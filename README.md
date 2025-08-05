@@ -1,16 +1,16 @@
-## Hi there 👋
+<!--BEGIN_BANNER_IMAGE-->
 
-<!--
-**AlphaAvatar/AlphaAvatar** is a ✨ _special_ ✨ repository because its `README.md` (this file) appears on your GitHub profile.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="/.github/banner_dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="/.github/banner_light.png">
+  <img style="width:100%;" alt="The AvatarAlpha icon, the name of the repository." src="https://raw.githubusercontent.com/AlphaAvatar/AlphaAvatar/main/.github/banner_dark.png">
+</picture>
 
-Here are some ideas to get you started:
+<!--END_BANNER_IMAGE-->
+<br />
 
-- 🔭 I’m currently working on ...
-- 🌱 I’m currently learning ...
-- 👯 I’m looking to collaborate on ...
-- 🤔 I’m looking for help with ...
-- 💬 Ask me about ...
-- 📫 How to reach me: ...
-- 😄 Pronouns: ...
-- ⚡ Fun fact: ...
--->
+---
+
+*Latest News* 🔥
+
+- [2025/08]
