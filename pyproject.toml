@@ -1,0 +1,86 @@
+[tool.uv]
+constraint-dependencies = ['onnxruntime<1.20.0; python_version == "3.9"']
+
+[tool.uv.sources]
+avatar-agents = { workspace = true }
+avatar-memory = { workspace = true }
+
+[tool.uv.workspace]
+members = ["avatar-plugins/*", "avatar-agents"]
+exclude = []
+
+[dependency-groups]
+dev = [
+    "python-dotenv>=1.0.1",
+    "mypy",
+    "pytest",
+    "ruff",
+    "pytest-asyncio>=0.25.3",
+    "jiwer>=3.1.0",
+    "scipy>=1.13.1",
+    "tiktoken>=0.9.0",
+]
+docs = [
+    "pdoc3",
+    "setuptools",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+exclude = [".github"]
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+known-first-party = ["alphaavatar"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = ["--import-mode=importlib", "--ignore=examples"]
+
+
+[tool.mypy]
+strict = true
+disallow_any_generics = false
+
+[[tool.mypy.overrides]]
+module = "mcp.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "google.genai"
+follow_imports = "normal"
+follow_untyped_imports = true
+
+[[tool.mypy.overrides]]
+module = "boto3"
+follow_untyped_imports = true
+
+[[tool.mypy.overrides]]
+module = "aws_sdk_bedrock_runtime.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "smithy_aws_core.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "smithy_core.*"
+ignore_missing_imports = true

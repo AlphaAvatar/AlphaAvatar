@@ -9,8 +9,10 @@
 <!--END_BANNER_IMAGE-->
 <br />
 
+[![License](https://img.shields.io/github/license/AlphaAvatar/livekit)](https://github.com/livekit/livekit/blob/main/LICENSE)
+
 ---
-
+AlphaAvatar
 *Latest News* 🔥
-
-- [2025/08]
+AlphaAvatar
+- [2025/09]
