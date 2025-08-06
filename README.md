@@ -9,7 +9,7 @@
 <!--END_BANNER_IMAGE-->
 <br />
 
-[![License](https://img.shields.io/github/license/AlphaAvatar/livekit)](https://github.com/livekit/livekit/blob/main/LICENSE)
+[![License](https://img.shields.io/github/license/AlphaAvatar/AlphaAvatar)](https://github.com/AlphaAvatar/AlphaAvatar/blob/main/LICENSE)
 
 ---
 AlphaAvatar
