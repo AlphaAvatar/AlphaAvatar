@@ -12,7 +12,7 @@
 [![License](https://img.shields.io/github/license/AlphaAvatar/AlphaAvatar)](https://github.com/AlphaAvatar/AlphaAvatar/blob/main/LICENSE)
 
 ---
-AlphaAvatar
+
 *Latest News* 🔥
-AlphaAvatar
+
 - [2025/09]
