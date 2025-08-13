@@ -9,6 +9,7 @@
 <!--END_BANNER_IMAGE-->
 <br />
 
+[![GitHub Repo stars](https://img.shields.io/github/stars/AlphaAvatar/AlphaAvatar?style=social)](https://github.com/AlphaAvatar/AlphaAvatar/stargazers)
 [![License](https://img.shields.io/github/license/AlphaAvatar/AlphaAvatar)](https://github.com/AlphaAvatar/AlphaAvatar/blob/main/LICENSE)
 
 ---

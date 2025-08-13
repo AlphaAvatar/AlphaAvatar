@@ -3,7 +3,7 @@ constraint-dependencies = ['onnxruntime<1.20.0; python_version == "3.9"']
 
 [tool.uv.sources]
 avatar-agents = { workspace = true }
-avatar-memory = { workspace = true }
+avatar-plugins-memory = { workspace = true }
 
 [tool.uv.workspace]
 members = ["avatar-plugins/*", "avatar-agents"]
