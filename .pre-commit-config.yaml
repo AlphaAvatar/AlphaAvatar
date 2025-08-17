@@ -1,0 +1,24 @@
+repos:
+  - repo: local
+    hooks:
+      - id: add-python-copyright
+        name: Add Apache-2.0 license header (Python)
+        entry: python3 scripts/add_copyright.py
+        language: system
+        types: [python]
+        exclude: |
+          (?x)^(
+            \.venv/|venv/|build/|dist/|migrations/|third_party/
+          )
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Ruff version.
+    rev: v0.12.9
+    hooks:
+      # Run the linter.
+      - id: ruff-check
+        types_or: [ python, pyi ]
+        args: [ --fix ]
+      # Run the formatter.
+      - id: ruff-format
+        types_or: [ python, pyi ]

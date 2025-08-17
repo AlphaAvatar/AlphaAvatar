@@ -40,7 +40,7 @@ livekit-turn-detector = ["livekit-plugins-turn-detector>=1.2.4"]
 livekit-openai = ["livekit-plugins-openai>=1.2.4"]
 
 [project.scripts]
-alphaavatar = "alphaavatar.agents.entrypoints.serve:main"
+alphaavatar = "alphaavatar.agents.entrypoints.main:main"
 
 [project.urls]
 Documentation = ""
