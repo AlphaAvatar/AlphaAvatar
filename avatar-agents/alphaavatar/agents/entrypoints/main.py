@@ -2,6 +2,7 @@ import json
 import logging
 import textwrap
 from dotenv import load_dotenv
+from typing import Any, Optional
 
 from livekit import agents
 from livekit.agents import AgentSession, RoomInputOptions
@@ -13,6 +14,7 @@ from livekit.plugins import (
 )
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
+from alphaavatar.agents.configs import read_args
 from alphaavatar.agents.avatar import AvatarEngine
 
 load_dotenv()
@@ -35,13 +37,15 @@ async def entrypoint(ctx: agents.JobContext):
     logger.info(textwrap.dedent(f"""Connecting to room... 
 room name: {ctx.room.name}
 token: {ctx._info.token}
-user_id: {ctx._info.token}
-chat_id: {ctx._info.token}"""))
+user_id: {user_id}
+chat_id: {chat_id}"""))
 
     # Build Session & Avatar
     session = AgentSession()
     avatar_engine = AvatarEngine(
+        # Internal
         instructions="You are a helpful voice AI assistant.",
+        # External
         turn_detection=MultilingualModel(),
         vad=silero.VAD.load(),
         stt=openai.STT(model="gpt-4o-transcribe"),
@@ -70,7 +74,9 @@ chat_id: {ctx._info.token}"""))
     )
 
 
-def main():
+def main(args: Optional[dict[str, Any]] = None) -> None:
+    args = read_args(args)
+
     agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))
 
 

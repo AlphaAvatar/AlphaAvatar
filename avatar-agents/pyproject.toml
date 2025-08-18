@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "A real-time interactive Omni Avatar built on LiveKit."
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 keywords = ["omni", "realtime", "audio", "video", "llm", "agents", "AI"]
 classifiers = [
     "Intended Audience :: Developers",
@@ -32,11 +32,13 @@ dependencies = [
     "livekit-blingfire~=1.0",
     "livekit-agents~=1.0",
     "livekit-plugins-noise-cancellation~=0.2",
-    "livekit-plugins-silero>=1.2.5"
+    "livekit-plugins-silero>=1.2.5",
+    "livekit-plugins-turn-detector>=1.2.4",
+    "mcp>=1.10.0, <2",
+    "omegaconf",
 ]
 
 [project.optional-dependencies]
-livekit-turn-detector = ["livekit-plugins-turn-detector>=1.2.4"]
 livekit-openai = ["livekit-plugins-openai>=1.2.4"]
 
 [project.scripts]

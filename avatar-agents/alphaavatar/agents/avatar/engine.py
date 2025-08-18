@@ -43,3 +43,15 @@ class AvatarEngine(Agent):
             use_tts_aligned_transcript=use_tts_aligned_transcript
         )
         self._memory = memory
+    
+    async def on_user_turn_completed(
+        self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage
+    ) -> None:
+        """Override [livekit.agents.voice.agent.Agent::on_user_turn_completed] method to handle user turn completion."""
+        avatar_memeories_str = self.memory.search(query=new_message.text_content())
+        print(avatar_memeories_str, turn_ctx.items, "User turn completed:", new_message.content, "((--))", flush=True)
+
+    @property
+    def memory(self) -> NotGivenOr[Memory | None]:
+        """Get the memory instance."""
+        return self._memory
