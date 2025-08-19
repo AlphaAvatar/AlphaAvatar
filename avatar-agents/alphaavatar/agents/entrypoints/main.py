@@ -1,28 +1,28 @@
 import json
 import logging
 import textwrap
+from functools import partial
 from dotenv import load_dotenv
 from typing import Any, Optional
 
 from livekit import agents
 from livekit.agents import AgentSession, RoomInputOptions
-from livekit.agents.job import AutoSubscribe, JobProcess
-from livekit.plugins import (
-    openai,
-    noise_cancellation,
-    silero,
-)
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
+from livekit.agents.job import AutoSubscribe
+from livekit.plugins import noise_cancellation
 
-from alphaavatar.agents.configs import read_args
 from alphaavatar.agents.avatar import AvatarEngine
+from alphaavatar.agents.configs import read_args, get_avatar_args, AvatarConfig
+
 
 load_dotenv()
 
 logger = logging.getLogger("alphaavatar.agent")
 
 
-async def entrypoint(ctx: agents.JobContext):
+async def entrypoint(
+    avatar_config: AvatarConfig,
+    ctx: agents.JobContext
+):
     # Wait connecting...
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
 
@@ -35,28 +35,15 @@ async def entrypoint(ctx: agents.JobContext):
     chat_id = participant_metadata.get("chat_id", None)
 
     logger.info(textwrap.dedent(f"""Connecting to room... 
-room name: {ctx.room.name}
-token: {ctx._info.token}
-user_id: {user_id}
-chat_id: {chat_id}"""))
+    room name: {ctx.room.name}
+    token: {ctx._info.token}
+    user_id: {user_id}
+    chat_id: {chat_id}
+    avatar_config: {avatar_config}"""))
 
     # Build Session & Avatar
     session = AgentSession()
-    avatar_engine = AvatarEngine(
-        # Internal
-        instructions="You are a helpful voice AI assistant.",
-        # External
-        turn_detection=MultilingualModel(),
-        vad=silero.VAD.load(),
-        stt=openai.STT(model="gpt-4o-transcribe"),
-        llm=openai.LLM(model="gpt-4o-mini"),
-        tts=openai.TTS(
-            model="gpt-4o-mini-tts",
-            voice="ash",
-            instructions="Speak in a friendly and conversational tone.",
-        ),
-        allow_interruptions=True,
-    )
+    avatar_engine = AvatarEngine(avatar_config)
 
     await session.start(
         room=ctx.room,
@@ -76,8 +63,8 @@ chat_id: {chat_id}"""))
 
 def main(args: Optional[dict[str, Any]] = None) -> None:
     args = read_args(args)
-
-    agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=entrypoint))
+    avatar_config = get_avatar_args(args)
+    agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=partial(entrypoint, avatar_config)))
 
 
 if __name__ == "__main__":

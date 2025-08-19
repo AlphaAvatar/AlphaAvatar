@@ -1,57 +1,33 @@
 """Avatar Launch Engine"""
-from livekit.agents import Agent, llm, stt, tts, vad
-from livekit.agents.types import NOT_GIVEN, NotGivenOr
-from livekit.agents.voice.agent_session import TurnDetectionMode
-from livekit.agents.llm import mcp
+from livekit.agents import Agent, llm
+from livekit.agents.types import NotGivenOr
 
 from alphaavatar.agents.memory import Memory
-
+from alphaavatar.agents.configs import AvatarConfig
 
 class AvatarEngine(Agent):
-    def __init__(
-        self,
-        *,
-        # Internal
-        instructions: str,
-        memory: NotGivenOr[Memory | None] = NOT_GIVEN,
-        # External
-        chat_ctx: NotGivenOr[llm.ChatContext | None] = NOT_GIVEN,
-        tools: list[llm.FunctionTool | llm.RawFunctionTool] | None = None,
-        turn_detection: NotGivenOr[TurnDetectionMode | None] = NOT_GIVEN,
-        stt: NotGivenOr[stt.STT | None] = NOT_GIVEN,
-        vad: NotGivenOr[vad.VAD | None] = NOT_GIVEN,
-        llm: NotGivenOr[llm.LLM | llm.RealtimeModel | None] = NOT_GIVEN,
-        tts: NotGivenOr[tts.TTS | None] = NOT_GIVEN,
-        mcp_servers: NotGivenOr[list[mcp.MCPServer] | None] = NOT_GIVEN,
-        allow_interruptions: NotGivenOr[bool] = NOT_GIVEN,
-        min_consecutive_speech_delay: NotGivenOr[float] = NOT_GIVEN,
-        use_tts_aligned_transcript: NotGivenOr[bool] = NOT_GIVEN,
-        # 
-    ) -> None:
+    def __init__(self, avatar_config: AvatarConfig) -> None:
         super().__init__(
             instructions=instructions,
-            chat_ctx=chat_ctx,
-            tools=tools,
-            turn_detection=turn_detection,
-            stt=stt,
-            vad=vad,
-            llm=llm,
-            tts=tts,
-            mcp_servers=mcp_servers,
-            allow_interruptions=allow_interruptions,
-            min_consecutive_speech_delay=min_consecutive_speech_delay,
-            use_tts_aligned_transcript=use_tts_aligned_transcript
+            turn_detection=avatar_config.livekit_plugin_config.get_turn_detection_plugin(),
+            stt=avatar_config.livekit_plugin_config.get_stt_plugin(),
+            vad=avatar_config.livekit_plugin_config.get_vad_plugin(),
+            llm=avatar_config.livekit_plugin_config.get_llm_plugin(),
+            tts=avatar_config.livekit_plugin_config.get_tts_plugin(),
+            allow_interruptions=avatar_config.livekit_plugin_config.allow_interruptions,
         )
+        self.avatar_config = avatar_config
+
         self._memory = memory
-    
+
+    @property
+    def memory(self) -> NotGivenOr[Memory | None]:
+        """Get the memory instance."""
+        return self._memory
+
     async def on_user_turn_completed(
         self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage
     ) -> None:
         """Override [livekit.agents.voice.agent.Agent::on_user_turn_completed] method to handle user turn completion."""
         avatar_memeories_str = self.memory.search(query=new_message.text_content())
         print(avatar_memeories_str, turn_ctx.items, "User turn completed:", new_message.content, "((--))", flush=True)
-
-    @property
-    def memory(self) -> NotGivenOr[Memory | None]:
-        """Get the memory instance."""
-        return self._memory

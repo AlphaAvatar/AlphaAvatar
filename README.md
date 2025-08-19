@@ -10,6 +10,7 @@
 <br />
 
 [![GitHub Repo stars](https://img.shields.io/github/stars/AlphaAvatar/AlphaAvatar?style=social)](https://github.com/AlphaAvatar/AlphaAvatar/stargazers)
+[![GitHub last commit](https://img.shields.io/github/last-commit/AlphaAvatar/AlphaAvatar)](https://github.com/AlphaAvatar/AlphaAvatar/commits/main)
 [![License](https://img.shields.io/github/license/AlphaAvatar/AlphaAvatar)](https://github.com/AlphaAvatar/AlphaAvatar/blob/main/LICENSE)
 
 ---
@@ -17,3 +18,14 @@
 *Latest News* 🔥
 
 - [2025/09]
+
+### Quickstart
+
+```bash
+export LIVEKIT_API_KEY=<your API Key>
+export LIVEKIT_API_SECRET=<your API Secret>
+export LIVEKIT_URL=<your LiveKit server URL>
+export OPENAI_API_KEY=<Your OpenAI API Key>
+
+alphaavatar dev examples/pipline_openai.yaml
+```

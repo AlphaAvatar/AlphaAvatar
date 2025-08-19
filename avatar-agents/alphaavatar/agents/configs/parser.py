@@ -1,25 +1,84 @@
 import json
-import os
+import dataclasses
 import sys
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, NewType
 
 import yaml
 from omegaconf import OmegaConf
+
+from .avatar_config import AvatarConfig
+from .avatar_plugin_config import LiveKitPluginConfig
+
+
+DataClass = NewType("DataClass", Any)
+DataClassType = NewType("DataClassType", Any)
+
+
+_CONFIG_CLS = [LiveKitPluginConfig]
 
 
 def read_args(args: Optional[Union[dict[str, Any], list[str]]] = None) -> Union[dict[str, Any], list[str]]:
     r"""Get arguments from the command line or a config file."""
     if args is not None:
         return args
+    
+    if len(sys.argv) >= 2:
+        args = dict()
+        if sys.argv[2].endswith(".yaml") or sys.argv[2].endswith(".yml"):
+            override_config = OmegaConf.from_cli(sys.argv[3:])
+            dict_config = yaml.safe_load(Path(sys.argv[2]).absolute().read_text())
+            args.update(OmegaConf.to_container(OmegaConf.merge(dict_config, override_config)))
+        elif sys.argv[2].endswith(".json"):
+            override_config = OmegaConf.from_cli(sys.argv[3:])
+            dict_config = json.loads(Path(sys.argv[2]).absolute().read_text())
+            args.update(OmegaConf.to_container(OmegaConf.merge(dict_config, override_config)))
+        else:
+            dict_config = OmegaConf.from_cli(sys.argv[2:])
+            args.update(OmegaConf.to_container(dict_config))
 
-    if sys.argv[1].endswith(".yaml") or sys.argv[1].endswith(".yml"):
-        override_config = OmegaConf.from_cli(sys.argv[2:])
-        dict_config = yaml.safe_load(Path(sys.argv[1]).absolute().read_text())
-        return OmegaConf.to_container(OmegaConf.merge(dict_config, override_config))
-    elif sys.argv[1].endswith(".json"):
-        override_config = OmegaConf.from_cli(sys.argv[2:])
-        dict_config = json.loads(Path(sys.argv[1]).absolute().read_text())
-        return OmegaConf.to_container(OmegaConf.merge(dict_config, override_config))
+        sys.argv = sys.argv[:2]  # Keep only the script name and first argument
+        return args
     else:
-        return sys.argv[1:]
+        ValueError("No arguments provided. Please provide a config file or command line arguments.")
+
+
+def parse_dict(dataclass_types: list[DataClassType], args: dict[str, Any], allow_extra_keys: bool = False) -> tuple[DataClass, ...]:
+    """
+    Alternative helper method that does not use `argparse` at all, instead uses a dict and populating the dataclass
+    types.
+
+    Args:
+        args (`dict`):
+            dict containing config values
+        allow_extra_keys (`bool`, *optional*, defaults to `False`):
+            Defaults to False. If False, will raise an exception if the dict contains keys that are not parsed.
+
+    Returns:
+        Tuple consisting of:
+
+            - the dataclass instances in the same order as they were passed to the initializer.
+    """
+    unused_keys = set(args.keys())
+    outputs = []
+    for dtype in dataclass_types:
+        keys = {f.name for f in dataclasses.fields(dtype) if f.init}
+        inputs = {k: v for k, v in args.items() if k in keys}
+        unused_keys.difference_update(inputs.keys())
+        obj = dtype(**inputs)
+        outputs.append(obj)
+    if not allow_extra_keys and unused_keys:
+        raise ValueError(f"Some keys are not used by the HfArgumentParser: {sorted(unused_keys)}")
+    return tuple(outputs)
+
+
+def get_avatar_args(args: Optional[Union[dict[str, Any], list[str]]] = None) -> AvatarConfig:
+    livekit_plugin_config, = parse_dict(_CONFIG_CLS, args)
+
+    # post-validation
+    
+    avatar_config = AvatarConfig(
+        livekit_plugin_config=livekit_plugin_config,
+    )
+
+    return avatar_config

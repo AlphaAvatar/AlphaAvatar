@@ -1,0 +1,12 @@
+### LiveKit Args
+stt_plugin: openai
+stt_model: gpt-4o-transcribe
+tts_plugin: openai
+tts_model: gpt-4o-mini-tts
+tts_voice: ash
+tts_instructions: Speak in a friendly and conversational tone.
+llm_plugin: openai
+llm_model: gpt-4o-mini
+vad_plugin: silero
+turn_detection_plugin: multilingual
+allow_interruptions: true

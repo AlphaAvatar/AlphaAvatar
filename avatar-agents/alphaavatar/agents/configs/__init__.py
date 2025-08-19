@@ -1,8 +1,11 @@
-from .avatar_plugin_args import LiveKitPluginArguments
-from .parser import read_args
+from .avatar_config import AvatarConfig
+from .avatar_plugin_config import LiveKitPluginConfig
+from .parser import read_args, get_avatar_args
 
 
 __all__ = [
-    "LiveKitPluginArguments",
+    "AvatarConfig",
+    "LiveKitPluginConfig",
     "read_args",
+    "get_avatar_args"
 ]
