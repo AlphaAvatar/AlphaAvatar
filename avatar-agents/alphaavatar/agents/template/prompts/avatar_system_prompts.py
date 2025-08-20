@@ -1,4 +1,4 @@
-AVATAR_SYSTEM_PROMPT="""{avatar_introduce}
+AVATAR_SYSTEM_PROMPT="""{avatar_introduction}
 
 {memory_content}
 

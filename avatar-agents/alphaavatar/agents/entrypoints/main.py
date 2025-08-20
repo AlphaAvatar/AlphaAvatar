@@ -19,6 +19,16 @@ load_dotenv()
 logger = logging.getLogger("alphaavatar.agent")
 
 
+def init_warm():
+    try:
+        from livekit.plugins.turn_detector.multilingual import MultilingualModel
+    except:
+        pass
+
+
+init_warm()
+
+
 async def entrypoint(
     avatar_config: AvatarConfig,
     ctx: agents.JobContext

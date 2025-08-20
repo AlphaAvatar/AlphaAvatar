@@ -8,14 +8,15 @@ import yaml
 from omegaconf import OmegaConf
 
 from .avatar_config import AvatarConfig
-from .avatar_plugin_config import LiveKitPluginConfig
+from .plugin_config import LiveKitPluginConfig
+from .prompt_config import PromptConfig
 
 
 DataClass = NewType("DataClass", Any)
 DataClassType = NewType("DataClassType", Any)
 
 
-_CONFIG_CLS = [LiveKitPluginConfig]
+_CONFIG_CLS = [LiveKitPluginConfig, PromptConfig]
 
 
 def read_args(args: Optional[Union[dict[str, Any], list[str]]] = None) -> Union[dict[str, Any], list[str]]:
@@ -73,12 +74,13 @@ def parse_dict(dataclass_types: list[DataClassType], args: dict[str, Any], allow
 
 
 def get_avatar_args(args: Optional[Union[dict[str, Any], list[str]]] = None) -> AvatarConfig:
-    livekit_plugin_config, = parse_dict(_CONFIG_CLS, args)
+    livekit_plugin_config, prompt_config = parse_dict(_CONFIG_CLS, args)
 
     # post-validation
     
     avatar_config = AvatarConfig(
         livekit_plugin_config=livekit_plugin_config,
+        prompt_config=prompt_config
     )
 
     return avatar_config

@@ -165,11 +165,3 @@ class LiveKitPluginConfig(STTArguments, TTSArguments, LLMArguments, VADArguments
                 return EnglishModel()
             case _:
                 return None
-
-    def to_dict(self) -> dict[str, Any]:
-        # Pydantic dataclass 会有 .__pydantic_model__.model_dump()
-        data = self.__pydantic_model__.model_dump(self)
-        return {
-            k: (f"<{k.upper()}>" if isinstance(v, str) and k.endswith("token") else v)
-            for k, v in data.items()
-        }

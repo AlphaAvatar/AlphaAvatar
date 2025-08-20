@@ -7,11 +7,11 @@ from collections.abc import Set
 from dataclasses import dataclass, field
 from typing import Callable, Optional, TypeVar, Union
 
-from .base import Memory
+from .base import MemoryBase
 
 
 __all__ = [
-    "Memory",
+    "MemoryBase",
 ]
 
 
@@ -22,17 +22,17 @@ _T = TypeVar("_T")
 
 @dataclass
 class _MemoryRegistry:
-    modules: dict[str, Memory] = field(default_factory=dict)
+    modules: dict[str, MemoryBase] = field(default_factory=dict)
 
     def get_supported_memory(self) -> Set[str]:
         return self.modules.keys()
 
-    def register_model(
+    def register(
         self,
         module_name: str,
-        module_cls: Memory,
+        module_cls: MemoryBase,
     ) -> None:
         self.modules[module_name] = module_cls
 
 
-ModelRegistry = _MemoryRegistry()
+MemoryRegistry = _MemoryRegistry()

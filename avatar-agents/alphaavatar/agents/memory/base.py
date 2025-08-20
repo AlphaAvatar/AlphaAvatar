@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from livekit.agents.types import NOT_GIVEN, NotGivenOr
 
 
-class Memory(ABC):
+class MemoryBase(ABC):
     def __init__(
         self,
         *,
