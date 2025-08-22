@@ -18,7 +18,12 @@ repos:
       # Run the linter.
       - id: ruff-check
         types_or: [ python, pyi ]
-        args: [ --fix ]
+        args: [--fix, --unsafe-fixes, --show-fixes, --exit-non-zero-on-fix]
       # Run the formatter.
       - id: ruff-format
         types_or: [ python, pyi ]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace

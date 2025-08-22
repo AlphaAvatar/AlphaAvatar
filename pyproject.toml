@@ -27,7 +27,7 @@ docs = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py310"
 exclude = [".github"]
 
 [tool.ruff.lint]
@@ -40,7 +40,7 @@ select = [
     "C4", # flake8-comprehensions
     "UP", # pyupgrade
 ]
-ignore = ["E501"]
+ignore = ["E501", "B904"]
 
 [tool.ruff.lint.isort]
 combine-as-imports = true

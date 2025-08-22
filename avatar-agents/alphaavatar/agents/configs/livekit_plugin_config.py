@@ -1,8 +1,21 @@
-from typing import Any, Optional, Literal
-from pydantic.dataclasses import dataclass
-from pydantic import Field, ConfigDict
+# Copyright 2025 AlphaAvatar project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+from typing import Literal
 
-from livekit.agents import stt, tts, llm, vad
+from livekit.agents import llm, stt, tts, vad
+from pydantic import ConfigDict, Field
+from pydantic.dataclasses import dataclass
 
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -88,7 +101,7 @@ class LLMArguments:
         description="Model to use for language/real-time model interactions.",
     )
 
-    def get_llm_plugin(self) -> Optional[llm.LLM | llm.RealtimeModel]:
+    def get_llm_plugin(self) -> llm.LLM | llm.RealtimeModel | None:
         """Returns the LLM plugin based on llm config."""
         match self.llm_plugin:
             case "openai":
@@ -141,7 +154,7 @@ class LiveKitPluginConfig(STTArguments, TTSArguments, LLMArguments, VADArguments
         default=True,
         description="Allow interruptions during speech.",
     )
-    
+
     def get_turn_detection_plugin(self):
         """Returns the turn detection plugin based on the configuration."""
         match self.turn_detection_plugin:

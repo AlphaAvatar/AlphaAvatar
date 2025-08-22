@@ -11,8 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .template import AvatarPromptTemplate
 
-__all__ = [
-    "AvatarPromptTemplate",
-]
+
+class MemoryCache:
+    """It is used to temporarily store the short-term memory content of the Avatar's current conversation session. When the session ends, it will be updated to the memory database."""
+
+    def __init__(
+        self,
+    ):
+        pass

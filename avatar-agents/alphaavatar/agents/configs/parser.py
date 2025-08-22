@@ -1,31 +1,46 @@
-import json
+# Copyright 2025 AlphaAvatar project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 import dataclasses
+import json
 import sys
 from pathlib import Path
-from typing import Any, Optional, Union, NewType
+from typing import Any, NewType
 
 import yaml
 from omegaconf import OmegaConf
 
 from .avatar_config import AvatarConfig
-from .plugin_config import LiveKitPluginConfig
+from .livekit_plugin_config import LiveKitPluginConfig
+from .memory_plugin_config import MemoryConfig
 from .prompt_config import PromptConfig
-
 
 DataClass = NewType("DataClass", Any)
 DataClassType = NewType("DataClassType", Any)
 
 
-_CONFIG_CLS = [LiveKitPluginConfig, PromptConfig]
+_CONFIG_CLS = [LiveKitPluginConfig, MemoryConfig, PromptConfig]
 
 
-def read_args(args: Optional[Union[dict[str, Any], list[str]]] = None) -> Union[dict[str, Any], list[str]]:
+def read_args(
+    args: dict[str, Any] | list[str] | None = None,
+) -> dict[str, Any] | list[str]:
     r"""Get arguments from the command line or a config file."""
     if args is not None:
         return args
-    
+
     if len(sys.argv) >= 2:
-        args = dict()
+        args = {}
         if sys.argv[2].endswith(".yaml") or sys.argv[2].endswith(".yml"):
             override_config = OmegaConf.from_cli(sys.argv[3:])
             dict_config = yaml.safe_load(Path(sys.argv[2]).absolute().read_text())
@@ -44,7 +59,9 @@ def read_args(args: Optional[Union[dict[str, Any], list[str]]] = None) -> Union[
         ValueError("No arguments provided. Please provide a config file or command line arguments.")
 
 
-def parse_dict(dataclass_types: list[DataClassType], args: dict[str, Any], allow_extra_keys: bool = False) -> tuple[DataClass, ...]:
+def parse_dict(
+    dataclass_types: list[DataClassType], args: dict[str, Any], allow_extra_keys: bool = False
+) -> tuple[DataClass, ...]:
     """
     Alternative helper method that does not use `argparse` at all, instead uses a dict and populating the dataclass
     types.
@@ -73,14 +90,15 @@ def parse_dict(dataclass_types: list[DataClassType], args: dict[str, Any], allow
     return tuple(outputs)
 
 
-def get_avatar_args(args: Optional[Union[dict[str, Any], list[str]]] = None) -> AvatarConfig:
-    livekit_plugin_config, prompt_config = parse_dict(_CONFIG_CLS, args)
+def get_avatar_args(args: dict[str, Any] | list[str] | None = None) -> AvatarConfig:
+    livekit_plugin_config, memory_config, prompt_config = parse_dict(_CONFIG_CLS, args)
 
     # post-validation
-    
+
     avatar_config = AvatarConfig(
         livekit_plugin_config=livekit_plugin_config,
-        prompt_config=prompt_config
+        memory_config=memory_config,
+        prompt_config=prompt_config,
     )
 
     return avatar_config

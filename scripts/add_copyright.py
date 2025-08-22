@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-import sys, os, re, datetime, pathlib
-
+import datetime
+import os
+import pathlib
+import re
+import sys
 
 OWNER = os.getenv("COPYRIGHT_OWNER", "AlphaAvatar project")
-YEAR  = os.getenv("COPYRIGHT_YEAR", str(datetime.date.today().year))
+YEAR = os.getenv("COPYRIGHT_YEAR", str(datetime.date.today().year))
 TEMPLATE_FILE = os.getenv("COPYRIGHT_TEMPLATE_FILE", "").strip()
 ENCODING_RE = re.compile(r"^#.*coding[:=]\s*([-\w.]+)")
 APACHE_MARKER = "Licensed under the Apache License, Version 2.0"
