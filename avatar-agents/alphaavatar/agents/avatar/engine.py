@@ -23,18 +23,21 @@ from alphaavatar.agents.template import AvatarPromptTemplate
 
 class AvatarEngine(Agent):
     def __init__(self, avatar_config: AvatarConfig) -> None:
-        system_prompt = AvatarPromptTemplate.init_system_prompt(
+        instructions = AvatarPromptTemplate.init_instructions(
             avatar_introduction=avatar_config.prompt_config.avatar_introduction,
         )
 
         self.avatar_config = avatar_config
 
         self._memory = avatar_config.memory_config.get_memory_plugin(
-            avater_name=avatar_config.prompt_config.avatar_name
+            avater_name=avatar_config.prompt_config.avatar_name,
+            memory_id=avatar_config.memory_config.memory_id,
+            memory_token_length=avatar_config.memory_config.memory_token_length,
+            memory_recall_session=avatar_config.memory_config.memory_recall_session,
         )
 
         super().__init__(
-            instructions=system_prompt,
+            instructions=instructions,
             turn_detection=avatar_config.livekit_plugin_config.get_turn_detection_plugin(),
             stt=avatar_config.livekit_plugin_config.get_stt_plugin(),
             vad=avatar_config.livekit_plugin_config.get_vad_plugin(),
@@ -57,7 +60,6 @@ class AvatarEngine(Agent):
         self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage
     ) -> None:
         """Override [livekit.agents.voice.agent.Agent::on_user_turn_completed] method to handle user turn completion."""
-        await self.memory.add(turn_ctx, new_message)
         avatar_memeories_str = await self.memory.search(query=new_message.text_content)
         print(
             avatar_memeories_str,

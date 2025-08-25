@@ -27,7 +27,7 @@ class AvatarPromptTemplate:
     ): ...
 
     @staticmethod
-    def init_system_prompt(
+    def init_instructions(
         *,
         avatar_introduction: str,
     ) -> str:
