@@ -16,8 +16,10 @@ from .livekit_plugin_config import LiveKitPluginConfig
 from .memory_plugin_config import MemoryConfig
 from .parser import get_avatar_args, read_args
 from .prompt_config import PromptConfig
+from .session_config import SessionConfig
 
 __all__ = [
+    "SessionConfig",
     "AvatarConfig",
     "LiveKitPluginConfig",
     "MemoryConfig",

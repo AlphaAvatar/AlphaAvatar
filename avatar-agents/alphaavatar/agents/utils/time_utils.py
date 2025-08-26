@@ -72,6 +72,7 @@ def format_current_time(tz: str | None = None) -> dict:
 
     time_str = f"{weekday}, {month} {dt.day}, {dt.year}, {hour12} {ampm}"
     return {
+        "timezone": tz,
         "year": dt.year,
         "month": dt.month,
         "day": dt.day,

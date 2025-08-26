@@ -16,20 +16,23 @@
 from livekit.agents import Agent, llm
 from livekit.agents.types import NotGivenOr
 
-from alphaavatar.agents.configs import AvatarConfig
+from alphaavatar.agents.configs import AvatarConfig, SessionConfig
 from alphaavatar.agents.memory import MemoryBase
 from alphaavatar.agents.template import AvatarPromptTemplate
 
+from .wrapper import add_message_wrapper
+
 
 class AvatarEngine(Agent):
-    def __init__(self, avatar_config: AvatarConfig) -> None:
+    def __init__(self, session_config: SessionConfig, avatar_config: AvatarConfig) -> None:
+        self.session_config = session_config
+        self.avatar_config = avatar_config
+
         instructions = AvatarPromptTemplate.init_instructions(
             avatar_introduction=avatar_config.prompt_config.avatar_introduction,
         )
 
-        self.avatar_config = avatar_config
-
-        self._memory = avatar_config.memory_config.get_memory_plugin(
+        self._memory: MemoryBase = avatar_config.memory_config.get_memory_plugin(
             avater_name=avatar_config.prompt_config.avatar_name,
             memory_id=avatar_config.memory_config.memory_id,
             memory_token_length=avatar_config.memory_config.memory_token_length,
@@ -44,6 +47,20 @@ class AvatarEngine(Agent):
             llm=avatar_config.livekit_plugin_config.get_llm_plugin(),
             tts=avatar_config.livekit_plugin_config.get_tts_plugin(),
             allow_interruptions=avatar_config.livekit_plugin_config.allow_interruptions,
+        )
+
+        self.__post_init__()
+
+    def __post_init__(self):
+        """Post-initialization to Avtar."""
+        # Avatar Memory Init
+        self._memory.init_cache(session_id=self.session_config.session_id)
+
+        # wrap chat context's add_message method to log messages
+        self._chat_ctx.add_message = add_message_wrapper(
+            session_id=self.session_config.session_id,
+            _chat_ctx=self._chat_ctx,
+            _memory=self._memory,
         )
 
     @property
@@ -71,4 +88,4 @@ class AvatarEngine(Agent):
         )
 
     async def on_exit(self):
-        print("Avatar is exiting...", flush=True)
+        await self.memory.update(session_id=self.session_config.session_id)

@@ -17,7 +17,6 @@ from pydantic import ConfigDict, Field
 from pydantic.dataclasses import dataclass
 
 from alphaavatar.agents.memory import MemoryBase
-from alphaavatar.plugins.memory.mem0 import Memory as Mem0Memory
 
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -54,6 +53,8 @@ class MemoryConfig:
             case "mem0":
                 try:
                     from mem0 import AsyncMemory, AsyncMemoryClient
+
+                    from alphaavatar.plugins.memory.mem0 import Memory as Mem0Memory
                 except ImportError:
                     raise ImportError(
                         "The 'mem0' Memory plugin is required but is not installed.\n"

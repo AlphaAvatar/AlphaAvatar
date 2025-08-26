@@ -12,14 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from livekit.agents.types import NOT_GIVEN, NotGivenOr
+from mem0 import AsyncMemory as Mem0, AsyncMemoryClient as Mem0Client
 
 from alphaavatar.agents.memory import MemoryBase
-
-try:
-    from mem0 import AsyncMemory as Mem0, AsyncMemoryClient as Mem0Client
-except ImportError:
-    Mem0 = None
-    Mem0Client = None
 
 
 class Memory(MemoryBase):
@@ -54,7 +49,7 @@ class Memory(MemoryBase):
         Returns:
             _type_: _description_
         """
-        relevant_memories = await self.client.search(
+        relevant_memories = self.client.search(
             query, user_id=self.avater_name, limit=self.memory_recall_session
         )
         if isinstance(self.client, Mem0Client):
@@ -65,6 +60,28 @@ class Memory(MemoryBase):
             )
         return memories_str
 
-    async def update(self):
-        # Implement search logic here
-        pass
+    async def update(self, *, session_id: str | None = None):
+        """Update the memory database with the cached messages.
+        If session_id is None, update all sessions in the memory cache.
+        """
+
+        if session_id in self.memory_cache:
+            raise ValueError(
+                f"Session ID {session_id} not found in memory cache. You need to call 'init_cache' first."
+            )
+
+        if session_id is None:
+            memory_tuple = [(sid, cache) for sid, cache in self.memory_cache.items()]
+        else:
+            memory_tuple = [(session_id, self.memory_cache[session_id])]
+
+        for _sid, cache in memory_tuple:
+            memory_str = cache.convert_to_memory_string()
+            if not memory_str.strip():
+                continue
+
+            self.client.update(
+                memory_id=self.memory_id,
+                text=memory_str,
+                metadata=cache.metadata,
+            )

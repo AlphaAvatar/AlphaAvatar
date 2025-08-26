@@ -6,12 +6,17 @@
 
 <br />
 
-[![GitHub Repo stars](https://img.shields.io/github/stars/AlphaAvatar/AlphaAvatar?style=social)](https://github.com/AlphaAvatar/AlphaAvatar/stargazers)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome!-brightgreen.svg?style=flat-square)](https://github.com/AlphaAvatar/AlphaAvatar/pulls)
 [![GitHub last commit](https://img.shields.io/github/last-commit/AlphaAvatar/AlphaAvatar)](https://github.com/AlphaAvatar/AlphaAvatar/commits/main)
 [![License](https://img.shields.io/github/license/AlphaAvatar/AlphaAvatar)](https://github.com/AlphaAvatar/AlphaAvatar/blob/main/LICENSE)
 
+[![GitHub watchers](https://img.shields.io/github/watchers/AlphaAvatar/AlphaAvatar?style=social&label=Watch)](https://GitHub.com/AlphaAvatar/AlphaAvatar/watchers/?WT.mc_id=academic-105485-koreyst)
+[![GitHub forks](https://img.shields.io/github/forks/AlphaAvatar/AlphaAvatar?style=social&label=Fork)](https://GitHub.com/AlphaAvatar/AlphaAvatar/network/?WT.mc_id=academic-105485-koreyst)
+[![GitHub stars](https://img.shields.io/github/stars/AlphaAvatar/AlphaAvatar?style=social&label=Star)](https://GitHub.com/AlphaAvatar/AlphaAvatar/stargazers/?WT.mc_id=academic-105485-koreyst)
+
+
 <h3 align="center">
-Easy, fast, and pluggable Omni-Avatar serving for everyone
+WebUI, configurable, and pluggable Omni-Avatar Assistant for everyone
 </h3>
 
 ---

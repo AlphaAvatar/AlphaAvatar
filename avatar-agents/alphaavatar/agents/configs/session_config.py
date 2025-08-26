@@ -11,8 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .version import __version__
+from pydantic import ConfigDict, Field
+from pydantic.dataclasses import dataclass
 
-__all__ = [
-    "__version__",
-]
+
+@dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+class SessionConfig:
+    """Dataclass which contains all session-related configuration."""
+
+    user_id: str = Field(default=None)
+    """User ID associated with the session."""
+    session_id: str = Field(default=None)
+    """Session ID for the current session."""
+    session_timeout: int = Field(default=300)
+    """Session timeout in seconds. Default is 300 seconds (5 minutes)."""

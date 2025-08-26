@@ -14,6 +14,7 @@
 import json
 import logging
 import textwrap
+import uuid
 from functools import partial
 from typing import Any
 
@@ -24,7 +25,7 @@ from livekit.agents.job import AutoSubscribe
 from livekit.plugins import noise_cancellation
 
 from alphaavatar.agents.avatar import AvatarEngine
-from alphaavatar.agents.configs import AvatarConfig, get_avatar_args, read_args
+from alphaavatar.agents.configs import AvatarConfig, SessionConfig, get_avatar_args, read_args
 
 load_dotenv()
 
@@ -49,21 +50,23 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     participant = await ctx.wait_for_participant()
     participant_metadata = json.loads(participant.metadata) if participant.metadata else {}
     user_id = participant_metadata.get("user_id", None)
-    chat_id = participant_metadata.get("chat_id", None)
+    session_id = participant_metadata.get("session_id", uuid.uuid4().hex)
+    session_config = SessionConfig(
+        user_id=user_id,
+        session_id=session_id,
+    )
 
     logger.info(
         textwrap.dedent(f"""Connecting to room...
     room name: {ctx.room.name}
     token: {ctx._info.token}
-    user_id: {user_id}
-    chat_id: {chat_id}
+    session_config: {session_config}
     avatar_config: {avatar_config}""")
     )
 
     # Build Session & Avatar
     session = AgentSession()
-    avatar_engine = AvatarEngine(avatar_config)
-
+    avatar_engine = AvatarEngine(session_config, avatar_config)
     await session.start(
         room=ctx.room,
         agent=avatar_engine,
