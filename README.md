@@ -1,3 +1,5 @@
+<div align="center"> <a name="readme-top"></a>
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="/.github/banner_dark.png">
   <source media="(prefers-color-scheme: light)" srcset="/.github/banner_light.png">
@@ -18,6 +20,8 @@
 <h3 align="center">
 WebUI, configurable, and pluggable Omni-Avatar Assistant for everyone
 </h3>
+
+</div>
 
 ---
 
