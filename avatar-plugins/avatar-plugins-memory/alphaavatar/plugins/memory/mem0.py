@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from livekit.agents.types import NOT_GIVEN, NotGivenOr
-from mem0 import AsyncMemory as Mem0, AsyncMemoryClient as Mem0Client
+from mem0 import AsyncMemory, AsyncMemoryClient
 
 from alphaavatar.agents.memory import MemoryBase
 
@@ -22,22 +22,22 @@ class Memory(MemoryBase):
         self,
         *,
         avater_name: str,
-        memory_id: str,
+        avatar_id: str,
         memory_token_length: NotGivenOr[int | None] = NOT_GIVEN,
         memory_recall_session: NotGivenOr[int | None] = NOT_GIVEN,
-        client: Mem0Client | Mem0Client | None = NOT_GIVEN,
+        client: NotGivenOr[AsyncMemory | AsyncMemoryClient | None] = NOT_GIVEN,
     ) -> None:
         super().__init__(
             avater_name=avater_name,
-            memory_id=memory_id,
+            avatar_id=avatar_id,
             memory_token_length=memory_token_length,
             memory_recall_session=memory_recall_session,
         )
 
-        self._client = client or Mem0()
+        self._client = client or AsyncMemory()
 
     @property
-    def client(self) -> Mem0Client | Mem0:
+    def client(self) -> AsyncMemoryClient | AsyncMemory:
         return self._client
 
     async def search(self, *, query: str) -> str:
@@ -52,7 +52,7 @@ class Memory(MemoryBase):
         relevant_memories = self.client.search(
             query, user_id=self.avater_name, limit=self.memory_recall_session
         )
-        if isinstance(self.client, Mem0Client):
+        if isinstance(self.client, AsyncMemoryClient):
             memories_str = "\n".join(f"- {entry['memory']}" for entry in relevant_memories)
         else:
             memories_str = "\n".join(
@@ -65,7 +65,7 @@ class Memory(MemoryBase):
         If session_id is None, update all sessions in the memory cache.
         """
 
-        if session_id in self.memory_cache:
+        if session_id is not None and session_id not in self.memory_cache:
             raise ValueError(
                 f"Session ID {session_id} not found in memory cache. You need to call 'init_cache' first."
             )
@@ -76,12 +76,14 @@ class Memory(MemoryBase):
             memory_tuple = [(session_id, self.memory_cache[session_id])]
 
         for _sid, cache in memory_tuple:
-            memory_str = cache.convert_to_memory_string()
-            if not memory_str.strip():
+            messages = cache.convert_to_message_list()
+            if not messages:
                 continue
 
-            self.client.update(
-                memory_id=self.memory_id,
-                text=memory_str,
+            self.client.add(
+                agent_id=self.avatar_id,
+                user_id=cache.user_id,
+                run_id=cache.session_id,
+                messages=messages,
                 metadata=cache.metadata,
             )

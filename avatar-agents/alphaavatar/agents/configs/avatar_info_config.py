@@ -11,17 +11,22 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import uuid
 
 from pydantic import ConfigDict, Field
 from pydantic.dataclasses import dataclass
 
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
-class PromptConfig:
+class AvatarInfoConfig:
     """Configuration for the prompt used in the agent."""
 
-    avatar_name: str | None = Field(
-        default=None,
+    avatar_id: str = Field(
+        default=uuid.uuid4().hex,
+        description="Unique identifier for the avatar.",
+    )
+    avatar_name: str = Field(
+        default="Assistant",
         description="Name of the avatar.",
     )
     avatar_introduction: str = Field(

@@ -23,7 +23,7 @@ def add_message_wrapper(*, session_id, _chat_ctx: llm.ChatContext, _memory: Memo
 
     def wrapper(self, *args, **kwargs):
         message: llm.ChatMessage = orig_add_message(*args, **kwargs)
-        print(message, "((---))", flush=True)
+        print(message, "((-111--))", flush=True)
 
         # post-process: add message to memory
         _memory.add(session_id=session_id, chat_item=message)

@@ -32,16 +32,6 @@ load_dotenv()
 logger = logging.getLogger("alphaavatar.agent")
 
 
-def init_warm():
-    try:
-        pass
-    except Exception:
-        pass
-
-
-init_warm()
-
-
 async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     # Wait connecting...
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
@@ -49,7 +39,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     # Get Metadata
     participant = await ctx.wait_for_participant()
     participant_metadata = json.loads(participant.metadata) if participant.metadata else {}
-    user_id = participant_metadata.get("user_id", None)
+    user_id = participant_metadata.get("user_id", uuid.uuid4().hex)
     session_id = participant_metadata.get("session_id", uuid.uuid4().hex)
     session_config = SessionConfig(
         user_id=user_id,
@@ -66,7 +56,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
 
     # Build Session & Avatar
     session = AgentSession()
-    avatar_engine = AvatarEngine(session_config, avatar_config)
+    avatar_engine = AvatarEngine(session_config=session_config, avatar_config=avatar_config)
     await session.start(
         room=ctx.room,
         agent=avatar_engine,

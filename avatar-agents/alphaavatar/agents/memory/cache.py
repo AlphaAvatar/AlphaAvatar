@@ -13,7 +13,7 @@
 # limitations under the License.
 import enum
 
-from livekit.agents.llm import ChatItem
+from livekit.agents.llm import ChatItem, ChatMessage
 
 from alphaavatar.agents.utils import format_current_time
 
@@ -22,21 +22,27 @@ def apply_memory_template(messages: list[ChatItem], **kwargs) -> str:
     """Apply the memory template with the given keyword arguments."""
     memory_strings = []
     for msg in messages:
-        role = msg.role
-        msg_str = ""
-        content: list[dict] = msg.content
-        for item in content:
-            if isinstance(item, str):
-                msg_str += item + "\n"
-            else:  # TODO: Handle different content types more robustly
-                continue
-
-        memory_strings.append(f"### {role}:\n{msg_str.strip()}")
+        if isinstance(msg, ChatMessage):
+            role = msg.role
+            msg_str = msg.text_content  # TODO: Handle different content types more robustly
+            memory_strings.append(f"### {role}:\n{msg_str}")
 
     return "\n\n".join(memory_strings)
 
 
-class MemoryType(enum):
+def apply_message_template(messages: list[ChatItem], **kwargs) -> list[dict]:
+    """Apply the memory template with the given keyword arguments."""
+    message_list = []
+    for msg in messages:
+        if isinstance(msg, ChatMessage):
+            role = msg.role
+            msg_str = msg.text_content  # TODO: Handle different content types more robustly
+            message_list.append({"role": role, "content": str(msg_str)})
+
+    return message_list
+
+
+class MemoryType(enum.Enum):
     CONVERSATION = "conversation"
 
 
@@ -47,10 +53,13 @@ class MemoryCache:
     def __init__(
         self,
         session_id: str | None = None,
+        user_id: str | None = None,
         memory_type: MemoryType = MemoryType.CONVERSATION,
     ):
+        self._user_id = user_id
+        self._session_id = session_id
+
         self._metadata = {
-            "session_id": session_id,
             "type": memory_type,
             "session_topic": "",
         }
@@ -62,6 +71,16 @@ class MemoryCache:
         """Get the metadata of the memory cache."""
         return self._metadata
 
+    @property
+    def user_id(self) -> str | None:
+        """Get the user ID associated with the memory cache."""
+        return self._user_id
+
+    @property
+    def session_id(self) -> str | None:
+        """Get the session ID associated with the memory cache."""
+        return self._session_id
+
     def add_message(self, message: ChatItem):
         """Add a new message to the cache."""
         self._messages.append(message)
@@ -70,3 +89,8 @@ class MemoryCache:
         """Convert the cached messages to a string format suitable for memory storage."""
         memory_str = apply_memory_template(self._messages)
         return memory_str
+
+    def convert_to_message_list(self) -> list[dict]:
+        """Convert the cached messages to a list of message dicts suitable for memory storage."""
+        messages = apply_message_template(self._messages)
+        return messages

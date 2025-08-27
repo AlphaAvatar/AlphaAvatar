@@ -14,7 +14,6 @@
 """Avatar Launch Engine"""
 
 from livekit.agents import Agent, llm
-from livekit.agents.types import NotGivenOr
 
 from alphaavatar.agents.configs import AvatarConfig, SessionConfig
 from alphaavatar.agents.memory import MemoryBase
@@ -24,37 +23,38 @@ from .wrapper import add_message_wrapper
 
 
 class AvatarEngine(Agent):
-    def __init__(self, session_config: SessionConfig, avatar_config: AvatarConfig) -> None:
+    def __init__(self, *, session_config: SessionConfig, avatar_config: AvatarConfig) -> None:
         self.session_config = session_config
         self.avatar_config = avatar_config
 
-        instructions = AvatarPromptTemplate.init_instructions(
-            avatar_introduction=avatar_config.prompt_config.avatar_introduction,
-        )
-
         self._memory: MemoryBase = avatar_config.memory_config.get_memory_plugin(
-            avater_name=avatar_config.prompt_config.avatar_name,
-            memory_id=avatar_config.memory_config.memory_id,
-            memory_token_length=avatar_config.memory_config.memory_token_length,
-            memory_recall_session=avatar_config.memory_config.memory_recall_session,
+            avater_name=avatar_config.avatar_info.avatar_name,
+            avatar_id=avatar_config.avatar_info.avatar_id,
         )
 
+        # Prepare initial instructions
+        instructions = AvatarPromptTemplate.init_instructions(
+            avatar_introduction=self.avatar_config.avatar_info.avatar_introduction,
+        )
         super().__init__(
             instructions=instructions,
-            turn_detection=avatar_config.livekit_plugin_config.get_turn_detection_plugin(),
-            stt=avatar_config.livekit_plugin_config.get_stt_plugin(),
-            vad=avatar_config.livekit_plugin_config.get_vad_plugin(),
-            llm=avatar_config.livekit_plugin_config.get_llm_plugin(),
-            tts=avatar_config.livekit_plugin_config.get_tts_plugin(),
-            allow_interruptions=avatar_config.livekit_plugin_config.allow_interruptions,
+            turn_detection=self.avatar_config.livekit_plugin_config.get_turn_detection_plugin(),
+            stt=self.avatar_config.livekit_plugin_config.get_stt_plugin(),
+            vad=self.avatar_config.livekit_plugin_config.get_vad_plugin(),
+            llm=self.avatar_config.livekit_plugin_config.get_llm_plugin(),
+            tts=self.avatar_config.livekit_plugin_config.get_tts_plugin(),
+            allow_interruptions=self.avatar_config.livekit_plugin_config.allow_interruptions,
         )
 
         self.__post_init__()
 
     def __post_init__(self):
         """Post-initialization to Avtar."""
-        # Avatar Memory Init
-        self._memory.init_cache(session_id=self.session_config.session_id)
+        # Init User & Avatar Interactive Memory by user_id & session_id
+        self._memory.init_cache(
+            session_id=self.session_config.session_id,
+            user_id=self.session_config.user_id,
+        )
 
         # wrap chat context's add_message method to log messages
         self._chat_ctx.add_message = add_message_wrapper(
@@ -64,7 +64,7 @@ class AvatarEngine(Agent):
         )
 
     @property
-    def memory(self) -> NotGivenOr[MemoryBase | None]:
+    def memory(self) -> MemoryBase:
         """Get the memory instance."""
         return self._memory
 
@@ -77,15 +77,17 @@ class AvatarEngine(Agent):
         self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage
     ) -> None:
         """Override [livekit.agents.voice.agent.Agent::on_user_turn_completed] method to handle user turn completion."""
-        avatar_memeories_str = await self.memory.search(query=new_message.text_content)
-        print(
-            avatar_memeories_str,
-            turn_ctx.items,
-            "User turn completed:",
-            new_message.content,
-            "((--))",
-            flush=True,
-        )
+        # avatar_memeories_str = await self.memory.search(query=new_message.text_content)
+        print(turn_ctx.items, "((-1-1-))", flush=True)
+        # print(
+        #     avatar_memeories_str,
+        #     turn_ctx.items,
+        #     "User turn completed:",
+        #     new_message.content,
+        #     "((--))",
+        #     flush=True,
+        # )
+        pass
 
     async def on_exit(self):
         await self.memory.update(session_id=self.session_config.session_id)

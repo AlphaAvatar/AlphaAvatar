@@ -26,13 +26,13 @@ class MemoryBase(ABC):
         self,
         *,
         avater_name: str,
-        memory_id: str,
+        avatar_id: str,
         memory_token_length: NotGivenOr[int | None] = NOT_GIVEN,
         memory_recall_session: NotGivenOr[int | None] = NOT_GIVEN,
     ) -> None:
         super().__init__()
         self._avatar_name = avater_name
-        self._memory_id = memory_id
+        self._avatar_id = avatar_id
         self._memory_token_length = memory_token_length
         self._memory_recall_session = memory_recall_session
         self._memory_cache: dict[str, MemoryCache] = {}
@@ -42,8 +42,8 @@ class MemoryBase(ABC):
         return self._avatar_name
 
     @property
-    def memory_id(self) -> str:
-        return self._memory_id
+    def avatar_id(self) -> str:
+        return self._avatar_id
 
     @property
     def memory_recall_session(self) -> NotGivenOr[int | None]:
@@ -54,12 +54,17 @@ class MemoryBase(ABC):
         return self._memory_cache
 
     def init_cache(
-        self, *, session_id: str, memory_type: MemoryType = MemoryType.CONVERSATION
+        self,
+        *,
+        session_id: str,
+        user_id: str | None = None,
+        memory_type: MemoryType = MemoryType.CONVERSATION,
     ) -> MemoryCache:
         if session_id not in self._memory_cache:
             self._memory_cache[session_id] = MemoryCache(
-                memory_type=memory_type,
                 session_id=session_id,
+                user_id=user_id,
+                memory_type=memory_type,
             )
         return self._memory_cache[session_id]
 

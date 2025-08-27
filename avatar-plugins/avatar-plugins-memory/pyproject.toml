@@ -30,6 +30,7 @@ dependencies = [
 
 [project.optional-dependencies]
 mem0 = ["mem0ai"]
+mem0-graph = ["mem0ai[graph]"]
 
 [project.urls]
 Documentation = ""

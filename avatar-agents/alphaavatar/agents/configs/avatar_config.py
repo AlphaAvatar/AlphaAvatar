@@ -14,9 +14,9 @@
 from pydantic import ConfigDict, Field
 from pydantic.dataclasses import dataclass
 
+from .avatar_info_config import AvatarInfoConfig
 from .livekit_plugin_config import LiveKitPluginConfig
 from .memory_plugin_config import MemoryConfig
-from .prompt_config import PromptConfig
 
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -25,9 +25,9 @@ class AvatarConfig:
     simplifies passing around the distinct configurations in the codebase.
     """
 
+    avatar_info: AvatarInfoConfig = Field(default_factory=AvatarInfoConfig)
+    """Avatar Information configuration."""
     livekit_plugin_config: LiveKitPluginConfig = Field(default_factory=LiveKitPluginConfig)
     """Livekit Plugins configuration."""
-    prompt_config: PromptConfig = Field(default_factory=PromptConfig)
-    """Prompts configuration."""
-    memory_config: MemoryConfig = Field(default=MemoryConfig)
+    memory_config: MemoryConfig = Field(default_factory=MemoryConfig)
     """Avatar Memory configuration."""

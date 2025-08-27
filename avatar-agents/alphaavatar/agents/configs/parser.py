@@ -21,15 +21,15 @@ import yaml
 from omegaconf import OmegaConf
 
 from .avatar_config import AvatarConfig
+from .avatar_info_config import AvatarInfoConfig
 from .livekit_plugin_config import LiveKitPluginConfig
 from .memory_plugin_config import MemoryConfig
-from .prompt_config import PromptConfig
 
 DataClass = NewType("DataClass", Any)
 DataClassType = NewType("DataClassType", Any)
 
 
-_CONFIG_CLS = [LiveKitPluginConfig, MemoryConfig, PromptConfig]
+_CONFIG_CLS = [AvatarInfoConfig, LiveKitPluginConfig, MemoryConfig]
 
 
 def read_args(
@@ -56,7 +56,9 @@ def read_args(
         sys.argv = sys.argv[:2]  # Keep only the script name and first argument
         return args
     else:
-        ValueError("No arguments provided. Please provide a config file or command line arguments.")
+        raise ValueError(
+            "No arguments provided. Please provide a config file or command line arguments."
+        )
 
 
 def parse_dict(
@@ -91,14 +93,14 @@ def parse_dict(
 
 
 def get_avatar_args(args: dict[str, Any] | list[str] | None = None) -> AvatarConfig:
-    livekit_plugin_config, memory_config, prompt_config = parse_dict(_CONFIG_CLS, args)
+    avatar_info, livekit_plugin_config, memory_config = parse_dict(_CONFIG_CLS, args)
 
-    # post-validation
+    # TODO: post-validation
 
     avatar_config = AvatarConfig(
+        avatar_info=avatar_info,
         livekit_plugin_config=livekit_plugin_config,
         memory_config=memory_config,
-        prompt_config=prompt_config,
     )
 
     return avatar_config

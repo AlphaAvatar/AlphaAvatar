@@ -22,17 +22,20 @@ from pydantic.dataclasses import dataclass
 class STTArguments:
     """Configuration for the STT plugin used in the agent."""
 
-    stt_plugin: Literal["openai"] = Field(
+    stt_plugin: Literal["openai"] | None = Field(
         default=None,
         description="STT plugin to use for speech-to-text.",
     )
-    stt_model: str = Field(
+    stt_model: str | None = Field(
         default=None,
         description="Model to use for speech-to-text.",
     )
 
-    def get_stt_plugin(self) -> stt.STT:
+    def get_stt_plugin(self) -> stt.STT | None:
         """Returns the STT plugin base on stt config."""
+        if self.stt_model is None:
+            return None
+
         match self.stt_plugin:
             case "openai":
                 try:
@@ -51,24 +54,24 @@ class STTArguments:
 class TTSArguments:
     """Configuration for the TTS plugin used in the agent."""
 
-    tts_plugin: Literal["openai"] = Field(
+    tts_plugin: Literal["openai"] | None = Field(
         default=None,
         description="TTS plugin to use for text-to-speech.",
     )
-    tts_model: str = Field(
+    tts_model: str | None = Field(
         default=None,
         description="Model to use for text-to-speech.",
     )
-    tts_voice: str = Field(
+    tts_voice: str | None = Field(
         default=None,
         description="Voice to use for text-to-speech.",
     )
-    tts_instructions: str = Field(
+    tts_instructions: str | None = Field(
         default=None,
         description="Instructions for the TTS model.",
     )
 
-    def get_tts_plugin(self) -> tts.TTS:
+    def get_tts_plugin(self) -> tts.TTS | None:
         """Returns the TTS plugin based on tts config."""
         match self.tts_plugin:
             case "openai":
@@ -92,17 +95,21 @@ class TTSArguments:
 class LLMArguments:
     """Configuration for the LLM plugin used in the agent."""
 
-    llm_plugin: Literal["openai"] = Field(
+    llm_plugin: Literal["openai"] | None = Field(
         default=None,
         description="LLM plugin to use for language/real-time model interactions.",
     )
-    llm_model: str = Field(
+    llm_model: str | None = Field(
         default=None,
         description="Model to use for language/real-time model interactions.",
     )
 
     def get_llm_plugin(self) -> llm.LLM | llm.RealtimeModel | None:
         """Returns the LLM plugin based on llm config."""
+
+        if self.llm_model is None:
+            return None
+
         match self.llm_plugin:
             case "openai":
                 try:
@@ -121,12 +128,12 @@ class LLMArguments:
 class VADArguments:
     """Configuration for the VAD plugin used in the agent."""
 
-    vad_plugin: Literal["silero"] = Field(
+    vad_plugin: Literal["silero"] | None = Field(
         default=None,
         description="VAD plugin to use for voice activity detection.",
     )
 
-    def get_vad_plugin(self) -> vad.VAD:
+    def get_vad_plugin(self) -> vad.VAD | None:
         """Returns the VAD plugin based on vad config."""
         match self.vad_plugin:
             case "silero":
@@ -146,7 +153,7 @@ class VADArguments:
 class LiveKitPluginConfig(STTArguments, TTSArguments, LLMArguments, VADArguments):
     """Configuration for LiveKit plugins used in the agent."""
 
-    turn_detection_plugin: Literal["multilingual", "english"] = Field(
+    turn_detection_plugin: Literal["multilingual", "english"] | None = Field(
         default=None,
         description="Turn detection plugin to use for detecting speech turns.",
     )

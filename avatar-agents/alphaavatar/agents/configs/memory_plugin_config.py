@@ -24,35 +24,36 @@ class MemoryConfig:
     """Configuration for the Memory plugin used in the agent."""
 
     # Memory Metadata
-    memory_id: str = Field(
-        default=None,
-        description="Unique identifier for the memory instance.",
-    )
-    memory_token_length: int | None = Field(
-        default=None,
+    memory_token_length: int = Field(
+        default=1024,
         description="Maximum length of tokens in memory segments.",
     )
-    memory_recall_session: int | None = Field(
-        default=None,
+    memory_recall_session: int = Field(
+        default=14,
         description="Number of sessions to recall from memory.",
     )
 
     # Memory plugin config
     memory_plugin: Literal["mem0"] = Field(
-        default=None,
+        default="mem0",
         description="Avatar Memory plugin to use for memory management.",
     )
     memory_mode: Literal["local", "client"] = Field(
         default="client",
         description="Mode of memory operation, either 'local' for local storage or 'client' for remote client operations.",
     )
+    memory_custom_config: dict | None = Field(
+        default=None,
+        description="Custom configuration parameters for the memory plugin.",
+    )
 
-    def get_memory_plugin(self, avater_name: str) -> MemoryBase:
+    def get_memory_plugin(self, *, avatar_id: str, avater_name: str) -> MemoryBase:
         """Returns the Memory plugin instance based on the configuration."""
         match self.memory_plugin:
             case "mem0":
                 try:
                     from mem0 import AsyncMemory, AsyncMemoryClient
+                    from mem0.configs.base import MemoryConfig
 
                     from alphaavatar.plugins.memory.mem0 import Memory as Mem0Memory
                 except ImportError:
@@ -61,13 +62,20 @@ class MemoryConfig:
                         "To fix this, install the optional dependency: `pip install alphaavatar-plugins-memory`"
                     )
 
-                client = AsyncMemoryClient() if self.memory_mode == "client" else AsyncMemory()
+                if self.memory_mode == "client":
+                    client = AsyncMemoryClient()
+                else:
+                    if self.memory_custom_config:
+                        config = MemoryConfig(**self.memory_custom_config)
+                        client = AsyncMemory(config=config)
+                    else:
+                        client = AsyncMemory()
                 return Mem0Memory(
                     avater_name=avater_name,
-                    memory_id=self.memory_id,
+                    avatar_id=avatar_id,
                     memory_token_length=self.memory_token_length,
                     memory_recall_session=self.memory_recall_session,
                     client=client,
                 )
             case _:
-                return None
+                raise ValueError(f"Unsupported memory plugin: {self.memory_plugin}")
