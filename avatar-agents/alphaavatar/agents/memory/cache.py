@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import enum
+from enum import StrEnum
 
 from livekit.agents.llm import ChatItem, ChatMessage
 
@@ -42,7 +42,7 @@ def apply_message_template(messages: list[ChatItem], **kwargs) -> list[dict]:
     return message_list
 
 
-class MemoryType(enum.Enum):
+class MemoryType(StrEnum):
     CONVERSATION = "conversation"
 
 
@@ -83,7 +83,10 @@ class MemoryCache:
 
     def add_message(self, message: ChatItem):
         """Add a new message to the cache."""
-        self._messages.append(message)
+        if isinstance(message, ChatMessage) and message.role in ("user", "assistant"):
+            self._messages.append(message)
+            # sort
+            self._messages.sort(key=lambda x: x.created_at)
 
     def convert_to_memory_string(self) -> str:
         """Convert the cached messages to a string format suitable for memory storage."""

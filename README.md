@@ -37,5 +37,5 @@ export LIVEKIT_API_SECRET=<your API Secret>
 export LIVEKIT_URL=<your LiveKit server URL>
 export OPENAI_API_KEY=<Your OpenAI API Key>
 
-alphaavatar dev examples/pipline_openai.yaml
+alphaavatar dev examples/pipline_openai_mem0.yaml
 ```

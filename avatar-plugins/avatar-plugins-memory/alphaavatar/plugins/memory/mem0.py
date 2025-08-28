@@ -80,7 +80,7 @@ class Memory(MemoryBase):
             if not messages:
                 continue
 
-            self.client.add(
+            await self.client.add(
                 agent_id=self.avatar_id,
                 user_id=cache.user_id,
                 run_id=cache.session_id,

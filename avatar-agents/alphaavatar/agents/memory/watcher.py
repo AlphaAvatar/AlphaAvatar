@@ -11,23 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import types
+from typing import Any
 
-from livekit.agents import llm
+from alphaavatar.agents.avatar.chat_context_observer import ObservableList, OpType
 
-from alphaavatar.agents.memory import MemoryBase
+from .base import MemoryBase
 
 
-def add_message_wrapper(*, session_id, _chat_ctx: llm.ChatContext, _memory: MemoryBase):
-    orig_add_message = _chat_ctx.add_message
-
-    def wrapper(self, *args, **kwargs):
-        message: llm.ChatMessage = orig_add_message(*args, **kwargs)
-        print(message, "((-111--))", flush=True)
-
-        # post-process: add message to memory
-        _memory.add(session_id=session_id, chat_item=message)
-
-        return message
-
-    return types.MethodType(wrapper, _chat_ctx)
+def chat_context_watcher(
+    memory: MemoryBase, session_id: str, lst: ObservableList, op: OpType, payload: dict[str, Any]
+):
+    """Watch chat context changes and update memory accordingly."""
+    if op == OpType.INSERT:
+        memory.add(session_id=session_id, chat_item=payload["value"])

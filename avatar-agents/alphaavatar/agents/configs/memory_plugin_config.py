@@ -42,7 +42,7 @@ class MemoryConfig:
         default="client",
         description="Mode of memory operation, either 'local' for local storage or 'client' for remote client operations.",
     )
-    memory_custom_config: dict | None = Field(
+    memory_init_config: dict | None = Field(
         default=None,
         description="Custom configuration parameters for the memory plugin.",
     )
@@ -65,8 +65,8 @@ class MemoryConfig:
                 if self.memory_mode == "client":
                     client = AsyncMemoryClient()
                 else:
-                    if self.memory_custom_config:
-                        config = MemoryConfig(**self.memory_custom_config)
+                    if self.memory_init_config:
+                        config = MemoryConfig(**self.memory_init_config)
                         client = AsyncMemory(config=config)
                     else:
                         client = AsyncMemory()

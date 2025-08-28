@@ -13,13 +13,15 @@
 # limitations under the License.
 """Avatar Launch Engine"""
 
+from functools import partial
+
 from livekit.agents import Agent, llm
 
 from alphaavatar.agents.configs import AvatarConfig, SessionConfig
-from alphaavatar.agents.memory import MemoryBase
+from alphaavatar.agents.memory import MemoryBase, chat_context_watcher
 from alphaavatar.agents.template import AvatarPromptTemplate
 
-from .wrapper import add_message_wrapper
+from .chat_context_observer import attach_items_observer
 
 
 class AvatarEngine(Agent):
@@ -56,11 +58,10 @@ class AvatarEngine(Agent):
             user_id=self.session_config.user_id,
         )
 
-        # wrap chat context's add_message method to log messages
-        self._chat_ctx.add_message = add_message_wrapper(
-            session_id=self.session_config.session_id,
-            _chat_ctx=self._chat_ctx,
-            _memory=self._memory,
+        # attach chat context observer
+        attach_items_observer(
+            ctx=self._chat_ctx,
+            on_change=partial(chat_context_watcher, self._memory, self.session_config.session_id),
         )
 
     @property
@@ -76,17 +77,11 @@ class AvatarEngine(Agent):
     async def on_user_turn_completed(
         self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage
     ) -> None:
-        """Override [livekit.agents.voice.agent.Agent::on_user_turn_completed] method to handle user turn completion."""
-        # avatar_memeories_str = await self.memory.search(query=new_message.text_content)
-        print(turn_ctx.items, "((-1-1-))", flush=True)
-        # print(
-        #     avatar_memeories_str,
-        #     turn_ctx.items,
-        #     "User turn completed:",
-        #     new_message.content,
-        #     "((--))",
-        #     flush=True,
-        # )
+        """
+        TTS -> Text -|-> Text append to chat context
+
+        Override [livekit.agents.voice.agent.Agent::on_user_turn_completed] method to handle user turn completion.
+        """
         pass
 
     async def on_exit(self):
