@@ -27,37 +27,24 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 
 <h3>Plugins</h3>
 <details><summary></summary>
-<table align="center" width="90%" border="0" cellspacing="0" cellpadding="0">
-  <tr>
-    <td width="50%" valign="top" border="0">
-      <table border="1" width="100%" cellspacing="0" cellpadding="12">
-        <tr><td height="150" valign="top">
-          <h4>🧠 <a href="#" target="_blank" rel="noopener">Memory ↗</a></h4>
-          <p>Self-improving memory layer for AI agents.</p>
-        </td></tr>
-      </table>
-      <br/>
-      <table border="1" width="100%" cellspacing="0" cellpadding="12">
-        <tr><td height="150" valign="top">
-          <h4>🦙 <a href="#" target="_blank" rel="noopener">RAG ↗</a></h4>
-          <p>Framework for connecting custom data to LLMs.</p>
-        </td></tr>
-      </table>
-      <table border="1" width="100%" cellspacing="0" cellpadding="12">
-        <tr><td height="150" valign="top">
-          <h4>✉️ <a href="#" target="_blank" rel="noopener">Deepreseach ↗</a></h4>
-          <p>Give your agents their own email inboxes.</p>
-        </td></tr>
-      </table>
-      <br/>
-      <table border="1" width="100%" cellspacing="0" cellpadding="12">
-        <tr><td height="150" valign="top">
-          <h4>💾 <a href="#" target="_blank" rel="noopener">MCP ↗</a></h4>
-          <p>Self-improving memory layer for AI agents.</p>
-        </td></tr>
-      </table>
-    </td>
-  </tr>
+<table>
+<tr>
+<td width="50%">
+<h3>🧠 Memory</h3>
+<p>Self-improving memory layer for Omni-Avatar.</p>
+<p>
+<a href="examples/voice_agents/basic_agent.py">README↗</a>
+</p>
+</td>
+<td width="50%">
+<h3>🔄 Deepreseach</h3>
+<p>Responds to multiple users in the room via push-to-talk.</p>
+<p>
+<a href="examples/voice_agents/push_to_talk.py">README↗</a>
+</p>
+</td>
+</tr>
+
 </table>
 </details>
 
