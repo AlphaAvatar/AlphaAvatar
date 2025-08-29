@@ -27,17 +27,16 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 
 <h3>Plugins</h3>
 <div align="center">
-<table align="center" width="90%" border="0" cellspacing="0" cellpadding="8">
+<table align="center" width="90%" border="0" cellspacing="0" cellpadding="0">
   <tr>
-    <td width="25%" valign="top">
+    <td width="50%" valign="top">
       <table border="1" width="100%" cellspacing="0" cellpadding="12">
         <tr><td height="150" valign="top">
           <h4>🧠 <a href="#" target="_blank" rel="noopener">Memory ↗</a></h4>
           <p>Self-improving memory layer for AI agents.</p>
         </td></tr>
       </table>
-    </td>
-    <td width="25%" valign="top">
+      <br/>
       <table border="1" width="100%" cellspacing="0" cellpadding="12">
         <tr><td height="150" valign="top">
           <h4>🦙 <a href="#" target="_blank" rel="noopener">RAG ↗</a></h4>
@@ -45,15 +44,14 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
         </td></tr>
       </table>
     </td>
-    <td width="25%" valign="top">
+    <td width="50%" valign="top">
       <table border="1" width="100%" cellspacing="0" cellpadding="12">
         <tr><td height="150" valign="top">
-          <h4>✉️ <a href="#" target="_blank" rel="noopener">DeepResearch ↗</a></h4>
+          <h4>✉️ <a href="#" target="_blank" rel="noopener">Deepreseach ↗</a></h4>
           <p>Give your agents their own email inboxes.</p>
         </td></tr>
       </table>
-    </td>
-    <td width="25%" valign="top">
+      <br/>
       <table border="1" width="100%" cellspacing="0" cellpadding="12">
         <tr><td height="150" valign="top">
           <h4>💾 <a href="#" target="_blank" rel="noopener">MCP ↗</a></h4>
