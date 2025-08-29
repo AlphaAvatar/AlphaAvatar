@@ -26,10 +26,9 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 ---
 
 <h3>Plugins</h3>
-<div align="center">
 <table align="center" width="90%" border="0" cellspacing="0" cellpadding="0">
   <tr>
-    <td width="50%" valign="top">
+    <td width="50%" valign="top" border="0">
       <table border="1" width="100%" cellspacing="0" cellpadding="12">
         <tr><td height="150" valign="top">
           <h4>🧠 <a href="#" target="_blank" rel="noopener">Memory ↗</a></h4>
@@ -44,7 +43,7 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
         </td></tr>
       </table>
     </td>
-    <td width="50%" valign="top">
+    <td width="50%" valign="top" border="0">
       <table border="1" width="100%" cellspacing="0" cellpadding="12">
         <tr><td height="150" valign="top">
           <h4>✉️ <a href="#" target="_blank" rel="noopener">Deepreseach ↗</a></h4>
@@ -61,7 +60,6 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
     </td>
   </tr>
 </table>
-</div>
 
 ---
 
