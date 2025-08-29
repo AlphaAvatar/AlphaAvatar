@@ -44,6 +44,7 @@ def apply_message_template(messages: list[ChatItem], **kwargs) -> list[dict]:
 
 class MemoryType(StrEnum):
     CONVERSATION = "conversation"
+    TOOLS = "tools"
 
 
 class MemoryCache:
@@ -85,7 +86,6 @@ class MemoryCache:
         """Add a new message to the cache."""
         if isinstance(message, ChatMessage) and message.role in ("user", "assistant"):
             self._messages.append(message)
-            # sort
             self._messages.sort(key=lambda x: x.created_at)
 
     def convert_to_memory_string(self) -> str:

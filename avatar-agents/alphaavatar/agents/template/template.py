@@ -11,6 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from alphaavatar.agents.memory import MemoryType
+
+from .prompts.avatar_memory_prompts import (
+    MEMORY_CONVERSATION_RETRIEVAL_PROMPT,
+    MEMORY_TOOLS_RETRIEVAL_PROMPT,
+)
 from .prompts.avatar_system_prompts import AVATAR_SYSTEM_PROMPT
 
 
@@ -44,3 +50,23 @@ class AvatarPromptTemplate:
             memory_content="{memory_content}",
             user_profile="{user_profile}",
         )
+
+    @staticmethod
+    def get_memory_retrieval_prompt(
+        *,
+        memory_type: MemoryType,
+    ) -> str:
+        """Initialize the system prompt for the Avatar Agent.
+
+        Args:
+            avatar_introduction (str): _description_
+
+        Returns:
+            str: _description_
+        """
+        if memory_type == MemoryType.CONVERSATION:
+            return MEMORY_CONVERSATION_RETRIEVAL_PROMPT
+        elif memory_type == MemoryType.TOOLS:
+            return MEMORY_TOOLS_RETRIEVAL_PROMPT
+        else:
+            raise NotImplementedError

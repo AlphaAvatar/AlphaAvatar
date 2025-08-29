@@ -18,7 +18,7 @@ from alphaavatar.agents.avatar.chat_context_observer import ObservableList, OpTy
 from .base import MemoryBase
 
 
-def chat_context_watcher(
+def memory_chat_context_watcher(
     memory: MemoryBase, session_id: str, lst: ObservableList, op: OpType, payload: dict[str, Any]
 ):
     """Watch chat context changes and update memory accordingly."""

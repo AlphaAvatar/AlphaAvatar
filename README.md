@@ -18,18 +18,65 @@
 
 
 <h3 align="center">
-WebUI, configurable, and pluggable Omni-Avatar Assistant for everyone
+Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 </h3>
 
 </div>
 
 ---
 
-*Latest News* 🔥
+<h3>Plugins</h3>
+<div align="center">
+<table align="center" width="90%" border="0" cellspacing="0" cellpadding="8">
+  <tr>
+    <td width="25%" valign="top">
+      <table border="1" width="100%" cellspacing="0" cellpadding="12">
+        <tr><td height="150" valign="top">
+          <h4>🧠 <a href="#" target="_blank" rel="noopener">Memory ↗</a></h4>
+          <p>Self-improving memory layer for AI agents.</p>
+        </td></tr>
+      </table>
+    </td>
+    <td width="25%" valign="top">
+      <table border="1" width="100%" cellspacing="0" cellpadding="12">
+        <tr><td height="150" valign="top">
+          <h4>🦙 <a href="#" target="_blank" rel="noopener">RAG ↗</a></h4>
+          <p>Framework for connecting custom data to LLMs.</p>
+        </td></tr>
+      </table>
+    </td>
+    <td width="25%" valign="top">
+      <table border="1" width="100%" cellspacing="0" cellpadding="12">
+        <tr><td height="150" valign="top">
+          <h4>✉️ <a href="#" target="_blank" rel="noopener">DeepResearch ↗</a></h4>
+          <p>Give your agents their own email inboxes.</p>
+        </td></tr>
+      </table>
+    </td>
+    <td width="25%" valign="top">
+      <table border="1" width="100%" cellspacing="0" cellpadding="12">
+        <tr><td height="150" valign="top">
+          <h4>💾 <a href="#" target="_blank" rel="noopener">MCP ↗</a></h4>
+          <p>Self-improving memory layer for AI agents.</p>
+        </td></tr>
+      </table>
+    </td>
+  </tr>
+</table>
+</div>
+
+---
+
+<h3>Docs and guides</h3>
+
+<h4>Latest News 🔥</h4>
 
 - [2025/09]
 
-### Quickstart
+
+<br/>
+
+<h4>Quick Start ⚡️<h4>
 
 ```bash
 export LIVEKIT_API_KEY=<your API Key>

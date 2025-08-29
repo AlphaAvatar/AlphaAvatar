@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .base import MemoryBase
-from .watcher import chat_context_watcher
+from .cache import MemoryType
+from .watcher import memory_chat_context_watcher
 
-__all__ = ["MemoryBase", "chat_context_watcher"]
+__all__ = ["MemoryBase", "MemoryType", "memory_chat_context_watcher"]
