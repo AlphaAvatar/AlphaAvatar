@@ -24,9 +24,9 @@ class MemoryConfig:
     """Configuration for the Memory plugin used in the agent."""
 
     # Memory Metadata
-    memory_token_length: int = Field(
-        default=1024,
-        description="Maximum length of tokens in memory segments.",
+    memory_search_length: int = Field(
+        default=4,
+        description="The number of contexts used for memory searches.",
     )
     memory_recall_session: int = Field(
         default=14,
@@ -73,7 +73,7 @@ class MemoryConfig:
                 return Mem0Memory(
                     avater_name=avater_name,
                     avatar_id=avatar_id,
-                    memory_token_length=self.memory_token_length,
+                    memory_search_length=self.memory_search_length,
                     memory_recall_session=self.memory_recall_session,
                     client=client,
                 )

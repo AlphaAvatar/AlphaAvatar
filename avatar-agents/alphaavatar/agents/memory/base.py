@@ -16,7 +16,6 @@
 from abc import ABC, abstractmethod
 
 from livekit.agents.llm import ChatItem
-from livekit.agents.types import NOT_GIVEN, NotGivenOr
 
 from .cache import MemoryCache, MemoryType
 
@@ -27,15 +26,19 @@ class MemoryBase(ABC):
         *,
         avater_name: str,
         avatar_id: str,
-        memory_token_length: NotGivenOr[int | None] = NOT_GIVEN,
-        memory_recall_session: NotGivenOr[int | None] = NOT_GIVEN,
+        memory_search_length: int = 2,
+        memory_recall_session: int = 100,
     ) -> None:
         super().__init__()
         self._avatar_name = avater_name
         self._avatar_id = avatar_id
-        self._memory_token_length = memory_token_length
+        self._memory_search_length = memory_search_length
         self._memory_recall_session = memory_recall_session
         self._memory_cache: dict[str, MemoryCache] = {}
+
+        self._agent_memory: str | None = None
+        self._user_memory: str | None = None
+        self._tool_memory: str | None = None
 
     @property
     def avater_name(self) -> str:
@@ -46,12 +49,32 @@ class MemoryBase(ABC):
         return self._avatar_id
 
     @property
-    def memory_recall_session(self) -> NotGivenOr[int | None]:
+    def memory_search_length(self) -> int:
+        return self._memory_search_length
+
+    @property
+    def memory_recall_session(self) -> int:
         return self._memory_recall_session
 
     @property
     def memory_cache(self) -> dict[str, MemoryCache]:
         return self._memory_cache
+
+    @property
+    def agent_memory(self) -> str | None:
+        return self._agent_memory
+
+    @agent_memory.setter
+    def agent_memory(self, memory: str) -> None:
+        self._agent_memory = memory
+
+    @property
+    def user_memory(self) -> str | None:
+        return self._user_memory
+
+    @user_memory.setter
+    def user_memory(self, memory: str) -> None:
+        self._user_memory = memory
 
     def init_cache(
         self,
@@ -69,7 +92,9 @@ class MemoryBase(ABC):
         return self._memory_cache[session_id]
 
     @abstractmethod
-    async def search(self, *, query: str): ...
+    async def search(
+        self, *, session_id: str, chat_context: list[ChatItem], chat_item: ChatItem
+    ): ...
 
     @abstractmethod
     async def update(self, *, session_id: str | None = None): ...

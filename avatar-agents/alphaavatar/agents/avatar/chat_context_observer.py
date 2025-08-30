@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from enum import StrEnum
 from typing import Any, Generic, TypeVar
 
-from livekit.agents import ChatContext
+from livekit.agents import ChatContext, ChatItem
 
 T = TypeVar("T")
 
@@ -40,8 +40,8 @@ OnChange = Callable[["ObservableList[T]", OpType, dict[str, Any]], None]
 
 
 class ObservableList(MutableSequence, Generic[T]):
-    def __init__(self, iterable: Iterable[T] = (), on_change: OnChange | None = None):
-        self._list: list[T] = list(iterable)
+    def __init__(self, iterable: Iterable[ChatItem] = (), on_change: OnChange | None = None):
+        self._list: list[ChatItem] = list(iterable)
         self._listeners: list[OnChange] = []
         if on_change:
             self._listeners.append(on_change)
@@ -75,16 +75,16 @@ class ObservableList(MutableSequence, Generic[T]):
             del self._list[i]
             self._notify(OpType.DELITEM, {"index": i, "old": old})
 
-    def insert(self, index: int, value: T) -> None:
+    def insert(self, index: int, value: ChatItem) -> None:
         self._list.insert(index, value)
         self._notify(OpType.INSERT, {"index": index, "value": value})
 
-    def append(self, value: T) -> None:
+    def append(self, value: ChatItem) -> None:
         idx = len(self._list)
         self._list.append(value)
         self._notify(OpType.APPEND, {"index": idx, "value": value})
 
-    def extend(self, values: Iterable[T]) -> None:
+    def extend(self, values: Iterable[ChatItem]) -> None:
         items = list(values)
         if not items:
             return
@@ -99,7 +99,7 @@ class ObservableList(MutableSequence, Generic[T]):
         self._list.clear()
         self._notify(OpType.CLEAR, {"old": old})
 
-    def pop(self, index: int = -1) -> T:
+    def pop(self, index: int = -1) -> ChatItem:
         val = self._list.pop(index)
         self._notify(OpType.POP, {"index": index, "value": val})
         return val
@@ -112,7 +112,7 @@ class ObservableList(MutableSequence, Generic[T]):
         self._list.reverse()
         self._notify(OpType.REVERSE, {})
 
-    def __iadd__(self, other: Iterable[T]):
+    def __iadd__(self, other: Iterable[ChatItem]):
         self.extend(other)
         return self
 

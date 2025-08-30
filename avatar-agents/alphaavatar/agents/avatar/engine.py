@@ -13,9 +13,12 @@
 # limitations under the License.
 """Avatar Launch Engine"""
 
+from collections.abc import AsyncIterable, Coroutine
 from functools import partial
+from typing import Any
 
-from livekit.agents import Agent, RunContext, function_tool, llm
+from livekit.agents import Agent, ModelSettings, llm
+from livekit.agents.llm import FunctionTool, RawFunctionTool
 
 from alphaavatar.agents.configs import AvatarConfig, SessionConfig
 from alphaavatar.agents.memory import MemoryBase, memory_chat_context_watcher
@@ -71,83 +74,6 @@ class AvatarEngine(Agent):
         """Get the memory instance."""
         return self._memory
 
-    @function_tool()
-    async def lookup_conversation_memory(
-        self,
-        context: "RunContext",
-        current_user_message: str,
-        now_iso: str,
-    ) -> str:
-        """
-        Use this tool to retrieve assistant↔user conversation memories that improve
-        personalization and continuity of the current reply.
-
-        CALL THIS TOOL IF ANY OF THE FOLLOWING ARE TRUE:
-        {memory_prompt}
-
-        INPUT FIELDS:
-        - current_user_message: raw user text for semantic matching.
-        - conversation_id: stable ID for long-term storage (optional).
-        - recent_turns: last N turns (optional, improves relevance).
-        - now_iso: ISO timestamp to enable recency weighting (optional).
-        - top_k: max number of memories to return (default 5).
-        """
-        # ------------------ implementation sketch ------------------
-        # 1) Resolve time
-        # _now = now_iso or datetime.utcnow().isoformat()
-
-        # 2) (Pseudo) perform semantic retrieval from your memory store
-        # candidates = memory_store.search_conversation(conversation_id, current_user_message, recent_turns)
-
-        # 3) (Pseudo) score + filter + redact
-        # scored = score_candidates(candidates, _now)
-        # top = take_top_k_and_redact(scored, top_k)
-
-        # 4) Stub return with the required shape (replace with real data)
-        return ""
-
-    @function_tool()
-    async def lookup_tools_memory(
-        self,
-        context: "RunContext",
-        current_user_message: str,
-        now_iso: str,
-    ):
-        """
-        Use this tool to recall assistant↔tools interaction memories that help you
-        SELECT THE RIGHT TOOL and CONFIGURE IT CORRECTLY for the current task.
-
-        CALL THIS TOOL IF ANY OF THE FOLLOWING ARE TRUE:
-        {memory_prompt}
-
-        INPUT FIELDS:
-        - current_user_message: raw user text that describes the need.
-        - task_intent: pre-parsed task intent if available (optional).
-        - tool_catalog: brief list of available tools and capabilities (optional).
-        - conversation_id: to scope previous tool runs (optional).
-        - now_iso: ISO timestamp for recency weighting (optional).
-        - top_k: max number of supporting memories to return (default 5).
-        """
-        # ------------------ implementation sketch ------------------
-        # _now = now_iso or datetime.utcnow().isoformat()
-
-        # candidates = memory_store.search_tools(intention=task_intent or current_user_message)
-
-        # ranked = rank_by_success_and_recency(candidates, _now)
-        # top = ranked[:top_k]
-        # recommendation = synthesize_recommendation(top, tool_catalog)
-
-        return {
-            "recommendation": {
-                "tool": "",
-                "why": "No relevant tools memory found.",
-                "parameters": {},
-            },
-            "supporting_memories": [],
-            "constraints": {"rate_limits": "", "env": "unknown", "known_errors_and_fixes": []},
-            "cache_hint": {"usable": False, "cache_key": "", "note": ""},
-        }
-
     async def on_enter(self):
         self.session.generate_reply(
             instructions="Briefly greet the user and offer your assistance."
@@ -162,6 +88,28 @@ class AvatarEngine(Agent):
         Override [livekit.agents.voice.agent.Agent::on_user_turn_completed] method to handle user turn completion.
         """
         ...
+
+    def llm_node(
+        self,
+        chat_ctx: llm.ChatContext,
+        tools: list[FunctionTool | RawFunctionTool],
+        model_settings: ModelSettings,
+    ) -> (
+        AsyncIterable[llm.ChatChunk | str]
+        | Coroutine[Any, Any, AsyncIterable[llm.ChatChunk | str]]
+        | Coroutine[Any, Any, str]
+        | Coroutine[Any, Any, llm.ChatChunk]
+        | Coroutine[Any, Any, None]
+    ):
+        """
+        TTS -> Text -> Text append to chat context -> chat context [llm_node] -> llm
+
+        Override [livekit.agents.voice.agent.Agent::llm_node] method to handle llm inputs.
+        """
+
+        # memory update
+
+        return Agent.default.llm_node(self, chat_ctx, tools, model_settings)
 
     async def on_exit(self):
         await self.memory.update(session_id=self.session_config.session_id)

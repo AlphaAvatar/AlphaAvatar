@@ -20,5 +20,5 @@ allow_interruptions: true
 ### Memory Args
 memory_plugin: mem0
 memory_mode: client
-memory_token_length: 2048
+memory_search_length: 4
 memory_recall_session: 14

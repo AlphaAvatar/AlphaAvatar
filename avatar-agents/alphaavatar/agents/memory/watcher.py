@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import asyncio
 from typing import Any
 
 from alphaavatar.agents.avatar.chat_context_observer import ObservableList, OpType
@@ -19,8 +20,22 @@ from .base import MemoryBase
 
 
 def memory_chat_context_watcher(
-    memory: MemoryBase, session_id: str, lst: ObservableList, op: OpType, payload: dict[str, Any]
+    memory: MemoryBase,
+    session_id: str,
+    chat_context: ObservableList,
+    op: OpType,
+    payload: dict[str, Any],
 ):
     """Watch chat context changes and update memory accordingly."""
+
+    # add memory
     if op == OpType.INSERT:
         memory.add(session_id=session_id, chat_item=payload["value"])
+
+    # retrieval memory
+    if op == OpType.INSERT and payload["value"].role == "user":
+        asyncio.run(
+            memory.search(
+                session_id=session_id, chat_context=chat_context._list, chat_item=payload["value"]
+            )
+        )

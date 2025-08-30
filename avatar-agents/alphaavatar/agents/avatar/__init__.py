@@ -11,26 +11,23 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from alphaavatar.agents.memory import MemoryType
-from alphaavatar.agents.template import AvatarPromptTemplate
-
 from .chat_context_observer import ObservableList, OpType
 from .engine import AvatarEngine
 
 __all__ = ["AvatarEngine", "ObservableList", "OpType"]
 
 
-if AvatarEngine.lookup_conversation_memory.__doc__:
-    AvatarEngine.lookup_conversation_memory.__doc__ = (
-        AvatarEngine.lookup_conversation_memory.__doc__.format(
-            memory_prompt=AvatarPromptTemplate.get_memory_retrieval_prompt(
-                memory_type=MemoryType.CONVERSATION
-            )
-        )
-    )
+# if AvatarEngine.lookup_conversation_memory.__doc__:
+#     AvatarEngine.lookup_conversation_memory.__doc__ = (
+#         AvatarEngine.lookup_conversation_memory.__doc__.format(
+#             memory_prompt=AvatarPromptTemplate.get_memory_retrieval_prompt(
+#                 memory_type=MemoryType.CONVERSATION
+#             )
+#         )
+#     )
 
 
-if AvatarEngine.lookup_tools_memory.__doc__:
-    AvatarEngine.lookup_tools_memory.__doc__ = AvatarEngine.lookup_tools_memory.__doc__.format(
-        memory_prompt=AvatarPromptTemplate.get_memory_retrieval_prompt(memory_type=MemoryType.TOOLS)
-    )
+# if AvatarEngine.lookup_tools_memory.__doc__:
+#     AvatarEngine.lookup_tools_memory.__doc__ = AvatarEngine.lookup_tools_memory.__doc__.format(
+#         memory_prompt=AvatarPromptTemplate.get_memory_retrieval_prompt(memory_type=MemoryType.TOOLS)
+#     )
