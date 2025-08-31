@@ -13,6 +13,17 @@
 # limitations under the License.
 AVATAR_SYSTEM_PROMPT = """{avatar_introduction}
 
+Your Memory Content:
+```
 {memory_content}
+```
 
-{user_profile}"""
+The User Persona:
+```
+{user_persona}
+```
+
+The current time:
+```
+{current_time}
+```"""

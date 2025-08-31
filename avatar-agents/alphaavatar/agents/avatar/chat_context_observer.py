@@ -160,7 +160,7 @@ class ObservableList(MutableSequence, Generic[T]):
             fn(self, op, payload)
 
 
-def attach_items_observer(ctx: ChatContext, on_change: OnChange):
+def attach_observer(ctx: ChatContext, on_change: OnChange):
     if not isinstance(ctx.items, ObservableList):
         ctx.items = ObservableList(ctx.items, on_change=on_change)  # type: ignore[assignment]
     else:

@@ -17,32 +17,40 @@ from collections.abc import AsyncIterable, Coroutine
 from functools import partial
 from typing import Any
 
-from livekit.agents import Agent, ModelSettings, llm
+from livekit.agents import Agent, ModelSettings, RunContext, function_tool, llm
 from livekit.agents.llm import FunctionTool, RawFunctionTool
 
 from alphaavatar.agents.configs import AvatarConfig, SessionConfig
 from alphaavatar.agents.memory import MemoryBase, memory_chat_context_watcher
 from alphaavatar.agents.template import AvatarPromptTemplate
+from alphaavatar.agents.utils import format_current_time
 
-from .chat_context_observer import attach_items_observer
+from .chat_context_observer import attach_observer
 
 
 class AvatarEngine(Agent):
     def __init__(self, *, session_config: SessionConfig, avatar_config: AvatarConfig) -> None:
+        # initial config
         self.session_config = session_config
         self.avatar_config = avatar_config
 
+        # initial plugins
         self._memory: MemoryBase = avatar_config.memory_config.get_memory_plugin(
             avater_name=avatar_config.avatar_info.avatar_name,
             avatar_id=avatar_config.avatar_info.avatar_id,
         )
 
-        # Prepare initial instructions
-        instructions = AvatarPromptTemplate.init_instructions(
-            avatar_introduction=self.avatar_config.avatar_info.avatar_introduction,
+        # initial params
+        self._avatar_create_time = format_current_time(
+            self.avatar_config.avatar_info.avatar_timezone
         )
+
+        # initial avatar
         super().__init__(
-            instructions=instructions,
+            instructions=AvatarPromptTemplate.instructions(
+                avatar_introduction=self.avatar_config.avatar_info.avatar_introduction,
+                current_time=self._avatar_create_time["time_str"],
+            ),
             turn_detection=self.avatar_config.livekit_plugin_config.get_turn_detection_plugin(),
             stt=self.avatar_config.livekit_plugin_config.get_stt_plugin(),
             vad=self.avatar_config.livekit_plugin_config.get_vad_plugin(),
@@ -57,12 +65,13 @@ class AvatarEngine(Agent):
         """Post-initialization to Avtar."""
         # Init User & Avatar Interactive Memory by user_id & session_id
         self._memory.init_cache(
+            timestamp=self._avatar_create_time,
             session_id=self.session_config.session_id,
-            user_id=self.session_config.user_id,
+            user_or_tool_id=self.session_config.user_id,
         )
 
-        # attach chat context observer
-        attach_items_observer(
+        # attach memory chat context observer
+        attach_observer(
             ctx=self._chat_ctx,
             on_change=partial(
                 memory_chat_context_watcher, self._memory, self.session_config.session_id
@@ -73,6 +82,20 @@ class AvatarEngine(Agent):
     def memory(self) -> MemoryBase:
         """Get the memory instance."""
         return self._memory
+
+    @function_tool()
+    async def recall_memory(
+        self,
+        context: RunContext,
+        location: str,
+    ) -> dict[str, Any]:
+        """Look up weather information for a given location.
+
+        Args:
+            location: The location to look up weather information for.
+        """
+
+        return {"weather": "sunny", "temperature_f": 70}
 
     async def on_enter(self):
         self.session.generate_reply(
@@ -106,7 +129,6 @@ class AvatarEngine(Agent):
 
         Override [livekit.agents.voice.agent.Agent::llm_node] method to handle llm inputs.
         """
-
         # memory update
 
         return Agent.default.llm_node(self, chat_ctx, tools, model_settings)

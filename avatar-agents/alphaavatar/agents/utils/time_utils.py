@@ -18,11 +18,9 @@ from datetime import datetime
 try:
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError  # Python 3.9+
 
-    _HAVE_ZONEINFO = True
 except Exception:
     ZoneInfo = None  # type: ignore
     ZoneInfoNotFoundError = Exception  # type: ignore
-    _HAVE_ZONEINFO = False
 
 
 def _now_in_tz(tzname: str) -> datetime:
@@ -30,7 +28,7 @@ def _now_in_tz(tzname: str) -> datetime:
     Return current time in the given IANA timezone.
     Tries zoneinfo first; if unavailable or tz not found, falls back to pytz.
     """
-    if _HAVE_ZONEINFO:
+    if ZoneInfo:
         try:
             return datetime.now(ZoneInfo(tzname))
         except ZoneInfoNotFoundError:
@@ -47,7 +45,7 @@ def _now_in_tz(tzname: str) -> datetime:
     return datetime.now(pytz.timezone(tzname))
 
 
-def format_current_time(tz: str | None = None) -> dict:
+def format_current_time(tz: str) -> dict:
     """
     Return the current time as:
         'Weekday, Month D, YYYY, h AM/PM'
@@ -62,6 +60,7 @@ def format_current_time(tz: str | None = None) -> dict:
     """
     # Use server local time when tz is None; otherwise convert to the given tz.
     dt = datetime.now() if tz is None else _now_in_tz(tz)
+    tz = "server's local time"
 
     weekday = calendar.day_name[dt.weekday()]  # e.g., "Monday"
     month = calendar.month_name[dt.month]  # e.g., "August"

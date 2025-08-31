@@ -15,8 +15,6 @@ from enum import StrEnum
 
 from livekit.agents.llm import ChatItem, ChatMessage
 
-from alphaavatar.agents.utils import format_current_time
-
 
 def apply_memory_template(messages: list[ChatItem], **kwargs) -> str:
     """Apply the memory template with the given keyword arguments."""
@@ -53,18 +51,15 @@ class MemoryCache:
 
     def __init__(
         self,
+        timestamp: dict,
         session_id: str | None = None,
-        user_id: str | None = None,
+        user_or_tool_id: str | None = None,
         memory_type: MemoryType = MemoryType.CONVERSATION,
     ):
-        self._user_id = user_id
+        self._user_or_tool_id = user_or_tool_id
         self._session_id = session_id
 
-        self._metadata = {
-            "type": memory_type,
-            "session_topic": "",
-        }
-        self._metadata.update(format_current_time())
+        self._metadata = {"type": memory_type, "session_topic": "", **timestamp}
         self._messages: list[ChatItem] = []
 
     @property
@@ -73,9 +68,9 @@ class MemoryCache:
         return self._metadata
 
     @property
-    def user_id(self) -> str | None:
-        """Get the user ID associated with the memory cache."""
-        return self._user_id
+    def user_or_tool_id(self) -> str | None:
+        """Get the user/tool ID associated with the memory cache."""
+        return self._user_or_tool_id
 
     @property
     def session_id(self) -> str | None:

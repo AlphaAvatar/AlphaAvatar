@@ -33,3 +33,7 @@ class AvatarInfoConfig:
         default="You are a helpful voice AI assistant.",
         description="Introduction of the avatar.",
     )
+    avatar_timezone: str = Field(
+        default="server local time",
+        description="The time zone where the Avatar is deployed is used to align with the user's time zone for related task execution",
+    )

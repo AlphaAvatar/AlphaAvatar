@@ -58,7 +58,7 @@ class Memory(MemoryBase):
 
         agent_memory_filter = {"AND": [{"agent_id": self.avatar_id}, {"run_id": "*"}]}
         user_or_tool_memory_filter = {
-            "AND": [{"user_id": self.memory_cache[session_id].user_id}, {"run_id": "*"}]
+            "AND": [{"user_id": self.memory_cache[session_id].user_or_tool_id}, {"run_id": "*"}]
         }
 
         if isinstance(self.client, AsyncMemoryClient):
@@ -106,7 +106,7 @@ class Memory(MemoryBase):
 
             await self.client.add(
                 agent_id=self.avatar_id,
-                user_id=cache.user_id,
+                user_id=cache.user_or_tool_id,
                 run_id=cache.session_id,
                 messages=messages,
                 metadata=cache.metadata,

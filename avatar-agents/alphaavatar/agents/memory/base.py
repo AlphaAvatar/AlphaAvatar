@@ -79,14 +79,16 @@ class MemoryBase(ABC):
     def init_cache(
         self,
         *,
+        timestamp: dict,
         session_id: str,
-        user_id: str | None = None,
+        user_or_tool_id: str | None = None,
         memory_type: MemoryType = MemoryType.CONVERSATION,
     ) -> MemoryCache:
         if session_id not in self._memory_cache:
             self._memory_cache[session_id] = MemoryCache(
+                timestamp=timestamp,
                 session_id=session_id,
-                user_id=user_id,
+                user_or_tool_id=user_or_tool_id,
                 memory_type=memory_type,
             )
         return self._memory_cache[session_id]
