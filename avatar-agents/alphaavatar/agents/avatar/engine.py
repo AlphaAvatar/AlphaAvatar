@@ -13,6 +13,7 @@
 # limitations under the License.
 """Avatar Launch Engine"""
 
+import inspect
 from collections.abc import AsyncIterable, Coroutine
 from functools import partial
 from typing import Any
@@ -21,10 +22,11 @@ from livekit.agents import Agent, ModelSettings, RunContext, function_tool, llm
 from livekit.agents.llm import FunctionTool, RawFunctionTool
 
 from alphaavatar.agents.configs import AvatarConfig, SessionConfig
-from alphaavatar.agents.memory import MemoryBase, memory_chat_context_watcher
+from alphaavatar.agents.memory import MemoryBase, memory_chat_context_watcher, memory_search_hook
 from alphaavatar.agents.template import AvatarPromptTemplate
 from alphaavatar.agents.utils import format_current_time
 
+from .avatar_hooks import HookRegistry, install_generation_hooks
 from .chat_context_observer import attach_observer
 
 
@@ -78,6 +80,15 @@ class AvatarEngine(Agent):
             ),
         )
 
+        # generation hooks
+        self._generation_hooks = HookRegistry()
+        self._generation_hook_installed = False
+        self._generation_hooks.add(
+            partial(memory_search_hook, self._memory, self.session_config.session_id),
+            name="memory_search",
+            priority=1,
+        )
+
     @property
     def memory(self) -> MemoryBase:
         """Get the memory instance."""
@@ -98,6 +109,8 @@ class AvatarEngine(Agent):
         return {"weather": "sunny", "temperature_f": 70}
 
     async def on_enter(self):
+        # BUG: Before entering the function to send a greeting, the front end allows the user to input, but the system cannot recognize it.
+        install_generation_hooks(self)
         self.session.generate_reply(
             instructions="Briefly greet the user and offer your assistance."
         )
@@ -129,9 +142,29 @@ class AvatarEngine(Agent):
 
         Override [livekit.agents.voice.agent.Agent::llm_node] method to handle llm inputs.
         """
-        # memory update
 
-        return Agent.default.llm_node(self, chat_ctx, tools, model_settings)
+        async def _gen() -> AsyncIterable[llm.ChatChunk | str]:
+            await self._chat_ctx.items.wait_pending()  # type: ignore
+
+            res = Agent.default.llm_node(self, chat_ctx, tools, model_settings)
+
+            if inspect.isawaitable(res):
+                res = await res
+
+            # 如果是 AsyncIterable，逐个转发
+            if hasattr(res, "__aiter__"):
+                async for chunk in res:  # type: ignore[attr-defined]
+                    yield chunk
+                return
+
+            if isinstance(res, str | llm.ChatChunk):
+                yield res
+                return
+
+            return
+
+        return _gen()
 
     async def on_exit(self):
-        await self.memory.update(session_id=self.session_config.session_id)
+        # await self.memory.update(session_id=self.session_config.session_id)
+        ...

@@ -13,7 +13,9 @@
 # limitations under the License.
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, MutableSequence
+import asyncio
+import inspect
+from collections.abc import Callable, Coroutine, Iterable, MutableSequence
 from contextlib import contextmanager
 from enum import StrEnum
 from typing import Any, Generic, TypeVar
@@ -36,7 +38,7 @@ class OpType(StrEnum):
     BATCH = "batch"
 
 
-OnChange = Callable[["ObservableList[T]", OpType, dict[str, Any]], None]
+OnChange = Callable[["ObservableList[T]", OpType, dict[str, Any]], Coroutine[Any, Any, None] | None]
 
 
 class ObservableList(MutableSequence, Generic[T]):
@@ -48,6 +50,7 @@ class ObservableList(MutableSequence, Generic[T]):
         self._mute_depth = 0
         self._batch_depth = 0
         self._batched: list[tuple[str, dict[str, Any]]] = []
+        self._pending_tasks: set[asyncio.Task[Any]] = set()
 
     def __len__(self):
         return len(self._list)
@@ -156,8 +159,33 @@ class ObservableList(MutableSequence, Generic[T]):
     def _emit(self, op: OpType, payload: dict[str, Any]) -> None:
         if self._mute_depth > 0:
             return
+
         for fn in list(self._listeners):
-            fn(self, op, payload)
+            print(payload, fn, "----in", flush=True)
+            try:
+                result = fn(self, op, payload)
+            except Exception:
+                # TODO: log
+                raise
+
+            if inspect.isawaitable(result):
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    asyncio.run(result)
+                else:
+                    task = loop.create_task(result)
+                    self._pending_tasks.add(task)
+
+                    def _cleanup(t: asyncio.Task[Any]):
+                        self._pending_tasks.discard(t)
+                        _ = t.exception()
+
+                    task.add_done_callback(_cleanup)
+
+    async def wait_pending(self) -> None:
+        if self._pending_tasks:
+            await asyncio.gather(*list(self._pending_tasks), return_exceptions=False)
 
 
 def attach_observer(ctx: ChatContext, on_change: OnChange):

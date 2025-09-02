@@ -24,13 +24,17 @@ class MemoryConfig:
     """Configuration for the Memory plugin used in the agent."""
 
     # Memory Metadata
-    memory_search_length: int = Field(
-        default=4,
+    memory_search_context: int = Field(
+        default=3,
         description="The number of contexts used for memory searches.",
     )
     memory_recall_session: int = Field(
-        default=14,
+        default=1,
         description="Number of sessions to recall from memory.",
+    )
+    maximum_memory_items: int = Field(
+        default=10,
+        description="The maximum number of memory types to use",
     )
 
     # Memory plugin config
@@ -73,8 +77,9 @@ class MemoryConfig:
                 return Mem0Memory(
                     avater_name=avater_name,
                     avatar_id=avatar_id,
-                    memory_search_length=self.memory_search_length,
+                    memory_search_context=self.memory_search_context,
                     memory_recall_session=self.memory_recall_session,
+                    maximum_memory_items=self.maximum_memory_items,
                     client=client,
                 )
             case _:

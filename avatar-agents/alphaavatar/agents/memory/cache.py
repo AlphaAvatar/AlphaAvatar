@@ -13,15 +13,22 @@
 # limitations under the License.
 from enum import StrEnum
 
-from livekit.agents.llm import ChatItem, ChatMessage
+from livekit.agents.llm import ChatItem, ChatMessage, ChatRole
 
 
-def apply_memory_template(messages: list[ChatItem], **kwargs) -> str:
+def apply_memory_template(
+    messages: list[ChatItem], filter_roles: list[ChatRole] = None, **kwargs
+) -> str:
     """Apply the memory template with the given keyword arguments."""
+    if filter_roles is None:
+        filter_roles = []
     memory_strings = []
     for msg in messages:
         if isinstance(msg, ChatMessage):
             role = msg.role
+            if role in filter_roles:
+                continue
+
             msg_str = msg.text_content  # TODO: Handle different content types more robustly
             memory_strings.append(f"### {role}:\n{msg_str}")
 

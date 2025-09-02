@@ -59,8 +59,10 @@ def format_current_time(tz: str) -> dict:
         "Monday, August 25, 2025, 3 PM"
     """
     # Use server local time when tz is None; otherwise convert to the given tz.
-    dt = datetime.now() if tz is None else _now_in_tz(tz)
-    tz = "server's local time"
+    try:
+        dt = _now_in_tz(tz)
+    except Exception:
+        dt = datetime.now()
 
     weekday = calendar.day_name[dt.weekday()]  # e.g., "Monday"
     month = calendar.month_name[dt.month]  # e.g., "August"

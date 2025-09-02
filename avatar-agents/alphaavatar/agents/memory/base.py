@@ -13,32 +13,34 @@
 # limitations under the License.
 """Global Memory Abstract Class for Avatar"""
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 
 from livekit.agents.llm import ChatItem
 
 from .cache import MemoryCache, MemoryType
 
 
-class MemoryBase(ABC):
+class MemoryBase:
     def __init__(
         self,
         *,
         avater_name: str,
         avatar_id: str,
-        memory_search_length: int = 2,
+        memory_search_context: int = 3,
         memory_recall_session: int = 100,
+        maximum_memory_items: int = 24,
     ) -> None:
         super().__init__()
         self._avatar_name = avater_name
         self._avatar_id = avatar_id
-        self._memory_search_length = memory_search_length
+        self._memory_search_context = memory_search_context
         self._memory_recall_session = memory_recall_session
+        self._maximum_memory_items = maximum_memory_items
         self._memory_cache: dict[str, MemoryCache] = {}
 
-        self._agent_memory: str | None = None
-        self._user_memory: str | None = None
-        self._tool_memory: str | None = None
+        self._agent_memory: list[str] = []
+        self._user_memory: list[str] = []
+        self._tool_memory: list[str] = []
 
     @property
     def avater_name(self) -> str:
@@ -49,32 +51,48 @@ class MemoryBase(ABC):
         return self._avatar_id
 
     @property
-    def memory_search_length(self) -> int:
-        return self._memory_search_length
+    def memory_search_context(self) -> int:
+        return self._memory_search_context
 
     @property
     def memory_recall_session(self) -> int:
         return self._memory_recall_session
 
     @property
+    def maximum_memory_items(self) -> int:
+        return self._maximum_memory_items
+
+    @property
     def memory_cache(self) -> dict[str, MemoryCache]:
         return self._memory_cache
 
     @property
-    def agent_memory(self) -> str | None:
-        return self._agent_memory
-
-    @agent_memory.setter
-    def agent_memory(self, memory: str) -> None:
-        self._agent_memory = memory
+    def agent_memory(self) -> str:
+        return "\n".join(self._agent_memory)
 
     @property
-    def user_memory(self) -> str | None:
-        return self._user_memory
+    def user_memory(self) -> str:
+        return "\n".join(self._user_memory)
+
+    @property
+    def tool_memory(self) -> str:
+        return "\n".join(self._tool_memory)
+
+    @property
+    def memory_content(self) -> str:
+        return "\n".join([self.agent_memory, self.user_memory, self.tool_memory])
+
+    @agent_memory.setter
+    def agent_memory(self, agent_memory: list) -> None:
+        self._agent_memory = (self._agent_memory + agent_memory)[-self.maximum_memory_items :]
 
     @user_memory.setter
-    def user_memory(self, memory: str) -> None:
-        self._user_memory = memory
+    def user_memory(self, user_memory: list) -> None:
+        self._user_memory = (self._user_memory + user_memory)[-self.maximum_memory_items :]
+
+    @tool_memory.setter
+    def tool_memory(self, tool_memory: list) -> None:
+        self._tool_memory = (self._tool_memory + tool_memory)[-self.maximum_memory_items :]
 
     def init_cache(
         self,
@@ -94,9 +112,7 @@ class MemoryBase(ABC):
         return self._memory_cache[session_id]
 
     @abstractmethod
-    async def search(
-        self, *, session_id: str, chat_context: list[ChatItem], chat_item: ChatItem
-    ): ...
+    async def search(self, *, session_id: str, chat_context: list[ChatItem]): ...
 
     @abstractmethod
     async def update(self, *, session_id: str | None = None): ...

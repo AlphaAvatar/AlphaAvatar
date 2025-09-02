@@ -21,12 +21,19 @@ from mem0 import AsyncMemory, AsyncMemoryClient
 from alphaavatar.agents.memory import MemoryBase, apply_memory_template
 
 
-def apply_client_memory_str(results: list[dict[str, Any]]) -> str:
-    return "\n".join(f"- {entry['memory']}" for entry in results)
+def apply_client_memory_list(results: list[dict[str, Any]]) -> list:
+    memory_list = []
+    for entry in results:
+        sub_memory = ""
+        if "metadata" in entry and "time_str" in entry["metadata"]:
+            sub_memory += f"Timestamp: {entry['metadata']['time_str']};"
+        sub_memory += f"Content: {entry['memory']}"
+        memory_list.append(sub_memory)
+    return memory_list
 
 
-def apply_memory_str(results: dict[str, Any]) -> str:
-    return "\n".join(f"- {entry['memory']}" for entry in results["results"])
+def apply_memory_list(results: dict[str, Any]) -> list:
+    return [entry["memory"] for entry in results["results"]]
 
 
 class Memory(MemoryBase):
@@ -35,15 +42,17 @@ class Memory(MemoryBase):
         *,
         avater_name: str,
         avatar_id: str,
-        memory_search_length: int = 2,
+        memory_search_context: int = 3,
         memory_recall_session: int = 100,
+        maximum_memory_items: int = 24,
         client: NotGivenOr[AsyncMemory | AsyncMemoryClient | None] = NOT_GIVEN,
     ) -> None:
         super().__init__(
             avater_name=avater_name,
             avatar_id=avatar_id,
-            memory_search_length=memory_search_length,
+            memory_search_context=memory_search_context,
             memory_recall_session=memory_recall_session,
+            maximum_memory_items=maximum_memory_items,
         )
 
         self._client = client or AsyncMemory()
@@ -52,9 +61,11 @@ class Memory(MemoryBase):
     def client(self) -> AsyncMemoryClient | AsyncMemory:
         return self._client
 
-    async def search(self, *, session_id: str, chat_context: list[ChatItem], chat_item: ChatItem):
+    async def search(self, *, session_id: str, chat_context: list[ChatItem]):
         """Search for relevant memories based on the query."""
-        query_str = apply_memory_template(chat_context[-getattr(self, "memory_search_length", 2) :])
+        query_str = apply_memory_template(
+            chat_context[-getattr(self, "memory_search_context", 3) :], filter_roles=["system"]
+        )
 
         agent_memory_filter = {"AND": [{"agent_id": self.avatar_id}, {"run_id": "*"}]}
         user_or_tool_memory_filter = {
@@ -68,8 +79,8 @@ class Memory(MemoryBase):
                     query=query_str, version="v2", filters=user_or_tool_memory_filter
                 ),
             )
-            self.agent_memory = apply_client_memory_str(agent_results)
-            self.user_memory = apply_client_memory_str(user_or_tool_results)
+            self.agent_memory = apply_client_memory_list(agent_results)
+            self.user_memory = apply_client_memory_list(user_or_tool_results)
         else:
             agent_results, user_or_tool_results = await asyncio.gather(
                 self.client.search(
@@ -81,8 +92,8 @@ class Memory(MemoryBase):
                     filters=user_or_tool_memory_filter,
                 ),
             )
-            self.agent_memory = apply_memory_str(agent_results)
-            self.user_memory = apply_memory_str(user_or_tool_results)
+            self.agent_memory = apply_memory_list(agent_results)
+            self.user_memory = apply_memory_list(user_or_tool_results)
 
     async def update(self, *, session_id: str | None = None):
         """Update the memory database with the cached messages.

@@ -11,31 +11,33 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import asyncio
 from typing import Any
 
-from alphaavatar.agents.avatar.chat_context_observer import ObservableList, OpType
+from alphaavatar.agents.avatar import BeforeGenContextRO, HookDecision, ObservableList, OpType
 
 from .base import MemoryBase
 
 
-def memory_chat_context_watcher(
+async def memory_chat_context_watcher(
     memory: MemoryBase,
     session_id: str,
     chat_context: ObservableList,
     op: OpType,
     payload: dict[str, Any],
 ):
-    """Watch chat context changes and update memory accordingly."""
+    """Watch chat context changes and update memory accordingly, which will be called after llm generate reply (no matter user message or assistant message)"""
 
-    # add memory
     if op == OpType.INSERT:
         memory.add(session_id=session_id, chat_item=payload["value"])
 
-    # retrieval memory
-    if op == OpType.INSERT and payload["value"].role == "user":
-        asyncio.run(
-            memory.search(
-                session_id=session_id, chat_context=chat_context._list, chat_item=payload["value"]
-            )
-        )
+
+async def memory_search_hook(
+    memory: MemoryBase, session_id: str, ctx: BeforeGenContextRO
+) -> HookDecision:
+    if ctx.chat_ctx:
+        chat_context = ctx.chat_ctx.copy()
+        if ctx.new_message is not None:
+            chat_context.insert(ctx.new_message)
+        await memory.search(session_id=session_id, chat_context=chat_context.items)
+
+    return HookDecision()

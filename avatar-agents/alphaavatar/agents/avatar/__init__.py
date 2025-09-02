@@ -11,10 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from .avatar_hooks import BeforeGenContextRO, HookDecision
 from .chat_context_observer import ObservableList, OpType
 from .engine import AvatarEngine
 
-__all__ = ["AvatarEngine", "ObservableList", "OpType"]
+__all__ = ["AvatarEngine", "BeforeGenContextRO", "HookDecision", "ObservableList", "OpType"]
 
 
 # if AvatarEngine.lookup_conversation_memory.__doc__:
