@@ -17,6 +17,8 @@ from abc import abstractmethod
 
 from livekit.agents.llm import ChatItem
 
+from alphaavatar.agents.utils.op_utils import deduplicate_keep_latest
+
 from .cache import MemoryCache, MemoryType
 
 
@@ -83,16 +85,19 @@ class MemoryBase:
         return "\n".join([self.agent_memory, self.user_memory, self.tool_memory])
 
     @agent_memory.setter
-    def agent_memory(self, agent_memory: list) -> None:
-        self._agent_memory = (self._agent_memory + agent_memory)[-self.maximum_memory_items :]
+    def agent_memory(self, agent_memory: list[str]) -> None:
+        combined = self._agent_memory + agent_memory
+        self._agent_memory = deduplicate_keep_latest(combined)[-self.maximum_memory_items :]
 
     @user_memory.setter
-    def user_memory(self, user_memory: list) -> None:
-        self._user_memory = (self._user_memory + user_memory)[-self.maximum_memory_items :]
+    def user_memory(self, user_memory: list[str]) -> None:
+        combined = self._user_memory + user_memory
+        self._user_memory = deduplicate_keep_latest(combined)[-self.maximum_memory_items :]
 
     @tool_memory.setter
-    def tool_memory(self, tool_memory: list) -> None:
-        self._tool_memory = (self._tool_memory + tool_memory)[-self.maximum_memory_items :]
+    def tool_memory(self, tool_memory: list[str]) -> None:
+        combined = self._tool_memory + tool_memory
+        self._tool_memory = deduplicate_keep_latest(combined)[-self.maximum_memory_items :]
 
     def init_cache(
         self,

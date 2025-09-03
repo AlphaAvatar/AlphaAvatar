@@ -26,15 +26,26 @@ class AvatarPromptTemplate:
 
     def __init__(
         self,
-    ): ...
-
-    @staticmethod
-    def instructions(
-        *,
+        # Instruction
         avatar_introduction: str,
+        *,
         memory_content: str = DEFAULT_SYSTEM_VALUE,
         user_persona: str = DEFAULT_SYSTEM_VALUE,
         current_time: str = DEFAULT_SYSTEM_VALUE,
+    ):
+        # Instruction
+        self._avatar_introduction = avatar_introduction
+        self._memory_content = memory_content
+        self._user_persona = user_persona
+        self._current_time = current_time
+
+    def instructions(
+        self,
+        *,
+        avatar_introduction: str | None = None,
+        memory_content: str | None = None,
+        user_persona: str | None = None,
+        current_time: str | None = None,
     ) -> str:
         """Initialize the system prompt for the Avatar Agent.
 
@@ -44,9 +55,21 @@ class AvatarPromptTemplate:
         Returns:
             str: _description_
         """
+        if avatar_introduction:
+            self._avatar_introduction = avatar_introduction
+
+        if memory_content:
+            self._memory_content = memory_content
+
+        if user_persona:
+            self._user_persona = user_persona
+
+        if current_time:
+            self._current_time = current_time
+
         return AVATAR_SYSTEM_PROMPT.format(
-            avatar_introduction=avatar_introduction,
-            memory_content=memory_content,
-            user_persona=user_persona,
-            current_time=current_time,
+            avatar_introduction=self._avatar_introduction,
+            memory_content=self._memory_content,
+            user_persona=self._user_persona,
+            current_time=self._current_time,
         )

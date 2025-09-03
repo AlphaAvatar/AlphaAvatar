@@ -19,7 +19,7 @@ from functools import partial
 from typing import Any
 
 from livekit.agents import Agent, ModelSettings, RunContext, function_tool, llm
-from livekit.agents.llm import FunctionTool, RawFunctionTool
+from livekit.agents.voice.generation import update_instructions
 
 from alphaavatar.agents.configs import AvatarConfig, SessionConfig
 from alphaavatar.agents.memory import MemoryBase, memory_chat_context_watcher, memory_search_hook
@@ -46,13 +46,14 @@ class AvatarEngine(Agent):
         self._avatar_create_time = format_current_time(
             self.avatar_config.avatar_info.avatar_timezone
         )
+        self._avatar_prompt_template = AvatarPromptTemplate(
+            self.avatar_config.avatar_info.avatar_introduction,
+            current_time=self._avatar_create_time["time_str"],
+        )
 
         # initial avatar
         super().__init__(
-            instructions=AvatarPromptTemplate.instructions(
-                avatar_introduction=self.avatar_config.avatar_info.avatar_introduction,
-                current_time=self._avatar_create_time["time_str"],
-            ),
+            instructions=self._avatar_prompt_template.instructions(),
             turn_detection=self.avatar_config.livekit_plugin_config.get_turn_detection_plugin(),
             stt=self.avatar_config.livekit_plugin_config.get_stt_plugin(),
             vad=self.avatar_config.livekit_plugin_config.get_vad_plugin(),
@@ -123,12 +124,13 @@ class AvatarEngine(Agent):
 
         Override [livekit.agents.voice.agent.Agent::on_user_turn_completed] method to handle user turn completion.
         """
+        # BUG: When multiple separate user messages are entered consecutively, LiveKit will only use the latest one.
         ...
 
     def llm_node(
         self,
         chat_ctx: llm.ChatContext,
-        tools: list[FunctionTool | RawFunctionTool],
+        tools: list[llm.FunctionTool | llm.RawFunctionTool],
         model_settings: ModelSettings,
     ) -> (
         AsyncIterable[llm.ChatChunk | str]
@@ -145,6 +147,15 @@ class AvatarEngine(Agent):
 
         async def _gen() -> AsyncIterable[llm.ChatChunk | str]:
             await self._chat_ctx.items.wait_pending()  # type: ignore
+
+            # The current chat_ctx is temporarily copied from self._chat_ctx
+            update_instructions(
+                chat_ctx,
+                instructions=self._avatar_prompt_template.instructions(
+                    memory_content=self.memory.memory_content,
+                ),
+                add_if_missing=True,
+            )
 
             res = Agent.default.llm_node(self, chat_ctx, tools, model_settings)
 
@@ -166,5 +177,4 @@ class AvatarEngine(Agent):
         return _gen()
 
     async def on_exit(self):
-        # await self.memory.update(session_id=self.session_config.session_id)
-        ...
+        await self.memory.update(session_id=self.session_config.session_id)

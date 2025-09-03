@@ -161,7 +161,6 @@ class ObservableList(MutableSequence, Generic[T]):
             return
 
         for fn in list(self._listeners):
-            print(payload, fn, "----in", flush=True)
             try:
                 result = fn(self, op, payload)
             except Exception:

@@ -30,6 +30,8 @@ async def memory_chat_context_watcher(
     if op == OpType.INSERT:
         memory.add(session_id=session_id, chat_item=payload["value"])
 
+    # TODO: Whether to permanently add memory content to the global context
+
 
 async def memory_search_hook(
     memory: MemoryBase, session_id: str, ctx: BeforeGenContextRO

@@ -26,9 +26,9 @@ def apply_client_memory_list(results: list[dict[str, Any]]) -> list:
     for entry in results:
         sub_memory = ""
         if "metadata" in entry and "time_str" in entry["metadata"]:
-            sub_memory += f"Timestamp: {entry['metadata']['time_str']};"
+            sub_memory += f"Timestamp: {entry['metadata']['time_str']}; "
         sub_memory += f"Content: {entry['memory']}"
-        memory_list.append(sub_memory)
+        memory_list.append(sub_memory.strip())
     return memory_list
 
 
@@ -36,6 +36,7 @@ def apply_memory_list(results: dict[str, Any]) -> list:
     return [entry["memory"] for entry in results["results"]]
 
 
+# TODO: customize memory extracting prompt
 class Memory(MemoryBase):
     def __init__(
         self,

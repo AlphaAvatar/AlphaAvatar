@@ -107,7 +107,7 @@ class HookRegistry:
         self._hooks.append(
             _RegisteredHook(
                 priority=priority,
-                name=name or fn.__name__,
+                name=name or fn.__name__,  # type: ignore
                 fn=fn,  # type: ignore
                 timeout=timeout,
                 once=once,
