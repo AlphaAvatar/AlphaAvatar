@@ -22,4 +22,4 @@ pip install alpha-avatar-plugins-memory[mem0]
 | --------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
 | **mem0**  | Lightweight memory framework with APIs for creating, searching, and updating long-term memory | [https://github.com/mem0ai/mem0](https://github.com/mem0ai/mem0) |
 
-> More frameworks (e.g., xxx) will be added soon.
+> More frameworks (e.g., LlamaIndex - Memory) will be added soon.

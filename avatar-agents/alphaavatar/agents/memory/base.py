@@ -82,6 +82,7 @@ class MemoryBase:
 
     @property
     def memory_content(self) -> str:
+        # TODO: user memory should be with user profile to put into system prompt.
         return "\n".join([self.agent_memory, self.user_memory, self.tool_memory])
 
     @agent_memory.setter

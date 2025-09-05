@@ -9,7 +9,7 @@ description = "AlphaAvatar Framework plugin for memory service"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
-keywords = ["omni", "realtime", "audio", "video", "llm", "agents", "AI"]
+keywords = ["llm", "agents", "AI", "memory", "mem0"]
 classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",

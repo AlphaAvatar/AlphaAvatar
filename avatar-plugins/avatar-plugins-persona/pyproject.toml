@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "alpha-avatar-plugins-persona"
+dynamic = ["version"]
+description = "AlphaAvatar Framework plugin for persona service"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+keywords = ["llm", "agents", "AI", "persona", "profile", "langchain"]
+classifiers = [
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3 :: Only",
+]
+dependencies = [
+]
+
+
+[project.optional-dependencies]
+profiler_langchain = ["langchain-core", "langchain-community", "langchain-openai"]
+
+[project.urls]
+Documentation = ""
+Website = ""
+Source = "https://github.com/AlphaAvatar/AlphaAvatar"
+
+[tool.hatch.version]
+path = "alphaavatar/plugins/persona/version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["alphaavatar"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/alphaavatar"]

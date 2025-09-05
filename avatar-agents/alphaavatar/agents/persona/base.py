@@ -11,8 +11,25 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from .cache import PersonaCache
+from .identifier import IdentifierBase
 from .profiler import ProfilerBase
+from .recognizer import RecognizerBase
 
-__all__ = [
-    "ProfilerBase",
-]
+
+class PersonaBase:
+    def __init__(
+        self,
+        *,
+        profiler: ProfilerBase,
+        identifier: IdentifierBase,
+        recognizer: RecognizerBase,
+    ):
+        self._profiler = profiler
+        self._identifier = identifier
+        self._recognizer = recognizer
+        self._persona_cache: dict[str, PersonaCache] = {}
+
+    def init_persona(self, user_id: str):
+        """"""
+        pass
