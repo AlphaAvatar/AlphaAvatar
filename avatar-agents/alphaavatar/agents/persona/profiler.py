@@ -11,8 +11,42 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from abc import abstractmethod
+
+from livekit.agents.llm import ChatItem, ChatMessage
+from pydantic import BaseModel
+
+
+class UserProfileBase(BaseModel):
+    @classmethod
+    def apply_update_template(cls, chat_context: list[ChatItem]):
+        """Apply the profile update template with the given keyword arguments."""
+        memory_strings = []
+        for msg in chat_context:
+            if isinstance(msg, ChatMessage):
+                role = msg.role
+                # TODO: Handle different content types more robustly
+                if role not in ["user", "assistant"]:
+                    continue
+
+                msg_str = msg.text_content
+                memory_strings.append(f"### {role}:\n{msg_str}")
+
+        return "\n\n".join(memory_strings)
 
 
 class ProfilerBase:
     def __init__(self):
         pass
+
+    @abstractmethod
+    def search(self, profile: UserProfileBase): ...
+
+    @abstractmethod
+    def update(self, profile: UserProfileBase, chat_context: list[ChatItem]) -> UserProfileBase: ...
+
+    @abstractmethod
+    def save(self, user_id: str, profile: UserProfileBase) -> None: ...
+
+    @abstractmethod
+    def load(self, user_id: str) -> UserProfileBase: ...

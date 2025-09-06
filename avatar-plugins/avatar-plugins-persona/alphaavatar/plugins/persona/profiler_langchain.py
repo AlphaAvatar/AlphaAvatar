@@ -19,16 +19,19 @@ from typing import Any
 from langchain_community.vectorstores import Chroma
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from livekit.agents.llm import ChatItem
 
-from alphaavatar.agents.persona import ProfilerBase
+from alphaavatar.agents.persona import ProfilerBase, UserProfileBase
 
 from .enum.user_profile import UserProfile
 from .profiler_op import (
     ProfileDelta,
     append_string,
     clear_path,
+    flatten_items,
     parse_pointer,
     post_fix_conflicts,
+    rebuild_from_items,
     remove_string,
     write_set,
 )
@@ -92,16 +95,19 @@ class ProfilerLangChain(ProfilerBase):
             persist_directory=self.persist_dir,
         )
 
-    def update(self, profile: UserProfile, new_turn: str) -> UserProfile:
+    def update(
+        self, profile: UserProfileBase | UserProfile, chat_context: list[ChatItem]
+    ) -> UserProfile:
         """
         Generate a delta from the new dialog turn and apply it to the given profile.
         Returns a new (updated) UserProfile instance.
         """
+        new_turn = UserProfile.apply_update_template(chat_context)
         delta = self._extract_delta(profile, new_turn)
         updated = self._apply_patch(profile, delta)
         return updated
 
-    def save(self, user_id: str, profile: UserProfile) -> None:
+    def save(self, user_id: str, profile: UserProfileBase | UserProfile) -> None:
         """
         Persist the profile to the vector store as one embedding per item.
         Strategy: delete all existing items for this user_id, then upsert current snapshot.
@@ -114,9 +120,8 @@ class ProfilerLangChain(ProfilerBase):
             # Fallback: ignore if unavailable
             pass
 
-        profile.model_dump()
-        # items = flatten_items(user_id, data)
-        items = []
+        data = profile.model_dump()
+        items = flatten_items(user_id, data)
 
         if not items:
             self.vs.persist()
@@ -161,17 +166,18 @@ class ProfilerLangChain(ProfilerBase):
                 }
             )
 
-        # data = rebuild_from_items(items)
-        data = {}
+        data = rebuild_from_items(items)
         return UserProfile(**data)
 
-    def _extract_delta(self, profile: UserProfile, new_turn: str) -> ProfileDelta:
+    def _extract_delta(self, profile: UserProfileBase | UserProfile, new_turn: str) -> ProfileDelta:
         """Ask the LLM to generate patch ops relative to the current profile."""
         return (DELTA_PROMPT | self._delta_llm).invoke(
             {"current_profile": profile.model_dump_json(), "new_turn": new_turn}
-        )
+        )  # type: ignore
 
-    def _apply_patch(self, profile: UserProfile, delta: ProfileDelta) -> UserProfile:
+    def _apply_patch(
+        self, profile: UserProfileBase | UserProfile, delta: ProfileDelta
+    ) -> UserProfile:
         """
         Apply PatchOps to a UserProfile:
           - set: overwrite value (scalar/list/object) at path

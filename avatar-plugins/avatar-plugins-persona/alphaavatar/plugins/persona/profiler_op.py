@@ -13,6 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -131,3 +132,165 @@ def post_fix_conflicts(data: dict[str, Any]) -> None:
         if cleaned != interests:
             prefs["interests"] = cleaned
             data["preferences"] = prefs
+
+
+# --------------------------------- Flatten / Rebuild for VectorStore ---------------------------------
+def _is_primitive(x: Any) -> bool:
+    return isinstance(x, str | int | float | bool)
+
+
+def flatten_items(user_id: str, data: dict[str, Any], prefix: str = "") -> list[dict[str, Any]]:
+    """
+    Flatten a nested dict into vector-store "items".
+    Each item dict has: id, page_content, metadata.
+    """
+    # TODO: unified timestamp
+    items: list[dict[str, Any]] = []
+
+    def walk(val: Any, path: str):
+        # Scalars -> one item
+        if _is_primitive(val) or val is None:
+            if val is None or (isinstance(val, str) and val.strip() == ""):
+                return  # skip empty
+            item_id = f"{user_id}:{path}"
+            items.append(
+                {
+                    "id": item_id,
+                    "page_content": f"{path} = {val}",
+                    "metadata": {
+                        "user_id": user_id,
+                        "path": f"/{path}" if not path.startswith("/") else path,
+                        "type": "scalar",
+                        "value": str(val),
+                        "json_value": json.dumps(val, ensure_ascii=False),
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                    },
+                }
+            )
+            return
+
+        # Lists
+        if isinstance(val, list):
+            if len(val) == 0:
+                return
+            # list of primitives
+            if all(_is_primitive(x) for x in val):
+                for v in val:
+                    norm = _norm_token(v)
+                    item_id = f"{user_id}:{path}:{norm}"
+                    items.append(
+                        {
+                            "id": item_id,
+                            "page_content": f"{path} += {v}",
+                            "metadata": {
+                                "user_id": user_id,
+                                "path": f"/{path}" if not path.startswith("/") else path,
+                                "type": "list_item",
+                                "value": str(v),
+                                "json_value": json.dumps(v, ensure_ascii=False),
+                                "ts": datetime.now(timezone.utc).isoformat(),
+                            },
+                        }
+                    )
+                return
+            # list of objects
+            for idx, obj in enumerate(val):
+                item_id = f"{user_id}:{path}[{idx}]"
+                items.append(
+                    {
+                        "id": item_id,
+                        "page_content": f"{path}[{idx}] = {json.dumps(obj, ensure_ascii=False)}",
+                        "metadata": {
+                            "user_id": user_id,
+                            "path": f"/{path}[{idx}]",
+                            "type": "object_item",
+                            "index": idx,
+                            "json_value": json.dumps(obj, ensure_ascii=False),
+                            "ts": datetime.now(timezone.utc).isoformat(),
+                        },
+                    }
+                )
+            return
+
+        # Dicts -> recurse
+        if isinstance(val, dict):
+            for k, v in val.items():
+                key = f"{path}/{k}" if path else k
+                walk(v, key)
+            return
+
+        # Fallback: store JSON string
+        item_id = f"{user_id}:{path}"
+        items.append(
+            {
+                "id": item_id,
+                "page_content": f"{path} = {json.dumps(val, ensure_ascii=False)}",
+                "metadata": {
+                    "user_id": user_id,
+                    "path": f"/{path}" if not path.startswith("/") else path,
+                    "type": "scalar",
+                    "value": json.dumps(val, ensure_ascii=False),
+                    "json_value": json.dumps(val, ensure_ascii=False),
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                },
+            }
+        )
+
+    walk(data, prefix.strip("/"))
+    return items
+
+
+def rebuild_from_items(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    Reconstruct nested dict from vector-store items.
+    """
+    out: dict[str, Any] = {}
+
+    # First, handle object items (lists of objects) so we can merge indices
+    object_groups: dict[str, dict[int, Any]] = {}
+    for it in items:
+        meta = it.get("metadata", {})
+        typ = meta.get("type")
+        path = meta.get("path", "")
+        if typ == "object_item":
+            base_path, idx = path, meta.get("index", 0)
+            # Strip '[idx]' from path -> map to list assembly key
+            if base_path.endswith("]") and "[" in base_path:
+                key_path = base_path[: base_path.rfind("[")]
+                object_groups.setdefault(key_path, {})[int(idx)] = json.loads(
+                    meta.get("json_value", "{}")
+                )
+
+    # Apply scalar and list_item first
+    for it in items:
+        meta = it.get("metadata", {})
+        typ = meta.get("type")
+        path = meta.get("path", "")
+        tokens = parse_pointer(path)
+
+        if typ == "scalar":
+            val_json = meta.get("json_value")
+            val = json.loads(val_json) if val_json is not None else meta.get("value")
+            write_set(out, tokens, val)
+
+        elif typ == "list_item":
+            val_json = meta.get("json_value")
+            val = json.loads(val_json) if val_json is not None else meta.get("value")
+            lst = _ensure_list(out, tokens)
+            # de-dup
+            if isinstance(val, str | int | float | bool):
+                s = str(val)
+                seen = {_norm_token(x): True for x in lst if isinstance(x, str)}
+                if _norm_token(s) not in seen:
+                    lst.append(s)
+            else:
+                lst.append(val)
+
+    # Now assemble lists of objects
+    for key_path, idx_map in object_groups.items():
+        tokens = parse_pointer(key_path)
+        # Ensure parent list and fill by index order
+        ordered = [idx_map[i] for i in sorted(idx_map.keys())]
+        write_set(out, tokens, ordered)
+
+    return out
