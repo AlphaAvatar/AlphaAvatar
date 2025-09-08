@@ -16,9 +16,7 @@ from enum import StrEnum
 from livekit.agents.llm import ChatItem, ChatMessage, ChatRole
 
 
-def apply_memory_template(
-    messages: list[ChatItem], filter_roles: list[ChatRole] = None, **kwargs
-) -> str:
+def apply_memory_template(messages: list[ChatItem], *, filter_roles: list[ChatRole] = None) -> str:
     """Apply the memory template with the given keyword arguments."""
     if filter_roles is None:
         filter_roles = []
@@ -35,7 +33,7 @@ def apply_memory_template(
     return "\n\n".join(memory_strings)
 
 
-def apply_message_template(messages: list[ChatItem], **kwargs) -> list[dict]:
+def apply_message_template(messages: list[ChatItem]) -> list[dict]:
     """Apply the memory template with the given keyword arguments."""
     message_list = []
     for msg in messages:
@@ -66,7 +64,7 @@ class MemoryCache:
         self._user_or_tool_id = user_or_tool_id
         self._session_id = session_id
 
-        self._metadata = {"type": memory_type, "session_topic": "", **timestamp}
+        self._metadata = {"type": memory_type, "topic": "", **timestamp}
         self._messages: list[ChatItem] = []
 
     @property

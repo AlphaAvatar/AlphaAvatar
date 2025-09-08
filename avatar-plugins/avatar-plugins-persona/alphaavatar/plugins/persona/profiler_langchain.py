@@ -13,13 +13,25 @@
 # limitations under the License.
 from __future__ import annotations
 
+import asyncio
+import os
+import shutil
 from copy import deepcopy
 from typing import Any
 
-from langchain_community.vectorstores import Chroma
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_qdrant import QdrantVectorStore
 from livekit.agents.llm import ChatItem
+from qdrant_client import QdrantClient
+from qdrant_client.models import (
+    Distance,
+    FieldCondition,
+    Filter,
+    FilterSelector,
+    MatchValue,
+    VectorParams,
+)
 
 from alphaavatar.agents.persona import ProfilerBase, UserProfileBase
 
@@ -65,115 +77,166 @@ Avoid hallucinations. Do not invent values not clearly stated or strongly implie
 
 class ProfilerLangChain(ProfilerBase):
     """
-    Orchestrates:
-      - LLM delta extraction
-      - Applying patch ops to a UserProfile
-      - Persisting to / loading from a vector store (one vector per item)
+    Qdrant-backed pipeline:
+      - async LLM delta extraction
+      - sync in-memory patch
+      - async persistence via Qdrant
     """
 
     def __init__(
         self,
-        persist_dir: str = "./chroma_profile",
-        collection: str = "user_profiles",
+        *,
+        collection: str = "alphaavatar_user_profiles",
         chat_model: str = "gpt-4o-mini",
         embedding_model: str = "text-embedding-3-small",
         temperature: float = 0.0,
+        host: str | None = None,
+        port: int | None = None,
+        path: str = "/tmp/qdrant",
+        url: str | None = None,
+        api_key: str | None = None,
+        on_disk: bool = False,
+        prefer_grpc: bool = False,
     ) -> None:
         super().__init__()
-        self.persist_dir = persist_dir
-        # os.makedirs(self.persist_dir, exist_ok=True)
-
-        # LLM
+        self.collection = collection
         self.llm = ChatOpenAI(model=chat_model, temperature=temperature)
         self._delta_llm = self.llm.with_structured_output(ProfileDelta)
-
-        # Embeddings + Vector store
         self.embeddings = OpenAIEmbeddings(model=embedding_model)
-        self.vs = Chroma(
-            collection_name=collection,
-            embedding_function=self.embeddings,
-            persist_directory=self.persist_dir,
+        self.__post_init__(
+            host=host,
+            port=port,
+            path=path,
+            url=url,
+            api_key=api_key,
+            on_disk=on_disk,
+            prefer_grpc=prefer_grpc,
         )
 
-    def update(
+    def __post_init__(
+        self,
+        *,
+        host: str | None,
+        port: int | None,
+        path: str,
+        url: str | None,
+        api_key: str | None,
+        on_disk: bool,
+        prefer_grpc,
+    ):
+        # --- Qdrant client & vector store (LangChain wrapper) ---
+        params = {"prefer_grpc": prefer_grpc}
+        if api_key:
+            params["api_key"] = api_key
+        if url:
+            params["url"] = url
+        if host and port:
+            params["host"] = host
+            params["port"] = port
+        if not params:
+            params["path"] = path
+            if not on_disk:
+                if os.path.exists(path) and os.path.isdir(path):
+                    shutil.rmtree(path)
+
+        self.client = QdrantClient(**params)
+        asyncio.get_event_loop().run_until_complete(self._aensure_collection())
+        self.vs = QdrantVectorStore.from_existing_collection(
+            embedding=self.embeddings,
+            client=self.client,
+            collection_name=self.collection,
+        )
+
+    async def update(
         self, profile: UserProfileBase | UserProfile, chat_context: list[ChatItem]
     ) -> UserProfile:
-        """
-        Generate a delta from the new dialog turn and apply it to the given profile.
-        Returns a new (updated) UserProfile instance.
-        """
+        """Async delta extraction -> in-memory patch."""
         new_turn = UserProfile.apply_update_template(chat_context)
-        delta = self._extract_delta(profile, new_turn)
-        updated = self._apply_patch(profile, delta)
-        return updated
+        delta = await self._aextract_delta(profile, new_turn)
+        return self._apply_patch(profile, delta)
 
-    def save(self, user_id: str, profile: UserProfileBase | UserProfile) -> None:
-        """
-        Persist the profile to the vector store as one embedding per item.
-        Strategy: delete all existing items for this user_id, then upsert current snapshot.
-        """
-        # Remove existing entries for this user
-        try:
-            # Use underlying Chroma collection for filtered delete
-            self.vs._collection.delete(where={"user_id": user_id})  # type: ignore[attr-defined]
-        except Exception:
-            # Fallback: ignore if unavailable
-            pass
+    async def save(self, user_id: str, profile: UserProfileBase | UserProfile) -> None:
+        """Async: delete old by user_id filter, then upsert all items."""
 
+        # 1) delete existing points for this user_id
+        async def _delete_by_filter():
+            filt = Filter(must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))])
+            self.client.delete(
+                collection_name=self.collection,
+                points_selector=FilterSelector(filter=filt),
+                wait=True,
+            )
+
+        await asyncio.to_thread(_delete_by_filter)
+
+        # 2) flatten and add
         data = profile.model_dump()
         items = flatten_items(user_id, data)
-
         if not items:
-            self.vs.persist()
             return
 
         texts = [it["page_content"] for it in items]
         metadatas = [it["metadata"] for it in items]
         ids = [it["id"] for it in items]
 
-        # Upsert items (Chroma add_texts will overwrite if IDs exist)
-        self.vs.add_texts(texts=texts, metadatas=metadatas, ids=ids)
-        self.vs.persist()
+        await asyncio.to_thread(self.vs.add_texts, texts, metadatas, ids)
 
-    def load(self, user_id: str) -> UserProfile:
-        """
-        Load a full UserProfile from the vector store (all items for this user_id).
-        """
-        try:
-            raw = self.vs._collection.get(  # type: ignore[attr-defined]
-                where={"user_id": user_id}, include=["metadatas", "documents", "ids"]
-            )
-        except Exception:
-            # If the wrapper doesn't support filtered get, fallback to empty
-            raw = {"metadatas": [], "documents": [], "ids": []}
+    async def load(self, user_id: str) -> UserProfile:
+        """Async: fetch all points for user_id via Scroll API, rebuild profile."""
 
-        metadatas = raw.get("metadatas", []) or []
-        documents = raw.get("documents", []) or []
-        ids = raw.get("ids", []) or []
+        def _scroll_all() -> list[dict[str, Any]]:
+            filt = Filter(must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))])
+            all_points = []
+            next_offset = None
 
-        items = []
-        for meta, doc, _id in zip(metadatas, documents, ids, strict=False):
-            # Ensure required keys exist
-            meta = meta or {}
-            meta.setdefault("path", "")
-            meta.setdefault("type", "scalar")
-            meta.setdefault("json_value", None)
-            items.append(
-                {
-                    "id": _id,
-                    "page_content": doc,
-                    "metadata": meta,
-                }
-            )
+            while True:
+                try:
+                    points, next_offset = self.client.scroll(
+                        collection_name=self.collection,
+                        limit=256,
+                        with_payload=True,
+                        with_vectors=False,
+                        scroll_filter=filt,
+                        offset=next_offset,
+                    )
+                except TypeError:
+                    points, next_offset = self.client.scroll(
+                        collection_name=self.collection,
+                        limit=256,
+                        with_payload=True,
+                        with_vectors=False,
+                        filter=filt,
+                        offset=next_offset,
+                    )
 
+                all_points.extend(points or [])
+                if not next_offset or not points:
+                    break
+
+            items: list[dict[str, Any]] = []
+            for p in all_points:
+                payload = p.payload or {}
+                doc = payload.get("page_content") or ""
+                meta = {k: v for k, v in payload.items() if k != "page_content"}
+                meta.setdefault("path", "")
+                meta.setdefault("type", "scalar")
+                meta.setdefault("json_value", None)
+
+                items.append({"id": str(p.id), "page_content": doc, "metadata": meta})
+            return items
+
+        items = await asyncio.to_thread(_scroll_all)
         data = rebuild_from_items(items)
         return UserProfile(**data)
 
-    def _extract_delta(self, profile: UserProfileBase | UserProfile, new_turn: str) -> ProfileDelta:
+    async def _aextract_delta(
+        self, profile: UserProfileBase | UserProfile, new_turn: str
+    ) -> ProfileDelta:
         """Ask the LLM to generate patch ops relative to the current profile."""
-        return (DELTA_PROMPT | self._delta_llm).invoke(
-            {"current_profile": profile.model_dump_json(), "new_turn": new_turn}
-        )  # type: ignore
+        chain = DELTA_PROMPT | self._delta_llm
+        return await chain.ainvoke(
+            {"current_profile": profile.model_dump_json(), "new_turn": new_turn}  # type: ignore
+        )
 
     def _apply_patch(
         self, profile: UserProfileBase | UserProfile, delta: ProfileDelta
@@ -205,3 +268,21 @@ class ProfilerLangChain(ProfilerBase):
 
         post_fix_conflicts(data)
         return UserProfile(**data)
+
+    async def _aensure_collection(self) -> None:
+        """Create collection if missing; infer embedding dimension dynamically."""
+
+        def _ensure():
+            try:
+                self.client.get_collection(self.collection)
+                return  # exists
+            except Exception:
+                pass
+
+            dim = len(self.embeddings.embed_query("dimension-probe"))
+            self.client.create_collection(
+                collection_name=self.collection,
+                vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
+            )
+
+        await asyncio.to_thread(_ensure)

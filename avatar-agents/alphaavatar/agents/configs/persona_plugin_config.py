@@ -11,11 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .base import PersonaBase
-from .profiler import ProfilerBase, UserProfileBase
 
-__all__ = [
-    "PersonaBase",
-    "UserProfileBase",
-    "ProfilerBase",
-]
+from pydantic import ConfigDict
+from pydantic.dataclasses import dataclass
+
+
+@dataclass(config=ConfigDict(arbitrary_types_allowed=True))
+class PersonaConfig:
+    """Configuration for the Persona plugin used in the agent."""

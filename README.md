@@ -40,7 +40,7 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 <h3>👨 Persona</h3>
 <p>Automatic extraction and real-time matching of user full modality persona.</p>
 <p>
-<a href="examples/voice_agents/push_to_talk.py">README↗</a>
+<a href="https://github.com/AlphaAvatar/AlphaAvatar/blob/main/avatar-plugins/avatar-plugins-persona/README.md">README↗</a>
 </p>
 </td>
 </tr>
@@ -48,20 +48,24 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 <tr>
 <td width="50%">
 <h3>💡 Reflection</h3>
-<p>Self-improving memory layer for Omni-Avatar.</p>
+<p>An Optimizer for Omni-Avatar that can automatically build an internal knowledge base for avatars.</p>
 <p>
 <a href="examples/voice_agents/basic_agent.py">README↗</a>
 </p>
 </td>
 <td width="50%">
 <h3>😊 Avatar</h3>
-<p>Responds to multiple users in the room via push-to-talk.</p>
+<p></p>
 <p>
 <a href="examples/voice_agents/push_to_talk.py">README↗</a>
 </p>
 </td>
 </tr>
 </table>
+
+---
+
+<h3>Tools Plugins</h3>
 
 ---
 

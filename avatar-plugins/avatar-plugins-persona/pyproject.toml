@@ -29,7 +29,7 @@ dependencies = [
 
 
 [project.optional-dependencies]
-profiler_langchain = ["langchain-core", "langchain-community", "langchain-openai"]
+profiler_langchain = ["langchain-core", "langchain-community", "langchain-openai", "qdrant-client", "langchain-qdrant"]
 
 [project.urls]
 Documentation = ""

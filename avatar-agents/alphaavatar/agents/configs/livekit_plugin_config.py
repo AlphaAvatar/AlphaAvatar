@@ -82,6 +82,10 @@ class TTSArguments:
                         "The 'openai.TTS' plugin is required for livekit.plugins.openai but is not installed.\n"
                         "To fix this, install the optional dependency: `pip install livekit-plugins-openai`"
                     )
+
+                assert self.tts_model is not None
+                assert self.tts_voice is not None
+                assert self.tts_instructions is not None
                 return openai.TTS(
                     model=self.tts_model,
                     voice=self.tts_voice,

@@ -11,8 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from livekit.agents.llm import ChatItem
 
 
 class PersonaCache:
-    def __init__(self):
-        pass
+    def __init__(self, max_match_times: int):
+        self._max_match_times = max_match_times
+
+        self._messages: list[ChatItem] = []
