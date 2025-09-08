@@ -16,7 +16,9 @@ from enum import StrEnum
 from livekit.agents.llm import ChatItem, ChatMessage, ChatRole
 
 
-def apply_memory_template(messages: list[ChatItem], *, filter_roles: list[ChatRole] = None) -> str:
+def apply_memory_template(
+    messages: list[ChatItem], *, filter_roles: list[ChatRole] | None = None
+) -> str:
     """Apply the memory template with the given keyword arguments."""
     if filter_roles is None:
         filter_roles = []
