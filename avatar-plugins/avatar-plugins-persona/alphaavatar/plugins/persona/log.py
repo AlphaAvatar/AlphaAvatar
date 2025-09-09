@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .plugin import AvatarModule, AvatarPlugin
-from .version import __version__
+import logging
 
-__all__ = ["__version__", "AvatarPlugin", "AvatarModule"]
+logger = logging.getLogger("alphaavatar.plugins.perona")

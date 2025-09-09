@@ -21,13 +21,17 @@ class PersonaBase:
     def __init__(
         self,
         *,
-        profiler: ProfilerBase,
-        identifier: IdentifierBase,
-        recognizer: RecognizerBase,
+        profiler: ProfilerBase | None = None,
+        identifier: IdentifierBase | None = None,
+        recognizer: RecognizerBase | None = None,
+        maximum_retrieval_times: int = 3,
     ):
         self._profiler = profiler
         self._identifier = identifier
         self._recognizer = recognizer
+
+        self._maximum_retrieval_times = maximum_retrieval_times
+
         self._persona_cache: dict[str, PersonaCache] = {}
 
     def init_persona(self, user_id: str):

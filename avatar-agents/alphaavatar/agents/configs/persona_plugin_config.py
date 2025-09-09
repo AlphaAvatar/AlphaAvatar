@@ -11,11 +11,38 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-from pydantic import ConfigDict
+from pydantic import ConfigDict, Field
 from pydantic.dataclasses import dataclass
+
+from alphaavatar.agents import AvatarModule, AvatarPlugin
+from alphaavatar.agents.persona import PersonaBase
 
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class PersonaConfig:
     """Configuration for the Persona plugin used in the agent."""
+
+    # Persona Metadata
+    maximum_retrieval_times: int = Field(
+        default=3,
+        description="The maximum number of retrieval to determine whether a new user matches existing data in the Perona database.",
+    )
+
+    # Persona Profiler plugin config
+    profiler_plugin: str = Field(
+        default="langchain",
+        description="Avatar profiler plugin to use for user profile extraction from chat context.",
+    )
+    profiler_init_config: dict | None = Field(
+        default=None,
+        description="Custom configuration parameters for the profiler plugin.",
+    )
+
+    def get_persona_plugin(self) -> PersonaBase:
+        """Returns the Persona plugin instance based on the configuration."""
+        return PersonaBase(
+            profiler=AvatarPlugin.get_avatar_plugin(AvatarModule.PROFILER, self.profiler_plugin),
+            identifier=None,
+            recognizer=None,
+            maximum_retrieval_times=self.maximum_retrieval_times,
+        )

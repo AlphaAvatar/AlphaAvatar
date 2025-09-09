@@ -16,6 +16,7 @@ from typing import Literal
 from pydantic import ConfigDict, Field
 from pydantic.dataclasses import dataclass
 
+from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.memory import MemoryBase
 
 
@@ -34,7 +35,7 @@ class MemoryConfig:
     )
     maximum_memory_items: int = Field(
         default=10,
-        description="The maximum number of memory types to use",
+        description="The maximum number of memory items to use",
     )
 
     # Memory plugin config
@@ -53,34 +54,13 @@ class MemoryConfig:
 
     def get_memory_plugin(self, *, avatar_id: str, avater_name: str) -> MemoryBase:
         """Returns the Memory plugin instance based on the configuration."""
-        match self.memory_plugin:
-            case "mem0":
-                try:
-                    from mem0 import AsyncMemory, AsyncMemoryClient
-                    from mem0.configs.base import MemoryConfig
-
-                    from alphaavatar.plugins.memory.mem0 import Memory as Mem0Memory
-                except ImportError:
-                    raise ImportError(
-                        "The 'mem0' Memory plugin is required but is not installed.\n"
-                        "To fix this, install the optional dependency: `pip install alphaavatar-plugins-memory`"
-                    )
-
-                if self.memory_mode == "client":
-                    client = AsyncMemoryClient()
-                else:
-                    if self.memory_init_config:
-                        config = MemoryConfig(**self.memory_init_config)
-                        client = AsyncMemory(config=config)
-                    else:
-                        client = AsyncMemory()
-                return Mem0Memory(
-                    avater_name=avater_name,
-                    avatar_id=avatar_id,
-                    memory_search_context=self.memory_search_context,
-                    memory_recall_session=self.memory_recall_session,
-                    maximum_memory_items=self.maximum_memory_items,
-                    client=client,
-                )
-            case _:
-                raise ValueError(f"Unsupported memory plugin: {self.memory_plugin}")
+        return AvatarPlugin.get_avatar_plugin(
+            AvatarModule.MEMORY,
+            self.memory_plugin,
+            avatar_id=avatar_id,
+            avater_name=avater_name,
+            memory_search_context=self.memory_search_context,
+            memory_recall_session=self.memory_recall_session,
+            maximum_memory_items=self.maximum_memory_items,
+            memory_init_config=self.memory_init_config,
+        )

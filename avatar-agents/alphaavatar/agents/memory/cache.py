@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from enum import StrEnum
+from enum import Enum
 
 from livekit.agents.llm import ChatItem, ChatMessage, ChatRole
 
@@ -47,7 +47,7 @@ def apply_message_template(messages: list[ChatItem]) -> list[dict]:
     return message_list
 
 
-class MemoryType(StrEnum):
+class MemoryType(str, Enum):
     CONVERSATION = "conversation"
     TOOLS = "tools"
 

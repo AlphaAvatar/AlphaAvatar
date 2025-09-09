@@ -37,7 +37,7 @@ def apply_memory_list(results: dict[str, Any]) -> list:
 
 
 # TODO: customize memory extracting prompt
-class Memory(MemoryBase):
+class Mem0Memory(MemoryBase):
     def __init__(
         self,
         *,
