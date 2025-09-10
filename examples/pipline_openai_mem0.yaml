@@ -18,8 +18,12 @@ allow_interruptions: true
 
 
 ### Memory Args
-memory_plugin: mem0
-memory_mode: client
+memory_plugin: mem0_client
 memory_search_context: 3
 memory_recall_session: 4
 maximum_memory_items: 28
+
+
+### Profiler Args
+profiler_plugin: langchain
+maximum_retrieval_times: 3

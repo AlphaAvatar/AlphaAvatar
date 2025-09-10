@@ -21,9 +21,9 @@ class PersonaBase:
     def __init__(
         self,
         *,
-        profiler: ProfilerBase | None = None,
-        identifier: IdentifierBase | None = None,
-        recognizer: RecognizerBase | None = None,
+        profiler: ProfilerBase,
+        identifier: IdentifierBase,
+        recognizer: RecognizerBase,
         maximum_retrieval_times: int = 3,
     ):
         self._profiler = profiler
@@ -34,6 +34,32 @@ class PersonaBase:
 
         self._persona_cache: dict[str, PersonaCache] = {}
 
-    def init_persona(self, user_id: str):
-        """"""
-        pass
+    @property
+    def profiler(self) -> ProfilerBase:
+        return self._profiler
+
+    @property
+    def identifier(self) -> IdentifierBase:
+        return self._identifier
+
+    @property
+    def recognizer(self) -> RecognizerBase:
+        return self._recognizer
+
+    def init_cache(self, *, user_id: str) -> PersonaCache:
+        if user_id not in self._persona_cache:
+            user_profile = self.profiler.load(user_id)
+            # speech_profile = self.identifier.load(user_id)
+            # visual_profile = self.recognizer.load(user_id)
+
+            self._persona_cache[user_id] = PersonaCache(
+                user_profile=user_profile,
+                speech_profile=None,  # type: ignore
+                visual_profile=None,  # type: ignore
+            )
+            return self._persona_cache[user_id]
+        else:
+            raise ValueError(
+                f"User with id '{user_id}' already exists in perona cache. "
+                "Please use a unique user_id."
+            )

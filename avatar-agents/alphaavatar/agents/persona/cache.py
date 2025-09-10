@@ -13,9 +13,21 @@
 # limitations under the License.
 from livekit.agents.llm import ChatItem
 
+from .profiler import UserProfileBase
+
 
 class PersonaCache:
-    def __init__(self, max_match_times: int):
-        self._max_match_times = max_match_times
+    def __init__(
+        self,
+        *,
+        user_profile: UserProfileBase,
+        speech_profile: UserProfileBase,
+        visual_profile: UserProfileBase,
+        current_retrieval_times: int = 0,
+    ):
+        self._user_profile = user_profile
+        self._speech_profile = speech_profile
+        self._visual_profile = visual_profile
+        self._current_retrieval_times = current_retrieval_times
 
         self._messages: list[ChatItem] = []

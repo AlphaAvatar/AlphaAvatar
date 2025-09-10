@@ -15,8 +15,7 @@ import asyncio
 from typing import Any
 
 from livekit.agents.llm import ChatItem
-from livekit.agents.types import NOT_GIVEN, NotGivenOr
-from mem0 import AsyncMemory, AsyncMemoryClient
+from mem0 import AsyncMemoryClient
 
 from alphaavatar.agents.memory import MemoryBase, apply_memory_template
 
@@ -37,7 +36,7 @@ def apply_memory_list(results: dict[str, Any]) -> list:
 
 
 # TODO: customize memory extracting prompt
-class Mem0Memory(MemoryBase):
+class Mem0ClientMemory(MemoryBase):
     def __init__(
         self,
         *,
@@ -46,7 +45,7 @@ class Mem0Memory(MemoryBase):
         memory_search_context: int = 3,
         memory_recall_session: int = 100,
         maximum_memory_items: int = 24,
-        client: NotGivenOr[AsyncMemory | AsyncMemoryClient | None] = NOT_GIVEN,
+        **kwargs,
     ) -> None:
         super().__init__(
             avater_name=avater_name,
@@ -56,10 +55,10 @@ class Mem0Memory(MemoryBase):
             maximum_memory_items=maximum_memory_items,
         )
 
-        self._client = client or AsyncMemory()
+        self._client = AsyncMemoryClient()
 
     @property
-    def client(self) -> AsyncMemoryClient | AsyncMemory:
+    def client(self) -> AsyncMemoryClient:
         return self._client
 
     async def search(self, *, session_id: str, chat_context: list[ChatItem]):

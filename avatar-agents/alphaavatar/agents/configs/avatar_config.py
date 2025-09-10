@@ -17,6 +17,7 @@ from pydantic.dataclasses import dataclass
 from .avatar_info_config import AvatarInfoConfig
 from .livekit_plugin_config import LiveKitPluginConfig
 from .memory_plugin_config import MemoryConfig
+from .persona_plugin_config import PersonaConfig
 
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -31,3 +32,5 @@ class AvatarConfig:
     """Livekit Plugins configuration."""
     memory_config: MemoryConfig = Field(default_factory=MemoryConfig)
     """Avatar Memory configuration."""
+    persona_config: PersonaConfig = Field(default_factory=PersonaConfig)
+    """Avatar Persona configuration."""

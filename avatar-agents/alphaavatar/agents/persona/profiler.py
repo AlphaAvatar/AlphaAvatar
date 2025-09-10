@@ -40,6 +40,9 @@ class ProfilerBase:
         pass
 
     @abstractmethod
+    def load(self, user_id: str) -> UserProfileBase: ...
+
+    @abstractmethod
     def search(self, profile: UserProfileBase): ...
 
     @abstractmethod
@@ -49,6 +52,3 @@ class ProfilerBase:
 
     @abstractmethod
     async def save(self, user_id: str, profile: UserProfileBase) -> None: ...
-
-    @abstractmethod
-    async def load(self, user_id: str) -> UserProfileBase: ...

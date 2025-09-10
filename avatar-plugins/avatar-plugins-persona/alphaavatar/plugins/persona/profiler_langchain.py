@@ -147,6 +147,52 @@ class ProfilerLangChain(ProfilerBase):
             collection_name=self.collection,
         )
 
+    def load(self, user_id: str) -> UserProfile:
+        """Fetch all points for user_id via Scroll API, rebuild profile (synchronous)."""
+
+        filt = Filter(must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))])
+        all_points = []
+        next_offset = None
+
+        while True:
+            try:
+                points, next_offset = self.client.scroll(
+                    collection_name=self.collection,
+                    limit=256,
+                    with_payload=True,
+                    with_vectors=False,
+                    scroll_filter=filt,
+                    offset=next_offset,
+                )
+            except TypeError:
+                # Some client versions use `filter` instead of `scroll_filter`
+                points, next_offset = self.client.scroll(
+                    collection_name=self.collection,
+                    limit=256,
+                    with_payload=True,
+                    with_vectors=False,
+                    filter=filt,
+                    offset=next_offset,
+                )
+
+            all_points.extend(points or [])
+            if not next_offset or not points:
+                break
+
+        items: list[dict[str, Any]] = []
+        for p in all_points:
+            payload = p.payload or {}
+            doc = payload.get("page_content") or ""
+            meta = {k: v for k, v in payload.items() if k != "page_content"}
+            meta.setdefault("path", "")
+            meta.setdefault("type", "scalar")
+            meta.setdefault("json_value", None)
+
+            items.append({"id": str(p.id), "page_content": doc, "metadata": meta})
+
+        data = rebuild_from_items(items)
+        return UserProfile(**data)
+
     async def update(
         self, profile: UserProfileBase | UserProfile, chat_context: list[ChatItem]
     ) -> UserProfile:
@@ -180,54 +226,6 @@ class ProfilerLangChain(ProfilerBase):
         ids = [it["id"] for it in items]
 
         await asyncio.to_thread(self.vs.add_texts, texts, metadatas, ids)
-
-    async def load(self, user_id: str) -> UserProfile:
-        """Async: fetch all points for user_id via Scroll API, rebuild profile."""
-
-        def _scroll_all() -> list[dict[str, Any]]:
-            filt = Filter(must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))])
-            all_points = []
-            next_offset = None
-
-            while True:
-                try:
-                    points, next_offset = self.client.scroll(
-                        collection_name=self.collection,
-                        limit=256,
-                        with_payload=True,
-                        with_vectors=False,
-                        scroll_filter=filt,
-                        offset=next_offset,
-                    )
-                except TypeError:
-                    points, next_offset = self.client.scroll(
-                        collection_name=self.collection,
-                        limit=256,
-                        with_payload=True,
-                        with_vectors=False,
-                        filter=filt,
-                        offset=next_offset,
-                    )
-
-                all_points.extend(points or [])
-                if not next_offset or not points:
-                    break
-
-            items: list[dict[str, Any]] = []
-            for p in all_points:
-                payload = p.payload or {}
-                doc = payload.get("page_content") or ""
-                meta = {k: v for k, v in payload.items() if k != "page_content"}
-                meta.setdefault("path", "")
-                meta.setdefault("type", "scalar")
-                meta.setdefault("json_value", None)
-
-                items.append({"id": str(p.id), "page_content": doc, "metadata": meta})
-            return items
-
-        items = await asyncio.to_thread(_scroll_all)
-        data = rebuild_from_items(items)
-        return UserProfile(**data)
 
     async def _aextract_delta(
         self, profile: UserProfileBase | UserProfile, new_turn: str

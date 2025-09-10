@@ -16,7 +16,7 @@ from livekit.agents import Plugin
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 
 from .log import logger
-from .mem0 import Mem0Memory
+from .mem0_client import Mem0ClientMemory
 from .version import __version__
 
 __all__ = [
@@ -24,7 +24,7 @@ __all__ = [
 ]
 
 
-class MemoryMem0Plugin(Plugin):
+class MemoryMem0ClientPlugin(Plugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
 
@@ -35,33 +35,21 @@ class MemoryMem0Plugin(Plugin):
         self,
         avater_name: str,
         avatar_id: str,
-        memory_mode: str,
         memory_search_context: int,
         memory_recall_session: int,
         maximum_memory_items: int,
         memory_init_config: dict,
         *args,
         **kwargs,
-    ) -> Mem0Memory:
+    ) -> Mem0ClientMemory:
         try:
-            from mem0 import AsyncMemory, AsyncMemoryClient
-            from mem0.configs.base import MemoryConfig
-
-            if memory_mode == "client":
-                client = AsyncMemoryClient()
-            else:
-                if memory_init_config:
-                    config = MemoryConfig(**memory_init_config)
-                    client = AsyncMemory(config=config)
-                else:
-                    client = AsyncMemory()
-            return Mem0Memory(
+            return Mem0ClientMemory(
                 avater_name=avater_name,
                 avatar_id=avatar_id,
                 memory_search_context=memory_search_context,
                 memory_recall_session=memory_recall_session,
                 maximum_memory_items=maximum_memory_items,
-                client=client,
+                **memory_init_config,
             )
         except Exception:
             raise ImportError(
@@ -70,4 +58,4 @@ class MemoryMem0Plugin(Plugin):
             )
 
 
-AvatarPlugin.register_avatar_plugin(AvatarModule.MEMORY, "mem0", MemoryMem0Plugin())
+AvatarPlugin.register_avatar_plugin(AvatarModule.MEMORY, "mem0_client", MemoryMem0ClientPlugin())

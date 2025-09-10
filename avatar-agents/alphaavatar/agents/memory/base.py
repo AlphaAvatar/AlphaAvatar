@@ -115,7 +115,12 @@ class MemoryBase:
                 user_or_tool_id=user_or_tool_id,
                 memory_type=memory_type,
             )
-        return self._memory_cache[session_id]
+            return self._memory_cache[session_id]
+        else:
+            raise ValueError(
+                f"Session with id '{session_id}' already exists in memory cache. "
+                "Please use a unique session_id."
+            )
 
     @abstractmethod
     async def search(self, *, session_id: str, chat_context: list[ChatItem]): ...

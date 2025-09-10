@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Literal
 
 from pydantic import ConfigDict, Field
 from pydantic.dataclasses import dataclass
@@ -39,13 +38,9 @@ class MemoryConfig:
     )
 
     # Memory plugin config
-    memory_plugin: Literal["mem0"] = Field(
-        default="mem0",
+    memory_plugin: str = Field(
+        default="mem0_client",
         description="Avatar Memory plugin to use for memory management.",
-    )
-    memory_mode: Literal["local", "client"] = Field(
-        default="client",
-        description="Mode of memory operation, either 'local' for local storage or 'client' for remote client operations.",
     )
     memory_init_config: dict | None = Field(
         default=None,

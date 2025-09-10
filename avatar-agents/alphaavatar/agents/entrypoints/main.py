@@ -16,7 +16,6 @@ import logging
 import textwrap
 import uuid
 from functools import partial
-from typing import Any
 
 from dotenv import load_dotenv
 from livekit import agents
@@ -69,8 +68,8 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     )
 
 
-def main(args: dict[str, Any] | None = None) -> None:
-    args = read_args(args)
+def main() -> None:
+    args = read_args()
     avatar_config = get_avatar_args(args)
     agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=partial(entrypoint, avatar_config)))
 

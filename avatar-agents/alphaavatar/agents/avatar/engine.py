@@ -23,6 +23,7 @@ from livekit.agents.voice.generation import update_instructions
 
 from alphaavatar.agents.configs import AvatarConfig, SessionConfig
 from alphaavatar.agents.memory import MemoryBase, memory_chat_context_watcher, memory_search_hook
+from alphaavatar.agents.persona import PersonaBase
 from alphaavatar.agents.template import AvatarPromptTemplate
 from alphaavatar.agents.utils import format_current_time
 
@@ -41,6 +42,7 @@ class AvatarEngine(Agent):
             avater_name=avatar_config.avatar_info.avatar_name,
             avatar_id=avatar_config.avatar_info.avatar_id,
         )
+        self._persona: PersonaBase = avatar_config.persona_config.get_persona_plugin()
 
         # initial params
         self._avatar_create_time = format_current_time(
@@ -66,12 +68,15 @@ class AvatarEngine(Agent):
 
     def __post_init__(self):
         """Post-initialization to Avtar."""
-        # Init User & Avatar Interactive Memory by user_id & session_id
+        # Init User & Avatar Interactive Memory by init user_id & session_id
         self._memory.init_cache(
             timestamp=self._avatar_create_time,
             session_id=self.session_config.session_id,
             user_or_tool_id=self.session_config.user_id,
         )
+
+        # Init User Peronsa by init user_id
+        self._persona.init_cache(user_id=self.session_config.user_id)
 
         # attach memory chat context observer
         attach_observer(
@@ -106,7 +111,7 @@ class AvatarEngine(Agent):
         Args:
             location: The location to look up weather information for.
         """
-
+        # TODO: user ask agent recall memory
         return {"weather": "sunny", "temperature_f": 70}
 
     async def on_enter(self):
