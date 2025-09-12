@@ -43,6 +43,8 @@ class AvatarPlugin(Plugin):
     def get_avatar_plugin(cls, module: AvatarModule, name: str, *args, **kwargs):
         module_plugins = cls.avatar_registered_plugins[module]
         if name not in module_plugins:
-            raise NotImplementedError
+            raise ValueError(
+                f"We only supoort the following [{module}] plugins right now, please check again:\n{list(module_plugins.keys())}"
+            )
 
-        return module_plugins[name].get_plugin(args, kwargs)  # type: ignore
+        return module_plugins[name].get_plugin(*args, **kwargs)  # type: ignore

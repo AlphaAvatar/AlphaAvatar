@@ -11,10 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 from abc import abstractmethod
+from typing import TYPE_CHECKING
 
 from livekit.agents.llm import ChatItem, ChatMessage
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from .cache import PersonaCache
 
 
 class UserProfileBase(BaseModel):
@@ -46,9 +52,7 @@ class ProfilerBase:
     def search(self, profile: UserProfileBase): ...
 
     @abstractmethod
-    async def update(
-        self, profile: UserProfileBase, chat_context: list[ChatItem]
-    ) -> UserProfileBase: ...
+    async def update(self, perona: PersonaCache): ...
 
     @abstractmethod
     async def save(self, user_id: str, profile: UserProfileBase) -> None: ...

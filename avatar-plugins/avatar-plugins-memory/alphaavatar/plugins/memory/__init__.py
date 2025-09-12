@@ -49,11 +49,11 @@ class MemoryMem0ClientPlugin(Plugin):
                 memory_search_context=memory_search_context,
                 memory_recall_session=memory_recall_session,
                 maximum_memory_items=maximum_memory_items,
-                **memory_init_config,
+                memory_init_config=memory_init_config,
             )
         except Exception:
             raise ImportError(
-                "The 'mem0' Memory plugin is required but is not installed.\n"
+                "The 'mem0_client' Memory plugin is required but is not installed.\n"
                 "To fix this, install the optional dependency: `pip install alphaavatar-plugins-memory[mem0]`"
             )
 

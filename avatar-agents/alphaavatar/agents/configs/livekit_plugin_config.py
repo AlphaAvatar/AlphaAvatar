@@ -11,11 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import importlib.util
 from typing import Literal
 
 from livekit.agents import llm, stt, tts, vad
 from pydantic import ConfigDict, Field
 from pydantic.dataclasses import dataclass
+
+english_spec = importlib.util.find_spec("livekit.plugins.turn_detector.english")
+multilingual_spec = importlib.util.find_spec("livekit.plugins.turn_detector.multilingual")
+if english_spec is not None:
+    importlib.import_module("livekit.plugins.turn_detector.english")
+if multilingual_spec is not None:
+    importlib.import_module("livekit.plugins.turn_detector.multilingual")
 
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))

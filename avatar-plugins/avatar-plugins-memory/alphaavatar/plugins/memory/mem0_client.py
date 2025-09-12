@@ -45,7 +45,7 @@ class Mem0ClientMemory(MemoryBase):
         memory_search_context: int = 3,
         memory_recall_session: int = 100,
         maximum_memory_items: int = 24,
-        **kwargs,
+        memory_init_config: dict | None = None,
     ) -> None:
         super().__init__(
             avater_name=avater_name,

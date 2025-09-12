@@ -11,12 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import importlib
 
 from pydantic import ConfigDict, Field
 from pydantic.dataclasses import dataclass
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.memory import MemoryBase
+
+importlib.import_module("alphaavatar.plugins.memory")
 
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -42,8 +45,8 @@ class MemoryConfig:
         default="mem0_client",
         description="Avatar Memory plugin to use for memory management.",
     )
-    memory_init_config: dict | None = Field(
-        default=None,
+    memory_init_config: dict = Field(
+        default={},
         description="Custom configuration parameters for the memory plugin.",
     )
 

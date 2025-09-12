@@ -17,18 +17,34 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
-
+from pydantic import BaseModel, Field, model_validator
 
 # --------------------------------- Patch models ---------------------------------
+JSONScalar = str | int | float | bool | None
+
+
 class PatchOp(BaseModel):
     op: Literal["set", "append", "remove", "clear"]
-    path: str = Field(..., description="JSON Pointer-like path (e.g., '/preferences/interests').")
-    value: Any | None = Field(None, description="New value; used by set/append/remove.")
+    path: str = Field(..., description="JSON Pointer-like path, e.g. /preferences/interests")
+    value: JSONScalar | None = Field(
+        default=None,
+        description="For set/append/remove, provide a JSON value. For clear, omit or null.",
+    )
     confidence: float = Field(0.7, ge=0, le=1, description="Confidence score in [0,1].")
     evidence: str = Field("", description="Quoted sentence or concise paraphrase.")
     source: str = Field("chat", description="Data source tag.")
-    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    @model_validator(mode="after")
+    def _validate_value_by_op(self):
+        if self.op in ("set", "append", "remove") and self.value is None:
+            raise ValueError(f"value is required when op='{self.op}'")
+        if self.op == "append" and not isinstance(self.value, str):
+            raise ValueError("append requires value to be a string.")
+        if self.op == "remove" and not isinstance(self.value, str):
+            raise ValueError("remove requires value to be a string.")
+        if self.op == "clear":
+            self.value = None
+        return self
 
 
 class ProfileDelta(BaseModel):

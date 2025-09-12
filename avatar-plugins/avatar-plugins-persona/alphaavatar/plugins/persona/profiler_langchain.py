@@ -22,7 +22,6 @@ from typing import Any
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
-from livekit.agents.llm import ChatItem
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
@@ -33,7 +32,7 @@ from qdrant_client.models import (
     VectorParams,
 )
 
-from alphaavatar.agents.persona import ProfilerBase, UserProfileBase
+from alphaavatar.agents.persona import PersonaCache, ProfilerBase, UserProfileBase
 
 from .enum.user_profile import UserProfile
 from .profiler_op import (
@@ -124,27 +123,54 @@ class ProfilerLangChain(ProfilerBase):
         on_disk: bool,
         prefer_grpc,
     ):
-        # --- Qdrant client & vector store (LangChain wrapper) ---
-        params = {"prefer_grpc": prefer_grpc}
-        if api_key:
-            params["api_key"] = api_key
-        if url:
-            params["url"] = url
-        if host and port:
-            params["host"] = host
-            params["port"] = port
-        if not params:
-            params["path"] = path
-            if not on_disk:
-                if os.path.exists(path) and os.path.isdir(path):
-                    shutil.rmtree(path)
+        """
+        Initialize the Qdrant vector store.
 
-        self.client = QdrantClient(**params)
-        asyncio.get_event_loop().run_until_complete(self._aensure_collection())
-        self.vs = QdrantVectorStore.from_existing_collection(
-            embedding=self.embeddings,
+        Args:
+            collection_name (str): Name of the collection.
+            embedding_model_dims (int): Dimensions of the embedding model.
+            client (QdrantClient, optional): Existing Qdrant client instance. Defaults to None.
+            host (str, optional): Host address for Qdrant server. Defaults to None.
+            port (int, optional): Port for Qdrant server. Defaults to None.
+            path (str, optional): Path for local Qdrant database. Defaults to None.
+            url (str, optional): Full URL for Qdrant server. Defaults to None.
+            api_key (str, optional): API key for Qdrant server. Defaults to None.
+            on_disk (bool, optional): Enables persistent storage. Defaults to False.
+        """
+        is_remote = bool(url) or bool(api_key) or (host and port)
+
+        if is_remote:
+            self.client = QdrantClient(
+                url=url if url else None,
+                host=host if host else None,
+                port=port if port else None,
+                api_key=api_key if api_key else None,
+                prefer_grpc=prefer_grpc,
+            )
+        else:
+            if not on_disk and os.path.isdir(path):
+                shutil.rmtree(path)
+            self.client = QdrantClient(path=path, prefer_grpc=False)
+
+        self._ensure_collection()
+        self.vs = QdrantVectorStore(
             client=self.client,
             collection_name=self.collection,
+            embedding=self.embeddings,
+        )
+
+    def _ensure_collection(self) -> None:
+        """Create collection if missing; infer embedding dimension dynamically (sync)."""
+        try:
+            self.client.get_collection(self.collection)
+            return  # exists
+        except Exception:
+            pass
+
+        dim = len(self.embeddings.embed_query("dimension-probe"))
+        self.client.create_collection(
+            collection_name=self.collection,
+            vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
         )
 
     def load(self, user_id: str) -> UserProfile:
@@ -193,13 +219,16 @@ class ProfilerLangChain(ProfilerBase):
         data = rebuild_from_items(items)
         return UserProfile(**data)
 
-    async def update(
-        self, profile: UserProfileBase | UserProfile, chat_context: list[ChatItem]
-    ) -> UserProfile:
+    async def update(self, perona: PersonaCache):
         """Async delta extraction -> in-memory patch."""
+        profile = perona.user_profile
+        chat_context = perona.messages
+
         new_turn = UserProfile.apply_update_template(chat_context)
         delta = await self._aextract_delta(profile, new_turn)
-        return self._apply_patch(profile, delta)
+        profile = self._apply_patch(profile, delta)
+
+        perona.user_profile = profile
 
     async def save(self, user_id: str, profile: UserProfileBase | UserProfile) -> None:
         """Async: delete old by user_id filter, then upsert all items."""
@@ -266,21 +295,3 @@ class ProfilerLangChain(ProfilerBase):
 
         post_fix_conflicts(data)
         return UserProfile(**data)
-
-    async def _aensure_collection(self) -> None:
-        """Create collection if missing; infer embedding dimension dynamically."""
-
-        def _ensure():
-            try:
-                self.client.get_collection(self.collection)
-                return  # exists
-            except Exception:
-                pass
-
-            dim = len(self.embeddings.embed_query("dimension-probe"))
-            self.client.create_collection(
-                collection_name=self.collection,
-                vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
-            )
-
-        await asyncio.to_thread(_ensure)

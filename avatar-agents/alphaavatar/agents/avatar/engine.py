@@ -23,7 +23,7 @@ from livekit.agents.voice.generation import update_instructions
 
 from alphaavatar.agents.configs import AvatarConfig, SessionConfig
 from alphaavatar.agents.memory import MemoryBase, memory_chat_context_watcher, memory_search_hook
-from alphaavatar.agents.persona import PersonaBase
+from alphaavatar.agents.persona import PersonaBase, persona_chat_context_watcher
 from alphaavatar.agents.template import AvatarPromptTemplate
 from alphaavatar.agents.utils import format_current_time
 
@@ -85,6 +85,12 @@ class AvatarEngine(Agent):
                 memory_chat_context_watcher, self._memory, self.session_config.session_id
             ),
         )
+        attach_observer(
+            ctx=self._chat_ctx,
+            on_change=partial(
+                persona_chat_context_watcher, self._persona, self.session_config.user_id
+            ),
+        )
 
         # generation hooks
         self._generation_hooks = HookRegistry()
@@ -99,6 +105,11 @@ class AvatarEngine(Agent):
     def memory(self) -> MemoryBase:
         """Get the memory instance."""
         return self._memory
+
+    @property
+    def persona(self) -> PersonaBase:
+        """Get the memory instance."""
+        return self._persona
 
     @function_tool()
     async def recall_memory(
@@ -182,4 +193,8 @@ class AvatarEngine(Agent):
         return _gen()
 
     async def on_exit(self):
-        await self.memory.update(session_id=self.session_config.session_id)
+        # memory op
+        await self.memory.update()
+
+        # persona op
+        await self.persona.update()
