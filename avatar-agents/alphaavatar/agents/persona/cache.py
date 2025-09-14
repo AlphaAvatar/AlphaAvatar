@@ -17,19 +17,23 @@ from typing import TYPE_CHECKING
 
 from livekit.agents.llm import ChatItem, ChatMessage
 
+from alphaavatar.agents.utils import AvatarTime
+
 if TYPE_CHECKING:
-    from .profiler import UserProfileBase
+    from .profiler import DetailsBase, UserProfile
 
 
 class PersonaCache:
     def __init__(
         self,
         *,
-        user_profile: UserProfileBase,
-        speech_profile: UserProfileBase,
-        visual_profile: UserProfileBase,
+        timestamp: AvatarTime,
+        user_profile: UserProfile,
+        speech_profile: UserProfile,
+        visual_profile: UserProfile,
         current_retrieval_times: int = 0,
     ):
+        self._timestamp = timestamp
         self._user_profile = user_profile
         self._speech_profile = speech_profile
         self._visual_profile = visual_profile
@@ -38,8 +42,16 @@ class PersonaCache:
         self._messages: list[ChatItem] = []
 
     @property
-    def user_profile(self):
-        return self._user_profile
+    def time(self) -> str:
+        return self._timestamp.time_str
+
+    @property
+    def user_profile_details(self) -> DetailsBase:
+        return self._user_profile.details
+
+    @property
+    def user_profile_timestamp(self) -> dict[str, str]:
+        return self._user_profile.timestamp
 
     @property
     def speech_profile(self):
@@ -57,9 +69,13 @@ class PersonaCache:
     def messages(self):
         return self._messages
 
-    @user_profile.setter
-    def user_profile(self, user_profile: UserProfileBase):
-        self._user_profile = user_profile
+    @user_profile_details.setter
+    def user_profile_details(self, profile_details: DetailsBase):
+        self._user_profile.details = profile_details
+
+    @user_profile_timestamp.setter
+    def user_profile_timestamp(self, timestamp: dict):
+        self._user_profile.timestamp.update(timestamp)
 
     def add_message(self, message: ChatItem):
         """Add a new message to the cache."""

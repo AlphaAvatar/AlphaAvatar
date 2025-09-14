@@ -11,8 +11,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
+from abc import abstractmethod
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .cache import PersonaCache
 
 
 class RecognizerBase:
     def __init__(self):
         pass
+
+    @abstractmethod
+    async def update(self, perona: PersonaCache): ...
+
+    @abstractmethod
+    async def save(self, user_id: str, perona: PersonaCache) -> None: ...

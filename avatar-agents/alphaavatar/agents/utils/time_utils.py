@@ -14,13 +14,22 @@
 import calendar
 from datetime import datetime
 
+from pydantic import BaseModel, Field
+
 # Try zoneinfo first (Py>=3.9); if unavailable or tz not found, fall back to pytz.
 try:
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError  # Python 3.9+
-
 except Exception:
     ZoneInfo = None  # type: ignore
     ZoneInfoNotFoundError = Exception  # type: ignore
+
+
+class AvatarTime(BaseModel):
+    timezore: str = Field(default_factory=str)
+    year: str = Field(default_factory=str)
+    month: str = Field(default_factory=str)
+    day: str = Field(default_factory=str)
+    time_str: str = Field(default_factory=str)
 
 
 def _now_in_tz(tzname: str) -> datetime:
@@ -45,7 +54,7 @@ def _now_in_tz(tzname: str) -> datetime:
     return datetime.now(pytz.timezone(tzname))
 
 
-def format_current_time(tz: str) -> dict:
+def format_current_time(tz: str) -> AvatarTime:
     """
     Return the current time as:
         'Weekday, Month D, YYYY, h AM/PM'
@@ -71,11 +80,12 @@ def format_current_time(tz: str) -> dict:
     hour12 = dt.hour % 12 or 12
     ampm = "AM" if dt.hour < 12 else "PM"
 
-    time_str = f"{weekday}, {month} {dt.day}, {dt.year}, {hour12} {ampm}"
-    return {
+    time_str = f"Timezone: {tz}; Time: {weekday}, {month} {dt.day}, {dt.year}, {hour12} {ampm}"
+    time_dict = {
         "timezone": tz,
-        "year": dt.year,
-        "month": dt.month,
-        "day": dt.day,
+        "year": str(dt.year),
+        "month": str(dt.month),
+        "day": str(dt.day),
         "time_str": time_str,
     }
+    return AvatarTime(**time_dict)

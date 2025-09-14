@@ -13,13 +13,14 @@
 # limitations under the License.
 from .base import PersonaBase
 from .cache import PersonaCache
-from .profiler import ProfilerBase, UserProfileBase
+from .profiler import DetailsBase, ProfilerBase, UserProfile
 from .watcher import persona_chat_context_watcher
 
 __all__ = [
     "PersonaBase",
     "PersonaCache",
-    "UserProfileBase",
+    "UserProfile",
+    "DetailsBase",
     "ProfilerBase",
     "persona_chat_context_watcher",
 ]

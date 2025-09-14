@@ -14,6 +14,8 @@
 
 from livekit.agents.llm import ChatItem
 
+from alphaavatar.agents.utils import AvatarTime
+
 from .cache import PersonaCache
 from .identifier import IdentifierBase
 from .profiler import ProfilerBase
@@ -53,13 +55,14 @@ class PersonaBase:
     def persona_cache(self) -> dict[str, PersonaCache]:
         return self._persona_cache
 
-    def init_cache(self, *, user_id: str) -> PersonaCache:
+    def init_cache(self, *, timestamp: AvatarTime, user_id: str) -> PersonaCache:
         if user_id not in self.persona_cache:
             user_profile = self.profiler.load(user_id)
             # speech_profile = self.identifier.load(user_id)
             # visual_profile = self.recognizer.load(user_id)
 
             self.persona_cache[user_id] = PersonaCache(
+                timestamp=timestamp,
                 user_profile=user_profile,
                 speech_profile=None,  # type: ignore
                 visual_profile=None,  # type: ignore
@@ -93,6 +96,26 @@ class PersonaBase:
 
         update_clss_list = [self.recognizer, self.identifier, self.profiler]
         for update_clss in update_clss_list:
+            update_clss: RecognizerBase | IdentifierBase | ProfilerBase
             if update_clss and hasattr(update_clss, "update") and callable(update_clss.update):
                 for _uid, perona in perona_tuple:
-                    await update_clss.update(perona)
+                    await update_clss.update(perona)  # type: ignore
+
+    async def save(self, *, user_id: str | None = None):
+        """"""
+        if user_id is not None and user_id not in self.persona_cache:
+            raise ValueError(
+                f"User ID {user_id} not found in persona cache. You need to call 'init_cache' first."
+            )
+
+        if user_id is None:
+            perona_tuple = [(uid, cache) for uid, cache in self.persona_cache.items()]
+        else:
+            perona_tuple = [(user_id, self.persona_cache[user_id])]
+
+        update_clss_list = [self.recognizer, self.identifier, self.profiler]
+        for update_clss in update_clss_list:
+            update_clss: RecognizerBase | IdentifierBase | ProfilerBase
+            if update_clss and hasattr(update_clss, "save") and callable(update_clss.save):
+                for _uid, perona in perona_tuple:
+                    await update_clss.save(_uid, perona)  # type: ignore

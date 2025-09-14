@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .time_utils import format_current_time
+from .op_utils import deduplicate_keep_latest
+from .time_utils import AvatarTime, format_current_time
 
-__all__ = ["format_current_time"]
+__all__ = ["deduplicate_keep_latest", "AvatarTime", "format_current_time"]

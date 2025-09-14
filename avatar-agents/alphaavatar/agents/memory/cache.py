@@ -15,6 +15,8 @@ from enum import Enum
 
 from livekit.agents.llm import ChatItem, ChatMessage, ChatRole
 
+from alphaavatar.agents.utils import AvatarTime
+
 
 def apply_memory_template(
     messages: list[ChatItem], *, filter_roles: list[ChatRole] | None = None
@@ -58,7 +60,7 @@ class MemoryCache:
 
     def __init__(
         self,
-        timestamp: dict,
+        timestamp: AvatarTime,
         session_id: str | None = None,
         user_or_tool_id: str | None = None,
         memory_type: MemoryType = MemoryType.CONVERSATION,
@@ -66,7 +68,7 @@ class MemoryCache:
         self._user_or_tool_id = user_or_tool_id
         self._session_id = session_id
 
-        self._metadata = {"type": memory_type, "topic": "", **timestamp}
+        self._metadata = {"type": memory_type, "topic": "", **timestamp.model_dump()}
         self._messages: list[ChatItem] = []
 
     @property

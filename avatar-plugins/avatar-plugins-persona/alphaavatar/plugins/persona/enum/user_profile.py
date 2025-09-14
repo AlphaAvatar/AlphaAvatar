@@ -16,7 +16,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from alphaavatar.agents.persona import UserProfileBase
+from alphaavatar.agents.persona import DetailsBase
 
 
 class Gender(str, Enum):
@@ -229,7 +229,7 @@ class FamilyStatus(BaseModel):
     )
 
 
-class UserProfile(UserProfileBase):
+class UserProfileDetails(DetailsBase):
     # Identification & Demographics
     name: str | None = Field(None, description="Preferred name or nickname.")
     gender: Gender | None = Field(None, description="Gender identity if explicitly stated.")

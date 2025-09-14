@@ -32,11 +32,12 @@ from qdrant_client.models import (
     VectorParams,
 )
 
-from alphaavatar.agents.persona import PersonaCache, ProfilerBase, UserProfileBase
+from alphaavatar.agents.persona import DetailsBase, PersonaCache, ProfilerBase, UserProfile
 
-from .enum.user_profile import UserProfile
+from .enum.user_profile import UserProfileDetails
 from .profiler_op import (
     ProfileDelta,
+    ValueType,
     append_string,
     clear_path,
     flatten_items,
@@ -91,7 +92,7 @@ class ProfilerLangChain(ProfilerBase):
         temperature: float = 0.0,
         host: str | None = None,
         port: int | None = None,
-        path: str = "/tmp/qdrant",
+        path: str = "/tmp/qdrant_profiler",
         url: str | None = None,
         api_key: str | None = None,
         on_disk: bool = False,
@@ -211,26 +212,29 @@ class ProfilerLangChain(ProfilerBase):
             doc = payload.get("page_content") or ""
             meta = {k: v for k, v in payload.items() if k != "page_content"}
             meta.setdefault("path", "")
-            meta.setdefault("type", "scalar")
+            meta.setdefault("type", ValueType.scalar)
             meta.setdefault("json_value", None)
 
             items.append({"id": str(p.id), "page_content": doc, "metadata": meta})
 
-        data = rebuild_from_items(items)
-        return UserProfile(**data)
+        data, timestamp = rebuild_from_items(items)
+        profile_details = UserProfileDetails(**data)
+        return UserProfile(details=profile_details, timestamp=timestamp)
 
     async def update(self, perona: PersonaCache):
         """Async delta extraction -> in-memory patch."""
-        profile = perona.user_profile
+        update_time: str = perona.time
+        profile_details: UserProfileDetails | DetailsBase = perona.user_profile_details
         chat_context = perona.messages
 
         new_turn = UserProfile.apply_update_template(chat_context)
-        delta = await self._aextract_delta(profile, new_turn)
-        profile = self._apply_patch(profile, delta)
+        delta = await self._aextract_delta(profile_details, new_turn)
+        profile_details, timestamp = self._apply_patch(update_time, profile_details, delta)
 
-        perona.user_profile = profile
+        perona.user_profile_details = profile_details
+        perona.user_profile_timestamp = timestamp
 
-    async def save(self, user_id: str, profile: UserProfileBase | UserProfile) -> None:
+    async def save(self, user_id: str, perona: PersonaCache) -> None:
         """Async: delete old by user_id filter, then upsert all items."""
 
         # 1) delete existing points for this user_id
@@ -245,8 +249,9 @@ class ProfilerLangChain(ProfilerBase):
         await asyncio.to_thread(_delete_by_filter)
 
         # 2) flatten and add
-        data = profile.model_dump()
-        items = flatten_items(user_id, data)
+        data = perona.user_profile_details.model_dump()
+        timestamp = perona.user_profile_timestamp
+        items = flatten_items(user_id, data, timestamp)
         if not items:
             return
 
@@ -257,7 +262,7 @@ class ProfilerLangChain(ProfilerBase):
         await asyncio.to_thread(self.vs.add_texts, texts, metadatas, ids)
 
     async def _aextract_delta(
-        self, profile: UserProfileBase | UserProfile, new_turn: str
+        self, profile: UserProfileDetails | DetailsBase, new_turn: str
     ) -> ProfileDelta:
         """Ask the LLM to generate patch ops relative to the current profile."""
         chain = DELTA_PROMPT | self._delta_llm
@@ -266,15 +271,16 @@ class ProfilerLangChain(ProfilerBase):
         )
 
     def _apply_patch(
-        self, profile: UserProfileBase | UserProfile, delta: ProfileDelta
-    ) -> UserProfile:
+        self, update_time: str, profile: UserProfileDetails | DetailsBase, delta: ProfileDelta
+    ) -> tuple[UserProfileDetails, dict]:
         """
-        Apply PatchOps to a UserProfile:
+        Apply PatchOps to a UserProfileDetails:
           - set: overwrite value (scalar/list/object) at path
           - append/remove: operate on string lists
           - clear: clear path (None or [])
         """
         data: dict[str, Any] = deepcopy(profile.model_dump())
+        timestamp: dict[str, str] = {}
 
         for op in delta.ops:
             tokens = parse_pointer(op.path)
@@ -289,9 +295,11 @@ class ProfilerLangChain(ProfilerBase):
                     append_string(data, tokens, op.value)
                 elif op.op == "remove" and op.value is not None:
                     remove_string(data, tokens, op.value)
+
+                timestamp[op.path] = update_time
             except Exception:
                 # In production: log the error with op details
                 continue
 
         post_fix_conflicts(data)
-        return UserProfile(**data)
+        return UserProfileDetails(**data), timestamp

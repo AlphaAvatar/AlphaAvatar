@@ -18,12 +18,13 @@ allow_interruptions: true
 
 
 ### Memory Args
-memory_plugin: mem0_client
 memory_search_context: 3
 memory_recall_session: 4
 maximum_memory_items: 28
+memory_plugin: mem0_client
 
 
 ### Profiler Args
-profiler_plugin: langchain
 maximum_retrieval_times: 3
+profiler_plugin: langchain
+profiler_init_config: {'path': './qdrant_profiler', 'on_disk': true}

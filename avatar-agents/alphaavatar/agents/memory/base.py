@@ -17,7 +17,7 @@ from abc import abstractmethod
 
 from livekit.agents.llm import ChatItem
 
-from alphaavatar.agents.utils.op_utils import deduplicate_keep_latest
+from alphaavatar.agents.utils import AvatarTime, deduplicate_keep_latest
 
 from .cache import MemoryCache, MemoryType
 
@@ -103,7 +103,7 @@ class MemoryBase:
     def init_cache(
         self,
         *,
-        timestamp: dict,
+        timestamp: AvatarTime,
         session_id: str,
         user_or_tool_id: str | None = None,
         memory_type: MemoryType = MemoryType.CONVERSATION,

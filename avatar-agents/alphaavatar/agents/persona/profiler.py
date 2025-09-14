@@ -23,7 +23,13 @@ if TYPE_CHECKING:
     from .cache import PersonaCache
 
 
-class UserProfileBase(BaseModel):
+class DetailsBase(BaseModel): ...
+
+
+class UserProfile(BaseModel):
+    details: DetailsBase
+    timestamp: dict
+
     @classmethod
     def apply_update_template(cls, chat_context: list[ChatItem]):
         """Apply the profile update template with the given keyword arguments."""
@@ -46,13 +52,13 @@ class ProfilerBase:
         pass
 
     @abstractmethod
-    def load(self, user_id: str) -> UserProfileBase: ...
+    def load(self, user_id: str) -> UserProfile: ...
 
     @abstractmethod
-    def search(self, profile: UserProfileBase): ...
+    def search(self, profile: UserProfile): ...
 
     @abstractmethod
     async def update(self, perona: PersonaCache): ...
 
     @abstractmethod
-    async def save(self, user_id: str, profile: UserProfileBase) -> None: ...
+    async def save(self, user_id: str, perona: PersonaCache) -> None: ...

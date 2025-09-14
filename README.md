@@ -84,7 +84,8 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 export LIVEKIT_API_KEY=<your API Key>
 export LIVEKIT_API_SECRET=<your API Secret>
 export LIVEKIT_URL=<your LiveKit server URL>
-export OPENAI_API_KEY=<Your OpenAI API Key>
+export OPENAI_API_KEY=<your OpenAI API Key>
+export MEM0_API_KEY=<your Mem0 Client API KEY>
 
-alphaavatar dev examples/pipline_openai_mem0.yaml
+alphaavatar dev examples/pipline_openai_dev.yaml
 ```

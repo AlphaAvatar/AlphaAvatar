@@ -25,7 +25,7 @@ from alphaavatar.agents.configs import AvatarConfig, SessionConfig
 from alphaavatar.agents.memory import MemoryBase, memory_chat_context_watcher, memory_search_hook
 from alphaavatar.agents.persona import PersonaBase, persona_chat_context_watcher
 from alphaavatar.agents.template import AvatarPromptTemplate
-from alphaavatar.agents.utils import format_current_time
+from alphaavatar.agents.utils import AvatarTime, format_current_time
 
 from .avatar_hooks import HookRegistry, install_generation_hooks
 from .chat_context_observer import attach_observer
@@ -45,12 +45,12 @@ class AvatarEngine(Agent):
         self._persona: PersonaBase = avatar_config.persona_config.get_persona_plugin()
 
         # initial params
-        self._avatar_create_time = format_current_time(
+        self._avatar_activate_time: AvatarTime = format_current_time(
             self.avatar_config.avatar_info.avatar_timezone
         )
         self._avatar_prompt_template = AvatarPromptTemplate(
             self.avatar_config.avatar_info.avatar_introduction,
-            current_time=self._avatar_create_time["time_str"],
+            current_time=self._avatar_activate_time.time_str,
         )
 
         # initial avatar
@@ -70,13 +70,15 @@ class AvatarEngine(Agent):
         """Post-initialization to Avtar."""
         # Init User & Avatar Interactive Memory by init user_id & session_id
         self._memory.init_cache(
-            timestamp=self._avatar_create_time,
+            timestamp=self._avatar_activate_time,
             session_id=self.session_config.session_id,
             user_or_tool_id=self.session_config.user_id,
         )
 
         # Init User Peronsa by init user_id
-        self._persona.init_cache(user_id=self.session_config.user_id)
+        self._persona.init_cache(
+            timestamp=self._avatar_activate_time, user_id=self.session_config.user_id
+        )
 
         # attach memory chat context observer
         attach_observer(
@@ -198,3 +200,4 @@ class AvatarEngine(Agent):
 
         # persona op
         await self.persona.update()
+        await self.persona.save()
