@@ -46,6 +46,10 @@ class PersonaCache:
         return self._timestamp.time_str
 
     @property
+    def user_profile(self) -> UserProfile:
+        return self._user_profile
+
+    @property
     def user_profile_details(self) -> DetailsBase:
         return self._user_profile.details
 

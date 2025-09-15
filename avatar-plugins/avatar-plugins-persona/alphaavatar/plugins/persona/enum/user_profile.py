@@ -11,278 +11,133 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from enum import Enum
-from typing import Literal
-
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from alphaavatar.agents.persona import DetailsBase
 
 
-class Gender(str, Enum):
-    male = "male"
-    female = "female"
-    non_binary = "non-binary"
-    prefer_not_say = "prefer_not_say"
-    other = "other"
-
-
-class AgeRange(str, Enum):
-    _0_12 = "0-12"
-    _13_17 = "13-17"
-    _18_24 = "18-24"
-    _25_34 = "25-34"
-    _35_44 = "35-44"
-    _45_54 = "45-54"
-    _55_64 = "55-64"
-    _65_plus = "65+"
-
-
-class EducationLevel(str, Enum):
-    none = "none"
-    high_school = "high_school"
-    associate = "associate"
-    bachelor = "bachelor"
-    master = "master"
-    doctorate = "doctorate"
-    other = "other"
-
-
-class MaritalStatus(str, Enum):
-    single = "single"
-    in_relationship = "in_relationship"
-    married = "married"
-    divorced = "divorced"
-    widowed = "widowed"
-    prefer_not_say = "prefer_not_say"
-    other = "other"
-
-
-class LivingSituation(str, Enum):
-    alone = "alone"
-    with_partner = "with_partner"
-    with_family = "with_family"
-    with_children = "with_children"
-    with_roommates = "with_roommates"
-    campus_dorm = "campus_dorm"
-    other = "other"
-
-
-class LanguagePref(BaseModel):
-    language: str = Field(..., description="IETF BCP 47 code (e.g., 'zh-CN', 'en-US').")
-    proficiency: Literal["native", "fluent", "intermediate", "basic"] | None = Field(
-        None, description="Self-reported proficiency."
-    )
-    preferred: bool | None = Field(None, description="If true, prefer this language for responses.")
-
-
-class Location(BaseModel):
-    country: str | None = Field(None, description="Country name or ISO-3166 alpha-2 code.")
-    region: str | None = Field(None, description="State/Province/Region name.")
-    city: str | None = Field(None, description="City name.")
-    timezone: str | None = Field(None, description="IANA TZ (e.g., 'Asia/Shanghai').")
-    is_traveling: bool | None = Field(None, description="Temporarily away from home location.")
-
-
-class Employment(BaseModel):
-    job_title: str | None = Field(None, description="Current role or occupation.")
-    industry: str | None = Field(None, description="Industry sector (e.g., 'finance', 'tech').")
-    seniority: (
-        Literal[
-            "intern", "junior", "mid", "senior", "lead", "manager", "director", "vp", "cxo", "owner"
-        ]
-        | None
-    ) = Field(None, description="Career seniority if stated.")
-    employer: str | None = Field(None, description="Company or organization.")
-
-
-class EducationDetails(BaseModel):
-    """
-    Rich education block so we can capture field(s) of study without breaking existing 'education_level'.
-    """
-
-    degree_names: list[str] = Field(
-        default_factory=list, description="Degree names (e.g., 'BSc', 'MEng', 'PhD')."
-    )
-    fields_of_study: list[str] = Field(
-        default_factory=list,
-        description="Academic majors/disciplines (e.g., 'Computer Science', 'Economics').",
-    )
-    institution: str | None = Field(None, description="Institution or university name, if stated.")
-    graduation_year: int | None = Field(None, description="Graduation year if explicitly stated.")
-    current_program: str | None = Field(
-        None, description="If currently enrolled, program name (e.g., 'MSc in Data Science')."
-    )
-
-
-class CommunicationStyle(BaseModel):
-    tone: (
-        list[Literal["formal", "neutral", "friendly", "playful", "direct", "empathetic"]] | None
-    ) = Field(default_factory=list, description="Preferred tone(s) for responses.")
-    formality: Literal["low", "medium", "high"] | None = Field(
-        None, description="Desired level of formality."
-    )
-    detail_level: Literal["summary", "balanced", "detailed"] | None = Field(
-        None, description="Preferred detail level."
-    )
-    emoji_ok: bool | None = Field(None, description="Comfort with emojis or casual markers.")
-    response_length: Literal["short", "medium", "long"] | None = Field(
-        None, description="Preferred response length."
-    )
-
-
-class Personality(BaseModel):
-    openness: float | None = Field(
-        None, ge=0, le=1, description="0–1; openness to new experiences."
-    )
-    conscientiousness: float | None = Field(
-        None, ge=0, le=1, description="0–1; organization/self-discipline."
-    )
-    extraversion: float | None = Field(
-        None, ge=0, le=1, description="0–1; sociability/assertiveness."
-    )
-    agreeableness: float | None = Field(
-        None, ge=0, le=1, description="0–1; cooperativeness/empathy."
-    )
-    neuroticism: float | None = Field(
-        None, ge=0, le=1, description="0–1; emotional volatility (lower is calmer)."
-    )
-    traits: list[str] = Field(
-        default_factory=list,
-        description="Key adjectives stated or strongly implied (e.g., 'risk-averse', 'decisive').",
-    )
-
-
-class HealthDiet(BaseModel):
-    dietary: list[str] = Field(
-        default_factory=list, description="Diet patterns/restrictions (e.g., vegetarian, halal)."
-    )
-    allergies: list[str] = Field(default_factory=list, description="Food/substance allergies.")
-    accessibility_needs: list[str] = Field(
-        default_factory=list, description="Accessibility needs (e.g., wheelchair access)."
-    )
-
-
-class Preferences(BaseModel):
-    interests: list[str] = Field(
-        default_factory=list, description="Likes (topics, genres, activities, categories)."
-    )
-    dislikes: list[str] = Field(
-        default_factory=list, description="Avoid list (topics, genres, items)."
-    )
-    brands: list[str] = Field(
-        default_factory=list,
-        description="Favorite or avoided brands (prefix with '-' to mark avoidance).",
-    )
-    content_sensitivities: list[str] = Field(
-        default_factory=list, description="Topics to handle carefully (e.g., horror)."
-    )
-
-
-class Goals(BaseModel):
-    short_term: list[str] = Field(default_factory=list, description="Goals within ~3 months.")
-    long_term: list[str] = Field(default_factory=list, description="Goals beyond ~3 months.")
-
-
-class TimePreferences(BaseModel):
-    working_hours: str | None = Field(
-        None, description="Typical availability window (e.g., '09:30-18:30')."
-    )
-    weekend_ok: bool | None = Field(None, description="Whether weekend contact is acceptable.")
-
-
-class PrivacyPrefs(BaseModel):
-    data_sharing: Literal["minimal", "standard", "broad"] | None = Field(
-        None, description="Acceptable level of personal data sharing."
-    )
-    pii_redaction: bool | None = Field(None, description="Prefer PII to be redacted in outputs.")
-    personalization: Literal["off", "light", "full"] | None = Field(
-        None, description="Desired personalization level."
-    )
-
-
-class FamilyStatus(BaseModel):
-    """
-    Family/household context for better personalization and scheduling.
-    Only populate when the user explicitly states the info.
-    """
-
-    marital_status: MaritalStatus | None = Field(
-        None, description="Marital/relationship status if explicitly stated."
-    )
-    living_situation: LivingSituation | None = Field(
-        None, description="Current living arrangement (e.g., with family, alone)."
-    )
-    household_size: int | None = Field(
-        None, description="Total number of people living in the household (including user)."
-    )
-    children_count: int | None = Field(None, description="Number of children if stated.")
-    children_ages: list[str] = Field(
-        default_factory=list,
-        description="Children ages or age ranges (e.g., '0-3', '4-6', 'teen').",
-    )
-    caregiving_responsibilities: list[str] = Field(
-        default_factory=list, description="Care duties (e.g., eldercare, infant care)."
-    )
-    household_income_range: str | None = Field(
-        None, description="Optional income band if explicitly provided by the user."
-    )
-
-
 class UserProfileDetails(DetailsBase):
+    """
+    Fully flattened user profile model.
+    All fields are plain types (str, int, list[str]).
+    Field values can be natural language expressions, short phrases, or sentences.
+    """
+
     # Identification & Demographics
-    name: str | None = Field(None, description="Preferred name or nickname.")
-    gender: Gender | None = Field(None, description="Gender identity if explicitly stated.")
-    age: int | None = Field(None, description="Approximate age in years if explicitly stated.")
-    age_range: AgeRange | None = Field(
-        None, description="Age bracket if only a rough range is given."
+    name: str | None = Field(
+        None,
+        description="Preferred name or nickname, written naturally "
+        "(e.g., 'Lily', 'Mike Zhang', 'call me Jay').",
+    )
+    gender: str | None = Field(
+        None,
+        description="Gender identity as expressed by the user. Can be a word or phrase "
+        "(e.g., 'male', 'female', 'non-binary', 'prefer not to say', 'other: transgender woman').",
+    )
+    age: int | None = Field(
+        None, description="Approximate age in years if explicitly stated (e.g., 27)."
+    )
+    age_range: str | None = Field(
+        None,
+        description="Age bracket or natural expression "
+        "(e.g., '18-24', 'in my thirties', 'around 50').",
     )
     locale: str | None = Field(
-        None, description="Preferred language/locale code (e.g., 'zh-CN', 'en-US')."
+        None,
+        description="Preferred language/locale code or description "
+        "(e.g., 'zh-CN', 'English (US)', 'Mandarin Chinese').",
     )
-    languages: list[LanguagePref] = Field(
-        default_factory=list, description="Languages and preferences."
+
+    languages: list[str] = Field(
+        default_factory=list,
+        description="Languages with optional proficiency or preference notes, "
+        "written as natural text (e.g., 'English: native, prefer for work', "
+        "'Chinese: fluent, okay for casual chats').",
     )
-    home_location: Location | None = Field(None, description="Primary/home location.")
-    current_location: Location | None = Field(None, description="Current or temporary location.")
+
+    home_location: str | None = Field(
+        None,
+        description="Primary/home location as natural text "
+        "(e.g., 'Shanghai, China, lives in Pudong District, timezone Asia/Shanghai').",
+    )
+    current_location: str | None = Field(
+        None,
+        description="Current or temporary location, can include city/country/timezone "
+        "(e.g., 'Currently in San Francisco for work, timezone PST').",
+    )
 
     # Education & Work
-    education_level: EducationLevel | None = Field(
-        None, description="Highest education level if mentioned."
+    education_level: str | None = Field(
+        None,
+        description="Highest education level in natural words "
+        "(e.g., 'bachelor’s degree', 'completed high school', 'PhD in Physics').",
     )
-    education: EducationDetails | None = Field(
-        None, description="Detailed education info, including fields of study."
+    education: str | None = Field(
+        None,
+        description="Detailed education info, free-form "
+        "(e.g., 'Graduated from MIT in 2020 with a BSc in Computer Science').",
     )
-    employment: Employment | None = Field(
-        None, description="Occupation details including industry and seniority."
+    employment: str | None = Field(
+        None,
+        description="Occupation details as natural text "
+        "(e.g., 'Senior Software Engineer at Google in the tech industry', "
+        "'part-time barista while studying').",
     )
 
     # Personality & Communication
-    personality: Personality | None = Field(
-        None, description="Personality signals (Big Five + key traits)."
+    personality: str | None = Field(
+        None,
+        description="Personality description, free-form. Can include traits, scores, or phrases "
+        "(e.g., 'Openness: high, enjoys trying new things', "
+        "'introverted but friendly', 'empathetic and decisive').",
     )
-    communication: CommunicationStyle | None = Field(
-        None, description="How the user prefers to communicate."
+    communication: str | None = Field(
+        None,
+        description="Preferred communication style described naturally "
+        "(e.g., 'Friendly and casual, okay with emojis', "
+        "'formal and concise', 'detailed explanations preferred').",
     )
 
     # Preferences, Constraints & Context
-    preferences: Preferences | None = Field(
-        None, description="Likes, dislikes, brands, sensitivities."
+    preferences: str | None = Field(
+        None,
+        description="Likes, dislikes, favorite or avoided brands, sensitivities, described freely "
+        "(e.g., 'Loves sci-fi movies, dislikes horror, prefers Apple products, avoid political topics').",
     )
-    health_diet: HealthDiet | None = Field(None, description="Diet/allergies/accessibility.")
-    family: FamilyStatus | None = Field(None, description="Family and household context.")
+    health_diet: str | None = Field(
+        None,
+        description="Dietary patterns, allergies, accessibility needs, free-form "
+        "(e.g., 'Vegetarian, lactose intolerant, needs wheelchair access').",
+    )
+    family: str | None = Field(
+        None,
+        description="Family or household situation, described naturally "
+        "(e.g., 'Married, 2 kids aged 5 and 8, lives with partner and parents, household size 5').",
+    )
     constraints: list[str] = Field(
-        default_factory=list, description="Other hard constraints (time/legal/policy/ethical)."
+        default_factory=list,
+        description="Other constraints as natural phrases "
+        "(e.g., 'cannot work weekends', 'no alcohol due to health reasons').",
     )
-    goals: Goals | None = Field(None, description="Short- and long-term goals.")
-    time_prefs: TimePreferences | None = Field(
-        None, description="Availability and scheduling preferences."
+    goals: str | None = Field(
+        None,
+        description="Short- and long-term goals, free-form "
+        "(e.g., 'Short-term: learn Python, Long-term: transition into data science').",
     )
-    privacy: PrivacyPrefs | None = Field(
-        None, description="Privacy and personalization preferences."
+    time_prefs: str | None = Field(
+        None,
+        description="Availability and scheduling preferences "
+        "(e.g., 'Available 9am–6pm weekdays, weekends are family time').",
+    )
+    privacy: str | None = Field(
+        None,
+        description="Privacy and personalization preferences, natural text "
+        "(e.g., 'Prefer minimal data sharing but okay with personalization').",
     )
 
     # Misc
     notes: str | None = Field(
-        None, description="Additional context that does not fit other fields."
+        None,
+        description="Additional context or free-form notes that do not fit other fields "
+        "(e.g., 'Currently traveling, so responses might be delayed').",
     )

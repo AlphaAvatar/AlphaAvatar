@@ -33,16 +33,16 @@ from qdrant_client.models import (
 )
 
 from alphaavatar.agents.persona import DetailsBase, PersonaCache, ProfilerBase, UserProfile
+from alphaavatar.agents.template import PersonaPluginsTemplate
 
 from .enum.user_profile import UserProfileDetails
 from .profiler_op import (
     ProfileDelta,
-    ValueType,
     append_string,
+    append_text,
     clear_path,
     flatten_items,
     parse_pointer,
-    post_fix_conflicts,
     rebuild_from_items,
     remove_string,
     write_set,
@@ -53,23 +53,33 @@ DELTA_PROMPT = ChatPromptTemplate.from_messages(
         (
             "system",
             """You are a "profile delta extractor". Compare the NEW TURN to the CURRENT PROFILE and output only CHANGES as PatchOps.
-Rules:
-- Use JSON Pointer-like paths (e.g., "/preferences/interests", "/device/os", "/personality/traits").
-- For lists of strings (e.g., interests/dislikes/traits/constraints/brands):
-    * op=append to add a single string (avoid duplicates)
-    * op=remove to remove a single string
-    * op=set ONLY if replacing the entire list (value must be a list)
-- For structured nested objects (e.g., location, employment):
-    * Prefer op=set on the specific field path (e.g., "/location/country", "/employment/job_title")
-- Use op=clear only when the user explicitly invalidates prior info.
+
+Constraints (FLAT schema, no nested objects):
+- Paths MUST be single-segment, top-level keys ONLY (e.g., "/name", "/gender", "/preferences", "/constraints").
+  Do NOT use nested paths like "/preferences/interests" or "/location/country" — nested structures are NOT allowed.
+
+List fields (list of strings):
+  - Use op=append to add ONE string item (avoid duplicates)
+  - Use op=remove to remove ONE string item
+  - Use op=set ONLY if replacing the entire list (value must be a list of strings)
+
+String fields:
+  - Use op=set to overwrite the whole string
+  - Use op=append to CONCATENATE text to the end (like "+="). Keep it short and natural.
+  - Use op=clear to empty the string (set to "")
+
+General:
 - evidence must quote the original sentence or a tight paraphrase; set confidence in [0,1].
 - If nothing changes, return an empty list.
-Avoid hallucinations. Do not invent values not clearly stated or strongly implied.
+- Avoid hallucinations. Do not invent values not clearly stated or strongly implied.
 """,
         ),
         (
             "human",
-            "CURRENT PROFILE (JSON):\n{current_profile}\n\nNEW TURN:\n{new_turn}\n\nOutput only ProfileDelta (list of PatchOps).",
+            "CURRENT PROFILE (JSON):\n{current_profile}\n\n"
+            "REFERENCE FIELDS (type + description):\n{profile_reference}\n\n"
+            "NEW TURN:\n{new_turn}\n\n"
+            "Output only ProfileDelta (list of PatchOps).",
         ),
     ]
 )
@@ -149,7 +159,7 @@ class ProfilerLangChain(ProfilerBase):
                 prefer_grpc=prefer_grpc,
             )
         else:
-            if not on_disk and os.path.isdir(path):
+            if os.path.exists(path) and not on_disk and os.path.isdir(path):
                 shutil.rmtree(path)
             self.client = QdrantClient(path=path, prefer_grpc=False)
 
@@ -175,46 +185,55 @@ class ProfilerLangChain(ProfilerBase):
         )
 
     def load(self, user_id: str) -> UserProfile:
-        """Fetch all points for user_id via Scroll API, rebuild profile (synchronous)."""
+        """Fetch all points for user_id (stored in metadata) via Scroll API, rebuild profile."""
 
-        filt = Filter(must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))])
-        all_points = []
-        next_offset = None
+        def _scroll_all(filt: Filter | None):
+            all_pts = []
+            next_offset = None
+            while True:
+                try:
+                    points, next_offset = self.client.scroll(
+                        collection_name=self.collection,
+                        limit=256,
+                        with_payload=True,
+                        with_vectors=False,
+                        scroll_filter=filt,
+                        offset=next_offset,
+                    )
+                except TypeError:
+                    points, next_offset = self.client.scroll(
+                        collection_name=self.collection,
+                        limit=256,
+                        with_payload=True,
+                        with_vectors=False,
+                        filter=filt,
+                        offset=next_offset,
+                    )
+                all_pts.extend(points or [])
+                if not next_offset or not points:
+                    break
+            return all_pts
 
-        while True:
-            try:
-                points, next_offset = self.client.scroll(
-                    collection_name=self.collection,
-                    limit=256,
-                    with_payload=True,
-                    with_vectors=False,
-                    scroll_filter=filt,
-                    offset=next_offset,
-                )
-            except TypeError:
-                # Some client versions use `filter` instead of `scroll_filter`
-                points, next_offset = self.client.scroll(
-                    collection_name=self.collection,
-                    limit=256,
-                    with_payload=True,
-                    with_vectors=False,
-                    filter=filt,
-                    offset=next_offset,
-                )
+        filt = Filter(
+            must=[FieldCondition(key="metadata.user_id", match=MatchValue(value=user_id))]
+        )
+        all_points = _scroll_all(filt)
 
-            all_points.extend(points or [])
-            if not next_offset or not points:
-                break
+        if not all_points:
+            all_points = _scroll_all(None)
+
+            def _get_user_id(payload: dict[str, Any]) -> str | None:
+                if not isinstance(payload, dict):
+                    return None
+                return (payload.get("metadata") or {}).get("user_id")
+
+            all_points = [p for p in all_points if _get_user_id(p.payload or {}) == user_id]
 
         items: list[dict[str, Any]] = []
         for p in all_points:
             payload = p.payload or {}
-            doc = payload.get("page_content") or ""
-            meta = {k: v for k, v in payload.items() if k != "page_content"}
-            meta.setdefault("path", "")
-            meta.setdefault("type", ValueType.scalar)
-            meta.setdefault("json_value", None)
-
+            doc = payload.get("page_content")
+            meta = payload.get("metadata")
             items.append({"id": str(p.id), "page_content": doc, "metadata": meta})
 
         data, timestamp = rebuild_from_items(items)
@@ -227,7 +246,7 @@ class ProfilerLangChain(ProfilerBase):
         profile_details: UserProfileDetails | DetailsBase = perona.user_profile_details
         chat_context = perona.messages
 
-        new_turn = UserProfile.apply_update_template(chat_context)
+        new_turn = PersonaPluginsTemplate.apply_update_template(chat_context)
         delta = await self._aextract_delta(profile_details, new_turn)
         profile_details, timestamp = self._apply_patch(update_time, profile_details, delta)
 
@@ -238,7 +257,7 @@ class ProfilerLangChain(ProfilerBase):
         """Async: delete old by user_id filter, then upsert all items."""
 
         # 1) delete existing points for this user_id
-        async def _delete_by_filter():
+        def _delete_by_filter():
             filt = Filter(must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))])
             self.client.delete(
                 collection_name=self.collection,
@@ -258,7 +277,6 @@ class ProfilerLangChain(ProfilerBase):
         texts = [it["page_content"] for it in items]
         metadatas = [it["metadata"] for it in items]
         ids = [it["id"] for it in items]
-
         await asyncio.to_thread(self.vs.add_texts, texts, metadatas, ids)
 
     async def _aextract_delta(
@@ -267,24 +285,33 @@ class ProfilerLangChain(ProfilerBase):
         """Ask the LLM to generate patch ops relative to the current profile."""
         chain = DELTA_PROMPT | self._delta_llm
         return await chain.ainvoke(
-            {"current_profile": profile.model_dump_json(), "new_turn": new_turn}  # type: ignore
-        )
+            {
+                "current_profile": profile.model_dump_json(),
+                "profile_reference": UserProfileDetails.field_descriptions_prompt(),
+                "new_turn": new_turn,
+            }
+        )  # type: ignore
 
     def _apply_patch(
         self, update_time: str, profile: UserProfileDetails | DetailsBase, delta: ProfileDelta
     ) -> tuple[UserProfileDetails, dict]:
         """
-        Apply PatchOps to a UserProfileDetails:
-          - set: overwrite value (scalar/list/object) at path
-          - append/remove: operate on string lists
-          - clear: clear path (None or [])
+        Apply PatchOps to a (FLAT) UserProfileDetails:
+          - set: overwrite value (scalar/list) at path
+          - append/remove:
+              * list[str]: append/remove item
+              * str: append concatenated text (+=)
+          - clear:
+              * list -> []
+              * str  -> ""
+              * others -> None
         """
         data: dict[str, Any] = deepcopy(profile.model_dump())
         timestamp: dict[str, str] = {}
 
         for op in delta.ops:
             tokens = parse_pointer(op.path)
-            if not tokens:
+            if not tokens or len(tokens) != 1:
                 continue
             try:
                 if op.op == "set":
@@ -292,7 +319,12 @@ class ProfilerLangChain(ProfilerBase):
                 elif op.op == "clear":
                     clear_path(data, tokens)
                 elif op.op == "append" and op.value is not None:
-                    append_string(data, tokens, op.value)
+                    key = tokens[0]
+                    cur = data.get(key, None)
+                    if isinstance(cur, list):
+                        append_string(data, tokens, op.value)
+                    else:
+                        append_text(data, tokens, op.value)
                 elif op.op == "remove" and op.value is not None:
                     remove_string(data, tokens, op.value)
 
@@ -301,5 +333,4 @@ class ProfilerLangChain(ProfilerBase):
                 # In production: log the error with op details
                 continue
 
-        post_fix_conflicts(data)
         return UserProfileDetails(**data), timestamp

@@ -14,6 +14,7 @@
 
 from livekit.agents.llm import ChatItem
 
+from alphaavatar.agents.template import PersonaPluginsTemplate
 from alphaavatar.agents.utils import AvatarTime
 
 from .cache import PersonaCache
@@ -54,6 +55,11 @@ class PersonaBase:
     @property
     def persona_cache(self) -> dict[str, PersonaCache]:
         return self._persona_cache
+
+    @property
+    def persona_content(self) -> str:
+        user_profiles = [cache.user_profile for uid, cache in self.persona_cache.items()]
+        return PersonaPluginsTemplate.apply_profile_template(user_profiles)
 
     def init_cache(self, *, timestamp: AvatarTime, user_id: str) -> PersonaCache:
         if user_id not in self.persona_cache:

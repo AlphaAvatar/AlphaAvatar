@@ -17,7 +17,8 @@ from typing import Any
 from livekit.agents.llm import ChatItem
 from mem0 import AsyncMemoryClient
 
-from alphaavatar.agents.memory import MemoryBase, apply_memory_template
+from alphaavatar.agents.memory import MemoryBase
+from alphaavatar.agents.template import MemoryPluginsTemplate
 
 
 def apply_client_memory_list(results: list[dict[str, Any]]) -> list:
@@ -29,10 +30,6 @@ def apply_client_memory_list(results: list[dict[str, Any]]) -> list:
         sub_memory += f"Content: {entry['memory']}"
         memory_list.append(sub_memory.strip())
     return memory_list
-
-
-def apply_memory_list(results: dict[str, Any]) -> list:
-    return [entry["memory"] for entry in results["results"]]
 
 
 # TODO: customize memory extracting prompt
@@ -63,7 +60,7 @@ class Mem0ClientMemory(MemoryBase):
 
     async def search(self, *, session_id: str, chat_context: list[ChatItem]):
         """Search for relevant memories based on the query."""
-        query_str = apply_memory_template(
+        query_str = MemoryPluginsTemplate.apply_memory_search_template(
             chat_context[-getattr(self, "memory_search_context", 3) :], filter_roles=["system"]
         )
 
@@ -72,28 +69,12 @@ class Mem0ClientMemory(MemoryBase):
             "AND": [{"user_id": self.memory_cache[session_id].user_or_tool_id}, {"run_id": "*"}]
         }
 
-        if isinstance(self.client, AsyncMemoryClient):
-            agent_results, user_or_tool_results = await asyncio.gather(
-                self.client.search(query=query_str, version="v2", filters=agent_memory_filter),
-                self.client.search(
-                    query=query_str, version="v2", filters=user_or_tool_memory_filter
-                ),
-            )
-            self.agent_memory = apply_client_memory_list(agent_results)
-            self.user_memory = apply_client_memory_list(user_or_tool_results)
-        else:
-            agent_results, user_or_tool_results = await asyncio.gather(
-                self.client.search(
-                    query=query_str, limit=self.memory_recall_session, filters=agent_memory_filter
-                ),
-                self.client.search(
-                    query=query_str,
-                    limit=self.memory_recall_session,
-                    filters=user_or_tool_memory_filter,
-                ),
-            )
-            self.agent_memory = apply_memory_list(agent_results)
-            self.user_memory = apply_memory_list(user_or_tool_results)
+        agent_results, user_or_tool_results = await asyncio.gather(
+            self.client.search(query=query_str, version="v2", filters=agent_memory_filter),
+            self.client.search(query=query_str, version="v2", filters=user_or_tool_memory_filter),
+        )
+        self.agent_memory = apply_client_memory_list(agent_results)
+        self.user_memory = apply_client_memory_list(user_or_tool_results)
 
     async def update(self, *, session_id: str | None = None):
         """Update the memory database with the cached messages.

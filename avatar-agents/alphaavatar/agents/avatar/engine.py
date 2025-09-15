@@ -104,6 +104,10 @@ class AvatarEngine(Agent):
         )
 
     @property
+    def template(self) -> AvatarPromptTemplate:
+        return self._avatar_prompt_template
+
+    @property
     def memory(self) -> MemoryBase:
         """Get the memory instance."""
         return self._memory
@@ -169,8 +173,9 @@ class AvatarEngine(Agent):
             # The current chat_ctx is temporarily copied from self._chat_ctx
             update_instructions(
                 chat_ctx,
-                instructions=self._avatar_prompt_template.instructions(
+                instructions=self.template.instructions(
                     memory_content=self.memory.memory_content,
+                    user_persona=self.persona.persona_content,
                 ),
                 add_if_missing=True,
             )

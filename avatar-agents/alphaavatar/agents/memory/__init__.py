@@ -12,14 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .base import MemoryBase
-from .cache import MemoryType, apply_memory_template, apply_message_template
+from .cache import MemoryType
 from .watcher import memory_chat_context_watcher, memory_search_hook
 
 __all__ = [
     "MemoryBase",
     "MemoryType",
-    "apply_memory_template",
-    "apply_message_template",
     "memory_chat_context_watcher",
     "memory_search_hook",
 ]

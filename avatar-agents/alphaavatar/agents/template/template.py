@@ -11,7 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
+import json
+from typing import TYPE_CHECKING, Any
+
+from livekit.agents.llm import ChatItem, ChatMessage, ChatRole
+
 from .prompts.avatar_system_prompts import AVATAR_SYSTEM_PROMPT
+
+if TYPE_CHECKING:
+    from alphaavatar.agents.persona import UserProfile
+
 
 DEFAULT_SYSTEM_VALUE = "NONE"
 
@@ -73,3 +84,134 @@ class AvatarPromptTemplate:
             user_persona=self._user_persona,
             current_time=self._current_time,
         )
+
+
+class MemoryPluginsTemplate:
+    @classmethod
+    def apply_memory_search_template(
+        cls, messages: list[ChatItem], *, filter_roles: list[ChatRole] | None = None
+    ):
+        """Apply the memory search template with the given keyword arguments."""
+        if filter_roles is None:
+            filter_roles = []
+        memory_strings = []
+        for msg in messages:
+            if isinstance(msg, ChatMessage):
+                role = msg.role
+                if role in filter_roles:
+                    continue
+
+                msg_str = msg.text_content  # TODO: Handle different content types more robustly
+                memory_strings.append(f"### {role}:\n{msg_str}")
+
+        return "\n\n".join(memory_strings)
+
+
+class PersonaPluginsTemplate:
+    @classmethod
+    def apply_update_template(cls, chat_context: list[ChatItem]) -> str:
+        """Apply the profile update template with the given keyword arguments."""
+        memory_strings = []
+        for msg in chat_context:
+            if isinstance(msg, ChatMessage):
+                role = msg.role
+                # TODO: Handle different content types more robustly
+                if role not in ["user", "assistant"]:
+                    continue
+
+                msg_str = msg.text_content
+                memory_strings.append(f"### {role}:\n{msg_str}")
+
+        return "\n\n".join(memory_strings)
+
+    @classmethod
+    def apply_profile_template(
+        cls,
+        user_profiles: list[UserProfile],
+        *,
+        list_sep: str = ", ",
+        sort_keys: bool = True,
+        skip_empty: bool = True,
+    ) -> str:
+        """
+        Render flat UserProfile(s) into a human-readable prompt for Avatar system.
+
+        Args:
+            user_profiles: list of UserProfile objects.
+            list_sep: separator for list elements when rendering.
+            sort_keys: whether to sort top-level keys alphabetically for stable output.
+            skip_empty: skip None or empty-string values (and empty lists).
+
+        Returns:
+            A string ready to be used as part of a system prompt.
+        """
+
+        def _is_scalar(x: Any) -> bool:
+            return isinstance(x, str | int | float | bool)
+
+        def _format_value(val: Any) -> str:
+            """Format value into display text:
+            - scalar -> str(val)
+            - list   -> join primitives as str, non-primitives as JSON
+            - other  -> JSON
+            """
+            if _is_scalar(val):
+                return str(val)
+
+            if isinstance(val, list):
+                if skip_empty and len(val) == 0:
+                    return ""
+                parts: list[str] = []
+                for x in val:
+                    if _is_scalar(x):
+                        s = str(x)
+                        if skip_empty and isinstance(x, str) and s.strip() == "":
+                            continue
+                        parts.append(s)
+                    else:
+                        parts.append(json.dumps(x, ensure_ascii=False))
+                return list_sep.join(parts)
+
+            # dict / object -> JSON
+            return json.dumps(val, ensure_ascii=False)
+
+        profile_blocks: list[str] = []
+
+        for profile in user_profiles:
+            data: dict[str, Any] = (
+                profile.details.model_dump() if profile and profile.details else {}
+            )
+            if not isinstance(data, dict):
+                data = {}
+
+            keys = list(data.keys())
+            if sort_keys:
+                keys.sort()
+
+            lines: list[str] = []
+            for key in keys:
+                val = data[key]
+
+                # Skip empties
+                if skip_empty and (val is None or (isinstance(val, str) and val.strip() == "")):
+                    continue
+                if skip_empty and isinstance(val, list) and len(val) == 0:
+                    continue
+
+                display_val = _format_value(val)
+                if skip_empty and display_val == "":
+                    continue
+
+                meta_path = f"/{key}"
+                ts = profile.timestamp.get(meta_path) if hasattr(profile, "timestamp") else None
+                if ts:
+                    lines.append(f"- {key}: {display_val} (updated at {ts})")
+                else:
+                    lines.append(f"- {key}: {display_val}")
+
+            profile_blocks.append("\n".join(lines))
+
+        if len(profile_blocks) <= 1:
+            return profile_blocks[0] if profile_blocks else ""
+
+        return "\n\n".join(f"User {idx}\n{block}" for idx, block in enumerate(profile_blocks))
