@@ -61,9 +61,18 @@ class PersonaBase:
         user_profiles = [cache.user_profile for uid, cache in self.persona_cache.items()]
         return PersonaPluginsTemplate.apply_profile_template(user_profiles)
 
-    def init_cache(self, *, timestamp: AvatarTime, user_id: str) -> PersonaCache:
+    def add_message(self, *, user_id: str, chat_item: ChatItem):
+        if user_id not in self._persona_cache:
+            raise ValueError(
+                f"User ID {user_id} not found in perona cache. You need to call 'init_cache' first."
+            )
+
+        self._persona_cache[user_id].add_message(chat_item)
+
+    async def init_cache(self, *, timestamp: AvatarTime, user_id: str) -> PersonaCache:
         if user_id not in self.persona_cache:
-            user_profile = self.profiler.load(user_id)
+            # user_profile = self.profiler.load(user_id=user_id)
+            user_profile = await self.profiler.load(user_id=user_id)
             # speech_profile = self.identifier.load(user_id)
             # visual_profile = self.recognizer.load(user_id)
 
@@ -79,14 +88,6 @@ class PersonaBase:
                 f"User with id '{user_id}' already exists in perona cache. "
                 "Please use a unique user_id."
             )
-
-    def add(self, *, user_id: str, chat_item: ChatItem):
-        if user_id not in self._persona_cache:
-            raise ValueError(
-                f"User ID {user_id} not found in perona cache. You need to call 'init_cache' first."
-            )
-
-        self._persona_cache[user_id].add_message(chat_item)
 
     async def update(self, *, user_id: str | None = None):
         """"""
@@ -105,7 +106,7 @@ class PersonaBase:
             update_clss: RecognizerBase | IdentifierBase | ProfilerBase
             if update_clss and hasattr(update_clss, "update") and callable(update_clss.update):
                 for _uid, perona in perona_tuple:
-                    await update_clss.update(perona)  # type: ignore
+                    await update_clss.update(perona=perona)  # type: ignore
 
     async def save(self, *, user_id: str | None = None):
         """"""
@@ -124,4 +125,4 @@ class PersonaBase:
             update_clss: RecognizerBase | IdentifierBase | ProfilerBase
             if update_clss and hasattr(update_clss, "save") and callable(update_clss.save):
                 for _uid, perona in perona_tuple:
-                    await update_clss.save(_uid, perona)  # type: ignore
+                    await update_clss.save(user_id=_uid, perona=perona)  # type: ignore

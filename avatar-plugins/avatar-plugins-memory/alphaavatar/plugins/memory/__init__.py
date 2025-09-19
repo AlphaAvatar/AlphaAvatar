@@ -11,8 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from livekit.agents import Plugin
-
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 
 from .log import logger
@@ -24,12 +22,13 @@ __all__ = [
 ]
 
 
-class MemoryMem0ClientPlugin(Plugin):
+class MemoryMem0ClientPlugin(AvatarPlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
 
-    def download_files(self) -> None:
-        pass
+    def download_files(self): ...
+
+    def initialize(self, *args, **kwargs): ...
 
     def get_plugin(
         self,

@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "alpha-avatar"
+name = "alpha-avatar-agents"
 dynamic = ["version"]
 description = "A real-time interactive Omni Avatar built on LiveKit."
 readme = "README.md"

@@ -100,7 +100,15 @@ class MemoryBase:
         combined = self._tool_memory + tool_memory
         self._tool_memory = deduplicate_keep_latest(combined)[-self.maximum_memory_items :]
 
-    def init_cache(
+    def add_message(self, *, session_id: str, chat_item: ChatItem):
+        if session_id not in self._memory_cache:
+            raise ValueError(
+                f"Session ID {session_id} not found in memory cache. You need to call 'init_cache' first."
+            )
+
+        self._memory_cache[session_id].add_message(chat_item)
+
+    async def init_cache(
         self,
         *,
         timestamp: AvatarTime,
@@ -121,14 +129,6 @@ class MemoryBase:
                 f"Session with id '{session_id}' already exists in memory cache. "
                 "Please use a unique session_id."
             )
-
-    def add(self, *, session_id: str, chat_item: ChatItem):
-        if session_id not in self._memory_cache:
-            raise ValueError(
-                f"Session ID {session_id} not found in memory cache. You need to call 'init_cache' first."
-            )
-
-        self._memory_cache[session_id].add_message(chat_item)
 
     @abstractmethod
     async def search(self, *, session_id: str, chat_context: list[ChatItem]): ...

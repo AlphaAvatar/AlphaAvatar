@@ -36,6 +36,9 @@ class AvatarPlugin(Plugin):
         if threading.current_thread() != threading.main_thread():
             raise RuntimeError("Plugins must be registered on the main thread")
 
+        if name in cls.avatar_registered_plugins[module]:
+            raise ValueError(f"AvatarPlugin[{module}] `{name}` already registered.")
+
         cls.avatar_registered_plugins[module][name] = plugin
         cls.emitter.emit("plugin_registered", plugin)
 

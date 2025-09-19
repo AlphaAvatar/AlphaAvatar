@@ -14,27 +14,18 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import shutil
+import json
 from copy import deepcopy
 from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain_qdrant import QdrantVectorStore
-from qdrant_client import QdrantClient
-from qdrant_client.models import (
-    Distance,
-    FieldCondition,
-    Filter,
-    FilterSelector,
-    MatchValue,
-    VectorParams,
-)
+from langchain_openai import ChatOpenAI
+from livekit.agents.job import get_job_context
 
 from alphaavatar.agents.persona import DetailsBase, PersonaCache, ProfilerBase, UserProfile
 from alphaavatar.agents.template import PersonaPluginsTemplate
 
+from .enum.runner_op import EmbeddingRunnerOP
 from .enum.user_profile import UserProfileDetails
 from .profiler_op import (
     ProfileDelta,
@@ -47,6 +38,7 @@ from .profiler_op import (
     remove_string,
     write_set,
 )
+from .runner.qdrant_runner import QdrantRunner
 
 DELTA_PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -94,153 +86,36 @@ class ProfilerLangChain(ProfilerBase):
     """
 
     def __init__(
-        self,
-        *,
-        collection: str = "alphaavatar_user_profiles",
-        chat_model: str = "gpt-4o-mini",
-        embedding_model: str = "text-embedding-3-small",
-        temperature: float = 0.0,
-        host: str | None = None,
-        port: int | None = None,
-        path: str = "/tmp/qdrant_profiler",
-        url: str | None = None,
-        api_key: str | None = None,
-        on_disk: bool = False,
-        prefer_grpc: bool = False,
+        self, *, chat_model: str = "gpt-4o-mini", temperature: float = 0.0, **kwargs
     ) -> None:
         super().__init__()
-        self.collection = collection
-        self.llm = ChatOpenAI(model=chat_model, temperature=temperature)
-        self._delta_llm = self.llm.with_structured_output(ProfileDelta)
-        self.embeddings = OpenAIEmbeddings(model=embedding_model)
-        self.__post_init__(
-            host=host,
-            port=port,
-            path=path,
-            url=url,
-            api_key=api_key,
-            on_disk=on_disk,
-            prefer_grpc=prefer_grpc,
-        )
+        self._llm = ChatOpenAI(model=chat_model, temperature=temperature)
+        self._delta_llm = self._llm.with_structured_output(ProfileDelta)
+        self._executor = get_job_context().inference_executor
 
-    def __post_init__(
+    async def load(
         self,
         *,
-        host: str | None,
-        port: int | None,
-        path: str,
-        url: str | None,
-        api_key: str | None,
-        on_disk: bool,
-        prefer_grpc,
-    ):
-        """
-        Initialize the Qdrant vector store.
-
-        Args:
-            collection_name (str): Name of the collection.
-            embedding_model_dims (int): Dimensions of the embedding model.
-            client (QdrantClient, optional): Existing Qdrant client instance. Defaults to None.
-            host (str, optional): Host address for Qdrant server. Defaults to None.
-            port (int, optional): Port for Qdrant server. Defaults to None.
-            path (str, optional): Path for local Qdrant database. Defaults to None.
-            url (str, optional): Full URL for Qdrant server. Defaults to None.
-            api_key (str, optional): API key for Qdrant server. Defaults to None.
-            on_disk (bool, optional): Enables persistent storage. Defaults to False.
-        """
-        is_remote = bool(url) or bool(api_key) or (host and port)
-
-        if is_remote:
-            self.client = QdrantClient(
-                url=url if url else None,
-                host=host if host else None,
-                port=port if port else None,
-                api_key=api_key if api_key else None,
-                prefer_grpc=prefer_grpc,
-            )
-        else:
-            if os.path.exists(path) and not on_disk and os.path.isdir(path):
-                shutil.rmtree(path)
-            self.client = QdrantClient(path=path, prefer_grpc=False)
-
-        self._ensure_collection()
-        self.vs = QdrantVectorStore(
-            client=self.client,
-            collection_name=self.collection,
-            embedding=self.embeddings,
-        )
-
-    def _ensure_collection(self) -> None:
-        """Create collection if missing; infer embedding dimension dynamically (sync)."""
-        try:
-            self.client.get_collection(self.collection)
-            return  # exists
-        except Exception:
-            pass
-
-        dim = len(self.embeddings.embed_query("dimension-probe"))
-        self.client.create_collection(
-            collection_name=self.collection,
-            vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
-        )
-
-    def load(self, user_id: str) -> UserProfile:
+        user_id: str,
+        timeout: float | None = 3,
+    ) -> UserProfile:
         """Fetch all points for user_id (stored in metadata) via Scroll API, rebuild profile."""
+        json_data = {"op": EmbeddingRunnerOP.load_user_profile, "param": {"user_id": user_id}}
+        json_data = json.dumps(json_data).encode()
 
-        def _scroll_all(filt: Filter | None):
-            all_pts = []
-            next_offset = None
-            while True:
-                try:
-                    points, next_offset = self.client.scroll(
-                        collection_name=self.collection,
-                        limit=256,
-                        with_payload=True,
-                        with_vectors=False,
-                        scroll_filter=filt,
-                        offset=next_offset,
-                    )
-                except TypeError:
-                    points, next_offset = self.client.scroll(
-                        collection_name=self.collection,
-                        limit=256,
-                        with_payload=True,
-                        with_vectors=False,
-                        filter=filt,
-                        offset=next_offset,
-                    )
-                all_pts.extend(points or [])
-                if not next_offset or not points:
-                    break
-            return all_pts
-
-        filt = Filter(
-            must=[FieldCondition(key="metadata.user_id", match=MatchValue(value=user_id))]
+        result = await asyncio.wait_for(
+            self._executor.do_inference(QdrantRunner.INFERENCE_METHOD, json_data),
+            timeout=timeout,
         )
-        all_points = _scroll_all(filt)
 
-        if not all_points:
-            all_points = _scroll_all(None)
+        assert result is not None, "user profile load should always returns a result"
 
-            def _get_user_id(payload: dict[str, Any]) -> str | None:
-                if not isinstance(payload, dict):
-                    return None
-                return (payload.get("metadata") or {}).get("user_id")
-
-            all_points = [p for p in all_points if _get_user_id(p.payload or {}) == user_id]
-
-        items: list[dict[str, Any]] = []
-        for p in all_points:
-            payload = p.payload or {}
-            doc = payload.get("page_content")
-            meta = payload.get("metadata")
-            items.append({"id": str(p.id), "page_content": doc, "metadata": meta})
-
+        items: list[dict[str, Any]] = json.loads(result.decode())
         data, timestamp = rebuild_from_items(items)
         profile_details = UserProfileDetails(**data)
         return UserProfile(details=profile_details, timestamp=timestamp)
 
-    async def update(self, perona: PersonaCache):
+    async def update(self, *, perona: PersonaCache):
         """Async delta extraction -> in-memory patch."""
         update_time: str = perona.time
         profile_details: UserProfileDetails | DetailsBase = perona.user_profile_details
@@ -253,31 +128,24 @@ class ProfilerLangChain(ProfilerBase):
         perona.user_profile_details = profile_details
         perona.user_profile_timestamp = timestamp
 
-    async def save(self, user_id: str, perona: PersonaCache) -> None:
+    async def save(self, *, user_id: str, perona: PersonaCache, timeout: float | None = 3) -> None:
         """Async: delete old by user_id filter, then upsert all items."""
-
-        # 1) delete existing points for this user_id
-        def _delete_by_filter():
-            filt = Filter(must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))])
-            self.client.delete(
-                collection_name=self.collection,
-                points_selector=FilterSelector(filter=filt),
-                wait=True,
-            )
-
-        await asyncio.to_thread(_delete_by_filter)
-
-        # 2) flatten and add
         data = perona.user_profile_details.model_dump()
         timestamp = perona.user_profile_timestamp
         items = flatten_items(user_id, data, timestamp)
         if not items:
             return
 
-        texts = [it["page_content"] for it in items]
-        metadatas = [it["metadata"] for it in items]
-        ids = [it["id"] for it in items]
-        await asyncio.to_thread(self.vs.add_texts, texts, metadatas, ids)
+        json_data = {
+            "op": EmbeddingRunnerOP.save_user_profile,
+            "param": {"user_id": user_id, "items": items},
+        }
+        json_data = json.dumps(json_data).encode()
+
+        await asyncio.wait_for(
+            self._executor.do_inference(QdrantRunner.INFERENCE_METHOD, json_data),
+            timeout=timeout,
+        )
 
     async def _aextract_delta(
         self, profile: UserProfileDetails | DetailsBase, new_turn: str

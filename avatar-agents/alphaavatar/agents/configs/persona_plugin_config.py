@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import importlib
+import json
+import os
 
 from pydantic import ConfigDict, Field
 from pydantic.dataclasses import dataclass
@@ -41,6 +43,16 @@ class PersonaConfig:
         default={},
         description="Custom configuration parameters for the profiler plugin.",
     )
+
+    # Persona Embedding Config
+    persona_embedding_config: dict = Field(
+        default={},
+        description="Custom initialization parameters for the embedding backend (e.g., host, port, url, api_key, prefer_grpc).",
+    )
+
+    def __post_init__(self):
+        # Set PERONA_PROFILER_ENV
+        os.environ["PERONA_EMBEDDING_CONFIG"] = json.dumps(self.persona_embedding_config)
 
     def get_persona_plugin(self) -> PersonaBase:
         """Returns the Persona plugin instance based on the configuration."""

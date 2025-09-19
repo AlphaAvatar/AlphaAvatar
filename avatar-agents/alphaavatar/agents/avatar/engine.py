@@ -68,17 +68,6 @@ class AvatarEngine(Agent):
 
     def __post_init__(self):
         """Post-initialization to Avtar."""
-        # Init User & Avatar Interactive Memory by init user_id & session_id
-        self._memory.init_cache(
-            timestamp=self._avatar_activate_time,
-            session_id=self.session_config.session_id,
-            user_or_tool_id=self.session_config.user_id,
-        )
-
-        # Init User Peronsa by init user_id
-        self._persona.init_cache(
-            timestamp=self._avatar_activate_time, user_id=self.session_config.user_id
-        )
 
         # attach memory chat context observer
         attach_observer(
@@ -133,6 +122,19 @@ class AvatarEngine(Agent):
 
     async def on_enter(self):
         # BUG: Before entering the function to send a greeting, the front end allows the user to input, but the system cannot recognize it.
+
+        # Init User & Avatar Interactive Memory by init user_id & session_id
+        await self._memory.init_cache(
+            timestamp=self._avatar_activate_time,
+            session_id=self.session_config.session_id,
+            user_or_tool_id=self.session_config.user_id,
+        )
+
+        # Init User Peronsa by init user_id
+        await self._persona.init_cache(
+            timestamp=self._avatar_activate_time, user_id=self.session_config.user_id
+        )
+
         install_generation_hooks(self)
         self.session.generate_reply(
             instructions="Briefly greet the user and offer your assistance."
@@ -201,7 +203,7 @@ class AvatarEngine(Agent):
 
     async def on_exit(self):
         # memory op
-        await self.memory.update()
+        # await self.memory.update()
 
         # persona op
         await self.persona.update()

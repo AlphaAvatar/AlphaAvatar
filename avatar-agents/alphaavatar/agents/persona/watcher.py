@@ -28,4 +28,4 @@ async def persona_chat_context_watcher(
     """Watch chat context changes and update perona accordingly, which will be called after llm generate reply (no matter user message or assistant message)"""
 
     if op == OpType.INSERT:
-        perona.add(user_id=user_id, chat_item=payload["value"])
+        perona.add_message(user_id=user_id, chat_item=payload["value"])

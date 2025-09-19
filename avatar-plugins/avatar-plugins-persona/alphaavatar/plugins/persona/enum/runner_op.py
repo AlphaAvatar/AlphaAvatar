@@ -11,25 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import os
-
-from flask import Flask
-from livekit import api
-
-app = Flask(__name__)
+from enum import StrEnum
 
 
-@app.route("/getToken")
-def getToken():
-    token = (
-        api.AccessToken(os.getenv("LIVEKIT_API_KEY"), os.getenv("LIVEKIT_API_SECRET"))
-        .with_identity("identity")
-        .with_name("my name")
-        .with_grants(
-            api.VideoGrants(
-                room_join=True,
-                room="my-room",
-            )
-        )
-    )
-    return token.to_jwt()
+class EmbeddingRunnerOP(StrEnum):
+    load_user_profile = "load_user_profile"
+    save_user_profile = "save_user_profile"

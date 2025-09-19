@@ -28,7 +28,7 @@ async def memory_chat_context_watcher(
     """Watch chat context changes and update memory accordingly, which will be called after llm generate reply (no matter user message or assistant message)"""
 
     if op == OpType.INSERT:
-        memory.add(session_id=session_id, chat_item=payload["value"])
+        memory.add_message(session_id=session_id, chat_item=payload["value"])
 
     # TODO: Whether to permanently add memory content to the global context
 
