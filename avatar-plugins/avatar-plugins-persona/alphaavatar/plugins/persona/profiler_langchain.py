@@ -89,7 +89,7 @@ class ProfilerLangChain(ProfilerBase):
         self, *, chat_model: str = "gpt-4o-mini", temperature: float = 0.0, **kwargs
     ) -> None:
         super().__init__()
-        self._llm = ChatOpenAI(model=chat_model, temperature=temperature)
+        self._llm = ChatOpenAI(model=chat_model, temperature=temperature)  # type: ignore
         self._delta_llm = self._llm.with_structured_output(ProfileDelta)
         self._executor = get_job_context().inference_executor
 

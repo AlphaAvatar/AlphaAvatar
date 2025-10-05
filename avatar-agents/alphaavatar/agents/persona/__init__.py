@@ -13,8 +13,8 @@
 # limitations under the License.
 from .base import PersonaBase
 from .cache import PersonaCache
-from .identifier import IdentifierBase
 from .profiler import DetailsBase, ProfilerBase, UserProfile
+from .speaker import SpeakerBase
 from .watcher import persona_chat_context_watcher
 
 __all__ = [
@@ -23,6 +23,6 @@ __all__ = [
     "UserProfile",
     "DetailsBase",
     "ProfilerBase",
-    "IdentifierBase",
+    "SpeakerBase",
     "persona_chat_context_watcher",
 ]

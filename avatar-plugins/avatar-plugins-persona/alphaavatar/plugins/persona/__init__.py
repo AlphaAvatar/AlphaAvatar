@@ -16,7 +16,7 @@ from livekit.agents.inference_runner import _InferenceRunner
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 
 from .log import logger
-from .runner.qdrant_runner import QdrantRunner
+from .runner import QdrantRunner, SpeakerVectorRunner
 from .version import __version__
 
 __all__ = [
@@ -44,6 +44,7 @@ class ProfilerLangchainPlugin(AvatarPlugin):
 
 # runner init
 _InferenceRunner.register_runner(QdrantRunner)
+_InferenceRunner.register_runner(SpeakerVectorRunner)
 
 
 # plugin init

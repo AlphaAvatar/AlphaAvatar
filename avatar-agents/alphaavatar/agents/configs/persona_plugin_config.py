@@ -62,7 +62,7 @@ class PersonaConfig:
                 self.profiler_plugin,
                 profiler_init_config=self.profiler_init_config,
             ),
-            identifier=None,  # type: ignore
+            speaker=None,  # type: ignore
             recognizer=None,  # type: ignore
             maximum_retrieval_times=self.maximum_retrieval_times,
         )

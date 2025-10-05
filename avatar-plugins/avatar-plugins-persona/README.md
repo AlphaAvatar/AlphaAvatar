@@ -21,18 +21,23 @@ pip install alpha-avatar-plugins-persona[langchain]
 
 ## Supported Modules
 
+### Vector Store
+| Module                 | Description                                                                                   | Docs                                                                   |
+| ---------------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| **Qdrant** | Combined framework for persona extraction pipelines and vector storage / retrieval.           | [Qdrant](https://qdrant.tech) |
+
 ### Profiler
 | Module                 | Description                                                                                   | Docs                                                                   |
 | ---------------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| **LangChain + Qdrant** | Combined framework for persona extraction pipelines and vector storage / retrieval.           | [LangChain](https://www.langchain.com) / [Qdrant](https://qdrant.tech) |
+| **LangChain** | Combined framework for persona extraction pipelines and vector storage / retrieval.           | [LangChain](https://www.langchain.com) |
 
-### Identifier
+### Speaker
 | Module     | Description                                                                               | Docs                                                                 |
 | ---------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | **ERes2NetV2** | State-of-the-art deep speaker recognition model for speaker embedding and identification. | [3D-Speaker](https://github.com/modelscope/3D-Speaker)     |
 | **wav2vec2-large-robust-24-ft-age-gender** | Deep learning model for speaker embedding with additional age and gender recognition capabilities. | [audEERING](https://huggingface.co/audeering/wav2vec2-large-robust-24-ft-age-gender)     |
 
-### Recognizer
+### Face Recognizer
 | Module  | Description                                                                                   | Docs                                                                 |
 | ------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | **Face ID** | Face embedding + recognition module for identity verification and multimodal persona binding. | (e.g., [InsightFace](https://github.com/deepinsight/insightface))    |

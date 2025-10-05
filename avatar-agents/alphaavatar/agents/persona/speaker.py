@@ -20,12 +20,15 @@ if TYPE_CHECKING:
     from .cache import PersonaCache
 
 
-class IdentifierBase:
+class SpeakerBase:
     def __init__(self):
         pass
 
     @abstractmethod
     async def update(self, *, perona: PersonaCache): ...
+
+    @abstractmethod
+    async def search(self, *, perona: PersonaCache): ...
 
     @abstractmethod
     async def save(self, *, user_id: str, perona: PersonaCache) -> None: ...

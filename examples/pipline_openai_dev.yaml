@@ -28,4 +28,4 @@ memory_plugin: mem0_client
 maximum_retrieval_times: 3
 profiler_plugin: langchain
 profiler_init_config: {}
-persona_embedding_config: {'path': './qdrant_profiler', 'on_disk': true, 'profiler_collection_name': 'alphaavatar_persona_profiler', 'profiler_embedding_model': 'text-embedding-3-small'}
+persona_embedding_config: {'path': './qdrant_persona', 'on_disk': true, 'profiler_collection_name': 'alphaavatar_persona_profiler', 'profiler_embedding_model': 'text-embedding-3-small'}

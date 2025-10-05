@@ -206,5 +206,5 @@ class AvatarEngine(Agent):
         # await self.memory.update()
 
         # persona op
-        await self.persona.update()
+        await self.persona.update_profiler()
         await self.persona.save()

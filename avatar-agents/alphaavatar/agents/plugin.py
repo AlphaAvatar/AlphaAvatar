@@ -22,7 +22,7 @@ class AvatarModule(str, Enum):
 
     MEMORY = "memory"
     PROFILER = "persona_profiler"
-    IDENTIFIER = "persona_identifier"
+    SPEAKER = "persona_speaker"
     RECOGNIZER = "persona_recognizer"
 
 

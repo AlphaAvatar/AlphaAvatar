@@ -11,22 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from livekit.agents.job import get_job_context
+from typing import Literal
 
-from alphaavatar.agents.persona import SpeakerBase
+HG_MODEL = "livekit/turn-detector"
+ONNX_FILENAME = "model_q8.onnx"
 
 
-class SpeakerProfile(SpeakerBase):
-    def __init__(self):
-        super().__init__()
-        self._executor = get_job_context().inference_executor
+# Speaker Vector Model
+SpeakerVectoryModelType = Literal["eres2netv2"]
+MODEL_CONFIG: dict[SpeakerVectoryModelType, dict] = {
+    "eres2netv2": {
+        "revision": "main",
+    },
+}
 
-    async def update(
-        self,
-    ):
-        pass
 
-    async def search(
-        self,
-    ):
-        pass
+# Speaker Attribute Model
