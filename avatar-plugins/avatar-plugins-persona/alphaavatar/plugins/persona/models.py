@@ -22,6 +22,8 @@ SpeakerVectoryModelType = Literal["eres2netv2"]
 MODEL_CONFIG: dict[SpeakerVectoryModelType, dict] = {
     "eres2netv2": {
         "revision": "main",
+        "sample_rate": 16000,
+        "window_s": 3.0,
     },
 }
 

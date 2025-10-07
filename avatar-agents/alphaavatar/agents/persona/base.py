@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 from livekit.agents.llm import ChatItem
 
 from alphaavatar.agents.template import PersonaPluginsTemplate
@@ -19,7 +20,7 @@ from alphaavatar.agents.utils import AvatarTime
 from .cache import PersonaCache
 from .profiler import ProfilerBase
 from .recognizer import RecognizerBase
-from .speaker import SpeakerBase
+from .speaker import SpeakerStreamBase
 
 
 class PersonaBase:
@@ -27,12 +28,12 @@ class PersonaBase:
         self,
         *,
         profiler: ProfilerBase,
-        speaker: SpeakerBase,
+        speaker_stream: type[SpeakerStreamBase],
         recognizer: RecognizerBase,
         maximum_retrieval_times: int = 3,
     ):
         self._profiler = profiler
-        self._speaker = speaker
+        self._speaker_stream = speaker_stream
         self._recognizer = recognizer
 
         self._maximum_retrieval_times = maximum_retrieval_times
@@ -44,8 +45,8 @@ class PersonaBase:
         return self._profiler
 
     @property
-    def speaker(self) -> SpeakerBase:
-        return self._speaker
+    def speaker_stream(self) -> type[SpeakerStreamBase]:
+        return self._speaker_stream
 
     @property
     def recognizer(self) -> RecognizerBase:
@@ -89,14 +90,6 @@ class PersonaBase:
             )
 
     async def update_profiler(self, *, user_id: str | None = None):
-        """_summary_
-
-        Args:
-            user_id (str | None, optional): _description_. Defaults to None.
-
-        Raises:
-            ValueError: _description_
-        """
         if user_id is not None and user_id not in self.persona_cache:
             raise ValueError(
                 f"User ID {user_id} not found in persona cache. You need to call 'init_cache' first."
@@ -111,7 +104,6 @@ class PersonaBase:
             await self.profiler.update(perona=perona)
 
     async def save(self, *, user_id: str | None = None):
-        """"""
         if user_id is not None and user_id not in self.persona_cache:
             raise ValueError(
                 f"User ID {user_id} not found in persona cache. You need to call 'init_cache' first."
@@ -122,9 +114,6 @@ class PersonaBase:
         else:
             perona_tuple = [(user_id, self.persona_cache[user_id])]
 
-        update_clss_list = [self.recognizer, self.speaker, self.profiler]
-        for update_clss in update_clss_list:
-            update_clss: RecognizerBase | SpeakerBase | ProfilerBase
-            if update_clss and hasattr(update_clss, "save") and callable(update_clss.save):
-                for _uid, perona in perona_tuple:
-                    await update_clss.save(user_id=_uid, perona=perona)  # type: ignore
+        # save profiler
+        for _uid, perona in perona_tuple:
+            await self.profiler.save(user_id=_uid, perona=perona)

@@ -1,32 +1,28 @@
-# Roadmap
+# MAIN GOAL
 
-> Updated on 2025-09-12. This roadmap is subject to change based on user feedback and AlphaAvatar project plan.
+Develop a universal **assistant** capable of automatically recognizing users through multimodal streaming input, equipped with self-memory, autonomous reflection, and iterative self-evolution for real-time interaction. It also integrates with mainstream external tools to effectively address users’ practical needs.
 
-## Vision
-A one-liner about the long-term goal and intended users of this project.
+# PLAN ⌚️
 
-## Guidelines
-- Roadmap is structured by quarter & version (vX.Y).
-- Status: ✅ Done | ⏳ In Progress | 📝 Planned
-- Tracking: GitHub Issues / Milestones / Projects.
-- Major updates will be reflected here and in Releases.
+-
 
----
+# MileStone
 
-## Q4 2025 (v1.0)
-### Epic A: Core Functionality
-- 📝 Feature X ([#123](../issues/123))
-- ⏳ Feature Y ([#124](../issues/124))
-- ✅ Basic CLI commands ([#110](../pull/110))
+## Memory Plugin
 
-### Epic B: Performance & Stability
-- 📝 Startup latency < 200ms ([#130](../issues/130))
-- ⏳ E2E stability > 99.5% (Milestone: [v1.0](../milestone/1))
+### Done ✅
 
-### Epic C: Documentation & Observability
-- ✅ Quickstart guide ([#95](../pull/95))
-- 📝 Dashboard for key metrics ([#140](../issues/140))
+- [2025/09] Introduced a memory automatic extraction plug-in built on mem0 client to automatically extract memory information between Assistant and user, Assistant and tools.
 
----
+### TODO 📄
 
-## Q1 2026 (v1.1, Planned)
+-
+
+## Persona Plugin
+
+### Done ✅
+
+- [2025/09]
+
+### TODO 📄
+

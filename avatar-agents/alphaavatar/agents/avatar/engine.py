@@ -18,12 +18,18 @@ from collections.abc import AsyncIterable, Coroutine
 from functools import partial
 from typing import Any
 
-from livekit.agents import Agent, ModelSettings, RunContext, function_tool, llm
+from livekit import rtc
+from livekit.agents import Agent, ModelSettings, RunContext, function_tool, llm, stt
 from livekit.agents.voice.generation import update_instructions
 
 from alphaavatar.agents.configs import AvatarConfig, SessionConfig
 from alphaavatar.agents.memory import MemoryBase, memory_chat_context_watcher, memory_search_hook
-from alphaavatar.agents.persona import PersonaBase, persona_chat_context_watcher
+from alphaavatar.agents.persona import (
+    PersonaBase,
+    SpeakerStreamBase,
+    persona_chat_context_watcher,
+    speaker_node,
+)
 from alphaavatar.agents.template import AvatarPromptTemplate
 from alphaavatar.agents.utils import AvatarTime, format_current_time
 
@@ -106,6 +112,11 @@ class AvatarEngine(Agent):
         """Get the memory instance."""
         return self._persona
 
+    def _get_speaker_stream(self) -> type[SpeakerStreamBase]:
+        if not self._persona.speaker_stream:
+            raise RuntimeError("Persona Speaker Stream is not initialized.")
+        return self._persona.speaker_stream
+
     @function_tool()
     async def recall_memory(
         self,
@@ -140,11 +151,31 @@ class AvatarEngine(Agent):
             instructions="Briefly greet the user and offer your assistance."
         )
 
+    def stt_node(
+        self, audio: AsyncIterable[rtc.AudioFrame], model_settings: ModelSettings
+    ) -> (
+        AsyncIterable[stt.SpeechEvent | str]
+        | Coroutine[Any, Any, AsyncIterable[stt.SpeechEvent | str]]
+        | Coroutine[Any, Any, None]
+    ):
+        """
+        STT [stt_node] -> Text -> Text append to chat context -> chat context -> llm
+
+        Override [livekit.agents.voice.agent.Agent::stt_node] method to handle audio inputs.
+        """
+
+        async def preprocess_audio():
+            async for frame in audio:
+                # insert custom audio preprocessing here
+                yield frame
+
+        return speaker_node(self, preprocess_audio(), model_settings)
+
     async def on_user_turn_completed(
         self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage
     ) -> None:
         """
-        TTS -> Text [on_user_turn_completed] -> Text append to chat context
+        STT -> Text [on_user_turn_completed] -> Text append to chat context
 
         Override [livekit.agents.voice.agent.Agent::on_user_turn_completed] method to handle user turn completion.
         """
@@ -164,7 +195,7 @@ class AvatarEngine(Agent):
         | Coroutine[Any, Any, None]
     ):
         """
-        TTS -> Text -> Text append to chat context -> chat context [llm_node] -> llm
+        STT -> Text -> Text append to chat context -> chat context [llm_node] -> llm
 
         Override [livekit.agents.voice.agent.Agent::llm_node] method to handle llm inputs.
         """

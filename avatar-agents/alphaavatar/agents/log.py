@@ -11,22 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from livekit.agents.job import get_job_context
+import logging
 
-from alphaavatar.agents.persona import SpeakerBase
+DEV_LEVEL = 23
+logging.addLevelName(DEV_LEVEL, "DEV")
 
-
-class SpeakerProfile(SpeakerBase):
-    def __init__(self):
-        super().__init__()
-        self._executor = get_job_context().inference_executor
-
-    async def update(
-        self,
-    ):
-        pass
-
-    async def search(
-        self,
-    ):
-        pass
+logger = logging.getLogger("alphaavatar.agents")

@@ -21,6 +21,8 @@
 Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 </h3>
 
+\[ [ROADMAP](ROADMAP.md) \]
+
 </div>
 
 ---

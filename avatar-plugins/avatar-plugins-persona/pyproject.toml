@@ -25,11 +25,15 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
 ]
 dependencies = [
+    "langchain-core",
+    "langchain-community",
+    "langchain-openai",
+    "qdrant-client",
+    "langchain-qdrant"
 ]
 
 
 [project.optional-dependencies]
-langchain = ["langchain-core", "langchain-community", "langchain-openai", "qdrant-client", "langchain-qdrant"]
 
 [project.urls]
 Documentation = ""
