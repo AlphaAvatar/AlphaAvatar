@@ -26,7 +26,6 @@ from alphaavatar.agents.configs import AvatarConfig, SessionConfig
 from alphaavatar.agents.memory import MemoryBase, memory_chat_context_watcher, memory_search_hook
 from alphaavatar.agents.persona import (
     PersonaBase,
-    SpeakerStreamBase,
     persona_chat_context_watcher,
     speaker_node,
 )
@@ -111,11 +110,6 @@ class AvatarEngine(Agent):
     def persona(self) -> PersonaBase:
         """Get the memory instance."""
         return self._persona
-
-    def _get_speaker_stream(self) -> type[SpeakerStreamBase]:
-        if not self._persona.speaker_stream:
-            raise RuntimeError("Persona Speaker Stream is not initialized.")
-        return self._persona.speaker_stream
 
     @function_tool()
     async def recall_memory(

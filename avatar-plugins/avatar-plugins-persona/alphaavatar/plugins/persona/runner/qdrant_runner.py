@@ -202,14 +202,14 @@ class QdrantRunner(_InferenceRunner):
         # init speaker vs
 
     def run(self, data: bytes) -> bytes | None:
-        data_json = json.loads(data)
+        json_data = json.loads(data)
 
-        match data_json["op"]:
+        match json_data["op"]:
             case EmbeddingRunnerOP.load_user_profile:
-                items = self._load_user_profile(**data_json["param"])
+                items = self._load_user_profile(**json_data["param"])
                 return json.dumps(items).encode()
             case EmbeddingRunnerOP.save_user_profile:
-                result = self._save_user_profile(**data_json["param"])
+                result = self._save_user_profile(**json_data["param"])
                 return json.dumps(result).encode()
             case _:
                 return None

@@ -38,7 +38,7 @@ from .profiler_op import (
     remove_string,
     write_set,
 )
-from .runner.qdrant_runner import QdrantRunner
+from .runner import QdrantRunner
 
 DELTA_PROMPT = ChatPromptTemplate.from_messages(
     [

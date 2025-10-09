@@ -17,14 +17,21 @@ HG_MODEL = "livekit/turn-detector"
 ONNX_FILENAME = "model_q8.onnx"
 
 
+class RunnerModelConfig:
+    def __init__(self, revision: str, sample_rate: int, window_size_samples: int) -> None:
+        self.revision = revision
+        self.sample_rate = sample_rate
+        self.window_size_samples = window_size_samples
+
+
 # Speaker Vector Model
 SpeakerVectoryModelType = Literal["eres2netv2"]
-MODEL_CONFIG: dict[SpeakerVectoryModelType, dict] = {
-    "eres2netv2": {
-        "revision": "main",
-        "sample_rate": 16000,
-        "window_s": 3.0,
-    },
+MODEL_CONFIG: dict[SpeakerVectoryModelType, RunnerModelConfig] = {
+    "eres2netv2": RunnerModelConfig(
+        revision="main",
+        sample_rate=16000,
+        window_size_samples=int(3.0 * 16000),
+    ),
 }
 
 

@@ -32,6 +32,8 @@ from alphaavatar.agents.log import logger
 if TYPE_CHECKING:
     from alphaavatar.agents.avatar import AvatarEngine
 
+    from .base import PersonaBase
+
 
 DEFAULT_STREAM_ADAPTER_API_CONNECT_OPTIONS = APIConnectOptions(
     max_retry=0, timeout=DEFAULT_API_CONNECT_OPTIONS.timeout
@@ -52,9 +54,7 @@ async def speaker_node(
             "AlphaAvatar Persona Plugin require a VAD plugin, please add a VAD to the AgentTask/VoiceAgent to enable Persona Plugin."
         )
 
-    wrapped_speaker = SpeakerAdapter(
-        stt=activity.stt, vad=activity.vad, speaker_stream=agent._get_speaker_stream()
-    )
+    wrapped_speaker = SpeakerAdapter(stt=activity.stt, vad=activity.vad, persona=agent.persona)
 
     conn_options = activity.session.conn_options.stt_conn_options
     async with wrapped_speaker.stream(conn_options=conn_options) as stream:
@@ -73,11 +73,9 @@ async def speaker_node(
 
 
 class SpeakerAdapter(stt.StreamAdapter):
-    def __init__(
-        self, *, stt: stt.STT, vad: vad.VAD, speaker_stream: type[SpeakerStreamBase]
-    ) -> None:
+    def __init__(self, *, stt: stt.STT, vad: vad.VAD, persona: PersonaBase) -> None:
         super().__init__(stt=stt, vad=vad)
-        self._speaker_stream = speaker_stream
+        self._activity_persona = persona
 
     def stream(
         self,
@@ -85,12 +83,13 @@ class SpeakerAdapter(stt.StreamAdapter):
         language: NotGivenOr[str] = NOT_GIVEN,
         conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
     ) -> SpeakerStreamBase:
-        return self._speaker_stream(
+        return self._activity_persona.speaker_stream(
             self,
             vad=self._vad,
             wrapped_stt=self._stt,
             language=language,
             conn_options=conn_options,
+            activity_persona=self._activity_persona,
         )
 
 
@@ -103,12 +102,14 @@ class SpeakerStreamBase(stt.RecognizeStream):
         wrapped_stt: stt.STT,
         language: NotGivenOr[str],
         conn_options: APIConnectOptions,
+        activity_persona: PersonaBase,
     ) -> None:
         super().__init__(stt=stt, conn_options=DEFAULT_STREAM_ADAPTER_API_CONNECT_OPTIONS)
         self._vad = vad
         self._wrapped_stt = wrapped_stt
         self._wrapped_stt_conn_options = conn_options
         self._language = language
+        self._activity_persona = activity_persona
 
     @abstractmethod
     async def _run(self) -> None: ...

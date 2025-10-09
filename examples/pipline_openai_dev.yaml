@@ -30,4 +30,4 @@ profiler_plugin: default
 profiler_init_config: {}
 speaker_plugin: default
 speaker_init_config: {}
-persona_embedding_config: {'path': './qdrant_persona', 'on_disk': true, 'profiler_collection_name': 'alphaavatar_persona_profiler', 'profiler_embedding_model': 'text-embedding-3-small'}
+persona_embedding_config: {'path': './alphaavatar_qdrant_persona', 'on_disk': true, 'profiler_collection_name': 'alphaavatar_persona_profiler', 'profiler_embedding_model': 'text-embedding-3-small'}

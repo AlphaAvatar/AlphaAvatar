@@ -13,15 +13,17 @@
 # limitations under the License.
 import atexit
 import importlib.resources
-import json
 import math
 import os
 from contextlib import ExitStack
 
+import numpy as np
 import onnxruntime
+import torch
 from livekit.agents.inference_runner import _InferenceRunner
 from livekit.agents.utils import hw
 
+from ..fbank import FBank
 from ..models import SpeakerVectoryModelType
 
 _resource_files = ExitStack()
@@ -55,5 +57,12 @@ class SpeakerVectorRunner(_InferenceRunner):
         else:
             self._session = onnxruntime.InferenceSession(path, sess_options=opts)
 
+        self._feature_extractor = FBank(80, sample_rate=16000, mean_nor=True)
+
     def run(self, data: bytes) -> bytes | None:
-        json.loads(data)
+        wav_data = np.frombuffer(data, dtype=np.float32)
+        wav_tensor = torch.from_numpy(wav_data)
+
+        ort_inputs = {"feature": self._feature_extractor(wav_tensor)}
+        out = self._session.run(None, ort_inputs)
+        print("Speaker Vector Inference done.", out, flush=True)

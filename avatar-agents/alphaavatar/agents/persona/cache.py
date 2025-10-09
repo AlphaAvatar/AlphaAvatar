@@ -29,14 +29,14 @@ class PersonaCache:
         *,
         timestamp: AvatarTime,
         user_profile: UserProfile,
-        speech_profile: UserProfile,
-        visual_profile: UserProfile,
+        speaker_profile: UserProfile,
+        face_profile: UserProfile,
         current_retrieval_times: int = 0,
     ):
         self._timestamp = timestamp
         self._user_profile = user_profile
-        self._speech_profile = speech_profile
-        self._visual_profile = visual_profile
+        self._speaker_profile = speaker_profile
+        self._face_profile = face_profile
         self._current_retrieval_times = current_retrieval_times
 
         self._messages: list[ChatItem] = []
@@ -58,12 +58,12 @@ class PersonaCache:
         return self._user_profile.timestamp
 
     @property
-    def speech_profile(self):
-        return self._speech_profile
+    def speaker_profile(self):
+        return self._speaker_profile
 
     @property
-    def visual_profile(self):
-        return self._visual_profile
+    def face_profile(self):
+        return self._face_profile
 
     @property
     def retrieval_times(self):

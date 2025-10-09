@@ -49,9 +49,9 @@ class SpeakerStreamPlugin(AvatarPlugin):
     def download_files(self): ...
 
     def get_plugin(self, speaker_init_config: dict, *args, **kwargs):
-        from .speaker_stream import SpeakerProfileStream
+        from .speaker_stream import SpeakerStreamWrapper
 
-        return SpeakerProfileStream
+        return SpeakerStreamWrapper
 
 
 # runner init

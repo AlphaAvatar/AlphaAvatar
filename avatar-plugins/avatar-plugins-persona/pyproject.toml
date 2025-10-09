@@ -29,7 +29,8 @@ dependencies = [
     "langchain-community",
     "langchain-openai",
     "qdrant-client",
-    "langchain-qdrant"
+    "langchain-qdrant",
+    "torchaudio>=0.10.1"
 ]
 
 

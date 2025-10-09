@@ -79,8 +79,8 @@ class PersonaBase:
             self.persona_cache[user_id] = PersonaCache(
                 timestamp=timestamp,
                 user_profile=user_profile,
-                speech_profile=None,  # type: ignore
-                visual_profile=None,  # type: ignore
+                speaker_profile=None,  # type: ignore
+                face_profile=None,  # type: ignore
             )
             return self.persona_cache[user_id]
         else:
