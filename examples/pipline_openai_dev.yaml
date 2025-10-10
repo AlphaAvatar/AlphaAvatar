@@ -26,6 +26,7 @@ memory_plugin: mem0_client
 
 ### Profiler Args
 maximum_retrieval_times: 3
+speaker_threshold: 0.75
 profiler_plugin: default
 profiler_init_config: {}
 speaker_plugin: default

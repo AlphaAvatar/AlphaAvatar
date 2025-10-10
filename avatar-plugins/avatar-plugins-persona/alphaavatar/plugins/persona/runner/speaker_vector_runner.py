@@ -19,11 +19,11 @@ from contextlib import ExitStack
 
 import numpy as np
 import onnxruntime
-import torch
 from livekit.agents.inference_runner import _InferenceRunner
 from livekit.agents.utils import hw
 
 from ..fbank import FBank
+from ..log import logger
 from ..models import SpeakerVectoryModelType
 
 _resource_files = ExitStack()
@@ -46,23 +46,26 @@ class SpeakerVectorRunner(_InferenceRunner):
         opts.intra_op_num_threads = max(1, min(math.ceil(hw.get_cpu_monitor().cpu_count()) // 2, 4))
         opts.inter_op_num_threads = 1
         opts.add_session_config_entry("session.dynamic_block_base", "4")
+        available = onnxruntime.get_available_providers()
 
-        if (
-            os.getenv("FORCE_CPU", 1)
-            and "CPUExecutionProvider" in onnxruntime.get_available_providers()
-        ):
+        if os.getenv("FORCE_CPU", "0") == "1" and "CPUExecutionProvider" in available:
+            logger.info("[SpeakerVectorRunner] Running on CPU")
             self._session = onnxruntime.InferenceSession(
                 path, providers=["CPUExecutionProvider"], sess_options=opts
             )
+        elif "CUDAExecutionProvider" in available:
+            logger.info("[SpeakerVectorRunner] Running on GPU (CUDA)")
+            self._session = onnxruntime.InferenceSession(
+                path, providers=["CUDAExecutionProvider"], sess_options=opts
+            )
         else:
+            logger.info("[SpeakerVectorRunner] Fallback: default provider")
             self._session = onnxruntime.InferenceSession(path, sess_options=opts)
 
         self._feature_extractor = FBank(80, sample_rate=16000, mean_nor=True)
 
     def run(self, data: bytes) -> bytes | None:
         wav_data = np.frombuffer(data, dtype=np.float32)
-        wav_tensor = torch.from_numpy(wav_data)
-
-        ort_inputs = {"feature": self._feature_extractor(wav_tensor)}
-        out = self._session.run(None, ort_inputs)
-        print("Speaker Vector Inference done.", out, flush=True)
+        ort_inputs = {"feature": self._feature_extractor(wav_data)}
+        embedding: np.ndarray = self._session.run(None, ort_inputs)[0]  # type: ignore
+        return embedding.tobytes()

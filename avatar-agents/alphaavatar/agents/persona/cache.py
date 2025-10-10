@@ -13,14 +13,12 @@
 # limitations under the License.
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
+import numpy as np
 from livekit.agents.llm import ChatItem, ChatMessage
 
 from alphaavatar.agents.utils import AvatarTime
 
-if TYPE_CHECKING:
-    from .profiler import DetailsBase, UserProfile
+from .enum.user_profile import DetailsBase, UserProfile
 
 
 class PersonaCache:
@@ -29,14 +27,10 @@ class PersonaCache:
         *,
         timestamp: AvatarTime,
         user_profile: UserProfile,
-        speaker_profile: UserProfile,
-        face_profile: UserProfile,
         current_retrieval_times: int = 0,
     ):
         self._timestamp = timestamp
         self._user_profile = user_profile
-        self._speaker_profile = speaker_profile
-        self._face_profile = face_profile
         self._current_retrieval_times = current_retrieval_times
 
         self._messages: list[ChatItem] = []
@@ -46,26 +40,6 @@ class PersonaCache:
         return self._timestamp.time_str
 
     @property
-    def user_profile(self) -> UserProfile:
-        return self._user_profile
-
-    @property
-    def user_profile_details(self) -> DetailsBase:
-        return self._user_profile.details
-
-    @property
-    def user_profile_timestamp(self) -> dict[str, str]:
-        return self._user_profile.timestamp
-
-    @property
-    def speaker_profile(self):
-        return self._speaker_profile
-
-    @property
-    def face_profile(self):
-        return self._face_profile
-
-    @property
     def retrieval_times(self):
         return self._current_retrieval_times
 
@@ -73,12 +47,28 @@ class PersonaCache:
     def messages(self):
         return self._messages
 
-    @user_profile_details.setter
-    def user_profile_details(self, profile_details: DetailsBase):
+    @property
+    def profile(self) -> UserProfile:
+        return self._user_profile
+
+    @property
+    def profile_details(self) -> DetailsBase:
+        return self._user_profile.details
+
+    @property
+    def profile_timestamp(self) -> dict[str, str]:
+        return self._user_profile.timestamp
+
+    @property
+    def speaker_vector(self) -> np.ndarray | None:
+        return self._user_profile.speaker_vector
+
+    @profile_details.setter
+    def profile_details(self, profile_details: DetailsBase):
         self._user_profile.details = profile_details
 
-    @user_profile_timestamp.setter
-    def user_profile_timestamp(self, timestamp: dict):
+    @profile_timestamp.setter
+    def profile_timestamp(self, timestamp: dict):
         self._user_profile.timestamp.update(timestamp)
 
     def add_message(self, message: ChatItem):

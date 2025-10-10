@@ -11,32 +11,48 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import numpy as np
+import torch
 import torchaudio.compliance.kaldi as Kaldi
 
 
 class FBank:
-    def __init__(
-        self,
-        n_mels,
-        sample_rate,
-        mean_nor: bool = False,
-    ):
+    def __init__(self, n_mels, sample_rate, mean_nor: bool = False):
         self.n_mels = n_mels
         self.sample_rate = sample_rate
         self.mean_nor = mean_nor
 
-    def __call__(self, wav, dither=0):
-        sr = 16000
-        assert sr == self.sample_rate
-        if len(wav.shape) == 1:
-            wav = wav.unsqueeze(0)
-        # select single channel
-        if wav.shape[0] > 1:
-            wav = wav[0, :]
-            wav = wav.unsqueeze(0)
-        assert len(wav.shape) == 2 and wav.shape[0] == 1
-        feat = Kaldi.fbank(wav, num_mel_bins=self.n_mels, sample_frequency=sr, dither=dither)
-        # feat: [T, N]
-        if self.mean_nor:
-            feat = feat - feat.mean(0, keepdim=True)
-        return feat
+    def __call__(self, wav: np.ndarray, dither=0) -> np.ndarray:
+        sr = self.sample_rate
+        assert sr == 16000
+
+        wav_tensor = torch.from_numpy(wav).float()
+
+        if wav_tensor.ndim == 1:
+            wav_tensor = wav_tensor.unsqueeze(0)
+
+        if wav_tensor.shape[0] > 1 and wav_tensor.ndim == 2:
+            wav_tensor = wav_tensor[0, :].unsqueeze(0)
+
+        if wav_tensor.ndim == 2 and wav_tensor.shape[0] > 1:
+            feats = []
+            for i in range(wav_tensor.shape[0]):
+                f = Kaldi.fbank(
+                    wav_tensor[i].unsqueeze(0),
+                    num_mel_bins=self.n_mels,
+                    sample_frequency=sr,
+                    dither=dither,
+                )  # [T, N]
+                if self.mean_nor:
+                    f = f - f.mean(0, keepdim=True)
+                feats.append(f)
+            feat = torch.nn.utils.rnn.pad_sequence(feats, batch_first=True)  # [B, max_T, N]
+        else:
+            feat = Kaldi.fbank(
+                wav_tensor, num_mel_bins=self.n_mels, sample_frequency=sr, dither=dither
+            )  # [T, N]
+            if self.mean_nor:
+                feat = feat - feat.mean(0, keepdim=True)
+            feat = feat.unsqueeze(0)  # [1, T, N]
+
+        return feat.numpy()

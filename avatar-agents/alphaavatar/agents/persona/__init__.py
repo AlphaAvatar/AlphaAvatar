@@ -13,17 +13,18 @@
 # limitations under the License.
 from .base import PersonaBase
 from .cache import PersonaCache
-from .profiler import DetailsBase, ProfilerBase, UserProfile
+from .enum.user_profile import DetailsBase, UserProfile
+from .profiler import ProfilerBase
 from .speaker import SpeakerStreamBase, speaker_node
 from .watcher import persona_chat_context_watcher
 
 __all__ = [
     "PersonaBase",
     "PersonaCache",
-    "UserProfile",
-    "DetailsBase",
     "ProfilerBase",
     "SpeakerStreamBase",
     "speaker_node",
     "persona_chat_context_watcher",
+    "UserProfile",
+    "DetailsBase",
 ]

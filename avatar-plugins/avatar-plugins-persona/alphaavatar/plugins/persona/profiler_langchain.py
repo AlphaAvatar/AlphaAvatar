@@ -118,20 +118,20 @@ class ProfilerLangChain(ProfilerBase):
     async def update(self, *, perona: PersonaCache):
         """Async delta extraction -> in-memory patch."""
         update_time: str = perona.time
-        profile_details: UserProfileDetails | DetailsBase = perona.user_profile_details
+        profile_details: UserProfileDetails | DetailsBase = perona.profile_details
         chat_context = perona.messages
 
         new_turn = PersonaPluginsTemplate.apply_update_template(chat_context)
         delta = await self._aextract_delta(profile_details, new_turn)
         profile_details, timestamp = self._apply_patch(update_time, profile_details, delta)
 
-        perona.user_profile_details = profile_details
-        perona.user_profile_timestamp = timestamp
+        perona.profile_details = profile_details
+        perona.profile_timestamp = timestamp
 
     async def save(self, *, user_id: str, perona: PersonaCache, timeout: float | None = 3) -> None:
         """Async: delete old by user_id filter, then upsert all items."""
-        data = perona.user_profile_details.model_dump()
-        timestamp = perona.user_profile_timestamp
+        data = perona.profile_details.model_dump()
+        timestamp = perona.profile_timestamp
         items = flatten_items(user_id, data, timestamp)
         if not items:
             return

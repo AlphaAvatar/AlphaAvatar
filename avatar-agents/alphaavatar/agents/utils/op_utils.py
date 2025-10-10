@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import numpy as np
 
 
 def deduplicate_keep_latest(items: list[str]) -> list[str]:
@@ -21,3 +22,15 @@ def deduplicate_keep_latest(items: list[str]) -> list[str]:
     """
     deduped = list(dict.fromkeys(reversed(items)))
     return list(reversed(deduped))
+
+
+class NumpyOP:
+    @staticmethod
+    def to_np(x) -> np.ndarray:
+        arr = np.asarray(x, dtype=np.float32).reshape(-1)
+        return arr
+
+    @staticmethod
+    def np_l2_normalize(x: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+        n = np.linalg.norm(x) + eps
+        return x / n

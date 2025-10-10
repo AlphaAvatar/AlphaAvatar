@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import numpy as np
 from livekit.agents.llm import ChatItem
 
+from alphaavatar.agents.log import logger
 from alphaavatar.agents.template import PersonaPluginsTemplate
-from alphaavatar.agents.utils import AvatarTime
+from alphaavatar.agents.utils import AvatarTime, NumpyOP
 
 from .cache import PersonaCache
 from .profiler import ProfilerBase
@@ -31,12 +33,14 @@ class PersonaBase:
         speaker_stream: type[SpeakerStreamBase],
         recognizer: RecognizerBase,
         maximum_retrieval_times: int = 3,
+        speaker_threshold: float = 0.75,
     ):
         self._profiler = profiler
         self._speaker_stream = speaker_stream
         self._recognizer = recognizer
 
         self._maximum_retrieval_times = maximum_retrieval_times
+        self._speaker_threshold = speaker_threshold
 
         self._persona_cache: dict[str, PersonaCache] = {}
 
@@ -58,7 +62,7 @@ class PersonaBase:
 
     @property
     def persona_content(self) -> str:
-        user_profiles = [cache.user_profile for uid, cache in self.persona_cache.items()]
+        user_profiles = [cache.profile for uid, cache in self.persona_cache.items()]
         return PersonaPluginsTemplate.apply_profile_template(user_profiles)
 
     def add_message(self, *, user_id: str, chat_item: ChatItem):
@@ -71,16 +75,10 @@ class PersonaBase:
 
     async def init_cache(self, *, timestamp: AvatarTime, user_id: str) -> PersonaCache:
         if user_id not in self.persona_cache:
-            # user_profile = self.profiler.load(user_id=user_id)
             user_profile = await self.profiler.load(user_id=user_id)
-            # speech_profile = self.speaker.load(user_id)
-            # visual_profile = self.recognizer.load(user_id)
-
             self.persona_cache[user_id] = PersonaCache(
                 timestamp=timestamp,
                 user_profile=user_profile,
-                speaker_profile=None,  # type: ignore
-                face_profile=None,  # type: ignore
             )
             return self.persona_cache[user_id]
         else:
@@ -88,6 +86,34 @@ class PersonaBase:
                 f"User with id '{user_id}' already exists in perona cache. "
                 "Please use a unique user_id."
             )
+
+    async def match_speaker(self, vector: np.ndarray) -> str | None:
+        """Match and retrieve the user ID based on the given speaker vector."""
+
+        def _build_gallery(gallery: dict[str, np.ndarray]) -> tuple[np.ndarray, list[str]]:
+            ids, mats = [], []
+            for sid, vec in gallery.items():
+                ids.append(sid)
+                mats.append(NumpyOP.to_np(vec))
+            G = np.stack(mats, axis=0)  # (M, D)
+            return G, ids
+
+        gallery = {
+            uid: cache.speaker_vector
+            for uid, cache in self.persona_cache.items()
+            if cache.speaker_vector is not None
+        }
+        G, ids = _build_gallery(gallery)
+        if G.size == 0:
+            return None
+
+        p = NumpyOP.np_l2_normalize(NumpyOP.to_np(vector))
+        scores = G @ p  # (M,)
+        best_idx = int(np.argmax(scores))
+        best_score = float(scores[best_idx])
+        best_uid = ids[best_idx]
+
+        return best_uid if best_score >= self._speaker_threshold else None
 
     async def update_profiler(self, *, user_id: str | None = None):
         if user_id is not None and user_id not in self.persona_cache:
@@ -102,6 +128,15 @@ class PersonaBase:
 
         for _uid, perona in perona_tuple:
             await self.profiler.update(perona=perona)
+
+    async def update_speaker(self, *, user_id: str, vector: np.ndarray):
+        if user_id not in self.persona_cache:
+            logger.error(
+                f"User ID {user_id} not found in persona cache. You need to call 'init_cache' first."
+            )
+            return
+
+        self.persona_cache[user_id].profile.speaker_vector = vector
 
     async def save(self, *, user_id: str | None = None):
         if user_id is not None and user_id not in self.persona_cache:

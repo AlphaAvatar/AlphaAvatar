@@ -97,12 +97,18 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
         )
 
         # infer
-        await asyncio.wait_for(
+        speak_vector_bytes = await asyncio.wait_for(
             self._executor.do_inference(
                 SpeakerVectorRunner.INFERENCE_METHOD, inference_f32_data.tobytes()
             ),
             timeout=timeout,
         )
+        speaker_vector = np.frombuffer(speak_vector_bytes, dtype=np.float32)  # type: ignore
+
+        # Match & Retrieve & Update Speaker
+        uid = await self._activity_persona.match_speaker(speaker_vector)
+        if uid is not None:
+            await self._activity_persona.update_speaker(user_id=uid, vector=speaker_vector)
 
     async def _run(self) -> None:
         vad_stream = self._vad.stream()
@@ -119,6 +125,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
                     break
                 yield item
 
+        # Dispath
         async def _forward_input() -> None:
             """forward input to vad"""
             async for input in self._input_ch:
@@ -137,6 +144,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
                 await recognize_q.put(_SENTINEL)
                 await speaker_vector_q.put(_SENTINEL)
 
+        # Parallel
         async def _recognize() -> None:
             """recognize speech from vad"""
             async for event in _queue_iter(recognize_q):
@@ -174,6 +182,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
                     input_frame = utils.merge_frames(event.frames)
                     await self._inference_speaker_vector(input_frame)
 
+        # Run
         tasks = [
             asyncio.create_task(_forward_input(), name="forward_input"),
             asyncio.create_task(_dispatch_events(), name="dispatch"),
