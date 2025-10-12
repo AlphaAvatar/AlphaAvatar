@@ -15,6 +15,7 @@ import json
 import os
 import shutil
 from typing import Any
+from uuid import uuid4
 
 from langchain_openai import OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
@@ -26,10 +27,14 @@ from qdrant_client.models import (
     Filter,
     FilterSelector,
     MatchValue,
+    PointStruct,
+    SearchParams,
     VectorParams,
 )
 
 from ..enum.runner_op import EmbeddingRunnerOP
+from ..models import MODEL_CONFIG
+from .speaker_vector_runner import SpeakerVectorRunner
 
 
 def get_qdrant_client(
@@ -104,7 +109,7 @@ class QdrantRunner(_InferenceRunner):
             vectors_config=VectorParams(size=embedding_dim, distance=Distance.COSINE),
         )
 
-    def _load_user_profile(self, *, user_id: str, **kwargs):
+    def _load_user_profile(self, *, user_id: str, **kwargs) -> list[dict]:
         def _scroll_all(filt: Filter | None):
             all_pts = []
             next_offset = None
@@ -172,10 +177,82 @@ class QdrantRunner(_InferenceRunner):
             ids = [it["id"] for it in items]
             self._profiler_vector_store.add_texts(texts, metadatas, ids)
             result["inserted"] = len(items)
-
         except Exception as e:
             result["error"] = str(e)
 
+        return result
+
+    def _search_speaker_vector(
+        self,
+        *,
+        speaker_vector: list[float],
+        top_k: int = 1,
+        user_id: str | None = None,
+        threshold: float | None = None,
+    ) -> list[dict]:
+        q_filter = None
+        if user_id:
+            q_filter = Filter(
+                should=[
+                    FieldCondition(key="user_id", match=MatchValue(value=user_id)),
+                    FieldCondition(key="metadata.user_id", match=MatchValue(value=user_id)),
+                ]
+            )
+
+        hits = self._client.search(
+            collection_name=self._speaker_collection_name,
+            query_vector=speaker_vector,
+            limit=top_k,
+            query_filter=q_filter,
+            search_params=SearchParams(hnsw_ef=128),
+            score_threshold=threshold,
+            with_payload=True,
+            with_vectors=True,
+        )
+
+        results: list[dict] = []
+        for h in hits or []:
+            payload = h.payload or {}
+
+            uid = payload.get("user_id")
+            if uid is None:
+                uid = (payload.get("metadata") or {}).get("user_id")
+
+            vec = None
+            hv = getattr(h, "vector", None)
+            if isinstance(hv, dict):
+                if hv:
+                    vec = next(iter(hv.values()))
+            else:
+                vec = hv
+
+            results.append(
+                {
+                    "user_id": uid,
+                    "vector": vec,
+                    "id": str(h.id),
+                    "score": float(h.score),
+                }
+            )
+
+        return results[:1] if results else []
+
+    def _save_speaker_vector(self, *, items: list[dict]) -> dict:
+        result = {"inserted": 0, "error": None}
+        try:
+            points: list[PointStruct] = []
+            for it in items:
+                vid = str(it.get("id") or uuid4())
+                vec = it["vector"]
+                payload = it.get("metadata") or {}
+                points.append(PointStruct(id=vid, vector=vec, payload=payload))
+
+            self._client.upsert(
+                collection_name=self._speaker_collection_name, points=points, wait=True
+            )
+            result["inserted"] = len(points)
+        except Exception as e:
+            result["error"] = str(e)
         return result
 
     def initialize(self) -> None:
@@ -183,11 +260,12 @@ class QdrantRunner(_InferenceRunner):
         config = os.getenv("PERONA_EMBEDDING_CONFIG", "{}")
         config = json.loads(config)
         self._profiler_collection_name = config.get("profiler_collection_name", None)
+        self._speaker_collection_name = config.get("speaker_collection_name", None)
 
         # init client
         self._client = get_qdrant_client(**config)
 
-        # init profiler vs
+        # init profiler
         self._profiler_embeddings = get_profiler_embedding_model(**config)
         self._ensure_collection(
             self._profiler_collection_name,
@@ -199,7 +277,11 @@ class QdrantRunner(_InferenceRunner):
             embedding=self._profiler_embeddings,
         )
 
-        # init speaker vs
+        # init speaker vector
+        self._ensure_collection(
+            self._speaker_collection_name,
+            MODEL_CONFIG[SpeakerVectorRunner.MODEL_TYPE].embedding_dim,
+        )
 
     def run(self, data: bytes) -> bytes | None:
         json_data = json.loads(data)
@@ -210,6 +292,9 @@ class QdrantRunner(_InferenceRunner):
                 return json.dumps(items).encode()
             case EmbeddingRunnerOP.save_user_profile:
                 result = self._save_user_profile(**json_data["param"])
+                return json.dumps(result).encode()
+            case EmbeddingRunnerOP.search_speaker_vector:
+                result = self._search_speaker_vector(**json_data["param"])
                 return json.dumps(result).encode()
             case _:
                 return None

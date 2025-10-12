@@ -26,7 +26,7 @@ class PersonaCache:
         self,
         *,
         timestamp: AvatarTime,
-        user_profile: UserProfile,
+        user_profile: UserProfile | None = None,
         current_retrieval_times: int = 0,
     ):
         self._timestamp = timestamp
@@ -48,7 +48,7 @@ class PersonaCache:
         return self._messages
 
     @property
-    def profile(self) -> UserProfile:
+    def profile(self) -> UserProfile | None:
         return self._user_profile
 
     @property
@@ -61,7 +61,14 @@ class PersonaCache:
 
     @property
     def speaker_vector(self) -> np.ndarray | None:
-        return self._user_profile.speaker_vector
+        if self._user_profile:
+            return self._user_profile.speaker_vector
+        else:
+            return None
+
+    @profile.setter
+    def profile(self, profile: UserProfile):
+        self._user_profile = profile
 
     @profile_details.setter
     def profile_details(self, profile_details: DetailsBase):

@@ -20,6 +20,7 @@ from alphaavatar.agents.template import PersonaPluginsTemplate
 from alphaavatar.agents.utils import AvatarTime, NumpyOP
 
 from .cache import PersonaCache
+from .enum.user_profile import UserProfile
 from .profiler import ProfilerBase
 from .recognizer import RecognizerBase
 from .speaker import SpeakerStreamBase
@@ -62,7 +63,9 @@ class PersonaBase:
 
     @property
     def persona_content(self) -> str:
-        user_profiles = [cache.profile for uid, cache in self.persona_cache.items()]
+        user_profiles = [
+            cache.profile for uid, cache in self.persona_cache.items() if cache.profile is not None
+        ]
         return PersonaPluginsTemplate.apply_profile_template(user_profiles)
 
     def add_message(self, *, user_id: str, chat_item: ChatItem):
@@ -73,21 +76,22 @@ class PersonaBase:
 
         self._persona_cache[user_id].add_message(chat_item)
 
-    async def init_cache(self, *, timestamp: AvatarTime, user_id: str) -> PersonaCache:
-        if user_id not in self.persona_cache:
-            user_profile = await self.profiler.load(user_id=user_id)
-            self.persona_cache[user_id] = PersonaCache(
+    async def init_cache(self, *, timestamp: AvatarTime, init_user_id: str) -> PersonaCache:
+        if init_user_id not in self.persona_cache:
+            self._init_user_id = init_user_id
+            user_profile = await self.profiler.load(user_id=init_user_id)
+            self.persona_cache[init_user_id] = PersonaCache(
                 timestamp=timestamp,
                 user_profile=user_profile,
             )
-            return self.persona_cache[user_id]
+            return self.persona_cache[init_user_id]
         else:
             raise ValueError(
-                f"User with id '{user_id}' already exists in perona cache. "
+                f"User with id '{init_user_id}' already exists in perona cache. "
                 "Please use a unique user_id."
             )
 
-    async def match_speaker(self, vector: np.ndarray) -> str | None:
+    async def match_speaker(self, *, speaker_vector: np.ndarray) -> str | None:
         """Match and retrieve the user ID based on the given speaker vector."""
 
         def _build_gallery(gallery: dict[str, np.ndarray]) -> tuple[np.ndarray, list[str]]:
@@ -107,7 +111,7 @@ class PersonaBase:
         if G.size == 0:
             return None
 
-        p = NumpyOP.np_l2_normalize(NumpyOP.to_np(vector))
+        p = NumpyOP.np_l2_normalize(NumpyOP.to_np(speaker_vector))
         scores = G @ p  # (M,)
         best_idx = int(np.argmax(scores))
         best_score = float(scores[best_idx])
@@ -129,14 +133,23 @@ class PersonaBase:
         for _uid, perona in perona_tuple:
             await self.profiler.update(perona=perona)
 
-    async def update_speaker(self, *, user_id: str, vector: np.ndarray):
+    async def update_speaker(self, *, user_id: str, speaker_vector: np.ndarray):
         if user_id not in self.persona_cache:
             logger.error(
                 f"User ID {user_id} not found in persona cache. You need to call 'init_cache' first."
             )
             return
 
-        self.persona_cache[user_id].profile.speaker_vector = vector
+        # self.persona_cache[user_id].profile.speaker_vector = vector
+
+    async def insert_speaker(self, *, speaker_vector: np.ndarray):
+        if self.persona_cache[self._init_user_id].profile is None:
+            self.persona_cache[self._init_user_id].profile = UserProfile(
+                speaker_vector=NumpyOP.np_l2_normalize(speaker_vector)
+            )
+            return
+        else:
+            raise NotImplementedError
 
     async def save(self, *, user_id: str | None = None):
         if user_id is not None and user_id not in self.persona_cache:

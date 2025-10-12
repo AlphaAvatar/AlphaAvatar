@@ -11,10 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from enum import StrEnum
+import uuid
 
 
-class EmbeddingRunnerOP(StrEnum):
-    load_user_profile = "load_user_profile"
-    save_user_profile = "save_user_profile"
-    search_speaker_vector = "search_speaker_vector"
+def get_user_id():
+    return uuid.uuid4().hex
+
+
+def get_session_id():
+    return uuid.uuid4().hex

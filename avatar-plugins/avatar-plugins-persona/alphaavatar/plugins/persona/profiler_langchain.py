@@ -98,7 +98,7 @@ class ProfilerLangChain(ProfilerBase):
         *,
         user_id: str,
         timeout: float | None = 3,
-    ) -> UserProfile:
+    ) -> UserProfile | None:
         """Fetch all points for user_id (stored in metadata) via Scroll API, rebuild profile."""
         json_data = {"op": EmbeddingRunnerOP.load_user_profile, "param": {"user_id": user_id}}
         json_data = json.dumps(json_data).encode()
@@ -111,6 +111,9 @@ class ProfilerLangChain(ProfilerBase):
         assert result is not None, "user profile load should always returns a result"
 
         items: list[dict[str, Any]] = json.loads(result.decode())
+        if len(items) == 0:
+            return None
+
         data, timestamp = rebuild_from_items(items)
         profile_details = UserProfileDetails(**data)
         return UserProfile(details=profile_details, timestamp=timestamp)

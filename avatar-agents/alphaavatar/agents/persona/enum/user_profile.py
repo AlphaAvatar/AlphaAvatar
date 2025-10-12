@@ -116,6 +116,6 @@ class DetailsBase(BaseModel):
 
 
 class UserProfile(BaseModel):
-    timestamp: dict
-    details: DetailsBase
+    timestamp: dict | None = None
+    details: DetailsBase | None = None
     speaker_vector: np.ndarray | None = None

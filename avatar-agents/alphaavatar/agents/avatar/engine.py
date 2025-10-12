@@ -137,7 +137,7 @@ class AvatarEngine(Agent):
 
         # Init User Peronsa by init user_id
         await self._persona.init_cache(
-            timestamp=self._avatar_activate_time, user_id=self.session_config.user_id
+            timestamp=self._avatar_activate_time, init_user_id=self.session_config.user_id
         )
 
         install_generation_hooks(self)

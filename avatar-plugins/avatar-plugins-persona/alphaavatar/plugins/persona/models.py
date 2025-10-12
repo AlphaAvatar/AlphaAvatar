@@ -18,10 +18,19 @@ ONNX_FILENAME = "model_q8.onnx"
 
 
 class RunnerModelConfig:
-    def __init__(self, revision: str, sample_rate: int, window_size_samples: int) -> None:
+    def __init__(
+        self,
+        revision: str,
+        sample_rate: int,
+        window_size_samples: int,
+        step_size_samples: int,
+        embedding_dim: int,
+    ) -> None:
         self.revision = revision
         self.sample_rate = sample_rate
         self.window_size_samples = window_size_samples
+        self.step_size_samples = step_size_samples
+        self.embedding_dim = embedding_dim
 
 
 # Speaker Vector Model
@@ -31,6 +40,8 @@ MODEL_CONFIG: dict[SpeakerVectoryModelType, RunnerModelConfig] = {
         revision="main",
         sample_rate=16000,
         window_size_samples=int(3.0 * 16000),
+        step_size_samples=int(1 * 16000),
+        embedding_dim=172,
     ),
 }
 

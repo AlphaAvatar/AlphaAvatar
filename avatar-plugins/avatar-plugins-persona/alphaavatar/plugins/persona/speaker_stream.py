@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+import json
 import time
 from collections.abc import AsyncIterator
 from typing import Any
@@ -23,11 +24,11 @@ from livekit.agents.job import get_job_context
 from livekit.agents.types import APIConnectOptions, NotGivenOr
 
 from alphaavatar.agents.persona import PersonaBase, SpeakerStreamBase
+from alphaavatar.agents.utils import NumpyOP
 
+from .enum.runner_op import EmbeddingRunnerOP
 from .models import MODEL_CONFIG
-from .runner import SpeakerVectorRunner
-
-STEP_S = 1.0
+from .runner import QdrantRunner, SpeakerVectorRunner
 
 
 class SpeakerStreamWrapper(SpeakerStreamBase):
@@ -106,9 +107,26 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
         speaker_vector = np.frombuffer(speak_vector_bytes, dtype=np.float32)  # type: ignore
 
         # Match & Retrieve & Update Speaker
-        uid = await self._activity_persona.match_speaker(speaker_vector)
+        uid = await self._activity_persona.match_speaker(speaker_vector=speaker_vector)
         if uid is not None:
-            await self._activity_persona.update_speaker(user_id=uid, vector=speaker_vector)
+            await self._activity_persona.update_speaker(user_id=uid, speaker_vector=speaker_vector)
+        else:
+            json_data = {
+                "op": EmbeddingRunnerOP.search_speaker_vector,
+                "param": {"speaker_vector": NumpyOP.np_l2_normalize(speaker_vector).tolist()},
+            }
+            json_data = json.dumps(json_data).encode()
+            search_results = await asyncio.wait_for(
+                self._executor.do_inference(QdrantRunner.INFERENCE_METHOD, json_data),
+                timeout=timeout,
+            )
+            if search_results:
+                pass
+            else:
+                await self._activity_persona.insert_speaker(speaker_vector=speaker_vector)
+
+        # process remaining frames
+        return
 
     async def _run(self) -> None:
         vad_stream = self._vad.stream()
