@@ -32,6 +32,7 @@ Build a universal **assistant** that can automatically recognize users through m
     to support varied scenarios effectively.
 * Support multi-user interactions by extracting and maintaining **separate response memories** for each user.
 * Enable users to proactively **query and recall specific memory entries** on demand.
+* Add Event
 
 ---
 
@@ -46,3 +47,4 @@ Build a universal **assistant** that can automatically recognize users through m
 * Real-time retrieval of user profiles based on conversations between users and Assistant.
 * Develop a speech-based system to extract speaker vectors and related features, enabling automatic retrieval or identification of speaker profiles without relying on fixed user IDs.
 * Develop a face-based system to extract facial embeddings and related features, enabling automatic retrieval or identification of speaker profiles without binding to a specific user ID.
+* Add Event

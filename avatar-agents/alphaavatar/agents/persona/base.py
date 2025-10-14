@@ -11,13 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import numpy as np
 from livekit.agents.llm import ChatItem
 
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.template import PersonaPluginsTemplate
-from alphaavatar.agents.utils import AvatarTime, NumpyOP
+from alphaavatar.agents.utils import AvatarTime, NumpyOP, get_user_id
 
 from .cache import PersonaCache
 from .enum.user_profile import UserProfile
@@ -63,9 +62,7 @@ class PersonaBase:
 
     @property
     def persona_content(self) -> str:
-        user_profiles = [
-            cache.profile for uid, cache in self.persona_cache.items() if cache.profile is not None
-        ]
+        user_profiles = [cache.profile for uid, cache in self.persona_cache.items()]
         return PersonaPluginsTemplate.apply_profile_template(user_profiles)
 
     def add_message(self, *, user_id: str, chat_item: ChatItem):
@@ -76,20 +73,41 @@ class PersonaBase:
 
         self._persona_cache[user_id].add_message(chat_item)
 
-    async def init_cache(self, *, timestamp: AvatarTime, init_user_id: str) -> PersonaCache:
+    async def init_cache(self, *, timestamp: AvatarTime, init_user_id: str):
         if init_user_id not in self.persona_cache:
             self._init_user_id = init_user_id
-            user_profile = await self.profiler.load(user_id=init_user_id)
+            self._init_timestamp = timestamp
+            user_profile = await self.profiler.load(uid=init_user_id)
             self.persona_cache[init_user_id] = PersonaCache(
                 timestamp=timestamp,
                 user_profile=user_profile,
             )
-            return self.persona_cache[init_user_id]
         else:
-            raise ValueError(
+            logger.error(
                 f"User with id '{init_user_id}' already exists in perona cache. "
                 "Please use a unique user_id."
             )
+
+    async def load_profile(self, *, uid: str):
+        user_profile = await self.profiler.load(uid=uid)
+        if self.persona_cache[self._init_user_id].profile is None:
+            del self.persona_cache[self._init_user_id]
+            self.persona_cache[uid] = PersonaCache(
+                timestamp=self._init_timestamp,
+                user_profile=user_profile,
+            )
+            self._init_user_id = uid
+        else:
+            if uid not in self.persona_cache:
+                self.persona_cache[uid] = PersonaCache(
+                    timestamp=self._init_timestamp,
+                    user_profile=user_profile,
+                )
+            else:
+                logger.warning(
+                    f"User with id '{uid}' already exists in perona cache. "
+                    "Please use a unique user_id."
+                )
 
     async def match_speaker(self, *, speaker_vector: np.ndarray) -> str | None:
         """Match and retrieve the user ID based on the given speaker vector."""
@@ -111,7 +129,7 @@ class PersonaBase:
         if G.size == 0:
             return None
 
-        p = NumpyOP.np_l2_normalize(NumpyOP.to_np(speaker_vector))
+        p = NumpyOP.l2_normalize(NumpyOP.to_np(speaker_vector))
         scores = G @ p  # (M,)
         best_idx = int(np.argmax(scores))
         best_score = float(scores[best_idx])
@@ -119,49 +137,61 @@ class PersonaBase:
 
         return best_uid if best_score >= self._speaker_threshold else None
 
-    async def update_profiler(self, *, user_id: str | None = None):
-        if user_id is not None and user_id not in self.persona_cache:
+    async def update_profile_details(self, *, uid: str | None = None):
+        if uid is not None and uid not in self.persona_cache:
             raise ValueError(
-                f"User ID {user_id} not found in persona cache. You need to call 'init_cache' first."
+                f"User ID {uid} not found in persona cache. You need to call 'init_cache' first."
             )
 
-        if user_id is None:
+        if uid is None:
             perona_tuple = [(uid, cache) for uid, cache in self.persona_cache.items()]
         else:
-            perona_tuple = [(user_id, self.persona_cache[user_id])]
+            perona_tuple = [(uid, self.persona_cache[uid])]
 
         for _uid, perona in perona_tuple:
             await self.profiler.update(perona=perona)
 
-    async def update_speaker(self, *, user_id: str, speaker_vector: np.ndarray):
-        if user_id not in self.persona_cache:
+    async def update_speaker(self, *, uid: str, speaker_vector: np.ndarray | list[float]):
+        if uid not in self.persona_cache:
             logger.error(
-                f"User ID {user_id} not found in persona cache. You need to call 'init_cache' first."
+                f"User ID {uid} not found in persona cache. You need to call 'init_cache' first."
             )
             return
 
-        # self.persona_cache[user_id].profile.speaker_vector = vector
+        if self.persona_cache[uid].speaker_vector is None:
+            logger.error(
+                f"User ID {uid} has no speaker vector in persona cache. You need to call 'insert_speaker' first."
+            )
+            return
 
-    async def insert_speaker(self, *, speaker_vector: np.ndarray):
+        self.persona_cache[uid].speaker_vector = NumpyOP.l2_normalize(NumpyOP.to_np(speaker_vector))
+
+    async def insert_speaker(self, *, speaker_vector: np.ndarray | list[float]):
+        # TODO: hadle multiple users
         if self.persona_cache[self._init_user_id].profile is None:
             self.persona_cache[self._init_user_id].profile = UserProfile(
-                speaker_vector=NumpyOP.np_l2_normalize(speaker_vector)
+                speaker_vector=NumpyOP.l2_normalize(NumpyOP.to_np(speaker_vector))
             )
-            return
         else:
-            raise NotImplementedError
-
-    async def save(self, *, user_id: str | None = None):
-        if user_id is not None and user_id not in self.persona_cache:
-            raise ValueError(
-                f"User ID {user_id} not found in persona cache. You need to call 'init_cache' first."
+            uid = get_user_id()
+            user_profile = UserProfile(
+                speaker_vector=NumpyOP.l2_normalize(NumpyOP.to_np(speaker_vector))
+            )
+            self.persona_cache[uid] = PersonaCache(
+                timestamp=self._init_timestamp, user_profile=user_profile
             )
 
-        if user_id is None:
+    async def save(self, *, uid: str | None = None):
+        if uid is not None and uid not in self.persona_cache:
+            raise ValueError(
+                f"User ID {uid} not found in persona cache. You need to call 'init_cache' first."
+            )
+
+        if uid is None:
             perona_tuple = [(uid, cache) for uid, cache in self.persona_cache.items()]
         else:
-            perona_tuple = [(user_id, self.persona_cache[user_id])]
+            perona_tuple = [(uid, self.persona_cache[uid])]
 
         # save profiler
         for _uid, perona in perona_tuple:
-            await self.profiler.save(user_id=_uid, perona=perona)
+            await self.profiler.save(uid=_uid, perona=perona)

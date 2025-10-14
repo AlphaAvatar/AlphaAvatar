@@ -13,13 +13,13 @@
 # limitations under the License.
 from __future__ import annotations
 
-import json
 import uuid
 from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from alphaavatar.agents.persona import ProfileItemSource
 from alphaavatar.agents.utils import format_current_time
 
 # --------------------------------- Patch models ---------------------------------
@@ -98,11 +98,17 @@ def parse_pointer(path: str) -> list[str]:
     return [p for p in path.split("/") if p != ""]
 
 
-def write_set(container: dict[str, Any], tokens: list[str], value: Any) -> None:
+def write_set(
+    container: dict[str, Any],
+    tokens: list[str],
+    value: Any,
+    update_time: str,
+    source: ProfileItemSource = ProfileItemSource.chat,
+) -> None:
     """Set value at path (overwrite)."""
     parent, key = _ensure_parent(container, tokens)
     if isinstance(parent, dict):
-        parent[key] = value
+        parent[key] = {"value": value, "source": source, "timestamp": update_time}
     else:
         raise TypeError(f"Cannot set at non-dict parent for key '{key}'")
 
@@ -113,44 +119,60 @@ def clear_path(container: dict[str, Any], tokens: list[str]) -> None:
     cur = parent.get(key, None)
     if isinstance(cur, list):
         parent[key] = []
-    elif isinstance(cur, str) or cur is None:
-        parent[key] = ""
     else:
         parent[key] = None
 
 
-def append_string(container: dict[str, Any], tokens: list[str], value: Any) -> None:
+def append_string(
+    container: dict[str, Any],
+    tokens: list[str],
+    value: Any,
+    update_time: str,
+    source: ProfileItemSource = ProfileItemSource.chat,
+) -> None:
     """Append a string to a list at path with de-dup."""
-    lst = _ensure_list(container, tokens)
-    s = str(value)
-    seen = {_norm_token(x): True for x in lst if isinstance(x, str)}
-    if _norm_token(s) not in seen:
-        lst.append(s)
+    lst: list[dict] = _ensure_list(container, tokens)
+    seen = {_norm_token(x["value"]): True for x in lst}
+    if _norm_token(value) not in seen:
+        lst.append({"value": value, "source": source, "timestamp": update_time})
 
 
-def append_text(container: dict[str, Any], tokens: list[str], value: Any, sep: str = " ") -> None:
+def append_text(
+    container: dict[str, Any],
+    tokens: list[str],
+    value: Any,
+    update_time: str,
+    sep: str = " ",
+    source: ProfileItemSource = ProfileItemSource.chat,
+) -> None:
     """
     Append text to a STRING field at path (like '+='):
       - If current is None or empty -> set to value
       - Else -> concatenate with a single separator (default space)
     """
     parent, key = _ensure_parent(container, tokens)
-    s = str(value)
-    cur = parent.get(key)
-    if cur is None or (isinstance(cur, str) and cur.strip() == ""):
-        parent[key] = s
-        return
-    if isinstance(cur, list):
-        lst = _ensure_list(container, tokens)
-        if _norm_token(s) not in {_norm_token(x) for x in lst if isinstance(x, str)}:
-            lst.append(s)
+    cur: dict | list = parent.get(key)
+    if cur is None or (isinstance(cur, dict) and cur["vluae"].strip() == ""):
+        parent[key]["vluae"] = value
+        parent[key]["source"] = source
+        parent[key]["timestamp"] = update_time
         return
 
-    cur_str = str(cur)
+    if isinstance(cur, list):
+        lst: list[dict] = _ensure_list(container, tokens)
+        if _norm_token(value) not in {_norm_token(x["value"]) for x in lst}:
+            lst.append({"value": value, "source": source, "timestamp": update_time})
+        return
+
+    cur_str = cur["vluae"]
     if cur_str.endswith((" ", sep)):
-        parent[key] = f"{cur_str}{s}"
+        parent[key] = {"value": f"{cur_str}{value}", "source": source, "timestamp": update_time}
     else:
-        parent[key] = f"{cur_str}{sep}{s}"
+        parent[key] = {
+            "value": f"{cur_str}{sep}{value}",
+            "source": source,
+            "timestamp": update_time,
+        }
 
 
 def remove_string(container: dict[str, Any], tokens: list[str], value: Any) -> None:
@@ -160,17 +182,13 @@ def remove_string(container: dict[str, Any], tokens: list[str], value: Any) -> N
     if not isinstance(cur, list):
         return
     norm = _norm_token(value)
-    parent[key] = [x for x in cur if not (isinstance(x, str) and _norm_token(x) == norm)]
+    parent[key] = [
+        x for x in cur if not (isinstance(x["value"], str) and _norm_token(x["value"]) == norm)
+    ]
 
 
 # --------------------------------- Flatten / Rebuild for VectorStore ---------------------------------
-def _is_primitive(x: Any) -> bool:
-    return isinstance(x, str | int | float | bool)
-
-
-def flatten_items(
-    user_id: str, data: dict[str, Any], timestamp: dict[str, str], prefix: str = ""
-) -> list[dict[str, Any]]:
+def flatten_items(user_id: str, data: dict[str, Any], prefix: str = "") -> list[dict[str, Any]]:
     """
     Flatten a FLAT dict (top-level keys only) into vector-store "items".
     Each item dict has: id, page_content, metadata.
@@ -190,16 +208,18 @@ def flatten_items(
         meta_path = f"/{path}"
         return path, meta_path
 
-    for key, val in (data or {}).items():
+    for key, item in (data or {}).items():
         path, meta_path = _mk_path(key)
-        ts = timestamp.get(meta_path, format_current_time("").time_str)
-
-        # Skip empty scalars
-        if val is None or (isinstance(val, str) and val.strip() == ""):
-            continue
 
         # Scalars
-        if _is_primitive(val):
+        if isinstance(item, dict):
+            val = item.get("value", "")
+            source = item.get("source", ProfileItemSource.chat)
+            ts = item.get("timestamp", format_current_time("").time_str)
+
+            if val is None or (isinstance(val, str) and val.strip() == ""):
+                continue
+
             items.append(
                 {
                     "id": str(uuid.uuid4()),
@@ -209,7 +229,7 @@ def flatten_items(
                         "path": meta_path,
                         "type": ValueType.scalar,
                         "value": str(val),
-                        "json_value": json.dumps(val, ensure_ascii=False),
+                        "source": source,
                         "ts": ts,
                     },
                 }
@@ -217,69 +237,38 @@ def flatten_items(
             continue
 
         # Lists
-        if isinstance(val, list):
-            if not val:
-                continue
-            if all(_is_primitive(x) for x in val):
-                for v in val:
-                    if v is None or (isinstance(v, str) and v.strip() == ""):
-                        continue
-                    items.append(
-                        {
-                            "id": str(uuid.uuid4()),
-                            "page_content": f"{path} += {v}",
-                            "metadata": {
-                                "user_id": user_id,
-                                "path": meta_path,
-                                "type": ValueType.list_item,
-                                "value": str(v),
-                                "json_value": json.dumps(v, ensure_ascii=False),
-                                "ts": ts,
-                            },
-                        }
-                    )
+        if isinstance(item, list):
+            if not item:
                 continue
 
-            val_json = json.dumps(val, ensure_ascii=False)
-            items.append(
-                {
-                    "id": str(uuid.uuid4()),
-                    "page_content": f"{path} = {val_json}",
-                    "metadata": {
-                        "user_id": user_id,
-                        "path": meta_path,
-                        "type": ValueType.scalar,
-                        "value": val_json,
-                        "json_value": val_json,
-                        "ts": ts,
-                    },
-                }
-            )
+            for it in item:
+                val = it.get("value", "")
+                source = it.get("source", ProfileItemSource.chat)
+                ts = it.get("timestamp", format_current_time("").time_str)
+
+                if val is None or (isinstance(val, str) and val.strip() == ""):
+                    continue
+
+                items.append(
+                    {
+                        "id": str(uuid.uuid4()),
+                        "page_content": f"{path} += {val}",
+                        "metadata": {
+                            "user_id": user_id,
+                            "path": meta_path,
+                            "type": ValueType.list_item,
+                            "value": str(val),
+                            "source": source,
+                            "ts": ts,
+                        },
+                    }
+                )
             continue
-
-        try:
-            val_json = json.dumps(val, ensure_ascii=False)
-        except TypeError:
-            val_json = str(val)
-        items.append(
-            {
-                "id": str(uuid.uuid4()),
-                "page_content": f"{path} = {val_json}",
-                "metadata": {
-                    "user_id": user_id,
-                    "path": meta_path,
-                    "type": ValueType.scalar,
-                    "value": val_json,
-                    "json_value": val_json,
-                    "ts": ts,
-                },
-            }
-        )
 
     return items
 
 
-def rebuild_from_items(items: list[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, str]]:
+def rebuild_from_items(items: list[dict[str, Any]]) -> dict[str, Any]:
     """
     Reconstruct (flatten) dict from vector-store items.
 
@@ -289,31 +278,23 @@ def rebuild_from_items(items: list[dict[str, Any]]) -> tuple[dict[str, Any], dic
     - No longer assembles object lists or nested structures.
     """
     out: dict[str, Any] = {}
-    timestamp: dict[str, str] = {}
 
     for it in items:
         meta = it.get("metadata", {})
         typ = meta.get("type")
         path = meta.get("path", "")
+        source = meta.get("source", ProfileItemSource.chat)
+        timestamp = meta.get("ts", "")
+
         tokens = parse_pointer(path)
-        timestamp[path] = meta.get("ts", "")
-
         if typ == ValueType.scalar:
-            val_json = meta.get("json_value")
-            val = json.loads(val_json) if val_json is not None else meta.get("value")
-            write_set(out, tokens, val)
-
+            value = meta.get("value")
+            write_set(out, tokens, value, timestamp)
         elif typ == ValueType.list_item:
-            val_json = meta.get("json_value")
-            val = json.loads(val_json) if val_json is not None else meta.get("value")
+            value = meta.get("value")
             lst = _ensure_list(out, tokens)
-            # de-dup（仅对字符串；其他类型直接 append）
-            if isinstance(val, str | int | float | bool):
-                s = str(val)
-                seen = {_norm_token(x): True for x in lst if isinstance(x, str)}
-                if _norm_token(s) not in seen:
-                    lst.append(s)
-            else:
-                lst.append(val)
+            seen = {_norm_token(x["value"]): True for x in lst if isinstance(x, dict)}
+            if _norm_token(value) not in seen:
+                lst.append({"value": value, "source": source, "timestamp": timestamp})
 
-    return out, timestamp
+    return out

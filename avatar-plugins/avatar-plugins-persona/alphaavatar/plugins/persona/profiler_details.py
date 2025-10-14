@@ -13,71 +13,71 @@
 # limitations under the License.
 from pydantic import Field
 
-from alphaavatar.agents.persona import DetailsBase
+from alphaavatar.agents.persona import DetailsBase, ProfileItemView
 
 
 class UserProfileDetails(DetailsBase):
     """
     Fully flattened user profile model.
-    All fields are plain types (str, int, list[str]).
+    All fields are plain types (ProfileItemView, list[ProfileItemView]).
     Field values can be natural language expressions, short phrases, or sentences.
     """
 
     # Identification & Demographics
-    name: str | None = Field(
+    name: ProfileItemView | None = Field(
         None,
         description="Preferred name or nickname, written naturally "
         "(e.g., 'Lily', 'Mike Zhang', 'call me Jay').",
     )
-    gender: str | None = Field(
+    gender: ProfileItemView | None = Field(
         None,
         description="Gender identity as expressed by the user. Can be a word or phrase "
         "(e.g., 'male', 'female', 'non-binary', 'prefer not to say', 'other: transgender woman').",
     )
-    age: int | None = Field(
+    age: ProfileItemView | None = Field(
         None, description="Approximate age in years if explicitly stated (e.g., 27)."
     )
-    age_range: str | None = Field(
+    age_range: ProfileItemView | None = Field(
         None,
         description="Age bracket or natural expression "
         "(e.g., '18-24', 'in my thirties', 'around 50').",
     )
-    locale: str | None = Field(
+    locale: ProfileItemView | None = Field(
         None,
         description="Preferred language/locale code or description "
         "(e.g., 'zh-CN', 'English (US)', 'Mandarin Chinese').",
     )
 
-    languages: list[str] = Field(
+    languages: list[ProfileItemView] = Field(
         default_factory=list,
         description="Languages with optional proficiency or preference notes, "
         "written as natural text (e.g., 'English: native, prefer for work', "
         "'Chinese: fluent, okay for casual chats').",
     )
 
-    home_location: str | None = Field(
+    home_location: ProfileItemView | None = Field(
         None,
         description="Primary/home location as natural text "
         "(e.g., 'Shanghai, China, lives in Pudong District, timezone Asia/Shanghai').",
     )
-    current_location: str | None = Field(
+    current_location: ProfileItemView | None = Field(
         None,
         description="Current or temporary location, can include city/country/timezone "
         "(e.g., 'Currently in San Francisco for work, timezone PST').",
     )
 
     # Education & Work
-    education_level: str | None = Field(
+    education_level: ProfileItemView | None = Field(
         None,
         description="Highest education level in natural words "
         "(e.g., 'bachelor’s degree', 'completed high school', 'PhD in Physics').",
     )
-    education: str | None = Field(
+    education: ProfileItemView | None = Field(
         None,
         description="Detailed education info, free-form "
         "(e.g., 'Graduated from MIT in 2020 with a BSc in Computer Science').",
     )
-    employment: str | None = Field(
+    employment: ProfileItemView | None = Field(
         None,
         description="Occupation details as natural text "
         "(e.g., 'Senior Software Engineer at Google in the tech industry', "
@@ -85,13 +85,13 @@ class UserProfileDetails(DetailsBase):
     )
 
     # Personality & Communication
-    personality: str | None = Field(
+    personality: ProfileItemView | None = Field(
         None,
         description="Personality description, free-form. Can include traits, scores, or phrases "
         "(e.g., 'Openness: high, enjoys trying new things', "
         "'introverted but friendly', 'empathetic and decisive').",
     )
-    communication: str | None = Field(
+    communication: ProfileItemView | None = Field(
         None,
         description="Preferred communication style described naturally "
         "(e.g., 'Friendly and casual, okay with emojis', "
@@ -99,44 +99,44 @@ class UserProfileDetails(DetailsBase):
     )
 
     # Preferences, Constraints & Context
-    preferences: str | None = Field(
+    preferences: ProfileItemView | None = Field(
         None,
         description="Likes, dislikes, favorite or avoided brands, sensitivities, described freely "
         "(e.g., 'Loves sci-fi movies, dislikes horror, prefers Apple products, avoid political topics').",
     )
-    health_diet: str | None = Field(
+    health_diet: ProfileItemView | None = Field(
         None,
         description="Dietary patterns, allergies, accessibility needs, free-form "
         "(e.g., 'Vegetarian, lactose intolerant, needs wheelchair access').",
     )
-    family: str | None = Field(
+    family: ProfileItemView | None = Field(
         None,
         description="Family or household situation, described naturally "
         "(e.g., 'Married, 2 kids aged 5 and 8, lives with partner and parents, household size 5').",
     )
-    constraints: list[str] = Field(
+    constraints: list[ProfileItemView] = Field(
         default_factory=list,
         description="Other constraints as natural phrases "
         "(e.g., 'cannot work weekends', 'no alcohol due to health reasons').",
     )
-    goals: str | None = Field(
+    goals: ProfileItemView | None = Field(
         None,
         description="Short- and long-term goals, free-form "
         "(e.g., 'Short-term: learn Python, Long-term: transition into data science').",
     )
-    time_prefs: str | None = Field(
+    time_prefs: ProfileItemView | None = Field(
         None,
         description="Availability and scheduling preferences "
         "(e.g., 'Available 9am–6pm weekdays, weekends are family time').",
     )
-    privacy: str | None = Field(
+    privacy: ProfileItemView | None = Field(
         None,
         description="Privacy and personalization preferences, natural text "
         "(e.g., 'Prefer minimal data sharing but okay with personalization').",
     )
 
     # Misc
-    notes: str | None = Field(
+    notes: ProfileItemView | None = Field(
         None,
         description="Additional context or free-form notes that do not fit other fields "
         "(e.g., 'Currently traveling, so responses might be delayed').",

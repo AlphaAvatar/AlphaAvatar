@@ -31,6 +31,6 @@ class NumpyOP:
         return arr
 
     @staticmethod
-    def np_l2_normalize(x: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+    def l2_normalize(x: np.ndarray, eps: float = 1e-12) -> np.ndarray:
         n = np.linalg.norm(x) + eps
         return x / n

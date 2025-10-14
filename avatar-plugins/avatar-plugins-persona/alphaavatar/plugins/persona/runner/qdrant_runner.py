@@ -32,7 +32,8 @@ from qdrant_client.models import (
     VectorParams,
 )
 
-from ..enum.runner_op import EmbeddingRunnerOP
+from alphaavatar.agents.persona import EmbeddingRunnerOP
+
 from ..models import MODEL_CONFIG
 from .speaker_vector_runner import SpeakerVectorRunner
 
@@ -109,26 +110,44 @@ class QdrantRunner(_InferenceRunner):
             vectors_config=VectorParams(size=embedding_dim, distance=Distance.COSINE),
         )
 
-    def _load_user_profile(self, *, user_id: str, **kwargs) -> list[dict]:
-        def _scroll_all(filt: Filter | None):
+    def _save_batch_speaker_vector(self, *, items: list[dict]) -> dict:
+        result = {"inserted": 0, "error": None}
+        try:
+            points: list[PointStruct] = []
+            for it in items:
+                vid = str(it.get("id") or uuid4())
+                vec = it["vector"]
+                payload = it.get("payload") or {}
+                points.append(PointStruct(id=vid, vector=vec, payload=payload))
+
+            self._client.upsert(
+                collection_name=self._speaker_collection_name, points=points, wait=True
+            )
+            result["inserted"] = len(points)
+        except Exception as e:
+            result["error"] = str(e)
+        return result
+
+    def _load(self, *, user_id: str, **kwargs) -> dict:
+        def _scroll_all(filt: Filter | None, collection_name, *, with_vectors: bool = False):
             all_pts = []
             next_offset = None
             while True:
                 try:
                     points, next_offset = self._client.scroll(
-                        collection_name=self._profiler_collection_name,
+                        collection_name=collection_name,
                         limit=256,
                         with_payload=True,
-                        with_vectors=False,
+                        with_vectors=with_vectors,
                         scroll_filter=filt,
                         offset=next_offset,
                     )
                 except TypeError:
                     points, next_offset = self._client.scroll(
-                        collection_name=self._profiler_collection_name,
+                        collection_name=collection_name,
                         limit=256,
                         with_payload=True,
-                        with_vectors=False,
+                        with_vectors=with_vectors,
                         filter=filt,
                         offset=next_offset,
                     )
@@ -137,48 +156,101 @@ class QdrantRunner(_InferenceRunner):
                     break
             return all_pts
 
+        # 1) Load details_items from profiler collection
+        details_items: list[dict[str, Any]] = []
         filt = Filter(
             must=[FieldCondition(key="metadata.user_id", match=MatchValue(value=user_id))]
         )
-        all_points = _scroll_all(filt)
-
-        if not all_points:
-            all_points = _scroll_all(None)
-
-            def _get_user_id(payload: dict[str, Any]) -> str | None:
-                if not isinstance(payload, dict):
-                    return None
-                return (payload.get("metadata") or {}).get("user_id")
-
-            all_points = [p for p in all_points if _get_user_id(p.payload or {}) == user_id]
-
-        items: list[dict[str, Any]] = []
+        all_points = _scroll_all(filt, self._profiler_collection_name, with_vectors=False)
         for p in all_points:
             payload = p.payload or {}
             doc = payload.get("page_content")
             meta = payload.get("metadata")
-            items.append({"id": str(p.id), "page_content": doc, "metadata": meta})
+            details_items.append({"id": str(p.id), "page_content": doc, "metadata": meta})
 
-        return items
+        # 2) Load speaker vector from speaker collection
+        speaker_vector = None
+        spk_filter = Filter(
+            should=[
+                FieldCondition(key="user_id", match=MatchValue(value=user_id)),
+                FieldCondition(key="metadata.user_id", match=MatchValue(value=user_id)),
+            ]
+        )
+        spk_points = _scroll_all(spk_filter, self._speaker_collection_name, with_vectors=True)
+        if spk_points:
+            # take the most recent / first found
+            p = spk_points[0]
+            hv = getattr(p, "vector", None)
+            if isinstance(hv, dict):
+                if hv:
+                    speaker_vector = next(iter(hv.values()))
+            else:
+                speaker_vector = hv
 
-    def _save_user_profile(self, *, user_id: str, items: list[dict]) -> dict:
-        result = {"user_id": user_id, "deleted": False, "inserted": 0, "error": None}
-        try:
-            filt = Filter(must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))])
-            self._client.delete(
-                collection_name=self._profiler_collection_name,
-                points_selector=FilterSelector(filter=filt),
-                wait=True,
-            )
-            result["deleted"] = True
+        return {"details_items": details_items, "speaker_vector": speaker_vector}
 
-            texts = [it["page_content"] for it in items]
-            metadatas = [it["metadata"] for it in items]
-            ids = [it["id"] for it in items]
-            self._profiler_vector_store.add_texts(texts, metadatas, ids)
-            result["inserted"] = len(items)
-        except Exception as e:
-            result["error"] = str(e)
+    def _save(
+        self, *, user_id: str, details_items: list[dict] | None, speaker_vector: list[float] | None
+    ) -> dict:
+        result = {
+            "user_id": user_id,
+            "deleted": False,
+            "inserted": 0,
+            "error": None,
+            "speaker_deleted": False,
+            "speaker_inserted": 0,
+            "speaker_error": None,
+        }
+
+        # 1) Save details_items to profiler collection
+        if details_items:
+            try:
+                filt = Filter(
+                    must=[FieldCondition(key="metadata.user_id", match=MatchValue(value=user_id))]
+                )
+                self._client.delete(
+                    collection_name=self._profiler_collection_name,
+                    points_selector=FilterSelector(filter=filt),
+                    wait=True,
+                )
+                result["deleted"] = True
+
+                texts = [it["page_content"] for it in details_items]
+                metadatas = [it["metadata"] for it in details_items]
+                ids = [it["id"] for it in details_items]
+                self._profiler_vector_store.add_texts(texts, metadatas, ids)
+                result["inserted"] = len(details_items)
+            except Exception as e:
+                result["error"] = str(e)
+
+        # 2) Save speaker vector to speaker collection
+        if speaker_vector:
+            try:
+                # delete existing speaker vectors for this user (support both payload schemas)
+                speaker_filt = Filter(
+                    should=[
+                        FieldCondition(key="user_id", match=MatchValue(value=user_id)),
+                        FieldCondition(key="metadata.user_id", match=MatchValue(value=user_id)),
+                    ]
+                )
+                self._client.delete(
+                    collection_name=self._speaker_collection_name,
+                    points_selector=FilterSelector(filter=speaker_filt),
+                    wait=True,
+                )
+                result["speaker_deleted"] = True
+
+                # upsert the new vector
+                payload = {"user_id": user_id}
+                save_res = self._save_batch_speaker_vector(
+                    items=[{"vector": speaker_vector, "payload": payload}]
+                )
+                if save_res.get("error"):
+                    result["speaker_error"] = save_res["error"]
+                else:
+                    result["speaker_inserted"] = save_res.get("inserted", 0)
+            except Exception as e:
+                result["speaker_error"] = str(e)
 
         return result
 
@@ -189,7 +261,7 @@ class QdrantRunner(_InferenceRunner):
         top_k: int = 1,
         user_id: str | None = None,
         threshold: float | None = None,
-    ) -> list[dict]:
+    ) -> dict | None:
         q_filter = None
         if user_id:
             q_filter = Filter(
@@ -235,25 +307,7 @@ class QdrantRunner(_InferenceRunner):
                 }
             )
 
-        return results[:1] if results else []
-
-    def _save_speaker_vector(self, *, items: list[dict]) -> dict:
-        result = {"inserted": 0, "error": None}
-        try:
-            points: list[PointStruct] = []
-            for it in items:
-                vid = str(it.get("id") or uuid4())
-                vec = it["vector"]
-                payload = it.get("metadata") or {}
-                points.append(PointStruct(id=vid, vector=vec, payload=payload))
-
-            self._client.upsert(
-                collection_name=self._speaker_collection_name, points=points, wait=True
-            )
-            result["inserted"] = len(points)
-        except Exception as e:
-            result["error"] = str(e)
-        return result
+        return results[0] if results else None
 
     def initialize(self) -> None:
         # get config
@@ -287,11 +341,11 @@ class QdrantRunner(_InferenceRunner):
         json_data = json.loads(data)
 
         match json_data["op"]:
-            case EmbeddingRunnerOP.load_user_profile:
-                items = self._load_user_profile(**json_data["param"])
+            case EmbeddingRunnerOP.load:
+                items = self._load(**json_data["param"])
                 return json.dumps(items).encode()
-            case EmbeddingRunnerOP.save_user_profile:
-                result = self._save_user_profile(**json_data["param"])
+            case EmbeddingRunnerOP.save:
+                result = self._save(**json_data["param"])
                 return json.dumps(result).encode()
             case EmbeddingRunnerOP.search_speaker_vector:
                 result = self._search_speaker_vector(**json_data["param"])

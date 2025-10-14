@@ -24,11 +24,14 @@ from livekit.agents.job import get_job_context
 from livekit.agents.types import APIConnectOptions, NotGivenOr
 
 from alphaavatar.agents.persona import PersonaBase, SpeakerStreamBase
+from alphaavatar.agents.persona.enum.runner_op import EmbeddingRunnerOP
 from alphaavatar.agents.utils import NumpyOP
 
-from .enum.runner_op import EmbeddingRunnerOP
+from .log import logger
 from .models import MODEL_CONFIG
 from .runner import QdrantRunner, SpeakerVectorRunner
+
+SLOW_INFERENCE_THRESHOLD = 0.2
 
 
 class SpeakerStreamWrapper(SpeakerStreamBase):
@@ -57,6 +60,10 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
         self._speaker_vector_config = MODEL_CONFIG[SpeakerVectorRunner.MODEL_TYPE]
         self._speaker_vector_frames: list[rtc.AudioFrame] = []
         self._speaker_vector_resampler: rtc.AudioResampler | None = None
+        self._speaker_window_duration = (
+            self._speaker_vector_config.window_size_samples
+            / self._speaker_vector_config.sample_rate
+        )
 
         # Speaker Attribute Inference
         self._inference_frames_attribute: list[rtc.AudioFrame] = []
@@ -64,7 +71,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
     async def _inference_speaker_vector(
         self, input_frame: rtc.AudioFrame, timeout: float | None = 1.0
     ) -> None:
-        time.perf_counter()
+        start_time = time.perf_counter()
 
         if self._speaker_vector_config.sample_rate != input_frame.sample_rate:
             if not self._speaker_vector_resampler:
@@ -106,26 +113,68 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
         )
         speaker_vector = np.frombuffer(speak_vector_bytes, dtype=np.float32)  # type: ignore
 
+        inference_duration = time.perf_counter() - start_time
+        extra_inference_time = max(
+            0.0,
+            inference_duration - self._speaker_window_duration,
+        )
+        if inference_duration > SLOW_INFERENCE_THRESHOLD:
+            logger.warning(
+                "inference is slower than realtime",
+                extra={"delay": extra_inference_time},
+            )
+
         # Match & Retrieve & Update Speaker
         uid = await self._activity_persona.match_speaker(speaker_vector=speaker_vector)
         if uid is not None:
-            await self._activity_persona.update_speaker(user_id=uid, speaker_vector=speaker_vector)
+            await self._activity_persona.update_speaker(uid=uid, speaker_vector=speaker_vector)
         else:
             json_data = {
                 "op": EmbeddingRunnerOP.search_speaker_vector,
-                "param": {"speaker_vector": NumpyOP.np_l2_normalize(speaker_vector).tolist()},
+                "param": {"speaker_vector": NumpyOP.l2_normalize(speaker_vector).tolist()},
             }
             json_data = json.dumps(json_data).encode()
-            search_results = await asyncio.wait_for(
+            results = await asyncio.wait_for(
                 self._executor.do_inference(QdrantRunner.INFERENCE_METHOD, json_data),
                 timeout=timeout,
             )
-            if search_results:
-                pass
+            if results:
+                data: dict[str, Any] = json.loads(results.decode())
+                uid = data.get("user_id", "")
+                await self._activity_persona.load_profile(uid=uid)
+                await self._activity_persona.update_speaker(uid=uid, speaker_vector=speaker_vector)
             else:
                 await self._activity_persona.insert_speaker(speaker_vector=speaker_vector)
 
         # process remaining frames
+        step = int(self._speaker_vector_config.step_size_samples)
+        if step <= 0:
+            step = int(self._speaker_vector_config.window_size_samples)
+
+        to_discard = step
+        frames = self._speaker_vector_frames
+        while to_discard > 0 and frames:
+            f0 = frames[0]
+            n_per_ch = int(f0.samples_per_channel)
+            ch = int(f0.num_channels)
+
+            if to_discard >= n_per_ch:
+                to_discard -= n_per_ch
+                frames.pop(0)
+            else:
+                start_h = to_discard * ch
+                total_h = n_per_ch * ch
+                suffix_bytes = f0.data[start_h:total_h].cast("B").tobytes()
+                rest_samples = n_per_ch - to_discard
+                new_frame = rtc.AudioFrame(
+                    data=suffix_bytes,
+                    sample_rate=f0.sample_rate,
+                    num_channels=f0.num_channels,
+                    samples_per_channel=rest_samples,
+                )
+                frames[0] = new_frame
+                to_discard = 0
+
         return
 
     async def _run(self) -> None:
@@ -162,7 +211,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
                 await recognize_q.put(_SENTINEL)
                 await speaker_vector_q.put(_SENTINEL)
 
-        # Parallel
+        # Parallel threads
         async def _recognize() -> None:
             """recognize speech from vad"""
             async for event in _queue_iter(recognize_q):

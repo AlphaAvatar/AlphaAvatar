@@ -15,6 +15,6 @@ from enum import StrEnum
 
 
 class EmbeddingRunnerOP(StrEnum):
-    load_user_profile = "load_user_profile"
-    save_user_profile = "save_user_profile"
+    load = "load"
+    save = "save"
     search_speaker_vector = "search_speaker_vector"

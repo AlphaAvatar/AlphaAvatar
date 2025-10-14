@@ -181,8 +181,6 @@ class PersonaPluginsTemplate:
             data: dict[str, Any] = (
                 profile.details.model_dump() if profile and profile.details else {}
             )
-            if not isinstance(data, dict):
-                data = {}
 
             keys = list(data.keys())
             if sort_keys:
@@ -190,24 +188,21 @@ class PersonaPluginsTemplate:
 
             lines: list[str] = []
             for key in keys:
-                val = data[key]
+                item: dict = data[key]
+                val = item.get("value", "")
+                source = item.get("source", "")
+                timestamp = item.get("timestamp", "")
 
-                # Skip empties
                 if skip_empty and (val is None or (isinstance(val, str) and val.strip() == "")):
-                    continue
-                if skip_empty and isinstance(val, list) and len(val) == 0:
                     continue
 
                 display_val = _format_value(val)
                 if skip_empty and display_val == "":
                     continue
 
-                meta_path = f"/{key}"
-                ts = profile.timestamp.get(meta_path) if hasattr(profile, "timestamp") else None
-                if ts:
-                    lines.append(f"- {key}: {display_val} (updated at {ts})")
-                else:
-                    lines.append(f"- {key}: {display_val}")
+                lines.append(
+                    f"- {key}: {display_val} (updated at {timestamp}), source from: {source}"
+                )
 
             profile_blocks.append("\n".join(lines))
 

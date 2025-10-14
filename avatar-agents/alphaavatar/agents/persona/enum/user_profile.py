@@ -11,75 +11,50 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Any, Union, get_args, get_origin
+from enum import StrEnum
+from typing import Any, get_args, get_origin
 
 import numpy as np
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from alphaavatar.agents.utils import NumpyOP
+
+
+class ProfileItemSource(StrEnum):
+    chat = "chat"
+    speech = "speech"
+
+
+class ProfileItemView(BaseModel):
+    value: str
+    source: ProfileItemSource
+    timestamp: str
 
 
 class DetailsBase(BaseModel):
     @classmethod
     def field_descriptions_prompt(cls) -> str:
         """
-        Return a formatted string with `field (type): description` for all fields.
-        Useful as structured guidance to an LLM.
+        Return a formatted string with `field (type): description` for all fields,
+        where the type is constrained to `ProfileItemView` or `list[ProfileItemView]`.
+        This keeps the prompt focused on the only two allowed shapes.
         """
 
-        def _type_to_str(tp: Any) -> str:
-            # No annotation → Any
-            if tp is None:
-                return "Any"
-
+        def _type_label(tp: Any) -> str:
+            if tp is ProfileItemView:
+                return "String"
             origin = get_origin(tp)
-            # Non-generic / builtins
-            if origin is None:
-                if tp is str:
-                    return "str"
-                if tp is int:
-                    return "int"
-                if tp is float:
-                    return "float"
-                if tp is bool:
-                    return "bool"
-                if tp is Any:
-                    return "Any"
-                # Fallback to name/str
-                return getattr(tp, "__name__", str(tp))
-
-            args = get_args(tp)
-
-            # Containers
-            if origin in (list, set):
-                inner = _type_to_str(args[0]) if args else "Any"
-                return f"{origin.__name__}[{inner}]"
-            if origin is tuple:
-                if args and args[-1] is Ellipsis:
-                    inner = ", ".join(_type_to_str(a) for a in args[:-1]) + ", ..."
-                else:
-                    inner = ", ".join(_type_to_str(a) for a in args) if args else "Any"
-                return f"tuple[{inner}]"
-            if origin is dict:
-                k = _type_to_str(args[0]) if len(args) > 0 else "Any"
-                v = _type_to_str(args[1]) if len(args) > 1 else "Any"
-                return f"dict[{k}, {v}]"
-
-            # Unions / Optional
-            if origin is Union:
-                parts = list(args)
-                if type(None) in parts:
-                    non_none = [a for a in parts if a is not type(None)]
-                    if not non_none:
-                        return "Optional[Any]"
-                    return "Optional[" + " | ".join(_type_to_str(a) for a in non_none) + "]"
-                return " | ".join(_type_to_str(a) for a in parts)
-
-            # Fallback
-            return str(origin)
+            if origin in (list, list):
+                args = get_args(tp) or ()
+                if len(args) == 1 and args[0] is ProfileItemView:
+                    return "list[String]"
+            # Fallback for unexpected annotations (should not happen due to __init_subclass__)
+            return "Unsupported"
 
         lines: list[str] = []
-        for name, field in cls.model_fields.items():  # Pydantic v2: FieldInfo objects
-            tp = getattr(field, "annotation", Any)
-            typ_str = _type_to_str(tp)
+        for name, field in cls.model_fields.items():  # Pydantic v2 FieldInfo
+            ann = getattr(field, "annotation", Any)
+            typ_str = _type_label(ann)
             desc = field.description or ""
             lines.append(f"{name} ({typ_str}): {desc}")
 
@@ -87,35 +62,49 @@ class DetailsBase(BaseModel):
 
     def __init_subclass__(cls, **kwargs):
         """
-        This hook runs automatically whenever a new subclass of DetailsBase is defined.
-        Its purpose here is to enforce that all fields in subclasses are "flat":
-          - Allowed: primitive types (str, int, float, bool), lists, dicts, unions, enums, etc.
-          - Not allowed: nested Pydantic models (BaseModel or subclasses of BaseModel).
+        Enforce that every field annotation in subclasses is either:
+          - ProfileItemView
+          - list[ProfileItemView] (also accepts typing.List[ProfileItemView])
 
-        If a field is detected as a nested BaseModel, a TypeError is raised immediately
-        at class definition time. This prevents creation of complex/nested schemas and
-        ensures all subclasses of DetailsBase remain flat structures.
+        If any field does not match the allowed shapes, raise TypeError at class
+        definition time to fail fast.
         """
         super().__init_subclass__(**kwargs)
 
+        def _is_itemview_or_list(tp: Any) -> bool:
+            if tp is ProfileItemView:
+                return True
+            origin = get_origin(tp)
+            if origin in (list, list):
+                args = get_args(tp) or ()
+                return len(args) == 1 and args[0] is ProfileItemView
+            return False
+
         for name, field in cls.model_fields.items():
-            outer_type = field.annotation
-            origin = get_origin(outer_type)
-
-            if isinstance(outer_type, type) and issubclass(outer_type, BaseModel):
+            ann = getattr(field, "annotation", None)
+            if not _is_itemview_or_list(ann):
                 raise TypeError(
-                    f"Field '{name}' in {cls.__name__} is a nested BaseModel, "
-                    "which is not allowed. Only flat structures are permitted."
-                )
-
-            if origin is not None and issubclass(origin, BaseModel):  # e.g. List[SomeModel]
-                raise TypeError(
-                    f"Field '{name}' in {cls.__name__} contains a nested BaseModel "
-                    "which is not allowed."
+                    f"{cls.__name__}.{name} must be annotated as ProfileItemView or list[ProfileItemView], "
+                    f"got {ann!r}."
                 )
 
 
 class UserProfile(BaseModel):
-    timestamp: dict | None = None
     details: DetailsBase | None = None
     speaker_vector: np.ndarray | None = None
+
+    @field_validator("speaker_vector", mode="before")
+    @classmethod
+    def _coerce_and_validate_vec(cls, v: np.ndarray | list[float] | None) -> np.ndarray | None:
+        if v is None:
+            return None
+        if isinstance(v, list):
+            v = NumpyOP.l2_normalize(NumpyOP.to_np(v))
+        elif isinstance(v, np.ndarray):
+            if v.dtype != np.float32:
+                v = v.astype(np.float32, copy=False)
+        else:
+            raise TypeError("speaker_vector must be a 1D numpy array or list of floats.")
+        if v.ndim != 1:
+            raise ValueError("speaker_vector must be a 1-dimensional array.")
+        return v

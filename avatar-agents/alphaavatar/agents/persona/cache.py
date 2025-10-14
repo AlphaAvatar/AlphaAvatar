@@ -16,9 +16,11 @@ from __future__ import annotations
 import numpy as np
 from livekit.agents.llm import ChatItem, ChatMessage
 
-from alphaavatar.agents.utils import AvatarTime
+from alphaavatar.agents.utils import AvatarTime, NumpyOP
 
 from .enum.user_profile import DetailsBase, UserProfile
+
+SPEAKER_BETA = 0.95
 
 
 class PersonaCache:
@@ -26,7 +28,7 @@ class PersonaCache:
         self,
         *,
         timestamp: AvatarTime,
-        user_profile: UserProfile | None = None,
+        user_profile: UserProfile,
         current_retrieval_times: int = 0,
     ):
         self._timestamp = timestamp
@@ -48,23 +50,35 @@ class PersonaCache:
         return self._messages
 
     @property
-    def profile(self) -> UserProfile | None:
+    def profile(self) -> UserProfile:
         return self._user_profile
 
     @property
-    def profile_details(self) -> DetailsBase:
+    def profile_details(self) -> DetailsBase | None:
         return self._user_profile.details
 
     @property
-    def profile_timestamp(self) -> dict[str, str]:
-        return self._user_profile.timestamp
+    def profile_details_dump_value(self) -> dict:
+        if self.profile_details:
+            json_dump = self.profile_details.model_dump()
+            json_dump_value = {}
+            for key in json_dump:
+                val = json_dump[key]
+                if val is None:
+                    continue
+
+                if isinstance(val, dict):
+                    json_dump_value[key] = val["value"]
+                elif isinstance(val, list):
+                    json_dump_value[key] = [x["value"] for x in val if isinstance(x, dict)]
+
+            return json_dump_value
+        else:
+            return {}
 
     @property
     def speaker_vector(self) -> np.ndarray | None:
-        if self._user_profile:
-            return self._user_profile.speaker_vector
-        else:
-            return None
+        return self._user_profile.speaker_vector
 
     @profile.setter
     def profile(self, profile: UserProfile):
@@ -74,9 +88,22 @@ class PersonaCache:
     def profile_details(self, profile_details: DetailsBase):
         self._user_profile.details = profile_details
 
-    @profile_timestamp.setter
-    def profile_timestamp(self, timestamp: dict):
-        self._user_profile.timestamp.update(timestamp)
+    @speaker_vector.setter
+    def speaker_vector(self, vector: np.ndarray):
+        if self._user_profile is None:
+            raise ValueError("Cannot set speaker_vector before profile is set.")
+
+        current = getattr(self._user_profile, "speaker_vector", None)
+        if current is None:
+            self._user_profile.speaker_vector = vector
+        else:
+            if current.shape != vector.shape:
+                raise ValueError(
+                    f"speaker_vector shape mismatch: {current.shape} vs {vector.shape}"
+                )
+            self._user_profile.speaker_vector = NumpyOP.l2_normalize(
+                SPEAKER_BETA * current + (1 - SPEAKER_BETA) * vector
+            )
 
     def add_message(self, message: ChatItem):
         """Add a new message to the cache."""

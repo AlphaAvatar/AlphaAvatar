@@ -13,7 +13,8 @@
 # limitations under the License.
 from .base import PersonaBase
 from .cache import PersonaCache
-from .enum.user_profile import DetailsBase, UserProfile
+from .enum.runner_op import EmbeddingRunnerOP
+from .enum.user_profile import DetailsBase, ProfileItemSource, ProfileItemView, UserProfile
 from .profiler import ProfilerBase
 from .speaker import SpeakerStreamBase, speaker_node
 from .watcher import persona_chat_context_watcher
@@ -21,10 +22,13 @@ from .watcher import persona_chat_context_watcher
 __all__ = [
     "PersonaBase",
     "PersonaCache",
+    "EmbeddingRunnerOP",
+    "ProfileItemSource",
+    "ProfileItemView",
+    "DetailsBase",
+    "UserProfile",
     "ProfilerBase",
     "SpeakerStreamBase",
     "speaker_node",
     "persona_chat_context_watcher",
-    "UserProfile",
-    "DetailsBase",
 ]

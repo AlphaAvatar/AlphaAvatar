@@ -22,11 +22,10 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from livekit.agents.job import get_job_context
 
-from alphaavatar.agents.persona import DetailsBase, PersonaCache, ProfilerBase, UserProfile
+from alphaavatar.agents.persona import EmbeddingRunnerOP, PersonaCache, ProfilerBase, UserProfile
 from alphaavatar.agents.template import PersonaPluginsTemplate
 
-from .enum.runner_op import EmbeddingRunnerOP
-from .enum.user_profile import UserProfileDetails
+from .profiler_details import UserProfileDetails
 from .profiler_op import (
     ProfileDelta,
     append_string,
@@ -96,13 +95,12 @@ class ProfilerLangChain(ProfilerBase):
     async def load(
         self,
         *,
-        user_id: str,
+        uid: str,
         timeout: float | None = 3,
-    ) -> UserProfile | None:
-        """Fetch all points for user_id (stored in metadata) via Scroll API, rebuild profile."""
-        json_data = {"op": EmbeddingRunnerOP.load_user_profile, "param": {"user_id": user_id}}
+    ) -> UserProfile:
+        """Load text, voice, and face profile information for the specified user_id"""
+        json_data = {"op": EmbeddingRunnerOP.load, "param": {"user_id": uid}}
         json_data = json.dumps(json_data).encode()
-
         result = await asyncio.wait_for(
             self._executor.do_inference(QdrantRunner.INFERENCE_METHOD, json_data),
             timeout=timeout,
@@ -110,38 +108,50 @@ class ProfilerLangChain(ProfilerBase):
 
         assert result is not None, "user profile load should always returns a result"
 
-        items: list[dict[str, Any]] = json.loads(result.decode())
-        if len(items) == 0:
-            return None
+        data: dict[str, Any] = json.loads(result.decode())
 
-        data, timestamp = rebuild_from_items(items)
-        profile_details = UserProfileDetails(**data)
-        return UserProfile(details=profile_details, timestamp=timestamp)
+        # Text Profile
+        if data.get("details_items", None):
+            profile_details = UserProfileDetails(**rebuild_from_items(data["details_items"]))
+        else:
+            profile_details = None
 
-    async def update(self, *, perona: PersonaCache):
-        """Async delta extraction -> in-memory patch."""
-        update_time: str = perona.time
-        profile_details: UserProfileDetails | DetailsBase = perona.profile_details
-        chat_context = perona.messages
+        # Voice Profile
+        if data.get("speaker_vector", None):
+            speaker_vector = data["speaker_vector"]
+        else:
+            speaker_vector = None
 
-        new_turn = PersonaPluginsTemplate.apply_update_template(chat_context)
-        delta = await self._aextract_delta(profile_details, new_turn)
-        profile_details, timestamp = self._apply_patch(update_time, profile_details, delta)
+        # Face Profile
+        # TODO: add face profile loading logic
 
-        perona.profile_details = profile_details
-        perona.profile_timestamp = timestamp
+        return UserProfile(details=profile_details, speaker_vector=speaker_vector)
 
-    async def save(self, *, user_id: str, perona: PersonaCache, timeout: float | None = 3) -> None:
-        """Async: delete old by user_id filter, then upsert all items."""
-        data = perona.profile_details.model_dump()
-        timestamp = perona.profile_timestamp
-        items = flatten_items(user_id, data, timestamp)
-        if not items:
-            return
+    async def save(self, *, uid: str, perona: PersonaCache, timeout: float | None = 3) -> None:
+        """Save the text, voice, and face profile information of the specified user_id."""
+        # Text Profile
+        if perona.profile_details:
+            data = perona.profile_details.model_dump()
+            details_items = flatten_items(uid, data)
+        else:
+            details_items = None
+
+        # Voice Profile
+        if perona.speaker_vector:
+            speaker_vector = perona.speaker_vector.tolist()
+        else:
+            speaker_vector = None
+
+        # Face Profile
+        # TODO: add face profile saving logic
 
         json_data = {
-            "op": EmbeddingRunnerOP.save_user_profile,
-            "param": {"user_id": user_id, "items": items},
+            "op": EmbeddingRunnerOP.save,
+            "param": {
+                "user_id": uid,
+                "details_items": details_items,
+                "speaker_vector": speaker_vector,
+            },
         }
         json_data = json.dumps(json_data).encode()
 
@@ -150,22 +160,34 @@ class ProfilerLangChain(ProfilerBase):
             timeout=timeout,
         )
 
-    async def _aextract_delta(
-        self, profile: UserProfileDetails | DetailsBase, new_turn: str
-    ) -> ProfileDelta:
+    async def update(self, *, perona: PersonaCache):
+        """Async delta extraction -> in-memory patch."""
+        profile_details_dump: dict = perona.profile_details_dump_value
+
+        update_time: str = perona.time
+        chat_context = perona.messages
+
+        new_turn = PersonaPluginsTemplate.apply_update_template(chat_context)
+        delta = await self._aextract_delta(profile_details_dump, new_turn)
+        profile_details_dict = self._apply_patch(update_time, profile_details_dump, delta)
+
+        if profile_details_dict:
+            perona.profile_details = UserProfileDetails(**profile_details_dict)
+
+    async def _aextract_delta(self, profile_details_dump: dict, new_turn: str) -> ProfileDelta:
         """Ask the LLM to generate patch ops relative to the current profile."""
         chain = DELTA_PROMPT | self._delta_llm
         return await chain.ainvoke(
             {
-                "current_profile": profile.model_dump_json(),
+                "current_profile": profile_details_dump,
                 "profile_reference": UserProfileDetails.field_descriptions_prompt(),
                 "new_turn": new_turn,
             }
         )  # type: ignore
 
     def _apply_patch(
-        self, update_time: str, profile: UserProfileDetails | DetailsBase, delta: ProfileDelta
-    ) -> tuple[UserProfileDetails, dict]:
+        self, update_time: str, profile_details_dump: dict, delta: ProfileDelta
+    ) -> dict:
         """
         Apply PatchOps to a (FLAT) UserProfileDetails:
           - set: overwrite value (scalar/list) at path
@@ -177,8 +199,7 @@ class ProfilerLangChain(ProfilerBase):
               * str  -> ""
               * others -> None
         """
-        data: dict[str, Any] = deepcopy(profile.model_dump())
-        timestamp: dict[str, str] = {}
+        data: dict[str, Any] = deepcopy(profile_details_dump)
 
         for op in delta.ops:
             tokens = parse_pointer(op.path)
@@ -186,22 +207,20 @@ class ProfilerLangChain(ProfilerBase):
                 continue
             try:
                 if op.op == "set":
-                    write_set(data, tokens, op.value)
+                    write_set(data, tokens, op.value, update_time)
                 elif op.op == "clear":
                     clear_path(data, tokens)
                 elif op.op == "append" and op.value is not None:
                     key = tokens[0]
                     cur = data.get(key, None)
                     if isinstance(cur, list):
-                        append_string(data, tokens, op.value)
+                        append_string(data, tokens, op.value, update_time)
                     else:
-                        append_text(data, tokens, op.value)
+                        append_text(data, tokens, op.value, update_time)
                 elif op.op == "remove" and op.value is not None:
                     remove_string(data, tokens, op.value)
-
-                timestamp[op.path] = update_time
             except Exception:
                 # In production: log the error with op details
                 continue
 
-        return UserProfileDetails(**data), timestamp
+        return data
