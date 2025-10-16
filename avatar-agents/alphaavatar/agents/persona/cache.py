@@ -50,8 +50,11 @@ class PersonaCache:
         return self._messages
 
     @property
-    def profile(self) -> UserProfile:
-        return self._user_profile
+    def profile(self) -> UserProfile | None:
+        if self._user_profile.details or self._user_profile.speaker_vector:
+            return self._user_profile
+        else:
+            return None
 
     @property
     def profile_details(self) -> DetailsBase | None:

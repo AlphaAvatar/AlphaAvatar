@@ -44,6 +44,7 @@ Build a universal **assistant** that can automatically recognize users through m
 
 ### TODO 📄
 
+* Support multi-user interactions
 * Real-time retrieval of user profiles based on conversations between users and Assistant.
 * Develop a speech-based system to extract speaker vectors and related features, enabling automatic retrieval or identification of speaker profiles without relying on fixed user IDs.
 * Develop a face-based system to extract facial embeddings and related features, enabling automatic retrieval or identification of speaker profiles without binding to a specific user ID.

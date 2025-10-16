@@ -25,6 +25,7 @@ from livekit.agents.job import get_job_context
 from alphaavatar.agents.persona import EmbeddingRunnerOP, PersonaCache, ProfilerBase, UserProfile
 from alphaavatar.agents.template import PersonaPluginsTemplate
 
+from .log import logger
 from .profiler_details import UserProfileDetails
 from .profiler_op import (
     ProfileDelta,
@@ -154,25 +155,35 @@ class ProfilerLangChain(ProfilerBase):
             },
         }
         json_data = json.dumps(json_data).encode()
-
-        await asyncio.wait_for(
+        result = await asyncio.wait_for(
             self._executor.do_inference(QdrantRunner.INFERENCE_METHOD, json_data),
             timeout=timeout,
         )
 
+        if result:
+            logger.info(f"User Profile SAVE success: {result.decode()}")
+        else:
+            logger.warning("User Profile SAVE falied!")
+
     async def update(self, *, perona: PersonaCache):
         """Async delta extraction -> in-memory patch."""
-        profile_details_dump: dict = perona.profile_details_dump_value
+        if perona.profile_details:
+            data = perona.profile_details.model_dump()
+        else:
+            data = {}
 
         update_time: str = perona.time
         chat_context = perona.messages
 
         new_turn = PersonaPluginsTemplate.apply_update_template(chat_context)
-        delta = await self._aextract_delta(profile_details_dump, new_turn)
-        profile_details_dict = self._apply_patch(update_time, profile_details_dump, delta)
+        delta = await self._aextract_delta(perona.profile_details_dump_value, new_turn)
+        is_updated, updated_profile_details = self._apply_patch(update_time, data, delta)
 
-        if profile_details_dict:
-            perona.profile_details = UserProfileDetails(**profile_details_dict)
+        if is_updated:
+            logger.info(f"User Profile UPDATE success: {updated_profile_details}")
+            perona.profile_details = UserProfileDetails(**updated_profile_details)
+        else:
+            logger.info("User Profile UPDATE skip!")
 
     async def _aextract_delta(self, profile_details_dump: dict, new_turn: str) -> ProfileDelta:
         """Ask the LLM to generate patch ops relative to the current profile."""
@@ -187,7 +198,7 @@ class ProfilerLangChain(ProfilerBase):
 
     def _apply_patch(
         self, update_time: str, profile_details_dump: dict, delta: ProfileDelta
-    ) -> dict:
+    ) -> tuple[bool, dict[str, Any]]:
         """
         Apply PatchOps to a (FLAT) UserProfileDetails:
           - set: overwrite value (scalar/list) at path
@@ -201,6 +212,7 @@ class ProfilerLangChain(ProfilerBase):
         """
         data: dict[str, Any] = deepcopy(profile_details_dump)
 
+        is_updated = False
         for op in delta.ops:
             tokens = parse_pointer(op.path)
             if not tokens or len(tokens) != 1:
@@ -219,8 +231,10 @@ class ProfilerLangChain(ProfilerBase):
                         append_text(data, tokens, op.value, update_time)
                 elif op.op == "remove" and op.value is not None:
                     remove_string(data, tokens, op.value)
+
+                is_updated = True
             except Exception:
                 # In production: log the error with op details
                 continue
 
-        return data
+        return is_updated, data

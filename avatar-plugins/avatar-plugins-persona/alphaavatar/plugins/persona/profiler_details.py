@@ -48,8 +48,8 @@ class UserProfileDetails(DetailsBase):
         "(e.g., 'zh-CN', 'English (US)', 'Mandarin Chinese').",
     )
 
-    languages: list[ProfileItemView] = Field(
-        default_factory=list,
+    languages: list[ProfileItemView] | None = Field(
+        None,
         description="Languages with optional proficiency or preference notes, "
         "written as natural text (e.g., 'English: native, prefer for work', "
         "'Chinese: fluent, okay for casual chats').",
@@ -99,7 +99,7 @@ class UserProfileDetails(DetailsBase):
     )
 
     # Preferences, Constraints & Context
-    preferences: ProfileItemView | None = Field(
+    preferences: list[ProfileItemView] | None = Field(
         None,
         description="Likes, dislikes, favorite or avoided brands, sensitivities, described freely "
         "(e.g., 'Loves sci-fi movies, dislikes horror, prefers Apple products, avoid political topics').",
@@ -114,8 +114,8 @@ class UserProfileDetails(DetailsBase):
         description="Family or household situation, described naturally "
         "(e.g., 'Married, 2 kids aged 5 and 8, lives with partner and parents, household size 5').",
     )
-    constraints: list[ProfileItemView] = Field(
-        default_factory=list,
+    constraints: list[ProfileItemView] | None = Field(
+        None,
         description="Other constraints as natural phrases "
         "(e.g., 'cannot work weekends', 'no alcohol due to health reasons').",
     )

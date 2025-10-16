@@ -13,7 +13,6 @@
 # limitations under the License.
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Any
 
 from livekit.agents.llm import ChatItem, ChatMessage, ChatRole
@@ -145,36 +144,6 @@ class PersonaPluginsTemplate:
         Returns:
             A string ready to be used as part of a system prompt.
         """
-
-        def _is_scalar(x: Any) -> bool:
-            return isinstance(x, str | int | float | bool)
-
-        def _format_value(val: Any) -> str:
-            """Format value into display text:
-            - scalar -> str(val)
-            - list   -> join primitives as str, non-primitives as JSON
-            - other  -> JSON
-            """
-            if _is_scalar(val):
-                return str(val)
-
-            if isinstance(val, list):
-                if skip_empty and len(val) == 0:
-                    return ""
-                parts: list[str] = []
-                for x in val:
-                    if _is_scalar(x):
-                        s = str(x)
-                        if skip_empty and isinstance(x, str) and s.strip() == "":
-                            continue
-                        parts.append(s)
-                    else:
-                        parts.append(json.dumps(x, ensure_ascii=False))
-                return list_sep.join(parts)
-
-            # dict / object -> JSON
-            return json.dumps(val, ensure_ascii=False)
-
         profile_blocks: list[str] = []
 
         for profile in user_profiles:
@@ -182,27 +151,37 @@ class PersonaPluginsTemplate:
                 profile.details.model_dump() if profile and profile.details else {}
             )
 
-            keys = list(data.keys())
+            profile_attr = list(data.keys())
             if sort_keys:
-                keys.sort()
+                profile_attr.sort()
 
             lines: list[str] = []
-            for key in keys:
-                item: dict = data[key]
-                val = item.get("value", "")
-                source = item.get("source", "")
-                timestamp = item.get("timestamp", "")
-
-                if skip_empty and (val is None or (isinstance(val, str) and val.strip() == "")):
+            for attr in profile_attr:
+                value: dict | list | None = data[attr]
+                if value is None:
                     continue
 
-                display_val = _format_value(val)
-                if skip_empty and display_val == "":
-                    continue
+                if isinstance(value, list):
+                    attr_values = []
+                    for v in value:
+                        val = v.get("value", "")
+                        source = v.get("source", "")
+                        timestamp = v.get("timestamp", "")
+                        attr_values.append(
+                            f"{val} (updated at {timestamp}) | source from: {source}"
+                        )
+                    lines.append(f"- {attr}: {list_sep.join(attr_values)}")
+                else:
+                    val = value.get("value", "")
+                    source = value.get("source", "")
+                    timestamp = value.get("timestamp", "")
 
-                lines.append(
-                    f"- {key}: {display_val} (updated at {timestamp}), source from: {source}"
-                )
+                    if skip_empty and (val is None or (isinstance(val, str) and val.strip() == "")):
+                        continue
+
+                    lines.append(
+                        f"- {attr}: {val} (updated at {timestamp}) | source from: {source}"
+                    )
 
             profile_blocks.append("\n".join(lines))
 

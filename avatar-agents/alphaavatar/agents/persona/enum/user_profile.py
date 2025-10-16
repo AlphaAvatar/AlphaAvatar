@@ -15,7 +15,7 @@ from enum import StrEnum
 from typing import Any, get_args, get_origin
 
 import numpy as np
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_serializer, field_validator
 
 from alphaavatar.agents.utils import NumpyOP
 
@@ -90,12 +90,14 @@ class DetailsBase(BaseModel):
 
 
 class UserProfile(BaseModel):
-    details: DetailsBase | None = None
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    details: "DetailsBase | None" = None
     speaker_vector: np.ndarray | None = None
 
     @field_validator("speaker_vector", mode="before")
     @classmethod
-    def _coerce_and_validate_vec(cls, v: np.ndarray | list[float] | None) -> np.ndarray | None:
+    def _coerce_and_validate_vec(cls, v):
         if v is None:
             return None
         if isinstance(v, list):
@@ -108,3 +110,8 @@ class UserProfile(BaseModel):
         if v.ndim != 1:
             raise ValueError("speaker_vector must be a 1-dimensional array.")
         return v
+
+    # Optional: make JSON export friendly
+    @field_serializer("speaker_vector")
+    def _serialize_vec(self, v: np.ndarray | None):
+        return None if v is None else v.tolist()

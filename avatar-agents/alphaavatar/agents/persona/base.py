@@ -62,7 +62,9 @@ class PersonaBase:
 
     @property
     def persona_content(self) -> str:
-        user_profiles = [cache.profile for uid, cache in self.persona_cache.items()]
+        user_profiles = [
+            cache.profile for uid, cache in self.persona_cache.items() if cache.profile is not None
+        ]
         return PersonaPluginsTemplate.apply_profile_template(user_profiles)
 
     def add_message(self, *, user_id: str, chat_item: ChatItem):

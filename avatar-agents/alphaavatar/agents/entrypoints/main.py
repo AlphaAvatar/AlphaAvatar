@@ -36,8 +36,8 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     # Get Metadata
     participant = await ctx.wait_for_participant()
     participant_metadata = json.loads(participant.metadata) if participant.metadata else {}
-    user_id = participant_metadata.get("user_id", get_user_id)
-    session_id = participant_metadata.get("session_id", get_session_id)
+    user_id = participant_metadata.get("user_id", get_user_id())
+    session_id = participant_metadata.get("session_id", get_session_id())
     session_config = SessionConfig(
         user_id=user_id,
         session_id=session_id,
@@ -45,10 +45,10 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
 
     logger.info(
         textwrap.dedent(f"""Connecting to room...
-    room name: {ctx.room.name}
-    token: {ctx._info.token}
-    session_config: {session_config}
-    avatar_config: {avatar_config}""")
+    - Room Name: {ctx.room.name}
+    - Token: {ctx._info.token}
+    - Session Config: {session_config}
+    - Avatar Config: {avatar_config}""")
     )
 
     # Build Session & Avatar
