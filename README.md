@@ -29,7 +29,7 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 
 ---
 
-<h3>Avatar Plugins</h3>
+<h3>AlphaAvatar Plugins</h3>
 
 <table>
 <tr>
@@ -41,10 +41,27 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 </p>
 </td>
 <td width="50%">
-<h3>👨 Persona</h3>
+<h3>🧬 Persona</h3>
 <p>Automatic extraction and real-time matching of user full modality persona.</p>
 <p>
 <a href="https://github.com/AlphaAvatar/AlphaAvatar/blob/main/avatar-plugins/avatar-plugins-persona/README.md">README↗</a>
+</p>
+</td>
+</tr>
+
+<tr>
+<td width="50%">
+<h3> Planning</h3>
+<p></p>
+<p>
+<a href="examples/voice_agents/basic_agent.py">README↗</a>
+</p>
+</td>
+<td width="50%">
+<h3>🤖 Behavior</h3>
+<p>Controls AlphaAvatar’s behavior logic and process flow.</p>
+<p>
+<a href="examples/voice_agents/push_to_talk.py">README↗</a>
 </p>
 </td>
 </tr>
@@ -59,12 +76,13 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 </td>
 <td width="50%">
 <h3>😊 Avatar</h3>
-<p></p>
+<p>The real-time generated digital avatar synchronously drives the lip movements, expressions and movements during the conversation, achieving contextualized and anthropomorphic presentation and interaction.</p>
 <p>
 <a href="examples/voice_agents/push_to_talk.py">README↗</a>
 </p>
 </td>
 </tr>
+
 </table>
 
 ---

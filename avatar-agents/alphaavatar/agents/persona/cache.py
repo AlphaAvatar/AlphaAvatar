@@ -51,7 +51,7 @@ class PersonaCache:
 
     @property
     def profile(self) -> UserProfile | None:
-        if self._user_profile.details or self._user_profile.speaker_vector:
+        if self._user_profile.details is not None or self._user_profile.speaker_vector is not None:
             return self._user_profile
         else:
             return None
@@ -93,7 +93,7 @@ class PersonaCache:
 
     @speaker_vector.setter
     def speaker_vector(self, vector: np.ndarray):
-        if self._user_profile is None:
+        if self.profile is None:
             raise ValueError("Cannot set speaker_vector before profile is set.")
 
         current = getattr(self._user_profile, "speaker_vector", None)

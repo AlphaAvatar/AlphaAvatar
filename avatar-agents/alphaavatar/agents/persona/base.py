@@ -68,12 +68,14 @@ class PersonaBase:
         return PersonaPluginsTemplate.apply_profile_template(user_profiles)
 
     def add_message(self, *, user_id: str, chat_item: ChatItem):
-        if user_id not in self._persona_cache:
-            raise ValueError(
-                f"User ID {user_id} not found in perona cache. You need to call 'init_cache' first."
+        if user_id not in self.persona_cache:
+            logger.error(
+                f"User ID {user_id} not found in perona cache."
+                "You need to call 'init_cache' or 'load_profile' first."
             )
+            return
 
-        self._persona_cache[user_id].add_message(chat_item)
+        self.persona_cache[user_id].add_message(chat_item)
 
     async def init_cache(self, *, timestamp: AvatarTime, init_user_id: str):
         if init_user_id not in self.persona_cache:
@@ -99,12 +101,17 @@ class PersonaBase:
                 user_profile=user_profile,
             )
             self._init_user_id = uid
+            logger.info(
+                f"User Profile with id '{uid}' loaded and "
+                "replaced the initial temporary user in perona cache."
+            )
         else:
             if uid not in self.persona_cache:
                 self.persona_cache[uid] = PersonaCache(
                     timestamp=self._init_timestamp,
                     user_profile=user_profile,
                 )
+                logger.info(f"User Profile with id '{uid}' loaded into perona cache.")
             else:
                 logger.warning(
                     f"User with id '{uid}' already exists in perona cache. "
@@ -116,8 +123,8 @@ class PersonaBase:
 
         def _build_gallery(gallery: dict[str, np.ndarray]) -> tuple[np.ndarray, list[str]]:
             ids, mats = [], []
-            for sid, vec in gallery.items():
-                ids.append(sid)
+            for uid, vec in gallery.items():
+                ids.append(uid)
                 mats.append(NumpyOP.to_np(vec))
             G = np.stack(mats, axis=0)  # (M, D)
             return G, ids
@@ -127,6 +134,9 @@ class PersonaBase:
             for uid, cache in self.persona_cache.items()
             if cache.speaker_vector is not None
         }
+        if len(gallery) == 0:
+            return None
+
         G, ids = _build_gallery(gallery)
         if G.size == 0:
             return None
@@ -167,6 +177,7 @@ class PersonaBase:
             return
 
         self.persona_cache[uid].speaker_vector = NumpyOP.l2_normalize(NumpyOP.to_np(speaker_vector))
+        logger.info(f"User ID {uid} speaker vector updated in persona cache.")
 
     async def insert_speaker(self, *, speaker_vector: np.ndarray | list[float]):
         # TODO: hadle multiple users

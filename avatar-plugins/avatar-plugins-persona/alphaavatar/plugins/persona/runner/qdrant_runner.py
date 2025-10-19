@@ -42,7 +42,7 @@ def get_qdrant_client(
     *,
     host: str | None = None,
     port: int | None = None,
-    path: str = "/tmp/qdrant_profiler",
+    path: str = "/tmp/alphaavatar_qdrant_persona",
     url: str | None = None,
     api_key: str | None = None,
     on_disk: bool = False,
@@ -342,13 +342,13 @@ class QdrantRunner(_InferenceRunner):
 
         match json_data["op"]:
             case EmbeddingRunnerOP.load:
-                items = self._load(**json_data["param"])
-                return json.dumps(items).encode()
+                result = self._load(**json_data["param"])
+                return json.dumps(result).encode() if result else None
             case EmbeddingRunnerOP.save:
                 result = self._save(**json_data["param"])
-                return json.dumps(result).encode()
+                return json.dumps(result).encode() if result else None
             case EmbeddingRunnerOP.search_speaker_vector:
                 result = self._search_speaker_vector(**json_data["param"])
-                return json.dumps(result).encode()
+                return json.dumps(result).encode() if result else None
             case _:
                 return None

@@ -68,10 +68,10 @@ General:
         ),
         (
             "human",
-            "CURRENT PROFILE (JSON):\n{current_profile}\n\n"
-            "REFERENCE FIELDS (type + description):\n{profile_reference}\n\n"
-            "NEW TURN:\n{new_turn}\n\n"
-            "Output only ProfileDelta (list of PatchOps).",
+            "CURRENT PROFILE (JSON):\n```{current_profile}```\n\n"
+            "REFERENCE FIELDS (type + description):\n```{profile_reference}```\n\n"
+            "NEW TURN:\n```{new_turn}```\n\n"
+            "Output only ProfileDelta (list of PatchOps, If nothing changes, return an empty list).",
         ),
     ]
 )
@@ -131,14 +131,14 @@ class ProfilerLangChain(ProfilerBase):
     async def save(self, *, uid: str, perona: PersonaCache, timeout: float | None = 3) -> None:
         """Save the text, voice, and face profile information of the specified user_id."""
         # Text Profile
-        if perona.profile_details:
+        if perona.profile_details is not None:
             data = perona.profile_details.model_dump()
             details_items = flatten_items(uid, data)
         else:
             details_items = None
 
         # Voice Profile
-        if perona.speaker_vector:
+        if perona.speaker_vector is not None:
             speaker_vector = perona.speaker_vector.tolist()
         else:
             speaker_vector = None

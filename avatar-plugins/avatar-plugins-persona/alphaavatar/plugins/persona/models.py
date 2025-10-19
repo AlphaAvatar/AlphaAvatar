@@ -41,7 +41,7 @@ MODEL_CONFIG: dict[SpeakerVectoryModelType, RunnerModelConfig] = {
         sample_rate=16000,
         window_size_samples=int(3.0 * 16000),
         step_size_samples=int(1 * 16000),
-        embedding_dim=172,
+        embedding_dim=192,
     ),
 }
 
