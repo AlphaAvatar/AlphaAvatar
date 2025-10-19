@@ -76,7 +76,7 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 </td>
 <td width="50%">
 <h3>😊 Avatar</h3>
-<p>The real-time generated digital avatar synchronously drives the lip movements, expressions and movements during the conversation, achieving contextualized and anthropomorphic presentation and interaction.</p>
+<p>The real-time generated digital avatar during the conversation.</p>
 <p>
 <a href="examples/voice_agents/push_to_talk.py">README↗</a>
 </p>
