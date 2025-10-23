@@ -17,8 +17,8 @@ from typing import Any
 from livekit.agents.llm import ChatItem
 from mem0 import AsyncMemoryClient
 
+from alphaavatar.agents.avatar import MemoryPluginsTemplate
 from alphaavatar.agents.memory import MemoryBase
-from alphaavatar.agents.template import MemoryPluginsTemplate
 
 
 def apply_client_memory_list(results: list[dict[str, Any]]) -> list:
@@ -58,7 +58,7 @@ class Mem0ClientMemory(MemoryBase):
     def client(self) -> AsyncMemoryClient:
         return self._client
 
-    async def search(self, *, session_id: str, chat_context: list[ChatItem]):
+    async def search(self, *, session_id: str, chat_context: list[ChatItem]) -> None:
         """Search for relevant memories based on the query."""
         query_str = MemoryPluginsTemplate.apply_memory_search_template(
             chat_context[-getattr(self, "memory_search_context", 3) :], filter_roles=["system"]

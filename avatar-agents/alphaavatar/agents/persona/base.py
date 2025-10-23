@@ -14,8 +14,8 @@
 import numpy as np
 from livekit.agents.llm import ChatItem
 
+from alphaavatar.agents.avatar import PersonaPluginsTemplate
 from alphaavatar.agents.log import logger
-from alphaavatar.agents.template import PersonaPluginsTemplate
 from alphaavatar.agents.utils import AvatarTime, NumpyOP, get_user_id
 
 from .cache import PersonaCache

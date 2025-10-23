@@ -13,11 +13,8 @@
 # limitations under the License.
 from .base import MemoryBase
 from .cache import MemoryType
-from .watcher import memory_chat_context_watcher, memory_search_hook
 
 __all__ = [
     "MemoryBase",
     "MemoryType",
-    "memory_chat_context_watcher",
-    "memory_search_hook",
 ]

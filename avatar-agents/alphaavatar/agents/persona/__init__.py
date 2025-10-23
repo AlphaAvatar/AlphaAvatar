@@ -17,7 +17,6 @@ from .enum.runner_op import EmbeddingRunnerOP
 from .enum.user_profile import DetailsBase, ProfileItemSource, ProfileItemView, UserProfile
 from .profiler import ProfilerBase
 from .speaker import SpeakerStreamBase, speaker_node
-from .watcher import persona_chat_context_watcher
 
 __all__ = [
     "PersonaBase",
@@ -30,5 +29,4 @@ __all__ = [
     "ProfilerBase",
     "SpeakerStreamBase",
     "speaker_node",
-    "persona_chat_context_watcher",
 ]

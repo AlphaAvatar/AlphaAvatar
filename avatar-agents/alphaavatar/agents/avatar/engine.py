@@ -15,7 +15,6 @@
 
 import inspect
 from collections.abc import AsyncIterable, Coroutine
-from functools import partial
 from typing import Any
 
 from livekit import rtc
@@ -23,17 +22,13 @@ from livekit.agents import Agent, ModelSettings, RunContext, function_tool, llm,
 from livekit.agents.voice.generation import update_instructions
 
 from alphaavatar.agents.configs import AvatarConfig, SessionConfig
-from alphaavatar.agents.memory import MemoryBase, memory_chat_context_watcher, memory_search_hook
-from alphaavatar.agents.persona import (
-    PersonaBase,
-    persona_chat_context_watcher,
-    speaker_node,
-)
-from alphaavatar.agents.template import AvatarPromptTemplate
+from alphaavatar.agents.memory import MemoryBase
+from alphaavatar.agents.persona import PersonaBase, speaker_node
 from alphaavatar.agents.utils import AvatarTime, format_current_time
 
-from .avatar_hooks import HookRegistry, install_generation_hooks
-from .chat_context_observer import attach_observer
+from .context import init_context_manager
+from .context.template import AvatarPromptTemplate
+from .patches import init_avatar_patches
 
 
 class AvatarEngine(Agent):
@@ -67,34 +62,6 @@ class AvatarEngine(Agent):
             llm=self.avatar_config.livekit_plugin_config.get_llm_plugin(),
             tts=self.avatar_config.livekit_plugin_config.get_tts_plugin(),
             allow_interruptions=self.avatar_config.livekit_plugin_config.allow_interruptions,
-        )
-
-        self.__post_init__()
-
-    def __post_init__(self):
-        """Post-initialization to Avtar."""
-
-        # attach memory chat context observer
-        attach_observer(
-            ctx=self._chat_ctx,
-            on_change=partial(
-                memory_chat_context_watcher, self._memory, self.session_config.session_id
-            ),
-        )
-        attach_observer(
-            ctx=self._chat_ctx,
-            on_change=partial(
-                persona_chat_context_watcher, self._persona, self.session_config.user_id
-            ),
-        )
-
-        # generation hooks
-        self._generation_hooks = HookRegistry()
-        self._generation_hook_installed = False
-        self._generation_hooks.add(
-            partial(memory_search_hook, self._memory, self.session_config.session_id),
-            name="memory_search",
-            priority=1,
         )
 
     @property
@@ -140,7 +107,9 @@ class AvatarEngine(Agent):
             timestamp=self._avatar_activate_time, init_user_id=self.session_config.user_id
         )
 
-        install_generation_hooks(self)
+        init_avatar_patches(self)
+        init_context_manager(self)
+
         self.session.generate_reply(
             instructions="Briefly greet the user and offer your assistance."
         )

@@ -108,6 +108,11 @@ class MemoryBase:
 
         self._memory_cache[session_id].add_message(chat_item)
 
+    def update_user_tool_id(self, *, ori_id: str, tgt_id: str):
+        for cache in self._memory_cache.values():
+            if cache.user_or_tool_id == ori_id:
+                cache._user_or_tool_id = tgt_id
+
     async def init_cache(
         self,
         *,
@@ -131,7 +136,7 @@ class MemoryBase:
             )
 
     @abstractmethod
-    async def search(self, *, session_id: str, chat_context: list[ChatItem]): ...
+    async def search(self, *, session_id: str, chat_context: list[ChatItem]) -> None: ...
 
     @abstractmethod
     async def update(self, *, session_id: str | None = None): ...

@@ -41,12 +41,12 @@ DEFAULT_STREAM_ADAPTER_API_CONNECT_OPTIONS = APIConnectOptions(
 
 
 async def speaker_node(
-    agent: AvatarEngine,
+    engine: AvatarEngine,
     audio: AsyncIterable[rtc.AudioFrame],
     model_settings: ModelSettings,
 ) -> AsyncGenerator[stt.SpeechEvent, None]:
     """Override implementation for `Agent.default.stt_node`"""
-    activity = agent._get_activity_or_raise()
+    activity = engine._get_activity_or_raise()
     assert activity.stt is not None, "stt_node called but no STT node is available"
 
     if not activity.vad:
@@ -54,7 +54,7 @@ async def speaker_node(
             "AlphaAvatar Persona Plugin require a VAD plugin, please add a VAD to the AgentTask/VoiceAgent to enable Persona Plugin."
         )
 
-    wrapped_speaker = SpeakerAdapter(stt=activity.stt, vad=activity.vad, persona=agent.persona)
+    wrapped_speaker = SpeakerAdapter(stt=activity.stt, vad=activity.vad, persona=engine.persona)
 
     conn_options = activity.session.conn_options.stt_conn_options
     async with wrapped_speaker.stream(conn_options=conn_options) as stream:

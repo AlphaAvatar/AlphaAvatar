@@ -19,6 +19,18 @@
 
 ---
 
+# Core Function
+
+### ✅ **DONE**
+
+|  Date    | Task                                                                                                                         |
+| :------- | :--------------------------------------------------------------------------------------------------------------------------- |
+| 2025-10  | Develop a context manager to route real-time updated interaction information to different plugin models (memory, persona) for corresponding plugin updates. |
+
+### 🧭 **TODO**
+
+---
+
 # 🧠 **MEMORY PLUGIN**
 
 ### 📊 **Progress**
@@ -27,15 +39,11 @@
 ██████████░░░░░░░░░░  50%  (Phase 1 Complete)
 ```
 
----
-
 ### ✅ **DONE**
 
 | Date    | Milestone                            | Notes                                                                                                                                       |
 | :------ | :----------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------ |
 | 2025-09 | **Automatic Memory Extraction (v1)** | Built on **Mem0 Client**, enabling memory capture & retrieval across:<br>• Assistant–User<br>• Assistant–Tools<br>• Assistant’s self-memory |
-
----
 
 ### 🧭 **TODO**
 
@@ -56,15 +64,11 @@
 ████████████░░░░░░░░  65%  (Core capability live)
 ```
 
----
-
 ### ✅ **DONE**
 
 | Date    | Milestone                                  | Notes                                                                          |
 | :------ | :----------------------------------------- | :----------------------------------------------------------------------------- |
 | 2025-10 | **Automatic User Profile Extraction (v1)** | Generates personalized, context-aware responses based on conversation history. |
-
----
 
 ### 🧭 **TODO**
 

@@ -11,21 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Any
-
-from alphaavatar.agents.avatar import ObservableList, OpType
-
-from .base import PersonaBase
+from enum import StrEnum
 
 
-async def persona_chat_context_watcher(
-    perona: PersonaBase,
-    user_id: str,
-    chat_context: ObservableList,
-    op: OpType,
-    payload: dict[str, Any],
-):
-    """Watch chat context changes and update perona accordingly, which will be called after llm generate reply (no matter user message or assistant message)"""
-
-    if op == OpType.INSERT:
-        perona.add_message(user_id=user_id, chat_item=payload["value"])
+class OpType(StrEnum):
+    INSERT = "insert"
+    APPEND = "append"
+    EXTEND = "extend"
+    CLEAR = "clear"
+    POP = "pop"
+    SETITEM = "setitem"
+    DELITEM = "delitem"
+    SORT = "sort"
+    REVERSE = "reverse"
+    BATCH = "batch"

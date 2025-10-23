@@ -22,8 +22,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from livekit.agents.job import get_job_context
 
+from alphaavatar.agents.avatar import PersonaPluginsTemplate
 from alphaavatar.agents.persona import EmbeddingRunnerOP, PersonaCache, ProfilerBase, UserProfile
-from alphaavatar.agents.template import PersonaPluginsTemplate
 
 from .log import logger
 from .profiler_details import UserProfileDetails
@@ -145,6 +145,10 @@ class ProfilerLangChain(ProfilerBase):
 
         # Face Profile
         # TODO: add face profile saving logic
+
+        if details_items is None or len(details_items) == 0 or speaker_vector is None:
+            logger.info("User Profile SAVE skip!")
+            return
 
         json_data = {
             "op": EmbeddingRunnerOP.save,

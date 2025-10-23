@@ -17,25 +17,17 @@ import asyncio
 import inspect
 from collections.abc import Callable, Coroutine, Iterable, MutableSequence
 from contextlib import contextmanager
-from enum import StrEnum
-from typing import Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-from livekit.agents import ChatContext, ChatItem
+from livekit.agents import ChatItem
+
+from .context_manager import ContextManager
+from .enum import OpType
+
+if TYPE_CHECKING:
+    from ..engine import AvatarEngine
 
 T = TypeVar("T")
-
-
-class OpType(StrEnum):
-    INSERT = "insert"
-    APPEND = "append"
-    EXTEND = "extend"
-    CLEAR = "clear"
-    POP = "pop"
-    SETITEM = "setitem"
-    DELITEM = "delitem"
-    SORT = "sort"
-    REVERSE = "reverse"
-    BATCH = "batch"
 
 
 OnChange = Callable[["ObservableList[T]", OpType, dict[str, Any]], Coroutine[Any, Any, None] | None]
@@ -187,8 +179,10 @@ class ObservableList(MutableSequence, Generic[T]):
             await asyncio.gather(*list(self._pending_tasks), return_exceptions=False)
 
 
-def attach_observer(ctx: ChatContext, on_change: OnChange):
-    if not isinstance(ctx.items, ObservableList):
-        ctx.items = ObservableList(ctx.items, on_change=on_change)  # type: ignore[assignment]
+def init_context_manager(engine: AvatarEngine):
+    context_manager = ContextManager(engine=engine)
+
+    if not isinstance(engine._chat_ctx.items, ObservableList):
+        engine._chat_ctx.items = ObservableList(engine._chat_ctx.items, on_change=context_manager)  # type: ignore[assignment]
     else:
-        ctx.items.subscribe(on_change)
+        engine._chat_ctx.items.subscribe(context_manager)
