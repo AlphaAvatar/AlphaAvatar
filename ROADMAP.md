@@ -43,7 +43,7 @@
 
 | Date    | Milestone                            | Notes                                                                                                                                       |
 | :------ | :----------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------ |
-| 2025-09 | **Automatic Memory Extraction (v1)** | Built on **Mem0 Client**, enabling memory capture & retrieval across:<br>• Assistant–User<br>• Assistant–Tools<br>• Assistant’s self-memory |
+| 2025-09 | **Automatic Memory Extraction (v1)** | Built on **Memory Client**, enabling memory capture & retrieval across:<br>• Assistant–User<br>• Assistant–Tools<br>• Assistant’s self-memory |
 
 ### 🧭 **TODO**
 

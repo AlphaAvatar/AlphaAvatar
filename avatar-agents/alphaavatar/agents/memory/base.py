@@ -17,40 +17,40 @@ from abc import abstractmethod
 
 from livekit.agents.llm import ChatItem
 
-from alphaavatar.agents.utils import AvatarTime, deduplicate_keep_latest
-
-from .cache import MemoryCache, MemoryType
+from .cache import MemoryCache
+from .enum.memory_item import MemoryItem
+from .enum.memory_type import MemoryType
 
 
 class MemoryBase:
     def __init__(
         self,
         *,
-        avater_name: str,
         avatar_id: str,
+        activate_time: str,
         memory_search_context: int = 3,
         memory_recall_session: int = 100,
         maximum_memory_items: int = 24,
     ) -> None:
         super().__init__()
-        self._avatar_name = avater_name
         self._avatar_id = avatar_id
+        self._activate_time = activate_time
         self._memory_search_context = memory_search_context
         self._memory_recall_session = memory_recall_session
         self._maximum_memory_items = maximum_memory_items
         self._memory_cache: dict[str, MemoryCache] = {}
 
-        self._agent_memory: list[str] = []
-        self._user_memory: list[str] = []
-        self._tool_memory: list[str] = []
-
-    @property
-    def avater_name(self) -> str:
-        return self._avatar_name
+        self._avatar_memory: list[MemoryItem] = []
+        self._user_memory: list[MemoryItem] = []
+        self._tool_memory: list[MemoryItem] = []
 
     @property
     def avatar_id(self) -> str:
         return self._avatar_id
+
+    @property
+    def time(self) -> str:
+        return self._activate_time
 
     @property
     def memory_search_context(self) -> int:
@@ -69,36 +69,58 @@ class MemoryBase:
         return self._memory_cache
 
     @property
-    def agent_memory(self) -> str:
-        return "\n".join(self._agent_memory)
+    def avatar_memory(self) -> str:
+        memory_list = []
+        for item in self._avatar_memory:
+            sub_memory = ""
+            sub_memory += f"Timestamp: {item.timestamp}; "
+            sub_memory += f"Content: {item.value}"
+            memory_list.append(sub_memory.strip())
+        return "\n".join(memory_list)
 
     @property
     def user_memory(self) -> str:
-        return "\n".join(self._user_memory)
+        memory_list = []
+        for item in self._user_memory:
+            sub_memory = ""
+            sub_memory += f"Timestamp: {item.timestamp}; "
+            sub_memory += f"Content: {item.value}"
+            memory_list.append(sub_memory.strip())
+        return "\n".join(memory_list)
 
     @property
     def tool_memory(self) -> str:
-        return "\n".join(self._tool_memory)
+        memory_list = []
+        for item in self._tool_memory:
+            sub_memory = ""
+            sub_memory += f"Timestamp: {item.timestamp}; "
+            sub_memory += f"Content: {item.value}"
+            memory_list.append(sub_memory.strip())
+        return "\n".join(memory_list)
 
     @property
     def memory_content(self) -> str:
         # TODO: user memory should be with user profile to put into system prompt.
-        return "\n".join([self.agent_memory, self.user_memory, self.tool_memory])
+        return "\n".join([self.avatar_memory, self.user_memory, self.tool_memory])
 
-    @agent_memory.setter
-    def agent_memory(self, agent_memory: list[str]) -> None:
-        combined = self._agent_memory + agent_memory
-        self._agent_memory = deduplicate_keep_latest(combined)[-self.maximum_memory_items :]
+    @property
+    def memory_items(self) -> list[MemoryItem]:
+        return self._avatar_memory + self._user_memory + self._tool_memory
+
+    @avatar_memory.setter
+    def avatar_memory(self, avatar_memory: list[MemoryItem]) -> None:
+        self._avatar_memory + avatar_memory
+        # self._avatar_memory = deduplicate_keep_latest(combined)[-self.maximum_memory_items :]
 
     @user_memory.setter
-    def user_memory(self, user_memory: list[str]) -> None:
-        combined = self._user_memory + user_memory
-        self._user_memory = deduplicate_keep_latest(combined)[-self.maximum_memory_items :]
+    def user_memory(self, user_memory: list[MemoryItem]) -> None:
+        self._user_memory + user_memory
+        # self._user_memory = deduplicate_keep_latest(combined)[-self.maximum_memory_items :]
 
     @tool_memory.setter
-    def tool_memory(self, tool_memory: list[str]) -> None:
-        combined = self._tool_memory + tool_memory
-        self._tool_memory = deduplicate_keep_latest(combined)[-self.maximum_memory_items :]
+    def tool_memory(self, tool_memory: list[MemoryItem]) -> None:
+        self._tool_memory + tool_memory
+        # self._tool_memory = deduplicate_keep_latest(combined)[-self.maximum_memory_items :]
 
     def add_message(self, *, session_id: str, chat_item: ChatItem):
         if session_id not in self._memory_cache:
@@ -111,19 +133,17 @@ class MemoryBase:
     def update_user_tool_id(self, *, ori_id: str, tgt_id: str):
         for cache in self._memory_cache.values():
             if cache.user_or_tool_id == ori_id:
-                cache._user_or_tool_id = tgt_id
+                cache.user_or_tool_id = tgt_id
 
     async def init_cache(
         self,
         *,
-        timestamp: AvatarTime,
         session_id: str,
-        user_or_tool_id: str | None = None,
+        user_or_tool_id: str,
         memory_type: MemoryType = MemoryType.CONVERSATION,
     ) -> MemoryCache:
         if session_id not in self.memory_cache:
             self.memory_cache[session_id] = MemoryCache(
-                timestamp=timestamp,
                 session_id=session_id,
                 user_or_tool_id=user_or_tool_id,
                 memory_type=memory_type,
@@ -140,3 +160,6 @@ class MemoryBase:
 
     @abstractmethod
     async def update(self, *, session_id: str | None = None): ...
+
+    @abstractmethod
+    async def save(self): ...

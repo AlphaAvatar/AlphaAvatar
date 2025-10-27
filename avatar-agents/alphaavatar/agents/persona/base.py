@@ -118,6 +118,39 @@ class PersonaBase:
                     "Please use a unique user_id."
                 )
 
+    async def save(self, *, uid: str | None = None):
+        if uid is not None and uid not in self.persona_cache:
+            raise ValueError(
+                f"User ID {uid} not found in persona cache. You need to call 'init_cache' first."
+            )
+
+        if uid is None:
+            perona_tuple = [(uid, cache) for uid, cache in self.persona_cache.items()]
+        else:
+            perona_tuple = [(uid, self.persona_cache[uid])]
+
+        # save profiler
+        for _uid, perona in perona_tuple:
+            await self.profiler.save(uid=_uid, perona=perona)
+
+    """Profiler Op"""
+
+    async def update_profile_details(self, *, uid: str | None = None):
+        if uid is not None and uid not in self.persona_cache:
+            raise ValueError(
+                f"User ID {uid} not found in persona cache. You need to call 'init_cache' first."
+            )
+
+        if uid is None:
+            perona_tuple = [(uid, cache) for uid, cache in self.persona_cache.items()]
+        else:
+            perona_tuple = [(uid, self.persona_cache[uid])]
+
+        for _uid, perona in perona_tuple:
+            await self.profiler.update(uid=_uid, perona=perona)
+
+    """Speaker Op"""
+
     async def match_speaker(self, *, speaker_vector: np.ndarray) -> str | None:
         """Match and retrieve the user ID based on the given speaker vector."""
 
@@ -149,20 +182,6 @@ class PersonaBase:
 
         return best_uid if best_score >= self._speaker_threshold else None
 
-    async def update_profile_details(self, *, uid: str | None = None):
-        if uid is not None and uid not in self.persona_cache:
-            raise ValueError(
-                f"User ID {uid} not found in persona cache. You need to call 'init_cache' first."
-            )
-
-        if uid is None:
-            perona_tuple = [(uid, cache) for uid, cache in self.persona_cache.items()]
-        else:
-            perona_tuple = [(uid, self.persona_cache[uid])]
-
-        for _uid, perona in perona_tuple:
-            await self.profiler.update(perona=perona)
-
     async def update_speaker(self, *, uid: str, speaker_vector: np.ndarray | list[float]):
         if uid not in self.persona_cache:
             logger.error(
@@ -193,18 +212,3 @@ class PersonaBase:
             self.persona_cache[uid] = PersonaCache(
                 timestamp=self._init_timestamp, user_profile=user_profile
             )
-
-    async def save(self, *, uid: str | None = None):
-        if uid is not None and uid not in self.persona_cache:
-            raise ValueError(
-                f"User ID {uid} not found in persona cache. You need to call 'init_cache' first."
-            )
-
-        if uid is None:
-            perona_tuple = [(uid, cache) for uid, cache in self.persona_cache.items()]
-        else:
-            perona_tuple = [(uid, self.persona_cache[uid])]
-
-        # save profiler
-        for _uid, perona in perona_tuple:
-            await self.profiler.save(uid=_uid, perona=perona)

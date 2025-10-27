@@ -31,20 +31,14 @@ from .context.template import AvatarPromptTemplate
 from .patches import init_avatar_patches
 
 
+# TESTCASES: can you hear my voice on type or voice mode
 class AvatarEngine(Agent):
     def __init__(self, *, session_config: SessionConfig, avatar_config: AvatarConfig) -> None:
-        # initial config
+        # Step1: initial config
         self.session_config = session_config
         self.avatar_config = avatar_config
 
-        # initial plugins
-        self._memory: MemoryBase = avatar_config.memory_config.get_memory_plugin(
-            avater_name=avatar_config.avatar_info.avatar_name,
-            avatar_id=avatar_config.avatar_info.avatar_id,
-        )
-        self._persona: PersonaBase = avatar_config.persona_config.get_persona_plugin()
-
-        # initial params
+        # Step2: initial params
         self._avatar_activate_time: AvatarTime = format_current_time(
             self.avatar_config.avatar_info.avatar_timezone
         )
@@ -53,7 +47,14 @@ class AvatarEngine(Agent):
             current_time=self._avatar_activate_time.time_str,
         )
 
-        # initial avatar
+        # Step3: initial plugins
+        self._memory: MemoryBase = avatar_config.memory_config.get_memory_plugin(
+            avatar_id=avatar_config.avatar_info.avatar_id,
+            activate_time=self._avatar_activate_time.time_str,
+        )
+        self._persona: PersonaBase = avatar_config.persona_config.get_persona_plugin()
+
+        # Step4: initial avatar
         super().__init__(
             instructions=self._avatar_prompt_template.instructions(),
             turn_detection=self.avatar_config.livekit_plugin_config.get_turn_detection_plugin(),
@@ -97,7 +98,6 @@ class AvatarEngine(Agent):
 
         # Init User & Avatar Interactive Memory by init user_id & session_id
         await self._memory.init_cache(
-            timestamp=self._avatar_activate_time,
             session_id=self.session_config.session_id,
             user_or_tool_id=self.session_config.user_id,
         )
@@ -197,7 +197,7 @@ class AvatarEngine(Agent):
 
     async def on_exit(self):
         # memory op
-        # await self.memory.update()
+        await self.memory.update()
 
         # persona op
         await self.persona.update_profile_details()

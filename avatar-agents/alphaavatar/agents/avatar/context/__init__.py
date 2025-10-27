@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar
 from livekit.agents import ChatItem
 
 from .context_manager import ContextManager
-from .enum import OpType
+from .enum.op import OpType
 
 if TYPE_CHECKING:
     from ..engine import AvatarEngine

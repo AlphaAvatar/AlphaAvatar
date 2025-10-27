@@ -13,7 +13,7 @@
 # limitations under the License.
 from .base import PersonaBase
 from .cache import PersonaCache
-from .enum.runner_op import EmbeddingRunnerOP
+from .enum.runner_op import VectorRunnerOP
 from .enum.user_profile import DetailsBase, ProfileItemSource, ProfileItemView, UserProfile
 from .profiler import ProfilerBase
 from .speaker import SpeakerStreamBase, speaker_node
@@ -21,7 +21,7 @@ from .speaker import SpeakerStreamBase, speaker_node
 __all__ = [
     "PersonaBase",
     "PersonaCache",
-    "EmbeddingRunnerOP",
+    "VectorRunnerOP",
     "ProfileItemSource",
     "ProfileItemView",
     "DetailsBase",

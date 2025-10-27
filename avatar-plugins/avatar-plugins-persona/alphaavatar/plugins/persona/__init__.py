@@ -37,8 +37,8 @@ class ProfilerLangchainPlugin(AvatarPlugin):
             return ProfilerLangChain(**profiler_init_config)
         except Exception:
             raise ImportError(
-                "The 'langchain' Profiler plugin is required but is not installed.\n"
-                "To fix this, install the optional dependency: `pip install alphaavatar-plugins-persona[langchain]`"
+                "The 'langchain[default]' Profiler plugin is required but is not installed.\n"
+                "To fix this, install the optional dependency: `pip install alphaavatar-plugins-persona`"
             )
 
 

@@ -50,13 +50,13 @@ class MemoryConfig:
         description="Custom configuration parameters for the memory plugin.",
     )
 
-    def get_memory_plugin(self, *, avatar_id: str, avater_name: str) -> MemoryBase:
+    def get_memory_plugin(self, *, avatar_id: str, activate_time: str) -> MemoryBase:
         """Returns the Memory plugin instance based on the configuration."""
         return AvatarPlugin.get_avatar_plugin(
             AvatarModule.MEMORY,
             self.memory_plugin,
             avatar_id=avatar_id,
-            avater_name=avater_name,
+            activate_time=activate_time,
             memory_search_context=self.memory_search_context,
             memory_recall_session=self.memory_recall_session,
             maximum_memory_items=self.maximum_memory_items,

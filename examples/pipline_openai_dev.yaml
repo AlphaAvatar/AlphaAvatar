@@ -21,7 +21,8 @@ allow_interruptions: true
 memory_search_context: 3
 memory_recall_session: 4
 maximum_memory_items: 28
-memory_plugin: mem0_client
+memory_plugin: default
+memory_init_config: {'single_memory_length': 150}
 
 
 ### Profiler Args

@@ -11,10 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .base import MemoryBase
-from .cache import MemoryCache
-from .enum.memory_item import MemoryItem
-from .enum.memory_type import MemoryType
-from .enum.runner_op import VectorRunnerOP
+from livekit.agents.inference_runner import _InferenceRunner
 
-__all__ = ["MemoryBase", "MemoryCache", "MemoryItem", "MemoryType", "VectorRunnerOP"]
+
+class QdrantRunner(_InferenceRunner):
+    INFERENCE_METHOD = "alphaavatar_memory_qdrant"
+
+    def __init__(self):
+        super().__init__()

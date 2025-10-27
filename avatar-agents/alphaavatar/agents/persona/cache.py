@@ -42,11 +42,11 @@ class PersonaCache:
         return self._timestamp.time_str
 
     @property
-    def retrieval_times(self):
+    def retrieval_times(self) -> int:
         return self._current_retrieval_times
 
     @property
-    def messages(self):
+    def messages(self) -> list[ChatItem]:
         return self._messages
 
     @property

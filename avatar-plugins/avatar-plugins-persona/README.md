@@ -14,7 +14,7 @@ This plugin provides a unified interface for **profiling** (semantic + vector re
 ## Installation
 
 ```bash
-pip install alpha-avatar-plugins-persona[langchain]
+pip install alpha-avatar-plugins-persona
 ```
 
 ---

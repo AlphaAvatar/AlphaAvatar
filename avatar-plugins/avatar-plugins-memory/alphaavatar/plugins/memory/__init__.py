@@ -14,7 +14,7 @@
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 
 from .log import logger
-from .mem0_client import Mem0ClientMemory
+from .memory_langchain import MemoryLangchain
 from .version import __version__
 
 __all__ = [
@@ -22,29 +22,27 @@ __all__ = [
 ]
 
 
-class MemoryMem0ClientPlugin(AvatarPlugin):
+class MemoryLangchainPlugin(AvatarPlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
 
     def download_files(self): ...
 
-    def initialize(self, *args, **kwargs): ...
-
     def get_plugin(
         self,
-        avater_name: str,
         avatar_id: str,
+        activate_time: str,
         memory_search_context: int,
         memory_recall_session: int,
         maximum_memory_items: int,
         memory_init_config: dict,
         *args,
         **kwargs,
-    ) -> Mem0ClientMemory:
+    ) -> MemoryLangchain:
         try:
-            return Mem0ClientMemory(
-                avater_name=avater_name,
+            return MemoryLangchain(
                 avatar_id=avatar_id,
+                activate_time=activate_time,
                 memory_search_context=memory_search_context,
                 memory_recall_session=memory_recall_session,
                 maximum_memory_items=maximum_memory_items,
@@ -52,9 +50,9 @@ class MemoryMem0ClientPlugin(AvatarPlugin):
             )
         except Exception:
             raise ImportError(
-                "The 'mem0_client' Memory plugin is required but is not installed.\n"
-                "To fix this, install the optional dependency: `pip install alphaavatar-plugins-memory[mem0]`"
+                "The 'langchain[default]' Memory plugin is required but is not installed.\n"
+                "To fix this, install the optional dependency: `pip install alphaavatar-plugins-memory`"
             )
 
 
-AvatarPlugin.register_avatar_plugin(AvatarModule.MEMORY, "mem0_client", MemoryMem0ClientPlugin())
+AvatarPlugin.register_avatar_plugin(AvatarModule.MEMORY, "default", MemoryLangchainPlugin())

@@ -25,11 +25,16 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
 ]
 dependencies = [
+    "langchain-core",
+    "langchain-community",
+    "langchain-openai",
+    "qdrant-client",
+    "langchain-qdrant",
+    "torchaudio>=0.10.1"
 ]
 
 
 [project.optional-dependencies]
-mem0 = ["mem0ai", "mem0ai[graph]"]
 
 [project.urls]
 Documentation = ""

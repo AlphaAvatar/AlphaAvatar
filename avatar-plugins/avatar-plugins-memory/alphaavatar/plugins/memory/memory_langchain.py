@@ -1,0 +1,219 @@
+# Copyright 2025 AlphaAvatar project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+import asyncio
+import json
+from typing import Any
+
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+from livekit.agents.job import get_job_context
+from livekit.agents.llm import ChatItem
+from pydantic import BaseModel, Field
+
+from alphaavatar.agents.avatar import MemoryPluginsTemplate
+from alphaavatar.agents.memory import (
+    MemoryBase,
+    MemoryCache,
+    MemoryItem,
+    MemoryType,
+    VectorRunnerOP,
+)
+
+from .log import logger
+from .memory_op import MemoryDelta, flatten_items, norm_token
+from .memory_prompts import MEMORY_EXTRACT_PROMPT
+from .runner import QdrantRunner
+
+DELTA_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            MEMORY_EXTRACT_PROMPT,
+        ),
+        (
+            "human",
+            "CONVERSATION CONTENT ({type}):\n```{message_content}```\n\n"
+            "Output only MemoryDelta (list of PatchOps, If nothing changes, return an empty list).\n"
+            """
+### WRITING RULES
+- Each `PatchOp.value` should be a clear, concise English sentence or short paragraph.
+- `entities` should list key nouns or named entities (users, tools, places, topics).
+- `topic` should be a short label like `"property purchase"`, `"AI code debugging"`, `"automotive interests"`, or `"social context"`.
+- Avoid duplication of previous memory content; only record new or changed insights.
+- Do not invent details not supported by the conversation.""",
+        ),
+    ]
+)
+
+
+class MemmoryInitConfig(BaseModel):
+    chat_model: str = Field(default="gpt-4o-mini")
+    temperature: float = Field(default=0.0)
+
+    single_memory_length: int = Field(default=50)
+
+
+class MemoryLangchain(MemoryBase):
+    def __init__(
+        self,
+        *,
+        avatar_id: str,
+        activate_time: str,
+        memory_search_context: int = 3,
+        memory_recall_session: int = 100,
+        maximum_memory_items: int = 24,
+        memory_init_config: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            avatar_id=avatar_id,
+            activate_time=activate_time,
+            memory_search_context=memory_search_context,
+            memory_recall_session=memory_recall_session,
+            maximum_memory_items=maximum_memory_items,
+        )
+
+        self._memory_init_config = (
+            MemmoryInitConfig(**memory_init_config) if memory_init_config else MemmoryInitConfig()
+        )
+
+        llm = ChatOpenAI(
+            model=self._memory_init_config.chat_model,
+            temperature=self._memory_init_config.temperature,
+        )  # type: ignore
+        self._delta_llm = llm.with_structured_output(MemoryDelta)
+        self._executor = get_job_context().inference_executor
+
+    @property
+    def memory_init_config(self) -> MemmoryInitConfig:
+        return self._memory_init_config
+
+    async def _aextract_delta(self, message_content: str, memory_type: MemoryType) -> MemoryDelta:
+        """Ask the LLM to generate patch ops relative to the current profile."""
+        chain = DELTA_PROMPT | self._delta_llm
+        return await chain.ainvoke({"type": memory_type, "new_turn": message_content})  # type: ignore
+
+    def _apply_delta(self, delta: MemoryDelta, memory_cache: MemoryCache):
+        assistant_memories: list[MemoryItem] = []
+        user_memories: list[MemoryItem] = []
+        tool_memories: list[MemoryItem] = []
+
+        # apply assistant memory
+        for item in delta.assistant_memory_entries:
+            if norm_token(item.value):
+                assistant_memories.append(
+                    MemoryItem(
+                        updated=True,
+                        session_id=memory_cache.session_id,
+                        object_id=self.avatar_id,
+                        value=item.value,
+                        entities=item.entities,
+                        topic=item.topic,
+                        timestamp=self.time,
+                    )
+                )
+
+        # apply user or tool memory
+        if memory_cache.type == MemoryType.CONVERSATION:
+            for item in delta.user_or_tool_memory_entries:
+                if norm_token(item.value):
+                    user_memories.append(
+                        MemoryItem(
+                            updated=True,
+                            session_id=memory_cache.session_id,
+                            object_id=memory_cache.user_or_tool_id,
+                            value=item.value,
+                            entities=item.entities,
+                            topic=item.topic,
+                            timestamp=self.time,
+                        )
+                    )
+        else:
+            for item in delta.user_or_tool_memory_entries:
+                if norm_token(item.value):
+                    tool_memories.append(
+                        MemoryItem(
+                            updated=True,
+                            session_id=memory_cache.session_id,
+                            object_id=memory_cache.user_or_tool_id,
+                            value=item.value,
+                            entities=item.entities,
+                            topic=item.topic,
+                            timestamp=self.time,
+                        )
+                    )
+
+        return assistant_memories, user_memories, tool_memories
+
+    async def search(self, *, session_id: str, chat_context: list[ChatItem]) -> None:
+        """Search for relevant memories based on the query."""
+        MemoryPluginsTemplate.apply_search_template(
+            chat_context[-getattr(self, "memory_search_context", 3) :], filter_roles=["system"]
+        )
+
+        {"AND": [{"user_id": self.memory_cache[session_id].user_or_tool_id}, {"run_id": "*"}]}
+
+        # agent_results, user_or_tool_results = await asyncio.gather(
+        #     self.client.search(query=query_str, version="v2", filters=agent_memory_filter),
+        #     self.client.search(query=query_str, version="v2", filters=user_or_tool_memory_filter),
+        # )
+        # self.agent_memory = apply_client_memory_list(agent_results)
+        # self.user_memory = apply_client_memory_list(user_or_tool_results)
+
+    async def update(self, *, session_id: str | None = None):
+        """Update the memory database with the cached messages.
+        If session_id is None, update all sessions in the memory cache.
+        """
+
+        if session_id is not None and session_id not in self.memory_cache:
+            raise ValueError(
+                f"Session ID {session_id} not found in memory cache. You need to call 'init_cache' first."
+            )
+
+        if session_id is None:
+            memory_tuple = [(sid, cache) for sid, cache in self.memory_cache.items()]
+        else:
+            memory_tuple = [(session_id, self.memory_cache[session_id])]
+
+        for _sid, cache in memory_tuple:
+            chat_context = cache.messages
+            if not chat_context:
+                logger.info(f"[sid: {_sid}] Memory message is empty, UPDATE skip!")
+
+            message_content = MemoryPluginsTemplate.apply_update_template(chat_context, cache.type)
+            delta: MemoryDelta = await self._aextract_delta(message_content, cache.type)
+            assistant_memories, user_memories, tool_memories = self._apply_delta(delta, cache)
+            self.avatar_memory = assistant_memories
+            self.user_memory = user_memories
+            self.tool_memory = tool_memories
+
+    async def save(self, timeout: float = 3):
+        memory_items: list[dict] = flatten_items(
+            [item for item in self.memory_items if item.updated]
+        )
+
+        if len(memory_items) == 0:
+            logger.info("Avatar Memory SAVE skip!")
+            return
+
+        json_data = {
+            "op": VectorRunnerOP.save,
+            "param": {
+                "memory_items": memory_items,
+            },
+        }
+        json_data = json.dumps(json_data).encode()
+        await asyncio.wait_for(
+            self._executor.do_inference(QdrantRunner.INFERENCE_METHOD, json_data),
+            timeout=timeout,
+        )

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .enum import OpType
+from .enum.op import OpType
 
 if TYPE_CHECKING:
     from ..engine import AvatarEngine

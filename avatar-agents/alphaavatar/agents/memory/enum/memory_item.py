@@ -11,10 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .base import MemoryBase
-from .cache import MemoryCache
-from .enum.memory_item import MemoryItem
-from .enum.memory_type import MemoryType
-from .enum.runner_op import VectorRunnerOP
+import uuid
 
-__all__ = ["MemoryBase", "MemoryCache", "MemoryItem", "MemoryType", "VectorRunnerOP"]
+from pydantic import BaseModel, Field
+
+
+class MemoryItem(BaseModel):
+    updated: bool = Field(default=False)
+
+    memory_id: str = Field(default=str(uuid.uuid4()))
+    session_id: str
+    object_id: str
+
+    value: str
+    entities: list
+    topic: str | None
+    timestamp: str

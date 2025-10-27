@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, Any
 
 from livekit.agents.llm import ChatItem, ChatMessage, ChatRole
 
+from alphaavatar.agents.memory import MemoryType
+
 from .prompts.avatar_system_prompts import AVATAR_SYSTEM_PROMPT
 
 if TYPE_CHECKING:
@@ -87,7 +89,23 @@ class AvatarPromptTemplate:
 
 class MemoryPluginsTemplate:
     @classmethod
-    def apply_memory_search_template(
+    def apply_update_template(cls, chat_context: list[ChatItem], memory_type: MemoryType) -> str:
+        """Apply the profile update template with the given keyword arguments."""
+        memory_strings = []
+        for msg in chat_context:
+            if isinstance(msg, ChatMessage):
+                role = msg.role
+                # TODO: Handle different content types more robustly
+                if memory_type == MemoryType.CONVERSATION and role not in ["user", "assistant"]:
+                    continue
+
+                msg_str = msg.text_content
+                memory_strings.append(f"### {role}:\n{msg_str}")
+
+        return "\n\n".join(memory_strings)
+
+    @classmethod
+    def apply_search_template(
         cls, messages: list[ChatItem], *, filter_roles: list[ChatRole] | None = None
     ):
         """Apply the memory search template with the given keyword arguments."""
