@@ -31,11 +31,11 @@ class MemoryConfig:
         default=3,
         description="The number of contexts used for memory searches.",
     )
-    memory_recall_session: int = Field(
-        default=1,
-        description="Number of sessions to recall from memory.",
+    memory_recall_num: int = Field(
+        default=10,
+        description="The number of items to recall from the memory vector database.",
     )
-    maximum_memory_items: int = Field(
+    maximum_memory_num: int = Field(
         default=10,
         description="The maximum number of memory items to use",
     )
@@ -58,7 +58,7 @@ class MemoryConfig:
             avatar_id=avatar_id,
             activate_time=activate_time,
             memory_search_context=self.memory_search_context,
-            memory_recall_session=self.memory_recall_session,
-            maximum_memory_items=self.maximum_memory_items,
+            memory_recall_num=self.memory_recall_num,
+            maximum_memory_num=self.maximum_memory_num,
             memory_init_config=self.memory_init_config,
         )

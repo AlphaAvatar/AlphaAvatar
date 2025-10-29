@@ -61,6 +61,7 @@ def flatten_items(memory_items: list[MemoryItem]) -> list[dict[str, Any]]:
                     "entities": memory.entities,
                     "topic": memory.topic,
                     "ts": memory.timestamp,
+                    "memory_type": memory.memory_type,
                 },
             }
         )

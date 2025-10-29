@@ -19,8 +19,8 @@ allow_interruptions: true
 
 ### Memory Args
 memory_search_context: 3
-memory_recall_session: 4
-maximum_memory_items: 28
+memory_recall_num: 6
+maximum_memory_num: 28
 memory_plugin: default
 memory_init_config: {'single_memory_length': 150}
 
@@ -32,4 +32,4 @@ profiler_plugin: default
 profiler_init_config: {}
 speaker_plugin: default
 speaker_init_config: {}
-persona_embedding_config: {'path': './alphaavatar_qdrant_persona', 'on_disk': true, 'profiler_collection_name': 'alphaavatar_persona_profiler', 'profiler_embedding_model': 'text-embedding-3-small', speaker_collection_name: 'alphaavatar_persona_speaker'}
+persona_embedding_config: {'path': './alphaavatar_qdrant_persona', 'on_disk': true, 'profiler_collection_name': 'alphaavatar_persona_profiler', speaker_collection_name: 'alphaavatar_persona_speaker', 'embedding_model': 'text-embedding-3-small'}

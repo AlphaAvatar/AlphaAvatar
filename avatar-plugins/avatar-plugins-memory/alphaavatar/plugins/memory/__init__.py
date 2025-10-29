@@ -33,8 +33,8 @@ class MemoryLangchainPlugin(AvatarPlugin):
         avatar_id: str,
         activate_time: str,
         memory_search_context: int,
-        memory_recall_session: int,
-        maximum_memory_items: int,
+        memory_recall_num: int,
+        maximum_memory_num: int,
         memory_init_config: dict,
         *args,
         **kwargs,
@@ -44,8 +44,8 @@ class MemoryLangchainPlugin(AvatarPlugin):
                 avatar_id=avatar_id,
                 activate_time=activate_time,
                 memory_search_context=memory_search_context,
-                memory_recall_session=memory_recall_session,
-                maximum_memory_items=maximum_memory_items,
+                memory_recall_num=memory_recall_num,
+                maximum_memory_num=maximum_memory_num,
                 memory_init_config=memory_init_config,
             )
         except Exception:

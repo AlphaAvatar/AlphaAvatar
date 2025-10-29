@@ -15,5 +15,5 @@ from enum import StrEnum
 
 
 class VectorRunnerOP(StrEnum):
-    load = "load"
+    search_by_context = "search memory by context"
     save = "save"

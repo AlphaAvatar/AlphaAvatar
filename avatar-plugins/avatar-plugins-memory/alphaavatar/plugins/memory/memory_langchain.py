@@ -71,16 +71,16 @@ class MemoryLangchain(MemoryBase):
         avatar_id: str,
         activate_time: str,
         memory_search_context: int = 3,
-        memory_recall_session: int = 100,
-        maximum_memory_items: int = 24,
+        memory_recall_num: int = 10,
+        maximum_memory_num: int = 24,
         memory_init_config: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(
             avatar_id=avatar_id,
             activate_time=activate_time,
             memory_search_context=memory_search_context,
-            memory_recall_session=memory_recall_session,
-            maximum_memory_items=maximum_memory_items,
+            memory_recall_num=memory_recall_num,
+            maximum_memory_num=maximum_memory_num,
         )
 
         self._memory_init_config = (
@@ -120,6 +120,7 @@ class MemoryLangchain(MemoryBase):
                         entities=item.entities,
                         topic=item.topic,
                         timestamp=self.time,
+                        memory_type=MemoryType.Avatar,
                     )
                 )
 
@@ -136,6 +137,7 @@ class MemoryLangchain(MemoryBase):
                             entities=item.entities,
                             topic=item.topic,
                             timestamp=self.time,
+                            memory_type=MemoryType.CONVERSATION,
                         )
                     )
         else:
@@ -150,25 +152,45 @@ class MemoryLangchain(MemoryBase):
                             entities=item.entities,
                             topic=item.topic,
                             timestamp=self.time,
+                            memory_type=MemoryType.TOOLS,
                         )
                     )
 
         return assistant_memories, user_memories, tool_memories
 
-    async def search(self, *, session_id: str, chat_context: list[ChatItem]) -> None:
+    async def search_by_context(
+        self, *, session_id: str, chat_context: list[ChatItem], timeout: float = 3
+    ) -> None:
         """Search for relevant memories based on the query."""
-        MemoryPluginsTemplate.apply_search_template(
+        context_str = MemoryPluginsTemplate.apply_search_template(
             chat_context[-getattr(self, "memory_search_context", 3) :], filter_roles=["system"]
         )
 
-        {"AND": [{"user_id": self.memory_cache[session_id].user_or_tool_id}, {"run_id": "*"}]}
+        if not context_str:
+            return
 
-        # agent_results, user_or_tool_results = await asyncio.gather(
-        #     self.client.search(query=query_str, version="v2", filters=agent_memory_filter),
-        #     self.client.search(query=query_str, version="v2", filters=user_or_tool_memory_filter),
-        # )
-        # self.agent_memory = apply_client_memory_list(agent_results)
-        # self.user_memory = apply_client_memory_list(user_or_tool_results)
+        if self.memory_cache[session_id].type == MemoryType.CONVERSATION:
+            json_data = {
+                "op": VectorRunnerOP.search_by_context,
+                "param": {
+                    "context_str": context_str,
+                    "avatar_id": self.avatar_id,
+                    "user_id": self.memory_cache[session_id].user_or_tool_id,
+                    "top_k": self.memory_recall_num,
+                },
+            }
+            json_data = json.dumps(json_data).encode()
+        else:
+            # TODO: we will implement the part in the future
+            raise NotImplementedError
+
+        result = await asyncio.wait_for(
+            self._executor.do_inference(QdrantRunner.INFERENCE_METHOD, json_data),
+            timeout=timeout,
+        )
+
+        if result is None:
+            logger.warning("Memory [search_by_context] falied, result is None!")
 
     async def update(self, *, session_id: str | None = None):
         """Update the memory database with the cached messages.
@@ -213,7 +235,17 @@ class MemoryLangchain(MemoryBase):
             },
         }
         json_data = json.dumps(json_data).encode()
-        await asyncio.wait_for(
+        result = await asyncio.wait_for(
             self._executor.do_inference(QdrantRunner.INFERENCE_METHOD, json_data),
             timeout=timeout,
         )
+
+        if result is None:
+            logger.warning("Memory SAVE falied, result is None!")
+        else:
+            result = json.loads(result.decode())
+            if result["error"] is not None:
+                logger.warning(f"Memory SAVE falied, because: {result['error']}")
+            else:
+                del result["error"]
+                logger.info(f"Memory SAVE success: {result}")

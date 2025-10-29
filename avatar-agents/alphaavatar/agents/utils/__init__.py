@@ -14,7 +14,7 @@
 from .id_utils import get_session_id, get_user_id
 from .op_utils import NumpyOP, deduplicate_keep_latest
 from .time_utils import AvatarTime, format_current_time
-from .vdb_utils import get_qdrant_client
+from .vdb_utils import get_embedding_model, get_qdrant_client
 
 __all__ = [
     "deduplicate_keep_latest",
@@ -24,4 +24,5 @@ __all__ = [
     "get_user_id",
     "get_session_id",
     "get_qdrant_client",
+    "get_embedding_model",
 ]

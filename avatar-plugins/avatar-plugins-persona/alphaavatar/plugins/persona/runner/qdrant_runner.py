@@ -16,7 +16,6 @@ import os
 from typing import Any
 from uuid import uuid4
 
-from langchain_openai import OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from livekit.agents.inference_runner import _InferenceRunner
 from qdrant_client.models import (
@@ -31,15 +30,10 @@ from qdrant_client.models import (
 )
 
 from alphaavatar.agents.persona import VectorRunnerOP
-from alphaavatar.agents.utils import get_qdrant_client
+from alphaavatar.agents.utils import get_embedding_model, get_qdrant_client
 
 from ..models import MODEL_CONFIG
 from .speaker_vector_runner import SpeakerVectorRunner
-
-
-def get_profiler_embedding_model(*, profiler_embedding_model, **kwargs):
-    embeddings = OpenAIEmbeddings(model=profiler_embedding_model)
-    return embeddings
 
 
 class QdrantRunner(_InferenceRunner):
@@ -61,6 +55,33 @@ class QdrantRunner(_InferenceRunner):
             vectors_config=VectorParams(size=embedding_dim, distance=Distance.COSINE),
         )
 
+    def _scroll_all(self, filt: Filter | None, collection_name, *, with_vectors: bool = False):
+        all_pts = []
+        next_offset = None
+        while True:
+            try:
+                points, next_offset = self._client.scroll(
+                    collection_name=collection_name,
+                    limit=256,
+                    with_payload=True,
+                    with_vectors=with_vectors,
+                    scroll_filter=filt,
+                    offset=next_offset,
+                )
+            except TypeError:
+                points, next_offset = self._client.scroll(
+                    collection_name=collection_name,
+                    limit=256,
+                    with_payload=True,
+                    with_vectors=with_vectors,
+                    filter=filt,
+                    offset=next_offset,
+                )
+            all_pts.extend(points or [])
+            if not next_offset or not points:
+                break
+        return all_pts
+
     def _save_batch_speaker_vector(self, *, items: list[dict]) -> dict:
         result = {"inserted": 0, "error": None}
         try:
@@ -80,39 +101,12 @@ class QdrantRunner(_InferenceRunner):
         return result
 
     def _load(self, *, user_id: str, **kwargs) -> dict:
-        def _scroll_all(filt: Filter | None, collection_name, *, with_vectors: bool = False):
-            all_pts = []
-            next_offset = None
-            while True:
-                try:
-                    points, next_offset = self._client.scroll(
-                        collection_name=collection_name,
-                        limit=256,
-                        with_payload=True,
-                        with_vectors=with_vectors,
-                        scroll_filter=filt,
-                        offset=next_offset,
-                    )
-                except TypeError:
-                    points, next_offset = self._client.scroll(
-                        collection_name=collection_name,
-                        limit=256,
-                        with_payload=True,
-                        with_vectors=with_vectors,
-                        filter=filt,
-                        offset=next_offset,
-                    )
-                all_pts.extend(points or [])
-                if not next_offset or not points:
-                    break
-            return all_pts
-
         # 1) Load details_items from profiler collection
         details_items: list[dict[str, Any]] = []
         filt = Filter(
             must=[FieldCondition(key="metadata.user_id", match=MatchValue(value=user_id))]
         )
-        all_points = _scroll_all(filt, self._profiler_collection_name, with_vectors=False)
+        all_points = self._scroll_all(filt, self._profiler_collection_name, with_vectors=False)
         for p in all_points:
             payload = p.payload or {}
             doc = payload.get("page_content")
@@ -126,7 +120,7 @@ class QdrantRunner(_InferenceRunner):
                 FieldCondition(key="user_id", match=MatchValue(value=user_id)),
             ]
         )
-        spk_points = _scroll_all(spk_filter, self._speaker_collection_name, with_vectors=True)
+        spk_points = self._scroll_all(spk_filter, self._speaker_collection_name, with_vectors=True)
         if spk_points:
             # take the most recent / first found
             p = spk_points[0]
@@ -178,9 +172,7 @@ class QdrantRunner(_InferenceRunner):
             try:
                 # delete existing speaker vectors for this user (support both payload schemas)
                 speaker_filt = Filter(
-                    should=[
-                        FieldCondition(key="user_id", match=MatchValue(value=user_id)),
-                    ]
+                    must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]
                 )
                 self._client.delete(
                     collection_name=self._speaker_collection_name,
@@ -216,7 +208,6 @@ class QdrantRunner(_InferenceRunner):
             q_filter = Filter(
                 should=[
                     FieldCondition(key="user_id", match=MatchValue(value=user_id)),
-                    FieldCondition(key="metadata.user_id", match=MatchValue(value=user_id)),
                 ]
             )
 
@@ -269,7 +260,7 @@ class QdrantRunner(_InferenceRunner):
         self._client = get_qdrant_client(**config)
 
         # init profiler
-        self._profiler_embeddings = get_profiler_embedding_model(**config)
+        self._profiler_embeddings = get_embedding_model(**config)
         self._ensure_collection(
             self._profiler_collection_name,
             len(self._profiler_embeddings.embed_query("dimension-probe")),
@@ -292,12 +283,12 @@ class QdrantRunner(_InferenceRunner):
         match json_data["op"]:
             case VectorRunnerOP.load:
                 result = self._load(**json_data["param"])
-                return json.dumps(result).encode() if result else None
+                return json.dumps(result).encode()
             case VectorRunnerOP.save:
                 result = self._save(**json_data["param"])
-                return json.dumps(result).encode() if result else None
+                return json.dumps(result).encode()
             case VectorRunnerOP.search_speaker_vector:
                 result = self._search_speaker_vector(**json_data["param"])
-                return json.dumps(result).encode() if result else None
+                return json.dumps(result).encode()
             case _:
                 return None

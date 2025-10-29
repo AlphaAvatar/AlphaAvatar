@@ -15,5 +15,6 @@ from enum import Enum
 
 
 class MemoryType(str, Enum):
+    Avatar = "Assistant Memory"
     CONVERSATION = "User Interaction with Assistant"
     TOOLS = "Assistant Interaction with Tools"

@@ -46,7 +46,7 @@ class ContextSearch:
             chat_context = ctx.chat_ctx.copy()
             if ctx.new_message is not None:
                 chat_context.insert(ctx.new_message)
-                await self._engine.memory.search(
+                await self._engine.memory.search_by_context(
                     session_id=self._engine.session_config.session_id,
                     chat_context=chat_context.items,
                 )

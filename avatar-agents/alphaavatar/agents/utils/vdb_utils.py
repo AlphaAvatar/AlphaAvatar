@@ -39,7 +39,7 @@ def get_qdrant_client(
     try:
         from qdrant_client import QdrantClient
     except Exception:
-        raise ImportError("Qdrant vector library call error, please install qdrant-client")
+        raise ImportError("Qdrant vector library import error, please install qdrant-client")
 
     is_remote = bool(url) or bool(api_key) or (host and port)
 
@@ -65,3 +65,15 @@ def get_qdrant_client(
         )
 
     return client
+
+
+def get_embedding_model(*, embedding_model, **kwargs):
+    try:
+        from langchain_openai import OpenAIEmbeddings
+    except Exception:
+        raise ImportError(
+            "Langchain OpenAIEmbeddings import error, please install langchain_openai"
+        )
+
+    embeddings = OpenAIEmbeddings(model=embedding_model)
+    return embeddings

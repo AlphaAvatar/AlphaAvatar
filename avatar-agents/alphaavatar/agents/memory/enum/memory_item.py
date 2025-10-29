@@ -15,6 +15,8 @@ import uuid
 
 from pydantic import BaseModel, Field
 
+from .memory_type import MemoryType
+
 
 class MemoryItem(BaseModel):
     updated: bool = Field(default=False)
@@ -27,3 +29,5 @@ class MemoryItem(BaseModel):
     entities: list
     topic: str | None
     timestamp: str
+
+    memory_type: MemoryType

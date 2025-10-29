@@ -24,7 +24,7 @@ from livekit.agents.job import get_job_context
 from livekit.agents.types import APIConnectOptions, NotGivenOr
 
 from alphaavatar.agents.persona import PersonaBase, SpeakerStreamBase
-from alphaavatar.agents.persona.enum.runner_op import EmbeddingRunnerOP
+from alphaavatar.agents.persona.enum.runner_op import VectorRunnerOP
 from alphaavatar.agents.utils import NumpyOP
 
 from .log import logger
@@ -130,7 +130,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
             await self._activity_persona.update_speaker(uid=uid, speaker_vector=speaker_vector)
         else:
             json_data = {
-                "op": EmbeddingRunnerOP.search_speaker_vector,
+                "op": VectorRunnerOP.search_speaker_vector,
                 "param": {"speaker_vector": NumpyOP.l2_normalize(speaker_vector).tolist()},
             }
             json_data = json.dumps(json_data).encode()

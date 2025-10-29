@@ -29,15 +29,15 @@ class MemoryBase:
         avatar_id: str,
         activate_time: str,
         memory_search_context: int = 3,
-        memory_recall_session: int = 100,
-        maximum_memory_items: int = 24,
+        memory_recall_num: int = 10,
+        maximum_memory_num: int = 24,
     ) -> None:
         super().__init__()
         self._avatar_id = avatar_id
         self._activate_time = activate_time
         self._memory_search_context = memory_search_context
-        self._memory_recall_session = memory_recall_session
-        self._maximum_memory_items = maximum_memory_items
+        self._memory_recall_num = memory_recall_num
+        self._maximum_memory_num = maximum_memory_num
         self._memory_cache: dict[str, MemoryCache] = {}
 
         self._avatar_memory: list[MemoryItem] = []
@@ -57,12 +57,12 @@ class MemoryBase:
         return self._memory_search_context
 
     @property
-    def memory_recall_session(self) -> int:
-        return self._memory_recall_session
+    def memory_recall_num(self) -> int:
+        return self._memory_recall_num
 
     @property
-    def maximum_memory_items(self) -> int:
-        return self._maximum_memory_items
+    def maximum_memory_num(self) -> int:
+        return self._maximum_memory_num
 
     @property
     def memory_cache(self) -> dict[str, MemoryCache]:
@@ -110,17 +110,17 @@ class MemoryBase:
     @avatar_memory.setter
     def avatar_memory(self, avatar_memory: list[MemoryItem]) -> None:
         self._avatar_memory + avatar_memory
-        # self._avatar_memory = deduplicate_keep_latest(combined)[-self.maximum_memory_items :]
+        # self._avatar_memory = deduplicate_keep_latest(combined)[-self.maximum_memory_num :]
 
     @user_memory.setter
     def user_memory(self, user_memory: list[MemoryItem]) -> None:
         self._user_memory + user_memory
-        # self._user_memory = deduplicate_keep_latest(combined)[-self.maximum_memory_items :]
+        # self._user_memory = deduplicate_keep_latest(combined)[-self.maximum_memory_num :]
 
     @tool_memory.setter
     def tool_memory(self, tool_memory: list[MemoryItem]) -> None:
         self._tool_memory + tool_memory
-        # self._tool_memory = deduplicate_keep_latest(combined)[-self.maximum_memory_items :]
+        # self._tool_memory = deduplicate_keep_latest(combined)[-self.maximum_memory_num :]
 
     def add_message(self, *, session_id: str, chat_item: ChatItem):
         if session_id not in self._memory_cache:
@@ -156,7 +156,7 @@ class MemoryBase:
             )
 
     @abstractmethod
-    async def search(self, *, session_id: str, chat_context: list[ChatItem]) -> None: ...
+    async def search_by_context(self, *, session_id: str, chat_context: list[ChatItem]) -> None: ...
 
     @abstractmethod
     async def update(self, *, session_id: str | None = None): ...
