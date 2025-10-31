@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .id_utils import get_session_id, get_user_id
-from .op_utils import NumpyOP, deduplicate_keep_latest
-from .time_utils import AvatarTime, format_current_time
+from .op_utils import NumpyOP
+from .time_utils import AvatarTime, format_current_time, time_str_to_datetime
 from .vdb_utils import get_embedding_model, get_qdrant_client
 
 __all__ = [
-    "deduplicate_keep_latest",
     "NumpyOP",
     "AvatarTime",
     "format_current_time",
+    "time_str_to_datetime",
     "get_user_id",
     "get_session_id",
     "get_qdrant_client",

@@ -76,16 +76,16 @@ class QdrantRunner(_InferenceRunner):
         top_k: int = 10,
     ) -> dict:
         out = {
-            "avatar_results": [],
-            "user_results": [],
+            "avatar_memory_items": [],
+            "user_rmemory_items": [],
             "error": None,
         }
 
         try:
             query_vec = self._embeddings.embed_query(context_str)
-            out["avatar_results"] = self._search_with_object_id(query_vec, avatar_id, top_k)
+            out["avatar_memory_items"] = self._search_with_object_id(query_vec, avatar_id, top_k)
             if user_id:
-                out["user_results"] = self._search_with_object_id(query_vec, user_id, top_k)
+                out["user_rmemory_items"] = self._search_with_object_id(query_vec, user_id, top_k)
         except Exception as e:
             out["error"] = str(e)
 

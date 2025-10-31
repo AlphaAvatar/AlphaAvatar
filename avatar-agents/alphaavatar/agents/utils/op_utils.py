@@ -14,16 +14,6 @@
 import numpy as np
 
 
-def deduplicate_keep_latest(items: list[str]) -> list[str]:
-    """
-    Remove duplicates and keep the most recent element.
-    Input: ["a", "b", "a", "c", "b"]
-    Output: ["a", "c", "b"]
-    """
-    deduped = list(dict.fromkeys(reversed(items)))
-    return list(reversed(deduped))
-
-
 class NumpyOP:
     @staticmethod
     def to_np(x) -> np.ndarray:

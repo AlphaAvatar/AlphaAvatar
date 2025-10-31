@@ -17,9 +17,26 @@ from abc import abstractmethod
 
 from livekit.agents.llm import ChatItem
 
+from alphaavatar.agents.utils import time_str_to_datetime
+
 from .cache import MemoryCache
 from .enum.memory_item import MemoryItem
 from .enum.memory_type import MemoryType
+
+
+def deduplicate_keep_latest(items: list[MemoryItem]) -> list[MemoryItem]:
+    latest_items: dict[str, MemoryItem] = {}
+    for item in items:
+        if item.memory_id not in latest_items:
+            latest_items[item.memory_id] = item
+        else:
+            current_time = time_str_to_datetime(item.timestamp)
+            existing_time = time_str_to_datetime(latest_items[item.memory_id].timestamp)
+            if current_time > existing_time:
+                latest_items[item.memory_id] = item
+
+    sorted_items = sorted(latest_items.values(), key=lambda x: time_str_to_datetime(x.timestamp))
+    return sorted_items
 
 
 class MemoryBase:
@@ -109,18 +126,20 @@ class MemoryBase:
 
     @avatar_memory.setter
     def avatar_memory(self, avatar_memory: list[MemoryItem]) -> None:
-        self._avatar_memory + avatar_memory
-        # self._avatar_memory = deduplicate_keep_latest(combined)[-self.maximum_memory_num :]
+        self._avatar_memory += avatar_memory
+        self._avatar_memory = deduplicate_keep_latest(self._avatar_memory)[
+            -self.maximum_memory_num :
+        ]
 
     @user_memory.setter
     def user_memory(self, user_memory: list[MemoryItem]) -> None:
-        self._user_memory + user_memory
-        # self._user_memory = deduplicate_keep_latest(combined)[-self.maximum_memory_num :]
+        self._user_memory += user_memory
+        self._user_memory = deduplicate_keep_latest(self._user_memory)[-self.maximum_memory_num :]
 
     @tool_memory.setter
     def tool_memory(self, tool_memory: list[MemoryItem]) -> None:
-        self._tool_memory + tool_memory
-        # self._tool_memory = deduplicate_keep_latest(combined)[-self.maximum_memory_num :]
+        self._tool_memory += tool_memory
+        self._tool_memory = deduplicate_keep_latest(self._tool_memory)[-self.maximum_memory_num :]
 
     def add_message(self, *, session_id: str, chat_item: ChatItem):
         if session_id not in self._memory_cache:

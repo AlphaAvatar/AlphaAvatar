@@ -31,7 +31,7 @@ from alphaavatar.agents.memory import (
 )
 
 from .log import logger
-from .memory_op import MemoryDelta, flatten_items, norm_token
+from .memory_op import MemoryDelta, flatten_items, norm_token, rebuild_from_items
 from .memory_prompts import MEMORY_EXTRACT_PROMPT
 from .runner import QdrantRunner
 
@@ -191,6 +191,20 @@ class MemoryLangchain(MemoryBase):
 
         if result is None:
             logger.warning("Memory [search_by_context] falied, result is None!")
+            return
+
+        data: dict[str, Any] = json.loads(result.decode())
+
+        # Avatar Memory
+        if data.get("avatar_memory_items", None):
+            self.avatar_memory = rebuild_from_items(data["avatar_memory_items"])
+
+        # User Memory
+        if data.get("user_rmemory_items", None):
+            self.user_memory = rebuild_from_items(data["user_rmemory_items"])
+
+        if data.get("error", None):
+            logger.warning(f"Memory [search_by_context] err: {data['error']}")
 
     async def update(self, *, session_id: str | None = None):
         """Update the memory database with the cached messages.

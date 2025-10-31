@@ -67,3 +67,30 @@ def flatten_items(memory_items: list[MemoryItem]) -> list[dict[str, Any]]:
         )
 
     return items
+
+
+def rebuild_from_items(items: list[dict[str, Any]]) -> list[MemoryItem]:
+    out: list[MemoryItem] = []
+
+    for it in items:
+        mid = it.get("id", None)
+        value = it.get("page_content", None)
+        meta = it.get("metadata", {})
+
+        if mid is None or value is None:
+            continue
+
+        out.append(
+            MemoryItem(
+                memory_id=mid,
+                value=value,
+                session_id=meta.get("session_id"),
+                object_id=meta.get("object_id"),
+                entities=meta.get("entities"),
+                topic=meta.get("topic"),
+                timestamp=meta.get("ts"),
+                memory_type=meta.get("memory_type"),
+            )
+        )
+
+    return out

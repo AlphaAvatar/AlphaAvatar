@@ -23,6 +23,8 @@ except Exception:
     ZoneInfo = None  # type: ignore
     ZoneInfoNotFoundError = Exception  # type: ignore
 
+from alphaavatar.agents.log import logger
+
 
 class AvatarTime(BaseModel):
     timezore: str = Field(default_factory=str)
@@ -89,3 +91,12 @@ def format_current_time(tz: str) -> AvatarTime:
         "time_str": time_str,
     }
     return AvatarTime(**time_dict)
+
+
+def time_str_to_datetime(time_str: str) -> datetime:
+    try:
+        time_part = time_str.split("Time:")[1].strip()
+        return datetime.strptime(time_part, "%A, %B %d, %Y, %I:%M %p")
+    except Exception as e:
+        logger.error(f"Unable to resolve timestamp: {time_str}. Error: {e}")
+        return datetime.min
