@@ -107,7 +107,8 @@ export LIVEKIT_API_KEY=<your API Key>
 export LIVEKIT_API_SECRET=<your API Secret>
 export LIVEKIT_URL=<your LiveKit server URL>
 export OPENAI_API_KEY=<your OpenAI API Key>
-export MEM0_API_KEY=<your Mem0 Client API KEY>
+export QDRANT_URL='https://xxxxxx-xxxxx-xxxxx-xxxx-xxxxxxxxx.us-east.aws.cloud.qdrant.io:6333'
+export QDRANT_API_KEY=<your QDRANT API Key>
 
 alphaavatar dev examples/pipline_openai_dev.yaml
 ```

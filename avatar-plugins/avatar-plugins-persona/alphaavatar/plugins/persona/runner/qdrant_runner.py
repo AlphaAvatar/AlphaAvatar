@@ -24,6 +24,7 @@ from qdrant_client.models import (
     Filter,
     FilterSelector,
     MatchValue,
+    PayloadSchemaType,
     PointStruct,
     SearchParams,
     VectorParams,
@@ -53,6 +54,16 @@ class QdrantRunner(_InferenceRunner):
         self._client.create_collection(
             collection_name=collection_name,
             vectors_config=VectorParams(size=embedding_dim, distance=Distance.COSINE),
+        )
+        self._client.create_payload_index(
+            collection_name=collection_name,
+            field_name="metadata.user_id",
+            field_schema=PayloadSchemaType.KEYWORD,
+        )
+        self._client.create_payload_index(
+            collection_name=collection_name,
+            field_name="user_id",
+            field_schema=PayloadSchemaType.KEYWORD,
         )
 
     def _scroll_all(self, filt: Filter | None, collection_name, *, with_vectors: bool = False):
@@ -251,7 +262,7 @@ class QdrantRunner(_InferenceRunner):
 
     def initialize(self) -> None:
         # get config
-        config = os.getenv("PERONA_EMBEDDING_CONFIG", "{}")
+        config = os.getenv("PERONA_VDB_CONFIG", "{}")
         config = json.loads(config)
         self._profiler_collection_name = config.get("profiler_collection_name", None)
         self._speaker_collection_name = config.get("speaker_collection_name", None)

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import importlib
+import json
+import os
 
 from pydantic import ConfigDict, Field
 from pydantic.dataclasses import dataclass
@@ -49,6 +51,16 @@ class MemoryConfig:
         default={},
         description="Custom configuration parameters for the memory plugin.",
     )
+
+    # Memory VDB Config
+    memory_vdb_config: dict = Field(
+        default={},
+        description="Custom initialization parameters for the memory vdb backend (e.g., host, port, url, api_key, prefer_grpc).",
+    )
+
+    def __post_init__(self):
+        # Set PERONA_PROFILER_ENV
+        os.environ["MEMORY_VDB_CONFIG"] = json.dumps(self.memory_vdb_config)
 
     def get_memory_plugin(self, *, avatar_id: str, activate_time: str) -> MemoryBase:
         """Returns the Memory plugin instance based on the configuration."""

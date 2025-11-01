@@ -40,15 +40,22 @@ def get_qdrant_client(
     except Exception:
         raise ImportError("Qdrant vector library import error, please install qdrant-client")
 
+    # init param
     api_key = api_key or os.getenv("QDRANT_API_KEY", None)
-    is_remote = bool(url) or (host and port)
+    url = url or os.getenv("QDRANT_URL", None)
 
-    if api_key:
+    # init mode
+    could_client = api_key and url
+    local_client = url or (host and port)
+
+    # init client
+    if could_client:
         client = QdrantClient(
             api_key=api_key,
+            url=url,
             prefer_grpc=prefer_grpc,
         )
-    elif is_remote:
+    elif local_client:
         client = QdrantClient(
             url=url if url else None,
             host=host if host else None,
@@ -57,7 +64,7 @@ def get_qdrant_client(
         )
     else:
         raise ValueError(
-            "We currently only support remote client creation, please enter a valid host:port or QDRANT_API_KEY='xxx'."
+            "We currently only support remote/local client creation, please enter a valid host:port or QDRANT_API_KEY and QDRANT_URL."
         )
 
     return client

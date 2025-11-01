@@ -21,6 +21,7 @@ from qdrant_client.models import (
     FieldCondition,
     Filter,
     MatchValue,
+    PayloadSchemaType,
     PointIdsList,
     VectorParams,
 )
@@ -46,6 +47,11 @@ class QdrantRunner(_InferenceRunner):
         self._client.create_collection(
             collection_name=collection_name,
             vectors_config=VectorParams(size=embedding_dim, distance=Distance.COSINE),
+        )
+        self._client.create_payload_index(
+            collection_name=collection_name,
+            field_name="metadata.object_id",
+            field_schema=PayloadSchemaType.KEYWORD,
         )
 
     def _search_with_object_id(self, query_vec: list[float], obj_id: str, k: int):
@@ -123,7 +129,7 @@ class QdrantRunner(_InferenceRunner):
 
     def initialize(self) -> None:
         # get config
-        config = os.getenv("MEMORY_EMBEDDING_CONFIG", "{}")
+        config = os.getenv("MEMORY_VDB_CONFIG", "{}")
         config = json.loads(config)
         self._memory_collection_name = config.get("memory_collection_name", None)
 

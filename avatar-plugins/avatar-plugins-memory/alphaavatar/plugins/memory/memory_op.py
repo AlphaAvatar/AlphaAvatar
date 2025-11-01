@@ -23,8 +23,8 @@ class PatchOp(BaseModel):
         default="",
         description="The concise new memory text.",
     )
-    entities: list = Field(
-        default=[],
+    entities: list[str] = Field(
+        default_factory=list,
         description="Related entities extracted from the memory value are used to associate with other memory items.",
     )
     topic: str | None = Field(

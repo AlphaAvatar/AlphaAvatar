@@ -49,89 +49,89 @@ User: "Hi."
 Assistant: "Hello, how are you?"
 
 Output:
-{
+{{
   "user_or_tool_memory_entries": [],
   "assistant_memory_entries": []
-}
+}}
 
 **Example 2: Greeting with emotion**
 User: "Hi, I’m exhausted today."
 Assistant: "Rough day? Want to talk about it?"
 
 Output:
-{
+{{
   "user_or_tool_memory_entries": [
-    {
+    {{
       "value": "User greeted the assistant and expressed tiredness, indicating low energy or fatigue.",
       "entities": ["greeting", "fatigue"],
       "topic": "social context"
-    }
+    }}
   ],
   "assistant_memory_entries": []
-}
+}}
 
 **Example 3: Task-focused**
 User: "I finally signed the MOU for the apartment in Abu Dhabi."
 Assistant: "Great! I can help you prepare the move-in checklist next."
 
 Output:
-{
+{{
   "user_or_tool_memory_entries": [
-    {
+    {{
       "value": "User confirmed signing the MOU for an apartment in Abu Dhabi and plans to prepare for move-in.",
       "entities": ["MOU", "apartment", "Abu Dhabi"],
       "topic": "property purchase"
-    }
+    }}
   ],
   "assistant_memory_entries": [
-    {
+    {{
       "value": "Assistant learned that users completing property purchases often need guidance on move-in approvals and documentation follow-up.",
       "entities": ["property purchase", "move-in process"],
       "topic": "situational pattern: property workflow"
-    }
+    }}
   ]
-}
+}}
 
 **Example 4**
 User: "I finally signed the MOU for the apartment in Abu Dhabi today."
 Assistant: "Great! I can help you prepare the move-in checklist next."
 
 Output:
-{
+{{
   "user_or_tool_memory_entries": [
-    {
+    {{
       "value": "User confirmed signing the MOU for an apartment in Abu Dhabi and plans to prepare for move-in.",
       "entities": ["MOU", "apartment", "Abu Dhabi"],
       "topic": "property purchase"
-    }
+    }}
   ],
   "assistant_memory_entries": [
-    {
+    {{
       "value": "Assistant learned to assist users after real-estate milestones by suggesting next practical steps like move-in preparation.",
       "entities": ["property workflow", "task planning"],
       "topic": "assistant reflection"
-    }
+    }}
   ]
-}
+}}
 
 **Example 5**
 User: "Can you fix my Python async function? It throws an event loop error."
 Assistant: "Sure, I added `asyncio.run` to properly manage the coroutine context."
 
 Output:
-{
+{{
   "user_or_tool_memory_entries": [
-    {
+    {{
       "value": "User requested help debugging a Python async function with an event loop error, which the assistant resolved using asyncio.run.",
       "entities": ["Python", "asyncio", "event loop"],
       "topic": "code debugging"
-    }
+    }}
   ],
   "assistant_memory_entries": [
-    {
+    {{
       "value": "Assistant improved its approach to diagnosing async errors and recommending coroutine-safe execution patterns.",
       "entities": ["Python", "async programming"],
       "topic": "assistant skill improvement"
-    }
+    }}
   ]
-}"""
+}}"""

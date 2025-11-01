@@ -11,10 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from livekit.agents.inference_runner import _InferenceRunner
+
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 
 from .log import logger
 from .memory_langchain import MemoryLangchain
+from .runner import QdrantRunner
 from .version import __version__
 
 __all__ = [
@@ -55,4 +58,8 @@ class MemoryLangchainPlugin(AvatarPlugin):
             )
 
 
+# runner init
+_InferenceRunner.register_runner(QdrantRunner)
+
+# plugin init
 AvatarPlugin.register_avatar_plugin(AvatarModule.MEMORY, "default", MemoryLangchainPlugin())

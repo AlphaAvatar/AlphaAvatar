@@ -61,8 +61,6 @@ class MemmoryInitConfig(BaseModel):
     chat_model: str = Field(default="gpt-4o-mini")
     temperature: float = Field(default=0.0)
 
-    single_memory_length: int = Field(default=50)
-
 
 class MemoryLangchain(MemoryBase):
     def __init__(
@@ -101,7 +99,7 @@ class MemoryLangchain(MemoryBase):
     async def _aextract_delta(self, message_content: str, memory_type: MemoryType) -> MemoryDelta:
         """Ask the LLM to generate patch ops relative to the current profile."""
         chain = DELTA_PROMPT | self._delta_llm
-        return await chain.ainvoke({"type": memory_type, "new_turn": message_content})  # type: ignore
+        return await chain.ainvoke({"type": memory_type, "message_content": message_content})  # type: ignore
 
     def _apply_delta(self, delta: MemoryDelta, memory_cache: MemoryCache):
         assistant_memories: list[MemoryItem] = []

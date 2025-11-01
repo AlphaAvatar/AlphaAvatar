@@ -29,6 +29,10 @@ from alphaavatar.agents.utils import get_session_id, get_user_id
 load_dotenv()
 
 
+def worker_load(worker) -> float:
+    return min(len(worker.active_jobs) / 10.0, 1.0)
+
+
 async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     # Wait connecting...
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
@@ -68,8 +72,17 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
 
 def main() -> None:
     args = read_args()
-    avatar_config = get_avatar_args(args)
-    agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=partial(entrypoint, avatar_config)))
+    avatar_config: AvatarConfig = get_avatar_args(args)
+
+    opts = agents.WorkerOptions(
+        entrypoint_fnc=partial(entrypoint, avatar_config),
+        job_memory_warn_mb=1024,
+        job_memory_limit_mb=2048,
+        num_idle_processes=1,
+        load_fnc=worker_load,
+        load_threshold=0.9,
+    )
+    agents.cli.run_app(opts)
 
 
 if __name__ == "__main__":

@@ -58,15 +58,15 @@ class PersonaConfig:
         description="Custom configuration parameters for the spkear profile plugin.",
     )
 
-    # Persona Embedding Config
-    persona_embedding_config: dict = Field(
+    # Persona VDB Config
+    persona_vdb_config: dict = Field(
         default={},
-        description="Custom initialization parameters for the embedding backend (e.g., host, port, url, api_key, prefer_grpc).",
+        description="Custom initialization parameters for the persona vdb backend (e.g., host, port, url, api_key, prefer_grpc).",
     )
 
     def __post_init__(self):
         # Set PERONA_PROFILER_ENV
-        os.environ["PERONA_EMBEDDING_CONFIG"] = json.dumps(self.persona_embedding_config)
+        os.environ["PERONA_VDB_CONFIG"] = json.dumps(self.persona_vdb_config)
 
     def get_persona_plugin(self) -> PersonaBase:
         """Returns the Persona plugin instance based on the configuration."""
