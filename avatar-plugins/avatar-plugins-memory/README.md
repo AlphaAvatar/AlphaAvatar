@@ -18,8 +18,12 @@ pip install alpha-avatar-plugins-memory
 
 ## Supported Open-Source Memory Frameworks
 
-| Framework | Description                                                                                   | Docs                                                             |
-| --------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| **mem0 client**  | Lightweight memory framework with APIs for creating, searching, and updating long-term memory | [https://github.com/mem0ai/](https://github.com/mem0ai/mem0) |
+### Vector Store
+| Module                 | Description                                                                                   | Docs                                                                   |
+| ---------------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| **Qdrant** (default) | Combined framework for persona extraction pipelines and vector storage / retrieval.           | [Qdrant](https://qdrant.tech) |
 
-> More frameworks (e.g., LlamaIndex - Memory) will be added soon.
+### Memory
+| Module                 | Description                                                                                   | Docs                                                                   |
+| ---------------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| **LangChain** (default) | Combined framework for persona extraction pipelines and vector storage / retrieval.           | [LangChain](https://www.langchain.com) |
