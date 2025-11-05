@@ -21,7 +21,7 @@ from .memory_type import MemoryType
 class MemoryItem(BaseModel):
     updated: bool = Field(default=False)
 
-    memory_id: str = Field(default=str(uuid.uuid4()))
+    memory_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str
     object_id: str
 

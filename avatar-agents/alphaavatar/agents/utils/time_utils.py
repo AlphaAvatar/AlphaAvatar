@@ -96,7 +96,11 @@ def format_current_time(tz: str) -> AvatarTime:
 def time_str_to_datetime(time_str: str) -> datetime:
     try:
         time_part = time_str.split("Time:")[1].strip()
-        return datetime.strptime(time_part, "%A, %B %d, %Y, %I:%M %p")
+        # handle both with and without minutes
+        try:
+            return datetime.strptime(time_part, "%A, %B %d, %Y, %I:%M %p")
+        except ValueError:
+            return datetime.strptime(time_part, "%A, %B %d, %Y, %I %p")
     except Exception as e:
         logger.error(f"Unable to resolve timestamp: {time_str}. Error: {e}")
         return datetime.min

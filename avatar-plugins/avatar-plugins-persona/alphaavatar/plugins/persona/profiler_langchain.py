@@ -222,7 +222,7 @@ class ProfilerLangChain(ProfilerBase):
         # Face Profile
         # TODO: add face profile saving logic
 
-        if details_items is None or len(details_items) == 0 or speaker_vector is None:
+        if (details_items is None or len(details_items) == 0) and speaker_vector is None:
             logger.info("User Profile SAVE skip!")
             return
 
