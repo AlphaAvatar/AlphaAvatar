@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .base import PersonaBase
-from .cache import PersonaCache
+from .cache import PersonaCache, SpeakerCacheBase
 from .enum.runner_op import VectorRunnerOP
 from .enum.user_profile import DetailsBase, ProfileItemSource, ProfileItemView, UserProfile
 from .profiler import ProfilerBase
@@ -21,6 +21,7 @@ from .speaker import SpeakerStreamBase, speaker_node
 __all__ = [
     "PersonaBase",
     "PersonaCache",
+    "SpeakerCacheBase",
     "VectorRunnerOP",
     "ProfileItemSource",
     "ProfileItemView",

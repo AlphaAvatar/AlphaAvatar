@@ -44,12 +44,12 @@ class ContextManager:
 
     def __call__(self, chat_context: ObservableList, op: OpType, payload: dict[str, Any]):
         # Fix init config when user info update
-        if self._engine.session_config.user_id != self._engine.persona._init_user_id:
+        if self._engine.session_config.user_id != self._engine.persona.default_uid:
             self._engine.memory.update_user_tool_id(
                 ori_id=self._engine.session_config.user_id,
-                tgt_id=self._engine.persona._init_user_id,
+                tgt_id=self._engine.persona.default_uid,
             )
-            self._engine.session_config.user_id = self._engine.persona._init_user_id
+            self._engine.session_config.user_id = self._engine.persona.default_uid
 
         # Notify memory
         self.memory_context_watcher(chat_context=chat_context, op=op, payload=payload)

@@ -51,27 +51,27 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 
 <tr>
 <td width="50%">
+<h3>💡 Reflection</h3>
+<p>An Optimizer for Omni-Avatar that can automatically build an internal knowledge base for avatars.</p>
+<p>
+<a href="examples/voice_agents/basic_agent.py">README↗</a>
+</p>
+</td>
+<td width="50%">
 <h3> Planning</h3>
 <p></p>
 <p>
 <a href="examples/voice_agents/basic_agent.py">README↗</a>
 </p>
 </td>
+</tr>
+
+<tr>
 <td width="50%">
 <h3>🤖 Behavior</h3>
 <p>Controls AlphaAvatar’s behavior logic and process flow.</p>
 <p>
 <a href="examples/voice_agents/push_to_talk.py">README↗</a>
-</p>
-</td>
-</tr>
-
-<tr>
-<td width="50%">
-<h3>💡 Reflection</h3>
-<p>An Optimizer for Omni-Avatar that can automatically build an internal knowledge base for avatars.</p>
-<p>
-<a href="examples/voice_agents/basic_agent.py">README↗</a>
 </p>
 </td>
 <td width="50%">
@@ -95,7 +95,7 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 
 <h4>Latest News 🔥</h4>
 
-- [2025/09]
+- [2025/11]
 
 
 <br/>

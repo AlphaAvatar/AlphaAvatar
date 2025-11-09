@@ -13,9 +13,6 @@
 # limitations under the License.
 from typing import Literal
 
-HG_MODEL = "livekit/turn-detector"
-ONNX_FILENAME = "model_q8.onnx"
-
 
 class RunnerModelConfig:
     def __init__(
@@ -24,7 +21,7 @@ class RunnerModelConfig:
         sample_rate: int,
         window_size_samples: int,
         step_size_samples: int,
-        embedding_dim: int,
+        embedding_dim: int | None = None,
     ) -> None:
         self.revision = revision
         self.sample_rate = sample_rate
@@ -33,9 +30,10 @@ class RunnerModelConfig:
         self.embedding_dim = embedding_dim
 
 
-# Speaker Vector Model
-SpeakerVectoryModelType = Literal["eres2netv2"]
-MODEL_CONFIG: dict[SpeakerVectoryModelType, RunnerModelConfig] = {
+SpeakerModelType = Literal["eres2netv2", "w2v2l6"]
+
+
+MODEL_CONFIG: dict[SpeakerModelType, RunnerModelConfig] = {
     "eres2netv2": RunnerModelConfig(
         revision="main",
         sample_rate=16000,
@@ -43,7 +41,11 @@ MODEL_CONFIG: dict[SpeakerVectoryModelType, RunnerModelConfig] = {
         step_size_samples=int(1 * 16000),
         embedding_dim=192,
     ),
+    "w2v2l6": RunnerModelConfig(
+        revision="main",
+        sample_rate=16000,
+        window_size_samples=int(3.0 * 16000),
+        step_size_samples=int(1 * 16000),
+        embedding_dim=1024,
+    ),
 }
-
-
-# Speaker Attribute Model

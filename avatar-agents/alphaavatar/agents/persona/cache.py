@@ -13,14 +13,16 @@
 # limitations under the License.
 from __future__ import annotations
 
+from abc import abstractmethod
+from typing import Any
+
 import numpy as np
 from livekit.agents.llm import ChatItem, ChatMessage
 
+from alphaavatar.agents.constants import SPEAKER_BETA
 from alphaavatar.agents.utils import AvatarTime, NumpyOP
 
 from .enum.user_profile import DetailsBase, UserProfile
-
-SPEAKER_BETA = 0.95
 
 
 class PersonaCache:
@@ -29,10 +31,12 @@ class PersonaCache:
         *,
         timestamp: AvatarTime,
         user_profile: UserProfile,
+        speaker_cache: SpeakerCacheBase,
         current_retrieval_times: int = 0,
     ):
         self._timestamp = timestamp
         self._user_profile = user_profile
+        self._speaker_cache = speaker_cache
         self._current_retrieval_times = current_retrieval_times
 
         self._messages: list[ChatItem] = []
@@ -113,3 +117,18 @@ class PersonaCache:
         if isinstance(message, ChatMessage) and message.role in ("user", "assistant"):
             self._messages.append(message)
             self._messages.sort(key=lambda x: x.created_at)
+
+    def update_speaker_profile(self, speaker_attribute: dict[str, Any]):
+        self.profile_details = self._speaker_cache.update_profile_detail(
+            self.profile_details, speaker_attribute, timestamp=self.time
+        )
+        print(self.profile_details, "((-----))", flush=True)
+
+
+class SpeakerCacheBase:
+    def __init__(self): ...
+
+    @abstractmethod
+    def update_profile_detail(
+        self, profile_details: Any, speaker_attribute: dict[str, Any], timestamp: str
+    ) -> Any: ...

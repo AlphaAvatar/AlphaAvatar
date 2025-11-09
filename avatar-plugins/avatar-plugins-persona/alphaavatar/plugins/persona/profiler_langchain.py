@@ -171,7 +171,7 @@ class ProfilerLangChain(ProfilerBase):
         else:
             profile_details = None
 
-        # Voice Profile
+        # Speaker Profile
         if data.get("speaker_vector", None):
             speaker_vector = data["speaker_vector"]
         else:

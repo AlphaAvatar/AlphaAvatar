@@ -76,12 +76,12 @@ class PersonaConfig:
                 self.profiler_plugin,
                 profiler_init_config=self.profiler_init_config,
             ),
-            speaker_stream=AvatarPlugin.get_avatar_plugin(
+            speaker_cls=AvatarPlugin.get_avatar_plugin(
                 AvatarModule.SPEAKER,
                 self.speaker_plugin,
                 speaker_init_config=self.speaker_init_config,
             ),
-            recognizer=None,  # type: ignore
+            face_cls=None,  # type: ignore
             maximum_retrieval_times=self.maximum_retrieval_times,
             speaker_threshold=self.speaker_threshold,
         )

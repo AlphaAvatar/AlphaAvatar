@@ -28,7 +28,7 @@ from alphaavatar.agents.utils import AvatarTime, format_current_time
 
 from .context import init_context_manager
 from .context.template import AvatarPromptTemplate
-from .patches import init_avatar_patches
+from .patches import init_avatar_patches  # NOTE: patches import only be used here
 
 
 # TESTCASES: can you hear my voice on type or voice mode
@@ -198,8 +198,8 @@ class AvatarEngine(Agent):
     async def on_exit(self):
         # memory op
         await self.memory.update()
-        await self.memory.save()
+        # await self.memory.save()
 
         # persona op
         await self.persona.update_profile_details()
-        await self.persona.save()
+        # await self.persona.save()

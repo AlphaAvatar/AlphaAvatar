@@ -16,7 +16,7 @@ from livekit.agents.inference_runner import _InferenceRunner
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 
 from .log import logger
-from .runner import QdrantRunner, SpeakerVectorRunner
+from .runner import QdrantRunner, SpeakerAttributeRunner, SpeakerVectorRunner
 from .version import __version__
 
 __all__ = [
@@ -42,23 +42,25 @@ class ProfilerLangchainPlugin(AvatarPlugin):
             )
 
 
-class SpeakerStreamPlugin(AvatarPlugin):
+class SpeakerPlugin(AvatarPlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
 
     def download_files(self): ...
 
     def get_plugin(self, speaker_init_config: dict, *args, **kwargs):
+        from .speaker_cache import SpeakerCache
         from .speaker_stream import SpeakerStreamWrapper
 
-        return SpeakerStreamWrapper
+        return (SpeakerStreamWrapper, SpeakerCache)
 
 
 # runner init
 _InferenceRunner.register_runner(QdrantRunner)
+_InferenceRunner.register_runner(SpeakerAttributeRunner)
 _InferenceRunner.register_runner(SpeakerVectorRunner)
 
 
 # plugin init
 AvatarPlugin.register_avatar_plugin(AvatarModule.PROFILER, "default", ProfilerLangchainPlugin())
-AvatarPlugin.register_avatar_plugin(AvatarModule.SPEAKER, "default", SpeakerStreamPlugin())
+AvatarPlugin.register_avatar_plugin(AvatarModule.SPEAKER, "default", SpeakerPlugin())

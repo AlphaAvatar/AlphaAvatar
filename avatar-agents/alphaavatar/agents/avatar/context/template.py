@@ -17,15 +17,13 @@ from typing import TYPE_CHECKING, Any
 
 from livekit.agents.llm import ChatItem, ChatMessage, ChatRole
 
+from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
 from alphaavatar.agents.memory import MemoryType
 
 from .prompts.avatar_system_prompts import AVATAR_SYSTEM_PROMPT
 
 if TYPE_CHECKING:
     from alphaavatar.agents.persona import UserProfile
-
-
-DEFAULT_SYSTEM_VALUE = "NONE"
 
 
 class AvatarPromptTemplate:

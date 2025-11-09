@@ -94,6 +94,8 @@ class SpeakerAdapter(stt.StreamAdapter):
 
 
 class SpeakerStreamBase(stt.RecognizeStream):
+    """Called every time voice input is activated"""
+
     def __init__(
         self,
         stt: stt.STT,

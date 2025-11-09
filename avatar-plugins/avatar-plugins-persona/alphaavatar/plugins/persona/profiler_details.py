@@ -35,12 +35,9 @@ class UserProfileDetails(DetailsBase):
         "(e.g., 'male', 'female', 'non-binary', 'prefer not to say', 'other: transgender woman').",
     )
     age: ProfileItemView | None = Field(
-        None, description="Approximate age in years if explicitly stated (e.g., 27)."
-    )
-    age_range: ProfileItemView | None = Field(
         None,
-        description="Age bracket or natural expression "
-        "(e.g., '18-24', 'in my thirties', 'around 50').",
+        description="If you are specifically asking, please provide an approximate age (e.g., 27 years old), "
+        "otherwise, an approximate age range (e.g., 35-45 years old) is acceptable.",
     )
     locale: ProfileItemView | None = Field(
         None,

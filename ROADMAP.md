@@ -53,6 +53,7 @@
 | 🔸       | Add **multi-user memory isolation** (unique response memory per user).                                                       | ⏳ In Progress |
 | 🔹       | Allow users to **query / recall** specific memories on demand.                                                               |   🧩 Planned  |
 | 🔹       | Add **event-driven memory updates** for adaptive reflection.                                                                 |   🧩 Planned  |
+| 🔹       | Add **omni** memory updates.                                                                                                 |   🧩 Planned  |
 
 ---
 

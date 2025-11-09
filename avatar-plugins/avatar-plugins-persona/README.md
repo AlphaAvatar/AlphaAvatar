@@ -35,7 +35,7 @@ pip install alpha-avatar-plugins-persona
 | Module     | Description                                                                               | Docs                                                                 |
 | ---------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | **ERes2NetV2** (default) | State-of-the-art deep speaker recognition model for speaker embedding and identification. | [3D-Speaker](https://github.com/modelscope/3D-Speaker)     |
-| **wav2vec2-large-robust-24-ft-age-gender** (default) | Deep learning model for speaker embedding with additional age and gender recognition capabilities. | [audEERING](https://huggingface.co/audeering/wav2vec2-large-robust-24-ft-age-gender)     |
+| **wav2vec2-large-robust-6-ft-age-gender** (default) | Deep learning model for speaker embedding with additional age and gender recognition capabilities. | [audEERING](https://github.com/audeering/w2v2-age-gender-how-to)     |
 
 ### Face Recognizer
 | Module  | Description                                                                                   | Docs                                                                 |

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .qdrant_runner import QdrantRunner
+from .speaker_attribute_runner import SpeakerAttributeRunner
 from .speaker_vector_runner import SpeakerVectorRunner
 
-__all__ = ["QdrantRunner", "SpeakerVectorRunner"]
+__all__ = ["QdrantRunner", "SpeakerAttributeRunner", "SpeakerVectorRunner"]

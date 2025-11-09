@@ -300,6 +300,6 @@ class QdrantRunner(_InferenceRunner):
                 return json.dumps(result).encode()
             case VectorRunnerOP.search_speaker_vector:
                 result = self._search_speaker_vector(**json_data["param"])
-                return json.dumps(result).encode()
+                return json.dumps(result).encode() if result is not None else result
             case _:
                 return None

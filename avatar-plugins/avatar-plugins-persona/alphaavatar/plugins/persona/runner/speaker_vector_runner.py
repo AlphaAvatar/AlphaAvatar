@@ -22,9 +22,9 @@ import onnxruntime
 from livekit.agents.inference_runner import _InferenceRunner
 from livekit.agents.utils import hw
 
-from ..fbank import FBank
 from ..log import logger
-from ..models import SpeakerVectoryModelType
+from ..models import SpeakerModelType
+from ..utils.fbank import FBank
 
 _resource_files = ExitStack()
 atexit.register(_resource_files.close)
@@ -32,7 +32,7 @@ atexit.register(_resource_files.close)
 
 class SpeakerVectorRunner(_InferenceRunner):
     INFERENCE_METHOD = "alphaavatar_perona_speaker_vector"
-    MODEL_TYPE: SpeakerVectoryModelType = "eres2netv2"
+    MODEL_TYPE: SpeakerModelType = "eres2netv2"
 
     def __init__(self):
         super().__init__()
@@ -64,7 +64,13 @@ class SpeakerVectorRunner(_InferenceRunner):
 
         self._feature_extractor = FBank(80, sample_rate=16000, mean_nor=True)
 
-    def run(self, data: bytes) -> bytes | None:
+        # Cache input/output names
+        self._input_names = [i.name for i in self._session.get_inputs()]
+        self._output_names = [o.name for o in self._session.get_outputs()]
+        logger.info(f"[SpeakerVectorRunner] Inputs: {self._input_names}")
+        logger.info(f"[SpeakerVectorRunner] Outputs: {self._output_names}")
+
+    def run(self, data: bytes) -> bytes:
         wav_data = np.frombuffer(data, dtype=np.float32)
         ort_inputs = {"feature": self._feature_extractor(wav_data)}
         embedding: np.ndarray = self._session.run(None, ort_inputs)[0]  # type: ignore

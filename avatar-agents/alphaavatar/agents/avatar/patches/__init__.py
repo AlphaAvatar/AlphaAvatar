@@ -24,3 +24,14 @@ def init_avatar_patches(engine: AvatarEngine) -> None:
     from .context_search_patch import install_context_search_patch
 
     install_context_search_patch(engine)
+
+
+def init_avatar_worker() -> None:
+    from livekit.agents.cli import _run
+
+    from .worker_patch import run_avatar_worker
+
+    _run.run_worker = run_avatar_worker
+
+
+init_avatar_worker()

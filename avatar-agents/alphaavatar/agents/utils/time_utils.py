@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import calendar
+import random
+import time
 from datetime import datetime
 
 from pydantic import BaseModel, Field
@@ -56,7 +58,7 @@ def _now_in_tz(tzname: str) -> datetime:
     return datetime.now(pytz.timezone(tzname))
 
 
-def format_current_time(tz: str) -> AvatarTime:
+def format_current_time(tz: str | None = None) -> AvatarTime:
     """
     Return the current time as:
         'Weekday, Month D, YYYY, h AM/PM'
@@ -71,7 +73,7 @@ def format_current_time(tz: str) -> AvatarTime:
     """
     # Use server local time when tz is None; otherwise convert to the given tz.
     try:
-        dt = _now_in_tz(tz)
+        dt = _now_in_tz(tz) if tz else datetime.now()
     except Exception:
         dt = datetime.now()
 
@@ -104,3 +106,8 @@ def time_str_to_datetime(time_str: str) -> datetime:
     except Exception as e:
         logger.error(f"Unable to resolve timestamp: {time_str}. Error: {e}")
         return datetime.min
+
+
+def get_timestamp() -> str:
+    id = f"{int(time.time() * 1000)}{random.randint(100, 999)}"
+    return id

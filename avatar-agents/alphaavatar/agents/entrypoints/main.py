@@ -76,11 +76,12 @@ def main() -> None:
 
     opts = agents.WorkerOptions(
         entrypoint_fnc=partial(entrypoint, avatar_config),
-        job_memory_warn_mb=1024,
-        job_memory_limit_mb=2048,
+        job_memory_warn_mb=8192,
+        job_memory_limit_mb=0,
         num_idle_processes=1,
         load_fnc=worker_load,
         load_threshold=0.9,
+        initialize_process_timeout=30,
     )
     agents.cli.run_app(opts)
 
