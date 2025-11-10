@@ -17,6 +17,7 @@ import numpy as np
 from livekit.agents.llm import ChatItem
 
 from alphaavatar.agents.avatar import PersonaPluginsTemplate
+from alphaavatar.agents.constants import SPEAKER_THRESHOLD
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.utils import AvatarTime, NumpyOP, get_user_id
 
@@ -34,14 +35,12 @@ class PersonaBase:
         speaker_cls: tuple[type[SpeakerStreamBase], type[SpeakerCacheBase]],
         face_cls: tuple[type[SpeakerStreamBase], type[SpeakerCacheBase]],
         maximum_retrieval_times: int = 3,
-        speaker_threshold: float = 0.75,
     ):
         self._profiler = profiler
         self._speaker_cls = speaker_cls
         self._face_cls = face_cls
 
         self._maximum_retrieval_times = maximum_retrieval_times
-        self._speaker_threshold = speaker_threshold
 
         self._persona_cache: dict[str, PersonaCache] = {}
 
@@ -190,7 +189,7 @@ class PersonaBase:
         best_score = float(scores[best_idx])
         best_uid = ids[best_idx]
 
-        return best_uid if best_score >= self._speaker_threshold else None
+        return best_uid if best_score >= SPEAKER_THRESHOLD else None
 
     async def update_speaker_vector(self, *, uid: str, speaker_vector: np.ndarray | list[float]):
         if uid not in self.persona_cache:

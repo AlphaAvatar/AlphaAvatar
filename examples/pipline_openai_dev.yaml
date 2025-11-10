@@ -27,7 +27,6 @@ memory_vdb_config: {'memory_collection_name': "alphaavatar_memory", 'embedding_m
 
 ### Profiler Args
 maximum_retrieval_times: 3
-speaker_threshold: 0.75
 profiler_plugin: default
 profiler_init_config: {}
 speaker_plugin: default

@@ -33,10 +33,6 @@ class PersonaConfig:
         default=3,
         description="The maximum number of retrieval to determine whether a new user matches existing data in the Perona database.",
     )
-    speaker_threshold: float = Field(
-        default=0.75,
-        description="The threshold for speaker recognition matching. A lower value makes the matching more lenient.",
-    )
 
     # Persona Profiler plugin config
     profiler_plugin: str = Field(
@@ -83,5 +79,4 @@ class PersonaConfig:
             ),
             face_cls=None,  # type: ignore
             maximum_retrieval_times=self.maximum_retrieval_times,
-            speaker_threshold=self.speaker_threshold,
         )

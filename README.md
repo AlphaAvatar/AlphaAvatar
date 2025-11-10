@@ -23,6 +23,12 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 
 <p align="center">
   <a href="ROADMAP.md">ROADMAP</a>
+  |
+  <a href="#">Demo</a>
+  |
+  <a href="#">HomePage</a>
+  |
+  <a href="#">Documents</a>
 </p>
 
 </div>

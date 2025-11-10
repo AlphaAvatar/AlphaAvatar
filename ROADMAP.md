@@ -70,6 +70,7 @@
 | Date    | Milestone                                  | Notes                                                                          |
 | :------ | :----------------------------------------- | :----------------------------------------------------------------------------- |
 | 2025-10 | **Automatic User Profile Extraction (v1)** | Generates personalized, context-aware responses based on conversation history. |
+| 2025-11 | **Speaker Verification**                   | Add speech-based profiling (speaker vector extraction & identification).       |
 
 ### 🧭 **TODO**
 
@@ -77,7 +78,6 @@
 | :------- | :--------------------------------------------------------------------------- | :-----------: |
 | 🔸       | Add **multi-user profile management** for concurrent interactions.           | ⏳ In Progress |
 | 🔸       | Enable **real-time profile retrieval** during active conversation.           | ⏳ In Progress |
-| 🔹       | Add **speech-based profiling** (speaker vector extraction & identification). |   🧩 Planned  |
 | 🔹       | Add **face-based profiling** (facial embedding recognition).                 |   🧩 Planned  |
 | 🔹       | Integrate **event triggers** for profile updates & reflection cycles.        |   🧩 Planned  |
 

@@ -40,7 +40,7 @@ class AvatarPlugin(Plugin):
             raise ValueError(f"AvatarPlugin[{module}] `{name}` already registered.")
 
         cls.avatar_registered_plugins[module][name] = plugin
-        cls.emitter.emit("plugin_registered", plugin)
+        cls.register_plugin(plugin)
 
     @classmethod
     def get_avatar_plugin(cls, module: AvatarModule, name: str, *args, **kwargs):
