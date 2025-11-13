@@ -114,7 +114,8 @@ build_and_publish() {
   TWINE_NON_INTERACTIVE=1 python -m twine upload -v \
     --repository-url "$repo_url" \
     --skip-existing \
-    -u __token__ -p "$PYPI_TOKEN" \
+    -u __token__ \
+    -p "$PYPI_TOKEN" \
     "${files[@]}"
 }
 
