@@ -2,15 +2,20 @@
 constraint-dependencies = ['onnxruntime<1.20.0; python_version == "3.9"']
 
 [tool.uv.sources]
-avatar-agents = { workspace = true }
-avatar-plugins-memory = { workspace = true }
+alpha-avatar-agents = { workspace = true }
+alpha-avatar-plugins-memory = { workspace = true }
+alpha-avatar-plugins-persona = { workspace = true }
 
 [tool.uv.workspace]
-members = ["avatar-plugins/*", "avatar-agents"]
+members = [
+    "avatar-agents",
+    "avatar-plugins/*",
+]
 exclude = []
 
 [dependency-groups]
 dev = [
+    "pre-commit",
     "python-dotenv>=1.0.1",
     "mypy",
     "pytest",
@@ -59,28 +64,3 @@ addopts = ["--import-mode=importlib", "--ignore=examples"]
 [tool.mypy]
 strict = true
 disallow_any_generics = false
-
-[[tool.mypy.overrides]]
-module = "mcp.*"
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "google.genai"
-follow_imports = "normal"
-follow_untyped_imports = true
-
-[[tool.mypy.overrides]]
-module = "boto3"
-follow_untyped_imports = true
-
-[[tool.mypy.overrides]]
-module = "aws_sdk_bedrock_runtime.*"
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "smithy_aws_core.*"
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "smithy_core.*"
-ignore_missing_imports = true

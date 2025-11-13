@@ -106,7 +106,30 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 
 <br/>
 
+<h4>Installation ⚙️<h4>
+
+Install **stable** AlphaAvatar version from PyPI:
+
+```bash
+uv venv .my-env
+source .my-env/bin/activate
+pip install alpha-avatar-agents
+```
+
+Install **latest** AlphaAvatar version from GitHub:
+
+```bash
+git clone https://github.com/AlphaAvatar/AlphaAvatar.git
+cd AlphaAvatar
+
+uv venv .venv
+source .venv/bin/activate
+uv sync --all-packages
+```
+
 <h4>Quick Start ⚡️<h4>
+
+Start your agent in dev mode to connect it to LiveKit and make it available from anywhere on the internet:
 
 ```bash
 export LIVEKIT_API_KEY=<your API Key>
@@ -116,5 +139,8 @@ export OPENAI_API_KEY=<your OpenAI API Key>
 export QDRANT_URL='https://xxxxxx-xxxxx-xxxxx-xxxx-xxxxxxxxx.us-east.aws.cloud.qdrant.io:6333'
 export QDRANT_API_KEY=<your QDRANT API Key>
 
+alphaavatar download-files
 alphaavatar dev examples/pipline_openai_dev.yaml
 ```
+
+To see more supported modes, please refer to the [LiveKit](https://docs.livekit.io/agents/start/voice-ai/) documentation.

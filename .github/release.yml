@@ -1,0 +1,18 @@
+changelog:
+  categories:
+    - title: What's Changed
+      labels:
+        - enhancement
+        - feature
+        - bug
+        - fix
+        - performance
+        - refactor
+        - documentation
+        - dependencies
+        - "*"
+  exclude:
+    labels:
+      - skip-changelog
+  new_contributors:
+    include_existing_contributors: false

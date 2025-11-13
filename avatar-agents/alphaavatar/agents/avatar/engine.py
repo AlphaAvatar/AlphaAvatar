@@ -198,8 +198,8 @@ class AvatarEngine(Agent):
     async def on_exit(self):
         # memory op
         await self.memory.update()
-        # await self.memory.save()
+        await self.memory.save()
 
         # persona op
         await self.persona.update_profile_details()
-        # await self.persona.save()
+        await self.persona.save()

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "alpha-avatar-agents"
 dynamic = ["version"]
-description = "A real-time interactive Omni Avatar built on LiveKit."
+description = "A real-time interactive Omni Avatar Agent built on LiveKit."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
@@ -17,7 +17,6 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -32,21 +31,21 @@ dependencies = [
     "livekit-blingfire~=1.0",
     "livekit-agents~=1.0",
     "livekit-plugins-noise-cancellation~=0.2",
+    "livekit-plugins-openai>=1.2.4",
     "livekit-plugins-silero>=1.2.5",
     "livekit-plugins-turn-detector>=1.2.4",
     "mcp>=1.10.0, <2",
     "omegaconf",
+    "alpha-avatar-plugins-memory>=0.1.0",
+    "alpha-avatar-plugins-persona>=0.1.0",
 ]
 
 [project.optional-dependencies]
-livekit-openai = ["livekit-plugins-openai>=1.2.4"]
 
 [project.scripts]
 alphaavatar = "alphaavatar.agents.entrypoints.main:main"
 
 [project.urls]
-Documentation = ""
-Website = ""
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"
 
 
@@ -57,4 +56,4 @@ path = "alphaavatar/agents/version.py"
 packages = ["alphaavatar"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/alphaavatar"]
+include = ["alphaavatar", "README.md", "LICENSE"]

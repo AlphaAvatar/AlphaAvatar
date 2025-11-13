@@ -9,7 +9,7 @@ description = "AlphaAvatar Framework plugin for memory service"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
-keywords = ["llm", "agents", "AI", "memory", "mem0"]
+keywords = ["llm", "agents", "AI", "memory", "langchain"]
 classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
@@ -17,7 +17,6 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -37,8 +36,6 @@ dependencies = [
 [project.optional-dependencies]
 
 [project.urls]
-Documentation = ""
-Website = ""
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"
 
 [tool.hatch.version]
@@ -48,4 +45,4 @@ path = "alphaavatar/plugins/memory/version.py"
 packages = ["alphaavatar"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/alphaavatar"]
+include = ["alphaavatar", "README.md", "LICENSE"]

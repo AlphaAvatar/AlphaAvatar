@@ -1,0 +1,94 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "test-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.uv/bin" >> $GITHUB_PATH
+          uv --version
+
+      - name: Create venv & install build tooling
+        run: |
+          uv venv .venv
+          source .venv/bin/activate
+          uv pip install uv hatchling
+
+      - name: Determine repository (PyPI/TestPyPI) and version
+        id: meta
+        shell: bash
+        run: |
+          set -e
+          TAG="${GITHUB_REF_NAME}"   # v0.1.0 or test-v0.1.0
+          if [[ "$TAG" == test-v* ]]; then
+            REPO="testpypi"
+            VERSION="${TAG#test-v}"
+          else
+            REPO="pypi"
+            VERSION="${TAG#v}"
+          fi
+          echo "repo=$REPO" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Resolved: tag=$TAG repo=$REPO version=$VERSION"
+
+      - name: Build & Publish (runs your release script)
+        env:
+          PYPI_TOKEN: ${{ steps.meta.outputs.repo == 'pypi' && secrets.PYPI_TOKEN || secrets.TEST_PYPI_TOKEN }}
+          REPO: ${{ steps.meta.outputs.repo }}
+        shell: bash
+        run: |
+          set -e
+          source .venv/bin/activate
+          test -n "$PYPI_TOKEN" || { echo "Missing token: set PYPI_TOKEN and TEST_PYPI_TOKEN secrets."; exit 1; }
+          chmod +x scripts/release.sh
+          ./scripts/release.sh "${{ steps.meta.outputs.version }}"
+
+      - name: Generate Release Notes body
+        id: notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -e
+          TAG="${GITHUB_REF_NAME}"
+          BODY="$(gh api repos/${{ github.repository }}/releases/generate-notes \
+            -f tag_name="$TAG" -f target_commitish="${GITHUB_SHA}" -q .body)"
+          echo "$BODY" > body.md
+          PREV="$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)"
+          if [ -n "$PREV" ]; then
+            {
+              echo
+              echo "Full Changelog: https://github.com/${{ github.repository }}/compare/$PREV...$TAG"
+            } >> body.md
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.notes.outputs.tag }}" \
+            --title "${{ steps.notes.outputs.tag }}" \
+            --notes-file body.md
