@@ -3,8 +3,8 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
-      - "test-v*"
+      - "v*"         # e.g., v0.1.0 -> publish to PyPI
+      - "test-v*"    # e.g., test-v0.1.0 -> publish to TestPyPI
 
 permissions:
   contents: write
@@ -57,11 +57,12 @@ jobs:
         env:
           PYPI_TOKEN: ${{ steps.meta.outputs.repo == 'pypi' && secrets.PYPI_TOKEN || secrets.TEST_PYPI_TOKEN }}
           REPO: ${{ steps.meta.outputs.repo }}
+          SKIP_GIT: "1"      # 关键：CI 下跳过 git 提交/打标签
         shell: bash
         run: |
           set -e
           source .venv/bin/activate
-          test -n "$PYPI_TOKEN" || { echo "Missing token: set PYPI_TOKEN and TEST_PYPI_TOKEN secrets."; exit 1; }
+          test -n "$PYPI_TOKEN" || { echo "Missing token: set PYPI_TOKEN and TEST_PYPI_TOKEN in repo secrets."; exit 1; }
           chmod +x scripts/release.sh
           ./scripts/release.sh "${{ steps.meta.outputs.version }}"
 

@@ -1,26 +1,32 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# -------------------------------
+# ----------------------------------
 # Config
-# -------------------------------
-# 包目录（相对仓库根目录）的发布顺序：先依赖、再上层
+# ----------------------------------
+# 依赖顺序：先底层依赖、再上层（如有主包 alphaavatar，请放最后）
 PACKAGES=(
   "avatar-agents"
   "avatar-plugins/avatar-plugins-memory"
   "avatar-plugins/avatar-plugins-persona"
+  # "avatar"   # 若后续加入 alphaavatar 主包，则取消注释并放在最后
 )
 
-# PyPI 仓库名：pypi 或 testpypi
-REPO="${REPO:-pypi}"              # 用法：REPO=testpypi ./release.sh 0.1.0
-# Dry run：不执行发布、不推送，只做版本写入和构建
-DRY="${DRY:-0}"                    # 用法：DRY=1 ./release.sh 0.1.0
-# PyPI Token（必填）
+# PyPI 仓库名：pypi 或 testpypi（由 CI 注入，或本地 export）
+REPO="${REPO:-pypi}"
+
+# Dry run：仅写版本/构建，不发布、不推送
+DRY="${DRY:-0}"
+
+# 在 CI 下跳过 git 提交/打 tag（由 workflow 设定为 1）
+SKIP_GIT="${SKIP_GIT:-0}"
+
+# 必填：PyPI Token（CI 注入；本地可 export）
 PYPI_TOKEN="${PYPI_TOKEN:-}"
 
-# -------------------------------
+# ----------------------------------
 # Helpers
-# -------------------------------
+# ----------------------------------
 die() { echo "Error: $*" >&2; exit 1; }
 
 require_cmd() {
@@ -29,7 +35,6 @@ require_cmd() {
 
 get_version_file_from_pyproject() {
   # 从 pyproject.toml 里解析 [tool.hatch.version].path
-  # 兼容 macOS/BSD grep：尽量用 awk+sed
   local proj="$1"
   awk '
     $0 ~ /^\[tool\.hatch\.version\]/ { inblock=1; next }
@@ -44,7 +49,6 @@ set_version_in_file() {
   local file="$1"
   local version="$2"
   [[ -f "$file" ]] || die "version file not found: $file"
-  # 用 Python 更稳妥地替换 __version__ = "x.y.z"
   python3 - "$file" "$version" <<'PY'
 import re, sys, pathlib
 p = pathlib.Path(sys.argv[1])
@@ -72,58 +76,60 @@ build_and_publish() {
   fi
 }
 
-# -------------------------------
+# ----------------------------------
 # Main
-# -------------------------------
+# ----------------------------------
 require_cmd git
 require_cmd python3
 require_cmd uv
 
 VERSION="${1:-}"
-[[ -n "$VERSION" ]] || die "Usage: ./release.sh <version> (e.g., 0.1.0). You can also set REPO=pypi|testpypi, DRY=1."
+[[ -n "$VERSION" ]] || die "Usage: ./scripts/release.sh <version> (e.g., 0.1.0)"
 
-# 1) 检查工作区干净
-if [[ "$DRY" != "1" ]]; then
+echo "Release config -> VERSION=$VERSION REPO=$REPO DRY=$DRY SKIP_GIT=$SKIP_GIT"
+
+# 在本地发布时确保工作区干净、tag 不重复；CI（SKIP_GIT=1）跳过
+if [[ "$DRY" != "1" && "$SKIP_GIT" != "1" ]]; then
   git diff --quiet || die "Working tree not clean. Commit or stash changes first."
   if git rev-parse "v$VERSION" >/dev/null 2>&1; then
     die "Git tag v$VERSION already exists."
   fi
 fi
 
-# 2) 逐包写入版本
+# 逐包写入版本号（依据 [tool.hatch.version].path）
 for pkgdir in "${PACKAGES[@]}"; do
   pyproj="$pkgdir/pyproject.toml"
   [[ -f "$pyproj" ]] || die "Missing $pyproj"
   vpath="$(get_version_file_from_pyproject "$pyproj")"
   if [[ -z "$vpath" ]]; then
-    # 回退：常见路径猜测
+    # 常见回退路径（如无配置）
     if [[ -f "$pkgdir/alphaavatar/version.py" ]]; then
       vpath="alphaavatar/version.py"
     elif [[ -f "$pkgdir/alphaavatar/agents/version.py" ]]; then
       vpath="alphaavatar/agents/version.py"
     else
-      die "Cannot locate [tool.hatch.version].path in $pyproj and no common fallback found."
+      die "Cannot locate [tool.hatch.version].path in $pyproj and no fallback found."
     fi
   fi
   set_version_in_file "$pkgdir/$vpath" "$VERSION"
 done
 
-# 3) 提交与打标签
-if [[ "$DRY" != "1" ]]; then
+# 本地发布：写版本 -> 提交 -> 打 tag
+if [[ "$DRY" != "1" && "$SKIP_GIT" != "1" ]]; then
   git add -A
   git commit -m "chore(release): v$VERSION"
   git tag -a "v$VERSION" -m "Release v$VERSION"
 fi
 
-# 4) 构建并发布（按顺序）
+# 构建并发布（按顺序）
 for pkgdir in "${PACKAGES[@]}"; do
   build_and_publish "$pkgdir"
 done
 
-# 5) 推送
-if [[ "$DRY" != "1" ]]; then
+# 本地发布：推送
+if [[ "$DRY" != "1" && "$SKIP_GIT" != "1" ]]; then
   git push
   git push --tags
 fi
 
-echo "Done. Version: $VERSION | Repo: $REPO | DRY=$DRY"
+echo "Done. Version: $VERSION | Repo: $REPO | DRY=$DRY | SKIP_GIT=$SKIP_GIT"
