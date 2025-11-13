@@ -36,8 +36,6 @@ dependencies = [
 [project.optional-dependencies]
 
 [project.urls]
-Documentation = ""
-Website = ""
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"
 
 [tool.hatch.version]

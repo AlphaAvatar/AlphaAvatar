@@ -111,11 +111,10 @@ build_and_publish() {
 
   echo "==> Publishing $pkg_name to $REPO ($repo_url) via twine"
   # --skip-existing: 若相同文件已存在则跳过（避免 400）
-  TWINE_NON_INTERACTIVE=1 python -m twine upload \
+  TWINE_NON_INTERACTIVE=1 python -m twine upload -v \
     --repository-url "$repo_url" \
     --skip-existing \
-    -u __token__ \
-    -p "$PYPI_TOKEN" \
+    -u __token__ -p "$PYPI_TOKEN" \
     "${files[@]}"
 }
 
