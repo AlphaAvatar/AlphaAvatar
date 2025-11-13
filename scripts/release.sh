@@ -4,24 +4,16 @@ set -euo pipefail
 # ----------------------------------
 # Config
 # ----------------------------------
-# 依赖顺序：先底层依赖、再上层（如有主包 alphaavatar，请放最后）
 PACKAGES=(
   "avatar-agents"
   "avatar-plugins/avatar-plugins-memory"
   "avatar-plugins/avatar-plugins-persona"
-  # "avatar"   # 若后续加入 alphaavatar 主包，则取消注释并放在最后
+  # "avatar"   # 如后续加入主包 alphaavatar，请把它放在最后
 )
 
-# PyPI 仓库名：pypi 或 testpypi（由 CI 注入，或本地 export）
-REPO="${REPO:-pypi}"
-
-# Dry run：仅写版本/构建，不发布、不推送
+REPO="${REPO:-pypi}"      # pypi | testpypi
 DRY="${DRY:-0}"
-
-# 在 CI 下跳过 git 提交/打 tag（由 workflow 设定为 1）
 SKIP_GIT="${SKIP_GIT:-0}"
-
-# 必填：PyPI Token（CI 注入；本地可 export）
 PYPI_TOKEN="${PYPI_TOKEN:-}"
 
 # ----------------------------------
@@ -34,12 +26,23 @@ require_cmd() {
 }
 
 get_version_file_from_pyproject() {
-  # 从 pyproject.toml 里解析 [tool.hatch.version].path
   local proj="$1"
   awk '
     $0 ~ /^\[tool\.hatch\.version\]/ { inblock=1; next }
     inblock && $0 ~ /^\[/ { inblock=0 }
     inblock && $0 ~ /^path *=/ {
+      match($0, /"([^"]+)"/, m); if (m[1] != "") { print m[1]; exit 0 }
+    }
+  ' "$proj"
+}
+
+get_project_name_from_pyproject() {
+  # 解析 [project].name
+  local proj="$1"
+  awk '
+    $0 ~ /^\[project\]/ { inblock=1; next }
+    inblock && $0 ~ /^\[/ { inblock=0 }
+    inblock && $0 ~ /^name *=/ {
       match($0, /"([^"]+)"/, m); if (m[1] != "") { print m[1]; exit 0 }
     }
   ' "$proj"
@@ -65,15 +68,47 @@ PY
 
 build_and_publish() {
   local dir="$1"
+  local version="$2"
+
   echo "==> Building in $dir"
   ( cd "$dir" && uv build )
+
+  # uv 会把产物放到仓库根的 dist/（从你的日志可见）
+  local dist_root="dist"
+  [[ -d "$dist_root" ]] || die "dist directory not found at repo root"
+
+  # 解析包名，并生成文件基名（wheel/源码包文件名把 - 归一化为 _）
+  local pyproj="$dir/pyproject.toml"
+  local pkg_name
+  pkg_name="$(get_project_name_from_pyproject "$pyproj")"
+  [[ -n "$pkg_name" ]] || die "Cannot read [project].name from $pyproj"
+
+  local fname_base="${pkg_name//-/_}-${version}"
+
+  # 找到该包对应的构建文件
+  mapfile -t files < <(ls -1 "$dist_root"/"$fname_base"* 2>/dev/null || true)
+  [[ ${#files[@]} -gt 0 ]] || die "No built files found for $pkg_name ($fname_base*) in $dist_root"
+
+  echo "Artifacts to publish:"
+  printf '  %s\n' "${files[@]}"
+
   if [[ "$DRY" == "1" ]]; then
     echo "DRY=1: skip publish for $dir"
-  else
-    [[ -n "$PYPI_TOKEN" ]] || die "PYPI_TOKEN is required for publishing"
-    echo "==> Publishing $dir to $REPO"
-    ( cd "$dir" && uv publish --repository "$REPO" --token "$PYPI_TOKEN" )
+    return 0
   fi
+
+  [[ -n "$PYPI_TOKEN" ]] || die "PYPI_TOKEN is required for publishing"
+
+  local repo_url=""
+  if [[ "$REPO" == "testpypi" ]]; then
+    repo_url="https://test.pypi.org/legacy/"
+  else
+    repo_url="https://upload.pypi.org/legacy/"
+  fi
+
+  echo "==> Publishing $pkg_name to $REPO ($repo_url)"
+  # 仅上传该包对应的文件
+  uv publish --directory "$dist_root" --repository-url "$repo_url" --token "$PYPI_TOKEN" "${files[@]}"
 }
 
 # ----------------------------------
@@ -88,7 +123,7 @@ VERSION="${1:-}"
 
 echo "Release config -> VERSION=$VERSION REPO=$REPO DRY=$DRY SKIP_GIT=$SKIP_GIT"
 
-# 在本地发布时确保工作区干净、tag 不重复；CI（SKIP_GIT=1）跳过
+# 本地发布：确保工作区干净 & tag 未存在；CI（SKIP_GIT=1）跳过
 if [[ "$DRY" != "1" && "$SKIP_GIT" != "1" ]]; then
   git diff --quiet || die "Working tree not clean. Commit or stash changes first."
   if git rev-parse "v$VERSION" >/dev/null 2>&1; then
@@ -96,13 +131,12 @@ if [[ "$DRY" != "1" && "$SKIP_GIT" != "1" ]]; then
   fi
 fi
 
-# 逐包写入版本号（依据 [tool.hatch.version].path）
+# 写版本号
 for pkgdir in "${PACKAGES[@]}"; do
   pyproj="$pkgdir/pyproject.toml"
   [[ -f "$pyproj" ]] || die "Missing $pyproj"
   vpath="$(get_version_file_from_pyproject "$pyproj")"
   if [[ -z "$vpath" ]]; then
-    # 常见回退路径（如无配置）
     if [[ -f "$pkgdir/alphaavatar/version.py" ]]; then
       vpath="alphaavatar/version.py"
     elif [[ -f "$pkgdir/alphaavatar/agents/version.py" ]]; then
@@ -114,19 +148,19 @@ for pkgdir in "${PACKAGES[@]}"; do
   set_version_in_file "$pkgdir/$vpath" "$VERSION"
 done
 
-# 本地发布：写版本 -> 提交 -> 打 tag
+# 本地发布才提交/打 tag
 if [[ "$DRY" != "1" && "$SKIP_GIT" != "1" ]]; then
   git add -A
   git commit -m "chore(release): v$VERSION"
   git tag -a "v$VERSION" -m "Release v$VERSION"
 fi
 
-# 构建并发布（按顺序）
+# 逐包构建并上传（只传该包文件）
 for pkgdir in "${PACKAGES[@]}"; do
-  build_and_publish "$pkgdir"
+  build_and_publish "$pkgdir" "$VERSION"
 done
 
-# 本地发布：推送
+# 本地发布才推送
 if [[ "$DRY" != "1" && "$SKIP_GIT" != "1" ]]; then
   git push
   git push --tags
