@@ -77,7 +77,7 @@ build_and_publish() {
   local dist_root="dist"
   [[ -d "$dist_root" ]] || die "dist directory not found at repo root"
 
-  # 解析包名，定位当前包的构建文件
+  # 解析包名并定位产物文件（基名要将 - 规范化为 _）
   local pyproj="$dir/pyproject.toml"
   local pkg_name
   pkg_name="$(get_project_name_from_pyproject "$pyproj")"
@@ -91,6 +91,10 @@ build_and_publish() {
   echo "Artifacts to publish:"
   printf '  %s\n' "${files[@]}"
 
+  # 先做元数据检查（能提前发现 README/metadata 问题）
+  echo "==> twine check"
+  python -m twine check "${files[@]}"
+
   if [[ "$DRY" == "1" ]]; then
     echo "DRY=1: skip publish for $dir"
     return 0
@@ -98,7 +102,6 @@ build_and_publish() {
 
   [[ -n "$PYPI_TOKEN" ]] || die "PYPI_TOKEN is required for publishing"
 
-  # 选择仓库地址（twine 需要 legacy endpoint）
   local repo_url
   if [[ "$REPO" == "testpypi" ]]; then
     repo_url="https://test.pypi.org/legacy/"
@@ -107,8 +110,10 @@ build_and_publish() {
   fi
 
   echo "==> Publishing $pkg_name to $REPO ($repo_url) via twine"
-  python -m twine upload \
+  # --skip-existing: 若相同文件已存在则跳过（避免 400）
+  TWINE_NON_INTERACTIVE=1 python -m twine upload \
     --repository-url "$repo_url" \
+    --skip-existing \
     -u __token__ \
     -p "$PYPI_TOKEN" \
     "${files[@]}"
