@@ -34,7 +34,7 @@ jobs:
         run: |
           uv venv .venv
           source .venv/bin/activate
-          uv pip install uv hatchling
+          uv pip install uv hatchling twine
 
       - name: Determine repository (PyPI/TestPyPI) and version
         id: meta

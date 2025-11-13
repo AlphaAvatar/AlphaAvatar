@@ -73,11 +73,11 @@ build_and_publish() {
   echo "==> Building in $dir"
   ( cd "$dir" && uv build )
 
-  # uv 会把产物放到仓库根的 dist/（从你的日志可见）
+  # 产物在仓库根 dist/
   local dist_root="dist"
   [[ -d "$dist_root" ]] || die "dist directory not found at repo root"
 
-  # 解析包名，并生成文件基名（wheel/源码包文件名把 - 归一化为 _）
+  # 解析包名，定位当前包的构建文件
   local pyproj="$dir/pyproject.toml"
   local pkg_name
   pkg_name="$(get_project_name_from_pyproject "$pyproj")"
@@ -85,7 +85,6 @@ build_and_publish() {
 
   local fname_base="${pkg_name//-/_}-${version}"
 
-  # 找到该包对应的构建文件
   mapfile -t files < <(ls -1 "$dist_root"/"$fname_base"* 2>/dev/null || true)
   [[ ${#files[@]} -gt 0 ]] || die "No built files found for $pkg_name ($fname_base*) in $dist_root"
 
@@ -99,16 +98,20 @@ build_and_publish() {
 
   [[ -n "$PYPI_TOKEN" ]] || die "PYPI_TOKEN is required for publishing"
 
-  local repo_url=""
+  # 选择仓库地址（twine 需要 legacy endpoint）
+  local repo_url
   if [[ "$REPO" == "testpypi" ]]; then
     repo_url="https://test.pypi.org/legacy/"
   else
     repo_url="https://upload.pypi.org/legacy/"
   fi
 
-  echo "==> Publishing $pkg_name to $REPO ($repo_url)"
-  # 仅上传该包对应的文件
-  uv publish --directory "$dist_root" --repository-url "$repo_url" --token "$PYPI_TOKEN" "${files[@]}"
+  echo "==> Publishing $pkg_name to $REPO ($repo_url) via twine"
+  python -m twine upload \
+    --repository-url "$repo_url" \
+    -u __token__ \
+    -p "$PYPI_TOKEN" \
+    "${files[@]}"
 }
 
 # ----------------------------------
