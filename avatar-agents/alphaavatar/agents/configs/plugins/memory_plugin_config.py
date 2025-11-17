@@ -44,7 +44,7 @@ class MemoryConfig:
 
     # Memory plugin config
     memory_plugin: str = Field(
-        default="mem0_client",
+        default="default",
         description="Avatar Memory plugin to use for memory management.",
     )
     memory_init_config: dict = Field(
@@ -62,13 +62,11 @@ class MemoryConfig:
         # Set PERONA_PROFILER_ENV
         os.environ["MEMORY_VDB_CONFIG"] = json.dumps(self.memory_vdb_config)
 
-    def get_memory_plugin(self, *, avatar_id: str, activate_time: str) -> MemoryBase:
+    def get_plugin(self) -> MemoryBase:
         """Returns the Memory plugin instance based on the configuration."""
         return AvatarPlugin.get_avatar_plugin(
             AvatarModule.MEMORY,
             self.memory_plugin,
-            avatar_id=avatar_id,
-            activate_time=activate_time,
             memory_search_context=self.memory_search_context,
             memory_recall_num=self.memory_recall_num,
             maximum_memory_num=self.maximum_memory_num,

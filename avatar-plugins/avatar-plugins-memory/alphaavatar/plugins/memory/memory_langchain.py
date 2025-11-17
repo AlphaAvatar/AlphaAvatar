@@ -29,6 +29,7 @@ from alphaavatar.agents.memory import (
     MemoryType,
     VectorRunnerOP,
 )
+from alphaavatar.agents.utils import format_current_time
 
 from .log import logger
 from .memory_op import MemoryDelta, flatten_items, norm_token, rebuild_from_items
@@ -66,16 +67,12 @@ class MemoryLangchain(MemoryBase):
     def __init__(
         self,
         *,
-        avatar_id: str,
-        activate_time: str,
         memory_search_context: int = 3,
         memory_recall_num: int = 10,
         maximum_memory_num: int = 24,
         memory_init_config: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(
-            avatar_id=avatar_id,
-            activate_time=activate_time,
             memory_search_context=memory_search_context,
             memory_recall_num=memory_recall_num,
             maximum_memory_num=maximum_memory_num,
@@ -101,7 +98,8 @@ class MemoryLangchain(MemoryBase):
         chain = DELTA_PROMPT | self._delta_llm
         return await chain.ainvoke({"type": memory_type, "message_content": message_content})  # type: ignore
 
-    def _apply_delta(self, delta: MemoryDelta, memory_cache: MemoryCache):
+    def _apply_delta(self, avatar_id: str, delta: MemoryDelta, memory_cache: MemoryCache):
+        avatar_time = format_current_time().time_str
         assistant_memories: list[MemoryItem] = []
         user_memories: list[MemoryItem] = []
         tool_memories: list[MemoryItem] = []
@@ -113,11 +111,11 @@ class MemoryLangchain(MemoryBase):
                     MemoryItem(
                         updated=True,
                         session_id=memory_cache.session_id,
-                        object_id=self.avatar_id,
+                        object_id=avatar_id,
                         value=item.value,
                         entities=item.entities,
                         topic=item.topic,
-                        timestamp=self.time,
+                        timestamp=avatar_time,
                         memory_type=MemoryType.Avatar,
                     )
                 )
@@ -134,7 +132,7 @@ class MemoryLangchain(MemoryBase):
                             value=item.value,
                             entities=item.entities,
                             topic=item.topic,
-                            timestamp=self.time,
+                            timestamp=avatar_time,
                             memory_type=MemoryType.CONVERSATION,
                         )
                     )
@@ -149,7 +147,7 @@ class MemoryLangchain(MemoryBase):
                             value=item.value,
                             entities=item.entities,
                             topic=item.topic,
-                            timestamp=self.time,
+                            timestamp=avatar_time,
                             memory_type=MemoryType.TOOLS,
                         )
                     )
@@ -157,7 +155,7 @@ class MemoryLangchain(MemoryBase):
         return assistant_memories, user_memories, tool_memories
 
     async def search_by_context(
-        self, *, session_id: str, chat_context: list[ChatItem], timeout: float = 3
+        self, *, avatar_id: str, session_id: str, chat_context: list[ChatItem], timeout: float = 3
     ) -> None:
         """Search for relevant memories based on the query."""
         context_str = MemoryPluginsTemplate.apply_search_template(
@@ -172,7 +170,7 @@ class MemoryLangchain(MemoryBase):
                 "op": VectorRunnerOP.search_by_context,
                 "param": {
                     "context_str": context_str,
-                    "avatar_id": self.avatar_id,
+                    "avatar_id": avatar_id,
                     "user_id": self.memory_cache[session_id].user_or_tool_id,
                     "top_k": self.memory_recall_num,
                 },
@@ -204,7 +202,7 @@ class MemoryLangchain(MemoryBase):
         if data.get("error", None):
             logger.warning(f"Memory [search_by_context] err: {data['error']}")
 
-    async def update(self, *, session_id: str | None = None):
+    async def update(self, *, avatar_id: str, session_id: str | None = None):
         """Update the memory database with the cached messages.
         If session_id is None, update all sessions in the memory cache.
         """
@@ -226,7 +224,9 @@ class MemoryLangchain(MemoryBase):
 
             message_content = MemoryPluginsTemplate.apply_update_template(chat_context, cache.type)
             delta: MemoryDelta = await self._aextract_delta(message_content, cache.type)
-            assistant_memories, user_memories, tool_memories = self._apply_delta(delta, cache)
+            assistant_memories, user_memories, tool_memories = self._apply_delta(
+                avatar_id, delta, cache
+            )
             self.avatar_memory = assistant_memories
             self.user_memory = user_memories
             self.tool_memory = tool_memories

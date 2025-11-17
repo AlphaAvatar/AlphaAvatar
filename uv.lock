@@ -11,6 +11,7 @@ resolution-markers = [
 [manifest]
 members = [
     "alpha-avatar-agents",
+    "alpha-avatar-plugins-avatar",
     "alpha-avatar-plugins-memory",
     "alpha-avatar-plugins-persona",
 ]
@@ -221,6 +222,10 @@ requires-dist = [
     { name = "omegaconf" },
     { name = "python-dotenv" },
 ]
+
+[[package]]
+name = "alpha-avatar-plugins-avatar"
+source = { editable = "avatar-plugins/avatar-plugins-avatar" }
 
 [[package]]
 name = "alpha-avatar-plugins-memory"

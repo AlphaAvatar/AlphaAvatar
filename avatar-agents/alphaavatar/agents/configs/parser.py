@@ -23,11 +23,18 @@ from omegaconf import OmegaConf
 
 from .avatar_config import AvatarConfig
 from .avatar_info_config import AvatarInfoConfig
-from .livekit_plugin_config import LiveKitPluginConfig
-from .memory_plugin_config import MemoryConfig
-from .persona_plugin_config import PersonaConfig
+from .plugins.character_plugin_config import VirtualCharacterConfig
+from .plugins.livekit_plugin_config import LiveKitPluginConfig
+from .plugins.memory_plugin_config import MemoryConfig
+from .plugins.persona_plugin_config import PersonaConfig
 
-_CONFIG_CLS = [AvatarInfoConfig, LiveKitPluginConfig, MemoryConfig, PersonaConfig]
+_CONFIG_CLS = [
+    LiveKitPluginConfig,
+    AvatarInfoConfig,
+    VirtualCharacterConfig,
+    MemoryConfig,
+    PersonaConfig,
+]
 
 
 class _DataclassInstance(Protocol):
@@ -146,15 +153,16 @@ def parse_dict(
 
 
 def get_avatar_args(args: dict[str, Any]) -> AvatarConfig:
-    avatar_info, livekit_plugin_config, memory_config, persona_config = parse_dict(
-        _CONFIG_CLS, args
+    livekit_plugin_config, avatar_info, character_config, memory_config, persona_config = (
+        parse_dict(_CONFIG_CLS, args)
     )
 
     # TODO: post-validation
 
     avatar_config = AvatarConfig(
-        avatar_info=avatar_info,
         livekit_plugin_config=livekit_plugin_config,
+        avatar_info=avatar_info,
+        character_config=character_config,
         memory_config=memory_config,
         persona_config=persona_config,
     )

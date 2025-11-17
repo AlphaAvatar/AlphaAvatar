@@ -31,6 +31,16 @@
 
 ---
 
+# 😊 **CHARACTER PLUGIN**
+
+### 📊 **Progress**
+
+### ✅ **DONE**
+
+### 🧭 **TODO**
+
+---
+
 # 🧠 **MEMORY PLUGIN**
 
 ### 📊 **Progress**

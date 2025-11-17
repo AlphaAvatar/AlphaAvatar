@@ -33,8 +33,6 @@ class MemoryLangchainPlugin(AvatarPlugin):
 
     def get_plugin(
         self,
-        avatar_id: str,
-        activate_time: str,
         memory_search_context: int,
         memory_recall_num: int,
         maximum_memory_num: int,
@@ -44,8 +42,6 @@ class MemoryLangchainPlugin(AvatarPlugin):
     ) -> MemoryLangchain:
         try:
             return MemoryLangchain(
-                avatar_id=avatar_id,
-                activate_time=activate_time,
                 memory_search_context=memory_search_context,
                 memory_recall_num=memory_recall_num,
                 maximum_memory_num=maximum_memory_num,

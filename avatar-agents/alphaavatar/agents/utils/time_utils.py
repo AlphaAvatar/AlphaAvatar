@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import calendar
+import os
 import random
 import time
 from datetime import datetime
@@ -72,6 +73,8 @@ def format_current_time(tz: str | None = None) -> AvatarTime:
         "Monday, August 25, 2025, 3 PM"
     """
     # Use server local time when tz is None; otherwise convert to the given tz.
+    tz = os.getenv("AVATAR_TIMEZONE", None)
+
     try:
         dt = _now_in_tz(tz) if tz else datetime.now()
     except Exception:

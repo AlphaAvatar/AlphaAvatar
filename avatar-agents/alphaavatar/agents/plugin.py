@@ -20,6 +20,7 @@ from livekit.agents import Plugin
 class AvatarModule(str, Enum):
     """"""
 
+    CHARACTER = "character"
     MEMORY = "memory"
     PROFILER = "persona_profiler"
     SPEAKER = "persona_speaker"

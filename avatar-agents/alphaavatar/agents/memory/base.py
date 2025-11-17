@@ -43,15 +43,11 @@ class MemoryBase:
     def __init__(
         self,
         *,
-        avatar_id: str,
-        activate_time: str,
         memory_search_context: int = 3,
         memory_recall_num: int = 10,
         maximum_memory_num: int = 24,
     ) -> None:
         super().__init__()
-        self._avatar_id = avatar_id
-        self._activate_time = activate_time
         self._memory_search_context = memory_search_context
         self._memory_recall_num = memory_recall_num
         self._maximum_memory_num = maximum_memory_num
@@ -60,14 +56,6 @@ class MemoryBase:
         self._avatar_memory: list[MemoryItem] = []
         self._user_memory: list[MemoryItem] = []
         self._tool_memory: list[MemoryItem] = []
-
-    @property
-    def avatar_id(self) -> str:
-        return self._avatar_id
-
-    @property
-    def time(self) -> str:
-        return self._activate_time
 
     @property
     def memory_search_context(self) -> int:
@@ -175,10 +163,12 @@ class MemoryBase:
             )
 
     @abstractmethod
-    async def search_by_context(self, *, session_id: str, chat_context: list[ChatItem]) -> None: ...
+    async def search_by_context(
+        self, *, avatar_id: str, session_id: str, chat_context: list[ChatItem]
+    ) -> None: ...
 
     @abstractmethod
-    async def update(self, *, session_id: str | None = None): ...
+    async def update(self, *, avatar_id: str, session_id: str | None = None): ...
 
     @abstractmethod
     async def save(self): ...

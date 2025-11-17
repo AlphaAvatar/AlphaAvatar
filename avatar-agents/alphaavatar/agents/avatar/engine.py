@@ -31,7 +31,6 @@ from .context.template import AvatarPromptTemplate
 from .patches import init_avatar_patches  # NOTE: patches import only be used here
 
 
-# TESTCASES: can you hear my voice on type or voice mode
 class AvatarEngine(Agent):
     def __init__(self, *, session_config: SessionConfig, avatar_config: AvatarConfig) -> None:
         # Step1: initial config
@@ -39,20 +38,15 @@ class AvatarEngine(Agent):
         self.avatar_config = avatar_config
 
         # Step2: initial params
-        self._avatar_activate_time: AvatarTime = format_current_time(
-            self.avatar_config.avatar_info.avatar_timezone
-        )
+        self._avatar_activate_time: AvatarTime = format_current_time()
         self._avatar_prompt_template = AvatarPromptTemplate(
             self.avatar_config.avatar_info.avatar_introduction,
             current_time=self._avatar_activate_time.time_str,
         )
 
         # Step3: initial plugins
-        self._memory: MemoryBase = avatar_config.memory_config.get_memory_plugin(
-            avatar_id=avatar_config.avatar_info.avatar_id,
-            activate_time=self._avatar_activate_time.time_str,
-        )
-        self._persona: PersonaBase = avatar_config.persona_config.get_persona_plugin()
+        self._memory: MemoryBase = avatar_config.memory_config.get_plugin()
+        self._persona: PersonaBase = avatar_config.persona_config.get_plugin()
 
         # Step4: initial avatar
         super().__init__(
@@ -197,7 +191,7 @@ class AvatarEngine(Agent):
 
     async def on_exit(self):
         # memory op
-        await self.memory.update()
+        await self.memory.update(avatar_id=self.avatar_config.avatar_info.avatar_id)
         await self.memory.save()
 
         # persona op

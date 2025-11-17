@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
 import uuid
 
 from pydantic import ConfigDict, Field
@@ -37,3 +38,6 @@ class AvatarInfoConfig:
         default="server local time",
         description="The time zone where the Avatar is deployed is used to align with the user's time zone for related task execution",
     )
+
+    def __post_init__(self):
+        os.environ["AVATAR_TIMEZONE"] = self.avatar_timezone

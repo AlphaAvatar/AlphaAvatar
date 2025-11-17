@@ -64,7 +64,7 @@ class PersonaConfig:
         # Set PERONA_PROFILER_ENV
         os.environ["PERONA_VDB_CONFIG"] = json.dumps(self.persona_vdb_config)
 
-    def get_persona_plugin(self) -> PersonaBase:
+    def get_plugin(self) -> PersonaBase:
         """Returns the Persona plugin instance based on the configuration."""
         return PersonaBase(
             profiler=AvatarPlugin.get_avatar_plugin(

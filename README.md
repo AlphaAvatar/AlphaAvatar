@@ -81,10 +81,10 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 </p>
 </td>
 <td width="50%">
-<h3>😊 Avatar</h3>
-<p>The real-time generated digital avatar during the conversation.</p>
+<h3>😊 Virtual Character</h3>
+<p>The real-time generated <b>virtual character</b> that visually represents the Avatar during interactions.</p>
 <p>
-<a href="examples/voice_agents/push_to_talk.py">README↗</a>
+<a href="https://github.com/AlphaAvatar/AlphaAvatar/blob/main/avatar-plugins/avatar-plugins-character/README.md">README↗</a>
 </p>
 </td>
 </tr>
@@ -101,7 +101,7 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 
 <h4>Latest News 🔥</h4>
 
-- [2025/11]
+- [2025/11] We have released AlphaAvatar **version 0.1.0** to support automatic memory extraction, automatic user persona extraction and matching.
 
 
 <br/>
