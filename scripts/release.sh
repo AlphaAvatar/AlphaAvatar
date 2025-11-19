@@ -6,9 +6,9 @@ set -euo pipefail
 # ----------------------------------
 PACKAGES=(
   "avatar-agents"
+  "avatar-plugins/avatar-plugins-character"
   "avatar-plugins/avatar-plugins-memory"
   "avatar-plugins/avatar-plugins-persona"
-  # "avatar"   # 如后续加入主包 alphaavatar，请把它放在最后
 )
 
 REPO="${REPO:-pypi}"      # pypi | testpypi

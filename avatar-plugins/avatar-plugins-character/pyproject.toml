@@ -33,7 +33,7 @@ dependencies = [
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"
 
 [tool.hatch.version]
-path = "alphaavatar/plugins/avatar/version.py"
+path = "alphaavatar/plugins/character/version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["alphaavatar"]

@@ -31,6 +31,7 @@ class VirtialCharacterSession:
     @abstractmethod
     async def start(
         self,
+        agent_identity: str,
         agent_session: AgentSession,
         room: rtc.Room,
         *,

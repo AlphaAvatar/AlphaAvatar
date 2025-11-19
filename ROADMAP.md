@@ -10,7 +10,6 @@
 
 | Plugin               | Description                                                                  |   Status   |
 | :------------------- | :--------------------------------------------------------------------------- | :--------: |
-| 😊 **Avatar**        | The real-time generated digital avatar synchronously drives the lip movements, expressions and movements during the conversation, achieving contextualized and anthropomorphic presentation and interaction. | 🧩 Planned |
 | 🔍 **Deep Research** | Structured multi-step reasoning for long-horizon problem solving.            | 🧩 Planned |
 | ⚙️ **Behavior**      | Controls AlphaAvatar’s behavior logic and process flow.                      | 🧩 Planned |
 | 💡 **Reflection**    | Generates metacognitive insights from memory and interaction history.        | 🧩 Planned |

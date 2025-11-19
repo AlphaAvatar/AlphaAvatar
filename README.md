@@ -22,7 +22,7 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 </h3>
 
 <p align="center">
-  <a href="ROADMAP.md">ROADMAP</a>
+  <a href="ROADMAP.md">RoadMap</a>
   |
   <a href="#">Demo</a>
   |

@@ -1,0 +1,26 @@
+# Copyright 2025 AlphaAvatar project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+from dataclasses import dataclass
+
+
+@dataclass
+class AiriConfig:
+    video_width: int = 1280
+    video_height: int = 720
+    video_fps: float = 30.0
+    audio_sample_rate: int = 24000
+    audio_channels: int = 1
+    # This section could be used to add: model ID, expression
+    # e.g. airi_profile_id: str = "default"
+    #      airi_endpoint: str = "http://127.0.0.1:xxxx"

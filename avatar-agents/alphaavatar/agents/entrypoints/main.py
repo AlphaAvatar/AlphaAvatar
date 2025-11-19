@@ -38,6 +38,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
 
     # Get Metadata
+    agent_identity = ctx.token_claims().identity
     participant = await ctx.wait_for_participant()
     participant_metadata = json.loads(participant.metadata) if participant.metadata else {}
     user_id = participant_metadata.get("user_id", get_user_id())
@@ -51,13 +52,18 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
         textwrap.dedent(f"""Connecting to room...
     - Room Name: {ctx.room.name}
     - Token: {ctx._info.token}
+    - Agent Identity: {agent_identity}
     - Session Config: {session_config}
     - Avatar Config: {avatar_config}""")
     )
 
-    # Build Session & Avatar
+    # Build Agent & Virtaul Character Session
     session = AgentSession()
     avatar_engine = AvatarEngine(session_config=session_config, avatar_config=avatar_config)
+    avatar_character = avatar_config.character_config.get_plugin()
+
+    # Start Up
+    await avatar_character.start(agent_identity, session, room=ctx.room)
     await session.start(
         room=ctx.room,
         agent=avatar_engine,

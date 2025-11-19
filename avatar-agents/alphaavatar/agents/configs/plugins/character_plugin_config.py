@@ -11,12 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import importlib
 
 from pydantic import ConfigDict, Field
 from pydantic.dataclasses import dataclass
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.sessions import VirtialCharacterSession
+
+importlib.import_module("alphaavatar.plugins.character")
 
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))

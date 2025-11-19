@@ -11,7 +11,7 @@ resolution-markers = [
 [manifest]
 members = [
     "alpha-avatar-agents",
-    "alpha-avatar-plugins-avatar",
+    "alpha-avatar-plugins-character",
     "alpha-avatar-plugins-memory",
     "alpha-avatar-plugins-persona",
 ]
@@ -224,8 +224,8 @@ requires-dist = [
 ]
 
 [[package]]
-name = "alpha-avatar-plugins-avatar"
-source = { editable = "avatar-plugins/avatar-plugins-avatar" }
+name = "alpha-avatar-plugins-character"
+source = { editable = "avatar-plugins/avatar-plugins-character" }
 
 [[package]]
 name = "alpha-avatar-plugins-memory"
