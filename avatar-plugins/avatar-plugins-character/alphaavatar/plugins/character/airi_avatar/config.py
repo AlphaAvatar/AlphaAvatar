@@ -11,16 +11,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from dataclasses import dataclass
+from pathlib import Path
+
+from pydantic import BaseModel
 
 
-@dataclass
-class AiriConfig:
+class AiriConfig(BaseModel):
     video_width: int = 1280
     video_height: int = 720
     video_fps: float = 30.0
     audio_sample_rate: int = 24000
     audio_channels: int = 1
-    # This section could be used to add: model ID, expression
-    # e.g. airi_profile_id: str = "default"
-    #      airi_endpoint: str = "http://127.0.0.1:xxxx"
+
+    # AIRI sub-project path & port
+    airi_repo_dir: Path = Path(__file__).resolve().parents[3] / "third_party" / "airi"
+    airi_dev_port: int = 4173
+
+    # Use the AIRI page route of livekit-client, such as /livekit-avatar
+    airi_avatar_path: str = "/livekit-avatar"

@@ -1,0 +1,3 @@
+[submodule "avatar-plugins/avatar-plugins-character/third_party/airi"]
+	path = avatar-plugins/avatar-plugins-character/third_party/airi
+	url = https://github.com/moeru-ai/airi.git
