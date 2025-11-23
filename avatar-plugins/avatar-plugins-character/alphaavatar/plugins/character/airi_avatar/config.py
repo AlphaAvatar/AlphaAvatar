@@ -24,8 +24,8 @@ class AiriConfig(BaseModel):
     audio_channels: int = 1
 
     # AIRI sub-project path & port
-    airi_repo_dir: Path = Path(__file__).resolve().parents[3] / "third_party" / "airi"
-    airi_dev_port: int = 4173
+    airi_repo_dir: Path = Path(__file__).resolve().parents[4] / "third_party" / "airi"
+    airi_dev_port: int = 5173
 
     # Use the AIRI page route of livekit-client, such as /livekit-avatar
     airi_avatar_path: str = "/livekit-avatar"

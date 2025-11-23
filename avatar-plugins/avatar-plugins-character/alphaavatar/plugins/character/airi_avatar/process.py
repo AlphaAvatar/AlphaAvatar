@@ -13,9 +13,19 @@
 # limitations under the License.
 import asyncio
 import os
+from contextlib import suppress
 from pathlib import Path
 
 from ..log import logger
+
+try:
+    from playwright.async_api import Browser, Page, async_playwright
+except Exception:
+    logger.info("[AIRI] Installing Chromium for Playwright...")
+    import subprocess
+
+    subprocess.run(["playwright", "install", "chromium"], check=True)
+    from playwright.async_api import Browser, Page, async_playwright
 
 
 class AiriProcess:
@@ -23,6 +33,7 @@ class AiriProcess:
         self._repo_dir = repo_dir
         self._port = port
         self._proc: asyncio.subprocess.Process | None = None
+        self._browser_task: asyncio.Task | None = None
 
     async def start(
         self,
@@ -31,21 +42,22 @@ class AiriProcess:
         agent_identity: str,
         avatar_identity: str,
     ) -> None:
-        """启动 AIRI 的前端 dev/server 进程"""
-
         if self._proc and self._proc.returncode is None:
             return
 
         env = os.environ.copy()
-        env["AIRI_LIVEKIT_URL"] = livekit_url
-        env["AIRI_LIVEKIT_TOKEN"] = livekit_token
-        env["AIRI_AGENT_IDENTITY"] = agent_identity
-        env["AIRI_AVATAR_IDENTITY"] = avatar_identity
+        env["VITE_AIRI_LIVEKIT_URL"] = livekit_url
+        env["VITE_AIRI_LIVEKIT_TOKEN"] = livekit_token
+        env["VITE_AIRI_AGENT_IDENTITY"] = agent_identity
+        env["VITE_AIRI_AVATAR_IDENTITY"] = avatar_identity
         env["AIRI_PORT"] = str(self._port)
 
         # Here we'll use pnpm dev first, but you can also switch to pnpm build + node server.js
         self._proc = await asyncio.create_subprocess_exec(
             "pnpm",
+            "-r",
+            "-F",
+            "@proj-airi/stage-web",
             "dev",
             "--",
             "--port",
@@ -55,9 +67,11 @@ class AiriProcess:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-
-        # Simply log the data to the Python logger function
         asyncio.create_task(self._log_output())
+
+        # Start the headless browser task
+        if self._browser_task is None or self._browser_task.done():
+            self._browser_task = asyncio.create_task(self._run_headless_browser())
 
     async def _log_output(self):
         assert self._proc and self._proc.stdout
@@ -65,15 +79,87 @@ class AiriProcess:
             line = await self._proc.stdout.readline()
             if not line:
                 break
-            logger.info("[AIRI frontend]", line.decode().rstrip())
+            logger.info(f"[AIRI frontend] {line.decode().rstrip()}")
+
+    async def _wait_for_server_ready(self, timeout: float = 120.0):
+        import aiohttp
+
+        url = f"http://127.0.0.1:{self._port}/"
+        deadline = asyncio.get_event_loop().time() + timeout
+
+        async with aiohttp.ClientSession() as session:
+            while True:
+                if asyncio.get_event_loop().time() > deadline:
+                    raise TimeoutError(f"AIRI dev server not ready on {url} within {timeout}s")
+
+                try:
+                    async with session.get(url) as resp:
+                        if resp.status < 500:
+                            logger.info(f"[AIRI] Dev server ready on {url} (status={resp.status})")
+                            return
+                except Exception:
+                    pass
+
+                await asyncio.sleep(0.5)
+
+    async def _run_headless_browser(self):
+        try:
+            # Wait for server ready first
+            await self._wait_for_server_ready()
+
+            async with async_playwright() as p:
+                browser: Browser = await p.chromium.launch(headless=True)
+                page: Page = await browser.new_page()
+
+                # Bind console.log
+                page.on(
+                    "console",
+                    lambda msg: logger.info(f"[AIRI console] {msg.type}: {msg.text}")
+                    if msg.type == "log"
+                    else None,
+                )
+
+                # Binding page error
+                page.on("pageerror", lambda exc: logger.error(f"[AIRI pageerror] {exc}"))
+
+                # Network failure
+                page.on(
+                    "requestfailed",
+                    lambda req: logger.warning(
+                        f"[AIRI requestfailed] {req.method} {req.url} -> {req.failure}"
+                    ),
+                )
+
+                url = f"http://127.0.0.1:{self._port}/livekit-avatar"
+                logger.info(f"[AIRI] Opening headless page: {url}")
+                await page.goto(url, wait_until="networkidle")
+
+                while True:
+                    await asyncio.sleep(3600)
+
+        except asyncio.CancelledError:
+            logger.info("[AIRI] Headless browser task cancelled")
+            raise
+        except Exception:
+            logger.exception("[AIRI] Headless browser task crashed")
+        finally:
+            logger.info("[AIRI] Headless browser task finished")
 
     async def stop(self):
+        if self._browser_task and not self._browser_task.done():
+            self._browser_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._browser_task
+        self._browser_task = None
+
         if not self._proc:
             return
+
         if self._proc.returncode is None:
             self._proc.terminate()
             try:
                 await asyncio.wait_for(self._proc.wait(), timeout=10)
             except asyncio.TimeoutError:
                 self._proc.kill()
+
         self._proc = None

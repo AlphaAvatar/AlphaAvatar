@@ -12,7 +12,15 @@ pip install alpha-avatar-plugins-character
 
 ## Supported Open-Source Virtual Character Frameworks
 
+### Default: AIRI [Github](https://github.com/moeru-ai/airi)
 
-| Module                 | Description                                                                                   | Docs                                                                   |
-| ---------------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| **AIRI** (default) | High-fidelity Live2D/VRM real-time renderer, enabling lip-sync, emotion control, and avatar video generation. | [Github](https://github.com/moeru-ai/airi) |
+High-fidelity Live2D/VRM real-time renderer, enabling lip-sync, emotion control, and avatar video generation.
+
+```shell
+curl https://get.volta.sh | bash
+
+volta install node
+volta install pnpm
+
+alphaavatar-airi-install
+```

@@ -24,8 +24,11 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
 ]
 dependencies = [
+    "playwright",
 ]
 
+[project.scripts]
+alphaavatar-airi-install = "alphaavatar.plugins.character.airi_avatar.install:main"
 
 [project.optional-dependencies]
 
