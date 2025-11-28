@@ -28,6 +28,10 @@
 
 ### 🧭 **TODO**
 
+| Priority | Task                                                                                                                         |     Stage     |
+| :------- | :--------------------------------------------------------------------------------------------------------------------------- | :-----------: |
+| 🔸       | Develop multi-user management features for memory and persona  | 🧩 Planned |
+
 ---
 
 # 😊 **CHARACTER PLUGIN**
