@@ -42,34 +42,29 @@ class AiriProcess:
         agent_identity: str,
         avatar_identity: str,
     ) -> None:
-        if self._proc and self._proc.returncode is None:
-            return
+        if not self._proc or self._proc.returncode is not None:
+            env = os.environ.copy()
+            env["VITE_AIRI_LIVEKIT_URL"] = livekit_url
+            env["VITE_AIRI_LIVEKIT_TOKEN"] = livekit_token
+            env["VITE_AIRI_AGENT_IDENTITY"] = agent_identity
+            env["VITE_AIRI_AVATAR_IDENTITY"] = avatar_identity
+            env["AIRI_PORT"] = str(self._port)
 
-        env = os.environ.copy()
-        env["VITE_AIRI_LIVEKIT_URL"] = livekit_url
-        env["VITE_AIRI_LIVEKIT_TOKEN"] = livekit_token
-        env["VITE_AIRI_AGENT_IDENTITY"] = agent_identity
-        env["VITE_AIRI_AVATAR_IDENTITY"] = avatar_identity
-        env["AIRI_PORT"] = str(self._port)
+            stage_web_dir = self._repo_dir / "apps" / "stage-web"
 
-        # Here we'll use pnpm dev first, but you can also switch to pnpm build + node server.js
-        self._proc = await asyncio.create_subprocess_exec(
-            "pnpm",
-            "-r",
-            "-F",
-            "@proj-airi/stage-web",
-            "dev",
-            "--",
-            "--port",
-            str(self._port),
-            cwd=str(self._repo_dir),
-            env=env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        asyncio.create_task(self._log_output())
+            self._proc = await asyncio.create_subprocess_exec(
+                "pnpm",
+                "dev",
+                "--port",
+                str(self._port),
+                cwd=str(stage_web_dir),
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
 
-        # Start the headless browser task
+            asyncio.create_task(self._log_output())
+
         if self._browser_task is None or self._browser_task.done():
             self._browser_task = asyncio.create_task(self._run_headless_browser())
 
@@ -85,11 +80,12 @@ class AiriProcess:
         import aiohttp
 
         url = f"http://127.0.0.1:{self._port}/"
-        deadline = asyncio.get_event_loop().time() + timeout
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
 
         async with aiohttp.ClientSession() as session:
             while True:
-                if asyncio.get_event_loop().time() > deadline:
+                if loop.time() > deadline:
                     raise TimeoutError(f"AIRI dev server not ready on {url} within {timeout}s")
 
                 try:
@@ -104,35 +100,47 @@ class AiriProcess:
 
     async def _run_headless_browser(self):
         try:
-            # Wait for server ready first
             await self._wait_for_server_ready()
 
             async with async_playwright() as p:
-                browser: Browser = await p.chromium.launch(headless=True)
+                browser: Browser = await p.chromium.launch(
+                    headless=True,
+                    args=[
+                        "--autoplay-policy=no-user-gesture-required",
+                        "--use-fake-ui-for-media-stream",
+                        "--use-fake-device-for-media-stream",
+                        "--mute-audio",
+                    ],
+                )
                 page: Page = await browser.new_page()
 
-                # Bind console.log
                 page.on(
                     "console",
-                    lambda msg: logger.info(f"[AIRI console] {msg.type}: {msg.text}")
+                    lambda msg: logger.info(f"[console] {msg.type}: {msg.text}")
                     if msg.type == "log"
                     else None,
                 )
 
-                # Binding page error
-                page.on("pageerror", lambda exc: logger.error(f"[AIRI pageerror] {exc}"))
+                page.on("pageerror", lambda exc: logger.error(f"[pageerror] {exc}"))
 
-                # Network failure
                 page.on(
                     "requestfailed",
                     lambda req: logger.warning(
-                        f"[AIRI requestfailed] {req.method} {req.url} -> {req.failure}"
+                        f"[requestfailed] {req.method} {req.url} -> {req.failure}"
                     ),
                 )
 
                 url = f"http://127.0.0.1:{self._port}/livekit-avatar"
                 logger.info(f"[AIRI] Opening headless page: {url}")
                 await page.goto(url, wait_until="networkidle")
+
+                try:
+                    state = await page.evaluate(
+                        "async () => { const ctx = new AudioContext(); return ctx.state; }"
+                    )
+                    logger.info(f"[AIRI] AudioContext state in page after goto: {state}")
+                except Exception:
+                    logger.exception("[AIRI] Failed to check AudioContext state")
 
                 while True:
                     await asyncio.sleep(3600)
@@ -151,15 +159,3 @@ class AiriProcess:
             with suppress(asyncio.CancelledError):
                 await self._browser_task
         self._browser_task = None
-
-        if not self._proc:
-            return
-
-        if self._proc.returncode is None:
-            self._proc.terminate()
-            try:
-                await asyncio.wait_for(self._proc.wait(), timeout=10)
-            except asyncio.TimeoutError:
-                self._proc.kill()
-
-        self._proc = None

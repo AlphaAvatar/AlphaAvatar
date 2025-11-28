@@ -22,7 +22,7 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 </h3>
 
 <p align="center">
-  <a href="ROADMAP.md">RoadMap</a>
+  <a href="ROADMAP.md">RoadMAP</a>
   |
   <a href="#">Demo</a>
   |
@@ -140,7 +140,7 @@ export QDRANT_URL='https://xxxxxx-xxxxx-xxxxx-xxxx-xxxxxxxxx.us-east.aws.cloud.q
 export QDRANT_API_KEY=<your QDRANT API Key>
 
 alphaavatar download-files
-alphaavatar dev examples/pipline_openai_dev.yaml
+alphaavatar dev examples/pipline_openai_airi.yaml
 ```
 
 To see more supported modes, please refer to the [LiveKit](https://docs.livekit.io/agents/start/voice-ai/) documentation.

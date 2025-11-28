@@ -122,7 +122,6 @@ class PersonaCache:
         self.profile_details = self._speaker_cache.update_profile_detail(
             self.profile_details, speaker_attribute, timestamp=self.time
         )
-        print(self.profile_details, "((-----))", flush=True)
 
 
 class SpeakerCacheBase:

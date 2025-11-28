@@ -13,6 +13,8 @@
 # limitations under the License.
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 
 from livekit import api, rtc
@@ -42,6 +44,36 @@ class AiriCharacterSession(VirtialCharacterSession):
             port=avatar_config.airi_dev_port,
         )
 
+    async def _wait_avatar_ready(self, room: rtc.Room) -> None:
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future[None] = loop.create_future()
+
+        def _on_data(data_packet: rtc.room.DataPacket):
+            if fut.done():
+                return
+
+            if data_packet.topic != "avatar_status":
+                return
+
+            try:
+                msg = json.loads(data_packet.data.decode("utf-8"))
+            except Exception:
+                return
+
+            if msg.get("type") == "avatar_ready":
+                logger.info(
+                    "avatar_ready received from %s",
+                    data_packet.participant.identity if data_packet.participant else "<server>",
+                )
+                fut.set_result(None)
+
+        room.on("data_received", _on_data)
+
+        try:
+            await asyncio.wait_for(fut, timeout=60.0)
+        except asyncio.TimeoutError:
+            logger.warning("wait_avatar_ready timeout, continue anyway")
+
     async def start(
         self,
         agent_identity: str,
@@ -52,10 +84,6 @@ class AiriCharacterSession(VirtialCharacterSession):
         livekit_api_key: NotGivenOr[str] = NOT_GIVEN,
         livekit_api_secret: NotGivenOr[str] = NOT_GIVEN,
     ) -> None:
-        attrs = dict(room.local_participant.attributes)
-        attrs["lk.publish_on_behalf"] = agent_identity
-        await room.local_participant.set_attributes(attrs)
-
         livekit_url = livekit_url or (os.getenv("LIVEKIT_URL") or NOT_GIVEN)
         livekit_api_key = livekit_api_key or (os.getenv("LIVEKIT_API_KEY") or NOT_GIVEN)
         livekit_api_secret = livekit_api_secret or (os.getenv("LIVEKIT_API_SECRET") or NOT_GIVEN)
@@ -87,3 +115,7 @@ class AiriCharacterSession(VirtialCharacterSession):
             agent_identity=agent_identity,
             avatar_identity=self._avatar_participant_identity,
         )
+
+        logger.info("waiting for avatar_ready...")
+        await self._wait_avatar_ready(room)
+        logger.info("avatar_ready, AiriCharacterSession.start() will now return")

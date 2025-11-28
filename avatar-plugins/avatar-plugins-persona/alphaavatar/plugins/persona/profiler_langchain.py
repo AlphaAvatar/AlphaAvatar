@@ -202,7 +202,7 @@ class ProfilerLangChain(ProfilerBase):
             logger.info(f"[uid: {uid}] User Profile UPDATE success: {updated_profile_details}")
             perona.profile_details = UserProfileDetails(**updated_profile_details)
         else:
-            logger.info("[uid: {uid}] User Profile output is empty, UPDATE skip!")
+            logger.info(f"[uid: {uid}] User Profile output is empty, UPDATE skip!")
 
     async def save(self, *, uid: str, perona: PersonaCache, timeout: float | None = 3) -> None:
         """Save the text, voice, and face profile information of the specified user_id."""
