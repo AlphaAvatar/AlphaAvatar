@@ -30,7 +30,7 @@
 
 | Priority | Task                                                                                                                         |     Stage     |
 | :------- | :--------------------------------------------------------------------------------------------------------------------------- | :-----------: |
-| 🔸       | Develop multi-user management features for memory and persona  | 🧩 Planned |
+| 🔹       | Develop multi-user management features for plugins.  | 🧩 Planned |
 
 ---
 
@@ -110,5 +110,5 @@
 | Quarter | Focus                        | Expected Outcome                                  |
 | :------ | :--------------------------- | :------------------------------------------------ |
 | Q4-2025 | Memory + Persona + Avatar Integration | Unified multimodal identity recognition pipeline. |
-| Q1-2026 | Reflection Plugin Alpha      | Enable autonomous self-analysis & evolution.      |
-| Q2-2026 | External Tool Integration    | Seamless task execution via MCP + RAG plugins.    |
+| Q1-2026 | External Tool Integration    | Seamless task execution via MCP + RAG plugins.    |
+| Q2-2026 | Reflection Plugin Alpha      | Enable autonomous self-analysis & evolution.      |

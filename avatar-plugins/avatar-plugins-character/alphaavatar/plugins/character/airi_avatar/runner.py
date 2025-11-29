@@ -12,10 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+import json
 import os
-from contextlib import suppress
+import threading
+import urllib.parse
+from collections.abc import Coroutine
+from concurrent.futures import Future
 from pathlib import Path
+from typing import Any, TypeVar
 
+from livekit.agents.inference_runner import _InferenceRunner
+
+from ..enum import RunnerOP
 from ..log import logger
 
 try:
@@ -27,46 +35,42 @@ except Exception:
     subprocess.run(["playwright", "install", "chromium"], check=True)
     from playwright.async_api import Browser, Page, async_playwright
 
+T = TypeVar("T")
 
-class AiriProcess:
-    def __init__(self, repo_dir: Path, port: int) -> None:
-        self._repo_dir = repo_dir
-        self._port = port
+AIRI_REPO_DIR: Path = Path(__file__).resolve().parents[4] / "third_party" / "airi"
+AIRI_PORT: int = 5173
+
+
+class AiriRunner(_InferenceRunner):
+    INFERENCE_METHOD = "alphaavatar_character_airi"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._repo_dir = AIRI_REPO_DIR
+        self._port = AIRI_PORT
         self._proc: asyncio.subprocess.Process | None = None
-        self._browser_task: asyncio.Task | None = None
 
-    async def start(
-        self,
-        livekit_url: str,
-        livekit_token: str,
-        agent_identity: str,
-        avatar_identity: str,
-    ) -> None:
-        if not self._proc or self._proc.returncode is not None:
-            env = os.environ.copy()
-            env["VITE_AIRI_LIVEKIT_URL"] = livekit_url
-            env["VITE_AIRI_LIVEKIT_TOKEN"] = livekit_token
-            env["VITE_AIRI_AGENT_IDENTITY"] = agent_identity
-            env["VITE_AIRI_AVATAR_IDENTITY"] = avatar_identity
-            env["AIRI_PORT"] = str(self._port)
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._loop_thread: threading.Thread | None = None
 
-            stage_web_dir = self._repo_dir / "apps" / "stage-web"
+    def _ensure_loop(self) -> None:
+        if self._loop and not self._loop.is_closed():
+            return
 
-            self._proc = await asyncio.create_subprocess_exec(
-                "pnpm",
-                "dev",
-                "--port",
-                str(self._port),
-                cwd=str(stage_web_dir),
-                env=env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
+        loop = asyncio.new_event_loop()
+        self._loop = loop
 
-            asyncio.create_task(self._log_output())
+        def _run_loop():
+            asyncio.set_event_loop(loop)
+            loop.run_forever()
 
-        if self._browser_task is None or self._browser_task.done():
-            self._browser_task = asyncio.create_task(self._run_headless_browser())
+        self._loop_thread = threading.Thread(target=_run_loop, daemon=True)
+        self._loop_thread.start()
+
+    def _submit_coro(self, coro: Coroutine[Any, Any, T]) -> Future[T]:
+        self._ensure_loop()
+        assert self._loop is not None
+        return asyncio.run_coroutine_threadsafe(coro, self._loop)
 
     async def _log_output(self):
         assert self._proc and self._proc.stdout
@@ -98,10 +102,33 @@ class AiriProcess:
 
                 await asyncio.sleep(0.5)
 
-    async def _run_headless_browser(self):
-        try:
-            await self._wait_for_server_ready()
+    async def _start_server(self) -> None:
+        stage_web_dir = self._repo_dir / "apps" / "stage-web"
 
+        env = os.environ.copy()
+
+        self._proc = await asyncio.create_subprocess_exec(
+            "pnpm",
+            "dev",
+            "--port",
+            str(self._port),
+            cwd=str(stage_web_dir),
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+
+        asyncio.create_task(self._log_output())
+
+        await self._wait_for_server_ready()
+
+    async def _run_headless_browser(
+        self,
+        livekit_url: str,
+        livekit_token: str,
+        agent_identity: str,
+    ):
+        try:
             async with async_playwright() as p:
                 browser: Browser = await p.chromium.launch(
                     headless=True,
@@ -130,7 +157,15 @@ class AiriProcess:
                     ),
                 )
 
-                url = f"http://127.0.0.1:{self._port}/livekit-avatar"
+                query = urllib.parse.urlencode(
+                    {
+                        "livekitUrl": livekit_url,
+                        "livekitToken": livekit_token,
+                        "agentIdentity": agent_identity,
+                    }
+                )
+                url = f"http://127.0.0.1:{self._port}/livekit-avatar?{query}"
+
                 logger.info(f"[AIRI] Opening headless page: {url}")
                 await page.goto(url, wait_until="networkidle")
 
@@ -153,9 +188,36 @@ class AiriProcess:
         finally:
             logger.info("[AIRI] Headless browser task finished")
 
-    async def stop(self):
-        if self._browser_task and not self._browser_task.done():
-            self._browser_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._browser_task
-        self._browser_task = None
+    def _run_livekit_avatar(
+        self,
+        livekit_url: str,
+        livekit_token: str,
+        agent_identity: str,
+    ) -> None:
+        if self._proc is None or self._proc.returncode is not None:
+            raise RuntimeError("AIRI dev server is not running. Did you call initialize()?")
+
+        logger.info("[AIRI] starting headless browser for LiveKit avatar")
+        self._submit_coro(
+            self._run_headless_browser(
+                livekit_url=livekit_url,
+                livekit_token=livekit_token,
+                agent_identity=agent_identity,
+            )
+        )
+
+    def initialize(self) -> None:
+        if self._proc is not None and self._proc.returncode is None:
+            return
+
+        self._submit_coro(self._start_server())
+
+    def run(self, data: bytes) -> bytes | None:
+        json_data = json.loads(data)
+
+        match json_data["op"]:
+            case RunnerOP.run:
+                self._run_livekit_avatar(**json_data["param"])
+                return None
+            case _:
+                return None

@@ -63,12 +63,12 @@ class SpeakerPlugin(AvatarPlugin):
         return (SpeakerStreamWrapper, SpeakerCache)
 
 
-# runner init
-_InferenceRunner.register_runner(QdrantRunner)
-_InferenceRunner.register_runner(SpeakerAttributeRunner)
-_InferenceRunner.register_runner(SpeakerVectorRunner)
-
-
 # plugin init
 AvatarPlugin.register_avatar_plugin(AvatarModule.PROFILER, "default", ProfilerLangchainPlugin())
 AvatarPlugin.register_avatar_plugin(AvatarModule.SPEAKER, "default", SpeakerPlugin())
+
+
+# runner register
+_InferenceRunner.register_runner(QdrantRunner)
+_InferenceRunner.register_runner(SpeakerAttributeRunner)
+_InferenceRunner.register_runner(SpeakerVectorRunner)

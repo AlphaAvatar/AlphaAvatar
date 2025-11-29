@@ -23,13 +23,15 @@ from livekit.agents import (
     AgentSession,
     NotGivenOr,
 )
+from livekit.agents.job import get_job_context
 from livekit.agents.types import ATTRIBUTE_PUBLISH_ON_BEHALF
 
 from alphaavatar.agents.sessions import VirtialCharacterSession
 
+from ..enum import RunnerOP
 from ..log import logger
 from .config import AiriConfig
-from .process import AiriProcess
+from .runner import AiriRunner
 
 _AVATAR_IDENTITY = "airi-avatar-worker"
 
@@ -39,10 +41,7 @@ class AiriCharacterSession(VirtialCharacterSession):
         self._avatar_config = avatar_config
         self._avatar_participant_identity = _AVATAR_IDENTITY
 
-        self._airi_proc = AiriProcess(
-            repo_dir=avatar_config.airi_repo_dir,
-            port=avatar_config.airi_dev_port,
-        )
+        self._executor = get_job_context().inference_executor
 
     async def _wait_avatar_ready(self, room: rtc.Room) -> None:
         loop = asyncio.get_running_loop()
@@ -109,11 +108,18 @@ class AiriCharacterSession(VirtialCharacterSession):
         )
 
         logger.debug("starting avatar session")
-        await self._airi_proc.start(
-            livekit_url=livekit_url,
-            livekit_token=livekit_token,
-            agent_identity=agent_identity,
-            avatar_identity=self._avatar_participant_identity,
+        json_data = {
+            "op": RunnerOP.run,
+            "param": {
+                "livekit_url": livekit_url,
+                "livekit_token": livekit_token,
+                "agent_identity": agent_identity,
+            },
+        }
+        json_data = json.dumps(json_data).encode()
+        await asyncio.wait_for(
+            self._executor.do_inference(AiriRunner.INFERENCE_METHOD, json_data),
+            timeout=30.0,
         )
 
         logger.info("waiting for avatar_ready...")

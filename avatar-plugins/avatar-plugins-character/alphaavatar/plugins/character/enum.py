@@ -11,12 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from pydantic import BaseModel
+from enum import StrEnum
 
 
-class AiriConfig(BaseModel):
-    video_width: int = 1280
-    video_height: int = 720
-    video_fps: float = 30.0
-    audio_sample_rate: int = 24000
-    audio_channels: int = 1
+class RunnerOP(StrEnum):
+    run = "run"

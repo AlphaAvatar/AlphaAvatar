@@ -143,4 +143,10 @@ alphaavatar download-files
 alphaavatar dev examples/pipline_openai_airi.yaml
 ```
 
-To see more supported modes, please refer to the [LiveKit](https://docs.livekit.io/agents/start/voice-ai/) documentation.
+To see more supported modes, please refer to the [LiveKit doc](https://docs.livekit.io/agents/start/voice-ai/).
+
+<h4>Usage</h4>
+
+AlphaAvatar does not currently offer frontend support. Please start using it by visiting the [LiveKit playground](https://agents-playground.livekit.io/) link:
+
+![playground airi screenshot](.github/assets/playground-airi-screenshot.png)

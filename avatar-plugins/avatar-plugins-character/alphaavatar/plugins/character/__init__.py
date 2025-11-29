@@ -11,6 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
+
+from livekit.agents.inference_runner import _InferenceRunner
+
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 
 from .log import logger
@@ -42,3 +46,12 @@ class AiriCharacterPlugin(AvatarPlugin):
 
 # plugin init
 AvatarPlugin.register_avatar_plugin(AvatarModule.CHARACTER, "default", AiriCharacterPlugin())
+
+
+# runner register
+character_name = os.getenv("CHARACRER_NAME", "default")
+match character_name:
+    case "default":
+        from .airi_avatar import AiriRunner
+
+        _InferenceRunner.register_runner(AiriRunner)

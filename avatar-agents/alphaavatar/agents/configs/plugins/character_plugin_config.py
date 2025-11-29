@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import importlib
+import os
 
 from pydantic import ConfigDict, Field
 from pydantic.dataclasses import dataclass
@@ -35,6 +36,10 @@ class VirtualCharacterConfig:
         default={},
         description="Custom configuration parameters for the Virtual Character plugin.",
     )
+
+    def __post_init__(self):
+        # Set CHARACRER_NAME
+        os.environ["CHARACRER_NAME"] = self.character_plugin
 
     def get_plugin(self) -> VirtialCharacterSession:
         """Returns the Character plugin instance based on the configuration."""
