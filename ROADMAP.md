@@ -6,27 +6,40 @@
 
 ---
 
-# 🗓️ **PLAN OVERVIEW**
+# Table of contents
+
+- [PLAN OVERVIEW](#plan-overview)
+- [Core Function](#core-function)
+- [AlphaAvatar Plugins](#alphaavatar-plugins)
+    - [CHARACTER](#character-plugin)
+    - [MEMORY](#memory-plugin)
+    - [PERSONA](#persona-plugin)
+- [Tools Plugins](#tools-plugins)
+    - [Deep Search](#deepsearch)
+- [NEXT STEPS](#next-steps)
+
+---
+
+# 🗓️ PLAN OVERVIEW
 
 | Plugin               | Description                                                                  |   Status   |
 | :------------------- | :--------------------------------------------------------------------------- | :--------: |
-| 🔍 **Deep Research** | Structured multi-step reasoning for long-horizon problem solving.            | 🧩 Planned |
+| 📚 **RAG**           | Retrieval-Augmented Generation for improved reasoning & factual grounding.   | 🧩 Planned |
 | ⚙️ **Behavior**      | Controls AlphaAvatar’s behavior logic and process flow.                      | 🧩 Planned |
 | 💡 **Reflection**    | Generates metacognitive insights from memory and interaction history.        | 🧩 Planned |
-| 📚 **RAG**           | Retrieval-Augmented Generation for improved reasoning & factual grounding.   | 🧩 Planned |
 | 🧰 **MCP Tools**     | Modular control & orchestration layer for cross-plugin coordination.         | 🧩 Planned |
 
 ---
 
 # Core Function
 
-### ✅ **DONE**
+### ✅ DONE
 
 |  Date    | Task                                                                                                                         |
 | :------- | :--------------------------------------------------------------------------------------------------------------------------- |
 | 2025-10  | Develop a context manager to route real-time updated interaction information to different plugin models (memory, persona) for corresponding plugin updates. |
 
-### 🧭 **TODO**
+### 🧭 TODO
 
 | Priority | Task                                                                                                                         |     Stage     |
 | :------- | :--------------------------------------------------------------------------------------------------------------------------- | :-----------: |
@@ -34,40 +47,28 @@
 
 ---
 
-# 😊 **CHARACTER PLUGIN**
+# AlphaAvatar Plugins
 
-### 📊 **Progress**
+## 😊 CHARACTER
 
-```
-██░░░░░░░░░░░░░░░░░░  10%
-```
+### ✅ DONE
 
-### ✅ **DONE**
+|  Date    | Task                                                                                                                         |
+| :------- | :--------------------------------------------------------------------------------------------------------------------------- |
+| 2025-12  | Integrating AIRI live2d into AlphaAvatar |
+
+### 🧭 TODO
 
 
-### 🧭 **TODO**
+## 🧠 MEMORY
 
-| Priority | Task                                                                                                                         |     Stage     |
-| :------- | :--------------------------------------------------------------------------------------------------------------------------- | :-----------: |
-| 🔸       | Integrating AIRI live2d into AlphaAvatar  | ⏳ In Progress |
-
----
-
-# 🧠 **MEMORY PLUGIN**
-
-### 📊 **Progress**
-
-```
-██████████░░░░░░░░░░  50%  (Phase 1 Complete)
-```
-
-### ✅ **DONE**
+### ✅ DONE
 
 | Date    | Milestone                            | Notes                                                                                                                                       |
 | :------ | :----------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------ |
 | 2025-09 | **Automatic Memory Extraction (v1)** | Built on **Memory Client**, enabling memory capture & retrieval across:<br>• Assistant–User<br>• Assistant–Tools<br>• Assistant’s self-memory |
 
-### 🧭 **TODO**
+### 🧭 TODO
 
 | Priority | Task                                                                                                                         |     Stage     |
 | :------- | :--------------------------------------------------------------------------------------------------------------------------- | :-----------: |
@@ -77,24 +78,16 @@
 | 🔹       | Add **event-driven memory updates** for adaptive reflection.                                                                 |   🧩 Planned  |
 | 🔹       | Add **omni** memory updates.                                                                                                 |   🧩 Planned  |
 
----
+## 🧬 PERSONA
 
-# 🧬 **PERSONA PLUGIN**
-
-### 📊 **Progress**
-
-```
-████████████░░░░░░░░  65%  (Core capability live)
-```
-
-### ✅ **DONE**
+### ✅ DONE
 
 | Date    | Milestone                                  | Notes                                                                          |
 | :------ | :----------------------------------------- | :----------------------------------------------------------------------------- |
 | 2025-10 | **Automatic User Profile Extraction (v1)** | Generates personalized, context-aware responses based on conversation history. |
 | 2025-11 | **Speaker Verification**                   | Add speech-based profiling (speaker vector extraction & identification).       |
 
-### 🧭 **TODO**
+### 🧭 TODO
 
 | Priority | Task                                                                         |     Stage     |
 | :------- | :--------------------------------------------------------------------------- | :-----------: |
@@ -105,10 +98,21 @@
 
 ---
 
-# 🚀 **NEXT STEPS**
+# Tools Plugins
+
+## 🔍 DeepSearch
+
+### ✅ DONE
+
+### 🧭 TODO
+
+---
+
+# NEXT STEPS
 
 | Quarter | Focus                        | Expected Outcome                                  |
 | :------ | :--------------------------- | :------------------------------------------------ |
 | Q4-2025 | Memory + Persona + Avatar Integration | Unified multimodal identity recognition pipeline. |
+| Q1-2026 | DeepSearch Integration    | Give AlphaAvatar the ability to access the network.    |
 | Q1-2026 | External Tool Integration    | Seamless task execution via MCP + RAG plugins.    |
 | Q2-2026 | Reflection Plugin Alpha      | Enable autonomous self-analysis & evolution.      |
