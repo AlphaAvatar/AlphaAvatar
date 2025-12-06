@@ -37,7 +37,9 @@ except Exception:
 
 T = TypeVar("T")
 
-AIRI_REPO_DIR: Path = Path(__file__).resolve().parents[4] / "third_party" / "airi"
+AIRI_REPO_DIR: Path = Path(os.getenv("AIRI_REPO_DIR", ""))
+if not AIRI_REPO_DIR.exists():
+    AIRI_REPO_DIR: Path = Path(__file__).resolve().parents[4] / "third_party" / "airi"
 AIRI_PORT: int = 5173
 
 

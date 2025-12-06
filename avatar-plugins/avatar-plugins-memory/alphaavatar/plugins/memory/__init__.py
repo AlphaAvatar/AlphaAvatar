@@ -54,8 +54,8 @@ class MemoryLangchainPlugin(AvatarPlugin):
             )
 
 
-# runner init
-_InferenceRunner.register_runner(QdrantRunner)
-
 # plugin init
 AvatarPlugin.register_avatar_plugin(AvatarModule.MEMORY, "default", MemoryLangchainPlugin())
+
+# runner init
+_InferenceRunner.register_runner(QdrantRunner)

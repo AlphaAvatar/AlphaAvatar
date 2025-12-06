@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import os
+from pathlib import Path
 
 from livekit.agents.inference_runner import _InferenceRunner
 
@@ -52,6 +53,16 @@ AvatarPlugin.register_avatar_plugin(AvatarModule.CHARACTER, "default", AiriChara
 character_name = os.getenv("CHARACRER_NAME", "default")
 match character_name:
     case "default":
-        from .airi_avatar import AiriRunner
+        AIRI_REPO_DIR = Path(os.getenv("AIRI_REPO_DIR", ""))
+        if AIRI_REPO_DIR.exists():
+            from .airi_avatar import AiriRunner
 
-        _InferenceRunner.register_runner(AiriRunner)
+            _InferenceRunner.register_runner(AiriRunner)
+        else:
+            logger.warning(
+                "[AlphaAvatar] Airi frontend not detected. AiriRunner disabled.\n"
+                "Set AIRI_REPO_DIR to the cloned path and:\n"
+                "  git clone https://github.com/AlphaAvatar/AlphaAvatar-character-airi.git\n"
+                "  cd AlphaAvatar-character-airi && git checkout alphaavatar-livekit-integration\n"
+                "  alphaavatar-airi-install\n"
+            )

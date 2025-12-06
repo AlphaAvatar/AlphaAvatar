@@ -19,8 +19,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .config import AiriConfig
-
 
 def main() -> None:
     """
@@ -29,8 +27,9 @@ def main() -> None:
     - Check if pnpm/npm is available
     - Execute the dependency installation command in the AIRI repository
     """
-    cfg = AiriConfig()
-    repo_dir: Path = cfg.airi_repo_dir
+    from .runner import AIRI_REPO_DIR
+
+    repo_dir: Path = AIRI_REPO_DIR
 
     if not repo_dir.exists():
         print(f"[AIRI] repo directory not found: {repo_dir}", file=sys.stderr)
