@@ -19,6 +19,7 @@ from .plugins.character_plugin_config import VirtualCharacterConfig
 from .plugins.livekit_plugin_config import LiveKitPluginConfig
 from .plugins.memory_plugin_config import MemoryConfig
 from .plugins.persona_plugin_config import PersonaConfig
+from .plugins.tools_plugin_config import ToolsConfig
 
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -38,3 +39,6 @@ class AvatarConfig:
     """Avatar Memory configuration."""
     persona_config: PersonaConfig = Field(default_factory=PersonaConfig)
     """Avatar Persona configuration."""
+
+    tools_config: ToolsConfig = Field(default_factory=ToolsConfig)
+    """Avatar Tools configuration."""

@@ -27,6 +27,7 @@ from .plugins.character_plugin_config import VirtualCharacterConfig
 from .plugins.livekit_plugin_config import LiveKitPluginConfig
 from .plugins.memory_plugin_config import MemoryConfig
 from .plugins.persona_plugin_config import PersonaConfig
+from .plugins.tools_plugin_config import ToolsConfig
 
 _CONFIG_CLS = [
     LiveKitPluginConfig,
@@ -34,6 +35,7 @@ _CONFIG_CLS = [
     VirtualCharacterConfig,
     MemoryConfig,
     PersonaConfig,
+    ToolsConfig,
 ]
 
 
@@ -153,9 +155,14 @@ def parse_dict(
 
 
 def get_avatar_args(args: dict[str, Any]) -> AvatarConfig:
-    livekit_plugin_config, avatar_info, character_config, memory_config, persona_config = (
-        parse_dict(_CONFIG_CLS, args)
-    )
+    (
+        livekit_plugin_config,
+        avatar_info,
+        character_config,
+        memory_config,
+        persona_config,
+        tools_config,
+    ) = parse_dict(_CONFIG_CLS, args)
 
     # TODO: post-validation
 
@@ -165,6 +172,7 @@ def get_avatar_args(args: dict[str, Any]) -> AvatarConfig:
         character_config=character_config,
         memory_config=memory_config,
         persona_config=persona_config,
+        tools_config=tools_config,
     )
 
     return avatar_config

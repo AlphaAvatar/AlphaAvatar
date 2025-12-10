@@ -20,11 +20,15 @@ from livekit.agents import Plugin
 class AvatarModule(str, Enum):
     """"""
 
+    # Internal module names
     CHARACTER = "character"
     MEMORY = "memory"
     PROFILER = "persona_profiler"
     SPEAKER = "persona_speaker"
     RECOGNIZER = "persona_recognizer"
+
+    # tools
+    DEEPSEARCH = "deepsearch"
 
 
 class AvatarPlugin(Plugin):

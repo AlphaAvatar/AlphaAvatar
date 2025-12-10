@@ -15,7 +15,7 @@
     - [MEMORY](#memory-plugin)
     - [PERSONA](#persona-plugin)
 - [Tools Plugins](#tools-plugins)
-    - [Deep Search](#deepsearch)
+    - [Deep Research](#deepresearch)
 - [NEXT STEPS](#next-steps)
 
 ---
@@ -100,7 +100,7 @@
 
 # Tools Plugins
 
-## 🔍 DeepSearch
+## 🔍 DeepResearch
 
 ### ✅ DONE
 
@@ -113,6 +113,6 @@
 | Quarter | Focus                        | Expected Outcome                                  |
 | :------ | :--------------------------- | :------------------------------------------------ |
 | Q4-2025 | Memory + Persona + Avatar Integration | Unified multimodal identity recognition pipeline. |
-| Q1-2026 | DeepSearch Integration    | Give AlphaAvatar the ability to access the network.    |
+| Q1-2026 | DeepResearch Integration    | Give AlphaAvatar the ability to access the network.    |
 | Q1-2026 | External Tool Integration    | Seamless task execution via MCP + RAG plugins.    |
 | Q2-2026 | Reflection Plugin Alpha      | Enable autonomous self-analysis & evolution.      |

@@ -18,7 +18,7 @@ from collections.abc import AsyncIterable, Coroutine
 from typing import Any
 
 from livekit import rtc
-from livekit.agents import Agent, ModelSettings, RunContext, function_tool, llm, stt
+from livekit.agents import Agent, ModelSettings, llm, stt
 from livekit.agents.voice.generation import update_instructions
 
 from alphaavatar.agents.configs import AvatarConfig, SessionConfig
@@ -72,20 +72,6 @@ class AvatarEngine(Agent):
     def persona(self) -> PersonaBase:
         """Get the memory instance."""
         return self._persona
-
-    @function_tool()
-    async def recall_memory(
-        self,
-        context: RunContext,
-        location: str,
-    ) -> dict[str, Any]:
-        """Look up weather information for a given location.
-
-        Args:
-            location: The location to look up weather information for.
-        """
-        # TODO: user ask agent recall memory
-        return {"weather": "sunny", "temperature_f": 70}
 
     async def on_enter(self):
         # BUG: Before entering the function to send a greeting, the front end allows the user to input, but the system cannot recognize it.

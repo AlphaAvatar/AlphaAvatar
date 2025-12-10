@@ -116,13 +116,13 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 <table>
 <tr>
 <td width="50%">
-<h3>🔍 DeepSearch</h3>
+<h3>🔍 DeepResearch</h3>
 <p>
   <img src="https://img.shields.io/badge/In_Progress-28a745?style=flat" />
 </p>
 <p>Allow AlphaAvatar to <strong>access the network</strong> and perform single-step/multi-step inference through a separate Agent service to search for more accurate content.</p>
 <p>
-<a href="https://github.com/AlphaAvatar/AlphaAvatar/blob/main/avatar-plugins/avatar-plugins-deepsearch/README.md">README↗</a>
+<a href="https://github.com/AlphaAvatar/AlphaAvatar/blob/main/avatar-plugins/avatar-plugins-deepresearch/README.md">README↗</a>
 </p>
 </td>
 <td width="50%">

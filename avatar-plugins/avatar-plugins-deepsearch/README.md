@@ -1,2 +1,0 @@
-# DeepSearch Plugin for AlphaAvatar
-

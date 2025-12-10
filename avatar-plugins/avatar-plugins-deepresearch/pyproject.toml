@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "alpha-avatar-plugins-deepsearch"
+name = "alpha-avatar-plugins-deepresearch"
 dynamic = ["version"]
-description = "AlphaAvatar Framework plugin for DeepSearch service"
+description = "AlphaAvatar Framework plugin for DeepResearch service"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
-keywords = ["llm", "agents", "AI", "internet", "deepsearch"]
+keywords = ["llm", "agents", "AI", "internet", "deepsearch", "deepresearch"]
 classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
@@ -23,7 +23,9 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3 :: Only",
 ]
-dependencies = []
+dependencies = [
+    "tavily"
+]
 
 
 [project.optional-dependencies]
@@ -32,7 +34,7 @@ dependencies = []
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"
 
 [tool.hatch.version]
-path = "alphaavatar/plugins/deepsearch/version.py"
+path = "alphaavatar/plugins/deepresearch/version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["alphaavatar"]
