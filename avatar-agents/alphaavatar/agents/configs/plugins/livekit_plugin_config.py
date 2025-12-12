@@ -15,8 +15,7 @@ import importlib.util
 from typing import Literal
 
 from livekit.agents import llm, stt, tts, vad
-from pydantic import ConfigDict, Field
-from pydantic.dataclasses import dataclass
+from pydantic import BaseModel, Field
 
 english_spec = importlib.util.find_spec("livekit.plugins.turn_detector.english")
 multilingual_spec = importlib.util.find_spec("livekit.plugins.turn_detector.multilingual")
@@ -26,8 +25,7 @@ if multilingual_spec is not None:
     importlib.import_module("livekit.plugins.turn_detector.multilingual")
 
 
-@dataclass(config=ConfigDict(arbitrary_types_allowed=True))
-class STTArguments:
+class STTArguments(BaseModel):
     """Configuration for the STT plugin used in the agent."""
 
     stt_plugin: Literal["openai"] | None = Field(
@@ -58,8 +56,7 @@ class STTArguments:
                 return None
 
 
-@dataclass(config=ConfigDict(arbitrary_types_allowed=True))
-class TTSArguments:
+class TTSArguments(BaseModel):
     """Configuration for the TTS plugin used in the agent."""
 
     tts_plugin: Literal["openai"] | None = Field(
@@ -103,8 +100,7 @@ class TTSArguments:
                 return None
 
 
-@dataclass(config=ConfigDict(arbitrary_types_allowed=True))
-class LLMArguments:
+class LLMArguments(BaseModel):
     """Configuration for the LLM plugin used in the agent."""
 
     llm_plugin: Literal["openai"] | None = Field(
@@ -136,8 +132,7 @@ class LLMArguments:
                 return None
 
 
-@dataclass(config=ConfigDict(arbitrary_types_allowed=True))
-class VADArguments:
+class VADArguments(BaseModel):
     """Configuration for the VAD plugin used in the agent."""
 
     vad_plugin: Literal["silero"] | None = Field(
@@ -161,7 +156,6 @@ class VADArguments:
                 return None
 
 
-@dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class LiveKitPluginConfig(STTArguments, TTSArguments, LLMArguments, VADArguments):
     """Configuration for LiveKit plugins used in the agent."""
 

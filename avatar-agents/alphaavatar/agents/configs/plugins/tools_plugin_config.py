@@ -13,8 +13,8 @@
 # limitations under the License.
 import importlib
 
-from pydantic import ConfigDict, Field
-from pydantic.dataclasses import dataclass
+from livekit.agents import llm
+from pydantic import BaseModel, Field
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.tools import ToolBase
@@ -22,8 +22,7 @@ from alphaavatar.agents.tools import ToolBase
 importlib.import_module("alphaavatar.plugins.deepsearch")
 
 
-@dataclass(config=ConfigDict(arbitrary_types_allowed=True))
-class ToolsConfig:
+class ToolsConfig(BaseModel):
     deepresearch_tool: str = Field(
         default="default",
         description="Avatar deepresearch tool plugin to use for agent.",
@@ -33,14 +32,18 @@ class ToolsConfig:
         description="Custom configuration parameters for the deepresearch tool plugin.",
     )
 
-    def __post_init__(self): ...
+    def model_post_init(self, __context): ...
 
-    def get_plugin(self) -> list[ToolBase]:
-        """Returns the Persona plugin instance based on the configuration."""
-        deepresearch_tool = AvatarPlugin.get_avatar_plugin(
+    def get_tools(self) -> list[llm.FunctionTool | llm.RawFunctionTool]:
+        """Returns the available tools based on the configuration."""
+        tools = []
+
+        deepresearch_tool: ToolBase | None = AvatarPlugin.get_avatar_plugin(
             AvatarModule.DEEPSEARCH,
             self.deepresearch_tool,
             character_init_config=self.deepresearch_init_config,
         )
+        if deepresearch_tool:
+            tools.append(deepresearch_tool.tool)
 
-        return [deepresearch_tool]
+        return tools

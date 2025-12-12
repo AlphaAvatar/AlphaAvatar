@@ -11,8 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from pydantic import ConfigDict, Field
-from pydantic.dataclasses import dataclass
+from pydantic import BaseModel, Field
 
 from .avatar_info_config import AvatarInfoConfig
 from .plugins.character_plugin_config import VirtualCharacterConfig
@@ -22,8 +21,7 @@ from .plugins.persona_plugin_config import PersonaConfig
 from .plugins.tools_plugin_config import ToolsConfig
 
 
-@dataclass(config=ConfigDict(arbitrary_types_allowed=True))
-class AvatarConfig:
+class AvatarConfig(BaseModel):
     """Dataclass which contains all avatar-related configuration. This
     simplifies passing around the distinct configurations in the codebase.
     """

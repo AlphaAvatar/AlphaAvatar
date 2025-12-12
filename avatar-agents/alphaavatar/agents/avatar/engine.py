@@ -47,6 +47,9 @@ class AvatarEngine(Agent):
         # Step3: initial plugins
         self._memory: MemoryBase = avatar_config.memory_config.get_plugin()
         self._persona: PersonaBase = avatar_config.persona_config.get_plugin()
+        self._tools: list[llm.FunctionTool | llm.RawFunctionTool] = (
+            avatar_config.tools_config.get_tools()
+        )
 
         # Step4: initial avatar
         super().__init__(
@@ -57,6 +60,7 @@ class AvatarEngine(Agent):
             llm=self.avatar_config.livekit_plugin_config.get_llm_plugin(),
             tts=self.avatar_config.livekit_plugin_config.get_tts_plugin(),
             allow_interruptions=self.avatar_config.livekit_plugin_config.allow_interruptions,
+            tools=self._tools,
         )
 
     @property

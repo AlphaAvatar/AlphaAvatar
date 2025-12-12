@@ -11,15 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import dataclasses
 import json
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Protocol, TypeGuard, TypeVar
+from typing import Any, TypeGuard, TypeVar
 
 import yaml
 from omegaconf import OmegaConf
+from pydantic import BaseModel
 
 from .avatar_config import AvatarConfig
 from .avatar_info_config import AvatarInfoConfig
@@ -39,23 +39,13 @@ _CONFIG_CLS = [
 ]
 
 
-class _DataclassInstance(Protocol):
-    # Minimal attribute that typeshed uses to recognize dataclasses
-    __dataclass_fields__: dict[str, Any]
-
-
-# A dataclass *instance* type variable
-ConfigT = TypeVar("ConfigT", bound=_DataclassInstance)
-
-# The class (constructor) that produces ConfigT
+ConfigT = TypeVar("ConfigT", bound=BaseModel)
 ConfigClassType = type[ConfigT]
-# The instance type (for readability / parity with your names)
 ConfigClass = ConfigT
 
 
-def _is_dataclass_type(tp: object) -> TypeGuard[ConfigClassType[Any]]:
-    """TypeGuard so Pylance knows `tp` is a dataclass *type*, not just any type."""
-    return isinstance(tp, type) and dataclasses.is_dataclass(tp)
+def _is_model_type(tp: object) -> TypeGuard[ConfigClassType[Any]]:
+    return isinstance(tp, type) and issubclass(tp, BaseModel)
 
 
 def _ensure_mapping(obj: Any) -> dict[str, Any]:
@@ -113,40 +103,25 @@ def read_args() -> dict[str, Any]:
     return args
 
 
-def parse_dict(
-    dataclass_types: Sequence[ConfigClassType[Any]],
+def parse_dict_models(
+    model_types: Sequence[ConfigClassType[Any]],
     args: dict[str, Any],
     allow_extra_keys: bool = False,
 ) -> tuple[ConfigClass, ...]:
-    """
-    Alternative helper that avoids `argparse`: fill provided dataclass *types* from a dict.
-
-    Args:
-        dataclass_types: Sequence of dataclass types to instantiate (in order).
-        args: Dict containing config values.
-        allow_extra_keys: If False, raise on keys that are not consumed by any dataclass.
-
-    Returns:
-        Tuple of instantiated dataclass objects, in the same order as `dataclass_types`.
-    """
     unused_keys = set(args.keys())
     outputs: list[ConfigClass] = []
 
-    for dtype in dataclass_types:
-        # Runtime+static check: ensure this really is a dataclass type
-        if not _is_dataclass_type(dtype):
-            raise TypeError(f"Expected a dataclass type, got: {dtype!r}")
+    for mtype in model_types:
+        if not _is_model_type(mtype):
+            raise TypeError(f"Expected a BaseModel subclass, got: {mtype!r}")
 
-        # Collect init-able field names for this dataclass
-        keys = {f.name for f in dataclasses.fields(dtype) if f.init}
+        keys = set(mtype.model_fields.keys())
 
-        # Slice out the matching inputs
         inputs = {k: v for k, v in args.items() if k in keys}
         unused_keys.difference_update(inputs.keys())
 
-        # Instantiate
-        obj = dtype(**inputs)  # type: ignore[call-arg]  # (fields() guarantees names)
-        outputs.append(obj)  # type: ignore[arg-type]
+        obj = mtype(**inputs)
+        outputs.append(obj)
 
     if not allow_extra_keys and unused_keys:
         raise ValueError(f"Some keys are not used by the parser: {sorted(unused_keys)}")
@@ -162,9 +137,9 @@ def get_avatar_args(args: dict[str, Any]) -> AvatarConfig:
         memory_config,
         persona_config,
         tools_config,
-    ) = parse_dict(_CONFIG_CLS, args)
+    ) = parse_dict_models(_CONFIG_CLS, args)
 
-    # TODO: post-validation
+    # TODO: Post validation
 
     avatar_config = AvatarConfig(
         livekit_plugin_config=livekit_plugin_config,

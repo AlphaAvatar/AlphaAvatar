@@ -50,7 +50,7 @@ AvatarPlugin.register_avatar_plugin(AvatarModule.CHARACTER, "default", AiriChara
 
 
 # runner register
-character_name = os.getenv("CHARACRER_NAME", "default")
+character_name = os.getenv("ALPHAAVATAR_CHARACRER_NAME", "default")
 match character_name:
     case "default":
         AIRI_REPO_DIR = Path(os.getenv("AIRI_REPO_DIR", ""))

@@ -13,12 +13,10 @@
 # limitations under the License.
 import uuid
 
-from pydantic import ConfigDict, Field
-from pydantic.dataclasses import dataclass
+from pydantic import BaseModel, Field
 
 
-@dataclass(config=ConfigDict(arbitrary_types_allowed=True))
-class SessionConfig:
+class SessionConfig(BaseModel):
     """Dataclass which contains all session-related configuration."""
 
     user_id: str = Field(default=uuid.uuid4().hex)

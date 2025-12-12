@@ -63,7 +63,8 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     avatar_character = avatar_config.character_config.get_plugin()
 
     # Start Up
-    await avatar_character.start(agent_identity, session, room=ctx.room)
+    if avatar_character:
+        await avatar_character.start(agent_identity, session, room=ctx.room)
     await session.start(
         room=ctx.room,
         agent=avatar_engine,

@@ -17,17 +17,24 @@ from tavily import TavilyClient
 from alphaavatar.agents.tools import ToolBase
 
 
-class TavilyDeepSearchTool(ToolBase):
-    name = "tavily_deepsearch"
-    description = "Use this tool to perform deep research on a given topic using Tavily's DeepResearch capabilities."
+class TavilyDeepResearchTool(ToolBase):
+    name = "tavily_deepresearch"
+    description = """Use this tool to perform deep research on a given topic using Tavily's DeepResearch capabilities."""
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(
-            name=TavilyDeepSearchTool.name, description=TavilyDeepSearchTool.description
+            name=TavilyDeepResearchTool.name, description=TavilyDeepResearchTool.description
         )
 
         self.tavily_client = TavilyClient(api_key="tvly-YOUR_API_KEY")
 
-    async def invoke(self, ctx: "RunContext", query: str, max_results: int = 5) -> dict:
-        # TODO
-        ...
+    async def invoke(
+        self,
+        ctx: "RunContext",
+        query: str,
+        search_depth: str = "basic",
+        max_results: int = 5,
+    ) -> dict:
+        return self.tavily_client.search(
+            query=query, search_depth=search_depth, max_results=max_results
+        )

@@ -16,6 +16,8 @@ from enum import Enum
 
 from livekit.agents import Plugin
 
+from .log import logger
+
 
 class AvatarModule(str, Enum):
     """"""
@@ -51,8 +53,9 @@ class AvatarPlugin(Plugin):
     def get_avatar_plugin(cls, module: AvatarModule, name: str, *args, **kwargs):
         module_plugins = cls.avatar_registered_plugins[module]
         if name not in module_plugins:
-            raise ValueError(
+            logger.warning(
                 f"We only supoort the following [{module}] plugins right now, please check again:\n{list(module_plugins.keys())}"
             )
+            return None
 
         return module_plugins[name].get_plugin(*args, **kwargs)  # type: ignore

@@ -14,12 +14,10 @@
 import os
 import uuid
 
-from pydantic import ConfigDict, Field
-from pydantic.dataclasses import dataclass
+from pydantic import BaseModel, Field
 
 
-@dataclass(config=ConfigDict(arbitrary_types_allowed=True))
-class AvatarInfoConfig:
+class AvatarInfoConfig(BaseModel):
     """Configuration for the prompt used in the agent."""
 
     avatar_id: str = Field(
@@ -39,5 +37,5 @@ class AvatarInfoConfig:
         description="The time zone where the Avatar is deployed is used to align with the user's time zone for related task execution",
     )
 
-    def __post_init__(self):
+    def model_post_init(self, __context):
         os.environ["AVATAR_TIMEZONE"] = self.avatar_timezone

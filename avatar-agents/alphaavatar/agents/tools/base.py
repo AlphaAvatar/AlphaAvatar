@@ -14,7 +14,7 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from livekit.agents import RunContext, function_tool
+from livekit.agents import RunContext, function_tool, llm
 
 
 class ToolBase(ABC):
@@ -28,7 +28,11 @@ class ToolBase(ABC):
         async def _tool(ctx: "RunContext", *args, **kwargs) -> Any:
             return await self.invoke(ctx, *args, **kwargs)
 
-        self.tool = _tool
+        self._tool = _tool
+
+    @property
+    def tool(self) -> llm.FunctionTool | llm.RawFunctionTool:
+        return self._tool
 
     @abstractmethod
     async def invoke(self, ctx: "RunContext", *args, **kwargs) -> Any: ...

@@ -183,12 +183,16 @@ export LIVEKIT_URL=<your LiveKit server URL>
 export OPENAI_API_KEY=<your OpenAI API Key>
 export QDRANT_URL='https://xxxxxx-xxxxx-xxxxx-xxxx-xxxxxxxxx.us-east.aws.cloud.qdrant.io:6333'
 export QDRANT_API_KEY=<your QDRANT API Key>
+export TAVILY_API_KEY=<your TAVILY API Key> # Optional
 
 alphaavatar download-files
-alphaavatar dev examples/pipline_openai_airi.yaml
+alphaavatar dev examples/pipline_openai_airi.yaml # or
+alphaavatar dev examples/pipline_openai_tools.yaml
 ```
 
 To see more supported modes, please refer to the [LiveKit doc](https://docs.livekit.io/agents/start/voice-ai/).
+
+To see more examples, please refer to the [Link](https://github.com/AlphaAvatar/AlphaAvatar/blob/main/examples/README.md)
 
 <h4>Usage 🚀</h4>
 

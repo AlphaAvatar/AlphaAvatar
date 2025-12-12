@@ -15,8 +15,7 @@ import importlib
 import json
 import os
 
-from pydantic import ConfigDict, Field
-from pydantic.dataclasses import dataclass
+from pydantic import BaseModel, Field
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.memory import MemoryBase
@@ -24,8 +23,7 @@ from alphaavatar.agents.memory import MemoryBase
 importlib.import_module("alphaavatar.plugins.memory")
 
 
-@dataclass(config=ConfigDict(arbitrary_types_allowed=True))
-class MemoryConfig:
+class MemoryConfig(BaseModel):
     """Configuration for the Memory plugin used in the agent."""
 
     # Memory Metadata
@@ -58,7 +56,7 @@ class MemoryConfig:
         description="Custom initialization parameters for the memory vdb backend (e.g., host, port, url, api_key, prefer_grpc).",
     )
 
-    def __post_init__(self):
+    def model_post_init(self, __context):
         # Set PERONA_PROFILER_ENV
         os.environ["MEMORY_VDB_CONFIG"] = json.dumps(self.memory_vdb_config)
 

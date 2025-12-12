@@ -15,8 +15,7 @@ import importlib
 import json
 import os
 
-from pydantic import ConfigDict, Field
-from pydantic.dataclasses import dataclass
+from pydantic import BaseModel, Field
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.persona import PersonaBase
@@ -24,8 +23,7 @@ from alphaavatar.agents.persona import PersonaBase
 importlib.import_module("alphaavatar.plugins.persona")
 
 
-@dataclass(config=ConfigDict(arbitrary_types_allowed=True))
-class PersonaConfig:
+class PersonaConfig(BaseModel):
     """Configuration for the Persona plugin used in the agent."""
 
     # Persona Metadata
@@ -60,7 +58,7 @@ class PersonaConfig:
         description="Custom initialization parameters for the persona vdb backend (e.g., host, port, url, api_key, prefer_grpc).",
     )
 
-    def __post_init__(self):
+    def model_post_init(self, __context):
         # Set PERONA_PROFILER_ENV
         os.environ["PERONA_VDB_CONFIG"] = json.dumps(self.persona_vdb_config)
 
