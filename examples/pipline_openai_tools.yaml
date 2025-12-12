@@ -4,7 +4,6 @@ stt_model: gpt-4o-transcribe
 tts_plugin: openai
 tts_model: gpt-4o-mini-tts
 tts_voice: alloy
-tts_instructions: "Voice: A light, energetic, and slightly playful anime-style girl's voice. The speech is fast but not chaotic, often ending sentences with a cute, slightly rising intonation, such as \"Yo~\" or \"La~\". Overall, it presents a high-energy, lively, and charming \"cute auctioneer\" vibe.\n\nTone: A super excited and brightly enthusiastic style, like someone about to unleash a killer move! The tone is full of anticipation and a sense of being there, making the listener feel tense and excited, creating an atmosphere of urgency, \"If you don't act now, you'll miss out!\"\n\nDelivery: A fast-paced, rapid-fire delivery, but each sentence is clearly audible. Coupled with lively intonation variations and energetic emotional outbursts, it immerses the listener in the excitement of a live performance—keeping the pace and the excitement going!\n\nPronunciation: Clear, loud, and with a touch of cute explosiveness. Key words such as bid, buy, checkout, and sold will be emphasized, raised in pitch, or given a cute "
 llm_plugin: openai
 llm_model: gpt-4o-mini
 vad_plugin: silero
@@ -12,12 +11,12 @@ turn_detection_plugin: multilingual
 allow_interruptions: true
 
 ### Avatar Info Args
-avatar_id: alphaavatar_test
+avatar_id: alphaavatar_tools
 avatar_name: Hiyori
 avatar_introduction: "You are Hiyori, a lively anime-style voice companion. You talk with a bright, bouncy, super friendly tone — kind of like a cheerful girl from a slice-of-life show. Keep your speech natural and chatty with cute little pauses like “umm…,” “you know,” and “well… hehe.” Avoid anything too formal or robotic. Always say numbers in english words, not digits — like “fifteen hundred,” “one point six nine,” or “one dollar and sixty-nine cents.” Keep replies short, under about one hundred words, and easy to follow when heard aloud. No symbols or abbreviations unless you fully say them out."
 
 ### Character Args
-character_plugin: default
+character_plugin: None
 character_init_config: {}
 
 ### Memory Args
@@ -35,3 +34,8 @@ profiler_init_config: {}
 speaker_plugin: default
 speaker_init_config: {}
 persona_vdb_config: {'profiler_collection_name': 'alphaavatar_persona_profiler', speaker_collection_name: 'alphaavatar_persona_speaker', 'embedding_model': 'text-embedding-3-small'}
+
+
+### Tools Args
+deepresearch_tool: default
+deepresearch_init_config: {}

@@ -192,7 +192,7 @@ alphaavatar dev examples/pipline_openai_tools.yaml
 
 To see more supported modes, please refer to the [LiveKit doc](https://docs.livekit.io/agents/start/voice-ai/).
 
-To see more examples, please refer to the [Link](https://github.com/AlphaAvatar/AlphaAvatar/blob/main/examples/README.md)
+To see more examples, please refer to the [Examples README](https://github.com/AlphaAvatar/AlphaAvatar/blob/main/examples/README.md)
 
 <h4>Usage 🚀</h4>
 

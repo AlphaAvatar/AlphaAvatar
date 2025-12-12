@@ -90,7 +90,6 @@ class TTSArguments(BaseModel):
 
                 assert self.tts_model is not None
                 assert self.tts_voice is not None
-                assert self.tts_instructions is not None
                 return openai.TTS(
                     model=self.tts_model,
                     voice=self.tts_voice,
