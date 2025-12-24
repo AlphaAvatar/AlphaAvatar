@@ -156,7 +156,7 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 Install **stable** AlphaAvatar version from PyPI:
 
 ```bash
-uv venv .my-env
+uv venv .my-env --python 3.11
 source .my-env/bin/activate
 pip install alpha-avatar-agents
 ```
@@ -167,7 +167,7 @@ Install **latest** AlphaAvatar version from GitHub:
 git clone https://github.com/AlphaAvatar/AlphaAvatar.git
 cd AlphaAvatar
 
-uv venv .venv
+uv venv .venv --python 3.11
 source .venv/bin/activate
 uv sync --all-packages
 ```
