@@ -14,7 +14,7 @@
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 
 from .log import logger
-from .tavily import TavilyDeepSearchTool
+from .tavily import TavilyDeepResearchTool
 from .version import __version__
 
 __all__ = [
@@ -32,9 +32,9 @@ class TavilyPlugin(AvatarPlugin):
         self,
         *args,
         **kwargs,
-    ) -> TavilyDeepSearchTool:
+    ) -> TavilyDeepResearchTool:
         try:
-            return TavilyDeepSearchTool(*args, **kwargs)
+            return TavilyDeepResearchTool(*args, **kwargs)
         except Exception:
             raise ImportError(
                 "The 'tavily[default]' DeepResearch plugin is required but is not installed.\n"

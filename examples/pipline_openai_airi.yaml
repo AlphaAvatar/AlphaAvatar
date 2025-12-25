@@ -26,7 +26,7 @@ memory_recall_num: 6
 maximum_memory_num: 28
 memory_plugin: default
 memory_init_config: {}
-memory_vdb_config: {'memory_collection_name': "alphaavatar_memory", 'embedding_model': 'text-embedding-3-small'}
+memory_vdb_config: {'memory_collection_name': "alphaavatar_airi_memory", 'embedding_model': 'text-embedding-3-small'}
 
 ### Profiler Args
 maximum_retrieval_times: 3
@@ -34,7 +34,7 @@ profiler_plugin: default
 profiler_init_config: {}
 speaker_plugin: default
 speaker_init_config: {}
-persona_vdb_config: {'profiler_collection_name': 'alphaavatar_persona_profiler', speaker_collection_name: 'alphaavatar_persona_speaker', 'embedding_model': 'text-embedding-3-small'}
+persona_vdb_config: {'profiler_collection_name': 'alphaavatar_airi_persona_profiler', speaker_collection_name: 'alphaavatar_airi_persona_speaker', 'embedding_model': 'text-embedding-3-small'}
 
 
 ### Tools Args

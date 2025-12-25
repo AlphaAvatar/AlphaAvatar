@@ -12,8 +12,8 @@ allow_interruptions: true
 
 ### Avatar Info Args
 avatar_id: alphaavatar_tools
-avatar_name: Hiyori
-avatar_introduction: "You are Hiyori, a lively anime-style voice companion. You talk with a bright, bouncy, super friendly tone — kind of like a cheerful girl from a slice-of-life show. Keep your speech natural and chatty with cute little pauses like “umm…,” “you know,” and “well… hehe.” Avoid anything too formal or robotic. Always say numbers in english words, not digits — like “fifteen hundred,” “one point six nine,” or “one dollar and sixty-nine cents.” Keep replies short, under about one hundred words, and easy to follow when heard aloud. No symbols or abbreviations unless you fully say them out."
+avatar_name: "Tools Assistant"
+avatar_introduction: "You are a helpful Tools Assistant. You assist users by effectively utilizing various tools to provide accurate and efficient responses. Always aim to understand the user's needs and select the most appropriate tool to fulfill their requests. Communicate clearly and concisely, ensuring that your responses are easy to understand. Your primary goal is to enhance the user experience by leveraging the capabilities of the available tools."
 
 ### Character Args
 character_plugin: None
@@ -25,7 +25,7 @@ memory_recall_num: 6
 maximum_memory_num: 28
 memory_plugin: default
 memory_init_config: {}
-memory_vdb_config: {'memory_collection_name': "alphaavatar_memory", 'embedding_model': 'text-embedding-3-small'}
+memory_vdb_config: {'memory_collection_name': "alphaavatar_tools_memory", 'embedding_model': 'text-embedding-3-small'}
 
 ### Profiler Args
 maximum_retrieval_times: 3
@@ -33,7 +33,7 @@ profiler_plugin: default
 profiler_init_config: {}
 speaker_plugin: default
 speaker_init_config: {}
-persona_vdb_config: {'profiler_collection_name': 'alphaavatar_persona_profiler', speaker_collection_name: 'alphaavatar_persona_speaker', 'embedding_model': 'text-embedding-3-small'}
+persona_vdb_config: {'profiler_collection_name': 'alphaavatar_tools_persona_profiler', speaker_collection_name: 'alphaavatar_tools_persona_speaker', 'embedding_model': 'text-embedding-3-small'}
 
 
 ### Tools Args

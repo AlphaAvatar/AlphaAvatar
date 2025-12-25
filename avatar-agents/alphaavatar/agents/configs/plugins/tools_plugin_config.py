@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.tools import ToolBase
 
-importlib.import_module("alphaavatar.plugins.deepsearch")
+importlib.import_module("alphaavatar.plugins.deepresearch")
 
 
 class ToolsConfig(BaseModel):

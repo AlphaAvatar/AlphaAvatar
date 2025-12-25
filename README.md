@@ -164,7 +164,7 @@ pip install alpha-avatar-agents
 Install **latest** AlphaAvatar version from GitHub:
 
 ```bash
-git clone https://github.com/AlphaAvatar/AlphaAvatar.git
+git clone --recurse-submodules https://github.com/AlphaAvatar/AlphaAvatar.git
 cd AlphaAvatar
 
 uv venv .venv --python 3.11
@@ -180,13 +180,18 @@ Start your agent in dev mode to connect it to LiveKit and make it available from
 export LIVEKIT_API_KEY=<your API Key>
 export LIVEKIT_API_SECRET=<your API Secret>
 export LIVEKIT_URL=<your LiveKit server URL>
+
 export OPENAI_API_KEY=<your OpenAI API Key>
+
 export QDRANT_URL='https://xxxxxx-xxxxx-xxxxx-xxxx-xxxxxxxxx.us-east.aws.cloud.qdrant.io:6333'
 export QDRANT_API_KEY=<your QDRANT API Key>
-export TAVILY_API_KEY=<your TAVILY API Key> # Optional
+
+# Optional
+export TAVILY_API_KEY=<your TAVILY API Key>
 
 alphaavatar download-files
-alphaavatar dev examples/pipline_openai_airi.yaml # or
+alphaavatar dev examples/pipline_openai_airi.yaml
+# or
 alphaavatar dev examples/pipline_openai_tools.yaml
 ```
 
