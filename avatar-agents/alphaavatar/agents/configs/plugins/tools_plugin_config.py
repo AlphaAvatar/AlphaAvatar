@@ -39,7 +39,7 @@ class ToolsConfig(BaseModel):
         tools = []
 
         deepresearch_tool: ToolBase | None = AvatarPlugin.get_avatar_plugin(
-            AvatarModule.DEEPSEARCH,
+            AvatarModule.DEEPRESEARCH,
             self.deepresearch_tool,
             character_init_config=self.deepresearch_init_config,
         )

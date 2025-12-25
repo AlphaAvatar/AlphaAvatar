@@ -43,4 +43,4 @@ class TavilyPlugin(AvatarPlugin):
 
 
 # plugin init
-AvatarPlugin.register_avatar_plugin(AvatarModule.DEEPSEARCH, "default", TavilyPlugin())
+AvatarPlugin.register_avatar_plugin(AvatarModule.DEEPRESEARCH, "default", TavilyPlugin())

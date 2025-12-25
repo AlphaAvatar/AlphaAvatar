@@ -30,7 +30,7 @@ class AvatarModule(str, Enum):
     RECOGNIZER = "persona_recognizer"
 
     # tools
-    DEEPSEARCH = "deepsearch"
+    DEEPRESEARCH = "deepresearch"
 
 
 class AvatarPlugin(Plugin):

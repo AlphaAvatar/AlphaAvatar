@@ -24,3 +24,7 @@ volta install pnpm
 
 alphaavatar-airi-install
 ```
+
+> Note: AIRI performs a Chromium preflight check on startup.
+> If Chromium cannot start in headless mode, actionable system dependency
+> installation hints will be printed based on your Linux distribution.
