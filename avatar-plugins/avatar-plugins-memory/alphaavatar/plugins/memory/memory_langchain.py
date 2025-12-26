@@ -99,7 +99,7 @@ class MemoryLangchain(MemoryBase):
         return await chain.ainvoke({"type": memory_type, "message_content": message_content})  # type: ignore
 
     def _apply_delta(self, avatar_id: str, delta: MemoryDelta, memory_cache: MemoryCache):
-        avatar_time = format_current_time().time_str
+        updated_time = format_current_time().time_str
         assistant_memories: list[MemoryItem] = []
         user_memories: list[MemoryItem] = []
         tool_memories: list[MemoryItem] = []
@@ -115,7 +115,7 @@ class MemoryLangchain(MemoryBase):
                         value=item.value,
                         entities=item.entities,
                         topic=item.topic,
-                        timestamp=avatar_time,
+                        timestamp=updated_time,
                         memory_type=MemoryType.Avatar,
                     )
                 )
@@ -132,7 +132,7 @@ class MemoryLangchain(MemoryBase):
                             value=item.value,
                             entities=item.entities,
                             topic=item.topic,
-                            timestamp=avatar_time,
+                            timestamp=updated_time,
                             memory_type=MemoryType.CONVERSATION,
                         )
                     )
@@ -147,7 +147,7 @@ class MemoryLangchain(MemoryBase):
                             value=item.value,
                             entities=item.entities,
                             topic=item.topic,
-                            timestamp=avatar_time,
+                            timestamp=updated_time,
                             memory_type=MemoryType.TOOLS,
                         )
                     )

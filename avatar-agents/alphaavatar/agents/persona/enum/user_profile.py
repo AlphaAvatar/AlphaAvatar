@@ -23,6 +23,7 @@ from alphaavatar.agents.utils import NumpyOP
 class ProfileItemSource(StrEnum):
     chat = "chat"
     speech = "speech"
+    visual = "visual"
 
 
 class ProfileItemView(BaseModel):

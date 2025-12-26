@@ -18,6 +18,14 @@ Once the `main` branch is stable, releases are created simply by tagging a versi
   * `TEST_PYPI_TOKEN`
   * `PYPI_TOKEN`
 
+### 2️⃣ Install pre-commit hooks (REQUIRED)
+
+After setting up the development environment, run **once**:
+
+```bash
+pre-commit install
+```
+
 ---
 
 ### 2️⃣ Test Release (TestPyPI)
