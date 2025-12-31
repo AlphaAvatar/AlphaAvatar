@@ -19,6 +19,8 @@ from tavily import TavilyClient
 
 from alphaavatar.agents.tools import ToolBase
 
+from .log import logger
+
 
 class TavilyDeepResearchTool(ToolBase):
     name = "tavily_deepresearch"
@@ -48,6 +50,9 @@ Args:
         )
 
         self._tavily_api_key = tavily_api_key or (os.getenv("TAVILY_API_KEY") or NOT_GIVEN)
+        if not self._tavily_api_key:
+            raise ValueError("TAVILY_API_KEY must be set by arguments or environment variables")
+
         self._tavily_client = TavilyClient(api_key=self._tavily_api_key)
 
     async def invoke(
@@ -57,6 +62,9 @@ Args:
         search_depth: Literal["basic", "advanced"] = "basic",
         max_results: int = 5,
     ) -> dict:
-        return self._tavily_client.search(
+        res = self._tavily_client.search(
             query=query, search_depth=search_depth, max_results=max_results
         )
+
+        logger.info(f"[TavilyDeepResearchTool] search result: {res}")
+        return res

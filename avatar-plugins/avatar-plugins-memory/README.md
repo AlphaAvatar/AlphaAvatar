@@ -18,12 +18,9 @@ pip install alpha-avatar-plugins-memory
 
 ## Supported Open-Source Memory Frameworks
 
-### Vector Store
+### Default: **LangChain + Qdrant**
+
 | Module                 | Description                                                                                   | Docs                                                                   |
 | ---------------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | **Qdrant** (default) | Combined framework for persona extraction pipelines and vector storage / retrieval.           | [Qdrant](https://qdrant.tech) |
-
-### Memory
-| Module                 | Description                                                                                   | Docs                                                                   |
-| ---------------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | **LangChain** (default) | Combined framework for persona extraction pipelines and vector storage / retrieval.           | [LangChain](https://www.langchain.com) |

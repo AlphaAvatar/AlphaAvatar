@@ -70,13 +70,14 @@
 
 ### 🧭 TODO
 
-| Priority | Task                                                                                                                         |     Stage     |
-| :------- | :--------------------------------------------------------------------------------------------------------------------------- | :-----------: |
+| Priority | Task                                                                                                                         |     Stage      |
+| :------- | :--------------------------------------------------------------------------------------------------------------------------- | :-----------:  |
+| 🔸       | Add Assistant–Tools memory for DeepResearch Plugin                                                                           | ⏳ In Progress |
 | 🔸       | Design **differentiated prompts** for:<br>– self-memory<br>– shared Assistant–User memory<br>– shared Assistant–Tools memory | ⏳ In Progress |
 | 🔸       | Add **multi-user memory isolation** (unique response memory per user).                                                       | ⏳ In Progress |
-| 🔹       | Allow users to **query / recall** specific memories on demand.                                                               |   🧩 Planned  |
-| 🔹       | Add **event-driven memory updates** for adaptive reflection.                                                                 |   🧩 Planned  |
-| 🔹       | Add **omni** memory updates.                                                                                                 |   🧩 Planned  |
+| 🔹       | Allow users to **query / recall** specific memories on demand.                                                               |   🧩 Planned   |
+| 🔹       | Add **event-driven memory updates** for adaptive reflection.                                                                 |   🧩 Planned   |
+| 🔹       | Add **omni** memory updates.                                                                                                 |   🧩 Planned   |
 
 ## 🧬 PERSONA
 
@@ -103,6 +104,10 @@
 ## 🔍 DeepResearch
 
 ### ✅ DONE
+
+| Date    | Milestone                                  | Notes                                                                          |
+| :------ | :----------------------------------------- | :----------------------------------------------------------------------------- |
+| 2025-12 | **Integrating the Tavily API into the DeepResearch plugin(v1)** | Supports fast online retrieval or deep search.. |
 
 ### 🧭 TODO
 
