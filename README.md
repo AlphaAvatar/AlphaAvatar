@@ -146,7 +146,7 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 <h4>Latest News 🔥</h4>
 
 - [2026/01] We have released AlphaAvatar **version 0.3.0** to support DeepResearch by [tavily](https://tavily.com) API.
-  - ADD tool calls during user-Assistant interactions to the memory management module.
+  - Released AlphaAvatar **version 0.3.1**: ADD tool calls during user-Assistant interactions to the Memory module.
 - [2025/12] We have released AlphaAvatar **version 0.2.0** to support [AIRI](https://github.com/moeru-ai/airi) live2d-based virtual character display.
 - [2025/11] We have released AlphaAvatar **version 0.1.0** to support automatic memory extraction, automatic user persona extraction and matching.
 
