@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from livekit.agents.llm import ChatItem, ChatMessage
+from livekit.agents.llm import ChatItem, ChatMessage, FunctionCall, FunctionCallOutput
 
 from .enum.memory_type import MemoryType
 
@@ -57,4 +57,7 @@ class MemoryCache:
         """Add a new message to the cache."""
         if isinstance(message, ChatMessage) and message.role in ("user", "assistant"):
             self._messages.append(message)
-            self._messages.sort(key=lambda x: x.created_at)
+        elif isinstance(message, FunctionCall) or isinstance(message, FunctionCallOutput):
+            self._messages.append(message)
+
+        self._messages.sort(key=lambda x: x.created_at)

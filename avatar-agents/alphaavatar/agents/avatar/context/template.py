@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from livekit.agents.llm import ChatItem, ChatMessage, ChatRole
+from livekit.agents.llm import ChatItem, ChatMessage, ChatRole, FunctionCall, FunctionCallOutput
 
 from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
 from alphaavatar.agents.memory import MemoryType
@@ -98,6 +98,14 @@ class MemoryPluginsTemplate:
                     continue
 
                 msg_str = msg.text_content
+                memory_strings.append(f"### {role}:\n{msg_str}")
+            elif isinstance(msg, FunctionCall):
+                role = f"assistant call function [{msg.name}]"
+                msg_str = f"Function arguments: {msg.arguments}"
+                memory_strings.append(f"### {role}:\n{msg_str}")
+            elif isinstance(msg, FunctionCallOutput):
+                role = f"function [{msg.name}] output"
+                msg_str = msg.output
                 memory_strings.append(f"### {role}:\n{msg_str}")
 
         return "\n\n".join(memory_strings)

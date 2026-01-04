@@ -66,5 +66,5 @@ Args:
             query=query, search_depth=search_depth, max_results=max_results
         )
 
-        logger.info(f"[TavilyDeepResearchTool] search result: {res}")
+        logger.debug(f"[TavilyDeepResearchTool] search result: {res}")
         return res

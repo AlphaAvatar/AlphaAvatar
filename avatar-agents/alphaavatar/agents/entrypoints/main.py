@@ -24,7 +24,7 @@ from livekit.plugins import noise_cancellation
 from alphaavatar.agents.avatar import AvatarEngine
 from alphaavatar.agents.configs import AvatarConfig, SessionConfig, get_avatar_args, read_args
 from alphaavatar.agents.log import logger
-from alphaavatar.agents.utils import get_session_id, get_user_id
+from alphaavatar.agents.utils import SessionType, get_session_id, get_user_id
 
 load_dotenv()
 
@@ -42,7 +42,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     participant = await ctx.wait_for_participant()
     participant_metadata = json.loads(participant.metadata) if participant.metadata else {}
     user_id = participant_metadata.get("user_id", get_user_id())
-    session_id = participant_metadata.get("session_id", get_session_id())
+    session_id = participant_metadata.get("session_id", get_session_id(SessionType.CHAT))
     session_config = SessionConfig(
         user_id=user_id,
         session_id=session_id,

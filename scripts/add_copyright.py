@@ -64,7 +64,7 @@ def process(path: str) -> bool:
     new_text = "\n".join(lines[:pos] + [header] + lines[pos:]) + "\n"
 
     if new_text != (text if text.endswith("\n") else text + "\n"):
-        p.write_text(new_text, encoding="utf-8", newline="\n")
+        p.write_text(new_text, encoding="utf-8")
         print(f"inserted license header: {path}")
         return True
     return False

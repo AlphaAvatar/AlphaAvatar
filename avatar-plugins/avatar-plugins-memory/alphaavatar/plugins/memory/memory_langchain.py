@@ -222,7 +222,9 @@ class MemoryLangchain(MemoryBase):
             if not chat_context:
                 logger.info(f"[sid: {_sid}] Memory message is empty, UPDATE skip!")
 
-            message_content = MemoryPluginsTemplate.apply_update_template(chat_context, cache.type)
+            message_content: str = MemoryPluginsTemplate.apply_update_template(
+                chat_context, cache.type
+            )
             delta: MemoryDelta = await self._aextract_delta(message_content, cache.type)
             assistant_memories, user_memories, tool_memories = self._apply_delta(
                 avatar_id, delta, cache

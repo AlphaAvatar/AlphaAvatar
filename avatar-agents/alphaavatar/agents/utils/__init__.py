@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .dual_key_dict import DualKeyDict
+from .enum import SessionType
 from .id_utils import get_session_id, get_user_id
 from .op_utils import NumpyOP
 from .time_utils import AvatarTime, format_current_time, get_timestamp, time_str_to_datetime
@@ -19,6 +20,7 @@ from .vdb_utils import get_embedding_model, get_qdrant_client
 
 __all__ = [
     "DualKeyDict",
+    "SessionType",
     "NumpyOP",
     "AvatarTime",
     "format_current_time",
