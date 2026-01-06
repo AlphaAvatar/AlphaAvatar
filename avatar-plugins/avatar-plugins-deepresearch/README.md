@@ -1,7 +1,3 @@
-下面是**参考 Memory / Character 插件 README 风格**，并结合 **DeepResearch 实际职责**，为你补充完成的一份 **DeepResearch Plugin for AlphaAvatar** 的 README 草案。内容已默认 **DeepResearch 当前使用 Tavily API**，并把 Tavily 的能力结构化地融入插件设计中，保持与前两个插件在抽象层级与语气上的一致性。
-
----
-
 # DeepResearch Plugin for AlphaAvatar
 
 A modular deep-research middleware for AlphaAvatar, providing unified access to web search, real-time information retrieval, and multi-step research workflows.
