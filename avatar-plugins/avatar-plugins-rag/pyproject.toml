@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "alpha-avatar-agents"
+name = "alpha-avatar-plugins-rag"
 dynamic = ["version"]
-description = "A real-time interactive Omni Avatar Agent built on LiveKit."
+description = "AlphaAvatar Framework plugin for RAG service"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
-keywords = ["omni", "realtime", "audio", "video", "llm", "agents", "AI"]
+keywords = ["llm", "agents", "AI", "internet", "multimodel", "rag"]
 classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
@@ -24,38 +24,17 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
 ]
 dependencies = [
-    "python-dotenv",
-    "livekit>=1.0.12,<2",
-    "livekit-api>=1.0.4,<2",
-    "livekit-protocol~=1.0",
-    "livekit-blingfire~=1.0",
-    "livekit-agents~=1.0",
-    "livekit-plugins-noise-cancellation~=0.2",
-    "livekit-plugins-openai>=1.2.4",
-    "livekit-plugins-silero>=1.2.5",
-    "livekit-plugins-turn-detector>=1.2.4",
-    "mcp>=1.10.0, <2",
-    "omegaconf",
-    "alpha-avatar-plugins-memory>=0.1.0",
-    "alpha-avatar-plugins-persona>=0.1.0",
+    "raganything[all]"
 ]
+
 
 [project.optional-dependencies]
-character = ["alpha-avatar-plugins-character>=0.1.0"]
-tools = [
-    "alpha-avatar-plugins-deepresearch>=0.1.0",
-    "alpha-avatar-plugins-rag>=0.1.0",
-]
-
-[project.scripts]
-alphaavatar = "alphaavatar.agents.entrypoints.main:main"
 
 [project.urls]
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"
 
-
 [tool.hatch.version]
-path = "alphaavatar/agents/version.py"
+path = "alphaavatar/plugins/rag/version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["alphaavatar"]
