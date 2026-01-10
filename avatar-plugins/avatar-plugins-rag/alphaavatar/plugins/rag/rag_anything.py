@@ -22,9 +22,8 @@ from lightrag.utils import EmbeddingFunc
 from livekit.agents import NOT_GIVEN, NotGivenOr
 from raganything import RAGAnything
 
+from alphaavatar.agents.tools.rag_api import RAGBase
 from alphaavatar.agents.utils.loop_thread import AsyncLoopThread
-
-from .rag_api import RAGBase
 
 
 async def _maybe_await(v):

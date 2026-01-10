@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from alphaavatar.agents import AvatarModule, AvatarPlugin
+from alphaavatar.agents.tools.rag_api import RAGAPI
 
 from .log import logger
 from .rag_anything import RAGAnythingTool
-from .rag_api import RAGAPI
 from .version import __version__
 
 __all__ = [

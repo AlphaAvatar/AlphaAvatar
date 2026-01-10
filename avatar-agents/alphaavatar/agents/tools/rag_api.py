@@ -16,7 +16,7 @@ from typing import Any, Literal
 
 from livekit.agents import RunContext
 
-from alphaavatar.agents.tools import ToolBase
+from .base import ToolBase
 
 
 class RAGOp(StrEnum):

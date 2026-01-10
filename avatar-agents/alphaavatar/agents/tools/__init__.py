@@ -12,5 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .base import ToolBase
+from .rag_api import RAGAPI
 
-__all__ = ["ToolBase"]
+__all__ = ["ToolBase", "RAGAPI"]
