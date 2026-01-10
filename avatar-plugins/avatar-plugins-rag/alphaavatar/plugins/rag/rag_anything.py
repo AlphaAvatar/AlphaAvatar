@@ -11,3 +11,166 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import inspect
+import os
+from typing import Any
+
+from lightrag import LightRAG
+from lightrag.kg.shared_storage import initialize_pipeline_status
+from lightrag.llm.openai import openai_complete_if_cache, openai_embed
+from lightrag.utils import EmbeddingFunc
+from livekit.agents import NOT_GIVEN, NotGivenOr
+from raganything import RAGAnything
+
+from alphaavatar.agents.utils.loop_thread import AsyncLoopThread
+
+from .rag_api import RAGBase
+
+
+async def _maybe_await(v):
+    if inspect.isawaitable(v):
+        return await v
+    return v
+
+
+class RAGAnythingTool(RAGBase):
+    name = "RAG Anything class for Retrieval-Augmented Generation"
+    description = ""
+
+    def __init__(
+        self,
+        *args,
+        working_dir: str = "",
+        openai_api_key: NotGivenOr[str] = NOT_GIVEN,
+        openai_base_url: NotGivenOr[str] = NOT_GIVEN,
+        **kwargs,
+    ):
+        super().__init__(name=self.name, description=self.description)
+
+        self._working_dir = working_dir
+        self._openai_api_key = openai_api_key
+        self._openai_base_url = openai_base_url
+
+        self._loop_thread = AsyncLoopThread(name="raganything-loop")
+
+        self._rag: RAGAnything | None = None
+        self._lightrag: LightRAG | None = None
+
+        self._loop_thread.submit(self._ainit())
+
+    async def _ainit(self) -> None:
+        api_key = self._openai_api_key or (os.getenv("OPENAI_API_KEY") or NOT_GIVEN)
+        base_url = self._openai_base_url or (os.getenv("OPENAI_BASE_URL") or NOT_GIVEN)
+
+        async def llm_model_func(
+            prompt: str,
+            system_prompt: str | None = None,
+            history_messages: list[dict[str, Any]] | None = None,
+            **kwargs,
+        ):
+            return await _maybe_await(
+                openai_complete_if_cache(
+                    "gpt-4o-mini",
+                    prompt,
+                    system_prompt=system_prompt,
+                    history_messages=history_messages or [],
+                    api_key=api_key,
+                    base_url=base_url,
+                    **kwargs,
+                )
+            )
+
+        async def embedding_func(texts: list[str]):
+            return await _maybe_await(
+                openai_embed(
+                    texts,
+                    model="text-embedding-3-large",
+                    api_key=api_key,
+                    base_url=base_url,
+                )
+            )
+
+        # Create/load LightRAG instance with your configuration
+        lightrag_instance = LightRAG(
+            working_dir=self._working_dir,
+            llm_model_func=llm_model_func,
+            embedding_func=EmbeddingFunc(
+                embedding_dim=3072,
+                max_token_size=8192,
+                func=embedding_func,
+            ),
+        )
+
+        # Initialize storage (this will load existing data if available)
+        await lightrag_instance.initialize_storages()
+        await initialize_pipeline_status()
+
+        # Define vision model function for image processing
+        async def vision_model_func(
+            prompt: str,
+            system_prompt: str | None = None,
+            history_messages: list[dict[str, Any]] | None = None,
+            image_data: str | None = None,
+            messages: list[dict[str, Any]] | None = None,
+            **kwargs,
+        ):
+            # If messages format is provided (for multimodal VLM enhanced query), use it directly
+            if messages:
+                return await _maybe_await(
+                    openai_complete_if_cache(
+                        "gpt-4o",
+                        "",
+                        messages=messages,
+                        api_key=api_key,
+                        base_url=base_url,
+                        **kwargs,
+                    )
+                )
+
+            # Traditional single image format
+            if image_data:
+                mm_messages = []
+                if system_prompt:
+                    mm_messages.append({"role": "system", "content": system_prompt})
+                mm_messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/jpeg;base64,{image_data}"},
+                            },
+                        ],
+                    }
+                )
+                return await _maybe_await(
+                    openai_complete_if_cache(
+                        "gpt-4o",
+                        "",
+                        messages=mm_messages,
+                        api_key=api_key,
+                        base_url=base_url,
+                        **kwargs,
+                    )
+                )
+
+            # Pure text format
+            return await llm_model_func(
+                prompt, system_prompt=system_prompt, history_messages=history_messages
+            )
+
+        # Now use existing LightRAG instance to initialize RAGAnything
+        self._lightrag = lightrag_instance
+        self._rag = RAGAnything(
+            lightrag=lightrag_instance,
+            vision_model_func=vision_model_func,
+        )
+
+    def _require_ready(self) -> RAGAnything:
+        if self._rag is None:
+            raise RuntimeError("RAGAnythingTool not initialized")
+        return self._rag
+
+    def close(self):
+        self._loop_thread.stop()

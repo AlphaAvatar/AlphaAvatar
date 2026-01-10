@@ -13,8 +13,8 @@
 # limitations under the License.
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 
+from .deepresearch_tavily import TavilyDeepResearchTool
 from .log import logger
-from .tavily import TavilyDeepResearchTool
 from .version import __version__
 
 __all__ = [

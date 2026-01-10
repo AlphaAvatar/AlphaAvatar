@@ -31,6 +31,7 @@ class AvatarModule(str, Enum):
 
     # tools
     DEEPRESEARCH = "deepresearch"
+    RAG = "rag"
 
 
 class AvatarPlugin(Plugin):

@@ -14,14 +14,14 @@
 import asyncio
 import json
 import os
-import threading
 import urllib.parse
-from collections.abc import Coroutine
-from concurrent.futures import Future
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TypeVar
 
 from livekit.agents.inference_runner import _InferenceRunner
+
+from alphaavatar.agents.utils.loop_thread import AsyncLoopThread
 
 from ..enum import RunnerOP
 from ..log import logger
@@ -62,27 +62,7 @@ class AiriRunner(_InferenceRunner):
         self._port = AIRI_PORT
         self._proc: asyncio.subprocess.Process | None = None
 
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._loop_thread: threading.Thread | None = None
-
-    def _ensure_loop(self) -> None:
-        if self._loop and not self._loop.is_closed():
-            return
-
-        loop = asyncio.new_event_loop()
-        self._loop = loop
-
-        def _run_loop():
-            asyncio.set_event_loop(loop)
-            loop.run_forever()
-
-        self._loop_thread = threading.Thread(target=_run_loop, daemon=True)
-        self._loop_thread.start()
-
-    def _submit_coro(self, coro: Coroutine[Any, Any, T]) -> Future[T]:
-        self._ensure_loop()
-        assert self._loop is not None
-        return asyncio.run_coroutine_threadsafe(coro, self._loop)
+        self._loop_thread = AsyncLoopThread(name="airi-loop")
 
     async def _log_output(self):
         assert self._proc and self._proc.stdout
@@ -96,7 +76,7 @@ class AiriRunner(_InferenceRunner):
         import aiohttp
 
         url = f"http://127.0.0.1:{self._port}/"
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
 
         async with aiohttp.ClientSession() as session:
@@ -121,7 +101,6 @@ class AiriRunner(_InferenceRunner):
 
     async def _start_server(self) -> None:
         stage_web_dir = self._repo_dir / "apps" / "stage-web"
-
         env = os.environ.copy()
 
         self._proc = await asyncio.create_subprocess_exec(
@@ -138,7 +117,6 @@ class AiriRunner(_InferenceRunner):
         )
 
         asyncio.create_task(self._log_output())
-
         await self._wait_for_server_ready()
 
     async def _run_headless_browser(
@@ -200,16 +178,14 @@ class AiriRunner(_InferenceRunner):
             logger.info("[AIRI] Headless browser task finished")
 
     def _run_livekit_avatar(
-        self,
-        livekit_url: str,
-        livekit_token: str,
-        agent_identity: str,
+        self, livekit_url: str, livekit_token: str, agent_identity: str
     ) -> None:
         if self._proc is None or self._proc.returncode is not None:
             raise RuntimeError("AIRI dev server is not running. Did you call initialize()?")
 
         logger.info("[AIRI] starting headless browser for LiveKit avatar")
-        self._submit_coro(
+
+        self._loop_thread.submit_future(
             self._run_headless_browser(
                 livekit_url=livekit_url,
                 livekit_token=livekit_token,
@@ -221,8 +197,10 @@ class AiriRunner(_InferenceRunner):
         if self._proc is not None and self._proc.returncode is None:
             return
 
-        fut = self._submit_coro(self._start_server())
-        fut.result(timeout=180)
+        try:
+            self._loop_thread.submit(self._start_server(), timeout=180)
+        except FutureTimeoutError as e:
+            raise TimeoutError("AIRI dev server startup timed out (>180s).") from e
 
     def run(self, data: bytes) -> bytes | None:
         json_data = json.loads(data)
@@ -233,3 +211,17 @@ class AiriRunner(_InferenceRunner):
                 return None
             case _:
                 return None
+
+    def close(self) -> None:
+        proc = self._proc
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        self._proc = None
+
+        try:
+            self._loop_thread.stop()
+        except Exception:
+            pass
