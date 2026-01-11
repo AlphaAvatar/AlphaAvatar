@@ -11,38 +11,67 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from abc import ABC, abstractmethod
 from enum import StrEnum
 from typing import Any, Literal
 
-from livekit.agents import RunContext
+from livekit.agents import NOT_GIVEN, NotGivenOr, RunContext
 
 from .base import ToolBase
 
 
 class RAGOp(StrEnum):
-    BASIC = "basic"
-    ADVANCED = "advanced"
+    QUERY = "query"
+    INDEXING = "indexing"
 
 
-class RAGBase:
+class RAGBase(ABC):
     """Base class for RAG API tools."""
 
     def __init__(self, *, name: str, description: str):
         self.name = name
         self.description = description
 
+    @abstractmethod
+    async def query(
+        self,
+        ctx: RunContext,
+        data_source: str = "all",
+        query: NotGivenOr[str] = NOT_GIVEN,
+    ) -> Any: ...
+
+    @abstractmethod
+    async def indexing(
+        self,
+        ctx: RunContext,
+        data_source: str = "all",
+        file_path: NotGivenOr[str] = NOT_GIVEN,
+    ) -> Any: ...
+
 
 class RAGAPI(ToolBase):
+    tool_description = "Tool for Retrieval-Augmented Generation (RAG) operations."
+
     def __init__(self, rag_object: RAGBase):
-        super().__init__(name=rag_object.name, description=rag_object.description)
+        super().__init__(
+            name=rag_object.name,
+            description=rag_object.description + "\n\n" + self.tool_description,
+        )
 
         self._rag_object = rag_object
 
     async def invoke(
         self,
         ctx: RunContext,
-        query: str,
-        search_depth: Literal["basic", "advanced"] = "basic",
-        max_results: int = 5,
+        op: Literal[RAGOp.QUERY, RAGOp.INDEXING],
+        data_source: str = "all",
+        query: NotGivenOr[str] = NOT_GIVEN,
+        file_path: NotGivenOr[str] = NOT_GIVEN,
     ) -> Any:
-        pass
+        match op:
+            case RAGOp.QUERY:
+                return await self._rag_object.query(ctx, data_source=data_source, query=query)
+            case RAGOp.INDEXING:
+                return await self._rag_object.indexing(
+                    ctx, data_source=data_source, file_path=file_path
+                )
