@@ -13,7 +13,6 @@
 # limitations under the License.
 import os
 import pathlib
-from typing import Literal
 
 from livekit.agents import NOT_GIVEN, NotGivenOr, RunContext
 from tavily import TavilyClient
@@ -21,7 +20,6 @@ from tavily import TavilyClient
 from alphaavatar.agents.tools import DeepResearchBase
 
 from .log import logger
-
 
 SEARCH_INSTANCE = "tavily"
 
@@ -32,7 +30,7 @@ class TavilyDeepResearchTool(DeepResearchBase):
         *args,
         working_dir: pathlib.Path,
         tavily_api_key: NotGivenOr[str] = NOT_GIVEN,
-        **kwargs
+        **kwargs,
     ) -> None:
         super().__init__()
 
@@ -49,36 +47,26 @@ class TavilyDeepResearchTool(DeepResearchBase):
         ctx: RunContext,
         query: str,
     ) -> dict:
-        logger.debug(f"[TavilyDeepResearchTool] search by query: {query}")
-        res = self._tavily_client.search(
-            query=query, search_depth="basic", max_results=5
-        )
+        logger.info(f"[TavilyDeepResearchTool] search func by query: {query}")
+        res = self._tavily_client.search(query=query, search_depth="basic", max_results=5)
         return res
-    
+
     async def research(
         self,
         ctx: RunContext,
         query: str,
     ) -> dict:
-        logger.debug(f"[TavilyDeepResearchTool] research by query: {query}")
-        res = self._tavily_client.search(
-            query=query, search_depth="advanced", max_results=5
-        )
+        logger.info(f"[TavilyDeepResearchTool] research func by query: {query}")
+        res = self._tavily_client.search(query=query, search_depth="advanced", max_results=5)
 
         return res
 
     async def scrape(self, ctx, urls: list[str]) -> list[str]:
-        logger.debug(f"[TavilyDeepResearchTool] scrape by urls: {urls}")
-        res = self._tavily_client.extract(
-            urls=urls,
-            include_images=True
-        )
+        logger.info(f"[TavilyDeepResearchTool] scrape func by urls: {urls}")
+        res = self._tavily_client.extract(urls=urls, include_images=True)
         return res
 
     async def download(self, ctx, urls: list[str]) -> list[str]:
-        logger.debug(f"[TavilyDeepResearchTool] download by urls: {urls}")
-        res = self._tavily_client.extract(
-            urls=urls,
-            include_images=True
-        )
+        logger.info(f"[TavilyDeepResearchTool] download func by urls: {urls}")
+        res = self._tavily_client.extract(urls=urls, include_images=True)
         return res

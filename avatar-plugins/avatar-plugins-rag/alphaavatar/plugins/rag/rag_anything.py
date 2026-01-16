@@ -28,7 +28,6 @@ from alphaavatar.agents.utils.loop_thread import AsyncLoopThread
 
 from .log import logger
 
-
 RAG_INSTANCE = "rag_anything"
 MAX_WORKERS = 4
 
@@ -59,7 +58,6 @@ class RAGAnythingTool(RAGBase):
         self._loop_thread.submit(self._load_instance())
 
     async def _load_instance(self) -> None:
-
         async def llm_model_func(
             prompt: str,
             system_prompt: str | None = None,
@@ -92,7 +90,9 @@ class RAGAnythingTool(RAGBase):
         if os.path.exists(self._working_dir) and os.listdir(self._working_dir):
             logger.info("[RAGAnythingTool] ✅ Found existing LightRAG instance, loading...")
         else:
-            logger.info("[RAGAnythingTool] ❌ No existing LightRAG instance found, will create new one")
+            logger.info(
+                "[RAGAnythingTool] ❌ No existing LightRAG instance found, will create new one"
+            )
 
         lightrag_instance = LightRAG(
             working_dir=self._working_dir,
@@ -187,10 +187,8 @@ class RAGAnythingTool(RAGBase):
             logger.warning("[RAGAnythingTool] Please provide valid query for [query] op!")
             return "Empty result because of invalid query"
 
-        result = await self._rag.aquery(
-            query,
-            mode="hybrid"
-        )
+        logger.info(f"[RAGAnythingTool] query func by query: {query}")
+        result = await self._rag.aquery(query, mode="hybrid")
         return result
 
     async def indexing(
@@ -202,8 +200,7 @@ class RAGAnythingTool(RAGBase):
         if os.path.isfile(file_path_or_dir):
             logger.info("[RAGAnythingTool] Begin to process document...")
             await self._rag.process_document_complete(
-                file_path=file_path_or_dir,
-                output_dir="./output"
+                file_path=file_path_or_dir, output_dir="./output"
             )
         elif os.path.isdir(file_path_or_dir):
             logger.info("[RAGAnythingTool] Begin to process folder...")
@@ -212,5 +209,5 @@ class RAGAnythingTool(RAGBase):
                 output_dir="./output",
                 file_extensions=[".pdf", ".docx", ".pptx"],
                 recursive=True,
-                max_workers=MAX_WORKERS
+                max_workers=MAX_WORKERS,
             )
