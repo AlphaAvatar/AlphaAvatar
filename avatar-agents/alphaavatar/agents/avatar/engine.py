@@ -48,7 +48,7 @@ class AvatarEngine(Agent):
         self._memory: MemoryBase = avatar_config.memory_config.get_plugin()
         self._persona: PersonaBase = avatar_config.persona_config.get_plugin()
         self._tools: list[llm.FunctionTool | llm.RawFunctionTool] = (
-            avatar_config.tools_config.get_tools()
+            avatar_config.tools_config.get_tools(self.session_config)
         )
 
         # Step4: initial avatar

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .base import ToolBase
-from .rag_api import RAGAPI
+from .deepresearch_api import DeepResearchBase, DeepResearchAPI
+from .rag_api import RAGBase, RAGAPI
 
-__all__ = ["ToolBase", "RAGAPI"]
+
+__all__ = ["ToolBase", "DeepResearchBase", "DeepResearchAPI", "RAGBase", "RAGAPI"]

@@ -13,12 +13,17 @@
 # limitations under the License.
 import os
 import uuid
-
+import pathlib
 from pydantic import BaseModel, Field
+
+from alphaavatar.agents.utils.file_utils import default_work_dir
+
+
+PROJECT_NAME = "alphaavatar"
 
 
 class AvatarInfoConfig(BaseModel):
-    """Configuration for the prompt used in the agent."""
+    """Configuration for the prompt used in the agent, , which will creat when server load."""
 
     avatar_id: str = Field(
         default=uuid.uuid4().hex,
@@ -36,6 +41,23 @@ class AvatarInfoConfig(BaseModel):
         default="server local time",
         description="The time zone where the Avatar is deployed is used to align with the user's time zone for related task execution",
     )
+    
+    avatar_work_dir: str = Field(
+        default="",
+        description=(
+            "Base work directory for this service. "
+            f"If empty, defaults to /var/lib/{PROJECT_NAME} (or ~/.local/share/{PROJECT_NAME} fallback). "
+            "Will create subdirs: <work_dir>/.cache and <work_dir>/data."
+        ),
+    )
 
     def model_post_init(self, __context):
         os.environ["AVATAR_TIMEZONE"] = self.avatar_timezone
+
+        if self.avatar_work_dir and self.avatar_work_dir.strip():
+            work_dir = pathlib.Path(self.avatar_work_dir) / PROJECT_NAME
+        else:
+            work_dir = default_work_dir(PROJECT_NAME)
+
+        work_dir.mkdir(parents=True, exist_ok=True)
+        os.environ["AVATAR_WORK_DIR"] = str(work_dir)

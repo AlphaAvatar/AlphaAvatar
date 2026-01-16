@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from alphaavatar.agents import AvatarModule, AvatarPlugin
+from alphaavatar.agents.tools import DeepResearchAPI
 
 from .deepresearch_tavily import TavilyDeepResearchTool
 from .log import logger
@@ -34,7 +35,9 @@ class TavilyPlugin(AvatarPlugin):
         **kwargs,
     ) -> TavilyDeepResearchTool:
         try:
-            return TavilyDeepResearchTool(*args, **kwargs)
+            deepresearch_obj = TavilyDeepResearchTool(*args, **kwargs)
+            deepresearch_api = DeepResearchAPI(deepresearch_obj)
+            return deepresearch_api
         except Exception:
             raise ImportError(
                 "The 'tavily[default]' DeepResearch plugin is required but is not installed.\n"

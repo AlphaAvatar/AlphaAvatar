@@ -13,17 +13,24 @@
 # limitations under the License.
 import inspect
 import os
+import pathlib
 from typing import Any
 
 from lightrag import LightRAG
 from lightrag.kg.shared_storage import initialize_pipeline_status
 from lightrag.llm.openai import openai_complete_if_cache, openai_embed
 from lightrag.utils import EmbeddingFunc
-from livekit.agents import NOT_GIVEN, NotGivenOr
+from livekit.agents import NOT_GIVEN, NotGivenOr, RunContext
 from raganything import RAGAnything
 
-from alphaavatar.agents.tools.rag_api import RAGBase
+from alphaavatar.agents.tools import RAGBase
 from alphaavatar.agents.utils.loop_thread import AsyncLoopThread
+
+from .log import logger
+
+
+RAG_INSTANCE = "rag_anything"
+MAX_WORKERS = 4
 
 
 async def _maybe_await(v):
@@ -33,33 +40,25 @@ async def _maybe_await(v):
 
 
 class RAGAnythingTool(RAGBase):
-    name = "RAG Anything class for Retrieval-Augmented Generation"
-    description = ""
-
     def __init__(
         self,
         *args,
-        working_dir: str = "",
+        working_dir: pathlib.Path,
         openai_api_key: NotGivenOr[str] = NOT_GIVEN,
         openai_base_url: NotGivenOr[str] = NOT_GIVEN,
         **kwargs,
     ):
-        super().__init__(name=self.name, description=self.description)
+        super().__init__()
 
-        self._working_dir = working_dir
-        self._openai_api_key = openai_api_key
-        self._openai_base_url = openai_base_url
-
-        self._loop_thread = AsyncLoopThread(name="raganything-loop")
+        self._working_dir = working_dir / RAG_INSTANCE
+        self._openai_api_key = openai_api_key or (os.getenv("OPENAI_API_KEY") or NOT_GIVEN)
+        self._openai_base_url = openai_base_url or (os.getenv("OPENAI_BASE_URL") or NOT_GIVEN)
 
         self._rag: RAGAnything | None = None
-        self._lightrag: LightRAG | None = None
+        self._loop_thread = AsyncLoopThread(name="raganything-loop")
+        self._loop_thread.submit(self._load_instance())
 
-        self._loop_thread.submit(self._ainit())
-
-    async def _ainit(self) -> None:
-        api_key = self._openai_api_key or (os.getenv("OPENAI_API_KEY") or NOT_GIVEN)
-        base_url = self._openai_base_url or (os.getenv("OPENAI_BASE_URL") or NOT_GIVEN)
+    async def _load_instance(self) -> None:
 
         async def llm_model_func(
             prompt: str,
@@ -73,8 +72,8 @@ class RAGAnythingTool(RAGBase):
                     prompt,
                     system_prompt=system_prompt,
                     history_messages=history_messages or [],
-                    api_key=api_key,
-                    base_url=base_url,
+                    api_key=self._openai_api_key,
+                    base_url=self._openai_base_url,
                     **kwargs,
                 )
             )
@@ -84,12 +83,17 @@ class RAGAnythingTool(RAGBase):
                 openai_embed(
                     texts,
                     model="text-embedding-3-large",
-                    api_key=api_key,
-                    base_url=base_url,
+                    api_key=self._openai_api_key,
+                    base_url=self._openai_base_url,
                 )
             )
 
         # Create/load LightRAG instance with your configuration
+        if os.path.exists(self._working_dir) and os.listdir(self._working_dir):
+            logger.info("[RAGAnythingTool] ✅ Found existing LightRAG instance, loading...")
+        else:
+            logger.info("[RAGAnythingTool] ❌ No existing LightRAG instance found, will create new one")
+
         lightrag_instance = LightRAG(
             working_dir=self._working_dir,
             llm_model_func=llm_model_func,
@@ -120,8 +124,8 @@ class RAGAnythingTool(RAGBase):
                         "gpt-4o",
                         "",
                         messages=messages,
-                        api_key=api_key,
-                        base_url=base_url,
+                        api_key=self._openai_api_key,
+                        base_url=self._openai_base_url,
                         **kwargs,
                     )
                 )
@@ -148,8 +152,8 @@ class RAGAnythingTool(RAGBase):
                         "gpt-4o",
                         "",
                         messages=mm_messages,
-                        api_key=api_key,
-                        base_url=base_url,
+                        api_key=self._openai_api_key,
+                        base_url=self._openai_base_url,
                         **kwargs,
                     )
                 )
@@ -160,7 +164,6 @@ class RAGAnythingTool(RAGBase):
             )
 
         # Now use existing LightRAG instance to initialize RAGAnything
-        self._lightrag = lightrag_instance
         self._rag = RAGAnything(
             lightrag=lightrag_instance,
             vision_model_func=vision_model_func,
@@ -173,3 +176,41 @@ class RAGAnythingTool(RAGBase):
 
     def close(self):
         self._loop_thread.stop()
+
+    async def query(
+        self,
+        ctx: RunContext,
+        data_source: str = "all",
+        query: NotGivenOr[str] = NOT_GIVEN,
+    ) -> str:
+        if query is NOT_GIVEN:
+            logger.warning("[RAGAnythingTool] Please provide valid query for [query] op!")
+            return "Empty result because of invalid query"
+
+        result = await self._rag.aquery(
+            query,
+            mode="hybrid"
+        )
+        return result
+
+    async def indexing(
+        self,
+        ctx: RunContext,
+        data_source: str = "all",
+        file_path_or_dir: NotGivenOr[str] = NOT_GIVEN,
+    ) -> Any:
+        if os.path.isfile(file_path_or_dir):
+            logger.info("[RAGAnythingTool] Begin to process document...")
+            await self._rag.process_document_complete(
+                file_path=file_path_or_dir,
+                output_dir="./output"
+            )
+        elif os.path.isdir(file_path_or_dir):
+            logger.info("[RAGAnythingTool] Begin to process folder...")
+            await self._rag.process_folder_complete(
+                folder_path=file_path_or_dir,
+                output_dir="./output",
+                file_extensions=[".pdf", ".docx", ".pptx"],
+                recursive=True,
+                max_workers=MAX_WORKERS
+            )

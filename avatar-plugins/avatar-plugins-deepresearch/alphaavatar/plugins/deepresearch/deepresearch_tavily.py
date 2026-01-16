@@ -12,59 +12,73 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import os
+import pathlib
 from typing import Literal
 
 from livekit.agents import NOT_GIVEN, NotGivenOr, RunContext
 from tavily import TavilyClient
 
-from alphaavatar.agents.tools import ToolBase
+from alphaavatar.agents.tools import DeepResearchBase
 
 from .log import logger
 
 
-class TavilyDeepResearchTool(ToolBase):
-    name = "tavily_deepresearch"
-    description = """Perform deep web research on a given topic using Tavily DeepResearch.
+SEARCH_INSTANCE = "tavily"
 
-This tool is best used when the task requires:
-- Broad information gathering from multiple sources
-- Exploratory research on unfamiliar or complex topics
-- Collecting background knowledge, trends, or comparisons
-- Answering open-ended questions that cannot be resolved from a single source
 
-It leverages Tavily's DeepResearch capabilities to search the web with
-configurable depth and result limits.
+class TavilyDeepResearchTool(DeepResearchBase):
+    def __init__(
+        self,
+        *args,
+        working_dir: pathlib.Path,
+        tavily_api_key: NotGivenOr[str] = NOT_GIVEN,
+        **kwargs
+    ) -> None:
+        super().__init__()
 
-Args:
-    query: The research question or topic to search for. Should be a natural
-        language description of what information is needed.
-    search_depth: The depth of the search.
-        - "basic": Faster, lighter search suitable for quick overviews.
-        - "advanced": Deeper, more comprehensive search across more sources.
-    max_results: The maximum number of search results to return.
-        Higher values provide broader coverage but may include more noise."""
-
-    def __init__(self, *args, tavily_api_key: NotGivenOr[str] = NOT_GIVEN, **kwargs) -> None:
-        super().__init__(
-            name=TavilyDeepResearchTool.name, description=TavilyDeepResearchTool.description
-        )
-
+        self._working_dir = working_dir / SEARCH_INSTANCE
         self._tavily_api_key = tavily_api_key or (os.getenv("TAVILY_API_KEY") or NOT_GIVEN)
+
         if not self._tavily_api_key:
             raise ValueError("TAVILY_API_KEY must be set by arguments or environment variables")
 
         self._tavily_client = TavilyClient(api_key=self._tavily_api_key)
 
-    async def invoke(
+    async def search(
         self,
         ctx: RunContext,
         query: str,
-        search_depth: Literal["basic", "advanced"] = "basic",
-        max_results: int = 5,
     ) -> dict:
+        logger.debug(f"[TavilyDeepResearchTool] search by query: {query}")
         res = self._tavily_client.search(
-            query=query, search_depth=search_depth, max_results=max_results
+            query=query, search_depth="basic", max_results=5
+        )
+        return res
+    
+    async def research(
+        self,
+        ctx: RunContext,
+        query: str,
+    ) -> dict:
+        logger.debug(f"[TavilyDeepResearchTool] research by query: {query}")
+        res = self._tavily_client.search(
+            query=query, search_depth="advanced", max_results=5
         )
 
-        logger.debug(f"[TavilyDeepResearchTool] search result: {res}")
+        return res
+
+    async def scrape(self, ctx, urls: list[str]) -> list[str]:
+        logger.debug(f"[TavilyDeepResearchTool] scrape by urls: {urls}")
+        res = self._tavily_client.extract(
+            urls=urls,
+            include_images=True
+        )
+        return res
+
+    async def download(self, ctx, urls: list[str]) -> list[str]:
+        logger.debug(f"[TavilyDeepResearchTool] download by urls: {urls}")
+        res = self._tavily_client.extract(
+            urls=urls,
+            include_images=True
+        )
         return res

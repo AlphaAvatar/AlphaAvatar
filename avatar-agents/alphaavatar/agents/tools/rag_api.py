@@ -27,10 +27,10 @@ class RAGOp(StrEnum):
 
 class RAGBase(ABC):
     """Base class for RAG API tools."""
+    name = "RAG"
+    description = """"""
 
-    def __init__(self, *, name: str, description: str):
-        self.name = name
-        self.description = description
+    def __init__(self, *args, **kwargs): ...
 
     @abstractmethod
     async def query(
@@ -45,17 +45,17 @@ class RAGBase(ABC):
         self,
         ctx: RunContext,
         data_source: str = "all",
-        file_path: NotGivenOr[str] = NOT_GIVEN,
+        file_path_or_dir: NotGivenOr[str] = NOT_GIVEN,
     ) -> Any: ...
 
 
 class RAGAPI(ToolBase):
-    tool_description = "Tool for Retrieval-Augmented Generation (RAG) operations."
+    args_description = ""
 
     def __init__(self, rag_object: RAGBase):
         super().__init__(
             name=rag_object.name,
-            description=rag_object.description + "\n\n" + self.tool_description,
+            description=rag_object.description + "\n\n" + self.args_description,
         )
 
         self._rag_object = rag_object
@@ -66,12 +66,20 @@ class RAGAPI(ToolBase):
         op: Literal[RAGOp.QUERY, RAGOp.INDEXING],
         data_source: str = "all",
         query: NotGivenOr[str] = NOT_GIVEN,
-        file_path: NotGivenOr[str] = NOT_GIVEN,
+        file_path_or_dir: NotGivenOr[str] = NOT_GIVEN,
     ) -> Any:
         match op:
             case RAGOp.QUERY:
                 return await self._rag_object.query(ctx, data_source=data_source, query=query)
             case RAGOp.INDEXING:
                 return await self._rag_object.indexing(
-                    ctx, data_source=data_source, file_path=file_path
+                    ctx, data_source=data_source, file_path_or_dir=file_path_or_dir
                 )
+
+    async def query(
+        self,
+        ctx: RunContext,
+        data_source: str = "all",
+        query: NotGivenOr[str] = NOT_GIVEN,
+    ):
+        return await self._rag_object.query(ctx, data_source=data_source, query=query)
