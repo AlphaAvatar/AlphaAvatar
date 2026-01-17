@@ -16,6 +16,7 @@
     - [PERSONA](#persona-plugin)
 - [Tools Plugins](#tools-plugins)
     - [Deep Research](#deepresearch)
+    - [RAG](#rag)
 - [NEXT STEPS](#next-steps)
 
 ---
