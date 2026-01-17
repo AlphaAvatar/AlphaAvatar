@@ -24,7 +24,6 @@
 
 | Plugin               | Description                                                                  |   Status   |
 | :------------------- | :--------------------------------------------------------------------------- | :--------: |
-| 📚 **RAG**           | Retrieval-Augmented Generation for improved reasoning & factual grounding.   | 🧩 Planned |
 | ⚙️ **Behavior**      | Controls AlphaAvatar’s behavior logic and process flow.                      | 🧩 Planned |
 | 💡 **Reflection**    | Generates metacognitive insights from memory and interaction history.        | 🧩 Planned |
 | 🧰 **MCP Tools**     | Modular control & orchestration layer for cross-plugin coordination.         | 🧩 Planned |
@@ -107,9 +106,29 @@
 
 | Date    | Milestone                                  | Notes                                                                          |
 | :------ | :----------------------------------------- | :----------------------------------------------------------------------------- |
-| 2025-12 | **Integrating the Tavily API into the DeepResearch plugin(v1)** | Supports fast online retrieval or deep search.. |
+| 2025-12 | **Integrating the Tavily API into the DeepResearch plugin(v1)** | Supports fast online retrieval or deep search, scraping and page to pdf. |
 
 ### 🧭 TODO
+
+| Priority | Task                                                                                                                         |     Stage      |
+| :------- | :--------------------------------------------------------------------------------------------------------------------------- | :-----------:  |
+| 🔹       | Allows you to retrieve all accessible webpage links under a specified webpage and store them in a specific folder for use by the RAG plugin. |   🧩 Planned   |
+
+## 📖 RAG
+
+### ✅ DONE
+
+| Date    | Milestone                                            | Notes                                                                          |
+| :------ | :--------------------------------------------------- | :----------------------------------------------------------------------------- |
+| 2026-01 | **Integrating the RAG Anything into the RAG plugin** | Supports query and indexing based on pages from DeepResearch plugin.           |
+
+### 🧭 TODO
+
+| Priority | Task                                                                                                                         |     Stage      |
+| :------- | :--------------------------------------------------------------------------------------------------------------------------- | :-----------:  |
+| 🔹       | Allow folder index building.                                                                                                 |   🧩 Planned   |
+| 🔹       | Allows queries to be performed against **different data sources**.                                                           |   🧩 Planned   |
+| 🔹       | Allows the construction of metadata (structured information such as directories) for different data sources, improving retrieval efficiency.  |   🧩 Planned   |
 
 ---
 
@@ -117,7 +136,5 @@
 
 | Quarter | Focus                        | Expected Outcome                                  |
 | :------ | :--------------------------- | :------------------------------------------------ |
-| Q4-2025 | Memory + Persona + Avatar Integration | Unified multimodal identity recognition pipeline. |
-| Q1-2026 | DeepResearch Integration    | Give AlphaAvatar the ability to access the network.    |
 | Q1-2026 | External Tool Integration    | Seamless task execution via MCP + RAG plugins.    |
 | Q2-2026 | Reflection Plugin Alpha      | Enable autonomous self-analysis & evolution.      |

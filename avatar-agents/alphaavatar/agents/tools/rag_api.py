@@ -27,10 +27,26 @@ class RAGOp(StrEnum):
 
 class RAGBase(ABC):
     """Base class for RAG API tools."""
-    name = "RAG"
-    description = """"""
 
-    def __init__(self, *args, **kwargs): ...
+    name = "RAG"
+    description = """Retrieve and ground answers using Retrieval-Augmented Generation (RAG).
+
+This tool is best used when the task requires:
+- Answering questions using your own indexed documents (PDF/Markdown/text)
+- Grounding responses with specific sources rather than general knowledge
+- Searching across a large local corpus (notes, reports, web snapshots, manuals)
+- Iteratively building and updating an index for later fast retrieval
+
+Typical workflow:
+1) Use indexing() to ingest files (e.g., PDFs downloaded from DeepResearch.download).
+2) Use query() to retrieve relevant chunks and produce grounded answers.
+
+Note:
+- "data_source" controls which collection/index to use (e.g., "all", "pdf", "web", "notes").
+- Indexing supports both individual file paths and directories containing many files."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__()
 
     @abstractmethod
     async def query(
@@ -45,12 +61,40 @@ class RAGBase(ABC):
         self,
         ctx: RunContext,
         data_source: str = "all",
-        file_path_or_dir: NotGivenOr[str] = NOT_GIVEN,
+        file_paths_or_dir: NotGivenOr[list[str]] = NOT_GIVEN,
     ) -> Any: ...
 
 
 class RAGAPI(ToolBase):
-    args_description = ""
+    args_description = """Args:
+    op:
+        The operation to perform. One of:
+        - "query": Retrieve from an existing index and return grounded results.
+        - "indexing": Ingest documents into an index for later retrieval.
+
+    data_source:
+        The target corpus/index name. Use "all" to query across all available
+        sources, or pass a specific collection key (e.g., "pdf", "web", "notes",
+        "project_docs"). This allows multiple independent indexes.
+
+    query:
+        The user question. Required for op="query". Should be a natural-language
+        question or instruction describing what you want to find in the indexed
+        content.
+
+    file_paths_or_dir:
+        A list of filesystem paths to files and/or directories to ingest.
+        Required for op="indexing".
+        - If a path is a directory, the implementation should recursively ingest
+          supported files inside it (commonly: .pdf, .md, .txt).
+        - If a path is a file, ingest that single file.
+
+Expected returns by op:
+    - query(data_source, query) -> retrieval results and/or grounded answer
+      (implementation-defined, e.g., list of passages with metadata, plus a synthesis)
+    - indexing(data_source, file_paths_or_dir) -> indexing status/summary
+      (implementation-defined, e.g., counts of documents/chunks, doc_ids, errors)
+"""
 
     def __init__(self, rag_object: RAGBase):
         super().__init__(
@@ -66,14 +110,14 @@ class RAGAPI(ToolBase):
         op: Literal[RAGOp.QUERY, RAGOp.INDEXING],
         data_source: str = "all",
         query: NotGivenOr[str] = NOT_GIVEN,
-        file_path_or_dir: NotGivenOr[str] = NOT_GIVEN,
+        file_paths_or_dir: NotGivenOr[list[str]] = NOT_GIVEN,
     ) -> Any:
         match op:
             case RAGOp.QUERY:
                 return await self._rag_object.query(ctx, data_source=data_source, query=query)
             case RAGOp.INDEXING:
                 return await self._rag_object.indexing(
-                    ctx, data_source=data_source, file_path_or_dir=file_path_or_dir
+                    ctx, data_source=data_source, file_paths_or_dir=file_paths_or_dir
                 )
 
     async def query(

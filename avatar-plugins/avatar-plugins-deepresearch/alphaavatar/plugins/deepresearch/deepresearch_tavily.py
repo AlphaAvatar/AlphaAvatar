@@ -18,6 +18,7 @@ from livekit.agents import NOT_GIVEN, NotGivenOr, RunContext
 from tavily import TavilyClient
 
 from alphaavatar.agents.tools import DeepResearchBase
+from alphaavatar.agents.utils import file_utils
 
 from .log import logger
 
@@ -42,6 +43,10 @@ class TavilyDeepResearchTool(DeepResearchBase):
 
         self._tavily_client = TavilyClient(api_key=self._tavily_api_key)
 
+    def _get_page_content(self, urls: list[str]) -> dict[str]:
+        res = self._tavily_client.extract(urls=urls, include_images=True, format="markdown")
+        return res
+
     async def search(
         self,
         ctx: RunContext,
@@ -61,12 +66,15 @@ class TavilyDeepResearchTool(DeepResearchBase):
 
         return res
 
-    async def scrape(self, ctx, urls: list[str]) -> list[str]:
+    async def scrape(self, ctx, urls: list[str]) -> str:
         logger.info(f"[TavilyDeepResearchTool] scrape func by urls: {urls}")
-        res = self._tavily_client.extract(urls=urls, include_images=True)
+        res: dict[str] = self._get_page_content(urls=urls)
         return res
 
-    async def download(self, ctx, urls: list[str]) -> list[str]:
+    async def download(self, ctx, urls: list[str]) -> str:
         logger.info(f"[TavilyDeepResearchTool] download func by urls: {urls}")
-        res = self._tavily_client.extract(urls=urls, include_images=True)
+        res: dict[str] = self._get_page_content(urls=urls)
+        file_utils.markdown_str_to_pdf(
+            md_text=res, output_pdf_path=str(self._working_dir / "tavily_download.pdf")
+        )
         return res

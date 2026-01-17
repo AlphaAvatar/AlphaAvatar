@@ -25,6 +25,11 @@ classifiers = [
 ]
 dependencies = [
     "python-dotenv",
+    "mcp>=1.10.0, <2",
+    "omegaconf",
+    "markdown",
+    "weasyprint",
+    "python-slugify",
     "livekit>=1.0.12,<2",
     "livekit-api>=1.0.4,<2",
     "livekit-protocol~=1.0",
@@ -34,8 +39,6 @@ dependencies = [
     "livekit-plugins-openai>=1.2.4",
     "livekit-plugins-silero>=1.2.5",
     "livekit-plugins-turn-detector>=1.2.4",
-    "mcp>=1.10.0, <2",
-    "omegaconf",
     "alpha-avatar-plugins-memory>=0.1.0",
     "alpha-avatar-plugins-persona>=0.1.0",
 ]

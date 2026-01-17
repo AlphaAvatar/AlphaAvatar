@@ -15,7 +15,9 @@ import os
 import pathlib
 import re
 
+from markdown import markdown
 from pydantic import BaseModel, ConfigDict, Field
+from weasyprint import CSS, HTML
 
 _SAFE = re.compile(r"[^a-zA-Z0-9._-]+")
 
@@ -83,4 +85,59 @@ def mk_user_dirs(work_dir: str, user_id: str) -> UserPath:
         data_dir=data_dir,
         cache_dir=cache_dir,
         logs_dir=logs_dir,
+    )
+
+
+def markdown_str_to_pdf(
+    md_text: str,
+    output_pdf_path: str,
+) -> None:
+    """
+    Convert a Markdown string to a PDF file.
+
+    Steps:
+    1. Markdown string -> HTML
+    2. HTML -> PDF using WeasyPrint
+
+    :param md_text: Markdown content as a string
+    :param output_pdf_path: Output PDF file path
+    """
+
+    # Convert Markdown to HTML
+    html_content = markdown(
+        md_text,
+        extensions=[
+            "extra",  # Tables, fenced code blocks, etc.
+            "codehilite",  # Syntax highlighting for code blocks
+            "toc",  # Table of contents support
+        ],
+        output_format="html5",
+    )
+
+    # Optional: basic CSS for better PDF appearance
+    css = CSS(
+        string="""
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        h1, h2, h3 {
+            color: #333;
+        }
+        pre {
+            background: #f6f8fa;
+            padding: 10px;
+            overflow-x: auto;
+        }
+        code {
+            font-family: Consolas, Monaco, monospace;
+        }
+        """
+    )
+
+    # Render HTML to PDF
+    HTML(string=html_content).write_pdf(
+        output_pdf_path,
+        stylesheets=[css],
     )

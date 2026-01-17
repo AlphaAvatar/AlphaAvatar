@@ -29,8 +29,9 @@ class DeepResearchOp(StrEnum):
 
 class DeepResearchBase(ABC):
     """Base class for RAG API tools."""
+
     name = "DeepResearch"
-    description = """Perform deep web research on a given topic using Tavily DeepResearch.
+    description = """Perform deep web research and content acquisition for a given topic.
 
 This tool is best used when the task requires:
 - Broad information gathering from multiple sources
@@ -38,10 +39,24 @@ This tool is best used when the task requires:
 - Collecting background knowledge, trends, or comparisons
 - Answering open-ended questions that cannot be resolved from a single source
 
-It leverages Tavily's DeepResearch capabilities to search the web with
-configurable depth and result limits."""
+It exposes four operations (op) that can be composed into a pipeline:
+- search:
+    Perform a lightweight web search for quick discovery. Use this when you
+    need fast, broad results with minimal reasoning.
+- research:
+    Perform deep, multi-step research. Use this when the question requires
+    decomposition, iterative searching, cross-source comparison, and reasoning.
+- scrape:
+    Given a list of URLs, fetch and extract the main page contents, then
+    merge them into an integrated Markdown text suitable for downstream
+    processing (e.g., summarization, indexing).
+- download:
+    Given a list of URLs, fetch pages and convert them into stored PDF
+    artifacts, returning a list of stored file references (string list)
+    for downstream tools/plugins (e.g., a RAG plugin building a local index)."""
 
-    def __init__(self, *args, **kwargs): ...
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__()
 
     @abstractmethod
     async def search(
@@ -73,13 +88,34 @@ configurable depth and result limits."""
 
 
 class DeepResearchAPI(ToolBase):
-    args_description = """
-Args:
-    query: The research question or topic to search for. Should be a natural
-        language description of what information is needed.
-    search_depth: The depth of the search.
-        - "basic": Faster, lighter search suitable for quick overviews.
-        - "advanced": Deeper, more comprehensive search across more sources."""
+    args_description = """Args:
+    op:
+        The operation to perform. One of:
+        - "search": Simple web search (fast discovery, minimal reasoning).
+        - "research": Deep multi-step research (query decomposition, iterative
+          searching, cross-source synthesis).
+        - "scrape": Fetch the given URL list and return ONE integrated Markdown
+          text that merges the extracted contents.
+        - "download": Fetch the given URL list, convert pages to PDFs, store them,
+          and return a list of stored file references (strings) for downstream
+          tools/plugins (e.g., RAG indexing).
+
+    query:
+        The research question or search topic. Required for "search" and
+        "research". Should be a natural-language description of what information
+        is needed.
+
+    urls:
+        A list of URLs to process. Required for "scrape" and "download".
+        Use URLs returned by "search" or "research".
+
+Expected returns by op:
+    - search(query) -> search results (e.g., list of {title, url, snippet}, etc.)
+    - research(query) -> enriched results + synthesis (e.g., ranked sources,
+      key findings, structured summary)
+    - scrape(urls) -> integrated Markdown string (merged content from all URLs)
+    - download(urls) -> str of stored PDF file references/paths
+"""
 
     def __init__(self, deepresearch_object: DeepResearchBase):
         super().__init__(
@@ -92,7 +128,12 @@ Args:
     async def invoke(
         self,
         ctx: RunContext,
-        op: Literal[DeepResearchOp.SEARCH, DeepResearchOp.RESEARCH, DeepResearchOp.SCRAPE, DeepResearchOp.DOWNLOAD],
+        op: Literal[
+            DeepResearchOp.SEARCH,
+            DeepResearchOp.RESEARCH,
+            DeepResearchOp.SCRAPE,
+            DeepResearchOp.DOWNLOAD,
+        ],
         query: NotGivenOr[str] = NOT_GIVEN,
         urls: NotGivenOr[list[str]] = NOT_GIVEN,
     ) -> Any:
