@@ -11,14 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import importlib
+from typing import TYPE_CHECKING
 
 from livekit.agents import llm
 from pydantic import BaseModel, Field
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
-from alphaavatar.agents.configs import SessionConfig
-from alphaavatar.agents.tools import ToolBase, RAGAPI
+from alphaavatar.agents.tools import RAGAPI, ToolBase
+
+if TYPE_CHECKING:
+    from alphaavatar.agents.configs import SessionConfig
 
 
 importlib.import_module("alphaavatar.plugins.deepresearch")
@@ -33,7 +38,7 @@ class ToolsConfig(BaseModel):
         default={},
         description="Custom configuration parameters for the deepresearch tool plugin.",
     )
-    
+
     rag_tool: str = Field(
         default="default",
         description="Avatar RAG tool plugin to use for agent.",
@@ -45,7 +50,9 @@ class ToolsConfig(BaseModel):
 
     def model_post_init(self, __context): ...
 
-    def get_tools(self, session_config: SessionConfig) -> list[llm.FunctionTool | llm.RawFunctionTool]:
+    def get_tools(
+        self, session_config: SessionConfig
+    ) -> list[llm.FunctionTool | llm.RawFunctionTool]:
         """Returns the available tools based on the configuration."""
         tools = []
 
@@ -54,17 +61,17 @@ class ToolsConfig(BaseModel):
             AvatarModule.DEEPRESEARCH,
             self.deepresearch_tool,
             character_init_config=self.deepresearch_init_config,
-            working_dir=session_config.user_path.data_dir
+            working_dir=session_config.user_path.data_dir,
         )
         if deepresearch_tool:
             tools.append(deepresearch_tool.tool)
-        
+
         # RAG Tool
         rag_tool: RAGAPI | None = AvatarPlugin.get_avatar_plugin(
             AvatarModule.RAG,
             self.rag_tool,
             character_init_config=self.rag_init_config,
-            working_dir=session_config.user_path.data_dir
+            working_dir=session_config.user_path.data_dir,
         )
         if rag_tool:
             tools.append(rag_tool.tool)

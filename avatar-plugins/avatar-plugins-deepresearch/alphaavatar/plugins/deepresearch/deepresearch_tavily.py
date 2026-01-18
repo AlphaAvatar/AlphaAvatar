@@ -49,8 +49,9 @@ class TavilyDeepResearchTool(DeepResearchBase):
 
     async def search(
         self,
-        ctx: RunContext,
+        *,
         query: str,
+        ctx: RunContext | None = None,
     ) -> dict:
         logger.info(f"[TavilyDeepResearchTool] search func by query: {query}")
         res = self._tavily_client.search(query=query, search_depth="basic", max_results=5)
@@ -58,20 +59,21 @@ class TavilyDeepResearchTool(DeepResearchBase):
 
     async def research(
         self,
-        ctx: RunContext,
+        *,
         query: str,
+        ctx: RunContext | None = None,
     ) -> dict:
         logger.info(f"[TavilyDeepResearchTool] research func by query: {query}")
         res = self._tavily_client.search(query=query, search_depth="advanced", max_results=5)
 
         return res
 
-    async def scrape(self, ctx, urls: list[str]) -> str:
+    async def scrape(self, *, urls: list[str], ctx: RunContext | None = None) -> str:
         logger.info(f"[TavilyDeepResearchTool] scrape func by urls: {urls}")
         res: dict[str] = self._get_page_content(urls=urls)
         return res
 
-    async def download(self, ctx, urls: list[str]) -> str:
+    async def download(self, *, urls: list[str], ctx: RunContext | None = None) -> str:
         logger.info(f"[TavilyDeepResearchTool] download func by urls: {urls}")
         res: dict[str] = self._get_page_content(urls=urls)
         file_utils.markdown_str_to_pdf(

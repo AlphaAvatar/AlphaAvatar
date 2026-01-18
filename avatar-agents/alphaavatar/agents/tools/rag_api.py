@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from enum import StrEnum
 from typing import Any, Literal
 
-from livekit.agents import NOT_GIVEN, NotGivenOr, RunContext
+from livekit.agents import RunContext
 
 from .base import ToolBase
 
@@ -51,17 +51,19 @@ Note:
     @abstractmethod
     async def query(
         self,
-        ctx: RunContext,
+        *,
+        query: str,
+        ctx: RunContext | None = None,
         data_source: str = "all",
-        query: NotGivenOr[str] = NOT_GIVEN,
     ) -> Any: ...
 
     @abstractmethod
     async def indexing(
         self,
-        ctx: RunContext,
+        *,
+        file_paths_or_dir: list[str],
+        ctx: RunContext | None = None,
         data_source: str = "all",
-        file_paths_or_dir: NotGivenOr[list[str]] = NOT_GIVEN,
     ) -> Any: ...
 
 
@@ -109,21 +111,20 @@ Expected returns by op:
         ctx: RunContext,
         op: Literal[RAGOp.QUERY, RAGOp.INDEXING],
         data_source: str = "all",
-        query: NotGivenOr[str] = NOT_GIVEN,
-        file_paths_or_dir: NotGivenOr[list[str]] = NOT_GIVEN,
+        query: str | None = None,
+        file_paths_or_dir: list[str] | None = None,
     ) -> Any:
         match op:
             case RAGOp.QUERY:
-                return await self._rag_object.query(ctx, data_source=data_source, query=query)
+                return await self._rag_object.query(query=query, ctx=ctx, data_source=data_source)
             case RAGOp.INDEXING:
                 return await self._rag_object.indexing(
-                    ctx, data_source=data_source, file_paths_or_dir=file_paths_or_dir
+                    file_paths_or_dir=file_paths_or_dir, ctx=ctx, data_source=data_source
                 )
 
     async def query(
         self,
-        ctx: RunContext,
+        query: str,
         data_source: str = "all",
-        query: NotGivenOr[str] = NOT_GIVEN,
     ):
-        return await self._rag_object.query(ctx, data_source=data_source, query=query)
+        return await self._rag_object.query(query=query, data_source=data_source)

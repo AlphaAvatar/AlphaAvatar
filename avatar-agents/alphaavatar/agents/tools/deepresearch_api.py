@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from enum import StrEnum
 from typing import Any, Literal
 
-from livekit.agents import NOT_GIVEN, NotGivenOr, RunContext
+from livekit.agents import RunContext
 
 from .base import ToolBase
 
@@ -61,29 +61,33 @@ It exposes four operations (op) that can be composed into a pipeline:
     @abstractmethod
     async def search(
         self,
-        ctx: RunContext,
-        query: NotGivenOr[str] = NOT_GIVEN,
+        *,
+        query: str,
+        ctx: RunContext | None = None,
     ) -> Any: ...
 
     @abstractmethod
     async def research(
         self,
-        ctx: RunContext,
-        query: NotGivenOr[str] = NOT_GIVEN,
+        *,
+        query: str,
+        ctx: RunContext | None = None,
     ) -> Any: ...
 
     @abstractmethod
     async def scrape(
         self,
-        ctx: RunContext,
-        urls: NotGivenOr[list[str]] = NOT_GIVEN,
+        *,
+        urls: list[str],
+        ctx: RunContext | None = None,
     ) -> Any: ...
 
     @abstractmethod
     async def download(
         self,
-        ctx: RunContext,
-        urls: NotGivenOr[list[str]] = NOT_GIVEN,
+        *,
+        urls: list[str],
+        ctx: RunContext | None = None,
     ) -> Any: ...
 
 
@@ -134,15 +138,15 @@ Expected returns by op:
             DeepResearchOp.SCRAPE,
             DeepResearchOp.DOWNLOAD,
         ],
-        query: NotGivenOr[str] = NOT_GIVEN,
-        urls: NotGivenOr[list[str]] = NOT_GIVEN,
+        query: str | None = None,
+        urls: list[str] | None = None,
     ) -> Any:
         match op:
             case DeepResearchOp.SEARCH:
-                return await self._deepresearch_object.search(ctx, query=query)
-            case DeepResearchOp.SEARCH:
-                return await self._deepresearch_object.research(ctx, query=query)
+                return await self._deepresearch_object.search(query=query, ctx=ctx)
+            case DeepResearchOp.RESEARCH:
+                return await self._deepresearch_object.research(query=query, ctx=ctx)
             case DeepResearchOp.SCRAPE:
-                return await self._deepresearch_object.scrape(ctx, urls=urls)
+                return await self._deepresearch_object.scrape(urls=urls, ctx=ctx)
             case DeepResearchOp.DOWNLOAD:
-                return await self._deepresearch_object.download(ctx, urls=urls)
+                return await self._deepresearch_object.download(urls=urls, ctx=ctx)

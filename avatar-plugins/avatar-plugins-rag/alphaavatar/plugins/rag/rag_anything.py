@@ -179,9 +179,10 @@ class RAGAnythingTool(RAGBase):
 
     async def query(
         self,
-        ctx: RunContext,
+        *,
+        query: str,
+        ctx: RunContext | None = None,
         data_source: str = "all",
-        query: NotGivenOr[str] = NOT_GIVEN,
     ) -> str:
         if query is NOT_GIVEN:
             logger.warning("[RAGAnythingTool] Please provide valid query for [query] op!")
@@ -193,21 +194,24 @@ class RAGAnythingTool(RAGBase):
 
     async def indexing(
         self,
-        ctx: RunContext,
+        *,
+        file_paths_or_dir: list[str],
+        ctx: RunContext | None = None,
         data_source: str = "all",
-        file_path_or_dir: NotGivenOr[str] = NOT_GIVEN,
     ) -> Any:
-        if os.path.isfile(file_path_or_dir):
-            logger.info("[RAGAnythingTool] Begin to process document...")
-            await self._rag.process_document_complete(
-                file_path=file_path_or_dir, output_dir="./output"
-            )
-        elif os.path.isdir(file_path_or_dir):
-            logger.info("[RAGAnythingTool] Begin to process folder...")
-            await self._rag.process_folder_complete(
-                folder_path=file_path_or_dir,
-                output_dir="./output",
-                file_extensions=[".pdf", ".docx", ".pptx"],
-                recursive=True,
-                max_workers=MAX_WORKERS,
-            )
+        logger.info("[RAGAnythingTool] indexing func:")
+        for file_path_or_dir in file_paths_or_dir:
+            if os.path.isfile(file_path_or_dir):
+                logger.info(f"[RAGAnythingTool] Begin to process document [{file_path_or_dir}] ...")
+                await self._rag.process_document_complete(
+                    file_path=file_path_or_dir, output_dir="./output"
+                )
+            elif os.path.isdir(file_path_or_dir):
+                logger.info(f"[RAGAnythingTool] Begin to process folder [{file_path_or_dir}] ...")
+                await self._rag.process_folder_complete(
+                    folder_path=file_path_or_dir,
+                    output_dir="./output",
+                    file_extensions=[".pdf", ".docx", ".pptx"],
+                    recursive=True,
+                    max_workers=MAX_WORKERS,
+                )

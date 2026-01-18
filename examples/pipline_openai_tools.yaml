@@ -15,7 +15,7 @@ allow_interruptions: true
 avatar_id: alphaavatar_tools
 avatar_name: "Tools Assistant"
 avatar_introduction: "You are a helpful Tools Assistant. You assist users by effectively utilizing various tools to provide accurate and efficient responses. Always aim to understand the user's needs and select the most appropriate tool to fulfill their requests. Communicate clearly and concisely, ensuring that your responses are easy to understand. Your primary goal is to enhance the user experience by leveraging the capabilities of the available tools."
-avatar_work_dir: ~/.alphaavatar_workspace/
+avatar_work_dir: .alphaavatar_workspace/
 
 ### Character Args
 character_plugin: None
