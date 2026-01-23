@@ -21,7 +21,7 @@ from lightrag.kg.shared_storage import initialize_pipeline_status
 from lightrag.llm.openai import openai_complete_if_cache, openai_embed
 from lightrag.utils import EmbeddingFunc
 from livekit.agents import NOT_GIVEN, NotGivenOr, RunContext
-from raganything import RAGAnything
+from raganything import RAGAnything, RAGAnythingConfig
 
 from alphaavatar.agents.tools import RAGBase
 from alphaavatar.agents.utils.loop_thread import AsyncLoopThread
@@ -165,8 +165,10 @@ class RAGAnythingTool(RAGBase):
 
         # Now use existing LightRAG instance to initialize RAGAnything
         self._rag = RAGAnything(
+            config=RAGAnythingConfig(working_dir=self._working_dir),
             lightrag=lightrag_instance,
             vision_model_func=vision_model_func,
+            # Note: working_dir, llm_model_func, embedding_func, etc. are inherited from lightrag_instance
         )
 
     def _require_ready(self) -> RAGAnything:

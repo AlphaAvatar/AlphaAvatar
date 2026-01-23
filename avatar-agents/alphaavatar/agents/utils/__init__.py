@@ -13,7 +13,7 @@
 # limitations under the License.
 from .dual_key_dict import DualKeyDict
 from .enum import SessionType
-from .id_utils import get_session_id, get_user_id
+from .id_utils import get_session_id, get_user_id, url_to_filename_id
 from .loop_thread import AsyncLoopThread
 from .op_utils import NumpyOP
 from .time_utils import AvatarTime, format_current_time, get_timestamp, time_str_to_datetime
@@ -24,6 +24,7 @@ __all__ = [
     "SessionType",
     "get_session_id",
     "get_user_id",
+    "url_to_filename_id",
     "AsyncLoopThread",
     "NumpyOP",
     "AvatarTime",

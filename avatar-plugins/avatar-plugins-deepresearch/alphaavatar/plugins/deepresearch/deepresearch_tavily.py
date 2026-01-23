@@ -18,9 +18,11 @@ from livekit.agents import NOT_GIVEN, NotGivenOr, RunContext
 from tavily import TavilyClient
 
 from alphaavatar.agents.tools import DeepResearchBase
-from alphaavatar.agents.utils import file_utils
+from alphaavatar.agents.utils import url_to_filename_id
+from alphaavatar.agents.utils.files import save_single_url_content_to_pdf
 
 from .log import logger
+from .schema.tavily_obj import TavilyExtractObj
 
 SEARCH_INSTANCE = "tavily"
 
@@ -45,7 +47,7 @@ class TavilyDeepResearchTool(DeepResearchBase):
 
     def _get_page_content(self, urls: list[str]) -> dict[str]:
         res = self._tavily_client.extract(urls=urls, include_images=True, format="markdown")
-        return res
+        return TavilyExtractObj.from_dict(res)
 
     async def search(
         self,
@@ -54,7 +56,9 @@ class TavilyDeepResearchTool(DeepResearchBase):
         ctx: RunContext | None = None,
     ) -> dict:
         logger.info(f"[TavilyDeepResearchTool] search func by query: {query}")
-        res = self._tavily_client.search(query=query, search_depth="basic", max_results=5)
+        res: dict[str] = self._tavily_client.search(
+            query=query, search_depth="basic", max_results=5
+        )
         return res
 
     async def research(
@@ -65,18 +69,59 @@ class TavilyDeepResearchTool(DeepResearchBase):
     ) -> dict:
         logger.info(f"[TavilyDeepResearchTool] research func by query: {query}")
         res = self._tavily_client.search(query=query, search_depth="advanced", max_results=5)
-
         return res
 
     async def scrape(self, *, urls: list[str], ctx: RunContext | None = None) -> str:
         logger.info(f"[TavilyDeepResearchTool] scrape func by urls: {urls}")
-        res: dict[str] = self._get_page_content(urls=urls)
-        return res
+        extract_obj: TavilyExtractObj = self._get_page_content(urls=urls)
+        return extract_obj.to_markdown()
 
     async def download(self, *, urls: list[str], ctx: RunContext | None = None) -> str:
         logger.info(f"[TavilyDeepResearchTool] download func by urls: {urls}")
-        res: dict[str] = self._get_page_content(urls=urls)
-        file_utils.markdown_str_to_pdf(
-            md_text=res, output_pdf_path=str(self._working_dir / "tavily_download.pdf")
-        )
-        return res
+
+        res: TavilyExtractObj = self._get_page_content(urls=urls)
+
+        out_root = self._working_dir.resolve()
+        saved_lines: list[str] = []
+        for idx, item in enumerate(res.results, start=1):
+            safe_name = url_to_filename_id(item.url)
+            page_dir = self._working_dir / safe_name
+            page_dir.mkdir(parents=True, exist_ok=True)
+
+            out_pdf = (page_dir / "page.pdf").resolve()
+
+            save_single_url_content_to_pdf(
+                url=item.url,
+                title=item.title,
+                markdown_content=item.raw_content,
+                output_pdf_path=str(out_pdf),
+                work_dir=page_dir,
+                extra_image_urls=item.images,
+            )
+
+            title = (item.title or "").strip() or "Untitled"
+            saved_lines.append(
+                f"{idx}. Title: {title}\n   URL: {item.url}\n   Saved PDF: {out_pdf}\n"
+            )
+
+        failed_lines: list[str] = []
+        if res.failed_results:
+            for idx, fr in enumerate(res.failed_results, start=1):
+                failed_lines.append(f"{idx}. {fr}")
+
+        summary = [
+            "✅ All URLs have been downloaded and saved successfully.",
+            f"Root output directory: {out_root}",
+            "",
+            "Saved files:",
+            *saved_lines,
+        ]
+
+        if failed_lines:
+            summary += [
+                "",
+                "⚠️ Failed results:",
+                *failed_lines,
+            ]
+
+        return "\n".join(summary)

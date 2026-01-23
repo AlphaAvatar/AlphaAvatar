@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import os
-import uuid
 import pathlib
+import uuid
+
 from pydantic import BaseModel, Field
 
-from alphaavatar.agents.utils.file_utils import default_work_dir
-
+from alphaavatar.agents.utils.files.work_dirs import default_work_dir
 
 PROJECT_NAME = "alphaavatar"
 
@@ -41,7 +41,7 @@ class AvatarInfoConfig(BaseModel):
         default="server local time",
         description="The time zone where the Avatar is deployed is used to align with the user's time zone for related task execution",
     )
-    
+
     avatar_work_dir: str = Field(
         default="",
         description=(

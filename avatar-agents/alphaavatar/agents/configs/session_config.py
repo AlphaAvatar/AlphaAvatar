@@ -16,7 +16,7 @@ import uuid
 
 from pydantic import BaseModel, Field
 
-from alphaavatar.agents.utils.file_utils import mk_user_dirs, UserPath
+from alphaavatar.agents.utils.files.work_dirs import UserPath, mk_user_dirs
 
 
 class SessionConfig(BaseModel):

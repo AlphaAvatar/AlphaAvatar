@@ -55,7 +55,7 @@ class AvatarPlugin(Plugin):
         module_plugins = cls.avatar_registered_plugins[module]
         if name not in module_plugins:
             logger.warning(
-                f"We only supoort the following [{module}] plugins right now, please check again:\n{list(module_plugins.keys())}"
+                f"Plugin {name} is not registered for module {module}. {module} Module only has plugins: {list(module_plugins.keys())}."
             )
             return None
 

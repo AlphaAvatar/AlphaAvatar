@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
 
 importlib.import_module("alphaavatar.plugins.deepresearch")
+importlib.import_module("alphaavatar.plugins.rag")
 
 
 class ToolsConfig(BaseModel):
