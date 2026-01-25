@@ -88,7 +88,7 @@ class TavilyDeepResearchTool(DeepResearchBase):
             page_dir = self._working_dir / safe_name
             page_dir.mkdir(parents=True, exist_ok=True)
 
-            out_pdf = (page_dir / "page.pdf").resolve()
+            out_pdf = (page_dir / f"{safe_name}_page.pdf").resolve()
 
             save_single_url_content_to_pdf(
                 url=item.url,

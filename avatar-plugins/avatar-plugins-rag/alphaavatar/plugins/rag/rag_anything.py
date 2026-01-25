@@ -50,6 +50,9 @@ class RAGAnythingTool(RAGBase):
         super().__init__()
 
         self._working_dir = working_dir / RAG_INSTANCE
+        self._working_dir_index = self._working_dir / "index"
+        self._working_dir_artifacts = self._working_dir / "artifacts"
+
         self._openai_api_key = openai_api_key or (os.getenv("OPENAI_API_KEY") or NOT_GIVEN)
         self._openai_base_url = openai_base_url or (os.getenv("OPENAI_BASE_URL") or NOT_GIVEN)
 
@@ -87,7 +90,7 @@ class RAGAnythingTool(RAGBase):
             )
 
         # Create/load LightRAG instance with your configuration
-        if os.path.exists(self._working_dir) and os.listdir(self._working_dir):
+        if os.path.exists(self._working_dir_index) and os.listdir(self._working_dir_index):
             logger.info("[RAGAnythingTool] ✅ Found existing LightRAG instance, loading...")
         else:
             logger.info(
@@ -95,7 +98,7 @@ class RAGAnythingTool(RAGBase):
             )
 
         lightrag_instance = LightRAG(
-            working_dir=self._working_dir,
+            working_dir=self._working_dir_index,
             llm_model_func=llm_model_func,
             embedding_func=EmbeddingFunc(
                 embedding_dim=3072,
@@ -191,7 +194,9 @@ class RAGAnythingTool(RAGBase):
             return "Empty result because of invalid query"
 
         logger.info(f"[RAGAnythingTool] query func by query: {query}")
-        result = await self._rag.aquery(query, mode="hybrid")
+
+        rag = self._require_ready()
+        result = await rag.aquery(query, mode="hybrid")
         return result
 
     async def indexing(
@@ -201,18 +206,23 @@ class RAGAnythingTool(RAGBase):
         ctx: RunContext | None = None,
         data_source: str = "all",
     ) -> Any:
-        logger.info("[RAGAnythingTool] indexing func:")
+        rag = self._require_ready()
+
         for file_path_or_dir in file_paths_or_dir:
             if os.path.isfile(file_path_or_dir):
-                logger.info(f"[RAGAnythingTool] Begin to process document [{file_path_or_dir}] ...")
-                await self._rag.process_document_complete(
-                    file_path=file_path_or_dir, output_dir="./output"
+                logger.info(
+                    f"[RAGAnythingTool] Indexing func begin to process document [{file_path_or_dir}] ..."
+                )
+                await rag.process_document_complete(
+                    file_path=file_path_or_dir, output_dir=str(self._working_dir_artifacts)
                 )
             elif os.path.isdir(file_path_or_dir):
-                logger.info(f"[RAGAnythingTool] Begin to process folder [{file_path_or_dir}] ...")
-                await self._rag.process_folder_complete(
+                logger.info(
+                    f"[RAGAnythingTool] Indexing func begin to process folder [{file_path_or_dir}] ..."
+                )
+                await rag.process_folder_complete(
                     folder_path=file_path_or_dir,
-                    output_dir="./output",
+                    output_dir=str(self._working_dir_artifacts),
                     file_extensions=[".pdf", ".docx", ".pptx"],
                     recursive=True,
                     max_workers=MAX_WORKERS,

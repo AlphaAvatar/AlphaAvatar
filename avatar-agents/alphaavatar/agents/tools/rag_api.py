@@ -31,19 +31,38 @@ class RAGBase(ABC):
     name = "RAG"
     description = """Retrieve and ground answers using Retrieval-Augmented Generation (RAG).
 
-This tool is best used when the task requires:
-- Answering questions using your own indexed documents (PDF/Markdown/text)
-- Grounding responses with specific sources rather than general knowledge
-- Searching across a large local corpus (notes, reports, web snapshots, manuals)
-- Iteratively building and updating an index for later fast retrieval
+This tool is designed for working with user-provided or locally stored content (files, documents, or web snapshots) and enabling fast, grounded retrieval later.
+
+Use this tool when the task involves one or more of the following:
+- Answering questions based on specific user-owned documents (PDF / Markdown / text / HTML)
+- Grounding responses with explicit sources instead of general model knowledge
+- Searching across a growing local knowledge base (notes, reports, manuals, web pages)
+- Persisting knowledge so it can be reused efficiently in future conversations
+
+Indexing vs Querying:
+- Use indexing() to ingest and persist content into a searchable index.
+- Use query() to retrieve relevant chunks from an existing index and generate answers.
+
+When to consider indexing():
+- The user explicitly asks to "save", "store", "remember", or "archive" a file, document, or webpage
+- The user provides files or URLs and implies future reuse (e.g. “以后可能会用到”, “留着查”, “做个资料库”)
+- The user downloads or collects multiple documents (e.g. via DeepResearch) that may be queried later
+- The same or similar documents are referenced repeatedly across turns
+
+When the user requests content but indexing intent is unclear:
+- Ask a clarifying question such as:
+  “Do you want me to build an index for this so you can search it later?”
+- If the user confirms, call indexing(); otherwise, treat the content as temporary context only
 
 Typical workflow:
-1) Use indexing() to ingest files (e.g., PDFs downloaded from DeepResearch.download).
-2) Use query() to retrieve relevant chunks and produce grounded answers.
+1) Acquire content (uploaded files, local paths, or downloaded web pages).
+2) Optionally ask the user whether the content should be indexed for future retrieval.
+3) Use indexing() to build or update the index.
+4) Use query() to retrieve relevant chunks and produce grounded answers.
 
-Note:
-- "data_source" controls which collection/index to use (e.g., "all", "pdf", "web", "notes").
-- Indexing supports both individual file paths and directories containing many files."""
+Notes:
+- indexing() supports both individual file paths and directories containing many files.
+- Indexing is incremental: calling it multiple times will extend or refresh the existing index."""
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__()

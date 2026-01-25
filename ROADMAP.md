@@ -23,11 +23,11 @@
 
 # 🗓️ PLAN OVERVIEW
 
-| Plugin               | Description                                                                  |   Status   |
-| :------------------- | :--------------------------------------------------------------------------- | :--------: |
-| ⚙️ **Behavior**      | Controls AlphaAvatar’s behavior logic and process flow.                      | 🧩 Planned |
-| 💡 **Reflection**    | Generates metacognitive insights from memory and interaction history.        | 🧩 Planned |
-| 🧰 **MCP Tools**     | Modular control & orchestration layer for cross-plugin coordination.         | 🧩 Planned |
+| Plugin               | Description                                                                  |     Stage     |
+| :------------------- | :--------------------------------------------------------------------------- | :-----------: |
+| ⚙️ **Behavior**      | Controls AlphaAvatar’s behavior logic and process flow.                      |   🧩 Planned   |
+| 💡 **Reflection**    | Generates metacognitive insights from memory and interaction history.        |   🧩 Planned   |
+| 🧰 **MCP Tools**     | Modular control & orchestration layer for cross-plugin coordination.         |   🧩 Planned   |
 
 ---
 
@@ -43,7 +43,10 @@
 
 | Priority | Task                                                                                                                         |     Stage     |
 | :------- | :--------------------------------------------------------------------------------------------------------------------------- | :-----------: |
-| 🔹       | Develop multi-user management features for plugins.  | 🧩 Planned |
+| 🔹       | Develop multi-user management features for plugins.                                                                          |   🧩 Planned   |
+| 🔹       | Content uploaded by a user in the current session is first stored in a temporary directory, and then stored in persistent storage after confirmation. The user's upload status and input are identified separately for use in the model.    | 🧩 Planned     |
+| 🔹       | The return values ​​of the Deep research download function and the Rag indexing function should include a brief description of the returned content (using a decorator) stored in memory for later reference.    | 🧩 Planned     |
+| 🔹       | Enrich the logging system.                                                                                                   |   🧩 Planned   |
 
 ---
 
@@ -94,8 +97,8 @@
 | :------- | :--------------------------------------------------------------------------- | :-----------: |
 | 🔸       | Add **multi-user profile management** for concurrent interactions.           | ⏳ In Progress |
 | 🔸       | Enable **real-time profile retrieval** during active conversation.           | ⏳ In Progress |
-| 🔹       | Add **face-based profiling** (facial embedding recognition).                 |   🧩 Planned  |
-| 🔹       | Integrate **event triggers** for profile updates & reflection cycles.        |   🧩 Planned  |
+| 🔹       | Add **face-based profiling** (facial embedding recognition).                 |   🧩 Planned   |
+| 🔹       | Integrate **event triggers** for profile updates & reflection cycles.        |   🧩 Planned   |
 
 ---
 
@@ -114,6 +117,7 @@
 | Priority | Task                                                                                                                         |     Stage      |
 | :------- | :--------------------------------------------------------------------------------------------------------------------------- | :-----------:  |
 | 🔹       | Allows you to retrieve all accessible webpage links under a specified webpage and store them in a specific folder for use by the RAG plugin. |   🧩 Planned   |
+| 🔹       | Add intermediate states during tool invocation to reduce the user's perceived waiting time.                                  |   🧩 Planned   |
 
 ## 📖 RAG
 
@@ -130,6 +134,8 @@
 | 🔹       | Allow folder index building.                                                                                                 |   🧩 Planned   |
 | 🔹       | Allows queries to be performed against **different data sources**.                                                           |   🧩 Planned   |
 | 🔹       | Allows the construction of metadata (structured information such as directories) for different data sources, improving retrieval efficiency.  |   🧩 Planned   |
+| 🔹       | Build offline indexing and passive retrieval capabilities to automatically retrieve relevant content from the Assistant's internal knowledge base (such as the Reflection module). |   🧩 Planned   |
+| 🔹       | Add intermediate states during tool invocation to reduce the user's perceived waiting time.                                  |   🧩 Planned   |
 
 ---
 

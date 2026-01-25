@@ -106,7 +106,6 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 </p>
 </td>
 </tr>
-
 </table>
 
 ---
@@ -137,6 +136,28 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 </td>
 </tr>
 
+<tr>
+<td width="50%">
+<h3>🧰 MCP</h3>
+<p>
+  <img src="https://img.shields.io/badge/Planned-6c757d?style=flat" alt="Planned" />
+</p>
+<p></p>
+<p>
+<a href="#">README↗</a>
+</p>
+</td>
+<td width="50%">
+<h3>🌍 SANDBOX</h3>
+<p>
+  <img src="https://img.shields.io/badge/Planned-6c757d?style=flat" alt="Planned" />
+</p>
+<p></p>
+<p>
+<a href="#">README↗</a>
+</p>
+</td>
+</tr>
 </table>
 
 ---
