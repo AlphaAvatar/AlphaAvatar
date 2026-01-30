@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import inspect
+import json
 import os
 import pathlib
 from typing import Any
@@ -43,11 +44,14 @@ class RAGAnythingTool(RAGBase):
         self,
         *args,
         working_dir: pathlib.Path,
+        doc_parser: str = "mineru",
         openai_api_key: NotGivenOr[str] = NOT_GIVEN,
         openai_base_url: NotGivenOr[str] = NOT_GIVEN,
         **kwargs,
     ):
         super().__init__()
+
+        self._doc_parser = doc_parser
 
         self._working_dir = working_dir / RAG_INSTANCE
         self._working_dir_index = self._working_dir / "index"
@@ -168,7 +172,10 @@ class RAGAnythingTool(RAGBase):
 
         # Now use existing LightRAG instance to initialize RAGAnything
         self._rag = RAGAnything(
-            config=RAGAnythingConfig(working_dir=self._working_dir),
+            config=RAGAnythingConfig(
+                working_dir=self._working_dir,
+                parser=self._doc_parser,
+            ),
             lightrag=lightrag_instance,
             vision_model_func=vision_model_func,
             # Note: working_dir, llm_model_func, embedding_func, etc. are inherited from lightrag_instance
@@ -205,9 +212,9 @@ class RAGAnythingTool(RAGBase):
         file_paths_or_dir: list[str],
         ctx: RunContext | None = None,
         data_source: str = "all",
-    ) -> Any:
+    ) -> str:
         rag = self._require_ready()
-
+        message_logs = {}
         for file_path_or_dir in file_paths_or_dir:
             if os.path.isfile(file_path_or_dir):
                 logger.info(
@@ -215,6 +222,9 @@ class RAGAnythingTool(RAGBase):
                 )
                 await rag.process_document_complete(
                     file_path=file_path_or_dir, output_dir=str(self._working_dir_artifacts)
+                )
+                message_logs[file_path_or_dir] = (
+                    f"Indexed document [{file_path_or_dir}] successfully."
                 )
             elif os.path.isdir(file_path_or_dir):
                 logger.info(
@@ -227,3 +237,15 @@ class RAGAnythingTool(RAGBase):
                     recursive=True,
                     max_workers=MAX_WORKERS,
                 )
+                message_logs[file_path_or_dir] = (
+                    f"Indexed folder [{file_path_or_dir}] successfully."
+                )
+            else:
+                logger.warning(
+                    f"[RAGAnythingTool] Indexing func found invalid path [{file_path_or_dir}], skipped."
+                )
+                message_logs[file_path_or_dir] = (
+                    f"Indexing func found invalid path [{file_path_or_dir}], skipped."
+                )
+
+        return json.dumps(message_logs, ensure_ascii=False, indent=2)

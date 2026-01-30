@@ -32,17 +32,18 @@ class RAGAnythingPlugin(AvatarPlugin):
     def get_plugin(
         self,
         *args,
+        rag_init_config: dict,
         **kwargs,
     ) -> RAGAPI:
         try:
-            rag_obj = RAGAnythingTool(*args, **kwargs)
-            rag_api = RAGAPI(rag_object=rag_obj)
-            return rag_api
-        except Exception:
+            rag_obj = RAGAnythingTool(*args, **rag_init_config, **kwargs)
+        except (ImportError, ModuleNotFoundError) as e:
             raise ImportError(
                 "The 'raganything[default]' RAG plugin is required but is not installed.\n"
-                "To fix this, install the optional dependency: `pip install alphaavatar-plugins-rag`"
-            )
+                "Install it via: `pip install alphaavatar-plugins-rag`"
+            ) from e
+
+        return RAGAPI(rag_object=rag_obj)
 
 
 # plugin init

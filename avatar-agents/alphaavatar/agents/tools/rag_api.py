@@ -74,7 +74,7 @@ Notes:
         query: str,
         ctx: RunContext | None = None,
         data_source: str = "all",
-    ) -> Any: ...
+    ) -> str: ...
 
     @abstractmethod
     async def indexing(
@@ -83,7 +83,7 @@ Notes:
         file_paths_or_dir: list[str],
         ctx: RunContext | None = None,
         data_source: str = "all",
-    ) -> Any: ...
+    ) -> str: ...
 
 
 class RAGAPI(ToolBase):

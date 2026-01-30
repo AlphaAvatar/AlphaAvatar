@@ -24,7 +24,8 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
 ]
 dependencies = [
-    "raganything[all]"
+    "raganything[all]",
+    "docling"
 ]
 
 

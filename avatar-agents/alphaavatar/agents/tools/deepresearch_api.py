@@ -64,7 +64,7 @@ It exposes four operations (op) that can be composed into a pipeline:
         *,
         query: str,
         ctx: RunContext | None = None,
-    ) -> Any: ...
+    ) -> str: ...
 
     @abstractmethod
     async def research(
@@ -72,7 +72,7 @@ It exposes four operations (op) that can be composed into a pipeline:
         *,
         query: str,
         ctx: RunContext | None = None,
-    ) -> Any: ...
+    ) -> str: ...
 
     @abstractmethod
     async def scrape(
@@ -80,7 +80,7 @@ It exposes four operations (op) that can be composed into a pipeline:
         *,
         urls: list[str],
         ctx: RunContext | None = None,
-    ) -> Any: ...
+    ) -> str: ...
 
     @abstractmethod
     async def download(
@@ -88,7 +88,7 @@ It exposes four operations (op) that can be composed into a pipeline:
         *,
         urls: list[str],
         ctx: RunContext | None = None,
-    ) -> Any: ...
+    ) -> str: ...
 
 
 class DeepResearchAPI(ToolBase):
@@ -99,10 +99,10 @@ class DeepResearchAPI(ToolBase):
         - "research": Deep multi-step research (query decomposition, iterative
           searching, cross-source synthesis).
         - "scrape": Fetch the given URL list and return ONE integrated Markdown
-          text that merges the extracted contents.
-        - "download": Fetch the given URL list, convert pages to PDFs, store them,
+          text that merges the extracted contents for assistant answering direct questions.
+        - "download": Fetch the given URL list, convert pages to PDFs, store them to disk,
           and return a list of stored file references (strings) for downstream
-          tools/plugins (e.g., RAG indexing).
+          tools/plugins (e.g., RAG indexing func).
 
     query:
         The research question or search topic. Required for "search" and

@@ -41,3 +41,5 @@ persona_vdb_config: {'profiler_collection_name': 'alphaavatar_tools_persona_prof
 ### Tools Args
 deepresearch_tool: default
 deepresearch_init_config: {}
+rag_tool: default
+rag_init_config: {'doc_parser': 'docling'}

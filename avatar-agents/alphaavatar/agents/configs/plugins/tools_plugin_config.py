@@ -61,7 +61,7 @@ class ToolsConfig(BaseModel):
         deepresearch_tool: ToolBase | None = AvatarPlugin.get_avatar_plugin(
             AvatarModule.DEEPRESEARCH,
             self.deepresearch_tool,
-            character_init_config=self.deepresearch_init_config,
+            deepresearch_init_config=self.deepresearch_init_config,
             working_dir=session_config.user_path.data_dir,
         )
         if deepresearch_tool:
@@ -71,7 +71,7 @@ class ToolsConfig(BaseModel):
         rag_tool: RAGAPI | None = AvatarPlugin.get_avatar_plugin(
             AvatarModule.RAG,
             self.rag_tool,
-            character_init_config=self.rag_init_config,
+            rag_init_config=self.rag_init_config,
             working_dir=session_config.user_path.data_dir,
         )
         if rag_tool:
