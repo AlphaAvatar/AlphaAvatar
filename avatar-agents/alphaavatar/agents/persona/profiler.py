@@ -16,7 +16,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import TYPE_CHECKING
 
-from .enum.user_profile import UserProfile
+from .schema.user_profile import UserProfile
 
 if TYPE_CHECKING:
     from .cache import PersonaCache

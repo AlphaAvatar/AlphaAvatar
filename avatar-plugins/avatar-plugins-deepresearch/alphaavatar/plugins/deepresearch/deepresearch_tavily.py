@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import asyncio
 import os
 import pathlib
 
@@ -22,7 +23,7 @@ from alphaavatar.agents.utils import url_to_filename_id
 from alphaavatar.agents.utils.files import save_single_url_content_to_pdf
 
 from .log import logger
-from .schema.tavily_obj import TavilyExtractObj
+from .schema.tavily_obj import TavilyExtractObj, TavilySearchObj
 
 SEARCH_INSTANCE = "tavily"
 
@@ -38,16 +39,24 @@ class TavilyDeepResearchTool(DeepResearchBase):
         super().__init__()
 
         self._working_dir = working_dir / SEARCH_INSTANCE
-        self._tavily_api_key = tavily_api_key or (os.getenv("TAVILY_API_KEY") or NOT_GIVEN)
+        self._working_dir.mkdir(parents=True, exist_ok=True)
 
+        self._tavily_api_key = tavily_api_key or (os.getenv("TAVILY_API_KEY") or NOT_GIVEN)
         if not self._tavily_api_key:
             raise ValueError("TAVILY_API_KEY must be set by arguments or environment variables")
 
         self._tavily_client = TavilyClient(api_key=self._tavily_api_key)
 
-    def _get_page_content(self, urls: list[str]) -> dict[str]:
-        res = self._tavily_client.extract(urls=urls, include_images=True, format="markdown")
-        return TavilyExtractObj.from_dict(res)
+    async def _tavily_extract(self, urls: list[str]) -> TavilyExtractObj:
+        def _call():
+            res = self._tavily_client.extract(
+                urls=urls,
+                include_images=True,
+                format="markdown",
+            )
+            return TavilyExtractObj.from_dict(res)
+
+        return await asyncio.to_thread(_call)
 
     async def search(
         self,
@@ -56,10 +65,17 @@ class TavilyDeepResearchTool(DeepResearchBase):
         ctx: RunContext | None = None,
     ) -> dict:
         logger.info(f"[TavilyDeepResearchTool] search func by query: {query}")
-        res: dict[str] = self._tavily_client.search(
-            query=query, search_depth="basic", max_results=5
-        )
-        return res
+
+        def _call():
+            res = self._tavily_client.search(
+                query=query,
+                search_depth="basic",
+                max_results=5,
+            )
+            return TavilySearchObj.from_dict(res)
+
+        search_obj: TavilySearchObj = await asyncio.to_thread(_call)
+        return search_obj.to_markdown()
 
     async def research(
         self,
@@ -68,18 +84,27 @@ class TavilyDeepResearchTool(DeepResearchBase):
         ctx: RunContext | None = None,
     ) -> dict:
         logger.info(f"[TavilyDeepResearchTool] research func by query: {query}")
-        res = self._tavily_client.search(query=query, search_depth="advanced", max_results=5)
-        return res
+
+        def _call():
+            res = self._tavily_client.search(
+                query=query,
+                search_depth="advanced",
+                max_results=5,
+            )
+            return TavilySearchObj.from_dict(res)
+
+        search_obj: TavilySearchObj = await asyncio.to_thread(_call)
+        return search_obj.to_markdown()
 
     async def scrape(self, *, urls: list[str], ctx: RunContext | None = None) -> str:
         logger.info(f"[TavilyDeepResearchTool] scrape func by urls: {urls}")
-        extract_obj: TavilyExtractObj = self._get_page_content(urls=urls)
+        extract_obj: TavilyExtractObj = await self._tavily_extract(urls=urls)
         return extract_obj.to_markdown()
 
     async def download(self, *, urls: list[str], ctx: RunContext | None = None) -> str:
         logger.info(f"[TavilyDeepResearchTool] download func by urls: {urls}")
 
-        res: TavilyExtractObj = self._get_page_content(urls=urls)
+        res: TavilyExtractObj = await self._tavily_extract(urls=urls)
 
         out_root = self._working_dir.resolve()
         saved_lines: list[str] = []

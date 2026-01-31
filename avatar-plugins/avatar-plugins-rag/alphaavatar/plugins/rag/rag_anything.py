@@ -15,7 +15,7 @@ import inspect
 import json
 import os
 import pathlib
-from typing import Any
+from typing import Any, Literal
 
 from lightrag import LightRAG
 from lightrag.kg.shared_storage import initialize_pipeline_status
@@ -25,12 +25,14 @@ from livekit.agents import NOT_GIVEN, NotGivenOr, RunContext
 from raganything import RAGAnything, RAGAnythingConfig
 
 from alphaavatar.agents.tools import RAGBase
-from alphaavatar.agents.utils.loop_thread import AsyncLoopThread
+from alphaavatar.agents.utils import AsyncLoopThread, gpu_available
 
 from .log import logger
 
 RAG_INSTANCE = "rag_anything"
 MAX_WORKERS = 4
+
+DocParserType = Literal["mineru", "docling"]
 
 
 async def _maybe_await(v):
@@ -44,14 +46,25 @@ class RAGAnythingTool(RAGBase):
         self,
         *args,
         working_dir: pathlib.Path,
-        doc_parser: str = "mineru",
+        doc_parser: DocParserType = "mineru",
         openai_api_key: NotGivenOr[str] = NOT_GIVEN,
         openai_base_url: NotGivenOr[str] = NOT_GIVEN,
         **kwargs,
     ):
         super().__init__()
 
-        self._doc_parser = doc_parser
+        if doc_parser == "mineru":
+            if not gpu_available():
+                logger.warning(
+                    "[RAGAnythingTool] doc_parser='mineru' requested but no GPU detected. "
+                    "Falling back to 'docling'."
+                )
+                self._doc_parser: DocParserType = "docling"
+            else:
+                logger.info("[RAGAnythingTool] Using 'mineru' parser with GPU support.")
+                self._doc_parser = "mineru"
+        else:
+            self._doc_parser = doc_parser
 
         self._working_dir = working_dir / RAG_INSTANCE
         self._working_dir_index = self._working_dir / "index"

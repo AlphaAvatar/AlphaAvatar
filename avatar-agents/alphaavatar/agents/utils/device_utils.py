@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,10 +11,22 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .base import MemoryBase
-from .cache import MemoryCache
-from .schema.memory_item import MemoryItem
-from .schema.memory_type import MemoryType
-from .schema.runner_op import VectorRunnerOP
+import os
 
-__all__ = ["MemoryBase", "MemoryCache", "MemoryItem", "MemoryType", "VectorRunnerOP"]
+
+def gpu_available() -> bool:
+    """
+    Best-effort GPU detection.
+    - Not strongly dependent on torch.
+    - Compatible with CUDA_VISIBLE_DEVICES.
+    """
+    cuda_visible = os.getenv("CUDA_VISIBLE_DEVICES")
+    if cuda_visible in ("", "-1"):
+        return False
+
+    try:
+        import torch  # type: ignore
+
+        return torch.cuda.is_available()
+    except Exception:
+        return False

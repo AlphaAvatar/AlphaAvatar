@@ -11,127 +11,204 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-MEMORY_EXTRACT_PROMPT = """You are a "conversation memory synthesizer" that maintains two distinct but related memory streams for a virtual assistant system:
+MEMORY_EXTRACT_PROMPT = """You are an "AlphaAvatar Conversation Memory Extractor".
 
-1. **user_or_tool_memory_entries** — captures user–assistant–tool interactions.
-2. **assistant_memory_entries** — captures the assistant’s self-reflection and generalized learnings.
+Your job is to read the NEW CONVERSATION TURN (which may include user messages, assistant messages, tool payloads, tool outputs, and metadata) and output a MemoryDelta object with two lists:
 
-Your task is to read the NEW CONVERSATION TURN and output a structured `MemoryDelta` object summarizing incremental memory updates.
+1) user_or_tool_memory_entries: memories about user↔assistant↔tool interactions (user-specific or tool-run specific).
+2) assistant_memory_entries: reusable assistant operational learnings (generalizable patterns, skills, guardrails).
+   IMPORTANT: assistant_memory_entries MUST remain grounded in concrete events from this turn.
 
----
+⚠️ Key Problem To Solve:
+Previous memories were too abstract (e.g., "encountered issues", "needs improved error handling") and lacked specifics like what failed, which tool, which error code, what inputs, and what next steps.
+You MUST produce detailed, actionable memories, while respecting privacy.
 
-### INSTRUCTIONS
+----------------------------------------------------------------------
+A) OUTPUT FORMAT (CRITICAL)
+----------------------------------------------------------------------
+You MUST output ONLY a JSON object that matches the MemoryDelta schema.
+Each memory item is a PatchOp with:
+- value: string
+- entities: list[string]
+- topic: string | null
 
-#### 1. For `user_or_tool_memory_entries`:
-- Capture **what the user said, did, wanted, or felt**, and **what the assistant or tools did in response**.
-- Focus on **facts, actions, intents, and emotions** that contribute to the user’s story or goals.
-- Include contextual references (e.g., names, tasks, decisions, locations).
-- Avoid speculation — record only what is explicitly stated or strongly implied.
-- These memories are **user-specific** and may contain **privacy-sensitive information**.
+You are NOT allowed to output anything else.
 
-**Special rule for greetings or small talk:**
-- Do **not** record simple neutral exchanges (e.g., "Hi", "Hello", "How are you") unless they reveal emotional tone or conversational intent.
-- If emotion or tone is clear (e.g., “Hi, I’m tired today.” / “Hello! I’m so excited!”), record it as a lightweight “social context” memory with topic `"social context"`.
+----------------------------------------------------------------------
+B) WHAT TO STORE vs WHAT NOT TO STORE
+----------------------------------------------------------------------
+STORE (high value):
+- Concrete events: what happened, where (component/tool), inputs (sanitized), outcome (success/failed/partial), and evidence IDs.
+- Error details: exception type, error code, short error message excerpt, request_id/session_id/object_id from metadata if present.
+- Tool actions: search/research/scrape/download/indexing/query, what data source, what artifact saved.
+- Decisions: fallbacks, parameter changes, retries, timeouts, parser/model selections.
+- User intents and tasks: what user wanted to do, decisions made, constraints (budget, environment, GPU/no GPU, uv/pip, etc).
+- Operational reminders: "when X happens, do Y" rules.
 
-#### 2. For `assistant_memory_entries`:
-- Capture the **assistant’s reflection or learned pattern** from the interaction.
-- Summarize how the assistant improved its understanding, refined its approach, or derived reusable insights.
-- These memories are **generalizable** — safe to share or reuse across users.
-- **If applicable, extract "situational patterns" — generalized descriptions of user contexts or problems that may recur** (e.g., "users relocating internationally often ask about move-in approval and bank transfer processes").
-- Each situational pattern should be phrased **generically**, without user identifiers, so that it can later be matched to other users with similar contexts.
+DO NOT STORE (privacy / token bloat):
+- Full raw web page content, full PDFs, full documents, or long extracted text.
+- Full user queries or messages if they contain sensitive content; prefer short sanitized paraphrases + hash.
+- Full URLs with query strings, tokens, signatures; store domain+path or a hash.
+- Secrets: API keys, passwords, cookies, auth headers.
+- Large code blocks verbatim (store short excerpt + file name + error line).
+- Speculation about user private traits.
 
----
+If you must refer to sensitive text:
+- Use a short sanitized excerpt (<= 160 characters) OR a hash (e.g., sha256[:12]) and store where it came from (evidence).
 
-### EXAMPLES
+----------------------------------------------------------------------
+C) WRITE "EVENT CARDS" INSIDE PatchOp.value (MANDATORY)
+----------------------------------------------------------------------
+To make memories machine-usable for a separate reflection module, every PatchOp.value MUST be a single EVENT CARD.
 
-**Example 1: Greeting (no emotional tone)**
-User: "Hi."
-Assistant: "Hello, how are you?"
+EVENT CARD format (use exactly this structure, plain text):
 
-Output:
-{{
-  "user_or_tool_memory_entries": [],
-  "assistant_memory_entries": []
-}}
+[EVENT]
+type: <one of: interaction | tool_run | incident | decision | file_storage | web_search | indexing | retrieval | config_change>
+who: <user | assistant | tool>
+component: <tool/class/module name if known, else "unknown">
+topic: <short label, should match PatchOp.topic>
+summary: <1-2 concise sentences describing the concrete event>
+inputs: <sanitized key details: query_hash, file_path, domains, params, env conditions>
+outcome: <success | failed | partial | unknown>
+evidence: <copy any evidence IDs present: session_id/object_id/request_id/trace_id/file_name/artifact_path>
+error: <only if incident/failed/partial; include error_type/code/message_excerpt>
+actions: <what was attempted or executed (bullet-like lines)>
+next_steps: <practical follow-up steps (bullet-like lines)>
+[/EVENT]
 
-**Example 2: Greeting with emotion**
-User: "Hi, I’m exhausted today."
-Assistant: "Rough day? Want to talk about it?"
+Notes:
+- Keep each field short. Do NOT leave everything blank: for every event card you MUST fill type/who/component/summary/outcome.
+- The evidence field is extremely important. If metadata contains session_id/object_id/request_id, include them verbatim.
+- For URLs, store only domains and clean paths, or a hash.
 
-Output:
-{{
-  "user_or_tool_memory_entries": [
-    {{
-      "value": "User greeted the assistant and expressed tiredness, indicating low energy or fatigue.",
-      "entities": ["greeting", "fatigue"],
-      "topic": "social context"
-    }}
-  ],
-  "assistant_memory_entries": []
-}}
+----------------------------------------------------------------------
+D) TOPIC + ENTITIES RULES
+----------------------------------------------------------------------
+topic:
+- MUST be a stable short label (lowercase preferred), examples:
+  "rag indexing", "web search", "file storage", "tool error", "async debugging", "dependency install", "gpu detection", "qdrant memory"
+- Use consistent topics across similar events, so retrieval works.
 
-**Example 3: Task-focused**
-User: "I finally signed the MOU for the apartment in Abu Dhabi."
-Assistant: "Great! I can help you prepare the move-in checklist next."
+entities:
+- MUST include high-signal nouns to make retrieval effective:
+  - tool/class names: "RAGAnythingTool", "TavilyDeepResearchTool", "QdrantRunner"
+  - operations: "indexing", "search", "download", "extract", "query"
+  - error identifiers: "502", "Bad Gateway", "HTTPError", "TimeoutError"
+  - environment cues: "uv", "pip", "GPU", "CUDA", "CUDA_VISIBLE_DEVICES"
+  - artifacts: "PDF", "docx", "pptx", "index", "manifest.json"
+- Avoid generic entities like "assistant", "user" unless needed.
 
-Output:
-{{
-  "user_or_tool_memory_entries": [
-    {{
-      "value": "User confirmed signing the MOU for an apartment in Abu Dhabi and plans to prepare for move-in.",
-      "entities": ["MOU", "apartment", "Abu Dhabi"],
-      "topic": "property purchase"
-    }}
-  ],
-  "assistant_memory_entries": [
-    {{
-      "value": "Assistant learned that users completing property purchases often need guidance on move-in approvals and documentation follow-up.",
-      "entities": ["property purchase", "move-in process"],
-      "topic": "situational pattern: property workflow"
-    }}
-  ]
-}}
+----------------------------------------------------------------------
+E) WHEN TO WRITE user_or_tool_memory_entries
+----------------------------------------------------------------------
+Write user_or_tool_memory_entries when any of these happens in the new turn:
+1) User intent/task: user asked to do something concrete.
+2) Tool run: a tool was called, returned results, created artifacts, or failed.
+3) Important state changes: user confirmed a decision, created/downloading/indexed something.
+4) Strong emotion/tone is present (rare, must be explicit).
 
-**Example 4**
-User: "I finally signed the MOU for the apartment in Abu Dhabi today."
-Assistant: "Great! I can help you prepare the move-in checklist next."
+For tool runs:
+- Create one memory item per major operation (search vs download vs indexing).
+- Include evidence like request_id, file path, object_id.
 
-Output:
-{{
-  "user_or_tool_memory_entries": [
-    {{
-      "value": "User confirmed signing the MOU for an apartment in Abu Dhabi and plans to prepare for move-in.",
-      "entities": ["MOU", "apartment", "Abu Dhabi"],
-      "topic": "property purchase"
-    }}
-  ],
-  "assistant_memory_entries": [
-    {{
-      "value": "Assistant learned to assist users after real-estate milestones by suggesting next practical steps like move-in preparation.",
-      "entities": ["property workflow", "task planning"],
-      "topic": "assistant reflection"
-    }}
-  ]
-}}
+----------------------------------------------------------------------
+F) WHEN TO WRITE assistant_memory_entries
+----------------------------------------------------------------------
+assistant_memory_entries are for generalizable learnings, BUT must be grounded:
+- You MUST NOT write a reflection unless you can cite the specific event from this turn.
+- Use type "decision" or "config_change" or "incident" in the event card to encode the learning as a rule.
+- Reflection must be operational and testable, examples:
+  - "If doc_parser=mineru and GPU is not available, fallback to docling automatically."
+  - "Avoid logging raw queries/URLs; log hash + domains to prevent privacy leaks."
+  - "Async methods must not call synchronous Tavily client directly; use asyncio.to_thread."
 
-**Example 5**
-User: "Can you fix my Python async function? It throws an event loop error."
-Assistant: "Sure, I added `asyncio.run` to properly manage the coroutine context."
+So assistant_memory_entries should look like a "policy card" derived from the event.
 
-Output:
-{{
-  "user_or_tool_memory_entries": [
-    {{
-      "value": "User requested help debugging a Python async function with an event loop error, which the assistant resolved using asyncio.run.",
-      "entities": ["Python", "asyncio", "event loop"],
-      "topic": "code debugging"
-    }}
-  ],
-  "assistant_memory_entries": [
-    {{
-      "value": "Assistant improved its approach to diagnosing async errors and recommending coroutine-safe execution patterns.",
-      "entities": ["Python", "async programming"],
-      "topic": "assistant skill improvement"
-    }}
-  ]
-}}"""
+----------------------------------------------------------------------
+G) STRICT ANTI-VAGUENESS RULES (CRITICAL)
+----------------------------------------------------------------------
+BANNED vague summaries unless immediately followed by details:
+- "encountered issues"
+- "needs improvement"
+- "had errors"
+- "worked on"
+- "handled indexing"
+If you mention any of these, you MUST specify:
+- what tool/component
+- what operation
+- what error code/type/message excerpt
+- what inputs were involved
+- what action was taken
+- what next steps are recommended
+
+If you cannot find those details, DO NOT create that memory item.
+
+----------------------------------------------------------------------
+H) DEDUPLICATION / INCREMENTAL UPDATES
+----------------------------------------------------------------------
+Only write new memories for this turn.
+If the same event is repeated with no new details, do not add a new PatchOp.
+If there is a small update, write a new event card describing the delta ("retry attempt #2 failed with same 502").
+
+----------------------------------------------------------------------
+I) EXAMPLES
+----------------------------------------------------------------------
+Example (Tool incident, detailed):
+PatchOp.value:
+
+[EVENT]
+type: incident
+who: tool
+component: RAGAnythingTool
+topic: rag indexing
+summary: Indexing failed while processing a PDF with mineru parser; request returned HTTP 502 when fetching model metadata.
+inputs: file=/data/.../doc.pdf; parser=mineru; env=uv; query_hash=n/a
+outcome: failed
+evidence: session_id=chat-027b...; object_id=alphaavatar_tools; request_id=140ddd...
+error: HTTPError code=502 message="Bad Gateway for url: https://huggingface.co/api/models/opendatalab/PDF-Extract-Kit"
+actions:
+- attempted indexing once; received 502
+next_steps:
+- fallback to docling when GPU not available or mineru fails
+- add retry/backoff for 5xx with max attempts=3
+- store sanitized error excerpt + request_id into memory
+[/EVENT]
+
+Example (Assistant operational rule derived from the incident):
+[EVENT]
+type: decision
+who: assistant
+component: memory.plugin
+topic: tool error handling
+summary: When tool failures occur, store concrete error details (exception name/code/message excerpt) and evidence IDs to enable later reflection and debugging.
+inputs: evidence_keys=session_id,object_id,request_id; sanitize=true
+outcome: success
+evidence: derived_from=rag indexing incident in this turn
+actions:
+- update memory prompt to enforce event cards with evidence
+next_steps:
+- implement low-info filter to drop vague memories
+[/EVENT]
+
+----------------------------------------------------------------------
+J) SOCIAL / SMALL TALK MEMORY (IMPORTANT)
+----------------------------------------------------------------------
+Unlike simple greetings, AlphaAvatar wants to remember useful social context for personalization.
+
+When the turn is small talk or casual chat, you SHOULD write a user_or_tool_memory_entries event card if:
+- The user expresses emotion, mood, energy, stress, or attitude (e.g. tired, excited, anxious, frustrated).
+- The user reveals short-term situational context that affects interaction (e.g. "busy today", "driving now", "at work", "want to relax").
+- The user states a preference about conversation style (e.g. "keep it short", "be more direct", "joking tone").
+
+You SHOULD NOT store pure greetings or filler acknowledgements:
+- "hi", "hello", "ok", "thanks", "lol", emojis with no context.
+
+For social context events:
+- type: interaction
+- topic: social context
+- entities: include key emotion/state words (e.g., "fatigue", "stress", "excitement") and any relevant situation ("work", "travel", "driving").
+- summary: mention the emotion/context concretely in 1 sentence.
+- inputs: can be minimal.
+- outcome: usually "unknown" or "success".
+- next_steps: optional; can be "adjust tone: concise" or "offer empathy" if explicitly relevant."""

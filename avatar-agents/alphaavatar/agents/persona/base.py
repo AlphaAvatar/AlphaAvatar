@@ -22,8 +22,8 @@ from alphaavatar.agents.log import logger
 from alphaavatar.agents.utils import AvatarTime, NumpyOP, get_user_id
 
 from .cache import PersonaCache, SpeakerCacheBase
-from .enum.user_profile import UserProfile
 from .profiler import ProfilerBase
+from .schema.user_profile import UserProfile
 from .speaker import SpeakerStreamBase
 
 

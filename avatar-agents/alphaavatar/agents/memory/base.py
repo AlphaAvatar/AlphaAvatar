@@ -20,8 +20,8 @@ from livekit.agents.llm import ChatItem
 from alphaavatar.agents.utils import time_str_to_datetime
 
 from .cache import MemoryCache
-from .enum.memory_item import MemoryItem
-from .enum.memory_type import MemoryType
+from .schema.memory_item import MemoryItem
+from .schema.memory_type import MemoryType
 
 
 def deduplicate_keep_latest(items: list[MemoryItem]) -> list[MemoryItem]:

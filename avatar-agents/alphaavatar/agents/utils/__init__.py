@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from .device_utils import gpu_available
 from .dual_key_dict import DualKeyDict
 from .enum import SessionType
 from .id_utils import get_session_id, get_user_id, url_to_filename_id
@@ -20,6 +21,7 @@ from .time_utils import AvatarTime, format_current_time, get_timestamp, time_str
 from .vdb_utils import get_embedding_model, get_qdrant_client
 
 __all__ = [
+    "gpu_available",
     "DualKeyDict",
     "SessionType",
     "get_session_id",

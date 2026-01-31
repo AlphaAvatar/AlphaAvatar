@@ -22,7 +22,7 @@ from livekit.agents.llm import ChatItem, ChatMessage
 from alphaavatar.agents.constants import SPEAKER_BETA
 from alphaavatar.agents.utils import AvatarTime, NumpyOP
 
-from .enum.user_profile import DetailsBase, UserProfile
+from .schema.user_profile import DetailsBase, UserProfile
 
 
 class PersonaCache:
