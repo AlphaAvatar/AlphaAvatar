@@ -41,24 +41,6 @@ It exposes **two core operations (op)** that can be composed into an agent workf
 
 ---
 
-### query
-
-Retrieve relevant chunks from an existing index and generate grounded answers.
-
-Use this operation when:
-
-* The user asks questions about previously stored documents
-* Accurate, source-backed answers are required
-* The context would be too large to fit into a single prompt
-
-Key properties:
-
-* Retrieves semantically relevant chunks
-* Produces answers grounded in retrieved content
-* Designed for low-latency, repeated querying
-
----
-
 ## When to Use RAG
 
 ### Use **indexing()** when:
