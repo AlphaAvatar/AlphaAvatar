@@ -108,7 +108,7 @@ pip install alpha-avatar-plugins-rag
 
 ## Supported RAG Frameworks
 
-### Default: **RAGAnything**
+### Default: **RAG-Anything**
 
 [Github Website](https://github.com/HKUDS/RAG-Anything)
 

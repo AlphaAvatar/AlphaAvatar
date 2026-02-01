@@ -73,7 +73,7 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 </p>
 </td>
 <td width="50%">
-<h3>🗺️ Planning</h3>
+<h3>📅 Planning</h3>
 <p>
   <img src="https://img.shields.io/badge/Planned-6c757d?style=flat" alt="Planned" />
 </p>
@@ -166,6 +166,7 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 
 <h4>Latest News 🔥</h4>
 
+- [2026/02] We have released AlphaAvatar **version 0.4.0** to support RAG by [RAG-Anything](https://github.com/HKUDS/RAG-Anything) library and optimized the Memory and DeepResearch modules.
 - [2026/01] We have released AlphaAvatar **version 0.3.0** to support DeepResearch by [tavily](https://tavily.com) API.
   - Released AlphaAvatar **version 0.3.1**: ADD tool calls during user-Assistant interactions to the Memory module.
 - [2025/12] We have released AlphaAvatar **version 0.2.0** to support [AIRI](https://github.com/moeru-ai/airi) live2d-based virtual character display.

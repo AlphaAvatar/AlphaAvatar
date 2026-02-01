@@ -45,7 +45,7 @@
 | :------- | :--------------------------------------------------------------------------------------------------------------------------- | :-----------: |
 | 🔹       | Develop multi-user management features for plugins.                                                                          |   🧩 Planned   |
 | 🔹       | Content uploaded by a user in the current session is first stored in a temporary directory, and then stored in persistent storage after confirmation. The user's upload status and input are identified separately for use in the model.    | 🧩 Planned     |
-| 🔹       | The return values ​​of the Deep research download function and the Rag indexing function should include a brief description of the returned content (using a decorator) stored in memory for later reference.    | 🧩 Planned     |
+| 🔹       | The return values ​​of the Deep research download function and the Rag indexing function should include a brief description of the doc/url content (using a decorator) stored in memory for later reference.    | 🧩 Planned     |
 | 🔹       | Enrich the logging system.                                                                                                   |   🧩 Planned   |
 
 ---
@@ -67,15 +67,15 @@
 
 ### ✅ DONE
 
-| Date    | Milestone                            | Notes                                                                                                                                       |
-| :------ | :----------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------ |
-| 2025-09 | **Automatic Memory Extraction (v1)** | Built on **Memory Client**, enabling memory capture & retrieval across:<br>• Assistant–User<br>• Assistant–Tools<br>• Assistant’s self-memory |
+| Date    | Milestone                                     | Notes                                                                                                                                         |
+| :------ | :-------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2025-09 | **Automatic Memory Extraction (v1)**          | Built on **Memory Client**, enabling memory capture & retrieval across:<br>• Assistant–User<br>• Assistant–Tools<br>• Assistant’s self-memory |
+| 2026-01 | **Automatic Assistant–Tools Extraction (v1)** | Add Assistant–Tools memory in user session for DeepResearch/RAG Plugin.                                                                       |
 
 ### 🧭 TODO
 
 | Priority | Task                                                                                                                         |     Stage      |
 | :------- | :--------------------------------------------------------------------------------------------------------------------------- | :-----------:  |
-| 🔸       | Add Assistant–Tools memory for DeepResearch Plugin                                                                           | ⏳ In Progress |
 | 🔸       | Design **differentiated prompts** for:<br>– self-memory<br>– shared Assistant–User memory<br>– shared Assistant–Tools memory | ⏳ In Progress |
 | 🔸       | Add **multi-user memory isolation** (unique response memory per user).                                                       | ⏳ In Progress |
 | 🔹       | Allow users to **query / recall** specific memories on demand.                                                               |   🧩 Planned   |
@@ -116,6 +116,7 @@
 
 | Priority | Task                                                                                                                         |     Stage      |
 | :------- | :--------------------------------------------------------------------------------------------------------------------------- | :-----------:  |
+| 🔹       | Add intermediate states during deep-research invocation to reduce the user's perceived waiting time.                                  |   🧩 Planned   |
 | 🔹       | Allows you to retrieve all accessible webpage links under a specified webpage and store them in a specific folder for use by the RAG plugin. |   🧩 Planned   |
 | 🔹       | Add intermediate states during tool invocation to reduce the user's perceived waiting time.                                  |   🧩 Planned   |
 
@@ -143,5 +144,6 @@
 
 | Quarter | Focus                        | Expected Outcome                                  |
 | :------ | :--------------------------- | :------------------------------------------------ |
-| Q1-2026 | External Tool Integration    | Seamless task execution via MCP + RAG plugins.    |
+| Q1-2026 | External Tool Integration    | Seamless task execution via MCP plugins.          |
 | Q2-2026 | Reflection Plugin Alpha      | Enable autonomous self-analysis & evolution.      |
+| Q2-2026 | World Sandbox Link           | Allows AlphaAvatar to link to external sandbox worlds (code environments, game environments, etc.).      |
