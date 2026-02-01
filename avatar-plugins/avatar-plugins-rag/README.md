@@ -27,20 +27,6 @@ The default backend is **RAGAnything**, but the plugin is designed to support mu
 
 ---
 
-## Functionality
-
-It exposes **two core operations (op)** that can be composed into an agent workflow:
-
-* **indexing**
-  Persist files, documents, or web content into a searchable local index.
-  Use this when the content should be saved for future retrieval.
-
-* **query**
-  Retrieve relevant chunks from an existing index and generate grounded answers.
-  Use this when answering questions based on previously indexed content.
-
----
-
 ## When to Use RAG
 
 ### Use **indexing()** when:
@@ -59,18 +45,17 @@ It exposes **two core operations (op)** that can be composed into an agent workf
 
 ---
 
-## Indexing vs Temporary Context
+## Functionality
 
-Not all content needs to be indexed.
+It exposes **two core operations (op)** that can be composed into an agent workflow:
 
-When the user requests content but **indexing intent is unclear**, the agent SHOULD ask a clarifying question, such as:
+* **indexing**
+  Persist files, documents, or web content into a searchable local index.
+  Use this when the content should be saved for future retrieval.
 
-> “Do you want me to build an index for this so you can search it later?”
-
-* If the user confirms → call `indexing()`
-* If not → treat the content as **temporary context only**
-
-This distinction helps avoid unnecessary storage while preserving long-term memory when it matters.
+* **query**
+  Retrieve relevant chunks from an existing index and generate grounded answers.
+  Use this when answering questions based on previously indexed content.
 
 ---
 
