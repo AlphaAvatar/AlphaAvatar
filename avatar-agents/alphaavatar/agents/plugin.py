@@ -33,6 +33,9 @@ class AvatarModule(str, Enum):
     DEEPRESEARCH = "deepresearch"
     RAG = "rag"
 
+    # MCP
+    MCP = "mcp"
+
 
 class AvatarPlugin(Plugin):
     avatar_registered_plugins: dict[AvatarModule, dict[str, Plugin]] = {

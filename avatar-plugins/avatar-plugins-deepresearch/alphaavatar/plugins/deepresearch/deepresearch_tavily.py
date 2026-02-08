@@ -31,7 +31,7 @@ SEARCH_INSTANCE = "tavily"
 class TavilyDeepResearchTool(DeepResearchBase):
     def __init__(
         self,
-        *args,
+        *,
         working_dir: pathlib.Path,
         tavily_api_key: NotGivenOr[str] = NOT_GIVEN,
         **kwargs,

@@ -25,6 +25,7 @@ members = [
     "alpha-avatar-agents",
     "alpha-avatar-plugins-character",
     "alpha-avatar-plugins-deepresearch",
+    "alpha-avatar-plugins-mcp",
     "alpha-avatar-plugins-memory",
     "alpha-avatar-plugins-persona",
     "alpha-avatar-plugins-rag",
@@ -329,6 +330,16 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "tavily" }]
+
+[[package]]
+name = "alpha-avatar-plugins-mcp"
+source = { editable = "avatar-plugins/avatar-plugins-mcp" }
+dependencies = [
+    { name = "mcp" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "mcp", specifier = ">=1.10.0,<2" }]
 
 [[package]]
 name = "alpha-avatar-plugins-memory"

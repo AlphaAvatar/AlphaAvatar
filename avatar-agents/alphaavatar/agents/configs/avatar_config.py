@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from .avatar_info_config import AvatarInfoConfig
 from .plugins.character_plugin_config import VirtualCharacterConfig
 from .plugins.livekit_plugin_config import LiveKitPluginConfig
+from .plugins.mcp_plugin_config import MCPConfig
 from .plugins.memory_plugin_config import MemoryConfig
 from .plugins.persona_plugin_config import PersonaConfig
 from .plugins.tools_plugin_config import ToolsConfig
@@ -40,3 +41,6 @@ class AvatarConfig(BaseModel):
 
     tools_config: ToolsConfig = Field(default_factory=ToolsConfig)
     """Avatar Tools configuration."""
+
+    mcp_config: MCPConfig = Field(default_factory=MCPConfig)
+    """Avatar MCP configuration."""

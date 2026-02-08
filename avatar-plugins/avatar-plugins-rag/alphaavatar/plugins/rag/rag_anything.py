@@ -44,7 +44,7 @@ async def _maybe_await(v):
 class RAGAnythingTool(RAGBase):
     def __init__(
         self,
-        *args,
+        *,
         working_dir: pathlib.Path,
         doc_parser: DocParserType = "mineru",
         openai_api_key: NotGivenOr[str] = NOT_GIVEN,

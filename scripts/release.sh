@@ -8,6 +8,7 @@ PACKAGES=(
   "avatar-agents"
   "avatar-plugins/avatar-plugins-character"
   "avatar-plugins/avatar-plugins-deepresearch"
+  "avatar-plugins/avatar-plugins-mcp"
   "avatar-plugins/avatar-plugins-memory"
   "avatar-plugins/avatar-plugins-persona"
   "avatar-plugins/avatar-plugins-rag"

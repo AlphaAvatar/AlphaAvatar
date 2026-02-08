@@ -12,10 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from alphaavatar.agents import AvatarModule, AvatarPlugin
-from alphaavatar.agents.tools import RAGAPI
 
 from .log import logger
-from .rag_anything import RAGAnythingTool
+from .mcp_server_remote import MCPServerRemote
 from .version import __version__
 
 __all__ = [
@@ -23,7 +22,7 @@ __all__ = [
 ]
 
 
-class RAGAnythingPlugin(AvatarPlugin):
+class MCPRemotePlugin(AvatarPlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
 
@@ -31,21 +30,20 @@ class RAGAnythingPlugin(AvatarPlugin):
 
     def get_plugin(
         self,
-        working_dir: str,
-        rag_init_config: dict,
+        url: str,
+        mcp_init_config: dict,
         *args,
         **kwargs,
-    ) -> RAGAPI:
+    ) -> MCPServerRemote:
         try:
-            rag_obj = RAGAnythingTool(working_dir=working_dir, **rag_init_config, **kwargs)
-        except (ImportError, ModuleNotFoundError) as e:
+            mcp_server = MCPServerRemote(url=url, **mcp_init_config, **kwargs)
+            return mcp_server
+        except Exception:
             raise ImportError(
-                "The 'raganything[default]' RAG plugin is required but is not installed.\n"
-                "Install it via: `pip install alphaavatar-plugins-rag`"
-            ) from e
-
-        return RAGAPI(rag_object=rag_obj)
+                "The MCP plugin is required but is not installed.\n"
+                "To fix this, install the optional dependency: `pip install alphaavatar-plugins-mcp`"
+            )
 
 
 # plugin init
-AvatarPlugin.register_avatar_plugin(AvatarModule.RAG, "default", RAGAnythingPlugin())
+AvatarPlugin.register_avatar_plugin(AvatarModule.MCP, "default_remote", MCPRemotePlugin())

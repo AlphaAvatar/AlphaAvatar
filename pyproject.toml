@@ -5,6 +5,7 @@ constraint-dependencies = ['onnxruntime<1.20.0; python_version == "3.9"']
 alpha-avatar-agents = { workspace = true }
 alpha-avatar-plugins-character = { workspace = true }
 alpha-avatar-plugins-deepresearch = { workspace = true }
+alpha-avatar-plugins-mcp = { workspace = true }
 alpha-avatar-plugins-memory = { workspace = true }
 alpha-avatar-plugins-persona = { workspace = true }
 alpha-avatar-plugins-rag = { workspace = true }

@@ -31,11 +31,15 @@ class TavilyPlugin(AvatarPlugin):
 
     def get_plugin(
         self,
+        working_dir: str,
+        deepresearch_init_config: dict,
         *args,
         **kwargs,
     ) -> TavilyDeepResearchTool:
         try:
-            deepresearch_obj = TavilyDeepResearchTool(*args, **kwargs)
+            deepresearch_obj = TavilyDeepResearchTool(
+                working_dir=working_dir, **deepresearch_init_config, **kwargs
+            )
             deepresearch_api = DeepResearchAPI(deepresearch_obj)
             return deepresearch_api
         except Exception:

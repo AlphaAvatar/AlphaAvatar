@@ -1,0 +1,1 @@
+# MCP Plugin for AlphaAvatar

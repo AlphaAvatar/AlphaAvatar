@@ -140,9 +140,9 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 <td width="50%">
 <h3>🧰 MCP</h3>
 <p>
-  <img src="https://img.shields.io/badge/Planned-6c757d?style=flat" alt="Planned" />
+  <img src="https://img.shields.io/badge/In_Progress-28a745?style=flat" />
 </p>
-<p></p>
+<p>Allows AlphaAvatar to <strong>access real-world external tools</strong>, such as databases, email, social media, etc.</p>
 <p>
 <a href="#">README↗</a>
 </p>
@@ -152,7 +152,7 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 <p>
   <img src="https://img.shields.io/badge/Planned-6c757d?style=flat" alt="Planned" />
 </p>
-<p></p>
+<p>Provide AlphaAvatar with a sandbox environment to interact with the <strong>external world or with other agents</strong>, thereby enabling multi-agent interaction and exploration.</p>
 <p>
 <a href="#">README↗</a>
 </p>
@@ -167,6 +167,7 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 <h4>Latest News 🔥</h4>
 
 - [2026/02] We have released AlphaAvatar **version 0.4.0** to support RAG by [RAG-Anything](https://github.com/HKUDS/RAG-Anything) library and optimized the Memory and DeepResearch modules.
+  - Released AlphaAvatar **version 0.4.1**: Fix the Persona plugin bugs and Add new MCP plugin.
 - [2026/01] We have released AlphaAvatar **version 0.3.0** to support DeepResearch by [tavily](https://tavily.com) API.
   - Released AlphaAvatar **version 0.3.1**: ADD tool calls during user-Assistant interactions to the Memory module.
 - [2025/12] We have released AlphaAvatar **version 0.2.0** to support [AIRI](https://github.com/moeru-ai/airi) live2d-based virtual character display.
