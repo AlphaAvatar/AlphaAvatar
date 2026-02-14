@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from alphaavatar.agents import AvatarModule, AvatarPlugin
+from alphaavatar.agents.tools import MCPAPI
 
 from .log import logger
-from .mcp_server_remote import MCPServerRemote
+from .mcp_host import MCPHost
 from .version import __version__
 
 __all__ = [
@@ -30,14 +31,15 @@ class MCPRemotePlugin(AvatarPlugin):
 
     def get_plugin(
         self,
-        url: str,
+        urls: list[str],
         mcp_init_config: dict,
         *args,
         **kwargs,
-    ) -> MCPServerRemote:
+    ) -> MCPHost:
         try:
-            mcp_server = MCPServerRemote(url=url, **mcp_init_config, **kwargs)
-            return mcp_server
+            mcp_host = MCPHost(urls=urls, **mcp_init_config, **kwargs)
+            mcp_api = MCPAPI(mcp_host)
+            return mcp_api
         except Exception:
             raise ImportError(
                 "The MCP plugin is required but is not installed.\n"
@@ -46,4 +48,4 @@ class MCPRemotePlugin(AvatarPlugin):
 
 
 # plugin init
-AvatarPlugin.register_avatar_plugin(AvatarModule.MCP, "default_remote", MCPRemotePlugin())
+AvatarPlugin.register_avatar_plugin(AvatarModule.MCP, "default", MCPRemotePlugin())

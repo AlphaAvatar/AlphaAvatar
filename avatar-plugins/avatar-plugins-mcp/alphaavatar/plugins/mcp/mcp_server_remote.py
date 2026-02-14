@@ -22,3 +22,10 @@ class MCPServerRemote(mcp.MCPServerHTTP):
         **kwargs,
     ) -> None:
         super().__init__(url=url)
+
+    async def list_tools(self) -> list[mcp.MCPTool]:
+        # NOTE: We have disabled LiveKit's native chain of injecting MCP as a tool call into the Agent.
+        # To prevent Agent performance degradation due to an increase in available MCP tools,
+        # and to address the issue of serial tool calls, we provide a unified MCP tool call interface.
+        # This supports MCP RAG functionality and parallel tool calls, thereby improving Agent tool call performance.
+        return []

@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,17 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .base import ToolBase
-from .deepresearch_api import DeepResearchAPI, DeepResearchBase
-from .mcp_api import MCPAPI, MCPHostBase
-from .rag_api import RAGAPI, RAGBase
+from alphaavatar.agents.tools import MCPHostBase
 
-__all__ = [
-    "ToolBase",
-    "DeepResearchBase",
-    "DeepResearchAPI",
-    "MCPHostBase",
-    "MCPAPI",
-    "RAGBase",
-    "RAGAPI",
-]
+
+class MCPHost(MCPHostBase):
+    def __init__(self, urls: list[str], **kwargs) -> None:
+        super().__init__(description=f"Host for URLs: {urls}", **kwargs)

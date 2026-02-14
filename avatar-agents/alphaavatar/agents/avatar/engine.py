@@ -18,7 +18,7 @@ from collections.abc import AsyncIterable, Coroutine
 from typing import Any
 
 from livekit import rtc
-from livekit.agents import Agent, ModelSettings, llm, mcp, stt
+from livekit.agents import Agent, ModelSettings, llm, stt
 from livekit.agents.voice.generation import update_instructions
 
 from alphaavatar.agents.configs import AvatarConfig, SessionConfig
@@ -50,7 +50,9 @@ class AvatarEngine(Agent):
         self._tools: list[llm.FunctionTool | llm.RawFunctionTool] = (
             avatar_config.tools_config.get_tools(self.session_config)
         )
-        self._mcps: list[mcp.MCPServerHTTP] = avatar_config.mcp_config.get_mcps(self.session_config)
+        self._mcp_tool: llm.FunctionTool | llm.RawFunctionTool = avatar_config.mcp_config.get_mcp(
+            self.session_config
+        )
 
         # Step4: initial avatar
         super().__init__(
@@ -61,8 +63,7 @@ class AvatarEngine(Agent):
             llm=self.avatar_config.livekit_plugin_config.get_llm_plugin(),
             tts=self.avatar_config.livekit_plugin_config.get_tts_plugin(),
             allow_interruptions=self.avatar_config.livekit_plugin_config.allow_interruptions,
-            tools=self._tools,
-            mcp_servers=self._mcps,
+            tools=self._tools + [self._mcp_tool] if self._mcp_tool else self._tools,
         )
 
     @property

@@ -16,11 +16,12 @@ from __future__ import annotations
 import importlib
 from typing import TYPE_CHECKING
 
-from livekit.agents import mcp
+from livekit.agents import llm
 from pydantic import BaseModel, Field
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.log import logger
+from alphaavatar.agents.tools import ToolBase
 
 if TYPE_CHECKING:
     from alphaavatar.agents.configs import SessionConfig
@@ -45,26 +46,26 @@ class MCPConfig(BaseModel):
 
     def model_post_init(self, __context): ...
 
-    def get_mcps(self, session_config: SessionConfig) -> list[mcp.MCPServerHTTP]:
+    def get_mcp(self, session_config: SessionConfig) -> llm.FunctionTool | llm.RawFunctionTool:
         """Returns the available tools based on the configuration."""
-        mcps = []
+        tool = None
 
         if not self.enable_mcp:
-            return mcps
+            return tool
 
         # For remote MCP servers
         if len(self.mcp_server_urls) == 0:
             logger.warning("No MCP server URLs provided while MCP is enabled.")
-            return mcps
+            return tool
 
-        for url in self.mcp_server_urls:
-            mcp_i: mcp.MCPServerHTTP | None = AvatarPlugin.get_avatar_plugin(
-                AvatarModule.MCP,
-                "default_remote",
-                url=url,
-                mcp_init_config=self.mcp_init_config,
-            )
-            if mcp_i is not None:
-                mcps.append(mcp_i)
+        mcp_tool: ToolBase | None = AvatarPlugin.get_avatar_plugin(
+            AvatarModule.MCP,
+            "default",
+            urls=self.mcp_server_urls,
+            mcp_init_config=self.mcp_init_config,
+            working_dir=session_config.user_path.data_dir,
+        )
+        if mcp_tool:
+            tool = mcp_tool.tool
 
-        return mcps
+        return tool

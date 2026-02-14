@@ -17,6 +17,8 @@ from typing import Any, Literal
 
 from livekit.agents import RunContext
 
+from alphaavatar.agents.log import logger
+
 from .base import ToolBase
 
 
@@ -150,3 +152,7 @@ Expected returns by op:
                 return await self._deepresearch_object.scrape(urls=urls, ctx=ctx)
             case DeepResearchOp.DOWNLOAD:
                 return await self._deepresearch_object.download(urls=urls, ctx=ctx)
+            case _:
+                msg = f"Unsupported MCP operation: {op}"
+                logger.error(msg)
+                return msg

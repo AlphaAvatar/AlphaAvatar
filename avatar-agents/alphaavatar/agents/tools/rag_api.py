@@ -17,6 +17,8 @@ from typing import Any, Literal
 
 from livekit.agents import RunContext
 
+from alphaavatar.agents.log import logger
+
 from .base import ToolBase
 
 
@@ -140,6 +142,10 @@ Expected returns by op:
                 return await self._rag_object.indexing(
                     file_paths_or_dir=file_paths_or_dir, ctx=ctx, data_source=data_source
                 )
+            case _:
+                msg = f"Unsupported MCP operation: {op}"
+                logger.error(msg)
+                return msg
 
     async def query(
         self,

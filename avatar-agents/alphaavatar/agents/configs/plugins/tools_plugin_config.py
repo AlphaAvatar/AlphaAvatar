@@ -20,7 +20,7 @@ from livekit.agents import llm
 from pydantic import BaseModel, Field
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
-from alphaavatar.agents.tools import RAGAPI, ToolBase
+from alphaavatar.agents.tools import ToolBase
 
 if TYPE_CHECKING:
     from alphaavatar.agents.configs import SessionConfig
@@ -68,7 +68,7 @@ class ToolsConfig(BaseModel):
             tools.append(deepresearch_tool.tool)
 
         # RAG Tool
-        rag_tool: RAGAPI | None = AvatarPlugin.get_avatar_plugin(
+        rag_tool: ToolBase | None = AvatarPlugin.get_avatar_plugin(
             AvatarModule.RAG,
             self.rag_tool,
             rag_init_config=self.rag_init_config,
