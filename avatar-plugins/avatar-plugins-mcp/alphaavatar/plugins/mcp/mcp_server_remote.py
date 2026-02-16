@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import json
 from datetime import timedelta
 from typing import Any
 
@@ -31,7 +32,19 @@ class MCPServerRemote(mcp.MCPServerHTTP):
     ) -> None:
         super().__init__(url=url)
 
-        self._client_name: str | None = None
+        self._server_name: str | None = None
+        self._server_title: str | None = None
+        self._server_instrcution: str | None = None
+
+    @property
+    def info(self) -> str:
+        info = {
+            "name": self._server_name,
+            "title": self._server_title,
+            "url": self.url,
+            "instrcution": self._server_instrcution,
+        }
+        return json.dumps(info, ensure_ascii=False)
 
     async def initialize(self) -> None:
         try:
@@ -47,10 +60,14 @@ class MCPServerRemote(mcp.MCPServerHTTP):
                 )
             )
             init_result = await self._client.initialize()  # type: ignore[union-attr]
-            self._client_name = init_result.serverInfo.name if init_result.serverInfo else None
+            self._server_name = init_result.serverInfo.name if init_result.serverInfo else None
+            self._server_title = init_result.serverInfo.title if init_result.serverInfo else None
+            self._server_instrcution = (
+                init_result.instructions if init_result.instructions else None
+            )
             self._initialized = True
             logger.info(
-                f"[MCPServerRemote] Initialized MCPServerRemote for client '{self._client_name}' at URL: {self.url}"
+                f"[MCPServerRemote] Initialized MCPServerRemote for client '{self.info}' at URL: {self.url}"
             )
         except Exception:
             await self.aclose()
@@ -80,7 +97,7 @@ class MCPServerRemote(mcp.MCPServerHTTP):
         input_schema: dict[str, Any],
         meta: dict[str, Any] | None,
     ) -> MCPTool:
-        tool = MCPTool(self._client, self._client_name, name, description, input_schema, meta)
+        tool = MCPTool(self._client, self._server_name, name, description, input_schema, meta)
         logger.info(
             f"[MCPServerRemote] Registered MCP tool: {tool._tool_id} with input schema: {input_schema} and meta: {meta}"
         )

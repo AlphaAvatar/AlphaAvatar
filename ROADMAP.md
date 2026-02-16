@@ -24,11 +24,12 @@
 
 # 🗓️ PLAN OVERVIEW
 
-| Plugin               | Description                                                                  |     Stage     |
-| :------------------- | :--------------------------------------------------------------------------- | :-----------: |
-| 💡 **Reflection**    | Generates metacognitive insights from memory and interaction history.        |   🧩 Planned   |
-| ⚙️ **Behavior**      | Controls AlphaAvatar’s behavior logic and process flow.                      |   🧩 Planned   |
-| 🌍 **SANDBOX**       | Interaction and exploration of external virtual environments                 |   🧩 Planned   |
+| Plugin               | Description                                                                                                                     |     Stage     |
+| :------------------- | :------------------------------------------------------------------------------------------------------------------------------ | :-----------: |
+| 💡 **Reflection**    | Generates metacognitive insights from memory and interaction history.                                                           |   🧩 Planned   |
+| ⚙️ **Behavior**      | Controls AlphaAvatar’s behavior logic and process flow.                                                                         |   🧩 Planned   |
+| 🌍 **SANDBOX**       | Interaction and exploration of external virtual environments.                                                                   |   🧩 Planned   |
+| 📅 **PLANNING**      | Based on the memory and reflection results obtained from user/tool ​​interactions, future plans are generated offline or online.  |   🧩 Planned   |
 
 ---
 
@@ -44,6 +45,7 @@
 
 | Priority | Task                                                                                                                         |     Stage     |
 | :------- | :--------------------------------------------------------------------------------------------------------------------------- | :-----------: |
+| 🔹       | Add error handling and interactive feedback during tool invocation.                                                          |   🧩 Planned   |
 | 🔹       | Develop multi-user management features for plugins.                                                                          |   🧩 Planned   |
 | 🔹       | Content uploaded by a user in the current session is first stored in a temporary directory, and then stored in persistent storage after confirmation. The user's upload status and input are identified separately for use in the model.    | 🧩 Planned     |
 | 🔹       | The return values ​​of the Deep research download function and the Rag indexing function should include a brief description of the doc/url content (using a decorator) stored in memory for later reference.    | 🧩 Planned     |

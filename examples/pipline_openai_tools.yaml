@@ -43,3 +43,6 @@ deepresearch_tool: default
 deepresearch_init_config: {}
 rag_tool: default
 rag_init_config: {'doc_parser': 'docling'}
+enable_mcp: true
+mcp_server_urls: ["https://docs.livekit.io/mcp"]
+mcp_init_config: {}

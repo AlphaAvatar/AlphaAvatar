@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+import json
+from typing import Any
 
-from livekit.agents import utils
+from livekit.agents import RunContext, utils
+from livekit.agents.llm.tool_context import ToolError
 
 from alphaavatar.agents.tools import MCPHostBase
 from alphaavatar.agents.utils import AsyncLoopThread
@@ -33,10 +36,10 @@ class MCPHost(MCPHostBase):
         self._clients: list[MCPServerRemote] | None = None
         self._mcp_tools: dict[str, MCPTool] | None = None
 
-        self._loop_thread = AsyncLoopThread(name="raganything-loop")
+        self._loop_thread = AsyncLoopThread(name="mcp-loop")
         self._loop_thread.submit(self._initialize(urls))
 
-        super().__init__(description=self._get_tools_description(), **kwargs)
+        super().__init__(servers_info=self._get_servers_info(), **kwargs)
 
     async def _initialize(self, urls: list[str]):
         # STEP 1: Initialize MCPServerRemotes in parallel
@@ -68,13 +71,93 @@ class MCPHost(MCPHostBase):
                 for tool in tools:
                     self._mcp_tools[tool._tool_id] = tool
 
-    def _get_tools_description(self, tool_ids: list[str] | None = None) -> str:
+    def _get_servers_info(self) -> str:
+        if self._clients is None:
+            return "MCPHost with uninitialized servers"
+
+        info_list = "\n".join(f"- {client.info}" for client in self._clients)
+        return f"MCPHost with the following servers:\n{info_list}"
+
+    async def search_tools(self, *, query: str, ctx: RunContext) -> str:
         if self._mcp_tools is None:
             return "MCPHost with uninitialized tools"
 
-        tool_list = "\n".join(
-            f"- {tool.description}"
-            for tool in self._mcp_tools.values()
-            if tool_ids is None or tool._tool_id in tool_ids
+        # TODO: search tools base on query
+
+        tool_list = "\n".join(f"- {tool.description}" for tool in self._mcp_tools.values())
+        return f"MCPHost with the following tools for query ({query}):\n{tool_list}"
+
+    async def call_tools(self, *, params: dict, ctx: RunContext) -> str:
+        if self._mcp_tools is None:
+            return "MCPHost with uninitialized tools"
+
+        if not params:
+            return "MCPHost TOOL_CALL received empty params"
+
+        # 1) Pre-check: Does tool exist?
+        missing = [tool_id for tool_id in params.keys() if tool_id not in self._mcp_tools]
+        if missing:
+            missing_list = "\n".join(f"- {tid}" for tid in missing)
+            available_hint = "\n".join(f"- {tid}" for tid in sorted(self._mcp_tools.keys())[:50])
+            return (
+                "### MCP TOOL_CALL error\n"
+                "Some tools are not available in this MCPHost.\n\n"
+                f"**Missing tools:**\n{missing_list}\n\n"
+                f"**Available tools (partial):**\n{available_hint}\n"
+            )
+
+        # 2) Concurrent calls (preserving input order)
+        ordered_items: list[tuple[str, Any]] = list(params.items())
+
+        async def _call_one(tool_id: str, raw_args: Any) -> Any:
+            tool = self._mcp_tools[tool_id]
+            if raw_args is None:
+                raw_args = {}
+            if not isinstance(raw_args, dict):
+                raise ToolError(
+                    f"Invalid params for tool '{tool_id}': expected dict, got {type(raw_args).__name__}"
+                )
+            return await tool.call(raw_args)
+
+        results = await asyncio.gather(
+            *(_call_one(tool_id, raw_args) for tool_id, raw_args in ordered_items),
+            return_exceptions=True,
         )
-        return f"MCPHost with the following tools:\n{tool_list}"
+
+        # 3) Markdown summary output
+        lines: list[str] = []
+        lines.append("### MCP TOOL_CALL results")
+        lines.append("")
+        lines.append(f"- Total tools requested: **{len(ordered_items)}**")
+        lines.append("")
+
+        for (tool_id, raw_args), res in zip(ordered_items, results, strict=False):
+            lines.append(f"#### {tool_id}")
+            lines.append("")
+            lines.append("**Args:**")
+            lines.append("```json")
+            try:
+                lines.append(json.dumps(raw_args or {}, ensure_ascii=False, indent=2))
+            except Exception:
+                lines.append(json.dumps({"_repr_": repr(raw_args)}, ensure_ascii=False, indent=2))
+            lines.append("```")
+            lines.append("")
+
+            if isinstance(res, Exception):
+                lines.append("**Status:** ❌ Error")
+                lines.append("")
+                lines.append("```text")
+                lines.append(str(res))
+                lines.append("```")
+            else:
+                lines.append("**Status:** ✅ OK")
+                lines.append("")
+                # TODO: MCPTool.call() currently returns a JSON string (or a JSON list string).
+                # To avoid misclassification, it's displayed as text here; if you're sure it's always JSON, you can change it to ```json`
+                lines.append("```text")
+                lines.append(res if isinstance(res, str) else json.dumps(res, ensure_ascii=False))
+                lines.append("```")
+
+            lines.append("")  # spacer
+
+        return "\n".join(lines)

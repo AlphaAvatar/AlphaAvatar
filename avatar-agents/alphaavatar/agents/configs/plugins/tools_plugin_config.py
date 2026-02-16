@@ -20,6 +20,7 @@ from livekit.agents import llm
 from pydantic import BaseModel, Field
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
+from alphaavatar.agents.log import logger
 from alphaavatar.agents.tools import ToolBase
 
 if TYPE_CHECKING:
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
 
 
 importlib.import_module("alphaavatar.plugins.deepresearch")
+importlib.import_module("alphaavatar.plugins.mcp")
 importlib.import_module("alphaavatar.plugins.rag")
 
 
@@ -47,6 +49,19 @@ class ToolsConfig(BaseModel):
     rag_init_config: dict = Field(
         default={},
         description="Custom configuration parameters for the RAG tool plugin.",
+    )
+
+    enable_mcp: bool = Field(
+        default=False,
+        description="Whether to enable the MCP plugin.",
+    )
+    mcp_server_urls: list[str] = Field(
+        default=[],
+        description="List of MCP server URLs to connect to.",
+    )
+    mcp_init_config: dict = Field(
+        default={},
+        description="Custom configuration parameters for the MCP plugin.",
     )
 
     def model_post_init(self, __context): ...
@@ -76,5 +91,23 @@ class ToolsConfig(BaseModel):
         )
         if rag_tool:
             tools.append(rag_tool.tool)
+
+        if not self.enable_mcp:
+            return tools
+
+        # For remote MCP servers
+        if len(self.mcp_server_urls) == 0:
+            logger.warning("No MCP server URLs provided while MCP is enabled.")
+            return tools
+
+        mcp_tool: ToolBase | None = AvatarPlugin.get_avatar_plugin(
+            AvatarModule.MCP,
+            "default",
+            urls=self.mcp_server_urls,
+            mcp_init_config=self.mcp_init_config,
+            working_dir=session_config.user_path.data_dir,
+        )
+        if mcp_tool:
+            tools.append(mcp_tool.tool)
 
         return tools
