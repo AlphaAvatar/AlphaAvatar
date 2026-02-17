@@ -14,6 +14,7 @@
 import asyncio
 import json
 import re
+from datetime import timedelta
 from typing import Any
 
 from livekit.agents.llm.tool_context import ToolError
@@ -32,6 +33,7 @@ class MCPTool:
         description: str | None,
         input_schema: dict[str, Any],
         meta: dict[str, Any] | None,
+        server_loop: asyncio.AbstractEventLoop | None = None,
     ) -> None:
         self._client = client
         self._client_name = client_name
@@ -43,6 +45,8 @@ class MCPTool:
 
         self._tool_id = f"{client_name}.{name}" if client_name else name
 
+        self._server_loop = server_loop
+
     @property
     def description(self) -> str:
         description = f"{self._tool_id}: {self._description} (input schema: {self._input_schema}, meta: {self._meta})"
@@ -50,22 +54,25 @@ class MCPTool:
         return description
 
     async def call(self, raw_arguments: dict[str, Any]) -> Any:
-        # In case (somehow), the tool is called after the MCPServer aclose.
         if self._client is None:
             raise ToolError(
                 "Tool invocation failed: internal service is unavailable. "
                 "Please check that the MCPServer is still running."
             )
 
-        try:
-            tool_result = await asyncio.wait_for(
-                self._client.call_tool(self._name, arguments=raw_arguments),
-                timeout=DEFAULT_TIMEOUT,
+        async def _do_call():
+            return await self._client.call_tool(
+                self._name,
+                arguments=raw_arguments,
+                read_timeout_seconds=timedelta(seconds=DEFAULT_TIMEOUT),
             )
-        except asyncio.TimeoutError:
-            raise ToolError(
-                f"Tool '{self._tool_id}' timed out after {DEFAULT_TIMEOUT:.1f} seconds."
-            )
+
+        cur_loop = asyncio.get_running_loop()
+        if self._server_loop is not None and cur_loop is not self._server_loop:
+            cfut = asyncio.run_coroutine_threadsafe(_do_call(), self._server_loop)
+            tool_result = await asyncio.wrap_future(cfut)
+        else:
+            tool_result = await _do_call()
 
         if tool_result.isError:
             error_str = "\n".join(str(part) for part in tool_result.content)

@@ -143,10 +143,12 @@ class MCPHost(MCPHostBase):
                 )
                 raise ToolError(f"Tool {tool_id} failed because: {e}")
 
-        results = await asyncio.gather(
-            *(_call_one(tool_id, raw_args) for tool_id, raw_args in ordered_items),
-            return_exceptions=True,
-        )
+        results = []
+        for tool_id, raw_args in ordered_items:
+            try:
+                results.append(await _call_one(tool_id, raw_args))
+            except Exception as e:
+                results.append(e)
 
         success_count = sum(1 for r in results if not isinstance(r, Exception))
         error_count = len(results) - success_count

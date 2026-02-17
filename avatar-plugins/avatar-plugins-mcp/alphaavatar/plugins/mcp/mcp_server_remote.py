@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import asyncio
 import json
 from datetime import timedelta
 from typing import Any
@@ -43,6 +44,8 @@ class MCPServerRemote(mcp.MCPServerHTTP):
         self._server_name: str | None = None
         self._server_title: str | None = None
         self._server_instrcution: str | None = None
+
+        self._loop = asyncio.get_running_loop()
 
     @property
     def info(self) -> str:
@@ -108,7 +111,15 @@ class MCPServerRemote(mcp.MCPServerHTTP):
         input_schema: dict[str, Any],
         meta: dict[str, Any] | None,
     ) -> MCPTool:
-        tool = MCPTool(self._client, self._server_name, name, description, input_schema, meta)
+        tool = MCPTool(
+            self._client,
+            self._server_name,
+            name,
+            description,
+            input_schema,
+            meta,
+            server_loop=self._loop,
+        )
         logger.info(
             f"[MCPServerRemote] Registered MCP tool: {tool._tool_id} with input schema: {input_schema} and meta: {meta}"
         )
