@@ -13,6 +13,7 @@
 # limitations under the License.
 import asyncio
 import json
+import time
 from typing import Any
 
 from livekit.agents import RunContext, utils
@@ -32,18 +33,18 @@ class MCPHost(MCPHostBase):
     # and to address the issue of serial tool calls, we provide a unified MCP tool call interface.
     # This supports MCP RAG functionality and parallel tool calls, thereby improving Agent tool call performance.
 
-    def __init__(self, urls: list[str], **kwargs) -> None:
+    def __init__(self, servers: dict[str, dict], **kwargs) -> None:
         self._clients: list[MCPServerRemote] | None = None
         self._mcp_tools: dict[str, MCPTool] | None = None
 
         self._loop_thread = AsyncLoopThread(name="mcp-loop")
-        self._loop_thread.submit(self._initialize(urls))
+        self._loop_thread.submit(self._initialize(servers))
 
         super().__init__(servers_info=self._get_servers_info(), **kwargs)
 
-    async def _initialize(self, urls: list[str]):
+    async def _initialize(self, servers: dict[str, dict]):
         # STEP 1: Initialize MCPServerRemotes in parallel
-        self._clients = [MCPServerRemote(url=url) for url in urls]
+        self._clients = [MCPServerRemote(**servers[name]) for name in servers]
 
         @utils.log_exceptions(logger=logger)
         async def _initialize_client(client: MCPServerRemote) -> None:
@@ -79,6 +80,8 @@ class MCPHost(MCPHostBase):
         return f"MCPHost with the following servers:\n{info_list}"
 
     async def search_tools(self, *, query: str, ctx: RunContext) -> str:
+        logger.info(f"[MCPHost] search_tools called with query: {query}")
+
         if self._mcp_tools is None:
             return "MCPHost with uninitialized tools"
 
@@ -88,15 +91,21 @@ class MCPHost(MCPHostBase):
         return f"MCPHost with the following tools for query ({query}):\n{tool_list}"
 
     async def call_tools(self, *, params: dict, ctx: RunContext) -> str:
+        call_start = time.time()
+        logger.info(f"[MCPHost] call_tools invoked with {len(params) if params else 0} tools")
+
         if self._mcp_tools is None:
+            logger.warning("[MCPHost] call_tools called before initialization")
             return "MCPHost with uninitialized tools"
 
         if not params:
+            logger.warning("[MCPHost] Empty params received")
             return "MCPHost TOOL_CALL received empty params"
 
         # 1) Pre-check: Does tool exist?
         missing = [tool_id for tool_id in params.keys() if tool_id not in self._mcp_tools]
         if missing:
+            logger.error(f"[MCPHost] Missing tools requested: {missing}")
             missing_list = "\n".join(f"- {tid}" for tid in missing)
             available_hint = "\n".join(f"- {tid}" for tid in sorted(self._mcp_tools.keys())[:50])
             return (
@@ -111,17 +120,39 @@ class MCPHost(MCPHostBase):
 
         async def _call_one(tool_id: str, raw_args: Any) -> Any:
             tool = self._mcp_tools[tool_id]
+            tool_start = time.time()
+
+            logger.info(f"[MCPHost] Calling tool: {tool_id}, args: {raw_args}")
+
             if raw_args is None:
                 raw_args = {}
+
             if not isinstance(raw_args, dict):
-                raise ToolError(
-                    f"Invalid params for tool '{tool_id}': expected dict, got {type(raw_args).__name__}"
+                logger.error(f"[MCPHost] Invalid args type for {tool_id}")
+                raise ToolError(f"Invalid params for tool '{tool_id}': expected dict")
+
+            try:
+                result = await tool.call(raw_args)
+                logger.info(
+                    f"[MCPHost] Tool {tool_id} completed in {time.time() - tool_start:.2f}s"
                 )
-            return await tool.call(raw_args)
+                return result
+            except Exception as e:
+                logger.exception(
+                    f"[MCPHost] Tool {tool_id} failed after {time.time() - tool_start:.2f}s"
+                )
+                raise ToolError(f"Tool {tool_id} failed because: {e}")
 
         results = await asyncio.gather(
             *(_call_one(tool_id, raw_args) for tool_id, raw_args in ordered_items),
             return_exceptions=True,
+        )
+
+        success_count = sum(1 for r in results if not isinstance(r, Exception))
+        error_count = len(results) - success_count
+        logger.info(
+            f"[MCPHost] call_tools finished in {time.time() - call_start:.2f}s | "
+            f"Success: {success_count} | Errors: {error_count}"
         )
 
         # 3) Markdown summary output

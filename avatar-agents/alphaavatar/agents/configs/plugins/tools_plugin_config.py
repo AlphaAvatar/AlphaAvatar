@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.tools import ToolBase
+from alphaavatar.agents.utils import resolve_env_placeholders
 
 if TYPE_CHECKING:
     from alphaavatar.agents.configs import SessionConfig
@@ -55,9 +56,28 @@ class ToolsConfig(BaseModel):
         default=False,
         description="Whether to enable the MCP plugin.",
     )
-    mcp_server_urls: list[str] = Field(
-        default=[],
-        description="List of MCP server URLs to connect to.",
+    mcp_servers: dict[str, dict] = Field(
+        default={},
+        description=(
+            "Mapping of MCP server identifiers to their configuration objects. "
+            "Each key represents a logical MCP server name, and the value is a "
+            "dictionary containing connection parameters such as `url` and optional "
+            "`headers`.\n\n"
+            "Example:\n"
+            "{\n"
+            '  "livekit-docs": {\n'
+            '    "url": "https://docs.livekit.io/mcp"\n'
+            "  },\n"
+            '  "github-mcp": {\n'
+            '    "url": "https://api.githubcopilot.com/mcp/",\n'
+            '    "headers": {\n'
+            '      "Authorization": "Bearer <GITHUB_PAT>"\n'
+            "    }\n"
+            "  }\n"
+            "}\n\n"
+            "The configuration object is passed directly to the MCPServerRemote "
+            "constructor when initializing remote MCP connections."
+        ),
     )
     mcp_init_config: dict = Field(
         default={},
@@ -96,14 +116,15 @@ class ToolsConfig(BaseModel):
             return tools
 
         # For remote MCP servers
-        if len(self.mcp_server_urls) == 0:
+        if len(self.mcp_servers) == 0:
             logger.warning("No MCP server URLs provided while MCP is enabled.")
             return tools
 
+        mcp_servers = resolve_env_placeholders(self.mcp_servers)
         mcp_tool: ToolBase | None = AvatarPlugin.get_avatar_plugin(
             AvatarModule.MCP,
             "default",
-            urls=self.mcp_server_urls,
+            servers=mcp_servers,
             mcp_init_config=self.mcp_init_config,
             working_dir=session_config.user_path.data_dir,
         )

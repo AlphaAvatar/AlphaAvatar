@@ -19,6 +19,7 @@ from livekit.agents import mcp
 
 from mcp import ClientSession
 
+from .config import DEFAULT_TIMEOUT
 from .log import logger
 from .mcp_tool import MCPTool
 
@@ -28,9 +29,16 @@ class MCPServerRemote(mcp.MCPServerHTTP):
         self,
         *,
         url: str,
+        headers: dict[str, Any] | None = None,
+        client_session_timeout_seconds: float = DEFAULT_TIMEOUT,
         **kwargs,
     ) -> None:
-        super().__init__(url=url)
+        super().__init__(
+            url=url,
+            headers=headers,
+            timeout=DEFAULT_TIMEOUT,
+            client_session_timeout_seconds=client_session_timeout_seconds,
+        )
 
         self._server_name: str | None = None
         self._server_title: str | None = None
@@ -67,9 +75,12 @@ class MCPServerRemote(mcp.MCPServerHTTP):
             )
             self._initialized = True
             logger.info(
-                f"[MCPServerRemote] Initialized MCPServerRemote for client '{self.info}' at URL: {self.url}"
+                f"[MCPServerRemote] Initialized MCPServerRemote success for client '{self.info}' at URL: {self.url}"
             )
-        except Exception:
+        except Exception as e:
+            logger.error(
+                f"[MCPServerRemote] Initialized MCPServerRemote falied ❌ for client '{self.info}' at URL: {self.url}, {e}"
+            )
             await self.aclose()
             raise
 

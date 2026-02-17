@@ -35,8 +35,11 @@ profiler_plugin: default
 profiler_init_config: {}
 speaker_plugin: default
 speaker_init_config: {}
-persona_vdb_config: {'profiler_collection_name': 'alphaavatar_tools_persona_profiler', speaker_collection_name: 'alphaavatar_tools_persona_speaker', 'embedding_model': 'text-embedding-3-small'}
-
+persona_vdb_config: {
+  'profiler_collection_name': 'alphaavatar_tools_persona_profiler',
+  speaker_collection_name: 'alphaavatar_tools_persona_speaker',
+  'embedding_model': 'text-embedding-3-small'
+}
 
 ### Tools Args
 deepresearch_tool: default
@@ -44,5 +47,15 @@ deepresearch_init_config: {}
 rag_tool: default
 rag_init_config: {'doc_parser': 'docling'}
 enable_mcp: true
-mcp_server_urls: ["https://docs.livekit.io/mcp"]
+mcp_servers: {
+  "livekit-docs": {
+    "url": "https://docs.livekit.io/mcp"
+  },
+  "github-copilot": {
+    "url": "https://api.githubcopilot.com/mcp/",
+    "headers": {
+      "Authorization": "Bearer <GITHUB_PAT>"
+    }
+  }
+}
 mcp_init_config: {}

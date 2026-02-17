@@ -31,13 +31,13 @@ class MCPRemotePlugin(AvatarPlugin):
 
     def get_plugin(
         self,
-        urls: list[str],
+        servers: dict[str, dict],
         mcp_init_config: dict,
         *args,
         **kwargs,
     ) -> MCPHost:
         try:
-            mcp_host = MCPHost(urls=urls, **mcp_init_config, **kwargs)
+            mcp_host = MCPHost(servers=servers, **mcp_init_config, **kwargs)
             mcp_api = MCPAPI(mcp_host)
             return mcp_api
         except Exception:
