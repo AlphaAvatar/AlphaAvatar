@@ -145,12 +145,21 @@
 
 ## 🧰 MCP
 
+| Date    | Milestone                                            | Notes                                                                          |
+| :------ | :--------------------------------------------------- | :----------------------------------------------------------------------------- |
+| 2026-02 | Integrate MCP Host as an MCP plugin for AlphaAvatar  | Supports MCP registration, tool search, and parallel invocation.               |
+
+### 🧭 TODO
+
+| Priority | Task                                                                                                                         |     Stage      |
+| :------- | :--------------------------------------------------------------------------------------------------------------------------- | :-----------:  |
+| 🔹       | Implement the function search_tools() for MCP Host.                                                                          |   🧩 Planned   |
+
 ---
 
 # NEXT STEPS
 
 | Quarter | Focus                        | Expected Outcome                                  |
 | :------ | :--------------------------- | :------------------------------------------------ |
-| Q1-2026 | External Tool Integration    | Seamless task execution via MCP plugins.          |
 | Q2-2026 | Reflection Plugin Alpha      | Enable autonomous self-analysis & evolution.      |
 | Q2-2026 | World Sandbox Link           | Allows AlphaAvatar to link to external sandbox worlds (code environments, game environments, etc.).      |

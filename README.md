@@ -214,6 +214,9 @@ export QDRANT_API_KEY=<your QDRANT API Key>
 # Optional
 export TAVILY_API_KEY=<your TAVILY API Key>
 
+# MCP Header Key
+export GITHUB_PAT=<your Github PAT>
+
 alphaavatar download-files
 alphaavatar dev examples/pipline_openai_airi.yaml
 # or

@@ -31,6 +31,7 @@ class MCPServerRemote(mcp.MCPServerHTTP):
         *,
         url: str,
         headers: dict[str, Any] | None = None,
+        instrcution: str | None = None,
         client_session_timeout_seconds: float = DEFAULT_TIMEOUT,
         **kwargs,
     ) -> None:
@@ -43,7 +44,7 @@ class MCPServerRemote(mcp.MCPServerHTTP):
 
         self._server_name: str | None = None
         self._server_title: str | None = None
-        self._server_instrcution: str | None = None
+        self._server_instrcution: str | None = instrcution
 
         self._loop = asyncio.get_running_loop()
 
@@ -74,7 +75,9 @@ class MCPServerRemote(mcp.MCPServerHTTP):
             self._server_name = init_result.serverInfo.name if init_result.serverInfo else None
             self._server_title = init_result.serverInfo.title if init_result.serverInfo else None
             self._server_instrcution = (
-                init_result.instructions if init_result.instructions else None
+                init_result.instructions
+                if self._server_instrcution is None
+                else self._server_instrcution
             )
             self._initialized = True
             logger.info(
