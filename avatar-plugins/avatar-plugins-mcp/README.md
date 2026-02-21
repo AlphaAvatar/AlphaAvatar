@@ -92,11 +92,6 @@ Internally, MCPHost:
 pip install alpha-avatar-plugins-mcp
 ```
 
-下面是我帮你**重构优化后的 Usage 部分**。
-结构更清晰、更加工程化，也更符合你 AlphaAvatar 一贯的技术文档风格（清晰步骤 + 运行逻辑说明 + 最佳实践）。
-
-你可以直接替换原来的 `# Usage` 章节。
-
 ---
 
 # Usage
