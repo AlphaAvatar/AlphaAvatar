@@ -140,7 +140,7 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 <td width="50%">
 <h3>🧰 MCP</h3>
 <p>
-  <img src="https://img.shields.io/badge/Planned-6c757d?style=flat" alt="Planned" />
+  <img src="https://img.shields.io/badge/In_Progress-28a745?style=flat" />
 </p>
 <p>Allows AlphaAvatar to <strong>access real-world external tools</strong>, such as databases, email, social media, etc.</p>
 <p>
