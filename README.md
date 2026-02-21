@@ -144,7 +144,7 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 </p>
 <p>Allows AlphaAvatar to <strong>access real-world external tools</strong>, such as databases, email, social media, etc.</p>
 <p>
-<a href="#">README↗</a>
+<a href="https://github.com/AlphaAvatar/AlphaAvatar/blob/main/avatar-plugins/avatar-plugins-mcp/README.md">README↗</a>
 </p>
 </td>
 <td width="50%">
