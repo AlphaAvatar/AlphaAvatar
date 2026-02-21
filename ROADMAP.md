@@ -142,6 +142,8 @@
 | 🔹       | Allows the construction of metadata (structured information such as directories) for different data sources, improving retrieval efficiency.  |   🧩 Planned   |
 | 🔹       | Build offline indexing and passive retrieval capabilities to automatically retrieve relevant content from the Assistant's internal knowledge base (such as the Reflection module). |   🧩 Planned   |
 | 🔹       | Add intermediate states during tool invocation to reduce the user's perceived waiting time.                                  |   🧩 Planned   |
+| 🔹       | Add intermediate states during tool invocation to reduce the user's perceived waiting time.                                  |   🧩 Planned   |
+| 🔹       | Allows AlphaAvatar to indexing and retrieve pre-written Skills, thus enabling more efficient execution of commands.          |   🧩 Planned   |
 
 ## 🧰 MCP
 
