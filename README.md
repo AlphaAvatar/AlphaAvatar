@@ -166,6 +166,7 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 
 <h4>Latest News 🔥</h4>
 
+- [2026/03] We have released AlphaAvatar **version 0.5.0** to support the MCP plugin, which enables retrieval and concurrent invocation of the MCP tools.
 - [2026/02] We have released AlphaAvatar **version 0.4.0** to support RAG by [RAG-Anything](https://github.com/HKUDS/RAG-Anything) library and optimized the Memory and DeepResearch modules.
   - Released AlphaAvatar **version 0.4.1**: Fix the Persona plugin bugs and Add new MCP plugin.
 - [2026/01] We have released AlphaAvatar **version 0.3.0** to support DeepResearch by [tavily](https://tavily.com) API.
