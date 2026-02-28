@@ -230,6 +230,79 @@ To see more examples, please refer to the [Examples README](https://github.com/A
 
 <h4>Usage 🚀</h4>
 
-AlphaAvatar does not currently offer frontend support. Please start using it by visiting the [LiveKit playground](https://agents-playground.livekit.io/) link:
+AlphaAvatar is designed to be accessible to **different types of users** — from end users to developers.
+
+We are gradually building multi-channel access capabilities.
+
+---
+
+## 1️⃣ Desktop Users (Web Access)
+
+🖥️ **Web Interface (Planned)**
+
+Desktop users will be able to access AlphaAvatar directly via a web interface.
+
+- 🌐 Browser-based interaction
+- 🎙️ Real-time voice & multimodal support
+- 🧠 Full plugin capability (Memory / RAG / MCP / etc.)
+
+> 🚧 Status: Currently under development.
+
+---
+
+## 2️⃣ Mobile Users
+
+📱 AlphaAvatar will support mobile users through two main approaches:
+
+### 💬 Social Media Access
+
+Users will be able to interact with AlphaAvatar directly from messaging platforms:
+
+- WhatsApp (🚧 In Development)
+- WeChat (Planned)
+- More platforms coming soon
+
+This allows:
+- Text-based conversation
+- Voice message interaction
+- Tool invocation through chat interfaces
+
+---
+
+### 📲 Native App (Planned)
+
+A dedicated AlphaAvatar mobile app is planned to provide:
+
+- Real-time voice communication
+- Avatar visualization (Live2D / Virtual Character)
+- Persistent memory & personalized persona
+
+> 🚧 Status: Product planning stage.
+
+---
+
+## 3️⃣ Developers (Playground Access)
+
+👨‍💻 Developers can immediately access AlphaAvatar via the **LiveKit Playground**.
+
+### Step 1 — Start AlphaAvatar locally
+
+### Step 2 — Access Playground
+
+Visit:
+
+👉 https://agents-playground.livekit.io/
+
+Then:
+1. Connect to your LiveKit server
+2. Join the room your agent is connected to
+3. Start interacting with AlphaAvatar
+
+You can test:
+- 🎙️ Voice interaction
+- 🧠 Memory extraction
+- 🔍 RAG retrieval
+- 🧰 MCP tool invocation
+- 😊 Virtual character display
 
 ![playground airi screenshot](.github/assets/playground-airi-screenshot.png)
