@@ -285,11 +285,7 @@ A dedicated AlphaAvatar mobile app is planned to provide:
 
 👨‍💻 Developers can immediately access AlphaAvatar via the **LiveKit Playground**.
 
-### Step 1 — Start AlphaAvatar locally
-
-### Step 2 — Access Playground
-
-Visit:
+Visit when you start the AlphaAvatar server:
 
 👉 https://agents-playground.livekit.io/
 
