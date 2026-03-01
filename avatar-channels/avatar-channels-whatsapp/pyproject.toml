@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "alpha-avatar-channels-whatsapp"
+dynamic = ["version"]
+description = "WhatsApp channel bridge for AlphaAvatar. Connects WhatsApp (Baileys / Cloud API) to LiveKit-based AlphaAvatar agents via realtime data channels."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+keywords = ["alphaavatar", "whatsapp", "messaging", "realtime", "livekit", "agent-framework", "chatbot", "ai-agents", "channel-bridge", "websocket"]
+classifiers = [
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Topic :: Communications :: Chat",
+  "Topic :: Internet :: WWW/HTTP",
+  "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+  "Topic :: Software Development :: Libraries",
+  "Topic :: Software Development :: Libraries :: Application Frameworks",
+  "Topic :: System :: Networking",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3 :: Only",
+]
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn>=0.27",
+  "pydantic>=2.6",
+  "websockets>=12.0",
+]
+
+[project.scripts]
+alphaavatar-whatsapp-core = "alphaavatar.channels.whatsapp.core:main"
+
+[project.optional-dependencies]
+# meta = ["httpx"]
+# twilio = ["twilio"]
+
+[project.urls]
+Source = "https://github.com/AlphaAvatar/AlphaAvatar"
+
+[tool.hatch.version]
+path = "src/alphaavatar/channels/whatsapp/version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/alphaavatar"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/alphaavatar", "README.md", "LICENSE"]

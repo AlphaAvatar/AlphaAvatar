@@ -48,6 +48,7 @@ character = ["alpha-avatar-plugins-character>=0.1.0"]
 tools = [
     "alpha-avatar-plugins-deepresearch>=0.1.0",
     "alpha-avatar-plugins-rag>=0.1.0",
+    "alpha-avatar-plugins-mcp>=0.1.0",
 ]
 
 [project.scripts]

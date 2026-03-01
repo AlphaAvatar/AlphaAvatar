@@ -3,6 +3,7 @@ constraint-dependencies = ['onnxruntime<1.20.0; python_version == "3.9"']
 
 [tool.uv.sources]
 alpha-avatar-agents = { workspace = true }
+alpha-avatar-channels-whatsapp = { workspace = true }
 alpha-avatar-plugins-character = { workspace = true }
 alpha-avatar-plugins-deepresearch = { workspace = true }
 alpha-avatar-plugins-mcp = { workspace = true }
@@ -13,6 +14,7 @@ alpha-avatar-plugins-rag = { workspace = true }
 [tool.uv.workspace]
 members = [
     "avatar-agents",
+    "avatar-channels/*",
     "avatar-plugins/*",
 ]
 exclude = []
