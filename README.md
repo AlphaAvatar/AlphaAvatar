@@ -35,7 +35,7 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 
 ---
 
-<h3>AlphaAvatar Plugins</h3>
+<h2>AlphaAvatar Plugins</h2>
 
 <table>
 <tr>
@@ -110,7 +110,7 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 
 ---
 
-<h3>Tools Plugins</h3>
+<h2>Tools Plugins</h2>
 
 <table>
 <tr>
@@ -162,7 +162,7 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 
 ---
 
-<h3>Docs and guides</h3>
+<h2>Docs and guides</h2>
 
 <h4>Latest News 🔥</h4>
 
@@ -177,7 +177,7 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 
 <br/>
 
-<h4>Installation ⚙️<h4>
+<h2>Installation ⚙️</h2>
 
 Install **stable** AlphaAvatar version from PyPI:
 
@@ -198,7 +198,7 @@ source .venv/bin/activate
 uv sync --all-packages
 ```
 
-<h4>Quick Start ⚡️<h4>
+<h2>Quick Start ⚡️</h2>
 
 Start your agent in dev mode to connect it to LiveKit and make it available from anywhere on the internet:
 
@@ -228,73 +228,78 @@ To see more supported modes, please refer to the [LiveKit doc](https://docs.live
 
 To see more examples, please refer to the [Examples README](https://github.com/AlphaAvatar/AlphaAvatar/blob/main/examples/README.md)
 
-<h4>Usage 🚀</h4>
+<h2>Usage 🚀</h2>
 
-AlphaAvatar is designed to be accessible to **different types of users** — from end users to developers.
-
-We are gradually building multi-channel access capabilities.
+AlphaAvatar supports multiple **Access Channels**, allowing different types of users — from end users to developers — to interact with the system.
 
 ---
 
-## 1️⃣ Desktop Users (Web Access)
+<h3>🌐 Web Access</h3>
 
-🖥️ **Web Interface (Planned)**
+<img src="https://img.shields.io/badge/In_Development-orange?style=flat" />
 
-Desktop users will be able to access AlphaAvatar directly via a web interface.
+🖥️ Browser-based interface for real-time interaction.
+This will become the official AlphaAvatar user interface.
 
-- 🌐 Browser-based interaction
-- 🎙️ Real-time voice & multimodal support
-- 🧠 Full plugin capability (Memory / RAG / MCP / etc.)
-
-> 🚧 Status: Currently under development.
-
----
-
-## 2️⃣ Mobile Users
-
-📱 AlphaAvatar will support mobile users through two main approaches:
-
-### 💬 Social Media Access
-
-Users will be able to interact with AlphaAvatar directly from messaging platforms:
-
-- WhatsApp (🚧 In Development)
-- WeChat (Planned)
-- More platforms coming soon
-
-This allows:
-- Text-based conversation
-- Voice message interaction
-- Tool invocation through chat interfaces
+- 🎙️ Real-time voice & multimodal communication
+- 🧠 Full plugin support (Memory / RAG / MCP / etc.)
+- 😊 Virtual character display
 
 ---
 
-### 📲 Native App (Planned)
+<h3>💬 Social & Messaging Platforms</h3>
 
-A dedicated AlphaAvatar mobile app is planned to provide:
+Interact with AlphaAvatar directly inside messaging platforms.
 
-- Real-time voice communication
-- Avatar visualization (Live2D / Virtual Character)
-- Persistent memory & personalized persona
+Capabilities:
+- 💬 Text-based conversation
+- 🎤 Voice message interaction
+- 🧰 Tool invocation via chat interface
 
-> 🚧 Status: Product planning stage.
+<h4>WhatsApp</h4>
+
+<img src="https://img.shields.io/badge/In_Development-orange?style=flat" />
+
+<h4>WeChat</h4>
+
+<img src="https://img.shields.io/badge/Planned-6c757d?style=flat" />
+
+<h4>Slack</h4>
+
+<img src="https://img.shields.io/badge/Planned-6c757d?style=flat" />
 
 ---
 
-## 3️⃣ Developers (Playground Access)
+<h3>📲 Native Mobile App</h3>
 
-👨‍💻 Developers can immediately access AlphaAvatar via the **LiveKit Playground**.
+<img src="https://img.shields.io/badge/Planned-6c757d?style=flat" />
 
-Visit when you start the AlphaAvatar server:
+A dedicated AlphaAvatar mobile application providing:
+
+- 🎙️ Real-time voice communication
+- 😊 Live2D / Virtual character visualization
+- 🧠 Persistent memory & persona
+
+---
+
+<h3>🧪 Developer Playground (Available Now)</h3>
+
+<img src="https://img.shields.io/badge/Available-28a745?style=flat" />
+
+This is the primary access channel for AlphaAvatar today.
+
+Developers can immediately access AlphaAvatar via the **LiveKit Playground**.
 
 👉 https://agents-playground.livekit.io/
 
-Then:
-1. Connect to your LiveKit server
-2. Join the room your agent is connected to
-3. Start interacting with AlphaAvatar
+After starting your AlphaAvatar server:
 
-You can test:
+1. Connect to your LiveKit instance
+2. Join the agent room
+3. Start testing real-time interaction
+
+Supported capabilities:
+
 - 🎙️ Voice interaction
 - 🧠 Memory extraction
 - 🔍 RAG retrieval
@@ -302,3 +307,8 @@ You can test:
 - 😊 Virtual character display
 
 ![playground airi screenshot](.github/assets/playground-airi-screenshot.png)
+
+---
+
+> 💡 AlphaAvatar is currently developer-first.
+> Web and mobile experiences are actively under development.
