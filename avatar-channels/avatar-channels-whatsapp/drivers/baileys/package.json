@@ -1,10 +1,12 @@
 {
-  "name": "js",
+  "name": "baileys",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "CORE_WS_URL=ws://127.0.0.1:18789 tsx src/baileys.ts"
   },
   "keywords": [],
   "author": "",
@@ -13,11 +15,14 @@
   "dependencies": {
     "@whiskeysockets/baileys": "7.0.0-rc.9",
     "pino": "^10.3.1",
+    "qrcode-terminal": "^0.12.0",
     "ws": "^8.19.0"
   },
   "devDependencies": {
-    "@types/node": "^25.3.2",
+    "@types/node": "^25.3.3",
+    "@types/ws": "^8.18.1",
     "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }
 }

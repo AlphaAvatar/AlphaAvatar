@@ -23,7 +23,7 @@ from websockets.server import WebSocketServerProtocol
 
 from .schemas import WAInboundEvent, WAOutboundEvent
 
-logger = logging.getLogger("aa.whatsapp.core")
+logger = logging.getLogger("alphaavatar.whatsapp.core")
 logging.basicConfig(level=logging.INFO)
 
 # Save the driver for the current connection (only one instance is supported initially)
