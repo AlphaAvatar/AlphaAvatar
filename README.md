@@ -258,7 +258,9 @@ Capabilities:
 
 <h4>WhatsApp</h4>
 
-<img src="https://img.shields.io/badge/In_Development-orange?style=flat" />
+<a href="https://github.com/AlphaAvatar/AlphaAvatar/blob/main/avatar-channels/avatar-channels-whatsapp/README.md">
+  <img src="https://img.shields.io/badge/In_Development-orange?style=flat" />
+</a>
 
 <h4>WeChat</h4>
 
