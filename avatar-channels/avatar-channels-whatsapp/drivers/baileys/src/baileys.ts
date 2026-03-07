@@ -140,7 +140,7 @@ async function main() {
       }
     });
 
-    // 等待本次连接结束（close），然后决定是否退出/重连
+    // Wait for this connection to close, then decide whether to exit/reconnect.
     const closeCode: number = await new Promise((resolve) => {
       sock.ev.on("connection.update", async (update) => {
         const { connection, lastDisconnect, qr } = update as any;

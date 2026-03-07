@@ -21,7 +21,9 @@ from typing import Any
 import websockets
 from websockets.server import WebSocketServerProtocol
 
-from .schemas import WAInboundEvent, WAOutboundEvent
+from .livekit_bridge import LiveKitBridge
+from .schemas import WAInboundEvent
+from .settings import WhatsAppBridgeSettings
 
 logger = logging.getLogger("alphaavatar.whatsapp.core")
 logging.basicConfig(level=logging.INFO)
@@ -31,6 +33,8 @@ DRIVER_CONNS: set[WebSocketServerProtocol] = set()
 
 # Simple deduplication (MVP: in-process set; to be replaced with sqlite/redis later)
 SEEN_MESSAGE_IDS: set[str] = set()
+
+LK: LiveKitBridge | None = None
 
 
 async def handle_driver(ws: WebSocketServerProtocol):
@@ -46,15 +50,17 @@ async def handle_driver(ws: WebSocketServerProtocol):
                     continue
                 SEEN_MESSAGE_IDS.add(inbound.message_id)
 
-                # First, perform an echo test: return inbound.text to the driver as is.
-                out = WAOutboundEvent(
-                    to=inbound.from_,
-                    chat_id=inbound.chat_id,
-                    correlation_id=inbound.message_id,
-                    text=f"[echo] {inbound.text}",
-                    meta={"echo": True},
+                if not LK:
+                    logger.warning("LiveKit not ready; drop inbound")
+                    continue
+
+                await LK.publish_inbound(inbound.model_dump(by_alias=True))
+
+                logger.info(
+                    "Published inbound to LiveKit: chat_id=%s message_id=%s",
+                    inbound.chat_id,
+                    inbound.message_id,
                 )
-                await broadcast_to_driver(out.model_dump())
             else:
                 logger.warning("Unknown message: %s", data)
     except websockets.ConnectionClosed:
@@ -72,9 +78,22 @@ async def broadcast_to_driver(payload: dict[str, Any]):
 
 
 async def ws_main(host: str = "127.0.0.1", port: int = 18789):
+    global LK
+
+    s = WhatsAppBridgeSettings.from_env()
+    LK = LiveKitBridge(
+        on_outbound=broadcast_to_driver,
+        livekit_url=s.livekit_url,
+        api_key=s.livekit_api_key,
+        api_secret=s.livekit_api_secret,
+        room_name=s.room_name,
+        identity=s.identity,
+    )
+    await LK.start()
+
     async with websockets.serve(handle_driver, host, port, ping_interval=20, ping_timeout=20):
         logger.info("WhatsApp Core WS listening on ws://%s:%d", host, port)
-        await asyncio.Future()  # run forever
+        await asyncio.Future()
 
 
 def main():

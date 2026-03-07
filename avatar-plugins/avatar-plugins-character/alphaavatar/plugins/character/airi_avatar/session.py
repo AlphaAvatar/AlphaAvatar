@@ -88,7 +88,7 @@ class AiriCharacterSession(VirtialCharacterSession):
         livekit_api_secret = livekit_api_secret or (os.getenv("LIVEKIT_API_SECRET") or NOT_GIVEN)
         if not livekit_url or not livekit_api_key or not livekit_api_secret:
             raise ValueError(
-                "livekit_url, livekit_api_key, and livekit_api_secret must be set "
+                "LIVEKIT_URL, LIVEKIT_API_KEY, and LIVEKIT_API_SECRET must be set "
                 "by arguments or environment variables"
             )
 
