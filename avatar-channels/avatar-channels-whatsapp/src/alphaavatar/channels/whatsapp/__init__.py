@@ -11,3 +11,30 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
+from alphaavatar.agents.channels.registry import register_channel_adapters
+from alphaavatar.agents.channels.room_type import RoomType
+
+from .adapters.egress import WhatsAppEgressAdapter
+from .adapters.ingress import WhatsAppIngressAdapter
+
+
+def build_whatsapp_ingress(*, room, session=None, on_input=None, **kwargs):
+    return WhatsAppIngressAdapter(
+        room=room,
+        on_input=on_input,
+    )
+
+
+def build_whatsapp_egress(*, room, session=None, **kwargs):
+    return WhatsAppEgressAdapter(
+        room=room,
+    )
+
+
+register_channel_adapters(
+    RoomType.WHATSAPP,
+    build_ingress=build_whatsapp_ingress,
+    build_egress=build_whatsapp_egress,
+)

@@ -16,11 +16,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from typing import Any
 
 import websockets
 from websockets.server import WebSocketServerProtocol
 
+from .dispatch import create_agent_dispatch_for_room
 from .livekit_bridge import LiveKitBridge
 from .schemas import WAInboundEvent
 from .settings import WhatsAppBridgeSettings
@@ -73,6 +75,8 @@ async def broadcast_to_driver(payload: dict[str, Any]):
     if not DRIVER_CONNS:
         logger.warning("No driver connected; dropping outbound payload")
         return
+
+    logger.info("Broadcasting outbound to driver: %s", payload)
     msg = json.dumps(payload, ensure_ascii=False)
     await asyncio.gather(*(ws.send(msg) for ws in list(DRIVER_CONNS)))
 
@@ -90,6 +94,12 @@ async def ws_main(host: str = "127.0.0.1", port: int = 18789):
         identity=s.identity,
     )
     await LK.start()
+
+    agent_name = os.environ.get("AVATAR_NAME", "").strip()
+    if agent_name:
+        await create_agent_dispatch_for_room(s.room_name, agent_name=agent_name)
+    else:
+        logger.warning("AVATAR_NAME is empty; skip agent dispatch creation")
 
     async with websockets.serve(handle_driver, host, port, ping_interval=20, ping_timeout=20):
         logger.info("WhatsApp Core WS listening on ws://%s:%d", host, port)

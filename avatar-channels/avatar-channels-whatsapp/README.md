@@ -90,7 +90,7 @@ This layer **does not depend on a specific WhatsApp API provider**.
 From repo root:
 
 ```bash
-uv run aa-whatsapp-core
+uv run alphaavatar-whatsapp-core
 ```
 
 Expected output:

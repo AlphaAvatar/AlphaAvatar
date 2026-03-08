@@ -50,7 +50,7 @@
 | 🔹       | Develop multi-user management features for plugins.                                                                          |   🧩 Planned   |
 | 🔹       | Content uploaded by a user in the current session is first stored in a temporary directory, and then stored in persistent storage after confirmation. The user's upload status and input are identified separately for use in the model.    | 🧩 Planned     |
 | 🔹       | The return values ​​of the Deep research download function and the Rag indexing function should include a brief description of the doc/url content (using a decorator) stored in memory for later reference.    | 🧩 Planned     |
-| 🔹       | Enrich the logging system.                                                                                                   |   🧩 Planned   |
+| 🔹       | Enrich the logging system, Assign a separate room prefix to each room.                                                       |   🧩 Planned   |
 
 ---
 

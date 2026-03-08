@@ -232,6 +232,31 @@ To see more examples, please refer to the [Examples README](https://github.com/A
 
 AlphaAvatar supports multiple **Access Channels**, allowing different types of users — from end users to developers — to interact with the system.
 
+```
+           AlphaAvatar Agent Runtime
+           ─────────────────────────
+
+        ┌──────────────────────────────┐
+        │        AgentSession          │
+        │        AvatarEngine          │
+        └──────────────┬───────────────┘
+                       │
+                 InputDispatcher
+                       │
+                  InputEnvelope
+                       │
+        ┌──────────────┴───────────────┐
+        │                              │
+ WhatsAppIngressAdapter        Web/App Native Input
+        │                              │
+        ▼                              ▼
+   whatsapp.in topic            audio/text/video
+
+────────────────────────────────────────────────────
+
+           Bridge Layer (avatar-channels)
+```
+
 ---
 
 <h3>🌐 Web Access</h3>
@@ -297,8 +322,9 @@ Developers can immediately access AlphaAvatar via the **LiveKit Playground**.
 After starting your AlphaAvatar server:
 
 1. Connect to your LiveKit instance
-2. Join the agent room
-3. Start testing real-time interaction
+2. Configure the Agent name in the Playground (must match `avatar_name`, default: `Assistant`) to enable Explicit Dispatch.
+3. Connect to the agent room
+4. Start testing real-time interaction
 
 Supported capabilities:
 

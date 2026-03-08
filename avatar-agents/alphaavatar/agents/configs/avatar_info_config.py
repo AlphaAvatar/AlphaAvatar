@@ -52,6 +52,12 @@ class AvatarInfoConfig(BaseModel):
     )
 
     def model_post_init(self, __context):
+        # Get Global environment variables
+        self.avatar_name = os.getenv("AVATAR_NAME") or self.avatar_name
+        self.avatar_timezone = os.getenv("AVATAR_TIMEZONE") or self.avatar_timezone
+        self.avatar_work_dir = os.getenv("AVATAR_WORK_DIR") or self.avatar_work_dir
+
+        # Set environment variables based on the configuration
         os.environ["AVATAR_TIMEZONE"] = self.avatar_timezone
 
         if self.avatar_work_dir and self.avatar_work_dir.strip():
