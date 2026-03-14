@@ -102,10 +102,11 @@ class InputDispatcher:
             try:
                 run_result = self.session.run(
                     user_input=envelope.text or "",
-                    output_type=str,
                 )
                 await run_result
+
                 reply_text = _extract_reply_text_from_run(run_result)
+
             except Exception:
                 logger.exception("InputDispatcher text run failed")
                 reply_text = "Sorry, something went wrong while processing your message."

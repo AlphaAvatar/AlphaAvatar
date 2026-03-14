@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 from alphaavatar.agents.channels.registry import register_channel_adapters
-from alphaavatar.agents.channels.room_type import RoomType
+from alphaavatar.agents.channels.schema.room_type import RoomType
 
 from .adapters.egress import WhatsAppEgressAdapter
 from .adapters.ingress import WhatsAppIngressAdapter

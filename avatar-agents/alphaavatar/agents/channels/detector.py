@@ -17,7 +17,7 @@ import json
 
 from livekit import rtc
 
-from .room_type import RoomType
+from .schema.room_type import RoomType
 
 
 def _safe_json_loads(value: str | None) -> dict:

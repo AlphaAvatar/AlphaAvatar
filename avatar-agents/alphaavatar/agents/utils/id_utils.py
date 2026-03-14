@@ -17,7 +17,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse
 
 from slugify import slugify
 
-from .enum import SessionType
+from alphaavatar.agents.entrypoints.schema.session_type import SessionType
 
 
 def get_user_id():

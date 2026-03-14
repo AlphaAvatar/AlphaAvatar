@@ -13,7 +13,6 @@
 # limitations under the License.
 from .device_utils import gpu_available
 from .dual_key_dict import DualKeyDict
-from .enum import SessionType
 from .env_utils import resolve_env_placeholders
 from .id_utils import get_session_id, get_user_id, url_to_filename_id
 from .loop_thread import AsyncLoopThread
@@ -24,7 +23,6 @@ from .vdb_utils import get_embedding_model, get_qdrant_client
 __all__ = [
     "gpu_available",
     "DualKeyDict",
-    "SessionType",
     "resolve_env_placeholders",
     "get_session_id",
     "get_user_id",

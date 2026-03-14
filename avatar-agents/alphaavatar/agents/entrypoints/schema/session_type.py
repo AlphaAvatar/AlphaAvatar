@@ -16,4 +16,6 @@ from enum import Enum
 
 class SessionType(str, Enum):
     CHAT = "chat"
-    TOOL = "tool"
+    TOOL = "agent"
+    VIDEO = "video"
+    AUDIO = "audio"

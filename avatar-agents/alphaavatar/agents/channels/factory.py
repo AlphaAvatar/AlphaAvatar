@@ -23,7 +23,7 @@ from alphaavatar.agents.log import logger
 
 from .detector import detect_room_type
 from .registry import get_channel_adapters_builder
-from .room_type import RoomType
+from .schema.room_type import RoomType
 
 
 @dataclass

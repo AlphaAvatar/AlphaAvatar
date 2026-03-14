@@ -173,3 +173,4 @@ pyrightconfig.json
 
 # Database files
 *.db
+.alphaavatar_workspace

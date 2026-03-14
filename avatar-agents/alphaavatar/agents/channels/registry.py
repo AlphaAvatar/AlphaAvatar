@@ -19,7 +19,7 @@ from typing import Any
 
 from alphaavatar.agents.log import logger
 
-from .room_type import RoomType
+from .schema.room_type import RoomType
 
 
 @dataclass
