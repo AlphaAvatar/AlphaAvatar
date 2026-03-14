@@ -19,11 +19,10 @@ from typing import Any
 from livekit import rtc
 from livekit.agents import AgentSession
 
+from alphaavatar.agents.entrypoints.schema.room_type import RoomType, detect_room_type
 from alphaavatar.agents.log import logger
 
-from .detector import detect_room_type
 from .registry import get_channel_adapters_builder
-from .schema.room_type import RoomType
 
 
 @dataclass

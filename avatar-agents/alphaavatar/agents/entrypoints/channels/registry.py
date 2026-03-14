@@ -17,9 +17,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from alphaavatar.agents.entrypoints.schema.room_type import RoomType
 from alphaavatar.agents.log import logger
-
-from .schema.room_type import RoomType
 
 
 @dataclass

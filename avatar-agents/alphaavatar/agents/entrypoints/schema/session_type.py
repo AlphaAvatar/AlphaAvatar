@@ -13,9 +13,28 @@
 # limitations under the License.
 from enum import Enum
 
+from .room_type import RoomType
+
 
 class SessionType(str, Enum):
     CHAT = "chat"
     TOOL = "agent"
     VIDEO = "video"
     AUDIO = "audio"
+
+
+def resolve_session_type(room_type: RoomType, participant_metadata: dict) -> SessionType:
+    raw = participant_metadata.get("session_type")
+    if raw:
+        try:
+            return SessionType(raw)
+        except ValueError:
+            pass
+
+    if room_type == RoomType.WHATSAPP:
+        return SessionType.CHAT
+
+    if room_type == RoomType.WEB_APP:
+        return SessionType.AUDIO
+
+    raise ValueError(f"Unable to resolve session type for room type: {room_type}")

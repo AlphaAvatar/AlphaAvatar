@@ -16,16 +16,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from typing import Any
 
 import websockets
 from websockets.server import WebSocketServerProtocol
 
-from .dispatch import create_agent_dispatch_for_room
-from .livekit_bridge import LiveKitBridge
-from .schemas import WAInboundEvent
-from .settings import WhatsAppBridgeSettings
+from .room_manager import WhatsAppRoomManager
+from .schema.events import WAInboundEvent
+from .schema.settings import WhatsAppBridgeSettings
 
 logger = logging.getLogger("alphaavatar.whatsapp.core")
 logging.basicConfig(level=logging.INFO)
@@ -36,7 +34,7 @@ DRIVER_CONNS: set[WebSocketServerProtocol] = set()
 # Simple deduplication (MVP: in-process set; to be replaced with sqlite/redis later)
 SEEN_MESSAGE_IDS: set[str] = set()
 
-LK: LiveKitBridge | None = None
+ROOM_MANAGER: WhatsAppRoomManager | None = None
 
 
 async def handle_driver(ws: WebSocketServerProtocol):
@@ -52,15 +50,21 @@ async def handle_driver(ws: WebSocketServerProtocol):
                     continue
                 SEEN_MESSAGE_IDS.add(inbound.message_id)
 
-                if not LK:
-                    logger.warning("LiveKit not ready; drop inbound")
+                if not ROOM_MANAGER:
+                    logger.warning("Room manager not ready; drop inbound")
                     continue
 
-                await LK.publish_inbound(inbound.model_dump(by_alias=True))
+                await ROOM_MANAGER.publish_inbound(
+                    inbound.chat_id,
+                    inbound.model_dump(by_alias=True),
+                )
 
                 logger.info(
-                    "Published inbound to LiveKit: chat_id=%s message_id=%s",
+                    "Published inbound to LiveKit: chat_id=%s room=%s message_id=%s",
                     inbound.chat_id,
+                    ROOM_MANAGER.rooms[inbound.chat_id].room_name
+                    if inbound.chat_id in ROOM_MANAGER.rooms
+                    else "unknown",
                     inbound.message_id,
                 )
             else:
@@ -82,24 +86,14 @@ async def broadcast_to_driver(payload: dict[str, Any]):
 
 
 async def ws_main(host: str = "127.0.0.1", port: int = 18789):
-    global LK
+    global ROOM_MANAGER
 
     s = WhatsAppBridgeSettings.from_env()
-    LK = LiveKitBridge(
+    ROOM_MANAGER = WhatsAppRoomManager(
+        settings=s,
         on_outbound=broadcast_to_driver,
-        livekit_url=s.livekit_url,
-        api_key=s.livekit_api_key,
-        api_secret=s.livekit_api_secret,
-        room_name=s.room_name,
-        identity=s.identity,
     )
-    await LK.start()
-
-    agent_name = os.environ.get("AVATAR_NAME", "").strip()
-    if agent_name:
-        await create_agent_dispatch_for_room(s.room_name, agent_name=agent_name)
-    else:
-        logger.warning("AVATAR_NAME is empty; skip agent dispatch creation")
+    await ROOM_MANAGER.start()
 
     async with websockets.serve(handle_driver, host, port, ping_interval=20, ping_timeout=20):
         logger.info("WhatsApp Core WS listening on ws://%s:%d", host, port)

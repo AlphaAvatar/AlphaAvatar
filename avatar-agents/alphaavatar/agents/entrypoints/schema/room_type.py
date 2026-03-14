@@ -14,10 +14,22 @@
 from __future__ import annotations
 
 import json
+from enum import StrEnum
 
 from livekit import rtc
 
-from .schema.room_type import RoomType
+
+class RoomType(StrEnum):
+    WEB_APP = "web_app"  # Default: Webpage / App / Playground / Native LiveKit Client
+    WHATSAPP = "whatsapp"
+    TELEGRAM = "telegram"
+    SLACK = "slack"
+    DISCORD = "discord"
+    API = "api"
+    UNKNOWN = "unknown"
+
+
+SUPPORTED_ADAPTER_TYPES = {item.value for item in [RoomType.WHATSAPP]}
 
 
 def _safe_json_loads(value: str | None) -> dict:

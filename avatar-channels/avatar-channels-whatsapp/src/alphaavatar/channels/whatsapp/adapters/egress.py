@@ -18,7 +18,7 @@ from typing import Any
 
 from livekit import rtc
 
-from alphaavatar.agents.io.envelopes import OutputEnvelope
+from alphaavatar.agents.entrypoints.io.envelopes import OutputEnvelope
 from alphaavatar.agents.log import logger
 
 

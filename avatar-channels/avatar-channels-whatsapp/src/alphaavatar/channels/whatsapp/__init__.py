@@ -13,8 +13,8 @@
 # limitations under the License.
 from __future__ import annotations
 
-from alphaavatar.agents.channels.registry import register_channel_adapters
-from alphaavatar.agents.channels.schema.room_type import RoomType
+from alphaavatar.agents.entrypoints.channels.registry import register_channel_adapters
+from alphaavatar.agents.entrypoints.schema.room_type import RoomType
 
 from .adapters.egress import WhatsAppEgressAdapter
 from .adapters.ingress import WhatsAppIngressAdapter

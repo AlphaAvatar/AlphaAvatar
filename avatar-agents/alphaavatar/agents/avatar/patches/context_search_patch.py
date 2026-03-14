@@ -71,11 +71,12 @@ def install_context_search_patch(engine: AvatarEngine) -> None:
         *,
         speech_handle: SpeechHandle,
         chat_ctx: llm.ChatContext,
-        tools: list[llm.FunctionTool | llm.RawFunctionTool],
+        tools: list[llm.Tool | llm.Toolset],
         model_settings: ModelSettings,
         new_message: llm.ChatMessage | None = None,
-        instructions: str | None = None,
-        _tools_messages: Sequence[llm.FunctionCall | llm.FunctionCallOutput] | None = None,
+        instructions: str | llm.chat_context.Instructions | None = None,
+        _previous_user_metrics: llm.MetricsReport | None = None,
+        _previous_tools_messages: Sequence[llm.FunctionCall | llm.FunctionCallOutput] | None = None,
     ):
         ro = Context(
             mode="pipeline",
@@ -85,7 +86,7 @@ def install_context_search_patch(engine: AvatarEngine) -> None:
             model_settings=model_settings,
             new_message=new_message,
             instructions=instructions,
-            tools_messages=_tools_messages,
+            tools_messages=_previous_tools_messages,
         )
         await context_search(ro)
         return await _orig_pipeline(
@@ -95,7 +96,8 @@ def install_context_search_patch(engine: AvatarEngine) -> None:
             model_settings=model_settings,
             new_message=new_message,
             instructions=instructions,
-            _tools_messages=_tools_messages,
+            _previous_user_metrics=_previous_user_metrics,
+            _previous_tools_messages=_previous_tools_messages,
         )
 
     activity._pipeline_reply_task = MethodType(_wrapped_pipeline, activity)

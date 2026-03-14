@@ -22,7 +22,6 @@ class WhatsAppBridgeSettings:
     livekit_url: str
     livekit_api_key: str
     livekit_api_secret: str
-    room_name: str
     identity: str = "whatsapp-bridge"
 
     @staticmethod
@@ -30,9 +29,6 @@ class WhatsAppBridgeSettings:
         livekit_url = os.environ.get("LIVEKIT_URL", "")
         livekit_api_key = os.environ.get("LIVEKIT_API_KEY", "")
         livekit_api_secret = os.environ.get("LIVEKIT_API_SECRET", "")
-
-        # MVP: First, fix one room, then do mapping (chat_id -> room) later.
-        room = os.environ.get("WHATSAPP_ROOM", "wa_mvp")
 
         if not livekit_url or not livekit_api_key or not livekit_api_secret:
             raise RuntimeError(
@@ -44,5 +40,4 @@ class WhatsAppBridgeSettings:
             livekit_url=livekit_url,
             livekit_api_key=livekit_api_key,
             livekit_api_secret=livekit_api_secret,
-            room_name=room,
         )
