@@ -47,7 +47,7 @@ Each server info is a JSON string with the structure:
 - name: string        (server unique name / id)
 - title: string       (human-friendly title)
 - url: string       (remote server address)
-- instrcution: string (server instruction / usage guidance)
+- instruction: string (server instruction / usage guidance)
 
 ----------------------------------------------------------------------
 Operations

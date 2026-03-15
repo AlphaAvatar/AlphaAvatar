@@ -106,7 +106,7 @@ enable_mcp: true
 mcp_servers:
   livekit-docs:
     url: "https://docs.livekit.io/mcp"
-    instrcution: >
+    instruction: >
       LiveKit Docs MCP Server provides unified access to the LiveKit ecosystem,
       allowing you to search documentation, explore GitHub code across livekit
       and livekit-examples repositories, retrieve package changelogs, and browse
@@ -116,7 +116,7 @@ mcp_servers:
     url: "https://api.githubcopilot.com/mcp/"
     headers:
       Authorization: "Bearer <GITHUB_PAT>"
-    instrcution: >
+    instruction: >
       The GitHub MCP server (via GitHub Copilot) enables AI agents to interact
       with repositories, issues, pull requests, and code through a standardized
       MCP interface.

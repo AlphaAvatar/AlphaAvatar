@@ -16,7 +16,7 @@ import json
 import time
 from typing import Any
 
-from livekit.agents import RunContext, utils
+from livekit.agents import RunContext
 from livekit.agents.llm.tool_context import ToolError
 
 from alphaavatar.agents.tools import MCPHostBase
@@ -38,48 +38,78 @@ class MCPHost(MCPHostBase):
         self._mcp_tools: dict[str, MCPTool] | None = None
 
         self._loop_thread = AsyncLoopThread(name="mcp-loop")
-        self._loop_thread.submit(self._initialize(servers))
+        self._init_future = self._loop_thread.submit_future(self._initialize(servers))
+        self._init_error: Exception | None = None
 
-        super().__init__(servers_info=self._get_servers_info(), **kwargs)
+        super().__init__(servers_info=self._build_config_servers_info(servers), **kwargs)
+
+    def _build_config_servers_info(self, servers: dict[str, dict]) -> str:
+        lines = []
+        for name, cfg in servers.items():
+            url = cfg.get("url", "unknown")
+            instruction = cfg.get("instruction") or cfg.get("instruction") or ""
+            lines.append(f"- name={name}, url={url}, instruction={instruction}")
+        return "MCPHost configured servers:\n" + "\n".join(lines)
+
+    async def _ensure_initialized(self) -> None:
+        async with self._init_lock:
+            if self._init_future is None:
+                return
+
+            future = self._init_future
+            self._init_future = None
+
+            try:
+                await asyncio.wrap_future(future)
+            except Exception as e:
+                self._init_error = e
+                logger.exception("[MCPHost] initialization failed")
 
     async def _initialize(self, servers: dict[str, dict]):
-        # STEP 1: Initialize MCPServerRemotes in parallel
         self._clients = [MCPServerRemote(**servers[name]) for name in servers]
+        self._mcp_tools = {}
 
-        @utils.log_exceptions(logger=logger)
+        # STEP 1: Initialize MCPServerRemotes in parallel
+        ready_clients: list[MCPServerRemote] = []
+
         async def _initialize_client(client: MCPServerRemote) -> None:
-            if not client.initialized:
-                await client.initialize()
+            try:
+                if not client.initialized:
+                    await client.initialize()
+                ready_clients.append(client)
+                logger.info("[MCPHost] MCP client ready: %s", client.url)
+            except Exception:
+                logger.exception("[MCPHost] Failed to initialize MCP client: %s", client.url)
 
-        await asyncio.gather(
-            *(_initialize_client(c) for c in self._clients), return_exceptions=True
-        )
+        await asyncio.gather(*(_initialize_client(c) for c in self._clients))
+
+        self._clients = ready_clients
 
         # STEP 2: List tools from all clients in parallel and aggregate them
-        @utils.log_exceptions(logger=logger)
-        async def _list_mcp_tools(
-            mcp_server: MCPServerRemote,
-        ) -> list[MCPTool]:
-            return await mcp_server.list_tools()
+        async def _list_mcp_tools(mcp_server: MCPServerRemote) -> list[MCPTool]:
+            try:
+                return await mcp_server.list_tools()
+            except Exception:
+                logger.exception(
+                    "[MCPHost] Failed to list tools from MCP server: %s", mcp_server.url
+                )
+                return []
 
-        gathered = await asyncio.gather(
-            *(_list_mcp_tools(s) for s in self._clients),
-            return_exceptions=True,
-        )
-        self._mcp_tools: dict[str, MCPTool] = {}
+        gathered = await asyncio.gather(*(_list_mcp_tools(s) for s in self._clients))
+
         for tools in gathered:
-            if isinstance(tools, list):
-                for tool in tools:
-                    self._mcp_tools[tool._tool_id] = tool
+            for tool in tools:
+                self._mcp_tools[tool._tool_id] = tool
 
-    def _get_servers_info(self) -> str:
-        if self._clients is None:
-            return "MCPHost with uninitialized servers"
-
-        info_list = "\n".join(f"- {client.info}" for client in self._clients)
-        return f"MCPHost with the following servers:\n{info_list}"
+        logger.info(
+            "[MCPHost] initialized clients=%d tools=%d",
+            len(self._clients),
+            len(self._mcp_tools),
+        )
 
     async def search_tools(self, *, query: str, ctx: RunContext) -> str:
+        await self._ensure_initialized()
+
         logger.info(f"[MCPHost] search_tools called with query: {query}")
 
         if self._mcp_tools is None:
@@ -91,8 +121,10 @@ class MCPHost(MCPHostBase):
         return f"MCPHost with the following tools for query ({query}):\n{tool_list}"
 
     async def call_tools(self, *, params: dict, ctx: RunContext) -> str:
-        call_start = time.time()
-        logger.info(f"[MCPHost] call_tools invoked with {len(params) if params else 0} tools")
+        await self._ensure_initialized()
+
+        call_start = time.perf_counter()
+        logger.info("[MCPHost] call_tools count=%d", len(params) if params else 0)
 
         if self._mcp_tools is None:
             logger.warning("[MCPHost] call_tools called before initialization")
@@ -105,7 +137,7 @@ class MCPHost(MCPHostBase):
         # 1) Pre-check: Does tool exist?
         missing = [tool_id for tool_id in params.keys() if tool_id not in self._mcp_tools]
         if missing:
-            logger.error(f"[MCPHost] Missing tools requested: {missing}")
+            logger.warning("[MCPHost] missing tools: %s", missing)
             missing_list = "\n".join(f"- {tid}" for tid in missing)
             available_hint = "\n".join(f"- {tid}" for tid in sorted(self._mcp_tools.keys())[:50])
             return (
@@ -120,41 +152,48 @@ class MCPHost(MCPHostBase):
 
         async def _call_one(tool_id: str, raw_args: Any) -> Any:
             tool = self._mcp_tools[tool_id]
-            tool_start = time.time()
+            tool_start = time.perf_counter()
 
-            logger.info(f"[MCPHost] Calling tool: {tool_id}, args: {raw_args}")
+            logger.debug(
+                "[MCPHost] Calling tool=%s args=%s",
+                tool_id,
+                raw_args,
+            )
 
             if raw_args is None:
                 raw_args = {}
 
             if not isinstance(raw_args, dict):
-                logger.error(f"[MCPHost] Invalid args type for {tool_id}")
                 raise ToolError(f"Invalid params for tool '{tool_id}': expected dict")
 
             try:
                 result = await tool.call(raw_args)
                 logger.info(
-                    f"[MCPHost] Tool {tool_id} completed in {time.time() - tool_start:.2f}s"
+                    "[MCPHost] tool=%s elapsed=%.2fs status=ok",
+                    tool_id,
+                    time.perf_counter() - tool_start,
                 )
                 return result
             except Exception as e:
                 logger.exception(
-                    f"[MCPHost] Tool {tool_id} failed after {time.time() - tool_start:.2f}s"
+                    "[MCPHost] tool=%s elapsed=%.2fs status=error",
+                    tool_id,
+                    time.perf_counter() - tool_start,
                 )
                 raise ToolError(f"Tool {tool_id} failed because: {e}")
 
-        results = []
-        for tool_id, raw_args in ordered_items:
-            try:
-                results.append(await _call_one(tool_id, raw_args))
-            except Exception as e:
-                results.append(e)
+        results = await asyncio.gather(
+            *(_call_one(tool_id, raw_args) for tool_id, raw_args in ordered_items),
+            return_exceptions=True,
+        )
 
         success_count = sum(1 for r in results if not isinstance(r, Exception))
         error_count = len(results) - success_count
         logger.info(
-            f"[MCPHost] call_tools finished in {time.time() - call_start:.2f}s | "
-            f"Success: {success_count} | Errors: {error_count}"
+            "[MCPHost] call_tools finished elapsed=%.2fs success=%d error=%d",
+            time.perf_counter() - call_start,
+            success_count,
+            error_count,
         )
 
         # 3) Markdown summary output
@@ -194,3 +233,13 @@ class MCPHost(MCPHostBase):
             lines.append("")  # spacer
 
         return "\n".join(lines)
+
+    async def aclose(self) -> None:
+        if self._clients:
+            for client in self._clients:
+                try:
+                    await client.aclose()
+                except Exception:
+                    logger.exception("[MCPHost] Failed to close MCP client: %s", client.url)
+
+        self._loop_thread.stop()
