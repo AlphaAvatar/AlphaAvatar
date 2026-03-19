@@ -17,15 +17,15 @@ from urllib.parse import parse_qsl, urlencode, urlparse
 
 from slugify import slugify
 
-from alphaavatar.agents.entrypoints.schema.session_type import SessionType
+from alphaavatar.agents.entrypoints.schema.room_type import RoomType
 
 
 def get_user_id():
     return uuid.uuid4().hex
 
 
-def get_session_id(session_type: SessionType) -> str:
-    return f"{session_type.value}-{uuid.uuid4().hex}"
+def get_session_id(room_type: RoomType) -> str:
+    return f"{room_type.value}:{uuid.uuid4().hex}"
 
 
 def normalize_url(url: str) -> str:

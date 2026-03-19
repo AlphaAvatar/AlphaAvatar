@@ -46,8 +46,8 @@ class WhatsAppIngressAdapter:
 
                 envelope = InputEnvelope(
                     channel="whatsapp",
-                    user_id=f"whatsapp:{payload.get('from', '')}",
-                    session_id=f"whatsapp:{payload.get('chat_id', '')}",
+                    user_id=payload.get("user_id", ""),
+                    session_id=payload.get("session_id", ""),
                     room_name=self.room.name,
                     message_id=payload.get("message_id", ""),
                     modality="text",

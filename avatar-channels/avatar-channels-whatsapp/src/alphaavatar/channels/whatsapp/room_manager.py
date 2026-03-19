@@ -20,6 +20,7 @@ import re
 import time
 from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 from .dispatch import create_agent_dispatch_for_room
 from .livekit_bridge import LiveKitBridge
@@ -33,10 +34,26 @@ def make_room_name(chat_id: str) -> str:
     return f"wa_{safe}"
 
 
+def normalize_sender_id(value: str) -> str:
+    # 143744686940161@lid -> 143744686940161
+    # 9715xxxxxxx@s.whatsapp.net -> 9715xxxxxxx
+    return (value or "").split("@")[0]
+
+
+def make_user_id(sender_id: str) -> str:
+    return f"whatsapp:{sender_id}"
+
+
+def make_session_id(user_id: str) -> str:
+    return f"{user_id}:session:{uuid4().hex}"
+
+
 @dataclass
 class ManagedRoom:
     chat_id: str
     room_name: str
+    user_id: str
+    session_id: str
     bridge: LiveKitBridge
     last_active_ts: float
 
@@ -64,7 +81,12 @@ class WhatsAppRoomManager:
             await room.bridge.aclose()
         self.rooms.clear()
 
-    async def ensure_room(self, chat_id: str) -> ManagedRoom:
+    async def ensure_room(
+        self,
+        *,
+        chat_id: str,
+        user_id: str,
+    ) -> ManagedRoom:
         async with self._lock:
             existing = self.rooms.get(chat_id)
             if existing:
@@ -72,6 +94,15 @@ class WhatsAppRoomManager:
                 return existing
 
             room_name = make_room_name(chat_id)
+            session_id = make_session_id(user_id)
+
+            participant_metadata = {
+                "channel": "whatsapp",
+                "room_type": "whatsapp",
+                "user_id": user_id,
+                "session_id": session_id,
+                "chat_id": chat_id,
+            }
 
             bridge = LiveKitBridge(
                 on_outbound=self.on_outbound,
@@ -80,6 +111,7 @@ class WhatsAppRoomManager:
                 api_secret=self.settings.livekit_api_secret,
                 room_name=room_name,
                 identity=f"{self.settings.identity}-{room_name}",
+                participant_metadata=participant_metadata,
             )
             await bridge.start()
 
@@ -93,16 +125,34 @@ class WhatsAppRoomManager:
             managed = ManagedRoom(
                 chat_id=chat_id,
                 room_name=room_name,
+                user_id=user_id,
+                session_id=session_id,
                 bridge=bridge,
                 last_active_ts=time.time(),
             )
             self.rooms[chat_id] = managed
-            logger.info("Created WhatsApp room chat_id=%s room=%s", chat_id, room_name)
+
+            logger.info(
+                "Created WhatsApp room chat_id=%s room=%s user_id=%s session_id=%s",
+                chat_id,
+                room_name,
+                user_id,
+                session_id,
+            )
             return managed
 
-    async def publish_inbound(self, chat_id: str, payload: dict[str, Any]) -> None:
-        room = await self.ensure_room(chat_id)
+    async def publish_inbound(self, *, chat_id: str, payload: dict[str, Any]) -> None:
+        raw_from = payload.get("from", "")
+        sender_id = normalize_sender_id(raw_from)
+        user_id = make_user_id(sender_id)
+
+        room = await self.ensure_room(
+            chat_id=chat_id,
+            user_id=user_id,
+        )
         room.last_active_ts = time.time()
+        payload["user_id"] = room.user_id
+        payload["session_id"] = room.session_id
         await room.bridge.publish_inbound(payload)
 
     async def _cleanup_loop(self) -> None:
@@ -120,9 +170,11 @@ class WhatsAppRoomManager:
                     room = self.rooms.pop(chat_id, None)
                     if room:
                         logger.info(
-                            "Closing idle WhatsApp room chat_id=%s room=%s idle_for=%.1fs",
+                            "Closing idle WhatsApp room chat_id=%s room=%s user_id=%s session_id=%s idle_for=%.1fs",
                             chat_id,
                             room.room_name,
+                            room.user_id,
+                            room.session_id,
                             now - room.last_active_ts,
                         )
                         await room.bridge.aclose()

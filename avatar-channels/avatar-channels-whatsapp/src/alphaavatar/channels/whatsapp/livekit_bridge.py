@@ -34,6 +34,7 @@ class LiveKitBridge:
         api_secret: str,
         room_name: str,
         identity: str = "whatsapp-bridge",
+        participant_metadata: dict[str, Any] | None = None,
     ):
         self._on_outbound = on_outbound
         self._url = livekit_url
@@ -41,15 +42,22 @@ class LiveKitBridge:
         self._api_secret = api_secret
         self._room_name = room_name
         self._identity = identity
+        self._participant_metadata = participant_metadata or {}
         self._room: rtc.Room | None = None
 
     async def start(self) -> None:
-        token = (
+        token_builder = (
             api.AccessToken(self._api_key, self._api_secret)
             .with_identity(self._identity)
             .with_grants(api.VideoGrants(room_join=True, room=self._room_name))
-            .to_jwt()
         )
+
+        if self._participant_metadata:
+            token_builder = token_builder.with_metadata(
+                json.dumps(self._participant_metadata, ensure_ascii=False)
+            )
+
+        token = token_builder.to_jwt()
 
         room = rtc.Room()
         self._room = room
@@ -67,7 +75,12 @@ class LiveKitBridge:
                 logger.exception("Failed to handle data_received")
 
         await room.connect(self._url, token)
-        logger.info("LiveKit connected room=%s identity=%s", self._room_name, self._identity)
+        logger.info(
+            "LiveKit connected room=%s identity=%s metadata=%s",
+            self._room_name,
+            self._identity,
+            self._participant_metadata,
+        )
 
     async def publish_inbound(self, payload: dict[str, Any]) -> None:
         if not self._room:

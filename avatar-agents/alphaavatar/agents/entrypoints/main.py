@@ -77,7 +77,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     session_mode = resolve_session_mode(session_type)
 
     user_id = participant_metadata.get("user_id", get_user_id())
-    session_id = participant_metadata.get("session_id", get_session_id(session_type))
+    session_id = participant_metadata.get("session_id", get_session_id(room_type))
 
     session_config = SessionConfig(
         user_id=user_id,

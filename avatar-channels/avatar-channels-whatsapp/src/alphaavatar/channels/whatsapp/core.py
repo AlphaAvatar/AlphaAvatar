@@ -65,8 +65,8 @@ async def handle_driver(ws: WebSocketServerProtocol):
                     continue
 
                 await ROOM_MANAGER.publish_inbound(
-                    inbound.chat_id,
-                    inbound.model_dump(by_alias=True),
+                    chat_id=inbound.chat_id,
+                    payload=inbound.model_dump(by_alias=True),
                 )
 
                 logger.info(
