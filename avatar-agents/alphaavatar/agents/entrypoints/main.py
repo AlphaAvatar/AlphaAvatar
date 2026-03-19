@@ -29,6 +29,7 @@ from alphaavatar.agents.utils import get_session_id, get_user_id
 from .channels.bootstrap import register_builtin_channels
 from .channels.factory import build_channel_adapters
 from .io.dispatcher import InputDispatcher
+from .io.envelopes import InputEnvelope
 from .schema.room_type import SUPPORTED_ADAPTER_TYPES, detect_room_type
 from .schema.session_mode import SessionMode, resolve_session_mode
 from .schema.session_type import resolve_session_type
@@ -121,7 +122,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
 
     built = None
 
-    async def _handle_adapter_input(envelope, raw_payload):
+    async def _handle_adapter_input(envelope: InputEnvelope, raw_payload):
         # TODO: Support more modalities by dispatching to different handlers based on envelope.modality and built.room_type
         if envelope.modality != "text":
             logger.warning(

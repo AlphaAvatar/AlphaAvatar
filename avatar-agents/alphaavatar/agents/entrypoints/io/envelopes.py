@@ -39,7 +39,7 @@ class OutputEnvelope:
     user_id: str
     session_id: str
     room_name: str
-    correlation_id: str
+    correlation_id: str  # message_id
     modality: OutputModality
 
     text: str | None = None

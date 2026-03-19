@@ -29,7 +29,7 @@ logger = logging.getLogger("alphaavatar.whatsapp.core")
 logging.basicConfig(level=logging.INFO)
 
 # Save the driver for the current connection (only one instance is supported initially)
-DRIVER_CONNS: set[WebSocketServerProtocol] = set()
+DRIVER_CONN: WebSocketServerProtocol | None = None
 
 # Simple deduplication (MVP: in-process set; to be replaced with sqlite/redis later)
 SEEN_MESSAGE_IDS: set[str] = set()
@@ -38,8 +38,18 @@ ROOM_MANAGER: WhatsAppRoomManager | None = None
 
 
 async def handle_driver(ws: WebSocketServerProtocol):
-    DRIVER_CONNS.add(ws)
+    global DRIVER_CONN
+
+    if DRIVER_CONN is not None and DRIVER_CONN != ws:
+        logger.warning("Another driver is already connected, replacing old connection")
+        try:
+            await DRIVER_CONN.close()
+        except Exception:
+            pass
+
+    DRIVER_CONN = ws
     logger.info("Driver connected: %s", ws.remote_address)
+
     try:
         async for msg in ws:
             data = json.loads(msg)
@@ -72,17 +82,18 @@ async def handle_driver(ws: WebSocketServerProtocol):
     except websockets.ConnectionClosed:
         logger.info("Driver disconnected")
     finally:
-        DRIVER_CONNS.discard(ws)
+        if DRIVER_CONN == ws:
+            DRIVER_CONN = None
 
 
-async def broadcast_to_driver(payload: dict[str, Any]):
-    if not DRIVER_CONNS:
+async def send_outbound_to_driver(payload: dict[str, Any]):
+    if DRIVER_CONN is None:
         logger.warning("No driver connected; dropping outbound payload")
         return
 
-    logger.info("Broadcasting outbound to driver: %s", payload)
+    logger.info("Sending outbound to driver: %s", payload)
     msg = json.dumps(payload, ensure_ascii=False)
-    await asyncio.gather(*(ws.send(msg) for ws in list(DRIVER_CONNS)))
+    await DRIVER_CONN.send(msg)
 
 
 async def ws_main(host: str = "127.0.0.1", port: int = 18789):
@@ -91,7 +102,7 @@ async def ws_main(host: str = "127.0.0.1", port: int = 18789):
     s = WhatsAppBridgeSettings.from_env()
     ROOM_MANAGER = WhatsAppRoomManager(
         settings=s,
-        on_outbound=broadcast_to_driver,
+        on_outbound=send_outbound_to_driver,
     )
     await ROOM_MANAGER.start()
 
