@@ -45,7 +45,7 @@ def make_user_id(sender_id: str) -> str:
 
 
 def make_session_id(user_id: str) -> str:
-    return f"{user_id}:session:{uuid4().hex}"
+    return f"{user_id}:whatsapp:{uuid4().hex}"
 
 
 @dataclass
