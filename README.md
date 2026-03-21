@@ -311,7 +311,7 @@ Capabilities:
 
 📦 Channel introduction: [README](https://github.com/AlphaAvatar/AlphaAvatar/blob/main/avatar-channels/avatar-channels-whatsapp/README.md)
 
-### ▶️ Start WhatsApp Channel
+▶️ Start WhatsApp Channel
 
 > Make sure AlphaAvatar Agent is already running (see Quick Start above).
 
