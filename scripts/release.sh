@@ -6,6 +6,7 @@ set -euo pipefail
 # ----------------------------------
 PACKAGES=(
   "avatar-agents"
+  "avatar-channels/avatar-channels-whatsapp"
   "avatar-plugins/avatar-plugins-character"
   "avatar-plugins/avatar-plugins-deepresearch"
   "avatar-plugins/avatar-plugins-mcp"
