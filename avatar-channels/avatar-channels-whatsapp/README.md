@@ -1,6 +1,11 @@
 # AlphaAvatar WhatsApp Channel
 
-> WhatsApp channel integration module for **AlphaAvatar**
+![Status](https://img.shields.io/badge/status-in_development-orange)
+![Driver](https://img.shields.io/badge/driver-baileys-blue)
+![Architecture](https://img.shields.io/badge/architecture-driver_abstraction-purple)
+
+> A pluggable WhatsApp channel for AlphaAvatar, built with a driver abstraction architecture to support multiple backend APIs (Baileys / Meta / Twilio).
+
 > Built with a **Driver Abstraction Architecture** for future API replacement.
 
 ---
@@ -45,7 +50,7 @@ This layer can be replaced without modifying the Agent or Bridge Core.
 
 ---
 
-### 🧠 Bridge Core (Stable Layer)
+### 🧠 Bridge Core (Stable API Layer)
 
 Located at:
 
@@ -302,6 +307,6 @@ It ensures that WhatsApp API provider changes **do not cascade into AlphaAvatar 
 * [ ] LiveKit streaming integration
 * [ ] Meta Cloud API driver
 * [ ] Twilio driver
-* [ ] Voice note support (ASR)
-* [ ] Media support
+* [ ] Voice/Image/Media support
+* [ ] Whitelist support
 * [ ] Multi-driver runtime selection

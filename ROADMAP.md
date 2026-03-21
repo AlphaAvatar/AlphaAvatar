@@ -101,8 +101,9 @@
 
 | Priority | Task                                                                         |     Stage     |
 | :------- | :--------------------------------------------------------------------------- | :-----------: |
-| 🔸       | Add **multi-user profile management** for concurrent interactions.           | ⏳ In Progress |
-| 🔸       | Enable **real-time profile retrieval** during active conversation.           | ⏳ In Progress |
+| 🔸       | Supports **local persona storage and retrieval** configuration.              | ⏳ In Progress |
+| 🔹       | Add **multi-user profile management** for concurrent interactions.           |   🧩 Planned   |
+| 🔹       | Enable **real-time profile retrieval** during active conversation.           |   🧩 Planned   |
 | 🔹       | Add **face-based profiling** (facial embedding recognition).                 |   🧩 Planned   |
 | 🔹       | Integrate **event triggers** for profile updates & reflection cycles.        |   🧩 Planned   |
 

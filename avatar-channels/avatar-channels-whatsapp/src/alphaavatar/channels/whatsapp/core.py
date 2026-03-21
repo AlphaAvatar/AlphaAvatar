@@ -15,18 +15,20 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from typing import Any
 
 import websockets
 from websockets.server import WebSocketServerProtocol
 
+from alphaavatar.agents.env import init_env
+
+from .log import logger
 from .room_manager import WhatsAppRoomManager
 from .schema.events import WAInboundEvent
 from .schema.settings import WhatsAppBridgeSettings
 
-logger = logging.getLogger("alphaavatar.whatsapp.core")
-logging.basicConfig(level=logging.INFO)
+init_env()
+
 
 # Save the driver for the current connection (only one instance is supported initially)
 DRIVER_CONN: WebSocketServerProtocol | None = None

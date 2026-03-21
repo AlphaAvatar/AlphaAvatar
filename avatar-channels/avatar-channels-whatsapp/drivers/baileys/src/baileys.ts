@@ -7,9 +7,12 @@ import makeWASocket, {
 } from "@whiskeysockets/baileys";
 import WebSocket from "ws";
 import pino from "pino";
+import fs from "fs";
 
 const logger = pino({ level: "info" });
 const CORE_WS_URL = process.env.CORE_WS_URL ?? "ws://127.0.0.1:18789";
+const AUTH_DIR = process.env.WHATSAPP_AUTH_DIR ?? "./auth";
+const RESET_AUTH = process.env.WHATSAPP_RESET_AUTH === "1";
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -40,7 +43,23 @@ function extractText(msg: proto.IWebMessageInfo): string | null {
   return null;
 }
 
+function shouldIgnoreMessage(msg: proto.IWebMessageInfo): boolean {
+  const remoteJid = msg.key.remoteJid ?? "";
+
+  if (msg.key.fromMe) return true;
+  if (!remoteJid) return true;
+  if (remoteJid === "status@broadcast") return true;
+  if (remoteJid.endsWith("@broadcast")) return true;
+
+  return false;
+}
+
 async function main() {
+  if (RESET_AUTH && fs.existsSync(AUTH_DIR)) {
+    fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+    logger.warn({ AUTH_DIR }, "Auth directory reset before startup");
+  }
+
   // -------- Core WS (one connection) --------
   const ws = new WebSocket(CORE_WS_URL);
 
@@ -48,10 +67,11 @@ async function main() {
   ws.on("close", () => logger.warn("Core WS closed"));
   ws.on("error", (err: unknown) => logger.error({ err }, "Core WS error"));
 
-  // 当前可用的 WhatsApp socket（随着重连更新）
+  // Currently available WhatsApp sockets (to be updated upon reconnection)
   let currentSock: ReturnType<typeof makeWASocket> | null = null;
+  let lastHealthyAt = 0;
 
-  // Core -> WhatsApp（只注册一次，避免重复绑定）
+  // Core -> WhatsApp (Register only once to avoid duplicate binding)
   ws.on("message", async (data: WebSocket.RawData) => {
     try {
       const evt = JSON.parse(data.toString("utf-8"));
@@ -69,14 +89,14 @@ async function main() {
       const text: string = evt.text;
 
       const sent = await currentSock.sendMessage(chat_id, { text });
+      lastHealthyAt = Date.now();
       logger.info({ to: chat_id, id: sent?.key?.id }, "sent message");
     } catch (err: unknown) {
       logger.error({ err }, "send outbound error");
     }
   });
 
-  // -------- Baileys auth --------
-  const { state, saveCreds } = await useMultiFileAuthState("./auth");
+  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
   const { version } = await fetchLatestBaileysVersion();
 
   // -------- WhatsApp socket loop (auto-restart) --------
@@ -84,12 +104,12 @@ async function main() {
 
   while (true) {
     attempt += 1;
-    logger.info({ attempt }, "Starting WhatsApp socket...");
+    logger.info({ attempt, AUTH_DIR }, "Starting WhatsApp socket...");
 
     const sock = makeWASocket({
       version,
       auth: state,
-      logger: logger,
+      logger,
     });
 
     currentSock = sock;
@@ -101,9 +121,7 @@ async function main() {
       try {
         const msg = upsert.messages?.[0];
         if (!msg) return;
-
-        // Ignore messages you sent to avoid self-triggered loops.
-        if (msg.key.fromMe) return;
+        if (shouldIgnoreMessage(msg)) return;
 
         const text = extractText(msg);
         if (!text) return;
@@ -121,7 +139,7 @@ async function main() {
           v: 1,
           channel: "whatsapp",
           direction: "in",
-          from: from,
+          from,
           chat_id,
           message_id,
           ts: nowTs(),
@@ -132,6 +150,7 @@ async function main() {
 
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify(inbound));
+          lastHealthyAt = Date.now();
         } else {
           logger.warn("Core WS not open; drop inbound");
         }
@@ -152,12 +171,12 @@ async function main() {
 
         if (connection === "open") {
           logger.info("WhatsApp connection opened");
-          attempt = 0; // Reset to zero upon success
+          attempt = 0;
         }
 
         if (connection === "close") {
           const reason = (lastDisconnect?.error as any)?.output?.statusCode;
-          logger.warn({ reason }, "WhatsApp connection closed");
+          logger.warn({ reason, lastHealthyAt }, "WhatsApp connection closed");
           resolve(reason ?? 0);
         }
       });
@@ -165,11 +184,18 @@ async function main() {
 
     // loggedOut: Manual clearing of auth and re-pairing are required.
     if (closeCode === DisconnectReason.loggedOut) {
-      logger.error("WhatsApp logged out. Delete ./auth and re-pair.");
+      logger.error({ AUTH_DIR }, "WhatsApp logged out. Delete auth and re-pair.");
       break;
     }
 
-    // 515 / Other temporary errors: Reconnect after backtracking
+    if (closeCode === DisconnectReason.connectionReplaced) {
+      logger.warn("WhatsApp connection replaced by another session.");
+    }
+
+    if (closeCode === DisconnectReason.restartRequired) {
+      logger.warn("WhatsApp restart required.");
+    }
+
     const backoff = calcBackoffMs(attempt);
     logger.info({ closeCode, backoff }, "Restarting WhatsApp socket...");
     await sleep(backoff);

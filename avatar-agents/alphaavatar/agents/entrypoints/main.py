@@ -15,7 +15,6 @@ import json
 import textwrap
 from functools import partial
 
-from dotenv import load_dotenv
 from livekit import agents
 from livekit.agents import AgentSession, room_io
 from livekit.agents.job import AutoSubscribe
@@ -23,6 +22,7 @@ from livekit.agents.job import AutoSubscribe
 from alphaavatar.agents.avatar import AvatarEngine
 from alphaavatar.agents.avatar.patches import AvatarServer
 from alphaavatar.agents.configs import AvatarConfig, SessionConfig, get_avatar_args, read_args
+from alphaavatar.agents.env import init_env
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.utils import get_session_id, get_user_id
 
@@ -34,11 +34,11 @@ from .schema.room_type import SUPPORTED_ADAPTER_TYPES, detect_room_type
 from .schema.session_mode import SessionMode, resolve_session_mode
 from .schema.session_type import resolve_session_type
 
-load_dotenv()
+init_env()
 
 
 def worker_load(worker) -> float:
-    return 1.0 if len(worker.active_jobs) >= 1 else 0.0
+    return min(len(worker.active_jobs) / 5.0, 1.0)
 
 
 def build_room_options(session_mode: SessionMode) -> room_io.RoomOptions:
@@ -61,6 +61,33 @@ def build_room_options(session_mode: SessionMode) -> room_io.RoomOptions:
         kwargs["audio_input"] = False
 
     return room_io.RoomOptions(**kwargs)
+
+
+async def publish_ready_signal(ctx: agents.JobContext, room_type: str) -> None:
+    """
+    Explicitly notify bridge that the agent is fully ready to receive inbound channel messages.
+    Only publish ready for bridged adapter room types such as whatsapp.
+    """
+    if room_type not in SUPPORTED_ADAPTER_TYPES:
+        return
+
+    payload = {
+        "status": "ready",
+        "room_type": room_type,
+        "room_name": ctx.room.name,
+    }
+
+    await ctx.room.local_participant.publish_data(
+        json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        topic=f"{room_type}.ready",
+        reliable=True,
+    )
+
+    logger.info(
+        "Published ready signal topic=%s room=%s",
+        f"{room_type}.ready",
+        ctx.room.name,
+    )
 
 
 async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
@@ -96,7 +123,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     - Avatar Config: {avatar_config}""")
     )
 
-    # Build Agent & Virtaul Character Session
+    # Build Agent & Virtual Character Session
     session = AgentSession()
     avatar_engine = AvatarEngine(session_config=session_config, avatar_config=avatar_config)
     avatar_character = avatar_config.character_config.get_plugin()
@@ -145,6 +172,14 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     if built.room_type in SUPPORTED_ADAPTER_TYPES and built.ingress and built.egress:
         built.ingress.start()
         logger.info("Attached Channel=%s adapters to room=%s", built.room_type, ctx.room.name)
+
+        # IMPORTANT:
+        # Only publish ready after:
+        # 1) session.start() completed
+        # 2) adapters were built
+        # 3) ingress.start() completed
+        await publish_ready_signal(ctx, built.room_type)
+
     else:
         logger.info(
             "No bridged adapters attached for room_type=%s room=%s", built.room_type, ctx.room.name

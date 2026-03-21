@@ -167,6 +167,7 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 <h4>Latest News 🔥</h4>
 
 - [2026/03] We have released AlphaAvatar **version 0.5.0** to support the MCP plugin, which enables retrieval and concurrent invocation of the MCP tools.
+  - Released AlphaAvatar **version 0.5.1**: Added WhatsApp channel support via Baileys driver, enabling connection to AlphaAvatar Agent for **WhatsApp** integration.
 - [2026/02] We have released AlphaAvatar **version 0.4.0** to support RAG by [RAG-Anything](https://github.com/HKUDS/RAG-Anything) library and optimized the Memory and DeepResearch modules.
   - Released AlphaAvatar **version 0.4.1**: Fix the Persona plugin bugs and Add new MCP plugin.
 - [2026/01] We have released AlphaAvatar **version 0.3.0** to support DeepResearch by [tavily](https://tavily.com) API.
@@ -200,62 +201,81 @@ uv sync --all-packages
 
 <h2>Quick Start ⚡️</h2>
 
-Start your agent in dev mode to connect it to LiveKit and make it available from anywhere on the internet:
+Start your agent in dev mode to connect it to LiveKit and make it available from anywhere on the internet.
+
+---
+
+🧩 Step 1. Configure Environment Variables
 
 ```bash
-export LIVEKIT_API_KEY=<your API Key>
-export LIVEKIT_API_SECRET=<your API Secret>
-export LIVEKIT_URL=<your LiveKit server URL>
+cd AlphaAvatar
 
-export OPENAI_API_KEY=<your OpenAI API Key>
+# Copy template
+cp .env.template .env.dev
+```
 
-export QDRANT_URL='https://xxxxxx-xxxxx-xxxxx-xxxx-xxxxxxxxx.us-east.aws.cloud.qdrant.io:6333'
-export QDRANT_API_KEY=<your QDRANT API Key>
+Edit .env.dev and set required environment variables.
 
-# Optional
-export TAVILY_API_KEY=<your TAVILY API Key>
+📦 Step 2. Download Required Files
 
-# MCP Header Key
-export GITHUB_PAT=<your Github PAT>
-
+```bash
 alphaavatar download-files
-alphaavatar dev examples/pipline_openai_airi.yaml
+```
+
+🚀 Step 3. Run the Agent
+
+```bash
+ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/pipline_openai_airi.yaml
 # or
-alphaavatar dev examples/pipline_openai_tools.yaml
+ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/pipline_openai_tools.yaml
 ```
 
 To see more supported modes, please refer to the [LiveKit doc](https://docs.livekit.io/agents/start/voice-ai/).
 
 To see more examples, please refer to the [Examples README](https://github.com/AlphaAvatar/AlphaAvatar/blob/main/examples/README.md)
 
+
 <h2>Usage 🚀</h2>
 
 AlphaAvatar supports multiple **Access Channels**, allowing different types of users — from end users to developers — to interact with the system.
 
+---
+
+## 🧠 Runtime Architecture
+
 ```
-           AlphaAvatar Agent Runtime
-           ─────────────────────────
+            AlphaAvatar Runtime
+            ───────────────────
 
-        ┌──────────────────────────────┐
-        │        AgentSession          │
-        │        AvatarEngine          │
-        └──────────────┬───────────────┘
-                       │
-                 InputDispatcher
-                       │
-                  InputEnvelope
-                       │
-        ┌──────────────┴───────────────┐
-        │                              │
- WhatsAppIngressAdapter        Web/App Native Input
-        │                              │
-        ▼                              ▼
-   whatsapp.in topic            audio/text/video
-
-────────────────────────────────────────────────────
-
-           Bridge Layer (avatar-channels)
+    ┌──────────────────────────────┐
+    │        AgentSession          │
+    │        AvatarEngine          │
+    │   (LLM / Memory / RAG / MCP) │
+    └──────────────┬───────────────┘
+                   │
+            InputDispatcher
+                   │
+            InputEnvelope
+                   │
+    ┌──────────────┴───────────────┐
+    │                              │
+Channel Adapters                Native Inputs
+(Ingress Layer)                (Web / App)
+    │                              │
+    ▼                              ▼
+WhatsApp / WeChat / Slack      audio / text / video
+    │                              │
+    └──────────────┬───────────────┘
+                   ▼
+           OutputDispatcher
+                   │
+    ┌──────────────┴───────────────┐
+    │                              │
+Channel Egress                  Native Output
+(Messaging APIs)                (WebRTC / UI)
 ```
+
+> 💡 AlphaAvatar uses a **Channel Adapter architecture** to decouple runtime logic from communication channels.
 
 ---
 
@@ -277,15 +297,29 @@ This will become the official AlphaAvatar user interface.
 Interact with AlphaAvatar directly inside messaging platforms.
 
 Capabilities:
+
 - 💬 Text-based conversation
 - 🎤 Voice message interaction
 - 🧰 Tool invocation via chat interface
 
+---
+
 <h4>WhatsApp</h4>
 
-<a href="https://github.com/AlphaAvatar/AlphaAvatar/blob/main/avatar-channels/avatar-channels-whatsapp/README.md">
-  <img src="https://img.shields.io/badge/In_Development-orange?style=flat" />
-</a>
+
+<img src="https://img.shields.io/badge/Available-28a745?style=flat" />
+
+📦 Channel introduction: [README](https://github.com/AlphaAvatar/AlphaAvatar/blob/main/avatar-channels/avatar-channels-whatsapp/README.md)
+
+### ▶️ Start WhatsApp Channel
+
+> Make sure AlphaAvatar Agent is already running (see Quick Start above).
+
+```bash
+ENV_FILE=.env.dev sh examples/channels/start_whatsapp.sh
+````
+
+> 💡 The WhatsApp channel runs as an independent bridge process and connects to the Agent runtime.
 
 <h4>WeChat</h4>
 

@@ -13,12 +13,12 @@
 # limitations under the License.
 """Avatar Launch Engine"""
 
-import inspect
 from collections.abc import AsyncIterable, Coroutine
 from typing import Any
 
 from livekit import rtc
 from livekit.agents import Agent, ModelSettings, llm, stt
+from livekit.agents.types import FlushSentinel
 from livekit.agents.voice.generation import update_instructions
 
 from alphaavatar.agents.configs import AvatarConfig, SessionConfig
@@ -88,7 +88,8 @@ class AvatarEngine(Agent):
 
         # Init User Peronsa by init user_id
         await self._persona.init_cache(
-            timestamp=self._avatar_activate_time, init_user_id=self.session_config.user_id
+            timestamp=self._avatar_activate_time,
+            init_user_id=self.session_config.user_id,
         )
 
         init_avatar_patches(self)
@@ -132,24 +133,16 @@ class AvatarEngine(Agent):
     def llm_node(
         self,
         chat_ctx: llm.ChatContext,
-        tools: list[llm.FunctionTool | llm.RawFunctionTool],
+        tools: list[llm.Tool],
         model_settings: ModelSettings,
-    ) -> (
-        AsyncIterable[llm.ChatChunk | str]
-        | Coroutine[Any, Any, AsyncIterable[llm.ChatChunk | str]]
-        | Coroutine[Any, Any, str]
-        | Coroutine[Any, Any, llm.ChatChunk]
-        | Coroutine[Any, Any, None]
-    ):
+    ) -> AsyncIterable[llm.ChatChunk | str | FlushSentinel]:
         """
         STT -> Text -> Text append to chat context -> chat context [llm_node] -> llm
 
-        Override [livekit.agents.voice.agent.Agent::llm_node] method to handle llm inputs.
+        Override [livekit.agents.Agent::llm_node] method to handle llm inputs.
         """
 
-        async def _gen() -> AsyncIterable[llm.ChatChunk | str]:
-            await self._chat_ctx.items.wait_pending()  # type: ignore
-
+        async def _gen():
             # The current chat_ctx is temporarily copied from self._chat_ctx
             update_instructions(
                 chat_ctx,
@@ -160,22 +153,8 @@ class AvatarEngine(Agent):
                 add_if_missing=True,
             )
 
-            res = Agent.default.llm_node(self, chat_ctx, tools, model_settings)
-
-            if inspect.isawaitable(res):
-                res = await res
-
-            # 如果是 AsyncIterable，逐个转发
-            if hasattr(res, "__aiter__"):
-                async for chunk in res:  # type: ignore[attr-defined]
-                    yield chunk
-                return
-
-            if isinstance(res, str | llm.ChatChunk):
-                yield res
-                return
-
-            return
+            async for chunk in Agent.default.llm_node(self, chat_ctx, tools, model_settings):
+                yield chunk
 
         return _gen()
 

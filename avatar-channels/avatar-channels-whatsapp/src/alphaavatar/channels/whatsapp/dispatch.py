@@ -13,10 +13,9 @@
 # limitations under the License.
 from __future__ import annotations
 
-import logging
 import os
 
-logger = logging.getLogger("alphaavatar.whatsapp.dispatch")
+from .log import logger
 
 try:
     from livekit import api  # type: ignore

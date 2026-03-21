@@ -14,19 +14,17 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
 from .dispatch import create_agent_dispatch_for_room
 from .livekit_bridge import LiveKitBridge
+from .log import logger
 from .schema.settings import WhatsAppBridgeSettings
-
-logger = logging.getLogger("alphaavatar.whatsapp.room_manager")
 
 
 def make_room_name(chat_id: str) -> str:
@@ -56,6 +54,8 @@ class ManagedRoom:
     session_id: str
     bridge: LiveKitBridge
     last_active_ts: float
+    pending_messages: list[dict[str, Any]] = field(default_factory=list)
+    warmup_task: asyncio.Task | None = None
 
 
 class WhatsAppRoomManager:
@@ -63,7 +63,7 @@ class WhatsAppRoomManager:
         self.settings = settings
         self.on_outbound = on_outbound
         self.rooms: dict[str, ManagedRoom] = {}
-        self.idle_timeout_sec = int(os.environ.get("WHATSAPP_IDLE_TIMEOUT_SEC", "900"))  # 15 min
+        self.idle_timeout_sec = int(os.environ.get("WHATSAPP_IDLE_TIMEOUT_SEC", "900"))
         self._cleanup_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
 
@@ -78,7 +78,10 @@ class WhatsAppRoomManager:
             self._cleanup_task = None
 
         for room in list(self.rooms.values()):
+            if room.warmup_task and not room.warmup_task.done():
+                room.warmup_task.cancel()
             await room.bridge.aclose()
+
         self.rooms.clear()
 
     async def ensure_room(
@@ -86,12 +89,12 @@ class WhatsAppRoomManager:
         *,
         chat_id: str,
         user_id: str,
-    ) -> ManagedRoom:
+    ) -> tuple[ManagedRoom, bool]:
         async with self._lock:
             existing = self.rooms.get(chat_id)
             if existing:
                 existing.last_active_ts = time.time()
-                return existing
+                return existing, False
 
             room_name = make_room_name(chat_id)
             session_id = make_session_id(user_id)
@@ -104,8 +107,12 @@ class WhatsAppRoomManager:
                 "chat_id": chat_id,
             }
 
+            async def _on_agent_ready() -> None:
+                await self._flush_pending_messages(chat_id)
+
             bridge = LiveKitBridge(
                 on_outbound=self.on_outbound,
+                on_agent_ready=_on_agent_ready,
                 livekit_url=self.settings.livekit_url,
                 api_key=self.settings.livekit_api_key,
                 api_secret=self.settings.livekit_api_secret,
@@ -113,6 +120,7 @@ class WhatsAppRoomManager:
                 identity=f"{self.settings.identity}-{room_name}",
                 participant_metadata=participant_metadata,
             )
+
             await bridge.start()
 
             agent_name = os.environ.get("AVATAR_NAME", "").strip()
@@ -132,6 +140,10 @@ class WhatsAppRoomManager:
             )
             self.rooms[chat_id] = managed
 
+            managed.warmup_task = asyncio.create_task(
+                self._warmup_room(chat_id=chat_id, room=managed)
+            )
+
             logger.info(
                 "Created WhatsApp room chat_id=%s room=%s user_id=%s session_id=%s",
                 chat_id,
@@ -139,21 +151,90 @@ class WhatsAppRoomManager:
                 user_id,
                 session_id,
             )
-            return managed
+            return managed, True
 
     async def publish_inbound(self, *, chat_id: str, payload: dict[str, Any]) -> None:
         raw_from = payload.get("from", "")
         sender_id = normalize_sender_id(raw_from)
         user_id = make_user_id(sender_id)
 
-        room = await self.ensure_room(
+        room, is_new = await self.ensure_room(
             chat_id=chat_id,
             user_id=user_id,
         )
         room.last_active_ts = time.time()
+
         payload["user_id"] = room.user_id
         payload["session_id"] = room.session_id
-        await room.bridge.publish_inbound(payload)
+
+        if room.bridge.is_ready:
+            await room.bridge.publish_inbound(payload)
+            return
+
+        room.pending_messages.append(payload)
+
+        logger.info(
+            "Buffered inbound message chat_id=%s room=%s is_new=%s pending=%d",
+            chat_id,
+            room.room_name,
+            is_new,
+            len(room.pending_messages),
+        )
+
+    async def _warmup_room(self, *, chat_id: str, room: ManagedRoom) -> None:
+        try:
+            ready = await room.bridge.wait_until_ready(timeout=15.0)
+            logger.info(
+                "Room warmup complete chat_id=%s room=%s ready=%s",
+                chat_id,
+                room.room_name,
+                ready,
+            )
+
+            if ready:
+                await self._flush_pending_messages(chat_id)
+            else:
+                logger.warning(
+                    "Agent still not ready after warmup chat_id=%s room=%s pending=%d",
+                    chat_id,
+                    room.room_name,
+                    len(room.pending_messages),
+                )
+        except asyncio.CancelledError:
+            logger.info("Warmup task cancelled chat_id=%s room=%s", chat_id, room.room_name)
+        except Exception:
+            logger.exception("Warmup task failed chat_id=%s room=%s", chat_id, room.room_name)
+
+    async def _flush_pending_messages(self, chat_id: str) -> None:
+        room = self.rooms.get(chat_id)
+        if not room:
+            return
+
+        if not room.bridge.is_ready:
+            return
+
+        if not room.pending_messages:
+            return
+
+        pending = list(room.pending_messages)
+        room.pending_messages.clear()
+
+        logger.info(
+            "Flushing pending messages chat_id=%s room=%s count=%d",
+            chat_id,
+            room.room_name,
+            len(pending),
+        )
+
+        for payload in pending:
+            try:
+                await room.bridge.publish_inbound(payload)
+            except Exception:
+                logger.exception(
+                    "Failed to flush pending inbound chat_id=%s room=%s",
+                    chat_id,
+                    room.room_name,
+                )
 
     async def _cleanup_loop(self) -> None:
         try:
@@ -177,6 +258,8 @@ class WhatsAppRoomManager:
                             room.session_id,
                             now - room.last_active_ts,
                         )
+                        if room.warmup_task and not room.warmup_task.done():
+                            room.warmup_task.cancel()
                         await room.bridge.aclose()
         except asyncio.CancelledError:
             logger.info("WhatsAppRoomManager cleanup loop cancelled")

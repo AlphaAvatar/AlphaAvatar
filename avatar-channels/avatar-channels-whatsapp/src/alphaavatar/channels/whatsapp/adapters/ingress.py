@@ -21,7 +21,7 @@ from typing import Any
 from livekit import rtc
 
 from alphaavatar.agents.entrypoints.io.envelopes import InputEnvelope
-from alphaavatar.agents.log import logger
+from alphaavatar.channels.whatsapp.log import logger
 
 
 class WhatsAppIngressAdapter:
