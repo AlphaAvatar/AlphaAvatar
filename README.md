@@ -39,6 +39,8 @@ Learnable, configurable, and pluggable Omni Personal Assistant for everyone
 
 AlphaAvatar is an **Omni-Avatar personal assistant framework** designed to evolve into your **intelligent personal butler**.
 
+✨ **Fully self-hostable and privacy-first** — you can deploy AlphaAvatar locally or on your own infrastructure, with full control over your data, memory, and behavior.
+
 It is built around a **plugin-based Agent architecture**, combining:
 
 - 🧠 Full-modality **Memory**
