@@ -18,7 +18,7 @@
 
 
 <h3 align="center">
-Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
+Learnable, configurable, and pluggable Omni Personal Assistant for everyone
 </h3>
 
 <p align="center">
@@ -32,6 +32,74 @@ Learnable, configurable, and pluggable Omni-Avatar Assistant for everyone
 </p>
 
 </div>
+
+---
+
+<h2>AlphaAvatar Introduction</h2>
+
+AlphaAvatar is an **Omni-Avatar personal assistant framework** designed to evolve into your **intelligent personal butler**.
+
+It is built around a **plugin-based Agent architecture**, combining:
+
+- 🧠 Full-modality **Memory**
+- 🧬 Dynamic **Persona understanding**
+- 💡 Self-improving **Reflection**
+- 📅 Long-term **Planning & Execution**
+- 🧰 External **Tool integrations (MCP / RAG / DeepResearch)**
+- 😊 Real-time **Virtual Character (Avatar)**
+
+Together, these components enable AlphaAvatar to move beyond a traditional chatbot into a **continuous, personalized, and proactive assistant system**.
+
+### 🎯 Vision
+
+Our goal is to build an AI that can **continuously learn, remember, and act on behalf of the user**, acting as a true **personal life manager** rather than a passive responder.
+
+### 🧩 What Can AlphaAvatar Do?
+
+With the combination of internal Agent plugins and external tools, AlphaAvatar can:
+
+#### 1️⃣ Personal Data & Life Metrics Management
+- 📊 Track and analyze personal metrics (health, fitness, sleep, study progress)
+- 📈 Provide long-term insights and trend analysis
+- 🎯 Suggest improvements based on historical patterns
+
+#### 2️⃣ Knowledge & Notes Management
+- 📖 Organize personal notes, documents, and knowledge
+- 🔍 Retrieve relevant information via RAG
+- 🧠 Build a **personal knowledge base** over time
+
+#### 3️⃣ Task & Event Management
+- 📅 Schedule tasks and reminders
+- ⏰ Proactively notify based on context and priority
+- 🔄 Break down long-term goals into actionable steps
+
+#### 4️⃣ Autonomous Planning & Execution
+- 🧠 Plan multi-step workflows (learning plans, projects, research)
+- 🔧 Call tools automatically to complete tasks
+- 📌 Maintain consistency across long time horizons
+
+#### 5️⃣ Personalized Companion & Context Awareness
+- 🧬 Understand user preferences, habits, and personality
+- 💬 Provide highly personalized responses
+- 🤝 Maintain continuity across conversations and modalities
+
+#### 6️⃣ External World Interaction
+- 🌐 Search, research, and summarize real-world information
+- 🧰 Integrate with tools (email, database, APIs, messaging apps)
+- 🔗 Act as a bridge between user intent and external systems
+
+### 🚀 Why AlphaAvatar?
+
+Unlike traditional AI assistants, AlphaAvatar is:
+
+- **Stateful** → remembers and evolves with you
+- **Proactive** → acts, not just responds
+- **Composable** → fully plugin-driven architecture
+- **Omni-modal** → supports text, voice, and visual interaction
+- **Extensible** → easily integrates new tools and capabilities
+
+> 💡 AlphaAvatar is not just an assistant —
+> it is your **long-term AI companion and personal operating system**.
 
 ---
 
