@@ -88,7 +88,7 @@ With the combination of internal Agent plugins and external tools, AlphaAvatar c
 - 🧰 Integrate with tools (email, database, APIs, messaging apps)
 - 🔗 Act as a bridge between user intent and external systems
 
-### 🚀 Why AlphaAvatar?
+### 🤖 Why AlphaAvatar?
 
 Unlike traditional AI assistants, AlphaAvatar is:
 
@@ -290,7 +290,7 @@ Edit .env.dev and set required environment variables.
 alphaavatar download-files
 ```
 
-🚀 Step 3. Run the Agent
+✅ Step 3. Run the Agent
 
 ```bash
 ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/pipline_openai_airi.yaml
