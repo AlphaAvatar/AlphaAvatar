@@ -28,8 +28,8 @@ from livekit.agents.types import ATTRIBUTE_PUBLISH_ON_BEHALF
 
 from alphaavatar.agents.sessions import VirtialCharacterSession
 
-from ..enum import RunnerOP
 from ..log import logger
+from ..runner_op import RunnerOP
 from .config import AiriConfig
 from .runner import AiriRunner
 

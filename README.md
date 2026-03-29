@@ -237,7 +237,8 @@ Unlike traditional AI assistants, AlphaAvatar is:
 <h4>Latest News 🔥</h4>
 
 - [2026/03] We have released AlphaAvatar **version 0.5.0** to support the MCP plugin, which enables retrieval and concurrent invocation of the MCP tools.
-  - Released AlphaAvatar **version 0.5.1**: Added WhatsApp channel support via Baileys driver, enabling connection to AlphaAvatar Agent for **WhatsApp** integration.
+  - Released AlphaAvatar **version 0.5.1**: Added [WhatsApp]((https://github.com/AlphaAvatar/AlphaAvatar/blob/main/avatar-channels/avatar-channels-whatsapp/README.md)) channel support via [Baileys](https://github.com/whiskeysockets/Baileys) driver, enabling connection to AlphaAvatar Agent for **WhatsApp** integration.
+  - Released AlphaAvatar **version 0.5.2**: Add the AlphaAvatar Voice plugin to support the [Voice.ai](https://voice.ai/) TTS API, providing a wider variety of speaker options.
 - [2026/02] We have released AlphaAvatar **version 0.4.0** to support RAG by [RAG-Anything](https://github.com/HKUDS/RAG-Anything) library and optimized the Memory and DeepResearch modules.
   - Released AlphaAvatar **version 0.4.1**: Fix the Persona plugin bugs and Add new MCP plugin.
 - [2026/01] We have released AlphaAvatar **version 0.3.0** to support DeepResearch by [tavily](https://tavily.com) API.
@@ -295,9 +296,9 @@ alphaavatar download-files
 ✅ Step 3. Run the Agent
 
 ```bash
-ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/pipline_openai_airi.yaml
+ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/pipeline_openai_airi.yaml
 # or
-ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/pipline_openai_tools.yaml
+ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/pipeline_openai_tools.yaml
 ```
 
 To see more supported modes, please refer to the [LiveKit doc](https://docs.livekit.io/agents/start/voice-ai/).

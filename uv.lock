@@ -30,6 +30,7 @@ members = [
     "alpha-avatar-plugins-memory",
     "alpha-avatar-plugins-persona",
     "alpha-avatar-plugins-rag",
+    "alpha-avatar-plugins-voice",
 ]
 constraints = [{ name = "onnxruntime", marker = "python_full_version == '3.9.*'", specifier = "<1.20.0" }]
 
@@ -261,6 +262,7 @@ source = { editable = "avatar-agents" }
 dependencies = [
     { name = "alpha-avatar-plugins-memory" },
     { name = "alpha-avatar-plugins-persona" },
+    { name = "alpha-avatar-plugins-voice" },
     { name = "livekit" },
     { name = "livekit-agents" },
     { name = "livekit-api" },
@@ -296,6 +298,7 @@ requires-dist = [
     { name = "alpha-avatar-plugins-memory", editable = "avatar-plugins/avatar-plugins-memory" },
     { name = "alpha-avatar-plugins-persona", editable = "avatar-plugins/avatar-plugins-persona" },
     { name = "alpha-avatar-plugins-rag", marker = "extra == 'tools'", editable = "avatar-plugins/avatar-plugins-rag" },
+    { name = "alpha-avatar-plugins-voice", editable = "avatar-plugins/avatar-plugins-voice" },
     { name = "livekit", specifier = ">=1.0.12,<2" },
     { name = "livekit-agents", specifier = "~=1.4" },
     { name = "livekit-api", specifier = ">=1.0.4,<2" },
@@ -419,6 +422,10 @@ requires-dist = [
     { name = "docling" },
     { name = "raganything", extras = ["all"] },
 ]
+
+[[package]]
+name = "alpha-avatar-plugins-voice"
+source = { editable = "avatar-plugins/avatar-plugins-voice" }
 
 [[package]]
 name = "annotated-doc"

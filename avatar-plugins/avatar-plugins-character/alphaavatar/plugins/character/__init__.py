@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import os
-from pathlib import Path
 
 from livekit.agents.inference_runner import _InferenceRunner
 
@@ -40,29 +39,19 @@ class AiriCharacterPlugin(AvatarPlugin):
             return AiriCharacterSession(avatar_config=avatar_config)
         except Exception:
             raise ImportError(
-                "The 'Airi[default]' Character plugin is required but is not installed.\n"
+                "The 'Airi' Character plugin is required but is not installed.\n"
                 "To fix this, install the optional dependency: `pip install alphaavatar-plugins-character`"
             )
 
 
 # plugin init
-AvatarPlugin.register_avatar_plugin(AvatarModule.CHARACTER, "default", AiriCharacterPlugin())
+AvatarPlugin.register_avatar_plugin(AvatarModule.CHARACTER, "airi", AiriCharacterPlugin())
 
 
 # runner register
-character_name = os.getenv("ALPHAAVATAR_CHARACRER_NAME", "default")
+character_name = os.getenv("ALPHAAVATAR_CHARACRER_NAME", None)
 match character_name:
-    case "default":
-        AIRI_REPO_DIR = Path(os.getenv("AIRI_REPO_DIR", ""))
-        if AIRI_REPO_DIR.exists():
-            from .airi_avatar import AiriRunner
+    case "airi":
+        from .airi_avatar import AiriRunner
 
-            _InferenceRunner.register_runner(AiriRunner)
-        else:
-            logger.warning(
-                "[AlphaAvatar] Airi frontend not detected. AiriRunner disabled.\n"
-                "Set AIRI_REPO_DIR to the cloned path and:\n"
-                "  git clone https://github.com/AlphaAvatar/AlphaAvatar-character-airi.git\n"
-                "  cd AlphaAvatar-character-airi && git checkout alphaavatar-livekit-integration\n"
-                "  alphaavatar-airi-install\n"
-            )
+        _InferenceRunner.register_runner(AiriRunner)

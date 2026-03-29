@@ -54,12 +54,12 @@ class AvatarEngine(Agent):
         # Step4: initial avatar
         super().__init__(
             instructions=self._avatar_prompt_template.instructions(),
-            turn_detection=self.avatar_config.livekit_plugin_config.get_turn_detection_plugin(),
-            stt=self.avatar_config.livekit_plugin_config.get_stt_plugin(),
-            vad=self.avatar_config.livekit_plugin_config.get_vad_plugin(),
-            llm=self.avatar_config.livekit_plugin_config.get_llm_plugin(),
-            tts=self.avatar_config.livekit_plugin_config.get_tts_plugin(),
-            allow_interruptions=self.avatar_config.livekit_plugin_config.allow_interruptions,
+            turn_detection=self.avatar_config.voice_plugin_config.get_turn_detection_plugin(),
+            stt=self.avatar_config.voice_plugin_config.get_stt_plugin(),
+            vad=self.avatar_config.voice_plugin_config.get_vad_plugin(),
+            llm=self.avatar_config.voice_plugin_config.get_llm_plugin(),
+            tts=self.avatar_config.voice_plugin_config.get_tts_plugin(),
+            allow_interruptions=self.avatar_config.voice_plugin_config.allow_interruptions,
             tools=self._tools,
         )
 

@@ -20,7 +20,9 @@ from .log import logger
 
 
 class AvatarModule(str, Enum):
-    """"""
+    # Voice modules
+    VOICE_STT = "voice_stt"
+    VOICE_TTS = "voice_tts"
 
     # Internal module names
     CHARACTER = "character"

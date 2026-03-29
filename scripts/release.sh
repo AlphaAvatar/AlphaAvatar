@@ -12,7 +12,8 @@ PACKAGES=(
   "avatar-plugins/avatar-plugins-mcp"
   "avatar-plugins/avatar-plugins-memory"
   "avatar-plugins/avatar-plugins-persona"
-  "avatar-plugins/avatar-plugins-rag"
+  "avatar-plugins/avatar-plugins-rag",
+  "avatar-plugins/avatar-plugins-voice"
 )
 
 REPO="${REPO:-pypi}"      # pypi | testpypi

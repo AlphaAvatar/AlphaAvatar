@@ -23,8 +23,8 @@ from livekit.agents.inference_runner import _InferenceRunner
 
 from alphaavatar.agents.utils.loop_thread import AsyncLoopThread
 
-from ..enum import RunnerOP
 from ..log import logger
+from ..runner_op import RunnerOP
 from .check import chromium_preflight_check
 
 try:
@@ -46,11 +46,21 @@ def is_airi_repo(p: Path) -> bool:
     return (p / "package.json").exists() and (p / "pnpm-lock.yaml").exists()
 
 
+AIRI_PORT: int = 5173
 env_val = os.getenv("AIRI_REPO_DIR", "").strip()
 AIRI_REPO_DIR = Path(env_val) if env_val else None
 if not AIRI_REPO_DIR or env_val in {".", "./"} or not is_airi_repo(AIRI_REPO_DIR):
     AIRI_REPO_DIR = Path(__file__).resolve().parents[4] / "third_party" / "airi"
-AIRI_PORT: int = 5173
+
+
+if not AIRI_REPO_DIR.exists():
+    logger.error(
+        "[AlphaAvatar] Airi frontend not detected. AiriRunner disabled.\n"
+        "Set AIRI_REPO_DIR to the cloned path and:\n"
+        "  git clone https://github.com/AlphaAvatar/AlphaAvatar-character-airi.git\n"
+        "  cd AlphaAvatar-character-airi && git checkout alphaavatar-livekit-integration\n"
+        "  alphaavatar-airi-install\n"
+    )
 
 
 class AiriRunner(_InferenceRunner):

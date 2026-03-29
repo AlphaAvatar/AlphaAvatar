@@ -15,10 +15,10 @@ from pydantic import BaseModel, Field
 
 from .avatar_info_config import AvatarInfoConfig
 from .plugins.character_plugin_config import VirtualCharacterConfig
-from .plugins.livekit_plugin_config import LiveKitPluginConfig
 from .plugins.memory_plugin_config import MemoryConfig
 from .plugins.persona_plugin_config import PersonaConfig
 from .plugins.tools_plugin_config import ToolsConfig
+from .plugins.voice_plugin_config import VoicePluginConfig
 
 
 class AvatarConfig(BaseModel):
@@ -26,8 +26,8 @@ class AvatarConfig(BaseModel):
     simplifies passing around the distinct configurations in the codebase.
     """
 
-    livekit_plugin_config: LiveKitPluginConfig = Field(default_factory=LiveKitPluginConfig)
-    """Livekit Plugins configuration."""
+    voice_plugin_config: VoicePluginConfig = Field(default_factory=VoicePluginConfig)
+    """Voice Plugins configuration."""
 
     avatar_info: AvatarInfoConfig = Field(default_factory=AvatarInfoConfig)
     """Avatar Information configuration."""

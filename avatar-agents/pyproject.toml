@@ -41,14 +41,15 @@ dependencies = [
     "livekit-plugins-turn-detector~=1.4",
     "alpha-avatar-plugins-memory>=0.1.0",
     "alpha-avatar-plugins-persona>=0.1.0",
+    "alpha-avatar-plugins-voice>=0.1.0",
 ]
 
 [project.optional-dependencies]
 character = ["alpha-avatar-plugins-character>=0.1.0"]
 tools = [
     "alpha-avatar-plugins-deepresearch>=0.1.0",
-    "alpha-avatar-plugins-rag>=0.1.0",
     "alpha-avatar-plugins-mcp>=0.1.0",
+    "alpha-avatar-plugins-rag>=0.1.0",
 ]
 
 [project.scripts]

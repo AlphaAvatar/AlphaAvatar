@@ -27,7 +27,7 @@ class VirtualCharacterConfig(BaseModel):
 
     # Character plugin config
     character_plugin: str = Field(
-        default="default",
+        default=None,
         description="Avatar Virtual Character plugin to use for agent visually represents.",
     )
     character_init_config: dict = Field(

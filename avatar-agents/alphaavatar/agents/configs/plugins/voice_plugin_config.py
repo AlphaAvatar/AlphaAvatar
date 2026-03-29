@@ -17,12 +17,18 @@ from typing import Literal
 from livekit.agents import llm, stt, tts, vad
 from pydantic import BaseModel, Field
 
+from alphaavatar.agents import AvatarModule, AvatarPlugin
+
+# livekit turn_detector
 english_spec = importlib.util.find_spec("livekit.plugins.turn_detector.english")
 multilingual_spec = importlib.util.find_spec("livekit.plugins.turn_detector.multilingual")
 if english_spec is not None:
     importlib.import_module("livekit.plugins.turn_detector.english")
 if multilingual_spec is not None:
     importlib.import_module("livekit.plugins.turn_detector.multilingual")
+
+# alphaavatar voice plugins
+importlib.import_module("alphaavatar.plugins.voice")
 
 
 class STTArguments(BaseModel):
@@ -59,7 +65,7 @@ class STTArguments(BaseModel):
 class TTSArguments(BaseModel):
     """Configuration for the TTS plugin used in the agent."""
 
-    tts_plugin: Literal["openai"] | None = Field(
+    tts_plugin: Literal["openai", "voiceai"] | None = Field(
         default=None,
         description="TTS plugin to use for text-to-speech.",
     )
@@ -69,7 +75,7 @@ class TTSArguments(BaseModel):
     )
     tts_voice: str | None = Field(
         default=None,
-        description="Voice to use for text-to-speech.",
+        description="Voice to use for text-to-speech. for voice.ai, this corresponds to the `voice_id` parameter.",
     )
     tts_instructions: str | None = Field(
         default=None,
@@ -96,7 +102,13 @@ class TTSArguments(BaseModel):
                     instructions=self.tts_instructions,
                 )
             case _:
-                return None
+                return AvatarPlugin.get_avatar_plugin(
+                    AvatarModule.VOICE_TTS,
+                    self.tts_plugin,
+                    model=self.tts_model,
+                    voice=self.tts_voice,
+                    instructions=self.tts_instructions,
+                )
 
 
 class LLMArguments(BaseModel):
@@ -155,7 +167,7 @@ class VADArguments(BaseModel):
                 return None
 
 
-class LiveKitPluginConfig(STTArguments, TTSArguments, LLMArguments, VADArguments):
+class VoicePluginConfig(STTArguments, TTSArguments, LLMArguments, VADArguments):
     """Configuration for LiveKit plugins used in the agent."""
 
     turn_detection_plugin: Literal["multilingual", "english"] | None = Field(

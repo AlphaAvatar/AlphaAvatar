@@ -52,6 +52,7 @@
 | 🔹       | The return values ​​of the Deep research download function and the Rag indexing function should include a brief description of the doc/url content (using a decorator) stored in memory for later reference.    | 🧩 Planned     |
 | 🔹       | Enrich the logging system, Assign a separate room prefix to each room.                                                       |   🧩 Planned   |
 | 🔹       | Set up an identification mechanism for the same user accessing AlphaAvatar from different platforms.                         |   🧩 Planned   |
+| 🔹       | Version control for each library.                                                                                            |   🧩 Planned   |
 
 ---
 
