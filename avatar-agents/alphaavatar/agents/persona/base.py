@@ -37,7 +37,6 @@ class PersonaBase:
         maximum_retrieval_times: int = 3,
     ):
         self._profiler = profiler
-        self._speaker_cls = speaker_cls
         self._face_cls = face_cls
 
         self._maximum_retrieval_times = maximum_retrieval_times

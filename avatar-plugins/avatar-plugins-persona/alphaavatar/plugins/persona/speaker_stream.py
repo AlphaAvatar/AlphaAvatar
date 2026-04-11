@@ -31,7 +31,9 @@ from alphaavatar.agents.utils import DualKeyDict, NumpyOP
 
 from .log import logger
 from .models import MODEL_CONFIG
-from .runner import QdrantRunner, SpeakerAttributeRunner, SpeakerVectorRunner
+from .runner import SpeakerAttributeRunner, SpeakerVectorRunner
+
+SPEAKER_INFERENCE_METHOD = None
 
 
 @dataclass
@@ -187,7 +189,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
             }
             json_data = json.dumps(json_data).encode()
             results = await asyncio.wait_for(
-                self._executor.do_inference(QdrantRunner.INFERENCE_METHOD, json_data),
+                self._executor.do_inference(SPEAKER_INFERENCE_METHOD, json_data),
                 timeout=timeout,
             )
             if results:

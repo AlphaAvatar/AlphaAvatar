@@ -23,7 +23,7 @@ class MemoryItem(BaseModel):
 
     memory_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str
-    object_id: str
+    object_id: str  # Avatar id/ user id/ tool id
 
     value: str
     entities: list

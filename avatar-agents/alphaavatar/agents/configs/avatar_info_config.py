@@ -19,8 +19,6 @@ from pydantic import BaseModel, Field
 
 from alphaavatar.agents.utils.files.work_dirs import default_work_dir
 
-PROJECT_NAME = "alphaavatar"
-
 
 class AvatarInfoConfig(BaseModel):
     """Configuration for the prompt used in the agent, , which will creat when server load."""
@@ -46,7 +44,7 @@ class AvatarInfoConfig(BaseModel):
         default="",
         description=(
             "Base work directory for this service. "
-            f"If empty, defaults to /var/lib/{PROJECT_NAME} (or ~/.local/share/{PROJECT_NAME} fallback). "
+            "If empty, defaults to /var/lib/avatar_id (or ~/.local/share/avatar_id fallback). "
             "Will create subdirs: <work_dir>/.cache and <work_dir>/data."
         ),
     )
@@ -61,9 +59,9 @@ class AvatarInfoConfig(BaseModel):
         os.environ["AVATAR_TIMEZONE"] = self.avatar_timezone
 
         if self.avatar_work_dir and self.avatar_work_dir.strip():
-            work_dir = pathlib.Path(self.avatar_work_dir) / PROJECT_NAME
+            work_dir = pathlib.Path(self.avatar_work_dir) / self.avatar_id
         else:
-            work_dir = default_work_dir(PROJECT_NAME)
+            work_dir = default_work_dir(self.avatar_id)
 
         work_dir.mkdir(parents=True, exist_ok=True)
         os.environ["AVATAR_WORK_DIR"] = str(work_dir)

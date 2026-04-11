@@ -11,8 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Global Memory Abstract Class for Avatar"""
-
+import os
+import pathlib
 from abc import abstractmethod
 
 from livekit.agents.llm import ChatItem
@@ -22,6 +22,8 @@ from alphaavatar.agents.utils import time_str_to_datetime
 from .cache import MemoryCache
 from .schema.memory_item import MemoryItem
 from .schema.memory_type import MemoryType
+
+MEMORY_INSTANCE = "memory"
 
 
 def deduplicate_keep_latest(items: list[MemoryItem]) -> list[MemoryItem]:
@@ -43,11 +45,26 @@ class MemoryBase:
     def __init__(
         self,
         *,
+        working_dir: pathlib.Path,
         memory_search_context: int = 3,
         memory_recall_num: int = 10,
         maximum_memory_num: int = 24,
     ) -> None:
         super().__init__()
+
+        # memory work dir init
+        work_dir = os.getenv("AVATAR_WORK_DIR", "")
+        if not work_dir:
+            raise ValueError(
+                "AVATAR_WORK_DIR is not set. Please initialize AvatarInfoConfig first."
+            )
+
+        self._avatar_memory_path = pathlib.Path(work_dir) / "data" / MEMORY_INSTANCE
+        self._avatar_memory_path.mkdir(parents=True, exist_ok=True)
+        self._session_memory_path = working_dir / MEMORY_INSTANCE
+        self._session_memory_path.mkdir(parents=True, exist_ok=True)
+
+        # memory config init
         self._memory_search_context = memory_search_context
         self._memory_recall_num = memory_recall_num
         self._maximum_memory_num = maximum_memory_num

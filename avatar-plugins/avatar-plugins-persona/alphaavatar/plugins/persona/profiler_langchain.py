@@ -38,7 +38,6 @@ from .profiler_op import (
     remove_string,
     write_set,
 )
-from .runner import QdrantRunner
 
 DELTA_PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -76,33 +75,31 @@ General:
     ]
 )
 
+PROFILER_INFERENCE_METHOD = None
+
 
 class ProfilerLangChain(ProfilerBase):
-    """
-    Qdrant-backed pipeline:
-      - async LLM delta extraction
-      - sync in-memory patch
-      - async persistence via Qdrant
-    """
-
     def __init__(
         self, *, chat_model: str = "gpt-4o-mini", temperature: float = 0.0, **kwargs
     ) -> None:
         super().__init__()
+
         llm = ChatOpenAI(model=chat_model, temperature=temperature)  # type: ignore
         self._delta_llm = llm.with_structured_output(ProfileDelta)
+        self._chain = DELTA_PROMPT | self._delta_llm
+
         self._executor = get_job_context().inference_executor
 
     async def _aextract_delta(self, profile_details_dump: dict, new_turn: str) -> ProfileDelta:
         """Ask the LLM to generate patch ops relative to the current profile."""
-        chain = DELTA_PROMPT | self._delta_llm
-        return await chain.ainvoke(
+
+        return await self._chain.ainvoke(
             {
                 "current_profile": profile_details_dump,
                 "profile_reference": UserProfileDetails.field_descriptions_prompt(),
                 "new_turn": new_turn,
             }
-        )  # type: ignore
+        )
 
     def _apply_delta(
         self, update_time: str, profile_details_dump: dict, delta: ProfileDelta
@@ -157,7 +154,7 @@ class ProfilerLangChain(ProfilerBase):
         json_data = {"op": VectorRunnerOP.load, "param": {"user_id": uid}}
         json_data = json.dumps(json_data).encode()
         result = await asyncio.wait_for(
-            self._executor.do_inference(QdrantRunner.INFERENCE_METHOD, json_data),
+            self._executor.do_inference(PROFILER_INFERENCE_METHOD, json_data),
             timeout=timeout,
         )
 
@@ -236,7 +233,7 @@ class ProfilerLangChain(ProfilerBase):
         }
         json_data = json.dumps(json_data).encode()
         result = await asyncio.wait_for(
-            self._executor.do_inference(QdrantRunner.INFERENCE_METHOD, json_data),
+            self._executor.do_inference(PROFILER_INFERENCE_METHOD, json_data),
             timeout=timeout,
         )
 

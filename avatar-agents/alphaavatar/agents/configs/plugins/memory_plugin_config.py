@@ -14,11 +14,16 @@
 import importlib
 import json
 import os
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.memory import MemoryBase
+from alphaavatar.agents.utils.vdb import qdrant
+
+if TYPE_CHECKING:
+    from alphaavatar.agents.configs import SessionConfig
 
 importlib.import_module("alphaavatar.plugins.memory")
 
@@ -57,14 +62,27 @@ class MemoryConfig(BaseModel):
     )
 
     def model_post_init(self, __context):
-        # Set PERONA_PROFILER_ENV
+        # Set MEMORY_VDB_CONFIG
         os.environ["MEMORY_VDB_CONFIG"] = json.dumps(self.memory_vdb_config)
+        if self.memory_plugin == "default":
+            # Ensure default Memory plugin is registered
+            try:
+                qdrant.get_client(
+                    **self.memory_vdb_config
+                )  # Check if Qdrant client can be initialized with current config
+                os.environ["MEMORY_VDB_TYPE"] = "qdrant"
+            except ValueError:
+                os.environ["MEMORY_VDB_TYPE"] = "lancedb"
+        else:
+            # TODO: Handle other memory plugins and their corresponding VDB types if needed
+            pass
 
-    def get_plugin(self) -> MemoryBase:
+    def get_plugin(self, session_config: "SessionConfig") -> MemoryBase:
         """Returns the Memory plugin instance based on the configuration."""
         return AvatarPlugin.get_avatar_plugin(
             AvatarModule.MEMORY,
             self.memory_plugin,
+            working_dir=session_config.user_path.data_dir,
             memory_search_context=self.memory_search_context,
             memory_recall_num=self.memory_recall_num,
             maximum_memory_num=self.maximum_memory_num,

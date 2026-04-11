@@ -27,7 +27,7 @@ from qdrant_client.models import (
 )
 
 from alphaavatar.agents.memory import VectorRunnerOP
-from alphaavatar.agents.utils import get_embedding_model, get_qdrant_client
+from alphaavatar.agents.utils.vdb import embedding, qdrant
 
 
 class QdrantRunner(_InferenceRunner):
@@ -134,10 +134,10 @@ class QdrantRunner(_InferenceRunner):
         self._memory_collection_name = config.get("memory_collection_name", None)
 
         # init client
-        self._client = get_qdrant_client(**config)
+        self._client = qdrant.get_client(**config)
 
         # init memory
-        self._embeddings = get_embedding_model(**config)
+        self._embeddings = embedding.get_model(**config)
         self._ensure_collection(
             self._memory_collection_name,
             len(self._embeddings.embed_query("dimension-probe")),

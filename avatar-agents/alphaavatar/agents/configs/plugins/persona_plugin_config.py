@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.persona import PersonaBase
+from alphaavatar.agents.utils.vdb import qdrant
 
 importlib.import_module("alphaavatar.plugins.persona")
 
@@ -61,6 +62,18 @@ class PersonaConfig(BaseModel):
     def model_post_init(self, __context):
         # Set PERONA_PROFILER_ENV
         os.environ["PERONA_VDB_CONFIG"] = json.dumps(self.persona_vdb_config)
+        if self.profiler_plugin == "default":
+            # Ensure default Persona plugin is registered
+            try:
+                qdrant.get_client(
+                    **self.persona_vdb_config
+                )  # Check if Qdrant client can be initialized with current config
+                os.environ["PERSONA_VDB_TYPE"] = "qdrant"
+            except ValueError:
+                os.environ["PERSONA_VDB_TYPE"] = "lancedb"
+        else:
+            # TODO: Handle other persona plugins and their corresponding VDB types if needed
+            pass
 
     def get_plugin(self) -> PersonaBase:
         """Returns the Persona plugin instance based on the configuration."""

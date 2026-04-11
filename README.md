@@ -236,6 +236,7 @@ Unlike traditional AI assistants, AlphaAvatar is:
 
 <h4>Latest News 🔥</h4>
 
+- [2026/4] We have released AlphaAvatar **version 0.5.3** to support localized storage (MAKDOWN structure) for the Memory plugin, while using LanceDB as the default VDB (Qdrant will be used unless a Qdrant key and URL are provided).
 - [2026/03] We have released AlphaAvatar **version 0.5.0** to support the MCP plugin, which enables retrieval and concurrent invocation of the MCP tools.
   - Released AlphaAvatar **version 0.5.1**: Added [WhatsApp]((https://github.com/AlphaAvatar/AlphaAvatar/blob/main/avatar-channels/avatar-channels-whatsapp/README.md)) channel support via [Baileys](https://github.com/whiskeysockets/Baileys) driver, enabling connection to AlphaAvatar Agent for **WhatsApp** integration.
   - Released AlphaAvatar **version 0.5.2**: Add the AlphaAvatar Voice plugin to support the [Voice.ai](https://voice.ai/) TTS API, providing a wider variety of speaker options.
@@ -245,7 +246,6 @@ Unlike traditional AI assistants, AlphaAvatar is:
   - Released AlphaAvatar **version 0.3.1**: ADD tool calls during user-Assistant interactions to the Memory module.
 - [2025/12] We have released AlphaAvatar **version 0.2.0** to support [AIRI](https://github.com/moeru-ai/airi) live2d-based virtual character display.
 - [2025/11] We have released AlphaAvatar **version 0.1.0** to support automatic memory extraction, automatic user persona extraction and matching.
-
 
 <br/>
 

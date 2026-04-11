@@ -31,7 +31,7 @@ from qdrant_client.models import (
 )
 
 from alphaavatar.agents.persona import VectorRunnerOP
-from alphaavatar.agents.utils import get_embedding_model, get_qdrant_client
+from alphaavatar.agents.utils.vdb import embedding, qdrant
 
 from ..models import MODEL_CONFIG
 from .speaker_vector_runner import SpeakerVectorRunner
@@ -268,10 +268,10 @@ class QdrantRunner(_InferenceRunner):
         self._speaker_collection_name = config.get("speaker_collection_name", None)
 
         # init client
-        self._client = get_qdrant_client(**config)
+        self._client = qdrant.get_client(**config)
 
         # init profiler
-        self._profiler_embeddings = get_embedding_model(**config)
+        self._profiler_embeddings = embedding.get_model(**config)
         self._ensure_collection(
             self._profiler_collection_name,
             len(self._profiler_embeddings.embed_query("dimension-probe")),

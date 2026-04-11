@@ -11,12 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
+
 from livekit.agents.inference_runner import _InferenceRunner
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 
 from .log import logger
-from .runner import QdrantRunner, SpeakerAttributeRunner, SpeakerVectorRunner
+from .profiler_langchain import ProfilerLangChain
+from .runner import SpeakerAttributeRunner, SpeakerVectorRunner
 from .version import __version__
 
 __all__ = [
@@ -31,8 +34,6 @@ class ProfilerLangchainPlugin(AvatarPlugin):
     def download_files(self): ...
 
     def get_plugin(self, profiler_init_config: dict, *args, **kwargs):
-        from .profiler_langchain import ProfilerLangChain
-
         try:
             return ProfilerLangChain(**profiler_init_config)
         except Exception:
@@ -68,7 +69,25 @@ AvatarPlugin.register_avatar_plugin(AvatarModule.PROFILER, "default", ProfilerLa
 AvatarPlugin.register_avatar_plugin(AvatarModule.SPEAKER, "default", SpeakerPlugin())
 
 
-# runner register
-_InferenceRunner.register_runner(QdrantRunner)
+# SpeakerRunner register
 _InferenceRunner.register_runner(SpeakerAttributeRunner)
 _InferenceRunner.register_runner(SpeakerVectorRunner)
+
+# VDBRunner register
+persona_vdb_type = os.getenv("PERSONA_VDB_TYPE", None)
+match persona_vdb_type:
+    case "qdrant":
+        from . import profiler_langchain, speaker_stream
+        from .runner import QdrantRunner
+
+        profiler_langchain.PROFILER_INFERENCE_METHOD = QdrantRunner.INFERENCE_METHOD
+        speaker_stream.SPEAKER_INFERENCE_METHOD = QdrantRunner.INFERENCE_METHOD
+        _InferenceRunner.register_runner(QdrantRunner)
+
+    case "lancedb":
+        from . import profiler_langchain, speaker_stream
+        from .runner import LanceDBRunner
+
+        profiler_langchain.PROFILER_INFERENCE_METHOD = LanceDBRunner.INFERENCE_METHOD
+        speaker_stream.SPEAKER_INFERENCE_METHOD = LanceDBRunner.INFERENCE_METHOD
+        _InferenceRunner.register_runner(LanceDBRunner)

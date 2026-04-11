@@ -18,6 +18,8 @@
     - [Deep Research](#deepresearch)
     - [RAG](#rag)
     - [MCP](#mcp)
+- [Channels](#channels)
+    - [WhatsAPP](#whatsapp)
 - [NEXT STEPS](#next-steps)
 
 ---
@@ -46,6 +48,7 @@
 | Priority | Task                                                                                                                         |     Stage     |
 | :------- | :--------------------------------------------------------------------------------------------------------------------------- | :-----------: |
 | 🔸       | Supports setting different model interfaces for different plugins.                                                           | ⏳ In Progress |
+| 🔸       | Supports real-time model reading of **video streams**.                                                                       | ⏳ In Progress |
 | 🔹       | Add error handling and interactive feedback during tool invocation.                                                          |   🧩 Planned   |
 | 🔹       | Develop multi-user management features for plugins.                                                                          |   🧩 Planned   |
 | 🔹       | Content uploaded by a user in the current session is first stored in a temporary directory, and then stored in persistent storage after confirmation. The user's upload status and input are identified separately for use in the model.    | 🧩 Planned     |
@@ -53,6 +56,7 @@
 | 🔹       | Enrich the logging system, Assign a separate room prefix to each room.                                                       |   🧩 Planned   |
 | 🔹       | Set up an identification mechanism for the same user accessing AlphaAvatar from different platforms.                         |   🧩 Planned   |
 | 🔹       | Version control for each library.                                                                                            |   🧩 Planned   |
+| 🔹       | Refactoring the Avatar System prompt composition method.                                                                     |   🧩 Planned   |
 
 ---
 
@@ -77,17 +81,18 @@
 | :------ | :-------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------- |
 | 2025-09 | **Automatic Memory Extraction (v1)**          | Built on **Memory Client**, enabling memory capture & retrieval across:<br>• Assistant–User<br>• Assistant–Tools<br>• Assistant’s self-memory |
 | 2026-01 | **Automatic Assistant–Tools Extraction (v1)** | Add Assistant–Tools memory in user session for DeepResearch/RAG Plugin.                                                                       |
+| 2026-04 | **Automatic Assistant–Tools Extraction (v2)** | Design **differentiated prompts** for:<br>– self-memory<br>– shared Assistant–User memory<br>– shared Assistant–Tools memory.                 |
+| 2026-04 | **Local memory storage and retrieval**        | Supports **local memory storage and retrieval** configuration by LanceDB.                                                                     |
 
 ### 🧭 TODO
 
 | Priority | Task                                                                                                                         |     Stage      |
 | :------- | :--------------------------------------------------------------------------------------------------------------------------- | :-----------:  |
-| 🔸       | Design **differentiated prompts** for:<br>– self-memory<br>– shared Assistant–User memory<br>– shared Assistant–Tools memory | ⏳ In Progress |
-| 🔸       | Supports **local memory storage and retrieval** configuration.                                                               | ⏳ In Progress |
+| 🔸       | Allow users to activly **query / recall** specific memories on demand.                                                       | ⏳ In Progress |
 | 🔹       | Add **multi-user memory isolation** when (unique response memory per user), when multiple users are interacting.             |   🧩 Planned   |
-| 🔹       | Allow users to activly **query / recall** specific memories on demand.                                                       |   🧩 Planned   |
 | 🔹       | Add **event-driven memory updates** for adaptive reflection.                                                                 |   🧩 Planned   |
 | 🔹       | Add **omni** memory updates.                                                                                                 |   🧩 Planned   |
+| 🔹       | Add **Graph** memory search.                                                                                                 |   🧩 Planned   |
 
 ## 🧬 PERSONA
 
@@ -102,10 +107,10 @@
 
 | Priority | Task                                                                         |     Stage     |
 | :------- | :--------------------------------------------------------------------------- | :-----------: |
-| 🔸       | Supports **local persona storage and retrieval** configuration.              | ⏳ In Progress |
+| 🔸       | Add **face-based profiling** (facial embedding recognition).                 | ⏳ In Progress |
+| 🔸       | Supports **Persona visualization** interface.                                | ⏳ In Progress |
 | 🔹       | Add **multi-user profile management** for concurrent interactions.           |   🧩 Planned   |
 | 🔹       | Enable **real-time profile retrieval** during active conversation.           |   🧩 Planned   |
-| 🔹       | Add **face-based profiling** (facial embedding recognition).                 |   🧩 Planned   |
 | 🔹       | Integrate **event triggers** for profile updates & reflection cycles.        |   🧩 Planned   |
 
 ---
@@ -122,11 +127,11 @@
 
 ### 🧭 TODO
 
-| Priority | Task                                                                                                                         |     Stage      |
-| :------- | :--------------------------------------------------------------------------------------------------------------------------- | :-----------:  |
-| 🔹       | Add intermediate states during deep-research invocation to reduce the user's perceived waiting time.                                  |   🧩 Planned   |
+| Priority | Task                                                                                                                                         |     Stage      |
+| :------- | :------------------------------------------------------------------------------------------------------------------------------------------- | :-----------:  |
+| 🔹       | Add intermediate states during deep-research invocation to reduce the user's perceived waiting time.                                         |   🧩 Planned   |
 | 🔹       | Allows you to retrieve all accessible webpage links under a specified webpage and store them in a specific folder for use by the RAG plugin. |   🧩 Planned   |
-| 🔹       | Add intermediate states during tool invocation to reduce the user's perceived waiting time.                                  |   🧩 Planned   |
+| 🔹       | Add intermediate states during tool invocation to reduce the user's perceived waiting time.                                                  |   🧩 Planned   |
 
 ## 📖 RAG
 
@@ -158,13 +163,44 @@
 
 | Priority | Task                                                                                                                         |     Stage      |
 | :------- | :--------------------------------------------------------------------------------------------------------------------------- | :-----------:  |
+| 🔸       | Integrate **Notion MCP**                                                                                                     | ⏳ In Progress |
 | 🔹       | Implement the function search_tools() for MCP Host.                                                                          |   🧩 Planned   |
+
+---
+
+# Channels
+
+## WhatsAPP
+
+### ✅ DONE
+
+| Date    | Milestone                                      | Notes                                                                                  |
+| :------ | :--------------------------------------------- | :------------------------------------------------------------------------------------- |
+| 2026-02 | **WhatsApp channel integration (v1)**          | Built the initial WhatsApp channel based on the **Baileys driver + Python bridge** architecture. |
+| 2026-02 | **QR login & persistent session support**      | Supports WhatsApp authentication through QR code login with persistent local session storage. |
+
+### 🧭 TODO
+
+| Priority | Task                                                                 |     Stage     |
+| :------- | :------------------------------------------------------------------- | :-----------: |
+| 🔸       | **Whitelist support**                                                | ⏳ In Progress |
+| 🔸       | **LiveKit streaming integration**                                    | ⏳ In Progress |
+| 🔸       | **Voice / Image / Media support**                                    | ⏳ In Progress |
+| 🔹       | **Meta Cloud API driver**                                            |   🧩 Planned   |
+| 🔹       | **Twilio driver**                                                    |   🧩 Planned   |
+| 🔹       | **Multi-driver runtime selection**                                   |   🧩 Planned   |
 
 ---
 
 # NEXT STEPS
 
-| Quarter | Focus                        | Expected Outcome                                  |
-| :------ | :--------------------------- | :------------------------------------------------ |
-| Q2-2026 | Reflection Plugin Alpha      | Enable autonomous self-analysis & evolution.      |
-| Q2-2026 | World Sandbox Link           | Allows AlphaAvatar to link to external sandbox worlds (code environments, game environments, etc.).      |
+| Quarter | Focus                            | Expected Outcome |
+| :------ | :------------------------------- | :--------------- |
+| Q2-2026 | Notion MCP integration           | Enable AlphaAvatar to read, write, and organize user knowledge, notes, and planning pages in Notion as an external long-term workspace. |
+| Q2-2026 | Reminder system foundation       | Add task and schedule management through Todoist / Calendar integrations, enabling reminders, follow-ups, and recurring plans. |
+| Q2-2026 | Reflection Plugin Alpha          | Enable autonomous self-analysis and long-term adaptation based on memory and user interaction history. |
+| Q2-2026 | Cross-channel user continuity    | Establish identity continuity for the same user across web, desktop, and messaging platforms such as WhatsApp. |
+| Q3-2026 | Proactive assistant workflows    | Allow AlphaAvatar to generate reminders, follow-up tasks, and planning suggestions proactively based on memory, persona, and tool results. |
+| Q3-2026 | Persona + Memory externalization | Sync high-value profile, memory summaries, and structured plans into user-facing workspaces such as Notion for readability and control. |
+| Q3-2026 | World Sandbox Link               | Allow AlphaAvatar to connect to external sandbox worlds such as code environments, simulated spaces, and interactive applications. |
+| Q3-2026 | MCP ecosystem expansion          | Extend AlphaAvatar with more real-world productivity tools, turning it into a persistent multimodal personal butler across channels. |

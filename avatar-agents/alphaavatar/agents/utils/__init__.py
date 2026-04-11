@@ -18,7 +18,6 @@ from .id_utils import get_session_id, get_user_id, url_to_filename_id
 from .loop_thread import AsyncLoopThread
 from .op_utils import NumpyOP
 from .time_utils import AvatarTime, format_current_time, get_timestamp, time_str_to_datetime
-from .vdb_utils import get_embedding_model, get_qdrant_client
 
 __all__ = [
     "gpu_available",
@@ -33,6 +32,4 @@ __all__ = [
     "format_current_time",
     "get_timestamp",
     "time_str_to_datetime",
-    "get_qdrant_client",
-    "get_embedding_model",
 ]

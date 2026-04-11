@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 import os
 
 
-def get_qdrant_client(
+def get_client(
     *,
     host: str | None = None,
     port: int | None = None,
@@ -68,15 +68,3 @@ def get_qdrant_client(
         )
 
     return client
-
-
-def get_embedding_model(*, embedding_model, **kwargs):
-    try:
-        from langchain_openai import OpenAIEmbeddings
-    except Exception:
-        raise ImportError(
-            "Langchain OpenAIEmbeddings import error, please install langchain_openai"
-        )
-
-    embeddings = OpenAIEmbeddings(model=embedding_model)
-    return embeddings

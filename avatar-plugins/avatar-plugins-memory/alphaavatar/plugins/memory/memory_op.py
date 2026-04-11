@@ -21,7 +21,7 @@ from alphaavatar.agents.memory import MemoryItem
 class PatchOp(BaseModel):
     value: str = Field(
         default="",
-        description="The concise new memory text.",
+        description="The memory event text.",
     )
     entities: list[str] = Field(
         default_factory=list,
@@ -57,7 +57,7 @@ def flatten_items(memory_items: list[MemoryItem]) -> list[dict[str, Any]]:
                 "page_content": memory.value,
                 "metadata": {
                     "session_id": memory.session_id,
-                    "object_id": memory.object_id,
+                    "object_id": memory.object_id,  # Avatar id/ user id/ tool id
                     "entities": memory.entities,
                     "topic": memory.topic,
                     "ts": memory.timestamp,

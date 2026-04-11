@@ -299,14 +299,3 @@ This module is designed with:
 * Production upgrade path
 
 It ensures that WhatsApp API provider changes **do not cascade into AlphaAvatar core logic**.
-
----
-
-# 🗺 Roadmap
-
-* [ ] LiveKit streaming integration
-* [ ] Meta Cloud API driver
-* [ ] Twilio driver
-* [ ] Voice/Image/Media support
-* [ ] Whitelist support
-* [ ] Multi-driver runtime selection

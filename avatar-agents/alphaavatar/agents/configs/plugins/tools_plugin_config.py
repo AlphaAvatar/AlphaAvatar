@@ -34,6 +34,7 @@ importlib.import_module("alphaavatar.plugins.rag")
 
 
 class ToolsConfig(BaseModel):
+    # DeepResearch Tool
     deepresearch_tool: str = Field(
         default="default",
         description="Avatar deepresearch tool plugin to use for agent.",
@@ -43,6 +44,7 @@ class ToolsConfig(BaseModel):
         description="Custom configuration parameters for the deepresearch tool plugin.",
     )
 
+    # RAG Tool
     rag_tool: str = Field(
         default="default",
         description="Avatar RAG tool plugin to use for agent.",
@@ -52,6 +54,7 @@ class ToolsConfig(BaseModel):
         description="Custom configuration parameters for the RAG tool plugin.",
     )
 
+    # MCP Tool
     enable_mcp: bool = Field(
         default=False,
         description="Whether to enable the MCP plugin.",

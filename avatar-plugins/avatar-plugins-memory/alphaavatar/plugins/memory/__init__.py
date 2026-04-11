@@ -11,13 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
+
 from livekit.agents.inference_runner import _InferenceRunner
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 
 from .log import logger
 from .memory_langchain import MemoryLangchain
-from .runner import QdrantRunner
 from .version import __version__
 
 __all__ = [
@@ -33,6 +34,7 @@ class MemoryLangchainPlugin(AvatarPlugin):
 
     def get_plugin(
         self,
+        working_dir: str,
         memory_search_context: int,
         memory_recall_num: int,
         maximum_memory_num: int,
@@ -42,20 +44,32 @@ class MemoryLangchainPlugin(AvatarPlugin):
     ) -> MemoryLangchain:
         try:
             return MemoryLangchain(
+                working_dir=working_dir,
                 memory_search_context=memory_search_context,
                 memory_recall_num=memory_recall_num,
                 maximum_memory_num=maximum_memory_num,
                 memory_init_config=memory_init_config,
             )
-        except Exception:
-            raise ImportError(
-                "The 'langchain[default]' Memory plugin is required but is not installed.\n"
-                "To fix this, install the optional dependency: `pip install alphaavatar-plugins-memory`"
-            )
+        except Exception as e:
+            raise ImportError(f"Failed to initialize MemoryLangchain plugin: {e}")
 
 
 # plugin init
 AvatarPlugin.register_avatar_plugin(AvatarModule.MEMORY, "default", MemoryLangchainPlugin())
 
 # runner init
-_InferenceRunner.register_runner(QdrantRunner)
+memory_vdb_type = os.getenv("MEMORY_VDB_TYPE", None)
+match memory_vdb_type:
+    case "qdrant":
+        from . import memory_langchain
+        from .runner import QdrantRunner
+
+        memory_langchain.MEMORY_INFERENCE_METHOD = QdrantRunner.INFERENCE_METHOD
+        _InferenceRunner.register_runner(QdrantRunner)
+
+    case "lancedb":
+        from . import memory_langchain
+        from .runner import LanceDBRunner
+
+        memory_langchain.MEMORY_INFERENCE_METHOD = LanceDBRunner.INFERENCE_METHOD
+        _InferenceRunner.register_runner(LanceDBRunner)

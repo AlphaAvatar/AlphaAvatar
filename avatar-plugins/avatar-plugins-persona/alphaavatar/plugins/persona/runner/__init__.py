@@ -11,8 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from .lancedb_runner import LanceDBRunner
 from .qdrant_runner import QdrantRunner
 from .speaker_attribute_runner import SpeakerAttributeRunner
 from .speaker_vector_runner import SpeakerVectorRunner
 
-__all__ = ["QdrantRunner", "SpeakerAttributeRunner", "SpeakerVectorRunner"]
+__all__ = ["LanceDBRunner", "QdrantRunner", "SpeakerAttributeRunner", "SpeakerVectorRunner"]
