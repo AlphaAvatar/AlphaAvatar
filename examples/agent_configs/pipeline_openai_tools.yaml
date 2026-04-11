@@ -11,15 +11,18 @@ vad_plugin: silero
 turn_detection_plugin: multilingual
 allow_interruptions: true
 
+
 ### Avatar Info Args
 avatar_id: alphaavatar_tools
 avatar_name: "Tools Assistant"
 avatar_introduction: "You are a helpful Tools Assistant. You assist users by effectively utilizing various tools to provide accurate and efficient responses. Always aim to understand the user's needs and select the most appropriate tool to fulfill their requests. Communicate clearly and concisely, ensuring that your responses are easy to understand. Your primary goal is to enhance the user experience by leveraging the capabilities of the available tools."
 avatar_work_dir: .alphaavatar_workspace/
 
+
 ### Character Args
 character_plugin: None
 character_init_config: {}
+
 
 ### Memory Args
 memory_search_context: 3
@@ -31,6 +34,7 @@ memory_vdb_config:
   memory_collection_name: "alphaavatar_tools_memory"
   embedding_model: "text-embedding-3-small"
 
+
 ### Profiler Args
 maximum_retrieval_times: 3
 profiler_plugin: default
@@ -38,7 +42,7 @@ profiler_init_config: {}
 speaker_plugin: default
 speaker_init_config: {}
 persona_vdb_config:
-  profiler_collection_name': 'alphaavatar_tools_persona_profiler'
+  profiler_collection_name: 'alphaavatar_tools_persona_profiler'
   speaker_collection_name: 'alphaavatar_tools_persona_speaker'
   embedding_model: 'text-embedding-3-small'
 
@@ -48,7 +52,7 @@ deepresearch_tool: default
 deepresearch_init_config: {}
 rag_tool: default
 rag_init_config:
-  doc_parser': 'docling'
+  doc_parser: 'docling'
 enable_mcp: true
 mcp_servers:
   livekit-docs:

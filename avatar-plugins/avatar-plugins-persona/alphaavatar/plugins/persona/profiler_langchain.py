@@ -201,7 +201,7 @@ class ProfilerLangChain(ProfilerBase):
         else:
             logger.info(f"[uid: {uid}] User Profile output is empty, UPDATE skip!")
 
-    async def save(self, *, uid: str, perona: PersonaCache, timeout: float | None = 3) -> None:
+    async def save(self, *, uid: str, perona: PersonaCache, timeout: float | None = 15) -> None:
         """Save the text, voice, and face profile information of the specified user_id."""
         # Text Profile
         if perona.profile_details is not None:
