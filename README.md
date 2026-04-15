@@ -28,7 +28,7 @@ Learnable, configurable, and pluggable Omni Personal Assistant for everyone
   |
   <a href="#">HomePage</a>
   |
-  <a href="#">Documents</a>
+  <a href="https://docs.alphaavatar.io/">Documents</a>
 </p>
 
 </div>
