@@ -174,21 +174,23 @@
 
 ### ✅ DONE
 
-| Date    | Milestone                                      | Notes                                                                                  |
-| :------ | :--------------------------------------------- | :------------------------------------------------------------------------------------- |
+| Date    | Milestone                                      | Notes                                                                                            |
+| :------ | :--------------------------------------------- | :----------------------------------------------------------------------------------------------- |
 | 2026-02 | **WhatsApp channel integration (v1)**          | Built the initial WhatsApp channel based on the **Baileys driver + Python bridge** architecture. |
-| 2026-02 | **QR login & persistent session support**      | Supports WhatsApp authentication through QR code login with persistent local session storage. |
+| 2026-02 | **QR login & persistent session support**      | Supports WhatsApp authentication through QR code login with persistent local session storage.    |
+| 2026-04 | **Whitelist support**                          | Supports using a whitelist on WhatsApp to restrict users from accessing AlphaAvatar (groups are blocked by default). ｜
+
 
 ### 🧭 TODO
 
 | Priority | Task                                                                 |     Stage     |
 | :------- | :------------------------------------------------------------------- | :-----------: |
-| 🔸       | **Whitelist support**                                                | ⏳ In Progress |
 | 🔸       | **LiveKit streaming integration**                                    | ⏳ In Progress |
 | 🔸       | **Voice / Image / Media support**                                    | ⏳ In Progress |
 | 🔹       | **Meta Cloud API driver**                                            |   🧩 Planned   |
 | 🔹       | **Twilio driver**                                                    |   🧩 Planned   |
 | 🔹       | **Multi-driver runtime selection**                                   |   🧩 Planned   |
+| 🔹       | **Supports group chat functionality**                                |   🧩 Planned   |
 
 ---
 
