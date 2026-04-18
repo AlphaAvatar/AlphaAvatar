@@ -13,6 +13,9 @@ const logger = pino({ level: "info" });
 const CORE_WS_URL = process.env.CORE_WS_URL ?? "ws://127.0.0.1:18789";
 const AUTH_DIR = process.env.WHATSAPP_AUTH_DIR ?? "./auth";
 const RESET_AUTH = process.env.WHATSAPP_RESET_AUTH === "1";
+const WHATSAPP_WHITELIST_ENABLED =
+  (process.env.WHATSAPP_WHITELIST_ENABLED ?? "false").toLowerCase() === "true";
+const WHATSAPP_WHITELIST_FILE = process.env.WHATSAPP_WHITELIST_FILE ?? "";
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -31,6 +34,57 @@ async function printQr(qr: string) {
 
 function nowTs(): number {
   return Math.floor(Date.now() / 1000);
+}
+
+function normalizePhone(input: string): string {
+  return input.replace(/[^\d]/g, "");
+}
+
+function normalizeWhatsAppJid(jid: string): string {
+  // 971501234567@s.whatsapp.net -> 971501234567
+  const base = (jid ?? "").split("@")[0] ?? "";
+  return normalizePhone(base);
+}
+
+function isGroupJid(jid: string): boolean {
+  return jid.endsWith("@g.us");
+}
+
+function loadWhitelistFromFile(): Set<string> {
+  if (!WHATSAPP_WHITELIST_FILE) {
+    return new Set();
+  }
+
+  if (!fs.existsSync(WHATSAPP_WHITELIST_FILE)) {
+    logger.warn(
+      { file: WHATSAPP_WHITELIST_FILE },
+      "Whitelist file not found"
+    );
+    return new Set();
+  }
+
+  const items = fs
+    .readFileSync(WHATSAPP_WHITELIST_FILE, "utf-8")
+    .split(/\r?\n/)
+    .map((line) => normalizePhone(line.trim()))
+    .filter(Boolean);
+
+  return new Set(items);
+}
+
+function isAllowedWhatsAppUser(jid: string): boolean {
+  if (!WHATSAPP_WHITELIST_ENABLED) {
+    return true;
+  }
+
+  // Groups are not allowed by default
+  if (isGroupJid(jid)) {
+    return false;
+  }
+
+  const whitelist = loadWhitelistFromFile();
+  const normalized = normalizeWhatsAppJid(jid);
+  return whitelist.has(normalized);
 }
 
 function extractText(msg: proto.IWebMessageInfo): string | null {
@@ -59,6 +113,12 @@ async function main() {
     fs.rmSync(AUTH_DIR, { recursive: true, force: true });
     logger.warn({ AUTH_DIR }, "Auth directory reset before startup");
   }
+
+  // -------- Whitelist Config --------
+  logger.info(
+    { enabled: WHATSAPP_WHITELIST_ENABLED, file: WHATSAPP_WHITELIST_FILE },
+    "whitelist config loaded"
+  );
 
   // -------- Core WS (one connection) --------
   const ws = new WebSocket(CORE_WS_URL);
@@ -122,6 +182,12 @@ async function main() {
         const msg = upsert.messages?.[0];
         if (!msg) return;
         if (shouldIgnoreMessage(msg)) return;
+
+        const remoteJid = msg.key.remoteJid ?? "";
+        if (!isAllowedWhatsAppUser(remoteJid)) {
+          logger.warn({ remoteJid }, "Blocked by whitelist");
+          return;
+        }
 
         const text = extractText(msg);
         if (!text) return;

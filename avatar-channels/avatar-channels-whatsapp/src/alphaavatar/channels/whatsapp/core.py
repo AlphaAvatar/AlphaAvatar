@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any
 
 import websockets
@@ -26,6 +27,7 @@ from .log import logger
 from .room_manager import WhatsAppRoomManager
 from .schema.events import WAInboundEvent
 from .schema.settings import WhatsAppBridgeSettings
+from .whitelist import is_allowed_sender
 
 init_env()
 
@@ -57,10 +59,19 @@ async def handle_driver(ws: WebSocketServerProtocol):
             data = json.loads(msg)
             if data.get("direction") == "in":
                 inbound = WAInboundEvent.model_validate(data)
+
                 if inbound.message_id in SEEN_MESSAGE_IDS:
                     logger.info("Duplicate message_id ignored: %s", inbound.message_id)
                     continue
                 SEEN_MESSAGE_IDS.add(inbound.message_id)
+
+                if not is_allowed_sender(inbound.from_):
+                    logger.warning(
+                        "Blocked inbound by whitelist: from=%s chat_id=%s",
+                        inbound.from_,
+                        inbound.chat_id,
+                    )
+                    continue
 
                 if not ROOM_MANAGER:
                     logger.warning("Room manager not ready; drop inbound")
@@ -99,6 +110,12 @@ async def send_outbound_to_driver(payload: dict[str, Any]):
 
 
 async def ws_main(host: str = "127.0.0.1", port: int = 18789):
+    logger.info(
+        "Whitelist enabled=%s file=%s",
+        os.getenv("WHATSAPP_WHITELIST_ENABLED", "false"),
+        os.getenv("WHATSAPP_WHITELIST_FILE", ""),
+    )
+
     global ROOM_MANAGER
 
     s = WhatsAppBridgeSettings.from_env()
