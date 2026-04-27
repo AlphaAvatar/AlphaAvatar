@@ -92,7 +92,15 @@ async def publish_ready_signal(ctx: agents.JobContext, room_type: str) -> None:
 
 async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     # Wait connecting...
-    await ctx.connect(auto_subscribe=AutoSubscribe.SUBSCRIBE_NONE)
+
+    # Important:
+    # auto_subscribe controls whether the worker receives remote media tracks at the
+    # LiveKit transport layer. AgentSession room_options only controls which
+    # modalities are consumed by the agent pipeline.
+    #
+    # Do not use SUBSCRIBE_NONE for voice/video rooms, otherwise microphone tracks
+    # will never reach STT/VAD even if room_options.audio_input=True.
+    await ctx.connect(auto_subscribe=AutoSubscribe.SUBSCRIBE_ALL)
 
     # Get Metadata
     agent_identity = ctx.token_claims().identity
