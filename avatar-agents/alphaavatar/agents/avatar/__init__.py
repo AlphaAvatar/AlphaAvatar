@@ -15,19 +15,3 @@ from .context.template import MemoryPluginsTemplate, PersonaPluginsTemplate
 from .engine import AvatarEngine
 
 __all__ = ["MemoryPluginsTemplate", "PersonaPluginsTemplate", "AvatarEngine"]
-
-
-# if AvatarEngine.lookup_conversation_memory.__doc__:
-#     AvatarEngine.lookup_conversation_memory.__doc__ = (
-#         AvatarEngine.lookup_conversation_memory.__doc__.format(
-#             memory_prompt=AvatarPromptTemplate.get_memory_retrieval_prompt(
-#                 memory_type=MemoryType.CONVERSATION
-#             )
-#         )
-#     )
-
-
-# if AvatarEngine.lookup_tools_memory.__doc__:
-#     AvatarEngine.lookup_tools_memory.__doc__ = AvatarEngine.lookup_tools_memory.__doc__.format(
-#         memory_prompt=AvatarPromptTemplate.get_memory_retrieval_prompt(memory_type=MemoryType.TOOLS)
-#     )

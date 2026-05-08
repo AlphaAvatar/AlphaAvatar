@@ -13,6 +13,7 @@
 # limitations under the License.
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.tools import RAGAPI
+from alphaavatar.agents.utils.files.work_dirs import UserPath
 
 from .log import logger
 from .rag_anything import RAGAnythingTool
@@ -31,13 +32,13 @@ class RAGAnythingPlugin(AvatarPlugin):
 
     def get_plugin(
         self,
-        working_dir: str,
+        user_path: UserPath,
         rag_init_config: dict,
         *args,
         **kwargs,
     ) -> RAGAPI:
         try:
-            rag_obj = RAGAnythingTool(working_dir=working_dir, **rag_init_config, **kwargs)
+            rag_obj = RAGAnythingTool(user_path=user_path, **rag_init_config, **kwargs)
         except (ImportError, ModuleNotFoundError) as e:
             raise ImportError(
                 "The 'raganything[default]' RAG plugin is required but is not installed.\n"

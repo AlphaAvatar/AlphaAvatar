@@ -33,6 +33,7 @@ class MCPServerRemote(mcp.MCPServerHTTP):
         url: str,
         headers: dict[str, Any] | None = None,
         instruction: str | None = None,
+        server_key: str | None = None,
         client_session_timeout_seconds: float = DEFAULT_TIMEOUT,
         **kwargs,
     ) -> None:
@@ -43,6 +44,7 @@ class MCPServerRemote(mcp.MCPServerHTTP):
             client_session_timeout_seconds=client_session_timeout_seconds,
         )
 
+        self._server_key: str | None = server_key
         self._server_name: str | None = None
         self._server_title: str | None = None
         self._server_instruction: str | None = instruction
@@ -55,6 +57,7 @@ class MCPServerRemote(mcp.MCPServerHTTP):
     @property
     def info_dict(self) -> dict[str, Any]:
         return {
+            "key": self._server_key,
             "name": self._server_name,
             "title": self._server_title,
             "url": self.url,
@@ -180,15 +183,17 @@ class MCPServerRemote(mcp.MCPServerHTTP):
             input_schema,
             meta,
             server_loop=self._loop,
+            server_key=self._server_key,
         )
         logger.info(
-            "[MCPServerRemote] registered tool=%s server=%s",
-            tool._tool_id,
+            "[MCPServerRemote] registered tool=%s server_key=%s server=%s",
+            tool.tool_id,
+            self._server_key,
             self._server_name,
         )
         logger.debug(
             "[MCPServerRemote] tool=%s input_schema=%s meta=%s",
-            tool._tool_id,
+            tool.tool_id,
             json.dumps(input_schema, ensure_ascii=False),
             json.dumps(meta, ensure_ascii=False) if meta is not None else None,
         )

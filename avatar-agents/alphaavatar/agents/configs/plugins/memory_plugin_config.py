@@ -82,7 +82,7 @@ class MemoryConfig(BaseModel):
         return AvatarPlugin.get_avatar_plugin(
             AvatarModule.MEMORY,
             self.memory_plugin,
-            working_dir=session_config.user_path.data_dir,
+            user_path=session_config.user_path,
             memory_search_context=self.memory_search_context,
             memory_recall_num=self.memory_recall_num,
             maximum_memory_num=self.maximum_memory_num,

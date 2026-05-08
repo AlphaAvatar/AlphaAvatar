@@ -177,18 +177,18 @@ class LanceDBRunner(_InferenceRunner):
     def initialize(self) -> None:
         config = os.getenv("MEMORY_VDB_CONFIG", "{}")
         config = json.loads(config)
-        self._memory_collection_name = config.get("memory_collection_name", None)
+        self._collection_name = config.get("collection_name", None)
 
-        if not self._memory_collection_name:
-            raise ValueError("memory_collection_name is required in MEMORY_VDB_CONFIG")
+        if not self._collection_name:
+            raise ValueError("collection_name is required in MEMORY_VDB_CONFIG")
 
         self._client = lancedb.get_client(**config)
 
         self._embeddings = embedding.get_model(**config)
         embedding_dim = len(self._embeddings.embed_query("dimension-probe"))
 
-        self._ensure_collection(self._memory_collection_name, embedding_dim)
-        self._memory_table = self._client.open_table(self._memory_collection_name)
+        self._ensure_collection(self._collection_name, embedding_dim)
+        self._memory_table = self._client.open_table(self._collection_name)
 
     def run(self, data: bytes) -> bytes | None:
         json_data = json.loads(data)

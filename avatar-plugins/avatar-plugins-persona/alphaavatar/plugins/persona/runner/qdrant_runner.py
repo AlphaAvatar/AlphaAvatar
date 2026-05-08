@@ -38,7 +38,7 @@ from .speaker_vector_runner import SpeakerVectorRunner
 
 
 class QdrantRunner(_InferenceRunner):
-    INFERENCE_METHOD = "alphaavatar_perona_qdrant"
+    INFERENCE_METHOD = "alphaavatar_persona_qdrant"
 
     def __init__(self):
         super().__init__()

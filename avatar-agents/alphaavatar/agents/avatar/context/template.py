@@ -21,67 +21,86 @@ from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
 from alphaavatar.agents.memory import MemoryType
 
 from .prompts.avatar_system_prompts import AVATAR_SYSTEM_PROMPT
+from .prompts.runtime_context_prompts import RUNTIME_CONTEXT_PROMPT
+from .runtime_context import AvatarRuntimeContext
 
 if TYPE_CHECKING:
     from alphaavatar.agents.persona import UserProfile
 
 
-class AvatarPromptTemplate:
+class AvatarSysPromptTemplate:
     """
-    A class to represent the prompt template for the Avatar Agent.
+    Static system prompt template for the Avatar Agent.
 
-    This class encapsulates the prompt template used by the Avatar Agent, allowing for easy
-    configuration and management of the prompt structure.
+    This template should only contain stable information to improve prefix cache hit rate.
+    Dynamic per-turn context such as memory, current time, plan, and reflection should not
+    be rendered here.
     """
 
     def __init__(
         self,
-        # Instruction
         avatar_introduction: str,
         *,
-        memory_content: str = DEFAULT_SYSTEM_VALUE,
-        user_persona: str = DEFAULT_SYSTEM_VALUE,
-        current_time: str = DEFAULT_SYSTEM_VALUE,
+        runtime_context: AvatarRuntimeContext | None = None,
+        stable_persona: str = DEFAULT_SYSTEM_VALUE,
+        stable_behavior_rules: str = DEFAULT_SYSTEM_VALUE,
     ):
-        # Instruction
         self._avatar_introduction = avatar_introduction
-        self._memory_content = memory_content
-        self._user_persona = user_persona
-        self._current_time = current_time
+        self._runtime_context = runtime_context or AvatarRuntimeContext()
+        self._stable_persona = stable_persona
+        self._stable_behavior_rules = stable_behavior_rules
 
     def instructions(
         self,
         *,
         avatar_introduction: str | None = None,
-        memory_content: str | None = None,
-        user_persona: str | None = None,
-        current_time: str | None = None,
+        runtime_context: AvatarRuntimeContext | None = None,
+        stable_persona: str | None = None,
+        stable_behavior_rules: str | None = None,
     ) -> str:
-        """Initialize the system prompt for the Avatar Agent.
-
-        Args:
-            avatar_introduction (str): _description_
-
-        Returns:
-            str: _description_
-        """
         if avatar_introduction:
             self._avatar_introduction = avatar_introduction
 
-        if memory_content:
-            self._memory_content = memory_content
+        if runtime_context:
+            self._runtime_context = runtime_context
 
-        if user_persona:
-            self._user_persona = user_persona
+        if stable_persona is not None:
+            self._stable_persona = stable_persona or DEFAULT_SYSTEM_VALUE
 
-        if current_time:
-            self._current_time = current_time
+        if stable_behavior_rules is not None:
+            self._stable_behavior_rules = stable_behavior_rules or DEFAULT_SYSTEM_VALUE
 
         return AVATAR_SYSTEM_PROMPT.format(
             avatar_introduction=self._avatar_introduction,
-            memory_content=self._memory_content,
-            user_persona=self._user_persona,
-            current_time=self._current_time,
+            interaction_method=self._runtime_context.interaction_method.render(),
+            stable_persona=self._stable_persona,
+            stable_behavior_rules=self._stable_behavior_rules,
+        )
+
+
+class RuntimeContextTemplate:
+    """
+    Per-turn runtime context template.
+
+    Only dynamic current-turn information should be rendered here.
+    Stable persona should stay in the system prompt.
+    """
+
+    def render(
+        self,
+        *,
+        current_time: str = DEFAULT_SYSTEM_VALUE,
+        memory_content: str = DEFAULT_SYSTEM_VALUE,
+        plan_content: str = DEFAULT_SYSTEM_VALUE,
+        reflection_content: str = DEFAULT_SYSTEM_VALUE,
+        behavior_rules: str = DEFAULT_SYSTEM_VALUE,
+    ) -> str:
+        return RUNTIME_CONTEXT_PROMPT.format(
+            current_time=current_time or DEFAULT_SYSTEM_VALUE,
+            memory_content=memory_content or DEFAULT_SYSTEM_VALUE,
+            plan_content=plan_content or DEFAULT_SYSTEM_VALUE,
+            reflection_content=reflection_content or DEFAULT_SYSTEM_VALUE,
+            behavior_rules=behavior_rules or DEFAULT_SYSTEM_VALUE,
         )
 
 
@@ -132,12 +151,63 @@ class MemoryPluginsTemplate:
 
 class PersonaPluginsTemplate:
     @classmethod
+    def _render_flat_model(
+        cls,
+        data: dict[str, Any],
+        *,
+        list_sep: str = ", ",
+        sort_keys: bool = True,
+        skip_empty: bool = True,
+    ) -> list[str]:
+        keys = list(data.keys())
+        if sort_keys:
+            keys.sort()
+
+        lines: list[str] = []
+
+        for attr in keys:
+            value = data[attr]
+            if value is None:
+                continue
+
+            if isinstance(value, list):
+                attr_values = []
+                for v in value:
+                    if not isinstance(v, dict):
+                        continue
+                    val = v.get("value", "")
+                    source = v.get("source", "")
+                    timestamp = v.get("timestamp", "")
+                    attr_values.append(f"{val} (updated at {timestamp}) | source from: {source}")
+                if attr_values:
+                    lines.append(f"- {attr}: {list_sep.join(attr_values)}")
+            elif isinstance(value, dict):
+                val = value.get("value", "")
+                source = value.get("source", "")
+                timestamp = value.get("timestamp", "")
+
+                if skip_empty and (val is None or (isinstance(val, str) and val.strip() == "")):
+                    continue
+
+                lines.append(f"- {attr}: {val} (updated at {timestamp}) | source from: {source}")
+            else:
+                if skip_empty and (
+                    value is None or (isinstance(value, str) and value.strip() == "")
+                ):
+                    continue
+
+                lines.append(f"- {attr}: {value}")
+
+        return lines
+
+    @classmethod
     def apply_update_template(cls, chat_context: list[ChatItem]) -> str:
         """Apply the profile update template with the given keyword arguments."""
         memory_strings = []
         for msg in chat_context:
             if isinstance(msg, ChatMessage):
                 role = msg.role
+
                 # TODO: Handle different content types more robustly
                 if role not in ["user", "assistant"]:
                     continue
@@ -148,7 +218,7 @@ class PersonaPluginsTemplate:
         return "\n\n".join(memory_strings)
 
     @classmethod
-    def apply_profile_template(
+    def apply_system_template(
         cls,
         user_profiles: list[UserProfile],
         *,
@@ -157,57 +227,48 @@ class PersonaPluginsTemplate:
         skip_empty: bool = True,
     ) -> str:
         """
-        Render flat UserProfile(s) into a human-readable prompt for Avatar system.
+        Render UserProfile(s) into a human-readable prompt for Avatar system.
 
-        Args:
-            user_profiles: list of UserProfile objects.
-            list_sep: separator for list elements when rendering.
-            sort_keys: whether to sort top-level keys alphabetically for stable output.
-            skip_empty: skip None or empty-string values (and empty lists).
-
-        Returns:
-            A string ready to be used as part of a system prompt.
+        Includes:
+        - Runtime state: system-observed login/session state
+        - Details: LLM-extracted profile details
         """
         profile_blocks: list[str] = []
 
         for profile in user_profiles:
-            data: dict[str, Any] = (
-                profile.details.model_dump() if profile and profile.details else {}
-            )
+            sections: list[str] = []
 
-            profile_attr = list(data.keys())
-            if sort_keys:
-                profile_attr.sort()
-
-            lines: list[str] = []
-            for attr in profile_attr:
-                value: dict | list | None = data[attr]
-                if value is None:
-                    continue
-
-                if isinstance(value, list):
-                    attr_values = []
-                    for v in value:
-                        val = v.get("value", "")
-                        source = v.get("source", "")
-                        timestamp = v.get("timestamp", "")
-                        attr_values.append(
-                            f"{val} (updated at {timestamp}) | source from: {source}"
-                        )
-                    lines.append(f"- {attr}: {list_sep.join(attr_values)}")
-                else:
-                    val = value.get("value", "")
-                    source = value.get("source", "")
-                    timestamp = value.get("timestamp", "")
-
-                    if skip_empty and (val is None or (isinstance(val, str) and val.strip() == "")):
-                        continue
-
-                    lines.append(
-                        f"- {attr}: {val} (updated at {timestamp}) | source from: {source}"
+            if profile and profile.runtime_state:
+                runtime_data = profile.runtime_state.model_dump()
+                runtime_lines = cls._render_flat_model(
+                    runtime_data,
+                    list_sep=list_sep,
+                    sort_keys=sort_keys,
+                    skip_empty=skip_empty,
+                )
+                if runtime_lines:
+                    sections.append(
+                        "### Runtime state\n"
+                        "System-observed login/session state. Use subtly; do not mention unless helpful.\n"
+                        + "\n".join(runtime_lines)
                     )
 
-            profile_blocks.append("\n".join(lines))
+            if profile and profile.details:
+                details_data = profile.details.model_dump()
+                details_lines = cls._render_flat_model(
+                    details_data,
+                    list_sep=list_sep,
+                    sort_keys=sort_keys,
+                    skip_empty=skip_empty,
+                )
+                if details_lines:
+                    sections.append(
+                        "### User profile details\n"
+                        "LLM-extracted long-term user profile.\n" + "\n".join(details_lines)
+                    )
+
+            if sections:
+                profile_blocks.append("\n\n".join(sections))
 
         if len(profile_blocks) <= 1:
             return profile_blocks[0] if profile_blocks else ""

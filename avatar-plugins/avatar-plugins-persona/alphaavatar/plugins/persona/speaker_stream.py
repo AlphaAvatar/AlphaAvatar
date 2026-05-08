@@ -160,7 +160,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
             ),
             timeout=timeout,
         )
-        speaker_vector = np.frombuffer(speak_vector_bytes, dtype=np.float32)  # type: ignore
+        speaker_vector = np.frombuffer(speak_vector_bytes, dtype=np.float32)
 
         inference_duration = time.perf_counter() - start_time
         extra_inference_time = max(

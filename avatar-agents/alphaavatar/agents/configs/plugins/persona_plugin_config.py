@@ -14,12 +14,16 @@
 import importlib
 import json
 import os
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.persona import PersonaBase
 from alphaavatar.agents.utils.vdb import qdrant
+
+if TYPE_CHECKING:
+    from alphaavatar.agents.configs import SessionConfig
 
 importlib.import_module("alphaavatar.plugins.persona")
 
@@ -33,7 +37,7 @@ class PersonaConfig(BaseModel):
         description="The maximum number of retrieval to determine whether a new user matches existing data in the Perona database.",
     )
 
-    # Persona Profiler plugin config
+    # Persona Profile plugin config
     profiler_plugin: str = Field(
         default="default",
         description="Avatar profiler plugin to use for user profile extraction from chat context.",
@@ -75,12 +79,13 @@ class PersonaConfig(BaseModel):
             # TODO: Handle other persona plugins and their corresponding VDB types if needed
             pass
 
-    def get_plugin(self) -> PersonaBase:
+    def get_plugin(self, session_config: "SessionConfig") -> PersonaBase:
         """Returns the Persona plugin instance based on the configuration."""
         return PersonaBase(
             profiler=AvatarPlugin.get_avatar_plugin(
                 AvatarModule.PROFILER,
                 self.profiler_plugin,
+                user_path=session_config.user_path,
                 profiler_init_config=self.profiler_init_config,
             ),
             speaker_cls=AvatarPlugin.get_avatar_plugin(

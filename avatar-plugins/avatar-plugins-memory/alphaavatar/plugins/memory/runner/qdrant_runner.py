@@ -59,7 +59,7 @@ class QdrantRunner(_InferenceRunner):
             must=[FieldCondition(key="metadata.object_id", match=MatchValue(value=obj_id))]
         )
         points = self._client.search(
-            collection_name=self._memory_collection_name,
+            collection_name=self._collection_name,
             query_vector=query_vec,
             limit=k,
             query_filter=_filter,
@@ -111,7 +111,7 @@ class QdrantRunner(_InferenceRunner):
             ids = [it["id"] for it in memory_items if "id" in it]
             if ids:
                 self._client.delete(
-                    collection_name=self._memory_collection_name,
+                    collection_name=self._collection_name,
                     points_selector=PointIdsList(points=ids),
                     wait=True,
                 )
@@ -131,7 +131,7 @@ class QdrantRunner(_InferenceRunner):
         # get config
         config = os.getenv("MEMORY_VDB_CONFIG", "{}")
         config = json.loads(config)
-        self._memory_collection_name = config.get("memory_collection_name", None)
+        self._collection_name = config.get("collection_name", None)
 
         # init client
         self._client = qdrant.get_client(**config)
@@ -139,12 +139,12 @@ class QdrantRunner(_InferenceRunner):
         # init memory
         self._embeddings = embedding.get_model(**config)
         self._ensure_collection(
-            self._memory_collection_name,
+            self._collection_name,
             len(self._embeddings.embed_query("dimension-probe")),
         )
         self._memory_vector_store = QdrantVectorStore(
             client=self._client,
-            collection_name=self._memory_collection_name,
+            collection_name=self._collection_name,
             embedding=self._embeddings,
         )
 

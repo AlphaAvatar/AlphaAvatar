@@ -28,6 +28,11 @@ from alphaavatar.agents.log import logger
 
 
 class AvatarServer(livekit_worker.AgentServer):
+    # AlphaAvatar patch:
+    # Keep this method in sync with livekit_worker.AgentServer.run().
+    # Only intentional behavior change:
+    # - inference executor memory warning threshold uses self._job_memory_warn_mb // 2
+
     async def run(self, *, devmode: bool = False, unregistered: bool = False) -> None:
         """This method starts the worker's internal event loop, initializes any required
         executors, HTTP servers, and process pools, and optionally registers the worker
@@ -98,8 +103,9 @@ class AvatarServer(livekit_worker.AgentServer):
                     runners=_InferenceRunner.registered_runners,
                     initialize_timeout=5 * 60,
                     close_timeout=5,
-                    memory_warn_mb=self._job_memory_warn_mb
-                    // 2,  # Patch: inference executor gets half the memory limit of a regular job
+                    memory_warn_mb=(
+                        max(1, self._job_memory_warn_mb // 2) if self._job_memory_warn_mb else 2000
+                    ),  # NOTE: Patch, inference executor gets half the memory warning threshold of a regular job
                     memory_limit_mb=0,  # no limit
                     ping_interval=5,
                     ping_timeout=60,

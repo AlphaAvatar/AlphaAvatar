@@ -21,6 +21,7 @@ from tavily import TavilyClient
 from alphaavatar.agents.tools import DeepResearchBase
 from alphaavatar.agents.utils import url_to_filename_id
 from alphaavatar.agents.utils.files import save_single_url_content_to_pdf
+from alphaavatar.agents.utils.files.work_dirs import UserPath
 
 from .log import logger
 from .schema.tavily_obj import TavilyExtractObj, TavilySearchObj
@@ -32,20 +33,25 @@ class TavilyDeepResearchTool(DeepResearchBase):
     def __init__(
         self,
         *,
-        working_dir: pathlib.Path,
+        user_path: UserPath,
         tavily_api_key: NotGivenOr[str] = NOT_GIVEN,
         **kwargs,
     ) -> None:
         super().__init__()
 
-        self._working_dir = working_dir / SEARCH_INSTANCE
-        self._working_dir.mkdir(parents=True, exist_ok=True)
+        self._user_path = user_path
 
         self._tavily_api_key = tavily_api_key or (os.getenv("TAVILY_API_KEY") or NOT_GIVEN)
         if not self._tavily_api_key:
             raise ValueError("TAVILY_API_KEY must be set by arguments or environment variables")
 
         self._tavily_client = TavilyClient(api_key=self._tavily_api_key)
+
+    @property
+    def working_dir(self) -> pathlib.Path:
+        path = self._user_path.data_dir / SEARCH_INSTANCE
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     async def _tavily_extract(self, urls: list[str]) -> TavilyExtractObj:
         def _call():
@@ -106,11 +112,11 @@ class TavilyDeepResearchTool(DeepResearchBase):
 
         res: TavilyExtractObj = await self._tavily_extract(urls=urls)
 
-        out_root = self._working_dir.resolve()
+        out_root = self.working_dir.resolve()
         saved_lines: list[str] = []
         for idx, item in enumerate(res.results, start=1):
             safe_name = url_to_filename_id(item.url)
-            page_dir = self._working_dir / safe_name
+            page_dir = self.working_dir / safe_name
             page_dir.mkdir(parents=True, exist_ok=True)
 
             out_pdf = (page_dir / f"{safe_name}_page.pdf").resolve()

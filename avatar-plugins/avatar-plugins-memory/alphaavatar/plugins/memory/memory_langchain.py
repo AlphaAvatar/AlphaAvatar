@@ -14,7 +14,6 @@
 import asyncio
 import hashlib
 import json
-import pathlib
 import re
 from typing import Any
 
@@ -33,6 +32,7 @@ from alphaavatar.agents.memory import (
     VectorRunnerOP,
 )
 from alphaavatar.agents.utils import format_current_time
+from alphaavatar.agents.utils.files.work_dirs import UserPath
 
 from .log import logger
 from .memory_markdown import save_memory_items_to_markdown
@@ -301,7 +301,7 @@ def _select_by_priority(
 
 
 class MemoryInitConfig(BaseModel):
-    chat_model: str = Field(default="gpt-4o-mini")
+    openai_model: str = Field(default="gpt-4o-mini")
     temperature: float = Field(default=0.0)
 
 
@@ -309,14 +309,14 @@ class MemoryLangchain(MemoryBase):
     def __init__(
         self,
         *,
-        working_dir: pathlib.Path,
+        user_path: UserPath,
         memory_search_context: int = 3,
         memory_recall_num: int = 10,
         maximum_memory_num: int = 24,
         memory_init_config: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(
-            working_dir=working_dir,
+            user_path=user_path,
             memory_search_context=memory_search_context,
             memory_recall_num=memory_recall_num,
             maximum_memory_num=maximum_memory_num,
@@ -327,7 +327,7 @@ class MemoryLangchain(MemoryBase):
         )
 
         llm = ChatOpenAI(
-            model=self._memory_init_config.chat_model,
+            model=self._memory_init_config.openai_model,
             temperature=self._memory_init_config.temperature,
         )  # type: ignore
 
@@ -606,7 +606,7 @@ class MemoryLangchain(MemoryBase):
         try:
             md_result = save_memory_items_to_markdown(
                 avatar_memory_path=self._avatar_memory_path,
-                session_memory_path=self._session_memory_path,
+                session_memory_path=self.working_dir,
                 memory_items=memory_items,
             )
             logger.info(f"Memory local markdown backup success: {md_result}")

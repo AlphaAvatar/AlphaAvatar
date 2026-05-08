@@ -97,13 +97,19 @@ class LanceDBRunner(_InferenceRunner):
         }
 
     def _speaker_row_to_result(self, row: dict) -> dict:
+        distance = float(row.get("_distance", float("inf")))
+
+        # LanceDB cosine distance: smaller is more similar.
+        # Convert it to cosine-similarity-like score so it matches Qdrant's COSINE score style.
+        score = 1.0 - distance
+        score = max(-1.0, min(1.0, score))
+
         return {
             "user_id": str(row.get("user_id", "")),
             "vector": row.get("vector"),
             "id": str(row.get("id", "")),
-            # Some versions of LanceDB return _distance, with smaller values ​​indicating closer proximity.
-            # Here, we uniformly convert it to score for compatibility mapping.
-            "score": float(1.0 / (1.0 + float(row.get("_distance", 0.0)))),
+            "distance": distance,
+            "score": score,
         }
 
     def _load(self, *, user_id: str, **kwargs) -> dict:
@@ -253,7 +259,13 @@ class LanceDBRunner(_InferenceRunner):
             fetch_k = min(max(top_k * 8, 32), all_count)
 
             try:
-                rows = self._speaker_table.search(speaker_vector).limit(fetch_k).to_list()
+                query = self._speaker_table.search(speaker_vector)
+                try:
+                    query = query.metric("cosine")
+                except Exception:
+                    pass
+
+                rows = query.limit(fetch_k).to_list()
             except Exception:
                 rows = []
 

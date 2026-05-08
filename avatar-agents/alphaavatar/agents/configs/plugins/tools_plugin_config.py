@@ -14,6 +14,8 @@
 from __future__ import annotations
 
 import importlib
+import json
+import os
 from typing import TYPE_CHECKING
 
 from livekit.agents import llm
@@ -59,6 +61,14 @@ class ToolsConfig(BaseModel):
         default=False,
         description="Whether to enable the MCP plugin.",
     )
+    mcp_init_config: dict = Field(
+        default={},
+        description="Custom configuration parameters for the MCP plugin.",
+    )
+    mcp_vdb_config: dict = Field(
+        default={},
+        description="Custom initialization parameters for the mcp vdb backend (e.g., host, port, url, api_key, prefer_grpc).",
+    )
     mcp_servers: dict[str, dict] = Field(
         default={},
         description=(
@@ -82,12 +92,14 @@ class ToolsConfig(BaseModel):
             "constructor when initializing remote MCP connections."
         ),
     )
-    mcp_init_config: dict = Field(
-        default={},
-        description="Custom configuration parameters for the MCP plugin.",
-    )
 
-    def model_post_init(self, __context): ...
+    def model_post_init(self, __context):
+        # Set MCP Env
+        if self.enable_mcp and len(self.mcp_servers) > 0:
+            os.environ["MCP_VDB_TYPE"] = "lancedb"
+            os.environ["MCP_VDB_CONFIG"] = json.dumps(self.mcp_vdb_config)
+            mcp_servers = resolve_env_placeholders(self.mcp_servers)
+            os.environ["MCP_SERVERS"] = json.dumps(mcp_servers)
 
     def get_tools(
         self, session_config: SessionConfig
@@ -100,7 +112,7 @@ class ToolsConfig(BaseModel):
             AvatarModule.DEEPRESEARCH,
             self.deepresearch_tool,
             deepresearch_init_config=self.deepresearch_init_config,
-            working_dir=session_config.user_path.data_dir,
+            user_path=session_config.user_path,
         )
         if deepresearch_tool:
             tools.append(deepresearch_tool.tool)
@@ -110,7 +122,7 @@ class ToolsConfig(BaseModel):
             AvatarModule.RAG,
             self.rag_tool,
             rag_init_config=self.rag_init_config,
-            working_dir=session_config.user_path.data_dir,
+            user_path=session_config.user_path,
         )
         if rag_tool:
             tools.append(rag_tool.tool)
@@ -123,13 +135,11 @@ class ToolsConfig(BaseModel):
             logger.warning("No MCP server URLs provided while MCP is enabled.")
             return tools
 
-        mcp_servers = resolve_env_placeholders(self.mcp_servers)
         mcp_tool: ToolBase | None = AvatarPlugin.get_avatar_plugin(
             AvatarModule.MCP,
             "default",
-            servers=mcp_servers,
             mcp_init_config=self.mcp_init_config,
-            working_dir=session_config.user_path.data_dir,
+            user_path=session_config.user_path,
         )
         if mcp_tool:
             tools.append(mcp_tool.tool)

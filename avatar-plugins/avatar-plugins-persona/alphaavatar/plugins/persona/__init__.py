@@ -16,6 +16,7 @@ import os
 from livekit.agents.inference_runner import _InferenceRunner
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
+from alphaavatar.agents.utils.files.work_dirs import UserPath
 
 from .log import logger
 from .profiler_langchain import ProfilerLangChain
@@ -33,9 +34,9 @@ class ProfilerLangchainPlugin(AvatarPlugin):
 
     def download_files(self): ...
 
-    def get_plugin(self, profiler_init_config: dict, *args, **kwargs):
+    def get_plugin(self, user_path: UserPath, profiler_init_config: dict, *args, **kwargs):
         try:
-            return ProfilerLangChain(**profiler_init_config)
+            return ProfilerLangChain(user_path=user_path, **profiler_init_config)
         except Exception:
             raise ImportError(
                 "The 'langchain[default]' Profiler plugin is required but is not installed.\n"

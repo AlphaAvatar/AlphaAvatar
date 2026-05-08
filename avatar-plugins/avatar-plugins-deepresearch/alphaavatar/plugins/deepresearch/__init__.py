@@ -13,6 +13,7 @@
 # limitations under the License.
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.tools import DeepResearchAPI
+from alphaavatar.agents.utils.files.work_dirs import UserPath
 
 from .deepresearch_tavily import TavilyDeepResearchTool
 from .log import logger
@@ -31,14 +32,14 @@ class TavilyPlugin(AvatarPlugin):
 
     def get_plugin(
         self,
-        working_dir: str,
+        user_path: UserPath,
         deepresearch_init_config: dict,
         *args,
         **kwargs,
     ) -> TavilyDeepResearchTool:
         try:
             deepresearch_obj = TavilyDeepResearchTool(
-                working_dir=working_dir, **deepresearch_init_config, **kwargs
+                user_path=user_path, **deepresearch_init_config, **kwargs
             )
             deepresearch_api = DeepResearchAPI(deepresearch_obj)
             return deepresearch_api

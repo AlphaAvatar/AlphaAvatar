@@ -11,6 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import json
+import os
+
+from livekit.agents.inference_runner import _InferenceRunner
+
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.tools import MCPAPI
 
@@ -31,12 +36,13 @@ class MCPRemotePlugin(AvatarPlugin):
 
     def get_plugin(
         self,
-        servers: dict[str, dict],
         mcp_init_config: dict,
         *args,
         **kwargs,
     ) -> MCPHost:
         try:
+            servers = os.getenv("MCP_SERVERS", "{}")
+            servers = json.loads(servers)
             mcp_host = MCPHost(servers=servers, **mcp_init_config, **kwargs)
             mcp_api = MCPAPI(mcp_host)
             return mcp_api
@@ -49,3 +55,13 @@ class MCPRemotePlugin(AvatarPlugin):
 
 # plugin init
 AvatarPlugin.register_avatar_plugin(AvatarModule.MCP, "default", MCPRemotePlugin())
+
+# runner init
+mcp_vdb_type = os.getenv("MCP_VDB_TYPE", None)
+match mcp_vdb_type:
+    case "lancedb":
+        from . import mcp_host
+        from .runner import LanceDBRunner
+
+        mcp_host.MCP_INFERENCE_METHOD = LanceDBRunner.INFERENCE_METHOD
+        _InferenceRunner.register_runner(LanceDBRunner)

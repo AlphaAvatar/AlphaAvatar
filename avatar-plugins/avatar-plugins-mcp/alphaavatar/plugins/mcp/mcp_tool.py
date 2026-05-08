@@ -34,24 +34,72 @@ class MCPTool:
         input_schema: dict[str, Any],
         meta: dict[str, Any] | None,
         server_loop: asyncio.AbstractEventLoop | None = None,
+        server_key: str | None = None,
     ) -> None:
         self._client = client
         self._client_name = client_name
+        self._server_key = server_key
 
         self._name = name
         self._description = description
         self._input_schema = input_schema
         self._meta = meta
 
-        self._tool_id = f"{client_name}.{name}" if client_name else name
+        # Stable tool id:
+        # Prefer config key, not remote serverInfo.name.
+        prefix = server_key or client_name
+        self._tool_id = f"{prefix}.{name}" if prefix else name
 
         self._server_loop = server_loop
 
     @property
+    def tool_id(self) -> str:
+        return self._tool_id
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def client_name(self) -> str | None:
+        return self._client_name
+
+    @property
+    def server_key(self) -> str | None:
+        return self._server_key
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return self._input_schema
+
+    @property
+    def meta(self) -> dict[str, Any] | None:
+        return self._meta
+
+    @property
+    def description_text(self) -> str:
+        return self._description or ""
+
+    @property
     def description(self) -> str:
-        description = f"{self._tool_id}: {self._description} (input schema: {self._input_schema}, meta: {self._meta})"
-        description = re.sub(r"\s+", " ", description).strip()
-        return description
+        description = (
+            f"{self._tool_id}: {self._description} "
+            f"(input schema: {self._input_schema}, meta: {self._meta})"
+        )
+        return re.sub(r"\s+", " ", description).strip()
+
+    def to_vdb_text(self, *, server_info: dict[str, Any] | None = None) -> str:
+        payload = {
+            "tool_id": self._tool_id,
+            "server_key": self._server_key,
+            "server_name": self._client_name,
+            "name": self._name,
+            "description": self._description,
+            "input_schema": self._input_schema,
+            "meta": self._meta,
+            "server_info": server_info or {},
+        }
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
     async def call(self, raw_arguments: dict[str, Any]) -> Any:
         if self._client is None:
@@ -78,7 +126,6 @@ class MCPTool:
             error_str = "\n".join(str(part) for part in tool_result.content)
             raise ToolError(error_str)
 
-        # TODO: handle images & binary messages
         if len(tool_result.content) == 1:
             return tool_result.content[0].model_dump_json()
         elif len(tool_result.content) > 1:

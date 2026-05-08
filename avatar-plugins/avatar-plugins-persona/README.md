@@ -26,7 +26,7 @@ pip install alpha-avatar-plugins-persona
 | ---------------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | **Qdrant** (default) | Combined framework for persona extraction pipelines and vector storage / retrieval.           | [Qdrant](https://qdrant.tech) |
 
-### Profiler
+### Profile
 | Module                 | Description                                                                                   | Docs                                                                   |
 | ---------------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | **LangChain** (default) | Combined framework for persona extraction pipelines and vector storage / retrieval.           | [LangChain](https://www.langchain.com) |

@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,12 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-DEFAULT_SYSTEM_VALUE = "NONE"
-DEFAULT_CONTEXT_VALUE = "No reliable information is currently available."
+from __future__ import annotations
 
-SLOW_INFERENCE_THRESHOLD = 0.2
+from enum import Enum
 
-SPEAKER_BETA = 0.95
-SPEAKER_THRESHOLD = 0.75
 
-USER_TAG_PREFIX = "User_"
+class RuntimeContextInjectionMode(str, Enum):
+    """
+    How to inject dynamic runtime context into the model input.
+    """
+
+    USER_APPEND = "user_append"
+    SYNTHETIC_TOOL = "synthetic_tool"
+    CUSTOM_ROLE = "custom_role"

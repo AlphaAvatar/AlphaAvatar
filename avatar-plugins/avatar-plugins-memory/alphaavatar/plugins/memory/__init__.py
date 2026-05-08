@@ -16,6 +16,7 @@ import os
 from livekit.agents.inference_runner import _InferenceRunner
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
+from alphaavatar.agents.utils.files.work_dirs import UserPath
 
 from .log import logger
 from .memory_langchain import MemoryLangchain
@@ -34,7 +35,7 @@ class MemoryLangchainPlugin(AvatarPlugin):
 
     def get_plugin(
         self,
-        working_dir: str,
+        user_path: UserPath,
         memory_search_context: int,
         memory_recall_num: int,
         maximum_memory_num: int,
@@ -44,7 +45,7 @@ class MemoryLangchainPlugin(AvatarPlugin):
     ) -> MemoryLangchain:
         try:
             return MemoryLangchain(
-                working_dir=working_dir,
+                user_path=user_path,
                 memory_search_context=memory_search_context,
                 memory_recall_num=memory_recall_num,
                 maximum_memory_num=maximum_memory_num,

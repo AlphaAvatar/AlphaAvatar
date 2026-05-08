@@ -32,6 +32,31 @@ class ProfileItemView(BaseModel):
     timestamp: str
 
 
+class UserRuntimeState(BaseModel):
+    """
+    Runtime/login/session state for a user.
+
+    This is system-observed state, not LLM-extracted profile details.
+    Persist this to local markdown, not vector DB.
+    """
+
+    # Current session state
+    current_timezone: str | None = None
+    timezone_source: str | None = None
+    current_login_time: str | None = None
+    current_session_id: str | None = None
+    current_room_type: str | None = None
+
+    # Previous session state
+    last_timezone: str | None = None
+    last_login_time: str | None = None
+    last_session_id: str | None = None
+    last_room_type: str | None = None
+
+    # Aggregate
+    login_count: int = 0
+
+
 class DetailsBase(BaseModel):
     @classmethod
     def field_descriptions_prompt(cls) -> str:
@@ -94,6 +119,7 @@ class UserProfile(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     details: "DetailsBase | None" = None
+    runtime_state: UserRuntimeState | None = None
     speaker_vector: np.ndarray | None = None
 
     @field_validator("speaker_vector", mode="before")

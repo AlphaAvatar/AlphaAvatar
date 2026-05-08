@@ -18,13 +18,21 @@ from functools import partial
 from livekit import agents
 from livekit.agents import AgentSession, room_io
 from livekit.agents.job import AutoSubscribe
+from livekit.plugins import noise_cancellation
 
 from alphaavatar.agents.avatar import AvatarEngine
+from alphaavatar.agents.avatar.context.runtime_context import (
+    AvatarRuntimeContext,
+    InteractionMethod,
+    TimeContext,
+)
 from alphaavatar.agents.avatar.patches import AvatarServer
 from alphaavatar.agents.configs import AvatarConfig, SessionConfig, get_avatar_args, read_args
+from alphaavatar.agents.constants import DEFAULT_CONTEXT_VALUE
 from alphaavatar.agents.env import init_env
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.utils import get_session_id, get_user_id
+from alphaavatar.agents.utils.time_utils import build_time_context_from_metadata
 
 from .channels.bootstrap import register_builtin_channels
 from .channels.factory import build_channel_adapters
@@ -50,8 +58,6 @@ def build_room_options(session_mode: SessionMode) -> room_io.RoomOptions:
 
     if session_mode.audio_input_enabled:
         if session_mode.enable_noise_cancellation:
-            from livekit.plugins import noise_cancellation
-
             kwargs["audio_input"] = room_io.AudioInputOptions(
                 noise_cancellation=noise_cancellation.BVC(),
             )
@@ -113,10 +119,51 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
 
     user_id = participant_metadata.get("user_id", get_user_id())
     session_id = participant_metadata.get("session_id", get_session_id(room_type))
+    time_data = build_time_context_from_metadata(participant_metadata)
 
     session_config = SessionConfig(
         user_id=user_id,
         session_id=session_id,
+    )
+
+    interaction_method = InteractionMethod(
+        room_type=room_type,
+        session_type=str(session_type),
+        text_input=session_mode.text_input_enabled,
+        text_output=session_mode.text_output_enabled,
+        audio_input=session_mode.audio_input_enabled,
+        audio_output=session_mode.audio_output_enabled,
+        # TODO: Currently, RoomOptions does not explicitly enable video input/output.
+        # If you want to support video understanding/output later, you can extend it from metadata or session_mode.
+        video_input=bool(participant_metadata.get("video_input_enabled", False)),
+        video_output=bool(participant_metadata.get("video_output_enabled", False)),
+        notes=[
+            "Adapt response style to the active room/session modality.",
+            "Do not assume visual perception unless video input is explicitly enabled.",
+        ],
+    )
+
+    time_context = TimeContext(
+        current_time=time_data["current_time"],
+        current_timezone=time_data["current_timezone"],
+        timezone_source=time_data["timezone_source"],
+        last_session_timezone=time_data["last_session_timezone"],
+        last_session_time=time_data["last_session_time"],
+    )
+
+    runtime_context = AvatarRuntimeContext(
+        interaction_method=interaction_method,
+        time_context=time_context,
+        global_behavior_rules=participant_metadata.get(
+            "global_behavior_rules",
+            DEFAULT_CONTEXT_VALUE,
+        ),
+        extra_context={
+            "room_name": ctx.room.name,
+            "agent_identity": agent_identity,
+            "user_id": user_id,
+            "session_id": session_id,
+        },
     )
 
     logger.info(
@@ -133,7 +180,11 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
 
     # Build Agent & Virtual Character Session
     session = AgentSession()
-    avatar_engine = AvatarEngine(session_config=session_config, avatar_config=avatar_config)
+    avatar_engine = AvatarEngine(
+        session_config=session_config,
+        avatar_config=avatar_config,
+        runtime_context=runtime_context,
+    )
     avatar_character = avatar_config.character_config.get_plugin()
 
     # Start character

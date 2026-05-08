@@ -22,13 +22,13 @@ Learnable, configurable, and pluggable Omni Personal Assistant for everyone
 </h3>
 
 <p align="center">
-  <a href="ROADMAP.md">ROADMAP</a>
+  <a href="ROADMAP.md">Roadmap</a>
   |
-  <a href="#">Demo</a>
+  <a href="https://www.alphaavatar.ai/demo">Demo</a>
   |
-  <a href="#">HomePage</a>
+  <a href="https://www.alphaavatar.ai/">Homepage</a>
   |
-  <a href="https://docs.alphaavatar.io/">Documents</a>
+  <a href="https://docs.alphaavatar.io/">Docs</a>
 </p>
 
 </div>
@@ -37,71 +37,91 @@ Learnable, configurable, and pluggable Omni Personal Assistant for everyone
 
 <h2>AlphaAvatar Introduction</h2>
 
-AlphaAvatar is an **Omni-Avatar personal assistant framework** designed to evolve into your **intelligent personal butler**.
+AlphaAvatar is a **self-hostable Omni Personal Assistant framework** designed to evolve into an **intelligent personal butler** — a continuous, personalized, and proactive assistant that can remember, understand, plan, and act on behalf of the user.
 
-✨ **Fully self-hostable and privacy-first** — you can deploy AlphaAvatar locally or on your own infrastructure, with full control over your data, memory, and behavior.
+It is built around a **plugin-based real-time Agent architecture**, combining:
 
-It is built around a **plugin-based Agent architecture**, combining:
+- 🧠 **Memory** for long-term user, assistant, and tool interaction history
+- 🧬 **Persona** for user understanding, identity continuity, and personalization
+- 💡 **Reflection** for self-improvement and long-term behavioral adaptation
+- 📅 **Planning** for task decomposition, reminders, and future-oriented actions
+- ⚙️ **Behavior** for response style, workflow policy, and proactive assistance
+- 🧰 **Tools** through MCP, RAG, DeepResearch, and external integrations
+- 😊 **Virtual Character** for real-time voice/avatar interaction
 
-- 🧠 Full-modality **Memory**
-- 🧬 Dynamic **Persona understanding**
-- 💡 Self-improving **Reflection**
-- 📅 Long-term **Planning & Execution**
-- 🧰 External **Tool integrations (MCP / RAG / DeepResearch)**
-- 😊 Real-time **Virtual Character (Avatar)**
+✨ **Fully self-hostable and privacy-first** — AlphaAvatar can run locally or on your own infrastructure, giving you control over your data, memory, tools, and behavior.
 
-Together, these components enable AlphaAvatar to move beyond a traditional chatbot into a **continuous, personalized, and proactive assistant system**.
+---
 
-### 🎯 Vision
+<h3>What AlphaAvatar Is Designed For</h3>
 
-Our goal is to build an AI that can **continuously learn, remember, and act on behalf of the user**, acting as a true **personal life manager** rather than a passive responder.
+<table>
+<tr>
+<td width="50%">
 
-### 🧩 What Can AlphaAvatar Do?
+<h4>1️⃣ Personal Data & Life Metrics Management</h4>
 
-With the combination of internal Agent plugins and external tools, AlphaAvatar can:
-
-#### 1️⃣ Personal Data & Life Metrics Management
-- 📊 Track and analyze personal metrics (health, fitness, sleep, study progress)
+- 📊 Track and analyze personal metrics such as health, fitness, sleep, and study progress
 - 📈 Provide long-term insights and trend analysis
 - 🎯 Suggest improvements based on historical patterns
 
-#### 2️⃣ Knowledge & Notes Management
-- 📖 Organize personal notes, documents, and knowledge
-- 🔍 Retrieve relevant information via RAG
-- 🧠 Build a **personal knowledge base** over time
+</td>
+<td width="50%">
 
-#### 3️⃣ Task & Event Management
+<h4>2️⃣ Knowledge & Notes Management</h4>
+
+- 📖 Organize personal notes, documents, and knowledge
+- 🔍 Retrieve relevant information through RAG
+- 🧠 Build a personal knowledge base over time
+
+</td>
+</tr>
+
+<tr>
+<td width="50%">
+
+<h4>3️⃣ Task & Event Management</h4>
+
 - 📅 Schedule tasks and reminders
 - ⏰ Proactively notify based on context and priority
 - 🔄 Break down long-term goals into actionable steps
 
-#### 4️⃣ Autonomous Planning & Execution
-- 🧠 Plan multi-step workflows (learning plans, projects, research)
+</td>
+<td width="50%">
+
+<h4>4️⃣ Autonomous Planning & Execution</h4>
+
+- 🧠 Plan multi-step workflows such as learning plans, projects, and research
 - 🔧 Call tools automatically to complete tasks
 - 📌 Maintain consistency across long time horizons
 
-#### 5️⃣ Personalized Companion & Context Awareness
+</td>
+</tr>
+
+<tr>
+<td width="50%">
+
+<h4>5️⃣ Personalized Companion & Context Awareness</h4>
+
 - 🧬 Understand user preferences, habits, and personality
 - 💬 Provide highly personalized responses
 - 🤝 Maintain continuity across conversations and modalities
 
-#### 6️⃣ External World Interaction
+</td>
+<td width="50%">
+
+<h4>6️⃣ External World Interaction</h4>
+
 - 🌐 Search, research, and summarize real-world information
-- 🧰 Integrate with tools (email, database, APIs, messaging apps)
+- 🧰 Integrate with tools such as email, databases, APIs, and messaging apps
 - 🔗 Act as a bridge between user intent and external systems
 
-### 🤖 Why AlphaAvatar?
+</td>
+</tr>
+</table>
 
-Unlike traditional AI assistants, AlphaAvatar is:
-
-- **Stateful** → remembers and evolves with you
-- **Proactive** → acts, not just responds
-- **Composable** → fully plugin-driven architecture
-- **Omni-modal** → supports text, voice, and visual interaction
-- **Extensible** → easily integrates new tools and capabilities
-
-> 💡 AlphaAvatar is not just an assistant —
-> it is your **long-term AI companion and personal operating system**.
+> 💡 AlphaAvatar is not just a chatbot.
+> It is a foundation for building **stateful, proactive, multimodal, and self-evolving personal AI assistants**.
 
 ---
 
@@ -124,7 +144,7 @@ Unlike traditional AI assistants, AlphaAvatar is:
 <p>
   <img src="https://img.shields.io/badge/In_Progress-28a745?style=flat" />
 </p>
-<p>Automatic extraction and real-time matching of user full modality persona.</p>
+<p>Automatic extraction and real-time matching of multimodal user persona.</p>
 <p>
 <a href="https://github.com/AlphaAvatar/AlphaAvatar/blob/main/avatar-plugins/avatar-plugins-persona/README.md">README↗</a>
 </p>
@@ -137,7 +157,7 @@ Unlike traditional AI assistants, AlphaAvatar is:
 <p>
   <img src="https://img.shields.io/badge/Planned-6c757d?style=flat" alt="Planned" />
 </p>
-<p>An Optimizer for Omni-Avatar that can automatically build an internal knowledge base for avatars.</p>
+<p>A self-improvement module that reflects on memory, behavior, and interaction history.</p>
 <p>
 <a href="#">README↗</a>
 </p>
@@ -147,7 +167,7 @@ Unlike traditional AI assistants, AlphaAvatar is:
 <p>
   <img src="https://img.shields.io/badge/Planned-6c757d?style=flat" alt="Planned" />
 </p>
-<p>Agents need to plan over a longer time frame to ensure that their actions are sequential and reliable.</p>
+<p>Long-horizon planning module for tasks, reminders, goals, and multi-step workflows.</p>
 <p>
 <a href="#">README↗</a>
 </p>
@@ -160,7 +180,7 @@ Unlike traditional AI assistants, AlphaAvatar is:
 <p>
   <img src="https://img.shields.io/badge/Planned-6c757d?style=flat" alt="Planned" />
 </p>
-<p>Controls AlphaAvatar’s behavior logic and process flow.</p>
+<p>Controls response style, workflow policy, tool-use behavior, and proactive assistance rules.</p>
 <p>
 <a href="#">README↗</a>
 </p>
@@ -212,7 +232,7 @@ Unlike traditional AI assistants, AlphaAvatar is:
 <p>
   <img src="https://img.shields.io/badge/In_Progress-28a745?style=flat" />
 </p>
-<p>Allows AlphaAvatar to <strong>access real-world external tools</strong>, such as databases, email, social media, etc.</p>
+<p>Allows AlphaAvatar to discover and call real-world external tools such as databases, email, calendars, APIs, and productivity apps.</p>
 <p>
 <a href="https://github.com/AlphaAvatar/AlphaAvatar/blob/main/avatar-plugins/avatar-plugins-mcp/README.md">README↗</a>
 </p>
@@ -236,16 +256,42 @@ Unlike traditional AI assistants, AlphaAvatar is:
 
 <h4>Latest News 🔥</h4>
 
-- [2026/04] We have released AlphaAvatar **version 0.5.3** to support localized storage (MAKDOWN structure) for the Memory plugin, while using LanceDB as the default VDB (Qdrant will be used unless a Qdrant key and URL are provided).
-- [2026/03] We have released AlphaAvatar **version 0.5.0** to support the MCP plugin, which enables retrieval and concurrent invocation of the MCP tools.
-  - Released AlphaAvatar **version 0.5.1**: Added [WhatsApp]((https://github.com/AlphaAvatar/AlphaAvatar/blob/main/avatar-channels/avatar-channels-whatsapp/README.md)) channel support via [Baileys](https://github.com/whiskeysockets/Baileys) driver, enabling connection to AlphaAvatar Agent for **WhatsApp** integration.
-  - Released AlphaAvatar **version 0.5.2**: Add the AlphaAvatar Voice plugin to support the [Voice.ai](https://voice.ai/) TTS API, providing a wider variety of speaker options.
-- [2026/02] We have released AlphaAvatar **version 0.4.0** to support RAG by [RAG-Anything](https://github.com/HKUDS/RAG-Anything) library and optimized the Memory and DeepResearch modules.
-  - Released AlphaAvatar **version 0.4.1**: Fix the Persona plugin bugs and Add new MCP plugin.
-- [2026/01] We have released AlphaAvatar **version 0.3.0** to support DeepResearch by [tavily](https://tavily.com) API.
-  - Released AlphaAvatar **version 0.3.1**: ADD tool calls during user-Assistant interactions to the Memory module.
-- [2025/12] We have released AlphaAvatar **version 0.2.0** to support [AIRI](https://github.com/moeru-ai/airi) live2d-based virtual character display.
-- [2025/11] We have released AlphaAvatar **version 0.1.0** to support automatic memory extraction, automatic user persona extraction and matching.
+- [2026/05] Released AlphaAvatar **version 0.5.4**:
+  - Added **LanceDB-backed MCP tool retrieval**, enabling AlphaAvatar to semantically search relevant MCP tools based on the Agent query.
+  - Refactored **system prompt and runtime prompt composition** to improve prefix-cache efficiency and support dynamic runtime context injection.
+  - Improved the **Persona plugin** with deterministic runtime state tracking, including timezone, login time, session ID, room type, and login count.
+  - Added **temporary-user to real-user identity merging**, including user workspace migration and identity-aware plugin storage.
+  - Improved RAG runtime behavior with initialization waiting, current/temporary workspace querying, and LLM-friendly query output.
+
+- [2026/04] Released AlphaAvatar **version 0.5.3**:
+  - Added localized Markdown backup for the Memory plugin.
+  - Added LanceDB as the default local VDB option when Qdrant credentials are not provided.
+
+- [2026/03] Released AlphaAvatar **version 0.5.0**:
+  - Added the MCP plugin, enabling retrieval and concurrent invocation of MCP tools.
+  - Released AlphaAvatar **version 0.5.1**: Added [WhatsApp](https://github.com/AlphaAvatar/AlphaAvatar/blob/main/avatar-channels/avatar-channels-whatsapp/README.md) channel support via [Baileys](https://github.com/whiskeysockets/Baileys).
+  - Released AlphaAvatar **version 0.5.2**: Added the AlphaAvatar Voice plugin with [Voice.ai](https://voice.ai/) TTS support.
+
+- [2026/02] Released AlphaAvatar **version 0.4.0**:
+  - Added RAG support through [RAG-Anything](https://github.com/HKUDS/RAG-Anything).
+  - Optimized the Memory and DeepResearch modules.
+  - Released AlphaAvatar **version 0.4.1**: Fixed Persona plugin bugs and added a new MCP plugin.
+
+- [2026/01] Released AlphaAvatar **version 0.3.0**:
+  - Added DeepResearch support through the [Tavily](https://tavily.com) API.
+  - Released AlphaAvatar **version 0.3.1**: Added tool-call memory extraction during user–assistant interactions.
+
+<details>
+<summary>2025 Release History</summary>
+
+- [2025/12] Released AlphaAvatar **version 0.2.0**:
+  - Added [AIRI](https://github.com/moeru-ai/airi) Live2D-based virtual character display.
+
+- [2025/11] Released AlphaAvatar **version 0.1.0**:
+  - Added automatic memory extraction.
+  - Added automatic user persona extraction and matching.
+
+</details>
 
 <br/>
 
@@ -314,52 +360,96 @@ AlphaAvatar supports multiple **Access Channels**, allowing different types of u
 
 ## 🧠 Runtime Architecture
 
-```
-            AlphaAvatar Runtime
-            ───────────────────
+AlphaAvatar is built around a **real-time multimodal Agent runtime**.
+It separates streaming interaction, model reasoning, runtime context, plugin state, tool execution, and channel adapters.
 
-    ┌──────────────────────────────┐
-    │        AgentSession          │
-    │        AvatarEngine          │
-    │   (LLM / Memory / RAG / MCP) │
-    └──────────────┬───────────────┘
-                   │
-            InputDispatcher
-                   │
-            InputEnvelope
-                   │
-    ┌──────────────┴───────────────┐
-    │                              │
-Channel Adapters                Native Inputs
-(Ingress Layer)                (Web / App)
-    │                              │
-    ▼                              ▼
-WhatsApp / WeChat / Slack      audio / text / video
-    │                              │
-    └──────────────┬───────────────┘
-                   ▼
-           OutputDispatcher
-                   │
-    ┌──────────────┴───────────────┐
-    │                              │
-Channel Egress                  Native Output
-(Messaging APIs)                (WebRTC / UI)
-```
+```text
+                         AlphaAvatar Runtime
+                         ───────────────────
 
-> 💡 AlphaAvatar uses a **Channel Adapter architecture** to decouple runtime logic from communication channels.
+        ┌──────────────────────────────────────────────┐
+        │                 LiveKit Room                 │
+        │        audio / text / video / data streams   │
+        └──────────────────────┬───────────────────────┘
+                               │
+                               ▼
+        ┌──────────────────────────────────────────────┐
+        │                 AgentSession                 │
+        │      real-time turn detection / streaming IO │
+        └──────────────────────┬───────────────────────┘
+                               │
+                               ▼
+        ┌──────────────────────────────────────────────┐
+        │                 AvatarEngine                 │
+        │  Realtime Model Pipeline                     │
+        │  STT / VAD / LLM / TTS / video-ready input   │
+        └──────────────────────┬───────────────────────┘
+                               │
+                               ▼
+        ┌──────────────────────────────────────────────┐
+        │          Prompt & Runtime Context Layer       │
+        │  system prompt / runtime prompt / time / mode │
+        │  memory / persona / plan / reflection / rules │
+        └──────────────────────┬───────────────────────┘
+                               │
+        ┌──────────────────────┼───────────────────────┐
+        │                      │                       │
+        ▼                      ▼                       ▼
+┌──────────────────┐  ┌──────────────────┐   ┌──────────────────┐
+│  Memory Plugin   │  │  Persona Plugin  │   │   Tools Plugins  │
+│ conversation     │  │ user profile     │   │ MCP / RAG        │
+│ tool memory      │  │ speaker / face   │   │ DeepResearch     │
+│ avatar memory    │  │ runtime state    │   │ external APIs    │
+└──────────────────┘  └──────────────────┘   └──────────────────┘
+
+┌──────────────────┐  ┌──────────────────┐   ┌──────────────────┐
+│ Reflection Plugin│  │ Planning Plugin  │   │ Behavior Plugin │
+│ self-analysis    │  │ tasks / plans    │   │ response policy │
+│ adaptation       │  │ reminders        │   │ workflow rules  │
+└──────────────────┘  └──────────────────┘   └──────────────────┘
+                               │
+                               ▼
+        ┌──────────────────────────────────────────────┐
+        │              UserPath Workspace              │
+        │  local data / cache / logs / memory / RAG    │
+        │  persona state / artifacts / user files      │
+        └──────────────────────┬───────────────────────┘
+                               │
+        ┌──────────────────────┴───────────────────────┐
+        │                                              │
+        ▼                                              ▼
+┌──────────────────────┐                    ┌──────────────────────┐
+│ Native Web / App     │                    │ Channel Adapters     │
+│ voice / text / video │                    │ WhatsApp / future    │
+│ WebRTC / UI          │                    │ messaging platforms  │
+└──────────────────────┘                    └──────────────────────┘
+```
 
 ---
 
 <h3>🌐 Web Access</h3>
 
-<img src="https://img.shields.io/badge/In_Development-orange?style=flat" />
+<img src="https://img.shields.io/badge/Available-28a745?style=flat" />
 
-🖥️ Browser-based interface for real-time interaction.
-This will become the official AlphaAvatar user interface.
+AlphaAvatar now provides a browser-based realtime demo interface built on **LiveKit**.
 
-- 🎙️ Real-time voice & multimodal communication
-- 🧠 Full plugin support (Memory / RAG / MCP / etc.)
-- 😊 Virtual character display
+👉 Try the Web Demo: https://www.alphaavatar.ai/demo
+
+The Web Demo supports:
+
+- 🎙️ Real-time voice interaction
+- 💬 Text chat with the Avatar
+- 📷 Camera preview and video-ready interaction
+- 🔊 Agent audio playback
+- 😊 Virtual character / avatar stage
+- 🧠 Full plugin support, including Memory, Persona, RAG, MCP, and DeepResearch
+- 🌍 Browser timezone metadata, enabling AlphaAvatar to understand local login time
+
+<p align="center">
+  <img src=".github/assets/web-demo-screenshot.png" alt="AlphaAvatar Web Demo Screenshot" width="100%" />
+</p>
+
+> The Web Demo is the recommended way to try AlphaAvatar with a full realtime multimodal experience.
 
 ---
 
@@ -388,7 +478,7 @@ Capabilities:
 
 ```bash
 ENV_FILE=.env.dev sh examples/channels/start_whatsapp.sh
-````
+```
 
 > 💡 The WhatsApp channel runs as an independent bridge process and connects to the Agent runtime.
 
@@ -414,11 +504,9 @@ A dedicated AlphaAvatar mobile application providing:
 
 ---
 
-<h3>🧪 Developer Playground (Available Now)</h3>
+<h3>🧪 Developer Playground</h3>
 
 <img src="https://img.shields.io/badge/Available-28a745?style=flat" />
-
-This is the primary access channel for AlphaAvatar today.
 
 Developers can immediately access AlphaAvatar via the **LiveKit Playground**.
 
@@ -443,5 +531,6 @@ Supported capabilities:
 
 ---
 
-> 💡 AlphaAvatar is currently developer-first.
-> Web and mobile experiences are actively under development.
+> 💡 AlphaAvatar is currently developer-first, with a Web Demo available for realtime interaction.
+
+> More user-facing web and mobile experiences are under active development.

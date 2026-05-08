@@ -28,8 +28,10 @@ from .plugins.memory_plugin_config import MemoryConfig
 from .plugins.persona_plugin_config import PersonaConfig
 from .plugins.tools_plugin_config import ToolsConfig
 from .plugins.voice_plugin_config import VoicePluginConfig
+from .runtime_config import RuntimeConfig
 
 _CONFIG_CLS = [
+    RuntimeConfig,
     VoicePluginConfig,
     AvatarInfoConfig,
     VirtualCharacterConfig,
@@ -131,6 +133,7 @@ def parse_dict_models(
 
 def get_avatar_args(args: dict[str, Any]) -> AvatarConfig:
     (
+        runtime_config,
         voice_plugin_config,
         avatar_info,
         character_config,
@@ -142,6 +145,7 @@ def get_avatar_args(args: dict[str, Any]) -> AvatarConfig:
     # TODO: Post validation
 
     avatar_config = AvatarConfig(
+        runtime_config=runtime_config,
         voice_plugin_config=voice_plugin_config,
         avatar_info=avatar_info,
         character_config=character_config,

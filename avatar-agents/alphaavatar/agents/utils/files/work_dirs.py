@@ -11,16 +11,46 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import os
 import pathlib
 import re
+import shutil
+from collections.abc import Callable
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 _SAFE = re.compile(r"[^a-zA-Z0-9._-]+")
 
 
+class UserPathSnapshot(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    user_id: str
+    user_root: pathlib.Path
+    data_dir: pathlib.Path
+    cache_dir: pathlib.Path
+    logs_dir: pathlib.Path
+
+
+UserPathChangeCallback = Callable[
+    ["UserPath", UserPathSnapshot, UserPathSnapshot],
+    Any,
+]
+
+
 class UserPath(BaseModel):
+    """
+    Mutable user-scoped path reference.
+
+    Important:
+    Plugins should hold this object itself, not a copied pathlib.Path.
+    When the user identity is resolved, this object is updated in place,
+    so all plugins can dynamically see the latest user paths.
+    """
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     user_id: str = Field(..., description="Sanitized user id used in folder names.")
@@ -29,6 +59,54 @@ class UserPath(BaseModel):
     data_dir: pathlib.Path
     cache_dir: pathlib.Path
     logs_dir: pathlib.Path
+
+    _callbacks: list[UserPathChangeCallback] = PrivateAttr(default_factory=list)
+    _version: int = PrivateAttr(default=0)
+
+    @property
+    def version(self) -> int:
+        return self._version
+
+    def snapshot(self) -> UserPathSnapshot:
+        return UserPathSnapshot(
+            user_id=self.user_id,
+            user_root=self.user_root,
+            data_dir=self.data_dir,
+            cache_dir=self.cache_dir,
+            logs_dir=self.logs_dir,
+        )
+
+    def subscribe(self, callback: UserPathChangeCallback):
+        self._callbacks.append(callback)
+
+        def unsubscribe():
+            try:
+                self._callbacks.remove(callback)
+            except ValueError:
+                pass
+
+        return unsubscribe
+
+    def update_from(self, new_path: UserPath) -> None:
+        """
+        Update this UserPath in place.
+
+        Do not replace the UserPath object itself, because plugins may already
+        hold a reference to it.
+        """
+        old = self.snapshot()
+
+        self.user_id = new_path.user_id
+        self.user_root = new_path.user_root
+        self.data_dir = new_path.data_dir
+        self.cache_dir = new_path.cache_dir
+        self.logs_dir = new_path.logs_dir
+        self._version += 1
+
+        new = self.snapshot()
+
+        for callback in list(self._callbacks):
+            callback(self, old, new)
 
 
 def _can_write_dir(path: pathlib.Path) -> bool:
@@ -84,3 +162,43 @@ def mk_user_dirs(work_dir: str, user_id: str) -> UserPath:
         cache_dir=cache_dir,
         logs_dir=logs_dir,
     )
+
+
+def merge_dirs(src: pathlib.Path, dst: pathlib.Path) -> None:
+    """
+    Merge src directory into dst directory.
+
+    Existing files in dst are not overwritten.
+    This is safer for merging temporary-user artifacts into real-user directory.
+    """
+    if not src.exists() or src.resolve() == dst.resolve():
+        return
+
+    dst.mkdir(parents=True, exist_ok=True)
+
+    for item in src.iterdir():
+        target = dst / item.name
+
+        if item.is_dir():
+            merge_dirs(item, target)
+        else:
+            if not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item, target)
+
+
+def migrate_user_path(
+    *,
+    old_user_path: UserPath | UserPathSnapshot,
+    new_user_path: UserPath | UserPathSnapshot,
+    remove_old: bool = False,
+) -> None:
+    if old_user_path.user_root.resolve() == new_user_path.user_root.resolve():
+        return
+
+    merge_dirs(old_user_path.data_dir, new_user_path.data_dir)
+    merge_dirs(old_user_path.cache_dir, new_user_path.cache_dir)
+    merge_dirs(old_user_path.logs_dir, new_user_path.logs_dir)
+
+    if remove_old:
+        shutil.rmtree(old_user_path.user_root, ignore_errors=True)

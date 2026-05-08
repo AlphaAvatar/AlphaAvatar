@@ -22,7 +22,7 @@ from livekit.agents.llm import ChatItem, ChatMessage
 from alphaavatar.agents.constants import SPEAKER_BETA
 from alphaavatar.agents.utils import AvatarTime, NumpyOP
 
-from .schema.user_profile import DetailsBase, UserProfile
+from .schema.user_profile import DetailsBase, UserProfile, UserRuntimeState
 
 
 class PersonaCache:
@@ -55,10 +55,17 @@ class PersonaCache:
 
     @property
     def profile(self) -> UserProfile | None:
-        if self._user_profile.details is not None or self._user_profile.speaker_vector is not None:
-            return self._user_profile
-        else:
+        if self._user_profile is None:
             return None
+
+        if (
+            self._user_profile.details is not None
+            or self._user_profile.runtime_state is not None
+            or self._user_profile.speaker_vector is not None
+        ):
+            return self._user_profile
+
+        return None
 
     @property
     def profile_details(self) -> DetailsBase | None:
@@ -84,6 +91,10 @@ class PersonaCache:
             return {}
 
     @property
+    def runtime_state(self) -> UserRuntimeState | None:
+        return self._user_profile.runtime_state
+
+    @property
     def speaker_vector(self) -> np.ndarray | None:
         return self._user_profile.speaker_vector
 
@@ -92,13 +103,17 @@ class PersonaCache:
         self._user_profile = profile
 
     @profile_details.setter
-    def profile_details(self, profile_details: DetailsBase):
+    def profile_details(self, profile_details: DetailsBase | None):
         self._user_profile.details = profile_details
+
+    @runtime_state.setter
+    def runtime_state(self, runtime_state: UserRuntimeState):
+        self._user_profile.runtime_state = runtime_state
 
     @speaker_vector.setter
     def speaker_vector(self, vector: np.ndarray):
-        if self.profile is None:
-            raise ValueError("Cannot set speaker_vector before profile is set.")
+        if self._user_profile is None:
+            self._user_profile = UserProfile()
 
         current = getattr(self._user_profile, "speaker_vector", None)
         if current is None:

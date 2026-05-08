@@ -1,4 +1,7 @@
-### LiveKit Args
+# Runtime Args
+runtime_context_mode: synthetic_tool
+
+# LiveKit Args
 stt_plugin: openai
 stt_model: gpt-4o-transcribe
 tts_plugin: openai
@@ -12,48 +15,59 @@ turn_detection_plugin: multilingual
 allow_interruptions: true
 
 
-### Avatar Info Args
+# Avatar Info Args
 avatar_id: alphaavatar_tools
 avatar_name: "AlphaAvatar"
 avatar_introduction: "You are a helpful Tools Assistant. You assist users by effectively utilizing various tools to provide accurate and efficient responses. Always aim to understand the user's needs and select the most appropriate tool to fulfill their requests. Communicate clearly and concisely, ensuring that your responses are easy to understand. Your primary goal is to enhance the user experience by leveraging the capabilities of the available tools."
 avatar_work_dir: .alphaavatar_workspace/
 
 
-### Character Args
+# Character Args
 character_plugin: None
 character_init_config: {}
 
 
-### Memory Args
+# Memory Args
 memory_search_context: 3
 memory_recall_num: 6
 maximum_memory_num: 28
 memory_plugin: default
-memory_init_config: {}
+memory_init_config:
+  openai_model: gpt-4o
 memory_vdb_config:
-  memory_collection_name: "alphaavatar_tools_memory"
+  collection_name: "memory"
   embedding_model: "text-embedding-3-small"
 
 
-### Profiler Args
+# Profiler Args
 maximum_retrieval_times: 3
 profiler_plugin: default
-profiler_init_config: {}
+profiler_init_config:
+  openai_model: gpt-4o
 speaker_plugin: default
 speaker_init_config: {}
 persona_vdb_config:
-  profiler_collection_name: 'alphaavatar_tools_persona_profiler'
-  speaker_collection_name: 'alphaavatar_tools_persona_speaker'
+  profiler_collection_name: 'persona_profiler'
+  speaker_collection_name: 'persona_speaker'
   embedding_model: 'text-embedding-3-small'
 
 
-### Tools Args
+# Tools Args
+## DeepResearch
 deepresearch_tool: default
 deepresearch_init_config: {}
+
+## RAG
 rag_tool: default
 rag_init_config:
   doc_parser: 'docling'
+
+## MCP
 enable_mcp: true
+mcp_init_config: {}
+mcp_vdb_config:
+  collection_name: 'mcp'
+  embedding_model: 'text-embedding-3-small'
 mcp_servers:
   livekit-docs:
     url: "https://docs.livekit.io/mcp/"
@@ -63,4 +77,3 @@ mcp_servers:
     headers:
       Authorization: "Bearer <GITHUB_PAT>"
     instruction: "The GitHub MCP server (via GitHub Copilot) enables AI agents to interact with repositories, issues, pull requests, and code through a standardized MCP interface, making GitHub workflows programmatically accessible."
-mcp_init_config: {}

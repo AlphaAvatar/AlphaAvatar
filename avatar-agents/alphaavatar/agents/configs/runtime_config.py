@@ -11,12 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-DEFAULT_SYSTEM_VALUE = "NONE"
-DEFAULT_CONTEXT_VALUE = "No reliable information is currently available."
+from pydantic import BaseModel, Field
 
-SLOW_INFERENCE_THRESHOLD = 0.2
+from alphaavatar.agents.avatar.context.enum.injection_mode import RuntimeContextInjectionMode
 
-SPEAKER_BETA = 0.95
-SPEAKER_THRESHOLD = 0.75
 
-USER_TAG_PREFIX = "User_"
+class RuntimeConfig(BaseModel):
+    """Dataclass which contains all runtime-related configuration, which will creat for each session."""
+
+    runtime_context_mode: RuntimeContextInjectionMode = Field(
+        default=RuntimeContextInjectionMode.USER_APPEND,
+        description="How to inject dynamic runtime context into the model input.",
+    )

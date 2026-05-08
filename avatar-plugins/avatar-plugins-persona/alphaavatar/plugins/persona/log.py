@@ -13,4 +13,4 @@
 # limitations under the License.
 import logging
 
-logger = logging.getLogger("alphaavatar.plugins.perona")
+logger = logging.getLogger("alphaavatar.plugins.persona")

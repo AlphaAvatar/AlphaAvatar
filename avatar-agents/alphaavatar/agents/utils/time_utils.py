@@ -19,9 +19,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-# Try zoneinfo first (Py>=3.9); if unavailable or tz not found, fall back to pytz.
 try:
-    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError  # Python 3.9+
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 except Exception:
     ZoneInfo = None  # type: ignore
     ZoneInfoNotFoundError = Exception  # type: ignore
@@ -30,7 +29,7 @@ from alphaavatar.agents.log import logger
 
 
 class AvatarTime(BaseModel):
-    timezore: str = Field(default_factory=str)
+    timezone: str = Field(default_factory=str)
     year: str = Field(default_factory=str)
     month: str = Field(default_factory=str)
     day: str = Field(default_factory=str)
@@ -46,71 +45,128 @@ def _now_in_tz(tzname: str) -> datetime:
         try:
             return datetime.now(ZoneInfo(tzname))
         except ZoneInfoNotFoundError:
-            pass  # will try pytz next
+            pass
 
-    # pytz fallback (works on Python 3.8 and earlier)
     try:
-        import pytz  # pip install pytz
+        import pytz
     except Exception as e:
         raise ImportError(
-            "Timezone support requires either 'zoneinfo' (Python 3.9+) or 'pytz'. "
+            "Timezone support requires either 'zoneinfo' Python 3.9+ or 'pytz'. "
             "Install pytz or upgrade Python."
         ) from e
+
     return datetime.now(pytz.timezone(tzname))
+
+
+def resolve_timezone(tz: str | None = None) -> tuple[str | None, str]:
+    """
+    Resolve timezone by priority:
+
+    1. Explicit tz argument
+    2. AVATAR_TIMEZONE env
+    3. None, meaning server local time
+
+    Returns:
+        tuple[timezone, source]
+    """
+    if tz:
+        return tz, "metadata"
+
+    env_tz = os.getenv("AVATAR_TIMEZONE")
+    if env_tz:
+        return env_tz, "env"
+
+    return None, "server"
 
 
 def format_current_time(tz: str | None = None) -> AvatarTime:
     """
-    Return the current time as:
-        'Weekday, Month D, YYYY, h AM/PM'
+    Return the current time in a stable prompt-friendly format.
 
     Args:
-        tz: IANA timezone name like "Asia/Kolkata" or "Asia/Shanghai".
-            If None, use the server's local time (no timezone conversion).
+        tz: IANA timezone name, e.g. "Asia/Dubai", "America/Los_Angeles".
 
     Returns:
-        A formatted time string, e.g.:
-        "Monday, August 25, 2025, 3 PM"
+        AvatarTime
     """
-    # Use server local time when tz is None; otherwise convert to the given tz.
-    tz = os.getenv("AVATAR_TIMEZONE", None)
+    resolved_tz, source = resolve_timezone(tz)
 
     try:
-        dt = _now_in_tz(tz) if tz else datetime.now()
-    except Exception:
+        dt = _now_in_tz(resolved_tz) if resolved_tz else datetime.now()
+    except Exception as e:
+        logger.warning("Invalid timezone=%s, fallback to server local time: %s", resolved_tz, e)
+        resolved_tz = None
+        source = "server_fallback"
         dt = datetime.now()
 
-    weekday = calendar.day_name[dt.weekday()]  # e.g., "Monday"
-    month = calendar.month_name[dt.month]  # e.g., "August"
+    weekday = calendar.day_name[dt.weekday()]
+    month = calendar.month_name[dt.month]
 
-    # 24h -> 12h conversion and AM/PM
     hour12 = dt.hour % 12 or 12
     ampm = "AM" if dt.hour < 12 else "PM"
 
-    time_str = f"Timezone: {tz}; Time: {weekday}, {month} {dt.day}, {dt.year}, {hour12} {ampm}"
-    time_dict = {
-        "timezone": tz,
-        "year": str(dt.year),
-        "month": str(dt.month),
-        "day": str(dt.day),
-        "time_str": time_str,
+    minute = f"{dt.minute:02d}"
+
+    timezone_display = resolved_tz or "Server Local Time"
+
+    time_str = (
+        f"Timezone: {timezone_display}; "
+        f"Timezone Source: {source}; "
+        f"Time: {weekday}, {month} {dt.day}, {dt.year}, {hour12}:{minute} {ampm}"
+    )
+
+    return AvatarTime(
+        timezone=timezone_display,
+        year=str(dt.year),
+        month=str(dt.month),
+        day=str(dt.day),
+        time_str=time_str,
+    )
+
+
+def build_time_context_from_metadata(metadata: dict) -> dict:
+    """
+    Build prompt-ready time context from participant metadata.
+
+    Expected metadata examples:
+        {
+            "timezone": "Asia/Dubai",
+            "timezone_source": "browser",
+            "last_session_timezone": "America/Los_Angeles",
+            "last_session_time": "Tuesday, May 5, 2026, 10:10 PM"
+        }
+    """
+    timezone = metadata.get("timezone") or metadata.get("browser_timezone") or metadata.get("tz")
+
+    timezone_source = metadata.get(
+        "timezone_source",
+        "browser" if timezone else "server",
+    )
+
+    current = format_current_time(timezone)
+
+    return {
+        "current_time": current.time_str,
+        "current_timezone": current.timezone,
+        "timezone_source": timezone_source,
+        "last_session_timezone": metadata.get("last_session_timezone", "Unknown"),
+        "last_session_time": metadata.get("last_session_time", "Unknown"),
     }
-    return AvatarTime(**time_dict)
 
 
 def time_str_to_datetime(time_str: str) -> datetime:
     try:
         time_part = time_str.split("Time:")[1].strip()
-        # handle both with and without minutes
+
         try:
             return datetime.strptime(time_part, "%A, %B %d, %Y, %I:%M %p")
         except ValueError:
             return datetime.strptime(time_part, "%A, %B %d, %Y, %I %p")
+
     except Exception as e:
         logger.error(f"Unable to resolve timestamp: {time_str}. Error: {e}")
         return datetime.min
 
 
 def get_timestamp() -> str:
-    id = f"{int(time.time() * 1000)}{random.randint(100, 999)}"
-    return id
+    return f"{int(time.time() * 1000)}{random.randint(100, 999)}"

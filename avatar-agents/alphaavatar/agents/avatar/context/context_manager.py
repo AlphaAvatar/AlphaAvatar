@@ -31,7 +31,8 @@ class ContextManager:
     ):
         if op == OpType.INSERT:
             self._engine.memory.add_message(
-                session_id=self._engine.session_config.session_id, chat_item=payload["value"]
+                session_id=self._engine.session_config.session_id,
+                chat_item=payload["value"],
             )
 
     def persona_context_watcher(
@@ -39,17 +40,16 @@ class ContextManager:
     ):
         if op == OpType.INSERT:
             self._engine.persona.add_message(
-                user_id=self._engine.session_config.user_id, chat_item=payload["value"]
+                user_id=self._engine.session_config.user_id,
+                chat_item=payload["value"],
             )
 
-    def __call__(self, chat_context: ObservableList, op: OpType, payload: dict[str, Any]):
-        # Fix init config when user info update
+    async def __call__(self, chat_context: ObservableList, op: OpType, payload: dict[str, Any]):
+        # Fix init config when user info update.
         if self._engine.session_config.user_id != self._engine.persona.default_uid:
-            self._engine.memory.update_user_tool_id(
-                ori_id=self._engine.session_config.user_id,
-                tgt_id=self._engine.persona.default_uid,
+            await self._engine.resolve_user_identity(
+                user_id=self._engine.persona.default_uid,
             )
-            self._engine.session_config.user_id = self._engine.persona.default_uid
 
         # Notify memory
         self.memory_context_watcher(chat_context=chat_context, op=op, payload=payload)

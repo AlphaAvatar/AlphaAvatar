@@ -1,8 +1,10 @@
 # 📈 **MAIN GOAL**
 
-> **Build a universal assistant** capable of recognizing users through multimodal streaming input.
-> It should possess **self-memory**, **autonomous reflection**, and **iterative self-evolution** for real-time interaction.
-> The assistant will **seamlessly integrate** with mainstream external tools to solve practical problems efficiently.
+> **Build a universal multimodal personal assistant** capable of recognizing users through streaming voice, text, image, and video input.
+
+> It should possess **self-memory**, **persona awareness**, **autonomous reflection**, **planning ability**, and **iterative self-evolution** for real-time interaction.
+
+> The assistant will **seamlessly integrate** with mainstream external tools and personal workspaces to solve practical problems efficiently.
 
 ---
 
@@ -10,28 +12,35 @@
 
 - [PLAN OVERVIEW](#plan-overview)
 - [Core Function](#core-function)
+- [Prompt & Runtime Context](#prompt--runtime-context)
 - [AlphaAvatar Plugins](#alphaavatar-plugins)
-    - [CHARACTER](#character-plugin)
-    - [MEMORY](#memory-plugin)
-    - [PERSONA](#persona-plugin)
+    - [CHARACTER](#character)
+    - [MEMORY](#memory)
+    - [PERSONA](#persona)
+    - [REFLECTION](#reflection)
+    - [PLANNING](#planning)
+    - [BEHAVIOR](#behavior)
 - [Tools Plugins](#tools-plugins)
-    - [Deep Research](#deepresearch)
+    - [DeepResearch](#deepresearch)
     - [RAG](#rag)
     - [MCP](#mcp)
 - [Channels](#channels)
-    - [WhatsAPP](#whatsapp)
+    - [Web Demo](#web-demo)
+    - [WhatsApp](#whatsapp)
 - [NEXT STEPS](#next-steps)
 
 ---
 
 # 🗓️ PLAN OVERVIEW
 
-| Plugin               | Description                                                                                                                     |     Stage     |
-| :------------------- | :------------------------------------------------------------------------------------------------------------------------------ | :-----------: |
-| 💡 **Reflection**    | Generates metacognitive insights from memory and interaction history.                                                           |   🧩 Planned   |
-| ⚙️ **Behavior**      | Controls AlphaAvatar’s behavior logic and process flow.                                                                         |   🧩 Planned   |
-| 🌍 **SANDBOX**       | Interaction and exploration of external virtual environments.                                                                   |   🧩 Planned   |
-| 📅 **PLANNING**      | Based on the memory and reflection results obtained from user/tool ​​interactions, future plans are generated offline or online.  |   🧩 Planned   |
+| Plugin / System        | Description                                                                                                               |     Stage     |
+| :--------------------- | :------------------------------------------------------------------------------------------------------------------------ | :-----------: |
+| 🧠 **Runtime Context** | Dynamically injects memory, time, plan, reflection, behavior rules, and interaction state into each model call.           | ✅ Implemented |
+| 🧬 **User Continuity** | Maintains user identity, runtime state, persona, memory, and workspace continuity across sessions.                        | ✅ Implemented |
+| 💡 **Reflection**      | Generates metacognitive insights from memory, persona, tool usage, failures, and interaction history.                    |   🧩 Planned   |
+| 📅 **Planning**        | Generates short-term tasks, long-term plans, reminders, and follow-up actions from memory, reflection, and tool results. |   🧩 Planned   |
+| ⚙️ **Behavior**        | Controls response style, workflow selection, tool-use policy, and proactive assistance rules.                            |   🧩 Planned   |
+| 🌍 **World Sandbox**   | Enables AlphaAvatar to interact with external virtual environments, code sandboxes, simulated worlds, or apps.           |   🧩 Planned   |
 
 ---
 
@@ -39,24 +48,52 @@
 
 ### ✅ DONE
 
-|  Date    | Task                                                                                                                         |
-| :------- | :--------------------------------------------------------------------------------------------------------------------------- |
-| 2025-10  | Develop a context manager to route real-time updated interaction information to different plugin models (memory, persona) for corresponding plugin updates. |
+| Date    | Task |
+| :------ | :--- |
+| 2025-10 | Developed a context manager to route real-time updated interaction information to plugin models such as memory and persona. |
+| 2026-05 | Added mutable user-scoped working directory support through `UserPath`, enabling plugins to follow identity changes dynamically. |
+| 2026-05 | Added temporary-user to real-user identity resolution flow, including deferred temp directory migration and cleanup at session exit. |
+| 2026-05 | Added runtime-aware session context construction based on room type, session mode, modality availability, user metadata, and time context. |
 
 ### 🧭 TODO
 
-| Priority | Task                                                                                                                         |     Stage     |
-| :------- | :--------------------------------------------------------------------------------------------------------------------------- | :-----------: |
-| 🔸       | Supports setting different model interfaces for different plugins.                                                           | ⏳ In Progress |
-| 🔸       | Supports real-time model reading of **video streams**.                                                                       | ⏳ In Progress |
-| 🔹       | Add error handling and interactive feedback during tool invocation.                                                          |   🧩 Planned   |
-| 🔹       | Develop multi-user management features for plugins.                                                                          |   🧩 Planned   |
-| 🔹       | Content uploaded by a user in the current session is first stored in a temporary directory, and then stored in persistent storage after confirmation. The user's upload status and input are identified separately for use in the model.    | 🧩 Planned     |
-| 🔹       | The return values ​​of the Deep research download function and the Rag indexing function should include a brief description of the doc/url content (using a decorator) stored in memory for later reference.    | 🧩 Planned     |
-| 🔹       | Enrich the logging system, Assign a separate room prefix to each room.                                                       |   🧩 Planned   |
-| 🔹       | Set up an identification mechanism for the same user accessing AlphaAvatar from different platforms.                         |   🧩 Planned   |
-| 🔹       | Version control for each library.                                                                                            |   🧩 Planned   |
-| 🔹       | Refactoring the Avatar System prompt composition method.                                                                     |   🧩 Planned   |
+| Priority | Task | Stage |
+| :------- | :--- | :---: |
+| 🔸 | Support different model interfaces for different plugins, such as memory extraction, persona extraction, reflection, planning, and tool reasoning. | ⏳ In Progress |
+| 🔸 | Support real-time model reading of **video streams**. | ⏳ In Progress |
+| 🔸 | Add multi-user streaming identity management, including speaker diarization, face recognition, and conflict handling. | 🧩 Planned |
+| 🔹 | Solve the cocktail-party problem for multi-speaker scenarios, including speaker separation, speaker tracking, and per-user context routing. | 🧩 Planned |
+| 🔹 | Add user upload lifecycle management: temporary storage during the current session, persistent storage after identity confirmation. | 🧩 Planned |
+| 🔹 | Add unified plugin lifecycle hooks, such as `on_user_path_changed`, `on_session_exit`, `close`, and `health_check`. | 🧩 Planned |
+| 🔹 | Add error handling and interactive feedback during tool invocation. | 🧩 Planned |
+| 🔹 | Enrich the logging system with per-room, per-session, and per-user prefixes. | 🧩 Planned |
+| 🔹 | Add version control and compatibility checks for each plugin package. | 🧩 Planned |
+| 🔹 | Add latency profiling and optimization across voice pipeline, tool invocation, memory retrieval, RAG, and MCP. | 🧩 Planned |
+
+---
+
+# Prompt & Runtime Context
+
+### ✅ DONE
+
+| Date    | Milestone | Notes |
+| :------ | :-------- | :---- |
+| 2026-05 | **System Prompt / Runtime Prompt Split** | Static content such as avatar introduction, interaction method, persona, and global behavior rules is kept in the system prompt for better prefix-cache reuse. |
+| 2026-05 | **Runtime Context Injection** | Dynamic per-turn information such as memory, current time, plan, reflection, and turn-level behavior rules is injected after the user query. |
+| 2026-05 | **Synthetic Tool Runtime Context Mode** | Added a model-compatible way to inject runtime context using synthetic tool-call / tool-output frames. |
+| 2026-05 | **Interaction Method Awareness** | Runtime prompt understands whether the current room supports text, voice, audio output, video input, and video output. |
+| 2026-05 | **Browser Timezone Integration** | Web demo passes browser timezone, locale, and UTC offset through LiveKit participant metadata so AlphaAvatar can build natural login time context. |
+
+### 🧭 TODO
+
+| Priority | Task | Stage |
+| :------- | :--- | :---: |
+| 🔸 | Optimize user prompt construction based on the user’s current input mode: text, voice, camera, screen sharing, uploaded files, or mixed modalities. | ⏳ In Progress |
+| 🔸 | Add response style adaptation based on interaction mode, such as shorter voice responses, richer text responses, and visual grounding when video input exists. | ⏳ In Progress |
+| 🔹 | Add country / location hint support based on browser timezone, locale, and optional IP-based geo hints, while treating them as soft signals. | 🧩 Planned |
+| 🔹 | Add runtime context compression to avoid long dynamic prompts when memory, RAG, reflection, and plans become large. | 🧩 Planned |
+| 🔹 | Add prompt versioning and prompt evaluation for system prompt, runtime prompt, memory extraction prompt, and persona extraction prompt. | 🧩 Planned |
+| 🔹 | Add model-specific prompt adapters for OpenAI, Gemini, Claude, local models, and small edge models. | 🧩 Planned |
 
 ---
 
@@ -66,52 +103,127 @@
 
 ### ✅ DONE
 
-|  Date    | Task                                                                                                                         |
-| :------- | :--------------------------------------------------------------------------------------------------------------------------- |
-| 2025-12  | Integrating AIRI live2d into AlphaAvatar |
+| Date    | Task |
+| :------ | :--- |
+| 2025-12 | Integrated AIRI Live2D into AlphaAvatar. |
 
 ### 🧭 TODO
 
+| Priority | Task | Stage |
+| :------- | :--- | :---: |
+| 🔹 | Improve avatar synchronization between voice output, Live2D motion, facial expression, and conversation state. | 🧩 Planned |
+| 🔹 | Add persona-aware avatar expression control based on emotion, conversation topic, and user relationship. | 🧩 Planned |
+
+---
 
 ## 🧠 MEMORY
 
 ### ✅ DONE
 
-| Date    | Milestone                                     | Notes                                                                                                                                         |
-| :------ | :-------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2025-09 | **Automatic Memory Extraction (v1)**          | Built on **Memory Client**, enabling memory capture & retrieval across:<br>• Assistant–User<br>• Assistant–Tools<br>• Assistant’s self-memory |
-| 2026-01 | **Automatic Assistant–Tools Extraction (v1)** | Add Assistant–Tools memory in user session for DeepResearch/RAG Plugin.                                                                       |
-| 2026-04 | **Automatic Assistant–Tools Extraction (v2)** | Design **differentiated prompts** for:<br>– self-memory<br>– shared Assistant–User memory<br>– shared Assistant–Tools memory.                 |
-| 2026-04 | **Local memory storage and retrieval**        | Supports **local memory storage and retrieval** configuration by LanceDB.                                                                     |
+| Date    | Milestone | Notes |
+| :------ | :-------- | :---- |
+| 2025-09 | **Automatic Memory Extraction v1** | Built on Memory Client, enabling memory capture and retrieval across Assistant–User, Assistant–Tools, and Assistant self-memory. |
+| 2026-01 | **Automatic Assistant–Tools Extraction v1** | Added Assistant–Tools memory in user sessions for DeepResearch and RAG plugins. |
+| 2026-04 | **Automatic Assistant–Tools Extraction v2** | Designed differentiated prompts for self-memory, shared Assistant–User memory, and shared Assistant–Tools memory. |
+| 2026-04 | **Local Memory Storage and Retrieval** | Supports local memory storage and retrieval through LanceDB. |
+| 2026-05 | **Runtime Memory Injection** | Memory is treated as dynamic per-turn context instead of static system prompt content to improve prefix-cache hit rate. |
+| 2026-05 | **Identity-aware Memory Binding** | Memory object IDs can be updated when a temporary user is resolved into a real user. |
 
 ### 🧭 TODO
 
-| Priority | Task                                                                                                                         |     Stage      |
-| :------- | :--------------------------------------------------------------------------------------------------------------------------- | :-----------:  |
-| 🔸       | Allow users to activly **query / recall** specific memories on demand.                                                       | ⏳ In Progress |
-| 🔹       | Add **multi-user memory isolation** when (unique response memory per user), when multiple users are interacting.             |   🧩 Planned   |
-| 🔹       | Add **event-driven memory updates** for adaptive reflection.                                                                 |   🧩 Planned   |
-| 🔹       | Add **omni** memory updates.                                                                                                 |   🧩 Planned   |
-| 🔹       | Add **Graph** memory search.                                                                                                 |   🧩 Planned   |
+| Priority | Task | Stage |
+| :------- | :--- | :---: |
+| 🔸 | Allow users to actively query, recall, correct, or delete specific memories on demand. | ⏳ In Progress |
+| 🔹 | Add multi-user memory isolation when multiple users are interacting in the same session. | 🧩 Planned |
+| 🔹 | Add event-driven memory updates for reflection, planning, and behavior adaptation. | 🧩 Planned |
+| 🔹 | Add omni-memory updates from text, voice, images, video, tools, files, and external workspaces. | 🧩 Planned |
+| 🔹 | Add graph-based memory search for relationships, entities, events, and long-term user goals. | 🧩 Planned |
+| 🔹 | Add memory confidence, source attribution, and conflict resolution. | 🧩 Planned |
+
+---
 
 ## 🧬 PERSONA
 
 ### ✅ DONE
 
-| Date    | Milestone                                  | Notes                                                                          |
-| :------ | :----------------------------------------- | :----------------------------------------------------------------------------- |
-| 2025-10 | **Automatic User Profile Extraction (v1)** | Generates personalized, context-aware responses based on conversation history. |
-| 2025-11 | **Speaker Verification**                   | Add speech-based profiling (speaker vector extraction & identification).       |
+| Date    | Milestone | Notes |
+| :------ | :-------- | :---- |
+| 2025-10 | **Automatic User Profile Extraction v1** | Generates personalized, context-aware responses based on conversation history. |
+| 2025-11 | **Speaker Verification** | Added speech-based profiling through speaker vector extraction and identification. |
+| 2026-05 | **Runtime State Tracking** | Added deterministic user runtime state, including current timezone, login time, session ID, room type, last timezone, last login time, and login count. |
+| 2026-05 | **Runtime State Markdown Storage** | Runtime state is stored locally as markdown instead of being mixed into LLM-extracted profile vectors. |
+| 2026-05 | **Temporary Persona Replacement** | Runtime-only temporary persona can be replaced by the resolved real user profile while preserving current session runtime state. |
+| 2026-05 | **Identity-aware UserPath Binding** | Persona local storage follows user identity changes through mutable `UserPath`. |
 
 ### 🧭 TODO
 
-| Priority | Task                                                                         |     Stage     |
-| :------- | :--------------------------------------------------------------------------- | :-----------: |
-| 🔸       | Add **face-based profiling** (facial embedding recognition).                 | ⏳ In Progress |
-| 🔸       | Supports **Persona visualization** interface.                                | ⏳ In Progress |
-| 🔹       | Add **multi-user profile management** for concurrent interactions.           |   🧩 Planned   |
-| 🔹       | Enable **real-time profile retrieval** during active conversation.           |   🧩 Planned   |
-| 🔹       | Integrate **event triggers** for profile updates & reflection cycles.        |   🧩 Planned   |
+| Priority | Task | Stage |
+| :------- | :--- | :---: |
+| 🔸 | Add face-based profiling using facial embedding recognition. | ⏳ In Progress |
+| 🔸 | Support persona visualization interface for profile inspection and correction. | ⏳ In Progress |
+| 🔸 | Add multi-user profile management for concurrent interactions. | 🧩 Planned |
+| 🔹 | Add real-time profile retrieval and profile switching during active conversation. | 🧩 Planned |
+| 🔹 | Add cross-platform identity linking for the same user across web, desktop, WhatsApp, and future channels. | 🧩 Planned |
+| 🔹 | Add user-confirmed identity merge and identity conflict resolution. | 🧩 Planned |
+| 🔹 | Add persona privacy controls, allowing users to inspect, edit, export, or delete profile fields. | 🧩 Planned |
+| 🔹 | Add event triggers for profile updates, reflection cycles, and planning refresh. | 🧩 Planned |
+
+---
+
+## 💡 REFLECTION
+
+### ✅ DONE
+
+| Date | Milestone | Notes |
+| :--- | :-------- | :---- |
+| - | - | - |
+
+### 🧭 TODO
+
+| Priority | Task | Stage |
+| :------- | :--- | :---: |
+| 🔸 | Build Reflection Plugin Alpha for summarizing recent memories, tool results, failures, repeated user needs, and behavioral improvements. | 🧩 Planned |
+| 🔹 | Add offline reflection cycles after session exit. | 🧩 Planned |
+| 🔹 | Add online lightweight reflection during long sessions. | 🧩 Planned |
+| 🔹 | Feed reflection results into memory, behavior, and planning plugins. | 🧩 Planned |
+
+---
+
+## 📅 PLANNING
+
+### ✅ DONE
+
+| Date | Milestone | Notes |
+| :--- | :-------- | :---- |
+| - | - | - |
+
+### 🧭 TODO
+
+| Priority | Task | Stage |
+| :------- | :--- | :---: |
+| 🔸 | Build Planning Plugin Alpha based on memory, persona, reflection, reminders, and external tool results. | 🧩 Planned |
+| 🔹 | Add short-term task tracking for ongoing user requests. | 🧩 Planned |
+| 🔹 | Add long-term goal tracking based on user memory and profile. | 🧩 Planned |
+| 🔹 | Integrate planning outputs with Notion, Calendar, Todoist, or other task systems. | 🧩 Planned |
+
+---
+
+## ⚙️ BEHAVIOR
+
+### ✅ DONE
+
+| Date | Milestone | Notes |
+| :--- | :-------- | :---- |
+| - | - | - |
+
+### 🧭 TODO
+
+| Priority | Task | Stage |
+| :------- | :--- | :---: |
+| 🔸 | Build Behavior Plugin Alpha for response style, workflow selection, tool-use policy, and proactive assistance rules. | 🧩 Planned |
+| 🔹 | Add global behavior rules and turn-level behavior rules. | 🧩 Planned |
+| 🔹 | Add user-configurable behavior preferences. | 🧩 Planned |
+| 🔹 | Add safe fallback behavior when tools fail or runtime context is incomplete. | 🧩 Planned |
 
 ---
 
@@ -121,88 +233,124 @@
 
 ### ✅ DONE
 
-| Date    | Milestone                                  | Notes                                                                          |
-| :------ | :----------------------------------------- | :----------------------------------------------------------------------------- |
-| 2025-12 | **Integrating the Tavily API into the DeepResearch plugin(v1)** | Supports fast online retrieval or deep search, scraping and page to pdf. |
+| Date    | Milestone | Notes |
+| :------ | :-------- | :---- |
+| 2025-12 | **Tavily API Integration v1** | Supports fast online retrieval, deep search, scraping, and webpage-to-PDF conversion. |
 
 ### 🧭 TODO
 
-| Priority | Task                                                                                                                                         |     Stage      |
-| :------- | :------------------------------------------------------------------------------------------------------------------------------------------- | :-----------:  |
-| 🔹       | Add intermediate states during deep-research invocation to reduce the user's perceived waiting time.                                         |   🧩 Planned   |
-| 🔹       | Allows you to retrieve all accessible webpage links under a specified webpage and store them in a specific folder for use by the RAG plugin. |   🧩 Planned   |
-| 🔹       | Add intermediate states during tool invocation to reduce the user's perceived waiting time.                                                  |   🧩 Planned   |
+| Priority | Task | Stage |
+| :------- | :--- | :---: |
+| 🔹 | Add intermediate states during DeepResearch invocation to reduce perceived waiting time. | 🧩 Planned |
+| 🔹 | Retrieve all accessible webpage links under a specified webpage and store them in a specific folder for RAG indexing. | 🧩 Planned |
+| 🔹 | Add automatic summary metadata for downloaded pages, PDFs, and search results so memory and RAG can reference them later. | 🧩 Planned |
+| 🔹 | Make DeepResearch outputs identity-aware through `UserPath`, so downloaded artifacts are stored in the correct user workspace. | 🧩 Planned |
+
+---
 
 ## 📖 RAG
 
 ### ✅ DONE
 
-| Date    | Milestone                                            | Notes                                                                          |
-| :------ | :--------------------------------------------------- | :----------------------------------------------------------------------------- |
-| 2026-01 | **Integrating the RAG Anything into the RAG plugin** | Supports query and indexing based on pages from DeepResearch plugin.           |
+| Date    | Milestone | Notes |
+| :------ | :-------- | :---- |
+| 2026-01 | **RAG Anything Integration** | Supports query and indexing based on documents and pages from DeepResearch plugin. |
+| 2026-05 | **UserPath-aware RAG Workspace** | RAG local workspace dynamically follows user identity changes through mutable `UserPath`. |
+| 2026-05 | **RAG Initialization Waiting** | Added `_ensure_loaded()` so query and indexing wait for RAGAnything initialization. |
+| 2026-05 | **Temporary + Current RAG Query Support** | Keeps previous temporary RAG instances as fallback after user identity resolution, while new indexing writes to the resolved user workspace. |
+| 2026-05 | **LLM-friendly RAG Query Output** | RAG query returns structured markdown sections instead of raw JSON for easier LLM consumption. |
 
 ### 🧭 TODO
 
-| Priority | Task                                                                                                                         |     Stage      |
-| :------- | :--------------------------------------------------------------------------------------------------------------------------- | :-----------:  |
-| 🔹       | Allow folder index building.                                                                                                 |   🧩 Planned   |
-| 🔹       | Allows queries to be performed against **different data sources**.                                                           |   🧩 Planned   |
-| 🔹       | Allows the construction of metadata (structured information such as directories) for different data sources, improving retrieval efficiency.  |   🧩 Planned   |
-| 🔹       | Build offline indexing and passive retrieval capabilities to automatically retrieve relevant content from the Assistant's internal knowledge base (such as the Reflection module). |   🧩 Planned   |
-| 🔹       | Add intermediate states during tool invocation to reduce the user's perceived waiting time.                                  |   🧩 Planned   |
-| 🔹       | Add intermediate states during tool invocation to reduce the user's perceived waiting time.                                  |   🧩 Planned   |
-| 🔹       | Allows AlphaAvatar to indexing and retrieve pre-written Skills, thus enabling more efficient execution of commands.          |   🧩 Planned   |
+| Priority | Task | Stage |
+| :------- | :--- | :---: |
+| 🔸 | Add robust temp-to-real RAG migration policy after identity resolution. | ⏳ In Progress |
+| 🔹 | Allow folder indexing and workspace-scoped retrieval across different data sources. | 🧩 Planned |
+| 🔹 | Add structured metadata for different data sources, including directories, source type, creation time, and user ownership. | 🧩 Planned |
+| 🔹 | Add RAG result reranking and answer synthesis across current user RAG, temporary session RAG, and global knowledge. | 🧩 Planned |
+| 🔹 | Allow AlphaAvatar to index and retrieve pre-written Skills for more efficient command execution. | 🧩 Planned |
+
+---
 
 ## 🧰 MCP
 
-| Date    | Milestone                                            | Notes                                                                          |
-| :------ | :--------------------------------------------------- | :----------------------------------------------------------------------------- |
-| 2026-02 | Integrate MCP Host as an MCP plugin for AlphaAvatar  | Supports MCP registration, tool search, and parallel invocation.               |
+### ✅ DONE
+
+| Date    | Milestone | Notes |
+| :------ | :-------- | :---- |
+| 2026-02 | **MCP Host Integration** | Integrated MCP Host as an MCP plugin for AlphaAvatar, supporting MCP registration, tool search, and parallel invocation. |
+| 2026-05 | **Runner-level MCP Initialization** | Initializes MCP servers and tool registry once per LiveKit worker instead of once per session. |
+| 2026-05 | **LanceDB-backed MCP Tool Retrieval** | Stores MCP tool metadata in LanceDB and supports top-k semantic tool search from agent queries. |
+| 2026-05 | **MCP Tool Runtime Robustness** | Adds stable tool IDs, agent-friendly tool usage hints, argument validation, hybrid reranking, and server reconnect. |
 
 ### 🧭 TODO
 
-| Priority | Task                                                                                                                         |     Stage      |
-| :------- | :--------------------------------------------------------------------------------------------------------------------------- | :-----------:  |
-| 🔸       | Integrate **Notion MCP**                                                                                                     | ⏳ In Progress |
-| 🔹       | Implement the function search_tools() for MCP Host.                                                                          |   🧩 Planned   |
+| Priority | Task | Stage |
+| :------- | :--- | :---: |
+| 🔸 | Integrate Notion MCP. | ⏳ In Progress |
+| 🔹 | Support global MCP + user-level MCP routing for OAuth-based tools such as Gmail, Calendar, Todoist, and Notion. | 🧩 Planned |
+| 🔹 | Make `search_tools()` support dynamic `top_k`, server filters, and tool category filters. | 🧩 Planned |
+| 🔹 | Add compact/raw output modes for `call_tools()` to control long tool results. | 🧩 Planned |
+| 🔹 | Add `refresh_tools` operation to reload MCP tools without restarting the worker. | 🧩 Planned |
+| 🔹 | Redact sensitive fields from MCP logs, including tokens, API keys, passwords, and authorization headers. | 🧩 Planned |
+| 🔹 | Add MCP permission model for user-scoped tools and external account authorization. | 🧩 Planned |
 
 ---
 
 # Channels
 
-## WhatsAPP
+## 🌐 Web Demo
 
 ### ✅ DONE
 
-| Date    | Milestone                                      | Notes                                                                                            |
-| :------ | :--------------------------------------------- | :----------------------------------------------------------------------------------------------- |
-| 2026-02 | **WhatsApp channel integration (v1)**          | Built the initial WhatsApp channel based on the **Baileys driver + Python bridge** architecture. |
-| 2026-02 | **QR login & persistent session support**      | Supports WhatsApp authentication through QR code login with persistent local session storage.    |
-| 2026-04 | **Whitelist support**                          | Supports using a whitelist on WhatsApp to restrict users from accessing AlphaAvatar (groups are blocked by default). ｜
-
+| Date    | Milestone | Notes |
+| :------ | :-------- | :---- |
+| 2026-04 | **LiveKit Web Demo v1** | Built realtime browser demo with voice, text chat, camera preview, agent audio/video stage, and session controls. |
+| 2026-05 | **Browser Timezone Metadata** | Sends browser timezone, locale, and UTC offset to AlphaAvatar through participant metadata. |
+| 2026-05 | **Room / Session Modality Awareness** | Web session metadata helps AlphaAvatar infer available text, voice, and video interaction modes. |
 
 ### 🧭 TODO
 
-| Priority | Task                                                                 |     Stage     |
-| :------- | :------------------------------------------------------------------- | :-----------: |
-| 🔸       | **LiveKit streaming integration**                                    | ⏳ In Progress |
-| 🔸       | **Voice / Image / Media support**                                    | ⏳ In Progress |
-| 🔹       | **Meta Cloud API driver**                                            |   🧩 Planned   |
-| 🔹       | **Twilio driver**                                                    |   🧩 Planned   |
-| 🔹       | **Multi-driver runtime selection**                                   |   🧩 Planned   |
-| 🔹       | **Supports group chat functionality**                                |   🧩 Planned   |
+| Priority | Task | Stage |
+| :------- | :--- | :---: |
+| 🔸 | Add user-facing persona and memory inspection panels. | ⏳ In Progress |
+| 🔹 | Add upload UI for documents, folders, images, and URLs. | 🧩 Planned |
+| 🔹 | Add screen sharing and visual grounding support. | 🧩 Planned |
+| 🔹 | Add demo session debugging panel for room metadata, participant metadata, agent status, and tool status. | 🧩 Planned |
+| 🔹 | Add user login and persistent identity binding. | 🧩 Planned |
+
+---
+
+## WhatsApp
+
+### ✅ DONE
+
+| Date    | Milestone | Notes |
+| :------ | :-------- | :---- |
+| 2026-02 | **WhatsApp Channel Integration v1** | Built the initial WhatsApp channel based on the Baileys driver + Python bridge architecture. |
+| 2026-02 | **QR Login & Persistent Session Support** | Supports WhatsApp authentication through QR code login with persistent local session storage. |
+| 2026-04 | **Whitelist Support** | Supports using a whitelist on WhatsApp to restrict users from accessing AlphaAvatar. Groups are blocked by default. |
+
+### 🧭 TODO
+
+| Priority | Task | Stage |
+| :------- | :--- | :---: |
+| 🔸 | LiveKit streaming integration. | ⏳ In Progress |
+| 🔸 | Voice / image / media support. | ⏳ In Progress |
+| 🔹 | Meta Cloud API driver. | 🧩 Planned |
+| 🔹 | Twilio driver. | 🧩 Planned |
+| 🔹 | Multi-driver runtime selection. | 🧩 Planned |
+| 🔹 | Group chat support with multi-user identity routing. | 🧩 Planned |
+| 🔹 | Cross-channel identity binding between WhatsApp users and web/demo users. | 🧩 Planned |
 
 ---
 
 # NEXT STEPS
 
-| Quarter | Focus                            | Expected Outcome |
-| :------ | :------------------------------- | :--------------- |
-| Q2-2026 | Notion MCP integration           | Enable AlphaAvatar to read, write, and organize user knowledge, notes, and planning pages in Notion as an external long-term workspace. |
-| Q2-2026 | Reminder system foundation       | Add task and schedule management through Todoist / Calendar integrations, enabling reminders, follow-ups, and recurring plans. |
-| Q2-2026 | Reflection Plugin Alpha          | Enable autonomous self-analysis and long-term adaptation based on memory and user interaction history. |
-| Q2-2026 | Cross-channel user continuity    | Establish identity continuity for the same user across web, desktop, and messaging platforms such as WhatsApp. |
-| Q3-2026 | Proactive assistant workflows    | Allow AlphaAvatar to generate reminders, follow-up tasks, and planning suggestions proactively based on memory, persona, and tool results. |
-| Q3-2026 | Persona + Memory externalization | Sync high-value profile, memory summaries, and structured plans into user-facing workspaces such as Notion for readability and control. |
-| Q3-2026 | World Sandbox Link               | Allow AlphaAvatar to connect to external sandbox worlds such as code environments, simulated spaces, and interactive applications. |
-| Q3-2026 | MCP ecosystem expansion          | Extend AlphaAvatar with more real-world productivity tools, turning it into a persistent multimodal personal butler across channels. |
+| Quarter | Focus | Expected Outcome |
+| :------ | :---- | :--------------- |
+| Q2-2026 | Notion MCP Integration | Use Notion as an external long-term workspace for notes, memory summaries, plans, and user knowledge. |
+| Q2-2026 | Reminder & Calendar Foundation | Enable reminders, follow-ups, recurring plans, and schedule-aware assistance through Calendar / Todoist integrations. |
+| Q2-2026 | Reflection Plugin Alpha | Build autonomous self-analysis from memory, persona, tool results, and repeated user interaction patterns. |
+| Q3-2026 | Proactive Assistant Loop | Combine memory, persona, reflection, planning, reminders, RAG, and MCP into proactive personal assistant workflows. |
+| Q3-2026 | RAG Workspace Evolution | Add data-source scoped retrieval, metadata-aware indexing, temp-to-real RAG migration policy, and skill retrieval. |

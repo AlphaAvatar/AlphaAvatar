@@ -24,6 +24,7 @@ from livekit.agents.job import get_job_context
 
 from alphaavatar.agents.avatar import PersonaPluginsTemplate
 from alphaavatar.agents.persona import PersonaCache, ProfilerBase, UserProfile, VectorRunnerOP
+from alphaavatar.agents.utils.files.work_dirs import UserPath
 
 from .log import logger
 from .profiler_details import UserProfileDetails
@@ -80,11 +81,16 @@ PROFILER_INFERENCE_METHOD = None
 
 class ProfilerLangChain(ProfilerBase):
     def __init__(
-        self, *, chat_model: str = "gpt-4o-mini", temperature: float = 0.0, **kwargs
+        self,
+        *,
+        user_path: UserPath,
+        openai_model: str = "gpt-4o-mini",
+        temperature: float = 0.0,
+        **kwargs,
     ) -> None:
-        super().__init__()
+        super().__init__(user_path=user_path)
 
-        llm = ChatOpenAI(model=chat_model, temperature=temperature)  # type: ignore
+        llm = ChatOpenAI(model=openai_model, temperature=temperature)  # type: ignore
         self._delta_llm = llm.with_structured_output(ProfileDelta)
         self._chain = DELTA_PROMPT | self._delta_llm
 
@@ -177,50 +183,70 @@ class ProfilerLangChain(ProfilerBase):
         # Face Profile
         # TODO: add face profile loading logic
 
-        return UserProfile(details=profile_details, speaker_vector=speaker_vector)
+        # User Runtime State (from local markdown)
+        runtime_state = await self.load_runtime_state()
 
-    async def update(self, *, uid: str, perona: PersonaCache):
+        return UserProfile(
+            details=profile_details,
+            runtime_state=runtime_state,
+            speaker_vector=speaker_vector,
+        )
+
+    async def update(self, *, uid: str, persona: PersonaCache):
         """Async delta extraction -> in-memory patch."""
-        if perona.profile_details:
-            data = perona.profile_details.model_dump()
+        if persona.profile_details:
+            data = persona.profile_details.model_dump()
         else:
             data = {}
 
-        update_time: str = perona.time
-        chat_context = perona.messages
+        update_time: str = persona.time
+        chat_context = persona.messages
         if not chat_context:
             logger.info(f"[uid: {uid}] User Profile message is empty, UPDATE skip!")
+            return
 
         new_turn = PersonaPluginsTemplate.apply_update_template(chat_context)
-        delta = await self._aextract_delta(perona.profile_details_dump_value, new_turn)
+        delta = await self._aextract_delta(persona.profile_details_dump_value, new_turn)
         is_updated, updated_profile_details = self._apply_delta(update_time, data, delta)
 
         if is_updated:
             logger.info(f"[uid: {uid}] User Profile UPDATE success: {updated_profile_details}")
-            perona.profile_details = UserProfileDetails(**updated_profile_details)
+            persona.profile_details = UserProfileDetails(**updated_profile_details)
         else:
             logger.info(f"[uid: {uid}] User Profile output is empty, UPDATE skip!")
 
-    async def save(self, *, uid: str, perona: PersonaCache, timeout: float | None = 15) -> None:
+    async def save(self, *, uid: str, persona: PersonaCache, timeout: float | None = 15) -> None:
         """Save the text, voice, and face profile information of the specified user_id."""
         # Text Profile
-        if perona.profile_details is not None:
-            data = perona.profile_details.model_dump()
+        if persona.profile_details is not None:
+            data = persona.profile_details.model_dump()
             details_items = flatten_items(uid, data)
         else:
             details_items = None
 
         # Voice Profile
-        if perona.speaker_vector is not None:
-            speaker_vector = perona.speaker_vector.tolist()
+        if persona.speaker_vector is not None:
+            speaker_vector = persona.speaker_vector.tolist()
         else:
             speaker_vector = None
 
         # Face Profile
         # TODO: add face profile saving logic
 
+        # Runtime State Markdown
+        if persona.profile is not None and persona.profile.runtime_state is not None:
+            try:
+                md_path = await self.save_runtime_state(
+                    runtime_state=persona.profile.runtime_state,
+                )
+                logger.info(f"User runtime state markdown save success: {md_path}")
+            except Exception as e:
+                logger.warning(f"User runtime state markdown save failed: {e}")
+
+        # Skip saving if both details_items and speaker_vector are empty,
+        # to avoid unnecessary VDB writes when only the runtime state markdown is updated.
         if (details_items is None or len(details_items) == 0) and speaker_vector is None:
-            logger.info("User Profile SAVE skip!")
+            logger.info("User Profile VDB SAVE skip; runtime state markdown may already be saved.")
             return
 
         json_data = {

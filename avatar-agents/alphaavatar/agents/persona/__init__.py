@@ -15,7 +15,13 @@ from .base import PersonaBase
 from .cache import PersonaCache, SpeakerCacheBase
 from .profiler import ProfilerBase
 from .schema.runner_op import VectorRunnerOP
-from .schema.user_profile import DetailsBase, ProfileItemSource, ProfileItemView, UserProfile
+from .schema.user_profile import (
+    DetailsBase,
+    ProfileItemSource,
+    ProfileItemView,
+    UserProfile,
+    UserRuntimeState,
+)
 from .speaker import SpeakerStreamBase, speaker_node
 
 __all__ = [
@@ -27,6 +33,7 @@ __all__ = [
     "ProfileItemView",
     "DetailsBase",
     "UserProfile",
+    "UserRuntimeState",
     "ProfilerBase",
     "SpeakerStreamBase",
     "speaker_node",

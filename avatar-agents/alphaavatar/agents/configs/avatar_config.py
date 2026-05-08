@@ -13,6 +13,8 @@
 # limitations under the License.
 from pydantic import BaseModel, Field
 
+from alphaavatar.agents.configs.runtime_config import RuntimeConfig
+
 from .avatar_info_config import AvatarInfoConfig
 from .plugins.character_plugin_config import VirtualCharacterConfig
 from .plugins.memory_plugin_config import MemoryConfig
@@ -25,6 +27,9 @@ class AvatarConfig(BaseModel):
     """Dataclass which contains all avatar-related configuration. This
     simplifies passing around the distinct configurations in the codebase.
     """
+
+    runtime_config: RuntimeConfig = Field(default_factory=RuntimeConfig)
+    """Runtime configuration, which will creat for each session."""
 
     voice_plugin_config: VoicePluginConfig = Field(default_factory=VoicePluginConfig)
     """Voice Plugins configuration."""

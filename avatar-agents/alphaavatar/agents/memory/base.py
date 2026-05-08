@@ -18,6 +18,7 @@ from abc import abstractmethod
 from livekit.agents.llm import ChatItem
 
 from alphaavatar.agents.utils import time_str_to_datetime
+from alphaavatar.agents.utils.files.work_dirs import UserPath
 
 from .cache import MemoryCache
 from .schema.memory_item import MemoryItem
@@ -45,24 +46,25 @@ class MemoryBase:
     def __init__(
         self,
         *,
-        working_dir: pathlib.Path,
+        user_path: UserPath,
         memory_search_context: int = 3,
         memory_recall_num: int = 10,
         maximum_memory_num: int = 24,
     ) -> None:
         super().__init__()
 
-        # memory work dir init
-        work_dir = os.getenv("AVATAR_WORK_DIR", "")
-        if not work_dir:
+        # memory avatar dir init
+        avatar_work_dir = os.getenv("AVATAR_WORK_DIR", "")
+        if not avatar_work_dir:
             raise ValueError(
                 "AVATAR_WORK_DIR is not set. Please initialize AvatarInfoConfig first."
             )
 
-        self._avatar_memory_path = pathlib.Path(work_dir) / "data" / MEMORY_INSTANCE
+        self._avatar_memory_path = pathlib.Path(avatar_work_dir) / "data" / MEMORY_INSTANCE
         self._avatar_memory_path.mkdir(parents=True, exist_ok=True)
-        self._session_memory_path = working_dir / MEMORY_INSTANCE
-        self._session_memory_path.mkdir(parents=True, exist_ok=True)
+
+        # memory user dir init
+        self._user_path = user_path
 
         # memory config init
         self._memory_search_context = memory_search_context
@@ -73,6 +75,12 @@ class MemoryBase:
         self._avatar_memory: list[MemoryItem] = []
         self._user_memory: list[MemoryItem] = []
         self._tool_memory: list[MemoryItem] = []
+
+    @property
+    def working_dir(self) -> pathlib.Path:
+        path = self._user_path.data_dir / MEMORY_INSTANCE
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     @property
     def memory_search_context(self) -> int:

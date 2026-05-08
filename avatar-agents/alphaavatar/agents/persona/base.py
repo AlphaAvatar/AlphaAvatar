@@ -23,7 +23,7 @@ from alphaavatar.agents.utils import AvatarTime, NumpyOP, get_user_id
 
 from .cache import PersonaCache, SpeakerCacheBase
 from .profiler import ProfilerBase
-from .schema.user_profile import UserProfile
+from .schema.user_profile import UserProfile, UserRuntimeState
 from .speaker import SpeakerStreamBase
 
 
@@ -69,19 +69,108 @@ class PersonaBase:
         user_profiles = [
             cache.profile for uid, cache in self.persona_cache.items() if cache.profile is not None
         ]
-        return PersonaPluginsTemplate.apply_profile_template(user_profiles)
+        return PersonaPluginsTemplate.apply_system_template(user_profiles)
+
+    """Helper Op"""
+
+    def _is_runtime_only_profile(self, profile: UserProfile | None) -> bool:
+        """
+        A temporary profile created only for session runtime state.
+
+        This commonly happens at session start before speaker/face identity is resolved.
+        """
+        if profile is None:
+            return True
+
+        return (
+            profile.details is None
+            and profile.speaker_vector is None
+            and profile.runtime_state is not None
+        )
+
+    def _get_runtime_state(self, uid: str) -> UserRuntimeState | None:
+        cache = self.persona_cache.get(uid)
+        if cache is None or cache.profile is None:
+            return None
+        return cache.profile.runtime_state
+
+    def _attach_runtime_state(
+        self,
+        *,
+        profile: UserProfile,
+        runtime_state: UserRuntimeState | None,
+    ) -> UserProfile:
+        if runtime_state is not None:
+            profile.runtime_state = runtime_state
+        return profile
 
     """Base Op"""
 
     def add_message(self, *, user_id: str, chat_item: ChatItem):
         if user_id not in self.persona_cache:
             logger.error(
-                f"User ID {user_id} not found in perona cache."
+                f"User ID {user_id} not found in persona cache."
                 "You need to call 'init_cache' or 'load_profile' first."
             )
             return
 
         self.persona_cache[user_id].add_message(chat_item)
+
+    def update_runtime_state(
+        self,
+        *,
+        uid: str | None = None,
+        current_timezone: str | None = None,
+        timezone_source: str | None = None,
+        current_login_time: str | None = None,
+        session_id: str | None = None,
+        room_type: str | None = None,
+    ) -> None:
+        target_uid = uid or self._default_user_id
+
+        if target_uid not in self.persona_cache:
+            logger.warning(
+                f"User ID {target_uid} not found in persona cache. Runtime state update skipped."
+            )
+            return
+
+        cache = self.persona_cache[target_uid]
+
+        if cache.profile is None:
+            cache.profile = UserProfile(runtime_state=UserRuntimeState())
+
+        if cache.runtime_state is None:
+            cache.runtime_state = UserRuntimeState()
+
+        state = cache.runtime_state
+
+        if state is None:
+            logger.warning(
+                f"User ID {target_uid} runtime_state init failed. Runtime state update skipped."
+            )
+            return
+
+        if state.current_timezone:
+            state.last_timezone = state.current_timezone
+        if state.current_login_time:
+            state.last_login_time = state.current_login_time
+        if state.current_session_id:
+            state.last_session_id = state.current_session_id
+        if state.current_room_type:
+            state.last_room_type = state.current_room_type
+
+        state.current_timezone = current_timezone or ""
+        state.timezone_source = timezone_source or ""
+        state.current_login_time = current_login_time or ""
+        state.current_session_id = session_id or ""
+        state.current_room_type = room_type or ""
+
+        state.login_count = int(state.login_count or 0) + 1
+
+        logger.info(
+            f"[uid: {target_uid}] Persona runtime state updated: "
+            f"timezone={current_timezone}, session_id={session_id}, room_type={room_type}"
+        )
 
     async def init_cache(self, *, timestamp: AvatarTime, init_user_id: str):
         if init_user_id not in self.persona_cache:
@@ -95,37 +184,54 @@ class PersonaBase:
             )
         else:
             logger.error(
-                f"User with id '{init_user_id}' already exists in perona cache. "
+                f"User with id '{init_user_id}' already exists in persona cache. "
                 "Please use a unique user_id."
             )
 
     async def load_profile(self, *, uid: str):
         user_profile = await self.profiler.load(uid=uid)
-        if self.persona_cache[self._default_user_id].profile is None:
+
+        default_cache = self.persona_cache[self._default_user_id]
+        default_runtime_state = (
+            default_cache.profile.runtime_state if default_cache.profile is not None else None
+        )
+
+        should_replace_default = self._is_runtime_only_profile(default_cache.profile)
+
+        if should_replace_default:
+            # Transfer current session runtime state from temporary user to the resolved real user.
+            user_profile = self._attach_runtime_state(
+                profile=user_profile,
+                runtime_state=default_runtime_state,
+            )
+
             del self.persona_cache[self._default_user_id]
+
             self.persona_cache[uid] = PersonaCache(
                 timestamp=self._init_timestamp,
                 user_profile=user_profile,
                 speaker_cache=self.speaker_cache(),
             )
             self._default_user_id = uid
+
             logger.info(
-                f"User Profile with id '{uid}' loaded and "
-                "replaced the initial temporary user in perona cache."
+                f"User Profile with id '{uid}' loaded and replaced the initial "
+                "runtime-only temporary user in persona cache."
             )
+            return
+
+        if uid not in self.persona_cache:
+            self.persona_cache[uid] = PersonaCache(
+                timestamp=self._init_timestamp,
+                user_profile=user_profile,
+                speaker_cache=self.speaker_cache(),
+            )
+            logger.info(f"User Profile with id '{uid}' loaded into persona cache.")
         else:
-            if uid not in self.persona_cache:
-                self.persona_cache[uid] = PersonaCache(
-                    timestamp=self._init_timestamp,
-                    user_profile=user_profile,
-                    speaker_cache=self.speaker_cache(),
-                )
-                logger.info(f"User Profile with id '{uid}' loaded into perona cache.")
-            else:
-                logger.warning(
-                    f"User with id '{uid}' already exists in perona cache. "
-                    "Please use a unique user_id."
-                )
+            logger.warning(
+                f"User with id '{uid}' already exists in persona cache. "
+                "Please use a unique user_id."
+            )
 
     async def save(self, *, uid: str | None = None):
         if uid is not None and uid not in self.persona_cache:
@@ -134,13 +240,13 @@ class PersonaBase:
             )
 
         if uid is None:
-            perona_tuple = [(uid, cache) for uid, cache in self.persona_cache.items()]
+            persona_tuple = [(uid, cache) for uid, cache in self.persona_cache.items()]
         else:
-            perona_tuple = [(uid, self.persona_cache[uid])]
+            persona_tuple = [(uid, self.persona_cache[uid])]
 
         # save profiler
-        for _uid, perona in perona_tuple:
-            await self.profiler.save(uid=_uid, perona=perona)
+        for _uid, persona in persona_tuple:
+            await self.profiler.save(uid=_uid, persona=persona)
 
     """Profiler Op"""
 
@@ -151,12 +257,12 @@ class PersonaBase:
             )
 
         if uid is None:
-            perona_tuple = [(uid, cache) for uid, cache in self.persona_cache.items()]
+            persona_tuple = [(uid, cache) for uid, cache in self.persona_cache.items()]
         else:
-            perona_tuple = [(uid, self.persona_cache[uid])]
+            persona_tuple = [(uid, self.persona_cache[uid])]
 
-        for _uid, perona in perona_tuple:
-            await self.profiler.update(uid=_uid, perona=perona)
+        for _uid, persona in persona_tuple:
+            await self.profiler.update(uid=_uid, persona=persona)
 
     """Speaker Op"""
 
