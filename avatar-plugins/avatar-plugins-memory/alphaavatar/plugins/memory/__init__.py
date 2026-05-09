@@ -13,8 +13,6 @@
 # limitations under the License.
 import os
 
-from livekit.agents.inference_runner import _InferenceRunner
-
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.utils.files.work_dirs import UserPath
 
@@ -52,25 +50,43 @@ class MemoryLangchainPlugin(AvatarPlugin):
                 memory_init_config=memory_init_config,
             )
         except Exception as e:
-            raise ImportError(f"Failed to initialize MemoryLangchain plugin: {e}")
+            raise ImportError(f"Failed to initialize MemoryLangchain plugin: {e}") from e
 
 
-# plugin init
-AvatarPlugin.register_avatar_plugin(AvatarModule.MEMORY, "default", MemoryLangchainPlugin())
+def bootstrap_inference_runners() -> None:
+    """
+    Plugin-owned runner bootstrap.
 
-# runner init
-memory_vdb_type = os.getenv("MEMORY_VDB_TYPE", None)
-match memory_vdb_type:
-    case "qdrant":
-        from . import memory_langchain
+    Called by AlphaAvatar core after AvatarConfig is parsed.
+    """
+    memory_vdb_type = os.getenv("MEMORY_VDB_TYPE", "lancedb")
+
+    if memory_vdb_type == "qdrant":
         from .runner import QdrantRunner
 
-        memory_langchain.MEMORY_INFERENCE_METHOD = QdrantRunner.INFERENCE_METHOD
-        _InferenceRunner.register_runner(QdrantRunner)
+        os.environ["MEMORY_INFERENCE_METHOD"] = QdrantRunner.INFERENCE_METHOD
+        AvatarPlugin.register_inference_runner_once(QdrantRunner)
+        return
 
-    case "lancedb":
-        from . import memory_langchain
+    if memory_vdb_type == "lancedb":
         from .runner import LanceDBRunner
 
-        memory_langchain.MEMORY_INFERENCE_METHOD = LanceDBRunner.INFERENCE_METHOD
-        _InferenceRunner.register_runner(LanceDBRunner)
+        os.environ["MEMORY_INFERENCE_METHOD"] = LanceDBRunner.INFERENCE_METHOD
+        AvatarPlugin.register_inference_runner_once(LanceDBRunner)
+        return
+
+    logger.warning("Unsupported MEMORY_VDB_TYPE=%r", memory_vdb_type)
+
+
+# Plugin register
+AvatarPlugin.register_avatar_plugin(
+    AvatarModule.MEMORY,
+    "default",
+    MemoryLangchainPlugin(),
+)
+
+# Runner bootstrap register
+AvatarPlugin.register_inference_runner_bootstrap(
+    "alphaavatar.plugins.memory",
+    bootstrap_inference_runners,
+)

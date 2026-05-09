@@ -13,6 +13,7 @@
 # limitations under the License.
 import asyncio
 import json
+import os
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -32,8 +33,6 @@ from alphaavatar.agents.utils import DualKeyDict, NumpyOP
 from .log import logger
 from .models import MODEL_CONFIG
 from .runner import SpeakerAttributeRunner, SpeakerVectorRunner
-
-SPEAKER_INFERENCE_METHOD = None
 
 
 @dataclass
@@ -84,6 +83,17 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
 
         # init frame tagger
         self.frames_tagger: DualKeyDict = DualKeyDict(id_field="uid")
+
+    @property
+    def inference_method(self) -> str:
+        method = os.getenv("PERSONA_INFERENCE_METHOD")
+        if not method:
+            raise RuntimeError(
+                "PERSONA_INFERENCE_METHOD is not configured. "
+                "Make sure AvatarPlugin.bootstrap_inference_runners() is called before "
+                "ProfilerLangChain is used."
+            )
+        return method
 
     def slide_frames(
         self, frames: list[rtc.AudioFrame], step_size_samples: int, window_size_samples: int
@@ -189,7 +199,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
             }
             json_data = json.dumps(json_data).encode()
             results = await asyncio.wait_for(
-                self._executor.do_inference(SPEAKER_INFERENCE_METHOD, json_data),
+                self._executor.do_inference(self.inference_method, json_data),
                 timeout=timeout,
             )
             if results:

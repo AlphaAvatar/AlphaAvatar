@@ -26,7 +26,7 @@ class VirtualCharacterConfig(BaseModel):
     """Configuration for the Virtual Character plugin used in the agent."""
 
     # Character plugin config
-    character_plugin: str = Field(
+    character_plugin: str | None = Field(
         default=None,
         description="Avatar Virtual Character plugin to use for agent visually represents.",
     )
@@ -36,7 +36,8 @@ class VirtualCharacterConfig(BaseModel):
     )
 
     def model_post_init(self, __context):
-        os.environ["ALPHAAVATAR_CHARACRER_NAME"] = self.character_plugin
+        if self.character_plugin is not None:
+            os.environ["ALPHAAVATAR_CHARACTER_NAME"] = self.character_plugin
 
     def get_plugin(self) -> VirtialCharacterSession | None:
         """Returns the Character plugin instance based on the configuration."""

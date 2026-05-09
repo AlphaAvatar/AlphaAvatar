@@ -257,11 +257,9 @@ It is built around a **plugin-based real-time Agent architecture**, combining:
 <h4>Latest News 🔥</h4>
 
 - [2026/05] Released AlphaAvatar **version 0.5.4**:
-  - Added **LanceDB-backed MCP tool retrieval**, enabling AlphaAvatar to semantically search relevant MCP tools based on the Agent query.
-  - Refactored **system prompt and runtime prompt composition** to improve prefix-cache efficiency and support dynamic runtime context injection.
-  - Improved the **Persona plugin** with deterministic runtime state tracking, including timezone, login time, session ID, room type, and login count.
-  - Added **temporary-user to real-user identity merging**, including user workspace migration and identity-aware plugin storage.
-  - Improved RAG runtime behavior with initialization waiting, current/temporary workspace querying, and LLM-friendly query output.
+  - Added **LanceDB-backed MCP tool retrieval**, enabling AlphaAvatar to semantically search relevant MCP tools from Agent queries.
+  - Refactored **system prompt and runtime prompt composition**, improved Persona runtime state tracking, added temporary-user to real-user identity merging, and improved RAG runtime behavior.
+  - Released AlphaAvatar **version 0.5.5**: Fixed the **inference runner registration lifecycle** for production `start` mode, ensuring plugins runners are registered after config parsing and before LiveKit creates the inference executor.
 
 - [2026/04] Released AlphaAvatar **version 0.5.3**:
   - Added localized Markdown backup for the Memory plugin.

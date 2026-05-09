@@ -292,16 +292,16 @@ class LanceDBRunner(_InferenceRunner):
 
     def initialize(self) -> None:
         # get config
-        config = os.getenv("PERONA_VDB_CONFIG", "{}")
+        config = os.getenv("PERSONA_VDB_CONFIG", "{}")
         config = json.loads(config)
 
         self._profiler_collection_name = config.get("profiler_collection_name")
         self._speaker_collection_name = config.get("speaker_collection_name")
 
         if not self._profiler_collection_name:
-            raise ValueError("`profiler_collection_name` is required in PERONA_VDB_CONFIG")
+            raise ValueError("`profiler_collection_name` is required in PERSONA_VDB_CONFIG")
         if not self._speaker_collection_name:
-            raise ValueError("`speaker_collection_name` is required in PERONA_VDB_CONFIG")
+            raise ValueError("`speaker_collection_name` is required in PERSONA_VDB_CONFIG")
 
         # init client
         self._client = lancedb.get_client(**config)

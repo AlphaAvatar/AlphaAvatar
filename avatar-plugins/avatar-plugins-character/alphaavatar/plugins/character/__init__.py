@@ -13,8 +13,6 @@
 # limitations under the License.
 import os
 
-from livekit.agents.inference_runner import _InferenceRunner
-
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 
 from .log import logger
@@ -22,6 +20,7 @@ from .version import __version__
 
 __all__ = [
     "__version__",
+    "bootstrap_inference_runners",
 ]
 
 
@@ -37,21 +36,45 @@ class AiriCharacterPlugin(AvatarPlugin):
         try:
             avatar_config = AiriConfig(**character_init_config)
             return AiriCharacterSession(avatar_config=avatar_config)
-        except Exception:
+        except Exception as e:
             raise ImportError(
-                "The 'Airi' Character plugin is required but is not installed.\n"
-                "To fix this, install the optional dependency: `pip install alphaavatar-plugins-character`"
-            )
+                "The 'Airi' Character plugin is required but failed to initialize.\n"
+                "To fix this, install the optional dependency: "
+                "`pip install alphaavatar-plugins-character`\n"
+                f"Original error: {e}"
+            ) from e
 
 
-# plugin init
-AvatarPlugin.register_avatar_plugin(AvatarModule.CHARACTER, "airi", AiriCharacterPlugin())
+def bootstrap_inference_runners() -> None:
+    """
+    Plugin-owned runner bootstrap.
 
+    Called by AlphaAvatar core after AvatarConfig is parsed.
+    """
+    character_name = os.getenv("ALPHAAVATAR_CHARACTER_NAME", None)
 
-# runner register
-character_name = os.getenv("ALPHAAVATAR_CHARACRER_NAME", None)
-match character_name:
-    case "airi":
+    if not character_name:
+        logger.info("Character runner bootstrap skipped: character plugin is disabled.")
+        return
+
+    if character_name == "airi":
         from .airi_avatar import AiriRunner
 
-        _InferenceRunner.register_runner(AiriRunner)
+        AvatarPlugin.register_inference_runner_once(AiriRunner)
+        return
+
+    logger.warning(f"Unsupported ALPHAAVATAR_CHARACTER_NAME={character_name!r}")
+
+
+# Plugin register
+AvatarPlugin.register_avatar_plugin(
+    AvatarModule.CHARACTER,
+    "airi",
+    AiriCharacterPlugin(),
+)
+
+# Runner bootstrap register
+AvatarPlugin.register_inference_runner_bootstrap(
+    "alphaavatar.plugins.character",
+    bootstrap_inference_runners,
+)

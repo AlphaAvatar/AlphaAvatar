@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from copy import deepcopy
 from typing import Any
 
@@ -76,8 +77,6 @@ General:
     ]
 )
 
-PROFILER_INFERENCE_METHOD = None
-
 
 class ProfilerLangChain(ProfilerBase):
     def __init__(
@@ -95,6 +94,17 @@ class ProfilerLangChain(ProfilerBase):
         self._chain = DELTA_PROMPT | self._delta_llm
 
         self._executor = get_job_context().inference_executor
+
+    @property
+    def inference_method(self) -> str:
+        method = os.getenv("PERSONA_INFERENCE_METHOD")
+        if not method:
+            raise RuntimeError(
+                "PERSONA_INFERENCE_METHOD is not configured. "
+                "Make sure AvatarPlugin.bootstrap_inference_runners() is called before "
+                "ProfilerLangChain is used."
+            )
+        return method
 
     async def _aextract_delta(self, profile_details_dump: dict, new_turn: str) -> ProfileDelta:
         """Ask the LLM to generate patch ops relative to the current profile."""
@@ -160,7 +170,7 @@ class ProfilerLangChain(ProfilerBase):
         json_data = {"op": VectorRunnerOP.load, "param": {"user_id": uid}}
         json_data = json.dumps(json_data).encode()
         result = await asyncio.wait_for(
-            self._executor.do_inference(PROFILER_INFERENCE_METHOD, json_data),
+            self._executor.do_inference(self.inference_method, json_data),
             timeout=timeout,
         )
 
@@ -259,7 +269,7 @@ class ProfilerLangChain(ProfilerBase):
         }
         json_data = json.dumps(json_data).encode()
         result = await asyncio.wait_for(
-            self._executor.do_inference(PROFILER_INFERENCE_METHOD, json_data),
+            self._executor.do_inference(self.inference_method, json_data),
             timeout=timeout,
         )
 

@@ -14,8 +14,6 @@
 import json
 import os
 
-from livekit.agents.inference_runner import _InferenceRunner
-
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.tools import MCPAPI
 
@@ -39,29 +37,53 @@ class MCPRemotePlugin(AvatarPlugin):
         mcp_init_config: dict,
         *args,
         **kwargs,
-    ) -> MCPHost:
+    ) -> MCPAPI:
         try:
             servers = os.getenv("MCP_SERVERS", "{}")
             servers = json.loads(servers)
-            mcp_host = MCPHost(servers=servers, **mcp_init_config, **kwargs)
-            mcp_api = MCPAPI(mcp_host)
-            return mcp_api
-        except Exception:
-            raise ImportError(
-                "The MCP plugin is required but is not installed.\n"
-                "To fix this, install the optional dependency: `pip install alphaavatar-plugins-mcp`"
+
+            mcp_host = MCPHost(
+                servers=servers,
+                **mcp_init_config,
+                **kwargs,
             )
+            return MCPAPI(mcp_host)
+        except Exception as e:
+            raise ImportError(
+                "The MCP plugin is required but failed to initialize.\n"
+                "To fix this, install the optional dependency: "
+                "`pip install alphaavatar-plugins-mcp`\n"
+                f"Original error: {e}"
+            ) from e
 
 
-# plugin init
-AvatarPlugin.register_avatar_plugin(AvatarModule.MCP, "default", MCPRemotePlugin())
+def bootstrap_inference_runners() -> None:
+    """
+    Plugin-owned runner bootstrap.
 
-# runner init
-mcp_vdb_type = os.getenv("MCP_VDB_TYPE", None)
-match mcp_vdb_type:
-    case "lancedb":
-        from . import mcp_host
+    Called by AlphaAvatar core after AvatarConfig is parsed.
+    """
+    mcp_vdb_type = os.getenv("MCP_VDB_TYPE", "lancedb")
+
+    if mcp_vdb_type == "lancedb":
         from .runner import LanceDBRunner
 
-        mcp_host.MCP_INFERENCE_METHOD = LanceDBRunner.INFERENCE_METHOD
-        _InferenceRunner.register_runner(LanceDBRunner)
+        os.environ["MCP_INFERENCE_METHOD"] = LanceDBRunner.INFERENCE_METHOD
+        AvatarPlugin.register_inference_runner_once(LanceDBRunner)
+        return
+
+    logger.warning("Unsupported MCP_VDB_TYPE=%r", mcp_vdb_type)
+
+
+# Plugin register
+AvatarPlugin.register_avatar_plugin(
+    AvatarModule.MCP,
+    "default",
+    MCPRemotePlugin(),
+)
+
+# Runner bootstrap register
+AvatarPlugin.register_inference_runner_bootstrap(
+    "alphaavatar.plugins.mcp",
+    bootstrap_inference_runners,
+)

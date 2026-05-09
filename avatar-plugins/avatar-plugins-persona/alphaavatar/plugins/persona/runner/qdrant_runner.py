@@ -262,7 +262,7 @@ class QdrantRunner(_InferenceRunner):
 
     def initialize(self) -> None:
         # get config
-        config = os.getenv("PERONA_VDB_CONFIG", "{}")
+        config = os.getenv("PERSONA_VDB_CONFIG", "{}")
         config = json.loads(config)
         self._profiler_collection_name = config.get("profiler_collection_name", None)
         self._speaker_collection_name = config.get("speaker_collection_name", None)

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from livekit.agents import RunContext
@@ -24,13 +25,22 @@ from alphaavatar.agents.tools.mcp_api import MCPOp
 
 from .log import logger
 
-MCP_INFERENCE_METHOD = None
-
 
 class MCPHost(MCPHostBase):
     def __init__(self, servers: dict[str, dict], **kwargs) -> None:
         super().__init__(servers_info=self._build_config_servers_info(servers), **kwargs)
         self._servers = servers
+
+    @property
+    def inference_method(self) -> str:
+        method = os.getenv("MCP_INFERENCE_METHOD")
+        if not method:
+            raise RuntimeError(
+                "MCP_INFERENCE_METHOD is not configured. "
+                "Make sure AvatarPlugin.bootstrap_inference_runners() is called before "
+                "MCPHost is used."
+            )
+        return method
 
     def _op(self, op: Any) -> Any:
         return getattr(op, "value", op)
@@ -44,9 +54,9 @@ class MCPHost(MCPHostBase):
         return "MCPHost configured servers:\n" + "\n".join(lines)
 
     async def _run_mcp_inference(self, *, op: Any, param: dict[str, Any]) -> dict[str, Any]:
-        if MCP_INFERENCE_METHOD is None:
+        if self.inference_method is None:
             raise RuntimeError(
-                "MCP_INFERENCE_METHOD is not configured. "
+                "env MCP_INFERENCE_METHOD is not configured. "
                 "Set MCP_VDB_TYPE=lancedb and register LanceDBRunner."
             )
 
@@ -59,7 +69,7 @@ class MCPHost(MCPHostBase):
         ).encode()
 
         job_ctx = get_job_context()
-        raw = await job_ctx.inference_executor.do_inference(MCP_INFERENCE_METHOD, payload)
+        raw = await job_ctx.inference_executor.do_inference(self.inference_method, payload)
 
         if raw is None:
             return {"error": "MCP inference runner returned None"}

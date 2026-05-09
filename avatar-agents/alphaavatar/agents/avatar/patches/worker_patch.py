@@ -24,15 +24,11 @@ from livekit.agents import Plugin, ipc, telemetry, utils, version, worker as liv
 from livekit.agents.inference_runner import _InferenceRunner
 from livekit.protocol import agent
 
+from alphaavatar.agents import AvatarPlugin
 from alphaavatar.agents.log import logger
 
 
 class AvatarServer(livekit_worker.AgentServer):
-    # AlphaAvatar patch:
-    # Keep this method in sync with livekit_worker.AgentServer.run().
-    # Only intentional behavior change:
-    # - inference executor memory warning threshold uses self._job_memory_warn_mb // 2
-
     async def run(self, *, devmode: bool = False, unregistered: bool = False) -> None:
         """This method starts the worker's internal event loop, initializes any required
         executors, HTTP servers, and process pools, and optionally registers the worker
@@ -98,14 +94,45 @@ class AvatarServer(livekit_worker.AgentServer):
             self._inference_executor: ipc.inference_proc_executor.InferenceProcExecutor | None = (
                 None
             )
+
+            # AlphaAvatar patch:
+            # Bootstrap plugin-owned inference runners at the exact point where LiveKit is
+            # about to create the inference executor.
+            #
+            # Do not do this at module import time because dev/start subprocesses may import
+            # the entrypoint without CLI args, causing empty config parsing.
+            #
+            # Do not rely only on main(), because dev/start may create the actual worker in a
+            # different process context. AvatarServer.run() is the final shared path.
+            try:
+                AvatarPlugin.bootstrap_inference_runners()
+            except Exception:
+                logger.exception("AlphaAvatar inference runner bootstrap failed")
+                raise
+
+            registered_runners = getattr(_InferenceRunner, "registered_runners", {})
+
+            logger.info(
+                "AlphaAvatar registered inference runners before executor creation",
+                extra={
+                    "runners": list(registered_runners.keys())
+                    if isinstance(registered_runners, dict)
+                    else [getattr(r, "INFERENCE_METHOD", str(r)) for r in registered_runners],
+                },
+            )
+
             if len(_InferenceRunner.registered_runners) > 0:
                 self._inference_executor = ipc.inference_proc_executor.InferenceProcExecutor(
                     runners=_InferenceRunner.registered_runners,
                     initialize_timeout=5 * 60,
                     close_timeout=5,
+                    # AlphaAvatar patch:
+                    # Keep this method in sync with livekit_worker.AgentServer.run().
+                    # Only intentional behavior change:
+                    # - inference executor memory warning threshold uses self._job_memory_warn_mb // 2
                     memory_warn_mb=(
                         max(1, self._job_memory_warn_mb // 2) if self._job_memory_warn_mb else 2000
-                    ),  # NOTE: Patch, inference executor gets half the memory warning threshold of a regular job
+                    ),
                     memory_limit_mb=0,  # no limit
                     ping_interval=5,
                     ping_timeout=60,

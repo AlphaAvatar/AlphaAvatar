@@ -14,6 +14,7 @@
 import asyncio
 import hashlib
 import json
+import os
 import re
 from typing import Any
 
@@ -91,7 +92,6 @@ TOOL_DELTA_PROMPT = ChatPromptTemplate.from_messages(
     ]
 )
 
-MEMORY_INFERENCE_METHOD = None
 
 # ===============================
 # For Memory Normalization and Dedupe
@@ -340,6 +340,17 @@ class MemoryLangchain(MemoryBase):
     def memory_init_config(self) -> MemoryInitConfig:
         return self._memory_init_config
 
+    @property
+    def inference_method(self) -> str:
+        method = os.getenv("MEMORY_INFERENCE_METHOD")
+        if not method:
+            raise RuntimeError(
+                "MEMORY_INFERENCE_METHOD is not configured. "
+                "Make sure AvatarPlugin.bootstrap_inference_runners() is called before "
+                "MemoryLangChain is used."
+            )
+        return method
+
     async def _safe_ainvoke_conversation_delta(
         self,
         *,
@@ -466,7 +477,7 @@ class MemoryLangchain(MemoryBase):
         json_data = json.dumps(json_data).encode()
 
         result = await asyncio.wait_for(
-            self._executor.do_inference(MEMORY_INFERENCE_METHOD, json_data),
+            self._executor.do_inference(self.inference_method, json_data),
             timeout=timeout,
         )
 
@@ -621,9 +632,7 @@ class MemoryLangchain(MemoryBase):
 
         try:
             result = await asyncio.wait_for(
-                self._executor.do_inference(
-                    MEMORY_INFERENCE_METHOD, json.dumps(json_data).encode()
-                ),
+                self._executor.do_inference(self.inference_method, json.dumps(json_data).encode()),
                 timeout=timeout,
             )
         except asyncio.TimeoutError:

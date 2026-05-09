@@ -359,11 +359,15 @@ requires-dist = [{ name = "tavily" }]
 name = "alpha-avatar-plugins-mcp"
 source = { editable = "avatar-plugins/avatar-plugins-mcp" }
 dependencies = [
+    { name = "lancedb" },
     { name = "mcp" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "mcp", specifier = ">=1.24.0,<2" }]
+requires-dist = [
+    { name = "lancedb" },
+    { name = "mcp", specifier = ">=1.24.0,<2" },
+]
 
 [[package]]
 name = "alpha-avatar-plugins-memory"
@@ -393,6 +397,7 @@ requires-dist = [
 name = "alpha-avatar-plugins-persona"
 source = { editable = "avatar-plugins/avatar-plugins-persona" }
 dependencies = [
+    { name = "lancedb" },
     { name = "langchain-community" },
     { name = "langchain-core" },
     { name = "langchain-openai" },
@@ -403,6 +408,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "lancedb" },
     { name = "langchain-community" },
     { name = "langchain-core" },
     { name = "langchain-openai" },
@@ -422,7 +428,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "docling" },
-    { name = "raganything", extras = ["all"] },
+    { name = "raganything", extras = ["all"], specifier = "==1.2.8" },
 ]
 
 [[package]]

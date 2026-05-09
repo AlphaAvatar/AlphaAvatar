@@ -34,7 +34,7 @@ class PersonaConfig(BaseModel):
     # Persona Metadata
     maximum_retrieval_times: int = Field(
         default=3,
-        description="The maximum number of retrieval to determine whether a new user matches existing data in the Perona database.",
+        description="The maximum number of retrieval to determine whether a new user matches existing data in the Persona database.",
     )
 
     # Persona Profile plugin config
@@ -50,11 +50,11 @@ class PersonaConfig(BaseModel):
     # Persona Speaker plugin config
     speaker_plugin: str = Field(
         default="default",
-        description="Avatar spkear profile plugin to use for user profile extraction from user voice.",
+        description="Avatar speaker profile plugin to use for user profile extraction from user voice.",
     )
     speaker_init_config: dict = Field(
         default={},
-        description="Custom configuration parameters for the spkear profile plugin.",
+        description="Custom configuration parameters for the speaker profile plugin.",
     )
 
     # Persona VDB Config
@@ -64,19 +64,19 @@ class PersonaConfig(BaseModel):
     )
 
     def model_post_init(self, __context):
-        # Set PERONA_PROFILER_ENV
-        os.environ["PERONA_VDB_CONFIG"] = json.dumps(self.persona_vdb_config)
+        os.environ["PERSONA_VDB_CONFIG"] = json.dumps(self.persona_vdb_config)
+
         if self.profiler_plugin == "default":
-            # Ensure default Persona plugin is registered
             try:
-                qdrant.get_client(
-                    **self.persona_vdb_config
-                )  # Check if Qdrant client can be initialized with current config
-                os.environ["PERSONA_VDB_TYPE"] = "qdrant"
+                qdrant.get_client(**self.persona_vdb_config)
+                persona_vdb_type = "qdrant"
             except ValueError:
-                os.environ["PERSONA_VDB_TYPE"] = "lancedb"
+                persona_vdb_type = "lancedb"
+
+            os.environ["PERSONA_VDB_TYPE"] = persona_vdb_type
+
         else:
-            # TODO: Handle other persona plugins and their corresponding VDB types if needed
+            # TODO: Handle custom profiler plugins and corresponding VDB runners.
             pass
 
     def get_plugin(self, session_config: "SessionConfig") -> PersonaBase:
