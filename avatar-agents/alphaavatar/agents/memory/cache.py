@@ -51,7 +51,7 @@ class MemoryCache:
 
     @user_or_tool_id.setter
     def user_or_tool_id(self, id: str):
-        self.user_or_tool_id = id
+        self._user_or_tool_id = id
 
     def add_message(self, message: ChatItem):
         """Add a new message to the cache."""
