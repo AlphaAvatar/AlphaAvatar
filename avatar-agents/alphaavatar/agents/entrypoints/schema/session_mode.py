@@ -18,44 +18,57 @@ from .session_type import SessionType
 
 @dataclass(frozen=True)
 class SessionMode:
-    audio_input_enabled: bool = True
-    audio_output_enabled: bool = True
     text_input_enabled: bool = True
+    audio_input_enabled: bool = True
+    video_input_enabled: bool = False
+
+    audio_output_enabled: bool = True
     text_output_enabled: bool = True
+
+    # Internal RoomOptions/audio pipeline setting.
+    # Do not expose this to InteractionMethod or runtime prompt.
     enable_noise_cancellation: bool = True
 
 
 def resolve_session_mode(session_type: SessionType) -> SessionMode:
     if session_type == SessionType.CHAT:
         return SessionMode(
-            audio_input_enabled=False,
-            audio_output_enabled=False,
             text_input_enabled=True,
+            audio_input_enabled=False,
+            video_input_enabled=False,
+            audio_output_enabled=False,
             text_output_enabled=True,
+            enable_noise_cancellation=False,
         )
 
     if session_type == SessionType.TOOL:
         return SessionMode(
-            audio_input_enabled=False,
-            audio_output_enabled=False,
             text_input_enabled=True,
+            audio_input_enabled=False,
+            video_input_enabled=False,
+            audio_output_enabled=False,
             text_output_enabled=True,
+            enable_noise_cancellation=False,
         )
 
     if session_type == SessionType.AUDIO:
         return SessionMode(
-            audio_input_enabled=True,
-            audio_output_enabled=True,
             text_input_enabled=True,
+            audio_input_enabled=True,
+            video_input_enabled=False,
+            audio_output_enabled=True,
             text_output_enabled=True,
+            enable_noise_cancellation=True,
         )
 
     if session_type == SessionType.VIDEO:
         return SessionMode(
-            audio_input_enabled=True,
-            audio_output_enabled=True,
             text_input_enabled=True,
+            audio_input_enabled=True,
+            video_input_enabled=True,
+            audio_output_enabled=True,
             text_output_enabled=True,
+            enable_noise_cancellation=True,
         )
 
     return SessionMode()

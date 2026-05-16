@@ -1,14 +1,17 @@
 # Runtime Args
 runtime_context_mode: synthetic_tool
 
-# LiveKit Args
-stt_plugin: openai
-stt_model: gpt-4o-transcribe
-tts_plugin: voiceai
-tts_model: voiceai-tts-v1-latest
-tts_voice: a931a6af-fb01-42f0-a8c0-bd14bc302bb1
+# LLM Args
 llm_plugin: openai
 llm_model: gpt-4o-mini
+
+# Voice Args
+stt_plugin: openai
+stt_model: gpt-4o-transcribe
+tts_plugin: openai
+tts_model: gpt-4o-mini-tts
+tts_voice: alloy
+tts_instructions: "Voice: A light, energetic, and slightly playful anime-style girl's voice. The speech is fast but not chaotic, often ending sentences with a cute, slightly rising intonation, such as \"Yo~\" or \"La~\". Overall, it presents a high-energy, lively, and charming \"cute auctioneer\" vibe.\n\nTone: A super excited and brightly enthusiastic style, like someone about to unleash a killer move! The tone is full of anticipation and a sense of being there, making the listener feel tense and excited, creating an atmosphere of urgency, \"If you don't act now, you'll miss out!\"\n\nDelivery: A fast-paced, rapid-fire delivery, but each sentence is clearly audible. Coupled with lively intonation variations and energetic emotional outbursts, it immerses the listener in the excitement of a live performance—keeping the pace and the excitement going!\n\nPronunciation: Clear, loud, and with a touch of cute explosiveness. Key words such as bid, buy, checkout, and sold will be emphasized, raised in pitch, or given a cute "
 vad_plugin: silero
 turn_detection_plugin: multilingual
 allow_interruptions: true

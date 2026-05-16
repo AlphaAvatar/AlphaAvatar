@@ -40,6 +40,7 @@ from .context.prompt_assembler import PromptAssembler
 from .context.runtime_context import AvatarRuntimeContext
 from .context.template import AvatarSysPromptTemplate, RuntimeContextTemplate
 from .patches import init_avatar_patches  # NOTE: patches import only be used here
+from .vision import VisionBase, build_vision
 
 
 class AvatarEngine(Agent):
@@ -64,7 +65,8 @@ class AvatarEngine(Agent):
 
         self._avatar_prompt_template = AvatarSysPromptTemplate(
             self.avatar_config.avatar_info.avatar_introduction,
-            runtime_context=self.runtime_context,
+            interaction_method=self.runtime_context.interaction_method,
+            stable_behavior_rules=self.runtime_context.global_behavior_rules,
         )
 
         self._runtime_context_template = RuntimeContextTemplate()
@@ -82,22 +84,24 @@ class AvatarEngine(Agent):
 
         # Step4: initial avatar
         super().__init__(
-            instructions=self.template.instructions(),
+            instructions=self.system_template.instructions(),
+            # llm
+            llm=self.avatar_config.llm_plugin_config.get_plugin(),
+            # voice plugins
             turn_detection=self.avatar_config.voice_plugin_config.get_turn_detection_plugin(),
             stt=self.avatar_config.voice_plugin_config.get_stt_plugin(),
             vad=self.avatar_config.voice_plugin_config.get_vad_plugin(),
-            llm=self.avatar_config.voice_plugin_config.get_llm_plugin(),
             tts=self.avatar_config.voice_plugin_config.get_tts_plugin(),
             allow_interruptions=self.avatar_config.voice_plugin_config.allow_interruptions,
+            # tools
             tools=self._tools,
         )
 
+        # vision
+        self._vision: VisionBase = build_vision(self)
+
         # other states
         self._pending_user_path_migration: tuple[UserPathSnapshot, UserPathSnapshot] | None = None
-
-    @property
-    def template(self) -> AvatarSysPromptTemplate:
-        return self._avatar_prompt_template
 
     @property
     def memory(self) -> MemoryBase:
@@ -108,6 +112,10 @@ class AvatarEngine(Agent):
     def persona(self) -> PersonaBase:
         """Get the memory instance."""
         return self._persona
+
+    @property
+    def system_template(self) -> AvatarSysPromptTemplate:
+        return self._avatar_prompt_template
 
     @property
     def runtime_context_template(self) -> RuntimeContextTemplate:
@@ -157,6 +165,27 @@ class AvatarEngine(Agent):
             self.runtime_context.turn_behavior_rules or DEFAULT_SYSTEM_VALUE
         )
 
+    async def _finalize_user_path_migration(self) -> None:
+        if self._pending_user_path_migration is None:
+            return
+
+        old_user_path, new_user_path = self._pending_user_path_migration
+
+        try:
+            migrate_user_path(
+                old_user_path=old_user_path,
+                new_user_path=new_user_path,
+                remove_old=True,
+            )
+            logger.info(
+                "Final user path migration success old_path=%s new_path=%s",
+                old_user_path.user_root,
+                new_user_path.user_root,
+            )
+            self._pending_user_path_migration = None
+        except Exception as e:
+            logger.warning("Final user path migration failed: %s", e)
+
     async def resolve_user_identity(self, *, user_id: str) -> None:
         if not user_id or user_id == self.session_config.user_id:
             return
@@ -190,27 +219,6 @@ class AvatarEngine(Agent):
             new_user_path.user_root,
         )
 
-    async def _finalize_user_path_migration(self) -> None:
-        if self._pending_user_path_migration is None:
-            return
-
-        old_user_path, new_user_path = self._pending_user_path_migration
-
-        try:
-            migrate_user_path(
-                old_user_path=old_user_path,
-                new_user_path=new_user_path,
-                remove_old=True,
-            )
-            logger.info(
-                "Final user path migration success old_path=%s new_path=%s",
-                old_user_path.user_root,
-                new_user_path.user_root,
-            )
-            self._pending_user_path_migration = None
-        except Exception as e:
-            logger.warning("Final user path migration failed: %s", e)
-
     async def on_enter(self):
         # BUG: Before entering the function to send a greeting, the front end allows the user to input, but the system cannot recognize it.
 
@@ -236,8 +244,12 @@ class AvatarEngine(Agent):
             room_type=self.runtime_context.interaction_method.room_type,
         )
 
+        # init patches and context manager
         init_avatar_patches(self)
         init_context_manager(self)
+
+        # enable vision input if needed
+        self._vision.start()
 
         self.session.generate_reply(
             instructions="Briefly greet the user and offer your assistance."
@@ -267,9 +279,10 @@ class AvatarEngine(Agent):
         self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage
     ) -> None:
         """
-        STT -> Text [on_user_turn_completed] -> Text append to chat context
+        STT -> Text -> [on_user_turn_completed] -> Text append to chat context
 
         Override [livekit.agents.voice.agent.Agent::on_user_turn_completed] method to handle user turn completion.
+        Only Voice Input will call this function, and it is called after the user stops speaking and the final transcription is ready.
         """
         # BUG: When multiple separate user messages are entered consecutively, LiveKit will only use the latest one.
         ...
@@ -298,30 +311,30 @@ class AvatarEngine(Agent):
             # 2. Render system-level prompt.
             update_instructions(
                 chat_ctx,
-                instructions=self.template.instructions(
-                    runtime_context=self.runtime_context,
+                instructions=self.system_template.instructions(
                     stable_persona=self.runtime_context.user_persona,
-                    stable_behavior_rules=self.runtime_context.global_behavior_rules,
                 ),
                 add_if_missing=True,
             )
 
-            # 3. Render turn-level runtime context.
+            # 3. Attach visual inputs before runtime context injection.
+            #
+            # This is handled in llm_node so both voice and text input can use
+            # visual context.
+            self._vision.inject_into_chat_ctx(chat_ctx)
+
+            # 4. Render turn-level runtime context.
             runtime_context_text = self.runtime_context_template.render(
-                current_time=self.runtime_context.time_context.current_time,
-                memory_content=self.runtime_context.memory_content,
-                plan_content=self.runtime_context.plan_content,
-                reflection_content=self.runtime_context.reflection_content,
-                behavior_rules=self.runtime_context.turn_behavior_rules,
+                runtime_context=self.runtime_context
             )
 
-            # 4. Inject runtime context after latest user query.
+            # 5. Inject runtime context after latest user query.
             injected_chat_ctx = self.prompt_assembler.inject_runtime_context(
                 chat_ctx,
                 runtime_context=runtime_context_text,
             )
 
-            # 5. Call model.
+            # 6. Call model.
             async for chunk in Agent.default.llm_node(
                 self,
                 injected_chat_ctx,
@@ -335,6 +348,9 @@ class AvatarEngine(Agent):
     async def on_exit(self):
         if hasattr(self._chat_ctx.items, "wait_pending"):
             await self._chat_ctx.items.wait_pending()
+
+        # vision cleanup
+        await self._vision.stop()
 
         # memory op
         await self.memory.update(avatar_id=self.avatar_config.avatar_info.avatar_id)

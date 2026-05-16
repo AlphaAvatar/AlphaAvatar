@@ -340,9 +340,9 @@ alphaavatar download-files
 ✅ Step 3. Run the Agent
 
 ```bash
-ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/pipeline_openai_airi.yaml
+ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/voice/pipeline_openai_tools.yaml
 # or
-ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/pipeline_openai_tools.yaml
+ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/mm/pipeline_openai_tools.yaml
 ```
 
 To see more supported modes, please refer to the [LiveKit doc](https://docs.livekit.io/agents/start/voice-ai/).

@@ -22,7 +22,7 @@ from alphaavatar.agents.memory import MemoryType
 
 from .prompts.avatar_system_prompts import AVATAR_SYSTEM_PROMPT
 from .prompts.runtime_context_prompts import RUNTIME_CONTEXT_PROMPT
-from .runtime_context import AvatarRuntimeContext
+from .runtime_context import AvatarRuntimeContext, InteractionMethod
 
 if TYPE_CHECKING:
     from alphaavatar.agents.persona import UserProfile
@@ -41,12 +41,12 @@ class AvatarSysPromptTemplate:
         self,
         avatar_introduction: str,
         *,
-        runtime_context: AvatarRuntimeContext | None = None,
+        interaction_method: InteractionMethod | None = None,
         stable_persona: str = DEFAULT_SYSTEM_VALUE,
         stable_behavior_rules: str = DEFAULT_SYSTEM_VALUE,
     ):
         self._avatar_introduction = avatar_introduction
-        self._runtime_context = runtime_context or AvatarRuntimeContext()
+        self._interaction_method = interaction_method or InteractionMethod()
         self._stable_persona = stable_persona
         self._stable_behavior_rules = stable_behavior_rules
 
@@ -54,15 +54,15 @@ class AvatarSysPromptTemplate:
         self,
         *,
         avatar_introduction: str | None = None,
-        runtime_context: AvatarRuntimeContext | None = None,
+        interaction_method: InteractionMethod | None = None,
         stable_persona: str | None = None,
         stable_behavior_rules: str | None = None,
     ) -> str:
         if avatar_introduction:
             self._avatar_introduction = avatar_introduction
 
-        if runtime_context:
-            self._runtime_context = runtime_context
+        if interaction_method:
+            self._interaction_method = interaction_method
 
         if stable_persona is not None:
             self._stable_persona = stable_persona or DEFAULT_SYSTEM_VALUE
@@ -72,7 +72,7 @@ class AvatarSysPromptTemplate:
 
         return AVATAR_SYSTEM_PROMPT.format(
             avatar_introduction=self._avatar_introduction,
-            interaction_method=self._runtime_context.interaction_method.render(),
+            interaction_method=self._interaction_method.render(),
             stable_persona=self._stable_persona,
             stable_behavior_rules=self._stable_behavior_rules,
         )
@@ -89,12 +89,14 @@ class RuntimeContextTemplate:
     def render(
         self,
         *,
-        current_time: str = DEFAULT_SYSTEM_VALUE,
-        memory_content: str = DEFAULT_SYSTEM_VALUE,
-        plan_content: str = DEFAULT_SYSTEM_VALUE,
-        reflection_content: str = DEFAULT_SYSTEM_VALUE,
-        behavior_rules: str = DEFAULT_SYSTEM_VALUE,
+        runtime_context: AvatarRuntimeContext,
     ) -> str:
+        current_time = runtime_context.time_context.current_time
+        memory_content = runtime_context.memory_content
+        plan_content = runtime_context.plan_content
+        reflection_content = runtime_context.reflection_content
+        behavior_rules = runtime_context.turn_behavior_rules
+
         return RUNTIME_CONTEXT_PROMPT.format(
             current_time=current_time or DEFAULT_SYSTEM_VALUE,
             memory_content=memory_content or DEFAULT_SYSTEM_VALUE,

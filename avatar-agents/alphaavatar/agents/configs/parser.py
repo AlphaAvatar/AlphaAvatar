@@ -24,16 +24,20 @@ from pydantic import BaseModel
 from .avatar_config import AvatarConfig
 from .avatar_info_config import AvatarInfoConfig
 from .plugins.character_plugin_config import VirtualCharacterConfig
+from .plugins.llm_plugin_cnofig import LLMPluginConfig
 from .plugins.memory_plugin_config import MemoryConfig
 from .plugins.persona_plugin_config import PersonaConfig
 from .plugins.tools_plugin_config import ToolsConfig
+from .plugins.vision_plugin_config import VisionPluginConfig
 from .plugins.voice_plugin_config import VoicePluginConfig
 from .runtime_config import RuntimeConfig
 
 _CONFIG_CLS = [
     RuntimeConfig,
-    VoicePluginConfig,
     AvatarInfoConfig,
+    LLMPluginConfig,
+    VoicePluginConfig,
+    VisionPluginConfig,
     VirtualCharacterConfig,
     MemoryConfig,
     PersonaConfig,
@@ -134,8 +138,10 @@ def parse_dict_models(
 def get_avatar_args(args: dict[str, Any]) -> AvatarConfig:
     (
         runtime_config,
-        voice_plugin_config,
         avatar_info,
+        llm_plugin_config,
+        voice_plugin_config,
+        vision_plugin_config,
         character_config,
         memory_config,
         persona_config,
@@ -144,9 +150,12 @@ def get_avatar_args(args: dict[str, Any]) -> AvatarConfig:
 
     # TODO: Post validation
 
+    # Initialize the AvatarConfig.
     avatar_config = AvatarConfig(
         runtime_config=runtime_config,
+        llm_plugin_config=llm_plugin_config,
         voice_plugin_config=voice_plugin_config,
+        vision_plugin_config=vision_plugin_config,
         avatar_info=avatar_info,
         character_config=character_config,
         memory_config=memory_config,

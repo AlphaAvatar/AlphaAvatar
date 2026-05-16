@@ -19,8 +19,8 @@ from .room_type import RoomType
 class SessionType(str, Enum):
     CHAT = "chat"
     TOOL = "agent"
-    VIDEO = "video"
     AUDIO = "audio"
+    VIDEO = "video"
 
 
 def resolve_session_type(room_type: RoomType, participant_metadata: dict) -> SessionType:
@@ -35,6 +35,9 @@ def resolve_session_type(room_type: RoomType, participant_metadata: dict) -> Ses
         return SessionType.CHAT
 
     if room_type == RoomType.WEB_APP:
-        return SessionType.AUDIO
+        # Web app supports text + audio + video by default.
+        # The actual runtime availability still depends on whether the user
+        # enables camera/screen share and whether vision_plugin_config is enabled.
+        return SessionType.VIDEO
 
     raise ValueError(f"Unable to resolve session type for room type: {room_type}")

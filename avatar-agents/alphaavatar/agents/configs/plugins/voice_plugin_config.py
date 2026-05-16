@@ -14,7 +14,7 @@
 import importlib.util
 from typing import Literal
 
-from livekit.agents import llm, stt, tts, vad
+from livekit.agents import stt, tts, vad
 from pydantic import BaseModel, Field
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
@@ -111,38 +111,6 @@ class TTSArguments(BaseModel):
                 )
 
 
-class LLMArguments(BaseModel):
-    """Configuration for the LLM plugin used in the agent."""
-
-    llm_plugin: Literal["openai"] | None = Field(
-        default=None,
-        description="LLM plugin to use for language/real-time model interactions.",
-    )
-    llm_model: str | None = Field(
-        default=None,
-        description="Model to use for language/real-time model interactions.",
-    )
-
-    def get_llm_plugin(self) -> llm.LLM | llm.RealtimeModel | None:
-        """Returns the LLM plugin based on llm config."""
-
-        if self.llm_model is None:
-            return None
-
-        match self.llm_plugin:
-            case "openai":
-                try:
-                    from livekit.plugins import openai
-                except ImportError:
-                    raise ImportError(
-                        "The 'openai.LLM' plugin is required for livekit.plugins.openai but is not installed.\n"
-                        "To fix this, install the optional dependency: `pip install livekit-plugins-openai`"
-                    )
-                return openai.LLM(model=self.llm_model)
-            case _:
-                return None
-
-
 class VADArguments(BaseModel):
     """Configuration for the VAD plugin used in the agent."""
 
@@ -167,7 +135,7 @@ class VADArguments(BaseModel):
                 return None
 
 
-class VoicePluginConfig(STTArguments, TTSArguments, LLMArguments, VADArguments):
+class VoicePluginConfig(STTArguments, TTSArguments, VADArguments):
     """Configuration for LiveKit plugins used in the agent."""
 
     turn_detection_plugin: Literal["multilingual", "english"] | None = Field(

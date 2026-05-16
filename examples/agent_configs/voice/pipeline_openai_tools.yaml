@@ -1,19 +1,20 @@
 # Runtime Args
 runtime_context_mode: synthetic_tool
 
-# LiveKit Args
+# LLM Args
+llm_plugin: openai
+llm_model: gpt-4o-mini
+
+# Voice Args
 stt_plugin: openai
 stt_model: gpt-4o-transcribe
 tts_plugin: openai
 tts_model: gpt-4o-mini-tts
 tts_voice: ash
 tts_instructions: Speak in a friendly and conversational tone.
-llm_plugin: openai
-llm_model: gpt-4o-mini
 vad_plugin: silero
 turn_detection_plugin: multilingual
 allow_interruptions: true
-
 
 # Avatar Info Args
 avatar_id: alphaavatar_tools
@@ -21,11 +22,9 @@ avatar_name: "AlphaAvatar"
 avatar_introduction: "You are a helpful Tools Assistant. You assist users by effectively utilizing various tools to provide accurate and efficient responses. Always aim to understand the user's needs and select the most appropriate tool to fulfill their requests. Communicate clearly and concisely, ensuring that your responses are easy to understand. Your primary goal is to enhance the user experience by leveraging the capabilities of the available tools."
 avatar_work_dir: .alphaavatar_workspace/
 
-
 # Character Args
 character_plugin: None
 character_init_config: {}
-
 
 # Memory Args
 memory_search_context: 3
@@ -38,7 +37,6 @@ memory_vdb_config:
   collection_name: "memory"
   embedding_model: "text-embedding-3-small"
 
-
 # Profiler Args
 maximum_retrieval_times: 3
 profiler_plugin: default
@@ -50,7 +48,6 @@ persona_vdb_config:
   profiler_collection_name: 'persona_profiler'
   speaker_collection_name: 'persona_speaker'
   embedding_model: 'text-embedding-3-small'
-
 
 # Tools Args
 ## DeepResearch

@@ -11,7 +11,7 @@ stt_model: gpt-4o-transcribe
 tts_plugin: openai
 tts_model: gpt-4o-mini-tts
 tts_voice: ash
-tts_instructions: "Speak in a warm, natural, and confident tone. Keep responses clear and conversational. For voice interaction, prefer concise answers unless the user asks for details."
+tts_instructions: Speak in a friendly and conversational tone.
 vad_plugin: silero
 turn_detection_plugin: multilingual
 allow_interruptions: true
@@ -30,9 +30,9 @@ vision_inference_height: 512
 vision_clear_after_turn: true
 
 # Avatar Info Args
-avatar_id: alphaavatar_demo
+avatar_id: alphaavatar_tools
 avatar_name: "AlphaAvatar"
-avatar_introduction: "You are AlphaAvatar, a real-time multimodal personal assistant demo. Your role is to show how AlphaAvatar can combine memory, persona awareness, tool use, RAG, MCP, DeepResearch, and voice interaction to help users solve practical problems. Communicate naturally, stay concise by default, and adapt your response style to the current interaction mode. When tools or external context are useful, choose them thoughtfully and explain results clearly. Your goal is to demonstrate a helpful, proactive, and privacy-aware personal assistant experience."
+avatar_introduction: "You are a helpful Tools Assistant. You assist users by effectively utilizing various tools to provide accurate and efficient responses. Always aim to understand the user's needs and select the most appropriate tool to fulfill their requests. Communicate clearly and concisely, ensuring that your responses are easy to understand. Your primary goal is to enhance the user experience by leveraging the capabilities of the available tools."
 avatar_work_dir: .alphaavatar_workspace/
 
 # Character Args

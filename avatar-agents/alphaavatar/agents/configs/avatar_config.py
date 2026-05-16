@@ -17,9 +17,11 @@ from alphaavatar.agents.configs.runtime_config import RuntimeConfig
 
 from .avatar_info_config import AvatarInfoConfig
 from .plugins.character_plugin_config import VirtualCharacterConfig
+from .plugins.llm_plugin_cnofig import LLMPluginConfig
 from .plugins.memory_plugin_config import MemoryConfig
 from .plugins.persona_plugin_config import PersonaConfig
 from .plugins.tools_plugin_config import ToolsConfig
+from .plugins.vision_plugin_config import VisionPluginConfig
 from .plugins.voice_plugin_config import VoicePluginConfig
 
 
@@ -31,15 +33,24 @@ class AvatarConfig(BaseModel):
     runtime_config: RuntimeConfig = Field(default_factory=RuntimeConfig)
     """Runtime configuration, which will creat for each session."""
 
+    avatar_info: AvatarInfoConfig = Field(default_factory=AvatarInfoConfig)
+    """Avatar Information configuration."""
+
+    llm_plugin_config: LLMPluginConfig = Field(default_factory=LLMPluginConfig)
+    """LLM Plugin configuration."""
+
     voice_plugin_config: VoicePluginConfig = Field(default_factory=VoicePluginConfig)
     """Voice Plugins configuration."""
 
-    avatar_info: AvatarInfoConfig = Field(default_factory=AvatarInfoConfig)
-    """Avatar Information configuration."""
+    vision_plugin_config: VisionPluginConfig = Field(default_factory=VisionPluginConfig)
+    """Vision Plugins configuration."""
+
     character_config: VirtualCharacterConfig = Field(default_factory=VirtualCharacterConfig)
     """Avatar Virtual Character configuration."""
+
     memory_config: MemoryConfig = Field(default_factory=MemoryConfig)
     """Avatar Memory configuration."""
+
     persona_config: PersonaConfig = Field(default_factory=PersonaConfig)
     """Avatar Persona configuration."""
 

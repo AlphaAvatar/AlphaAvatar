@@ -51,7 +51,10 @@ def worker_load(worker) -> float:
 
 def build_room_options(session_mode: SessionMode) -> room_io.RoomOptions:
     kwargs = {
+        # RoomOptions-supported inputs.
         "text_input": session_mode.text_input_enabled,
+        "video_input": session_mode.video_input_enabled,
+        # RoomOptions-supported outputs.
         "text_output": session_mode.text_output_enabled,
         "audio_output": session_mode.audio_output_enabled,
     }
@@ -126,20 +129,21 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
         session_id=session_id,
     )
 
+    visual_input_enabled = (
+        session_mode.video_input_enabled and avatar_config.vision_plugin_config.vision_input_enabled
+    )
+
     interaction_method = InteractionMethod(
-        room_type=room_type,
-        session_type=str(session_type),
+        room_type=room_type.value,
+        session_type=session_type.value,
         text_input=session_mode.text_input_enabled,
-        text_output=session_mode.text_output_enabled,
         audio_input=session_mode.audio_input_enabled,
+        video_input=visual_input_enabled,
         audio_output=session_mode.audio_output_enabled,
-        # TODO: Currently, RoomOptions does not explicitly enable video input/output.
-        # If you want to support video understanding/output later, you can extend it from metadata or session_mode.
-        video_input=bool(participant_metadata.get("video_input_enabled", False)),
-        video_output=bool(participant_metadata.get("video_output_enabled", False)),
+        text_output=session_mode.text_output_enabled,
         notes=[
             "Adapt response style to the active room/session modality.",
-            "Do not assume visual perception unless video input is explicitly enabled.",
+            "If visual input is enabled but no visual frame is available in the current turn, do not invent visual details.",
         ],
     )
 
