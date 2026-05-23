@@ -16,7 +16,7 @@ from typing import Any
 import numpy as np
 from livekit.agents.llm import ChatItem
 
-from alphaavatar.agents.avatar import PersonaPluginsTemplate
+from alphaavatar.agents.avatar.prompting import PersonaPluginsTemplate
 from alphaavatar.agents.constants import SPEAKER_THRESHOLD
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.utils import AvatarTime, NumpyOP, get_user_id

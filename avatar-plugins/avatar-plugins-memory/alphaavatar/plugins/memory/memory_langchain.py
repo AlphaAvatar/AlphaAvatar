@@ -24,7 +24,7 @@ from livekit.agents.job import get_job_context
 from livekit.agents.llm import ChatItem
 from pydantic import BaseModel, Field
 
-from alphaavatar.agents.avatar import MemoryPluginsTemplate
+from alphaavatar.agents.avatar.prompting import MemoryPluginsTemplate
 from alphaavatar.agents.memory import (
     MemoryBase,
     MemoryCache,

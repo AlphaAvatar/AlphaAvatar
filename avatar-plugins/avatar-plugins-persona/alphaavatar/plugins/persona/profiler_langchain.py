@@ -23,7 +23,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from livekit.agents.job import get_job_context
 
-from alphaavatar.agents.avatar import PersonaPluginsTemplate
+from alphaavatar.agents.avatar.prompting import PersonaPluginsTemplate
 from alphaavatar.agents.persona import PersonaCache, ProfilerBase, UserProfile, VectorRunnerOP
 from alphaavatar.agents.utils.files.work_dirs import UserPath
 
