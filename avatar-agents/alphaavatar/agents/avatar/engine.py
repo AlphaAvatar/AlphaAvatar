@@ -36,10 +36,10 @@ from alphaavatar.agents.utils.files.work_dirs import (
 
 from .context import init_context_manager
 from .context.internal_tools import get_runtime_context_tool
-from .context.prompt_assembler import PromptAssembler
 from .context.runtime_context import AvatarRuntimeContext
-from .context.template import AvatarSysPromptTemplate, RuntimeContextTemplate
 from .patches import init_avatar_patches  # NOTE: patches import only be used here
+from .prompting.assembler import PromptAssembler
+from .prompting.template import AvatarSysPromptTemplate, RuntimeContextTemplate
 from .vision import VisionBase, build_vision
 
 
@@ -251,9 +251,7 @@ class AvatarEngine(Agent):
         # enable vision input if needed
         self._vision.start()
 
-        self.session.generate_reply(
-            instructions="Briefly greet the user and offer your assistance."
-        )
+        self.session.generate_reply(user_input="Briefly greet the user and offer your assistance.")
 
     def stt_node(
         self, audio: AsyncIterable[rtc.AudioFrame], model_settings: ModelSettings
@@ -317,24 +315,29 @@ class AvatarEngine(Agent):
                 add_if_missing=True,
             )
 
-            # 3. Attach visual inputs before runtime context injection.
-            #
-            # This is handled in llm_node so both voice and text input can use
-            # visual context.
-            self._vision.inject_into_chat_ctx(chat_ctx)
+            # 3. Build model-facing context.
+            # Original chat_ctx keeps full history.
+            model_chat_ctx = self.prompt_assembler.prepare_model_chat_context(
+                chat_ctx,
+                strip_historical_visuals=True,
+                add_visual_placeholder=True,
+            )
 
-            # 4. Render turn-level runtime context.
+            # 4. Inject current visual frames into temporary context only.
+            self._vision.inject_into_chat_ctx(model_chat_ctx)
+
+            # 5. Render turn-level runtime context.
             runtime_context_text = self.runtime_context_template.render(
                 runtime_context=self.runtime_context
             )
 
-            # 5. Inject runtime context after latest user query.
+            # 6. Inject runtime context after latest user query.
             injected_chat_ctx = self.prompt_assembler.inject_runtime_context(
-                chat_ctx,
+                model_chat_ctx,
                 runtime_context=runtime_context_text,
             )
 
-            # 6. Call model.
+            # 7. Call model.
             async for chunk in Agent.default.llm_node(
                 self,
                 injected_chat_ctx,

@@ -24,6 +24,12 @@ from alphaavatar.agents.avatar.vision.base import VisionBase
 from alphaavatar.agents.configs.plugins.vision_plugin_config import VisionInputMode
 from alphaavatar.agents.log import logger
 
+from .constants import (
+    LATEST_VIDEO_FRAME_LABEL,
+    VIDEO_FRAME_LABEL_PREFIX,
+    VISUAL_INPUT_PREFIX,
+)
+
 
 class SampledFrameVision(VisionBase):
     """Sampled-frame visual input from LiveKit video tracks.
@@ -283,6 +289,52 @@ class SampledFrameVision(VisionBase):
 
         self._video_frame_buffer.clear()
 
+    def _build_visual_instruction(self, frame_count: int) -> str:
+        if frame_count == 1:
+            frame_desc = "One sampled moment"
+            visual_scope = "the video"
+        else:
+            frame_desc = f"{frame_count} sampled moments, ordered from earliest to latest,"
+            visual_scope = "the video sequence"
+
+        return (
+            f"\n{VISUAL_INPUT_PREFIX}\n"
+            f"{frame_desc} from the user's live video stream are available for this user message. "
+            "Always answer the user's text message normally. "
+            "Use the live video context only when the user's message explicitly refers to the video, camera, screen, scene, visible object, gesture, appearance, action, or something currently shown, "
+            "or when the user's question clearly depends on what is visible. "
+            "If the user's message does not require visual grounding, ignore the live video context and respond as a normal conversation. "
+            f"When visual grounding is needed, rely only on what is visible in {visual_scope} and avoid guessing beyond what is shown. "
+            "When responding naturally to the user, prefer phrasing such as "
+            "'from your video', 'based on your video', or 'from what I can see in the video', "
+            "and avoid phrasing such as 'from the attached frames', 'in the attached frames', 'from the image', or 'from the picture' "
+            "unless the user explicitly asks about frames or images."
+        )
+
+    def _message_has_visual_input(self, message: llm.ChatMessage) -> bool:
+        content = getattr(message, "content", None)
+
+        if not isinstance(content, list):
+            return False
+
+        for part in content:
+            if isinstance(part, str):
+                stripped = part.strip()
+                if VISUAL_INPUT_PREFIX in stripped:
+                    return True
+                if stripped.startswith(VIDEO_FRAME_LABEL_PREFIX):
+                    return True
+                if stripped == LATEST_VIDEO_FRAME_LABEL:
+                    return True
+
+            if getattr(part, "type", None) == "image_content":
+                return True
+
+            if part.__class__.__name__ == "ImageContent":
+                return True
+
+        return False
+
     def inject_into_chat_ctx(self, chat_ctx: llm.ChatContext) -> None:
         vision_config = self.agent.avatar_config.vision_plugin_config
         frames = self._select_visual_frames_for_turn()
@@ -301,31 +353,28 @@ class SampledFrameVision(VisionBase):
             logger.warning("No latest user message found; skip visual frame injection")
             return
 
+        # Ensure content is appendable.
+        if latest_user_message.content is None:
+            latest_user_message.content = []
+        elif not isinstance(latest_user_message.content, list):
+            latest_user_message.content = [latest_user_message.content]
+
+        # Avoid duplicate visual injection.
+        if self._message_has_visual_input(latest_user_message):
+            logger.debug("Latest user message already has visual input; skip duplicate injection")
+            return
+
         frame_count = len(frames)
 
-        if frame_count == 1:
-            latest_user_message.content.append(
-                "\n[Visual input attached]\n"
-                "Visual frame(s) from the user's live video stream are attached to this same user message. "
-                "Use them as visual evidence for the current question. "
-                "Do not say you cannot see the user or scene when answering this turn; instead, describe only what is visible in the attached frame(s)."
-            )
-        else:
-            latest_user_message.content.append(
-                "\n[Visual input attached]\n"
-                f"{frame_count} consecutive sampled frames from the user's live video stream are attached to this same user message. "
-                "They are ordered from earliest to latest and should be treated as a short video sequence. "
-                "Use them as visual evidence for the current question. "
-                "Do not say you cannot see the user or scene when answering this turn; instead, describe only what is visible in the attached frames."
-            )
+        latest_user_message.content.append(self._build_visual_instruction(frame_count))
 
         for idx, frame in enumerate(frames, start=1):
             if frame_count > 1:
                 latest_user_message.content.append(
-                    f"[Video frame {idx}/{frame_count} — chronological order]"
+                    f"{VIDEO_FRAME_LABEL_PREFIX}{idx}/{frame_count} — chronological order]"
                 )
             else:
-                latest_user_message.content.append("[Latest video frame]")
+                latest_user_message.content.append(LATEST_VIDEO_FRAME_LABEL)
 
             latest_user_message.content.append(
                 llm.ImageContent(

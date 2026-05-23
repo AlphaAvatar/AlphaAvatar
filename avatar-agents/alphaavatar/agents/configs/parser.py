@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from .avatar_config import AvatarConfig
 from .avatar_info_config import AvatarInfoConfig
 from .plugins.character_plugin_config import VirtualCharacterConfig
-from .plugins.llm_plugin_cnofig import LLMPluginConfig
+from .plugins.llm_plugin_config import LLMPluginConfig
 from .plugins.memory_plugin_config import MemoryConfig
 from .plugins.persona_plugin_config import PersonaConfig
 from .plugins.tools_plugin_config import ToolsConfig

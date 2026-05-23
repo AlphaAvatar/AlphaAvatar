@@ -13,7 +13,7 @@
 # limitations under the License.
 from pydantic import BaseModel, Field
 
-from alphaavatar.agents.avatar.context.enum.injection_mode import RuntimeContextInjectionMode
+from alphaavatar.agents.avatar.prompting.enum.injection_mode import RuntimeContextInjectionMode
 
 
 class RuntimeConfig(BaseModel):

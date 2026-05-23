@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .engine import AvatarEngine
-from .prompting.template import MemoryPluginsTemplate, PersonaPluginsTemplate
-
-__all__ = ["MemoryPluginsTemplate", "PersonaPluginsTemplate", "AvatarEngine"]
+VISUAL_INPUT_PREFIX = "[Live video context]"
+VIDEO_FRAME_LABEL_PREFIX = "[Live video moment "
+LATEST_VIDEO_FRAME_LABEL = "[Current live video moment]"
+HISTORICAL_VISUAL_PLACEHOLDER_PREFIX = "[Previous live video context omitted:"

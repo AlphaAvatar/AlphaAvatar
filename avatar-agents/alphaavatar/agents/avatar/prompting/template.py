@@ -20,9 +20,9 @@ from livekit.agents.llm import ChatItem, ChatMessage, ChatRole, FunctionCall, Fu
 from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
 from alphaavatar.agents.memory import MemoryType
 
+from ..context.runtime_context import AvatarRuntimeContext, InteractionMethod
 from .prompts.avatar_system_prompts import AVATAR_SYSTEM_PROMPT
 from .prompts.runtime_context_prompts import RUNTIME_CONTEXT_PROMPT
-from .runtime_context import AvatarRuntimeContext, InteractionMethod
 
 if TYPE_CHECKING:
     from alphaavatar.agents.persona import UserProfile

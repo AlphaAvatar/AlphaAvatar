@@ -79,6 +79,15 @@ TOOL_DELTA_PROMPT = ChatPromptTemplate.from_messages(
             "NEW TURN TYPE: {type}\n"
             "NEW TURN CONTENT:\n```{message_content}```\n\n"
             "Output only `MemoryDelta`.\n\n"
+            "### TOOL EVENT GATE\n"
+            "- Before writing any memory, decide whether the content contains an explicit tool/system operation.\n"
+            "- A valid tool event requires explicit evidence such as FunctionCall, FunctionCallOutput, tool_calls, function_call, ToolMessage, tool output, file read/write/save/index/generation, search/retrieval/indexing/download/scrape, explicit tool error, retry, fallback, or config update.\n"
+            "- ChatMessage, normal assistant replies, normal user messages, ImageContent, VideoFrame, visual input, sampled frames, audio/transcript text, and latency metrics are NOT tool events by themselves.\n"
+            "- Assistant visual reasoning over attached frames is not artifact_generation and not a tool memory.\n"
+            "- Runtime metrics such as TTS/STT/LLM latency are not tool memories unless they show an explicit incident, failure, retry, fallback, or config change.\n"
+            "- Do not infer an internal tool/component from multimodal understanding.\n"
+            "- Do not invent components such as visual_analysis_module, vision_tool, image_analyzer, or multimodal_module unless they explicitly appear in the content.\n"
+            "- If there is no explicit tool event, output MemoryDelta with both lists empty.\n\n"
             "### WRITING RULES\n"
             "- Each user_or_tool_memory_entries PatchOp.value MUST be exactly one [EVENT]...[/EVENT] card for tool memory.\n"
             "- Each assistant_memory_entries PatchOp.value MUST be exactly one [EVENT]...[/EVENT] card for avatar memory derived from tool events.\n"
@@ -454,6 +463,28 @@ class MemoryLangchain(MemoryBase):
 
         return assistant_memories, target_memories
 
+    def _has_explicit_tool_event(self, chat_context: list[ChatItem]) -> bool:
+        for item in chat_context:
+            item_type = getattr(item, "type", None)
+
+            if item_type in {
+                "function_call",
+                "function_call_output",
+                "agent_config_update",
+            }:
+                return True
+
+            if item_type == "agent_handoff":
+                return True
+
+            if getattr(item, "tool_calls", None):
+                return True
+
+            if getattr(item, "function_call", None):
+                return True
+
+        return False
+
     async def search_by_context(
         self, *, avatar_id: str, session_id: str, chat_context: list[ChatItem], timeout: float = 3
     ) -> None:
@@ -525,17 +556,26 @@ class MemoryLangchain(MemoryBase):
                 chat_context, cache.type
             )
 
+            has_tool_event = self._has_explicit_tool_event(chat_context)
+
             if cache.type == MemoryType.CONVERSATION:
-                conversation_delta, tool_delta = await asyncio.gather(
-                    self._safe_ainvoke_conversation_delta(
+                if has_tool_event:
+                    conversation_delta, tool_delta = await asyncio.gather(
+                        self._safe_ainvoke_conversation_delta(
+                            message_content=message_content,
+                            timeout=30.0,
+                        ),
+                        self._safe_ainvoke_tool_delta(
+                            message_content=message_content,
+                            timeout=30.0,
+                        ),
+                    )
+                else:
+                    conversation_delta = await self._safe_ainvoke_conversation_delta(
                         message_content=message_content,
                         timeout=30.0,
-                    ),
-                    self._safe_ainvoke_tool_delta(
-                        message_content=message_content,
-                        timeout=30.0,
-                    ),
-                )
+                    )
+                    tool_delta = None
 
                 conv_avatar, conv_user = self._apply_delta_to_bucket(
                     avatar_id=avatar_id,
@@ -544,19 +584,27 @@ class MemoryLangchain(MemoryBase):
                     user_or_tool_memory_type=MemoryType.CONVERSATION,
                 )
 
-                tool_avatar, tool_memories = self._apply_delta_to_bucket(
-                    avatar_id=avatar_id,
-                    delta=tool_delta,
-                    memory_cache=cache,
-                    user_or_tool_memory_type=MemoryType.TOOLS,
-                )
-
                 all_assistant.extend(conv_avatar)
-                all_assistant.extend(tool_avatar)
                 all_user.extend(conv_user)
-                all_tool.extend(tool_memories)
+
+                if tool_delta is not None:
+                    tool_avatar, tool_memories = self._apply_delta_to_bucket(
+                        avatar_id=avatar_id,
+                        delta=tool_delta,
+                        memory_cache=cache,
+                        user_or_tool_memory_type=MemoryType.TOOLS,
+                    )
+
+                    all_assistant.extend(tool_avatar)
+                    all_tool.extend(tool_memories)
 
             else:
+                if not has_tool_event:
+                    logger.debug(
+                        f"[sid: {_sid}] No explicit tool event found for cache type {cache.type}, TOOL update skip."
+                    )
+                    continue
+
                 tool_delta = await self._safe_ainvoke_tool_delta(
                     message_content=message_content,
                     timeout=30.0,
