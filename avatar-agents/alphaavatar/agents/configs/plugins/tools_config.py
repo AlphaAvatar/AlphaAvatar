@@ -28,6 +28,7 @@ from alphaavatar.agents.utils import resolve_env_placeholders
 
 if TYPE_CHECKING:
     from alphaavatar.agents.configs import SessionConfig
+    from alphaavatar.agents.status import StatusEmitter
 
 
 importlib.import_module("alphaavatar.plugins.deepresearch")
@@ -102,7 +103,10 @@ class ToolsConfig(BaseModel):
             os.environ["MCP_SERVERS"] = json.dumps(mcp_servers)
 
     def get_tools(
-        self, session_config: SessionConfig
+        self,
+        session_config: SessionConfig,
+        *,
+        status_emitter: StatusEmitter | None = None,
     ) -> list[llm.FunctionTool | llm.RawFunctionTool]:
         """Returns the available tools based on the configuration."""
         tools = []
@@ -113,6 +117,7 @@ class ToolsConfig(BaseModel):
             self.deepresearch_tool,
             deepresearch_init_config=self.deepresearch_init_config,
             user_path=session_config.user_path,
+            status_emitter=status_emitter,
         )
         if deepresearch_tool:
             tools.append(deepresearch_tool.tool)
@@ -123,6 +128,7 @@ class ToolsConfig(BaseModel):
             self.rag_tool,
             rag_init_config=self.rag_init_config,
             user_path=session_config.user_path,
+            status_emitter=status_emitter,
         )
         if rag_tool:
             tools.append(rag_tool.tool)
@@ -140,6 +146,7 @@ class ToolsConfig(BaseModel):
             "default",
             mcp_init_config=self.mcp_init_config,
             user_path=session_config.user_path,
+            status_emitter=status_emitter,
         )
         if mcp_tool:
             tools.append(mcp_tool.tool)

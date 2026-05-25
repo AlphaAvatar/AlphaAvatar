@@ -37,7 +37,7 @@ def resolve_session_type(room_type: RoomType, participant_metadata: dict) -> Ses
     if room_type == RoomType.WEB_APP:
         # Web app supports text + audio + video by default.
         # The actual runtime availability still depends on whether the user
-        # enables camera/screen share and whether vision_plugin_config is enabled.
+        # enables camera/screen share and whether vision_config is enabled.
         return SessionType.VIDEO
 
     raise ValueError(f"Unable to resolve session type for room type: {room_type}")

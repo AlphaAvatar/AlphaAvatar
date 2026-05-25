@@ -15,7 +15,7 @@ import uuid
 
 from pydantic import BaseModel, Field
 
-from .memory_type import MemoryType
+from ..enum.memory_type import MemoryType
 
 
 class MemoryItem(BaseModel):

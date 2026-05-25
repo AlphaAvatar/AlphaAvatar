@@ -25,7 +25,7 @@ class VisionInputMode(StrEnum):
     PERIODIC_SAMPLE = "periodic_sample"
 
 
-class VisionPluginConfig(BaseModel):
+class VisionConfig(BaseModel):
     """Configuration for visual input used by the agent.
 
     This config describes the agent's visual input capability and sampling policy.
@@ -83,7 +83,7 @@ class VisionPluginConfig(BaseModel):
     )
 
     @model_validator(mode="after")
-    def normalize(self) -> VisionPluginConfig:
+    def normalize(self) -> VisionConfig:
         if not self.vision_input_enabled:
             self.vision_input_plugin = None
             return self

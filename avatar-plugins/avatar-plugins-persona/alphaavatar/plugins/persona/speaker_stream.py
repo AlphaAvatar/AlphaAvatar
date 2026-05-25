@@ -26,8 +26,7 @@ from livekit.agents.job import get_job_context
 from livekit.agents.types import APIConnectOptions, NotGivenOr
 
 from alphaavatar.agents.constants import SLOW_INFERENCE_THRESHOLD, SPEAKER_THRESHOLD
-from alphaavatar.agents.persona import PersonaBase, SpeakerStreamBase
-from alphaavatar.agents.persona.schema.runner_op import VectorRunnerOP
+from alphaavatar.agents.persona import PersonaBase, SpeakerStreamBase, VectorRunnerOP
 from alphaavatar.agents.utils import DualKeyDict, NumpyOP
 
 from .log import logger

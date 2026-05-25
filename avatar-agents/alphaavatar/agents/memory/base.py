@@ -21,8 +21,8 @@ from alphaavatar.agents.utils import time_str_to_datetime
 from alphaavatar.agents.utils.files.work_dirs import UserPath
 
 from .cache import MemoryCache
+from .enum.memory_type import MemoryType
 from .schema.memory_item import MemoryItem
-from .schema.memory_type import MemoryType
 
 MEMORY_INSTANCE = "memory"
 

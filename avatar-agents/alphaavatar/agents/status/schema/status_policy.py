@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,10 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .base import MemoryBase
-from .cache import MemoryCache
-from .enum.memory_type import MemoryType
-from .enum.runner_op import VectorRunnerOP
-from .schema.memory_item import MemoryItem
+from dataclasses import dataclass
 
-__all__ = ["MemoryBase", "MemoryCache", "MemoryItem", "MemoryType", "VectorRunnerOP"]
+from alphaavatar.agents.status.enum import StatusVisibility
+
+
+@dataclass(slots=True)
+class StatusPolicyConfig:
+    delay_sec: float = 1.5
+    min_interval_sec: float = 5.0
+    max_events_per_turn: int = 3
+    default_visibility: StatusVisibility = StatusVisibility.TEXT

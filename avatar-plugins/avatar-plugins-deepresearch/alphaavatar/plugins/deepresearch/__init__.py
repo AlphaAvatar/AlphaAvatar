@@ -38,10 +38,17 @@ class TavilyPlugin(AvatarPlugin):
         **kwargs,
     ) -> TavilyDeepResearchTool:
         try:
+            status_emitter = kwargs.pop("status_emitter", None)
+
             deepresearch_obj = TavilyDeepResearchTool(
-                user_path=user_path, **deepresearch_init_config, **kwargs
+                user_path=user_path,
+                **deepresearch_init_config,
+                **kwargs,
             )
-            deepresearch_api = DeepResearchAPI(deepresearch_obj)
+            deepresearch_api = DeepResearchAPI(
+                deepresearch_obj,
+                status_emitter=status_emitter,
+            )
             return deepresearch_api
         except Exception:
             raise ImportError(

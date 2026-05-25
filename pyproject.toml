@@ -10,6 +10,7 @@ alpha-avatar-plugins-mcp = { workspace = true }
 alpha-avatar-plugins-memory = { workspace = true }
 alpha-avatar-plugins-persona = { workspace = true }
 alpha-avatar-plugins-rag = { workspace = true }
+alpha-avatar-plugins-status = { workspace = true }
 alpha-avatar-plugins-voice = { workspace = true }
 
 [tool.uv.workspace]

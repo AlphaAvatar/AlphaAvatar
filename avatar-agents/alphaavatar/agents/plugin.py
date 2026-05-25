@@ -30,18 +30,28 @@ class AvatarModule(str, Enum):
     VOICE_STT = "voice_stt"
     VOICE_TTS = "voice_tts"
 
-    # Internal module names
+    # Status modules
+    STATUS = "status"
+
+    # Character modules
     CHARACTER = "character"
+
+    # Memory modules
     MEMORY = "memory"
+
+    # Persona modules
+    PERSONA = "persona"
     PROFILER = "persona_profiler"
     SPEAKER = "persona_speaker"
     RECOGNIZER = "persona_recognizer"
 
-    # tools
+    # deepresearch
     DEEPRESEARCH = "deepresearch"
+
+    # rag
     RAG = "rag"
 
-    # MCP
+    # mcp
     MCP = "mcp"
 
 

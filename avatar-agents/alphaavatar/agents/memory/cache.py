@@ -13,7 +13,7 @@
 # limitations under the License.
 from livekit.agents.llm import ChatItem, ChatMessage, FunctionCall, FunctionCallOutput
 
-from .schema.memory_type import MemoryType
+from .enum.memory_type import MemoryType
 
 
 class MemoryCache:

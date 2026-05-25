@@ -12,12 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from typing import Any, Literal
 
 from livekit.agents import RunContext
 
+from alphaavatar.agents import AvatarModule
 from alphaavatar.agents.log import logger
+from alphaavatar.agents.status import (
+    StatusEmitter,
+    StatusEvent,
+    StatusPriority,
+    StatusType,
+    StatusVisibility,
+)
 
 from .base import ToolBase
 
@@ -123,13 +132,55 @@ Expected returns by op:
     - download(urls) -> str of stored PDF file references/paths
 """
 
-    def __init__(self, deepresearch_object: DeepResearchBase):
+    def __init__(
+        self,
+        deepresearch_object: DeepResearchBase,
+        *,
+        status_emitter: StatusEmitter | None = None,
+    ):
         super().__init__(
             name=deepresearch_object.name,
             description=deepresearch_object.description + "\n\n" + self.args_description,
+            status_emitter=status_emitter,
         )
 
         self._deepresearch_object = deepresearch_object
+
+    def _emit_op_status(
+        self,
+        *,
+        op: DeepResearchOp,
+        status_type: StatusType,
+        query: str | None = None,
+        urls: list[str] | None = None,
+    ) -> None:
+        metadata: dict[str, Any] = {
+            "op": op.value,
+        }
+
+        if query is not None:
+            metadata["query"] = query
+
+        if urls is not None:
+            metadata["url_count"] = len(urls)
+
+        self.emit_status_nowait(
+            StatusEvent(
+                type=status_type,
+                source=AvatarModule.DEEPRESEARCH,
+                stage=op,
+                visibility=StatusVisibility.TEXT,
+                priority=StatusPriority.NORMAL,
+                render_mode="auto",
+                metadata=metadata,
+            )
+        )
+
+    def _should_emit_finalizing(self, op: DeepResearchOp) -> bool:
+        return op in {
+            DeepResearchOp.SEARCH,
+            DeepResearchOp.RESEARCH,
+        }
 
     async def invoke(
         self,
@@ -143,16 +194,45 @@ Expected returns by op:
         query: str | None = None,
         urls: list[str] | None = None,
     ) -> Any:
-        match op:
-            case DeepResearchOp.SEARCH:
-                return await self._deepresearch_object.search(query=query, ctx=ctx)
-            case DeepResearchOp.RESEARCH:
-                return await self._deepresearch_object.research(query=query, ctx=ctx)
-            case DeepResearchOp.SCRAPE:
-                return await self._deepresearch_object.scrape(urls=urls, ctx=ctx)
-            case DeepResearchOp.DOWNLOAD:
-                return await self._deepresearch_object.download(urls=urls, ctx=ctx)
-            case _:
-                msg = f"Unsupported MCP operation: {op}"
-                logger.error(msg)
-                return msg
+        try:
+            op = DeepResearchOp(op)
+        except ValueError:
+            msg = f"Unsupported DeepResearch operation: {op}"
+            logger.error(msg)
+            return msg
+
+        handlers: dict[DeepResearchOp, Callable[[], Awaitable[Any]]] = {
+            DeepResearchOp.SEARCH: lambda: self._deepresearch_object.search(
+                query=query,
+                ctx=ctx,
+            ),
+            DeepResearchOp.RESEARCH: lambda: self._deepresearch_object.research(
+                query=query,
+                ctx=ctx,
+            ),
+            DeepResearchOp.SCRAPE: lambda: self._deepresearch_object.scrape(
+                urls=urls,
+                ctx=ctx,
+            ),
+            DeepResearchOp.DOWNLOAD: lambda: self._deepresearch_object.download(
+                urls=urls,
+                ctx=ctx,
+            ),
+        }
+
+        self._emit_op_status(
+            op=op,
+            status_type=StatusType.TOOL_START,
+            query=query,
+            urls=urls,
+        )
+
+        result = await handlers[op]()
+
+        if self._should_emit_finalizing(op):
+            self._emit_op_status(
+                op=op,
+                status_type=StatusType.FINALIZING,
+            )
+
+        return result

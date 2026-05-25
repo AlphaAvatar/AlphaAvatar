@@ -130,7 +130,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     )
 
     visual_input_enabled = (
-        session_mode.video_input_enabled and avatar_config.vision_plugin_config.vision_input_enabled
+        session_mode.video_input_enabled and avatar_config.vision_config.vision_input_enabled
     )
 
     interaction_method = InteractionMethod(

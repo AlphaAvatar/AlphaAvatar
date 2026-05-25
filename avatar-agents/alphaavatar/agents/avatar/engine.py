@@ -13,8 +13,10 @@
 # limitations under the License.
 """Avatar Launch Engine"""
 
+import asyncio
 import os
 from collections.abc import AsyncIterable, Coroutine
+from contextlib import suppress
 from typing import Any
 
 from livekit import rtc
@@ -27,6 +29,12 @@ from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.memory import MemoryBase
 from alphaavatar.agents.persona import PersonaBase, speaker_node
+from alphaavatar.agents.status import (
+    StatusEmitter,
+    StatusEvent,
+    StatusType,
+    StatusVisibility,
+)
 from alphaavatar.agents.utils import AvatarTime, format_current_time
 from alphaavatar.agents.utils.files.work_dirs import (
     UserPathSnapshot,
@@ -74,11 +82,17 @@ class AvatarEngine(Agent):
             injection_mode=self.avatar_config.runtime_config.runtime_context_mode,
         )
 
+        # Status emitter
+        self.status_emitter: StatusEmitter = avatar_config.status_config.get_plugin()
+
         # Step3: initial plugins
         self._memory: MemoryBase = avatar_config.memory_config.get_plugin(self.session_config)
         self._persona: PersonaBase = avatar_config.persona_config.get_plugin(self.session_config)
         self._tools: list[llm.FunctionTool | llm.RawFunctionTool] = (
-            avatar_config.tools_config.get_tools(self.session_config)
+            avatar_config.tools_config.get_tools(
+                self.session_config,
+                status_emitter=self.status_emitter,
+            )
         )
         self._tools.append(get_runtime_context_tool())
 
@@ -86,16 +100,19 @@ class AvatarEngine(Agent):
         super().__init__(
             instructions=self.system_template.instructions(),
             # llm
-            llm=self.avatar_config.llm_plugin_config.get_plugin(),
+            llm=self.avatar_config.llm_config.get_plugin(),
             # voice plugins
-            turn_detection=self.avatar_config.voice_plugin_config.get_turn_detection_plugin(),
-            stt=self.avatar_config.voice_plugin_config.get_stt_plugin(),
-            vad=self.avatar_config.voice_plugin_config.get_vad_plugin(),
-            tts=self.avatar_config.voice_plugin_config.get_tts_plugin(),
-            allow_interruptions=self.avatar_config.voice_plugin_config.allow_interruptions,
+            turn_detection=self.avatar_config.voice_config.get_turn_detection_plugin(),
+            stt=self.avatar_config.voice_config.get_stt_plugin(),
+            vad=self.avatar_config.voice_config.get_vad_plugin(),
+            tts=self.avatar_config.voice_config.get_tts_plugin(),
+            allow_interruptions=self.avatar_config.voice_config.allow_interruptions,
             # tools
             tools=self._tools,
         )
+
+        # Bind runtime engine to status components.
+        self.status_emitter.bind_engine(self)
 
         # vision
         self._vision: VisionBase = build_vision(self)
@@ -303,6 +320,9 @@ class AvatarEngine(Agent):
         # chat_context after the answer is generated.
 
         async def _gen():
+            # 0. Reset status policy for this user turn.
+            self.status_emitter.start_turn()
+
             # 1. Sync all plugin-produced context into runtime_context.
             self._sync_runtime_context_for_turn()
 
@@ -338,13 +358,34 @@ class AvatarEngine(Agent):
             )
 
             # 7. Call model.
-            async for chunk in Agent.default.llm_node(
-                self,
-                injected_chat_ctx,
-                tools,
-                model_settings,
-            ):
-                yield chunk
+            thinking_task = self.status_emitter.emit_delayed(
+                StatusEvent(
+                    type=StatusType.THINKING,
+                    source="avatar_engine",
+                    stage="thinking",
+                    visibility=StatusVisibility.TEXT,
+                    render_mode="auto",
+                )
+            )
+
+            try:
+                async for chunk in Agent.default.llm_node(
+                    self,
+                    injected_chat_ctx,
+                    tools,
+                    model_settings,
+                ):
+                    if thinking_task is not None and not thinking_task.done():
+                        thinking_task.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await thinking_task
+
+                    yield chunk
+            finally:
+                if thinking_task is not None and not thinking_task.done():
+                    thinking_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await thinking_task
 
         return _gen()
 

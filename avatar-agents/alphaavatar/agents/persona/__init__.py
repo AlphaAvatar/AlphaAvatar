@@ -13,8 +13,8 @@
 # limitations under the License.
 from .base import PersonaBase
 from .cache import PersonaCache, SpeakerCacheBase
+from .enum.runner_op import VectorRunnerOP
 from .profiler import ProfilerBase
-from .schema.runner_op import VectorRunnerOP
 from .schema.user_profile import (
     DetailsBase,
     ProfileItemSource,

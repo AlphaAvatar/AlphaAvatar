@@ -17,13 +17,22 @@ from typing import Any
 
 from livekit.agents import RunContext, function_tool, llm
 
+from alphaavatar.agents.status import StatusEmitter, StatusEvent
+
 
 class ToolBase(ABC):
     """Base class for all tools used by agents in the AlphaAvatar framework."""
 
-    def __init__(self, *, name: str, description: str):
+    def __init__(
+        self,
+        *,
+        name: str,
+        description: str,
+        status_emitter: StatusEmitter | None = None,
+    ):
         self._name = name
         self._description = description
+        self._status_emitter = status_emitter
 
         tool_func = self._build_tool_wrapper()
         self._tool = function_tool(name=self._name, description=self._description)(tool_func)
@@ -32,12 +41,49 @@ class ToolBase(ABC):
     def tool(self) -> llm.FunctionTool | llm.RawFunctionTool:
         return self._tool
 
+    @property
+    def status_emitter(self) -> StatusEmitter | None:
+        return self._status_emitter
+
+    def set_status_emitter(self, status_emitter: StatusEmitter | None) -> None:
+        self._status_emitter = status_emitter
+
+    async def emit_status(self, event: StatusEvent) -> None:
+        """Awaitable status emit. Use this when ordering matters."""
+        if self._status_emitter is None:
+            return
+
+        await self._status_emitter.emit(event)
+
+    def emit_status_nowait(self, event: StatusEvent):
+        """
+        Fire-and-forget status emit.
+
+        This is preferred before long-running tool calls, so status delivery
+        does not block the actual tool execution.
+        """
+        if self._status_emitter is None:
+            return None
+
+        return self._status_emitter.emit_nowait(event)
+
+    def emit_status_delayed(
+        self,
+        event: StatusEvent,
+        *,
+        delay_sec: float | None = None,
+    ):
+        if self._status_emitter is None:
+            return None
+
+        return self._status_emitter.emit_delayed(event, delay_sec=delay_sec)
+
     def _build_tool_wrapper(self):
         """
         Build an async function (not a bound method) with the same signature as `self.invoke`,
         so LiveKit can attach metadata and build strict OpenAI schema.
         """
-        invoke = self.invoke  # bound method, used only inside closure
+        invoke = self.invoke
         sig = inspect.signature(invoke)
 
         params = list(sig.parameters.values())

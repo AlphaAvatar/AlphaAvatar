@@ -16,13 +16,14 @@ from pydantic import BaseModel, Field
 from alphaavatar.agents.configs.runtime_config import RuntimeConfig
 
 from .avatar_info_config import AvatarInfoConfig
-from .plugins.character_plugin_config import VirtualCharacterConfig
-from .plugins.llm_plugin_config import LLMPluginConfig
-from .plugins.memory_plugin_config import MemoryConfig
-from .plugins.persona_plugin_config import PersonaConfig
-from .plugins.tools_plugin_config import ToolsConfig
-from .plugins.vision_plugin_config import VisionPluginConfig
-from .plugins.voice_plugin_config import VoicePluginConfig
+from .plugins.character_config import VirtualCharacterConfig
+from .plugins.llm_config import LLMConfig
+from .plugins.memory_config import MemoryConfig
+from .plugins.persona_config import PersonaConfig
+from .plugins.status_config import StatusConfig
+from .plugins.tools_config import ToolsConfig
+from .plugins.vision_config import VisionConfig
+from .plugins.voice_config import VoiceConfig
 
 
 class AvatarConfig(BaseModel):
@@ -33,17 +34,20 @@ class AvatarConfig(BaseModel):
     runtime_config: RuntimeConfig = Field(default_factory=RuntimeConfig)
     """Runtime configuration, which will creat for each session."""
 
+    status_config: StatusConfig = Field(default_factory=StatusConfig)
+    """Avatar Intermediate Status Plugin configuration."""
+
     avatar_info: AvatarInfoConfig = Field(default_factory=AvatarInfoConfig)
     """Avatar Information configuration."""
 
-    llm_plugin_config: LLMPluginConfig = Field(default_factory=LLMPluginConfig)
-    """LLM Plugin configuration."""
+    llm_config: LLMConfig = Field(default_factory=LLMConfig)
+    """LLM configuration."""
 
-    voice_plugin_config: VoicePluginConfig = Field(default_factory=VoicePluginConfig)
-    """Voice Plugins configuration."""
+    voice_config: VoiceConfig = Field(default_factory=VoiceConfig)
+    """Voice configuration."""
 
-    vision_plugin_config: VisionPluginConfig = Field(default_factory=VisionPluginConfig)
-    """Vision Plugins configuration."""
+    vision_config: VisionConfig = Field(default_factory=VisionConfig)
+    """Vision configuration."""
 
     character_config: VirtualCharacterConfig = Field(default_factory=VirtualCharacterConfig)
     """Avatar Virtual Character configuration."""

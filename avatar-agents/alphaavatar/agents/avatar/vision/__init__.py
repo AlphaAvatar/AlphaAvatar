@@ -19,7 +19,7 @@ from alphaavatar.agents.avatar.vision.sampled_frame import SampledFrameVision
 
 
 def build_vision(agent) -> VisionBase:
-    vision_config = agent.avatar_config.vision_plugin_config
+    vision_config = agent.avatar_config.vision_config
 
     if not vision_config.vision_input_enabled:
         return NoopVision(agent)

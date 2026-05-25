@@ -21,7 +21,7 @@ from livekit import rtc
 from livekit.agents import get_job_context, llm
 
 from alphaavatar.agents.avatar.vision.base import VisionBase
-from alphaavatar.agents.configs.plugins.vision_plugin_config import VisionInputMode
+from alphaavatar.agents.configs.plugins.vision_config import VisionInputMode
 from alphaavatar.agents.log import logger
 
 from .constants import (
@@ -44,7 +44,7 @@ class SampledFrameVision(VisionBase):
     def __init__(self, agent) -> None:
         super().__init__(agent)
 
-        vision_config = self.agent.avatar_config.vision_plugin_config
+        vision_config = self.agent.avatar_config.vision_config
 
         self._video_frame_buffer: deque[rtc.VideoFrame] = deque(
             maxlen=vision_config.vision_frame_buffer_size
@@ -194,7 +194,7 @@ class SampledFrameVision(VisionBase):
         )
 
     def _maybe_cache_video_frame(self, frame: rtc.VideoFrame) -> None:
-        vision_config = self.agent.avatar_config.vision_plugin_config
+        vision_config = self.agent.avatar_config.vision_config
 
         if not vision_config.use_sampled_frame_input:
             return
@@ -209,7 +209,7 @@ class SampledFrameVision(VisionBase):
         self._video_frame_buffer.append(frame)
 
     def _select_visual_frames_for_turn(self) -> list[rtc.VideoFrame]:
-        vision_config = self.agent.avatar_config.vision_plugin_config
+        vision_config = self.agent.avatar_config.vision_config
 
         if not vision_config.use_sampled_frame_input:
             return []
@@ -230,7 +230,7 @@ class SampledFrameVision(VisionBase):
         return []
 
     def start(self) -> None:
-        vision_config = self.agent.avatar_config.vision_plugin_config
+        vision_config = self.agent.avatar_config.vision_config
 
         if not vision_config.use_sampled_frame_input:
             return
@@ -336,7 +336,7 @@ class SampledFrameVision(VisionBase):
         return False
 
     def inject_into_chat_ctx(self, chat_ctx: llm.ChatContext) -> None:
-        vision_config = self.agent.avatar_config.vision_plugin_config
+        vision_config = self.agent.avatar_config.vision_config
         frames = self._select_visual_frames_for_turn()
 
         if not frames:

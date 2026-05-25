@@ -135,7 +135,7 @@ class VADArguments(BaseModel):
                 return None
 
 
-class VoicePluginConfig(STTArguments, TTSArguments, VADArguments):
+class VoiceConfig(STTArguments, TTSArguments, VADArguments):
     """Configuration for LiveKit plugins used in the agent."""
 
     turn_detection_plugin: Literal["multilingual", "english"] | None = Field(

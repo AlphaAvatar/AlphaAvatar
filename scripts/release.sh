@@ -13,6 +13,7 @@ PACKAGES=(
   "avatar-plugins/avatar-plugins-memory"
   "avatar-plugins/avatar-plugins-persona"
   "avatar-plugins/avatar-plugins-rag"
+  "avatar-plugins/avatar-plugins-status"
   "avatar-plugins/avatar-plugins-voice"
 )
 

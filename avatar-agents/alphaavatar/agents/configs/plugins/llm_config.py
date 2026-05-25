@@ -17,7 +17,7 @@ from livekit.agents import llm
 from pydantic import BaseModel, Field
 
 
-class LLMPluginConfig(BaseModel):
+class LLMConfig(BaseModel):
     """Configuration for the LLM plugin used in the agent."""
 
     llm_plugin: Literal["openai"] | None = Field(
