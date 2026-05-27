@@ -15,64 +15,54 @@ from alphaavatar.agents import AvatarModule
 from alphaavatar.agents.status import StatusEvent, StatusRendererBase, StatusType
 from alphaavatar.agents.tools.deepresearch_api import DeepResearchOp
 
-_AVATAR_ENGINE_SOURCE = "avatar_engine"
-_LLM_SOURCE = "llm"
-
 
 class DefaultStatusRenderer(StatusRendererBase):
-    def __init__(
-        self,
-        *,
-        default_language: str = "en",
-        enable_llm: bool = False,
-    ) -> None:
-        self.default_language = default_language
-        self.enable_llm = enable_llm
+    def __init__(self) -> None:
+        pass
 
     async def render(self, event: StatusEvent) -> str | None:
-        if event.render_mode == "none":
+        if event.message:
+            return self._normalize_message(event.message)
+
+        language = self._detect_language(event)
+        return self._render_by_template(event, language=language)
+
+    def _normalize_message(self, message: str) -> str | None:
+        message = message.strip()
+        if not message:
             return None
 
+        # Keep status monologue short.
+        # The final sink may trim again depending on text/voice mode.
+        if len(message) > 80:
+            message = message[:80].rstrip("，。,. ") + "..."
+
+        return message
+
+    def _detect_language(self, event: StatusEvent) -> str:
+        candidates: list[str] = []
+
         if event.message:
-            return event.message
+            candidates.append(event.message)
 
-        language = event.language or self.default_language
+        query = event.metadata.get("query")
+        if isinstance(query, str):
+            candidates.append(query)
 
-        if event.render_mode == "llm":
-            return await self._render_by_llm(event, language=language)
+        # Very simple heuristic:
+        # If there are CJK characters, use Chinese. Otherwise English.
+        text = "\n".join(candidates)
 
-        if event.render_mode == "template":
-            return self._render_by_template(event, language=language)
+        if self._contains_cjk(text):
+            return "zh"
 
-        if self._should_use_llm(event):
-            llm_text = await self._render_by_llm(event, language=language)
-            if llm_text:
-                return llm_text
+        return "en"
 
-        return self._render_by_template(event, language=language)
-
-    def _should_use_llm(self, event: StatusEvent) -> bool:
-        if not self.enable_llm:
-            return False
-
-        if event.source in {AvatarModule.MEMORY, AvatarModule.PERSONA}:
-            return False
-
-        if event.source == _AVATAR_ENGINE_SOURCE and event.type in {
-            StatusType.THINKING,
-            StatusType.FINALIZING,
-        }:
-            return True
-
-        if event.source == AvatarModule.DEEPRESEARCH and event.type == StatusType.FINALIZING:
-            return True
-
+    def _contains_cjk(self, text: str) -> bool:
+        for ch in text:
+            if "\u4e00" <= ch <= "\u9fff":
+                return True
         return False
-
-    async def _render_by_llm(self, event: StatusEvent, *, language: str) -> str | None:
-        # Future extension:
-        # call a small model here.
-        return self._render_by_template(event, language=language)
 
     def _render_by_template(self, event: StatusEvent, *, language: str) -> str | None:
         if language.startswith("zh"):
@@ -90,26 +80,22 @@ class DefaultStatusRenderer(StatusRendererBase):
         if event.source == AvatarModule.RAG:
             return self._render_rag_en(event)
 
-        if event.source == _AVATAR_ENGINE_SOURCE:
+        if event.source == AvatarModule.AVATAR_ENGINE:
             if event.type == StatusType.THINKING:
-                return "Let me think for a moment."
+                return "Let me think."
             if event.type == StatusType.FINALIZING:
-                return "I have the result and I’m preparing the response."
-
-        if event.source == _LLM_SOURCE:
-            if event.type == StatusType.THINKING:
-                return "Let me think for a moment."
-            if event.type == StatusType.FINALIZING:
-                return "I’m preparing the final response."
+                return "Almost done."
 
         if event.type == StatusType.THINKING:
-            return "Let me think for a moment."
+            return "Let me think."
         if event.type == StatusType.TOOL_START:
-            return "I’m calling a tool."
+            return "I’ll check that."
         if event.type == StatusType.TOOL_PROGRESS:
-            return "I’m still working on it."
+            return "Still working on it."
         if event.type == StatusType.FINALIZING:
-            return "I’m preparing the final response."
+            return "Almost done."
+        if event.type == StatusType.TOOL_ERROR:
+            return "I’ll try another way."
 
         return None
 
@@ -123,117 +109,105 @@ class DefaultStatusRenderer(StatusRendererBase):
         if event.source == AvatarModule.RAG:
             return self._render_rag_zh(event)
 
-        if event.source == _AVATAR_ENGINE_SOURCE:
+        if event.source == AvatarModule.AVATAR_ENGINE:
             if event.type == StatusType.THINKING:
                 return "我想一下。"
             if event.type == StatusType.FINALIZING:
-                return "我已经拿到结果，正在整理回复。"
-
-        if event.source == _LLM_SOURCE:
-            if event.type == StatusType.THINKING:
-                return "我想一下。"
-            if event.type == StatusType.FINALIZING:
-                return "我正在整理最终回复。"
+                return "快好了。"
 
         if event.type == StatusType.THINKING:
             return "我想一下。"
         if event.type == StatusType.TOOL_START:
-            return "我正在调用工具处理。"
+            return "我查一下。"
         if event.type == StatusType.TOOL_PROGRESS:
-            return "我还在处理中。"
+            return "还在处理。"
         if event.type == StatusType.FINALIZING:
-            return "我正在整理回复。"
+            return "快好了。"
+        if event.type == StatusType.TOOL_ERROR:
+            return "我换个方式试试。"
 
         return None
 
     def _render_deepresearch_en(self, event: StatusEvent) -> str | None:
         if event.type == StatusType.TOOL_START:
             if event.stage == DeepResearchOp.SEARCH:
-                return "I’m searching for relevant information."
+                return "I’ll check that."
             if event.stage == DeepResearchOp.RESEARCH:
-                return "I’m starting a deeper research pass."
+                return "I’ll dig into it."
             if event.stage == DeepResearchOp.SCRAPE:
-                return "I’m reading through the source content."
+                return "I’m reading the sources."
             if event.stage == DeepResearchOp.DOWNLOAD:
-                return "I’m saving the relevant materials for analysis."
+                return "I’m saving the material."
 
         if event.type == StatusType.FINALIZING:
             if event.stage in {DeepResearchOp.SEARCH, DeepResearchOp.RESEARCH}:
-                return "I’ve gathered the materials and I’m summarizing the key points."
+                return "I found the main points."
 
         if event.type == StatusType.TOOL_ERROR:
-            return "The research tool hit an issue, but I’m trying to continue."
+            return "I’ll try another way."
 
-        return "I’m working on this research task."
+        return "I’m checking that."
 
     def _render_deepresearch_zh(self, event: StatusEvent) -> str | None:
         if event.type == StatusType.TOOL_START:
             if event.stage == DeepResearchOp.SEARCH:
-                return "我正在帮你搜索相关资料。"
+                return "我查一下。"
             if event.stage == DeepResearchOp.RESEARCH:
-                return "我正在做更深入的资料调研。"
+                return "我深入查一下。"
             if event.stage == DeepResearchOp.SCRAPE:
-                return "我正在读取这些网页内容。"
+                return "我正在看资料。"
             if event.stage == DeepResearchOp.DOWNLOAD:
-                return "我正在保存相关资料，方便后续分析。"
+                return "我先保存资料。"
 
         if event.type == StatusType.FINALIZING:
             if event.stage in {DeepResearchOp.SEARCH, DeepResearchOp.RESEARCH}:
-                return "资料已经收集得差不多了，我正在总结重点。"
+                return "我找到重点了。"
 
         if event.type == StatusType.TOOL_ERROR:
-            return "调研工具遇到了一点问题，我正在尝试继续处理。"
+            return "我换个方式试试。"
 
-        return "我正在处理这个研究任务。"
+        return "我查一下。"
 
     def _render_mcp_en(self, event: StatusEvent) -> str | None:
-        # TODO:
-        # Replace string stages with MCP op enum after MCP status events are typed.
         if event.stage == "search_tools":
-            return "I’m looking for the right external tools."
+            return "I’m finding the right tools."
         if event.stage == "parallel_tools":
-            return "I’m calling a few external tools in parallel."
+            return "I’m using a few tools."
         if event.stage == "calling_tool":
-            return "I’m calling an external tool."
+            return "I’m using a tool."
         if event.type == StatusType.TOOL_ERROR:
-            return "The tool call hit an issue, but I’m trying to continue."
-        return "I’m using external tools to process this."
+            return "I’ll try another way."
+        return "I’m using a tool."
 
     def _render_mcp_zh(self, event: StatusEvent) -> str | None:
-        # TODO:
-        # Replace string stages with MCP op enum after MCP status events are typed.
         if event.stage == "search_tools":
-            return "我正在查找可用的外部工具。"
+            return "我找一下合适的工具。"
         if event.stage == "parallel_tools":
-            return "我正在并行调用几个外部工具。"
+            return "我用几个工具看一下。"
         if event.stage == "calling_tool":
-            return "我正在调用外部工具处理。"
+            return "我用工具看一下。"
         if event.type == StatusType.TOOL_ERROR:
-            return "工具调用遇到了一点问题，我正在尝试继续处理。"
-        return "我正在通过外部工具处理。"
+            return "我换个方式试试。"
+        return "我用工具看一下。"
 
     def _render_rag_en(self, event: StatusEvent) -> str | None:
-        # TODO:
-        # Replace string stages with RAG op enum after RAG status events are typed.
         if event.stage == "retrieving":
-            return "I’m retrieving relevant documents."
+            return "I’ll check the documents."
         if event.stage == "reading":
-            return "I found some relevant content and I’m reading it."
+            return "I found something relevant."
         if event.stage == "indexing":
-            return "I’m organizing and indexing the materials."
+            return "I’m organizing the material."
         if event.stage == "summarizing":
-            return "I’m preparing an answer based on the documents."
-        return "I’m processing the document information."
+            return "I’m putting it together."
+        return "I’m checking the documents."
 
     def _render_rag_zh(self, event: StatusEvent) -> str | None:
-        # TODO:
-        # Replace string stages with RAG op enum after RAG status events are typed.
         if event.stage == "retrieving":
-            return "我正在检索相关文档。"
+            return "我查一下文档。"
         if event.stage == "reading":
-            return "我找到了一些相关内容，正在读取。"
+            return "我找到相关内容了。"
         if event.stage == "indexing":
-            return "我正在整理并索引这些资料。"
+            return "我整理一下资料。"
         if event.stage == "summarizing":
-            return "我正在根据文档整理答案。"
-        return "我正在处理文档信息。"
+            return "我整理一下。"
+        return "我查一下文档。"

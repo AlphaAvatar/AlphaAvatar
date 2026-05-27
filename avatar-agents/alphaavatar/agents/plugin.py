@@ -26,6 +26,9 @@ RunnerBootstrapFn = Callable[[], None]
 
 
 class AvatarModule(str, Enum):
+    # Engine
+    AVATAR_ENGINE = "avatar_engine"
+
     # Voice modules
     VOICE_STT = "voice_stt"
     VOICE_TTS = "voice_tts"

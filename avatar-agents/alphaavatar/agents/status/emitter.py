@@ -21,7 +21,6 @@ from alphaavatar.agents.status.base import (
     StatusSinkBase,
 )
 from alphaavatar.agents.status.callback import StatusSink
-from alphaavatar.agents.status.enum import StatusVisibility
 from alphaavatar.agents.status.schema import StatusEvent
 
 
@@ -57,6 +56,11 @@ class StatusEmitter:
         if self._policy is not None:
             self._policy.start_turn()
 
+        if isinstance(self._sink, StatusSinkBase):
+            start_turn = getattr(self._sink, "start_turn", None)
+            if callable(start_turn):
+                start_turn()
+
     async def emit(self, event: StatusEvent) -> None:
         if not self._enabled:
             return
@@ -64,27 +68,20 @@ class StatusEmitter:
         if self._sink is None:
             return
 
-        if event.visibility == StatusVisibility.SILENT:
-            return
-
         if self._policy is not None and not self._policy.should_emit(event):
             return
 
-        text: str | None = None
+        if self._renderer is None:
+            return
 
-        if event.visibility != StatusVisibility.EVENT and event.render_mode != "none":
-            if self._renderer is None:
-                return
-
-            text = await self._renderer.render(event)
-
-            if not text:
-                return
+        text = await self._renderer.render(event)
+        if not text:
+            return
 
         await self._emit_to_sink(event, text)
 
         if self._policy is not None:
-            self._policy.mark_emitted()
+            self._policy.mark_emitted(event)
 
     def emit_nowait(self, event: StatusEvent) -> asyncio.Task | None:
         """

@@ -34,29 +34,14 @@ class StatusConfig(BaseModel):
         description="Whether to enable intermediate status events.",
     )
 
-    default_language: str = Field(
-        default="en",
-        description="Default language for status rendering, e.g. en, zh.",
+    action_topic: str = Field(
+        default="agent.status.action",
+        description="LiveKit data topic for structured status action events.",
     )
 
-    enable_llm_renderer: bool = Field(
-        default=False,
-        description="Whether to enable LLM-based status rendering.",
-    )
-
-    enable_logger_sink: bool = Field(
-        default=True,
-        description="Whether to enable logger status sink.",
-    )
-
-    enable_livekit_data_sink: bool = Field(
-        default=False,
-        description="Whether to publish status events through LiveKit data channel.",
-    )
-
-    livekit_data_topic: str = Field(
-        default="agent.status",
-        description="LiveKit data channel topic for status events.",
+    text_topic: str = Field(
+        default="agent.status.text",
+        description="LiveKit data topic for user-facing status text events.",
     )
 
     status_init_config: dict = Field(
@@ -69,11 +54,8 @@ class StatusConfig(BaseModel):
             AvatarModule.STATUS,
             self.status_plugin,
             enabled=self.enabled,
-            default_language=self.default_language,
-            enable_llm_renderer=self.enable_llm_renderer,
-            enable_logger_sink=self.enable_logger_sink,
-            enable_livekit_data_sink=self.enable_livekit_data_sink,
-            livekit_data_topic=self.livekit_data_topic,
+            action_topic=self.action_topic,
+            text_topic=self.text_topic,
             **self.status_init_config,
         )
 

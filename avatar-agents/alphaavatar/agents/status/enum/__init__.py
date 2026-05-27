@@ -13,10 +13,8 @@
 # limitations under the License.
 from .status_priority import StatusPriority
 from .status_type import StatusType
-from .status_visibility import StatusVisibility
 
 __all__ = [
     "StatusType",
     "StatusPriority",
-    "StatusVisibility",
 ]

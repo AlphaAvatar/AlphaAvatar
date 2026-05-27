@@ -17,7 +17,12 @@ from alphaavatar.agents.status import StatusEmitter
 from .log import logger
 from .policy import DefaultStatusPolicy
 from .renderer import DefaultStatusRenderer
-from .sink import CompositeStatusSink, LiveKitDataChannelStatusSink, LoggerStatusSink
+from .sink import (
+    CompositeStatusSink,
+    LoggerStatusSink,
+    StatusActionEventSink,
+    TextOrVoiceStatusSink,
+)
 from .version import __version__
 
 __all__ = [
@@ -26,7 +31,8 @@ __all__ = [
     "DefaultStatusRenderer",
     "CompositeStatusSink",
     "LoggerStatusSink",
-    "LiveKitDataChannelStatusSink",
+    "StatusActionEventSink",
+    "TextOrVoiceStatusSink",
 ]
 
 
@@ -39,33 +45,29 @@ class DefaultStatusPlugin(AvatarPlugin):
     def get_plugin(
         self,
         *,
-        default_language: str = "en",
-        enable_llm_renderer: bool = False,
         enabled: bool = True,
-        enable_logger_sink: bool = True,
-        enable_livekit_data_sink: bool = False,
-        livekit_data_topic: str = "agent.status",
+        action_topic: str = "agent.status.action",
+        text_topic: str = "agent.status.text",
         **kwargs,
     ) -> StatusEmitter:
-        renderer = DefaultStatusRenderer(
-            default_language=default_language,
-            enable_llm=enable_llm_renderer,
-        )
+        renderer = DefaultStatusRenderer()
         policy = DefaultStatusPolicy()
 
-        sinks = []
-
-        if enable_logger_sink:
-            sinks.append(LoggerStatusSink())
-
-        if enable_livekit_data_sink:
-            sinks.append(
-                LiveKitDataChannelStatusSink(
-                    topic=livekit_data_topic,
-                )
-            )
-
-        sink = CompositeStatusSink(sinks)
+        sink = CompositeStatusSink(
+            [
+                # Always enabled for observability.
+                LoggerStatusSink(),
+                # Emits structured action events.
+                # The sink itself becomes useful only when a LiveKit room exists.
+                StatusActionEventSink(
+                    topic=action_topic,
+                ),
+                # Automatically chooses text or voice based on interaction_method.
+                TextOrVoiceStatusSink(
+                    text_topic=text_topic,
+                ),
+            ]
+        )
 
         return StatusEmitter(
             sink=sink,

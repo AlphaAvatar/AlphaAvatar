@@ -25,7 +25,6 @@ from alphaavatar.agents.status import (
     StatusEvent,
     StatusPriority,
     StatusType,
-    StatusVisibility,
 )
 
 from .base import ToolBase
@@ -124,6 +123,15 @@ class DeepResearchAPI(ToolBase):
         A list of URLs to process. Required for "scrape" and "download".
         Use URLs returned by "search" or "research".
 
+    monologue:
+        Optional short user-facing status message to show or speak while this
+        tool is running. Keep it brief, natural, and in the same language as the
+        user. Do not reveal hidden reasoning. Examples:
+        - "我查一下。"
+        - "我深入查一下。"
+        - "I’ll check that."
+        - "I’ll dig into it."
+
 Expected returns by op:
     - search(query) -> search results (e.g., list of {title, url, snippet}, etc.)
     - research(query) -> enriched results + synthesis (e.g., ranked sources,
@@ -153,6 +161,7 @@ Expected returns by op:
         status_type: StatusType,
         query: str | None = None,
         urls: list[str] | None = None,
+        monologue: str | None = None,
     ) -> None:
         metadata: dict[str, Any] = {
             "op": op.value,
@@ -169,9 +178,8 @@ Expected returns by op:
                 type=status_type,
                 source=AvatarModule.DEEPRESEARCH,
                 stage=op,
-                visibility=StatusVisibility.TEXT,
+                message=monologue,
                 priority=StatusPriority.NORMAL,
-                render_mode="auto",
                 metadata=metadata,
             )
         )
@@ -193,6 +201,7 @@ Expected returns by op:
         ],
         query: str | None = None,
         urls: list[str] | None = None,
+        monologue: str | None = None,
     ) -> Any:
         try:
             op = DeepResearchOp(op)
@@ -225,6 +234,7 @@ Expected returns by op:
             status_type=StatusType.TOOL_START,
             query=query,
             urls=urls,
+            monologue=monologue,
         )
 
         result = await handlers[op]()

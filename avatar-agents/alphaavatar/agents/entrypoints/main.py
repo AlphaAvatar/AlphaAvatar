@@ -189,9 +189,12 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
         avatar_config=avatar_config,
         runtime_context=runtime_context,
     )
-    avatar_character = avatar_config.character_config.get_plugin()
+
+    # Bind room before session.start so status sinks can publish early events.
+    avatar_engine.bind_livekit_room(ctx.room)
 
     # Start character
+    avatar_character = avatar_config.character_config.get_plugin()
     if avatar_character:
         await avatar_character.start(agent_identity, session, room=ctx.room)
 

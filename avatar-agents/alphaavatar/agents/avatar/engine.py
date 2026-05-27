@@ -14,6 +14,7 @@
 """Avatar Launch Engine"""
 
 import asyncio
+import inspect
 import os
 from collections.abc import AsyncIterable, Coroutine
 from contextlib import suppress
@@ -29,11 +30,11 @@ from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.memory import MemoryBase
 from alphaavatar.agents.persona import PersonaBase, speaker_node
+from alphaavatar.agents.plugin import AvatarModule
 from alphaavatar.agents.status import (
     StatusEmitter,
     StatusEvent,
     StatusType,
-    StatusVisibility,
 )
 from alphaavatar.agents.utils import AvatarTime, format_current_time
 from alphaavatar.agents.utils.files.work_dirs import (
@@ -59,6 +60,9 @@ class AvatarEngine(Agent):
         avatar_config: AvatarConfig,
         runtime_context: AvatarRuntimeContext | None = None,
     ) -> None:
+        # LiveKit room is provided by JobContext and explicitly bound after session.start.
+        self._livekit_room: rtc.Room | None = None
+
         # Step1: initial config
         self.session_config = session_config
         self.avatar_config = avatar_config
@@ -119,6 +123,13 @@ class AvatarEngine(Agent):
 
         # other states
         self._pending_user_path_migration: tuple[UserPathSnapshot, UserPathSnapshot] | None = None
+
+    @property
+    def livekit_room(self) -> rtc.Room | None:
+        return self._livekit_room
+
+    def bind_livekit_room(self, room: rtc.Room) -> None:
+        self._livekit_room = room
 
     @property
     def memory(self) -> MemoryBase:
@@ -203,6 +214,14 @@ class AvatarEngine(Agent):
         except Exception as e:
             logger.warning("Final user path migration failed: %s", e)
 
+    async def _call_with_supported_kwargs(self, func, *args, **kwargs) -> None:
+        sig = inspect.signature(func)
+        supported_kwargs = {key: value for key, value in kwargs.items() if key in sig.parameters}
+
+        result = func(*args, **supported_kwargs)
+        if asyncio.iscoroutine(result):
+            await result
+
     async def resolve_user_identity(self, *, user_id: str) -> None:
         if not user_id or user_id == self.session_config.user_id:
             return
@@ -234,6 +253,29 @@ class AvatarEngine(Agent):
             user_id,
             old_user_path.user_root,
             new_user_path.user_root,
+        )
+
+    async def speak_status_text(self, text: str) -> None:
+        """
+        Speak a short status message without going through the LLM.
+
+        This method should not add content to chat history or trigger tool calls.
+        """
+        session = getattr(self, "session", None)
+        if session is None:
+            logger.debug("Cannot speak status text because session is unavailable.")
+            return
+
+        say = getattr(session, "say", None)
+        if not callable(say):
+            logger.debug("Cannot speak status text because session.say is unavailable.")
+            return
+
+        await self._call_with_supported_kwargs(
+            say,
+            text,
+            allow_interruptions=False,
+            add_to_chat_ctx=False,
         )
 
     async def on_enter(self):
@@ -319,10 +361,33 @@ class AvatarEngine(Agent):
         # it's a temporary state. The user query and answer are only inserted into the
         # chat_context after the answer is generated.
 
-        async def _gen():
-            # 0. Reset status policy for this user turn.
-            self.status_emitter.start_turn()
+        def _latest_role(ctx: llm.ChatContext) -> str | None:
+            for item in reversed(getattr(ctx, "items", [])):
+                role = getattr(item, "role", None)
+                if role is not None:
+                    return role
+            return None
 
+        def _is_answer_chunk(chunk: llm.ChatChunk | str | FlushSentinel) -> bool:
+            if isinstance(chunk, str):
+                return bool(chunk.strip())
+
+            delta = getattr(chunk, "delta", None)
+            if delta is None:
+                return False
+
+            # Tool-call chunks should not cancel thinking.
+            tool_calls = getattr(delta, "tool_calls", None) or getattr(delta, "toolCalls", None)
+            if tool_calls:
+                return False
+
+            content = getattr(delta, "content", None)
+            if isinstance(content, str) and content.strip():
+                return True
+
+            return False
+
+        async def _gen():
             # 1. Sync all plugin-produced context into runtime_context.
             self._sync_runtime_context_for_turn()
 
@@ -357,17 +422,24 @@ class AvatarEngine(Agent):
                 runtime_context=runtime_context_text,
             )
 
-            # 7. Call model.
-            thinking_task = self.status_emitter.emit_delayed(
-                StatusEvent(
-                    type=StatusType.THINKING,
-                    source="avatar_engine",
-                    stage="thinking",
-                    visibility=StatusVisibility.TEXT,
-                    render_mode="auto",
-                )
-            )
+            # 7. Only emit thinking for the first model call after a user query.
+            #
+            # Later model calls after tool outputs should not emit thinking again:
+            # tool execution / multi-tool progress should be represented by tool status events.
+            is_user_query_model_call = _latest_role(model_chat_ctx) == "user"
 
+            thinking_task = None
+            if is_user_query_model_call:
+                self.status_emitter.start_turn()
+                thinking_task = self.status_emitter.emit_delayed(
+                    StatusEvent(
+                        type=StatusType.THINKING,
+                        source=AvatarModule.AVATAR_ENGINE,
+                        stage="thinking",
+                    )
+                )
+
+            thinking_cancelled = False
             try:
                 async for chunk in Agent.default.llm_node(
                     self,
@@ -375,12 +447,15 @@ class AvatarEngine(Agent):
                     tools,
                     model_settings,
                 ):
-                    if thinking_task is not None and not thinking_task.done():
-                        thinking_task.cancel()
-                        with suppress(asyncio.CancelledError):
-                            await thinking_task
+                    if not thinking_cancelled and _is_answer_chunk(chunk):
+                        if thinking_task is not None and not thinking_task.done():
+                            thinking_task.cancel()
+                            with suppress(asyncio.CancelledError):
+                                await thinking_task
+                        thinking_cancelled = True
 
                     yield chunk
+
             finally:
                 if thinking_task is not None and not thinking_task.done():
                     thinking_task.cancel()

@@ -14,15 +14,12 @@
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any
 
 from alphaavatar.agents.status.enum import (
     StatusPriority,
     StatusType,
-    StatusVisibility,
 )
-
-StatusRenderMode = Literal["auto", "template", "llm", "none"]
 
 
 def _to_json_value(value: Any) -> Any:
@@ -48,29 +45,11 @@ class StatusEvent:
 
     stage: str | StrEnum | None = None
 
+    # Short user-facing status text.
+    # If provided, renderer should use it directly.
     message: str | None = None
-    message_key: str | None = None
 
-    visibility: StatusVisibility = StatusVisibility.TEXT
     priority: StatusPriority = StatusPriority.NORMAL
-
-    # auto:
-    #   Let renderer choose template or llm.
-    # template:
-    #   Force deterministic template rendering.
-    # llm:
-    #   Force small-model rendering.
-    # none:
-    #   Structured event only.
-    render_mode: StatusRenderMode = "auto"
-
-    # Optional language hint.
-    # Example: "en", "zh", "ja", "ar".
-    # If None, renderer falls back to its default language.
-    language: str | None = None
-
-    metadata: dict[str, Any] = field(default_factory=dict)
-    created_at: float = field(default_factory=time.time)
 
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
@@ -81,11 +60,7 @@ class StatusEvent:
             "source": _to_json_value(self.source),
             "stage": _to_json_value(self.stage),
             "message": self.message,
-            "message_key": self.message_key,
-            "visibility": self.visibility.value,
             "priority": self.priority.value,
-            "render_mode": self.render_mode,
-            "language": self.language,
             "metadata": _to_json_value(self.metadata),
             "created_at": self.created_at,
         }

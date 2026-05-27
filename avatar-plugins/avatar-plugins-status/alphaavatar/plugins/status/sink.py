@@ -11,13 +11,28 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import asyncio
-import json
-from typing import Any
+from __future__ import annotations
 
-from alphaavatar.agents.status import StatusEvent, StatusSinkBase
+import asyncio
+import inspect
+import time
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any
+
+from alphaavatar.agents.entrypoints.schema.room_type import RoomType
+from alphaavatar.agents.status import LiveKitDataPublisherMixin, StatusEvent, StatusSinkBase
 
 from .log import logger
+
+if TYPE_CHECKING:
+    from alphaavatar.agents.avatar.engine import AvatarEngine
+
+
+class StatusDeliveryMode(StrEnum):
+    TEXT = "text"
+    VOICE = "voice"
+    BOTH = "both"
+    NONE = "none"
 
 
 class CompositeStatusSink(StatusSinkBase):
@@ -30,6 +45,12 @@ class CompositeStatusSink(StatusSinkBase):
     def bind_engine(self, engine: Any) -> None:
         for sink in self._sinks:
             sink.bind_engine(engine)
+
+    def start_turn(self) -> None:
+        for sink in self._sinks:
+            start_turn = getattr(sink, "start_turn", None)
+            if callable(start_turn):
+                start_turn()
 
     async def emit(self, event: StatusEvent, text: str | None) -> None:
         if not self._sinks:
@@ -48,64 +69,279 @@ class CompositeStatusSink(StatusSinkBase):
 class LoggerStatusSink(StatusSinkBase):
     async def emit(self, event: StatusEvent, text: str | None) -> None:
         logger.info(
-            "agent status | source=%s stage=%s type=%s visibility=%s text=%s metadata=%s",
+            "agent status | source=%s stage=%s type=%s text=%s metadata=%s",
             event.source,
             event.stage,
             event.type,
-            event.visibility,
             text,
             event.metadata,
         )
 
 
-class LiveKitDataChannelStatusSink(StatusSinkBase):
+class StatusActionEventSink(StatusSinkBase, LiveKitDataPublisherMixin):
+    """
+    Publish structured status action events.
+
+    This is for UI components / avatar animation / client-side state machines.
+    It does not mean "send a user-visible text message".
+    """
+
     def __init__(
         self,
         *,
-        topic: str = "agent.status",
+        topic: str = "agent.status.action",
         reliable: bool = True,
     ) -> None:
         self.topic = topic
         self.reliable = reliable
-        self._engine: Any | None = None
+        self._engine: AvatarEngine | None = None
 
-    def bind_engine(self, engine: Any) -> None:
+    def bind_engine(self, engine: AvatarEngine) -> None:
         self._engine = engine
 
     async def emit(self, event: StatusEvent, text: str | None) -> None:
         if self._engine is None:
             return
 
-        session = getattr(self._engine, "session", None)
-        if session is None:
-            return
-
-        room = getattr(session, "room", None)
-        if room is None:
-            return
-
-        local_participant = getattr(room, "local_participant", None)
+        # Only publish action events when there is an active client room.
+        local_participant = self._get_local_participant()
         if local_participant is None:
             return
 
         payload = {
-            "type": "agent_status",
+            "type": "agent_status_action",
+            "event": event.to_dict(),
+            "text": text,
+            "action": self._to_action(event),
+        }
+
+        await self._publish_data(local_participant, payload, topic=self.topic)
+
+    def _to_action(self, event: StatusEvent) -> dict[str, Any]:
+        return {
+            "source": event.to_dict().get("source"),
+            "stage": event.to_dict().get("stage"),
+            "status_type": event.to_dict().get("type"),
+        }
+
+
+class TextOrVoiceStatusSink(StatusSinkBase, LiveKitDataPublisherMixin):
+    """
+    Deliver short user-facing status text through the best available modality.
+
+    Routing is automatic:
+    - pure voice mode: speak short status
+    - text-capable mode: publish short text status event
+    - mixed web voice mode: prefer text/status event, avoid speaking too much
+    """
+
+    def __init__(
+        self,
+        *,
+        text_topic: str = "agent.status.text",
+        reliable: bool = True,
+        min_voice_interval_sec: float = 6.0,
+        max_voice_events_per_turn: int = 2,
+        max_text_chars: int = 80,
+        max_voice_chars: int = 36,
+    ) -> None:
+        self.text_topic = text_topic
+        self.reliable = reliable
+        self.min_voice_interval_sec = min_voice_interval_sec
+        self.max_voice_events_per_turn = max_voice_events_per_turn
+        self.max_text_chars = max_text_chars
+        self.max_voice_chars = max_voice_chars
+
+        self._engine: AvatarEngine | None = None
+
+        self._voice_lock = asyncio.Lock()
+        self._voice_tasks: set[asyncio.Task] = set()
+
+        self._last_spoken_at: float | None = None
+        self._spoken_count: int = 0
+        self._spoken_keys: set[tuple[Any, Any, Any]] = set()
+
+    def bind_engine(self, engine: AvatarEngine) -> None:
+        self._engine = engine
+
+    def start_turn(self) -> None:
+        self._last_spoken_at = None
+        self._spoken_count = 0
+        self._spoken_keys.clear()
+
+    async def emit(self, event: StatusEvent, text: str | None) -> None:
+        if self._engine is None:
+            return
+
+        if not text:
+            return
+
+        mode = self._resolve_delivery_mode()
+
+        if mode == StatusDeliveryMode.NONE:
+            return
+
+        if mode in {StatusDeliveryMode.TEXT, StatusDeliveryMode.BOTH}:
+            await self._publish_text_status(
+                event,
+                self._trim(text, self.max_text_chars),
+            )
+
+        if mode in {StatusDeliveryMode.VOICE, StatusDeliveryMode.BOTH}:
+            self._speak_nowait(
+                event,
+                self._trim(text, self.max_voice_chars),
+            )
+
+    def _resolve_delivery_mode(self) -> StatusDeliveryMode:
+        interaction = self._get_interaction_method()
+        if interaction is None:
+            return StatusDeliveryMode.NONE
+
+        room_type = str(getattr(interaction, "room_type", "") or "")
+
+        text_output = bool(getattr(interaction, "text_output", False))
+        audio_output = bool(getattr(interaction, "audio_output", False))
+
+        # Bridged text channels.
+        if room_type in {
+            RoomType.WHATSAPP.value,
+            RoomType.TELEGRAM.value,
+            RoomType.SLACK.value,
+            RoomType.DISCORD.value,
+        }:
+            return StatusDeliveryMode.TEXT
+
+        # API rooms usually should not speak.
+        if room_type == RoomType.API.value:
+            return StatusDeliveryMode.TEXT if text_output else StatusDeliveryMode.NONE
+
+        # Generic fallback based on actual outputs.
+        if text_output and audio_output:
+            return StatusDeliveryMode.BOTH
+
+        if text_output:
+            return StatusDeliveryMode.TEXT
+
+        if audio_output:
+            return StatusDeliveryMode.VOICE
+
+        return StatusDeliveryMode.NONE
+
+    def _get_interaction_method(self):
+        runtime_context = getattr(self._engine, "runtime_context", None)
+        if runtime_context is None:
+            return None
+
+        return getattr(runtime_context, "interaction_method", None)
+
+    async def _publish_text_status(self, event: StatusEvent, text: str) -> None:
+        local_participant = self._get_local_participant()
+        if local_participant is None:
+            return
+
+        payload = {
+            "type": "agent_status_text",
             "event": event.to_dict(),
             "text": text,
         }
 
-        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        await self._publish_data(local_participant, payload, topic=self.text_topic)
 
-        publish_data = getattr(local_participant, "publish_data", None)
-        if publish_data is None:
-            logger.debug("LiveKit local_participant has no publish_data method.")
+    def _speak_nowait(self, event: StatusEvent, text: str) -> None:
+        if not self._should_speak(event):
             return
 
-        result = publish_data(
-            data,
-            reliable=self.reliable,
-            topic=self.topic,
-        )
+        task = asyncio.create_task(self._speak_safely(event, text))
+        self._track_voice_task(task)
 
+    def _should_speak(self, event: StatusEvent) -> bool:
+        if self._spoken_count >= self.max_voice_events_per_turn:
+            return False
+
+        now = time.time()
+
+        if self._last_spoken_at is not None:
+            if now - self._last_spoken_at < self.min_voice_interval_sec:
+                return False
+
+        key = (event.source, event.stage, event.type)
+        if key in self._spoken_keys:
+            return False
+
+        return True
+
+    async def _speak_safely(self, event: StatusEvent, text: str) -> None:
+        async with self._voice_lock:
+            try:
+                await self._speak(text)
+
+                self._last_spoken_at = time.time()
+                self._spoken_count += 1
+                self._spoken_keys.add((event.source, event.stage, event.type))
+            except Exception as e:
+                logger.warning("Voice status speak failed: %s", e)
+
+    async def _speak(self, text: str) -> None:
+        if self._engine is None:
+            return
+
+        # Preferred explicit hook on AvatarEngine.
+        speak_status_text = getattr(self._engine, "speak_status_text", None)
+        if callable(speak_status_text):
+            result = speak_status_text(text)
+            if asyncio.iscoroutine(result):
+                await result
+            return
+
+        session = getattr(self._engine, "session", None)
+        if session is None:
+            logger.debug("TextOrVoiceStatusSink skipped voice because session is unavailable.")
+            return
+
+        say = getattr(session, "say", None)
+        if callable(say):
+            await self._call_with_supported_kwargs(
+                say,
+                text,
+                allow_interruptions=False,
+                add_to_chat_ctx=False,
+            )
+            return
+
+        logger.debug("TextOrVoiceStatusSink skipped voice because no safe TTS method was found.")
+
+    async def _call_with_supported_kwargs(self, func, *args, **kwargs) -> None:
+        sig = inspect.signature(func)
+        supported_kwargs = {key: value for key, value in kwargs.items() if key in sig.parameters}
+
+        result = func(*args, **supported_kwargs)
         if asyncio.iscoroutine(result):
             await result
+
+    def _trim(self, text: str, max_chars: int) -> str:
+        text = text.strip()
+
+        if len(text) <= max_chars:
+            return text
+
+        return text[:max_chars].rstrip("，。,. ") + "..."
+
+    def _track_voice_task(self, task: asyncio.Task) -> None:
+        self._voice_tasks.add(task)
+
+        def _cleanup(t: asyncio.Task) -> None:
+            self._voice_tasks.discard(t)
+
+            try:
+                exc = t.exception()
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                logger.debug("Failed to inspect voice status task result: %s", e)
+                return
+
+            if exc is not None:
+                logger.warning("Voice status task failed: %s", exc)
+
+        task.add_done_callback(_cleanup)

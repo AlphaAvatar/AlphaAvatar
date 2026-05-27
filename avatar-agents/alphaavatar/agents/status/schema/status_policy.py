@@ -13,12 +13,9 @@
 # limitations under the License.
 from dataclasses import dataclass
 
-from alphaavatar.agents.status.enum import StatusVisibility
-
 
 @dataclass(slots=True)
 class StatusPolicyConfig:
     delay_sec: float = 1.5
     min_interval_sec: float = 5.0
     max_events_per_turn: int = 3
-    default_visibility: StatusVisibility = StatusVisibility.TEXT

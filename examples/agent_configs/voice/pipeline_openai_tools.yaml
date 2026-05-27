@@ -4,8 +4,6 @@ runtime_context_mode: synthetic_tool
 # Intermediate Status Args
 status_plugin: default
 enabled: true
-default_language: en
-enable_llm_renderer: false
 
 # LLM Args
 llm_plugin: openai
