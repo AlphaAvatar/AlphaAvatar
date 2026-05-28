@@ -13,11 +13,18 @@
 # limitations under the License.
 import inspect
 from abc import ABC, abstractmethod
+from enum import StrEnum
 from typing import Any
 
 from livekit.agents import RunContext, function_tool, llm
+from livekit.agents.llm import ToolError
 
-from alphaavatar.agents.status import StatusEmitter, StatusEvent
+from alphaavatar.agents.status import (
+    StatusEmitter,
+    StatusEvent,
+    StatusPriority,
+    StatusType,
+)
 
 
 class ToolBase(ABC):
@@ -80,8 +87,11 @@ class ToolBase(ABC):
 
     def _build_tool_wrapper(self):
         """
-        Build an async function (not a bound method) with the same signature as `self.invoke`,
+        Build an async function with the same signature as self.invoke,
         so LiveKit can attach metadata and build strict OpenAI schema.
+
+        Also catches runtime errors, emits TOOL_ERROR status, and converts
+        unexpected exceptions into ToolError so the LLM can recover.
         """
         invoke = self.invoke
         sig = inspect.signature(invoke)
@@ -94,7 +104,12 @@ class ToolBase(ABC):
                     f"{self.__class__.__name__}.invoke must not use *args/**kwargs in strict tool schema mode."
                 )
 
-        ns = {"__invoke": invoke}
+        ns = {
+            "__invoke": invoke,
+            "__handle_tool_error": self._handle_tool_error,
+            "ToolError": ToolError,
+        }
+
         param_chunks = []
         call_chunks = []
 
@@ -121,7 +136,14 @@ class ToolBase(ABC):
 
         src = f"""
 async def __tool({params_src}):
-    return await __invoke({call_src})
+    try:
+        return await __invoke({call_src})
+    except ToolError as e:
+        await __handle_tool_error(e)
+        raise
+    except Exception as e:
+        await __handle_tool_error(e)
+        raise ToolError("The tool call failed. Please recover or try another way.")
 """
         exec(src, ns, ns)
         tool_func = ns["__tool"]
@@ -129,6 +151,28 @@ async def __tool({params_src}):
         tool_func.__annotations__ = dict(getattr(invoke, "__annotations__", {}))
 
         return tool_func
+
+    async def _handle_tool_error(self, error: Exception) -> None:
+        self.emit_status_nowait(
+            StatusEvent(
+                type=StatusType.TOOL_ERROR,
+                source=self._status_source(),
+                stage=self._status_stage(),
+                priority=StatusPriority.HIGH,
+                metadata={
+                    "tool_name": self._name,
+                    "tool_class": self.__class__.__name__,
+                    "error_type": error.__class__.__name__,
+                    "error": str(error),
+                },
+            )
+        )
+
+    def _status_source(self) -> str | StrEnum:
+        return self._name
+
+    def _status_stage(self) -> str | StrEnum:
+        return "tool_error"
 
     @abstractmethod
     async def invoke(self, ctx: RunContext, *args, **kwargs) -> Any: ...

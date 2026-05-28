@@ -13,12 +13,21 @@
 # limitations under the License.
 import json
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from typing import Any, Literal
 
 from livekit.agents import RunContext
+from livekit.agents.llm import ToolError
 
+from alphaavatar.agents import AvatarModule
 from alphaavatar.agents.log import logger
+from alphaavatar.agents.status import (
+    StatusEmitter,
+    StatusEvent,
+    StatusPriority,
+    StatusType,
+)
 
 from .base import ToolBase
 
@@ -95,35 +104,95 @@ class MCPAPI(ToolBase):
     args_description = """Args:
     op:
         The operation to perform. One of:
-        - MCPOp.TOOL_SEARCH: Search available MCP tools by query.
-        - MCPOp.TOOL_CALL: Call one or more MCP tools concurrently.
+        - "tool_search": Search available MCP tools by query.
+        - "tool_call": Call one or more MCP tools concurrently.
 
     query:
         Natural-language description of the needed capability.
-        Required for MCPOp.TOOL_SEARCH.
+        Required for op="tool_search".
 
     params_json:
-        Required for TOOL_CALL. A JSON string mapping tool_id -> tool_args.
+        Required for op="tool_call". A JSON string mapping tool_id -> tool_args.
         Example:
             {"clientA.toolX": {"q": "hello"}, "clientB.toolY": {"id": 1}}
 
+    monologue:
+        Optional short user-facing status message to show or speak while this
+        tool is running. Keep it brief, natural, and in the same language as the
+        user. Do not reveal hidden reasoning. Examples:
+        - "我找一下合适的工具。"
+        - "我用工具看一下。"
+        - "I’ll find the right tool."
+        - "I’ll use a tool for this."
+
 Expected returns by op (ALL RETURNS ARE STRINGS):
-    - TOOL_SEARCH(query) -> str
+    - tool_search(query) -> str
         A human-readable list of tools relevant to the query, formatted as
         bullet points. Each item is a single-line tool description including
         tool id, input schema, and metadata.
 
-    - TOOL_CALL(params) -> str
+    - tool_call(params_json) -> str
         A Markdown string summarizing the results of concurrent tool execution.
 """
 
-    def __init__(self, mcp_host: MCPHostBase) -> None:
+    def __init__(
+        self,
+        mcp_host: MCPHostBase,
+        *,
+        status_emitter: StatusEmitter | None = None,
+    ) -> None:
         super().__init__(
             name=mcp_host.name,
             description=mcp_host.description + "\n\n" + self.args_description,
+            status_emitter=status_emitter,
         )
 
         self._mcp_host = mcp_host
+        self._current_op: MCPOp | None = None
+
+    def _emit_op_status(
+        self,
+        *,
+        op: MCPOp,
+        status_type: StatusType,
+        query: str | None = None,
+        params_json: str | None = None,
+        monologue: str | None = None,
+    ) -> None:
+        metadata: dict[str, Any] = {
+            "op": op.value,
+        }
+
+        if query is not None:
+            metadata["query"] = query
+
+        if params_json is not None:
+            metadata["has_params_json"] = True
+
+            try:
+                params = json.loads(params_json)
+                if isinstance(params, dict):
+                    metadata["tool_count"] = len(params)
+                    metadata["tool_names"] = list(params.keys())[:10]
+            except Exception:
+                metadata["params_json_parseable"] = False
+
+        self.emit_status_nowait(
+            StatusEvent(
+                type=status_type,
+                source=AvatarModule.MCP,
+                stage=op,
+                message=monologue,
+                priority=StatusPriority.NORMAL,
+                metadata=metadata,
+            )
+        )
+
+    def _status_source(self):
+        return AvatarModule.MCP
+
+    def _status_stage(self):
+        return self._current_op or "tool_error"
 
     async def invoke(
         self,
@@ -134,19 +203,59 @@ Expected returns by op (ALL RETURNS ARE STRINGS):
         ],
         query: str | None = None,
         params_json: str | None = None,
+        monologue: str | None = None,
     ) -> Any:
-        match op:
-            case MCPOp.TOOL_SEARCH:
-                return await self._mcp_host.search_tools(query=query, ctx=ctx)
-            case MCPOp.TOOL_CALL:
-                if not params_json:
-                    return "MCP TOOL_CALL received empty params_json"
-                try:
-                    params = json.loads(params_json)
-                except Exception as e:
-                    return f"MCP TOOL_CALL params_json is not valid JSON: {e}"
-                return await self._mcp_host.call_tools(params=params, ctx=ctx)
-            case _:
-                msg = f"Unsupported MCP operation: {op}"
-                logger.error(msg)
-                return msg
+        try:
+            op = MCPOp(op)
+        except ValueError:
+            msg = f"Unsupported MCP operation: {op}"
+            logger.error(msg)
+            raise ToolError(msg)
+
+        self._current_op = op
+
+        try:
+            handlers: dict[MCPOp, Callable[[], Awaitable[Any]]] = {
+                MCPOp.TOOL_SEARCH: lambda: self._mcp_host.search_tools(
+                    query=query,
+                    ctx=ctx,
+                ),
+                MCPOp.TOOL_CALL: lambda: self._call_tools_from_json(
+                    params_json=params_json,
+                    ctx=ctx,
+                ),
+            }
+
+            self._emit_op_status(
+                op=op,
+                status_type=StatusType.TOOL_START,
+                query=query,
+                params_json=params_json,
+                monologue=monologue,
+            )
+
+            result = await handlers[op]()
+
+        finally:
+            self._current_op = None
+
+        return result
+
+    async def _call_tools_from_json(
+        self,
+        *,
+        params_json: str | None,
+        ctx: RunContext,
+    ) -> Any:
+        if not params_json:
+            raise ToolError("MCP tool_call received empty params_json.")
+
+        try:
+            params = json.loads(params_json)
+        except Exception as e:
+            raise ToolError(f"MCP tool_call params_json is not valid JSON: {e}") from e
+
+        if not isinstance(params, dict):
+            raise ToolError("MCP tool_call params_json must decode to a JSON object.")
+
+        return await self._mcp_host.call_tools(params=params, ctx=ctx)

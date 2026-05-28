@@ -36,6 +36,9 @@ class AvatarModule(str, Enum):
     # Status modules
     STATUS = "status"
 
+    # Intention modules
+    INTENTION = "intention"
+
     # Character modules
     CHARACTER = "character"
 

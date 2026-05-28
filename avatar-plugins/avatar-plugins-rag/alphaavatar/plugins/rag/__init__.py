@@ -38,6 +38,8 @@ class RAGAnythingPlugin(AvatarPlugin):
         **kwargs,
     ) -> RAGAPI:
         try:
+            status_emitter = kwargs.pop("status_emitter", None)
+
             rag_obj = RAGAnythingTool(user_path=user_path, **rag_init_config, **kwargs)
         except (ImportError, ModuleNotFoundError) as e:
             raise ImportError(
@@ -45,7 +47,7 @@ class RAGAnythingPlugin(AvatarPlugin):
                 "Install it via: `pip install alphaavatar-plugins-rag`"
             ) from e
 
-        return RAGAPI(rag_object=rag_obj)
+        return RAGAPI(rag_object=rag_obj, status_emitter=status_emitter)
 
 
 # plugin init

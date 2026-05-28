@@ -39,6 +39,8 @@ class MCPRemotePlugin(AvatarPlugin):
         **kwargs,
     ) -> MCPAPI:
         try:
+            status_emitter = kwargs.pop("status_emitter", None)
+
             servers = os.getenv("MCP_SERVERS", "{}")
             servers = json.loads(servers)
 
@@ -47,7 +49,7 @@ class MCPRemotePlugin(AvatarPlugin):
                 **mcp_init_config,
                 **kwargs,
             )
-            return MCPAPI(mcp_host)
+            return MCPAPI(mcp_host, status_emitter=status_emitter)
         except Exception as e:
             raise ImportError(
                 "The MCP plugin is required but failed to initialize.\n"

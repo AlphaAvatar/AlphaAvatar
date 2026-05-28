@@ -25,7 +25,6 @@ classifiers = [
 ]
 dependencies = []
 
-
 [project.optional-dependencies]
 
 [project.urls]
@@ -36,6 +35,14 @@ path = "alphaavatar/plugins/status/version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["alphaavatar"]
+artifacts = [
+    "alphaavatar/plugins/status/templates/**/*",
+]
 
 [tool.hatch.build.targets.sdist]
-include = ["alphaavatar", "README.md", "LICENSE"]
+include = [
+    "alphaavatar",
+    "README.md",
+    "LICENSE",
+    "alphaavatar/plugins/status/templates/**/*",
+]

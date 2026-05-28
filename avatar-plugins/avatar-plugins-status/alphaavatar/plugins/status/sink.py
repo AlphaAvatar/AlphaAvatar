@@ -17,8 +17,10 @@ import asyncio
 import inspect
 import time
 from enum import StrEnum
+from hashlib import sha1
 from typing import TYPE_CHECKING, Any
 
+from alphaavatar.agents import AvatarModule
 from alphaavatar.agents.entrypoints.schema.room_type import RoomType
 from alphaavatar.agents.status import LiveKitDataPublisherMixin, StatusEvent, StatusSinkBase
 
@@ -127,12 +129,11 @@ class StatusActionEventSink(StatusSinkBase, LiveKitDataPublisherMixin):
 
 class TextOrVoiceStatusSink(StatusSinkBase, LiveKitDataPublisherMixin):
     """
-    Deliver short user-facing status text through the best available modality.
+    Deliver short user-facing status through text and/or voice.
 
-    Routing is automatic:
-    - pure voice mode: speak short status
-    - text-capable mode: publish short text status event
-    - mixed web voice mode: prefer text/status event, avoid speaking too much
+    Routing is decided by room type / interaction mode.
+    Voice delivery has lightweight per-source throttling, so generic thinking
+    does not block concrete tool progress.
     """
 
     def __init__(
@@ -140,33 +141,29 @@ class TextOrVoiceStatusSink(StatusSinkBase, LiveKitDataPublisherMixin):
         *,
         text_topic: str = "agent.status.text",
         reliable: bool = True,
-        min_voice_interval_sec: float = 6.0,
-        max_voice_events_per_turn: int = 2,
-        max_text_chars: int = 80,
-        max_voice_chars: int = 36,
+        min_voice_interval_sec: float = 1.2,
+        max_voice_events_per_turn: int = 3,
     ) -> None:
         self.text_topic = text_topic
         self.reliable = reliable
         self.min_voice_interval_sec = min_voice_interval_sec
         self.max_voice_events_per_turn = max_voice_events_per_turn
-        self.max_text_chars = max_text_chars
-        self.max_voice_chars = max_voice_chars
 
         self._engine: AvatarEngine | None = None
 
         self._voice_lock = asyncio.Lock()
         self._voice_tasks: set[asyncio.Task] = set()
 
-        self._last_spoken_at: float | None = None
         self._spoken_count: int = 0
-        self._spoken_keys: set[tuple[Any, Any, Any]] = set()
+        self._last_spoken_at_by_bucket: dict[str, float] = {}
+        self._spoken_keys: set[tuple[Any, ...]] = set()
 
     def bind_engine(self, engine: AvatarEngine) -> None:
         self._engine = engine
 
     def start_turn(self) -> None:
-        self._last_spoken_at = None
         self._spoken_count = 0
+        self._last_spoken_at_by_bucket.clear()
         self._spoken_keys.clear()
 
     async def emit(self, event: StatusEvent, text: str | None) -> None:
@@ -184,13 +181,13 @@ class TextOrVoiceStatusSink(StatusSinkBase, LiveKitDataPublisherMixin):
         if mode in {StatusDeliveryMode.TEXT, StatusDeliveryMode.BOTH}:
             await self._publish_text_status(
                 event,
-                self._trim(text, self.max_text_chars),
+                text.strip(),
             )
 
         if mode in {StatusDeliveryMode.VOICE, StatusDeliveryMode.BOTH}:
             self._speak_nowait(
                 event,
-                self._trim(text, self.max_voice_chars),
+                text.strip(),
             )
 
     def _resolve_delivery_mode(self) -> StatusDeliveryMode:
@@ -199,7 +196,6 @@ class TextOrVoiceStatusSink(StatusSinkBase, LiveKitDataPublisherMixin):
             return StatusDeliveryMode.NONE
 
         room_type = str(getattr(interaction, "room_type", "") or "")
-
         text_output = bool(getattr(interaction, "text_output", False))
         audio_output = bool(getattr(interaction, "audio_output", False))
 
@@ -259,15 +255,17 @@ class TextOrVoiceStatusSink(StatusSinkBase, LiveKitDataPublisherMixin):
         if self._spoken_count >= self.max_voice_events_per_turn:
             return False
 
-        now = time.time()
-
-        if self._last_spoken_at is not None:
-            if now - self._last_spoken_at < self.min_voice_interval_sec:
-                return False
-
-        key = (event.source, event.stage, event.type)
+        key = self._spoken_key(event)
         if key in self._spoken_keys:
             return False
+
+        now = time.time()
+        bucket = self._voice_bucket(event)
+
+        last_spoken_at = self._last_spoken_at_by_bucket.get(bucket)
+        if last_spoken_at is not None:
+            if now - last_spoken_at < self._min_interval_for(event):
+                return False
 
         return True
 
@@ -276,9 +274,11 @@ class TextOrVoiceStatusSink(StatusSinkBase, LiveKitDataPublisherMixin):
             try:
                 await self._speak(text)
 
-                self._last_spoken_at = time.time()
+                now = time.time()
+                self._last_spoken_at_by_bucket[self._voice_bucket(event)] = now
                 self._spoken_count += 1
-                self._spoken_keys.add((event.source, event.stage, event.type))
+                self._spoken_keys.add(self._spoken_key(event))
+
             except Exception as e:
                 logger.warning("Voice status speak failed: %s", e)
 
@@ -289,27 +289,64 @@ class TextOrVoiceStatusSink(StatusSinkBase, LiveKitDataPublisherMixin):
         # Preferred explicit hook on AvatarEngine.
         speak_status_text = getattr(self._engine, "speak_status_text", None)
         if callable(speak_status_text):
-            result = speak_status_text(text)
+            result = speak_status_text(
+                text,
+                allow_interruptions=True,
+                add_to_chat_ctx=False,
+            )
             if asyncio.iscoroutine(result):
                 await result
             return
 
-        session = getattr(self._engine, "session", None)
-        if session is None:
-            logger.debug("TextOrVoiceStatusSink skipped voice because session is unavailable.")
-            return
-
-        say = getattr(session, "say", None)
-        if callable(say):
-            await self._call_with_supported_kwargs(
-                say,
-                text,
-                allow_interruptions=False,
-                add_to_chat_ctx=False,
-            )
-            return
-
         logger.debug("TextOrVoiceStatusSink skipped voice because no safe TTS method was found.")
+
+    def _voice_bucket(self, event: StatusEvent) -> str:
+        # Generic thinking and concrete tool progress should not block each other.
+        return str(event.source)
+
+    def _min_interval_for(self, event: StatusEvent) -> float:
+        # Generic thinking should not repeat too often.
+        if str(event.source) == AvatarModule.AVATAR_ENGINE:
+            return 3.0
+
+        # Tool monologues are concrete progress updates and can follow thinking sooner.
+        if event.source in {
+            AvatarModule.DEEPRESEARCH,
+            AvatarModule.MCP,
+            AvatarModule.RAG,
+        }:
+            return 1.2
+
+        return self.min_voice_interval_sec
+
+    def _spoken_key(self, event: StatusEvent) -> tuple[Any, ...]:
+        return (
+            event.source,
+            event.stage,
+            event.type,
+            self._semantic_key(event),
+        )
+
+    def _semantic_key(self, event: StatusEvent) -> str | None:
+        query = event.metadata.get("query")
+        if isinstance(query, str) and query.strip():
+            return self._short_hash(query.strip())
+
+        if event.message:
+            return self._short_hash(event.message.strip())
+
+        url_count = event.metadata.get("url_count")
+        if url_count is not None:
+            return f"url_count:{url_count}"
+
+        op = event.metadata.get("op")
+        if op is not None:
+            return str(op)
+
+        return None
+
+    def _short_hash(self, text: str) -> str:
+        return sha1(text.encode("utf-8")).hexdigest()[:12]
 
     async def _call_with_supported_kwargs(self, func, *args, **kwargs) -> None:
         sig = inspect.signature(func)
@@ -318,14 +355,6 @@ class TextOrVoiceStatusSink(StatusSinkBase, LiveKitDataPublisherMixin):
         result = func(*args, **supported_kwargs)
         if asyncio.iscoroutine(result):
             await result
-
-    def _trim(self, text: str, max_chars: int) -> str:
-        text = text.strip()
-
-        if len(text) <= max_chars:
-            return text
-
-        return text[:max_chars].rstrip("，。,. ") + "..."
 
     def _track_voice_task(self, task: asyncio.Task) -> None:
         self._voice_tasks.add(task)

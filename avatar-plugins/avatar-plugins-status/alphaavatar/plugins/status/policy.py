@@ -98,6 +98,9 @@ class DefaultStatusPolicy(StatusPolicyBase):
         self._emitted_keys.add(self._event_key(event))
 
     def _is_immediate_event(self, event: StatusEvent) -> bool:
+        if event.type == StatusType.READY:
+            return True
+
         if event.source == AvatarModule.DEEPRESEARCH:
             return event.type == StatusType.TOOL_START and event.stage in {
                 DeepResearchOp.SEARCH,
@@ -171,6 +174,13 @@ class DefaultStatusPolicy(StatusPolicyBase):
         return sha1(text.encode("utf-8")).hexdigest()[:12]
 
     def _get_config(self, event: StatusEvent) -> StatusPolicyConfig:
+        if event.type == StatusType.READY:
+            return StatusPolicyConfig(
+                delay_sec=0.0,
+                min_interval_sec=0.0,
+                max_events_per_turn=10,
+            )
+
         if event.source in {AvatarModule.MEMORY, AvatarModule.PERSONA}:
             return StatusPolicyConfig(
                 delay_sec=999999,

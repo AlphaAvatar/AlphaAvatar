@@ -130,6 +130,29 @@ It is built around a **plugin-based real-time Agent architecture**, combining:
 <table>
 <tr>
 <td width="50%">
+<h3>🟢 Status</h3>
+<p>
+  <img src="https://img.shields.io/badge/In_Progress-28a745?style=flat" />
+</p>
+<p>Intermediate status system for reducing perceived latency during thinking, tool calls, and multi-step workflows.</p>
+<p>
+<a href="https://github.com/AlphaAvatar/AlphaAvatar/blob/main/avatar-plugins/avatar-plugins-status/README.md">README↗</a>
+</p>
+</td>
+<td width="50%">
+<h3>🎯 Interaction Router</h3>
+<p>
+  <img src="https://img.shields.io/badge/Planned-6c757d?style=flat" alt="Planned" />
+</p>
+<p>Omni interaction routing module that decides whether the Avatar should respond, how the request should be handled, and which status feedback should be emitted.</p>
+<p>
+<a href="#">README↗</a>
+</p>
+</td>
+</tr>
+
+<tr>
+<td width="50%">
 <h3>🧠 Memory</h3>
 <p>
   <img src="https://img.shields.io/badge/In_Progress-28a745?style=flat" />
@@ -238,7 +261,7 @@ It is built around a **plugin-based real-time Agent architecture**, combining:
 </p>
 </td>
 <td width="50%">
-<h3>🌍 SANDBOX</h3>
+<h3>🌍 Sandbox</h3>
 <p>
   <img src="https://img.shields.io/badge/Planned-6c757d?style=flat" alt="Planned" />
 </p>
@@ -252,9 +275,9 @@ It is built around a **plugin-based real-time Agent architecture**, combining:
 
 ---
 
-<h2>Docs and guides</h2>
+<h2>Latest News 🔥</h2>
 
-<h4>Latest News 🔥</h4>
+- [2026/06] Released AlphaAvatar **version 0.6.0**: Added the **Status plugin**, sampled visual input support, and status-aware DeepResearch / RAG / MCP tool feedback.
 
 - [2026/05] Released AlphaAvatar **version 0.5.4**:
   - Added **LanceDB-backed MCP tool retrieval**, enabling AlphaAvatar to semantically search relevant MCP tools from Agent queries.
@@ -349,14 +372,9 @@ To see more supported modes, please refer to the [LiveKit doc](https://docs.live
 
 To see more examples, please refer to the [Examples README](https://github.com/AlphaAvatar/AlphaAvatar/blob/main/examples/README.md)
 
-
-<h2>Usage 🚀</h2>
-
-AlphaAvatar supports multiple **Access Channels**, allowing different types of users — from end users to developers — to interact with the system.
-
 ---
 
-## 🧠 Runtime Architecture
+<h2>Runtime Architecture 🧠</h2>
 
 AlphaAvatar is built around a **real-time multimodal Agent runtime**.
 It separates streaming interaction, model reasoning, runtime context, plugin state, tool execution, and channel adapters.
@@ -422,6 +440,10 @@ It separates streaming interaction, model reasoning, runtime context, plugin sta
 │ WebRTC / UI          │                    │ messaging platforms  │
 └──────────────────────┘                    └──────────────────────┘
 ```
+
+<h2>Usage 🚀</h2>
+
+AlphaAvatar supports multiple **Access Channels**, allowing different types of users — from end users to developers — to interact with the system.
 
 ---
 

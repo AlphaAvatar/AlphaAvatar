@@ -17,6 +17,7 @@ from enum import StrEnum
 from typing import Any, Literal
 
 from livekit.agents import RunContext
+from livekit.agents.llm import ToolError
 
 from alphaavatar.agents import AvatarModule
 from alphaavatar.agents.log import logger
@@ -153,6 +154,7 @@ Expected returns by op:
         )
 
         self._deepresearch_object = deepresearch_object
+        self._current_op: DeepResearchOp | None = None
 
     def _emit_op_status(
         self,
@@ -184,11 +186,11 @@ Expected returns by op:
             )
         )
 
-    def _should_emit_finalizing(self, op: DeepResearchOp) -> bool:
-        return op in {
-            DeepResearchOp.SEARCH,
-            DeepResearchOp.RESEARCH,
-        }
+    def _status_source(self):
+        return AvatarModule.DEEPRESEARCH
+
+    def _status_stage(self):
+        return self._current_op or "tool_error"
 
     async def invoke(
         self,
@@ -208,41 +210,40 @@ Expected returns by op:
         except ValueError:
             msg = f"Unsupported DeepResearch operation: {op}"
             logger.error(msg)
-            return msg
+            raise ToolError(msg)
 
-        handlers: dict[DeepResearchOp, Callable[[], Awaitable[Any]]] = {
-            DeepResearchOp.SEARCH: lambda: self._deepresearch_object.search(
-                query=query,
-                ctx=ctx,
-            ),
-            DeepResearchOp.RESEARCH: lambda: self._deepresearch_object.research(
-                query=query,
-                ctx=ctx,
-            ),
-            DeepResearchOp.SCRAPE: lambda: self._deepresearch_object.scrape(
-                urls=urls,
-                ctx=ctx,
-            ),
-            DeepResearchOp.DOWNLOAD: lambda: self._deepresearch_object.download(
-                urls=urls,
-                ctx=ctx,
-            ),
-        }
+        self._current_op = op
 
-        self._emit_op_status(
-            op=op,
-            status_type=StatusType.TOOL_START,
-            query=query,
-            urls=urls,
-            monologue=monologue,
-        )
+        try:
+            handlers: dict[DeepResearchOp, Callable[[], Awaitable[Any]]] = {
+                DeepResearchOp.SEARCH: lambda: self._deepresearch_object.search(
+                    query=query,
+                    ctx=ctx,
+                ),
+                DeepResearchOp.RESEARCH: lambda: self._deepresearch_object.research(
+                    query=query,
+                    ctx=ctx,
+                ),
+                DeepResearchOp.SCRAPE: lambda: self._deepresearch_object.scrape(
+                    urls=urls,
+                    ctx=ctx,
+                ),
+                DeepResearchOp.DOWNLOAD: lambda: self._deepresearch_object.download(
+                    urls=urls,
+                    ctx=ctx,
+                ),
+            }
 
-        result = await handlers[op]()
-
-        if self._should_emit_finalizing(op):
             self._emit_op_status(
                 op=op,
-                status_type=StatusType.FINALIZING,
+                status_type=StatusType.TOOL_START,
+                query=query,
+                urls=urls,
+                monologue=monologue,
             )
+
+            result = await handlers[op]()
+        finally:
+            self._current_op = None
 
         return result

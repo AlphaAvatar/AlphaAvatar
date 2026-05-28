@@ -11,31 +11,167 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from alphaavatar.agents import AvatarModule
-from alphaavatar.agents.status import StatusEvent, StatusRendererBase, StatusType
-from alphaavatar.agents.tools.deepresearch_api import DeepResearchOp
+from __future__ import annotations
+
+import random
+from importlib import resources
+from typing import Any
+
+from alphaavatar.agents.status import StatusEvent, StatusRendererBase
+
+from .log import logger
+
+_TEMPLATE_PACKAGE = "alphaavatar.plugins.status"
+_TEMPLATE_DIR_NAME = "templates"
 
 
 class DefaultStatusRenderer(StatusRendererBase):
+    """
+    File-based status renderer.
+
+    Template filename format:
+        {type}.{source}.{stage}.txt
+
+    Examples:
+        zh/tool_start.deepresearch.search.txt
+        zh/tool_error.deepresearch.default.txt
+        zh/tool_start.default.default.txt
+
+    Each file can contain multiple templates, one per line.
+    Empty lines and lines starting with "#" are ignored.
+    """
+
     def __init__(self) -> None:
-        pass
+        self._templates: dict[str, dict[tuple[str, str, str], list[str]]] = {}
+        self._load_templates()
 
     async def render(self, event: StatusEvent) -> str | None:
         if event.message:
-            return self._normalize_message(event.message)
+            return self._normalize_message(event.type, event.message)
 
         language = self._detect_language(event)
-        return self._render_by_template(event, language=language)
+        template = self._select_template(event, language=language)
 
-    def _normalize_message(self, message: str) -> str | None:
+        if template:
+            return self._normalize_message(event.type, template)
+
+        return None
+
+    def _load_templates(self) -> None:
+        """
+        Load all templates at startup.
+
+        Layout:
+            templates/
+                en/
+                    tool_start.deepresearch.search.txt
+                zh/
+                    tool_start.deepresearch.search.txt
+        """
+        try:
+            template_root = resources.files(_TEMPLATE_PACKAGE).joinpath(_TEMPLATE_DIR_NAME)
+        except Exception as e:
+            logger.warning("Failed to load templates: %s", e)
+            return
+
+        if not template_root.is_dir():
+            return
+
+        for lang_dir in template_root.iterdir():
+            if not lang_dir.is_dir():
+                continue
+
+            language = lang_dir.name
+            self._templates.setdefault(language, {})
+
+            for file in lang_dir.iterdir():
+                if not file.is_file():
+                    continue
+
+                if not file.name.endswith(".txt"):
+                    continue
+
+                key = self._parse_template_filename(file.name)
+                if key is None:
+                    continue
+
+                templates = self._read_template_file(file)
+                if not templates:
+                    continue
+
+                self._templates[language][key] = templates
+
+        logger.info("Loaded status templates successfully!")
+
+    def _parse_template_filename(self, filename: str) -> tuple[str, str, str] | None:
+        stem = filename.removesuffix(".txt")
+        parts = stem.split(".")
+
+        if len(parts) != 3:
+            return None
+
+        status_type, source, stage = parts
+        if not status_type or not source or not stage:
+            return None
+
+        return status_type, source, stage
+
+    def _read_template_file(self, file: Any) -> list[str]:
+        try:
+            content = file.read_text(encoding="utf-8")
+        except Exception:
+            return []
+
+        templates: list[str] = []
+
+        for line in content.splitlines():
+            line = line.strip()
+
+            if not line:
+                continue
+
+            if line.startswith("#"):
+                continue
+
+            templates.append(line)
+
+        return templates
+
+    def _select_template(self, event: StatusEvent, *, language: str) -> str | None:
+        language = self._normalize_language(language)
+
+        candidates = self._candidate_keys(event)
+
+        for lang in self._language_fallbacks(language):
+            lang_templates = self._templates.get(lang)
+            if not lang_templates:
+                continue
+
+            for key in candidates:
+                templates = lang_templates.get(key)
+                if templates:
+                    return random.choice(templates)
+
+        return None
+
+    def _candidate_keys(self, event: StatusEvent) -> list[tuple[str, str, str]]:
+        status_type = self._to_value(event.type)
+        source = self._to_value(event.source)
+        stage = self._to_value(event.stage) or "default"
+
+        return [
+            # Exact: tool_start.deepresearch.search
+            (status_type, source, stage),
+            # Source-level fallback: tool_start.deepresearch.default
+            (status_type, source, "default"),
+            # Type-level fallback: tool_start.default.default
+            (status_type, "default", "default"),
+        ]
+
+    def _normalize_message(self, status_type: str, message: str) -> str | None:
         message = message.strip()
         if not message:
             return None
-
-        # Keep status monologue short.
-        # The final sink may trim again depending on text/voice mode.
-        if len(message) > 80:
-            message = message[:80].rstrip("，。,. ") + "..."
 
         return message
 
@@ -49,8 +185,6 @@ class DefaultStatusRenderer(StatusRendererBase):
         if isinstance(query, str):
             candidates.append(query)
 
-        # Very simple heuristic:
-        # If there are CJK characters, use Chinese. Otherwise English.
         text = "\n".join(candidates)
 
         if self._contains_cjk(text):
@@ -64,150 +198,25 @@ class DefaultStatusRenderer(StatusRendererBase):
                 return True
         return False
 
-    def _render_by_template(self, event: StatusEvent, *, language: str) -> str | None:
+    def _normalize_language(self, language: str) -> str:
+        language = (language or "en").lower()
+
         if language.startswith("zh"):
-            return self._render_zh(event)
+            return "zh"
 
-        return self._render_en(event)
+        if language.startswith("en"):
+            return "en"
 
-    def _render_en(self, event: StatusEvent) -> str | None:
-        if event.source == AvatarModule.DEEPRESEARCH:
-            return self._render_deepresearch_en(event)
+        return language
 
-        if event.source == AvatarModule.MCP:
-            return self._render_mcp_en(event)
+    def _language_fallbacks(self, language: str) -> list[str]:
+        if language == "en":
+            return ["en"]
 
-        if event.source == AvatarModule.RAG:
-            return self._render_rag_en(event)
+        return [language, "en"]
 
-        if event.source == AvatarModule.AVATAR_ENGINE:
-            if event.type == StatusType.THINKING:
-                return "Let me think."
-            if event.type == StatusType.FINALIZING:
-                return "Almost done."
+    def _to_value(self, value: Any) -> str:
+        if value is None:
+            return ""
 
-        if event.type == StatusType.THINKING:
-            return "Let me think."
-        if event.type == StatusType.TOOL_START:
-            return "I’ll check that."
-        if event.type == StatusType.TOOL_PROGRESS:
-            return "Still working on it."
-        if event.type == StatusType.FINALIZING:
-            return "Almost done."
-        if event.type == StatusType.TOOL_ERROR:
-            return "I’ll try another way."
-
-        return None
-
-    def _render_zh(self, event: StatusEvent) -> str | None:
-        if event.source == AvatarModule.DEEPRESEARCH:
-            return self._render_deepresearch_zh(event)
-
-        if event.source == AvatarModule.MCP:
-            return self._render_mcp_zh(event)
-
-        if event.source == AvatarModule.RAG:
-            return self._render_rag_zh(event)
-
-        if event.source == AvatarModule.AVATAR_ENGINE:
-            if event.type == StatusType.THINKING:
-                return "我想一下。"
-            if event.type == StatusType.FINALIZING:
-                return "快好了。"
-
-        if event.type == StatusType.THINKING:
-            return "我想一下。"
-        if event.type == StatusType.TOOL_START:
-            return "我查一下。"
-        if event.type == StatusType.TOOL_PROGRESS:
-            return "还在处理。"
-        if event.type == StatusType.FINALIZING:
-            return "快好了。"
-        if event.type == StatusType.TOOL_ERROR:
-            return "我换个方式试试。"
-
-        return None
-
-    def _render_deepresearch_en(self, event: StatusEvent) -> str | None:
-        if event.type == StatusType.TOOL_START:
-            if event.stage == DeepResearchOp.SEARCH:
-                return "I’ll check that."
-            if event.stage == DeepResearchOp.RESEARCH:
-                return "I’ll dig into it."
-            if event.stage == DeepResearchOp.SCRAPE:
-                return "I’m reading the sources."
-            if event.stage == DeepResearchOp.DOWNLOAD:
-                return "I’m saving the material."
-
-        if event.type == StatusType.FINALIZING:
-            if event.stage in {DeepResearchOp.SEARCH, DeepResearchOp.RESEARCH}:
-                return "I found the main points."
-
-        if event.type == StatusType.TOOL_ERROR:
-            return "I’ll try another way."
-
-        return "I’m checking that."
-
-    def _render_deepresearch_zh(self, event: StatusEvent) -> str | None:
-        if event.type == StatusType.TOOL_START:
-            if event.stage == DeepResearchOp.SEARCH:
-                return "我查一下。"
-            if event.stage == DeepResearchOp.RESEARCH:
-                return "我深入查一下。"
-            if event.stage == DeepResearchOp.SCRAPE:
-                return "我正在看资料。"
-            if event.stage == DeepResearchOp.DOWNLOAD:
-                return "我先保存资料。"
-
-        if event.type == StatusType.FINALIZING:
-            if event.stage in {DeepResearchOp.SEARCH, DeepResearchOp.RESEARCH}:
-                return "我找到重点了。"
-
-        if event.type == StatusType.TOOL_ERROR:
-            return "我换个方式试试。"
-
-        return "我查一下。"
-
-    def _render_mcp_en(self, event: StatusEvent) -> str | None:
-        if event.stage == "search_tools":
-            return "I’m finding the right tools."
-        if event.stage == "parallel_tools":
-            return "I’m using a few tools."
-        if event.stage == "calling_tool":
-            return "I’m using a tool."
-        if event.type == StatusType.TOOL_ERROR:
-            return "I’ll try another way."
-        return "I’m using a tool."
-
-    def _render_mcp_zh(self, event: StatusEvent) -> str | None:
-        if event.stage == "search_tools":
-            return "我找一下合适的工具。"
-        if event.stage == "parallel_tools":
-            return "我用几个工具看一下。"
-        if event.stage == "calling_tool":
-            return "我用工具看一下。"
-        if event.type == StatusType.TOOL_ERROR:
-            return "我换个方式试试。"
-        return "我用工具看一下。"
-
-    def _render_rag_en(self, event: StatusEvent) -> str | None:
-        if event.stage == "retrieving":
-            return "I’ll check the documents."
-        if event.stage == "reading":
-            return "I found something relevant."
-        if event.stage == "indexing":
-            return "I’m organizing the material."
-        if event.stage == "summarizing":
-            return "I’m putting it together."
-        return "I’m checking the documents."
-
-    def _render_rag_zh(self, event: StatusEvent) -> str | None:
-        if event.stage == "retrieving":
-            return "我查一下文档。"
-        if event.stage == "reading":
-            return "我找到相关内容了。"
-        if event.stage == "indexing":
-            return "我整理一下资料。"
-        if event.stage == "summarizing":
-            return "我整理一下。"
-        return "我查一下文档。"
+        return getattr(value, "value", str(value))

@@ -27,6 +27,7 @@ from livekit.agents.voice.generation import update_instructions
 
 from alphaavatar.agents.configs import AvatarConfig, SessionConfig
 from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
+from alphaavatar.agents.entrypoints.schema.room_type import RoomType
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.memory import MemoryBase
 from alphaavatar.agents.persona import PersonaBase, speaker_node
@@ -214,13 +215,15 @@ class AvatarEngine(Agent):
         except Exception as e:
             logger.warning("Final user path migration failed: %s", e)
 
-    async def _call_with_supported_kwargs(self, func, *args, **kwargs) -> None:
+    async def _call_with_supported_kwargs(self, func, *args, **kwargs):
         sig = inspect.signature(func)
         supported_kwargs = {key: value for key, value in kwargs.items() if key in sig.parameters}
 
         result = func(*args, **supported_kwargs)
         if asyncio.iscoroutine(result):
-            await result
+            return await result
+
+        return result
 
     async def resolve_user_identity(self, *, user_id: str) -> None:
         if not user_id or user_id == self.session_config.user_id:
@@ -255,11 +258,20 @@ class AvatarEngine(Agent):
             new_user_path.user_root,
         )
 
-    async def speak_status_text(self, text: str) -> None:
+    async def speak_status_text(
+        self,
+        text: str,
+        *,
+        allow_interruptions: bool = True,
+        add_to_chat_ctx: bool = False,
+    ) -> None:
         """
         Speak a short status message without going through the LLM.
 
-        This method should not add content to chat history or trigger tool calls.
+        This is for intermediate status only:
+        - interruptible by user input
+        - interruptible by normal assistant speech
+        - not added to chat context
         """
         session = getattr(self, "session", None)
         if session is None:
@@ -271,12 +283,24 @@ class AvatarEngine(Agent):
             logger.debug("Cannot speak status text because session.say is unavailable.")
             return
 
-        await self._call_with_supported_kwargs(
-            say,
-            text,
-            allow_interruptions=False,
-            add_to_chat_ctx=False,
-        )
+        try:
+            handle = await self._call_with_supported_kwargs(
+                say,
+                text,
+                allow_interruptions=allow_interruptions,
+                add_to_chat_ctx=add_to_chat_ctx,
+            )
+
+            # Some LiveKit versions return a SpeechHandle from session.say().
+            # Awaiting it here makes speak_status_text complete when playback completes.
+            # If the speech is interrupted, this may raise/cancel depending on SDK behavior.
+            if handle is not None and hasattr(handle, "__await__"):
+                await handle
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug("Status speech failed or was interrupted: %s", e)
 
     async def on_enter(self):
         # BUG: Before entering the function to send a greeting, the front end allows the user to input, but the system cannot recognize it.
@@ -310,7 +334,16 @@ class AvatarEngine(Agent):
         # enable vision input if needed
         self._vision.start()
 
-        self.session.generate_reply(user_input="Briefly greet the user and offer your assistance.")
+        # Do not use LLM-generated greeting here.
+        # It may trigger llm_node and produce awkward thinking status during startup.
+        if self.runtime_context.interaction_method.room_type in (RoomType.WEB_APP.value,):
+            self.status_emitter.emit_nowait(
+                StatusEvent(
+                    type=StatusType.READY,
+                    source=AvatarModule.AVATAR_ENGINE,
+                    stage="session_ready",
+                )
+            )
 
     def stt_node(
         self, audio: AsyncIterable[rtc.AudioFrame], model_settings: ModelSettings
@@ -357,15 +390,34 @@ class AvatarEngine(Agent):
         Dynamic per-turn context is injected after the latest user query.
         """
 
-        # NOTE: The user query in the `llm_node` is appended after copying the chat_context;
-        # it's a temporary state. The user query and answer are only inserted into the
-        # chat_context after the answer is generated.
+        # NOTE:
+        # The user query in llm_node is appended after copying the chat_context.
+        # It's a temporary state. The user query and answer are only inserted into
+        # the chat_context after the answer is generated.
 
-        def _latest_role(ctx: llm.ChatContext) -> str | None:
+        def _latest_input_kind(ctx: llm.ChatContext) -> str | None:
             for item in reversed(getattr(ctx, "items", [])):
                 role = getattr(item, "role", None)
+                item_type = getattr(item, "type", None)
+
+                if role == "user":
+                    return "user"
+
+                if role in {"tool", "function"}:
+                    return "tool_output"
+
+                if item_type in {
+                    "tool_result",
+                    "tool_output",
+                    "function_result",
+                    "function_output",
+                    "function_call_output",
+                }:
+                    return "tool_output"
+
                 if role is not None:
-                    return role
+                    return str(role)
+
             return None
 
         def _is_answer_chunk(chunk: llm.ChatChunk | str | FlushSentinel) -> bool:
@@ -376,7 +428,8 @@ class AvatarEngine(Agent):
             if delta is None:
                 return False
 
-            # Tool-call chunks should not cancel thinking.
+            # Tool-call chunks should not cancel initial thinking.
+            # Thinking covers the period where the model is still deciding/generating a tool call.
             tool_calls = getattr(delta, "tool_calls", None) or getattr(delta, "toolCalls", None)
             if tool_calls:
                 return False
@@ -422,24 +475,41 @@ class AvatarEngine(Agent):
                 runtime_context=runtime_context_text,
             )
 
-            # 7. Only emit thinking for the first model call after a user query.
-            #
-            # Later model calls after tool outputs should not emit thinking again:
-            # tool execution / multi-tool progress should be represented by tool status events.
-            is_user_query_model_call = _latest_role(model_chat_ctx) == "user"
+            # 7. Schedule status events depending on what triggered this model call.
+            latest_input_kind = _latest_input_kind(model_chat_ctx)
 
             thinking_task = None
-            if is_user_query_model_call:
+            finalizing_task = None
+
+            if latest_input_kind == "user":
+                # First model call after user input:
+                # emit delayed thinking only if the model does not start answering quickly.
                 self.status_emitter.start_turn()
                 thinking_task = self.status_emitter.emit_delayed(
                     StatusEvent(
                         type=StatusType.THINKING,
                         source=AvatarModule.AVATAR_ENGINE,
                         stage="thinking",
-                    )
+                    ),
+                    delay_sec=1.5,
+                )
+
+            elif latest_input_kind == "tool_output":
+                # Model call after tool/function output:
+                # emit delayed organizing/finalizing only if model takes noticeable time
+                # before deciding the next tool call or producing the final answer.
+                finalizing_task = self.status_emitter.emit_delayed(
+                    StatusEvent(
+                        type=StatusType.FINALIZING,
+                        source=AvatarModule.AVATAR_ENGINE,
+                        stage="after_tool",
+                    ),
+                    delay_sec=1.2,
                 )
 
             thinking_cancelled = False
+            finalizing_cancelled = False
+
             try:
                 async for chunk in Agent.default.llm_node(
                     self,
@@ -447,20 +517,36 @@ class AvatarEngine(Agent):
                     tools,
                     model_settings,
                 ):
-                    if not thinking_cancelled and _is_answer_chunk(chunk):
-                        if thinking_task is not None and not thinking_task.done():
+                    # For user-query calls, only real answer text cancels thinking.
+                    # Tool-call chunks do not cancel it; tool execution status will take over later.
+                    if (
+                        not thinking_cancelled
+                        and thinking_task is not None
+                        and _is_answer_chunk(chunk)
+                    ):
+                        if not thinking_task.done():
                             thinking_task.cancel()
                             with suppress(asyncio.CancelledError):
                                 await thinking_task
                         thinking_cancelled = True
 
+                    # For tool-output calls, any first chunk means the model has resumed:
+                    # it may be another tool call or the final answer, so cancel the delayed status.
+                    if not finalizing_cancelled and finalizing_task is not None:
+                        if not finalizing_task.done():
+                            finalizing_task.cancel()
+                            with suppress(asyncio.CancelledError):
+                                await finalizing_task
+                        finalizing_cancelled = True
+
                     yield chunk
 
             finally:
-                if thinking_task is not None and not thinking_task.done():
-                    thinking_task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await thinking_task
+                for task in (thinking_task, finalizing_task):
+                    if task is not None and not task.done():
+                        task.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await task
 
         return _gen()
 

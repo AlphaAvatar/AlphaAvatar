@@ -12,12 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from typing import Any, Literal
 
 from livekit.agents import RunContext
+from livekit.agents.llm import ToolError
 
+from alphaavatar.agents import AvatarModule
 from alphaavatar.agents.log import logger
+from alphaavatar.agents.status import (
+    StatusEmitter,
+    StatusEvent,
+    StatusPriority,
+    StatusType,
+)
 
 from .base import ToolBase
 
@@ -112,6 +121,15 @@ class RAGAPI(ToolBase):
           supported files inside it (commonly: .pdf, .md, .txt).
         - If a path is a file, ingest that single file.
 
+    monologue:
+        Optional short user-facing status message to show or speak while this
+        tool is running. Keep it brief, natural, and in the same language as the
+        user. Do not reveal hidden reasoning. Examples:
+        - "我查一下文档。"
+        - "我整理一下资料。"
+        - "I’ll check the documents."
+        - "I’ll organize the material."
+
 Expected returns by op:
     - query(data_source, query) -> retrieval results and/or grounded answer
       (implementation-defined, e.g., list of passages with metadata, plus a synthesis)
@@ -119,13 +137,58 @@ Expected returns by op:
       (implementation-defined, e.g., counts of documents/chunks, doc_ids, errors)
 """
 
-    def __init__(self, rag_object: RAGBase):
+    def __init__(
+        self,
+        rag_object: RAGBase,
+        *,
+        status_emitter: StatusEmitter | None = None,
+    ):
         super().__init__(
             name=rag_object.name,
             description=rag_object.description + "\n\n" + self.args_description,
+            status_emitter=status_emitter,
         )
 
         self._rag_object = rag_object
+        self._current_op: RAGOp | None = None
+
+    def _emit_op_status(
+        self,
+        *,
+        op: RAGOp,
+        status_type: StatusType,
+        data_source: str = "all",
+        query: str | None = None,
+        file_paths_or_dir: list[str] | None = None,
+        monologue: str | None = None,
+    ) -> None:
+        metadata: dict[str, Any] = {
+            "op": op.value,
+            "data_source": data_source,
+        }
+
+        if query is not None:
+            metadata["query"] = query
+
+        if file_paths_or_dir is not None:
+            metadata["path_count"] = len(file_paths_or_dir)
+
+        self.emit_status_nowait(
+            StatusEvent(
+                type=status_type,
+                source=AvatarModule.RAG,
+                stage=op,
+                message=monologue,
+                priority=StatusPriority.NORMAL,
+                metadata=metadata,
+            )
+        )
+
+    def _status_source(self):
+        return AvatarModule.RAG
+
+    def _status_stage(self):
+        return self._current_op or "tool_error"
 
     async def invoke(
         self,
@@ -134,18 +197,46 @@ Expected returns by op:
         data_source: str = "all",
         query: str | None = None,
         file_paths_or_dir: list[str] | None = None,
+        monologue: str | None = None,
     ) -> Any:
-        match op:
-            case RAGOp.QUERY:
-                return await self._rag_object.query(query=query, ctx=ctx, data_source=data_source)
-            case RAGOp.INDEXING:
-                return await self._rag_object.indexing(
-                    file_paths_or_dir=file_paths_or_dir, ctx=ctx, data_source=data_source
-                )
-            case _:
-                msg = f"Unsupported MCP operation: {op}"
-                logger.error(msg)
-                return msg
+        try:
+            op = RAGOp(op)
+        except ValueError:
+            msg = f"Unsupported RAG operation: {op}"
+            logger.error(msg)
+            raise ToolError(msg)
+
+        self._current_op = op
+
+        try:
+            handlers: dict[RAGOp, Callable[[], Awaitable[Any]]] = {
+                RAGOp.QUERY: lambda: self._rag_object.query(
+                    query=query,
+                    ctx=ctx,
+                    data_source=data_source,
+                ),
+                RAGOp.INDEXING: lambda: self._rag_object.indexing(
+                    file_paths_or_dir=file_paths_or_dir,
+                    ctx=ctx,
+                    data_source=data_source,
+                ),
+            }
+
+            self._emit_op_status(
+                op=op,
+                status_type=StatusType.TOOL_START,
+                data_source=data_source,
+                query=query,
+                file_paths_or_dir=file_paths_or_dir,
+                monologue=monologue,
+            )
+
+            result = await handlers[op]()
+
+        finally:
+            self._current_op = None
+
+        return result
 
     async def query(
         self,
