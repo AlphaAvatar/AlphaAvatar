@@ -22,13 +22,27 @@ Learnable, configurable, and pluggable Omni Personal Assistant for everyone
 </h3>
 
 <p align="center">
-  <a href="ROADMAP.md">Roadmap</a>
-  |
-  <a href="https://www.alphaavatar.ai/demo">Demo</a>
-  |
-  <a href="https://www.alphaavatar.ai/">Homepage</a>
-  |
-  <a href="https://docs.alphaavatar.io/">Docs</a>
+  <a href="https://www.alphaavatar.ai">
+    <img src="https://img.shields.io/badge/Website-alphaavatar.ai-6366F1?style=flat-square&logo=googlechrome&logoColor=white" alt="Website">
+  </a>
+  <a href="https://docs.alphaavatar.io">
+    <img src="https://img.shields.io/badge/Docs-Documentation-2563EB?style=flat-square&logo=readthedocs&logoColor=white" alt="Docs">
+  </a>
+  <a href="https://www.alphaavatar.ai/demo">
+    <img src="https://img.shields.io/badge/Demo-Live-7C3AED?style=flat-square&logo=vercel&logoColor=white" alt="Demo">
+  </a>
+  <a href="https://github.com/AlphaAvatar/AlphaAvatar/blob/main/ROADMAP.md">
+    <img src="https://img.shields.io/badge/Roadmap-Project%20Plan-F97316?style=flat-square&logo=github&logoColor=white" alt="Roadmap">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://discord.gg/g22eMMYrW">
+    <img src="https://img.shields.io/discord/1510225790418292756?style=flat-square&logo=discord&logoColor=white&label=Discord" alt="Discord Members">
+  </a>
+  <a href="https://github.com/AlphaAvatar/AlphaAvatar/discussions">
+    <img src="https://img.shields.io/badge/Discussions-GitHub%20Community-181717?style=flat-square&logo=github&logoColor=white" alt="GitHub Discussions">
+  </a>
 </p>
 
 </div>
