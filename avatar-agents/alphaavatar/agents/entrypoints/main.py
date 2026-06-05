@@ -11,11 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import asyncio
+import contextlib
 import json
+import os
 import textwrap
 from functools import partial
 
-from livekit import agents
+from livekit import agents, api
 from livekit.agents import AgentSession, room_io
 from livekit.agents.job import AutoSubscribe
 from livekit.plugins import noise_cancellation
@@ -45,11 +48,77 @@ from .schema.session_type import resolve_session_type
 init_env()
 
 
+def get_max_session_seconds() -> int:
+    raw_value = os.getenv("ALPHAAVATAR_MAX_SESSION_SECONDS", "1800")
+    try:
+        return int(raw_value)
+    except ValueError:
+        logger.warning(
+            "Invalid ALPHAAVATAR_MAX_SESSION_SECONDS=%r, fallback to 1800",
+            raw_value,
+        )
+        return 1800
+
+
+MAX_SESSION_SECONDS = get_max_session_seconds()
+
+
+async def force_close_room_after_timeout(
+    *,
+    room_name: str,
+    session: AgentSession,
+) -> None:
+    if MAX_SESSION_SECONDS <= 0:
+        logger.info("Max session duration watchdog disabled for room=%s", room_name)
+        return
+
+    try:
+        await asyncio.sleep(MAX_SESSION_SECONDS)
+
+        logger.warning(
+            "Max session duration reached. Closing room=%s after %s seconds",
+            room_name,
+            MAX_SESSION_SECONDS,
+        )
+
+        # Close the AgentSession first.
+        session.shutdown(drain=True)
+
+        # Then force-delete the room so all participants are disconnected.
+        lkapi = api.LiveKitAPI()
+        try:
+            await lkapi.room.delete_room(
+                api.DeleteRoomRequest(room=room_name),
+            )
+            logger.warning("Deleted room after max duration: %s", room_name)
+        finally:
+            await lkapi.aclose()
+
+    except asyncio.CancelledError:
+        logger.info("Max session duration watchdog cancelled for room=%s", room_name)
+        raise
+    except Exception:
+        logger.exception("Failed to force close room=%s", room_name)
+
+
+def log_background_task_result(task: asyncio.Task) -> None:
+    with contextlib.suppress(asyncio.CancelledError):
+        exc = task.exception()
+        if exc:
+            logger.error(
+                "Background task failed",
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+
+
 def worker_load(worker) -> float:
     return min(len(worker.active_jobs) / 5.0, 1.0)
 
 
-def build_room_options(session_mode: SessionMode) -> room_io.RoomOptions:
+def build_room_options(
+    session_mode: SessionMode,
+    participant_identity: str | None = None,
+) -> room_io.RoomOptions:
     kwargs = {
         # RoomOptions-supported inputs.
         "text_input": session_mode.text_input_enabled,
@@ -57,6 +126,12 @@ def build_room_options(session_mode: SessionMode) -> room_io.RoomOptions:
         # RoomOptions-supported outputs.
         "text_output": session_mode.text_output_enabled,
         "audio_output": session_mode.audio_output_enabled,
+        # Important lifecycle controls.
+        # Close AgentSession when the linked user disconnects.
+        "close_on_disconnect": True,
+        # Delete the LiveKit room when AgentSession is closed.
+        # Otherwise the room may remain active until all participants leave.
+        "delete_room_on_close": True,
     }
 
     if session_mode.audio_input_enabled:
@@ -68,6 +143,9 @@ def build_room_options(session_mode: SessionMode) -> room_io.RoomOptions:
             kwargs["audio_input"] = True
     else:
         kwargs["audio_input"] = False
+
+    if participant_identity:
+        kwargs["participant_identity"] = participant_identity
 
     return room_io.RoomOptions(**kwargs)
 
@@ -184,6 +262,31 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
 
     # Build Agent & Virtual Character Session
     session = AgentSession()
+    linked_participant_identity = participant.identity
+
+    @ctx.room.on("participant_connected")
+    def on_participant_connected(connected_participant):
+        logger.info(
+            "Participant connected room=%s identity=%s",
+            ctx.room.name,
+            connected_participant.identity,
+        )
+
+    @ctx.room.on("participant_disconnected")
+    def on_participant_disconnected(disconnected_participant):
+        logger.info(
+            "Participant disconnected room=%s identity=%s linked_identity=%s",
+            ctx.room.name,
+            disconnected_participant.identity,
+            linked_participant_identity,
+        )
+
+        if disconnected_participant.identity == linked_participant_identity:
+            logger.info(
+                "Linked participant disconnected. AgentSession should close via close_on_disconnect. room=%s",
+                ctx.room.name,
+            )
+
     avatar_engine = AvatarEngine(
         session_config=session_config,
         avatar_config=avatar_config,
@@ -202,8 +305,19 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     await session.start(
         room=ctx.room,
         agent=avatar_engine,
-        room_options=build_room_options(session_mode),
+        room_options=build_room_options(
+            session_mode,
+            participant_identity=linked_participant_identity,
+        ),
     )
+
+    _max_duration_task = asyncio.create_task(
+        force_close_room_after_timeout(
+            room_name=ctx.room.name,
+            session=session,
+        )
+    )
+    _max_duration_task.add_done_callback(log_background_task_result)
 
     # Explicit channel registration bootstrap
     register_builtin_channels()
