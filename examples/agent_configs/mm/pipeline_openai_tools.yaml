@@ -54,13 +54,15 @@ memory_vdb_config:
   collection_name: "memory"
   embedding_model: "text-embedding-3-small"
 
-# Profiler Args
+# Persona Args
 maximum_retrieval_times: 3
 profiler_plugin: default
 profiler_init_config:
   openai_model: gpt-4o
 speaker_plugin: default
 speaker_init_config: {}
+face_plugin: default
+face_init_config: {}
 persona_vdb_config:
   profiler_collection_name: 'persona_profiler'
   speaker_collection_name: 'persona_speaker'
