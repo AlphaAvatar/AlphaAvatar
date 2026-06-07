@@ -21,7 +21,7 @@ from livekit.agents.inference_runner import _InferenceRunner
 from alphaavatar.agents.persona import VectorRunnerOP
 from alphaavatar.agents.utils.vdb import embedding, lancedb
 
-from ..models import MODEL_CONFIG
+from ..models import SPEAKER_MODEL_CONFIG
 from .speaker_vector_runner import SpeakerVectorRunner
 
 
@@ -327,7 +327,7 @@ class LanceDBRunner(_InferenceRunner):
         self._profiler_table = self._client.open_table(self._profiler_collection_name)
 
         # init speaker table
-        speaker_dim = MODEL_CONFIG[SpeakerVectorRunner.MODEL_TYPE].embedding_dim
+        speaker_dim = SPEAKER_MODEL_CONFIG[SpeakerVectorRunner.MODEL_TYPE].embedding_dim
         speaker_seed = [
             {
                 "id": "__init__",

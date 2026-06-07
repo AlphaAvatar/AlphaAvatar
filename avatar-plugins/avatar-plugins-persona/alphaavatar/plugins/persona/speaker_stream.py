@@ -25,12 +25,12 @@ from livekit.agents import stt, utils, vad
 from livekit.agents.job import get_job_context
 from livekit.agents.types import APIConnectOptions, NotGivenOr
 
-from alphaavatar.agents.constants import SLOW_INFERENCE_THRESHOLD, SPEAKER_THRESHOLD
+from alphaavatar.agents.constants import SPEAKER_INFERENCE_THRESHOLD, SPEAKER_THRESHOLD
 from alphaavatar.agents.persona import PersonaBase, SpeakerStreamBase, VectorRunnerOP
 from alphaavatar.agents.utils import DualKeyDict, NumpyOP
 
 from .log import logger
-from .models import MODEL_CONFIG
+from .models import SPEAKER_MODEL_CONFIG
 from .runner import SpeakerAttributeRunner, SpeakerVectorRunner
 
 
@@ -63,7 +63,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
         self._executor = get_job_context().inference_executor
 
         # Speaker Vector Inference
-        self._speaker_vector_config = MODEL_CONFIG[SpeakerVectorRunner.MODEL_TYPE]
+        self._speaker_vector_config = SPEAKER_MODEL_CONFIG[SpeakerVectorRunner.MODEL_TYPE]
         self._speaker_vector_frames: list[rtc.AudioFrame] = []
         self._speaker_vector_resampler: rtc.AudioResampler | None = None
         self._speaker_window_duration = (
@@ -72,7 +72,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
         )
 
         # Speaker Attribute Inference
-        self._speaker_attribute_config = MODEL_CONFIG[SpeakerAttributeRunner.MODEL_TYPE]
+        self._speaker_attribute_config = SPEAKER_MODEL_CONFIG[SpeakerAttributeRunner.MODEL_TYPE]
         self._speaker_attribute_frames: list[rtc.AudioFrame] = []
         self._speaker_attribute_resampler: rtc.AudioResampler | None = None
         self._speaker_window_duration = (
@@ -125,9 +125,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
                 frames[0] = new_frame
                 to_discard = 0
 
-    async def _inference_speaker_vector(
-        self, input_frame: rtc.AudioFrame, timestamp: str, timeout: float | None = 1.0
-    ) -> None:
+    async def _inference_speaker_vector(self, input_frame: rtc.AudioFrame, timestamp: str) -> None:
         start_time = time.perf_counter()
 
         if self._speaker_vector_config.sample_rate != input_frame.sample_rate:
@@ -167,7 +165,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
             self._executor.do_inference(
                 SpeakerVectorRunner.INFERENCE_METHOD, inference_f32_data.tobytes()
             ),
-            timeout=timeout,
+            timeout=self._speaker_vector_config.inference_timeout_sec,
         )
         speaker_vector = np.frombuffer(speak_vector_bytes, dtype=np.float32)
 
@@ -176,7 +174,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
             0.0,
             inference_duration - self._speaker_window_duration,
         )
-        if inference_duration > SLOW_INFERENCE_THRESHOLD:
+        if inference_duration > SPEAKER_INFERENCE_THRESHOLD:
             logger.warning(
                 "[SpeakerVector] inference is slower than realtime",
                 extra={"delay": extra_inference_time},
@@ -199,7 +197,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
             json_data = json.dumps(json_data).encode()
             results = await asyncio.wait_for(
                 self._executor.do_inference(self.inference_method, json_data),
-                timeout=timeout,
+                timeout=self._speaker_vector_config.inference_timeout_sec,
             )
             if results:
                 data: dict[str, Any] = json.loads(results.decode())
@@ -222,7 +220,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
         )
 
     async def _inference_speaker_attribute(
-        self, input_frame: rtc.AudioFrame, timestamp: str, timeout: float | None = 1.0
+        self, input_frame: rtc.AudioFrame, timestamp: str
     ) -> None:
         start_time = time.perf_counter()
 
@@ -248,7 +246,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
             return
 
         # wait
-        wait_budget = 2.0 if timeout is None else timeout
+        wait_budget = self._speaker_attribute_config.inference_timeout_sec
         poll_interval = 0.01
         elapsed = 0.0
         while timestamp not in self.frames_tagger:
@@ -280,7 +278,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
                 self._executor.do_inference(
                     SpeakerAttributeRunner.INFERENCE_METHOD, inference_f32_data.tobytes()
                 ),
-                timeout=timeout,
+                timeout=self._speaker_attribute_config.inference_timeout_sec,
             )
 
             inference_duration = time.perf_counter() - start_time
@@ -288,7 +286,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
                 0.0,
                 inference_duration - self._speaker_window_duration,
             )
-            if inference_duration > SLOW_INFERENCE_THRESHOLD:
+            if inference_duration > SPEAKER_INFERENCE_THRESHOLD:
                 logger.warning(
                     "[SpeakerAttribute] inference is slower than realtime",
                     extra={"delay": extra_inference_time},

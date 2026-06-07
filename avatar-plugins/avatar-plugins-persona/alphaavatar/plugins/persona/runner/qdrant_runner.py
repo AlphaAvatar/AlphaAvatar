@@ -33,7 +33,7 @@ from qdrant_client.models import (
 from alphaavatar.agents.persona import VectorRunnerOP
 from alphaavatar.agents.utils.vdb import embedding, qdrant
 
-from ..models import MODEL_CONFIG
+from ..models import SPEAKER_MODEL_CONFIG
 from .speaker_vector_runner import SpeakerVectorRunner
 
 
@@ -285,7 +285,7 @@ class QdrantRunner(_InferenceRunner):
         # init speaker vector
         self._ensure_collection(
             self._speaker_collection_name,
-            MODEL_CONFIG[SpeakerVectorRunner.MODEL_TYPE].embedding_dim,
+            SPEAKER_MODEL_CONFIG[SpeakerVectorRunner.MODEL_TYPE].embedding_dim,
         )
 
     def run(self, data: bytes) -> bytes | None:

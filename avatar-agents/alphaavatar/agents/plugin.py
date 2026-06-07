@@ -49,7 +49,7 @@ class AvatarModule(str, Enum):
     PERSONA = "persona"
     PROFILER = "persona_profiler"
     SPEAKER = "persona_speaker"
-    RECOGNIZER = "persona_recognizer"
+    FACE = "persona_face"
 
     # deepresearch
     DEEPRESEARCH = "deepresearch"

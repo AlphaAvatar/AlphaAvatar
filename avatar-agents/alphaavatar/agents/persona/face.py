@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,15 +17,27 @@ from abc import abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .cache import PersonaCache
+    from alphaavatar.agents.avatar import AvatarEngine
+
+    from .base import PersonaBase
 
 
-class RecognizerBase:
-    def __init__(self):
-        pass
+def face_node(engine: AvatarEngine) -> FaceStreamBase | None:
+    face_stream = engine.persona.face_stream
+    if face_stream is None:
+        return None
+
+    return face_stream(
+        activity_persona=engine.persona,
+    )
+
+
+class FaceStreamBase:
+    def __init__(self, *, activity_persona: PersonaBase) -> None:
+        self._activity_persona = activity_persona
 
     @abstractmethod
-    async def update(self, *, persona: PersonaCache): ...
+    def start(self) -> None: ...
 
     @abstractmethod
-    async def save(self, *, user_id: str, persona: PersonaCache) -> None: ...
+    async def stop(self) -> None: ...

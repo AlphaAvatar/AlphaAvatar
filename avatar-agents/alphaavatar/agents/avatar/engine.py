@@ -30,7 +30,7 @@ from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
 from alphaavatar.agents.entrypoints.schema.room_type import RoomType
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.memory import MemoryBase
-from alphaavatar.agents.persona import PersonaBase, speaker_node
+from alphaavatar.agents.persona import PersonaBase, face_node, speaker_node
 from alphaavatar.agents.plugin import AvatarModule
 from alphaavatar.agents.status import (
     StatusEmitter,
@@ -122,15 +122,15 @@ class AvatarEngine(Agent):
         # vision
         self._vision: VisionBase = build_vision(self)
 
+        # face identity stream
+        self._face_stream = face_node(self)
+
         # other states
         self._pending_user_path_migration: tuple[UserPathSnapshot, UserPathSnapshot] | None = None
 
     @property
     def livekit_room(self) -> rtc.Room | None:
         return self._livekit_room
-
-    def bind_livekit_room(self, room: rtc.Room) -> None:
-        self._livekit_room = room
 
     @property
     def memory(self) -> MemoryBase:
@@ -224,6 +224,9 @@ class AvatarEngine(Agent):
             return await result
 
         return result
+
+    def bind_livekit_room(self, room: rtc.Room) -> None:
+        self._livekit_room = room
 
     async def resolve_user_identity(self, *, user_id: str) -> None:
         if not user_id or user_id == self.session_config.user_id:
@@ -333,6 +336,10 @@ class AvatarEngine(Agent):
 
         # enable vision input if needed
         self._vision.start()
+
+        # enable face identity stream if needed
+        if self._face_stream is not None:
+            self._face_stream.start()
 
         # Do not use LLM-generated greeting here.
         # It may trigger llm_node and produce awkward thinking status during startup.
@@ -556,6 +563,9 @@ class AvatarEngine(Agent):
 
         # vision cleanup
         await self._vision.stop()
+
+        if self._face_stream is not None:
+            await self._face_stream.stop()
 
         # memory op
         await self.memory.update(avatar_id=self.avatar_config.avatar_info.avatar_id)

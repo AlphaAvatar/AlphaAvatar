@@ -22,7 +22,7 @@ from livekit.agents.inference_runner import _InferenceRunner
 from livekit.agents.utils import hw
 
 from ..log import logger
-from ..models import MODEL_CONFIG, SpeakerModelType, download_from_hf_hub
+from ..models import SPEAKER_MODEL_CONFIG, SpeakerModelType, download_from_hf_hub
 from ..utils.fbank import FBank
 
 _resource_files = ExitStack()
@@ -42,9 +42,9 @@ class SpeakerVectorRunner(_InferenceRunner):
 
         try:
             local_path_onnx = download_from_hf_hub(
-                MODEL_CONFIG[self.MODEL_TYPE].hf_model,
-                MODEL_CONFIG[self.MODEL_TYPE].file_name,
-                revision=MODEL_CONFIG[self.MODEL_TYPE].revision,
+                SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].hf_model,
+                SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].file_name,
+                revision=SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].revision,
                 local_files_only=True,
             )
             opts = ort.SessionOptions()
@@ -79,13 +79,13 @@ class SpeakerVectorRunner(_InferenceRunner):
 
         except (errors.LocalEntryNotFoundError, OSError):
             logger.error(
-                f"[SpeakerVectorRunner] Could not find model {MODEL_CONFIG[self.MODEL_TYPE].hf_model} with revision {MODEL_CONFIG[self.MODEL_TYPE].revision}. "
+                f"[SpeakerVectorRunner] Could not find model {SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].hf_model} with revision {SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].revision}. "
                 "Make sure you have downloaded the model before running the agent. "
                 "Use `python3 your_agent.py download-files` to download the models."
             )
             raise RuntimeError(
                 "[SpeakerVectorRunner] alphaavatar-plugins-persona initialization failed. "
-                f"Could not find model {MODEL_CONFIG[self.MODEL_TYPE].hf_model} with revision {MODEL_CONFIG[self.MODEL_TYPE].revision}."
+                f"Could not find model {SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].hf_model} with revision {SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].revision}."
             ) from None
 
     def run(self, data: bytes) -> bytes:

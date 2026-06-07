@@ -13,12 +13,17 @@
 # limitations under the License.
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from alphaavatar.agents.avatar.vision.base import NoopVision, VisionBase
 from alphaavatar.agents.avatar.vision.realtime import RealtimeVision
 from alphaavatar.agents.avatar.vision.sampled_frame import SampledFrameVision
 
+if TYPE_CHECKING:
+    from alphaavatar.agents.avatar.engine import AvatarEngine
 
-def build_vision(agent) -> VisionBase:
+
+def build_vision(agent: AvatarEngine) -> VisionBase:
     vision_config = agent.avatar_config.vision_config
 
     if not vision_config.vision_input_enabled:

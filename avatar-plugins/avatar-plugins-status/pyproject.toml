@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "AlphaAvatar Framework plugin for intermediate status events"
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11,<3.12"
 keywords = ["llm", "agents", "AI", "status", "progress", "realtime", "avatar"]
 classifiers = [
     "Intended Audience :: Developers",

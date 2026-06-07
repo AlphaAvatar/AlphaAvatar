@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "AlphaAvatar Framework plugin for MCP service"
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11,<3.12"
 keywords = ["llm", "agents", "AI", "real world", "mcp", "tools"]
 classifiers = [
     "Intended Audience :: Developers",
@@ -25,7 +25,7 @@ classifiers = [
 ]
 dependencies = [
   "mcp>=1.24.0,<2",
-  "lancedb",
+  "lancedb==0.30.2",
 ]
 
 

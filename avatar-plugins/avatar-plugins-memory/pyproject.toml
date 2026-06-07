@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "AlphaAvatar Framework plugin for memory service"
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11,<3.12"
 keywords = ["llm", "agents", "AI", "memory", "langchain"]
 classifiers = [
     "Intended Audience :: Developers",
@@ -28,7 +28,7 @@ dependencies = [
     "langchain-community",
     "langchain-openai",
     "qdrant-client",
-    "lancedb",
+    "lancedb==0.30.2",
     "langchain-qdrant",
     "torchaudio>=0.10.1"
 ]

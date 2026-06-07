@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "AlphaAvatar Framework plugin for persona service"
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11,<3.12"
 keywords = ["llm", "agents", "AI", "persona", "profile", "langchain"]
 classifiers = [
     "Intended Audience :: Developers",
@@ -24,13 +24,16 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
 ]
 dependencies = [
+    "onnxruntime==1.23.1",
+    "opencv-python-headless==4.12.0.88",
+    "insightface==1.0.1",
     "langchain-core",
     "langchain-community",
     "langchain-openai",
-    "qdrant-client",
-    "lancedb",
     "langchain-qdrant",
-    "torchaudio>=0.10.1"
+    "qdrant-client",
+    "lancedb==0.30.2",
+    "torchaudio>=0.10.1",
 ]
 
 

@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,16 +11,26 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .face_analysis_runner import FaceAnalysisRunner
-from .lancedb_runner import LanceDBRunner
-from .qdrant_runner import QdrantRunner
-from .speaker_attribute_runner import SpeakerAttributeRunner
-from .speaker_vector_runner import SpeakerVectorRunner
+from __future__ import annotations
 
-__all__ = [
-    "LanceDBRunner",
-    "QdrantRunner",
-    "SpeakerAttributeRunner",
-    "SpeakerVectorRunner",
-    "FaceAnalysisRunner",
-]
+from dataclasses import dataclass
+from typing import Any
+
+import numpy as np
+
+
+@dataclass
+class FaceObservation:
+    timestamp: float
+    participant_identity: str | None
+    track_sid: str | None
+
+    bbox: list[float]
+    det_score: float
+    quality_score: float | None
+
+    embedding: np.ndarray
+    age: int | None = None
+    gender: str | None = None
+
+    landmarks: Any | None = None

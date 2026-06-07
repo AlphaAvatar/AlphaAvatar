@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "WhatsApp channel bridge for AlphaAvatar. Connects WhatsApp (Baileys / Cloud API) to LiveKit-based AlphaAvatar agents via realtime data channels."
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11,<3.12"
 keywords = ["alphaavatar", "whatsapp", "messaging", "realtime", "livekit", "agent-framework", "chatbot", "ai-agents", "channel-bridge", "websocket"]
 classifiers = [
   "Intended Audience :: Developers",

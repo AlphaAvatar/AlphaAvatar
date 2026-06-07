@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .base import PersonaBase
-from .cache import PersonaCache, SpeakerCacheBase
+from .cache import FaceCacheBase, PersonaCache, SpeakerCacheBase
 from .enum.runner_op import VectorRunnerOP
+from .face import FaceStreamBase, face_node
 from .profiler import ProfilerBase
+from .schema.face import FaceObservation
 from .schema.user_profile import (
     DetailsBase,
     ProfileItemSource,
@@ -28,13 +30,17 @@ __all__ = [
     "PersonaBase",
     "PersonaCache",
     "SpeakerCacheBase",
+    "FaceCacheBase",
     "VectorRunnerOP",
+    "ProfilerBase",
+    "DetailsBase",
     "ProfileItemSource",
     "ProfileItemView",
-    "DetailsBase",
     "UserProfile",
     "UserRuntimeState",
-    "ProfilerBase",
+    "FaceObservation",
     "SpeakerStreamBase",
     "speaker_node",
+    "FaceStreamBase",
+    "face_node",
 ]

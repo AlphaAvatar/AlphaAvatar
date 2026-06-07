@@ -36,7 +36,7 @@ def download_from_hf_hub(repo_id: str, filename: str, **kwargs: Any) -> str:
     return local_path
 
 
-class RunnerModelConfig:
+class RunnerSpeakerModelConfig:
     def __init__(
         self,
         hf_model: str,
@@ -46,6 +46,7 @@ class RunnerModelConfig:
         window_size_samples: int,
         step_size_samples: int,
         embedding_dim: int | None = None,
+        inference_timeout_sec: float = 1.0,
     ) -> None:
         self.hf_model = hf_model
         self.revision = revision
@@ -54,13 +55,46 @@ class RunnerModelConfig:
         self.window_size_samples = window_size_samples
         self.step_size_samples = step_size_samples
         self.embedding_dim = embedding_dim
+        self.inference_timeout_sec = inference_timeout_sec
+
+
+class RunnerFaceModelConfig:
+    def __init__(
+        self,
+        *,
+        hf_model: str | None = None,
+        revision: str | None = None,
+        model_name: str,
+        root: str,
+        allowed_modules: list[str],
+        det_size: tuple[int, int],
+        det_thresh: float,
+        sample_interval_sec: float,
+        min_face_size: int,
+        jpeg_quality: int,
+        embedding_dim: int,
+        inference_timeout_sec: float,
+    ) -> None:
+        self.hf_model = hf_model
+        self.revision = revision
+        self.model_name = model_name
+        self.root = root
+        self.allowed_modules = allowed_modules
+        self.det_size = det_size
+        self.det_thresh = det_thresh
+        self.sample_interval_sec = sample_interval_sec
+        self.min_face_size = min_face_size
+        self.jpeg_quality = jpeg_quality
+        self.embedding_dim = embedding_dim
+        self.inference_timeout_sec = inference_timeout_sec
 
 
 SpeakerModelType = Literal["eres2netv2", "w2v2l6"]
+FaceModelType = Literal["buffalo_l"]
 
 
-MODEL_CONFIG: dict[SpeakerModelType, RunnerModelConfig] = {
-    "eres2netv2": RunnerModelConfig(
+SPEAKER_MODEL_CONFIG: dict[SpeakerModelType, RunnerSpeakerModelConfig] = {
+    "eres2netv2": RunnerSpeakerModelConfig(
         hf_model="AlphaAvatar/plugins-persona",
         revision="speaker_vector_onnx",
         file_name="eres2netv2.onnx",
@@ -68,8 +102,9 @@ MODEL_CONFIG: dict[SpeakerModelType, RunnerModelConfig] = {
         window_size_samples=int(3.0 * 16000),
         step_size_samples=int(1 * 16000),
         embedding_dim=192,
+        inference_timeout_sec=2.0,
     ),
-    "w2v2l6": RunnerModelConfig(
+    "w2v2l6": RunnerSpeakerModelConfig(
         hf_model="AlphaAvatar/plugins-persona",
         revision="speaker_attribute_onnx",
         file_name="w2v2l6.onnx",
@@ -77,5 +112,22 @@ MODEL_CONFIG: dict[SpeakerModelType, RunnerModelConfig] = {
         window_size_samples=int(3.0 * 16000),
         step_size_samples=int(1 * 16000),
         embedding_dim=1024,
+        inference_timeout_sec=2.0,
+    ),
+}
+
+
+FACE_MODEL_CONFIG: dict[FaceModelType, RunnerFaceModelConfig] = {
+    "buffalo_l": RunnerFaceModelConfig(
+        model_name="buffalo_l",
+        root="~/.insightface",
+        allowed_modules=["detection", "recognition", "genderage"],
+        det_size=(640, 640),
+        det_thresh=0.65,
+        sample_interval_sec=0.75,
+        min_face_size=48,
+        jpeg_quality=85,
+        embedding_dim=512,
+        inference_timeout_sec=2.0,
     ),
 }

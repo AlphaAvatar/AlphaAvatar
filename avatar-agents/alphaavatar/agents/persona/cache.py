@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 from livekit.agents.llm import ChatItem, ChatMessage
 
-from alphaavatar.agents.constants import SPEAKER_BETA
+from alphaavatar.agents.constants import FACE_BETA, SPEAKER_BETA
 from alphaavatar.agents.utils import AvatarTime, NumpyOP
 
 from .schema.user_profile import DetailsBase, UserProfile, UserRuntimeState
@@ -32,11 +32,13 @@ class PersonaCache:
         timestamp: AvatarTime,
         user_profile: UserProfile,
         speaker_cache: SpeakerCacheBase,
+        face_cache: FaceCacheBase,
         current_retrieval_times: int = 0,
     ):
         self._timestamp = timestamp
         self._user_profile = user_profile
         self._speaker_cache = speaker_cache
+        self._face_cache = face_cache
         self._current_retrieval_times = current_retrieval_times
 
         self._messages: list[ChatItem] = []
@@ -62,6 +64,7 @@ class PersonaCache:
             self._user_profile.details is not None
             or self._user_profile.runtime_state is not None
             or self._user_profile.speaker_vector is not None
+            or self._user_profile.face_vector is not None
         ):
             return self._user_profile
 
@@ -98,6 +101,10 @@ class PersonaCache:
     def speaker_vector(self) -> np.ndarray | None:
         return self._user_profile.speaker_vector
 
+    @property
+    def face_vector(self) -> np.ndarray | None:
+        return self._user_profile.face_vector
+
     @profile.setter
     def profile(self, profile: UserProfile):
         self._user_profile = profile
@@ -127,6 +134,22 @@ class PersonaCache:
                 SPEAKER_BETA * current + (1 - SPEAKER_BETA) * vector
             )
 
+    @face_vector.setter
+    def face_vector(self, vector: np.ndarray):
+        if self._user_profile is None:
+            self._user_profile = UserProfile()
+
+        current = getattr(self._user_profile, "face_vector", None)
+        if current is None:
+            self._user_profile.face_vector = NumpyOP.l2_normalize(vector)
+        else:
+            if current.shape != vector.shape:
+                raise ValueError(f"face_vector shape mismatch: {current.shape} vs {vector.shape}")
+
+            self._user_profile.face_vector = NumpyOP.l2_normalize(
+                FACE_BETA * current + (1 - FACE_BETA) * vector
+            )
+
     def add_message(self, message: ChatItem):
         """Add a new message to the cache."""
         if isinstance(message, ChatMessage) and message.role in ("user", "assistant"):
@@ -138,6 +161,11 @@ class PersonaCache:
             self.profile_details, speaker_attribute, timestamp=self.time
         )
 
+    def update_face_profile(self, face_attribute: dict[str, Any]):
+        self.profile_details = self._face_cache.update_profile_detail(
+            self.profile_details, face_attribute, timestamp=self.time
+        )
+
 
 class SpeakerCacheBase:
     def __init__(self): ...
@@ -145,4 +173,13 @@ class SpeakerCacheBase:
     @abstractmethod
     def update_profile_detail(
         self, profile_details: Any, speaker_attribute: dict[str, Any], timestamp: str
+    ) -> Any: ...
+
+
+class FaceCacheBase:
+    def __init__(self): ...
+
+    @abstractmethod
+    def update_profile_detail(
+        self, profile_details: Any, face_attribute: dict[str, Any], timestamp: str
     ) -> Any: ...

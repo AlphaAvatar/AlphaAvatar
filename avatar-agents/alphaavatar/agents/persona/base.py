@@ -17,11 +17,12 @@ import numpy as np
 from livekit.agents.llm import ChatItem
 
 from alphaavatar.agents.avatar.prompting import PersonaPluginsTemplate
-from alphaavatar.agents.constants import SPEAKER_THRESHOLD
+from alphaavatar.agents.constants import FACE_THRESHOLD, SPEAKER_THRESHOLD
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.utils import AvatarTime, NumpyOP, get_user_id
 
-from .cache import PersonaCache, SpeakerCacheBase
+from .cache import FaceCacheBase, PersonaCache, SpeakerCacheBase
+from .face import FaceStreamBase
 from .profiler import ProfilerBase
 from .schema.user_profile import UserProfile, UserRuntimeState
 from .speaker import SpeakerStreamBase
@@ -33,7 +34,7 @@ class PersonaBase:
         *,
         profiler: ProfilerBase,
         speaker_cls: tuple[type[SpeakerStreamBase], type[SpeakerCacheBase]],
-        face_cls: tuple[type[SpeakerStreamBase], type[SpeakerCacheBase]],
+        face_cls: tuple[type[FaceStreamBase], type[FaceCacheBase]] | None = None,
         maximum_retrieval_times: int = 3,
     ):
         self._profiler = profiler
@@ -61,6 +62,14 @@ class PersonaBase:
         return self._speaker_cls[1]
 
     @property
+    def face_stream(self) -> type[FaceStreamBase]:
+        return self._face_cls[0]
+
+    @property
+    def face_cache(self) -> type[FaceCacheBase]:
+        return self._face_cls[1]
+
+    @property
     def persona_cache(self) -> dict[str, PersonaCache]:
         return self._persona_cache
 
@@ -85,6 +94,7 @@ class PersonaBase:
         return (
             profile.details is None
             and profile.speaker_vector is None
+            and profile.face_vector is None
             and profile.runtime_state is not None
         )
 
@@ -181,6 +191,7 @@ class PersonaBase:
                 timestamp=timestamp,
                 user_profile=user_profile,
                 speaker_cache=self.speaker_cache(),
+                face_cache=self.face_cache(),
             )
         else:
             logger.error(
@@ -205,13 +216,14 @@ class PersonaBase:
                 runtime_state=default_runtime_state,
             )
 
+            # Reuse the original runtime cache object.
+            # This preserves speaker_cache, face_cache, messages, retrieval counters,
+            # and any other session-local states accumulated before identity resolution.
+            default_cache.profile = user_profile
+
             del self.persona_cache[self._default_user_id]
 
-            self.persona_cache[uid] = PersonaCache(
-                timestamp=self._init_timestamp,
-                user_profile=user_profile,
-                speaker_cache=self.speaker_cache(),
-            )
+            self.persona_cache[uid] = default_cache
             self._default_user_id = uid
 
             logger.info(
@@ -225,6 +237,7 @@ class PersonaBase:
                 timestamp=self._init_timestamp,
                 user_profile=user_profile,
                 speaker_cache=self.speaker_cache(),
+                face_cache=self.face_cache(),
             )
             logger.info(f"User Profile with id '{uid}' loaded into persona cache.")
         else:
@@ -339,3 +352,73 @@ class PersonaBase:
                 user_profile=user_profile,
                 speaker_cache=self.speaker_cache(),
             )
+
+    """Face Op"""
+
+    async def match_face_vector(self, *, face_vector: np.ndarray) -> str | None:
+        def _build_gallery(gallery: dict[str, np.ndarray]) -> tuple[np.ndarray, list[str]]:
+            ids, mats = [], []
+            for uid, vec in gallery.items():
+                ids.append(uid)
+                mats.append(NumpyOP.to_np(vec))
+            G = np.stack(mats, axis=0)
+            return G, ids
+
+        gallery = {
+            uid: cache.face_vector
+            for uid, cache in self.persona_cache.items()
+            if cache.face_vector is not None
+        }
+        if len(gallery) == 0:
+            return None
+
+        G, ids = _build_gallery(gallery)
+        if G.size == 0:
+            return None
+
+        p = NumpyOP.l2_normalize(NumpyOP.to_np(face_vector))
+        scores = G @ p
+        best_idx = int(np.argmax(scores))
+        best_score = float(scores[best_idx])
+        best_uid = ids[best_idx]
+
+        return best_uid if best_score >= FACE_THRESHOLD else None
+
+    async def update_face_vector(self, *, uid: str, face_vector: np.ndarray | list[float]):
+        if uid not in self.persona_cache:
+            logger.error(
+                f"User ID {uid} not found in persona cache. You need to call 'init_cache' first."
+            )
+            return
+
+        self.persona_cache[uid].face_vector = NumpyOP.l2_normalize(NumpyOP.to_np(face_vector))
+        logger.info(f"User ID {uid} face vector updated in persona cache.")
+
+    async def update_face_attribute(self, *, uid: str, face_attribute: dict[str, Any]):
+        if uid not in self.persona_cache:
+            logger.error(
+                f"User ID {uid} not found in persona cache. You need to call 'init_cache' first."
+            )
+            return
+
+        self.persona_cache[uid].update_face_profile(face_attribute)
+        logger.info(f"User ID {uid} face attribute updated in persona cache.")
+
+    async def insert_face_vector(self, *, face_vector: np.ndarray | list[float]) -> str:
+        if self.persona_cache[self._default_user_id].profile is None:
+            self.persona_cache[self._default_user_id].profile = UserProfile(
+                face_vector=NumpyOP.l2_normalize(NumpyOP.to_np(face_vector))
+            )
+            return self._default_user_id
+
+        uid = get_user_id()
+        user_profile = UserProfile(face_vector=NumpyOP.l2_normalize(NumpyOP.to_np(face_vector)))
+        self.persona_cache[uid] = PersonaCache(
+            timestamp=self._init_timestamp,
+            user_profile=user_profile,
+            speaker_cache=self.speaker_cache(),
+            face_cache=self.face_cache() if self.face_cache is not None else None,
+        )
+
+        logger.info(f"New user profile inserted with face vector uid={uid}")
+        return uid

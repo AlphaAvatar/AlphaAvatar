@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "AlphaAvatar Framework plugin for DeepResearch service"
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11,<3.12"
 keywords = ["llm", "agents", "AI", "internet", "deepsearch", "deepresearch"]
 classifiers = [
     "Intended Audience :: Developers",

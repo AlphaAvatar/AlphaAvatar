@@ -23,7 +23,7 @@ from alphaavatar.agents.utils import NumpyOP
 class ProfileItemSource(StrEnum):
     chat = "chat"
     speech = "speech"
-    visual = "visual"
+    face = "face"
 
 
 class ProfileItemView(BaseModel):
@@ -121,8 +121,9 @@ class UserProfile(BaseModel):
     details: "DetailsBase | None" = None
     runtime_state: UserRuntimeState | None = None
     speaker_vector: np.ndarray | None = None
+    face_vector: np.ndarray | None = None
 
-    @field_validator("speaker_vector", mode="before")
+    @field_validator("speaker_vector", "face_vector", mode="before")
     @classmethod
     def _coerce_and_validate_vec(cls, v):
         if v is None:
@@ -133,12 +134,18 @@ class UserProfile(BaseModel):
             if v.dtype != np.float32:
                 v = v.astype(np.float32, copy=False)
         else:
-            raise TypeError("speaker_vector must be a 1D numpy array or list of floats.")
+            raise TypeError(
+                "speaker_vector and face_vector must be 1D numpy arrays or lists of floats."
+            )
         if v.ndim != 1:
-            raise ValueError("speaker_vector must be a 1-dimensional array.")
+            raise ValueError("speaker_vector and face_vector must be 1-dimensional arrays.")
         return v
 
     # Optional: make JSON export friendly
     @field_serializer("speaker_vector")
     def _serialize_vec(self, v: np.ndarray | None):
+        return None if v is None else v.tolist()
+
+    @field_serializer("face_vector")
+    def _serialize_face_vec(self, v: np.ndarray | None):
         return None if v is None else v.tolist()

@@ -57,6 +57,16 @@ class PersonaConfig(BaseModel):
         description="Custom configuration parameters for the speaker profile plugin.",
     )
 
+    # Persona Face plugin config
+    face_plugin: str = Field(
+        default="default",
+        description="Avatar face profile plugin to use for user profile extraction from user video.",
+    )
+    face_init_config: dict = Field(
+        default={},
+        description="Custom configuration parameters for the face profile plugin.",
+    )
+
     # Persona VDB Config
     persona_vdb_config: dict = Field(
         default={},
@@ -93,6 +103,10 @@ class PersonaConfig(BaseModel):
                 self.speaker_plugin,
                 speaker_init_config=self.speaker_init_config,
             ),
-            face_cls=None,  # type: ignore
+            face_cls=AvatarPlugin.get_avatar_plugin(
+                AvatarModule.FACE,
+                self.face_plugin,
+                face_init_config=self.face_init_config,
+            ),
             maximum_retrieval_times=self.maximum_retrieval_times,
         )

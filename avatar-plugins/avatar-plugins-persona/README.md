@@ -40,4 +40,4 @@ pip install alpha-avatar-plugins-persona
 ### Face Recognizer
 | Module  | Description                                                                                   | Docs                                                                 |
 | ------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| **Face ID** (default) | Face embedding + recognition module for identity verification and multimodal persona binding. | (e.g., [InsightFace](https://github.com/deepinsight/insightface))    |
+| **buffalo_l** (default) | Face embedding + recognition module for identity verification and multimodal persona binding. | (e.g., [InsightFace](https://github.com/deepinsight/insightface))    |

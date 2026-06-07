@@ -18,7 +18,7 @@ from alphaavatar.agents.utils.files.work_dirs import UserPath
 
 from .log import logger
 from .profiler_langchain import ProfilerLangChain
-from .runner import SpeakerAttributeRunner, SpeakerVectorRunner
+from .runner import FaceAnalysisRunner, SpeakerAttributeRunner, SpeakerVectorRunner
 from .version import __version__
 
 __all__ = [
@@ -61,6 +61,22 @@ class SpeakerPlugin(AvatarPlugin):
         from .speaker_stream import SpeakerStreamWrapper
 
         return (SpeakerStreamWrapper, SpeakerCache)
+
+
+class FacePlugin(AvatarPlugin):
+    def __init__(self) -> None:
+        super().__init__(__name__, __version__, __package__, logger)  # type: ignore
+
+    def download_files(self):
+        # InsightFace 默认会在初始化时下载 buffalo_l。
+        # 后面可以改成显式预下载到 INSIGHTFACE_ROOT。
+        pass
+
+    def get_plugin(self, face_init_config: dict | None = None, *args, **kwargs):
+        from .face_cache import FaceCache
+        from .face_stream import FaceStreamWrapper
+
+        return (FaceStreamWrapper, FaceCache)
 
 
 def _configure_persona_vdb_runner(persona_vdb_type: str | None = None) -> str | None:
@@ -106,6 +122,7 @@ def bootstrap_inference_runners() -> None:
     # Speaker runners do not depend on PERSONA_VDB_TYPE.
     AvatarPlugin.register_inference_runner_once(SpeakerAttributeRunner)
     AvatarPlugin.register_inference_runner_once(SpeakerVectorRunner)
+    AvatarPlugin.register_inference_runner_once(FaceAnalysisRunner)
 
     # Persona profile / speaker-vector storage runner.
     _configure_persona_vdb_runner()
@@ -123,6 +140,13 @@ AvatarPlugin.register_avatar_plugin(
     "default",
     SpeakerPlugin(),
 )
+
+AvatarPlugin.register_avatar_plugin(
+    AvatarModule.FACE,
+    "default",
+    FacePlugin(),
+)
+
 
 # Runner bootstrap register
 AvatarPlugin.register_inference_runner_bootstrap(
