@@ -41,10 +41,6 @@
 
 | Plugin / System           | Description                                                                                                                           |     Stage     |
 | :------------------------ | :------------------------------------------------------------------------------------------------------------------------------------ | :-----------: |
-| 🧠 **Runtime Context**    | Dynamically injects memory, time, plan, reflection, behavior rules, interaction state, and modality information into each model call. | ✅ Implemented |
-| 🧬 **User Continuity**    | Maintains user identity, runtime state, persona, memory, and workspace continuity across sessions.                                    | ✅ Implemented |
-| 👁️ **Vision Input**      | Supports sampled visual input from real-time video streams and injects current visual context into model calls.                       | ✅ Implemented |
-| 🟢 **Status Feedback**    | Emits intermediate feedback during thinking, tool calls, tool errors, and post-tool result organization to reduce perceived latency.  | ✅ Implemented |
 | 🎯 **Interaction Router** | Routes user input based on intention, interaction context, and response necessity; may also select early status feedback.             |   🧩 Planned  |
 | 💡 **Reflection**         | Generates metacognitive insights from memory, persona, tool usage, failures, and interaction history.                                 |   🧩 Planned  |
 | 📅 **Planning**           | Generates short-term tasks, long-term plans, reminders, and follow-up actions from memory, reflection, and tool results.              |   🧩 Planned  |
@@ -235,19 +231,23 @@
 | 2026-05 | **Runtime State Markdown Storage** | Runtime state is stored locally as markdown instead of being mixed into LLM-extracted profile vectors. |
 | 2026-05 | **Temporary Persona Replacement** | Runtime-only temporary persona can be replaced by the resolved real user profile while preserving current session runtime state. |
 | 2026-05 | **Identity-aware UserPath Binding** | Persona local storage follows user identity changes through mutable `UserPath`. |
+| 2026-06 | **Realtime Face Detection** | Added realtime face detection from camera input through the Persona visual identity pipeline. |
+| 2026-06 | **Face-based Identity Support** | Integrated face vectors with Persona identity resolution, local cache matching, and VDB-backed persistence. |
 
 ### 🧭 TODO
 
 | Priority | Task | Stage |
 | :------- | :--- | :---: |
-| 🔸 | Add face-based profiling using facial embedding recognition. | ⏳ In Progress |
 | 🔸 | Support persona visualization interface for profile inspection and correction. | ⏳ In Progress |
-| 🔸 | Add multi-user profile management for concurrent interactions. | 🧩 Planned |
-| 🔹 | Add real-time profile retrieval and profile switching during active conversation. | 🧩 Planned |
+| 🔸 | Add multi-user profile management for concurrent interactions. | ⏳ In Progress |
+| 🔸 | Add real-time profile retrieval and profile switching during active conversation. | ⏳ In Progress |
 | 🔹 | Add cross-platform identity linking for the same user across web, desktop, WhatsApp, and future channels. | 🧩 Planned |
 | 🔹 | Add user-confirmed identity merge and identity conflict resolution. | 🧩 Planned |
 | 🔹 | Add persona privacy controls, allowing users to inspect, edit, export, or delete profile fields. | 🧩 Planned |
 | 🔹 | Add event triggers for profile updates, reflection cycles, and planning refresh. | 🧩 Planned |
+| 🔹 | Add persona privacy controls, allowing users to inspect, edit, export, or delete profile fields. | 🧩 Planned |
+| 🔹 | Add event triggers for profile updates, reflection cycles, and planning refresh. | 🧩 Planned |
+| 🔹 | Add multi-user face tracking, active speaker alignment, and per-user visual context routing. | 🧩 Planned |
 
 ---
 
