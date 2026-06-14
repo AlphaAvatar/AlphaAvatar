@@ -1,18 +1,40 @@
 changelog:
-  categories:
-    - title: What's Changed
-      labels:
-        - enhancement
-        - feature
-        - bug
-        - fix
-        - performance
-        - refactor
-        - documentation
-        - dependencies
-        - "*"
   exclude:
     labels:
-      - skip-changelog
+      - ignore-for-release
+    authors:
+      - dependabot[bot]
+
+  categories:
+    - title: 🚀 Features
+      labels:
+        - feature
+        - enhancement
+
+    - title: 🧠 Persona / Memory
+      labels:
+        - persona
+        - memory
+
+    - title: 🐛 Bug Fixes
+      labels:
+        - bug
+        - fix
+
+    - title: 📚 Documentation
+      labels:
+        - documentation
+        - docs
+
+    - title: 🧹 Maintenance
+      labels:
+        - refactor
+        - chore
+        - dependencies
+
+    - title: Other Changes
+      labels:
+        - "*"
+
   new_contributors:
     include_existing_contributors: false
