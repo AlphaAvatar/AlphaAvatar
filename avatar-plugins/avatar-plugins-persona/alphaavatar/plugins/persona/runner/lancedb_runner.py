@@ -21,7 +21,8 @@ from livekit.agents.inference_runner import _InferenceRunner
 from alphaavatar.agents.persona import VectorRunnerOP
 from alphaavatar.agents.utils.vdb import embedding, lancedb
 
-from ..models import SPEAKER_MODEL_CONFIG
+from ..models import FACE_MODEL_CONFIG, SPEAKER_MODEL_CONFIG
+from .face_analysis_runner import FaceAnalysisRunner
 from .speaker_vector_runner import SpeakerVectorRunner
 
 
@@ -112,6 +113,36 @@ class LanceDBRunner(_InferenceRunner):
             "score": score,
         }
 
+    #
+    # face_vector <-> Lance rows
+    #
+    def _face_to_row(self, *, user_id: str, vector: list[float], row_id: str | None = None) -> dict:
+        return {
+            "id": str(row_id or uuid4()),
+            "user_id": str(user_id),
+            "vector": vector,
+        }
+
+    def _face_row_to_result(self, row: dict) -> dict:
+        distance = float(row.get("_distance", float("inf")))
+
+        # LanceDB cosine distance: smaller is more similar.
+        # Convert it to cosine-similarity-like score so it matches Qdrant's COSINE score style.
+        score = 1.0 - distance
+        score = max(-1.0, min(1.0, score))
+
+        return {
+            "user_id": str(row.get("user_id", "")),
+            "vector": row.get("vector"),
+            "id": str(row.get("id", "")),
+            "distance": distance,
+            "score": score,
+        }
+
+    #
+    # LanceDB Operations
+    #
+
     def _load(self, *, user_id: str, **kwargs) -> dict:
         # 1) load details_items
         details_items: list[dict[str, Any]] = []
@@ -141,9 +172,22 @@ class LanceDBRunner(_InferenceRunner):
         if spk_rows:
             speaker_vector = spk_rows[0].get("vector")
 
+        # 3) load face_vector
+        face_vector = None
+        try:
+            face_rows = self._face_table.search().where(f"user_id = '{user_id}'").limit(1).to_list()
+        except Exception:
+            face_rows = [
+                r for r in self._face_table.to_list() if str(r.get("user_id", "")) == user_id
+            ][:1]
+
+        if face_rows:
+            face_vector = face_rows[0].get("vector")
+
         return {
             "details_items": details_items,
             "speaker_vector": speaker_vector,
+            "face_vector": face_vector,
         }
 
     def _save(
@@ -152,6 +196,7 @@ class LanceDBRunner(_InferenceRunner):
         user_id: str,
         details_items: list[dict] | None,
         speaker_vector: list[float] | None,
+        face_vector: list[float] | None = None,
     ) -> dict:
         result = {
             "user_id": user_id,
@@ -161,6 +206,9 @@ class LanceDBRunner(_InferenceRunner):
             "speaker_deleted": False,
             "speaker_inserted": 0,
             "speaker_error": None,
+            "face_deleted": False,
+            "face_inserted": 0,
+            "face_error": None,
         }
 
         # 1) save details_items
@@ -234,6 +282,31 @@ class LanceDBRunner(_InferenceRunner):
             except Exception as e:
                 result["speaker_error"] = str(e)
 
+        # 3) save face_vector
+        if face_vector:
+            try:
+                try:
+                    self._face_table.delete(f"user_id = '{user_id}'")
+                except Exception:
+                    old_rows = [
+                        r
+                        for r in self._face_table.to_list()
+                        if str(r.get("user_id", "")) == user_id
+                    ]
+                    old_ids = [str(r["id"]) for r in old_rows if "id" in r]
+                    if old_ids:
+                        quoted_ids = ",".join(f"'{x}'" for x in old_ids)
+                        self._face_table.delete(f"id IN ({quoted_ids})")
+
+                result["face_deleted"] = True
+
+                row = self._face_to_row(user_id=user_id, vector=face_vector)
+                self._face_table.add([row])
+                result["face_inserted"] = 1
+
+            except Exception as e:
+                result["face_error"] = str(e)
+
         return result
 
     def _search_speaker_vector(
@@ -290,6 +363,64 @@ class LanceDBRunner(_InferenceRunner):
         except Exception:
             return None
 
+    def _search_face_vector(
+        self,
+        *,
+        face_vector: list[float],
+        top_k: int = 1,
+        user_id: str | None = None,
+        threshold: float | None = None,
+    ) -> dict | None:
+        """
+        LanceDB typically returns `_distance`, with smaller values indicating greater similarity.
+        Here's how to handle compatibility:
+        - First, perform a vector search
+        - Then, filter by `user_id` on the Python side
+        - If a `threshold` is provided, filter by the converted score
+        """
+        try:
+            all_count = self._face_table.count_rows()
+            if all_count == 0:
+                return None
+
+            fetch_k = min(max(top_k * 8, 32), all_count)
+
+            try:
+                query = self._face_table.search(face_vector)
+                try:
+                    query = query.metric("cosine")
+                except Exception:
+                    pass
+
+                rows = query.limit(fetch_k).to_list()
+            except Exception:
+                rows = []
+
+            results: list[dict] = []
+            for row in rows:
+                row_user_id = str(row.get("user_id", ""))
+
+                if user_id and row_user_id != user_id:
+                    continue
+
+                item = self._face_row_to_result(row)
+
+                if threshold is not None and item["score"] < threshold:
+                    continue
+
+                results.append(item)
+                if len(results) >= top_k:
+                    break
+
+            return results[0] if results else None
+
+        except Exception:
+            return None
+
+    #
+    # Runner Interface
+    #
+
     def initialize(self) -> None:
         # get config
         config = os.getenv("PERSONA_VDB_CONFIG", "{}")
@@ -297,11 +428,14 @@ class LanceDBRunner(_InferenceRunner):
 
         self._profiler_collection_name = config.get("profiler_collection_name")
         self._speaker_collection_name = config.get("speaker_collection_name")
+        self._face_collection_name = config.get("face_collection_name")
 
         if not self._profiler_collection_name:
             raise ValueError("`profiler_collection_name` is required in PERSONA_VDB_CONFIG")
         if not self._speaker_collection_name:
             raise ValueError("`speaker_collection_name` is required in PERSONA_VDB_CONFIG")
+        if not self._face_collection_name:
+            raise ValueError("`face_collection_name` is required in PERSONA_VDB_CONFIG")
 
         # init client
         self._client = lancedb.get_client(**config)
@@ -338,6 +472,18 @@ class LanceDBRunner(_InferenceRunner):
         self._ensure_table(self._speaker_collection_name, speaker_seed)
         self._speaker_table = self._client.open_table(self._speaker_collection_name)
 
+        # init face table
+        face_dim = FACE_MODEL_CONFIG[FaceAnalysisRunner.MODEL_TYPE].embedding_dim
+        face_seed = [
+            {
+                "id": "__init__",
+                "user_id": "",
+                "vector": [0.0] * face_dim,
+            }
+        ]
+        self._ensure_table(self._face_collection_name, face_seed)
+        self._face_table = self._client.open_table(self._face_collection_name)
+
     def run(self, data: bytes) -> bytes | None:
         json_data = json.loads(data)
 
@@ -350,6 +496,9 @@ class LanceDBRunner(_InferenceRunner):
                 return json.dumps(result).encode()
             case VectorRunnerOP.search_speaker_vector:
                 result = self._search_speaker_vector(**json_data["param"])
+                return json.dumps(result).encode() if result is not None else result
+            case VectorRunnerOP.search_face_vector:
+                result = self._search_face_vector(**json_data["param"])
                 return json.dumps(result).encode() if result is not None else result
             case _:
                 return None

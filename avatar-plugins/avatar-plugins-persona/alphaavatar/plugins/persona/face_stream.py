@@ -13,6 +13,7 @@
 # limitations under the License.
 import asyncio
 import json
+import os
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -22,7 +23,8 @@ import numpy as np
 from livekit import rtc
 from livekit.agents.job import get_job_context
 
-from alphaavatar.agents.persona import FaceStreamBase, PersonaBase
+from alphaavatar.agents.constants import FACE_INFERENCE_THRESHOLD, FACE_MATCH_THRESHOLD
+from alphaavatar.agents.persona import FaceStreamBase, PersonaBase, VectorRunnerOP
 from alphaavatar.agents.utils import NumpyOP
 
 from .log import logger
@@ -60,6 +62,17 @@ class FaceStreamWrapper(FaceStreamBase):
         # Keep it small to preserve realtime behavior and avoid memory buildup.
         self._frame_q: asyncio.Queue[FaceFrameJob] = asyncio.Queue(maxsize=2)
         self._worker_task: asyncio.Task[None] | None = None
+
+    @property
+    def inference_method(self) -> str:
+        method = os.getenv("PERSONA_INFERENCE_METHOD")
+        if not method:
+            raise RuntimeError(
+                "PERSONA_INFERENCE_METHOD is not configured. "
+                "Make sure AvatarPlugin.bootstrap_inference_runners() is called before "
+                "FaceStreamWrapper is used."
+            )
+        return method
 
     def start(self) -> None:
         if self._worker_task is None or self._worker_task.done():
@@ -316,6 +329,8 @@ class FaceStreamWrapper(FaceStreamBase):
         return candidates[0][2]
 
     async def _inference_face_job(self, job: FaceFrameJob) -> None:
+        start_time = time.perf_counter()
+
         image_bytes = self._encode_frame_to_jpeg(job.frame)
 
         results = await asyncio.wait_for(
@@ -339,17 +354,46 @@ class FaceStreamWrapper(FaceStreamBase):
         if embedding is None:
             return
 
-        face_vector = NumpyOP.l2_normalize(np.asarray(embedding, dtype=np.float32))
+        inference_duration = time.perf_counter() - start_time
+        if inference_duration > FACE_INFERENCE_THRESHOLD:
+            logger.warning(
+                "[FaceAnalysis] inference is slower than realtime",
+                extra={"expection": FACE_INFERENCE_THRESHOLD},
+            )
 
+        # Match & Retrieve & Update Face
+        face_vector = np.asarray(embedding, dtype=np.float32)
         uid = await self._activity_persona.match_face_vector(face_vector=face_vector)
-
         if uid is not None:
             await self._activity_persona.update_face_vector(
                 uid=uid,
                 face_vector=face_vector,
             )
         else:
-            uid = await self._activity_persona.insert_face_vector(face_vector=face_vector)
+            json_data = {
+                "op": VectorRunnerOP.search_face_vector,
+                "param": {
+                    "face_vector": NumpyOP.l2_normalize(face_vector).tolist(),
+                    "threshold": FACE_MATCH_THRESHOLD,
+                },
+            }
+            json_data = json.dumps(json_data).encode()
+
+            results = await asyncio.wait_for(
+                self._executor.do_inference(self.inference_method, json_data),
+                timeout=self._face_config.inference_timeout_sec,
+            )
+
+            if results:
+                data: dict[str, Any] = json.loads(results.decode())
+                uid = data.get("user_id", "")
+                await self._activity_persona.load_profile(uid=uid)
+                await self._activity_persona.update_face_vector(
+                    uid=uid,
+                    face_vector=face_vector,
+                )
+            else:
+                uid = await self._activity_persona.insert_face_vector(face_vector=face_vector)
 
         face_attribute = {
             "age": face.get("age"),
@@ -362,16 +406,6 @@ class FaceStreamWrapper(FaceStreamBase):
         await self._activity_persona.update_face_attribute(
             uid=uid,
             face_attribute=face_attribute,
-        )
-
-        logger.info(
-            "Face identity updated uid=%s participant=%s track_sid=%s det_score=%s age=%s gender=%s",
-            uid,
-            job.participant_identity,
-            job.track_sid,
-            face.get("det_score"),
-            face.get("age"),
-            face.get("gender"),
         )
 
     async def _aclose_video_stream(

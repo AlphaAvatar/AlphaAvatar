@@ -13,6 +13,8 @@
 # limitations under the License.
 from livekit.agents.llm import ChatItem, ChatMessage, FunctionCall, FunctionCallOutput
 
+from alphaavatar.agents.utils import TimeStamp
+
 from .enum.memory_type import MemoryType
 
 
@@ -22,14 +24,20 @@ class MemoryCache:
 
     def __init__(
         self,
+        timestamp: TimeStamp,
         session_id: str,
         user_or_tool_id: str,
         memory_type: MemoryType = MemoryType.CONVERSATION,
     ):
+        self._timestamp = timestamp
         self._user_or_tool_id = user_or_tool_id
         self._session_id = session_id
         self._memory_type = memory_type
         self._messages: list[ChatItem] = []
+
+    @property
+    def time(self) -> str:
+        return self._timestamp.time_str
 
     @property
     def user_or_tool_id(self) -> str:

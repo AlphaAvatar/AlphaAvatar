@@ -11,13 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import copy
 import os
 import pathlib
 from abc import abstractmethod
 
 from livekit.agents.llm import ChatItem
 
-from alphaavatar.agents.utils import time_str_to_datetime
+from alphaavatar.agents.utils import TimeStamp, time_str_to_datetime
 from alphaavatar.agents.utils.files.work_dirs import UserPath
 
 from .cache import MemoryCache
@@ -172,10 +173,12 @@ class MemoryBase:
         *,
         session_id: str,
         user_or_tool_id: str,
+        timestamp: TimeStamp,
         memory_type: MemoryType = MemoryType.CONVERSATION,
     ) -> MemoryCache:
         if session_id not in self.memory_cache:
             self.memory_cache[session_id] = MemoryCache(
+                timestamp=copy.deepcopy(timestamp),
                 session_id=session_id,
                 user_or_tool_id=user_or_tool_id,
                 memory_type=memory_type,

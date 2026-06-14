@@ -20,7 +20,7 @@ import numpy as np
 from livekit.agents.llm import ChatItem, ChatMessage
 
 from alphaavatar.agents.constants import FACE_BETA, SPEAKER_BETA
-from alphaavatar.agents.utils import AvatarTime, NumpyOP
+from alphaavatar.agents.utils import NumpyOP, TimeStamp
 
 from .schema.user_profile import DetailsBase, UserProfile, UserRuntimeState
 
@@ -29,7 +29,7 @@ class PersonaCache:
     def __init__(
         self,
         *,
-        timestamp: AvatarTime,
+        timestamp: TimeStamp,
         user_profile: UserProfile,
         speaker_cache: SpeakerCacheBase,
         face_cache: FaceCacheBase,
@@ -57,7 +57,7 @@ class PersonaCache:
 
     @property
     def profile(self) -> UserProfile | None:
-        if self._user_profile is None:
+        if self._user_profile is None or self._user_profile.is_empty:
             return None
 
         if (

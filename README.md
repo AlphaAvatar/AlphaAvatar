@@ -67,6 +67,22 @@ It is built around a **plugin-based real-time Agent architecture**, combining:
 
 ---
 
+<h2>Runtime Architecture 🧠</h2>
+
+<p align="center">
+  <img src=".github/assets/alphaavatar_architecture.png" alt="AlphaAvatar Runtime Architecture" width="100%" />
+</p>
+
+AlphaAvatar is built around a realtime multimodal runtime that connects:
+
+- **User inputs**: voice, text, camera, and external channels
+- **Runtime context**: memory state, persona state, user identity, modality state, and task/status state
+- **Composable plugins**: Memory, Persona, MCP, RAG, DeepResearch, Character, and Channel plugins
+- **Model layer**: LLM/VLM, STT, TTS, speaker detection, and face detection
+- **Storage layer**: vector DB, personal server storage, knowledge base, and external tool APIs
+
+---
+
 <h3>What AlphaAvatar Is Designed For</h3>
 
 <table>
@@ -292,6 +308,7 @@ It is built around a **plugin-based real-time Agent architecture**, combining:
 <h2>Latest News 🔥</h2>
 
 - [2026/06] Released AlphaAvatar **version 0.6.0**: Added the **Status plugin**, sampled visual input support, and status-aware DeepResearch / RAG / MCP tool feedback.
+  - Released AlphaAvatar **version 0.6.1**: Added visual identity support for Persona, including face detection, face vector matching, speaker-face identity fusion, and several bug fixes.
 
 - [2026/05] Released AlphaAvatar **version 0.5.4**:
   - Added **LanceDB-backed MCP tool retrieval**, enabling AlphaAvatar to semantically search relevant MCP tools from Agent queries.
@@ -387,73 +404,6 @@ To see more supported modes, please refer to the [LiveKit doc](https://docs.live
 To see more examples, please refer to the [Examples README](https://github.com/AlphaAvatar/AlphaAvatar/blob/main/examples/README.md)
 
 ---
-
-<h2>Runtime Architecture 🧠</h2>
-
-AlphaAvatar is built around a **real-time multimodal Agent runtime**.
-It separates streaming interaction, model reasoning, runtime context, plugin state, tool execution, and channel adapters.
-
-```text
-                         AlphaAvatar Runtime
-                         ───────────────────
-
-        ┌──────────────────────────────────────────────┐
-        │                 LiveKit Room                 │
-        │        audio / text / video / data streams   │
-        └──────────────────────┬───────────────────────┘
-                               │
-                               ▼
-        ┌──────────────────────────────────────────────┐
-        │                 AgentSession                 │
-        │      real-time turn detection / streaming IO │
-        └──────────────────────┬───────────────────────┘
-                               │
-                               ▼
-        ┌──────────────────────────────────────────────┐
-        │                 AvatarEngine                 │
-        │  Realtime Model Pipeline                     │
-        │  STT / VAD / LLM / TTS / video-ready input   │
-        └──────────────────────┬───────────────────────┘
-                               │
-                               ▼
-        ┌──────────────────────────────────────────────┐
-        │          Prompt & Runtime Context Layer       │
-        │  system prompt / runtime prompt / time / mode │
-        │  memory / persona / plan / reflection / rules │
-        └──────────────────────┬───────────────────────┘
-                               │
-        ┌──────────────────────┼───────────────────────┐
-        │                      │                       │
-        ▼                      ▼                       ▼
-┌──────────────────┐  ┌──────────────────┐   ┌──────────────────┐
-│  Memory Plugin   │  │  Persona Plugin  │   │   Tools Plugins  │
-│ conversation     │  │ user profile     │   │ MCP / RAG        │
-│ tool memory      │  │ speaker / face   │   │ DeepResearch     │
-│ avatar memory    │  │ runtime state    │   │ external APIs    │
-└──────────────────┘  └──────────────────┘   └──────────────────┘
-
-┌──────────────────┐  ┌──────────────────┐   ┌──────────────────┐
-│ Reflection Plugin│  │ Planning Plugin  │   │ Behavior Plugin │
-│ self-analysis    │  │ tasks / plans    │   │ response policy │
-│ adaptation       │  │ reminders        │   │ workflow rules  │
-└──────────────────┘  └──────────────────┘   └──────────────────┘
-                               │
-                               ▼
-        ┌──────────────────────────────────────────────┐
-        │              UserPath Workspace              │
-        │  local data / cache / logs / memory / RAG    │
-        │  persona state / artifacts / user files      │
-        └──────────────────────┬───────────────────────┘
-                               │
-        ┌──────────────────────┴───────────────────────┐
-        │                                              │
-        ▼                                              ▼
-┌──────────────────────┐                    ┌──────────────────────┐
-│ Native Web / App     │                    │ Channel Adapters     │
-│ voice / text / video │                    │ WhatsApp / future    │
-│ WebRTC / UI          │                    │ messaging platforms  │
-└──────────────────────┘                    └──────────────────────┘
-```
 
 <h2>Usage 🚀</h2>
 

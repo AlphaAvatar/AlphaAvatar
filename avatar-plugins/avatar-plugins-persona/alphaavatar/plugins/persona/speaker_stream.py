@@ -25,7 +25,7 @@ from livekit.agents import stt, utils, vad
 from livekit.agents.job import get_job_context
 from livekit.agents.types import APIConnectOptions, NotGivenOr
 
-from alphaavatar.agents.constants import SPEAKER_INFERENCE_THRESHOLD, SPEAKER_THRESHOLD
+from alphaavatar.agents.constants import SPEAKER_INFERENCE_THRESHOLD, SPEAKER_MATCH_THRESHOLD
 from alphaavatar.agents.persona import PersonaBase, SpeakerStreamBase, VectorRunnerOP
 from alphaavatar.agents.utils import DualKeyDict, NumpyOP
 
@@ -191,7 +191,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
                 "op": VectorRunnerOP.search_speaker_vector,
                 "param": {
                     "speaker_vector": NumpyOP.l2_normalize(speaker_vector).tolist(),
-                    "threshold": SPEAKER_THRESHOLD,
+                    "threshold": SPEAKER_MATCH_THRESHOLD,
                 },
             }
             json_data = json.dumps(json_data).encode()

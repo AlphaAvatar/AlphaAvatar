@@ -191,15 +191,19 @@ class ProfilerLangChain(ProfilerBase):
             speaker_vector = None
 
         # Face Profile
-        # TODO: add face profile loading logic
+        if data.get("face_vector", None):
+            face_vector = data["face_vector"]
+        else:
+            face_vector = None
 
         # User Runtime State (from local markdown)
-        runtime_state = await self.load_runtime_state()
+        runtime_state = await self.load_runtime_state(uid=uid)
 
         return UserProfile(
             details=profile_details,
             runtime_state=runtime_state,
             speaker_vector=speaker_vector,
+            face_vector=face_vector,
         )
 
     async def update(self, *, uid: str, persona: PersonaCache):
@@ -241,12 +245,16 @@ class ProfilerLangChain(ProfilerBase):
             speaker_vector = None
 
         # Face Profile
-        # TODO: add face profile saving logic
+        if persona.face_vector is not None:
+            face_vector = persona.face_vector.tolist()
+        else:
+            face_vector = None
 
         # Runtime State Markdown
         if persona.profile is not None and persona.profile.runtime_state is not None:
             try:
                 md_path = await self.save_runtime_state(
+                    uid=uid,
                     runtime_state=persona.profile.runtime_state,
                 )
                 logger.info(f"User runtime state markdown save success: {md_path}")
@@ -255,7 +263,11 @@ class ProfilerLangChain(ProfilerBase):
 
         # Skip saving if both details_items and speaker_vector are empty,
         # to avoid unnecessary VDB writes when only the runtime state markdown is updated.
-        if (details_items is None or len(details_items) == 0) and speaker_vector is None:
+        if (
+            (details_items is None or len(details_items) == 0)
+            and speaker_vector is None
+            and face_vector is None
+        ):
             logger.info("User Profile VDB SAVE skip; runtime state markdown may already be saved.")
             return
 
@@ -265,6 +277,7 @@ class ProfilerLangChain(ProfilerBase):
                 "user_id": uid,
                 "details_items": details_items,
                 "speaker_vector": speaker_vector,
+                "face_vector": face_vector,
             },
         }
         json_data = json.dumps(json_data).encode()

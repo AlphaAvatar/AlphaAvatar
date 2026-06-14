@@ -353,36 +353,46 @@ class SampledFrameVision(VisionBase):
             logger.warning("No latest user message found; skip visual frame injection")
             return
 
-        # Ensure content is appendable.
+        # Normalize original user content while preserving its original order.
         if latest_user_message.content is None:
-            latest_user_message.content = []
-        elif not isinstance(latest_user_message.content, list):
-            latest_user_message.content = [latest_user_message.content]
+            original_content = []
+        elif isinstance(latest_user_message.content, list):
+            original_content = list(latest_user_message.content)
+        else:
+            original_content = [latest_user_message.content]
 
         # Avoid duplicate visual injection.
+        # Run this check after normalizing content, but before replacing it.
+        latest_user_message.content = original_content
         if self._message_has_visual_input(latest_user_message):
             logger.debug("Latest user message already has visual input; skip duplicate injection")
             return
 
         frame_count = len(frames)
 
-        latest_user_message.content.append(self._build_visual_instruction(frame_count))
+        visual_content: list = [self._build_visual_instruction(frame_count)]
 
         for idx, frame in enumerate(frames, start=1):
             if frame_count > 1:
-                latest_user_message.content.append(
+                visual_content.append(
                     f"{VIDEO_FRAME_LABEL_PREFIX}{idx}/{frame_count} — chronological order]"
                 )
             else:
-                latest_user_message.content.append(LATEST_VIDEO_FRAME_LABEL)
+                visual_content.append(LATEST_VIDEO_FRAME_LABEL)
 
-            latest_user_message.content.append(
+            visual_content.append(
                 llm.ImageContent(
                     image=frame,
                     inference_width=vision_config.vision_inference_width,
                     inference_height=vision_config.vision_inference_height,
                 )
             )
+
+        # Put visual input before the user's text/message content.
+        latest_user_message.content = [
+            *visual_content,
+            *original_content,
+        ]
 
         logger.info(
             "Injected visual frames into latest user message frame_count=%s mode=%s",

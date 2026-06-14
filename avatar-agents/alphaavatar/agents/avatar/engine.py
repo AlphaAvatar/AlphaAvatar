@@ -37,7 +37,7 @@ from alphaavatar.agents.status import (
     StatusEvent,
     StatusType,
 )
-from alphaavatar.agents.utils import AvatarTime, format_current_time
+from alphaavatar.agents.utils import format_current_time
 from alphaavatar.agents.utils.files.work_dirs import (
     UserPathSnapshot,
     migrate_user_path,
@@ -69,13 +69,7 @@ class AvatarEngine(Agent):
         self.avatar_config = avatar_config
         self.runtime_context = runtime_context or AvatarRuntimeContext()
 
-        # Step2: initial params
-        self._avatar_activate_time: AvatarTime = format_current_time(
-            self.runtime_context.time_context.current_timezone
-            if self.runtime_context.time_context.current_timezone != "Unknown"
-            else None
-        )
-
+        # Step2: initial prompt templates and assembler
         self._avatar_prompt_template = AvatarSysPromptTemplate(
             self.avatar_config.avatar_info.avatar_introduction,
             interaction_method=self.runtime_context.interaction_method,
@@ -87,16 +81,14 @@ class AvatarEngine(Agent):
             injection_mode=self.avatar_config.runtime_config.runtime_context_mode,
         )
 
-        # Status emitter
-        self.status_emitter: StatusEmitter = avatar_config.status_config.get_plugin()
-
         # Step3: initial plugins
+        self._status: StatusEmitter = avatar_config.status_config.get_plugin()
         self._memory: MemoryBase = avatar_config.memory_config.get_plugin(self.session_config)
         self._persona: PersonaBase = avatar_config.persona_config.get_plugin(self.session_config)
         self._tools: list[llm.FunctionTool | llm.RawFunctionTool] = (
             avatar_config.tools_config.get_tools(
                 self.session_config,
-                status_emitter=self.status_emitter,
+                status_emitter=self._status,
             )
         )
         self._tools.append(get_runtime_context_tool())
@@ -117,7 +109,7 @@ class AvatarEngine(Agent):
         )
 
         # Bind runtime engine to status components.
-        self.status_emitter.bind_engine(self)
+        self._status.bind_engine(self)
 
         # vision
         self._vision: VisionBase = build_vision(self)
@@ -165,11 +157,11 @@ class AvatarEngine(Agent):
         """
 
         # 1. Refresh current time for this turn.
-        current_timezone = self.runtime_context.time_context.current_timezone
-        if current_timezone and current_timezone != "Unknown":
-            current = format_current_time(current_timezone)
-            self.runtime_context.time_context.current_time = current.time_str
-            self.runtime_context.time_context.current_timezone = current.timezone
+        new_timestamp = format_current_time(
+            self.runtime_context.timestamp.timezone,
+            self.runtime_context.timestamp.timezone_source,
+        )
+        self.runtime_context.timestamp = new_timestamp
 
         # 2. Refresh persona every turn.
         #
@@ -312,20 +304,13 @@ class AvatarEngine(Agent):
         await self._memory.init_cache(
             session_id=self.session_config.session_id,
             user_or_tool_id=self.session_config.user_id,
+            timestamp=self.runtime_context.timestamp,
         )
 
         # Init User Peronsa by init user_id
-        await self._persona.init_cache(
-            timestamp=self._avatar_activate_time,
+        await self._persona.init(
+            timestamp=self.runtime_context.timestamp,
             init_user_id=self.session_config.user_id,
-        )
-
-        # Update deterministic runtime/session state.
-        self.persona.update_runtime_state(
-            uid=self.session_config.user_id,
-            current_timezone=self.runtime_context.time_context.current_timezone,
-            timezone_source=self.runtime_context.time_context.timezone_source,
-            current_login_time=self.runtime_context.time_context.current_time,
             session_id=self.session_config.session_id,
             room_type=self.runtime_context.interaction_method.room_type,
         )
@@ -344,7 +329,7 @@ class AvatarEngine(Agent):
         # Do not use LLM-generated greeting here.
         # It may trigger llm_node and produce awkward thinking status during startup.
         if self.runtime_context.interaction_method.room_type in (RoomType.WEB_APP.value,):
-            self.status_emitter.emit_nowait(
+            self._status.emit_nowait(
                 StatusEvent(
                     type=StatusType.READY,
                     source=AvatarModule.AVATAR_ENGINE,
@@ -491,8 +476,8 @@ class AvatarEngine(Agent):
             if latest_input_kind == "user":
                 # First model call after user input:
                 # emit delayed thinking only if the model does not start answering quickly.
-                self.status_emitter.start_turn()
-                thinking_task = self.status_emitter.emit_delayed(
+                self._status.start_turn()
+                thinking_task = self._status.emit_delayed(
                     StatusEvent(
                         type=StatusType.THINKING,
                         source=AvatarModule.AVATAR_ENGINE,
@@ -505,7 +490,7 @@ class AvatarEngine(Agent):
                 # Model call after tool/function output:
                 # emit delayed organizing/finalizing only if model takes noticeable time
                 # before deciding the next tool call or producing the final answer.
-                finalizing_task = self.status_emitter.emit_delayed(
+                finalizing_task = self._status.emit_delayed(
                     StatusEvent(
                         type=StatusType.FINALIZING,
                         source=AvatarModule.AVATAR_ENGINE,

@@ -14,13 +14,14 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import re
 from abc import abstractmethod
 from typing import TYPE_CHECKING
 
 from alphaavatar.agents.log import logger
-from alphaavatar.agents.utils.files.work_dirs import UserPath
+from alphaavatar.agents.utils.files.work_dirs import UserPath, mk_user_dirs
 
 from .schema.user_profile import UserProfile, UserRuntimeState
 
@@ -47,8 +48,20 @@ class ProfilerBase:
     def runtime_state_path(self) -> pathlib.Path:
         return self.working_dir / "runtime_state.md"
 
-    async def load_runtime_state(self) -> UserRuntimeState | None:
-        path = self.runtime_state_path
+    def _get_runtime_path_for_user(self, uid: str) -> pathlib.Path:
+        if uid:
+            work_dir = os.getenv("AVATAR_WORK_DIR", "")
+            user_path = mk_user_dirs(work_dir, uid)
+            path = user_path.data_dir / PROFILER_INSTANCE
+            path.mkdir(parents=True, exist_ok=True)
+            path = path / "runtime_state.md"
+        else:
+            path = self.runtime_state_path
+
+        return path
+
+    async def load_runtime_state(self, uid: str | None = None) -> UserRuntimeState | None:
+        path = self._get_runtime_path_for_user(uid)
         if not path.exists():
             return None
 
@@ -74,9 +87,10 @@ class ProfilerBase:
     async def save_runtime_state(
         self,
         *,
+        uid: str | None = None,
         runtime_state: UserRuntimeState,
     ) -> pathlib.Path:
-        path = self.runtime_state_path
+        path = self._get_runtime_path_for_user(uid)
 
         state_data = runtime_state.model_dump(mode="json", exclude_none=True)
 

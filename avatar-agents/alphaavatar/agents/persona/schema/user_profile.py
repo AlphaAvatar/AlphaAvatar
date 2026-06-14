@@ -42,7 +42,6 @@ class UserRuntimeState(BaseModel):
 
     # Current session state
     current_timezone: str | None = None
-    timezone_source: str | None = None
     current_login_time: str | None = None
     current_session_id: str | None = None
     current_room_type: str | None = None
@@ -123,6 +122,39 @@ class UserProfile(BaseModel):
     speaker_vector: np.ndarray | None = None
     face_vector: np.ndarray | None = None
 
+    @property
+    def is_empty(self) -> bool:
+        return (
+            self.details is None
+            and self.runtime_state is None
+            and self.speaker_vector is None
+            and self.face_vector is None
+        )
+
+    @property
+    def has_identity_signal(self) -> bool:
+        return self.speaker_vector is not None or self.face_vector is not None
+
+    @property
+    def has_persona_content(self) -> bool:
+        return (
+            self.details is not None
+            or self.speaker_vector is not None
+            or self.face_vector is not None
+        )
+
+    @property
+    def is_runtime_only(self) -> bool:
+        return (
+            self.runtime_state is not None
+            and self.details is None
+            and self.speaker_vector is None
+            and self.face_vector is None
+        )
+
+    def __bool__(self) -> bool:
+        return not self.is_empty
+
     @field_validator("speaker_vector", "face_vector", mode="before")
     @classmethod
     def _coerce_and_validate_vec(cls, v):
@@ -141,7 +173,6 @@ class UserProfile(BaseModel):
             raise ValueError("speaker_vector and face_vector must be 1-dimensional arrays.")
         return v
 
-    # Optional: make JSON export friendly
     @field_serializer("speaker_vector")
     def _serialize_vec(self, v: np.ndarray | None):
         return None if v is None else v.tolist()

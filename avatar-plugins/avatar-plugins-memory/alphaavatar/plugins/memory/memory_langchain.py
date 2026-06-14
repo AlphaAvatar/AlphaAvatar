@@ -32,7 +32,6 @@ from alphaavatar.agents.memory import (
     MemoryType,
     VectorRunnerOP,
 )
-from alphaavatar.agents.utils import format_current_time
 from alphaavatar.agents.utils.files.work_dirs import UserPath
 
 from .log import logger
@@ -408,7 +407,7 @@ class MemoryLangchain(MemoryBase):
         memory_cache: MemoryCache,
         user_or_tool_memory_type: MemoryType,
     ):
-        updated_time = format_current_time().time_str
+        updated_time = memory_cache.time
         assistant_memories: list[MemoryItem] = []
         target_memories: list[MemoryItem] = []
 

@@ -27,7 +27,6 @@ from alphaavatar.agents.avatar import AvatarEngine
 from alphaavatar.agents.avatar.context.runtime_context import (
     AvatarRuntimeContext,
     InteractionMethod,
-    TimeContext,
 )
 from alphaavatar.agents.avatar.patches import AvatarServer
 from alphaavatar.agents.configs import AvatarConfig, SessionConfig, get_avatar_args, read_args
@@ -35,7 +34,7 @@ from alphaavatar.agents.constants import DEFAULT_CONTEXT_VALUE
 from alphaavatar.agents.env import init_env
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.utils import get_session_id, get_user_id
-from alphaavatar.agents.utils.time_utils import build_time_context_from_metadata
+from alphaavatar.agents.utils.time_utils import TimeStamp, build_time_context_from_metadata
 
 from .channels.bootstrap import register_builtin_channels
 from .channels.factory import build_channel_adapters
@@ -200,7 +199,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
 
     user_id = participant_metadata.get("user_id", get_user_id())
     session_id = participant_metadata.get("session_id", get_session_id(room_type))
-    time_data = build_time_context_from_metadata(participant_metadata)
+    timestamp: TimeStamp = build_time_context_from_metadata(participant_metadata)
 
     session_config = SessionConfig(
         user_id=user_id,
@@ -225,17 +224,9 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
         ],
     )
 
-    time_context = TimeContext(
-        current_time=time_data["current_time"],
-        current_timezone=time_data["current_timezone"],
-        timezone_source=time_data["timezone_source"],
-        last_session_timezone=time_data["last_session_timezone"],
-        last_session_time=time_data["last_session_time"],
-    )
-
     runtime_context = AvatarRuntimeContext(
         interaction_method=interaction_method,
-        time_context=time_context,
+        timestamp=timestamp,
         global_behavior_rules=participant_metadata.get(
             "global_behavior_rules",
             DEFAULT_CONTEXT_VALUE,
@@ -250,9 +241,9 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
 
     logger.info(
         textwrap.dedent(f"""Connecting to room...
-    - Room Name: {ctx.room.name}
-    - Token: {ctx._info.token}
     - Agent Identity: {agent_identity}
+    - Token: {ctx._info.token}
+    - Room Name: {ctx.room.name}
     - Room Type: {room_type}
     - Session Type: {session_type}
     - Session Mode: {session_mode}

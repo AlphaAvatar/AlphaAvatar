@@ -13,6 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+import os
 import uuid
 from enum import StrEnum
 from typing import Any, Literal
@@ -215,7 +216,9 @@ def flatten_items(user_id: str, data: dict[str, Any], prefix: str = "") -> list[
         if isinstance(item, dict):
             val = item.get("value", "")
             source = item.get("source", ProfileItemSource.chat)
-            ts = item.get("timestamp", format_current_time("").time_str)
+            ts = item.get(
+                "timestamp", format_current_time(os.getenv("AVATAR_TIMEZONE", None)).time_str
+            )
 
             if val is None or (isinstance(val, str) and val.strip() == ""):
                 continue
@@ -244,7 +247,9 @@ def flatten_items(user_id: str, data: dict[str, Any], prefix: str = "") -> list[
             for it in item:
                 val = it.get("value", "")
                 source = it.get("source", ProfileItemSource.chat)
-                ts = it.get("timestamp", format_current_time("").time_str)
+                ts = it.get(
+                    "timestamp", format_current_time(os.getenv("AVATAR_TIMEZONE", None)).time_str
+                )
 
                 if val is None or (isinstance(val, str) and val.strip() == ""):
                     continue

@@ -17,7 +17,7 @@ from .env_utils import resolve_env_placeholders
 from .id_utils import get_session_id, get_user_id, url_to_filename_id
 from .loop_thread import AsyncLoopThread
 from .op_utils import NumpyOP
-from .time_utils import AvatarTime, format_current_time, get_timestamp, time_str_to_datetime
+from .time_utils import TimeStamp, format_current_time, get_timestamp, time_str_to_datetime
 
 __all__ = [
     "gpu_available",
@@ -28,7 +28,7 @@ __all__ = [
     "url_to_filename_id",
     "AsyncLoopThread",
     "NumpyOP",
-    "AvatarTime",
+    "TimeStamp",
     "format_current_time",
     "get_timestamp",
     "time_str_to_datetime",

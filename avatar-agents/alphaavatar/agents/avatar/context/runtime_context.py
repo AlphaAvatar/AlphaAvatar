@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from alphaavatar.agents.constants import DEFAULT_CONTEXT_VALUE
+from alphaavatar.agents.utils.time_utils import TimeStamp
 
 
 @dataclass
@@ -140,34 +141,6 @@ class InteractionMethod:
 
 
 @dataclass
-class TimeContext:
-    """
-    Describes the user's current time context.
-
-    current_time should ideally be based on user's browser timezone.
-    If browser timezone is unavailable, use metadata / env / server fallback.
-    """
-
-    current_time: str = DEFAULT_CONTEXT_VALUE
-    current_timezone: str = DEFAULT_CONTEXT_VALUE
-    timezone_source: str = "unknown"
-
-    last_session_timezone: str = DEFAULT_CONTEXT_VALUE
-    last_session_time: str = DEFAULT_CONTEXT_VALUE
-
-    def render(self) -> str:
-        return "\n".join(
-            [
-                f"- Current local time: {self.current_time}",
-                f"- Current timezone: {self.current_timezone}",
-                f"- Timezone source: {self.timezone_source}",
-                f"- Last session timezone: {self.last_session_timezone}",
-                f"- Last session time: {self.last_session_time}",
-            ]
-        )
-
-
-@dataclass
 class AvatarRuntimeContext:
     """
     Unified runtime context container.
@@ -181,7 +154,7 @@ class AvatarRuntimeContext:
     - global_behavior_rules
 
     Turn-level:
-    - time_context
+    - timestamp
     - memory_content
     - plan_content
     - reflection_content
@@ -189,7 +162,7 @@ class AvatarRuntimeContext:
     """
 
     interaction_method: InteractionMethod = field(default_factory=InteractionMethod)
-    time_context: TimeContext = field(default_factory=TimeContext)
+    timestamp: TimeStamp = field(default_factory=TimeStamp)
 
     # System-level, but may be refreshed during session when identity/persona is resolved.
     user_persona: str = DEFAULT_CONTEXT_VALUE

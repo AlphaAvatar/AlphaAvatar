@@ -44,6 +44,31 @@ class FaceCache(FaceCacheBase):
                 return f"{lo}-{hi} years old"
         return None
 
+    @staticmethod
+    def _normalize_gender(gender: str | int | None) -> str | None:
+        if gender is None:
+            return None
+
+        if isinstance(gender, int):
+            return "male" if gender == 1 else "female"
+
+        value = str(gender).lower().strip()
+        if not value:
+            return None
+
+        mapping = {
+            "m": "male",
+            "male": "male",
+            "man": "male",
+            "1": "male",
+            "f": "female",
+            "female": "female",
+            "woman": "female",
+            "0": "female",
+        }
+
+        return mapping.get(value)
+
     def _update_age(self, age: int) -> int:
         age = int(np.clip(age, 0, 100))
         if self._age is None:
@@ -91,16 +116,19 @@ class FaceCache(FaceCacheBase):
                 )
 
         if gender is not None:
-            gender_value = self._update_gender(str(gender))
+            normalized_gender = self._normalize_gender(gender)
 
-            if profile_details.gender is None or profile_details.gender.source in {
-                ProfileItemSource.face,
-                ProfileItemSource.speech,
-            }:
-                profile_details.gender = ProfileItemView(
-                    value=gender_value,
-                    source=ProfileItemSource.face,
-                    timestamp=timestamp,
-                )
+            if normalized_gender is not None:
+                gender_value = self._update_gender(normalized_gender)
+
+                if profile_details.gender is None or profile_details.gender.source in {
+                    ProfileItemSource.face,
+                    ProfileItemSource.speech,
+                }:
+                    profile_details.gender = ProfileItemView(
+                        value=gender_value,
+                        source=ProfileItemSource.face,
+                        timestamp=timestamp,
+                    )
 
         return profile_details

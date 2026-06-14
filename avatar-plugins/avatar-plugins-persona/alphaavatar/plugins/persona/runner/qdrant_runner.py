@@ -33,7 +33,8 @@ from qdrant_client.models import (
 from alphaavatar.agents.persona import VectorRunnerOP
 from alphaavatar.agents.utils.vdb import embedding, qdrant
 
-from ..models import SPEAKER_MODEL_CONFIG
+from ..models import FACE_MODEL_CONFIG, SPEAKER_MODEL_CONFIG
+from .face_analysis_runner import FaceAnalysisRunner
 from .speaker_vector_runner import SpeakerVectorRunner
 
 
@@ -47,7 +48,7 @@ class QdrantRunner(_InferenceRunner):
         """Create collection if missing; infer embedding dimension dynamically (sync)."""
         try:
             self._client.get_collection(collection_name)
-            return  # exists
+            return
         except Exception:
             pass
 
@@ -104,7 +105,29 @@ class QdrantRunner(_InferenceRunner):
                 points.append(PointStruct(id=vid, vector=vec, payload=payload))
 
             self._client.upsert(
-                collection_name=self._speaker_collection_name, points=points, wait=True
+                collection_name=self._speaker_collection_name,
+                points=points,
+                wait=True,
+            )
+            result["inserted"] = len(points)
+        except Exception as e:
+            result["error"] = str(e)
+        return result
+
+    def _save_batch_face_vector(self, *, items: list[dict]) -> dict:
+        result = {"inserted": 0, "error": None}
+        try:
+            points: list[PointStruct] = []
+            for it in items:
+                vid = str(it.get("id") or uuid4())
+                vec = it["vector"]
+                payload = it.get("payload") or {}
+                points.append(PointStruct(id=vid, vector=vec, payload=payload))
+
+            self._client.upsert(
+                collection_name=self._face_collection_name,
+                points=points,
+                wait=True,
             )
             result["inserted"] = len(points)
         except Exception as e:
@@ -142,10 +165,36 @@ class QdrantRunner(_InferenceRunner):
             else:
                 speaker_vector = hv
 
-        return {"details_items": details_items, "speaker_vector": speaker_vector}
+        # 3) Load face vector from face collection
+        face_vector = None
+        face_filter = Filter(
+            should=[
+                FieldCondition(key="user_id", match=MatchValue(value=user_id)),
+            ]
+        )
+        face_points = self._scroll_all(face_filter, self._face_collection_name, with_vectors=True)
+        if face_points:
+            p = face_points[0]
+            hv = getattr(p, "vector", None)
+            if isinstance(hv, dict):
+                if hv:
+                    face_vector = next(iter(hv.values()))
+            else:
+                face_vector = hv
+
+        return {
+            "details_items": details_items,
+            "speaker_vector": speaker_vector,
+            "face_vector": face_vector,
+        }
 
     def _save(
-        self, *, user_id: str, details_items: list[dict] | None, speaker_vector: list[float] | None
+        self,
+        *,
+        user_id: str,
+        details_items: list[dict] | None,
+        speaker_vector: list[float] | None,
+        face_vector: list[float] | None = None,
     ) -> dict:
         result = {
             "user_id": user_id,
@@ -155,6 +204,9 @@ class QdrantRunner(_InferenceRunner):
             "speaker_deleted": False,
             "speaker_inserted": 0,
             "speaker_error": None,
+            "face_deleted": False,
+            "face_inserted": 0,
+            "face_error": None,
         }
 
         # 1) Save details_items to profiler collection
@@ -203,6 +255,30 @@ class QdrantRunner(_InferenceRunner):
                     result["speaker_inserted"] = save_res.get("inserted", 0)
             except Exception as e:
                 result["speaker_error"] = str(e)
+
+        # 3) Save face vector to face collection
+        if face_vector:
+            try:
+                face_filt = Filter(
+                    must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]
+                )
+                self._client.delete(
+                    collection_name=self._face_collection_name,
+                    points_selector=FilterSelector(filter=face_filt),
+                    wait=True,
+                )
+                result["face_deleted"] = True
+
+                payload = {"user_id": user_id}
+                save_res = self._save_batch_face_vector(
+                    items=[{"vector": face_vector, "payload": payload}]
+                )
+                if save_res.get("error"):
+                    result["face_error"] = save_res["error"]
+                else:
+                    result["face_inserted"] = save_res.get("inserted", 0)
+            except Exception as e:
+                result["face_error"] = str(e)
 
         return result
 
@@ -260,12 +336,75 @@ class QdrantRunner(_InferenceRunner):
 
         return results[0] if results else None
 
+    def _search_face_vector(
+        self,
+        *,
+        face_vector: list[float],
+        top_k: int = 1,
+        user_id: str | None = None,
+        threshold: float | None = None,
+    ) -> dict | None:
+        q_filter = None
+        if user_id:
+            q_filter = Filter(
+                should=[
+                    FieldCondition(key="user_id", match=MatchValue(value=user_id)),
+                ]
+            )
+
+        hits = self._client.search(
+            collection_name=self._face_collection_name,
+            query_vector=face_vector,
+            limit=top_k,
+            query_filter=q_filter,
+            search_params=SearchParams(hnsw_ef=128),
+            score_threshold=threshold,
+            with_payload=True,
+            with_vectors=True,
+        )
+
+        results: list[dict] = []
+        for h in hits or []:
+            payload = h.payload or {}
+
+            uid = payload.get("user_id")
+            if uid is None:
+                uid = (payload.get("metadata") or {}).get("user_id")
+
+            vec = None
+            hv = getattr(h, "vector", None)
+            if isinstance(hv, dict):
+                if hv:
+                    vec = next(iter(hv.values()))
+            else:
+                vec = hv
+
+            results.append(
+                {
+                    "user_id": uid,
+                    "vector": vec,
+                    "id": str(h.id),
+                    "score": float(h.score),
+                }
+            )
+
+        return results[0] if results else None
+
     def initialize(self) -> None:
         # get config
         config = os.getenv("PERSONA_VDB_CONFIG", "{}")
         config = json.loads(config)
+
         self._profiler_collection_name = config.get("profiler_collection_name", None)
         self._speaker_collection_name = config.get("speaker_collection_name", None)
+        self._face_collection_name = config.get("face_collection_name", None)
+
+        if not self._profiler_collection_name:
+            raise ValueError("`profiler_collection_name` is required in PERSONA_VDB_CONFIG")
+        if not self._speaker_collection_name:
+            raise ValueError("`speaker_collection_name` is required in PERSONA_VDB_CONFIG")
+        if not self._face_collection_name:
+            self._face_collection_name = f"{self._speaker_collection_name}_face"
 
         # init client
         self._client = qdrant.get_client(**config)
@@ -288,6 +427,12 @@ class QdrantRunner(_InferenceRunner):
             SPEAKER_MODEL_CONFIG[SpeakerVectorRunner.MODEL_TYPE].embedding_dim,
         )
 
+        # init face vector
+        self._ensure_collection(
+            self._face_collection_name,
+            FACE_MODEL_CONFIG[FaceAnalysisRunner.MODEL_TYPE].embedding_dim,
+        )
+
     def run(self, data: bytes) -> bytes | None:
         json_data = json.loads(data)
 
@@ -300,6 +445,9 @@ class QdrantRunner(_InferenceRunner):
                 return json.dumps(result).encode()
             case VectorRunnerOP.search_speaker_vector:
                 result = self._search_speaker_vector(**json_data["param"])
+                return json.dumps(result).encode() if result is not None else result
+            case VectorRunnerOP.search_face_vector:
+                result = self._search_face_vector(**json_data["param"])
                 return json.dumps(result).encode() if result is not None else result
             case _:
                 return None

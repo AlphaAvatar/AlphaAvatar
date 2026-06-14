@@ -66,6 +66,7 @@ face_init_config: {}
 persona_vdb_config:
   profiler_collection_name: 'persona_profiler'
   speaker_collection_name: 'persona_speaker'
+  face_collection_name: 'persona_face'
   embedding_model: 'text-embedding-3-small'
 
 # Tools Args

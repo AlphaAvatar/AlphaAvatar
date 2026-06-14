@@ -28,8 +28,9 @@ except Exception:
 from alphaavatar.agents.log import logger
 
 
-class AvatarTime(BaseModel):
+class TimeStamp(BaseModel):
     timezone: str = Field(default_factory=str)
+    timezone_source: str = Field(default_factory=str)
     year: str = Field(default_factory=str)
     month: str = Field(default_factory=str)
     day: str = Field(default_factory=str)
@@ -79,17 +80,21 @@ def resolve_timezone(tz: str | None = None) -> tuple[str | None, str]:
     return None, "server"
 
 
-def format_current_time(tz: str | None = None) -> AvatarTime:
+def format_current_time(tz: str | None = None, tz_source: str | None = None) -> TimeStamp:
     """
     Return the current time in a stable prompt-friendly format.
 
     Args:
         tz: IANA timezone name, e.g. "Asia/Dubai", "America/Los_Angeles".
+        tz_source: Source of the timezone information.
 
     Returns:
-        AvatarTime
+        TimeStamp
     """
     resolved_tz, source = resolve_timezone(tz)
+
+    if tz_source:
+        source = tz_source
 
     try:
         dt = _now_in_tz(resolved_tz) if resolved_tz else datetime.now()
@@ -115,8 +120,9 @@ def format_current_time(tz: str | None = None) -> AvatarTime:
         f"Time: {weekday}, {month} {dt.day}, {dt.year}, {hour12}:{minute} {ampm}"
     )
 
-    return AvatarTime(
+    return TimeStamp(
         timezone=timezone_display,
+        timezone_source=source,
         year=str(dt.year),
         month=str(dt.month),
         day=str(dt.day),
@@ -124,34 +130,18 @@ def format_current_time(tz: str | None = None) -> AvatarTime:
     )
 
 
-def build_time_context_from_metadata(metadata: dict) -> dict:
+def build_time_context_from_metadata(metadata: dict) -> TimeStamp:
     """
     Build prompt-ready time context from participant metadata.
-
-    Expected metadata examples:
-        {
-            "timezone": "Asia/Dubai",
-            "timezone_source": "browser",
-            "last_session_timezone": "America/Los_Angeles",
-            "last_session_time": "Tuesday, May 5, 2026, 10:10 PM"
-        }
     """
     timezone = metadata.get("timezone") or metadata.get("browser_timezone") or metadata.get("tz")
 
-    timezone_source = metadata.get(
+    tz_source = metadata.get(
         "timezone_source",
         "browser" if timezone else "server",
     )
 
-    current = format_current_time(timezone)
-
-    return {
-        "current_time": current.time_str,
-        "current_timezone": current.timezone,
-        "timezone_source": timezone_source,
-        "last_session_timezone": metadata.get("last_session_timezone", "Unknown"),
-        "last_session_time": metadata.get("last_session_time", "Unknown"),
-    }
+    return format_current_time(timezone, tz_source)
 
 
 def time_str_to_datetime(time_str: str) -> datetime:

@@ -11,15 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import copy
 from typing import Any
 
 import numpy as np
 from livekit.agents.llm import ChatItem
 
 from alphaavatar.agents.avatar.prompting import PersonaPluginsTemplate
-from alphaavatar.agents.constants import FACE_THRESHOLD, SPEAKER_THRESHOLD
-from alphaavatar.agents.log import logger
-from alphaavatar.agents.utils import AvatarTime, NumpyOP, get_user_id
+from alphaavatar.agents.constants import FACE_MATCH_THRESHOLD, SPEAKER_MATCH_THRESHOLD
+from alphaavatar.agents.log import debug_every, logger
+from alphaavatar.agents.utils import NumpyOP, TimeStamp, get_user_id
 
 from .cache import FaceCacheBase, PersonaCache, SpeakerCacheBase
 from .face import FaceStreamBase
@@ -44,6 +45,16 @@ class PersonaBase:
         self._maximum_retrieval_times = maximum_retrieval_times
 
         self._persona_cache: dict[str, PersonaCache] = {}
+
+        # UIDs loaded from persistent persona storage.
+        # The initial default uid is not necessarily a real user.
+        self._resolved_uids: set[str] = set()
+
+        # init param
+        self._default_user_id: str | None = None
+        self._timestamp: TimeStamp | None = None
+        self._session_id: str | None = None
+        self._room_type: str | None = None
 
     @property
     def default_uid(self) -> str:
@@ -82,83 +93,25 @@ class PersonaBase:
 
     """Helper Op"""
 
-    def _is_runtime_only_profile(self, profile: UserProfile | None) -> bool:
-        """
-        A temporary profile created only for session runtime state.
+    def _ensure_runtime_state(self, *, user_profile: UserProfile) -> UserRuntimeState:
+        if user_profile.runtime_state is None:
+            user_profile.runtime_state = UserRuntimeState()
+        return user_profile.runtime_state
 
-        This commonly happens at session start before speaker/face identity is resolved.
-        """
-        if profile is None:
-            return True
+    def _is_resolved_uid(self, uid: str) -> bool:
+        return uid in self._resolved_uids
 
-        return (
-            profile.details is None
-            and profile.speaker_vector is None
-            and profile.face_vector is None
-            and profile.runtime_state is not None
-        )
-
-    def _get_runtime_state(self, uid: str) -> UserRuntimeState | None:
-        cache = self.persona_cache.get(uid)
-        if cache is None or cache.profile is None:
-            return None
-        return cache.profile.runtime_state
-
-    def _attach_runtime_state(
+    def _update_runtime_state(
         self,
         *,
-        profile: UserProfile,
-        runtime_state: UserRuntimeState | None,
-    ) -> UserProfile:
-        if runtime_state is not None:
-            profile.runtime_state = runtime_state
-        return profile
-
-    """Base Op"""
-
-    def add_message(self, *, user_id: str, chat_item: ChatItem):
-        if user_id not in self.persona_cache:
-            logger.error(
-                f"User ID {user_id} not found in persona cache."
-                "You need to call 'init_cache' or 'load_profile' first."
-            )
-            return
-
-        self.persona_cache[user_id].add_message(chat_item)
-
-    def update_runtime_state(
-        self,
-        *,
-        uid: str | None = None,
-        current_timezone: str | None = None,
-        timezone_source: str | None = None,
-        current_login_time: str | None = None,
-        session_id: str | None = None,
-        room_type: str | None = None,
+        user_profile: UserProfile,
     ) -> None:
-        target_uid = uid or self._default_user_id
-
-        if target_uid not in self.persona_cache:
-            logger.warning(
-                f"User ID {target_uid} not found in persona cache. Runtime state update skipped."
-            )
+        """Update the runtime state of the user profile based on the current timestamp and session information."""
+        if self._timestamp is None:
+            logger.warning("Persona timestamp is not initialized. Runtime state update skipped.")
             return
 
-        cache = self.persona_cache[target_uid]
-
-        if cache.profile is None:
-            cache.profile = UserProfile(runtime_state=UserRuntimeState())
-
-        if cache.runtime_state is None:
-            cache.runtime_state = UserRuntimeState()
-
-        state = cache.runtime_state
-
-        if state is None:
-            logger.warning(
-                f"User ID {target_uid} runtime_state init failed. Runtime state update skipped."
-            )
-            return
+        state = self._ensure_runtime_state(user_profile=user_profile)
 
         if state.current_timezone:
             state.last_timezone = state.current_timezone
@@ -169,72 +122,192 @@ class PersonaBase:
         if state.current_room_type:
             state.last_room_type = state.current_room_type
 
-        state.current_timezone = current_timezone or ""
-        state.timezone_source = timezone_source or ""
-        state.current_login_time = current_login_time or ""
-        state.current_session_id = session_id or ""
-        state.current_room_type = room_type or ""
+        state.current_timezone = self._timestamp.timezone or ""
+        state.current_login_time = self._timestamp.time_str or ""
+        state.current_session_id = self._session_id or ""
+        state.current_room_type = self._room_type or ""
 
         state.login_count = int(state.login_count or 0) + 1
 
-        logger.info(
-            f"[uid: {target_uid}] Persona runtime state updated: "
-            f"timezone={current_timezone}, session_id={session_id}, room_type={room_type}"
-        )
+    def _can_merge_profiles(
+        self,
+        *,
+        session_profile: UserProfile | None,
+        loaded_profile: UserProfile | None,
+    ) -> bool:
+        """
+        Decide whether a session-collected temporary profile can be merged into
+        a loaded persistent profile.
 
-    async def init_cache(self, *, timestamp: AvatarTime, init_user_id: str):
-        if init_user_id not in self.persona_cache:
-            self._default_user_id = init_user_id
-            self._init_timestamp = timestamp
-            user_profile = await self.profiler.load(uid=init_user_id)
-            self.persona_cache[init_user_id] = PersonaCache(
-                timestamp=timestamp,
-                user_profile=user_profile,
-                speaker_cache=self.speaker_cache(),
-                face_cache=self.face_cache(),
-            )
-        else:
+        This is evidence-based, not mode-based:
+        - Missing fields can be filled.
+        - Same-modality conflicts should not be merged automatically.
+        """
+        if session_profile is None:
+            return True
+
+        if loaded_profile is None:
+            return True
+
+        if session_profile.speaker_vector is not None and loaded_profile.speaker_vector is not None:
+            session_vec = NumpyOP.l2_normalize(NumpyOP.to_np(session_profile.speaker_vector))
+            loaded_vec = NumpyOP.l2_normalize(NumpyOP.to_np(loaded_profile.speaker_vector))
+            score = float(session_vec @ loaded_vec)
+
+            if score < SPEAKER_MATCH_THRESHOLD:
+                logger.warning(
+                    "Reject profile merge because speaker vectors conflict score=%.4f",
+                    score,
+                )
+                return False
+
+        if session_profile.face_vector is not None and loaded_profile.face_vector is not None:
+            session_vec = NumpyOP.l2_normalize(NumpyOP.to_np(session_profile.face_vector))
+            loaded_vec = NumpyOP.l2_normalize(NumpyOP.to_np(loaded_profile.face_vector))
+            score = float(session_vec @ loaded_vec)
+
+            if score < FACE_MATCH_THRESHOLD:
+                logger.warning(
+                    "Reject profile merge because face vectors conflict score=%.4f",
+                    score,
+                )
+                return False
+
+        return True
+
+    def _merge_profile_for_identity_resolution(
+        self,
+        *,
+        loaded_profile: UserProfile,
+        session_profile: UserProfile | None,
+    ) -> UserProfile:
+        """
+        Merge session-collected signals into a loaded persistent profile.
+
+        Persistent loaded profile has priority.
+        Session profile only fills missing fields.
+        """
+        if session_profile is not None:
+            if loaded_profile.details is None and session_profile.details is not None:
+                loaded_profile.details = session_profile.details
+
+            if loaded_profile.speaker_vector is None and session_profile.speaker_vector is not None:
+                loaded_profile.speaker_vector = session_profile.speaker_vector
+
+            if loaded_profile.face_vector is None and session_profile.face_vector is not None:
+                loaded_profile.face_vector = session_profile.face_vector
+
+        return loaded_profile
+
+    """Base Op"""
+
+    def add_message(self, *, user_id: str, chat_item: ChatItem):
+        if user_id not in self.persona_cache:
             logger.error(
-                f"User with id '{init_user_id}' already exists in persona cache. "
-                "Please use a unique user_id."
+                f"User ID {user_id} not found in persona cache."
+                "You need to call 'init' or 'load_profile' first."
             )
+            return
+
+        self.persona_cache[user_id].add_message(chat_item)
+
+    async def init(
+        self,
+        *,
+        init_user_id: str,
+        timestamp: TimeStamp,
+        session_id: str,
+        room_type: str,
+    ):
+        if init_user_id in self.persona_cache:
+            logger.warning(
+                f"User with id '{init_user_id}' already exists in persona cache. "
+                "Persona init skipped."
+            )
+            return
+
+        self._default_user_id = init_user_id
+        self._timestamp = copy.deepcopy(timestamp)
+        self._session_id = session_id
+        self._room_type = room_type
+
+        user_profile = await self.profiler.load(uid=init_user_id)
+        if user_profile is None or user_profile.is_empty:
+            user_profile = UserProfile(runtime_state=UserRuntimeState())
+        else:
+            self._resolved_uids.add(init_user_id)
+
+        self._update_runtime_state(user_profile=user_profile)
+        self.persona_cache[init_user_id] = PersonaCache(
+            timestamp=self._timestamp,
+            user_profile=user_profile,
+            speaker_cache=self.speaker_cache(),
+            face_cache=self.face_cache(),
+        )
 
     async def load_profile(self, *, uid: str):
         user_profile = await self.profiler.load(uid=uid)
+        if user_profile is None or user_profile.is_empty:
+            logger.warning(f"No user profile found for uid '{uid}' in profiler.")
+            return
+
+        # Mark this uid as persistent/resolved because it comes from profiler/VDB.
+        self._resolved_uids.add(uid)
+
+        # update latest runtime state
+        self._update_runtime_state(user_profile=user_profile)
+
+        if uid == self._default_user_id:
+            if uid not in self.persona_cache:
+                self.persona_cache[uid] = PersonaCache(
+                    timestamp=self._timestamp,
+                    user_profile=user_profile,
+                    speaker_cache=self.speaker_cache(),
+                    face_cache=self.face_cache(),
+                )
+            else:
+                self.persona_cache[uid].profile = user_profile
+            return
 
         default_cache = self.persona_cache[self._default_user_id]
-        default_runtime_state = (
-            default_cache.profile.runtime_state if default_cache.profile is not None else None
-        )
+        default_profile = default_cache.profile
+        default_is_unresolved = not self._is_resolved_uid(self._default_user_id)
 
-        should_replace_default = self._is_runtime_only_profile(default_cache.profile)
-
-        if should_replace_default:
-            # Transfer current session runtime state from temporary user to the resolved real user.
-            user_profile = self._attach_runtime_state(
-                profile=user_profile,
-                runtime_state=default_runtime_state,
+        if default_is_unresolved and self._can_merge_profiles(
+            session_profile=default_profile,
+            loaded_profile=user_profile,
+        ):
+            user_profile = self._merge_profile_for_identity_resolution(
+                loaded_profile=user_profile,
+                session_profile=default_profile,
             )
 
-            # Reuse the original runtime cache object.
-            # This preserves speaker_cache, face_cache, messages, retrieval counters,
-            # and any other session-local states accumulated before identity resolution.
             default_cache.profile = user_profile
 
-            del self.persona_cache[self._default_user_id]
+            old_default_uid = self._default_user_id
+            del self.persona_cache[old_default_uid]
+
+            if uid in self.persona_cache:
+                logger.warning(
+                    f"User with id '{uid}' already exists in persona cache. "
+                    "Replacing it with merged default cache."
+                )
 
             self.persona_cache[uid] = default_cache
             self._default_user_id = uid
 
             logger.info(
-                f"User Profile with id '{uid}' loaded and replaced the initial "
-                "runtime-only temporary user in persona cache."
+                f"User Profile with id '{uid}' loaded and merged with unresolved "
+                f"default persona cache old_default_uid='{old_default_uid}'."
             )
             return
 
+        # If default uid is already resolved and a different uid is loaded,
+        # do not merge automatically. This is how the design remains compatible
+        # with future multi-user scenarios.
         if uid not in self.persona_cache:
             self.persona_cache[uid] = PersonaCache(
-                timestamp=self._init_timestamp,
+                timestamp=self._timestamp,
                 user_profile=user_profile,
                 speaker_cache=self.speaker_cache(),
                 face_cache=self.face_cache(),
@@ -249,7 +322,7 @@ class PersonaBase:
     async def save(self, *, uid: str | None = None):
         if uid is not None and uid not in self.persona_cache:
             raise ValueError(
-                f"User ID {uid} not found in persona cache. You need to call 'init_cache' first."
+                f"User ID {uid} not found in persona cache. You need to call 'init' or 'load_profile' first."
             )
 
         if uid is None:
@@ -266,7 +339,7 @@ class PersonaBase:
     async def update_profile_details(self, *, uid: str | None = None):
         if uid is not None and uid not in self.persona_cache:
             raise ValueError(
-                f"User ID {uid} not found in persona cache. You need to call 'init_cache' first."
+                f"User ID {uid} not found in persona cache. You need to call 'init' or 'load_profile' first."
             )
 
         if uid is None:
@@ -308,12 +381,12 @@ class PersonaBase:
         best_score = float(scores[best_idx])
         best_uid = ids[best_idx]
 
-        return best_uid if best_score >= SPEAKER_THRESHOLD else None
+        return best_uid if best_score >= SPEAKER_MATCH_THRESHOLD else None
 
     async def update_speaker_vector(self, *, uid: str, speaker_vector: np.ndarray | list[float]):
         if uid not in self.persona_cache:
             logger.error(
-                f"User ID {uid} not found in persona cache. You need to call 'init_cache' first."
+                f"User ID {uid} not found in persona cache. You need to call 'init' or 'load_profile' first."
             )
             return
 
@@ -324,34 +397,60 @@ class PersonaBase:
             return
 
         self.persona_cache[uid].speaker_vector = NumpyOP.l2_normalize(NumpyOP.to_np(speaker_vector))
-        logger.info(f"User ID {uid} speaker vector updated in persona cache.")
+        debug_every(
+            "User ID %s speaker vector updated in persona cache.",
+            uid,
+            key=f"persona:speaker_vector_updated:{uid}",
+            interval_sec=10.0,
+        )
 
     async def update_speaker_attribute(self, *, uid: str, speaker_attribute: dict[str, Any]):
         if uid not in self.persona_cache:
             logger.error(
-                f"User ID {uid} not found in persona cache. You need to call 'init_cache' first."
+                f"User ID {uid} not found in persona cache. You need to call 'init' or 'load_profile' first."
             )
             return
 
         self.persona_cache[uid].update_speaker_profile(speaker_attribute)
-        logger.info(f"User ID {uid} speaker attribute updated in persona cache.")
+        debug_every(
+            "User ID %s speaker attribute updated in persona cache.",
+            uid,
+            key=f"persona:speaker_attribute_updated:{uid}",
+            interval_sec=10.0,
+        )
 
-    async def insert_speaker_vector(self, *, speaker_vector: np.ndarray | list[float]):
-        # TODO: hadle multiple users
-        if self.persona_cache[self._default_user_id].profile is None:
-            self.persona_cache[self._default_user_id].profile = UserProfile(
-                speaker_vector=NumpyOP.l2_normalize(NumpyOP.to_np(speaker_vector))
+    async def insert_speaker_vector(self, *, speaker_vector: np.ndarray | list[float]) -> str:
+        default_cache = self.persona_cache[self._default_user_id]
+        vector = NumpyOP.l2_normalize(NumpyOP.to_np(speaker_vector))
+
+        if default_cache.profile is None:
+            default_cache.profile = UserProfile(speaker_vector=vector)
+            logger.info(
+                f"Speaker vector inserted into default persona cache uid={self._default_user_id}"
             )
-        else:
-            uid = get_user_id()
-            user_profile = UserProfile(
-                speaker_vector=NumpyOP.l2_normalize(NumpyOP.to_np(speaker_vector))
+            return self._default_user_id
+
+        if default_cache.speaker_vector is None:
+            default_cache.speaker_vector = vector
+            logger.info(
+                f"Speaker vector attached to default persona cache uid={self._default_user_id}"
             )
-            self.persona_cache[uid] = PersonaCache(
-                timestamp=self._init_timestamp,
-                user_profile=user_profile,
-                speaker_cache=self.speaker_cache(),
-            )
+            return self._default_user_id
+
+        # Future multi-user compatible path:
+        # If a new speaker cannot be matched and default already has speaker_vector,
+        # create another temporary identity slot.
+        uid = get_user_id()
+        user_profile = UserProfile(speaker_vector=vector)
+        self.persona_cache[uid] = PersonaCache(
+            timestamp=self._timestamp,
+            user_profile=user_profile,
+            speaker_cache=self.speaker_cache(),
+            face_cache=self.face_cache(),
+        )
+
+        logger.info(f"New temporary user profile inserted with speaker vector uid={uid}")
+        return uid
 
     """Face Op"""
 
@@ -382,17 +481,22 @@ class PersonaBase:
         best_score = float(scores[best_idx])
         best_uid = ids[best_idx]
 
-        return best_uid if best_score >= FACE_THRESHOLD else None
+        return best_uid if best_score >= FACE_MATCH_THRESHOLD else None
 
     async def update_face_vector(self, *, uid: str, face_vector: np.ndarray | list[float]):
         if uid not in self.persona_cache:
             logger.error(
-                f"User ID {uid} not found in persona cache. You need to call 'init_cache' first."
+                f"User ID {uid} not found in persona cache. You need to call 'init' or 'load_profile' first."
             )
             return
 
         self.persona_cache[uid].face_vector = NumpyOP.l2_normalize(NumpyOP.to_np(face_vector))
-        logger.info(f"User ID {uid} face vector updated in persona cache.")
+        debug_every(
+            "User ID %s face vector updated in persona cache.",
+            uid,
+            key=f"persona:face_vector_updated:{uid}",
+            interval_sec=10.0,
+        )
 
     async def update_face_attribute(self, *, uid: str, face_attribute: dict[str, Any]):
         if uid not in self.persona_cache:
@@ -402,23 +506,42 @@ class PersonaBase:
             return
 
         self.persona_cache[uid].update_face_profile(face_attribute)
-        logger.info(f"User ID {uid} face attribute updated in persona cache.")
+        debug_every(
+            "User ID %s face attribute updated in persona cache.",
+            uid,
+            key=f"persona:face_attribute_updated:{uid}",
+            interval_sec=10.0,
+        )
 
     async def insert_face_vector(self, *, face_vector: np.ndarray | list[float]) -> str:
-        if self.persona_cache[self._default_user_id].profile is None:
-            self.persona_cache[self._default_user_id].profile = UserProfile(
-                face_vector=NumpyOP.l2_normalize(NumpyOP.to_np(face_vector))
+        default_cache = self.persona_cache[self._default_user_id]
+        vector = NumpyOP.l2_normalize(NumpyOP.to_np(face_vector))
+
+        if default_cache.profile is None:
+            default_cache.profile = UserProfile(face_vector=vector)
+            logger.info(
+                f"Face vector inserted into default persona cache uid={self._default_user_id}"
             )
             return self._default_user_id
 
+        if default_cache.face_vector is None:
+            default_cache.face_vector = vector
+            logger.info(
+                f"Face vector attached to default persona cache uid={self._default_user_id}"
+            )
+            return self._default_user_id
+
+        # Future multi-user compatible path:
+        # If a new face cannot be matched and default already has face_vector,
+        # create another temporary identity slot.
         uid = get_user_id()
-        user_profile = UserProfile(face_vector=NumpyOP.l2_normalize(NumpyOP.to_np(face_vector)))
+        user_profile = UserProfile(face_vector=vector)
         self.persona_cache[uid] = PersonaCache(
-            timestamp=self._init_timestamp,
+            timestamp=self._timestamp,
             user_profile=user_profile,
             speaker_cache=self.speaker_cache(),
             face_cache=self.face_cache() if self.face_cache is not None else None,
         )
 
-        logger.info(f"New user profile inserted with face vector uid={uid}")
+        logger.info(f"New temporary user profile inserted with face vector uid={uid}")
         return uid

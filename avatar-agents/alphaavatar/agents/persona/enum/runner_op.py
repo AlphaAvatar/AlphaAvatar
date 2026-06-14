@@ -18,3 +18,4 @@ class VectorRunnerOP(StrEnum):
     load = "load"
     save = "save"
     search_speaker_vector = "search_speaker_vector"
+    search_face_vector = "search_face_vector"

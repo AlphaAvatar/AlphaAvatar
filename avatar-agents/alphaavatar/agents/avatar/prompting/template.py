@@ -91,7 +91,7 @@ class RuntimeContextTemplate:
         *,
         runtime_context: AvatarRuntimeContext,
     ) -> str:
-        current_time = runtime_context.time_context.current_time
+        current_time = runtime_context.timestamp.time_str
         memory_content = runtime_context.memory_content
         plan_content = runtime_context.plan_content
         reflection_content = runtime_context.reflection_content
