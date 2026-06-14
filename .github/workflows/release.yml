@@ -77,27 +77,80 @@ jobs:
       - name: Generate Release Notes body
         id: notes
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
+
           TAG="${GITHUB_REF_NAME}"
-          BODY="$(gh api repos/${{ github.repository }}/releases/generate-notes \
-            -f tag_name="$TAG" -f target_commitish="${GITHUB_SHA}" -q .body)"
-          echo "$BODY" > body.md
+          VERSION="${{ steps.meta.outputs.version }}"
+          MANUAL_NOTES="docs/releases/${TAG}.md"
+          GENERATED_NOTES="generated_notes.md"
+          BODY_FILE="body.md"
+
+          echo "Generating release notes for $TAG"
+
           PREV="$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)"
+          echo "Previous tag: ${PREV:-<auto>}"
+
+          if [ -n "$PREV" ]; then
+            gh api "repos/${{ github.repository }}/releases/generate-notes" \
+              -f tag_name="$TAG" \
+              -f target_commitish="${GITHUB_SHA}" \
+              -f previous_tag_name="$PREV" \
+              -f configuration_file_path=".github/release.yml" \
+              --jq '.body' > "$GENERATED_NOTES"
+          else
+            gh api "repos/${{ github.repository }}/releases/generate-notes" \
+              -f tag_name="$TAG" \
+              -f target_commitish="${GITHUB_SHA}" \
+              -f configuration_file_path=".github/release.yml" \
+              --jq '.body' > "$GENERATED_NOTES"
+          fi
+
+          : > "$BODY_FILE"
+
+          if [ -f "$MANUAL_NOTES" ]; then
+            echo "Using manual release notes: $MANUAL_NOTES"
+            cat "$MANUAL_NOTES" >> "$BODY_FILE"
+            printf '\n\n---\n\n' >> "$BODY_FILE"
+          else
+            echo "Manual release notes not found: $MANUAL_NOTES"
+            echo "## AlphaAvatar ${TAG}" >> "$BODY_FILE"
+            printf '\n\n' >> "$BODY_FILE"
+          fi
+
+          cat "$GENERATED_NOTES" >> "$BODY_FILE"
+
           if [ -n "$PREV" ]; then
             {
               echo
               echo "Full Changelog: https://github.com/${{ github.repository }}/compare/$PREV...$TAG"
-            } >> body.md
+            } >> "$BODY_FILE"
           fi
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
 
-      - name: Create GitHub Release
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update GitHub Release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
-          gh release create "${{ steps.notes.outputs.tag }}" \
-            --title "${{ steps.notes.outputs.tag }}" \
-            --notes-file body.md
+          set -euo pipefail
+
+          TAG="${{ steps.notes.outputs.tag }}"
+          TITLE="AlphaAvatar ${TAG}"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists. Updating..."
+            gh release edit "$TAG" \
+              --title "$TITLE" \
+              --notes-file body.md
+          else
+            echo "Creating release $TAG..."
+            gh release create "$TAG" \
+              --title "$TITLE" \
+              --notes-file body.md \
+              --verify-tag
+          fi

@@ -40,7 +40,7 @@ PREVIOUS_TAG ?=
 
 # Whether to create/update GitHub Release after pushing the tag.
 # Set GH_RELEASE=0 to skip.
-GH_RELEASE ?= 1
+GH_RELEASE ?= 0
 
 # Whether to append GitHub generated PR notes after manual release notes.
 # Set GH_GENERATE_NOTES=0 to use manual notes only.
