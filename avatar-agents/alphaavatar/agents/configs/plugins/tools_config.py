@@ -16,10 +16,10 @@ from __future__ import annotations
 import importlib
 import json
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from livekit.agents import llm
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.log import logger
@@ -27,7 +27,7 @@ from alphaavatar.agents.tools import ToolBase
 from alphaavatar.agents.utils import resolve_env_placeholders
 
 if TYPE_CHECKING:
-    from alphaavatar.agents.configs import SessionConfig
+    from alphaavatar.agents.runtime import SessionRuntime
     from alphaavatar.agents.status import StatusEmitter
 
 
@@ -36,117 +36,119 @@ importlib.import_module("alphaavatar.plugins.mcp")
 importlib.import_module("alphaavatar.plugins.rag")
 
 
-class ToolsConfig(BaseModel):
-    # DeepResearch Tool
-    deepresearch_tool: str = Field(
+class ToolPluginConfig(BaseModel):
+    """Common config for a tool plugin."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    plugin: str | None = Field(
         default="default",
-        description="Avatar deepresearch tool plugin to use for agent.",
+        description="Tool plugin name. Set to null to disable this tool.",
     )
-    deepresearch_init_config: dict = Field(
-        default={},
-        description="Custom configuration parameters for the deepresearch tool plugin.",
+    init_config: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Custom initialization parameters for this tool plugin.",
     )
 
-    # RAG Tool
-    rag_tool: str = Field(
-        default="default",
-        description="Avatar RAG tool plugin to use for agent.",
-    )
-    rag_init_config: dict = Field(
-        default={},
-        description="Custom configuration parameters for the RAG tool plugin.",
-    )
 
-    # MCP Tool
-    enable_mcp: bool = Field(
+class MCPConfig(BaseModel):
+    """Configuration for MCP tool integration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
         default=False,
         description="Whether to enable the MCP plugin.",
     )
-    mcp_init_config: dict = Field(
-        default={},
-        description="Custom configuration parameters for the MCP plugin.",
+    plugin: str | None = Field(
+        default="default",
+        description="MCP tool plugin name. Set to null to disable MCP tool creation.",
     )
-    mcp_vdb_config: dict = Field(
-        default={},
-        description="Custom initialization parameters for the mcp vdb backend (e.g., host, port, url, api_key, prefer_grpc).",
+    init_config: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Custom initialization parameters for the MCP plugin.",
     )
-    mcp_servers: dict[str, dict] = Field(
-        default={},
+    vdb_config: dict[str, Any] = Field(
+        default_factory=dict,
         description=(
-            "Mapping of MCP server identifiers to their configuration objects. "
-            "Each key represents a logical MCP server name, and the value is a "
-            "dictionary containing connection parameters such as `url` and optional "
-            "`headers`.\n\n"
-            "Example:\n"
-            "{\n"
-            '  "livekit-docs": {\n'
-            '    "url": "https://docs.livekit.io/mcp"\n'
-            "  },\n"
-            '  "github-mcp": {\n'
-            '    "url": "https://api.githubcopilot.com/mcp/",\n'
-            '    "headers": {\n'
-            '      "Authorization": "Bearer <GITHUB_PAT>"\n'
-            "    }\n"
-            "  }\n"
-            "}\n\n"
-            "The configuration object is passed directly to the MCPServerRemote "
-            "constructor when initializing remote MCP connections."
+            "Custom initialization parameters for the MCP VDB backend "
+            "(e.g. host, port, url, api_key, prefer_grpc, embedding)."
         ),
     )
+    servers: dict[str, dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Mapping of MCP server identifiers to their configuration objects.",
+    )
+
+
+class ToolsConfig(BaseModel):
+    """Configuration for AlphaAvatar tools."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    deepresearch: ToolPluginConfig = Field(default_factory=ToolPluginConfig)
+    rag: ToolPluginConfig = Field(default_factory=ToolPluginConfig)
+    mcp: MCPConfig = Field(default_factory=MCPConfig)
 
     def model_post_init(self, __context):
-        # Set MCP Env
-        if self.enable_mcp and len(self.mcp_servers) > 0:
+        if self.mcp.enabled and len(self.mcp.servers) > 0:
             os.environ["MCP_VDB_TYPE"] = "lancedb"
-            os.environ["MCP_VDB_CONFIG"] = json.dumps(self.mcp_vdb_config)
-            mcp_servers = resolve_env_placeholders(self.mcp_servers)
+            os.environ["MCP_VDB_CONFIG"] = json.dumps(self.mcp.vdb_config)
+
+            mcp_servers = resolve_env_placeholders(self.mcp.servers)
             os.environ["MCP_SERVERS"] = json.dumps(mcp_servers)
 
     def get_tools(
         self,
-        session_config: SessionConfig,
+        session_runtime: SessionRuntime,
         *,
         status_emitter: StatusEmitter | None = None,
     ) -> list[llm.FunctionTool | llm.RawFunctionTool]:
         """Returns the available tools based on the configuration."""
-        tools = []
+        tools: list[llm.FunctionTool | llm.RawFunctionTool] = []
 
         # DeepResearch Tool
-        deepresearch_tool: ToolBase | None = AvatarPlugin.get_avatar_plugin(
-            AvatarModule.DEEPRESEARCH,
-            self.deepresearch_tool,
-            deepresearch_init_config=self.deepresearch_init_config,
-            user_path=session_config.user_path,
-            status_emitter=status_emitter,
-        )
-        if deepresearch_tool:
-            tools.append(deepresearch_tool.tool)
+        if self.deepresearch.plugin is not None:
+            deepresearch_tool: ToolBase | None = AvatarPlugin.get_avatar_plugin(
+                AvatarModule.DEEPRESEARCH,
+                self.deepresearch.plugin,
+                session_runtime=session_runtime,
+                status_emitter=status_emitter,
+                deepresearch_init_config=self.deepresearch.init_config,
+            )
+            if deepresearch_tool:
+                tools.append(deepresearch_tool.tool)
 
         # RAG Tool
-        rag_tool: ToolBase | None = AvatarPlugin.get_avatar_plugin(
-            AvatarModule.RAG,
-            self.rag_tool,
-            rag_init_config=self.rag_init_config,
-            user_path=session_config.user_path,
-            status_emitter=status_emitter,
-        )
-        if rag_tool:
-            tools.append(rag_tool.tool)
+        if self.rag.plugin is not None:
+            rag_tool: ToolBase | None = AvatarPlugin.get_avatar_plugin(
+                AvatarModule.RAG,
+                self.rag.plugin,
+                session_runtime=session_runtime,
+                status_emitter=status_emitter,
+                rag_init_config=self.rag.init_config,
+            )
+            if rag_tool:
+                tools.append(rag_tool.tool)
 
-        if not self.enable_mcp:
+        # MCP Tool
+        if not self.mcp.enabled:
             return tools
 
-        # For remote MCP servers
-        if len(self.mcp_servers) == 0:
+        if len(self.mcp.servers) == 0:
             logger.warning("No MCP server URLs provided while MCP is enabled.")
+            return tools
+
+        if self.mcp.plugin is None:
+            logger.warning("MCP is enabled but tools.mcp.plugin is null.")
             return tools
 
         mcp_tool: ToolBase | None = AvatarPlugin.get_avatar_plugin(
             AvatarModule.MCP,
-            "default",
-            mcp_init_config=self.mcp_init_config,
-            user_path=session_config.user_path,
+            self.mcp.plugin,
+            session_runtime=session_runtime,
             status_emitter=status_emitter,
+            mcp_init_config=self.mcp.init_config,
         )
         if mcp_tool:
             tools.append(mcp_tool.tool)

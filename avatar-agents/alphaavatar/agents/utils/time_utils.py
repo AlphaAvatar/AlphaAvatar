@@ -13,8 +13,6 @@
 # limitations under the License.
 import calendar
 import os
-import random
-import time
 from datetime import datetime
 
 from pydantic import BaseModel, Field
@@ -158,5 +156,5 @@ def time_str_to_datetime(time_str: str) -> datetime:
         return datetime.min
 
 
-def get_timestamp() -> str:
-    return f"{int(time.time() * 1000)}{random.randint(100, 999)}"
+def local_now_iso() -> str:
+    return datetime.now().astimezone().isoformat()

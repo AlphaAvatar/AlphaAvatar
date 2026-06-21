@@ -19,7 +19,7 @@ from alphaavatar.agents.avatar.prompting.enum.injection_mode import RuntimeConte
 class RuntimeConfig(BaseModel):
     """Dataclass which contains all runtime-related configuration, which will creat for each session."""
 
-    runtime_context_mode: RuntimeContextInjectionMode = Field(
+    context_mode: RuntimeContextInjectionMode = Field(
         default=RuntimeContextInjectionMode.USER_APPEND,
         description="How to inject dynamic runtime context into the model input.",
     )

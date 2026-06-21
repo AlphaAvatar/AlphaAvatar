@@ -91,9 +91,11 @@ from typing import Any
 from livekit.agents.inference_runner import _InferenceRunner
 from livekit.agents.llm.tool_context import ToolError
 
+from alphaavatar.agents.providers import ProviderKind, ProviderTaskConfig
+from alphaavatar.agents.providers.embedding import create_embedding_model
 from alphaavatar.agents.tools.mcp_api import MCPOp
 from alphaavatar.agents.utils.loop_thread import AsyncLoopThread
-from alphaavatar.agents.utils.vdb import embedding, lancedb
+from alphaavatar.agents.utils.vdb import lancedb
 
 from ..config import DEFAULT_TIMEOUT
 from ..log import logger
@@ -839,6 +841,39 @@ class LanceDBRunner(_InferenceRunner):
                 "error": str(e),
             }
 
+    #
+    # Runner Interface
+    #
+
+    def _get_vdb_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        vdb_config = dict(config)
+        vdb_config.pop("embedding", None)
+        return vdb_config
+
+    def _get_mcp_embeddings(self, config: dict[str, Any]):
+        embedding_config = config.get("embedding")
+
+        if not embedding_config:
+            raise ValueError("`embedding` is required in MCP_VDB_CONFIG")
+
+        provider = embedding_config.get("provider")
+        model = embedding_config.get("model")
+        extra = embedding_config.get("extra") or {}
+
+        if not provider:
+            raise ValueError("`embedding.provider` is required in MCP_VDB_CONFIG")
+        if not model:
+            raise ValueError("`embedding.model` is required in MCP_VDB_CONFIG")
+
+        task_config = ProviderTaskConfig(
+            kind=ProviderKind.EMBEDDING,
+            provider=provider,
+            model=model,
+            extra=extra,
+        )
+
+        return create_embedding_model(task_config)
+
     def initialize(self) -> None:
         config = os.getenv("MCP_VDB_CONFIG", "{}")
         config = json.loads(config)
@@ -847,9 +882,9 @@ class LanceDBRunner(_InferenceRunner):
         if not self._collection_name:
             raise ValueError("collection_name is required in MCP_VDB_CONFIG")
 
-        self._client = lancedb.get_client(**config)
+        self._client = lancedb.get_client(**self._get_vdb_config(config))
 
-        self._embeddings = embedding.get_model(**config)
+        self._embeddings = self._get_mcp_embeddings(config)
         embedding_dim = len(self._embeddings.embed_query("dimension-probe"))
 
         self._ensure_collection(self._collection_name, embedding_dim)

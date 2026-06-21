@@ -20,7 +20,8 @@ import numpy as np
 from livekit.agents.llm import ChatItem, ChatMessage
 
 from alphaavatar.agents.constants import FACE_BETA, SPEAKER_BETA
-from alphaavatar.agents.utils import NumpyOP, TimeStamp
+from alphaavatar.agents.runtime.session_runtime import ParticipantInfo
+from alphaavatar.agents.utils import NumpyOP
 
 from .schema.user_profile import DetailsBase, UserProfile, UserRuntimeState
 
@@ -29,13 +30,14 @@ class PersonaCache:
     def __init__(
         self,
         *,
-        timestamp: TimeStamp,
+        participant: ParticipantInfo,
         user_profile: UserProfile,
         speaker_cache: SpeakerCacheBase,
         face_cache: FaceCacheBase,
         current_retrieval_times: int = 0,
     ):
-        self._timestamp = timestamp
+        self._participant = participant
+
         self._user_profile = user_profile
         self._speaker_cache = speaker_cache
         self._face_cache = face_cache
@@ -45,7 +47,7 @@ class PersonaCache:
 
     @property
     def time(self) -> str:
-        return self._timestamp.time_str
+        return self._participant.timestamp.time_str
 
     @property
     def retrieval_times(self) -> int:
@@ -54,6 +56,10 @@ class PersonaCache:
     @property
     def messages(self) -> list[ChatItem]:
         return self._messages
+
+    @property
+    def participant(self) -> ParticipantInfo:
+        return self._participant
 
     @property
     def profile(self) -> UserProfile | None:
@@ -104,6 +110,10 @@ class PersonaCache:
     @property
     def face_vector(self) -> np.ndarray | None:
         return self._user_profile.face_vector
+
+    @participant.setter
+    def participant(self, participant: ParticipantInfo):
+        self._participant = participant
 
     @profile.setter
     def profile(self, profile: UserProfile):

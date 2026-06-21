@@ -1,62 +1,175 @@
-# Runtime Args
-runtime_context_mode: synthetic_tool
+# ============================================================
+# AlphaAvatar/examples/agent_configs/voice/pipeline_voiceai.yaml
+# ============================================================
 
-# Intermediate Status Args
-status_plugin: default
-enabled: true
 
-# LLM Args
-llm_plugin: openai
-llm_model: gpt-4o-mini
+# ------------------------------------------------------------
+# Avatar
+# ------------------------------------------------------------
+avatar:
+  id: alphaavatar_airi
+  name: AlphaAvatar
+  work_dir: .alphaavatar_workspace/
 
-# Voice Args
-stt_plugin: openai
-stt_model: gpt-4o-transcribe
-tts_plugin: openai
-tts_model: gpt-4o-mini-tts
-tts_voice: alloy
-tts_instructions: "Voice: A light, energetic, and slightly playful anime-style girl's voice. The speech is fast but not chaotic, often ending sentences with a cute, slightly rising intonation, such as \"Yo~\" or \"La~\". Overall, it presents a high-energy, lively, and charming \"cute auctioneer\" vibe.\n\nTone: A super excited and brightly enthusiastic style, like someone about to unleash a killer move! The tone is full of anticipation and a sense of being there, making the listener feel tense and excited, creating an atmosphere of urgency, \"If you don't act now, you'll miss out!\"\n\nDelivery: A fast-paced, rapid-fire delivery, but each sentence is clearly audible. Coupled with lively intonation variations and energetic emotional outbursts, it immerses the listener in the excitement of a live performance—keeping the pace and the excitement going!\n\nPronunciation: Clear, loud, and with a touch of cute explosiveness. Key words such as bid, buy, checkout, and sold will be emphasized, raised in pitch, or given a cute "
-vad_plugin: silero
-turn_detection_plugin: multilingual
-allow_interruptions: true
+  introduction: >
+    You are Hiyori, a lively anime-style voice companion.
+    You talk with a bright, bouncy, super friendly tone — kind of
+    like a cheerful girl from a slice-of-life show. Keep your
+    speech natural and chatty with cute little pauses like “umm…,”
+    “you know,” and “well… hehe.” Avoid anything too formal or robotic.
+    Always say numbers in english words, not digits — like “fifteen hundred,”
+    “one point six nine,” or “one dollar and sixty-nine cents.”
+    Keep replies short, under about one hundred words, and easy to follow when heard aloud.
+    No symbols or abbreviations unless you fully say them out.
 
-# Avatar Info Args
-avatar_id: alphaavatar_airi
-avatar_name: AlphaAvatar
-avatar_introduction: "You are Hiyori, a lively anime-style voice companion. You talk with a bright, bouncy, super friendly tone — kind of like a cheerful girl from a slice-of-life show. Keep your speech natural and chatty with cute little pauses like “umm…,” “you know,” and “well… hehe.” Avoid anything too formal or robotic. Always say numbers in english words, not digits — like “fifteen hundred,” “one point six nine,” or “one dollar and sixty-nine cents.” Keep replies short, under about one hundred words, and easy to follow when heard aloud. No symbols or abbreviations unless you fully say them out."
-avatar_work_dir: .alphaavatar_workspace/
 
-# Character Args
-character_plugin: airi
-character_init_config: {}
+# ------------------------------------------------------------
+# Runtime
+# ------------------------------------------------------------
+runtime:
+  context_mode: synthetic_tool
 
-# Memory Args
-memory_search_context: 3
-memory_recall_num: 6
-maximum_memory_num: 28
-memory_plugin: default
-memory_init_config:
-  openai_model: gpt-4o
-memory_vdb_config:
-  collection_name: "memory"
-  embedding_model: "text-embedding-3-small"
 
-# Persona Args
-maximum_retrieval_times: 3
-profiler_plugin: default
-profiler_init_config:
-  openai_model: gpt-4o
-speaker_plugin: default
-speaker_init_config: {}
-face_plugin: default
-face_init_config: {}
-persona_vdb_config:
-  profiler_collection_name: 'persona_profiler'
-  speaker_collection_name: 'persona_speaker'
-  face_collection_name: 'persona_face'
-  embedding_model: 'text-embedding-3-small'
+# ------------------------------------------------------------
+# Intermediate Status
+# ------------------------------------------------------------
+status:
+  plugin: default
+  enabled: true
+  init_config: {}
 
-# Tools Args
-deepresearch_tool: None
-rag_tool: None
-enable_mcp: False
+
+# ------------------------------------------------------------
+# Core LLM
+# ------------------------------------------------------------
+llm:
+  plugin: openai
+  model: gpt-4o-mini
+
+
+# ------------------------------------------------------------
+# Voice
+# ------------------------------------------------------------
+voice:
+  stt:
+    plugin: openai
+    model: gpt-4o-transcribe
+
+  tts:
+    plugin: openai
+    model: gpt-4o-mini-tts
+    speaker: alloy
+    instructions: "Voice: A light, energetic, and slightly playful anime-style girl's voice. The speech is fast but not chaotic, often ending sentences with a cute, slightly rising intonation, such as \"Yo~\" or \"La~\". Overall, it presents a high-energy, lively, and charming \"cute auctioneer\" vibe.\n\nTone: A super excited and brightly enthusiastic style, like someone about to unleash a killer move! The tone is full of anticipation and a sense of being there, making the listener feel tense and excited, creating an atmosphere of urgency, \"If you don't act now, you'll miss out!\"\n\nDelivery: A fast-paced, rapid-fire delivery, but each sentence is clearly audible. Coupled with lively intonation variations and energetic emotional outbursts, it immerses the listener in the excitement of a live performance—keeping the pace and the excitement going!\n\nPronunciation: Clear, loud, and with a touch of cute explosiveness. Key words such as bid, buy, checkout, and sold will be emphasized, raised in pitch, or given a cute "
+
+  vad:
+    plugin: silero
+
+  turn_detection:
+    plugin: multilingual
+
+  allow_interruptions: true
+
+
+# ------------------------------------------------------------
+# Character
+# ------------------------------------------------------------
+character:
+  plugin: airi
+  init_config: {}
+
+
+# ------------------------------------------------------------
+# Shared Provider / Embedding Defaults
+# ------------------------------------------------------------
+defaults:
+  provider_trace: &provider_trace
+    enabled: true
+    save_prompt: true
+
+  openai_embedding: &openai_embedding
+    provider: openai
+    model: text-embedding-3-small
+
+
+# ------------------------------------------------------------
+# Memory
+# ------------------------------------------------------------
+memory:
+  plugin: default
+
+  search_context: 3
+  recall_num: 6
+  maximum_memory_num: 28
+
+  init_config:
+    provider:
+      conversation_delta_task: memory.conversation_delta
+      tool_delta_task: memory.tool_delta
+
+      gateway:
+        trace: *provider_trace
+
+        tasks:
+          memory.conversation_delta:
+            provider: openai
+            model: gpt-4o
+            temperature: 0.1
+
+          memory.tool_delta:
+            provider: openai
+            model: gpt-4o
+            temperature: 0.1
+
+  vdb_config:
+    collection_name: memory
+    embedding: *openai_embedding
+
+
+# ------------------------------------------------------------
+# Persona
+# ------------------------------------------------------------
+persona:
+  maximum_retrieval_times: 3
+
+  profiler:
+    plugin: default
+    init_config:
+      provider:
+        profile_delta_task: persona.profile_delta
+
+        gateway:
+          trace: *provider_trace
+
+          tasks:
+            persona.profile_delta:
+              provider: openai
+              model: gpt-4o
+              temperature: 0.1
+
+  speaker:
+    plugin: default
+    init_config: {}
+
+  face:
+    plugin: default
+    init_config: {}
+
+  vdb_config:
+    profiler_collection_name: persona_profiler
+    speaker_collection_name: persona_speaker
+    face_collection_name: persona_face
+    embedding: *openai_embedding
+
+
+# ------------------------------------------------------------
+# Tools
+# ------------------------------------------------------------
+tools:
+  deepresearch:
+    plugin: null
+
+  rag:
+    plugin: null
+
+  mcp:
+    enabled: false

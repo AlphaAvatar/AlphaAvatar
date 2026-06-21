@@ -19,7 +19,9 @@ from uuid import uuid4
 from livekit.agents.inference_runner import _InferenceRunner
 
 from alphaavatar.agents.persona import VectorRunnerOP
-from alphaavatar.agents.utils.vdb import embedding, lancedb
+from alphaavatar.agents.providers import ProviderKind, ProviderTaskConfig
+from alphaavatar.agents.providers.embedding import create_embedding_model
+from alphaavatar.agents.utils.vdb import lancedb
 
 from ..models import FACE_MODEL_CONFIG, SPEAKER_MODEL_CONFIG
 from .face_analysis_runner import FaceAnalysisRunner
@@ -421,6 +423,35 @@ class LanceDBRunner(_InferenceRunner):
     # Runner Interface
     #
 
+    def _get_vdb_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        vdb_config = dict(config)
+        vdb_config.pop("embedding", None)
+        return vdb_config
+
+    def _get_profiler_embeddings(self, config: dict[str, Any]):
+        embedding_config = config.get("embedding")
+
+        if not embedding_config:
+            raise ValueError("`embedding` is required in PERSONA_VDB_CONFIG")
+
+        provider = embedding_config.get("provider")
+        model = embedding_config.get("model")
+        extra = embedding_config.get("extra") or {}
+
+        if not provider:
+            raise ValueError("`embedding.provider` is required in PERSONA_VDB_CONFIG")
+        if not model:
+            raise ValueError("`embedding.model` is required in PERSONA_VDB_CONFIG")
+
+        task_config = ProviderTaskConfig(
+            kind=ProviderKind.EMBEDDING,
+            provider=provider,
+            model=model,
+            extra=extra,
+        )
+
+        return create_embedding_model(task_config)
+
     def initialize(self) -> None:
         # get config
         config = os.getenv("PERSONA_VDB_CONFIG", "{}")
@@ -438,10 +469,10 @@ class LanceDBRunner(_InferenceRunner):
             raise ValueError("`face_collection_name` is required in PERSONA_VDB_CONFIG")
 
         # init client
-        self._client = lancedb.get_client(**config)
+        self._client = lancedb.get_client(**self._get_vdb_config(config))
 
         # init embeddings for details_items
-        self._profiler_embeddings = embedding.get_model(**config)
+        self._profiler_embeddings = self._get_profiler_embeddings(config)
         profiler_dim = len(self._profiler_embeddings.embed_query("dimension-probe"))
 
         # init profiler table

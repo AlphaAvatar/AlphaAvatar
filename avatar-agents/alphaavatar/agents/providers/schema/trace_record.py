@@ -11,15 +11,32 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+from .usage import ProviderUsage
 
 
-def get_model(*, embedding_model, **kwargs):
-    try:
-        from langchain_openai import OpenAIEmbeddings
-    except Exception:
-        raise ImportError(
-            "Langchain OpenAIEmbeddings import error, please install langchain_openai"
-        )
+class ProviderTraceRecord(BaseModel):
+    trace_id: str
+    task_name: str
 
-    embeddings = OpenAIEmbeddings(model=embedding_model)
-    return embeddings
+    provider: str
+    model: str
+
+    status: str
+
+    latency_ms: float | None = None
+    usage: ProviderUsage | None = None
+
+    prompt_hash: str | None = None
+    input_hash: str | None = None
+    output_hash: str | None = None
+    prompt_version: str | None = None
+
+    generation_id: str | None = None
+
+    error: str | None = None
+
+    metadata: dict[str, Any] = Field(default_factory=dict)

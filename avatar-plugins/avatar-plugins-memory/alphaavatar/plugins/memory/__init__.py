@@ -14,10 +14,10 @@
 import os
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
-from alphaavatar.agents.utils.files.work_dirs import UserPath
+from alphaavatar.agents.runtime import SessionRuntime
 
 from .log import logger
-from .memory_langchain import MemoryLangchain
+from .memory_runtime import MemoryRuntime
 from .version import __version__
 
 __all__ = [
@@ -25,7 +25,7 @@ __all__ = [
 ]
 
 
-class MemoryLangchainPlugin(AvatarPlugin):
+class MemoryPlugin(AvatarPlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
 
@@ -33,24 +33,24 @@ class MemoryLangchainPlugin(AvatarPlugin):
 
     def get_plugin(
         self,
-        user_path: UserPath,
+        session_runtime: SessionRuntime,
         memory_search_context: int,
         memory_recall_num: int,
         maximum_memory_num: int,
         memory_init_config: dict,
         *args,
         **kwargs,
-    ) -> MemoryLangchain:
+    ) -> MemoryRuntime:
         try:
-            return MemoryLangchain(
-                user_path=user_path,
+            return MemoryRuntime(
+                session_runtime=session_runtime,
                 memory_search_context=memory_search_context,
                 memory_recall_num=memory_recall_num,
                 maximum_memory_num=maximum_memory_num,
-                memory_init_config=memory_init_config,
+                **memory_init_config,
             )
         except Exception as e:
-            raise ImportError(f"Failed to initialize MemoryLangchain plugin: {e}") from e
+            raise ImportError(f"Failed to initialize MemoryRuntime plugin: {e}") from e
 
 
 def bootstrap_inference_runners() -> None:
@@ -82,7 +82,7 @@ def bootstrap_inference_runners() -> None:
 AvatarPlugin.register_avatar_plugin(
     AvatarModule.MEMORY,
     "default",
-    MemoryLangchainPlugin(),
+    MemoryPlugin(),
 )
 
 # Runner bootstrap register

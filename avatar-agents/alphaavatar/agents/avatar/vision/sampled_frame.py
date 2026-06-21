@@ -44,10 +44,10 @@ class SampledFrameVision(VisionBase):
     def __init__(self, agent) -> None:
         super().__init__(agent)
 
-        vision_config = self.agent.avatar_config.vision_config
+        vision_config = self.agent.avatar_config.vision
 
         self._video_frame_buffer: deque[rtc.VideoFrame] = deque(
-            maxlen=vision_config.vision_frame_buffer_size
+            maxlen=vision_config.sampling.frame_buffer_size
         )
         self._last_video_frame_sample_ts: float = 0.0
 
@@ -194,13 +194,13 @@ class SampledFrameVision(VisionBase):
         )
 
     def _maybe_cache_video_frame(self, frame: rtc.VideoFrame) -> None:
-        vision_config = self.agent.avatar_config.vision_config
+        vision_config = self.agent.avatar_config.vision
 
         if not vision_config.use_sampled_frame_input:
             return
 
         now = time.monotonic()
-        interval = vision_config.vision_frame_sample_interval_sec
+        interval = vision_config.sampling.frame_sample_interval_sec
 
         if interval > 0 and now - self._last_video_frame_sample_ts < interval:
             return
@@ -209,7 +209,7 @@ class SampledFrameVision(VisionBase):
         self._video_frame_buffer.append(frame)
 
     def _select_visual_frames_for_turn(self) -> list[rtc.VideoFrame]:
-        vision_config = self.agent.avatar_config.vision_config
+        vision_config = self.agent.avatar_config.vision
 
         if not vision_config.use_sampled_frame_input:
             return []
@@ -217,12 +217,12 @@ class SampledFrameVision(VisionBase):
         if not self._video_frame_buffer:
             return []
 
-        if vision_config.vision_input_mode == VisionInputMode.LATEST_FRAME_PER_TURN:
+        if vision_config.input.mode == VisionInputMode.LATEST_FRAME_PER_TURN:
             return [self._video_frame_buffer[-1]]
 
-        if vision_config.vision_input_mode == VisionInputMode.SAMPLED_FRAMES_PER_TURN:
+        if vision_config.input.mode == VisionInputMode.SAMPLED_FRAMES_PER_TURN:
             frame_count = min(
-                vision_config.vision_frames_per_turn,
+                vision_config.sampling.frames_per_turn,
                 len(self._video_frame_buffer),
             )
             return list(self._video_frame_buffer)[-frame_count:]
@@ -230,7 +230,7 @@ class SampledFrameVision(VisionBase):
         return []
 
     def start(self) -> None:
-        vision_config = self.agent.avatar_config.vision_config
+        vision_config = self.agent.avatar_config.vision
 
         if not vision_config.use_sampled_frame_input:
             return
@@ -336,7 +336,7 @@ class SampledFrameVision(VisionBase):
         return False
 
     def inject_into_chat_ctx(self, chat_ctx: llm.ChatContext) -> None:
-        vision_config = self.agent.avatar_config.vision_config
+        vision_config = self.agent.avatar_config.vision
         frames = self._select_visual_frames_for_turn()
 
         if not frames:
@@ -383,8 +383,8 @@ class SampledFrameVision(VisionBase):
             visual_content.append(
                 llm.ImageContent(
                     image=frame,
-                    inference_width=vision_config.vision_inference_width,
-                    inference_height=vision_config.vision_inference_height,
+                    inference_width=vision_config.inference.width,
+                    inference_height=vision_config.inference.height,
                 )
             )
 
@@ -397,8 +397,8 @@ class SampledFrameVision(VisionBase):
         logger.info(
             "Injected visual frames into latest user message frame_count=%s mode=%s",
             frame_count,
-            vision_config.vision_input_mode,
+            vision_config.input.mode,
         )
 
-        if vision_config.vision_clear_after_turn:
+        if vision_config.clear_after_turn:
             self._video_frame_buffer.clear()

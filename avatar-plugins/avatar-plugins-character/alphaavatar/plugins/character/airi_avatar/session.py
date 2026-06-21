@@ -26,7 +26,7 @@ from livekit.agents import (
 from livekit.agents.job import get_job_context
 from livekit.agents.types import ATTRIBUTE_PUBLISH_ON_BEHALF
 
-from alphaavatar.agents.sessions import VirtialCharacterSession
+from alphaavatar.agents.avatar.character import VirtialCharacterSession
 
 from ..log import logger
 from ..runner_op import RunnerOP

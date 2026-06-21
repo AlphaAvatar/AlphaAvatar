@@ -11,9 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import pathlib
+
 from livekit.agents.llm import ChatItem, ChatMessage, FunctionCall, FunctionCallOutput
 
 from alphaavatar.agents.utils import TimeStamp
+from alphaavatar.agents.utils.files.work_dirs import SessionPath
 
 from .enum.memory_type import MemoryType
 
@@ -26,12 +29,14 @@ class MemoryCache:
         self,
         timestamp: TimeStamp,
         session_id: str,
+        session_path: SessionPath,
         user_or_tool_id: str,
         memory_type: MemoryType = MemoryType.CONVERSATION,
     ):
         self._timestamp = timestamp
         self._user_or_tool_id = user_or_tool_id
         self._session_id = session_id
+        self._session_path = session_path
         self._memory_type = memory_type
         self._messages: list[ChatItem] = []
 
@@ -48,6 +53,10 @@ class MemoryCache:
     def session_id(self) -> str:
         """Get the session ID associated with the memory cache."""
         return self._session_id
+
+    @property
+    def provider_dir(self) -> pathlib.Path:
+        return self._session_path.provider_dir
 
     @property
     def type(self) -> MemoryType:

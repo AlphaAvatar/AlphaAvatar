@@ -24,16 +24,13 @@ from livekit.agents.job import AutoSubscribe
 from livekit.plugins import noise_cancellation
 
 from alphaavatar.agents.avatar import AvatarEngine
-from alphaavatar.agents.avatar.context.runtime_context import (
-    AvatarRuntimeContext,
-    InteractionMethod,
-)
 from alphaavatar.agents.avatar.patches import AvatarServer
-from alphaavatar.agents.configs import AvatarConfig, SessionConfig, get_avatar_args, read_args
+from alphaavatar.agents.configs import AvatarConfig, get_avatar_args, read_args
 from alphaavatar.agents.constants import DEFAULT_CONTEXT_VALUE
 from alphaavatar.agents.env import init_env
 from alphaavatar.agents.log import logger
-from alphaavatar.agents.utils import get_session_id, get_user_id
+from alphaavatar.agents.runtime import ContextRuntime, InteractionMethod, SessionRuntime
+from alphaavatar.agents.utils.id_utils import get_session_id, get_user_id
 from alphaavatar.agents.utils.time_utils import TimeStamp, build_time_context_from_metadata
 
 from .channels.bootstrap import register_builtin_channels
@@ -192,6 +189,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     agent_identity = ctx.token_claims().identity
     participant = await ctx.wait_for_participant()
     participant_metadata = json.loads(participant.metadata) if participant.metadata else {}
+    room_identity = participant.identity
 
     room_type = detect_room_type(ctx.room)
     session_type = resolve_session_type(room_type, participant_metadata)
@@ -201,14 +199,20 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     session_id = participant_metadata.get("session_id", get_session_id(room_type))
     timestamp: TimeStamp = build_time_context_from_metadata(participant_metadata)
 
-    session_config = SessionConfig(
-        user_id=user_id,
+    # Build Session Config
+    session_runtime = SessionRuntime(
         session_id=session_id,
     )
-
-    visual_input_enabled = (
-        session_mode.video_input_enabled and avatar_config.vision_config.vision_input_enabled
+    session_runtime.add_participant(
+        user_id=user_id,
+        room_identity=room_identity,
+        room_type=room_type.value,
+        timestamp=timestamp,
+        metadata=participant_metadata,
+        primary=True,
     )
+
+    visual_input_enabled = session_mode.video_input_enabled and avatar_config.vision.input.enabled
 
     interaction_method = InteractionMethod(
         room_type=room_type.value,
@@ -224,7 +228,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
         ],
     )
 
-    runtime_context = AvatarRuntimeContext(
+    context_runtime = ContextRuntime(
         interaction_method=interaction_method,
         timestamp=timestamp,
         global_behavior_rules=participant_metadata.get(
@@ -234,7 +238,6 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
         extra_context={
             "room_name": ctx.room.name,
             "agent_identity": agent_identity,
-            "user_id": user_id,
             "session_id": session_id,
         },
     )
@@ -245,15 +248,14 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     - Token: {ctx._info.token}
     - Room Name: {ctx.room.name}
     - Room Type: {room_type}
+    - Session Id: {session_id}
     - Session Type: {session_type}
     - Session Mode: {session_mode}
-    - Session Config: {session_config}
     - Avatar Config: {avatar_config}""")
     )
 
     # Build Agent & Virtual Character Session
     session = AgentSession()
-    linked_participant_identity = participant.identity
 
     @ctx.room.on("participant_connected")
     def on_participant_connected(connected_participant):
@@ -269,26 +271,26 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
             "Participant disconnected room=%s identity=%s linked_identity=%s",
             ctx.room.name,
             disconnected_participant.identity,
-            linked_participant_identity,
+            room_identity,
         )
 
-        if disconnected_participant.identity == linked_participant_identity:
+        if disconnected_participant.identity == room_identity:
             logger.info(
                 "Linked participant disconnected. AgentSession should close via close_on_disconnect. room=%s",
                 ctx.room.name,
             )
 
     avatar_engine = AvatarEngine(
-        session_config=session_config,
+        session_runtime=session_runtime,
         avatar_config=avatar_config,
-        runtime_context=runtime_context,
+        context_runtime=context_runtime,
     )
 
     # Bind room before session.start so status sinks can publish early events.
     avatar_engine.bind_livekit_room(ctx.room)
 
     # Start character
-    avatar_character = avatar_config.character_config.get_plugin()
+    avatar_character = avatar_config.character.get_plugin()
     if avatar_character:
         await avatar_character.start(agent_identity, session, room=ctx.room)
 
@@ -298,7 +300,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
         agent=avatar_engine,
         room_options=build_room_options(
             session_mode,
-            participant_identity=linked_participant_identity,
+            participant_identity=room_identity,
         ),
     )
 
@@ -362,7 +364,7 @@ def main() -> None:
     avatar_config: AvatarConfig = get_avatar_args(args)
 
     opts = agents.worker.ServerOptions(
-        agent_name=avatar_config.avatar_info.avatar_name,
+        agent_name=avatar_config.avatar.name,
         entrypoint_fnc=partial(entrypoint, avatar_config),
         job_memory_warn_mb=8192,
         job_memory_limit_mb=0,

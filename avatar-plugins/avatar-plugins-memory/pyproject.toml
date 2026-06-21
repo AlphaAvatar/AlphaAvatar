@@ -26,7 +26,6 @@ classifiers = [
 dependencies = [
     "langchain-core",
     "langchain-community",
-    "langchain-openai",
     "qdrant-client",
     "lancedb==0.30.2",
     "langchain-qdrant",

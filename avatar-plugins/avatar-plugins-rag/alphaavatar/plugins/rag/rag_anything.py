@@ -27,7 +27,7 @@ from raganything import RAGAnything, RAGAnythingConfig
 
 from alphaavatar.agents.tools import RAGBase
 from alphaavatar.agents.utils import AsyncLoopThread, gpu_available
-from alphaavatar.agents.utils.files.work_dirs import UserPath, UserPathSnapshot
+from alphaavatar.agents.utils.files.work_dirs import SessionPath
 
 from .log import logger
 
@@ -64,13 +64,15 @@ class RAGAnythingTool(RAGBase):
     def __init__(
         self,
         *,
-        user_path: UserPath,
+        session_path: SessionPath,
         doc_parser: DocParserType = "mineru",
         openai_api_key: NotGivenOr[str] = NOT_GIVEN,
         openai_base_url: NotGivenOr[str] = NOT_GIVEN,
         **kwargs,
     ):
         super().__init__()
+
+        self.session_path = session_path
 
         if doc_parser == "mineru":
             if not gpu_available():
@@ -84,9 +86,6 @@ class RAGAnythingTool(RAGBase):
                 self._doc_parser = "mineru"
         else:
             self._doc_parser = doc_parser
-
-        self._user_path = user_path
-        self._user_path_unsubscribe = self._user_path.subscribe(self._on_user_path_changed)
 
         self._openai_api_key = openai_api_key or (os.getenv("OPENAI_API_KEY") or NOT_GIVEN)
         self._openai_base_url = openai_base_url or (os.getenv("OPENAI_BASE_URL") or NOT_GIVEN)
@@ -107,34 +106,31 @@ class RAGAnythingTool(RAGBase):
 
     @property
     def working_dir(self) -> pathlib.Path:
-        _, working_dir, _, _ = self._current_rag_paths()
+        working_dir, _, _ = self._current_rag_paths()
         return working_dir
 
     @property
     def working_dir_index(self) -> pathlib.Path:
-        _, _, index_dir, _ = self._current_rag_paths()
+        _, index_dir, _ = self._current_rag_paths()
         return index_dir
 
     @property
     def working_dir_artifacts(self) -> pathlib.Path:
-        _, _, _, artifacts_dir = self._current_rag_paths()
+        _, _, artifacts_dir = self._current_rag_paths()
         return artifacts_dir
 
     def _current_rag_paths(self) -> tuple[str, pathlib.Path, pathlib.Path, pathlib.Path]:
-        user_id = self._user_path.user_id
-
-        working_dir = self._user_path.data_dir / RAG_INSTANCE
+        working_dir = self.session_path.artifacts_dir / RAG_INSTANCE
         index_dir = working_dir / "index"
         artifacts_dir = working_dir / "artifacts"
 
-        working_dir.mkdir(parents=True, exist_ok=True)
         index_dir.mkdir(parents=True, exist_ok=True)
         artifacts_dir.mkdir(parents=True, exist_ok=True)
 
-        return user_id, working_dir, index_dir, artifacts_dir
+        return working_dir, index_dir, artifacts_dir
 
     async def _load_instance(self) -> RAGAnything:
-        user_id, working_dir, index_dir, artifacts_dir = self._current_rag_paths()
+        working_dir, index_dir, artifacts_dir = self._current_rag_paths()
 
         async def llm_model_func(
             prompt: str,
@@ -254,8 +250,7 @@ class RAGAnythingTool(RAGBase):
         self._rag = rag
 
         logger.info(
-            "[RAGAnythingTool] RAGAnything instance loaded user_id=%s working_dir=%s",
-            user_id,
+            "[RAGAnythingTool] RAGAnything instance loaded working_dir=%s",
             working_dir,
         )
 
@@ -301,45 +296,6 @@ class RAGAnythingTool(RAGBase):
             raise RuntimeError("RAGAnything instance initialization completed but _rag is None.")
 
         return self._rag
-
-    def _on_user_path_changed(
-        self,
-        user_path: UserPath,
-        old_path: UserPathSnapshot,
-        new_path: UserPathSnapshot,
-    ) -> None:
-        logger.info(
-            "[RAGAnythingTool] User path changed: %s -> %s",
-            old_path.user_root,
-            new_path.user_root,
-        )
-
-        if self._rag is not None:
-            old_working_dir = old_path.data_dir / RAG_INSTANCE
-            old_index_dir = old_working_dir / "index"
-            old_artifacts_dir = old_working_dir / "artifacts"
-
-            self._previous_rags.append(
-                RAGSlot(
-                    rag=self._rag,
-                    user_id=old_path.user_id,
-                    working_dir=old_working_dir,
-                    index_dir=old_index_dir,
-                    artifacts_dir=old_artifacts_dir,
-                )
-            )
-
-        self._rag = None
-        self._load_error = None
-        self._load_future = None
-
-        try:
-            self._load_future = self._loop_thread.submit(self._load_instance())
-        except Exception as e:
-            self._load_error = e
-            logger.warning(
-                "[RAGAnythingTool] Failed to submit reload after user path change: %s", e
-            )
 
     async def query(
         self,
@@ -466,11 +422,6 @@ class RAGAnythingTool(RAGBase):
     def close(self):
         self._previous_rags.clear()
         self._rag = None
-
-        try:
-            self._user_path_unsubscribe()
-        except Exception:
-            pass
 
         try:
             self._loop_thread.stop()

@@ -14,10 +14,9 @@
 import os
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
-from alphaavatar.agents.utils.files.work_dirs import UserPath
 
 from .log import logger
-from .profiler_langchain import ProfilerLangChain
+from .profiler_runtime import ProfilerRuntime
 from .runner import FaceAnalysisRunner, SpeakerAttributeRunner, SpeakerVectorRunner
 from .version import __version__
 
@@ -26,20 +25,17 @@ __all__ = [
 ]
 
 
-class ProfilerLangchainPlugin(AvatarPlugin):
+class ProfilerPlugin(AvatarPlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
 
     def download_files(self): ...
 
-    def get_plugin(self, user_path: UserPath, profiler_init_config: dict, *args, **kwargs):
+    def get_plugin(self, profiler_init_config: dict, *args, **kwargs):
         try:
-            return ProfilerLangChain(user_path=user_path, **profiler_init_config)
-        except Exception:
-            raise ImportError(
-                "The 'langchain[default]' Profiler plugin is required but is not installed.\n"
-                "To fix this, install the optional dependency: `pip install alphaavatar-plugins-persona`"
-            )
+            return ProfilerRuntime(**profiler_init_config)
+        except Exception as e:
+            raise Exception(f"Failed to initialize ProfilerRuntime: {e}") from e
 
 
 class SpeakerPlugin(AvatarPlugin):
@@ -47,13 +43,13 @@ class SpeakerPlugin(AvatarPlugin):
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
 
     def download_files(self):
-        from .models import MODEL_CONFIG, download_from_hf_hub
+        from .models import SPEAKER_MODEL_CONFIG, download_from_hf_hub
 
-        for model_name in MODEL_CONFIG.keys():
+        for model_name in SPEAKER_MODEL_CONFIG.keys():
             download_from_hf_hub(
-                MODEL_CONFIG[model_name].hf_model,
-                MODEL_CONFIG[model_name].file_name,
-                revision=MODEL_CONFIG[model_name].revision,
+                SPEAKER_MODEL_CONFIG[model_name].hf_model,
+                SPEAKER_MODEL_CONFIG[model_name].file_name,
+                revision=SPEAKER_MODEL_CONFIG[model_name].revision,
             )
 
     def get_plugin(self, speaker_init_config: dict, *args, **kwargs):
@@ -68,8 +64,8 @@ class FacePlugin(AvatarPlugin):
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
 
     def download_files(self):
-        # InsightFace 默认会在初始化时下载 buffalo_l。
-        # 后面可以改成显式预下载到 INSIGHTFACE_ROOT。
+        # InsightFace downloads buffalo_l by default during initialization.
+        # This can be changed to explicitly pre-download it to INSIGHTFACE_ROOT.
         pass
 
     def get_plugin(self, face_init_config: dict | None = None, *args, **kwargs):
@@ -132,7 +128,7 @@ def bootstrap_inference_runners() -> None:
 AvatarPlugin.register_avatar_plugin(
     AvatarModule.PROFILER,
     "default",
-    ProfilerLangchainPlugin(),
+    ProfilerPlugin(),
 )
 
 AvatarPlugin.register_avatar_plugin(

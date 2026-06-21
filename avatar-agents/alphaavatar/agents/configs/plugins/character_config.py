@@ -17,7 +17,7 @@ import os
 from pydantic import BaseModel, Field
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
-from alphaavatar.agents.sessions import VirtialCharacterSession
+from alphaavatar.agents.avatar.character import VirtialCharacterSession
 
 importlib.import_module("alphaavatar.plugins.character")
 
@@ -26,23 +26,23 @@ class VirtualCharacterConfig(BaseModel):
     """Configuration for the Virtual Character plugin used in the agent."""
 
     # Character plugin config
-    character_plugin: str | None = Field(
+    plugin: str | None = Field(
         default=None,
         description="Avatar Virtual Character plugin to use for agent visually represents.",
     )
-    character_init_config: dict = Field(
+    init_config: dict = Field(
         default={},
         description="Custom configuration parameters for the Virtual Character plugin.",
     )
 
     def model_post_init(self, __context):
-        if self.character_plugin is not None:
-            os.environ["ALPHAAVATAR_CHARACTER_NAME"] = self.character_plugin
+        if self.plugin is not None:
+            os.environ["ALPHAAVATAR_CHARACTER_NAME"] = self.plugin
 
     def get_plugin(self) -> VirtialCharacterSession | None:
         """Returns the Character plugin instance based on the configuration."""
         return AvatarPlugin.get_avatar_plugin(
             AvatarModule.CHARACTER,
-            self.character_plugin,
-            character_init_config=self.character_init_config,
+            self.plugin,
+            character_init_config=self.init_config,
         )

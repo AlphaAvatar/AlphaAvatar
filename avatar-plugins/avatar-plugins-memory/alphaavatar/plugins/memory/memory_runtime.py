@@ -19,7 +19,6 @@ import re
 from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
 from livekit.agents.job import get_job_context
 from livekit.agents.llm import ChatItem
 from pydantic import BaseModel, Field
@@ -32,7 +31,11 @@ from alphaavatar.agents.memory import (
     MemoryType,
     VectorRunnerOP,
 )
-from alphaavatar.agents.utils.files.work_dirs import UserPath
+from alphaavatar.agents.providers import (
+    ProviderGateway,
+    ProvidersConfig,
+)
+from alphaavatar.agents.runtime import SessionRuntime
 
 from .log import logger
 from .memory_markdown import save_memory_items_to_markdown
@@ -308,45 +311,46 @@ def _select_by_priority(
     return picked
 
 
-class MemoryInitConfig(BaseModel):
-    openai_model: str = Field(default="gpt-4o-mini")
-    temperature: float = Field(default=0.0)
+class MemoryProviderConfig(BaseModel):
+    conversation_delta_task: str = "memory.conversation_delta"
+    tool_delta_task: str = "memory.tool_delta"
+    gateway: ProvidersConfig = Field(default_factory=ProvidersConfig)
 
 
-class MemoryLangchain(MemoryBase):
+class MemoryRuntime(MemoryBase):
     def __init__(
         self,
         *,
-        user_path: UserPath,
+        session_runtime: SessionRuntime,
         memory_search_context: int = 3,
         memory_recall_num: int = 10,
         maximum_memory_num: int = 24,
-        memory_init_config: dict[str, Any] | None = None,
+        provider: dict[str, Any] | None = None,
+        **kwargs,
     ) -> None:
         super().__init__(
-            user_path=user_path,
+            session_runtime=session_runtime,
             memory_search_context=memory_search_context,
             memory_recall_num=memory_recall_num,
             maximum_memory_num=maximum_memory_num,
         )
 
-        self._memory_init_config = (
-            MemoryInitConfig(**memory_init_config) if memory_init_config else MemoryInitConfig()
+        self._provider_config = (
+            MemoryProviderConfig(**provider) if provider else MemoryProviderConfig()
         )
 
-        llm = ChatOpenAI(
-            model=self._memory_init_config.openai_model,
-            temperature=self._memory_init_config.temperature,
-        )  # type: ignore
+        self._conversation_delta_task = self._provider_config.conversation_delta_task
+        self._tool_delta_task = self._provider_config.tool_delta_task
 
-        self._delta_llm = llm.with_structured_output(MemoryDelta)
-        self._conversation_delta_chain = CONVERSATION_DELTA_PROMPT | self._delta_llm
-        self._tool_delta_chain = TOOL_DELTA_PROMPT | self._delta_llm
+        self._provider_gateway = ProviderGateway(self._provider_config.gateway)
+        self._provider_gateway.validate_tasks(
+            [
+                self._conversation_delta_task,
+                self._tool_delta_task,
+            ]
+        )
+
         self._executor = get_job_context().inference_executor
-
-    @property
-    def memory_init_config(self) -> MemoryInitConfig:
-        return self._memory_init_config
 
     @property
     def inference_method(self) -> str:
@@ -359,45 +363,94 @@ class MemoryLangchain(MemoryBase):
             )
         return method
 
+    async def _safe_ainvoke_delta(
+        self,
+        *,
+        task_name: str,
+        prompt,
+        payload: dict[str, Any],
+        metadata: dict[str, Any],
+        timeout: float = 12.0,
+    ) -> MemoryDelta:
+        try:
+            result = await asyncio.wait_for(
+                self._provider_gateway.ainvoke_structured(
+                    task_name=task_name,
+                    prompt=prompt,
+                    payload=payload,
+                    output_schema=MemoryDelta,
+                    metadata=metadata,
+                ),
+                timeout=timeout,
+            )
+
+            if isinstance(result.output, MemoryDelta):
+                return result.output
+
+            return MemoryDelta.model_validate(result.output)
+
+        except asyncio.TimeoutError:
+            logger.warning("[Memory] delta extraction timeout task=%s", task_name)
+            return MemoryDelta()
+        except Exception:
+            logger.exception("[Memory] delta extraction failed task=%s", task_name)
+            return MemoryDelta()
+
     async def _safe_ainvoke_conversation_delta(
         self,
         *,
         message_content: str,
+        memory_cache: MemoryCache,
         timeout: float = 12.0,
     ) -> MemoryDelta:
         payload = {
             "type": MemoryType.CONVERSATION,
             "message_content": message_content,
         }
-        try:
-            return await asyncio.wait_for(
-                self._conversation_delta_chain.ainvoke(payload), timeout=timeout
-            )  # type: ignore
-        except asyncio.TimeoutError:
-            logger.warning("[Memory] conversation delta extraction timeout")
-            return MemoryDelta()
-        except Exception:
-            logger.exception("[Memory] conversation delta extraction failed")
-            return MemoryDelta()
+
+        return await self._safe_ainvoke_delta(
+            task_name=self._conversation_delta_task,
+            prompt=CONVERSATION_DELTA_PROMPT,
+            payload=payload,
+            metadata={
+                "provider_dir": memory_cache.provider_dir,
+                "plugin": "memory",
+                "component": "memory_delta_extractor",
+                "operation": "conversation_delta",
+                "session_id": memory_cache.session_id,
+                "user_or_tool_id": memory_cache.user_or_tool_id,
+                "memory_type": str(memory_cache.type),
+            },
+            timeout=timeout,
+        )
 
     async def _safe_ainvoke_tool_delta(
         self,
         *,
         message_content: str,
+        memory_cache: MemoryCache,
         timeout: float = 12.0,
     ) -> MemoryDelta:
         payload = {
             "type": MemoryType.TOOLS,
             "message_content": message_content,
         }
-        try:
-            return await asyncio.wait_for(self._tool_delta_chain.ainvoke(payload), timeout=timeout)  # type: ignore
-        except asyncio.TimeoutError:
-            logger.warning("[Memory] tool delta extraction timeout")
-            return MemoryDelta()
-        except Exception:
-            logger.exception("[Memory] tool delta extraction failed")
-            return MemoryDelta()
+
+        return await self._safe_ainvoke_delta(
+            task_name=self._tool_delta_task,
+            prompt=TOOL_DELTA_PROMPT,
+            payload=payload,
+            metadata={
+                "provider_dir": memory_cache.provider_dir,
+                "plugin": "memory",
+                "component": "memory_delta_extractor",
+                "operation": "tool_delta",
+                "session_id": memory_cache.session_id,
+                "user_or_tool_id": memory_cache.user_or_tool_id,
+                "memory_type": str(memory_cache.type),
+            },
+            timeout=timeout,
+        )
 
     def _apply_delta_to_bucket(
         self,
@@ -562,16 +615,19 @@ class MemoryLangchain(MemoryBase):
                     conversation_delta, tool_delta = await asyncio.gather(
                         self._safe_ainvoke_conversation_delta(
                             message_content=message_content,
+                            memory_cache=cache,
                             timeout=30.0,
                         ),
                         self._safe_ainvoke_tool_delta(
                             message_content=message_content,
+                            memory_cache=cache,
                             timeout=30.0,
                         ),
                     )
                 else:
                     conversation_delta = await self._safe_ainvoke_conversation_delta(
                         message_content=message_content,
+                        memory_cache=cache,
                         timeout=30.0,
                     )
                     tool_delta = None
@@ -663,8 +719,8 @@ class MemoryLangchain(MemoryBase):
         ## 5.1 Save to local .md file for backup/debug
         try:
             md_result = save_memory_items_to_markdown(
-                avatar_memory_path=self._avatar_memory_path,
-                session_memory_path=self.working_dir,
+                avatar_memory_path=self.session_runtime.avatar_path.memory_dir,
+                session_memory_path=self.session_runtime.session_path.memory_dir,
                 memory_items=memory_items,
             )
             logger.info(f"Memory local markdown backup success: {md_result}")

@@ -14,99 +14,91 @@
 import importlib
 import json
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.persona import PersonaBase
 from alphaavatar.agents.utils.vdb import qdrant
 
 if TYPE_CHECKING:
-    from alphaavatar.agents.configs import SessionConfig
+    from alphaavatar.agents.runtime import SessionRuntime
+
 
 importlib.import_module("alphaavatar.plugins.persona")
+
+
+class PersonaPluginConfig(BaseModel):
+    """Common plugin config for persona submodules."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    plugin: str = Field(
+        default="default",
+        description="Persona sub-plugin name.",
+    )
+    init_config: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Custom initialization parameters for this persona sub-plugin.",
+    )
 
 
 class PersonaConfig(BaseModel):
     """Configuration for the Persona plugin used in the agent."""
 
-    # Persona Metadata
+    model_config = ConfigDict(extra="forbid")
+
     maximum_retrieval_times: int = Field(
         default=3,
-        description="The maximum number of retrieval to determine whether a new user matches existing data in the Persona database.",
+        description=(
+            "The maximum number of retrieval attempts used to determine whether "
+            "a new user matches existing persona data."
+        ),
     )
 
-    # Persona Profile plugin config
-    profiler_plugin: str = Field(
-        default="default",
-        description="Avatar profiler plugin to use for user profile extraction from chat context.",
-    )
-    profiler_init_config: dict = Field(
-        default={},
-        description="Custom configuration parameters for the profiler plugin.",
-    )
+    profiler: PersonaPluginConfig = Field(default_factory=PersonaPluginConfig)
+    speaker: PersonaPluginConfig = Field(default_factory=PersonaPluginConfig)
+    face: PersonaPluginConfig = Field(default_factory=PersonaPluginConfig)
 
-    # Persona Speaker plugin config
-    speaker_plugin: str = Field(
-        default="default",
-        description="Avatar speaker profile plugin to use for user profile extraction from user voice.",
-    )
-    speaker_init_config: dict = Field(
-        default={},
-        description="Custom configuration parameters for the speaker profile plugin.",
-    )
-
-    # Persona Face plugin config
-    face_plugin: str = Field(
-        default="default",
-        description="Avatar face profile plugin to use for user profile extraction from user video.",
-    )
-    face_init_config: dict = Field(
-        default={},
-        description="Custom configuration parameters for the face profile plugin.",
-    )
-
-    # Persona VDB Config
-    persona_vdb_config: dict = Field(
-        default={},
-        description="Custom initialization parameters for the persona vdb backend (e.g., host, port, url, api_key, prefer_grpc).",
+    vdb_config: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Custom initialization parameters for the persona VDB backend "
+            "(e.g. host, port, url, api_key, prefer_grpc, embedding)."
+        ),
     )
 
     def model_post_init(self, __context):
-        os.environ["PERSONA_VDB_CONFIG"] = json.dumps(self.persona_vdb_config)
+        os.environ["PERSONA_VDB_CONFIG"] = json.dumps(self.vdb_config)
 
-        if self.profiler_plugin == "default":
+        if self.profiler.plugin == "default":
             try:
-                qdrant.get_client(**self.persona_vdb_config)
+                qdrant.get_client(**self.vdb_config)
                 persona_vdb_type = "qdrant"
             except ValueError:
                 persona_vdb_type = "lancedb"
 
             os.environ["PERSONA_VDB_TYPE"] = persona_vdb_type
 
-        else:
-            # TODO: Handle custom profiler plugins and corresponding VDB runners.
-            pass
-
-    def get_plugin(self, session_config: "SessionConfig") -> PersonaBase:
+    def get_plugin(self, session_runtime: "SessionRuntime") -> PersonaBase:
         """Returns the Persona plugin instance based on the configuration."""
         return PersonaBase(
+            session_runtime=session_runtime,
             profiler=AvatarPlugin.get_avatar_plugin(
                 AvatarModule.PROFILER,
-                self.profiler_plugin,
-                user_path=session_config.user_path,
-                profiler_init_config=self.profiler_init_config,
+                self.profiler.plugin,
+                profiler_init_config=self.profiler.init_config,
             ),
             speaker_cls=AvatarPlugin.get_avatar_plugin(
                 AvatarModule.SPEAKER,
-                self.speaker_plugin,
-                speaker_init_config=self.speaker_init_config,
+                self.speaker.plugin,
+                speaker_init_config=self.speaker.init_config,
             ),
             face_cls=AvatarPlugin.get_avatar_plugin(
                 AvatarModule.FACE,
-                self.face_plugin,
-                face_init_config=self.face_init_config,
+                self.face.plugin,
+                face_init_config=self.face.init_config,
             ),
             maximum_retrieval_times=self.maximum_retrieval_times,
         )

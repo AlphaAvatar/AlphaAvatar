@@ -20,12 +20,17 @@ from copy import deepcopy
 from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
 from livekit.agents.job import get_job_context
+from pydantic import BaseModel, Field
 
 from alphaavatar.agents.avatar.prompting import PersonaPluginsTemplate
 from alphaavatar.agents.persona import PersonaCache, ProfilerBase, UserProfile, VectorRunnerOP
-from alphaavatar.agents.utils.files.work_dirs import UserPath
+from alphaavatar.agents.providers import (
+    ProviderGateway,
+    ProvidersConfig,
+)
+from alphaavatar.agents.runtime.session_runtime import SessionRuntime
+from alphaavatar.agents.utils.files.work_dirs import AvatarPath
 
 from .log import logger
 from .profiler_details import UserProfileDetails
@@ -78,20 +83,28 @@ General:
 )
 
 
-class ProfilerLangChain(ProfilerBase):
+class ProfilerRuntimeConfig(BaseModel):
+    profile_delta_task: str = "persona.profile_delta"
+    gateway: ProvidersConfig = Field(default_factory=ProvidersConfig)
+
+
+class ProfilerRuntime(ProfilerBase):
     def __init__(
         self,
         *,
-        user_path: UserPath,
-        openai_model: str = "gpt-4o-mini",
-        temperature: float = 0.0,
+        provider: dict[str, Any] | None = None,
         **kwargs,
     ) -> None:
-        super().__init__(user_path=user_path)
+        super().__init__()
 
-        llm = ChatOpenAI(model=openai_model, temperature=temperature)  # type: ignore
-        self._delta_llm = llm.with_structured_output(ProfileDelta)
-        self._chain = DELTA_PROMPT | self._delta_llm
+        self._provider_config = (
+            ProfilerRuntimeConfig(**provider) if provider else ProfilerRuntimeConfig()
+        )
+
+        self._profile_delta_task = self._provider_config.profile_delta_task
+        self._provider_gateway = ProviderGateway(self._provider_config.gateway)
+
+        self._provider_gateway.validate_tasks([self._profile_delta_task])
 
         self._executor = get_job_context().inference_executor
 
@@ -106,16 +119,35 @@ class ProfilerLangChain(ProfilerBase):
             )
         return method
 
-    async def _aextract_delta(self, profile_details_dump: dict, new_turn: str) -> ProfileDelta:
-        """Ask the LLM to generate patch ops relative to the current profile."""
-
-        return await self._chain.ainvoke(
-            {
+    async def _aextract_delta(
+        self,
+        *,
+        uid: str,
+        profile_details_dump: dict,
+        new_turn: str,
+        session_runtime: SessionRuntime,
+    ) -> ProfileDelta:
+        """Ask the configured provider task to generate patch ops relative to the current profile."""
+        result = await self._provider_gateway.ainvoke_structured(
+            task_name=self._profile_delta_task,
+            prompt=DELTA_PROMPT,
+            payload={
                 "current_profile": profile_details_dump,
                 "profile_reference": UserProfileDetails.field_descriptions_prompt(),
                 "new_turn": new_turn,
-            }
+            },
+            output_schema=ProfileDelta,
+            metadata={
+                "provider_dir": session_runtime.session_path.provider_dir,
+                "plugin": "persona",
+                "component": "profiler",
+                "operation": "profile_delta",
+                "user_id": uid,
+                "session_id": session_runtime.session_id,
+            },
         )
+
+        return result.output
 
     def _apply_delta(
         self, update_time: str, profile_details_dump: dict, delta: ProfileDelta
@@ -164,6 +196,7 @@ class ProfilerLangChain(ProfilerBase):
         self,
         *,
         uid: str,
+        work_dir: AvatarPath,
         timeout: float = 3,
     ) -> UserProfile:
         """Load text, voice, and face profile information for the specified user_id"""
@@ -197,7 +230,7 @@ class ProfilerLangChain(ProfilerBase):
             face_vector = None
 
         # User Runtime State (from local markdown)
-        runtime_state = await self.load_runtime_state(uid=uid)
+        runtime_state = await self.load_runtime_state(uid=uid, work_dir=work_dir)
 
         return UserProfile(
             details=profile_details,
@@ -206,7 +239,7 @@ class ProfilerLangChain(ProfilerBase):
             face_vector=face_vector,
         )
 
-    async def update(self, *, uid: str, persona: PersonaCache):
+    async def update(self, *, uid: str, persona: PersonaCache, session_runtime: SessionRuntime):
         """Async delta extraction -> in-memory patch."""
         if persona.profile_details:
             data = persona.profile_details.model_dump()
@@ -220,7 +253,12 @@ class ProfilerLangChain(ProfilerBase):
             return
 
         new_turn = PersonaPluginsTemplate.apply_update_template(chat_context)
-        delta = await self._aextract_delta(persona.profile_details_dump_value, new_turn)
+        delta = await self._aextract_delta(
+            uid=uid,
+            profile_details_dump=persona.profile_details_dump_value,
+            new_turn=new_turn,
+            session_runtime=session_runtime,
+        )
         is_updated, updated_profile_details = self._apply_delta(update_time, data, delta)
 
         if is_updated:
@@ -229,7 +267,9 @@ class ProfilerLangChain(ProfilerBase):
         else:
             logger.info(f"[uid: {uid}] User Profile output is empty, UPDATE skip!")
 
-    async def save(self, *, uid: str, persona: PersonaCache, timeout: float | None = 15) -> None:
+    async def save(
+        self, *, uid: str, persona: PersonaCache, work_dir: AvatarPath, timeout: float | None = 15
+    ) -> None:
         """Save the text, voice, and face profile information of the specified user_id."""
         # Text Profile
         if persona.profile_details is not None:
@@ -256,6 +296,7 @@ class ProfilerLangChain(ProfilerBase):
                 md_path = await self.save_runtime_state(
                     uid=uid,
                     runtime_state=persona.profile.runtime_state,
+                    work_dir=work_dir,
                 )
                 logger.info(f"User runtime state markdown save success: {md_path}")
             except Exception as e:

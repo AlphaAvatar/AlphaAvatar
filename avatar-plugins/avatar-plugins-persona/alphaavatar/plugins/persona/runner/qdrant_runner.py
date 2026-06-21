@@ -31,7 +31,9 @@ from qdrant_client.models import (
 )
 
 from alphaavatar.agents.persona import VectorRunnerOP
-from alphaavatar.agents.utils.vdb import embedding, qdrant
+from alphaavatar.agents.providers import ProviderKind, ProviderTaskConfig
+from alphaavatar.agents.providers.embedding import create_embedding_model
+from alphaavatar.agents.utils.vdb import qdrant
 
 from ..models import FACE_MODEL_CONFIG, SPEAKER_MODEL_CONFIG
 from .face_analysis_runner import FaceAnalysisRunner
@@ -390,6 +392,39 @@ class QdrantRunner(_InferenceRunner):
 
         return results[0] if results else None
 
+    #
+    # Runner Interface
+    #
+
+    def _get_vdb_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        vdb_config = dict(config)
+        vdb_config.pop("embedding", None)
+        return vdb_config
+
+    def _get_profiler_embeddings(self, config: dict[str, Any]):
+        embedding_config = config.get("embedding")
+
+        if not embedding_config:
+            raise ValueError("`embedding` is required in PERSONA_VDB_CONFIG")
+
+        provider = embedding_config.get("provider")
+        model = embedding_config.get("model")
+        extra = embedding_config.get("extra") or {}
+
+        if not provider:
+            raise ValueError("`embedding.provider` is required in PERSONA_VDB_CONFIG")
+        if not model:
+            raise ValueError("`embedding.model` is required in PERSONA_VDB_CONFIG")
+
+        task_config = ProviderTaskConfig(
+            kind=ProviderKind.EMBEDDING,
+            provider=provider,
+            model=model,
+            extra=extra,
+        )
+
+        return create_embedding_model(task_config)
+
     def initialize(self) -> None:
         # get config
         config = os.getenv("PERSONA_VDB_CONFIG", "{}")
@@ -407,10 +442,10 @@ class QdrantRunner(_InferenceRunner):
             self._face_collection_name = f"{self._speaker_collection_name}_face"
 
         # init client
-        self._client = qdrant.get_client(**config)
+        self._client = qdrant.get_client(**self._get_vdb_config(config))
 
         # init profiler
-        self._profiler_embeddings = embedding.get_model(**config)
+        self._profiler_embeddings = self._get_profiler_embeddings(config)
         self._ensure_collection(
             self._profiler_collection_name,
             len(self._profiler_embeddings.embed_query("dimension-probe")),

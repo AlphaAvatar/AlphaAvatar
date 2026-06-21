@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from alphaavatar.agents import AvatarModule, AvatarPlugin
+from alphaavatar.agents.runtime import SessionRuntime
 from alphaavatar.agents.tools import RAGAPI
-from alphaavatar.agents.utils.files.work_dirs import UserPath
 
 from .log import logger
 from .rag_anything import RAGAnythingTool
@@ -32,7 +32,7 @@ class RAGAnythingPlugin(AvatarPlugin):
 
     def get_plugin(
         self,
-        user_path: UserPath,
+        session_runtime: SessionRuntime,
         rag_init_config: dict,
         *args,
         **kwargs,
@@ -40,7 +40,9 @@ class RAGAnythingPlugin(AvatarPlugin):
         try:
             status_emitter = kwargs.pop("status_emitter", None)
 
-            rag_obj = RAGAnythingTool(user_path=user_path, **rag_init_config, **kwargs)
+            rag_obj = RAGAnythingTool(
+                session_path=session_runtime.session_path, **rag_init_config, **kwargs
+            )
         except (ImportError, ModuleNotFoundError) as e:
             raise ImportError(
                 "The 'raganything[default]' RAG plugin is required but is not installed.\n"

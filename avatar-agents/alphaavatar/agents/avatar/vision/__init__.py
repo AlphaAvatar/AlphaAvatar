@@ -24,9 +24,9 @@ if TYPE_CHECKING:
 
 
 def build_vision(agent: AvatarEngine) -> VisionBase:
-    vision_config = agent.avatar_config.vision_config
+    vision_config = agent.avatar_config.vision
 
-    if not vision_config.vision_input_enabled:
+    if not vision_config.input.enabled:
         return NoopVision(agent)
 
     if vision_config.use_sampled_frame_input:

@@ -309,6 +309,7 @@ AlphaAvatar is built around a realtime multimodal runtime that connects:
 
 - [2026/06] Released AlphaAvatar **version 0.6.0**: Added the **Status plugin**, sampled visual input support, and status-aware DeepResearch / RAG / MCP tool feedback.
   - Released AlphaAvatar **version 0.6.1**: Added visual identity support for Persona, including face detection, face vector matching, speaker-face identity fusion, and several bug fixes.
+  - Released AlphaAvatar version 0.6.2: introduced the unified provider layer, nested configuration, provider tracing, and a cleaner session/runtime foundation for future multi-user multimodal memory.
 
 - [2026/05] Released AlphaAvatar **version 0.5.4**:
   - Added **LanceDB-backed MCP tool retrieval**, enabling AlphaAvatar to semantically search relevant MCP tools from Agent queries.

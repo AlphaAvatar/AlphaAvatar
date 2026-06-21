@@ -21,7 +21,7 @@ from tavily import TavilyClient
 from alphaavatar.agents.tools import DeepResearchBase
 from alphaavatar.agents.utils import url_to_filename_id
 from alphaavatar.agents.utils.files import save_single_url_content_to_pdf
-from alphaavatar.agents.utils.files.work_dirs import UserPath
+from alphaavatar.agents.utils.files.work_dirs import SessionPath
 
 from .log import logger
 from .schema.tavily_obj import TavilyExtractObj, TavilySearchObj
@@ -33,13 +33,13 @@ class TavilyDeepResearchTool(DeepResearchBase):
     def __init__(
         self,
         *,
-        user_path: UserPath,
+        session_path: SessionPath,
         tavily_api_key: NotGivenOr[str] = NOT_GIVEN,
         **kwargs,
     ) -> None:
         super().__init__()
 
-        self._user_path = user_path
+        self.session_path = session_path
 
         self._tavily_api_key = tavily_api_key or (os.getenv("TAVILY_API_KEY") or NOT_GIVEN)
         if not self._tavily_api_key:
@@ -49,7 +49,7 @@ class TavilyDeepResearchTool(DeepResearchBase):
 
     @property
     def working_dir(self) -> pathlib.Path:
-        path = self._user_path.data_dir / SEARCH_INSTANCE
+        path = self.session_path.artifacts_dir / SEARCH_INSTANCE
         path.mkdir(parents=True, exist_ok=True)
         return path
 

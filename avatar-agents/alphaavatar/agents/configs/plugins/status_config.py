@@ -24,7 +24,7 @@ importlib.import_module("alphaavatar.plugins.status")
 
 
 class StatusConfig(BaseModel):
-    status_plugin: str = Field(
+    plugin: str = Field(
         default="default",
         description="Avatar status plugin to use for intermediate status events.",
     )
@@ -44,7 +44,7 @@ class StatusConfig(BaseModel):
         description="LiveKit data topic for user-facing status text events.",
     )
 
-    status_init_config: dict = Field(
+    init_config: dict = Field(
         default={},
         description="Custom configuration parameters for the status plugin.",
     )
@@ -52,11 +52,11 @@ class StatusConfig(BaseModel):
     def get_plugin(self) -> StatusEmitter:
         status_emitter: StatusEmitter | None = AvatarPlugin.get_avatar_plugin(
             AvatarModule.STATUS,
-            self.status_plugin,
+            self.plugin,
             enabled=self.enabled,
             action_topic=self.action_topic,
             text_topic=self.text_topic,
-            **self.status_init_config,
+            **self.init_config,
         )
 
         if status_emitter is None:

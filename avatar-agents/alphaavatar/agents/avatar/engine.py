@@ -15,7 +15,6 @@
 
 import asyncio
 import inspect
-import os
 from collections.abc import AsyncIterable, Coroutine
 from contextlib import suppress
 from typing import Any
@@ -25,28 +24,23 @@ from livekit.agents import Agent, ModelSettings, llm, stt
 from livekit.agents.types import FlushSentinel
 from livekit.agents.voice.generation import update_instructions
 
-from alphaavatar.agents.configs import AvatarConfig, SessionConfig
+from alphaavatar.agents.configs import AvatarConfig
 from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
 from alphaavatar.agents.entrypoints.schema.room_type import RoomType
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.memory import MemoryBase
 from alphaavatar.agents.persona import PersonaBase, face_node, speaker_node
-from alphaavatar.agents.plugin import AvatarModule
+from alphaavatar.agents.plugin import AvatarModule, AvatarRuntimePlugin
+from alphaavatar.agents.runtime import ContextRuntime, SessionRuntime
 from alphaavatar.agents.status import (
     StatusEmitter,
     StatusEvent,
     StatusType,
 )
 from alphaavatar.agents.utils import format_current_time
-from alphaavatar.agents.utils.files.work_dirs import (
-    UserPathSnapshot,
-    migrate_user_path,
-    mk_user_dirs,
-)
 
 from .context import init_context_manager
 from .context.internal_tools import get_runtime_context_tool
-from .context.runtime_context import AvatarRuntimeContext
 from .patches import init_avatar_patches  # NOTE: patches import only be used here
 from .prompting.assembler import PromptAssembler
 from .prompting.template import AvatarSysPromptTemplate, RuntimeContextTemplate
@@ -57,53 +51,56 @@ class AvatarEngine(Agent):
     def __init__(
         self,
         *,
-        session_config: SessionConfig,
         avatar_config: AvatarConfig,
-        runtime_context: AvatarRuntimeContext | None = None,
+        session_runtime: SessionRuntime,
+        context_runtime: ContextRuntime,
     ) -> None:
         # LiveKit room is provided by JobContext and explicitly bound after session.start.
         self._livekit_room: rtc.Room | None = None
 
-        # Step1: initial config
-        self.session_config = session_config
         self.avatar_config = avatar_config
-        self.runtime_context = runtime_context or AvatarRuntimeContext()
+
+        # Step1: init runtime
+        self.session_runtime = session_runtime
+        self.context_runtime = context_runtime
 
         # Step2: initial prompt templates and assembler
         self._avatar_prompt_template = AvatarSysPromptTemplate(
-            self.avatar_config.avatar_info.avatar_introduction,
-            interaction_method=self.runtime_context.interaction_method,
-            stable_behavior_rules=self.runtime_context.global_behavior_rules,
+            self.avatar_config.avatar.introduction,
+            interaction_method=self.context_runtime.interaction_method,
+            stable_behavior_rules=self.context_runtime.global_behavior_rules,
         )
 
         self._runtime_context_template = RuntimeContextTemplate()
         self._prompt_assembler = PromptAssembler(
-            injection_mode=self.avatar_config.runtime_config.runtime_context_mode,
+            injection_mode=self.avatar_config.runtime.context_mode,
         )
 
         # Step3: initial plugins
-        self._status: StatusEmitter = avatar_config.status_config.get_plugin()
-        self._memory: MemoryBase = avatar_config.memory_config.get_plugin(self.session_config)
-        self._persona: PersonaBase = avatar_config.persona_config.get_plugin(self.session_config)
-        self._tools: list[llm.FunctionTool | llm.RawFunctionTool] = (
-            avatar_config.tools_config.get_tools(
-                self.session_config,
-                status_emitter=self._status,
-            )
+        self._status: StatusEmitter = avatar_config.status.get_plugin()
+        self._memory: MemoryBase = avatar_config.memory.get_plugin(self.session_runtime)
+        self._persona: PersonaBase = avatar_config.persona.get_plugin(self.session_runtime)
+        self._tools: list[llm.FunctionTool | llm.RawFunctionTool] = avatar_config.tools.get_tools(
+            self.session_runtime,
+            status_emitter=self._status,
         )
         self._tools.append(get_runtime_context_tool())
+        self._runtime_plugins: list[AvatarRuntimePlugin] = [
+            self._memory,
+            self._persona,
+        ]
 
         # Step4: initial avatar
         super().__init__(
             instructions=self.system_template.instructions(),
             # llm
-            llm=self.avatar_config.llm_config.get_plugin(),
+            llm=self.avatar_config.llm.get_plugin(),
             # voice plugins
-            turn_detection=self.avatar_config.voice_config.get_turn_detection_plugin(),
-            stt=self.avatar_config.voice_config.get_stt_plugin(),
-            vad=self.avatar_config.voice_config.get_vad_plugin(),
-            tts=self.avatar_config.voice_config.get_tts_plugin(),
-            allow_interruptions=self.avatar_config.voice_config.allow_interruptions,
+            turn_detection=self.avatar_config.voice.get_turn_detection_plugin(),
+            stt=self.avatar_config.voice.get_stt_plugin(),
+            vad=self.avatar_config.voice.get_vad_plugin(),
+            tts=self.avatar_config.voice.get_tts_plugin(),
+            allow_interruptions=self.avatar_config.voice.allow_interruptions,
             # tools
             tools=self._tools,
         )
@@ -116,9 +113,6 @@ class AvatarEngine(Agent):
 
         # face identity stream
         self._face_stream = face_node(self)
-
-        # other states
-        self._pending_user_path_migration: tuple[UserPathSnapshot, UserPathSnapshot] | None = None
 
     @property
     def livekit_room(self) -> rtc.Room | None:
@@ -146,9 +140,30 @@ class AvatarEngine(Agent):
     def prompt_assembler(self) -> PromptAssembler:
         return self._prompt_assembler
 
-    def _sync_runtime_context_for_turn(self) -> None:
+    """Helper Op"""
+
+    async def _start_runtime_plugins(self) -> None:
+        for plugin in self._runtime_plugins:
+            await plugin.on_session_start(
+                session_runtime=self.session_runtime,
+                context_runtime=self.context_runtime,
+                avatar_config=self.avatar_config,
+                engine=self,
+            )
+
+    async def _stop_runtime_plugins(self) -> None:
+        for plugin in reversed(self._runtime_plugins):
+            await plugin.on_session_stop(
+                session_runtime=self.session_runtime,
+                context_runtime=self.context_runtime,
+                avatar_config=self.avatar_config,
+                avatar_id=self.avatar_config.avatar.id,
+                engine=self,
+            )
+
+    def _refresh_context_runtime_for_turn(self) -> None:
         """
-        Sync plugin-produced context into AvatarRuntimeContext.
+        Sync plugin-produced context into ContextRuntime.
 
         Note:
         user_persona is system-level context, but it may become available after
@@ -158,54 +173,33 @@ class AvatarEngine(Agent):
 
         # 1. Refresh current time for this turn.
         new_timestamp = format_current_time(
-            self.runtime_context.timestamp.timezone,
-            self.runtime_context.timestamp.timezone_source,
+            self.context_runtime.timestamp.timezone,
+            self.context_runtime.timestamp.timezone_source,
         )
-        self.runtime_context.timestamp = new_timestamp
+        self.context_runtime.timestamp = new_timestamp
 
         # 2. Refresh persona every turn.
         #
         # Persona belongs to system prompt, but it can be empty at session start
         # and become available after user/speaker identification.
-        self.runtime_context.user_persona = self.persona.persona_content or DEFAULT_SYSTEM_VALUE
+        self.context_runtime.user_persona = self.persona.persona_content or DEFAULT_SYSTEM_VALUE
 
         # 3. Dynamic memory for current turn.
-        self.runtime_context.memory_content = self.memory.memory_content or DEFAULT_SYSTEM_VALUE
+        self.context_runtime.memory_content = self.memory.memory_content or DEFAULT_SYSTEM_VALUE
 
         # 4. Dynamic plan / reflection / turn behavior rules.
         #
         # TODO:
         # Replace these with plugin values when behavior/plan/reflection plugins are added.
-        self.runtime_context.plan_content = (
-            self.runtime_context.plan_content or DEFAULT_SYSTEM_VALUE
+        self.context_runtime.plan_content = (
+            self.context_runtime.plan_content or DEFAULT_SYSTEM_VALUE
         )
-        self.runtime_context.reflection_content = (
-            self.runtime_context.reflection_content or DEFAULT_SYSTEM_VALUE
+        self.context_runtime.reflection_content = (
+            self.context_runtime.reflection_content or DEFAULT_SYSTEM_VALUE
         )
-        self.runtime_context.turn_behavior_rules = (
-            self.runtime_context.turn_behavior_rules or DEFAULT_SYSTEM_VALUE
+        self.context_runtime.turn_behavior_rules = (
+            self.context_runtime.turn_behavior_rules or DEFAULT_SYSTEM_VALUE
         )
-
-    async def _finalize_user_path_migration(self) -> None:
-        if self._pending_user_path_migration is None:
-            return
-
-        old_user_path, new_user_path = self._pending_user_path_migration
-
-        try:
-            migrate_user_path(
-                old_user_path=old_user_path,
-                new_user_path=new_user_path,
-                remove_old=True,
-            )
-            logger.info(
-                "Final user path migration success old_path=%s new_path=%s",
-                old_user_path.user_root,
-                new_user_path.user_root,
-            )
-            self._pending_user_path_migration = None
-        except Exception as e:
-            logger.warning("Final user path migration failed: %s", e)
 
     async def _call_with_supported_kwargs(self, func, *args, **kwargs):
         sig = inspect.signature(func)
@@ -217,41 +211,10 @@ class AvatarEngine(Agent):
 
         return result
 
+    """Base Op"""
+
     def bind_livekit_room(self, room: rtc.Room) -> None:
         self._livekit_room = room
-
-    async def resolve_user_identity(self, *, user_id: str) -> None:
-        if not user_id or user_id == self.session_config.user_id:
-            return
-
-        old_user_id = self.session_config.user_id
-        old_user_path = self.session_config.user_path.snapshot()
-
-        work_dir = os.getenv("AVATAR_WORK_DIR", "")
-        new_user_path = mk_user_dirs(work_dir, user_id)
-        new_user_snapshot = new_user_path.snapshot()
-
-        # Record pending migration.
-        # Do not migrate immediately, because RAG/temp artifacts may still be active.
-        self._pending_user_path_migration = (old_user_path, new_user_snapshot)
-
-        # Important:
-        # This triggers UserPath callbacks immediately.
-        # memory/persona/deepresearch/rag can now see the real user path.
-        self.session_config.update_user_id(user_id)
-
-        self.memory.update_user_tool_id(
-            ori_id=old_user_id,
-            tgt_id=user_id,
-        )
-
-        logger.info(
-            "Resolved user identity old_user=%s new_user=%s; old_path=%s new_path=%s; migration deferred to on_exit",
-            old_user_id,
-            user_id,
-            old_user_path.user_root,
-            new_user_path.user_root,
-        )
 
     async def speak_status_text(
         self,
@@ -300,24 +263,12 @@ class AvatarEngine(Agent):
     async def on_enter(self):
         # BUG: Before entering the function to send a greeting, the front end allows the user to input, but the system cannot recognize it.
 
-        # Init User & Avatar Interactive Memory by init user_id & session_id
-        await self._memory.init_cache(
-            session_id=self.session_config.session_id,
-            user_or_tool_id=self.session_config.user_id,
-            timestamp=self.runtime_context.timestamp,
-        )
-
-        # Init User Peronsa by init user_id
-        await self._persona.init(
-            timestamp=self.runtime_context.timestamp,
-            init_user_id=self.session_config.user_id,
-            session_id=self.session_config.session_id,
-            room_type=self.runtime_context.interaction_method.room_type,
-        )
-
         # init patches and context manager
         init_avatar_patches(self)
         init_context_manager(self)
+
+        # init plugin runtime
+        await self._start_runtime_plugins()
 
         # enable vision input if needed
         self._vision.start()
@@ -328,7 +279,7 @@ class AvatarEngine(Agent):
 
         # Do not use LLM-generated greeting here.
         # It may trigger llm_node and produce awkward thinking status during startup.
-        if self.runtime_context.interaction_method.room_type in (RoomType.WEB_APP.value,):
+        if self.context_runtime.interaction_method.room_type in (RoomType.WEB_APP.value,):
             self._status.emit_nowait(
                 StatusEvent(
                     type=StatusType.READY,
@@ -336,6 +287,24 @@ class AvatarEngine(Agent):
                     stage="session_ready",
                 )
             )
+
+    async def on_exit(self):
+        if hasattr(self._chat_ctx.items, "wait_pending"):
+            await self._chat_ctx.items.wait_pending()
+
+        # vision cleanup
+        await self._vision.stop()
+
+        if self._face_stream is not None:
+            await self._face_stream.stop()
+
+        # close plugin runtime
+        await self._stop_runtime_plugins()
+
+        # Flush User Path
+        self.session_runtime.flush_user_path_migrations(remove_old=True)
+
+    """Node Op"""
 
     def stt_node(
         self, audio: AsyncIterable[rtc.AudioFrame], model_settings: ModelSettings
@@ -433,14 +402,14 @@ class AvatarEngine(Agent):
             return False
 
         async def _gen():
-            # 1. Sync all plugin-produced context into runtime_context.
-            self._sync_runtime_context_for_turn()
+            # 1. Sync all plugin-produced context into context_runtime.
+            self._refresh_context_runtime_for_turn()
 
             # 2. Render system-level prompt.
             update_instructions(
                 chat_ctx,
                 instructions=self.system_template.instructions(
-                    stable_persona=self.runtime_context.user_persona,
+                    stable_persona=self.context_runtime.user_persona,
                 ),
                 add_if_missing=True,
             )
@@ -458,7 +427,7 @@ class AvatarEngine(Agent):
 
             # 5. Render turn-level runtime context.
             runtime_context_text = self.runtime_context_template.render(
-                runtime_context=self.runtime_context
+                context_runtime=self.context_runtime
             )
 
             # 6. Inject runtime context after latest user query.
@@ -541,24 +510,3 @@ class AvatarEngine(Agent):
                             await task
 
         return _gen()
-
-    async def on_exit(self):
-        if hasattr(self._chat_ctx.items, "wait_pending"):
-            await self._chat_ctx.items.wait_pending()
-
-        # vision cleanup
-        await self._vision.stop()
-
-        if self._face_stream is not None:
-            await self._face_stream.stop()
-
-        # memory op
-        await self.memory.update(avatar_id=self.avatar_config.avatar_info.avatar_id)
-        await self.memory.save()
-
-        # persona op
-        await self.persona.update_profile_details()
-        await self.persona.save()
-
-        # RAG / temp files cleanup
-        await self._finalize_user_path_migration()

@@ -12,20 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import copy
-import os
-import pathlib
 from abc import abstractmethod
 
 from livekit.agents.llm import ChatItem
 
+from alphaavatar.agents.plugin import AvatarRuntimePlugin
+from alphaavatar.agents.runtime import SessionRuntime
 from alphaavatar.agents.utils import TimeStamp, time_str_to_datetime
-from alphaavatar.agents.utils.files.work_dirs import UserPath
+from alphaavatar.agents.utils.files.work_dirs import SessionPath
 
 from .cache import MemoryCache
 from .enum.memory_type import MemoryType
 from .schema.memory_item import MemoryItem
-
-MEMORY_INSTANCE = "memory"
 
 
 def deduplicate_keep_latest(items: list[MemoryItem]) -> list[MemoryItem]:
@@ -43,29 +41,18 @@ def deduplicate_keep_latest(items: list[MemoryItem]) -> list[MemoryItem]:
     return sorted_items
 
 
-class MemoryBase:
+class MemoryBase(AvatarRuntimePlugin):
     def __init__(
         self,
         *,
-        user_path: UserPath,
+        session_runtime: SessionRuntime,
         memory_search_context: int = 3,
         memory_recall_num: int = 10,
         maximum_memory_num: int = 24,
     ) -> None:
         super().__init__()
 
-        # memory avatar dir init
-        avatar_work_dir = os.getenv("AVATAR_WORK_DIR", "")
-        if not avatar_work_dir:
-            raise ValueError(
-                "AVATAR_WORK_DIR is not set. Please initialize AvatarInfoConfig first."
-            )
-
-        self._avatar_memory_path = pathlib.Path(avatar_work_dir) / "data" / MEMORY_INSTANCE
-        self._avatar_memory_path.mkdir(parents=True, exist_ok=True)
-
-        # memory user dir init
-        self._user_path = user_path
+        self.session_runtime = session_runtime
 
         # memory config init
         self._memory_search_context = memory_search_context
@@ -76,12 +63,6 @@ class MemoryBase:
         self._avatar_memory: list[MemoryItem] = []
         self._user_memory: list[MemoryItem] = []
         self._tool_memory: list[MemoryItem] = []
-
-    @property
-    def working_dir(self) -> pathlib.Path:
-        path = self._user_path.data_dir / MEMORY_INSTANCE
-        path.mkdir(parents=True, exist_ok=True)
-        return path
 
     @property
     def memory_search_context(self) -> int:
@@ -172,6 +153,7 @@ class MemoryBase:
         self,
         *,
         session_id: str,
+        session_path: SessionPath,
         user_or_tool_id: str,
         timestamp: TimeStamp,
         memory_type: MemoryType = MemoryType.CONVERSATION,
@@ -180,6 +162,7 @@ class MemoryBase:
             self.memory_cache[session_id] = MemoryCache(
                 timestamp=copy.deepcopy(timestamp),
                 session_id=session_id,
+                session_path=session_path,
                 user_or_tool_id=user_or_tool_id,
                 memory_type=memory_type,
             )
@@ -200,3 +183,21 @@ class MemoryBase:
 
     @abstractmethod
     async def save(self): ...
+
+    """Runtime Op"""
+
+    async def on_session_start(self, *, context_runtime, **kwargs) -> None:
+        primary_user_id = self.session_runtime.primary_user_id
+        if not primary_user_id:
+            return
+
+        await self.init_cache(
+            session_id=self.session_runtime.session_id,
+            session_path=self.session_runtime.session_path,
+            user_or_tool_id=primary_user_id,
+            timestamp=context_runtime.timestamp,
+        )
+
+    async def on_session_stop(self, *, avatar_id: str, **kwargs) -> None:
+        await self.update(avatar_id=avatar_id)
+        await self.save()

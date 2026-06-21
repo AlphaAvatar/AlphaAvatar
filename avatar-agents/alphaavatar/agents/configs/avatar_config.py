@@ -31,32 +31,32 @@ class AvatarConfig(BaseModel):
     simplifies passing around the distinct configurations in the codebase.
     """
 
-    runtime_config: RuntimeConfig = Field(default_factory=RuntimeConfig)
-    """Runtime configuration, which will creat for each session."""
-
-    status_config: StatusConfig = Field(default_factory=StatusConfig)
-    """Avatar Intermediate Status Plugin configuration."""
-
-    avatar_info: AvatarInfoConfig = Field(default_factory=AvatarInfoConfig)
+    avatar: AvatarInfoConfig = Field(default_factory=AvatarInfoConfig)
     """Avatar Information configuration."""
 
-    llm_config: LLMConfig = Field(default_factory=LLMConfig)
+    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
+    """Runtime configuration, which will creat for each session."""
+
+    status: StatusConfig = Field(default_factory=StatusConfig)
+    """Avatar Intermediate Status Plugin configuration."""
+
+    llm: LLMConfig = Field(default_factory=LLMConfig)
     """LLM configuration."""
 
-    voice_config: VoiceConfig = Field(default_factory=VoiceConfig)
+    voice: VoiceConfig = Field(default_factory=VoiceConfig)
     """Voice configuration."""
 
-    vision_config: VisionConfig = Field(default_factory=VisionConfig)
+    vision: VisionConfig = Field(default_factory=VisionConfig)
     """Vision configuration."""
 
-    character_config: VirtualCharacterConfig = Field(default_factory=VirtualCharacterConfig)
+    character: VirtualCharacterConfig = Field(default_factory=VirtualCharacterConfig)
     """Avatar Virtual Character configuration."""
 
-    memory_config: MemoryConfig = Field(default_factory=MemoryConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
     """Avatar Memory configuration."""
 
-    persona_config: PersonaConfig = Field(default_factory=PersonaConfig)
+    persona: PersonaConfig = Field(default_factory=PersonaConfig)
     """Avatar Persona configuration."""
 
-    tools_config: ToolsConfig = Field(default_factory=ToolsConfig)
+    tools: ToolsConfig = Field(default_factory=ToolsConfig)
     """Avatar Tools configuration."""

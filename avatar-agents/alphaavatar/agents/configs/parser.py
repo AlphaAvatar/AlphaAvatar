@@ -13,158 +13,58 @@
 # limitations under the License.
 import json
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, TypeGuard, TypeVar
+from typing import Any
 
 import yaml
 from omegaconf import OmegaConf
-from pydantic import BaseModel
 
 from .avatar_config import AvatarConfig
-from .avatar_info_config import AvatarInfoConfig
-from .plugins.character_config import VirtualCharacterConfig
-from .plugins.llm_config import LLMConfig
-from .plugins.memory_config import MemoryConfig
-from .plugins.persona_config import PersonaConfig
-from .plugins.status_config import StatusConfig
-from .plugins.tools_config import ToolsConfig
-from .plugins.vision_config import VisionConfig
-from .plugins.voice_config import VoiceConfig
-from .runtime_config import RuntimeConfig
-
-_CONFIG_CLS = [
-    RuntimeConfig,
-    StatusConfig,
-    AvatarInfoConfig,
-    LLMConfig,
-    VoiceConfig,
-    VisionConfig,
-    VirtualCharacterConfig,
-    MemoryConfig,
-    PersonaConfig,
-    ToolsConfig,
-]
-
-
-ConfigT = TypeVar("ConfigT", bound=BaseModel)
-ConfigClassType = type[ConfigT]
-ConfigClass = ConfigT
-
-
-def _is_model_type(tp: object) -> TypeGuard[ConfigClassType[Any]]:
-    return isinstance(tp, type) and issubclass(tp, BaseModel)
 
 
 def _ensure_mapping(obj: Any) -> dict[str, Any]:
-    """Ensure the object is a mapping (dict).
-    Raises an error if the top-level object is list/str/None.
-    This prevents passing invalid types to dict.update()."""
     if isinstance(obj, Mapping):
-        # Normalize keys to str in case they are not strings
         return {str(k): v for k, v in obj.items()}
+
     raise TypeError("Top-level config must be a mapping (dict), not a list/str/None.")
 
 
-def read_args() -> dict[str, Any]:
-    r"""Get arguments from the command line or a config file.
+def _load_config_file(config_path: Path) -> dict[str, Any]:
+    suffix = config_path.suffix.lower()
 
-    Supports:
-    - python script.py <cmd> <config.{yaml|yml|json}> [--k=v ...]
-    - python script.py <cmd> --k=v ...
-    """
+    if suffix in {".yaml", ".yml"}:
+        loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    elif suffix == ".json":
+        loaded = json.loads(config_path.read_text(encoding="utf-8"))
+    else:
+        raise ValueError(f"Unsupported config file type: {config_path}")
+
+    return _ensure_mapping(loaded)
+
+
+def read_args() -> dict[str, Any]:
     if len(sys.argv) < 2:
         raise ValueError("No arguments provided. Provide a command and config/CLI args.")
 
-    args: dict[str, Any] = {}
-
-    # Case A: user provides a config file
-    if len(sys.argv) >= 3 and (sys.argv[2].endswith((".yaml", ".yml", ".json"))):
+    if len(sys.argv) >= 3 and sys.argv[2].lower().endswith((".yaml", ".yml", ".json")):
         config_path = Path(sys.argv[2]).absolute()
 
-        # Load CLI overrides from arguments after the config file
+        base_dict = _load_config_file(config_path)
         override_cfg = OmegaConf.from_cli(sys.argv[3:])
 
-        # Load the base config depending on file type
-        if config_path.suffix.lower() in {".yaml", ".yml"}:
-            base_dict = yaml.safe_load(config_path.read_text())
-        else:  # .json
-            base_dict = json.loads(config_path.read_text())
-
-        # Merge base config with overrides
         merged = OmegaConf.merge(base_dict, override_cfg)
         container = OmegaConf.to_container(merged, resolve=True)
 
-        # Only accept dict at the top level, reject list/str/None
-        args.update(_ensure_mapping(container))
-
-        # Keep only script name and command in sys.argv
         sys.argv = sys.argv[:2]
-        return args
+        return _ensure_mapping(container)
 
-    # Case B: no config file, only CLI arguments
     cli_cfg = OmegaConf.from_cli(sys.argv[2:])
     container = OmegaConf.to_container(cli_cfg, resolve=True)
-    args.update(_ensure_mapping(container))
 
     sys.argv = sys.argv[:2]
-    return args
-
-
-def parse_dict_models(
-    model_types: Sequence[ConfigClassType[Any]],
-    args: dict[str, Any],
-    allow_extra_keys: bool = False,
-) -> tuple[ConfigClass, ...]:
-    unused_keys = set(args.keys())
-    outputs: list[ConfigClass] = []
-
-    for mtype in model_types:
-        if not _is_model_type(mtype):
-            raise TypeError(f"Expected a BaseModel subclass, got: {mtype!r}")
-
-        keys = set(mtype.model_fields.keys())
-
-        inputs = {k: v for k, v in args.items() if k in keys}
-        unused_keys.difference_update(inputs.keys())
-
-        obj = mtype(**inputs)
-        outputs.append(obj)
-
-    if not allow_extra_keys and unused_keys:
-        raise ValueError(f"Some keys are not used by the parser: {sorted(unused_keys)}")
-
-    return tuple(outputs)
+    return _ensure_mapping(container)
 
 
 def get_avatar_args(args: dict[str, Any]) -> AvatarConfig:
-    (
-        runtime_config,
-        status_config,
-        avatar_info,
-        llm_config,
-        voice_config,
-        vision_config,
-        character_config,
-        memory_config,
-        persona_config,
-        tools_config,
-    ) = parse_dict_models(_CONFIG_CLS, args)
-
-    # TODO: Post validation
-
-    # Initialize the AvatarConfig.
-    avatar_config = AvatarConfig(
-        runtime_config=runtime_config,
-        status_config=status_config,
-        llm_config=llm_config,
-        voice_config=voice_config,
-        vision_config=vision_config,
-        avatar_info=avatar_info,
-        character_config=character_config,
-        memory_config=memory_config,
-        persona_config=persona_config,
-        tools_config=tools_config,
-    )
-
-    return avatar_config
+    return AvatarConfig.model_validate(args)

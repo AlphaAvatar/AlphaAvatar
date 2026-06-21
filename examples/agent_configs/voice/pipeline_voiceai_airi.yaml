@@ -1,0 +1,174 @@
+# ============================================================
+# AlphaAvatar/examples/agent_configs/voice/pipeline_voiceai.yaml
+# ============================================================
+
+
+# ------------------------------------------------------------
+# Avatar
+# ------------------------------------------------------------
+avatar:
+  id: alphaavatar_airi
+  name: AlphaAvatar
+  work_dir: .alphaavatar_workspace/
+
+  introduction: >
+    You are Hiyori, a lively anime-style voice companion.
+    You talk with a bright, bouncy, super friendly tone — kind of
+    like a cheerful girl from a slice-of-life show. Keep your
+    speech natural and chatty with cute little pauses like “umm…,”
+    “you know,” and “well… hehe.” Avoid anything too formal or robotic.
+    Always say numbers in english words, not digits — like “fifteen hundred,”
+    “one point six nine,” or “one dollar and sixty-nine cents.”
+    Keep replies short, under about one hundred words, and easy to follow when heard aloud.
+    No symbols or abbreviations unless you fully say them out.
+
+
+# ------------------------------------------------------------
+# Runtime
+# ------------------------------------------------------------
+runtime:
+  context_mode: synthetic_tool
+
+
+# ------------------------------------------------------------
+# Intermediate Status
+# ------------------------------------------------------------
+status:
+  plugin: default
+  enabled: true
+  init_config: {}
+
+
+# ------------------------------------------------------------
+# Core LLM
+# ------------------------------------------------------------
+llm:
+  plugin: openai
+  model: gpt-4o-mini
+
+
+# ------------------------------------------------------------
+# Voice
+# ------------------------------------------------------------
+voice:
+  stt:
+    plugin: openai
+    model: gpt-4o-transcribe
+
+  tts:
+    plugin: voiceai
+    model: voiceai-tts-v1-latest
+    speaker: a931a6af-fb01-42f0-a8c0-bd14bc302bb1
+
+  vad:
+    plugin: silero
+
+  turn_detection:
+    plugin: multilingual
+
+  allow_interruptions: true
+
+
+# ------------------------------------------------------------
+# Character
+# ------------------------------------------------------------
+character:
+  plugin: airi
+  init_config: {}
+
+
+# ------------------------------------------------------------
+# Shared Provider / Embedding Defaults
+# ------------------------------------------------------------
+defaults:
+  provider_trace: &provider_trace
+    enabled: true
+    save_prompt: true
+
+  openai_embedding: &openai_embedding
+    provider: openai
+    model: text-embedding-3-small
+
+
+# ------------------------------------------------------------
+# Memory
+# ------------------------------------------------------------
+memory:
+  plugin: default
+
+  search_context: 3
+  recall_num: 6
+  maximum_memory_num: 28
+
+  init_config:
+    provider:
+      conversation_delta_task: memory.conversation_delta
+      tool_delta_task: memory.tool_delta
+
+      gateway:
+        trace: *provider_trace
+
+        tasks:
+          memory.conversation_delta:
+            provider: openai
+            model: gpt-4o
+            temperature: 0.1
+
+          memory.tool_delta:
+            provider: openai
+            model: gpt-4o
+            temperature: 0.1
+
+  vdb_config:
+    collection_name: memory
+    embedding: *openai_embedding
+
+
+# ------------------------------------------------------------
+# Persona
+# ------------------------------------------------------------
+persona:
+  maximum_retrieval_times: 3
+
+  profiler:
+    plugin: default
+    init_config:
+      provider:
+        profile_delta_task: persona.profile_delta
+
+        gateway:
+          trace: *provider_trace
+
+          tasks:
+            persona.profile_delta:
+              provider: openai
+              model: gpt-4o
+              temperature: 0.1
+
+  speaker:
+    plugin: default
+    init_config: {}
+
+  face:
+    plugin: default
+    init_config: {}
+
+  vdb_config:
+    profiler_collection_name: persona_profiler
+    speaker_collection_name: persona_speaker
+    face_collection_name: persona_face
+    embedding: *openai_embedding
+
+
+# ------------------------------------------------------------
+# Tools
+# ------------------------------------------------------------
+tools:
+  deepresearch:
+    plugin: null
+
+  rag:
+    plugin: null
+
+  mcp:
+    enabled: false

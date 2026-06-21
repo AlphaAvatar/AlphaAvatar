@@ -13,10 +13,8 @@
 # limitations under the License.
 from .avatar_config import AvatarConfig
 from .parser import get_avatar_args, read_args
-from .session_config import SessionConfig
 
 __all__ = [
-    "SessionConfig",
     "AvatarConfig",
     "read_args",
     "get_avatar_args",

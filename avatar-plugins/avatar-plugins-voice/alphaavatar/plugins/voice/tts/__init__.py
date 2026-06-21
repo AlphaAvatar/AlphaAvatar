@@ -20,11 +20,11 @@ class VoiceAITTSPlugin(AvatarPlugin):
 
     def download_files(self): ...
 
-    def get_plugin(self, model: str, voice: str, *args, **kwargs):
+    def get_plugin(self, model: str, speaker: str, *args, **kwargs):
         from .voiceai import TTS
 
         try:
-            return TTS(model=model, voice_id=voice, **kwargs)
+            return TTS(model=model, voice_id=speaker, **kwargs)
         except Exception:
             raise ImportError(
                 "The 'voiceai[default]' TTS plugin is required but is not installed.\n"

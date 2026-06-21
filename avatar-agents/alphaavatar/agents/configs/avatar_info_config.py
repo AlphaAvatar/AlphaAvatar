@@ -23,24 +23,24 @@ from alphaavatar.agents.utils.files.work_dirs import default_work_dir
 class AvatarInfoConfig(BaseModel):
     """Configuration for the prompt used in the agent, , which will creat when server load."""
 
-    avatar_id: str = Field(
+    id: str = Field(
         default=uuid.uuid4().hex,
         description="Unique identifier for the avatar.",
     )
-    avatar_name: str = Field(
+    name: str = Field(
         default="Assistant",
         description="Name of the avatar.",
     )
-    avatar_introduction: str = Field(
+    introduction: str = Field(
         default="You are a helpful voice AI assistant.",
         description="Introduction of the avatar.",
     )
-    avatar_timezone: str = Field(
+    timezone: str = Field(
         default="server local time",
         description="The time zone where the Avatar is deployed is used to align with the user's time zone for related task execution",
     )
 
-    avatar_work_dir: str = Field(
+    work_dir: str = Field(
         default="",
         description=(
             "Base work directory for this service. "
@@ -51,17 +51,17 @@ class AvatarInfoConfig(BaseModel):
 
     def model_post_init(self, __context):
         # Get Global environment variables
-        self.avatar_name = os.getenv("AVATAR_NAME") or self.avatar_name
-        self.avatar_timezone = os.getenv("AVATAR_TIMEZONE") or self.avatar_timezone
-        self.avatar_work_dir = os.getenv("AVATAR_WORK_DIR") or self.avatar_work_dir
+        self.name = os.getenv("AVATAR_NAME") or self.name
+        self.timezone = os.getenv("AVATAR_TIMEZONE") or self.timezone
+        self.work_dir = os.getenv("AVATAR_WORK_DIR") or self.work_dir
 
         # Set environment variables based on the configuration
-        os.environ["AVATAR_TIMEZONE"] = self.avatar_timezone
+        os.environ["AVATAR_TIMEZONE"] = self.timezone
 
-        if self.avatar_work_dir and self.avatar_work_dir.strip():
-            work_dir = pathlib.Path(self.avatar_work_dir) / self.avatar_id
+        if self.work_dir and self.work_dir.strip():
+            work_dir = pathlib.Path(self.work_dir) / self.id
         else:
-            work_dir = default_work_dir(self.avatar_id)
+            work_dir = default_work_dir(self.id)
 
         work_dir.mkdir(parents=True, exist_ok=True)
         os.environ["AVATAR_WORK_DIR"] = str(work_dir)

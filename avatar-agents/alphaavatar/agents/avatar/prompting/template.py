@@ -19,8 +19,8 @@ from livekit.agents.llm import ChatItem, ChatMessage, ChatRole, FunctionCall, Fu
 
 from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
 from alphaavatar.agents.memory import MemoryType
+from alphaavatar.agents.runtime import ContextRuntime, InteractionMethod
 
-from ..context.runtime_context import AvatarRuntimeContext, InteractionMethod
 from .prompts.avatar_system_prompts import AVATAR_SYSTEM_PROMPT
 from .prompts.runtime_context_prompts import RUNTIME_CONTEXT_PROMPT
 
@@ -89,13 +89,13 @@ class RuntimeContextTemplate:
     def render(
         self,
         *,
-        runtime_context: AvatarRuntimeContext,
+        context_runtime: ContextRuntime,
     ) -> str:
-        current_time = runtime_context.timestamp.time_str
-        memory_content = runtime_context.memory_content
-        plan_content = runtime_context.plan_content
-        reflection_content = runtime_context.reflection_content
-        behavior_rules = runtime_context.turn_behavior_rules
+        current_time = context_runtime.timestamp.time_str
+        memory_content = context_runtime.memory_content
+        plan_content = context_runtime.plan_content
+        reflection_content = context_runtime.reflection_content
+        behavior_rules = context_runtime.turn_behavior_rules
 
         return RUNTIME_CONTEXT_PROMPT.format(
             current_time=current_time or DEFAULT_SYSTEM_VALUE,

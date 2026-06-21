@@ -225,11 +225,7 @@ class TextOrVoiceStatusSink(StatusSinkBase, LiveKitDataPublisherMixin):
         return StatusDeliveryMode.NONE
 
     def _get_interaction_method(self):
-        runtime_context = getattr(self._engine, "runtime_context", None)
-        if runtime_context is None:
-            return None
-
-        return getattr(runtime_context, "interaction_method", None)
+        return self._engine.context_runtime.interaction_method
 
     async def _publish_text_status(self, event: StatusEvent, text: str) -> None:
         local_participant = self._get_local_participant()

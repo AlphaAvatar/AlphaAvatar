@@ -15,109 +15,12 @@ from __future__ import annotations
 
 import os
 import pathlib
-import re
-import shutil
-from collections.abc import Callable
-from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+from pydantic import BaseModel, ConfigDict, Field
 
-_SAFE = re.compile(r"[^a-zA-Z0-9._-]+")
+from alphaavatar.agents.utils.id_utils import sanitize_id
 
-
-class UserPathSnapshot(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    user_id: str
-    user_root: pathlib.Path
-    data_dir: pathlib.Path
-    cache_dir: pathlib.Path
-    logs_dir: pathlib.Path
-
-
-UserPathChangeCallback = Callable[
-    ["UserPath", UserPathSnapshot, UserPathSnapshot],
-    Any,
-]
-
-
-class UserPath(BaseModel):
-    """
-    Mutable user-scoped path reference.
-
-    Important:
-    Plugins should hold this object itself, not a copied pathlib.Path.
-    When the user identity is resolved, this object is updated in place,
-    so all plugins can dynamically see the latest user paths.
-    """
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    user_id: str = Field(..., description="Sanitized user id used in folder names.")
-    user_root: pathlib.Path
-
-    data_dir: pathlib.Path
-    cache_dir: pathlib.Path
-    logs_dir: pathlib.Path
-
-    _callbacks: list[UserPathChangeCallback] = PrivateAttr(default_factory=list)
-    _version: int = PrivateAttr(default=0)
-
-    @property
-    def version(self) -> int:
-        return self._version
-
-    def snapshot(self) -> UserPathSnapshot:
-        return UserPathSnapshot(
-            user_id=self.user_id,
-            user_root=self.user_root,
-            data_dir=self.data_dir,
-            cache_dir=self.cache_dir,
-            logs_dir=self.logs_dir,
-        )
-
-    def subscribe(self, callback: UserPathChangeCallback):
-        self._callbacks.append(callback)
-
-        def unsubscribe():
-            try:
-                self._callbacks.remove(callback)
-            except ValueError:
-                pass
-
-        return unsubscribe
-
-    def update_from(self, new_path: UserPath) -> None:
-        """
-        Update this UserPath in place.
-
-        Do not replace the UserPath object itself, because plugins may already
-        hold a reference to it.
-        """
-        old = self.snapshot()
-
-        self.user_id = new_path.user_id
-        self.user_root = new_path.user_root
-        self.data_dir = new_path.data_dir
-        self.cache_dir = new_path.cache_dir
-        self.logs_dir = new_path.logs_dir
-        self._version += 1
-
-        new = self.snapshot()
-
-        for callback in list(self._callbacks):
-            callback(self, old, new)
-
-
-def _can_write_dir(path: pathlib.Path) -> bool:
-    try:
-        path.mkdir(parents=True, exist_ok=True)
-        test = path / ".write_test"
-        test.write_text("ok", encoding="utf-8")
-        test.unlink(missing_ok=True)
-        return True
-    except Exception:
-        return False
+from .op import _can_write_dir
 
 
 def default_work_dir(app_name: str) -> pathlib.Path:
@@ -134,71 +37,116 @@ def default_work_dir(app_name: str) -> pathlib.Path:
     return home / ".local" / "share" / app_name
 
 
-def sanitize_id(s: str, max_len: int = 64) -> str:
-    s = (s or "").strip()
-    s = _SAFE.sub("_", s)
-    s = s.strip("._-")
-    if not s:
-        s = "unknown"
-    return s[:max_len]
+class AvatarPath(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    work_dir: pathlib.Path = Field(...)
+
+    # work_dir
+    data_dir: pathlib.Path
+    users_dir: pathlib.Path
+    env_dir: pathlib.Path
+
+    # /data_dir
+    sessions_dir: pathlib.Path
+    memory_dir: pathlib.Path
+    graph_dir: pathlib.Path
+    artifacts_dir: pathlib.Path
+
+    logs_dir: pathlib.Path
+    cache_dir: pathlib.Path
+
+    def session_dir(self, session_id: str) -> pathlib.Path:
+        path = self.sessions_dir / sanitize_id(session_id)
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
 
-def mk_user_dirs(work_dir: str, user_id: str) -> UserPath:
+class SessionPath(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    session_id: str
+    session_root: pathlib.Path
+
+    provider_dir: pathlib.Path
+    memory_dir: pathlib.Path
+    observations_dir: pathlib.Path
+    turns_dir: pathlib.Path
+    artifacts_dir: pathlib.Path
+    logs_dir: pathlib.Path
+
+
+def mk_avatar_dirs(work_dir: str | pathlib.Path) -> AvatarPath:
     base = pathlib.Path(work_dir)
-    uid = sanitize_id(user_id)
 
-    user_root = base / "users" / uid
-    data_dir = user_root / "data"
-    cache_dir = user_root / ".cache"
-    logs_dir = user_root / "logs"
+    data_dir = base / "data"
+    users_dir = base / "users"
+    env_dir = base / "env"
 
-    for d in [data_dir, cache_dir, logs_dir]:
+    sessions_dir = data_dir / "sessions"
+    memory_dir = data_dir / "memory"
+    graph_dir = data_dir / "graph"
+    artifacts_dir = data_dir / "artifacts"
+
+    logs_dir = base / ".logs"
+    cache_dir = base / ".cache"
+
+    for d in [
+        data_dir,
+        users_dir,
+        env_dir,
+        sessions_dir,
+        memory_dir,
+        graph_dir,
+        artifacts_dir,
+        logs_dir,
+        cache_dir,
+    ]:
         d.mkdir(parents=True, exist_ok=True)
 
-    return UserPath(
-        user_id=uid,
-        user_root=user_root,
+    return AvatarPath(
+        work_dir=base,
         data_dir=data_dir,
-        cache_dir=cache_dir,
+        users_dir=users_dir,
+        env_dir=env_dir,
+        sessions_dir=sessions_dir,
+        memory_dir=memory_dir,
+        graph_dir=graph_dir,
+        artifacts_dir=artifacts_dir,
         logs_dir=logs_dir,
+        cache_dir=cache_dir,
     )
 
 
-def merge_dirs(src: pathlib.Path, dst: pathlib.Path) -> None:
-    """
-    Merge src directory into dst directory.
+def mk_session_dirs(avatar_path: AvatarPath, session_id: str) -> SessionPath:
+    sid = sanitize_id(session_id)
+    session_root = avatar_path.sessions_dir / sid
 
-    Existing files in dst are not overwritten.
-    This is safer for merging temporary-user artifacts into real-user directory.
-    """
-    if not src.exists() or src.resolve() == dst.resolve():
-        return
+    provider_dir = session_root / "provider"
+    memory_dir = session_root / "memory"
+    observations_dir = session_root / "observations"
+    turns_dir = session_root / "turns"
+    artifacts_dir = session_root / "artifacts"
+    logs_dir = session_root / ".logs"
 
-    dst.mkdir(parents=True, exist_ok=True)
+    for d in [
+        session_root,
+        provider_dir,
+        memory_dir,
+        observations_dir,
+        turns_dir,
+        artifacts_dir,
+        logs_dir,
+    ]:
+        d.mkdir(parents=True, exist_ok=True)
 
-    for item in src.iterdir():
-        target = dst / item.name
-
-        if item.is_dir():
-            merge_dirs(item, target)
-        else:
-            if not target.exists():
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(item, target)
-
-
-def migrate_user_path(
-    *,
-    old_user_path: UserPath | UserPathSnapshot,
-    new_user_path: UserPath | UserPathSnapshot,
-    remove_old: bool = False,
-) -> None:
-    if old_user_path.user_root.resolve() == new_user_path.user_root.resolve():
-        return
-
-    merge_dirs(old_user_path.data_dir, new_user_path.data_dir)
-    merge_dirs(old_user_path.cache_dir, new_user_path.cache_dir)
-    merge_dirs(old_user_path.logs_dir, new_user_path.logs_dir)
-
-    if remove_old:
-        shutil.rmtree(old_user_path.user_root, ignore_errors=True)
+    return SessionPath(
+        session_id=sid,
+        session_root=session_root,
+        provider_dir=provider_dir,
+        memory_dir=memory_dir,
+        observations_dir=observations_dir,
+        turns_dir=turns_dir,
+        artifacts_dir=artifacts_dir,
+        logs_dir=logs_dir,
+    )

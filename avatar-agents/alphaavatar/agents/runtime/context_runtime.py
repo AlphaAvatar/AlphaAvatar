@@ -141,9 +141,9 @@ class InteractionMethod:
 
 
 @dataclass
-class AvatarRuntimeContext:
+class ContextRuntime:
     """
-    Unified runtime context container.
+    Unified context runtime container.
 
     This object stores both system-level and turn-level context.
     The template layer decides where each field is injected.

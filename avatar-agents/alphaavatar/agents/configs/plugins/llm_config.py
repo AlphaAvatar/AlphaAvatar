@@ -20,11 +20,11 @@ from pydantic import BaseModel, Field
 class LLMConfig(BaseModel):
     """Configuration for the LLM plugin used in the agent."""
 
-    llm_plugin: Literal["openai"] | None = Field(
+    plugin: Literal["openai"] | None = Field(
         default=None,
         description="LLM plugin to use for language/real-time model interactions.",
     )
-    llm_model: str | None = Field(
+    model: str | None = Field(
         default=None,
         description="Model to use for language/real-time model interactions.",
     )
@@ -34,10 +34,10 @@ class LLMConfig(BaseModel):
     def get_plugin(self) -> llm.LLM | llm.RealtimeModel | None:
         """Returns the LLM plugin based on llm config."""
 
-        if self.llm_model is None:
+        if self.model is None:
             return None
 
-        match self.llm_plugin:
+        match self.plugin:
             case "openai":
                 try:
                     from livekit.plugins import openai
@@ -46,6 +46,6 @@ class LLMConfig(BaseModel):
                         "The 'openai.LLM' plugin is required for livekit.plugins.openai but is not installed.\n"
                         "To fix this, install the optional dependency: `pip install livekit-plugins-openai`"
                     )
-                return openai.LLM(model=self.llm_model)
+                return openai.LLM(model=self.model)
             case _:
                 return None

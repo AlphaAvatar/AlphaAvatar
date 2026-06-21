@@ -13,6 +13,7 @@
 # limitations under the License.
 import json
 import os
+from typing import Any
 
 from langchain_qdrant import QdrantVectorStore
 from livekit.agents.inference_runner import _InferenceRunner
@@ -27,7 +28,9 @@ from qdrant_client.models import (
 )
 
 from alphaavatar.agents.memory import VectorRunnerOP
-from alphaavatar.agents.utils.vdb import embedding, qdrant
+from alphaavatar.agents.providers import ProviderKind, ProviderTaskConfig
+from alphaavatar.agents.providers.embedding import create_embedding_model
+from alphaavatar.agents.utils.vdb import qdrant
 
 
 class QdrantRunner(_InferenceRunner):
@@ -127,6 +130,39 @@ class QdrantRunner(_InferenceRunner):
 
         return result
 
+    #
+    # Runner Interface
+    #
+
+    def _get_vdb_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        vdb_config = dict(config)
+        vdb_config.pop("embedding", None)
+        return vdb_config
+
+    def _get_memory_embeddings(self, config: dict[str, Any]):
+        embedding_config = config.get("embedding")
+
+        if not embedding_config:
+            raise ValueError("`embedding` is required in MEMORY_VDB_CONFIG")
+
+        provider = embedding_config.get("provider")
+        model = embedding_config.get("model")
+        extra = embedding_config.get("extra") or {}
+
+        if not provider:
+            raise ValueError("`embedding.provider` is required in MEMORY_VDB_CONFIG")
+        if not model:
+            raise ValueError("`embedding.model` is required in MEMORY_VDB_CONFIG")
+
+        task_config = ProviderTaskConfig(
+            kind=ProviderKind.EMBEDDING,
+            provider=provider,
+            model=model,
+            extra=extra,
+        )
+
+        return create_embedding_model(task_config)
+
     def initialize(self) -> None:
         # get config
         config = os.getenv("MEMORY_VDB_CONFIG", "{}")
@@ -134,10 +170,10 @@ class QdrantRunner(_InferenceRunner):
         self._collection_name = config.get("collection_name", None)
 
         # init client
-        self._client = qdrant.get_client(**config)
+        self._client = qdrant.get_client(**self._get_vdb_config(config))
 
         # init memory
-        self._embeddings = embedding.get_model(**config)
+        self._embeddings = self._get_memory_embeddings(config)
         self._ensure_collection(
             self._collection_name,
             len(self._embeddings.embed_query("dimension-probe")),

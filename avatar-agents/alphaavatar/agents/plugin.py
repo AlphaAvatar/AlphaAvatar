@@ -16,6 +16,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from enum import Enum
+from typing import Any
 
 from livekit.agents import Plugin
 from livekit.agents.inference_runner import _InferenceRunner
@@ -140,3 +141,17 @@ class AvatarPlugin(Plugin):
                 raise RuntimeError(
                     f"Failed to bootstrap inference runners for plugin '{name}': {e}"
                 ) from e
+
+
+class AvatarRuntimePlugin:
+    """Base lifecycle interface for runtime plugins.
+
+    Plugins can override these methods if they need session-level startup
+    or cleanup logic.
+    """
+
+    async def on_session_start(self, **kwargs: Any) -> None:
+        pass
+
+    async def on_session_stop(self, **kwargs: Any) -> None:
+        pass

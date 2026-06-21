@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from alphaavatar.agents import AvatarModule, AvatarPlugin
+from alphaavatar.agents.runtime import SessionRuntime
 from alphaavatar.agents.tools import DeepResearchAPI
-from alphaavatar.agents.utils.files.work_dirs import UserPath
 
 from .deepresearch_tavily import TavilyDeepResearchTool
 from .log import logger
@@ -32,7 +32,7 @@ class TavilyPlugin(AvatarPlugin):
 
     def get_plugin(
         self,
-        user_path: UserPath,
+        session_runtime: SessionRuntime,
         deepresearch_init_config: dict,
         *args,
         **kwargs,
@@ -41,7 +41,7 @@ class TavilyPlugin(AvatarPlugin):
             status_emitter = kwargs.pop("status_emitter", None)
 
             deepresearch_obj = TavilyDeepResearchTool(
-                user_path=user_path,
+                session_path=session_runtime.session_path,
                 **deepresearch_init_config,
                 **kwargs,
             )
