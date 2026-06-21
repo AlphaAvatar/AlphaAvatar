@@ -34,6 +34,9 @@ docs = [
     "pdoc3",
     "setuptools",
 ]
+providers = [
+    "alpha-avatar-agents[providers]",
+]
 
 [tool.ruff]
 line-length = 100
@@ -69,3 +72,6 @@ addopts = ["--import-mode=importlib", "--ignore=examples"]
 [tool.mypy]
 strict = true
 disallow_any_generics = false
+
+[tool.uv]
+default-groups = ["dev", "providers"]

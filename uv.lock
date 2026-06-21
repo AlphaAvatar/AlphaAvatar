@@ -41,6 +41,7 @@ docs = [
     { name = "pdoc3" },
     { name = "setuptools" },
 ]
+providers = [{ name = "alpha-avatar-agents", extras = ["providers"], editable = "avatar-agents" }]
 
 [[package]]
 name = "accelerate"
@@ -188,18 +189,28 @@ openai = [
     { name = "langchain-openai" },
     { name = "livekit-plugins-openai" },
 ]
+providers = [
+    { name = "langchain-anthropic" },
+    { name = "langchain-google-genai" },
+    { name = "langchain-openai" },
+    { name = "livekit-plugins-openai" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "langchain-anthropic", marker = "extra == 'anthropic'" },
+    { name = "langchain-anthropic", marker = "extra == 'providers'" },
     { name = "langchain-google-genai", marker = "extra == 'google'" },
+    { name = "langchain-google-genai", marker = "extra == 'providers'" },
     { name = "langchain-openai", marker = "extra == 'openai'" },
+    { name = "langchain-openai", marker = "extra == 'providers'" },
     { name = "livekit", specifier = ">=1.0.12,<2" },
     { name = "livekit-agents", specifier = "~=1.4" },
     { name = "livekit-api", specifier = ">=1.0.4,<2" },
     { name = "livekit-blingfire", specifier = "~=1.0" },
     { name = "livekit-plugins-noise-cancellation", specifier = "~=0.2" },
     { name = "livekit-plugins-openai", marker = "extra == 'openai'", specifier = "~=1.4" },
+    { name = "livekit-plugins-openai", marker = "extra == 'providers'", specifier = "~=1.4" },
     { name = "livekit-plugins-silero", specifier = "~=1.4" },
     { name = "livekit-plugins-turn-detector", specifier = "~=1.4" },
     { name = "livekit-protocol", specifier = "~=1.0" },
@@ -210,7 +221,7 @@ requires-dist = [
     { name = "python-slugify" },
     { name = "weasyprint" },
 ]
-provides-extras = ["anthropic", "google", "openai"]
+provides-extras = ["anthropic", "google", "openai", "providers"]
 
 [[package]]
 name = "alpha-avatar-channels-whatsapp"

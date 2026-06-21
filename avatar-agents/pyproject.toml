@@ -41,9 +41,22 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-openai = ["livekit-plugins-openai~=1.4", "langchain-openai"]
-google = ["langchain-google-genai"]
-anthropic = ["langchain-anthropic"]
+openai = [
+    "livekit-plugins-openai~=1.4",
+    "langchain-openai",
+]
+google = [
+    "langchain-google-genai",
+]
+anthropic = [
+    "langchain-anthropic",
+]
+providers = [
+    "livekit-plugins-openai~=1.4",
+    "langchain-openai",
+    "langchain-google-genai",
+    "langchain-anthropic",
+]
 
 [project.scripts]
 alphaavatar = "alphaavatar.agents.entrypoints.main:main"
