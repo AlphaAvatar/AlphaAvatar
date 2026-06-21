@@ -53,27 +53,31 @@
 
 ### ✅ DONE
 
-| Date    | Task                                                                                                                                            |
-| :------ | :---------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2025-10 | Developed a context manager to route real-time updated interaction information to plugin models such as memory and persona.                     |
-| 2026-05 | Added mutable user-scoped working directory support through `UserPath`, enabling plugins to follow identity changes dynamically.                |
-| 2026-05 | Added temporary-user to real-user identity resolution flow, including deferred temp directory migration and cleanup at session exit.            |
-| 2026-05 | Added runtime-aware session context construction based on room type, session mode, modality availability, user metadata, and time context.      |
-| 2026-05 | Added LiveKit room binding support for runtime components that need direct room-level access, such as status sinks and data channel publishers. |
+| Date    | Task                                                                                                                                                                                            |
+| :------ | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2025-10 | Developed a context manager to route real-time updated interaction information to plugin models such as memory and persona.                                                                     |
+| 2026-05 | Added mutable user-scoped working directory support through `UserPath`, enabling plugins to follow identity changes dynamically.                                                                |
+| 2026-05 | Added temporary-user to real-user identity resolution flow, including deferred temporary directory migration and cleanup at session exit.                                                       |
+| 2026-05 | Added runtime-aware session context construction based on room type, session mode, modality availability, user metadata, and time context.                                                      |
+| 2026-05 | Added LiveKit room binding support for runtime components that need direct room-level access, such as status sinks and data channel publishers.                                                 |
+| 2026-06 | Introduced a unified provider layer for task-based LLM and embedding calls, including structured output, usage normalization, provider tracing, and provider-based Memory / Persona extraction. |
+| 2026-06 | Refactored runtime and configuration foundations with `SessionRuntime`, `ContextRuntime`, participant-aware sessions, nested YAML config, and initial plugin lifecycle boundaries.              |
 
 ### 🧭 TODO
 
-| Priority | Task                                                                                                                                               |     Stage     |
-| :------- | :------------------------------------------------------------------------------------------------------------------------------------------------- | :-----------: |
-| 🔸       | Support different model interfaces for different plugins, such as memory extraction, persona extraction, reflection, planning, and tool reasoning. | ⏳ In Progress |
-| 🔹       | Add multi-user streaming identity management, including speaker diarization, face recognition, and conflict handling.                              |   🧩 Planned  |
-| 🔹       | Solve the cocktail-party problem for multi-speaker scenarios, including speaker separation, speaker tracking, and per-user context routing.        |   🧩 Planned  |
-| 🔹       | Add user upload lifecycle management: temporary storage during the current session, persistent storage after identity confirmation.                |   🧩 Planned  |
-| 🔹       | Add unified plugin lifecycle hooks, such as `on_user_path_changed`, `on_session_exit`, `close`, and `health_check`.                                |   🧩 Planned  |
-| 🔹       | Add richer error handling and recovery policies across model calls, tool invocation, plugin initialization, and channel adapters.                  |   🧩 Planned  |
-| 🔹       | Enrich the logging system with per-room, per-session, per-user, and per-turn prefixes.                                                             |   🧩 Planned  |
-| 🔹       | Add version control and compatibility checks for each plugin package.                                                                              |   🧩 Planned  |
-| 🔹       | Add latency profiling and optimization across voice pipeline, tool invocation, memory retrieval, RAG, MCP, status feedback, and channel adapters.  |   🧩 Planned  |
+| Priority | Task                                                                                                                                                                         |     Stage     |
+| :------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-----------: |
+| 🔸       | Build the next-generation multimodal memory runtime, including session-level event storage, conversation events, tool events, visual observations, and memory consolidation. | ⏳ In Progress |
+| 🔸       | Add multi-user streaming identity management, including participant-level speaker tracking, face recognition, user resolution, and conflict handling.                        | ⏳ In Progress |
+| 🔹       | Improve provider runtime capabilities with fallback chains, retry policies, cost estimation, provider health checks, and model compatibility validation.                     |   🧩 Planned  |
+| 🔹       | Add richer plugin lifecycle hooks such as `on_session_start`, `on_session_stop`, `on_user_path_changed`, `close`, and `health_check`.                                        |   🧩 Planned  |
+| 🔹       | Solve the cocktail-party problem for multi-speaker scenarios, including speaker separation, speaker tracking, overlapping speech handling, and per-user context routing.     |   🧩 Planned  |
+| 🔹       | Add user upload lifecycle management, including temporary session storage, identity-aware persistence, artifact indexing, and cleanup policies.                              |   🧩 Planned  |
+| 🔹       | Add session replay and audit tooling based on turns, provider traces, memory events, and runtime status events.                                                              |   🧩 Planned  |
+| 🔹       | Add richer error handling and recovery policies across model calls, tool invocation, plugin initialization, channel adapters, and realtime media streams.                    |   🧩 Planned  |
+| 🔹       | Enrich the logging and tracing system with per-room, per-session, per-participant, per-user, per-turn, and per-provider-task prefixes.                                       |   🧩 Planned  |
+| 🔹       | Add version control and compatibility checks for each plugin package, provider integration, config schema, and runtime protocol.                                             |   🧩 Planned  |
+| 🔹       | Add latency profiling and optimization across the voice pipeline, provider calls, tool invocation, memory retrieval, RAG, MCP, status feedback, and channel adapters.        |   🧩 Planned  |
 
 ---
 
@@ -204,18 +208,19 @@
 | 2026-04 | **Automatic Assistant–Tools Extraction v2** | Designed differentiated prompts for self-memory, shared Assistant–User memory, and shared Assistant–Tools memory.                |
 | 2026-04 | **Local Memory Storage and Retrieval**      | Supports local memory storage and retrieval through LanceDB.                                                                     |
 | 2026-05 | **Runtime Memory Injection**                | Memory is treated as dynamic per-turn context instead of static system prompt content to improve prefix-cache hit rate.          |
-| 2026-05 | **Identity-aware Memory Binding**           | Memory object IDs can be updated when a temporary user is resolved into a real user.                                             |
 
 ### 🧭 TODO
 
-| Priority | Task                                                                                                                |     Stage     |
-| :------- | :------------------------------------------------------------------------------------------------------------------ | :-----------: |
-| 🔸       | Allow users to actively query, recall, correct, or delete specific memories on demand.                              | ⏳ In Progress |
-| 🔹       | Add multi-user memory isolation when multiple users are interacting in the same session.                            |   🧩 Planned  |
-| 🔹       | Add event-driven memory updates for reflection, planning, behavior adaptation, and status-aware interaction traces. |   🧩 Planned  |
-| 🔹       | Add omni-memory updates from text, voice, images, video, tools, files, and external workspaces.                     |   🧩 Planned  |
-| 🔹       | Add graph-based memory search for relationships, entities, events, and long-term user goals.                        |   🧩 Planned  |
-| 🔹       | Add memory confidence, source attribution, and conflict resolution.                                                 |   🧩 Planned  |
+| Priority | Task                                                                                                                                                            |     Stage     |
+| :------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-----------: |
+| 🔸       | Add visual-event memory from the visual stream, including visual event extraction, retrievable session memory cache, and final fusion with conversation memory. | ⏳ In Progress |
+| 🔸       | Add graph-based memory association across sessions, users, entities, tools, and multimodal observations.                                                        | ⏳ In Progress |
+| 🔹       | Allow users to actively query, recall, correct, or delete specific memories on demand.                                                                          |   🧩 Planned  |
+| 🔹       | Add multi-user memory isolation when multiple users are interacting in the same session.                                                                        |   🧩 Planned  |
+| 🔹       | Add event-driven memory updates for reflection, planning, behavior adaptation, and status-aware interaction traces.                                             |   🧩 Planned  |
+| 🔹       | Add omni-memory updates from text, voice, images, video, tools, files, and external workspaces.                                                                 |   🧩 Planned  |
+| 🔹       | Add graph-based memory search for relationships, entities, events, and long-term user goals.                                                                    |   🧩 Planned  |
+| 🔹       | Add memory confidence, source attribution, and conflict resolution.                                                                                             |   🧩 Planned  |
 
 ---
 
