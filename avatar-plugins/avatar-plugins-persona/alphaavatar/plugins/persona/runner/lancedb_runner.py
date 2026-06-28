@@ -53,6 +53,7 @@ class LanceDBRunner(_InferenceRunner):
     #
     # details_items <-> Lance rows
     #
+
     def _details_to_row(self, item: dict, vector: list[float]) -> dict:
         metadata = item.get("metadata", {}) or {}
         return {
@@ -90,6 +91,7 @@ class LanceDBRunner(_InferenceRunner):
     #
     # speaker_vector <-> Lance rows
     #
+
     def _speaker_to_row(
         self, *, user_id: str, vector: list[float], row_id: str | None = None
     ) -> dict:
@@ -118,6 +120,7 @@ class LanceDBRunner(_InferenceRunner):
     #
     # face_vector <-> Lance rows
     #
+
     def _face_to_row(self, *, user_id: str, vector: list[float], row_id: str | None = None) -> dict:
         return {
             "id": str(row_id or uuid4()),

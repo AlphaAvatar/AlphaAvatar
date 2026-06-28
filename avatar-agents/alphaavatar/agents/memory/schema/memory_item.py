@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import uuid
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 from ..enum.memory_type import MemoryType
+from .graph import MemoryGraphLink, MemoryGraphNode
 
 
 class MemoryItem(BaseModel):
@@ -23,11 +25,19 @@ class MemoryItem(BaseModel):
 
     memory_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str
-    object_id: str  # Avatar id/ user id/ tool id
+
+    # all related runtime owners or participants
+    object_ids: list[str] = Field(
+        default_factory=list
+    )  # Avatar id / user id / tool id / env source id
 
     value: str
-    entities: list
-    topic: str | None
+    topic: str | None = None
     timestamp: str
 
     memory_type: MemoryType
+
+    graph_nodes: list[MemoryGraphNode] = Field(default_factory=list)
+    graph_links: list[MemoryGraphLink] = Field(default_factory=list)
+
+    extra_data: dict[str, Any] = Field(default_factory=dict)

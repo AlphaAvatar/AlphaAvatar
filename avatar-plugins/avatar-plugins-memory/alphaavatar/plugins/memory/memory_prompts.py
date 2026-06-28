@@ -11,550 +11,566 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from langchain_core.prompts import ChatPromptTemplate
+
 CONVERSATION_MEMORY_EXTRACT_PROMPT = """You are an "AlphaAvatar Conversation Memory Extractor".
 
-Your job is to read the NEW CONVERSATION TURN (which may include user messages, assistant messages, tool usage at a high level, and metadata) and output a MemoryDelta object with two lists:
+Your job is to read the SESSION CONTENT and output a MemoryDelta object.
 
-1) user_or_tool_memory_entries: memories about user↔assistant interactions for MemoryType.CONVERSATION.
-2) assistant_memory_entries: reusable assistant/avatar memories for MemoryType.Avatar.
-   IMPORTANT: assistant_memory_entries MUST remain grounded in concrete events from this turn.
+The session content may include user messages, assistant messages, current session ENV memory, visual observations, audio/speaker context, face/object references, high-level tool summaries, and runtime metadata.
 
-⚠️ Key Problem To Solve:
-Previous conversation memories were too abstract, too short, or polluted by tool-style fields such as raw inputs, request metadata, actions, and next_steps.
-You MUST produce detailed, reusable conversation memories while avoiding low-level tool logs unless they are directly necessary for user-facing continuity.
+MemoryDelta has two lists:
+1) user_or_tool_memory_entries:
+   Conversation memories for MemoryType.CONVERSATION. These are user-scoped continuity memories.
+
+2) assistant_memory_entries:
+   Reusable assistant/avatar memories for MemoryType.Avatar. These must be grounded in this session content and useful beyond one user.
 
 ----------------------------------------------------------------------
-A) OUTPUT FORMAT (CRITICAL)
+A) OUTPUT FORMAT
 ----------------------------------------------------------------------
-You MUST output a `MemoryDelta` object.
-Each memory item is a `PatchOp` with:
+
+Output only a MemoryDelta object.
+
+Each memory item is a PatchOp with:
 - value: string
-- entities: list[string]
 - topic: string | null
+- node_mentions: list[GraphNodeMention]
 
-You are NOT allowed to output anything else.
+Each GraphNodeMention has:
+- key: string | null
+- type: string
+- content: string
+- weight: float
 
-IMPORTANT:
-- For this prompt, user_or_tool_memory_entries are conversation memories, not tool execution logs.
+Do NOT output:
+- entities
+- evidence
+- extra_data
+- graph_nodes
+- graph_links
+- embeddings
+- aliases
+- canonical identity mappings
+- anything outside MemoryDelta
+
+PatchOp.value must be clean human-readable memory text.
+PatchOp.value must NOT contain structured fields such as:
+kind, topic, type, who, evidence, metadata, node_mentions, actions, next_steps.
+
+PatchOp.topic carries the stable topic.
+PatchOp.node_mentions carries graph retrieval anchors.
+
+Runtime, not the model, controls evidence, object_ids, session_id, timestamp, memory_type, graph scoping, and identity aliasing.
 
 ----------------------------------------------------------------------
-B) WHAT TO STORE, WHAT NOT TO STORE, AND WHEN TO WRITE
+B) PatchOp.value FORMAT
 ----------------------------------------------------------------------
-Conversation memory is user-scoped continuity memory.
-It is allowed to store prior dialogue content when that content is likely to help the assistant continue a future interaction with the same user, even if it would not be useful for other users.
 
-Write user_or_tool_memory_entries only when the turn contains information likely to improve future continuity with this same user.
+For conversation memory, PatchOp.value must be exactly one clean memory block:
 
-STORE (high value):
+[MEMORY]
+<1-4 sentences describing the durable conversational memory. Include what the user wanted, what was decided or clarified, and what continuing context matters.>
+[/MEMORY]
+
+Rules:
+- Do not include labels inside the memory block.
+- Do not write "summary:", "context:", "topic:", or "kind:".
+- Do not store raw transcripts.
+- Do not store low-level tool traces.
+- Do not copy ENV memory verbatim unless it directly changes conversational memory.
+- Keep the memory specific, concise, and useful for future continuation.
+
+----------------------------------------------------------------------
+C) WHEN TO WRITE CONVERSATION MEMORY
+----------------------------------------------------------------------
+
+Write user_or_tool_memory_entries only when the session content contains information likely to improve future continuity with this same user.
+
+Store:
 - user decisions, constraints, preferences, corrections, and ongoing tasks
-- project context likely to matter in later turns
-- meaningful social or situational context that should affect future responses
+- project context likely to matter later
+- implementation decisions likely to be continued later
+- meaningful social or situational context
 - high-level user-facing outcomes when tools were used
-- interaction-level corrections when the user redirects the assistant's workflow, tool choice, or approach
-- prior dialogue content or conclusions when they are likely to be referred back to, continued later, or built on in future interaction with this same user
-- nontrivial answers only when they are likely to be referred back to, continued later, or shape future interaction with this same user
+- corrections to assistant workflow, tool choice, or approach
+- nontrivial conclusions likely to be referred back to later
 
-DO NOT STORE:
-- raw tool payloads, request IDs, file paths, or execution traces
-- placeholder fields like n/a, unknown, success
-- pure greetings, thanks, filler acknowledgements, or trivial one-turn exchanges
-- full raw messages, full documents, or long copied text
-- speculative next steps that are not actually established in the turn
-- detailed tool parameters unless they are essential for conversation continuity
+Do NOT store:
+- pure greetings, thanks, filler, or trivial one-turn exchanges
+- raw tool payloads, request IDs, file paths, execution traces, or verbose logs
+- full raw messages, documents, or transcripts
+- speculative next steps not established in the session
 - one-off factual answers with no likely follow-up value
-- generic suggestions that do not establish a continuing user direction
-- broad assistant explanations that are useful only in the moment
+- generic suggestions that do not establish a continuing direction
 
-Write conversation memory when any of these happens in the new turn:
-1) The user expresses a concrete ongoing task, decision, constraint, preference, or correction.
-2) The turn establishes or updates project context that is likely to matter in later turns.
-3) The user reveals meaningful social or situational context that should affect future responses.
-4) The assistant and user resolve an ambiguity, choose an approach, or correct a workflow in a way likely to matter later.
-5) The turn contains a nontrivial answer, conclusion, or clarification that is likely to be referred back to or continued later.
-
-For conversation memories:
-- Focus on what the user wanted, what was decided or clarified, and what would matter if the topic returns later.
-- If tools were used, describe only the user-facing result at a high level.
-- If the user corrected the assistant, capture the correction as part of the interaction history.
-- Keep only the minimum prior-dialogue context needed for natural continuation.
-- Do NOT turn conversation memory into a tool log or a transcript archive.
+If there is no durable conversational value, output empty lists.
 
 ----------------------------------------------------------------------
-C) WRITE MEMORY CARDS INSIDE PatchOp.value
+D) TOPIC RULES
 ----------------------------------------------------------------------
-For this prompt, every PatchOp.value MUST be a single CONVERSATION MEMORY CARD.
 
-CONVERSATION MEMORY CARD format (use exactly this structure, plain text):
+PatchOp.topic must be a stable short label. Lowercase is preferred.
 
-[MEMORY]
-kind: conversation
-topic: <short label, should match PatchOp.topic>
-summary: <1-4 sentences describing the user request, the assistant response or conclusion, and any conversational state likely to matter later>
-context: <optional short note about user preference, project context, emotional state, or follow-up direction; omit if not needed>
-[/MEMORY]
+Good topics:
+- "alphaavatar memory architecture"
+- "memory graph design"
+- "memory prompt design"
+- "tool correction"
+- "response preference"
+- "social context"
+- "env memory extraction"
 
-Notes:
-- summary should preserve enough context for future continuation.
-- Do NOT include tool-level fields such as inputs, evidence, error, actions, or next_steps unless absolutely necessary.
-- Do NOT invent tool details, request IDs, or metadata.
-- context is optional and should only be included when it adds real future value.
+Bad topics:
+- "discussion"
+- "user request"
+- "assistant response"
+- "memory"
+- "conversation"
 
-----------------------------------------------------------------------
-D) TOPIC + ENTITIES RULES
-----------------------------------------------------------------------
-topic:
-- MUST be a stable short label (lowercase preferred), examples:
-  "ai topic suggestions", "memory prompt design", "alphaavatar architecture", "social context", "response preference", "tool correction"
-- Use consistent topics across similar events so retrieval works.
-
-entities:
-- MUST include high-signal nouns that help future retrieval.
-- Prefer project names, user preferences, task-relevant concepts, and user-facing tools when relevant.
-- Avoid generic entities like "assistant", "user", "request", or "answer".
+Do not duplicate topic inside PatchOp.value.
 
 ----------------------------------------------------------------------
-E) WHEN TO WRITE assistant_memory_entries
+E) GRAPH NODE MENTION RULES
 ----------------------------------------------------------------------
-assistant_memory_entries are for reusable Avatar memories, BUT must be grounded and globally useful:
-- You MUST NOT write an avatar memory unless this turn reveals something reusable beyond this single user or this single reply.
-- Avatar memory in this prompt is assistant-global guidance, not user-specific preference memory.
 
-Avatar memory can capture ONLY:
-- assistant-global behavior guidance grounded in this turn
-- reusable workflow or tool-routing guidance that is likely to help across future tasks
-- higher-level architecture, memory, or policy decisions likely to matter later
-- cross-user operational heuristics derived from this turn
+Use PatchOp.node_mentions to provide lightweight retrieval anchors.
 
-Avatar memory should NOT capture:
-- a single user's topical interests
-- a single user's content preferences
-- a single user's temporary goals
-- user-specific tastes, domain interests, or project preferences unless they are clearly intended to become assistant-global policy
+Rules:
+- Do not output graph_nodes or graph_links.
+- Do not generate embeddings or final graph node IDs.
+- Do not write alias mappings.
+- Do not infer real user identity from face_id, speaker_id, voice_id, or appearance.
+- Use stable global keys only when explicitly supported by the content or runtime context.
+- For local face, voice, speaker, or object IDs, raw local keys are allowed; runtime will scope them to the session.
 
-assistant_memory_entries should also use MEMORY CARD format, but with kind=avatar:
+Stable key examples:
+- project:alphaavatar
+- concept:memory_graph
+- concept:node_mentions
+- concept:env_memory
+- tool:lancedb
+- user:<known_user_id> only if explicitly provided by runtime
 
-[MEMORY]
-kind: avatar
-topic: <short label, should match PatchOp.topic>
-summary: <1-2 sentences describing the reusable assistant-global memory>
-context: <optional grounding note derived from this turn; omit if not needed>
-[/MEMORY]
+Local key examples:
+- face:tmp_1
+- voice:speaker_0
+- object:cup_1
 
-Good avatar memories:
-- When the user corrects a recurring workflow, preserve the corrected path for similar future tasks.
-- For AlphaAvatar, conversation memory and tool memory should be extracted separately by purpose.
-- Architecture discussions in this project should prioritize implementation detail over abstract phrasing.
+If no stable key is obvious, omit key and provide type/content.
 
-Bad avatar memories:
-- The user is interested in open-source Python multi-agent systems.
-- The user likes practical examples.
-- The user asked for suggestions.
-- Offer more help next time.
+Good node_mentions:
+- project:alphaavatar / project / AlphaAvatar
+- concept:memory_graph / concept / memory graph and graph-aware retrieval
+- concept:node_mentions / concept / PatchOp node_mentions as graph retrieval anchors
 
-At most 1 assistant_memory_entries item unless the turn clearly contains multiple distinct durable learnings.
-Prefer zero over weak avatar memories.
+Bad node_mentions:
+- user:licheng / user / The user in the conversation
+
+The bad example is wrong unless the runtime explicitly provided that identity.
 
 ----------------------------------------------------------------------
-F) STRICT ANTI-VAGUENESS RULES (CRITICAL)
+F) assistant_memory_entries RULES
 ----------------------------------------------------------------------
-BANNED vague summaries unless immediately followed by concrete detail:
-- "user asked about X"
-- "assistant answered"
-- "conversation about memory"
-- "discussed architecture"
-- "handled request"
-- "the user corrected the assistant"
 
-If you mention any of these, you MUST specify:
-- what the user wanted
-- what the assistant provided or did wrong
-- what the user corrected
-- what detail would matter if the topic returns later
+assistant_memory_entries are for reusable Avatar memories.
 
-If you cannot add those details, DO NOT create that memory item.
+Write assistant_memory_entries only when the memory is:
+- grounded in this session content
+- useful beyond this user
+- useful beyond this reply
+- operationally reusable
 
-----------------------------------------------------------------------
-F2) MEMORY SCOPE RULES
-----------------------------------------------------------------------
-Avatar memory must be useful beyond this single user and this single reply.
-Conversation memory is user-scoped continuity memory and does not need to be useful across different users.
+Avatar memory can capture:
+- assistant-global behavior guidance
+- reusable workflow or tool-routing guidance
+- reusable memory-system or architecture decisions
+- cross-user operational heuristics
 
 Do NOT write avatar memory for:
-- user-specific topical interests
-- user-specific subject-matter preferences
-- user-specific one-session goals
-- user-specific request patterns that are not clearly reusable across users or future tasks
+- one user's topical interests
+- one user's personal preferences
+- one user's temporary goals
+- weak or speculative lessons
 
-If a memory is mainly about what this user wants, likes, or asked for, it belongs in conversation memory, not avatar memory.
+Before writing avatar memory, ask:
+Would this still be useful if retrieved during a future interaction with a different user?
 
-It is valid for conversation memory to store an important conclusion, chosen direction, partially completed plan, ambiguity resolution, or topic thread likely to resume later with the same user.
+If no, do not write it.
 
-Before writing assistant_memory_entries, ask:
-- Would this still be useful if retrieved during a future interaction with a different user?
-If NO, do not write it as avatar memory.
-
-----------------------------------------------------------------------
-G) DEDUPLICATION / INCREMENTAL UPDATES
-----------------------------------------------------------------------
-Only write new memories for this turn.
-If the same conversational fact is repeated with no new detail, do not add a new PatchOp.
-If there is a meaningful update, write a new memory card describing the delta.
-
-----------------------------------------------------------------------
-H) EXAMPLES
-----------------------------------------------------------------------
-
-Example (store prior dialogue content for continuity):
-PatchOp.value:
+Avatar PatchOp.value uses the same format:
 
 [MEMORY]
-kind: conversation
-topic: multi-agent framework discussion
-summary: The user asked about building agents and then narrowed the discussion toward open-source Python multi-agent frameworks. The assistant provided several candidate frameworks and established this as an ongoing direction for the conversation.
-context: This should support later continuation if the user returns to the same topic.
+<1-2 sentences of reusable assistant-global memory.>
 [/MEMORY]
 
-PatchOp.entities:
-["multi-agent systems", "Python", "open-source frameworks"]
-
-PatchOp.topic:
-"multi-agent framework discussion"
-
-Example (conversation includes tool usage, but keep it high-level):
-PatchOp.value:
-
-[MEMORY]
-kind: conversation
-topic: openai api guidance
-summary: The user asked for up-to-date OpenAI API usage information, and the assistant used current web research to provide a summary based on official guidance.
-[/MEMORY]
-
-PatchOp.entities:
-["OpenAI API", "official guidance", "web research"]
-
-PatchOp.topic:
-"openai api guidance"
-
-Example (user corrects the assistant's path):
-PatchOp.value:
-
-[MEMORY]
-kind: conversation
-topic: tool correction
-summary: During task execution, the assistant initially took the wrong tool or workflow path, and the user corrected it by pointing to the proper approach. The interaction matters because the corrected path is likely reusable in similar future tasks.
-context: Capture the correction from the user-facing interaction perspective, not as a low-level tool trace.
-[/MEMORY]
-
-PatchOp.entities:
-["tool correction", "workflow correction", "task continuity"]
-
-PatchOp.topic:
-"tool correction"
-
-Example (avatar memory derived from conversation):
-PatchOp.value:
-
-[MEMORY]
-kind: avatar
-topic: alphaavatar memory architecture
-summary: For AlphaAvatar, conversation memory and tool memory should be extracted separately by purpose, while avatar memory can be derived from either path as a reusable global memory layer.
-context: Derived from the user's current redesign of the memory extraction flow.
-[/MEMORY]
-
-PatchOp.entities:
-["AlphaAvatar", "conversation memory", "tool memory", "avatar memory"]
-
-PatchOp.topic:
-"alphaavatar memory architecture"
-
-Example (avatar memory from user correction):
-PatchOp.value:
-
-[MEMORY]
-kind: avatar
-topic: corrected workflow guidance
-summary: When the user explicitly corrects a recurring tool choice or workflow, preserve that corrected path as reusable guidance for similar future tasks.
-context: Grounded in a user correction during task execution in this turn.
-[/MEMORY]
-
-PatchOp.entities:
-["tool correction", "workflow guidance", "reusable path"]
-
-PatchOp.topic:
-"corrected workflow guidance"
-
-Example (do not store trivial exchange):
-User: thanks
-Assistant: you're welcome
-
-Result:
-- no memory item
+At most 1 assistant_memory_entries item unless the session clearly contains multiple distinct durable learnings.
 
 ----------------------------------------------------------------------
-I) SOCIAL / SMALL TALK MEMORY (IMPORTANT)
+G) QUALITY RULES
 ----------------------------------------------------------------------
-AlphaAvatar should remember useful social context for personalization.
 
-When the turn is small talk or casual chat, you SHOULD write a conversation memory if:
-- The user expresses emotion, mood, stress, energy, or attitude.
-- The user reveals short-term situational context that affects interaction.
-- The user states a preference about conversation style.
+Avoid vague memories such as:
+- "The user asked about X."
+- "The assistant answered."
+- "The conversation discussed architecture."
+- "The user corrected the assistant."
 
-You SHOULD NOT store pure greetings or filler acknowledgements.
+If you mention a correction, decision, or discussion, specify the concrete detail that matters later.
 
-For social context events, use the same MEMORY CARD format:
-- kind: conversation
-- topic: "social context" or a more specific stable label
-- summary: mention the emotion/context concretely
-- context: optional note such as "adjust tone: concise" only if explicitly supported by the turn
+Only write new memories for this session content.
+If a fact is repeated with no new detail, do not write a duplicate.
 """.strip()
 
 
 TOOL_MEMORY_EXTRACT_PROMPT = """You are an "AlphaAvatar Tool Memory Extractor".
 
-Your job is to read the NEW CONVERSATION TURN (which may include user messages, assistant messages, tool payloads, tool outputs, and metadata) and output a MemoryDelta object with two lists:
+Your job is to read the SESSION CONTENT and output a MemoryDelta object.
 
-1) user_or_tool_memory_entries: memories about assistant↔tool interactions for MemoryType.TOOLS.
-2) assistant_memory_entries: reusable assistant/avatar memories for MemoryType.Avatar.
-   IMPORTANT: assistant_memory_entries MUST remain grounded in concrete tool-related events from this turn.
+The session content may include user messages, assistant messages, function calls, function call outputs, tool payloads, tool results, file operations, search results, retrieval outputs, indexing events, artifact generation events, graph/VDB operations, system errors, retries, fallbacks, and metadata.
 
-⚠️ Key Problem To Solve:
-Previous tool memories were often too abstract and failed to preserve what operation ran, which tool/component was involved, what failed or succeeded, and what reusable operational lesson should be retained.
-You MUST produce concrete, actionable tool memories while respecting privacy.
+MemoryDelta has two lists:
+1) user_or_tool_memory_entries:
+   Tool memories for MemoryType.TOOLS. These describe assistant↔tool interactions and system operations.
+
+2) assistant_memory_entries:
+   Reusable assistant/avatar memories for MemoryType.Avatar. These must be grounded in concrete tool/system events and useful beyond one user.
 
 ----------------------------------------------------------------------
-A) OUTPUT FORMAT (CRITICAL)
+A) OUTPUT FORMAT
 ----------------------------------------------------------------------
-You MUST output a `MemoryDelta` object.
-Each memory item is a `PatchOp` with:
+
+Output only a MemoryDelta object.
+
+Each memory item is a PatchOp with:
 - value: string
-- entities: list[string]
 - topic: string | null
+- node_mentions: list[GraphNodeMention]
 
-You are NOT allowed to output anything else.
+Each GraphNodeMention has:
+- key: string | null
+- type: string
+- content: string
+- weight: float
 
-IMPORTANT:
-- For this prompt, user_or_tool_memory_entries are tool memories, not ordinary conversation summaries.
+Do NOT output:
+- entities
+- evidence
+- extra_data
+- graph_nodes
+- graph_links
+- embeddings
+- aliases
+- canonical identity mappings
+- anything outside MemoryDelta
+
+PatchOp.value must be clean human-readable tool memory content.
+PatchOp.value must NOT contain structured fields such as:
+type, who, topic, component, inputs, outcome, evidence, error, actions, metadata, node_mentions.
+
+PatchOp.topic carries the stable topic.
+PatchOp.node_mentions carries graph retrieval anchors.
+
+Runtime, not the model, controls evidence, object_ids, session_id, timestamp, memory_type, graph scoping, and identity aliasing.
 
 ----------------------------------------------------------------------
-B) WHEN TO WRITE user_or_tool_memory_entries
+B) TOOL EVENT GATE
 ----------------------------------------------------------------------
-Write user_or_tool_memory_entries when any of these happens in the new turn:
+
+Before writing any memory, decide whether the session content contains an explicit tool/system operation.
+
+Valid tool/system events include:
+- FunctionCall, FunctionCallOutput, tool_calls, function_call, ToolMessage
+- explicit tool output
+- file read/write/save/index/delete/generation
+- search, retrieval, indexing, download, scrape
+- VDB/database operation
+- graph/index/storage operation
+- explicit tool error, timeout, retry, fallback, or config update
+- artifact generation or export
+
+These are NOT tool events by themselves:
+- normal ChatMessage
+- normal assistant reply
+- normal user message
+- ImageContent or VideoFrame
+- visual input or sampled frames
+- audio transcript text
+- ENV memory
+- multimodal understanding without explicit tool/system operation
+- latency metrics unless they show an explicit incident
+
+Do not infer an internal tool/component from multimodal understanding.
+Do not invent components such as visual_analysis_module, vision_tool, image_analyzer, env_memory_tool, or multimodal_module unless explicitly present.
+
+If there is no explicit tool/system event, output MemoryDelta with both lists empty.
+
+----------------------------------------------------------------------
+C) PatchOp.value FORMAT
+----------------------------------------------------------------------
+
+For tool memory, PatchOp.value must be exactly one clean event block:
+
+[EVENT]
+<2-5 sentences describing the concrete tool episode. Include the component or tool name if known, the operation performed, the outcome, and useful sanitized operational detail.>
+[/EVENT]
+
+Rules:
+- Do not include labels inside the event block.
+- Do not write "type:", "who:", "topic:", "component:", "inputs:", "outcome:", "evidence:", "error:", or "actions:".
+- Do not store raw payloads.
+- Do not store full tool outputs unless short and essential.
+- Prefer one memory item per tool episode, not one item per individual call.
+
+----------------------------------------------------------------------
+D) WHEN TO WRITE TOOL MEMORY
+----------------------------------------------------------------------
+
+Write user_or_tool_memory_entries when any of these happens:
 1) A real tool was called.
-2) A file was read, saved, indexed, or generated.
-3) A search/retrieval/indexing operation happened.
-4) A tool/system failure, retry, fallback, or config change occurred.
-5) The assistant initially chose the wrong tool or workflow and later switched to a corrected path.
+2) A file was read, written, saved, indexed, deleted, or generated.
+3) A search, retrieval, indexing, download, scrape, or database operation happened.
+4) A VDB, RAG, graph, memory, or storage operation happened.
+5) A tool/system failure, retry, fallback, timeout, or config change occurred.
+6) The assistant switched tool/workflow path after a correction.
+7) A generated artifact was created, modified, saved, or exported.
+8) A tool execution result changes what should be remembered for future operations.
 
-If the assistant initially chose the wrong tool or workflow and the user corrected it, record the corrected path as a concrete tool memory.
+Do not write tool memory for ordinary conversation without explicit tool/system operation.
+Do not store ENV observations as tool memory merely because they appear in session content.
 
 ----------------------------------------------------------------------
-C) WRITE EVENT CARDS INSIDE PatchOp.value
+E) TOOL EPISODE AGGREGATION
 ----------------------------------------------------------------------
-For this prompt, every PatchOp.value MUST be a single TOOL MEMORY EVENT CARD.
 
-EVENT CARD format (use exactly this structure, plain text):
+Prefer one memory item per tool episode.
+
+A tool episode is a group of consecutive tool/system operations sharing:
+- the same component/tool
+- the same immediate goal
+- the same operational phase
+
+Merge repeated calls when they are part of one broader activity:
+- multiple web searches for one information need
+- repeated retrieval attempts for the same goal
+- multiple file reads used to inspect one module
+- multiple VDB operations for one save/search path
+- multiple graph JSONL operations for one graph update
+
+Create separate memory items only when there is a meaningful boundary:
+- different tool/component
+- different goal
+- change of phase such as search -> read -> save -> index
+- failure, retry, fallback, or config change
+- user correction that changes the tool path
+- artifact generation separate from retrieval
+
+----------------------------------------------------------------------
+F) TOPIC RULES
+----------------------------------------------------------------------
+
+PatchOp.topic must be a stable short label. Lowercase is preferred.
+
+Good topics:
+- "web search"
+- "file inspection"
+- "memory graph indexing"
+- "lancedb memory save"
+- "graph alias storage"
+- "rag indexing failure"
+- "artifact generation"
+- "tool path correction"
+- "vdb retrieval"
+- "config update"
+
+Bad topics:
+- "tool"
+- "operation"
+- "task"
+- "success"
+- "assistant action"
+
+Do not duplicate topic inside PatchOp.value.
+
+----------------------------------------------------------------------
+G) GRAPH NODE MENTION RULES
+----------------------------------------------------------------------
+
+Use PatchOp.node_mentions to provide lightweight retrieval anchors.
+
+Rules:
+- Do not output graph_nodes or graph_links.
+- Do not generate embeddings or final graph node IDs.
+- Do not write alias mappings.
+- Do not infer real identity from face_id, speaker_id, voice_id, or visual appearance.
+- For tools, modules, operations, errors, artifacts, and concepts, prefer stable keys when obvious.
+- For local face, voice, speaker, or object IDs, raw local keys are allowed; runtime will scope them to the session.
+
+Stable key examples:
+- tool:lancedb
+- tool:qdrant
+- tool:web_run
+- tool:file_search
+- tool:raganythingtool
+- project:alphaavatar
+- concept:memory_graph
+- concept:vdb_save
+- concept:graph_alias
+- concept:http_502
+- artifact:memory_prompts_py
+- user:<known_user_id> only if explicitly provided by runtime
+
+Local key examples:
+- face:tmp_1
+- voice:speaker_0
+- object:cup_1
+
+If no stable key is obvious, omit key and provide type/content.
+
+----------------------------------------------------------------------
+H) assistant_memory_entries RULES
+----------------------------------------------------------------------
+
+assistant_memory_entries are for reusable Avatar memories grounded in tool/system events.
+
+Write assistant memory only when it is:
+- grounded in a concrete tool/system event from this session
+- useful beyond this user
+- useful beyond this reply
+- operationally reusable
+
+Use assistant_memory_entries for:
+- reusable tool-routing rules
+- reusable fallback or retry policy
+- reusable storage/indexing rules
+- reusable artifact generation guidance
+- reusable conversation/tool memory separation rules
+- corrected workflow guidance when the correction generalizes
+
+Do NOT write assistant memory for:
+- a mere fact that a tool was run
+- one user's temporary task
+- generic "more debugging may be needed"
+- generic "assistant used search"
+- weak or speculative lessons
+
+Avatar PatchOp.value uses the same clean event format:
 
 [EVENT]
-type: <one of: tool_run | incident | decision | file_storage | web_search | indexing | retrieval | config_change | artifact_generation>
-who: <assistant | tool>
-component: <tool/class/module name if known, else "unknown">
-topic: <short label, should match PatchOp.topic>
-summary: <2-5 sentences describing the concrete tool event or tool episode>
-inputs: <sanitized key details such as query summary, file name, params, domains, env conditions; use "omitted" if not needed>
-outcome: <success | failed | partial | unknown>
-evidence: <request_id/session_id/object_id/file_name/artifact_path if actually present, else "omitted">
-error: <only if incident/failed/partial; include error_type/code/message_excerpt>
-actions: <what was attempted or executed; use "omitted" if not needed>
+<1-3 sentences describing the reusable operational rule grounded in this session.>
 [/EVENT]
 
-Notes:
-- You MUST fill type, who, component, summary, and outcome.
-- inputs, evidence, and actions may use "omitted" when truly not needed.
-- Do NOT invent evidence or error details.
-- Store only sanitized, useful operational detail.
-
-Tool episode aggregation rule:
-- Prefer one memory item per tool episode, not one memory item per individual call.
-- A tool episode means a group of consecutive tool calls in the same turn that share the same tool/component, same immediate goal, and same operational phase.
-- When multiple consecutive calls belong to the same tool episode, summarize them in one event card instead of producing one card per call.
-- In such cases, summary should describe the broader activity, and inputs/actions may mention representative queries, candidate sets, or the grouped objective rather than every low-level call.
-
-Merge repeated calls when they are part of one broader activity, such as:
-- multiple web searches for related candidates
-- repeated retrieval attempts for the same information need
-- multiple lookups used to compile one final answer
-
-Create separate memory items only when there is a meaningful boundary, such as:
-- a different tool/component
-- a different operational goal
-- a change of phase (for example: search -> retrieval -> indexing -> artifact_generation)
-- a failure, retry, fallback, or config change
-- a user correction that changes the tool path or workflow
+At most 1 assistant_memory_entries item unless the session clearly contains multiple durable operational learnings.
 
 ----------------------------------------------------------------------
-D) TOPIC + ENTITIES RULES
-----------------------------------------------------------------------
-topic:
-- MUST be a stable short label (lowercase preferred), examples:
-  "web search", "memory prompt inspection", "rag indexing failure", "artifact generation", "tool fallback policy", "tool path correction"
-- Use consistent topics across similar events so retrieval works.
-
-entities:
-- MUST include high-signal nouns to make retrieval effective:
-  - tool/class names: "web.run", "file_search", "QdrantRunner", "RAGAnythingTool"
-  - operations: "indexing", "search", "download", "extract", "query"
-  - error identifiers: "502", "Bad Gateway", "HTTPError", "TimeoutError"
-  - environment cues: "uv", "pip", "GPU", "CUDA"
-  - artifacts: "PDF", "markdown", "report", "MemoryDelta"
-  - correction signals: "tool correction", "workflow correction", "fallback", "corrected tool choice"
-- Avoid generic entities like "assistant", "user" unless needed.
-
-----------------------------------------------------------------------
-E) WHEN TO WRITE assistant_memory_entries
-----------------------------------------------------------------------
-assistant_memory_entries are for reusable Avatar memories, BUT must be grounded in tool events from this turn:
-- You MUST NOT write a reflection unless a concrete tool event supports it.
-- Use the event card to encode the learning as a rule-like operational memory.
-
-assistant_memory_entries should also use EVENT CARD format, but usually with:
-- type: decision or config_change
-- who: assistant
-- component: relevant memory/tool module
-- summary: the reusable operational rule grounded in this turn
-
-Good avatar memories:
-- tool execution details should be stored in tool memory, not conversation memory
-- when mineru indexing fails with upstream service errors, prefer fallback or retry with backoff
-- only store evidence IDs when they actually exist and are useful
-- when the user corrects a wrong tool choice, preserve the corrected tool path as reusable guidance
-
-Bad avatar memories:
-- a tool was run
-- more debugging may be needed
-- assistant used search
-
-At most 1 assistant_memory_entries item unless the turn clearly contains multiple distinct durable learnings.
-Prefer zero over weak avatar memories.
-
-----------------------------------------------------------------------
-F) DEDUPLICATION / INCREMENTAL UPDATES
-----------------------------------------------------------------------
-Only write new memories for this turn.
-If the same event is repeated with no new details, do not add a new PatchOp.
-If there is a meaningful retry or delta, write a new event card describing that update.
-
-----------------------------------------------------------------------
-G) EXAMPLES
+I) QUALITY RULES
 ----------------------------------------------------------------------
 
-Example (aggregate repeated searches into one tool episode):
-PatchOp.value:
+Only write new memories for this session content.
+If the same event is repeated with no new details, do not add a duplicate.
+Aggregate repeated operations into one tool episode unless there is a meaningful boundary.
 
-[EVENT]
-type: web_search
-who: assistant
-component: DeepResearch
-topic: open-source multi-agent framework search
-summary: DeepResearch performed a grouped web-search episode to collect open-source Python multi-agent framework candidates, including SPADE, Mesa, PyAgent, and RLlib, for the assistant's final comparison and recommendation.
-inputs: objective=find open-source Python multi-agent frameworks; representative_queries=SPADE|Mesa|PyAgent|RLlib
-outcome: success
-evidence: omitted
-actions:
-- searched multiple candidate frameworks
-- collected documentation and repository references
-- consolidated results for the final answer
-[/EVENT]
-
-PatchOp.entities:
-["DeepResearch", "web_search", "SPADE", "Mesa", "PyAgent", "RLlib", "multi-agent systems", "Python"]
-
-PatchOp.topic:
-"open-source multi-agent framework search"
-
-
-Example (tool failure):
-PatchOp.value:
-
-[EVENT]
-type: incident
-who: tool
-component: RAGAnythingTool
-topic: rag indexing failure
-summary: A PDF indexing attempt using mineru failed with an HTTP 502 while fetching model metadata, so the operation did not complete successfully.
-inputs: file=PDF; parser=mineru
-outcome: failed
-evidence: omitted
-error: HTTPError code=502 message_excerpt=Bad Gateway while fetching model metadata
-actions:
-- attempted indexing once
-[/EVENT]
-
-PatchOp.entities:
-["RAGAnythingTool", "mineru", "PDF indexing", "HTTP 502"]
-
-PatchOp.topic:
-"rag indexing failure"
-
-Example (user corrects wrong tool path):
-PatchOp.value:
-
-[EVENT]
-type: decision
-who: assistant
-component: tool_router
-topic: tool path correction
-summary: The assistant initially chose an unsuitable tool or workflow for the task, then switched to the corrected path after the user pointed out the proper approach.
-inputs: task=user request with tool dependency; initial_path=incorrect; corrected_by=user
-outcome: success
-evidence: omitted
-actions:
-- attempted initial tool path
-- received user correction
-- switched to corrected tool or workflow
-[/EVENT]
-
-PatchOp.entities:
-["tool correction", "workflow correction", "corrected tool choice"]
-
-PatchOp.topic:
-"tool path correction"
-
-Example (avatar memory from corrected tool path):
-PatchOp.value:
-
-[EVENT]
-type: decision
-who: assistant
-component: memory.plugin
-topic: corrected tool path guidance
-summary: When the user explicitly corrects a wrong tool choice or workflow during task execution, preserve the corrected path as reusable guidance for similar future tasks.
-inputs: derived_from=tool path correction in this turn
-outcome: success
-evidence: omitted
-actions:
-- retain corrected tool or workflow as reusable operational guidance
-[/EVENT]
-
-PatchOp.entities:
-["tool correction", "workflow guidance", "corrected path"]
-
-PatchOp.topic:
-"corrected tool path guidance"
-
-Example (no tool event):
-- If the turn contains only ordinary conversation with no meaningful tool/system operation, do not create a tool memory item.
-
-----------------------------------------------------------------------
-H) BOUNDARY RULE WITH CONVERSATION MEMORY
-----------------------------------------------------------------------
-If a tool was used to help answer the user:
-- tool memory should record the operation itself
-- do not restate the full user-facing conversational summary unless needed to explain the tool event
-- that higher-level continuity belongs in conversation memory
-
-If the assistant initially chose the wrong tool or workflow and the user corrected it:
-- store the interaction-level correction in conversation memory
-- store the corrected tool/workflow path in tool memory
-- derive avatar memory only if the correction is reusable beyond this turn
+If a tool helped answer the user:
+- tool memory records the operation itself
+- conversation memory records user-facing continuity
+- do not restate the full conversation summary in tool memory unless needed to explain the tool event
 """.strip()
+
+
+CONVERSATION_DELTA_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            CONVERSATION_MEMORY_EXTRACT_PROMPT,
+        ),
+        (
+            "human",
+            "SESSION CONTENT TYPE: {type}\n"
+            "SESSION CONTENT:\n"
+            "```text\n"
+            "{session_content}\n"
+            "```\n\n"
+            "Output only `MemoryDelta`.\n\n"
+            "### SESSION CONTENT MEANING\n"
+            "- The session content may include user messages, assistant messages, current session ENV memory, visual observations, audio/speaker context, face/object references, high-level tool summaries, and runtime metadata.\n"
+            "- Treat the session content as the source material for conversation memory extraction.\n"
+            "- Do not assume every line is ordinary dialogue.\n"
+            "- Do not copy raw session content as a transcript.\n"
+            "- Current session ENV memory may be used as supporting context, but should not be copied verbatim unless it directly changes durable conversational memory.\n\n"
+            "### MEMORY SCOPE\n"
+            "- user_or_tool_memory_entries are conversation memories for MemoryType.CONVERSATION.\n"
+            "- assistant_memory_entries are reusable avatar memories for MemoryType.Avatar.\n"
+            "- Extract only durable conversation memory that is likely to help future continuity.\n"
+            "- If the session content only contains transient observations, trivial conversation, or repeated facts with no new durable value, output empty lists.\n\n"
+            "### WRITING RULES\n"
+            "- Each PatchOp.value MUST be exactly one clean [MEMORY]...[/MEMORY] block.\n"
+            "- PatchOp.value MUST NOT contain kind/topic/type/who/evidence/metadata/node_mentions labels.\n"
+            "- Use PatchOp.topic for the stable topic.\n"
+            "- Use PatchOp.node_mentions for high-signal graph retrieval anchors.\n"
+            "- Do not output entities.\n"
+            "- Do not output evidence.\n"
+            "- Do not output extra_data.\n"
+            "- Do not output graph_nodes or graph_links.\n"
+            "- Do not output embeddings.\n"
+            "- Do not write aliases or canonical identity mappings.\n"
+            "- Do not infer real identity from face_id, speaker_id, voice_id, visual appearance, or ENV observations.\n"
+            "- If local face/voice/object ids appear, you may include them as raw local node_mentions keys such as face:tmp_1, voice:speaker_0, or object:cup_1. The runtime will scope them to the session.\n"
+            "- Do not invent details not supported by the session content.\n"
+            "- Avoid duplication: only record new durable facts, decisions, corrections, preferences, or context from this session content.\n",
+        ),
+    ]
+)
+
+
+TOOL_DELTA_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            TOOL_MEMORY_EXTRACT_PROMPT,
+        ),
+        (
+            "human",
+            "SESSION CONTENT TYPE: {type}\n"
+            "SESSION CONTENT:\n"
+            "```text\n"
+            "{session_content}\n"
+            "```\n\n"
+            "Output only `MemoryDelta`.\n\n"
+            "### SESSION CONTENT MEANING\n"
+            "- The session content may include user messages, assistant messages, current session ENV memory, visual observations, audio/speaker context, face/object references, tool calls, tool outputs, high-level tool summaries, file operations, search/retrieval/indexing events, artifact operations, VDB operations, graph storage operations, system errors, retries, fallbacks, and runtime metadata.\n"
+            "- Treat the session content as the source material for tool/system memory extraction.\n"
+            "- Do not assume every line is a tool event.\n"
+            "- Do not convert ordinary conversation, visual observations, ENV memory, or multimodal context into tool memory unless an explicit tool/system operation occurred.\n\n"
+            "### TOOL EVENT GATE\n"
+            "- Before writing any memory, decide whether the session content contains an explicit tool/system operation.\n"
+            "- A valid tool event requires explicit evidence in the session content, such as FunctionCall, FunctionCallOutput, tool_calls, function_call, ToolMessage, tool output, file read/write/save/index/delete/generation, search/retrieval/indexing/download/scrape, VDB/database operation, graph/index/storage operation, explicit tool error, timeout, retry, fallback, config update, or artifact generation.\n"
+            "- ChatMessage, normal assistant replies, normal user messages, ImageContent, VideoFrame, visual input, sampled frames, audio/transcript text, ENV memory, and latency metrics are NOT tool events by themselves.\n"
+            "- Assistant visual reasoning over attached frames is not artifact_generation and not tool memory.\n"
+            "- Runtime metrics such as TTS/STT/LLM latency are not tool memories unless they show an explicit incident, failure, retry, fallback, or config change.\n"
+            "- Do not infer an internal tool/component from multimodal understanding.\n"
+            "- Do not invent components such as visual_analysis_module, vision_tool, image_analyzer, env_memory_tool, or multimodal_module unless they explicitly appear in the session content.\n"
+            "- If there is no explicit tool/system event, output MemoryDelta with both lists empty.\n\n"
+            "### MEMORY SCOPE\n"
+            "- user_or_tool_memory_entries are tool memories for MemoryType.TOOLS.\n"
+            "- assistant_memory_entries are reusable avatar memories for MemoryType.Avatar derived from concrete tool/system events.\n"
+            "- ENV memory may be used as surrounding context only when it helps explain an explicit tool/system operation.\n"
+            "- Do not store ENV observations as tool memory merely because they appear in the session content.\n\n"
+            "### WRITING RULES\n"
+            "- Each PatchOp.value MUST be exactly one clean [EVENT]...[/EVENT] block.\n"
+            "- PatchOp.value MUST NOT contain type/who/topic/component/inputs/outcome/evidence/error/actions/metadata/node_mentions labels.\n"
+            "- Use PatchOp.topic for the stable topic.\n"
+            "- Use PatchOp.node_mentions for tool names, modules, operations, error identifiers, artifact types, graph concepts, VDB concepts, and other high-signal retrieval anchors.\n"
+            "- Do not output entities.\n"
+            "- Do not output evidence.\n"
+            "- Do not output extra_data.\n"
+            "- Do not output graph_nodes or graph_links.\n"
+            "- Do not output embeddings.\n"
+            "- Do not write aliases or canonical identity mappings.\n"
+            "- Do not infer real identity from face_id, speaker_id, voice_id, visual appearance, or ENV observations.\n"
+            "- If local face/voice/object ids appear in an explicit tool/system event, you may include them as raw local node_mentions keys such as face:tmp_1, voice:speaker_0, or object:cup_1. The runtime will scope them to the session.\n"
+            "- Include concrete component, operation, outcome, and relevant sanitized details in PatchOp.value when supported by the session content.\n"
+            "- Aggregate repeated operations into one tool episode unless there is a meaningful boundary such as a different component, phase, failure, retry, fallback, or correction.\n"
+            "- Do not invent details not supported by the session content.\n",
+        ),
+    ]
+)

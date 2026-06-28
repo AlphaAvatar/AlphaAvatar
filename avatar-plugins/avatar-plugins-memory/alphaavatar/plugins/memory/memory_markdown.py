@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import json
 import pathlib
 from collections import defaultdict
 from typing import Any
@@ -22,19 +23,10 @@ def _safe_name(value: str) -> str:
     return "".join(c if c.isalnum() or c in ("-", "_", ".") else "_" for c in str(value))
 
 
-def _fmt_list(value: Any) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return [str(x) for x in value if x is not None and str(x).strip()]
-    return [str(value)]
-
-
 def _render_frontmatter(
     *,
     title: str,
     memory_scope: str,
-    object_id: str = "",
     session_id: str = "",
     day: str = "",
     memory_count: int = 0,
@@ -46,8 +38,6 @@ def _render_frontmatter(
         f"memory_count: {memory_count}",
     ]
 
-    if object_id:
-        lines.append(f'object_id: "{object_id}"')
     if session_id:
         lines.append(f'session_id: "{session_id}"')
     if day:
@@ -68,33 +58,63 @@ def _wrap_text_block(text: str) -> list[str]:
     return [f"{fence}text", text, fence]
 
 
+def _render_json_block(value: Any) -> list[str]:
+    return _wrap_text_block(json.dumps(value, ensure_ascii=False, indent=2, default=str))
+
+
 def _render_memory_entry(item: dict[str, Any]) -> str:
     metadata = item.get("metadata", {}) or {}
 
     memory_id = str(item.get("id", "")).strip()
     page_content = str(item.get("page_content", "")).strip()
     session_id = str(metadata.get("session_id", "")).strip()
-    object_id = str(metadata.get("object_id", "")).strip()
+    object_ids = metadata.get("object_ids") or []
     topic = str(metadata.get("topic", "")).strip()
     ts = str(metadata.get("ts", "")).strip()
     memory_type = str(metadata.get("memory_type", "")).strip()
-    entities = _fmt_list(metadata.get("entities"))
+    graph_nodes = metadata.get("graph_nodes") or []
+    graph_links = metadata.get("graph_links") or []
+    extra_data = metadata.get("extra_data") or {}
 
     lines = [
         f"## Memory: {memory_id}",
         "",
         f"- **ts**: {ts}",
         f"- **memory_type**: {memory_type}",
-        f"- **object_id**: {object_id}",
+        f"- **object_ids**: {', '.join(str(x) for x in object_ids) if object_ids else 'N/A'}",
         f"- **session_id**: {session_id}",
         f"- **topic**: {topic or 'N/A'}",
-        f"- **entities**: {', '.join(entities) if entities else 'N/A'}",
         "",
         "### Content",
         "",
         *_wrap_text_block(page_content),
         "",
     ]
+
+    if graph_nodes:
+        lines += [
+            "### Graph Nodes",
+            "",
+            *_render_json_block(graph_nodes),
+            "",
+        ]
+
+    if graph_links:
+        lines += [
+            "### Graph Links",
+            "",
+            *_render_json_block(graph_links),
+            "",
+        ]
+
+    if extra_data:
+        lines += [
+            "### Extra Data",
+            "",
+            *_render_json_block(extra_data),
+            "",
+        ]
+
     return "\n".join(lines)
 
 
@@ -196,11 +216,21 @@ def _render_merged_document(
         entries.keys(),
         key=lambda mid: _entry_sort_key(mid, entries[mid]),
     )
-    body = "\n".join(entries[mid]["raw"].rstrip() for mid in ordered_ids).strip()
+    body = "\n\n".join(entries[mid]["raw"].rstrip() for mid in ordered_ids).strip()
 
     if body:
         return frontmatter.rstrip() + "\n\n" + body + "\n"
+
     return frontmatter.rstrip() + "\n"
+
+
+def _is_avatar_memory_type(memory_type: Any) -> bool:
+    value = str(memory_type)
+    return value in {
+        "Avatar",
+        "MemoryType.Avatar",
+        "Assistant Memory",
+    } or value.endswith(".Avatar")
 
 
 def save_memory_items_to_markdown(
@@ -233,7 +263,7 @@ def save_memory_items_to_markdown(
         session_id = str(metadata.get("session_id", "") or "unknown_session")
         ts = metadata.get("ts", "")
 
-        is_avatar = memory_type == "Avatar" or memory_type.endswith(".Avatar")
+        is_avatar = _is_avatar_memory_type(memory_type)
         if is_avatar:
             day = time_utils.time_str_to_datetime(ts).strftime("%Y-%m-%d")
             avatar_groups[day].append(item)

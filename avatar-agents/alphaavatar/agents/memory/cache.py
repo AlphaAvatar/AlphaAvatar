@@ -21,20 +21,38 @@ from alphaavatar.agents.utils.files.work_dirs import SessionPath
 from .enum.memory_type import MemoryType
 
 
+def _normalize_object_ids(value: list[str] | str | None) -> list[str]:
+    if value is None:
+        return []
+
+    values = value if isinstance(value, list) else [value]
+
+    out: list[str] = []
+    seen: set[str] = set()
+
+    for x in values:
+        s = str(x).strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+
+    return out
+
+
 class MemoryCache:
-    """It is used to temporarily store the short-term memory content of the Avatar's current conversation session.
-    When the session ends, it will be updated to the memory database."""
+    """Temporary memory cache for the current session."""
 
     def __init__(
         self,
         timestamp: TimeStamp,
         session_id: str,
         session_path: SessionPath,
-        user_or_tool_id: str,
+        object_ids: list[str] | str | None,
         memory_type: MemoryType = MemoryType.CONVERSATION,
     ):
         self._timestamp = timestamp
-        self._user_or_tool_id = user_or_tool_id
+        self._object_ids = _normalize_object_ids(object_ids)
         self._session_id = session_id
         self._session_path = session_path
         self._memory_type = memory_type
@@ -45,13 +63,11 @@ class MemoryCache:
         return self._timestamp.time_str
 
     @property
-    def user_or_tool_id(self) -> str:
-        """Get the user/tool ID associated with the memory cache."""
-        return self._user_or_tool_id
+    def object_ids(self) -> list[str]:
+        return self._object_ids
 
     @property
     def session_id(self) -> str:
-        """Get the session ID associated with the memory cache."""
         return self._session_id
 
     @property
@@ -66,9 +82,13 @@ class MemoryCache:
     def messages(self) -> list[ChatItem]:
         return self._messages
 
-    @user_or_tool_id.setter
-    def user_or_tool_id(self, id: str):
-        self._user_or_tool_id = id
+    @object_ids.setter
+    def object_ids(self, value: list[str] | str | None) -> None:
+        self._object_ids = _normalize_object_ids(value)
+
+    def add_object_ids(self, value: list[str] | str | None) -> None:
+        merged = self._object_ids + _normalize_object_ids(value)
+        self._object_ids = _normalize_object_ids(merged)
 
     def add_message(self, message: ChatItem):
         """Add a new message to the cache."""

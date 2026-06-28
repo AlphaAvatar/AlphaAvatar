@@ -16,19 +16,33 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from alphaavatar.agents.memory import MemoryItem
+from alphaavatar.agents.memory.schema.graph import (
+    GraphNodeMention,
+    MemoryGraphLink,
+    MemoryGraphNode,
+)
 
 
 class PatchOp(BaseModel):
     value: str = Field(
         default="",
-        description="The memory event text.",
+        description=(
+            "Clean human-readable memory text. Do not include structured fields "
+            "such as kind/topic/type/who/evidence/metadata."
+        ),
     )
-    entities: list[str] = Field(
-        default_factory=list,
-        description="Related entities extracted from the memory value are used to associate with other memory items.",
-    )
+
     topic: str | None = Field(
-        default=None, description="The topic described by the current memory content"
+        default=None,
+        description="Stable short topic label for retrieval and grouping.",
+    )
+
+    node_mentions: list[GraphNodeMention] = Field(
+        default_factory=list,
+        description=(
+            "Lightweight graph anchors mentioned in this memory. "
+            "Do not include embeddings, graph_nodes, graph_links, aliases, or evidence."
+        ),
     )
 
 
@@ -57,11 +71,17 @@ def flatten_items(memory_items: list[MemoryItem]) -> list[dict[str, Any]]:
                 "page_content": memory.value,
                 "metadata": {
                     "session_id": memory.session_id,
-                    "object_id": memory.object_id,  # Avatar id/ user id/ tool id
-                    "entities": memory.entities,
+                    "object_ids": memory.object_ids,
                     "topic": memory.topic,
                     "ts": memory.timestamp,
-                    "memory_type": memory.memory_type,
+                    "memory_type": (
+                        memory.memory_type.value
+                        if hasattr(memory.memory_type, "value")
+                        else str(memory.memory_type)
+                    ),
+                    "graph_nodes": [x.model_dump(mode="json") for x in memory.graph_nodes],
+                    "graph_links": [x.model_dump(mode="json") for x in memory.graph_links],
+                    "extra_data": memory.extra_data,
                 },
             }
         )
@@ -75,7 +95,7 @@ def rebuild_from_items(items: list[dict[str, Any]]) -> list[MemoryItem]:
     for it in items:
         mid = it.get("id", None)
         value = it.get("page_content", None)
-        meta = it.get("metadata", {})
+        meta = it.get("metadata", {}) or {}
 
         if mid is None or value is None:
             continue
@@ -85,11 +105,17 @@ def rebuild_from_items(items: list[dict[str, Any]]) -> list[MemoryItem]:
                 memory_id=mid,
                 value=value,
                 session_id=meta.get("session_id"),
-                object_id=meta.get("object_id"),
-                entities=meta.get("entities"),
+                object_ids=meta.get("object_ids") or [],
                 topic=meta.get("topic"),
                 timestamp=meta.get("ts"),
                 memory_type=meta.get("memory_type"),
+                graph_nodes=[
+                    MemoryGraphNode.model_validate(x) for x in meta.get("graph_nodes") or []
+                ],
+                graph_links=[
+                    MemoryGraphLink.model_validate(x) for x in meta.get("graph_links") or []
+                ],
+                extra_data=meta.get("extra_data") or {},
             )
         )
 
