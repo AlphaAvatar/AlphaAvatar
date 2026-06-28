@@ -201,26 +201,27 @@
 
 ### ✅ DONE
 
-| Date    | Milestone                                   | Notes                                                                                                                            |
-| :------ | :------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------- |
-| 2025-09 | **Automatic Memory Extraction v1**          | Built on Memory Client, enabling memory capture and retrieval across Assistant–User, Assistant–Tools, and Assistant self-memory. |
-| 2026-01 | **Automatic Assistant–Tools Extraction v1** | Added Assistant–Tools memory in user sessions for DeepResearch and RAG plugins.                                                  |
-| 2026-04 | **Automatic Assistant–Tools Extraction v2** | Designed differentiated prompts for self-memory, shared Assistant–User memory, and shared Assistant–Tools memory.                |
-| 2026-04 | **Local Memory Storage and Retrieval**      | Supports local memory storage and retrieval through LanceDB.                                                                     |
-| 2026-05 | **Runtime Memory Injection**                | Memory is treated as dynamic per-turn context instead of static system prompt content to improve prefix-cache hit rate.          |
+| Date    | Milestone                                   | Notes                                                                                                                                                                                                                                 |
+| :------ | :------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2025-09 | **Automatic Memory Extraction v1**          | Built on Memory Client, enabling memory capture and retrieval across Assistant–User, Assistant–Tools, and Assistant self-memory.                                                                                                      |
+| 2026-01 | **Automatic Assistant–Tools Extraction v1** | Added Assistant–Tools memory in user sessions for DeepResearch and RAG plugins.                                                                                                                                                       |
+| 2026-04 | **Automatic Assistant–Tools Extraction v2** | Designed differentiated prompts for self-memory, shared Assistant–User memory, and shared Assistant–Tools memory.                                                                                                                     |
+| 2026-04 | **Local Memory Storage and Retrieval**      | Supports local memory storage and retrieval through LanceDB.                                                                                                                                                                          |
+| 2026-05 | **Runtime Memory Injection**                | Memory is treated as dynamic per-turn context instead of static system prompt content to improve prefix-cache hit rate.                                                                                                               |
+| 2026-06 | **Graph-aware Memory Foundation**           | Added graph-based memory association across sessions, users, entities, tools, and future multimodal observations. Includes multi-object MemoryItem, session-scoped graph nodes, alias-ready lookup, and LanceDB graph-node retrieval. |
 
 ### 🧭 TODO
 
-| Priority | Task                                                                                                                                                            |     Stage     |
-| :------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-----------: |
-| 🔸       | Add visual-event memory from the visual stream, including visual event extraction, retrievable session memory cache, and final fusion with conversation memory. | ⏳ In Progress |
-| 🔸       | Add graph-based memory association across sessions, users, entities, tools, and multimodal observations.                                                        | ⏳ In Progress |
-| 🔹       | Allow users to actively query, recall, correct, or delete specific memories on demand.                                                                          |   🧩 Planned  |
-| 🔹       | Add multi-user memory isolation when multiple users are interacting in the same session.                                                                        |   🧩 Planned  |
-| 🔹       | Add event-driven memory updates for reflection, planning, behavior adaptation, and status-aware interaction traces.                                             |   🧩 Planned  |
-| 🔹       | Add omni-memory updates from text, voice, images, video, tools, files, and external workspaces.                                                                 |   🧩 Planned  |
-| 🔹       | Add graph-based memory search for relationships, entities, events, and long-term user goals.                                                                    |   🧩 Planned  |
-| 🔹       | Add memory confidence, source attribution, and conflict resolution.                                                                                             |   🧩 Planned  |
+| Priority | Task                                                                                                                                                                         |     Stage     |
+| :------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-----------: |
+| 🔸       | Add visual-event memory from the visual stream, including visual event extraction, retrievable session memory cache, and final fusion with conversation memory.              | ⏳ In Progress |
+| 🔹       | Add `node_merge` for graph node canonicalization, including alias conflict handling, duplicate node merging, scoped-local-to-canonical mapping, and optional VDB reindexing. |   🧩 Planned  |
+| 🔹       | Allow users to actively query, recall, correct, or delete specific memories on demand.                                                                                       |   🧩 Planned  |
+| 🔹       | Add multi-user memory isolation when multiple users are interacting in the same session.                                                                                     |   🧩 Planned  |
+| 🔹       | Add event-driven memory updates for reflection, planning, behavior adaptation, and status-aware interaction traces.                                                          |   🧩 Planned  |
+| 🔹       | Add omni-memory updates from text, voice, images, video, tools, files, and external workspaces.                                                                              |   🧩 Planned  |
+| 🔹       | Add graph-based memory search for relationships, entities, events, and long-term user goals.                                                                                 |   🧩 Planned  |
+| 🔹       | Add memory confidence, source attribution, and conflict resolution.                                                                                                          |   🧩 Planned  |
 
 ---
 
