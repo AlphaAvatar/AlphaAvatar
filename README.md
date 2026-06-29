@@ -38,7 +38,7 @@ Learnable, configurable, and pluggable Omni Personal Assistant for everyone
 
 <p align="center">
   <a href="https://discord.gg/fAEUtSzRyK">
-    <img src="https://img.shields.io/badge/dynamic/json?style=flat-square&logo=discord&logoColor=white&label=Discord&color=5865F2&query=%24.approximate_member_count&suffix=%20members&url=https%3A%2F%2Fdiscord.com%2Fapi%2Fv10%2Finvites%2Fg22eMMYrW%3Fwith_counts%3Dtrue" alt="Discord Members">
+    <img src="https://img.shields.io/badge/dynamic/json?style=flat-square&logo=discord&logoColor=white&label=Discord&color=5865F2&query=%24.approximate_member_count&suffix=%20members&url=https%3A%2F%2Fdiscord.com%2Fapi%2Fv10%2Finvites%2FfAEUtSzRyK%3Fwith_counts%3Dtrue" alt="Discord Members">
   </a>
   <a href="https://github.com/AlphaAvatar/AlphaAvatar/discussions">
     <img src="https://img.shields.io/badge/Discussions-GitHub%20Community-181717?style=flat-square&logo=github&logoColor=white" alt="GitHub Discussions">
