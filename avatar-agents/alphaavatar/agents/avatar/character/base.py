@@ -21,7 +21,7 @@ from livekit.agents import (
 )
 
 
-class VirtialCharacterSession:
+class VirtualCharacterSession:
     """A Virtial Character session"""
 
     def __init__(

@@ -26,7 +26,7 @@ from livekit.agents import (
 from livekit.agents.job import get_job_context
 from livekit.agents.types import ATTRIBUTE_PUBLISH_ON_BEHALF
 
-from alphaavatar.agents.avatar.character import VirtialCharacterSession
+from alphaavatar.agents.avatar.character import VirtualCharacterSession
 
 from ..log import logger
 from ..runner_op import RunnerOP
@@ -36,7 +36,7 @@ from .runner import AiriRunner
 _AVATAR_IDENTITY = "airi-avatar-worker"
 
 
-class AiriCharacterSession(VirtialCharacterSession):
+class AiriCharacterSession(VirtualCharacterSession):
     def __init__(self, avatar_config: AiriConfig):
         self._avatar_config = avatar_config
         self._avatar_participant_identity = _AVATAR_IDENTITY

@@ -61,6 +61,7 @@ class MemoryBase(AvatarRuntimePlugin):
         self._maximum_memory_num = maximum_memory_num
         self._memory_cache: dict[str, MemoryCache] = {}
 
+        # memory content init
         self._avatar_memory: list[MemoryItem] = []
         self._user_memory: list[MemoryItem] = []
         self._tool_memory: list[MemoryItem] = []
@@ -135,7 +136,7 @@ class MemoryBase(AvatarRuntimePlugin):
 
     @property
     def memory_items(self) -> list[MemoryItem]:
-        return self._avatar_memory + self._user_memory + self._tool_memory
+        return self._avatar_memory + self._user_memory + self._tool_memory + self._env_memory
 
     @avatar_memory.setter
     def avatar_memory(self, avatar_memory: list[MemoryItem]) -> None:
