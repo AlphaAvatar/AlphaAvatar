@@ -80,7 +80,6 @@ vision:
   sampling:
     frames_per_turn: 3
     frame_buffer_size: 8
-    frame_sample_interval_sec: 0.5
 
   inference:
     width: 512

@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import pathlib
+from typing import Any
 
 from livekit.agents.llm import ChatItem, ChatMessage, FunctionCall, FunctionCallOutput
 
 from alphaavatar.agents.utils import TimeStamp
 from alphaavatar.agents.utils.files.work_dirs import SessionPath
 
-from .enum.memory_type import MemoryType
+from .enum.cache_type import MemoryCacheType
 
 
 def _normalize_object_ids(value: list[str] | str | None) -> list[str]:
@@ -49,14 +50,19 @@ class MemoryCache:
         session_id: str,
         session_path: SessionPath,
         object_ids: list[str] | str | None,
-        memory_type: MemoryType = MemoryType.CONVERSATION,
+        cache_type: MemoryCacheType = MemoryCacheType.SESSION_INTERACTION,
     ):
         self._timestamp = timestamp
         self._object_ids = _normalize_object_ids(object_ids)
         self._session_id = session_id
         self._session_path = session_path
-        self._memory_type = memory_type
+        self._cache_type = cache_type
+
+        # conversation/agent-cli messages, sorted by created_at
         self._messages: list[ChatItem] = []
+
+        self._env_message_cursor: int = 0
+        self._evidence: list[dict[str, Any]] = []
 
     @property
     def time(self) -> str:
@@ -75,16 +81,24 @@ class MemoryCache:
         return self._session_path.provider_dir
 
     @property
-    def type(self) -> MemoryType:
-        return self._memory_type
+    def cache_type(self) -> MemoryCacheType:
+        return self._cache_type
 
     @property
     def messages(self) -> list[ChatItem]:
         return self._messages
 
+    @property
+    def evidence(self) -> list[dict[str, Any]]:
+        return self._evidence
+
     @object_ids.setter
     def object_ids(self, value: list[str] | str | None) -> None:
         self._object_ids = _normalize_object_ids(value)
+
+    @evidence.setter
+    def evidence(self, value: list[dict[str, Any]] | None) -> None:
+        self._evidence = value or []
 
     def add_object_ids(self, value: list[str] | str | None) -> None:
         merged = self._object_ids + _normalize_object_ids(value)
@@ -98,3 +112,9 @@ class MemoryCache:
             self._messages.append(message)
 
         self._messages.sort(key=lambda x: x.created_at)
+
+    def take_pending_env_messages(self) -> list[ChatItem]:
+        return self._messages[self._env_message_cursor :]
+
+    def commit_env_messages(self) -> None:
+        self._env_message_cursor = len(self._messages)

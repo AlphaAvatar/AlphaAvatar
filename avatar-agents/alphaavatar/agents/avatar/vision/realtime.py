@@ -16,7 +16,6 @@ from __future__ import annotations
 from livekit.agents import llm
 
 from alphaavatar.agents.avatar.vision.base import VisionBase
-from alphaavatar.agents.log import logger
 
 
 class RealtimeVision(VisionBase):
@@ -29,11 +28,4 @@ class RealtimeVision(VisionBase):
     the realtime model can receive video input directly.
     """
 
-    def start(self) -> None:
-        logger.info("RealtimeVision is not implemented yet")
-
-    async def stop(self) -> None:
-        return
-
-    def inject_into_chat_ctx(self, chat_ctx: llm.ChatContext) -> None:
-        return
+    def inject_into_chat_ctx(self, chat_ctx: llm.ChatContext) -> None: ...

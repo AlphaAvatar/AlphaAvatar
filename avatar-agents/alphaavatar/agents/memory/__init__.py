@@ -13,8 +13,16 @@
 # limitations under the License.
 from .base import MemoryBase
 from .cache import MemoryCache
+from .enum.cache_type import MemoryCacheType
 from .enum.memory_type import MemoryType
 from .enum.runner_op import VectorRunnerOP
 from .schema.memory_item import MemoryItem
 
-__all__ = ["MemoryBase", "MemoryCache", "MemoryItem", "MemoryType", "VectorRunnerOP"]
+__all__ = [
+    "MemoryBase",
+    "MemoryCache",
+    "MemoryItem",
+    "MemoryCacheType",
+    "MemoryType",
+    "VectorRunnerOP",
+]

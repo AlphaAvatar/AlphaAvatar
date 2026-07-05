@@ -59,6 +59,7 @@ class ProviderGateway:
         payload: dict[str, Any],
         output_schema: type[BaseModel],
         metadata: dict[str, Any] | None = None,
+        tracing_payload: bool = True,
     ) -> ProviderResult:
         """
         Invoke a task-level LLM with structured output.
@@ -85,7 +86,7 @@ class ProviderGateway:
             "provider": task_config.provider,
             "model": task_config.model,
             "prompt": to_jsonable(prompt),
-            "payload": to_jsonable(payload),
+            "payload": to_jsonable(payload) if tracing_payload else {},
             "metadata": to_jsonable(metadata),
         }
 
@@ -108,7 +109,7 @@ class ProviderGateway:
             trace_id=trace_id,
             task_name=task_name,
             prompt=prompt,
-            payload=payload,
+            payload=payload if tracing_payload else {},
             metadata=metadata,
         )
 

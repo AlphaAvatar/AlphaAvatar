@@ -17,27 +17,25 @@ from abc import abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from alphaavatar.agents.avatar import AvatarEngine
+    from alphaavatar.agents.runtime import SessionRuntime
 
     from .base import PersonaBase
 
 
-def face_node(engine: AvatarEngine) -> FaceStreamBase | None:
-    face_stream = engine.persona.face_stream
-    if face_stream is None:
-        return None
-
-    return face_stream(
-        activity_persona=engine.persona,
-    )
-
-
 class FaceStreamBase:
-    def __init__(self, *, activity_persona: PersonaBase) -> None:
+    CONSUMER_ID = "persona.face"
+
+    def __init__(
+        self,
+        *,
+        session_runtime: SessionRuntime,
+        activity_persona: PersonaBase,
+    ) -> None:
+        self.session_runtime = session_runtime
         self._activity_persona = activity_persona
 
     @abstractmethod
-    def start(self) -> None: ...
+    async def start(self) -> None: ...
 
     @abstractmethod
     async def stop(self) -> None: ...

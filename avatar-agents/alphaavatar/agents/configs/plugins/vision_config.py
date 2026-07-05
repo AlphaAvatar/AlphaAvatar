@@ -64,11 +64,6 @@ class VisionSamplingConfig(BaseModel):
         le=32,
         description="Maximum number of sampled frames to keep in memory.",
     )
-    frame_sample_interval_sec: float = Field(
-        default=0.5,
-        ge=0.0,
-        description="Minimum interval between cached video frames.",
-    )
 
 
 class VisionInferenceConfig(BaseModel):

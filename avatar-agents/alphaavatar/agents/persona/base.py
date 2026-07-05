@@ -37,7 +37,7 @@ class PersonaBase(AvatarRuntimePlugin):
         session_runtime: SessionRuntime,
         profiler: ProfilerBase,
         speaker_cls: tuple[type[SpeakerStreamBase], type[SpeakerCacheBase]],
-        face_cls: tuple[type[FaceStreamBase], type[FaceCacheBase]] | None = None,
+        face_cls: tuple[type[FaceStreamBase], type[FaceCacheBase]],
         maximum_retrieval_times: int = 3,
     ):
         self.session_runtime = session_runtime
@@ -53,6 +53,9 @@ class PersonaBase(AvatarRuntimePlugin):
         # UIDs loaded from persistent persona storage.
         # The initial default uid is not necessarily a real user.
         self._resolved_uids: set[str] = set()
+
+        # The face stream runtime instance, which is initialized when the session starts.
+        self._face_stream_runtime: FaceStreamBase | None = None
 
     @property
     def profiler(self) -> ProfilerBase:
@@ -476,6 +479,16 @@ class PersonaBase(AvatarRuntimePlugin):
 
         await self.load_profile(uid=primary_user_id)
 
+        face_stream_cls = self.face_stream
+        self._face_stream_runtime = face_stream_cls(
+            session_runtime=self.session_runtime,
+            activity_persona=self,
+        )
+        await self._face_stream_runtime.start()
+
     async def on_session_stop(self, **kwargs) -> None:
+        await self._face_stream_runtime.stop()
+        self._face_stream_runtime = None
+
         await self.update_profile_details()
         await self.save()

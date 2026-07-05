@@ -23,8 +23,10 @@ from alphaavatar.agents.utils import TimeStamp, time_str_to_datetime
 from alphaavatar.agents.utils.files.work_dirs import SessionPath
 
 from .cache import MemoryCache
+from .enum.cache_type import MemoryCacheType
 from .enum.memory_type import MemoryType
 from .schema.memory_item import MemoryItem
+from .state import MemoryState
 
 
 def deduplicate_keep_latest(items: list[MemoryItem]) -> list[MemoryItem]:
@@ -59,13 +61,10 @@ class MemoryBase(AvatarRuntimePlugin):
         self._memory_search_context = memory_search_context
         self._memory_recall_num = memory_recall_num
         self._maximum_memory_num = maximum_memory_num
-        self._memory_cache: dict[str, MemoryCache] = {}
 
         # memory content init
-        self._avatar_memory: list[MemoryItem] = []
-        self._user_memory: list[MemoryItem] = []
-        self._tool_memory: list[MemoryItem] = []
-        self._env_memory: list[MemoryItem] = []
+        self._memory_cache: dict[str, MemoryCache] = {}
+        self._memory_state = MemoryState(maximum_memory_num=maximum_memory_num)
 
     @property
     def memory_search_context(self) -> int:
@@ -76,52 +75,28 @@ class MemoryBase(AvatarRuntimePlugin):
         return self._memory_recall_num
 
     @property
-    def maximum_memory_num(self) -> int:
-        return self._maximum_memory_num
-
-    @property
     def memory_cache(self) -> dict[str, MemoryCache]:
         return self._memory_cache
 
     @property
+    def memory_state(self) -> MemoryState:
+        return self._memory_state
+
+    @property
     def avatar_memory(self) -> str:
-        memory_list = []
-        for item in self._avatar_memory:
-            sub_memory = ""
-            sub_memory += f"Timestamp: {item.timestamp}; "
-            sub_memory += f"Content: {item.value}"
-            memory_list.append(sub_memory.strip())
-        return "\n".join(memory_list)
+        return self._memory_state.render(memory_type=MemoryType.Avatar)
 
     @property
     def user_memory(self) -> str:
-        memory_list = []
-        for item in self._user_memory:
-            sub_memory = ""
-            sub_memory += f"Timestamp: {item.timestamp}; "
-            sub_memory += f"Content: {item.value}"
-            memory_list.append(sub_memory.strip())
-        return "\n".join(memory_list)
+        return self._memory_state.render(memory_type=MemoryType.CONVERSATION)
 
     @property
     def tool_memory(self) -> str:
-        memory_list = []
-        for item in self._tool_memory:
-            sub_memory = ""
-            sub_memory += f"Timestamp: {item.timestamp}; "
-            sub_memory += f"Content: {item.value}"
-            memory_list.append(sub_memory.strip())
-        return "\n".join(memory_list)
+        return self._memory_state.render(memory_type=MemoryType.TOOLS)
 
     @property
     def env_memory(self) -> str:
-        memory_list = []
-        for item in self._env_memory:
-            sub_memory = ""
-            sub_memory += f"Timestamp: {item.timestamp}; "
-            sub_memory += f"Content: {item.value}"
-            memory_list.append(sub_memory.strip())
-        return "\n".join(memory_list)
+        return self._memory_state.render(memory_type=MemoryType.ENV)
 
     @property
     def memory_content(self) -> str:
@@ -136,29 +111,44 @@ class MemoryBase(AvatarRuntimePlugin):
 
     @property
     def memory_items(self) -> list[MemoryItem]:
-        return self._avatar_memory + self._user_memory + self._tool_memory + self._env_memory
+        return self._memory_state.all_items
 
     @avatar_memory.setter
     def avatar_memory(self, avatar_memory: list[MemoryItem]) -> None:
-        self._avatar_memory += avatar_memory
-        self._avatar_memory = deduplicate_keep_latest(self._avatar_memory)[
-            -self.maximum_memory_num :
-        ]
+        self._memory_state.add(MemoryType.Avatar, avatar_memory)
 
     @user_memory.setter
     def user_memory(self, user_memory: list[MemoryItem]) -> None:
-        self._user_memory += user_memory
-        self._user_memory = deduplicate_keep_latest(self._user_memory)[-self.maximum_memory_num :]
+        self._memory_state.add(MemoryType.CONVERSATION, user_memory)
 
     @tool_memory.setter
     def tool_memory(self, tool_memory: list[MemoryItem]) -> None:
-        self._tool_memory += tool_memory
-        self._tool_memory = deduplicate_keep_latest(self._tool_memory)[-self.maximum_memory_num :]
+        self._memory_state.add(MemoryType.TOOLS, tool_memory)
 
     @env_memory.setter
     def env_memory(self, env_memory: list[MemoryItem]) -> None:
-        self._env_memory += env_memory
-        self._env_memory = deduplicate_keep_latest(self._env_memory)[-self.maximum_memory_num :]
+        self._memory_state.add(MemoryType.ENV, env_memory)
+
+    """Helper Op"""
+
+    def _get_cache_or_raise(self, session_id: str) -> MemoryCache:
+        if session_id not in self._memory_cache:
+            raise ValueError(
+                f"Session ID {session_id} not found in memory cache. "
+                "You need to call 'init_cache' first."
+            )
+
+        return self._memory_cache[session_id]
+
+    def _sync_object_ids(self) -> None:
+        for pend_result in self.session_runtime.pending_user_path_migrations:
+            ori_id = pend_result.old_user_id
+            tgt_id = pend_result.new_user_id
+
+            for cache in self._memory_cache.values():
+                cache.object_ids = [tgt_id if x == ori_id else x for x in cache.object_ids]
+
+    """Base Op"""
 
     def add_message(self, *, session_id: str, chat_item: ChatItem):
         if session_id not in self._memory_cache:
@@ -167,10 +157,8 @@ class MemoryBase(AvatarRuntimePlugin):
             )
 
         self._memory_cache[session_id].add_message(chat_item)
-
-    def update_object_id(self, ori_id: str, tgt_id: str) -> None:
-        for cache in self._memory_cache.values():
-            cache.object_ids = [tgt_id if x == ori_id else x for x in cache.object_ids]
+        self.on_cache_message_added(session_id=session_id, chat_item=chat_item)
+        self._sync_object_ids()
 
     async def init_cache(
         self,
@@ -179,7 +167,7 @@ class MemoryBase(AvatarRuntimePlugin):
         session_path: SessionPath,
         object_ids: list[str] | str | None,
         timestamp: TimeStamp,
-        memory_type: MemoryType = MemoryType.CONVERSATION,
+        cache_type: MemoryCacheType = MemoryCacheType.SESSION_INTERACTION,
     ) -> MemoryCache:
         if session_id not in self.memory_cache:
             self.memory_cache[session_id] = MemoryCache(
@@ -187,16 +175,42 @@ class MemoryBase(AvatarRuntimePlugin):
                 session_id=session_id,
                 session_path=session_path,
                 object_ids=object_ids,
-                memory_type=memory_type,
+                cache_type=cache_type,
             )
             return self.memory_cache[session_id]
-        else:
-            raise ValueError(
-                f"Session with id '{session_id}' already exists in memory cache. "
-                "Please use a unique session_id."
-            )
 
-    """Base Op"""
+        raise ValueError(
+            f"Session with id '{session_id}' already exists in memory cache. "
+            "Please use a unique session_id."
+        )
+
+    """ABC Op"""
+
+    @abstractmethod
+    def on_cache_message_added(self, *, session_id: str, chat_item: ChatItem) -> None:
+        """
+        Runtime hook.
+
+        MemoryRuntime can override this for user-turn env memory trigger.
+        """
+        ...
+
+    @abstractmethod
+    def save_graph_aliases(
+        self,
+        aliases: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """
+        Save graph aliases for identity/entity merge.
+
+        Example:
+            face:local:{session_id}:tmp_1 -> user:{user_id}
+            voice:local:{session_id}:speaker_0 -> user:{user_id}
+
+        This only writes graph alias stubs. It should not rewrite VDB directly.
+        Query-time alias expansion is handled by search_by_graph_node().
+        """
+        ...
 
     @abstractmethod
     async def search_by_context(
@@ -228,23 +242,6 @@ class MemoryBase(AvatarRuntimePlugin):
 
         This API is intended for Persona, ENV memory extraction, tools,
         channels, or other plugins that need graph-aware memory retrieval.
-        """
-        ...
-
-    @abstractmethod
-    def save_graph_aliases(
-        self,
-        aliases: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        """
-        Save graph aliases for identity/entity merge.
-
-        Example:
-            face:local:{session_id}:tmp_1 -> user:{user_id}
-            voice:local:{session_id}:speaker_0 -> user:{user_id}
-
-        This only writes graph alias stubs. It should not rewrite VDB directly.
-        Query-time alias expansion is handled by search_by_graph_node().
         """
         ...
 

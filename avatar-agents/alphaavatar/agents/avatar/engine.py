@@ -29,7 +29,7 @@ from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
 from alphaavatar.agents.entrypoints.schema.room_type import RoomType
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.memory import MemoryBase
-from alphaavatar.agents.persona import PersonaBase, face_node, speaker_node
+from alphaavatar.agents.persona import PersonaBase, speaker_node
 from alphaavatar.agents.plugin import AvatarModule, AvatarRuntimePlugin
 from alphaavatar.agents.runtime import ContextRuntime, SessionRuntime
 from alphaavatar.agents.status import (
@@ -41,7 +41,8 @@ from alphaavatar.agents.utils import format_current_time
 
 from .context import init_context_manager
 from .context.internal_tools import get_runtime_context_tool
-from .patches import init_avatar_patches  # NOTE: patches import only be used here
+from .patches import init_avatar_patches
+from .perception import LiveKitVideoInputRuntime
 from .prompting.assembler import PromptAssembler
 from .prompting.template import AvatarSysPromptTemplate, RuntimeContextTemplate
 from .vision import VisionBase, build_vision
@@ -85,10 +86,6 @@ class AvatarEngine(Agent):
             status_emitter=self._status,
         )
         self._tools.append(get_runtime_context_tool())
-        self._runtime_plugins: list[AvatarRuntimePlugin] = [
-            self._memory,
-            self._persona,
-        ]
 
         # Step4: initial avatar
         super().__init__(
@@ -111,8 +108,18 @@ class AvatarEngine(Agent):
         # vision
         self._vision: VisionBase = build_vision(self)
 
-        # face identity stream
-        self._face_stream = face_node(self)
+        # LiveKit video input runtime
+        self._video_input_runtime = LiveKitVideoInputRuntime(
+            session_runtime=self.session_runtime,
+        )
+
+        # Runtime plugins are started/stopped in on_enter/on_exit, and refreshed every turn.
+        self._runtime_plugins: list[AvatarRuntimePlugin] = [
+            self._video_input_runtime,
+            self._persona,
+            self._memory,
+            self._vision,
+        ]
 
     @property
     def livekit_room(self) -> rtc.Room | None:
@@ -270,13 +277,6 @@ class AvatarEngine(Agent):
         # init plugin runtime
         await self._start_runtime_plugins()
 
-        # enable vision input if needed
-        self._vision.start()
-
-        # enable face identity stream if needed
-        if self._face_stream is not None:
-            self._face_stream.start()
-
         # Do not use LLM-generated greeting here.
         # It may trigger llm_node and produce awkward thinking status during startup.
         if self.context_runtime.interaction_method.room_type in (RoomType.WEB_APP.value,):
@@ -291,12 +291,6 @@ class AvatarEngine(Agent):
     async def on_exit(self):
         if hasattr(self._chat_ctx.items, "wait_pending"):
             await self._chat_ctx.items.wait_pending()
-
-        # vision cleanup
-        await self._vision.stop()
-
-        if self._face_stream is not None:
-            await self._face_stream.stop()
 
         # close plugin runtime
         await self._stop_runtime_plugins()

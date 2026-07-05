@@ -24,6 +24,7 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
 ]
 dependencies = [
+    "alpha-avatar-core",
     "python-dotenv",
     "mcp>=1.10.0, <2",
     "omegaconf",
@@ -38,24 +39,21 @@ dependencies = [
     "livekit-plugins-noise-cancellation~=0.2",
     "livekit-plugins-silero~=1.4",
     "livekit-plugins-turn-detector~=1.4",
+    "langchain-core",
+    "langchain-community",
 ]
 
 [project.optional-dependencies]
-openai = [
-    "livekit-plugins-openai~=1.4",
-    "langchain-openai",
-]
-google = [
-    "langchain-google-genai",
-]
-anthropic = [
-    "langchain-anthropic",
-]
 providers = [
     "livekit-plugins-openai~=1.4",
     "langchain-openai",
     "langchain-google-genai",
     "langchain-anthropic",
+]
+vdb = [
+    "langchain-qdrant",
+    "qdrant-client",
+    "lancedb==0.30.2",
 ]
 
 [project.scripts]
@@ -63,7 +61,6 @@ alphaavatar = "alphaavatar.agents.entrypoints.main:main"
 
 [project.urls]
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"
-
 
 [tool.hatch.version]
 path = "alphaavatar/agents/version.py"

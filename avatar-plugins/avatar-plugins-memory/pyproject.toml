@@ -24,14 +24,8 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
 ]
 dependencies = [
-    "langchain-core",
-    "langchain-community",
-    "qdrant-client",
-    "lancedb==0.30.2",
-    "langchain-qdrant",
     "torchaudio>=0.10.1"
 ]
-
 
 [project.optional-dependencies]
 

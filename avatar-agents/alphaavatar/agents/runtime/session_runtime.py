@@ -33,6 +33,7 @@ from alphaavatar.agents.utils.files.work_dirs import (
 )
 from alphaavatar.agents.utils.id_utils import get_md5_id, sanitize_id
 from alphaavatar.agents.utils.time_utils import TimeStamp
+from alphaavatar.core.perception import PerceptionBus
 
 
 class ParticipantUpdateResult(BaseModel):
@@ -92,6 +93,8 @@ class SessionRuntime(BaseModel):
 
     avatar_path: AvatarPath | None = None
     session_path: SessionPath | None = None
+
+    perception_bus: PerceptionBus = Field(default_factory=PerceptionBus, exclude=True)
 
     pending_user_path_migrations: list[ParticipantUpdateResult] = Field(default_factory=list)
 

@@ -3,40 +3,53 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "alpha-avatar-plugins-mcp"
+name = "alpha-avatar-core"
 dynamic = ["version"]
-description = "AlphaAvatar Framework plugin for MCP service"
+description = "Core runtime schemas and transport primitives for AlphaAvatar."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11,<3.12"
-keywords = ["llm", "agents", "AI", "real world", "mcp", "tools"]
+keywords = [
+    "omni",
+    "realtime",
+    "audio",
+    "video",
+    "multimodal",
+    "rtc",
+    "runtime",
+    "AI",
+]
 classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
     "Topic :: Multimedia :: Sound/Audio",
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3 :: Only",
 ]
-dependencies = [
-  "mcp>=1.24.0,<2",
-]
+
+# Keep core minimal.
+# Core schemas should not require LiveKit, LangChain, providers, VDB, or livekit-agents.
+dependencies = []
 
 [project.optional-dependencies]
+livekit = [
+    "livekit>=1.0.12,<2",
+    "livekit-api>=1.0.4,<2",
+    "livekit-protocol~=1.0",
+]
 
 [project.urls]
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"
 
 [tool.hatch.version]
-path = "alphaavatar/plugins/mcp/version.py"
+path = "alphaavatar/core/version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["alphaavatar"]
 
 [tool.hatch.build.targets.sdist]
-include = ["alphaavatar", "README.md", "LICENSE"]
+include = ["alphaavatar", "README.md", "pyproject.toml"]

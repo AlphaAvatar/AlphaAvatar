@@ -18,7 +18,8 @@ from typing import TYPE_CHECKING, Any
 from livekit.agents.llm import ChatItem, ChatMessage, ChatRole, FunctionCall, FunctionCallOutput
 
 from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
-from alphaavatar.agents.memory import MemoryType
+from alphaavatar.agents.log import logger
+from alphaavatar.agents.memory import MemoryCacheType
 from alphaavatar.agents.runtime import ContextRuntime, InteractionMethod
 
 from .prompts.avatar_system_prompts import AVATAR_SYSTEM_PROMPT
@@ -108,14 +109,20 @@ class RuntimeContextTemplate:
 
 class MemoryPluginsTemplate:
     @classmethod
-    def apply_update_template(cls, chat_context: list[ChatItem], memory_type: MemoryType) -> str:
+    def apply_update_template(
+        cls, chat_context: list[ChatItem], cache_type: MemoryCacheType
+    ) -> str:
         """Apply the profile update template with the given keyword arguments."""
         memory_strings = []
         for msg in chat_context:
             if isinstance(msg, ChatMessage):
                 role = msg.role
                 # TODO: Handle different content types more robustly
-                if memory_type == MemoryType.CONVERSATION and role not in ["user", "assistant"]:
+                if cache_type == MemoryCacheType.SESSION_INTERACTION and role not in [
+                    "user",
+                    "assistant",
+                ]:
+                    logger.debug(f"Skipping message with role {role} for cache type {cache_type}.")
                     continue
 
                 msg_str = msg.text_content

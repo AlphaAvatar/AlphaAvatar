@@ -13,44 +13,89 @@
 # limitations under the License.
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from collections import deque
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 from livekit.agents import llm
+
+from alphaavatar.agents.log import logger
+from alphaavatar.agents.plugin import AvatarRuntimePlugin
+from alphaavatar.core.env import EnvObservation
 
 if TYPE_CHECKING:
     from alphaavatar.agents.avatar.engine import AvatarEngine
 
 
-class VisionBase(ABC):
+@dataclass(slots=True)
+class _VisualFrameSnapshot:
+    """
+    A bounded local snapshot for Avatar Vision.
+
+    Important:
+    - `payload` keeps the original runtime frame, usually rtc.VideoFrame.
+    - `observation` keeps a reference to the shared EnvObservation so late
+      annotations/rendered_payload can still be picked up at injection time.
+    """
+
+    payload: Any = field(repr=False, compare=False)
+    timestamp: str
+    observation_id: str
+
+    observation: EnvObservation | None = field(default=None, repr=False, compare=False)
+
+    frame_id: str | None = None
+    source_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+class VisionBase(AvatarRuntimePlugin):
     """Base class for AlphaAvatar visual input strategies."""
 
-    def __init__(self, agent: AvatarEngine) -> None:
+    def __init__(self, agent: AvatarEngine, vision_id: str) -> None:
         self.agent = agent
+        self.vision_id = vision_id
 
-    @abstractmethod
-    def start(self) -> None:
-        """Start visual input processing."""
-        raise NotImplementedError
+        vision_config = self.agent.avatar_config.vision
 
-    @abstractmethod
-    async def stop(self) -> None:
-        """Stop visual input processing and cleanup resources."""
-        raise NotImplementedError
+        self._video_frame_buffer: deque[_VisualFrameSnapshot] = deque(
+            maxlen=vision_config.sampling.frame_buffer_size
+        )
+        self._last_video_frame_sample_ts: float | None = None
+        self._started: bool = False
 
     def inject_into_chat_ctx(self, chat_ctx: llm.ChatContext) -> None:
         """Inject visual content into the chat context before LLM inference.
 
         Default implementation does nothing.
         """
-        return
+        ...
+
+    """Runtime Op"""
+
+    async def on_session_start(self, **kwargs) -> None:
+        """Start visual input processing."""
+        vision_config = self.agent.avatar_config.vision
+
+        self._started = True
+
+        logger.info(
+            "AvatarVision started with perception bus vision_id=%s mode=%s",
+            self.vision_id,
+            vision_config.input.mode,
+        )
+
+    async def on_session_stop(self, **kwargs) -> None:
+        """Stop visual input processing and cleanup resources."""
+        self._started = False
+        self._video_frame_buffer.clear()
+        self._last_video_frame_sample_ts = None
 
 
 class NoopVision(VisionBase):
     """No-op visual input strategy."""
 
-    def start(self) -> None:
-        return
+    CONSUMER_ID = "avatar.vision.noop"
 
-    async def stop(self) -> None:
-        return
+    def __init__(self, agent) -> None:
+        super().__init__(agent, vision_id=self.CONSUMER_ID)

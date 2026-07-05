@@ -14,7 +14,7 @@
 from .base import PersonaBase
 from .cache import FaceCacheBase, PersonaCache, SpeakerCacheBase
 from .enum.runner_op import VectorRunnerOP
-from .face import FaceStreamBase, face_node
+from .face import FaceStreamBase
 from .profiler import ProfilerBase
 from .schema.face import FaceObservation
 from .schema.user_profile import (
@@ -42,5 +42,4 @@ __all__ = [
     "SpeakerStreamBase",
     "speaker_node",
     "FaceStreamBase",
-    "face_node",
 ]

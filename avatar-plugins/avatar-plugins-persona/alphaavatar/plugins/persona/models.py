@@ -69,7 +69,6 @@ class RunnerFaceModelConfig:
         allowed_modules: list[str],
         det_size: tuple[int, int],
         det_thresh: float,
-        sample_interval_sec: float,
         min_face_size: int,
         jpeg_quality: int,
         embedding_dim: int,
@@ -82,7 +81,6 @@ class RunnerFaceModelConfig:
         self.allowed_modules = allowed_modules
         self.det_size = det_size
         self.det_thresh = det_thresh
-        self.sample_interval_sec = sample_interval_sec
         self.min_face_size = min_face_size
         self.jpeg_quality = jpeg_quality
         self.embedding_dim = embedding_dim
@@ -124,7 +122,6 @@ FACE_MODEL_CONFIG: dict[FaceModelType, RunnerFaceModelConfig] = {
         allowed_modules=["detection", "recognition", "genderage"],
         det_size=(640, 640),
         det_thresh=0.65,
-        sample_interval_sec=0.75,
         min_face_size=48,
         jpeg_quality=85,
         embedding_dim=512,

@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 CONVERSATION_MEMORY_EXTRACT_PROMPT = """You are an "AlphaAvatar Conversation Memory Extractor".
 
@@ -477,6 +477,310 @@ If a tool helped answer the user:
 """.strip()
 
 
+ENV_MEMORY_EXTRACT_PROMPT = """You are an "AlphaAvatar Environment Memory Extractor".
+
+Your job is to read an ordered multimodal observation stream and output an EnvMemoryDelta object.
+
+The observation stream may include sampled video frames, screen frames, rendered frames with bounding boxes, audio segments, video clips, observation metadata, face/object/speaker annotations, current session conversation context, and previous ENV memory.
+
+EnvMemoryDelta has one list:
+1) env_memory_entries:
+   Environment memories for MemoryType.ENV. These are session-grounded environmental continuity memories.
+
+Environment memory is NOT ordinary conversation memory.
+Environment memory is NOT assistant/avatar memory.
+Environment memory is used for future grounding, visual-history QA, multimodal recall, scene continuity, and long-running session context.
+
+----------------------------------------------------------------------
+A) OUTPUT FORMAT
+----------------------------------------------------------------------
+
+Output only an EnvMemoryDelta object.
+
+Each memory item is a PatchOp with:
+- value: string
+- topic: string | null
+- node_mentions: list[GraphNodeMention]
+
+Each GraphNodeMention has:
+- key: string | null
+- type: string
+- content: string
+- weight: float
+
+Do NOT output:
+- assistant_memory_entries
+- user_or_tool_memory_entries
+- entities
+- evidence
+- extra_data
+- graph_nodes
+- graph_links
+- embeddings
+- aliases
+- canonical identity mappings
+- anything outside EnvMemoryDelta
+
+PatchOp.value must be clean human-readable environment memory text.
+PatchOp.value must NOT contain structured fields such as:
+kind, topic, type, who, evidence, metadata, node_mentions, actions, next_steps, bbox, frame_id, observation_id.
+
+PatchOp.topic carries the stable environment topic.
+PatchOp.node_mentions carries graph retrieval anchors.
+
+Runtime, not the model, controls evidence, object_ids, session_id, timestamp, memory_type, graph scoping, and identity aliasing.
+
+----------------------------------------------------------------------
+B) PatchOp.value FORMAT
+----------------------------------------------------------------------
+
+For environment memory, PatchOp.value must be exactly one clean memory block:
+
+[MEMORY]
+<1-4 sentences describing the useful environmental observation. Include what was visible/heard/on-screen, what changed or persisted, and why it may matter for future grounding or recall.>
+[/MEMORY]
+
+Rules:
+- Do not include labels inside the memory block.
+- Do not write "summary:", "context:", "topic:", "kind:", "evidence:", or "frame:".
+- Do not store raw frame metadata.
+- Do not store raw bounding boxes unless the spatial relation itself is meaningful in natural language.
+- Do not store low-level detection traces.
+- Do not describe every frame.
+- Keep the memory specific, concise, and useful for future visual/audio/environment recall.
+
+Good value:
+[MEMORY]
+A visible person was sitting at a desk in an indoor room while interacting with the assistant. A laptop or screen-like workspace appeared to be part of the active environment.
+[/MEMORY]
+
+Bad value:
+[MEMORY]
+frame_id=abc123 bbox=[12,34,56,78] det_score=0.92 face_id=tmp_1.
+[/MEMORY]
+
+----------------------------------------------------------------------
+C) WHEN TO WRITE ENV MEMORY
+----------------------------------------------------------------------
+
+Write env_memory_entries only when the observation stream contains useful environmental information likely to improve future grounding, multimodal recall, visual-history QA, or session continuity.
+
+Store:
+- visible people, animals, objects, screens, rooms, workspaces, vehicles, plants, documents, or other salient scene elements
+- actions, gestures, object use, object movement, scene changes, screen changes, or repeated visual patterns
+- persistent environmental state across frames
+- meaningful changes between earlier and later observations
+- spatial relations that may matter later, such as an object being on a desk, a person entering/leaving, or a screen showing a specific workflow
+- high-level audio or speaker context when provided as observation/annotation
+- face/object/speaker references only as local retrieval anchors, not as real identity
+- rendered annotations such as boxes only when they clarify what object/person was being tracked
+
+Do NOT store:
+- trivial frame-by-frame descriptions
+- every object visible in a frame
+- one-off visual noise
+- low-confidence detections
+- raw bbox coordinates, raw frame ids, raw observation ids, raw detection scores, or raw embeddings
+- private or sensitive inferences from appearance
+- real identity inferred from face, voice, gender, age, clothing, location, or appearance
+- user preferences unless the conversation context explicitly supports that interpretation
+- durable conversation decisions; those belong to conversation memory
+- tool execution details; those belong to tool memory
+- assistant-global behavior rules; those belong to avatar memory
+
+If there is no useful new environment memory, output:
+EnvMemoryDelta(env_memory_entries=[])
+
+----------------------------------------------------------------------
+D) MULTIMODAL INPUT INTERPRETATION
+----------------------------------------------------------------------
+
+The input is an ordered observation stream.
+
+For video_frame and screen_frame observations:
+- Treat image blocks as sampled frames from a continuous video/screen stream.
+- Use temporal order, timestamps, observation metadata, and nearby annotations to understand continuity.
+- Do not treat each image as an unrelated uploaded image.
+- Prefer observations that persist, change, or matter for future grounding.
+
+For rendered frames:
+- Rendered bounding boxes or overlays are visual aids.
+- They help identify which person/object/region an annotation refers to.
+- Do not store the existence of a box itself unless the highlighted target matters.
+
+For video_clip observations:
+- Treat the video block as a short continuous clip.
+
+For audio_segment observations:
+- Use audio content only when available and relevant.
+- Do not infer speaker identity unless runtime-provided identity or explicit context supports it.
+
+For metadata and annotations:
+- Use them as supporting evidence.
+- They may include local face ids, speaker ids, object ids, track ids, source ids, or region labels.
+- These ids are local runtime anchors, not real-world identities.
+
+----------------------------------------------------------------------
+E) IDENTITY AND SAFETY RULES
+----------------------------------------------------------------------
+
+Do not infer real identity from:
+- face appearance
+- face_id
+- speaker_id
+- voice_id
+- track_sid
+- participant_identity
+- age/gender estimates
+- clothing
+- location
+- visual resemblance
+
+If identity is unknown, use neutral wording:
+- "a visible person"
+- "an unknown person"
+- "a speaker"
+- "a face-detected person"
+- "a local face track"
+- "an object"
+- "a screen"
+- "the room"
+
+If runtime explicitly provides a stable user id or known participant identity, you may use it only as a retrieval anchor in node_mentions, not as a guessed identity.
+
+Do not store sensitive attributes inferred from appearance.
+Do not store age/gender estimates as durable memory unless they are explicitly relevant and runtime-approved.
+
+----------------------------------------------------------------------
+F) TOPIC RULES
+----------------------------------------------------------------------
+
+PatchOp.topic must be a stable short label. Lowercase is preferred.
+
+Good topics:
+- "visible workspace"
+- "room state"
+- "screen context"
+- "object location"
+- "person activity"
+- "face observation"
+- "visual scene continuity"
+- "audio environment"
+- "vehicle scene"
+- "plant observation"
+
+Bad topics:
+- "environment"
+- "observation"
+- "frame"
+- "image"
+- "video"
+- "memory"
+- "misc"
+
+Do not duplicate topic inside PatchOp.value.
+
+----------------------------------------------------------------------
+G) GRAPH NODE MENTION RULES
+----------------------------------------------------------------------
+
+Use PatchOp.node_mentions to provide lightweight retrieval anchors for future graph-aware recall.
+
+Rules:
+- Do not output graph_nodes or graph_links.
+- Do not generate embeddings or final graph node IDs.
+- Do not write alias mappings.
+- Do not infer canonical identities.
+- Use stable global keys only when explicitly supported by runtime/context.
+- For local face, voice, speaker, object, track, screen, or region ids, raw local keys are allowed; runtime will scope them to the session.
+
+Stable key examples:
+- project:alphaavatar
+- concept:env_memory
+- concept:visual_history
+- concept:screen_context
+- user:<known_user_id> only if explicitly provided by runtime
+
+Local key examples:
+- face:tmp_1
+- voice:speaker_0
+- object:cup_1
+- track:camera_1
+- screen:main
+- region:desk_area
+
+Good node_mentions:
+- object:cup_1 / object / cup on the desk
+- face:tmp_1 / face / visible face-detected person
+- screen:main / screen / active screen context
+- concept:visual_history / concept / visual history recall from sampled frames
+
+Bad node_mentions:
+- user:john / user / The visible person is John
+
+The bad example is wrong unless runtime explicitly provided that identity.
+
+If no stable key is obvious, omit key and provide type/content.
+
+----------------------------------------------------------------------
+H) ENV MEMORY QUALITY RULES
+----------------------------------------------------------------------
+
+Prefer concise episodic memories over exhaustive descriptions.
+
+Good ENV memories:
+- A person remained seated at a desk while interacting with the assistant, with a laptop or screen-like workspace visible.
+- A small plant with light-colored leaves was visible near the user, and the plant remained in the scene across multiple observations.
+- The screen appeared to show a coding or debugging workflow related to AlphaAvatar, which may be relevant for visual-history recall.
+- A face-detected person was repeatedly visible in the camera stream, but no real identity should be inferred from appearance.
+
+Poor ENV memories:
+- The image shows a person.
+- A frame was observed.
+- There was a bbox around a face.
+- The camera captured video.
+- The user probably likes laptops.
+- The person is likely Licheng.
+- face_id tmp_1 is the user.
+
+Avoid duplication:
+- If previous ENV memory already contains the same observation and nothing changed, do not repeat it.
+- If the new stream only confirms the same stable scene, write at most one concise update.
+- If the stream contains a meaningful change, focus on the change.
+
+----------------------------------------------------------------------
+I) RELATION TO CONVERSATION CONTEXT
+----------------------------------------------------------------------
+
+Conversation context may help interpret the environment, but do not turn environment observations into user preferences or decisions unless the conversation explicitly supports it.
+
+Examples:
+- If the user asks "what is this plant?" and the frame shows a plant, store that a plant was visible and discussed.
+- If the user is coding AlphaAvatar and the screen shows related code, store the screen/workspace context if useful.
+- If the user casually appears in frame, do not store identity or personal attributes.
+
+Conversation memory extraction will handle durable user decisions, preferences, corrections, and project plans.
+Tool memory extraction will handle tool/system operations.
+Avatar memory extraction will handle reusable assistant-global behavior.
+ENV extraction should only handle environment/visual/audio/screen continuity.
+
+----------------------------------------------------------------------
+J) FINAL CHECK BEFORE OUTPUT
+----------------------------------------------------------------------
+
+Before outputting each env_memory_entries item, verify:
+- Is it grounded in the observation stream?
+- Is it useful for future grounding, visual-history QA, or session continuity?
+- Is it not merely raw metadata or frame description?
+- Does it avoid real identity inference?
+- Does it avoid sensitive appearance-based inference?
+- Does it avoid duplication with previous ENV memory?
+- Is PatchOp.value exactly one [MEMORY]...[/MEMORY] block?
+
+If no item passes these checks, output empty env_memory_entries.
+""".strip()
+
+
 CONVERSATION_DELTA_PROMPT = ChatPromptTemplate.from_messages(
     [
         (
@@ -485,7 +789,6 @@ CONVERSATION_DELTA_PROMPT = ChatPromptTemplate.from_messages(
         ),
         (
             "human",
-            "SESSION CONTENT TYPE: {type}\n"
             "SESSION CONTENT:\n"
             "```text\n"
             "{session_content}\n"
@@ -530,7 +833,6 @@ TOOL_DELTA_PROMPT = ChatPromptTemplate.from_messages(
         ),
         (
             "human",
-            "SESSION CONTENT TYPE: {type}\n"
             "SESSION CONTENT:\n"
             "```text\n"
             "{session_content}\n"
@@ -572,5 +874,13 @@ TOOL_DELTA_PROMPT = ChatPromptTemplate.from_messages(
             "- Aggregate repeated operations into one tool episode unless there is a meaningful boundary such as a different component, phase, failure, retry, fallback, or correction.\n"
             "- Do not invent details not supported by the session content.\n",
         ),
+    ]
+)
+
+
+ENV_DELTA_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        ("system", ENV_MEMORY_EXTRACT_PROMPT),
+        MessagesPlaceholder("env_messages"),
     ]
 )

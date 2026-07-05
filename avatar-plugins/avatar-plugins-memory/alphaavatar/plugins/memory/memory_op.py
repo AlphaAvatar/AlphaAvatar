@@ -57,6 +57,13 @@ class MemoryDelta(BaseModel):
     )
 
 
+class EnvMemoryDelta(BaseModel):
+    env_memory_entries: list[PatchOp] = Field(
+        default_factory=list,
+        description="The Assistant's own memory list is generated based on the conversation content and the memory content list of the Assistant's interaction with the user.",
+    )
+
+
 def norm_token(s: Any) -> str:
     """Normalize for case/whitespace-insensitive equality."""
     return " ".join(str(s).strip().lower().split())

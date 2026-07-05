@@ -11,4 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-__version__ = "0.6.4"
+from enum import Enum
+
+
+class MemoryCacheType(str, Enum):
+    SESSION_INTERACTION = "session_interaction"
+    AGENT_TOOL_INTERACTION = "agent_tool_interaction"
+    ENV_OBSERVATION = "env_observation"
+    BACKGROUND_TASK = "background_task"

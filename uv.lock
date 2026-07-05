@@ -15,6 +15,7 @@ resolution-markers = [
 members = [
     "alpha-avatar-agents",
     "alpha-avatar-channels-whatsapp",
+    "alpha-avatar-core",
     "alpha-avatar-plugins-character",
     "alpha-avatar-plugins-deepresearch",
     "alpha-avatar-plugins-mcp",
@@ -26,6 +27,7 @@ members = [
 ]
 
 [manifest.dependency-groups]
+avatar-agent-all = [{ name = "alpha-avatar-agents", extras = ["providers", "vdb"], editable = "avatar-agents" }]
 dev = [
     { name = "jiwer", specifier = ">=3.1.0" },
     { name = "mypy" },
@@ -41,7 +43,6 @@ docs = [
     { name = "pdoc3" },
     { name = "setuptools" },
 ]
-providers = [{ name = "alpha-avatar-agents", extras = ["providers"], editable = "avatar-agents" }]
 
 [[package]]
 name = "accelerate"
@@ -162,6 +163,9 @@ wheels = [
 name = "alpha-avatar-agents"
 source = { editable = "avatar-agents" }
 dependencies = [
+    { name = "alpha-avatar-core" },
+    { name = "langchain-community" },
+    { name = "langchain-core" },
     { name = "livekit" },
     { name = "livekit-agents" },
     { name = "livekit-api" },
@@ -179,37 +183,33 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-anthropic = [
-    { name = "langchain-anthropic" },
-]
-google = [
-    { name = "langchain-google-genai" },
-]
-openai = [
-    { name = "langchain-openai" },
-    { name = "livekit-plugins-openai" },
-]
 providers = [
     { name = "langchain-anthropic" },
     { name = "langchain-google-genai" },
     { name = "langchain-openai" },
     { name = "livekit-plugins-openai" },
 ]
+vdb = [
+    { name = "lancedb" },
+    { name = "langchain-qdrant" },
+    { name = "qdrant-client" },
+]
 
 [package.metadata]
 requires-dist = [
-    { name = "langchain-anthropic", marker = "extra == 'anthropic'" },
+    { name = "alpha-avatar-core", editable = "avatar-core" },
+    { name = "lancedb", marker = "extra == 'vdb'", specifier = "==0.30.2" },
     { name = "langchain-anthropic", marker = "extra == 'providers'" },
-    { name = "langchain-google-genai", marker = "extra == 'google'" },
+    { name = "langchain-community" },
+    { name = "langchain-core" },
     { name = "langchain-google-genai", marker = "extra == 'providers'" },
-    { name = "langchain-openai", marker = "extra == 'openai'" },
     { name = "langchain-openai", marker = "extra == 'providers'" },
+    { name = "langchain-qdrant", marker = "extra == 'vdb'" },
     { name = "livekit", specifier = ">=1.0.12,<2" },
     { name = "livekit-agents", specifier = "~=1.4" },
     { name = "livekit-api", specifier = ">=1.0.4,<2" },
     { name = "livekit-blingfire", specifier = "~=1.0" },
     { name = "livekit-plugins-noise-cancellation", specifier = "~=0.2" },
-    { name = "livekit-plugins-openai", marker = "extra == 'openai'", specifier = "~=1.4" },
     { name = "livekit-plugins-openai", marker = "extra == 'providers'", specifier = "~=1.4" },
     { name = "livekit-plugins-silero", specifier = "~=1.4" },
     { name = "livekit-plugins-turn-detector", specifier = "~=1.4" },
@@ -219,9 +219,10 @@ requires-dist = [
     { name = "omegaconf" },
     { name = "python-dotenv" },
     { name = "python-slugify" },
+    { name = "qdrant-client", marker = "extra == 'vdb'" },
     { name = "weasyprint" },
 ]
-provides-extras = ["anthropic", "google", "openai", "providers"]
+provides-extras = ["providers", "vdb"]
 
 [[package]]
 name = "alpha-avatar-channels-whatsapp"
@@ -240,6 +241,25 @@ requires-dist = [
     { name = "uvicorn", specifier = ">=0.27" },
     { name = "websockets", specifier = ">=12.0" },
 ]
+
+[[package]]
+name = "alpha-avatar-core"
+source = { editable = "avatar-core" }
+
+[package.optional-dependencies]
+livekit = [
+    { name = "livekit" },
+    { name = "livekit-api" },
+    { name = "livekit-protocol" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "livekit", marker = "extra == 'livekit'", specifier = ">=1.0.12,<2" },
+    { name = "livekit-api", marker = "extra == 'livekit'", specifier = ">=1.0.4,<2" },
+    { name = "livekit-protocol", marker = "extra == 'livekit'", specifier = "~=1.0" },
+]
+provides-extras = ["livekit"]
 
 [[package]]
 name = "alpha-avatar-plugins-character"
@@ -265,63 +285,37 @@ requires-dist = [{ name = "tavily" }]
 name = "alpha-avatar-plugins-mcp"
 source = { editable = "avatar-plugins/avatar-plugins-mcp" }
 dependencies = [
-    { name = "lancedb" },
     { name = "mcp" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "lancedb", specifier = "==0.30.2" },
-    { name = "mcp", specifier = ">=1.24.0,<2" },
-]
+requires-dist = [{ name = "mcp", specifier = ">=1.24.0,<2" }]
 
 [[package]]
 name = "alpha-avatar-plugins-memory"
 source = { editable = "avatar-plugins/avatar-plugins-memory" }
 dependencies = [
-    { name = "lancedb" },
-    { name = "langchain-community" },
-    { name = "langchain-core" },
-    { name = "langchain-qdrant" },
-    { name = "qdrant-client" },
     { name = "torchaudio" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "lancedb", specifier = "==0.30.2" },
-    { name = "langchain-community" },
-    { name = "langchain-core" },
-    { name = "langchain-qdrant" },
-    { name = "qdrant-client" },
-    { name = "torchaudio", specifier = ">=0.10.1" },
-]
+requires-dist = [{ name = "torchaudio", specifier = ">=0.10.1" }]
 
 [[package]]
 name = "alpha-avatar-plugins-persona"
 source = { editable = "avatar-plugins/avatar-plugins-persona" }
 dependencies = [
     { name = "insightface" },
-    { name = "lancedb" },
-    { name = "langchain-community" },
-    { name = "langchain-core" },
-    { name = "langchain-qdrant" },
     { name = "onnxruntime" },
     { name = "opencv-python-headless" },
-    { name = "qdrant-client" },
     { name = "torchaudio" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "insightface", specifier = "==1.0.1" },
-    { name = "lancedb", specifier = "==0.30.2" },
-    { name = "langchain-community" },
-    { name = "langchain-core" },
-    { name = "langchain-qdrant" },
     { name = "onnxruntime", specifier = "==1.23.1" },
     { name = "opencv-python-headless", specifier = "==4.12.0.88" },
-    { name = "qdrant-client" },
     { name = "torchaudio", specifier = ">=0.10.1" },
 ]
 

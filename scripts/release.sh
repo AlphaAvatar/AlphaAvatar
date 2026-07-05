@@ -5,6 +5,7 @@ set -euo pipefail
 # Config
 # ----------------------------------
 PACKAGES=(
+  "avatar-core"
   "avatar-agents"
   "avatar-channels/avatar-channels-whatsapp"
   "avatar-plugins/avatar-plugins-character"
