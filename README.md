@@ -73,13 +73,16 @@ It is built around a **plugin-based real-time Agent architecture**, combining:
   <img src=".github/assets/alphaavatar_architecture.png" alt="AlphaAvatar Runtime Architecture" width="100%" />
 </p>
 
-AlphaAvatar is built around a realtime multimodal runtime that connects:
+AlphaAvatar follows a layered realtime multimodal architecture:
 
-- **User inputs**: voice, text, camera, and external channels
-- **Runtime context**: memory state, persona state, user identity, modality state, and task/status state
-- **Composable plugins**: Memory, Persona, MCP, RAG, DeepResearch, Character, and Channel plugins
-- **Model layer**: LLM/VLM, STT, TTS, speaker detection, and face detection
-- **Storage layer**: vector DB, personal server storage, knowledge base, and external tool APIs
+- **🎙️ User & Channels**: voice, text, camera, screen, files, and messaging platforms.
+- **🔌 RTC Adapter**: connects LiveKit and other realtime communication backends.
+- **👁️ Core Perception**: normalizes multimodal observations, streams, timelines, and windows.
+- **⚙️ Agent & Runtime**: manages sessions, context, routing, and interaction workflows.
+- **🧩 Plugin Ecosystem**: adds Memory, Persona, RAG, MCP, Character, and other capabilities.
+- **🧠 Provider & Infrastructure**: connects models, embeddings, routing, tracing, and structured output.
+- **💾 Storage & Data**: stores identity, memory, vectors, traces, artifacts, and media.
+- **📤 Assistant Outputs**: delivers voice, text, avatar responses, tool actions, and status updates.
 
 ---
 

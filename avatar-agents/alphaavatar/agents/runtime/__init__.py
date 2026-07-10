@@ -11,7 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from .avatar_runtime import AvatarRuntime
 from .context_runtime import ContextRuntime, InteractionMethod
-from .session_runtime import SessionRuntime
+from .session_runtime import (
+    ParticipantInfo,
+    ParticipantUpdateResult,
+    SessionRuntime,
+)
 
-__all__ = ["ContextRuntime", "InteractionMethod", "SessionRuntime"]
+__all__ = [
+    "AvatarRuntime",
+    "ContextRuntime",
+    "InteractionMethod",
+    "ParticipantInfo",
+    "ParticipantUpdateResult",
+    "SessionRuntime",
+]

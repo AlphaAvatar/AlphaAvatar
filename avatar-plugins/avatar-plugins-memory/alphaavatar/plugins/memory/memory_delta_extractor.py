@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import asyncio
 import base64
 import hashlib
@@ -20,12 +22,26 @@ from typing import Any, TypeVar
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel, Field
 
-from alphaavatar.agents.memory import MemoryCache, MemoryType
-from alphaavatar.agents.providers import ProviderGateway, ProvidersConfig
+from alphaavatar.agents.memory import (
+    MemoryCache,
+    MemoryType,
+)
+from alphaavatar.agents.providers import (
+    ProviderGateway,
+    ProvidersConfig,
+)
 from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.media import (
+    PayloadFormat,
+    PayloadFormatUnavailable,
+    PayloadView,
+)
 
 from .log import logger
-from .memory_op import EnvMemoryDelta, MemoryDelta
+from .memory_op import (
+    EnvMemoryDelta,
+    MemoryDelta,
+)
 from .memory_prompts import (
     CONVERSATION_DELTA_PROMPT,
     ENV_DELTA_PROMPT,
@@ -51,13 +67,11 @@ class MemoryDeltaExtractor:
     """
     Provider-backed memory delta extractor.
 
-    This class owns all provider invocation logic for memory extraction:
-    - conversation delta
-    - tool delta
-    - environment delta
+    Runtime media conversion is not performed here.
 
-    MemoryRuntime decides when to call it.
-    This class decides how to call the provider task safely.
+    The input adapter and annotation renderers are responsible for adding
+    model-usable representations to MediaPayload. This extractor only selects
+    the representation required by the ENV memory provider.
     """
 
     def __init__(self, config: MemoryProviderConfig | None = None) -> None:
@@ -86,9 +100,17 @@ class MemoryDeltaExtractor:
 
     """Helper Op"""
 
-    def _stable_digest(self, value: Any) -> str:
+    def _stable_digest(
+        self,
+        value: Any,
+    ) -> str:
         try:
-            text = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+            text = json.dumps(
+                value,
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            )
         except Exception:
             text = str(value)
 
@@ -118,130 +140,113 @@ class MemoryDeltaExtractor:
 
         return metadata
 
-    def _env_trace_metadata(
+    def _observation_has_annotated_image(
         self,
-        *,
-        memory_cache: MemoryCache,
-        observations: list[EnvObservation],
-    ) -> dict[str, Any]:
-        observation_signature = [
-            {
-                "id": obs.observation_id,
-                "kind": obs.kind,
-                "timestamp": obs.timestamp,
-                "source_id": obs.source_id,
-                "frame_id": obs.frame_id,
-                "has_payload": obs.has_payload,
-                "has_path": obs.has_persisted_evidence,
-                "annotation_count": len(getattr(obs, "annotations", []) or []),
-            }
-            for obs in observations
-        ]
+        observation: EnvObservation,
+    ) -> bool:
+        payload = observation.payload
 
-        return self._base_trace_metadata(
-            memory_cache=memory_cache,
-            operation="env_delta",
-            memory_type=MemoryType.ENV,
-            component="env_memory_delta_extractor",
-            extra={
-                "observation_count": len(observations),
-                "payload_count": sum(1 for obs in observations if obs.has_payload),
-                "persisted_evidence_count": sum(
-                    1 for obs in observations if obs.has_persisted_evidence
-                ),
-                "observation_kinds": sorted({obs.kind for obs in observations}),
-                "source_count": len({obs.source_id for obs in observations if obs.source_id}),
-                "observation_digest": self._stable_digest(observation_signature),
-            },
+        if payload is None:
+            return False
+
+        return payload.has(
+            PayloadFormat.IMAGE_JPEG_BYTES,
+            view=PayloadView.ANNOTATED,
+            fallback_to_raw=False,
         )
-
-    def _content_block_type_for_observation(self, observation: EnvObservation) -> str:
-        if observation.kind in {"video_frame", "screen_frame"}:
-            return "image"
-
-        if observation.kind == "video_clip":
-            return "video"
-
-        if observation.kind == "audio_segment":
-            return "audio"
-
-        return "file"
 
     def _observation_to_content_block(
         self,
         observation: EnvObservation,
     ) -> dict[str, Any] | None:
         """
-        Convert EnvObservation.model_payload into a LangChain multimodal content block.
+        Convert an AlphaAvatar EnvObservation into a LangChain multimodal block.
 
-        Rules:
-        - Use observation.model_payload, which may be a rendered/model-facing payload.
-        - Do not convert runtime-only objects such as LiveKit rtc.VideoFrame here.
-        - RTC adapters or annotation renderers should provide bytes/provider-ready blocks.
+        Selection policy:
+
+        1. Use an explicitly prepared generic provider content block when
+           available.
+        2. For video_frame/screen_frame, prefer annotated JPEG.
+        3. Fall back to raw JPEG when no annotated representation exists.
+
+        No LiveKit or RTC conversion is allowed here.
         """
 
-        payload = observation.model_payload
+        payload = observation.payload
+
         if payload is None:
             return None
 
-        if isinstance(payload, dict):
-            return payload
+        # Allows future media/provider adapters to publish an already prepared
+        # provider-neutral block without changing MemoryDeltaExtractor.
+        try:
+            provider_block = payload.get(
+                PayloadFormat.PROVIDER_CONTENT_BLOCK,
+                view=PayloadView.ANNOTATED,
+                fallback_to_raw=True,
+            )
+        except PayloadFormatUnavailable:
+            provider_block = None
 
-        block_type = self._content_block_type_for_observation(observation)
-        mime_type = observation.model_mime_type
+        if provider_block is not None:
+            if isinstance(
+                provider_block,
+                dict,
+            ):
+                return provider_block
 
-        if isinstance(payload, bytes):
-            encoded = base64.b64encode(payload).decode("utf-8")
+            logger.warning(
+                "[Memory] invalid provider content block. observation_id=%s type=%s",
+                observation.observation_id,
+                type(provider_block).__name__,
+            )
+            return None
 
-            return {
-                "type": block_type,
-                "base64": encoded,
-                "mime_type": mime_type or self._default_mime_type_for_block(block_type),
-            }
+        if observation.kind not in {
+            "video_frame",
+            "screen_frame",
+        }:
+            logger.warning(
+                "[Memory] ENV observation modality is not yet supported. observation_id=%s kind=%s",
+                observation.observation_id,
+                observation.kind,
+            )
+            return None
 
-        if isinstance(payload, str):
-            payload_kind = observation.metadata.get("payload_kind")
+        try:
+            image_bytes = payload.get(
+                PayloadFormat.IMAGE_JPEG_BYTES,
+                view=PayloadView.ANNOTATED,
+                fallback_to_raw=True,
+            )
+        except PayloadFormatUnavailable:
+            logger.warning(
+                "[Memory] JPEG representation unavailable. observation_id=%s kind=%s frame_id=%s",
+                observation.observation_id,
+                observation.kind,
+                observation.frame_id,
+            )
+            return None
 
-            if payload_kind == "url":
-                return {
-                    "type": block_type,
-                    "url": payload,
-                }
+        if not isinstance(
+            image_bytes,
+            bytes,
+        ):
+            logger.warning(
+                "[Memory] invalid JPEG representation type. observation_id=%s kind=%s type=%s",
+                observation.observation_id,
+                observation.kind,
+                type(image_bytes).__name__,
+            )
+            return None
 
-            if payload_kind == "file_id":
-                return {
-                    "type": block_type,
-                    "file_id": payload,
-                    "mime_type": mime_type or self._default_mime_type_for_block(block_type),
-                }
+        encoded = base64.b64encode(image_bytes).decode("utf-8")
 
-            # Default: treat string payload as base64 inline content.
-            return {
-                "type": block_type,
-                "base64": payload,
-                "mime_type": mime_type or self._default_mime_type_for_block(block_type),
-            }
-
-        logger.warning(
-            "[Memory] unsupported env observation model payload type: "
-            "observation_id=%s kind=%s payload_type=%s. "
-            "Expected dict, bytes, base64 string, url, or file_id. "
-            "Runtime-only payloads such as rtc.VideoFrame should be converted by "
-            "RTC adapters or annotation renderers before env extraction.",
-            observation.observation_id,
-            observation.kind,
-            type(payload).__name__,
-        )
-        return None
-
-    def _default_mime_type_for_block(self, block_type: str) -> str:
-        if block_type == "image":
-            return "image/jpeg"
-        if block_type == "video":
-            return "video/mp4"
-        if block_type == "audio":
-            return "audio/wav"
-        return "application/octet-stream"
+        return {
+            "type": "image",
+            "base64": encoded,
+            "mime_type": "image/jpeg",
+        }
 
     def _build_env_delta_payload(
         self,
@@ -292,8 +297,9 @@ class MemoryDeltaExtractor:
 
         attached_count = 0
 
-        for obs in observations:
-            block = self._observation_to_content_block(obs)
+        for observation in observations:
+            block = self._observation_to_content_block(observation)
+
             if block is None:
                 continue
 
@@ -343,10 +349,19 @@ class MemoryDeltaExtractor:
             return output_schema.model_validate(result.output)
 
         except asyncio.TimeoutError:
-            logger.warning("[Memory] extraction timeout task=%s", task_name)
+            logger.warning(
+                "[Memory] extraction timeout task=%s timeout=%s",
+                task_name,
+                timeout,
+            )
             return fallback_output
-        except Exception:
-            logger.exception("[Memory] extraction failed task=%s", task_name)
+
+        except Exception as error:
+            logger.exception(
+                "[Memory] extraction failed task=%s error=%s",
+                task_name,
+                str(error),
+            )
             return fallback_output
 
     """Delta Op"""
@@ -410,7 +425,7 @@ class MemoryDeltaExtractor:
         memory_cache: MemoryCache,
         previous_env_memory: str | None = None,
         conversation_context: str | None = None,
-        timeout: float = 20.0,
+        timeout: float = 25.0,
     ) -> EnvMemoryDelta:
         if not self._env_delta_task:
             logger.debug("[Memory] env delta skipped because env_delta_task is not configured.")
@@ -431,9 +446,10 @@ class MemoryDeltaExtractor:
             payload=payload,
             output_schema=EnvMemoryDelta,
             fallback_output=EnvMemoryDelta(),
-            metadata=self._env_trace_metadata(
+            metadata=self._base_trace_metadata(
                 memory_cache=memory_cache,
-                observations=observations,
+                operation="env_delta",
+                memory_type=MemoryType.ENV,
             ),
             timeout=timeout,
             tracing_payload=False,

@@ -18,13 +18,23 @@ from contextlib import suppress
 from datetime import datetime
 from typing import Any
 
+from livekit import rtc
 from livekit.agents import llm
 
+from alphaavatar.agents.avatar.perception import (
+    to_livekit_video_frame,
+)
 from alphaavatar.agents.avatar.vision.base import VisionBase, _VisualFrameSnapshot
 from alphaavatar.agents.configs.plugins.vision_config import VisionInputMode
 from alphaavatar.agents.constants import VIDEO_VISION_INTERVAL_SEC
-from alphaavatar.agents.log import logger
+from alphaavatar.agents.log import debug_every, logger
 from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.media import (
+    PayloadFormat,
+    PayloadFormatUnavailable,
+    PayloadView,
+    VideoFrame,
+)
 
 from .constants import (
     LATEST_VIDEO_FRAME_LABEL,
@@ -91,18 +101,27 @@ class SampledFrameVision(VisionBase):
         self,
         observation: EnvObservation,
     ) -> _VisualFrameSnapshot | None:
-        if observation.kind not in {"video_frame", "screen_frame"}:
+        if observation.kind not in {
+            "video_frame",
+            "screen_frame",
+        }:
             return None
 
-        # AvatarVision wants runtime frame payload, usually rtc.VideoFrame.
-        if observation.payload is None:
+        payload = observation.payload
+        if payload is None:
+            return None
+
+        if not payload.has(
+            PayloadFormat.VIDEO_FRAME,
+            view=PayloadView.RAW,
+            fallback_to_raw=False,
+        ):
             return None
 
         if not self._should_sample_observation(observation):
             return None
 
         return _VisualFrameSnapshot(
-            payload=observation.payload,
             timestamp=observation.timestamp,
             observation_id=observation.observation_id,
             observation=observation,
@@ -117,39 +136,42 @@ class SampledFrameVision(VisionBase):
         if not vision_config.use_sampled_frame_input:
             return
 
-        perception_bus = self.agent.session_runtime.perception_bus
-        observations = perception_bus.take_pending_observations(
+        # Small delay gives asynchronous face inference a chance to publish
+        # an annotated representation before this frame enters the vision buffer.
+        window = self.agent.perception_runtime.take_pending_observations(
             consumer_id=self.CONSUMER_ID,
+            streams={"video", "screen"},
             require_payload=True,
+            min_age_sec=0.25,
         )
 
+        observations = window.observations
+
         if not observations:
+            self.agent.perception_runtime.commit_observations(window)
             return
 
         accepted_count = 0
 
         for observation in observations:
             snapshot = self._observation_to_snapshot(observation)
+
             if snapshot is None:
                 continue
 
             self._video_frame_buffer.append(snapshot)
             accepted_count += 1
 
-        # Commit for Avatar Vision only.
-        # Do NOT clear payload here because Memory / Persona / Router may still need it.
-        perception_bus.commit_observations(
-            consumer_id=self.CONSUMER_ID,
-            observations=observations,
-            clear_payload=False,
-        )
+        self.agent.perception_runtime.commit_observations(window)
 
         if accepted_count:
-            logger.debug(
-                "Pulled visual frames from perception bus accepted=%s pending=%s buffer=%s",
+            debug_every(
+                "Pulled visual frames accepted=%s pending=%s buffer=%s",
                 accepted_count,
                 len(observations),
                 len(self._video_frame_buffer),
+                key=(f"vision:sampled_frames_pulled:{self.agent.session_runtime.session_id}"),
+                interval_sec=10.0,
             )
 
     def _select_visual_frames_for_turn(self) -> list[_VisualFrameSnapshot]:
@@ -174,6 +196,63 @@ class SampledFrameVision(VisionBase):
             return list(self._video_frame_buffer)[-frame_count:]
 
         return []
+
+    def _resolve_livekit_frames(
+        self,
+        snapshots: list[_VisualFrameSnapshot],
+    ) -> list[
+        tuple[
+            _VisualFrameSnapshot,
+            rtc.VideoFrame,
+        ]
+    ]:
+        resolved: list[
+            tuple[
+                _VisualFrameSnapshot,
+                rtc.VideoFrame,
+            ]
+        ] = []
+
+        for snapshot in snapshots:
+            payload = snapshot.observation.payload
+            if payload is None:
+                continue
+
+            try:
+                frame = payload.get(
+                    PayloadFormat.VIDEO_FRAME,
+                    view=PayloadView.ANNOTATED,
+                    fallback_to_raw=True,
+                )
+            except PayloadFormatUnavailable:
+                continue
+
+            if not isinstance(frame, VideoFrame):
+                logger.warning(
+                    "Skip visual frame because VIDEO_FRAME representation "
+                    "is not VideoFrame observation_id=%s type=%s",
+                    snapshot.observation_id,
+                    type(frame).__name__,
+                )
+                continue
+
+            try:
+                livekit_frame = to_livekit_video_frame(frame)
+            except Exception:
+                logger.exception(
+                    "Failed to convert visual frame to LiveKit frame observation_id=%s",
+                    snapshot.observation_id,
+                )
+                continue
+
+            resolved.append(
+                (
+                    snapshot,
+                    livekit_frame,
+                )
+            )
+
+        return resolved
 
     def _build_visual_instruction(self, frame_count: int) -> str:
         if frame_count == 1:
@@ -221,21 +300,6 @@ class SampledFrameVision(VisionBase):
 
         return False
 
-    def _payload_for_injection(self, frame: _VisualFrameSnapshot) -> Any:
-        observation = frame.observation
-
-        if observation is not None:
-            # If Persona or other modules already rendered annotations,
-            # use the rendered/model-facing payload.
-            if observation.rendered_payload is not None:
-                return observation.rendered_payload
-
-            # Otherwise use the original runtime payload.
-            if observation.payload is not None:
-                return observation.payload
-
-        return frame.payload
-
     async def _visual_observation_loop(self) -> None:
         while True:
             try:
@@ -251,9 +315,9 @@ class SampledFrameVision(VisionBase):
 
     def inject_into_chat_ctx(self, chat_ctx: llm.ChatContext) -> None:
         vision_config = self.agent.avatar_config.vision
-        frames = self._select_visual_frames_for_turn()
+        snapshots = self._select_visual_frames_for_turn()
 
-        if not frames:
+        if not snapshots:
             return
 
         latest_user_message: llm.ChatMessage | None = None
@@ -281,21 +345,29 @@ class SampledFrameVision(VisionBase):
             logger.debug("Latest user message already has visual input; skip duplicate injection")
             return
 
-        frame_count = len(frames)
+        resolved_frames = self._resolve_livekit_frames(snapshots)
 
-        visual_content: list = [self._build_visual_instruction(frame_count)]
+        if not resolved_frames:
+            return
 
-        for idx, frame in enumerate(frames, start=1):
+        frame_count = len(resolved_frames)
+
+        visual_content: list[Any] = [self._build_visual_instruction(frame_count)]
+
+        for index, (_, livekit_frame) in enumerate(
+            resolved_frames,
+            start=1,
+        ):
             if frame_count > 1:
                 visual_content.append(
-                    f"{VIDEO_FRAME_LABEL_PREFIX}{idx}/{frame_count} — chronological order]"
+                    f"{VIDEO_FRAME_LABEL_PREFIX}{index}/{frame_count} — chronological order]"
                 )
             else:
                 visual_content.append(LATEST_VIDEO_FRAME_LABEL)
 
             visual_content.append(
                 llm.ImageContent(
-                    image=self._payload_for_injection(frame),
+                    image=livekit_frame,
                     inference_width=vision_config.inference.width,
                     inference_height=vision_config.inference.height,
                 )
@@ -318,8 +390,8 @@ class SampledFrameVision(VisionBase):
 
     """Runtime Op"""
 
-    async def on_session_start(self, **kwargs) -> None:
-        await super().on_session_start(**kwargs)
+    async def on_session_start(self) -> None:
+        await super().on_session_start()
 
         vision_config = self.agent.avatar_config.vision
 
@@ -341,11 +413,13 @@ class SampledFrameVision(VisionBase):
             VIDEO_VISION_INTERVAL_SEC,
         )
 
-    async def on_session_stop(self, **kwargs) -> None:
+    async def on_session_stop(self) -> None:
         if self._pull_task is not None:
             self._pull_task.cancel()
+
             with suppress(asyncio.CancelledError):
                 await self._pull_task
+
             self._pull_task = None
 
-        await super().on_session_stop(**kwargs)
+        await super().on_session_stop()

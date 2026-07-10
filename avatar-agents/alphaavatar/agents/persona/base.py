@@ -20,8 +20,13 @@ from alphaavatar.agents.avatar.prompting import PersonaPluginsTemplate
 from alphaavatar.agents.constants import FACE_MATCH_THRESHOLD, SPEAKER_MATCH_THRESHOLD
 from alphaavatar.agents.log import debug_every, logger
 from alphaavatar.agents.plugin import AvatarRuntimePlugin
-from alphaavatar.agents.runtime.session_runtime import ParticipantInfo, SessionRuntime
+from alphaavatar.agents.runtime import (
+    AvatarRuntime,
+    SessionRuntime,
+)
+from alphaavatar.agents.runtime.session_runtime import ParticipantInfo
 from alphaavatar.agents.utils import NumpyOP
+from alphaavatar.core.perception import PerceptionRuntime
 
 from .cache import FaceCacheBase, PersonaCache, SpeakerCacheBase
 from .face import FaceStreamBase
@@ -34,13 +39,13 @@ class PersonaBase(AvatarRuntimePlugin):
     def __init__(
         self,
         *,
-        session_runtime: SessionRuntime,
+        runtime: AvatarRuntime,
         profiler: ProfilerBase,
         speaker_cls: tuple[type[SpeakerStreamBase], type[SpeakerCacheBase]],
         face_cls: tuple[type[FaceStreamBase], type[FaceCacheBase]],
         maximum_retrieval_times: int = 3,
     ):
-        self.session_runtime = session_runtime
+        self.runtime = runtime
 
         self._profiler = profiler
         self._speaker_cls = speaker_cls
@@ -56,6 +61,14 @@ class PersonaBase(AvatarRuntimePlugin):
 
         # The face stream runtime instance, which is initialized when the session starts.
         self._face_stream_runtime: FaceStreamBase | None = None
+
+    @property
+    def session_runtime(self) -> SessionRuntime:
+        return self.runtime.session
+
+    @property
+    def perception_runtime(self) -> PerceptionRuntime:
+        return self.runtime.perception
 
     @property
     def profiler(self) -> ProfilerBase:
@@ -472,7 +485,7 @@ class PersonaBase(AvatarRuntimePlugin):
 
     """Runtime Op"""
 
-    async def on_session_start(self, **kwargs) -> None:
+    async def on_session_start(self) -> None:
         primary_user_id = self.session_runtime.primary_user_id
         if not primary_user_id:
             return
@@ -481,14 +494,15 @@ class PersonaBase(AvatarRuntimePlugin):
 
         face_stream_cls = self.face_stream
         self._face_stream_runtime = face_stream_cls(
-            session_runtime=self.session_runtime,
+            runtime=self.runtime,
             activity_persona=self,
         )
         await self._face_stream_runtime.start()
 
-    async def on_session_stop(self, **kwargs) -> None:
-        await self._face_stream_runtime.stop()
-        self._face_stream_runtime = None
+    async def on_session_stop(self) -> None:
+        if self._face_stream_runtime is not None:
+            await self._face_stream_runtime.stop()
+            self._face_stream_runtime = None
 
         await self.update_profile_details()
         await self.save()

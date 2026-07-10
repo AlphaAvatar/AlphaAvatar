@@ -15,77 +15,232 @@ from __future__ import annotations
 
 import asyncio
 import time
+from typing import TYPE_CHECKING, Any
 
-import cv2
-import numpy as np
 from livekit import rtc
-from livekit.agents import get_job_context
 
 from alphaavatar.agents.constants import VIDEO_RTC_INTERVAL_SEC
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.plugin import AvatarRuntimePlugin
-from alphaavatar.agents.runtime import SessionRuntime
 from alphaavatar.agents.utils.id_utils import get_md5_id
-from alphaavatar.core.perception import FrameEvent
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.media import VideoFramePayload
+from alphaavatar.core.perception import PerceptionRuntime
+
+from .livekit_video_codec import (
+    encode_video_frame_to_jpeg,
+    from_livekit_video_frame,
+)
+
+if TYPE_CHECKING:
+    from alphaavatar.agents.avatar.engine import AvatarEngine
 
 
 class LiveKitVideoInputRuntime(AvatarRuntimePlugin):
-    def __init__(self, *, session_runtime: SessionRuntime) -> None:
-        self.session_runtime = session_runtime
+    """
+    LiveKit video input adapter.
 
-        self._video_streams: dict[str, rtc.VideoStream] = {}
-        self._last_publish_ts_by_track: dict[str, float] = {}
+    Responsibilities:
+    - subscribe to LiveKit video tracks;
+    - sample incoming RTC video frames;
+    - convert rtc.VideoFrame into AlphaAvatar VideoFrame;
+    - publish EnvObservation into PerceptionRuntime.
+
+    It must not:
+    - publish rtc.VideoFrame into avatar-core;
+    - depend on Memory, Persona, or AvatarVision;
+    - decide which representation downstream consumers should use.
+    """
+
+    def __init__(
+        self,
+        *,
+        engine: AvatarEngine,
+        perception_runtime: PerceptionRuntime,
+        jpeg_quality: int = 85,
+    ) -> None:
+        self.engine = engine
+        self.perception_runtime = perception_runtime
+
+        self._jpeg_quality = jpeg_quality
+
+        self._video_streams: dict[
+            str,
+            rtc.VideoStream,
+        ] = {}
+
+        # Monotonic timestamps are used only for sampling intervals.
+        self._last_publish_ts_by_track: dict[
+            str,
+            float,
+        ] = {}
+
         self._video_tasks: set[asyncio.Task[None]] = set()
+
         self._listeners_registered = False
+        self._started = False
 
     """Helper Op"""
 
-    def _encode_frame_to_jpeg(self, frame: rtc.VideoFrame, *, quality: int = 85) -> bytes:
-        rgba = frame.convert(rtc.VideoBufferType.RGBA)
-        arr = np.frombuffer(rgba.data, dtype=np.uint8).reshape(
-            rgba.height,
-            rgba.width,
-            4,
+    def _get_room(self) -> rtc.Room | None:
+        room = self.engine.livekit_room
+
+        if room is None:
+            logger.warning("LiveKit room is not bound to AvatarEngine")
+
+        return room
+
+    def _register_task(
+        self,
+        task: asyncio.Task[None],
+    ) -> None:
+        self._video_tasks.add(task)
+
+        def _on_done(
+            completed_task: asyncio.Task[None],
+        ) -> None:
+            self._video_tasks.discard(completed_task)
+
+            if completed_task.cancelled():
+                return
+
+            try:
+                error = completed_task.exception()
+            except asyncio.CancelledError:
+                return
+
+            if error is not None:
+                logger.error(
+                    "LiveKit video background task failed",
+                    exc_info=(
+                        type(error),
+                        error,
+                        error.__traceback__,
+                    ),
+                )
+
+        task.add_done_callback(_on_done)
+
+    def _build_observation(
+        self,
+        *,
+        frame: rtc.VideoFrame,
+        track_sid: str,
+        participant_identity: str,
+        frame_index: int,
+        timestamp: float,
+    ) -> EnvObservation:
+        """
+        Convert one LiveKit frame into an AlphaAvatar observation.
+
+        The payload initially contains:
+
+            RAW + VIDEO_FRAME
+            RAW + IMAGE_JPEG_BYTES
+
+        FaceStream may later add:
+
+            ANNOTATED + VIDEO_FRAME
+            ANNOTATED + IMAGE_JPEG_BYTES
+        """
+
+        timestamp_text = str(timestamp)
+
+        frame_id = get_md5_id(
+            [
+                self.engine.session_runtime.session_id,
+                track_sid,
+                str(frame_index),
+                timestamp_text,
+            ]
         )
-        bgr = cv2.cvtColor(arr, cv2.COLOR_RGBA2BGR)
 
-        ok, encoded = cv2.imencode(
-            ".jpg",
-            bgr,
-            [int(cv2.IMWRITE_JPEG_QUALITY), quality],
+        generic_frame = from_livekit_video_frame(frame)
+
+        jpeg_bytes = encode_video_frame_to_jpeg(
+            generic_frame,
+            jpeg_quality=self._jpeg_quality,
         )
-        if not ok:
-            raise RuntimeError("Failed to encode video frame to JPEG")
 
-        return encoded.tobytes()
+        metadata: dict[str, Any] = {
+            "frame_id": frame_id,
+            "track_sid": track_sid,
+            "participant_identity": (participant_identity),
+            "frame_index": frame_index,
+            "rtc_backend": "livekit",
+        }
 
-    def _try_attach_existing_video_tracks(self) -> None:
+        payload = VideoFramePayload.create(
+            frame=generic_frame,
+            frame_id=frame_id,
+            jpeg_bytes=jpeg_bytes,
+            metadata=dict(metadata),
+        )
+
+        return EnvObservation.video_frame(
+            timestamp=timestamp_text,
+            source_id=f"env:camera:{track_sid}",
+            payload=payload,
+            metadata=metadata,
+        )
+
+    def _publish_video_frame(
+        self,
+        *,
+        frame: rtc.VideoFrame,
+        track_sid: str,
+        participant_identity: str,
+        frame_index: int,
+        timestamp: float,
+    ) -> None:
         try:
-            room = get_job_context().room
-        except Exception as e:
-            logger.warning("Cannot access LiveKit room for video input: %s", e)
+            observation = self._build_observation(
+                frame=frame,
+                track_sid=track_sid,
+                participant_identity=(participant_identity),
+                frame_index=frame_index,
+                timestamp=timestamp,
+            )
+
+        except Exception:
+            logger.exception(
+                "Failed to convert LiveKit video frame participant=%s track_sid=%s frame_index=%s",
+                participant_identity,
+                track_sid,
+                frame_index,
+            )
+            return
+
+        self.perception_runtime.publish_observation(observation)
+
+    def _try_attach_existing_video_tracks(
+        self,
+    ) -> None:
+        room = self._get_room()
+        if room is None:
             return
 
         for participant in room.remote_participants.values():
             for publication in participant.track_publications.values():
                 track = publication.track
+
                 if track is None or track.kind != rtc.TrackKind.KIND_VIDEO:
                     continue
 
                 self._create_video_stream(
                     track=track,
                     track_sid=publication.sid,
-                    participant_identity=participant.identity,
+                    participant_identity=(participant.identity),
                 )
 
-    def _register_video_track_listeners(self) -> None:
+    def _register_video_track_listeners(
+        self,
+    ) -> None:
         if self._listeners_registered:
             return
 
-        try:
-            room = get_job_context().room
-        except Exception as e:
-            logger.warning("Cannot register video track listeners: %s", e)
+        room = self._get_room()
+        if room is None:
             return
 
         self._listeners_registered = True
@@ -96,13 +251,16 @@ class LiveKitVideoInputRuntime(AvatarRuntimePlugin):
             publication: rtc.RemoteTrackPublication,
             participant: rtc.RemoteParticipant,
         ) -> None:
+            if not self._started:
+                return
+
             if track.kind != rtc.TrackKind.KIND_VIDEO:
                 return
 
             self._create_video_stream(
                 track=track,
                 track_sid=publication.sid,
-                participant_identity=participant.identity,
+                participant_identity=(participant.identity),
             )
 
         @room.on("track_unsubscribed")
@@ -117,11 +275,12 @@ class LiveKitVideoInputRuntime(AvatarRuntimePlugin):
             task = asyncio.create_task(
                 self._aclose_video_stream(
                     track_sid=publication.sid,
-                    participant_identity=participant.identity,
-                )
+                    participant_identity=(participant.identity),
+                ),
+                name=(f"livekit_video_stream_close:{publication.sid}"),
             )
-            self._video_tasks.add(task)
-            task.add_done_callback(lambda t: self._video_tasks.discard(t))
+
+            self._register_task(task)
 
     def _create_video_stream(
         self,
@@ -130,6 +289,9 @@ class LiveKitVideoInputRuntime(AvatarRuntimePlugin):
         track_sid: str,
         participant_identity: str,
     ) -> None:
+        if not self._started:
+            return
+
         if track_sid in self._video_streams:
             return
 
@@ -141,73 +303,67 @@ class LiveKitVideoInputRuntime(AvatarRuntimePlugin):
 
             try:
                 async for event in video_stream:
+                    if not self._started:
+                        break
+
                     frame_index += 1
 
-                    now = time.time()
+                    # Use monotonic time for interval comparison.
+                    publish_clock = time.monotonic()
 
-                    last_publish_ts = self._last_publish_ts_by_track.get(track_sid)
+                    last_publish_clock = self._last_publish_ts_by_track.get(track_sid)
+
                     if (
-                        last_publish_ts is not None
-                        and now - last_publish_ts < VIDEO_RTC_INTERVAL_SEC
+                        last_publish_clock is not None
+                        and publish_clock - last_publish_clock < VIDEO_RTC_INTERVAL_SEC
                     ):
                         continue
 
-                    self._last_publish_ts_by_track[track_sid] = now
+                    self._last_publish_ts_by_track[track_sid] = publish_clock
 
-                    frame = event.frame
-                    timestamp = str(now)
-                    frame_id = get_md5_id(
-                        [
-                            self.session_runtime.session_id,
-                            track_sid,
-                            str(frame_index),
-                            timestamp,
-                        ]
-                    )
+                    # Use wall-clock timestamp for observations and persistence.
+                    timestamp = time.time()
 
-                    try:
-                        model_frame_bytes = self._encode_frame_to_jpeg(frame)
-                    except Exception as e:
-                        logger.warning(
-                            "Failed to encode video frame for model input track_sid=%s error=%s",
-                            track_sid,
-                            e,
-                        )
-                        model_frame_bytes = None
-
-                    self.session_runtime.perception_bus.publish_frame(
-                        FrameEvent(
-                            frame_id=frame_id,
-                            timestamp=timestamp,
-                            source_id=f"env:camera:{track_sid}",
-                            payload=frame,  # realtime consumers: Vision / Persona
-                            rendered_payload=model_frame_bytes,  # model consumers: Memory / Gemini
-                            rendered_mime_type="image/jpeg" if model_frame_bytes else None,
-                            mime_type="image/jpeg",
-                            metadata={
-                                "frame_id": frame_id,
-                                "track_sid": track_sid,
-                                "participant_identity": participant_identity,
-                                "frame_index": frame_index,
-                            },
-                        )
+                    self._publish_video_frame(
+                        frame=event.frame,
+                        track_sid=track_sid,
+                        participant_identity=(participant_identity),
+                        frame_index=frame_index,
+                        timestamp=timestamp,
                     )
 
             except asyncio.CancelledError:
                 raise
-            except Exception as e:
-                logger.warning(
-                    "Video stream reader failed participant=%s track_sid=%s error=%s",
+
+            except Exception:
+                logger.exception(
+                    "Video stream reader failed participant=%s track_sid=%s",
                     participant_identity,
                     track_sid,
-                    e,
                 )
-            finally:
-                self._video_streams.pop(track_sid, None)
 
-        task = asyncio.create_task(read_stream())
-        self._video_tasks.add(task)
-        task.add_done_callback(lambda t: self._video_tasks.discard(t))
+            finally:
+                current_stream = self._video_streams.get(track_sid)
+
+                # Avoid removing a newer stream if the same track SID was
+                # recreated before this task finished.
+                if current_stream is video_stream:
+                    self._video_streams.pop(
+                        track_sid,
+                        None,
+                    )
+
+                self._last_publish_ts_by_track.pop(
+                    track_sid,
+                    None,
+                )
+
+        task = asyncio.create_task(
+            read_stream(),
+            name=(f"livekit_video_stream_reader:{track_sid}"),
+        )
+
+        self._register_task(task)
 
     async def _aclose_video_stream(
         self,
@@ -215,40 +371,84 @@ class LiveKitVideoInputRuntime(AvatarRuntimePlugin):
         track_sid: str,
         participant_identity: str,
     ) -> None:
-        video_stream = self._video_streams.pop(track_sid, None)
+        video_stream = self._video_streams.pop(
+            track_sid,
+            None,
+        )
+
+        self._last_publish_ts_by_track.pop(
+            track_sid,
+            None,
+        )
+
         if video_stream is None:
             return
 
         try:
             await video_stream.aclose()
-        except Exception as e:
-            logger.warning(
-                "Failed to close video stream participant=%s track_sid=%s error=%s",
+
+        except Exception:
+            logger.exception(
+                "Failed to close video stream participant=%s track_sid=%s",
                 participant_identity,
                 track_sid,
-                e,
             )
 
     """Runtime Op"""
 
-    async def on_session_start(self, **kwargs) -> None:
-        self._try_attach_existing_video_tracks()
-        self._register_video_track_listeners()
+    async def on_session_start(self) -> None:
+        if self._started:
+            return
 
-    async def on_session_stop(self, **kwargs) -> None:
+        self._started = True
+
+        self._register_video_track_listeners()
+        self._try_attach_existing_video_tracks()
+
+        logger.info(
+            "LiveKit video input runtime started session_id=%s sample_interval=%ss",
+            self.engine.session_runtime.session_id,
+            VIDEO_RTC_INTERVAL_SEC,
+        )
+
+    async def on_session_stop(self) -> None:
+        if not self._started:
+            return
+
+        # Prevent event callbacks and read loops from creating/publishing
+        # additional frames while shutdown is in progress.
+        self._started = False
+
         streams = list(self._video_streams.items())
+
         self._video_streams.clear()
         self._last_publish_ts_by_track.clear()
 
-        for _track_sid, video_stream in streams:
+        for track_sid, video_stream in streams:
             try:
                 await video_stream.aclose()
-            except Exception as e:
-                logger.warning("Failed to close video stream: %s", e)
 
-        for task in list(self._video_tasks):
-            task.cancel()
+            except Exception:
+                logger.exception(
+                    "Failed to close video stream track_sid=%s",
+                    track_sid,
+                )
 
-        if self._video_tasks:
-            await asyncio.gather(*self._video_tasks, return_exceptions=True)
-            self._video_tasks.clear()
+        tasks = list(self._video_tasks)
+
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+
+        if tasks:
+            await asyncio.gather(
+                *tasks,
+                return_exceptions=True,
+            )
+
+        self._video_tasks.clear()
+
+        logger.info(
+            "LiveKit video input runtime stopped session_id=%s",
+            self.engine.session_runtime.session_id,
+        )

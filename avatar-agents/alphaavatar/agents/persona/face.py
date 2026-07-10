@@ -16,9 +16,9 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from alphaavatar.agents.runtime import SessionRuntime
+from alphaavatar.agents.runtime import AvatarRuntime
 
+if TYPE_CHECKING:
     from .base import PersonaBase
 
 
@@ -28,10 +28,10 @@ class FaceStreamBase:
     def __init__(
         self,
         *,
-        session_runtime: SessionRuntime,
+        runtime: AvatarRuntime,
         activity_persona: PersonaBase,
     ) -> None:
-        self.session_runtime = session_runtime
+        self.runtime = runtime
         self._activity_persona = activity_persona
 
     @abstractmethod
