@@ -534,30 +534,38 @@ Runtime, not the model, controls evidence, object_ids, session_id, timestamp, me
 B) PatchOp.value FORMAT
 ----------------------------------------------------------------------
 
-For environment memory, PatchOp.value must be exactly one clean memory block:
+For environment memory, PatchOp.value must be exactly one clean ENV block with line breaks:
 
-[MEMORY]
+[ENV]
 <1-4 sentences describing the useful environmental observation. Include what was visible/heard/on-screen, what changed or persisted, and why it may matter for future grounding or recall.>
-[/MEMORY]
+[/ENV]
 
 Rules:
-- Do not include labels inside the memory block.
+- PatchOp.value MUST start with exactly "[ENV]\n".
+- PatchOp.value MUST end with exactly "\n[/ENV]".
+- Do NOT output "[ENV] ... [/ENV]" on one line.
+- Do not include labels inside the ENV block.
 - Do not write "summary:", "context:", "topic:", "kind:", "evidence:", or "frame:".
 - Do not store raw frame metadata.
 - Do not store raw bounding boxes unless the spatial relation itself is meaningful in natural language.
 - Do not store low-level detection traces.
 - Do not describe every frame.
-- Keep the memory specific, concise, and useful for future visual/audio/environment recall.
+- Keep the ENV block specific, concise, and useful for future visual/audio/environment recall.
 
 Good value:
-[MEMORY]
+[ENV]
 A visible person was sitting at a desk in an indoor room while interacting with the assistant. A laptop or screen-like workspace appeared to be part of the active environment.
-[/MEMORY]
+[/ENV]
 
 Bad value:
 [MEMORY]
-frame_id=abc123 bbox=[12,34,56,78] det_score=0.92 face_id=tmp_1.
+A visible person was sitting indoors.
 [/MEMORY]
+
+Bad value:
+[ENV]
+frame_id=abc123 bbox=[12,34,56,78] det_score=0.92 face_id=tmp_1.
+[/ENV]
 
 ----------------------------------------------------------------------
 C) WHEN TO WRITE ENV MEMORY
@@ -775,7 +783,7 @@ Before outputting each env_memory_entries item, verify:
 - Does it avoid real identity inference?
 - Does it avoid sensitive appearance-based inference?
 - Does it avoid duplication with previous ENV memory?
-- Is PatchOp.value exactly one [MEMORY]...[/MEMORY] block?
+- Is PatchOp.value exactly one [ENV]...[/ENV] block?
 
 If no item passes these checks, output empty env_memory_entries.
 """.strip()

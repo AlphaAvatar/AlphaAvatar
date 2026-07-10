@@ -14,17 +14,14 @@
 import importlib
 import json
 import os
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.persona import PersonaBase
+from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.utils.vdb import qdrant
-
-if TYPE_CHECKING:
-    from alphaavatar.agents.runtime import SessionRuntime
-
 
 importlib.import_module("alphaavatar.plugins.persona")
 
@@ -81,10 +78,10 @@ class PersonaConfig(BaseModel):
 
             os.environ["PERSONA_VDB_TYPE"] = persona_vdb_type
 
-    def get_plugin(self, session_runtime: "SessionRuntime") -> PersonaBase:
+    def get_plugin(self, runtime: AvatarRuntime) -> PersonaBase:
         """Returns the Persona plugin instance based on the configuration."""
         return PersonaBase(
-            session_runtime=session_runtime,
+            runtime=runtime,
             profiler=AvatarPlugin.get_avatar_plugin(
                 AvatarModule.PROFILER,
                 self.profiler.plugin,

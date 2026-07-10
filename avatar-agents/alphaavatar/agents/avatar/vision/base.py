@@ -30,19 +30,22 @@ if TYPE_CHECKING:
 @dataclass(slots=True)
 class _VisualFrameSnapshot:
     """
-    A bounded local snapshot for Avatar Vision.
+    Reference to a shared observation.
 
-    Important:
-    - `payload` keeps the original runtime frame, usually rtc.VideoFrame.
-    - `observation` keeps a reference to the shared EnvObservation so late
-      annotations/rendered_payload can still be picked up at injection time.
+    Do not copy the resolved video frame into this snapshot.
+
+    FaceStream may add an annotated representation after this snapshot enters
+    the local buffer. SampledFrameVision resolves the latest representation
+    only when injecting into the model context.
     """
 
-    payload: Any = field(repr=False, compare=False)
     timestamp: str
     observation_id: str
 
-    observation: EnvObservation | None = field(default=None, repr=False, compare=False)
+    observation: EnvObservation = field(
+        repr=False,
+        compare=False,
+    )
 
     frame_id: str | None = None
     source_id: str | None = None
@@ -50,9 +53,11 @@ class _VisualFrameSnapshot:
 
 
 class VisionBase(AvatarRuntimePlugin):
-    """Base class for AlphaAvatar visual input strategies."""
-
-    def __init__(self, agent: AvatarEngine, vision_id: str) -> None:
+    def __init__(
+        self,
+        agent: AvatarEngine,
+        vision_id: str,
+    ) -> None:
         self.agent = agent
         self.vision_id = vision_id
 
@@ -61,32 +66,28 @@ class VisionBase(AvatarRuntimePlugin):
         self._video_frame_buffer: deque[_VisualFrameSnapshot] = deque(
             maxlen=vision_config.sampling.frame_buffer_size
         )
+
         self._last_video_frame_sample_ts: float | None = None
-        self._started: bool = False
+        self._started = False
 
-    def inject_into_chat_ctx(self, chat_ctx: llm.ChatContext) -> None:
-        """Inject visual content into the chat context before LLM inference.
+    def inject_into_chat_ctx(
+        self,
+        chat_ctx: llm.ChatContext,
+    ) -> None: ...
 
-        Default implementation does nothing.
-        """
-        ...
-
-    """Runtime Op"""
-
-    async def on_session_start(self, **kwargs) -> None:
+    async def on_session_start(self) -> None:
         """Start visual input processing."""
         vision_config = self.agent.avatar_config.vision
 
         self._started = True
 
         logger.info(
-            "AvatarVision started with perception bus vision_id=%s mode=%s",
+            "AvatarVision started vision_id=%s mode=%s",
             self.vision_id,
             vision_config.input.mode,
         )
 
-    async def on_session_stop(self, **kwargs) -> None:
-        """Stop visual input processing and cleanup resources."""
+    async def on_session_stop(self) -> None:
         self._started = False
         self._video_frame_buffer.clear()
         self._last_video_frame_sample_ts = None
@@ -97,5 +98,8 @@ class NoopVision(VisionBase):
 
     CONSUMER_ID = "avatar.vision.noop"
 
-    def __init__(self, agent) -> None:
-        super().__init__(agent, vision_id=self.CONSUMER_ID)
+    def __init__(self, agent: AvatarEngine) -> None:
+        super().__init__(
+            agent,
+            vision_id=self.CONSUMER_ID,
+        )

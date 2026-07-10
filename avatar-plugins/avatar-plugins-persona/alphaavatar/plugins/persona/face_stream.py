@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import asyncio
 import json
 import os
@@ -20,18 +22,31 @@ from typing import Any
 
 import cv2
 import numpy as np
-from livekit import rtc
 from livekit.agents.job import get_job_context
 
+from alphaavatar.agents.avatar.perception import (
+    bgr_to_video_frame,
+    video_frame_to_bgr,
+)
 from alphaavatar.agents.constants import (
     FACE_INFERENCE_THRESHOLD,
     FACE_MATCH_THRESHOLD,
     VIDEO_PERSONA_INTERVAL_SEC,
 )
-from alphaavatar.agents.persona import FaceStreamBase, PersonaBase, VectorRunnerOP
-from alphaavatar.agents.runtime import SessionRuntime
+from alphaavatar.agents.persona import (
+    FaceStreamBase,
+    PersonaBase,
+    VectorRunnerOP,
+)
+from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.utils import NumpyOP
 from alphaavatar.core.env import EnvAnnotation, EnvObservation
+from alphaavatar.core.media import (
+    PayloadFormat,
+    PayloadFormatUnavailable,
+    PayloadView,
+    VideoFrame,
+)
 
 from .log import logger
 from .models import FACE_MODEL_CONFIG
@@ -40,10 +55,16 @@ from .runner.face_analysis_runner import FaceAnalysisRunner
 FACE_POLL_INTERVAL_SEC = 0.1
 
 
-@dataclass
+@dataclass(slots=True)
 class FaceFrameJob:
+    """
+    Face inference job referencing the shared observation.
+
+    The observation owns the media payload. Do not copy or store an RTC-specific
+    frame inside this job.
+    """
+
     observation: EnvObservation
-    frame: rtc.VideoFrame
     timestamp: float
     track_sid: str | None = None
     participant_identity: str | None = None
@@ -53,11 +74,11 @@ class FaceStreamWrapper(FaceStreamBase):
     def __init__(
         self,
         *,
-        session_runtime: SessionRuntime,
+        runtime: AvatarRuntime,
         activity_persona: PersonaBase,
     ) -> None:
         super().__init__(
-            session_runtime=session_runtime,
+            runtime=runtime,
             activity_persona=activity_persona,
         )
 
@@ -70,29 +91,48 @@ class FaceStreamWrapper(FaceStreamBase):
         self._min_face_size = self._face_config.min_face_size
         self._jpeg_quality = self._face_config.jpeg_quality
 
-        # Independent message channel.
-        # Keep it small to preserve realtime behavior and avoid memory buildup.
+        # Keep the queue small. For realtime identity detection, the newest
+        # frame is generally more useful than accumulated stale frames.
         self._frame_q: asyncio.Queue[FaceFrameJob] = asyncio.Queue(maxsize=2)
+
         self._worker_task: asyncio.Task[None] | None = None
         self._poll_task: asyncio.Task[None] | None = None
+
+        self._renderer_registered = False
 
     @property
     def inference_method(self) -> str:
         method = os.getenv("PERSONA_INFERENCE_METHOD")
+
         if not method:
             raise RuntimeError(
                 "PERSONA_INFERENCE_METHOD is not configured. "
-                "Make sure AvatarPlugin.bootstrap_inference_runners() is called before "
-                "FaceStreamWrapper is used."
+                "Make sure AvatarPlugin.bootstrap_inference_runners() "
+                "is called before FaceStreamWrapper is used."
             )
+
         return method
 
-    def _maybe_enqueue_observation(self, observation: EnvObservation) -> None:
+    """Observation helpers"""
+
+    def _maybe_enqueue_observation(
+        self,
+        observation: EnvObservation,
+    ) -> None:
         if observation.kind not in {"video_frame", "screen_frame"}:
             return
 
-        frame = observation.payload
-        if not isinstance(frame, rtc.VideoFrame):
+        payload = observation.payload
+        if payload is None:
+            return
+
+        # Face inference consumes the JPEG representation created by the
+        # RTC input adapter. This prevents repeated frame encoding.
+        if not payload.has(
+            PayloadFormat.IMAGE_JPEG_BYTES,
+            view=PayloadView.RAW,
+            fallback_to_raw=False,
+        ):
             return
 
         try:
@@ -101,7 +141,11 @@ class FaceStreamWrapper(FaceStreamBase):
             timestamp = time.monotonic()
 
         source_key = observation.source_id or observation.frame_id or "default"
-        last_ts = self._last_sample_ts.get(source_key, 0.0)
+
+        last_ts = self._last_sample_ts.get(
+            source_key,
+            0.0,
+        )
 
         if VIDEO_PERSONA_INTERVAL_SEC > 0 and timestamp - last_ts < VIDEO_PERSONA_INTERVAL_SEC:
             return
@@ -112,7 +156,6 @@ class FaceStreamWrapper(FaceStreamBase):
 
         job = FaceFrameJob(
             observation=observation,
-            frame=frame,
             timestamp=timestamp,
             track_sid=metadata.get("track_sid"),
             participant_identity=metadata.get("participant_identity"),
@@ -120,7 +163,9 @@ class FaceStreamWrapper(FaceStreamBase):
 
         try:
             self._frame_q.put_nowait(job)
+
         except asyncio.QueueFull:
+            # Drop the oldest pending frame and retain the latest frame.
             try:
                 self._frame_q.get_nowait()
             except asyncio.QueueEmpty:
@@ -135,27 +180,14 @@ class FaceStreamWrapper(FaceStreamBase):
                     observation.frame_id,
                 )
 
-    def _encode_frame_to_jpeg(self, frame: rtc.VideoFrame) -> bytes:
-        rgba = frame.convert(rtc.VideoBufferType.RGBA)
-        arr = np.frombuffer(rgba.data, dtype=np.uint8).reshape(
-            rgba.height,
-            rgba.width,
-            4,
-        )
-        bgr = cv2.cvtColor(arr, cv2.COLOR_RGBA2BGR)
-
-        ok, encoded = cv2.imencode(
-            ".jpg",
-            bgr,
-            [int(cv2.IMWRITE_JPEG_QUALITY), self._jpeg_quality],
-        )
-        if not ok:
-            raise RuntimeError("Failed to encode video frame to JPEG")
-
-        return encoded.tobytes()
-
     def _select_best_face(self, faces: list[dict[str, Any]]) -> dict[str, Any] | None:
-        candidates = []
+        candidates: list[
+            tuple[
+                float,
+                float,
+                dict[str, Any],
+            ]
+        ] = []
 
         for face in faces:
             bbox = face.get("bbox")
@@ -183,7 +215,15 @@ class FaceStreamWrapper(FaceStreamBase):
         candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
         return candidates[0][2]
 
-    def _safe_face_annotations(self, faces: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _safe_face_annotations(
+        self,
+        faces: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """
+        Remove embeddings and normalize NumPy/scalar values before publishing
+        the annotation into the shared perception timeline.
+        """
+
         safe_faces: list[dict[str, Any]] = []
 
         for face in faces:
@@ -202,6 +242,8 @@ class FaceStreamWrapper(FaceStreamBase):
 
         return safe_faces
 
+    """Annotation operations"""
+
     def _publish_face_annotation(
         self,
         *,
@@ -217,9 +259,9 @@ class FaceStreamWrapper(FaceStreamBase):
 
         selected_bbox = selected_face.get("bbox") if selected_face else None
 
-        self.session_runtime.perception_bus.publish_annotation(
+        self.runtime.perception.publish_annotation(
             EnvAnnotation(
-                observation_id=job.observation.observation_id,
+                observation_id=(job.observation.observation_id),
                 frame_id=job.observation.frame_id,
                 source="persona.face_stream",
                 annotation_type="face_detection",
@@ -228,7 +270,7 @@ class FaceStreamWrapper(FaceStreamBase):
                     "faces": safe_faces,
                     "selected_bbox": selected_bbox,
                     "matched_user_id": uid,
-                    "participant_identity": job.participant_identity,
+                    "participant_identity": (job.participant_identity),
                     "track_sid": job.track_sid,
                 },
             )
@@ -239,31 +281,70 @@ class FaceStreamWrapper(FaceStreamBase):
         observation: EnvObservation,
         annotation: EnvAnnotation,
     ) -> None:
+        """
+        Render face annotations into the observation's ANNOTATED payload view.
+
+        Produced representations:
+        - ANNOTATED + VIDEO_FRAME
+        - ANNOTATED + IMAGE_JPEG_BYTES
+
+        RAW representations remain unchanged.
+        """
+
         if annotation.annotation_type != "face_detection":
             return
 
-        frame = observation.payload
-        if not isinstance(frame, rtc.VideoFrame):
+        payload = observation.payload
+        if payload is None:
             return
 
         faces = annotation.data.get("faces") or []
         if not faces:
             return
 
-        rgba = frame.convert(rtc.VideoBufferType.RGBA)
-        arr = np.frombuffer(rgba.data, dtype=np.uint8).reshape(
-            rgba.height,
-            rgba.width,
-            4,
-        )
-        bgr = cv2.cvtColor(arr.copy(), cv2.COLOR_RGBA2BGR)
+        try:
+            # Prefer an already annotated frame so different renderers can
+            # compose overlays instead of overwriting one another.
+            source_frame = payload.get(
+                PayloadFormat.VIDEO_FRAME,
+                view=PayloadView.ANNOTATED,
+                fallback_to_raw=True,
+            )
+
+        except PayloadFormatUnavailable:
+            logger.debug(
+                "Cannot render face annotation because VIDEO_FRAME "
+                "representation is unavailable observation_id=%s",
+                observation.observation_id,
+            )
+            return
+
+        if not isinstance(source_frame, VideoFrame):
+            logger.warning(
+                "Cannot render face annotation because VIDEO_FRAME "
+                "representation has an invalid type "
+                "observation_id=%s type=%s",
+                observation.observation_id,
+                type(source_frame).__name__,
+            )
+            return
+
+        try:
+            bgr = video_frame_to_bgr(source_frame)
+        except Exception:
+            logger.exception(
+                "Failed to convert video frame for face rendering observation_id=%s",
+                observation.observation_id,
+            )
+            return
 
         for face in faces:
             bbox = face.get("bbox")
             if bbox is None or len(bbox) != 4:
                 continue
 
-            x1, y1, x2, y2 = [int(float(x)) for x in bbox]
+            x1, y1, x2, y2 = [int(value) for value in bbox]
+
             cv2.rectangle(
                 bgr,
                 (x1, y1),
@@ -286,39 +367,79 @@ class FaceStreamWrapper(FaceStreamBase):
                     cv2.LINE_AA,
                 )
 
+        try:
+            annotated_frame = bgr_to_video_frame(bgr)
+        except Exception:
+            logger.exception(
+                "Failed to build annotated video frame observation_id=%s",
+                observation.observation_id,
+            )
+            return
+
         ok, encoded = cv2.imencode(
             ".jpg",
             bgr,
             [int(cv2.IMWRITE_JPEG_QUALITY), self._jpeg_quality],
         )
+
         if not ok:
+            logger.warning(
+                "Failed to encode annotated face frame observation_id=%s",
+                observation.observation_id,
+            )
             return
 
-        observation.rendered_payload = encoded.tobytes()
-        observation.rendered_mime_type = "image/jpeg"
-        observation.metadata.setdefault("rendered_annotations", []).append(annotation.annotation_id)
+        payload.put(
+            PayloadFormat.VIDEO_FRAME,
+            annotated_frame,
+            view=PayloadView.ANNOTATED,
+        )
+        payload.put(
+            PayloadFormat.IMAGE_JPEG_BYTES,
+            encoded.tobytes(),
+            view=PayloadView.ANNOTATED,
+        )
+
+        rendered_annotations = observation.metadata.setdefault(
+            "rendered_annotations",
+            [],
+        )
+
+        if annotation.annotation_id not in rendered_annotations:
+            rendered_annotations.append(annotation.annotation_id)
+
+    """Perception consumer"""
 
     async def _face_observation_loop(self) -> None:
-        perception_bus = self.session_runtime.perception_bus
-
         while True:
-            observations = perception_bus.take_pending_observations(
-                consumer_id=self.CONSUMER_ID,
-                require_payload=True,
-            )
-
-            if observations:
-                for observation in observations:
-                    self._maybe_enqueue_observation(observation)
-
-                # Commit for Persona only. Do not clear payload.
-                perception_bus.commit_observations(
+            try:
+                window = self.runtime.perception.take_pending_observations(
                     consumer_id=self.CONSUMER_ID,
-                    observations=observations,
-                    clear_payload=False,
+                    streams={
+                        "video",
+                        "screen",
+                    },
+                    require_payload=True,
+                    min_age_sec=0.0,
                 )
 
+                for observation in window.observations:
+                    self._maybe_enqueue_observation(observation)
+
+                # Commit the cursor even when no observations were accepted.
+                # The window can still contain a cursor advance over filtered
+                # or unavailable records.
+                self.runtime.perception.commit_observations(window)
+
+            except asyncio.CancelledError:
+                raise
+
+            except Exception:
+                logger.exception("Face stream failed to consume perception observations")
+
             await asyncio.sleep(FACE_POLL_INTERVAL_SEC)
+
+    """Inference worker"""
 
     async def _face_worker(self) -> None:
         while True:
@@ -326,20 +447,49 @@ class FaceStreamWrapper(FaceStreamBase):
 
             try:
                 await self._inference_face_job(job)
+
             except asyncio.CancelledError:
                 raise
-            except Exception as e:
+
+            except Exception as error:
                 logger.warning(
                     "Face worker failed participant=%s track_sid=%s error=%s",
                     job.participant_identity,
                     job.track_sid,
-                    e,
+                    error,
+                    exc_info=True,
                 )
 
     async def _inference_face_job(self, job: FaceFrameJob) -> None:
         start_time = time.perf_counter()
 
-        image_bytes = self._encode_frame_to_jpeg(job.frame)
+        payload = job.observation.payload
+        if payload is None:
+            return
+
+        try:
+            image_bytes = payload.get(
+                PayloadFormat.IMAGE_JPEG_BYTES,
+                view=PayloadView.RAW,
+                fallback_to_raw=False,
+            )
+
+        except PayloadFormatUnavailable:
+            logger.debug(
+                "Skip face inference because raw JPEG "
+                "representation is unavailable observation_id=%s",
+                job.observation.observation_id,
+            )
+            return
+
+        if not isinstance(image_bytes, bytes):
+            logger.warning(
+                "Skip face inference because JPEG representation "
+                "has an invalid type observation_id=%s type=%s",
+                job.observation.observation_id,
+                type(image_bytes).__name__,
+            )
+            return
 
         results = await asyncio.wait_for(
             self._executor.do_inference(
@@ -355,6 +505,7 @@ class FaceStreamWrapper(FaceStreamBase):
             return
 
         face = self._select_best_face(faces)
+
         if face is None:
             self._publish_face_annotation(
                 job=job,
@@ -365,6 +516,7 @@ class FaceStreamWrapper(FaceStreamBase):
             return
 
         embedding = face.get("embedding")
+
         if embedding is None:
             self._publish_face_annotation(
                 job=job,
@@ -375,13 +527,15 @@ class FaceStreamWrapper(FaceStreamBase):
             return
 
         inference_duration = time.perf_counter() - start_time
+
         if inference_duration > FACE_INFERENCE_THRESHOLD:
             logger.warning(
-                "[FaceAnalysis] inference is slower than realtime",
-                extra={"expection": FACE_INFERENCE_THRESHOLD},
+                "[FaceAnalysis] inference is slower than realtime duration=%.3fs threshold=%.3fs",
+                inference_duration,
+                FACE_INFERENCE_THRESHOLD,
             )
 
-        # Match & Retrieve & Update Face
+        #  Match & Retrieve & Update Face
         face_vector = np.asarray(embedding, dtype=np.float32)
         uid = await self._activity_persona.match_face_vector(face_vector=face_vector)
 
@@ -390,12 +544,13 @@ class FaceStreamWrapper(FaceStreamBase):
                 uid=uid,
                 face_vector=face_vector,
             )
+
         else:
             json_data = {
                 "op": VectorRunnerOP.search_face_vector,
                 "param": {
                     "face_vector": NumpyOP.l2_normalize(face_vector).tolist(),
-                    "threshold": FACE_MATCH_THRESHOLD,
+                    "threshold": (FACE_MATCH_THRESHOLD),
                 },
             }
 
@@ -404,12 +559,12 @@ class FaceStreamWrapper(FaceStreamBase):
                     self.inference_method,
                     json.dumps(json_data).encode(),
                 ),
-                timeout=self._face_config.inference_timeout_sec,
+                timeout=(self._face_config.inference_timeout_sec),
             )
 
             if results:
-                data = json.loads(results.decode())
-                uid = data.get("user_id", "")
+                match_data = json.loads(results.decode())
+                uid = match_data.get("user_id", "")
 
                 if uid:
                     await self._activity_persona.load_profile(uid=uid)
@@ -417,20 +572,19 @@ class FaceStreamWrapper(FaceStreamBase):
                         uid=uid,
                         face_vector=face_vector,
                     )
+
             else:
-                uid = await self._activity_persona.insert_face_vector(
-                    face_vector=face_vector,
-                )
+                uid = await self._activity_persona.insert_face_vector(face_vector=face_vector)
 
         face_attribute = {
             "age": face.get("age"),
             "gender": face.get("gender"),
             "bbox": face.get("bbox"),
             "det_score": face.get("det_score"),
-            "participant_identity": job.participant_identity,
+            "participant_identity": (job.participant_identity),
             "track_sid": job.track_sid,
-            "frame_id": job.observation.frame_id,
-            "observation_id": job.observation.observation_id,
+            "frame_id": (job.observation.frame_id),
+            "observation_id": (job.observation.observation_id),
         }
 
         if uid:
@@ -446,14 +600,12 @@ class FaceStreamWrapper(FaceStreamBase):
             uid=uid,
         )
 
-    """Runtime Op"""
+    """Runtime operations"""
 
     async def start(self) -> None:
-        # Register renderer once. Any face_detection annotation attached to an
-        # EnvObservation can produce a rendered payload for downstream multimodal models.
-        self.session_runtime.perception_bus.add_annotation_renderer(
-            self._render_face_annotation,
-        )
+        if not self._renderer_registered:
+            self.runtime.perception.add_annotation_renderer(self._render_face_annotation)
+            self._renderer_registered = True
 
         if self._worker_task is None or self._worker_task.done():
             self._worker_task = asyncio.create_task(
@@ -468,19 +620,36 @@ class FaceStreamWrapper(FaceStreamBase):
             )
 
         logger.info(
-            "Persona face stream started with PerceptionBus consumer_id=%s", self.CONSUMER_ID
+            "Persona face stream started consumer_id=%s",
+            self.CONSUMER_ID,
         )
 
     async def stop(self) -> None:
+        # Stop reading new observations first.
         if self._poll_task is not None:
             self._poll_task.cancel()
-            await asyncio.gather(self._poll_task, return_exceptions=True)
+
+            await asyncio.gather(
+                self._poll_task,
+                return_exceptions=True,
+            )
+
             self._poll_task = None
 
+        # Then stop the inference worker.
         if self._worker_task is not None:
             self._worker_task.cancel()
-            await asyncio.gather(self._worker_task, return_exceptions=True)
+
+            await asyncio.gather(
+                self._worker_task,
+                return_exceptions=True,
+            )
+
             self._worker_task = None
+
+        if self._renderer_registered:
+            self.runtime.perception.remove_annotation_renderer(self._render_face_annotation)
+            self._renderer_registered = False
 
         while not self._frame_q.empty():
             try:
@@ -489,3 +658,8 @@ class FaceStreamWrapper(FaceStreamBase):
                 break
 
         self._last_sample_ts.clear()
+
+        logger.info(
+            "Persona face stream stopped consumer_id=%s",
+            self.CONSUMER_ID,
+        )

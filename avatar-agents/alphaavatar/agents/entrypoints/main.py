@@ -29,7 +29,12 @@ from alphaavatar.agents.configs import AvatarConfig, get_avatar_args, read_args
 from alphaavatar.agents.constants import DEFAULT_CONTEXT_VALUE
 from alphaavatar.agents.env import init_env
 from alphaavatar.agents.log import logger
-from alphaavatar.agents.runtime import ContextRuntime, InteractionMethod, SessionRuntime
+from alphaavatar.agents.runtime import (
+    AvatarRuntime,
+    ContextRuntime,
+    InteractionMethod,
+    SessionRuntime,
+)
 from alphaavatar.agents.utils.id_utils import get_session_id, get_user_id
 from alphaavatar.agents.utils.time_utils import TimeStamp, build_time_context_from_metadata
 
@@ -199,7 +204,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     session_id = participant_metadata.get("session_id", get_session_id(room_type))
     timestamp: TimeStamp = build_time_context_from_metadata(participant_metadata)
 
-    # Build Session Config
+    # Build Runtime Components
     session_runtime = SessionRuntime(
         session_id=session_id,
     )
@@ -242,6 +247,12 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
         },
     )
 
+    avatar_runtime = AvatarRuntime.create(
+        session=session_runtime,
+        context=context_runtime,
+    )
+
+    # logging
     logger.info(
         textwrap.dedent(f"""Connecting to room...
     - Agent Identity: {agent_identity}
@@ -281,9 +292,8 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
             )
 
     avatar_engine = AvatarEngine(
-        session_runtime=session_runtime,
         avatar_config=avatar_config,
-        context_runtime=context_runtime,
+        runtime=avatar_runtime,
     )
 
     # Bind room before session.start so status sinks can publish early events.

@@ -14,16 +14,13 @@
 import importlib
 import json
 import os
-from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.memory import MemoryBase
+from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.utils.vdb import qdrant
-
-if TYPE_CHECKING:
-    from alphaavatar.agents.runtime import SessionRuntime
 
 importlib.import_module("alphaavatar.plugins.memory")
 
@@ -78,12 +75,13 @@ class MemoryConfig(BaseModel):
             # TODO: Handle other memory plugins and their corresponding VDB types if needed
             pass
 
-    def get_plugin(self, session_runtime: "SessionRuntime") -> MemoryBase:
+    def get_plugin(self, runtime: AvatarRuntime, avatar_id: str) -> MemoryBase:
         """Returns the Memory plugin instance based on the configuration."""
         return AvatarPlugin.get_avatar_plugin(
             AvatarModule.MEMORY,
             self.plugin,
-            session_runtime=session_runtime,
+            runtime=runtime,
+            avatar_id=avatar_id,
             memory_search_context=self.search_context,
             memory_recall_num=self.recall_num,
             maximum_memory_num=self.maximum_memory_num,

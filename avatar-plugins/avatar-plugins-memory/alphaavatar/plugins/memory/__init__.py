@@ -14,7 +14,7 @@
 import os
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
-from alphaavatar.agents.runtime import SessionRuntime
+from alphaavatar.agents.runtime import AvatarRuntime
 
 from .log import logger
 from .memory_runtime import MemoryRuntime
@@ -33,7 +33,8 @@ class MemoryPlugin(AvatarPlugin):
 
     def get_plugin(
         self,
-        session_runtime: SessionRuntime,
+        runtime: AvatarRuntime,
+        avatar_id: str,
         memory_search_context: int,
         memory_recall_num: int,
         maximum_memory_num: int,
@@ -43,7 +44,8 @@ class MemoryPlugin(AvatarPlugin):
     ) -> MemoryRuntime:
         try:
             return MemoryRuntime(
-                session_runtime=session_runtime,
+                runtime=runtime,
+                avatar_id=avatar_id,
                 memory_search_context=memory_search_context,
                 memory_recall_num=memory_recall_num,
                 maximum_memory_num=maximum_memory_num,

@@ -18,9 +18,14 @@ from typing import Any
 from livekit.agents.llm import ChatItem
 
 from alphaavatar.agents.plugin import AvatarRuntimePlugin
-from alphaavatar.agents.runtime import SessionRuntime
+from alphaavatar.agents.runtime import (
+    AvatarRuntime,
+    ContextRuntime,
+    SessionRuntime,
+)
 from alphaavatar.agents.utils import TimeStamp, time_str_to_datetime
 from alphaavatar.agents.utils.files.work_dirs import SessionPath
+from alphaavatar.core.perception import PerceptionRuntime
 
 from .cache import MemoryCache
 from .enum.cache_type import MemoryCacheType
@@ -48,14 +53,16 @@ class MemoryBase(AvatarRuntimePlugin):
     def __init__(
         self,
         *,
-        session_runtime: SessionRuntime,
+        runtime: AvatarRuntime,
+        avatar_id: str,
         memory_search_context: int = 3,
         memory_recall_num: int = 10,
         maximum_memory_num: int = 24,
     ) -> None:
         super().__init__()
 
-        self.session_runtime = session_runtime
+        self.runtime = runtime
+        self.avatar_id = avatar_id
 
         # memory config init
         self._memory_search_context = memory_search_context
@@ -65,6 +72,18 @@ class MemoryBase(AvatarRuntimePlugin):
         # memory content init
         self._memory_cache: dict[str, MemoryCache] = {}
         self._memory_state = MemoryState(maximum_memory_num=maximum_memory_num)
+
+    @property
+    def session_runtime(self) -> SessionRuntime:
+        return self.runtime.session
+
+    @property
+    def context_runtime(self) -> ContextRuntime:
+        return self.runtime.context
+
+    @property
+    def perception_runtime(self) -> PerceptionRuntime:
+        return self.runtime.perception
 
     @property
     def memory_search_context(self) -> int:
@@ -253,18 +272,22 @@ class MemoryBase(AvatarRuntimePlugin):
 
     """Runtime Op"""
 
-    async def on_session_start(self, *, context_runtime, **kwargs) -> None:
+    async def on_session_start(self) -> None:
         primary_user_id = self.session_runtime.primary_user_id
         if not primary_user_id:
             return
 
+        session_path = self.session_runtime.session_path
+        if session_path is None:
+            raise RuntimeError("SessionRuntime.session_path is not initialized")
+
         await self.init_cache(
             session_id=self.session_runtime.session_id,
-            session_path=self.session_runtime.session_path,
+            session_path=session_path,
             object_ids=primary_user_id,
-            timestamp=context_runtime.timestamp,
+            timestamp=self.context_runtime.timestamp,
         )
 
-    async def on_session_stop(self, *, avatar_id: str, **kwargs) -> None:
-        await self.update(avatar_id=avatar_id)
+    async def on_session_stop(self) -> None:
+        await self.update(avatar_id=self.avatar_id)
         await self.save()

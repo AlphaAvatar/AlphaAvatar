@@ -31,13 +31,18 @@ from alphaavatar.agents.log import logger
 from alphaavatar.agents.memory import MemoryBase
 from alphaavatar.agents.persona import PersonaBase, speaker_node
 from alphaavatar.agents.plugin import AvatarModule, AvatarRuntimePlugin
-from alphaavatar.agents.runtime import ContextRuntime, SessionRuntime
+from alphaavatar.agents.runtime import (
+    AvatarRuntime,
+    ContextRuntime,
+    SessionRuntime,
+)
 from alphaavatar.agents.status import (
     StatusEmitter,
     StatusEvent,
     StatusType,
 )
 from alphaavatar.agents.utils import format_current_time
+from alphaavatar.core.perception import PerceptionRuntime
 
 from .context import init_context_manager
 from .context.internal_tools import get_runtime_context_tool
@@ -53,19 +58,15 @@ class AvatarEngine(Agent):
         self,
         *,
         avatar_config: AvatarConfig,
-        session_runtime: SessionRuntime,
-        context_runtime: ContextRuntime,
+        runtime: AvatarRuntime,
     ) -> None:
         # LiveKit room is provided by JobContext and explicitly bound after session.start.
         self._livekit_room: rtc.Room | None = None
 
         self.avatar_config = avatar_config
+        self.runtime = runtime
 
-        # Step1: init runtime
-        self.session_runtime = session_runtime
-        self.context_runtime = context_runtime
-
-        # Step2: initial prompt templates and assembler
+        # Step1: initial prompt templates and assembler
         self._avatar_prompt_template = AvatarSysPromptTemplate(
             self.avatar_config.avatar.introduction,
             interaction_method=self.context_runtime.interaction_method,
@@ -77,17 +78,20 @@ class AvatarEngine(Agent):
             injection_mode=self.avatar_config.runtime.context_mode,
         )
 
-        # Step3: initial plugins
+        # Step2: initial plugins
         self._status: StatusEmitter = avatar_config.status.get_plugin()
-        self._memory: MemoryBase = avatar_config.memory.get_plugin(self.session_runtime)
-        self._persona: PersonaBase = avatar_config.persona.get_plugin(self.session_runtime)
+        self._memory: MemoryBase = avatar_config.memory.get_plugin(
+            runtime=self.runtime,
+            avatar_id=self.avatar_config.avatar.id,
+        )
+        self._persona: PersonaBase = avatar_config.persona.get_plugin(self.runtime)
         self._tools: list[llm.FunctionTool | llm.RawFunctionTool] = avatar_config.tools.get_tools(
             self.session_runtime,
             status_emitter=self._status,
         )
         self._tools.append(get_runtime_context_tool())
 
-        # Step4: initial avatar
+        # Step3: initial avatar
         super().__init__(
             instructions=self.system_template.instructions(),
             # llm
@@ -110,16 +114,32 @@ class AvatarEngine(Agent):
 
         # LiveKit video input runtime
         self._video_input_runtime = LiveKitVideoInputRuntime(
-            session_runtime=self.session_runtime,
+            engine=self,
+            perception_runtime=self.perception_runtime,
         )
 
         # Runtime plugins are started/stopped in on_enter/on_exit, and refreshed every turn.
-        self._runtime_plugins: list[AvatarRuntimePlugin] = [
-            self._video_input_runtime,
+        self._perception_consumers: list[AvatarRuntimePlugin] = [
             self._persona,
             self._memory,
             self._vision,
         ]
+
+        self._perception_producers: list[AvatarRuntimePlugin] = [
+            self._video_input_runtime,
+        ]
+
+    @property
+    def session_runtime(self) -> SessionRuntime:
+        return self.runtime.session
+
+    @property
+    def context_runtime(self) -> ContextRuntime:
+        return self.runtime.context
+
+    @property
+    def perception_runtime(self) -> PerceptionRuntime:
+        return self.runtime.perception
 
     @property
     def livekit_room(self) -> rtc.Room | None:
@@ -150,23 +170,21 @@ class AvatarEngine(Agent):
     """Helper Op"""
 
     async def _start_runtime_plugins(self) -> None:
-        for plugin in self._runtime_plugins:
-            await plugin.on_session_start(
-                session_runtime=self.session_runtime,
-                context_runtime=self.context_runtime,
-                avatar_config=self.avatar_config,
-                engine=self,
-            )
+        # Consumers first: register renderers and start consumer loops before
+        # the RTC adapter begins publishing frames.
+        for plugin in self._perception_consumers:
+            await plugin.on_session_start()
+
+        for plugin in self._perception_producers:
+            await plugin.on_session_start()
 
     async def _stop_runtime_plugins(self) -> None:
-        for plugin in reversed(self._runtime_plugins):
-            await plugin.on_session_stop(
-                session_runtime=self.session_runtime,
-                context_runtime=self.context_runtime,
-                avatar_config=self.avatar_config,
-                avatar_id=self.avatar_config.avatar.id,
-                engine=self,
-            )
+        # Stop producers first so no new frames enter while consumers shut down.
+        for plugin in reversed(self._perception_producers):
+            await plugin.on_session_stop()
+
+        for plugin in reversed(self._perception_consumers):
+            await plugin.on_session_stop()
 
     def _refresh_context_runtime_for_turn(self) -> None:
         """

@@ -16,7 +16,6 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from enum import Enum
-from typing import Any
 
 from livekit.agents import Plugin
 from livekit.agents.inference_runner import _InferenceRunner
@@ -144,14 +143,15 @@ class AvatarPlugin(Plugin):
 
 
 class AvatarRuntimePlugin:
-    """Base lifecycle interface for runtime plugins.
+    """
+    Base lifecycle interface for session-scoped runtime plugins.
 
-    Plugins can override these methods if they need session-level startup
-    or cleanup logic.
+    Long-lived dependencies must be injected through the constructor.
+    Lifecycle methods only express start and stop.
     """
 
-    async def on_session_start(self, **kwargs: Any) -> None:
+    async def on_session_start(self) -> None:
         pass
 
-    async def on_session_stop(self, **kwargs: Any) -> None:
+    async def on_session_stop(self) -> None:
         pass

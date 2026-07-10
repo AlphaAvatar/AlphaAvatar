@@ -11,32 +11,35 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import uuid
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from .annotation import EnvAnnotation
+from alphaavatar.core.media import MediaPayload
 
-EnvAnnotationRenderer = Callable[["EnvObservation", EnvAnnotation], None]
+from .annotation import EnvAnnotation
 
 
 @dataclass(slots=True)
 class EnvObservation:
     """
-    Runtime environment observation.
+    Runtime environment observation envelope.
 
     payload:
-        Heavy runtime-only multimodal payload, such as frame bytes, audio bytes,
-        video clip bytes, provider content block, or LiveKit VideoFrame.
-        It must never be persisted to memory/VDB/markdown.
+        AlphaAvatar-owned MediaPayload.
+
+        It must not directly contain:
+        - LiveKit rtc.VideoFrame
+        - provider-specific content blocks
+        - LangChain message objects
 
     path:
-        Optional persisted keyframe/keyclip evidence path.
-        Only selected evidence should have path.
+        Optional persisted evidence path.
     """
 
-    kind: str  # video_frame / video_clip / audio_segment / screen_frame
+    kind: str
     timestamp: str
     source_id: str
 
@@ -44,49 +47,55 @@ class EnvObservation:
 
     path: str | None = None
     mime_type: str | None = None
-    payload: Any | None = field(default=None, repr=False, compare=False)
 
-    rendered_payload: Any | None = field(default=None, repr=False, compare=False)
-    rendered_mime_type: str | None = None
+    payload: MediaPayload | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     metadata: dict[str, Any] = field(default_factory=dict)
     annotations: list[EnvAnnotation] = field(default_factory=list)
 
     @property
     def frame_id(self) -> str | None:
-        value = self.metadata.get("frame_id")
-        return str(value) if value else None
+        metadata_frame_id = self.metadata.get("frame_id")
+        if metadata_frame_id:
+            return str(metadata_frame_id)
+
+        payload_frame_id = getattr(self.payload, "frame_id", None)
+        if payload_frame_id:
+            return str(payload_frame_id)
+
+        return None
 
     @property
     def has_payload(self) -> bool:
-        return self.payload is not None or self.rendered_payload is not None
+        return self.payload is not None and self.payload.has_any
 
     @property
     def has_persisted_evidence(self) -> bool:
         return bool(self.path)
 
-    @property
-    def model_payload(self) -> Any | None:
-        return self.rendered_payload if self.rendered_payload is not None else self.payload
+    def add_annotation(self, annotation: EnvAnnotation) -> bool:
+        """
+        Add annotation once.
 
-    @property
-    def model_mime_type(self) -> str | None:
-        return self.rendered_mime_type or self.mime_type
+        Returns True when added and False when it already existed.
+        """
 
-    def add_annotation(
-        self,
-        annotation: EnvAnnotation,
-        *,
-        renderers: list[EnvAnnotationRenderer] | None = None,
-    ) -> None:
+        for current in self.annotations:
+            if current.annotation_id == annotation.annotation_id:
+                return False
+
         self.annotations.append(annotation)
-
-        for renderer in renderers or []:
-            renderer(self, annotation)
+        return True
 
     def clear_payload(self) -> None:
+        if self.payload is not None:
+            self.payload.clear()
+
         self.payload = None
-        self.rendered_payload = None
 
     def to_evidence_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -96,7 +105,7 @@ class EnvObservation:
             "source_id": self.source_id,
             "mime_type": self.mime_type,
             "metadata": self.metadata,
-            "annotations": [ann.to_dict() for ann in self.annotations],
+            "annotations": [annotation.to_dict() for annotation in self.annotations],
         }
 
         if self.path:
@@ -110,22 +119,40 @@ class EnvObservation:
         *,
         timestamp: str,
         source_id: str,
+        payload: MediaPayload,
         path: str | None = None,
-        payload: Any | None = None,
-        rendered_payload: Any | None = None,
-        rendered_mime_type: str | None = None,
         metadata: dict[str, Any] | None = None,
         annotations: list[EnvAnnotation] | None = None,
-    ) -> "EnvObservation":
+    ) -> EnvObservation:
         return cls(
             kind="video_frame",
             timestamp=timestamp,
             source_id=source_id,
             path=path,
-            payload=payload,
             mime_type="image/jpeg",
-            rendered_payload=rendered_payload,
-            rendered_mime_type=rendered_mime_type,
+            payload=payload,
+            metadata=metadata or {},
+            annotations=annotations or [],
+        )
+
+    @classmethod
+    def screen_frame(
+        cls,
+        *,
+        timestamp: str,
+        source_id: str,
+        payload: MediaPayload,
+        path: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        annotations: list[EnvAnnotation] | None = None,
+    ) -> EnvObservation:
+        return cls(
+            kind="screen_frame",
+            timestamp=timestamp,
+            source_id=source_id,
+            path=path,
+            mime_type="image/jpeg",
+            payload=payload,
             metadata=metadata or {},
             annotations=annotations or [],
         )
@@ -136,19 +163,19 @@ class EnvObservation:
         *,
         timestamp: str,
         source_id: str,
+        payload: MediaPayload | None = None,
         path: str | None = None,
-        payload: Any | None = None,
         mime_type: str = "video/mp4",
         metadata: dict[str, Any] | None = None,
         annotations: list[EnvAnnotation] | None = None,
-    ) -> "EnvObservation":
+    ) -> EnvObservation:
         return cls(
             kind="video_clip",
             timestamp=timestamp,
             source_id=source_id,
             path=path,
-            payload=payload,
             mime_type=mime_type,
+            payload=payload,
             metadata=metadata or {},
             annotations=annotations or [],
         )
@@ -159,19 +186,19 @@ class EnvObservation:
         *,
         timestamp: str,
         source_id: str,
+        payload: MediaPayload | None = None,
         path: str | None = None,
-        payload: Any | None = None,
         mime_type: str = "audio/wav",
         metadata: dict[str, Any] | None = None,
         annotations: list[EnvAnnotation] | None = None,
-    ) -> "EnvObservation":
+    ) -> EnvObservation:
         return cls(
             kind="audio_segment",
             timestamp=timestamp,
             source_id=source_id,
             path=path,
-            payload=payload,
             mime_type=mime_type,
+            payload=payload,
             metadata=metadata or {},
             annotations=annotations or [],
         )
