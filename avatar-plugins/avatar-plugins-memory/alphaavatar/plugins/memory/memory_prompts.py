@@ -692,43 +692,151 @@ Do not duplicate topic inside PatchOp.value.
 G) GRAPH NODE MENTION RULES
 ----------------------------------------------------------------------
 
-Use PatchOp.node_mentions to provide lightweight retrieval anchors for future graph-aware recall.
+Use PatchOp.node_mentions only for sparse retrieval anchors representing
+concrete entities or bounded scene elements that were directly present in,
+heard in, or explicitly shown by the current observation stream.
 
-Rules:
+A graph node mention must refer to something that actually existed in the
+observed environment during this observation window.
+
+Primary rules:
 - Do not output graph_nodes or graph_links.
 - Do not generate embeddings or final graph node IDs.
 - Do not write alias mappings.
 - Do not infer canonical identities.
-- Use stable global keys only when explicitly supported by runtime/context.
-- For local face, voice, speaker, object, track, screen, or region ids, raw local keys are allowed; runtime will scope them to the session.
+- Only mention entities directly grounded in PatchOp.value.
+- Each node mention must represent exactly one concrete entity.
+- Do not merge a person with accessories, a room with its contents, a screen
+  with displayed content, or an object with its location.
+- Keep node content as a short noun phrase without actions or relations.
+- Prefer a small number of salient anchors. Usually 1-4 mentions are enough.
+- If no useful concrete entity is present, output an empty node_mentions list.
 
-Stable key examples:
-- project:alphaavatar
+Allowed node types include:
+- person
+- face
+- speaker
+- animal
+- object
+- plant
+- vehicle
+- device
+- screen
+- application
+- document
+- room
+- location
+
+These nodes must correspond to single concrete observed instances, for example:
+- a visible person
+- a tracked face
+- a red cup
+- a wooden cabinet
+- a pair of headphones
+- a laptop
+- a visible plant
+- the main screen
+- a document currently shown on-screen
+- a specific distinguishable room or workspace
+
+Do NOT create node mentions for:
+- abstract concepts
+- memory-system purposes
+- retrieval purposes
+- topics
+- summaries
+- categories
+- capabilities
+- project names inferred from context
+- generic environment labels
+- graph or memory implementation details
+
+Forbidden node types or keys include:
+- concept
+- topic
+- memory
+- memory_type
+- visual_history
+- env_memory
+- screen_context
+- multimodal_recall
+- project
+- assistant
+- system
+- plugin
+
+Never output nodes such as:
 - concept:env_memory
 - concept:visual_history
 - concept:screen_context
-- user:<known_user_id> only if explicitly provided by runtime
+- project:alphaavatar
+- topic:person_activity
+- memory_type:env
 
-Local key examples:
+Actions, gestures, attributes, state changes, and spatial relations should
+remain in PatchOp.value instead of becoming graph nodes or being merged into
+node content.
+
+For example:
+- "wearing glasses"
+- "wearing headphones"
+- "placing a hand on the chin"
+- "waving"
+- "entered the room"
+- "placed the cup on the desk"
+- "continued to be present"
+
+Only create an event/action node when:
+- the runtime explicitly provides a stable local event ID, and
+- the event is important enough for later event-specific retrieval.
+
+Key rules:
+- Use a key only when the input metadata or annotation explicitly provides
+  a stable or local runtime identifier.
+- Do not invent global semantic keys from descriptions.
+- If no explicit identifier exists, set key to null.
+- Local keys are allowed; runtime will scope them to the session.
+
+Allowed local key examples:
 - face:tmp_1
-- voice:speaker_0
+- speaker:speaker_0
 - object:cup_1
-- track:camera_1
 - screen:main
-- region:desk_area
+- document:page_2
+
+Known stable key examples:
+- user:<known_user_id>
+- device:<known_device_id>
+
+Use a stable user or entity key only when it is explicitly provided by runtime
+and directly corresponds to an entity present in the observation.
 
 Good node_mentions:
-- object:cup_1 / object / cup on the desk
 - face:tmp_1 / face / visible face-detected person
-- screen:main / screen / active screen context
-- concept:visual_history / concept / visual history recall from sampled frames
+- null / person / visible person
+- null / object / glasses
+- null / device / headphones
+- object:cup_1 / object / red cup
+- null / object / wooden cabinet
+- screen:main / screen / main screen
+- null / application / code editor
 
 Bad node_mentions:
-- user:john / user / The visible person is John
+- null / person / visible person wearing glasses and headphones
+- null / room / indoor room with shelves and a bright light
+- null / screen / main screen showing a code editor
+- null / object / cup on the desk
+- concept:visual_history / concept / visual history recall
+- concept:env_memory / concept / environment memory
+- user:john / user / visible person is John
 
-The bad example is wrong unless runtime explicitly provided that identity.
+Do not create multiple nodes for the same observed entity.
+Do not merge multiple physical entities into one node.
+Do not create a node merely because a phrase may be useful for semantic search.
+PatchOp.value already provides semantic retrieval coverage.
 
-If no stable key is obvious, omit key and provide type/content.
+If no concrete and salient entity qualifies, use:
+node_mentions=[]
 
 ----------------------------------------------------------------------
 H) ENV MEMORY QUALITY RULES
@@ -784,6 +892,7 @@ Before outputting each env_memory_entries item, verify:
 - Does it avoid sensitive appearance-based inference?
 - Does it avoid duplication with previous ENV memory?
 - Is PatchOp.value exactly one [ENV]...[/ENV] block?
+- Does every node mention represent exactly one concrete entity without merged accessories, objects, actions, or locations?
 
 If no item passes these checks, output empty env_memory_entries.
 """.strip()

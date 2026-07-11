@@ -98,7 +98,7 @@ class MemoryCache:
 
     @evidence.setter
     def evidence(self, value: list[dict[str, Any]] | None) -> None:
-        self._evidence = value or []
+        self._evidence += value or []
 
     def add_object_ids(self, value: list[str] | str | None) -> None:
         merged = self._object_ids + _normalize_object_ids(value)

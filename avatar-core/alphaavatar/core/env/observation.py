@@ -98,20 +98,21 @@ class EnvObservation:
         self.payload = None
 
     def to_evidence_dict(self) -> dict[str, Any]:
-        data: dict[str, Any] = {
-            "observation_id": self.observation_id,
-            "kind": self.kind,
-            "timestamp": self.timestamp,
-            "source_id": self.source_id,
-            "mime_type": self.mime_type,
-            "metadata": self.metadata,
-            "annotations": [annotation.to_dict() for annotation in self.annotations],
-        }
-
         if self.path:
-            data["path"] = self.path
+            data: dict[str, Any] = {
+                "observation_id": self.observation_id,
+                "kind": self.kind,
+                "timestamp": self.timestamp,
+                "source_id": self.source_id,
+                "mime_type": self.mime_type,
+                "metadata": self.metadata,
+                "annotations": [annotation.to_dict() for annotation in self.annotations],
+                "path": self.path,
+            }
 
-        return data
+            return data
+        else:
+            return {}
 
     @classmethod
     def video_frame(

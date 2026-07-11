@@ -116,6 +116,10 @@ class SessionRuntime(BaseModel):
         return participant.user_path
 
     def model_post_init(self, __context):
+        # sanitize id
+        self.session_id = sanitize_id(self.session_id)
+
+        # Dir Building
         work_dir = os.getenv("AVATAR_WORK_DIR", "")
         self.avatar_path = mk_avatar_dirs(work_dir)
         self.session_path = mk_session_dirs(self.avatar_path, self.session_id)

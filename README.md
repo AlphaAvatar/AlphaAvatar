@@ -190,7 +190,7 @@ AlphaAvatar follows a layered realtime multimodal architecture:
 <p>
   <img src="https://img.shields.io/badge/In_Progress-28a745?style=flat" />
 </p>
-<p>Self-improving memory module for Omni-Avatar.</p>
+<p>Persistent, graph-aware multimodal memory for conversations, tools, and realtime environment observations.</p>
 <p>
 <a href="https://github.com/AlphaAvatar/AlphaAvatar/blob/main/avatar-plugins/avatar-plugins-memory/README.md">README↗</a>
 </p>
@@ -309,6 +309,8 @@ AlphaAvatar follows a layered realtime multimodal architecture:
 ---
 
 <h2>Latest News 🔥</h2>
+
+- [2026/07] Released AlphaAvatar **version 0.6.4**: Added a transport-agnostic perception runtime with typed multimodal streams, shared timelines, annotated payload views, and online ENV memory extraction from live visual observations.
 
 - [2026/06] Released AlphaAvatar **version 0.6.0**: Added the **Status plugin**, sampled visual input support, and status-aware DeepResearch / RAG / MCP tool feedback.
   - Released AlphaAvatar **version 0.6.1**: Added visual identity support for Persona, including face detection, face vector matching, speaker-face identity fusion, and several bug fixes.

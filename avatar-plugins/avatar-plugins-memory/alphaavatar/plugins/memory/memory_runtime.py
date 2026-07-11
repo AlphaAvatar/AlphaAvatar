@@ -273,7 +273,13 @@ class MemoryRuntime(MemoryBase):
         return items
 
     def _build_env_evidence(self, observations: list[EnvObservation]) -> list[dict[str, Any]]:
-        return [observation.to_evidence_dict() for observation in observations]
+        evidence_list = []
+        for observation in observations:
+            evidence = observation.to_evidence_dict()
+            if evidence:
+                evidence_list.append(evidence)
+
+        return evidence_list
 
     def _build_env_conversation_context(
         self,

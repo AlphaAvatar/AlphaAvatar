@@ -11,9 +11,14 @@
 # Table of contents
 
 * [PLAN OVERVIEW](#plan-overview)
-* [Core Function](#core-function)
-* [Vision](#vision)
-* [Prompt & Runtime Context](#prompt--runtime-context)
+* [AlphaAvatar Core](#alphaavatar-core)
+* [AlphaAvatar RTC](#alphaavatar-rtc)
+* [AlphaAvatar Agent](#alphaavatar-agent)
+
+  * [Core Function](#core-function)
+  * [Prompt & Runtime Context](#prompt--runtime-context)
+  * [Runtime](#runtime)
+  * [Vision](#vision)
 * [AlphaAvatar Plugins](#alphaavatar-plugins)
 
   * [STATUS](#status)
@@ -49,7 +54,52 @@
 
 ---
 
-# Core Function
+# AlphaAvatar Core
+
+### ✅ DONE
+
+| Date    | Milestone                              | Notes |
+| :------ | :------------------------------------- | :---- |
+| 2026-07 | **Environment Observation Model**      | Added transport-agnostic `EnvObservation` and `EnvAnnotation` models for video, audio, screen, event, and future multimodal inputs. |
+| 2026-07 | **Multi-representation Media Payload** | Added `MediaPayload`, `PayloadFormat`, `PayloadView`, and AlphaAvatar-owned video-frame representations without RTC-specific types. |
+| 2026-07 | **Typed Perception Runtime**           | Added independent video, audio, screen, event, and annotation streams with consumer-specific cursors. |
+| 2026-07 | **Shared Timeline and Window Builder** | Added observation–annotation alignment and ordered consumer windows for Persona, Memory, Vision, and future routers. |
+
+### 🧭 TODO
+
+| Priority | Task | Stage |
+| :------- | :--- | :---: |
+| 🔸 | Add configurable retention, payload pruning, backpressure, and consumer-lag policies for long-running sessions. | ⏳ In Progress |
+| 🔹 | Add richer multimodal alignment across video frames, audio segments, speakers, screens, and runtime events. | 🧩 Planned |
+| 🔹 | Add annotation fusion for face, speaker, object, action, scene, and screen understanding. | 🧩 Planned |
+| 🔹 | Add reusable core policies for observation selection, temporal windows, and payload lifecycle management. | 🧩 Planned |
+
+---
+
+# AlphaAvatar RTC
+
+### ✅ DONE
+
+| Date    | Milestone                         | Notes |
+| :------ | :-------------------------------- | :---- |
+| 2026-07 | **RTC Adapter Boundary**          | RTC-specific media conversion is isolated from `avatar-core`; core observations no longer store LiveKit frame types directly. |
+| 2026-07 | **LiveKit Video Input Runtime**   | LiveKit video frames are normalized into AlphaAvatar media payloads and published once into `PerceptionRuntime`. |
+| 2026-07 | **Model-bound Frame Conversion**  | Generic AlphaAvatar frames are converted back to LiveKit frames only at the LiveKit model adapter boundary. |
+
+### 🧭 TODO
+
+| Priority | Task | Stage |
+| :------- | :--- | :---: |
+| 🔸 | Extract reusable RTC interfaces and adapters into a standalone `avatar-rtc` package. | ⏳ In Progress |
+| 🔸 | Add unified audio, screen-share, data-channel, and output adapters on top of the RTC abstraction. | ⏳ In Progress |
+| 🔹 | Add alternative RTC backends such as native WebRTC, `aiortc`, and custom RTC providers. | 🧩 Planned |
+| 🔹 | Add RTC-level reconnect, transport recovery, flow control, and health monitoring. | 🧩 Planned |
+
+---
+
+# AlphaAvatar Agent
+
+## Core Function
 
 ### ✅ DONE
 
@@ -65,48 +115,14 @@
 
 ### 🧭 TODO
 
-| Priority | Task                                                                                                                                                                         |     Stage     |
-| :------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-----------: |
-| 🔸       | Build the next-generation multimodal memory runtime, including session-level event storage, conversation events, tool events, visual observations, and memory consolidation. | ⏳ In Progress |
-| 🔸       | Add multi-user streaming identity management, including participant-level speaker tracking, face recognition, user resolution, and conflict handling.                        | ⏳ In Progress |
-| 🔹       | Improve provider runtime capabilities with fallback chains, retry policies, cost estimation, provider health checks, and model compatibility validation.                     |   🧩 Planned  |
-| 🔹       | Add richer plugin lifecycle hooks such as `on_session_start`, `on_session_stop`, `on_user_path_changed`, `close`, and `health_check`.                                        |   🧩 Planned  |
-| 🔹       | Solve the cocktail-party problem for multi-speaker scenarios, including speaker separation, speaker tracking, overlapping speech handling, and per-user context routing.     |   🧩 Planned  |
-| 🔹       | Add user upload lifecycle management, including temporary session storage, identity-aware persistence, artifact indexing, and cleanup policies.                              |   🧩 Planned  |
-| 🔹       | Add session replay and audit tooling based on turns, provider traces, memory events, and runtime status events.                                                              |   🧩 Planned  |
-| 🔹       | Add richer error handling and recovery policies across model calls, tool invocation, plugin initialization, channel adapters, and realtime media streams.                    |   🧩 Planned  |
-| 🔹       | Enrich the logging and tracing system with per-room, per-session, per-participant, per-user, per-turn, and per-provider-task prefixes.                                       |   🧩 Planned  |
-| 🔹       | Add version control and compatibility checks for each plugin package, provider integration, config schema, and runtime protocol.                                             |   🧩 Planned  |
-| 🔹       | Add latency profiling and optimization across the voice pipeline, provider calls, tool invocation, memory retrieval, RAG, MCP, status feedback, and channel adapters.        |   🧩 Planned  |
+| Priority | Task | Stage |
+| :------- | :--- | :---: |
+| 🔸 | Add multi-user streaming identity management, including participant-level speaker tracking, face recognition, user resolution, and conflict handling. | ⏳ In Progress |
+| 🔹 | Improve provider runtime capabilities with fallback chains, retry policies, cost estimation, provider health checks, and model compatibility validation. | 🧩 Planned |
+| 🔹 | Solve the cocktail-party problem for multi-speaker scenarios, including speaker separation, speaker tracking, overlapping speech handling, and per-user context routing. | 🧩 Planned |
+| 🔹 | Add user upload lifecycle management, including temporary session storage, identity-aware persistence, artifact indexing, and cleanup policies. | 🧩 Planned |
 
----
-
-# Vision
-
-### ✅ DONE
-
-| Date    | Milestone                            | Notes                                                                                                                                       |
-| :------ | :----------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------ |
-| 2026-05 | **Vision Input Module**              | Added a dedicated `avatar/vision` module for real-time visual context handling, session-aware activation, and vision plugin integration.    |
-| 2026-05 | **Sampled Video Frame Support**      | Supports sampled-frame visual input from real-time video streams instead of continuously sending every frame to the model.                  |
-| 2026-05 | **Runtime Visual Context Injection** | Injects current sampled frames into the temporary model-facing context, strips stale historical visuals, and adds placeholders when needed. |
-
-### 🧭 TODO
-
-| Priority | Task                                                                                                                                 |     Stage     |
-| :------- | :----------------------------------------------------------------------------------------------------------------------------------- | :-----------: |
-| 🔸       | Improve visual frame sampling policy based on interaction state, user speech, motion, camera activity, and model demand.             | ⏳ In Progress |
-| 🔸       | Add user-facing visual grounding behavior, such as explicitly stating when the assistant can or cannot see the current camera frame. | ⏳ In Progress |
-| 🔹       | Add screen sharing visual input support for debugging, document reading, and workflow assistance.                                    |   🧩 Planned  |
-| 🔹       | Add face recognition and face-based identity confirmation integrated with persona and user continuity.                               |   🧩 Planned  |
-| 🔹       | Add multi-user visual scene understanding, including face tracking, active speaker alignment, and per-user context routing.          |   🧩 Planned  |
-| 🔹       | Add visual memory extraction from important images, screenshots, whiteboards, and camera observations.                               |   🧩 Planned  |
-| 🔹       | Add visual privacy controls, allowing users to enable, disable, inspect, or discard visual context per session.                      |   🧩 Planned  |
-| 🔹       | Add multimodal evaluation for visual grounding accuracy, latency, and hallucination resistance.                                      |   🧩 Planned  |
-
----
-
-# Prompt & Runtime Context
+## Prompt & Runtime Context
 
 ### ✅ DONE
 
@@ -128,6 +144,53 @@
 | 🔹 | Add runtime context compression to avoid long dynamic prompts when memory, RAG, reflection, and plans become large. | 🧩 Planned |
 | 🔹 | Add prompt versioning and prompt evaluation for system prompt, runtime prompt, memory extraction prompt, and persona extraction prompt. | 🧩 Planned |
 | 🔹 | Add model-specific prompt adapters for OpenAI, Gemini, Claude, local models, and small edge models. | 🧩 Planned |
+
+---
+
+## Runtime
+
+### ✅ DONE
+
+| Date    | Milestone                            | Notes |
+| :------ | :----------------------------------- | :---- |
+| 2026-07 | **AvatarRuntime Composition**        | Added `AvatarRuntime` as the session-scoped composition root for `SessionRuntime`, `ContextRuntime`, and `PerceptionRuntime`. |
+| 2026-07 | **Simplified Plugin Lifecycle**      | Runtime dependencies are injected during plugin construction, while `on_session_start()` and `on_session_stop()` only manage lifecycle work. |
+| 2026-07 | **Producer / Consumer Orchestration**| Perception consumers start before RTC producers, while producers stop before consumers to preserve clean full-duplex lifecycle boundaries. |
+
+### 🧭 TODO
+
+| Priority | Task | Stage |
+| :------- | :--- | :---: |
+| 🔹 | Add richer plugin lifecycle hooks such as `on_user_path_changed`, `close`, and `health_check`. | 🧩 Planned |
+| 🔹 | Add session replay and audit tooling based on turns, provider traces, memory events, and runtime status events. | 🧩 Planned |
+| 🔹 | Add richer error handling and recovery policies across model calls, tool invocation, plugin initialization, channel adapters, and realtime media streams. | 🧩 Planned |
+| 🔹 | Enrich the logging and tracing system with per-room, per-session, per-participant, per-user, per-turn, and per-provider-task prefixes. | 🧩 Planned |
+| 🔹 | Add version control and compatibility checks for each plugin package, provider integration, config schema, and runtime protocol. | 🧩 Planned |
+| 🔹 | Add latency profiling and optimization across the voice pipeline, provider calls, tool invocation, memory retrieval, RAG, MCP, status feedback, and channel adapters. | 🧩 Planned |
+
+## Vision
+
+### ✅ DONE
+
+| Date    | Milestone                            | Notes |
+| :------ | :----------------------------------- | :---- |
+| 2026-05 | **Vision Input Module**              | Added a dedicated `avatar/vision` module for real-time visual context handling, session-aware activation, and vision plugin integration. |
+| 2026-05 | **Sampled Video Frame Support**      | Supports sampled-frame visual input from real-time video streams instead of continuously sending every frame to the model. |
+| 2026-05 | **Runtime Visual Context Injection** | Injects current sampled frames into the temporary model-facing context, strips stale historical visuals, and adds placeholders when needed. |
+| 2026-07 | **Shared Perception Consumption**    | Sampled Frame Vision consumes asynchronous observation windows from `PerceptionRuntime` instead of subscribing to RTC tracks directly. |
+| 2026-07 | **Late-bound Annotated Frames**      | Vision snapshots retain shared observations and resolve annotated frame views when visual context is injected into the model. |
+
+### 🧭 TODO
+
+| Priority | Task | Stage |
+| :------- | :--- | :---: |
+| 🔸 | Improve visual frame sampling policy based on interaction state, user speech, motion, camera activity, and model demand. | ⏳ In Progress |
+| 🔸 | Add user-facing visual grounding behavior, such as explicitly stating when the assistant can or cannot see the current camera frame. | ⏳ In Progress |
+| 🔹 | Add screen sharing visual input support for debugging, document reading, and workflow assistance. | 🧩 Planned |
+| 🔹 | Add multi-user visual scene understanding, including face tracking, active speaker alignment, and per-user context routing. | 🧩 Planned |
+| 🔹 | Expand visual-history retrieval with object, event, identity, time-range, screenshot, and whiteboard search. | 🧩 Planned |
+| 🔹 | Add visual privacy controls, allowing users to enable, disable, inspect, or discard visual context per session. | 🧩 Planned |
+| 🔹 | Add multimodal evaluation for visual grounding accuracy, latency, and hallucination resistance. | 🧩 Planned |
 
 ---
 
@@ -201,29 +264,33 @@
 
 ### ✅ DONE
 
-| Date    | Milestone                                   | Notes                                                                                                                                                                                                                                 |
-| :------ | :------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 2025-09 | **Automatic Memory Extraction v1**          | Built on Memory Client, enabling memory capture and retrieval across Assistant–User, Assistant–Tools, and Assistant self-memory.                                                                                                      |
-| 2026-01 | **Automatic Assistant–Tools Extraction v1** | Added Assistant–Tools memory in user sessions for DeepResearch and RAG plugins.                                                                                                                                                       |
-| 2026-04 | **Automatic Assistant–Tools Extraction v2** | Designed differentiated prompts for self-memory, shared Assistant–User memory, and shared Assistant–Tools memory.                                                                                                                     |
-| 2026-04 | **Local Memory Storage and Retrieval**      | Supports local memory storage and retrieval through LanceDB.                                                                                                                                                                          |
-| 2026-05 | **Runtime Memory Injection**                | Memory is treated as dynamic per-turn context instead of static system prompt content to improve prefix-cache hit rate.                                                                                                               |
+| Date    | Milestone                                   | Notes |
+| :------ | :------------------------------------------ | :---- |
+| 2025-09 | **Automatic Memory Extraction v1**          | Built on Memory Client, enabling memory capture and retrieval across Assistant–User, Assistant–Tools, and Assistant self-memory. |
+| 2026-01 | **Automatic Assistant–Tools Extraction v1** | Added Assistant–Tools memory in user sessions for DeepResearch and RAG plugins. |
+| 2026-04 | **Automatic Assistant–Tools Extraction v2** | Designed differentiated prompts for self-memory, shared Assistant–User memory, and shared Assistant–Tools memory. |
+| 2026-04 | **Local Memory Storage and Retrieval**      | Supports local memory storage and retrieval through LanceDB. |
+| 2026-05 | **Runtime Memory Injection**                | Memory is treated as dynamic per-turn context instead of static system prompt content to improve prefix-cache hit rate. |
 | 2026-06 | **Graph-aware Memory Foundation**           | Added graph-based memory association across sessions, users, entities, tools, and future multimodal observations. Includes multi-object MemoryItem, session-scoped graph nodes, alias-ready lookup, and LanceDB graph-node retrieval. |
+| 2026-07 | **Online ENV Memory Extraction**            | Added periodic ENV memory extraction from ordered live visual observation windows through configurable multimodal provider tasks. |
+| 2026-07 | **Annotated Visual Evidence**               | ENV extraction prefers annotated JPEG views and falls back to raw visual evidence without persisting runtime frame payloads. |
+| 2026-07 | **ENV Memory Consolidation**                | Added `MemoryType.ENV` updates and final fusion with conversation and tool memory during the session lifecycle. |
 
 ### 🧭 TODO
 
-| Priority | Task                                                                                                                                                                         |     Stage     |
-| :------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-----------: |
-| 🔸       | Add visual-event memory from the visual stream, including visual event extraction, retrievable session memory cache, and final fusion with conversation memory.              | ⏳ In Progress |
-| 🔹       | Add `node_merge` for graph node canonicalization, including alias conflict handling, duplicate node merging, scoped-local-to-canonical mapping, and optional VDB reindexing. |   🧩 Planned  |
-| 🔹       | Allow users to actively query, recall, correct, or delete specific memories on demand.                                                                                       |   🧩 Planned  |
-| 🔹       | Add multi-user memory isolation when multiple users are interacting in the same session.                                                                                     |   🧩 Planned  |
-| 🔹       | Add event-driven memory updates for reflection, planning, behavior adaptation, and status-aware interaction traces.                                                          |   🧩 Planned  |
-| 🔹       | Add omni-memory updates from text, voice, images, video, tools, files, and external workspaces.                                                                              |   🧩 Planned  |
-| 🔹       | Add graph-based memory search for relationships, entities, events, and long-term user goals.                                                                                 |   🧩 Planned  |
-| 🔹       | Add memory confidence, source attribution, and conflict resolution.                                                                                                          |   🧩 Planned  |
-
----
+| Priority | Task | Stage |
+| :------- | :--- | :---: |
+| 🔸 | Improve ENV memory retrieval with object-, event-, identity-, location-, and time-aware visual-history queries. | ⏳ In Progress |
+| 🔸 | Refine ENV graph-node extraction so only concrete observed entities become graph anchors. | ⏳ In Progress |
+| 🔹 | Add `node_merge` for graph node canonicalization, including alias conflict handling, duplicate node merging, scoped-local-to-canonical mapping, and optional VDB reindexing. | 🧩 Planned |
+| 🔹 | Add audio ENV memory from speaker, sound, and environmental audio streams. | 🧩 Planned |
+| 🔹 | Add cross-window event consolidation and duplicate suppression for long-running sessions. | 🧩 Planned |
+| 🔹 | Allow users to actively query, recall, correct, or delete specific memories on demand. | 🧩 Planned |
+| 🔹 | Add multi-user memory isolation when multiple users are interacting in the same session. | 🧩 Planned |
+| 🔹 | Add event-driven memory updates for reflection, planning, behavior adaptation, and status-aware interaction traces. | 🧩 Planned |
+| 🔹 | Add omni-memory updates from text, voice, images, video, tools, files, and external workspaces. | 🧩 Planned |
+| 🔹 | Expand graph-aware retrieval to richer relationships, temporal events, aliases, and long-term user goals. | 🧩 Planned |
+| 🔹 | Add memory confidence, source attribution, and conflict resolution. | 🧩 Planned |
 
 ## 🧬 PERSONA
 
@@ -239,6 +306,8 @@
 | 2026-05 | **Identity-aware UserPath Binding** | Persona local storage follows user identity changes through mutable `UserPath`. |
 | 2026-06 | **Realtime Face Detection** | Added realtime face detection from camera input through the Persona visual identity pipeline. |
 | 2026-06 | **Face-based Identity Support** | Integrated face vectors with Persona identity resolution, local cache matching, and VDB-backed persistence. |
+| 2026-07 | **Perception-based FaceStream** | FaceStream consumes shared visual observations instead of subscribing directly to LiveKit tracks. |
+| 2026-07 | **Face Annotation Rendering** | Face detections are published as `EnvAnnotation` records and rendered into alternate annotated payload views. |
 
 ### 🧭 TODO
 
@@ -251,11 +320,7 @@
 | 🔹 | Add user-confirmed identity merge and identity conflict resolution. | 🧩 Planned |
 | 🔹 | Add persona privacy controls, allowing users to inspect, edit, export, or delete profile fields. | 🧩 Planned |
 | 🔹 | Add event triggers for profile updates, reflection cycles, and planning refresh. | 🧩 Planned |
-| 🔹 | Add persona privacy controls, allowing users to inspect, edit, export, or delete profile fields. | 🧩 Planned |
-| 🔹 | Add event triggers for profile updates, reflection cycles, and planning refresh. | 🧩 Planned |
 | 🔹 | Add multi-user face tracking, active speaker alignment, and per-user visual context routing. | 🧩 Planned |
-
----
 
 ## 💡 REFLECTION
 
@@ -441,10 +506,11 @@
 
 | Quarter | Focus | Expected Outcome |
 | :------ | :---- | :--------------- |
-| Q2-2026 | Status + Visual Interaction Polish | Improve perceived latency with status feedback, connect status to UI/Avatar states, and stabilize sampled visual input. |
-| Q2-2026 | Interaction Router Foundation | Detect whether input is directed to the Avatar, route requests by interaction type, and choose early status feedback. |
-| Q2-2026 | Notion MCP Integration | Use Notion as an external long-term workspace for notes, memory summaries, plans, and user knowledge. |
-| Q3-2026 | Reminder & Calendar Foundation | Enable reminders, follow-ups, recurring plans, and schedule-aware assistance through Calendar / Todoist integrations. |
-| Q3-2026 | Reflection Plugin Alpha | Build autonomous self-analysis from memory, persona, tool results, status traces, and repeated user interaction patterns. |
-| Q3-2026 | Proactive Assistant Loop | Combine memory, persona, reflection, planning, reminders, RAG, MCP, status feedback, and interaction routing into proactive personal assistant workflows. |
+| Q3-2026 | Perception Runtime Expansion | Add audio, screen, event, retention, backpressure, and multimodal alignment capabilities. |
+| Q3-2026 | ENV Memory Retrieval | Add richer object-, event-, identity-, and time-aware visual-history retrieval. |
+| Q3-2026 | Interaction Router Foundation | Detect whether input is directed to the Avatar, route requests by interaction type, and choose early status feedback. |
+| Q3-2026 | Notion MCP Integration | Use Notion as an external long-term workspace for notes, memory summaries, plans, and user knowledge. |
 | Q3-2026 | RAG Workspace Evolution | Add data-source scoped retrieval, metadata-aware indexing, temp-to-real RAG migration policy, and skill retrieval. |
+| Q4-2026 | Reflection Plugin Alpha | Build autonomous self-analysis from memory, persona, tool results, status traces, and repeated user interaction patterns. |
+| Q4-2026 | Reminder & Calendar Foundation | Enable reminders, follow-ups, recurring plans, and schedule-aware assistance through Calendar / Todoist integrations. |
+| Q4-2026 | Proactive Assistant Loop | Combine perception, memory, persona, interaction routing, reflection, planning, tools, and status feedback into proactive personal assistant workflows. |
