@@ -123,6 +123,7 @@ memory:
     provider:
       conversation_delta_task: memory.conversation_delta
       tool_delta_task: memory.tool_delta
+      env_delta_task: memory.env_delta
 
       gateway:
         trace: *provider_trace
@@ -136,6 +137,11 @@ memory:
           memory.tool_delta:
             provider: openai
             model: gpt-4o
+            temperature: 0.1
+
+          memory.env_delta:
+            provider: google
+            model: gemini-2.5-flash
             temperature: 0.1
 
   vdb_config:
