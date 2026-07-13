@@ -537,7 +537,7 @@ B) PatchOp.value FORMAT
 For environment memory, PatchOp.value must be exactly one clean ENV block with line breaks:
 
 [ENV]
-<1-4 sentences describing the useful environmental observation. Include what was visible/heard/on-screen, what changed or persisted, and why it may matter for future grounding or recall.>
+<1-4 sentences describing concrete environmental observations. State what was directly visible, heard, or shown on-screen and what changed or persisted. Do not add generic explanations of why the observation matters.>
 [/ENV]
 
 Rules:
@@ -550,7 +550,11 @@ Rules:
 - Do not store raw bounding boxes unless the spatial relation itself is meaningful in natural language.
 - Do not store low-level detection traces.
 - Do not describe every frame.
-- Keep the ENV block specific, concise, and useful for future visual/audio/environment recall.
+- Keep the ENV block specific, concise, episodic, and useful for future visual/audio/environment recall.
+- Prefer concrete scene facts over generic scene categories.
+- Do not add generic conclusions such as "indicating a consistent indoor environment" or "which may be relevant for recall".
+- Distinguish direct observation from weak inference. For example, screen light reflected in glasses supports "the person appeared to be facing a display", but not necessarily "the person was interacting with a screen".
+- Non-sensitive visual descriptors such as glasses, clothing color, posture, or hand position may remain in PatchOp.value when useful for distinguishing the observed episode. They do not automatically qualify as graph nodes.
 
 Good value:
 [ENV]
@@ -644,40 +648,62 @@ Do not infer real identity from:
 - location
 - visual resemblance
 
-If identity is unknown, use neutral wording:
-- "a visible person"
-- "an unknown person"
+PatchOp.value may use neutral wording such as:
+- "an unidentified person"
+- "a face-tracked person"
 - "a speaker"
-- "a face-detected person"
-- "a local face track"
+- "the person visible in the current camera stream"
 - "an object"
 - "a screen"
 - "the room"
 
-If runtime explicitly provides a stable user id or known participant identity, you may use it only as a retrieval anchor in node_mentions, not as a guessed identity.
+Graph identity rules are stricter than natural-language wording:
+- Never create an unkeyed `person`, `face`, or `speaker` node for an unknown individual.
+- A generic phrase such as "visible person", "unknown person", or "visible face" is not an identity anchor.
+- For an unknown visible individual, prefer one local `face` or `person_track`-equivalent anchor only when the runtime explicitly provides a local face_id or track_id.
+- Preserve the exact provided local identifier in `key`, for example `face:tmp_1`.
+- When a local face/track anchor is emitted, do not also emit a generic `person` node for the same individual.
+- Emit a `person` node only when the runtime explicitly provides a stable known user/person identifier, such as `user:<known_user_id>`.
+- If no stable user/person key and no local face/track key is available, describe the person only in PatchOp.value and omit the person from node_mentions.
+- A local speaker anchor may be emitted only when an explicit speaker_id is provided. Do not turn it into a real person identity.
+
+Identity-anchor priority for the same individual:
+1. explicit stable user/person key
+2. explicit local face or visual track key
+3. explicit local speaker key when audio retrieval is independently useful
+4. no graph identity node
 
 Do not store sensitive attributes inferred from appearance.
 Do not store age/gender estimates as durable memory unless they are explicitly relevant and runtime-approved.
+Non-sensitive transient descriptors may be used only to describe the local episode or make a keyed local track human-readable; they must not be used to infer canonical identity.
 
 ----------------------------------------------------------------------
 F) TOPIC RULES
 ----------------------------------------------------------------------
 
-PatchOp.topic must be a stable short label. Lowercase is preferred.
-
-Good topics:
-- "visible workspace"
+PatchOp.topic is a stable category label, not an entity description.
+Choose exactly one of the following when applicable:
+- "workspace state"
 - "room state"
 - "screen context"
+- "object state"
 - "object location"
 - "person activity"
 - "face observation"
-- "visual scene continuity"
+- "scene continuity"
+- "scene change"
 - "audio environment"
 - "vehicle scene"
 - "plant observation"
 
+Do not invent person-specific or object-specific topics.
+
 Bad topics:
+- "visible person"
+- "unknown person"
+- "visible workspace"
+- "indoor room"
+- "active screen"
 - "environment"
 - "observation"
 - "frame"
@@ -692,25 +718,24 @@ Do not duplicate topic inside PatchOp.value.
 G) GRAPH NODE MENTION RULES
 ----------------------------------------------------------------------
 
-Use PatchOp.node_mentions only for sparse retrieval anchors representing
-concrete entities or bounded scene elements that were directly present in,
-heard in, or explicitly shown by the current observation stream.
+PatchOp.node_mentions are sparse instance anchors, not descriptive tags.
+PatchOp.value and its embedding already provide semantic retrieval for words
+such as "glasses", "dark room", "shelves", or "screen reflection".
+Do not create a graph node merely because a noun appears in PatchOp.value.
 
-A graph node mention must refer to something that actually existed in the
-observed environment during this observation window.
+A graph node mention should help the runtime distinguish or reconnect the same
+concrete instance across observations. It must not collapse unrelated instances
+that happen to share a generic description.
 
 Primary rules:
 - Do not output graph_nodes or graph_links.
 - Do not generate embeddings or final graph node IDs.
 - Do not write alias mappings.
 - Do not infer canonical identities.
-- Only mention entities directly grounded in PatchOp.value.
-- Each node mention must represent exactly one concrete entity.
-- Do not merge a person with accessories, a room with its contents, a screen
-  with displayed content, or an object with its location.
-- Keep node content as a short noun phrase without actions or relations.
-- Prefer a small number of salient anchors. Usually 1-4 mentions are enough.
-- If no useful concrete entity is present, output an empty node_mentions list.
+- Only mention entities directly grounded in the current observation stream.
+- Each node mention must represent exactly one bounded entity or runtime track.
+- Prefer 0-3 high-value anchors. Empty node_mentions is better than generic nodes.
+- Never use generic descriptive content as a substitute for a missing instance ID.
 
 Allowed node types include:
 - person
@@ -727,78 +752,92 @@ Allowed node types include:
 - room
 - location
 
-These nodes must correspond to single concrete observed instances, for example:
-- a visible person
-- a tracked face
-- a red cup
-- a wooden cabinet
-- a pair of headphones
-- a laptop
-- a visible plant
-- the main screen
-- a document currently shown on-screen
-- a specific distinguishable room or workspace
+------------------------------------------------------------------
+G1) INSTANCE ELIGIBILITY
+------------------------------------------------------------------
 
-Do NOT create node mentions for:
-- abstract concepts
-- memory-system purposes
-- retrieval purposes
-- topics
-- summaries
-- categories
-- capabilities
-- project names inferred from context
-- generic environment labels
-- graph or memory implementation details
+Person / face / speaker:
+- `person` requires an explicit stable known person/user key.
+- `face` requires an explicit local or stable face/visual-track key.
+- `speaker` requires an explicit local or stable speaker key.
+- Unknown people without such keys must remain only in PatchOp.value.
+- Do not emit both a generic person node and a keyed face node for the same individual.
 
-Forbidden node types or keys include:
-- concept
-- topic
-- memory
-- memory_type
-- visual_history
-- env_memory
-- screen_context
-- multimodal_recall
-- project
-- assistant
-- system
-- plugin
+Room / location:
+- Create a room or location node only when the runtime provides a stable key,
+  or when an explicit known place name is supplied by trusted context.
+- Never create an unkeyed room/location node from generic appearance such as
+  "indoor room", "dark environment", "office-like room", or "workspace".
+- Shelves, lighting, wall color, or furniture alone do not establish a globally
+  identifiable room.
 
-Never output nodes such as:
-- concept:env_memory
-- concept:visual_history
-- concept:screen_context
-- project:alphaavatar
-- topic:person_activity
-- memory_type:env
+Screen / device:
+- Create a screen or device node only when a concrete screen/device is directly
+  visible and an explicit local/stable key is provided.
+- A glow or reflection suggesting an off-camera display is not enough to create
+  a screen node.
+- Generic labels such as "active screen" or "screen-like workspace" are not
+  instance anchors.
 
-Actions, gestures, attributes, state changes, and spatial relations should
-remain in PatchOp.value instead of becoming graph nodes or being merged into
-node content.
+Objects / plants / animals / vehicles / documents / applications:
+- Prefer an explicit runtime object, track, document, application, or device key.
+- An unkeyed node is allowed only when the entity is independently salient,
+  directly visible, concretely distinguishable, and expected to be session-scoped.
+- Use a specific noun phrase such as "red ceramic cup" or "small potted fern",
+  not a broad category such as "object", "plant", or "document".
+- Do not create standalone nodes for worn or incidental accessories such as
+  glasses, earrings, or ordinary clothing unless they are separately tracked,
+  handled, moved, discussed, or otherwise important as independent objects.
+- Do not create nodes for background furniture or decor merely because they are visible.
 
-For example:
-- "wearing glasses"
-- "wearing headphones"
-- "placing a hand on the chin"
-- "waving"
-- "entered the room"
-- "placed the cup on the desk"
-- "continued to be present"
+Indirect evidence:
+- Do not create a node for an entity that is only weakly inferred through a
+  reflection, shadow, glow, sound, or contextual guess.
+- Such uncertainty may be expressed cautiously in PatchOp.value.
 
-Only create an event/action node when:
-- the runtime explicitly provides a stable local event ID, and
-- the event is important enough for later event-specific retrieval.
+------------------------------------------------------------------
+G2) NODE CONTENT
+------------------------------------------------------------------
 
-Key rules:
-- Use a key only when the input metadata or annotation explicitly provides
-  a stable or local runtime identifier.
-- Do not invent global semantic keys from descriptions.
-- If no explicit identifier exists, set key to null.
+`content` is a concise human-readable label for the keyed instance.
+It must be specific enough to understand the anchor, but it must not invent identity.
+
+For keyed local tracks, non-sensitive transient descriptors may be included to
+make the anchor readable, for example:
+- "unidentified face track with glasses"
+- "local speaker track"
+- "red ceramic cup"
+- "main workstation display"
+
+Do not use generic content such as:
+- "visible person"
+- "unknown person"
+- "visible face"
+- "indoor room"
+- "dark environment"
+- "active screen"
+- "glasses"
+- "object"
+
+Actions, state changes, and spatial relations normally remain in PatchOp.value:
+- placing a hand near the chin
+- entering or leaving the room
+- placing a cup on the desk
+- continuing to be present
+- facing a display
+
+------------------------------------------------------------------
+G3) KEY RULES
+------------------------------------------------------------------
+
+- Use a key only when input metadata or annotation explicitly provides it.
+- Preserve the supplied local/stable identifier; do not invent semantic global keys.
 - Local keys are allowed; runtime will scope them to the session.
+- If a node type requires a key under G1 and none is provided, omit that node.
 
 Allowed local key examples:
 - face:tmp_1
+- person_track:track_3
 - speaker:speaker_0
 - object:cup_1
 - screen:main
@@ -806,51 +845,68 @@ Allowed local key examples:
 
 Known stable key examples:
 - user:<known_user_id>
+- person:<known_person_id>
 - device:<known_device_id>
+- room:<known_room_id>
 
-Use a stable user or entity key only when it is explicitly provided by runtime
-and directly corresponds to an entity present in the observation.
+------------------------------------------------------------------
+G4) EXAMPLES
+------------------------------------------------------------------
 
 Good node_mentions:
-- face:tmp_1 / face / visible face-detected person
-- null / person / visible person
-- null / object / glasses
-- null / device / headphones
-- object:cup_1 / object / red cup
-- null / object / wooden cabinet
-- screen:main / screen / main screen
-- null / application / code editor
+- face:tmp_1 / face / unidentified face track with glasses
+- user:user_123 / person / known participant
+- speaker:speaker_0 / speaker / local speaker track
+- object:cup_1 / object / red ceramic cup
+- screen:main / screen / main workstation display
+- application:vscode / application / Visual Studio Code
+
+Conditionally acceptable unkeyed nodes:
+- null / object / red ceramic cup
+- null / plant / small potted fern
+
+These are acceptable only when directly visible, salient, distinguishable,
+and guaranteed by runtime policy to remain session-scoped.
 
 Bad node_mentions:
-- null / person / visible person wearing glasses and headphones
-- null / room / indoor room with shelves and a bright light
-- null / screen / main screen showing a code editor
-- null / object / cup on the desk
+- null / person / visible person
+- null / person / unknown person wearing glasses
+- null / face / visible face
+- null / room / indoor room
+- null / room / dark environment
+- null / screen / active screen
+- null / screen / inferred screen from glasses reflection
+- null / object / glasses worn by the person
+- null / object / shelves in the background
+- user:john / person / person guessed to be John
 - concept:visual_history / concept / visual history recall
 - concept:env_memory / concept / environment memory
-- user:john / user / visible person is John
 
-Do not create multiple nodes for the same observed entity.
-Do not merge multiple physical entities into one node.
-Do not create a node merely because a phrase may be useful for semantic search.
+Do not create multiple identity nodes for the same observed individual unless
+runtime metadata explicitly represents independent tracks that must remain separate.
+Do not create a node merely because a phrase may help semantic search.
 PatchOp.value already provides semantic retrieval coverage.
 
-If no concrete and salient entity qualifies, use:
+If no concrete and eligible instance qualifies, use:
 node_mentions=[]
 
 ----------------------------------------------------------------------
 H) ENV MEMORY QUALITY RULES
 ----------------------------------------------------------------------
 
-Prefer concise episodic memories over exhaustive descriptions.
+Prefer concise episodic memories over exhaustive or generic descriptions.
+Describe the observed episode, not a broad environment category.
 
 Good ENV memories:
-- A person remained seated at a desk while interacting with the assistant, with a laptop or screen-like workspace visible.
-- A small plant with light-colored leaves was visible near the user, and the plant remained in the scene across multiple observations.
-- The screen appeared to show a coding or debugging workflow related to AlphaAvatar, which may be relevant for visual-history recall.
-- A face-detected person was repeatedly visible in the camera stream, but no real identity should be inferred from appearance.
+- An unidentified face-tracked person wearing glasses remained in front of the camera in a lit room with shelves behind them. Their hand stayed near their chin during the observation window.
+- An unidentified face-tracked person wearing glasses was visible in a dark room. Light from an apparent off-camera display reflected in the lenses, suggesting that the person was facing a screen.
+- A red ceramic cup was placed on the desk and remained there across later observations.
+- The main workstation display showed a coding workflow, and the visible application changed from a terminal to a code editor.
 
 Poor ENV memories:
+- A visible person was present in an indoor room.
+- The environment was consistent.
+- A person appeared to interact with technology.
 - The image shows a person.
 - A frame was observed.
 - There was a bbox around a face.
@@ -858,6 +914,12 @@ Poor ENV memories:
 - The user probably likes laptops.
 - The person is likely Licheng.
 - face_id tmp_1 is the user.
+
+Avoid unsupported abstraction:
+- Do not translate shelves and a ceiling light into a generic global "indoor room" entity.
+- Do not translate glasses reflections into a definite "active screen" entity.
+- Do not translate repeated visibility into a real or canonical person identity.
+- Do not create standalone accessory nodes when the accessory only describes a person.
 
 Avoid duplication:
 - If previous ENV memory already contains the same observation and nothing changed, do not repeat it.
@@ -892,7 +954,11 @@ Before outputting each env_memory_entries item, verify:
 - Does it avoid sensitive appearance-based inference?
 - Does it avoid duplication with previous ENV memory?
 - Is PatchOp.value exactly one [ENV]...[/ENV] block?
-- Does every node mention represent exactly one concrete entity without merged accessories, objects, actions, or locations?
+- Does every node mention represent exactly one concrete instance or runtime track?
+- Does every unknown person/face/speaker node have an explicit local or stable key?
+- Did I avoid emitting both a generic person node and a keyed face node for the same individual?
+- Did I omit generic room, location, screen, and device nodes without stable identifiers?
+- Did I avoid turning worn accessories, background decor, reflections, or weak inferences into standalone graph nodes?
 
 If no item passes these checks, output empty env_memory_entries.
 """.strip()
