@@ -23,6 +23,7 @@ from alphaavatar.agents.runtime import (
     ContextRuntime,
     SessionRuntime,
 )
+from alphaavatar.agents.runtime.inference import InferenceExecutor
 from alphaavatar.agents.utils import TimeStamp, time_str_to_datetime
 from alphaavatar.agents.utils.files.work_dirs import SessionPath
 from alphaavatar.core.perception import PerceptionRuntime
@@ -84,6 +85,10 @@ class MemoryBase(AvatarRuntimePlugin):
     @property
     def perception_runtime(self) -> PerceptionRuntime:
         return self.runtime.perception
+
+    @property
+    def inference_executor(self) -> InferenceExecutor:
+        return self.runtime.inference
 
     @property
     def memory_search_context(self) -> int:

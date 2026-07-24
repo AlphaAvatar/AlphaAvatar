@@ -20,13 +20,23 @@ from livekit.agents import (
     NotGivenOr,
 )
 
+from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.inference import InferenceExecutor
+
 
 class VirtualCharacterSession:
     """A Virtial Character session"""
 
     def __init__(
         self,
-    ): ...
+        *,
+        runtime: AvatarRuntime,
+    ) -> None:
+        self.runtime = runtime
+
+    @property
+    def inference_executor(self) -> InferenceExecutor:
+        return self.runtime.inference
 
     @abstractmethod
     async def start(

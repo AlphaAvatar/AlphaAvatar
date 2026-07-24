@@ -19,8 +19,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
 from typing import TypeVar
 
-from livekit.agents.inference_runner import _InferenceRunner
-
+from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.loop_thread import AsyncLoopThread
 
 from ..log import logger
@@ -63,7 +62,7 @@ if not AIRI_REPO_DIR.exists():
     )
 
 
-class AiriRunner(_InferenceRunner):
+class AiriRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar_character_airi"
 
     def __init__(self) -> None:

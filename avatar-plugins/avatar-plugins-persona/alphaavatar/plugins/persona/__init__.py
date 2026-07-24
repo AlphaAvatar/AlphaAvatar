@@ -14,6 +14,8 @@
 import os
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
+from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.inference import InferenceRunner
 
 from .log import logger
 from .profiler_runtime import ProfilerRuntime
@@ -31,11 +33,20 @@ class ProfilerPlugin(AvatarPlugin):
 
     def download_files(self): ...
 
-    def get_plugin(self, profiler_init_config: dict, *args, **kwargs):
+    def get_plugin(
+        self,
+        *,
+        runtime: AvatarRuntime,
+        profiler_init_config: dict,
+        **kwargs,
+    ):
         try:
-            return ProfilerRuntime(**profiler_init_config)
+            return ProfilerRuntime(
+                runtime=runtime,
+                **profiler_init_config,
+            )
         except Exception as e:
-            raise Exception(f"Failed to initialize ProfilerRuntime: {e}") from e
+            raise RuntimeError(f"Failed to initialize ProfilerRuntime: {e}") from e
 
 
 class SpeakerPlugin(AvatarPlugin):
@@ -75,11 +86,8 @@ class FacePlugin(AvatarPlugin):
         return (FaceStreamWrapper, FaceCache)
 
 
-def _configure_persona_vdb_runner(persona_vdb_type: str | None = None) -> str | None:
-    """
-    Configure and register Persona VDB runner after PersonaConfig sets env vars.
-    """
-    vdb_type = persona_vdb_type or os.getenv("PERSONA_VDB_TYPE")
+def configure_vdb_runner(vdb_type: str | None = None) -> None:
+    vdb_type = vdb_type or os.getenv("PERSONA_VDB_TYPE")
 
     logger.info("Configuring Persona plugin with VDB type: %s", vdb_type)
 
@@ -87,41 +95,23 @@ def _configure_persona_vdb_runner(persona_vdb_type: str | None = None) -> str | 
         from .runner import QdrantRunner
 
         method = QdrantRunner.INFERENCE_METHOD
-        os.environ["PERSONA_INFERENCE_METHOD"] = method
+        InferenceRunner.register(QdrantRunner)
 
-        AvatarPlugin.register_inference_runner_once(QdrantRunner)
-        return method
-
-    if vdb_type == "lancedb":
+    elif vdb_type == "lancedb":
         from .runner import LanceDBRunner
 
         method = LanceDBRunner.INFERENCE_METHOD
-        os.environ["PERSONA_INFERENCE_METHOD"] = method
+        InferenceRunner.register(LanceDBRunner)
 
-        AvatarPlugin.register_inference_runner_once(LanceDBRunner)
-        return method
+    else:
+        logger.warning(
+            "Unsupported PERSONA_VDB_TYPE=%r. Expected 'qdrant' or 'lancedb'.",
+            vdb_type,
+        )
+        return None
 
-    logger.warning(
-        "Unsupported PERSONA_VDB_TYPE=%r. Expected 'qdrant' or 'lancedb'.",
-        vdb_type,
-    )
+    os.environ["PERSONA_VDB_INFERENCE_METHOD"] = method
     return None
-
-
-def bootstrap_inference_runners() -> None:
-    """
-    Plugin-owned inference runner bootstrap.
-
-    Called by AlphaAvatar Core from AvatarServer.run() after config/env is ready
-    and before LiveKit creates the inference executor.
-    """
-    # Speaker runners do not depend on PERSONA_VDB_TYPE.
-    AvatarPlugin.register_inference_runner_once(SpeakerAttributeRunner)
-    AvatarPlugin.register_inference_runner_once(SpeakerVectorRunner)
-    AvatarPlugin.register_inference_runner_once(FaceAnalysisRunner)
-
-    # Persona profile / speaker-vector storage runner.
-    _configure_persona_vdb_runner()
 
 
 # Plugin register
@@ -144,8 +134,11 @@ AvatarPlugin.register_avatar_plugin(
 )
 
 
-# Runner bootstrap register
+# Inference Runners
+InferenceRunner.register(SpeakerAttributeRunner)
+InferenceRunner.register(SpeakerVectorRunner)
+InferenceRunner.register(FaceAnalysisRunner)
 AvatarPlugin.register_inference_runner_bootstrap(
-    "alphaavatar.plugins.persona",
-    bootstrap_inference_runners,
+    "alphaavatar.plugins.persona.vdb",
+    configure_vdb_runner,
 )

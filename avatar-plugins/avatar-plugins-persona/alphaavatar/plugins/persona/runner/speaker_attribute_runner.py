@@ -20,8 +20,9 @@ from contextlib import ExitStack
 
 import numpy as np
 from huggingface_hub import errors
-from livekit.agents.inference_runner import _InferenceRunner
 from livekit.agents.utils import hw
+
+from alphaavatar.agents.runtime.inference import InferenceRunner
 
 from ..log import logger
 from ..models import SPEAKER_MODEL_CONFIG, SpeakerModelType, download_from_hf_hub
@@ -30,7 +31,7 @@ _resource_files = ExitStack()
 atexit.register(_resource_files.close)
 
 
-class SpeakerAttributeRunner(_InferenceRunner):
+class SpeakerAttributeRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar_persona_speaker_attribute"
     MODEL_TYPE: SpeakerModelType = "w2v2l6"
 

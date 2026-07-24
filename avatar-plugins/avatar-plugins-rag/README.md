@@ -1,4 +1,4 @@
-# RAG Plugin for AlphaAvatar
+# AlphaAvatar RAG Plugin
 
 A modular Retrieval-Augmented Generation (RAG) middleware for AlphaAvatar, enabling agents to **store**, **search**, and **ground answers** on user-provided or locally stored knowledge.
 

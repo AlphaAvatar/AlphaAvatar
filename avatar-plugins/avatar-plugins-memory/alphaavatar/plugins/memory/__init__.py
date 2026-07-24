@@ -15,6 +15,7 @@ import os
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.inference import InferenceRunner
 
 from .log import logger
 from .memory_runtime import MemoryRuntime
@@ -55,29 +56,32 @@ class MemoryPlugin(AvatarPlugin):
             raise ImportError(f"Failed to initialize MemoryRuntime plugin: {e}") from e
 
 
-def bootstrap_inference_runners() -> None:
-    """
-    Plugin-owned runner bootstrap.
+def configure_vdb_runner(vdb_type: str | None = None) -> None:
+    vdb_type = vdb_type or os.getenv("MEMORY_VDB_TYPE")
 
-    Called by AlphaAvatar core after AvatarConfig is parsed.
-    """
-    memory_vdb_type = os.getenv("MEMORY_VDB_TYPE", "lancedb")
+    logger.info("Configuring Persona plugin with VDB type: %s", vdb_type)
 
-    if memory_vdb_type == "qdrant":
+    if vdb_type == "qdrant":
         from .runner import QdrantRunner
 
-        os.environ["MEMORY_INFERENCE_METHOD"] = QdrantRunner.INFERENCE_METHOD
-        AvatarPlugin.register_inference_runner_once(QdrantRunner)
-        return
+        method = QdrantRunner.INFERENCE_METHOD
+        InferenceRunner.register(QdrantRunner)
 
-    if memory_vdb_type == "lancedb":
+    elif vdb_type == "lancedb":
         from .runner import LanceDBRunner
 
-        os.environ["MEMORY_INFERENCE_METHOD"] = LanceDBRunner.INFERENCE_METHOD
-        AvatarPlugin.register_inference_runner_once(LanceDBRunner)
-        return
+        method = LanceDBRunner.INFERENCE_METHOD
+        InferenceRunner.register(LanceDBRunner)
 
-    logger.warning("Unsupported MEMORY_VDB_TYPE=%r", memory_vdb_type)
+    else:
+        logger.warning(
+            "Unsupported MEMORY_VDB_TYPE=%r. Expected 'qdrant' or 'lancedb'.",
+            vdb_type,
+        )
+        return None
+
+    os.environ["MEMORY_VDB_INFERENCE_METHOD"] = method
+    return None
 
 
 # Plugin register
@@ -87,8 +91,8 @@ AvatarPlugin.register_avatar_plugin(
     MemoryPlugin(),
 )
 
-# Runner bootstrap register
+# Inference Runners
 AvatarPlugin.register_inference_runner_bootstrap(
-    "alphaavatar.plugins.memory",
-    bootstrap_inference_runners,
+    "alphaavatar.plugins.memory.vdb",
+    configure_vdb_runner,
 )

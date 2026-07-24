@@ -24,7 +24,7 @@ from .schema.user_profile import (
     UserProfile,
     UserRuntimeState,
 )
-from .speaker import SpeakerStreamBase, speaker_node
+from .speaker import SpeakerStreamBase
 
 __all__ = [
     "PersonaBase",
@@ -40,6 +40,5 @@ __all__ = [
     "UserRuntimeState",
     "FaceObservation",
     "SpeakerStreamBase",
-    "speaker_node",
     "FaceStreamBase",
 ]

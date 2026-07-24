@@ -17,7 +17,6 @@ from typing import Any
 from uuid import uuid4
 
 from langchain_qdrant import QdrantVectorStore
-from livekit.agents.inference_runner import _InferenceRunner
 from qdrant_client.models import (
     Distance,
     FieldCondition,
@@ -33,6 +32,7 @@ from qdrant_client.models import (
 from alphaavatar.agents.persona import VectorRunnerOP
 from alphaavatar.agents.providers import ProviderKind, ProviderTaskConfig
 from alphaavatar.agents.providers.embedding import create_embedding_model
+from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import qdrant
 
 from ..models import FACE_MODEL_CONFIG, SPEAKER_MODEL_CONFIG
@@ -40,7 +40,7 @@ from .face_analysis_runner import FaceAnalysisRunner
 from .speaker_vector_runner import SpeakerVectorRunner
 
 
-class QdrantRunner(_InferenceRunner):
+class QdrantRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar_persona_qdrant"
 
     def __init__(self):

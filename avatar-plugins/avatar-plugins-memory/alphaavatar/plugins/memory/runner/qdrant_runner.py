@@ -16,7 +16,6 @@ import os
 from typing import Any
 
 from langchain_qdrant import QdrantVectorStore
-from livekit.agents.inference_runner import _InferenceRunner
 from qdrant_client.models import (
     Distance,
     FieldCondition,
@@ -30,10 +29,11 @@ from qdrant_client.models import (
 from alphaavatar.agents.memory import VectorRunnerOP
 from alphaavatar.agents.providers import ProviderKind, ProviderTaskConfig
 from alphaavatar.agents.providers.embedding import create_embedding_model
+from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import qdrant
 
 
-class QdrantRunner(_InferenceRunner):
+class QdrantRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar_memory_qdrant"
 
     def __init__(self):

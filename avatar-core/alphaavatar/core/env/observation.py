@@ -182,6 +182,36 @@ class EnvObservation:
         )
 
     @classmethod
+    def audio_frame(
+        cls,
+        *,
+        timestamp: str,
+        source_id: str,
+        payload: MediaPayload,
+        path: str | None = None,
+        mime_type: str = "audio/pcm",
+        metadata: dict[str, Any] | None = None,
+        annotations: list[EnvAnnotation] | None = None,
+    ) -> EnvObservation:
+        """
+        Create one atomic runtime audio-frame observation.
+
+        The payload should normally be AudioFramePayload containing an
+        AlphaAvatar-owned AudioFrame and its PCM representation.
+        """
+
+        return cls(
+            kind="audio_frame",
+            timestamp=timestamp,
+            source_id=source_id,
+            path=path,
+            mime_type=mime_type,
+            payload=payload,
+            metadata=metadata or {},
+            annotations=annotations or [],
+        )
+
+    @classmethod
     def audio_segment(
         cls,
         *,
@@ -189,10 +219,17 @@ class EnvObservation:
         source_id: str,
         payload: MediaPayload | None = None,
         path: str | None = None,
-        mime_type: str = "audio/wav",
+        mime_type: str = "audio/pcm",
         metadata: dict[str, Any] | None = None,
         annotations: list[EnvAnnotation] | None = None,
     ) -> EnvObservation:
+        """
+        Create one completed logical audio segment.
+
+        A speech segment should normally be produced by Interaction Router
+        after VAD has accepted and finalized a continuous speech region.
+        """
+
         return cls(
             kind="audio_segment",
             timestamp=timestamp,

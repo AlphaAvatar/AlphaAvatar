@@ -85,6 +85,7 @@ class PersonaConfig(BaseModel):
             profiler=AvatarPlugin.get_avatar_plugin(
                 AvatarModule.PROFILER,
                 self.profiler.plugin,
+                runtime=runtime,
                 profiler_init_config=self.profiler.init_config,
             ),
             speaker_cls=AvatarPlugin.get_avatar_plugin(

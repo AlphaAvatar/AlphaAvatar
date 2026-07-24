@@ -14,13 +14,14 @@
 import os
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
+from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.inference import InferenceRunner
 
 from .log import logger
 from .version import __version__
 
 __all__ = [
     "__version__",
-    "bootstrap_inference_runners",
 ]
 
 
@@ -30,12 +31,12 @@ class AiriCharacterPlugin(AvatarPlugin):
 
     def download_files(self): ...
 
-    def get_plugin(self, character_init_config: dict, *args, **kwargs):
+    def get_plugin(self, *, runtime: AvatarRuntime, character_init_config: dict, **kwargs):
         from .airi_avatar import AiriCharacterSession, AiriConfig
 
         try:
             avatar_config = AiriConfig(**character_init_config)
-            return AiriCharacterSession(avatar_config=avatar_config)
+            return AiriCharacterSession(runtime=runtime, avatar_config=avatar_config)
         except Exception as e:
             raise ImportError(
                 "The 'Airi' Character plugin is required but failed to initialize.\n"
@@ -45,7 +46,7 @@ class AiriCharacterPlugin(AvatarPlugin):
             ) from e
 
 
-def bootstrap_inference_runners() -> None:
+def configure_character_runner() -> None:
     """
     Plugin-owned runner bootstrap.
 
@@ -60,10 +61,14 @@ def bootstrap_inference_runners() -> None:
     if character_name == "airi":
         from .airi_avatar import AiriRunner
 
-        AvatarPlugin.register_inference_runner_once(AiriRunner)
-        return
+        InferenceRunner.register(AiriRunner)
 
-    logger.warning(f"Unsupported ALPHAAVATAR_CHARACTER_NAME={character_name!r}")
+    else:
+        logger.warning(
+            "Unsupported ALPHAAVATAR_CHARACTER_NAME=%r. Expected 'airi'.",
+            character_name,
+        )
+        return None
 
 
 # Plugin register
@@ -73,8 +78,8 @@ AvatarPlugin.register_avatar_plugin(
     AiriCharacterPlugin(),
 )
 
-# Runner bootstrap register
+# Inference Runners
 AvatarPlugin.register_inference_runner_bootstrap(
     "alphaavatar.plugins.character",
-    bootstrap_inference_runners,
+    configure_character_runner,
 )

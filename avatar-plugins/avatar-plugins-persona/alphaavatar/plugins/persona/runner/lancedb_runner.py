@@ -16,11 +16,10 @@ import os
 from typing import Any
 from uuid import uuid4
 
-from livekit.agents.inference_runner import _InferenceRunner
-
 from alphaavatar.agents.persona import VectorRunnerOP
 from alphaavatar.agents.providers import ProviderKind, ProviderTaskConfig
 from alphaavatar.agents.providers.embedding import create_embedding_model
+from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import lancedb
 
 from ..models import FACE_MODEL_CONFIG, SPEAKER_MODEL_CONFIG
@@ -28,7 +27,7 @@ from .face_analysis_runner import FaceAnalysisRunner
 from .speaker_vector_runner import SpeakerVectorRunner
 
 
-class LanceDBRunner(_InferenceRunner):
+class LanceDBRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar_persona_lancedb"
 
     def __init__(self):

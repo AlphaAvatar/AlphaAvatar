@@ -1,4 +1,4 @@
-# DeepResearch Plugin for AlphaAvatar
+# AlphaAvatar DeepResearch Plugin
 
 A modular deep-research and content acquisition middleware for AlphaAvatar, providing unified access to **web search**, **iterative research**, and **content extraction**.
 

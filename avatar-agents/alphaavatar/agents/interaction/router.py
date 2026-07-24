@@ -11,3 +11,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
+from abc import ABC
+
+from alphaavatar.agents.plugin import AvatarRuntimePlugin
+from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.core.perception import PerceptionRuntime
+
+
+class InteractionRouterBase(AvatarRuntimePlugin, ABC):
+    """Session-scoped interaction routing plugin."""
+
+    def __init__(self, *, runtime: AvatarRuntime) -> None:
+        self.runtime = runtime
+
+    @property
+    def perception_runtime(self) -> PerceptionRuntime:
+        return self.runtime.perception

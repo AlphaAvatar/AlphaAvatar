@@ -300,7 +300,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     avatar_engine.bind_livekit_room(ctx.room)
 
     # Start character
-    avatar_character = avatar_config.character.get_plugin()
+    avatar_character = avatar_config.character.get_plugin(runtime=avatar_runtime)
     if avatar_character:
         await avatar_character.start(agent_identity, session, room=ctx.room)
 

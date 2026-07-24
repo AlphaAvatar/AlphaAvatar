@@ -13,105 +13,41 @@
 # limitations under the License.
 from __future__ import annotations
 
-import asyncio
-from abc import abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterable
+from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from livekit import rtc
-from livekit.agents import ModelSettings, stt, utils, vad
-from livekit.agents.types import (
-    DEFAULT_API_CONNECT_OPTIONS,
-    NOT_GIVEN,
-    APIConnectOptions,
-    NotGivenOr,
-)
-
-from alphaavatar.agents.log import logger
+from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.inference import InferenceExecutor
+from alphaavatar.core.perception import PerceptionRuntime
 
 if TYPE_CHECKING:
-    from alphaavatar.agents.avatar import AvatarEngine
-
     from .base import PersonaBase
 
 
-DEFAULT_STREAM_ADAPTER_API_CONNECT_OPTIONS = APIConnectOptions(
-    max_retry=0, timeout=DEFAULT_API_CONNECT_OPTIONS.timeout
-)
+class SpeakerStreamBase(ABC):
+    """
+    Session-scoped streaming speaker perception runtime.
 
+    It consumes routed speech observations from PerceptionRuntime and must not
+    own VAD, STT or RTC input.
+    """
 
-async def speaker_node(
-    engine: AvatarEngine,
-    audio: AsyncIterable[rtc.AudioFrame],
-    model_settings: ModelSettings,
-) -> AsyncGenerator[stt.SpeechEvent, None]:
-    """Override implementation for `Agent.default.stt_node`"""
-    activity = engine._get_activity_or_raise()
-    assert activity.stt is not None, "stt_node called but no STT node is available"
+    CONSUMER_ID = "persona.speaker"
 
-    if not activity.vad:
-        raise RuntimeError(
-            "AlphaAvatar Persona Plugin require a VAD plugin, please add a VAD to the AgentTask/VoiceAgent to enable Persona Plugin."
-        )
+    def __init__(self, *, runtime: AvatarRuntime, activity_persona: PersonaBase) -> None:
+        self.runtime = runtime
+        self.activity_persona = activity_persona
 
-    wrapped_speaker = SpeakerAdapter(stt=activity.stt, vad=activity.vad, persona=engine.persona)
+    @property
+    def perception_runtime(self) -> PerceptionRuntime:
+        return self.runtime.perception
 
-    conn_options = activity.session.conn_options.stt_conn_options
-    async with wrapped_speaker.stream(conn_options=conn_options) as stream:
-
-        @utils.log_exceptions(logger=logger)
-        async def _forward_input() -> None:
-            async for frame in audio:
-                stream.push_frame(frame)
-
-        forward_task = asyncio.create_task(_forward_input())
-        try:
-            async for event in stream:
-                yield event
-        finally:
-            await utils.aio.cancel_and_wait(forward_task)
-
-
-class SpeakerAdapter(stt.StreamAdapter):
-    def __init__(self, *, stt: stt.STT, vad: vad.VAD, persona: PersonaBase) -> None:
-        super().__init__(stt=stt, vad=vad)
-        self._activity_persona = persona
-
-    def stream(
-        self,
-        *,
-        language: NotGivenOr[str] = NOT_GIVEN,
-        conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
-    ) -> SpeakerStreamBase:
-        return self._activity_persona.speaker_stream(
-            self,
-            vad=self._vad,
-            wrapped_stt=self._stt,
-            language=language,
-            conn_options=conn_options,
-            activity_persona=self._activity_persona,
-        )
-
-
-class SpeakerStreamBase(stt.RecognizeStream):
-    """Called every time voice input is activated"""
-
-    def __init__(
-        self,
-        stt: stt.STT,
-        *,
-        vad: vad.VAD,
-        wrapped_stt: stt.STT,
-        language: NotGivenOr[str],
-        conn_options: APIConnectOptions,
-        activity_persona: PersonaBase,
-    ) -> None:
-        super().__init__(stt=stt, conn_options=DEFAULT_STREAM_ADAPTER_API_CONNECT_OPTIONS)
-        self._vad = vad
-        self._wrapped_stt = wrapped_stt
-        self._wrapped_stt_conn_options = conn_options
-        self._language = language
-        self._activity_persona = activity_persona
+    @property
+    def inference_executor(self) -> InferenceExecutor:
+        return self.runtime.inference
 
     @abstractmethod
-    async def _run(self) -> None: ...
+    async def start(self) -> None: ...
+
+    @abstractmethod
+    async def stop(self) -> None: ...

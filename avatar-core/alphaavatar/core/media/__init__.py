@@ -11,11 +11,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from .audio import (
+    AudioFrame,
+    AudioFramePayload,
+    AudioSampleFormat,
+    AudioSegmentPayload,
+)
 from .formats import PayloadFormat, PayloadView
 from .payload import MediaPayload, PayloadFormatUnavailable
 from .video import PixelFormat, VideoFrame, VideoFramePayload
 
 __all__ = [
+    "AudioFrame",
+    "AudioFramePayload",
+    "AudioSampleFormat",
+    "AudioSegmentPayload",
     "MediaPayload",
     "PayloadFormat",
     "PayloadFormatUnavailable",

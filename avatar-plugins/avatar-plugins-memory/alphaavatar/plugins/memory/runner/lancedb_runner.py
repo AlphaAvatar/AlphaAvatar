@@ -15,15 +15,14 @@ import json
 import os
 from typing import Any
 
-from livekit.agents.inference_runner import _InferenceRunner
-
 from alphaavatar.agents.memory import VectorRunnerOP
 from alphaavatar.agents.providers import ProviderKind, ProviderTaskConfig
 from alphaavatar.agents.providers.embedding import create_embedding_model
+from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import lancedb
 
 
-class LanceDBRunner(_InferenceRunner):
+class LanceDBRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar_memory_lancedb"
 
     def __init__(self):

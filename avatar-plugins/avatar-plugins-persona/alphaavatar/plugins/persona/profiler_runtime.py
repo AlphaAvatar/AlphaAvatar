@@ -20,7 +20,6 @@ from copy import deepcopy
 from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
-from livekit.agents.job import get_job_context
 from pydantic import BaseModel, Field
 
 from alphaavatar.agents.avatar.prompting import PersonaPluginsTemplate
@@ -29,8 +28,7 @@ from alphaavatar.agents.providers import (
     ProviderGateway,
     ProvidersConfig,
 )
-from alphaavatar.agents.runtime.session_runtime import SessionRuntime
-from alphaavatar.agents.utils.files.work_dirs import AvatarPath
+from alphaavatar.agents.runtime import AvatarRuntime
 
 from .log import logger
 from .profiler_details import UserProfileDetails
@@ -92,10 +90,11 @@ class ProfilerRuntime(ProfilerBase):
     def __init__(
         self,
         *,
+        runtime: AvatarRuntime,
         provider: dict[str, Any] | None = None,
         **kwargs,
     ) -> None:
-        super().__init__()
+        super().__init__(runtime=runtime)
 
         self._provider_config = (
             ProfilerRuntimeConfig(**provider) if provider else ProfilerRuntimeConfig()
@@ -106,16 +105,14 @@ class ProfilerRuntime(ProfilerBase):
 
         self._provider_gateway.validate_tasks([self._profile_delta_task])
 
-        self._executor = get_job_context().inference_executor
-
     @property
-    def inference_method(self) -> str:
-        method = os.getenv("PERSONA_INFERENCE_METHOD")
+    def vdb_inference_method(self) -> str:
+        method = os.getenv("PERSONA_VDB_INFERENCE_METHOD")
         if not method:
             raise RuntimeError(
-                "PERSONA_INFERENCE_METHOD is not configured. "
-                "Make sure AvatarPlugin.bootstrap_inference_runners() is called before "
-                "ProfilerLangChain is used."
+                "PERSONA_VDB_INFERENCE_METHOD is not configured. "
+                "Make sure the Persona VDB runner is registered before "
+                "ProfilerRuntime starts."
             )
         return method
 
@@ -125,7 +122,6 @@ class ProfilerRuntime(ProfilerBase):
         uid: str,
         profile_details_dump: dict,
         new_turn: str,
-        session_runtime: SessionRuntime,
     ) -> ProfileDelta:
         """Ask the configured provider task to generate patch ops relative to the current profile."""
         result = await self._provider_gateway.ainvoke_structured(
@@ -138,12 +134,12 @@ class ProfilerRuntime(ProfilerBase):
             },
             output_schema=ProfileDelta,
             metadata={
-                "provider_dir": session_runtime.session_path.provider_dir,
+                "provider_dir": self.session_runtime.session_path.provider_dir,
                 "plugin": "persona",
                 "component": "profiler",
                 "operation": "profile_delta",
                 "user_id": uid,
-                "session_id": session_runtime.session_id,
+                "session_id": self.session_runtime.session_id,
             },
         )
 
@@ -192,18 +188,12 @@ class ProfilerRuntime(ProfilerBase):
 
         return is_updated, data
 
-    async def load(
-        self,
-        *,
-        uid: str,
-        work_dir: AvatarPath,
-        timeout: float = 3,
-    ) -> UserProfile:
+    async def load(self, *, uid: str, timeout: float = 3) -> UserProfile:
         """Load text, voice, and face profile information for the specified user_id"""
         json_data = {"op": VectorRunnerOP.load, "param": {"user_id": uid}}
         json_data = json.dumps(json_data).encode()
         result = await asyncio.wait_for(
-            self._executor.do_inference(self.inference_method, json_data),
+            self.inference_executor.do_inference(self.vdb_inference_method, json_data),
             timeout=timeout,
         )
 
@@ -230,7 +220,7 @@ class ProfilerRuntime(ProfilerBase):
             face_vector = None
 
         # User Runtime State (from local markdown)
-        runtime_state = await self.load_runtime_state(uid=uid, work_dir=work_dir)
+        runtime_state = await self.load_runtime_state(uid=uid)
 
         return UserProfile(
             details=profile_details,
@@ -239,7 +229,7 @@ class ProfilerRuntime(ProfilerBase):
             face_vector=face_vector,
         )
 
-    async def update(self, *, uid: str, persona: PersonaCache, session_runtime: SessionRuntime):
+    async def update(self, *, uid: str, persona: PersonaCache):
         """Async delta extraction -> in-memory patch."""
         if persona.profile_details:
             data = persona.profile_details.model_dump()
@@ -257,7 +247,6 @@ class ProfilerRuntime(ProfilerBase):
             uid=uid,
             profile_details_dump=persona.profile_details_dump_value,
             new_turn=new_turn,
-            session_runtime=session_runtime,
         )
         is_updated, updated_profile_details = self._apply_delta(update_time, data, delta)
 
@@ -267,9 +256,7 @@ class ProfilerRuntime(ProfilerBase):
         else:
             logger.info(f"[uid: {uid}] User Profile output is empty, UPDATE skip!")
 
-    async def save(
-        self, *, uid: str, persona: PersonaCache, work_dir: AvatarPath, timeout: float | None = 15
-    ) -> None:
+    async def save(self, *, uid: str, persona: PersonaCache, timeout: float | None = 15) -> None:
         """Save the text, voice, and face profile information of the specified user_id."""
         # Text Profile
         if persona.profile_details is not None:
@@ -296,7 +283,6 @@ class ProfilerRuntime(ProfilerBase):
                 md_path = await self.save_runtime_state(
                     uid=uid,
                     runtime_state=persona.profile.runtime_state,
-                    work_dir=work_dir,
                 )
                 logger.info(f"User runtime state markdown save success: {md_path}")
             except Exception as e:
@@ -323,7 +309,7 @@ class ProfilerRuntime(ProfilerBase):
         }
         json_data = json.dumps(json_data).encode()
         result = await asyncio.wait_for(
-            self._executor.do_inference(self.inference_method, json_data),
+            self.inference_executor.do_inference(self.vdb_inference_method, json_data),
             timeout=timeout,
         )
 

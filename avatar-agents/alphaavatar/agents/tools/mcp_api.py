@@ -22,6 +22,8 @@ from livekit.agents.llm import ToolError
 
 from alphaavatar.agents import AvatarModule
 from alphaavatar.agents.log import logger
+from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.inference import InferenceExecutor
 from alphaavatar.agents.status import (
     StatusEmitter,
     StatusEvent,
@@ -89,9 +91,14 @@ Notes:
 - Each params value MUST match the target tool's input schema.
 """
 
-    def __init__(self, servers_info, *args, **kwargs) -> None:
+    def __init__(self, *, runtime: AvatarRuntime, servers_info: str, **kwargs) -> None:
         super().__init__()
+        self.runtime = runtime
         self.description = self.description.format(available_mcp_servers=servers_info)
+
+    @property
+    def inference_executor(self) -> InferenceExecutor:
+        return self.runtime.inference
 
     @abstractmethod
     async def search_tools(self, *, query: str, ctx: RunContext) -> Any: ...
@@ -194,6 +201,25 @@ Expected returns by op (ALL RETURNS ARE STRINGS):
     def _status_stage(self):
         return self._current_op or "tool_error"
 
+    async def _call_tools_from_json(
+        self,
+        *,
+        params_json: str | None,
+        ctx: RunContext,
+    ) -> Any:
+        if not params_json:
+            raise ToolError("MCP tool_call received empty params_json.")
+
+        try:
+            params = json.loads(params_json)
+        except Exception as e:
+            raise ToolError(f"MCP tool_call params_json is not valid JSON: {e}") from e
+
+        if not isinstance(params, dict):
+            raise ToolError("MCP tool_call params_json must decode to a JSON object.")
+
+        return await self._mcp_host.call_tools(params=params, ctx=ctx)
+
     async def invoke(
         self,
         ctx: RunContext,
@@ -240,22 +266,3 @@ Expected returns by op (ALL RETURNS ARE STRINGS):
             self._current_op = None
 
         return result
-
-    async def _call_tools_from_json(
-        self,
-        *,
-        params_json: str | None,
-        ctx: RunContext,
-    ) -> Any:
-        if not params_json:
-            raise ToolError("MCP tool_call received empty params_json.")
-
-        try:
-            params = json.loads(params_json)
-        except Exception as e:
-            raise ToolError(f"MCP tool_call params_json is not valid JSON: {e}") from e
-
-        if not isinstance(params, dict):
-            raise ToolError("MCP tool_call params_json must decode to a JSON object.")
-
-        return await self._mcp_host.call_tools(params=params, ctx=ctx)

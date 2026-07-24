@@ -14,16 +14,13 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import os
 from typing import Any
 
-from livekit.agents.job import get_job_context
 from livekit.agents.llm import ChatItem, ChatMessage
 
 from alphaavatar.agents.avatar.prompting import MemoryPluginsTemplate
-from alphaavatar.agents.constants import VIDEO_MEMORY_INTERVAL_SEC
 from alphaavatar.agents.memory import (
     MemoryBase,
     MemoryCache,
@@ -33,8 +30,8 @@ from alphaavatar.agents.memory import (
     VectorRunnerOP,
 )
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.core.env import EnvObservation
 
+from .env_memory import EnvMemoryBatch, EnvMemoryScheduler
 from .graph import (
     GraphLookup,
     build_graph_from_mentions,
@@ -44,11 +41,14 @@ from .graph import (
 from .log import logger
 from .memory_delta_extractor import MemoryDeltaExtractor, MemoryProviderConfig
 from .memory_markdown import save_memory_items_to_markdown
-from .memory_op import MemoryDelta, PatchOp, flatten_items, norm_token, rebuild_from_items
-
-ENV_MEMORY_UPDATE_INTERVAL_SEC = 30.0
-ENV_MEMORY_ANNOTATION_GRACE_SEC = 0.75
-ENV_MEMORY_CONSUMER_ID = "memory.env"
+from .memory_op import (
+    EnvMemoryDelta,
+    MemoryDelta,
+    PatchOp,
+    flatten_items,
+    norm_token,
+    rebuild_from_items,
+)
 
 
 def _norm_topic(value: str | None) -> str | None:
@@ -91,6 +91,7 @@ class MemoryRuntime(MemoryBase):
         memory_recall_num: int = 10,
         maximum_memory_num: int = 24,
         provider: dict[str, Any] | None = None,
+        env_streams: list[str] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(
@@ -106,29 +107,19 @@ class MemoryRuntime(MemoryBase):
         )
         self._delta_extractor = MemoryDeltaExtractor(self._provider_config)
 
-        # Only one ENV extraction is allowed at a time for this runtime.
-        self._env_update_lock = asyncio.Lock()
-
-        self._env_periodic_task: asyncio.Task[None] | None = None
-        self._env_user_turn_task: asyncio.Task[None] | None = None
-
-        # Additional memory-specific sampling on top of the shared perception
-        # stream sampling.
-        self._last_env_memory_frame_ts_by_source: dict[str, float] = {}
-
-        self._executor = get_job_context().inference_executor
+        # ENV Memory init
+        self._env_scheduler: EnvMemoryScheduler | None = None
+        self._env_streams = tuple(env_streams) if env_streams else None
 
     @property
-    def inference_method(self) -> str:
-        method = os.getenv("MEMORY_INFERENCE_METHOD")
-
+    def vdb_inference_method(self) -> str:
+        method = os.getenv("MEMORY_VDB_INFERENCE_METHOD")
         if not method:
             raise RuntimeError(
-                "MEMORY_INFERENCE_METHOD is not configured. "
-                "Make sure AvatarPlugin.bootstrap_inference_runners() is called "
-                "before MemoryRuntime is used."
+                "MEMORY_VDB_INFERENCE_METHOD is not configured. "
+                "Make sure the Memory VDB runner is registered before "
+                "MemoryRuntime starts."
             )
-
         return method
 
     """Helper Op"""
@@ -184,52 +175,6 @@ class MemoryRuntime(MemoryBase):
 
         return False
 
-    def _sample_env_observations_for_memory(
-        self,
-        observations: list[EnvObservation],
-    ) -> list[EnvObservation]:
-        """
-        Apply Memory-specific video sampling.
-
-        PerceptionRuntime owns transport buffering and consumer cursors.
-        This method only decides which pending observations are meaningful
-        enough to send to the ENV memory model.
-        """
-
-        if VIDEO_MEMORY_INTERVAL_SEC <= 0:
-            return observations
-
-        sampled: list[EnvObservation] = []
-
-        for observation in observations:
-            if observation.kind not in {
-                "video_frame",
-                "screen_frame",
-            }:
-                sampled.append(observation)
-                continue
-
-            try:
-                timestamp = float(observation.timestamp)
-            except (TypeError, ValueError):
-                # Do not discard observations with non-numeric timestamps.
-                sampled.append(observation)
-                continue
-
-            source_id = observation.source_id or observation.frame_id or "default"
-            last_timestamp = self._last_env_memory_frame_ts_by_source.get(source_id)
-
-            if (
-                last_timestamp is not None
-                and timestamp - last_timestamp < VIDEO_MEMORY_INTERVAL_SEC
-            ):
-                continue
-
-            self._last_env_memory_frame_ts_by_source[source_id] = timestamp
-            sampled.append(observation)
-
-        return sampled
-
     def _build_memory_items_from_patches(
         self,
         *,
@@ -250,10 +195,7 @@ class MemoryRuntime(MemoryBase):
             item = MemoryItem(
                 updated=True,
                 session_id=memory_cache.session_id,
-                object_ids=_merge_object_ids(
-                    object_ids,
-                    getattr(patch, "object_ids", []),
-                ),
+                object_ids=object_ids,
                 value=patch.value,
                 topic=topic,
                 timestamp=memory_cache.time,
@@ -271,30 +213,6 @@ class MemoryRuntime(MemoryBase):
             items.append(item)
 
         return items
-
-    def _build_env_evidence(self, observations: list[EnvObservation]) -> list[dict[str, Any]]:
-        evidence_list = []
-        for observation in observations:
-            evidence = observation.to_evidence_dict()
-            if evidence:
-                evidence_list.append(evidence)
-
-        return evidence_list
-
-    def _build_env_conversation_context(
-        self,
-        *,
-        messages: list[ChatItem],
-    ) -> str | None:
-        if not messages:
-            return None
-
-        context = MemoryPluginsTemplate.apply_search_template(
-            messages,
-            filter_roles=["system"],
-        )
-
-        return context or None
 
     def _build_session_content_for_update(
         self,
@@ -323,178 +241,6 @@ class MemoryRuntime(MemoryBase):
             ]
         )
 
-    async def _run_requested_env_update(self, *, trigger: str) -> None:
-        try:
-            await self._update_env_memory(
-                session_id=self.session_runtime.session_id,
-                trigger=trigger,
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception(
-                "[Memory] requested env memory update failed. trigger=%s",
-                trigger,
-            )
-
-    def _request_env_memory_update(self, *, trigger: str) -> None:
-        if self._env_user_turn_task and not self._env_user_turn_task.done():
-            return
-
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            logger.debug(
-                "[Memory] env update request ignored because no running event loop is available."
-            )
-            return
-
-        self._env_user_turn_task = loop.create_task(
-            self._run_requested_env_update(
-                trigger=trigger,
-            ),
-            name=(f"memory_env_user_turn_update:{self.session_runtime.session_id}"),
-        )
-
-    async def _update_env_memory(
-        self,
-        *,
-        session_id: str | None = None,
-        trigger: str = "manual",
-        timeout: float = 25.0,
-    ) -> list[MemoryItem]:
-        sid = session_id or self.session_runtime.session_id
-
-        if sid not in self.memory_cache:
-            logger.warning("[Memory] env update skipped, cache not found: %s", sid)
-            return []
-
-        async with self._env_update_lock:
-            cache = self.memory_cache[sid]
-            window = self.perception_runtime.take_pending_observations(
-                consumer_id=ENV_MEMORY_CONSUMER_ID,
-                streams={"video", "screen"},
-                require_payload=True,
-                min_age_sec=ENV_MEMORY_ANNOTATION_GRACE_SEC,
-            )
-            raw_observations = window.observations
-
-            if not raw_observations:
-                # The window cursor may still have advanced over observations
-                # without payload, so always commit the read result.
-                self.perception_runtime.commit_observations(window)
-
-                logger.debug(
-                    "[Memory] env update skipped, no observations with payload. trigger=%s sid=%s",
-                    trigger,
-                    sid,
-                )
-                return []
-
-            observations = self._sample_env_observations_for_memory(raw_observations)
-
-            if not observations:
-                # Commit all observations read for this consumer, including
-                # frames skipped by Memory-specific sampling.
-                self.perception_runtime.commit_observations(window)
-
-                logger.debug(
-                    "[Memory] env update skipped after sampling. "
-                    "trigger=%s sid=%s raw_observations=%s",
-                    trigger,
-                    sid,
-                    len(raw_observations),
-                )
-                return []
-
-            messages = cache.take_pending_env_messages()
-
-            evidence = self._build_env_evidence(observations)
-
-            cache.evidence = evidence
-
-            previous_env_memory = self.memory_state.render(
-                memory_type=MemoryType.ENV,
-                session_id=sid,
-            )
-
-            conversation_context = self._build_env_conversation_context(
-                messages=messages,
-            )
-
-            delta = await self._delta_extractor.extract_env_delta(
-                observations=observations,
-                memory_cache=cache,
-                previous_env_memory=previous_env_memory or None,
-                conversation_context=conversation_context,
-                timeout=timeout,
-            )
-
-            env_memories = self._build_memory_items_from_patches(
-                memory_cache=cache,
-                memory_type=MemoryType.ENV,
-                patches=getattr(
-                    delta,
-                    "env_memory_entries",
-                    [],
-                ),
-                object_ids=cache.object_ids,
-                extra_data={
-                    "trigger": trigger,
-                    "evidence": evidence,
-                },
-            )
-
-            # Extraction completed successfully, including the valid empty
-            # delta case. Advance the memory consumer cursor and commit the
-            # conversation messages associated with this observation window.
-            self.perception_runtime.commit_observations(window)
-            cache.commit_env_messages()
-
-            if not env_memories:
-                logger.debug(
-                    "[Memory] env delta produced no memory. trigger=%s sid=%s observation_count=%s",
-                    trigger,
-                    sid,
-                    len(observations),
-                )
-                return []
-
-            self.env_memory = env_memories
-
-            new_object_ids: list[str] = []
-
-            for item in env_memories:
-                new_object_ids.extend(item.object_ids)
-
-            cache.add_object_ids(new_object_ids)
-
-            logger.info(
-                "[Memory] env memory updated. trigger=%s sid=%s generated=%s "
-                "observations=%s raw_observations=%s",
-                trigger,
-                sid,
-                len(env_memories),
-                len(observations),
-                len(raw_observations),
-            )
-
-            return env_memories
-
-    async def _env_memory_loop(self, *, session_id: str) -> None:
-        while True:
-            await asyncio.sleep(ENV_MEMORY_UPDATE_INTERVAL_SEC)
-
-            try:
-                await self._update_env_memory(
-                    session_id=session_id,
-                    trigger="periodic",
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("[Memory] periodic env memory update failed")
-
     async def _save_to_vdb(self, *, memory_items: list[dict], timeout: float) -> None:
         json_data = {
             "op": VectorRunnerOP.save,
@@ -503,8 +249,8 @@ class MemoryRuntime(MemoryBase):
 
         try:
             result = await asyncio.wait_for(
-                self._executor.do_inference(
-                    self.inference_method,
+                self.inference_executor.do_inference(
+                    self.vdb_inference_method,
                     json.dumps(json_data).encode(),
                 ),
                 timeout=timeout,
@@ -525,11 +271,104 @@ class MemoryRuntime(MemoryBase):
         payload.pop("error", None)
         logger.info(f"Memory SAVE success: {payload}")
 
+    """Env Memory Op"""
+
+    async def _process_env_batch(
+        self,
+        batch: EnvMemoryBatch,
+        timeout: float,
+    ) -> list[MemoryItem]:
+        sid = batch.session_id
+
+        if sid not in self.memory_cache:
+            logger.warning(
+                "[Memory] ENV processing skipped, cache not found: %s",
+                sid,
+            )
+            return []
+
+        cache = self.memory_cache[sid]
+        evidence = batch.build_evidence()
+
+        cache.evidence = evidence
+
+        previous_env_memory = self.memory_state.render(
+            memory_type=MemoryType.ENV,
+            session_id=sid,
+        )
+
+        delta: EnvMemoryDelta = await self._delta_extractor.extract_env_delta(
+            observations=batch.observations,
+            memory_cache=cache,
+            previous_env_memory=previous_env_memory or None,
+            conversation_context=batch.conversation_context,
+            timeout=timeout,
+        )
+
+        env_memories = self._build_memory_items_from_patches(
+            memory_cache=cache,
+            memory_type=MemoryType.ENV,
+            patches=delta.env_memory_entries,
+            object_ids=cache.object_ids,
+            extra_data={
+                "trigger": batch.trigger_text,
+                "evidence": evidence,
+                "perception_missed_count": batch.missed_count,
+            },
+        )
+
+        if not env_memories:
+            logger.debug(
+                "[Memory] ENV delta produced no memory "
+                "sid=%s trigger=%s observations=%s messages=%s",
+                sid,
+                batch.trigger_text,
+                len(batch.observations),
+                batch.message_count,
+            )
+            return []
+
+        self.env_memory = env_memories
+
+        cache.add_object_ids([object_id for item in env_memories for object_id in item.object_ids])
+
+        logger.info(
+            "[Memory] ENV memory updated sid=%s trigger=%s generated=%s "
+            "observations=%s raw_observations=%s messages=%s attempts=%s",
+            sid,
+            batch.trigger_text,
+            len(env_memories),
+            len(batch.observations),
+            batch.raw_observation_count,
+            batch.message_count,
+            batch.attempts + 1,
+        )
+
+        return env_memories
+
     """Base Op"""
 
-    def on_cache_message_added(self, *, session_id: str, chat_item: ChatItem) -> None:
-        if isinstance(chat_item, ChatMessage) and chat_item.role == "user":
-            self._request_env_memory_update(trigger="user_turn")
+    def on_cache_message_added(
+        self,
+        *,
+        session_id: str,
+        chat_item: ChatItem,
+    ) -> None:
+        if not isinstance(chat_item, ChatMessage):
+            return
+
+        if chat_item.role != "user":
+            return
+
+        scheduler = self._env_scheduler
+
+        if scheduler is None:
+            return
+
+        if session_id != scheduler.session_id:
+            return
+
+        scheduler.request("user_turn")
 
     def save_graph_aliases(
         self,
@@ -575,8 +414,8 @@ class MemoryRuntime(MemoryBase):
         }
 
         result = await asyncio.wait_for(
-            self._executor.do_inference(
-                self.inference_method,
+            self.inference_executor.do_inference(
+                self.vdb_inference_method,
                 json.dumps(json_data).encode(),
             ),
             timeout=timeout,
@@ -651,8 +490,8 @@ class MemoryRuntime(MemoryBase):
         }
 
         result = await asyncio.wait_for(
-            self._executor.do_inference(
-                self.inference_method,
+            self.inference_executor.do_inference(
+                self.vdb_inference_method,
                 json.dumps(json_data).encode(),
             ),
             timeout=timeout,
@@ -829,58 +668,32 @@ class MemoryRuntime(MemoryBase):
         await super().on_session_start()
 
         sid = self.session_runtime.session_id
+        cache = self.memory_cache.get(sid)
 
-        if sid not in self.memory_cache:
-            logger.debug("[Memory] env loop not started because memory cache is unavailable.")
+        if cache is None:
+            logger.debug("[Memory] ENV scheduler not started because memory cache is unavailable.")
             return
 
-        if self._env_periodic_task is not None and not self._env_periodic_task.done():
-            return
-
-        self._env_periodic_task = asyncio.create_task(
-            self._env_memory_loop(session_id=sid),
-            name=(f"memory_env_periodic_loop:{sid}"),
+        self._env_scheduler = EnvMemoryScheduler(
+            perception_runtime=self.perception_runtime,
+            memory_cache=cache,
+            process=self._process_env_batch,
+            streams=self._env_streams,
         )
 
+        await self._env_scheduler.start()
+
         logger.info(
-            "[Memory] env memory loop started. sid=%s interval=%ss annotation_grace=%ss",
+            "[Memory] ENV scheduler started sid=%s interval=%ss annotation_grace=%ss streams=%s",
             sid,
-            ENV_MEMORY_UPDATE_INTERVAL_SEC,
-            ENV_MEMORY_ANNOTATION_GRACE_SEC,
+            self._env_scheduler.interval_sec,
+            self._env_scheduler.annotation_grace_sec,
+            sorted(self._env_scheduler.streams),
         )
 
     async def on_session_stop(self) -> None:
-        if self._env_periodic_task is not None:
-            self._env_periodic_task.cancel()
+        if self._env_scheduler is not None:
+            await self._env_scheduler.stop()
+            self._env_scheduler = None
 
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._env_periodic_task
-
-            self._env_periodic_task = None
-
-        # Cancel an in-progress user-turn extraction. The final session-stop
-        # extraction below will consume the still-uncommitted perception window.
-        if self._env_user_turn_task is not None:
-            if not self._env_user_turn_task.done():
-                self._env_user_turn_task.cancel()
-
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._env_user_turn_task
-
-            self._env_user_turn_task = None
-
-        try:
-            await self._update_env_memory(
-                session_id=self.session_runtime.session_id,
-                trigger="session_stop",
-                timeout=30.0,
-            )
-        except Exception:
-            # Conversation/tool memory should still be updated and persisted
-            # even if the final visual extraction fails.
-            logger.exception("[Memory] final env memory update failed")
-
-        # MemoryBase owns the final conversation/tool update and save.
         await super().on_session_stop()
-
-        self._last_env_memory_frame_ts_by_source.clear()

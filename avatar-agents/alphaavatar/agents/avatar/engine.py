@@ -15,21 +15,21 @@
 
 import asyncio
 import inspect
-from collections.abc import AsyncIterable, Coroutine
+from collections.abc import AsyncIterable
 from contextlib import suppress
-from typing import Any
 
 from livekit import rtc
-from livekit.agents import Agent, ModelSettings, llm, stt
+from livekit.agents import Agent, ModelSettings, llm, stt as livekit_stt
 from livekit.agents.types import FlushSentinel
 from livekit.agents.voice.generation import update_instructions
 
 from alphaavatar.agents.configs import AvatarConfig
 from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
 from alphaavatar.agents.entrypoints.schema.room_type import RoomType
+from alphaavatar.agents.interaction import InteractionRouterBase
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.memory import MemoryBase
-from alphaavatar.agents.persona import PersonaBase, speaker_node
+from alphaavatar.agents.persona import PersonaBase
 from alphaavatar.agents.plugin import AvatarModule, AvatarRuntimePlugin
 from alphaavatar.agents.runtime import (
     AvatarRuntime,
@@ -47,10 +47,11 @@ from alphaavatar.core.perception import PerceptionRuntime
 from .context import init_context_manager
 from .context.internal_tools import get_runtime_context_tool
 from .patches import init_avatar_patches
-from .perception import LiveKitVideoInputRuntime
+from .perception import LiveKitAudioInputRuntime, LiveKitVideoInputRuntime
 from .prompting.assembler import PromptAssembler
 from .prompting.template import AvatarSysPromptTemplate, RuntimeContextTemplate
 from .vision import VisionBase, build_vision
+from .voice import LiveKitSTTBridge, TranscriptionEvent, TranscriptionEventType
 
 
 class AvatarEngine(Agent):
@@ -80,26 +81,35 @@ class AvatarEngine(Agent):
 
         # Step2: initial plugins
         self._status: StatusEmitter = avatar_config.status.get_plugin()
+        self._router: InteractionRouterBase = avatar_config.router.get_plugin(
+            runtime=self.runtime,
+            vad=avatar_config.voice.get_vad_plugin(
+                inference_executor=self.runtime.inference,
+            ),
+            stt=avatar_config.voice.get_stt_plugin(),
+            on_transcription=self._handle_transcription_event,
+        )
         self._memory: MemoryBase = avatar_config.memory.get_plugin(
             runtime=self.runtime,
             avatar_id=self.avatar_config.avatar.id,
         )
         self._persona: PersonaBase = avatar_config.persona.get_plugin(self.runtime)
         self._tools: list[llm.FunctionTool | llm.RawFunctionTool] = avatar_config.tools.get_tools(
-            self.session_runtime,
+            self.runtime,
             status_emitter=self._status,
         )
         self._tools.append(get_runtime_context_tool())
 
         # Step3: initial avatar
+        self._livekit_stt_events: asyncio.Queue[livekit_stt.SpeechEvent] = asyncio.Queue()
         super().__init__(
             instructions=self.system_template.instructions(),
             # llm
             llm=self.avatar_config.llm.get_plugin(),
             # voice plugins
             turn_detection=self.avatar_config.voice.get_turn_detection_plugin(),
-            stt=self.avatar_config.voice.get_stt_plugin(),
-            vad=self.avatar_config.voice.get_vad_plugin(),
+            stt=LiveKitSTTBridge(),
+            vad=self.avatar_config.voice.get_legacy_livekit_vad_plugin(),
             tts=self.avatar_config.voice.get_tts_plugin(),
             allow_interruptions=self.avatar_config.voice.allow_interruptions,
             # tools
@@ -112,7 +122,14 @@ class AvatarEngine(Agent):
         # vision
         self._vision: VisionBase = build_vision(self)
 
-        # LiveKit video input runtime
+        # LiveKit audio/video input adapters
+        self._audio_input_runtime = LiveKitAudioInputRuntime(
+            engine=self,
+            perception_runtime=self.perception_runtime,
+            sample_rate=16_000,
+            num_channels=1,
+        )
+
         self._video_input_runtime = LiveKitVideoInputRuntime(
             engine=self,
             perception_runtime=self.perception_runtime,
@@ -120,12 +137,14 @@ class AvatarEngine(Agent):
 
         # Runtime plugins are started/stopped in on_enter/on_exit, and refreshed every turn.
         self._perception_consumers: list[AvatarRuntimePlugin] = [
+            self._router,
             self._persona,
             self._memory,
             self._vision,
         ]
 
         self._perception_producers: list[AvatarRuntimePlugin] = [
+            self._audio_input_runtime,
             self._video_input_runtime,
         ]
 
@@ -169,23 +188,6 @@ class AvatarEngine(Agent):
 
     """Helper Op"""
 
-    async def _start_runtime_plugins(self) -> None:
-        # Consumers first: register renderers and start consumer loops before
-        # the RTC adapter begins publishing frames.
-        for plugin in self._perception_consumers:
-            await plugin.on_session_start()
-
-        for plugin in self._perception_producers:
-            await plugin.on_session_start()
-
-    async def _stop_runtime_plugins(self) -> None:
-        # Stop producers first so no new frames enter while consumers shut down.
-        for plugin in reversed(self._perception_producers):
-            await plugin.on_session_stop()
-
-        for plugin in reversed(self._perception_consumers):
-            await plugin.on_session_stop()
-
     def _refresh_context_runtime_for_turn(self) -> None:
         """
         Sync plugin-produced context into ContextRuntime.
@@ -225,6 +227,61 @@ class AvatarEngine(Agent):
         self.context_runtime.turn_behavior_rules = (
             self.context_runtime.turn_behavior_rules or DEFAULT_SYSTEM_VALUE
         )
+
+    def _handle_transcription_event(self, event: TranscriptionEvent) -> None:
+        if event.type == TranscriptionEventType.ERROR:
+            logger.warning(
+                "STT error source_id=%s segment_id=%s reason=%s",
+                event.source_id,
+                event.segment_id,
+                event.reason,
+            )
+            return
+
+        text = event.text.strip()
+        if not text:
+            return
+
+        if event.type == TranscriptionEventType.INTERIM_TRANSCRIPT:
+            event_type = livekit_stt.SpeechEventType.INTERIM_TRANSCRIPT
+        elif event.type == TranscriptionEventType.FINAL_TRANSCRIPT:
+            event_type = livekit_stt.SpeechEventType.FINAL_TRANSCRIPT
+        else:
+            return
+
+        self._livekit_stt_events.put_nowait(
+            livekit_stt.SpeechEvent(
+                type=event_type,
+                request_id=event.segment_id,
+                alternatives=[
+                    livekit_stt.SpeechData(
+                        language=event.language or "en",
+                        text=text,
+                        start_time=event.start_time if event.start_time is not None else 0.0,
+                        end_time=event.end_time if event.end_time is not None else 0.0,
+                        confidence=event.confidence if event.confidence is not None else 0.0,
+                        speaker_id=event.source_id,
+                    )
+                ],
+            )
+        )
+
+    async def _start_runtime_plugins(self) -> None:
+        # Consumers first: register renderers and start consumer loops before
+        # the RTC adapter begins publishing frames.
+        for plugin in self._perception_consumers:
+            await plugin.on_session_start()
+
+        for plugin in self._perception_producers:
+            await plugin.on_session_start()
+
+    async def _stop_runtime_plugins(self) -> None:
+        # Stop producers first so no new frames enter while consumers shut down.
+        for plugin in reversed(self._perception_producers):
+            await plugin.on_session_stop()
+
+        for plugin in reversed(self._perception_consumers):
+            await plugin.on_session_stop()
 
     async def _call_with_supported_kwargs(self, func, *args, **kwargs):
         sig = inspect.signature(func)
@@ -310,8 +367,11 @@ class AvatarEngine(Agent):
         if hasattr(self._chat_ctx.items, "wait_pending"):
             await self._chat_ctx.items.wait_pending()
 
-        # close plugin runtime
+        # close plugins
         await self._stop_runtime_plugins()
+
+        # close runtime
+        await self.runtime.aclose()
 
         # Flush User Path
         self.session_runtime.flush_user_path_migrations(remove_old=True)
@@ -319,24 +379,35 @@ class AvatarEngine(Agent):
     """Node Op"""
 
     def stt_node(
-        self, audio: AsyncIterable[rtc.AudioFrame], model_settings: ModelSettings
-    ) -> (
-        AsyncIterable[stt.SpeechEvent | str]
-        | Coroutine[Any, Any, AsyncIterable[stt.SpeechEvent | str]]
-        | Coroutine[Any, Any, None]
-    ):
+        self,
+        audio: AsyncIterable[rtc.AudioFrame],
+        model_settings: ModelSettings,
+    ) -> AsyncIterable[livekit_stt.SpeechEvent]:
         """
-        STT [stt_node] -> Text -> Text append to chat context -> chat context -> llm
+        Temporary AlphaAvatar STT -> LiveKit turn-handling bridge.
 
-        Override [livekit.agents.voice.agent.Agent::stt_node] method to handle audio inputs.
+        AlphaAvatar owns transcription inference. LiveKit continues to own
+        turn detection, endpointing and user-turn commitment in v0.6.5.
         """
 
-        async def preprocess_audio():
-            async for frame in audio:
-                # insert custom audio preprocessing here
-                yield frame
+        async def _gen():
+            async def _drain_audio() -> None:
+                async for _ in audio:
+                    pass
 
-        return speaker_node(self, preprocess_audio(), model_settings)
+            drain_task = asyncio.create_task(
+                _drain_audio(),
+                name="livekit_stt_audio_drain",
+            )
+
+            try:
+                while True:
+                    yield await self._livekit_stt_events.get()
+            finally:
+                drain_task.cancel()
+                await asyncio.gather(drain_task, return_exceptions=True)
+
+        return _gen()
 
     async def on_user_turn_completed(
         self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage

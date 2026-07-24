@@ -1,4 +1,4 @@
-# MCP Plugin for AlphaAvatar
+# AlphaAvatar MCP Plugin
 
 A high-performance **Model Context Protocol (MCP) orchestration layer** for **AlphaAvatar**.
 

@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from alphaavatar.core.perception import PerceptionRuntime
 
 from .context_runtime import ContextRuntime
+from .inference import InferenceExecutor
 from .session_runtime import SessionRuntime
 
 
@@ -32,6 +33,7 @@ class AvatarRuntime:
     session: SessionRuntime
     context: ContextRuntime
     perception: PerceptionRuntime
+    inference: InferenceExecutor
 
     def __post_init__(self) -> None:
         if self.session.session_id != self.perception.session_id:
@@ -47,6 +49,7 @@ class AvatarRuntime:
         *,
         session: SessionRuntime,
         context: ContextRuntime,
+        inference: InferenceExecutor | None = None,
     ) -> AvatarRuntime:
         return cls(
             session=session,
@@ -54,4 +57,8 @@ class AvatarRuntime:
             perception=PerceptionRuntime(
                 session_id=session.session_id,
             ),
+            inference=inference or InferenceExecutor.from_env(),
         )
+
+    async def aclose(self) -> None:
+        await self.inference.close()

@@ -1,4 +1,4 @@
-# Virtual Character Plugin for AlphaAvatar
+# AlphaAvatar Virtual Character Plugin
 
 A modular virtual-character middleware that brings advanced real-time avatar rendering into the AlphaAvatar agent ecosystem. This plugin enables any AlphaAvatar-driven AI agent to seamlessly control high-fidelity virtual characters—handling lip-sync, facial expressions, emotional states, and synchronized video generation.
 

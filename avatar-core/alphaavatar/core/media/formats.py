@@ -45,11 +45,14 @@ class PayloadFormat(StrEnum):
     # Generic video frame owned by AlphaAvatar.
     VIDEO_FRAME = "video.frame"
 
+    # Generic audio frame owned by AlphaAvatar.
+    AUDIO_FRAME = "audio.frame"
+
     # Encoded visual representations.
     IMAGE_JPEG_BYTES = "image/jpeg.bytes"
     IMAGE_PNG_BYTES = "image/png.bytes"
 
-    # Reserved for later audio implementation.
+    # Audio representations.
     AUDIO_PCM16_BYTES = "audio/pcm16.bytes"
     AUDIO_WAV_BYTES = "audio/wav.bytes"
 

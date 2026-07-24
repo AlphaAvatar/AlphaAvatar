@@ -11,394 +11,420 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import asyncio
 import json
+import math
 import os
 import time
-from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from collections import deque
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
-from livekit import rtc
-from livekit.agents import stt, utils, vad
-from livekit.agents.job import get_job_context
-from livekit.agents.types import APIConnectOptions, NotGivenOr
 
-from alphaavatar.agents.constants import SPEAKER_INFERENCE_THRESHOLD, SPEAKER_MATCH_THRESHOLD
+from alphaavatar.agents.constants import SPEAKER_MATCH_THRESHOLD
 from alphaavatar.agents.persona import PersonaBase, SpeakerStreamBase, VectorRunnerOP
-from alphaavatar.agents.utils import DualKeyDict, NumpyOP
+from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.utils import NumpyOP
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.media import (
+    AudioFrame,
+    PayloadFormat,
+    PayloadFormatUnavailable,
+    PayloadView,
+)
 
 from .log import logger
 from .models import SPEAKER_MODEL_CONFIG
 from .runner import SpeakerAttributeRunner, SpeakerVectorRunner
 
+_STOP = object()
 
-@dataclass
-class TimeTag:
-    timestamp: str
-    uid: str | None
+
+@dataclass(slots=True)
+class SpeakerSourceState:
+    source_id: str
+    sample_rate: int
+    num_channels: int
+    pcm: bytearray = field(default_factory=bytearray)
+    window_index: int = 0
+    seen_observation_ids: set[str] = field(default_factory=set)
+    seen_order: deque[str] = field(default_factory=deque)
+
+
+@dataclass(slots=True, frozen=True)
+class SpeakerWindow:
+    source_id: str
+    segment_id: str | None
+    window_index: int
+    audio_f32: bytes
 
 
 class SpeakerStreamWrapper(SpeakerStreamBase):
+    MAX_SEEN_OBSERVATIONS = 2048
+    ATTRIBUTE_INTERVAL_SEC = 5.0
+
     def __init__(
         self,
-        stt: stt.STT,
         *,
-        vad: vad.VAD,
-        wrapped_stt: stt.STT,
-        language: NotGivenOr[str],
-        conn_options: APIConnectOptions,
+        runtime: AvatarRuntime,
         activity_persona: PersonaBase,
+        inference_queue_size: int = 1,
     ) -> None:
-        super().__init__(
-            stt,
-            vad=vad,
-            wrapped_stt=wrapped_stt,
-            language=language,
-            conn_options=conn_options,
-            activity_persona=activity_persona,
+        super().__init__(runtime=runtime, activity_persona=activity_persona)
+
+        self._vector_config = SPEAKER_MODEL_CONFIG[SpeakerVectorRunner.MODEL_TYPE]
+        self._attribute_config = SPEAKER_MODEL_CONFIG[SpeakerAttributeRunner.MODEL_TYPE]
+
+        if self._vector_config.sample_rate != self._attribute_config.sample_rate:
+            raise ValueError("Speaker vector and attribute models must use the same sample rate")
+
+        self._sample_rate = self._vector_config.sample_rate
+        self._window_samples = self._vector_config.window_size_samples
+        self._step_samples = self._vector_config.step_size_samples
+
+        self._window_bytes = self._window_samples * 2
+        self._step_bytes = self._step_samples * 2
+
+        self._step_sec = self._step_samples / self._sample_rate
+        self._attribute_every = max(
+            1,
+            math.ceil(self.ATTRIBUTE_INTERVAL_SEC / self._step_sec),
         )
 
-        self._executor = get_job_context().inference_executor
-
-        # Speaker Vector Inference
-        self._speaker_vector_config = SPEAKER_MODEL_CONFIG[SpeakerVectorRunner.MODEL_TYPE]
-        self._speaker_vector_frames: list[rtc.AudioFrame] = []
-        self._speaker_vector_resampler: rtc.AudioResampler | None = None
-        self._speaker_window_duration = (
-            self._speaker_vector_config.window_size_samples
-            / self._speaker_vector_config.sample_rate
+        self._sources: dict[str, SpeakerSourceState] = {}
+        self._inference_queue: asyncio.Queue[SpeakerWindow | object] = asyncio.Queue(
+            maxsize=inference_queue_size
         )
 
-        # Speaker Attribute Inference
-        self._speaker_attribute_config = SPEAKER_MODEL_CONFIG[SpeakerAttributeRunner.MODEL_TYPE]
-        self._speaker_attribute_frames: list[rtc.AudioFrame] = []
-        self._speaker_attribute_resampler: rtc.AudioResampler | None = None
-        self._speaker_window_duration = (
-            self._speaker_attribute_config.window_size_samples
-            / self._speaker_attribute_config.sample_rate
-        )
-
-        # init frame tagger
-        self.frames_tagger: DualKeyDict = DualKeyDict(id_field="uid")
+        self._consume_task: asyncio.Task[None] | None = None
+        self._inference_task: asyncio.Task[None] | None = None
+        self._started = False
 
     @property
-    def inference_method(self) -> str:
-        method = os.getenv("PERSONA_INFERENCE_METHOD")
+    def vdb_inference_method(self) -> str:
+        method = os.getenv("PERSONA_VDB_INFERENCE_METHOD")
         if not method:
             raise RuntimeError(
-                "PERSONA_INFERENCE_METHOD is not configured. "
-                "Make sure AvatarPlugin.bootstrap_inference_runners() is called before "
-                "ProfilerLangChain is used."
+                "PERSONA_VDB_INFERENCE_METHOD is not configured. "
+                "Make sure the Persona VDB runner is registered before "
+                "SpeakerStreamWrapper starts."
             )
         return method
 
-    def slide_frames(
-        self, frames: list[rtc.AudioFrame], step_size_samples: int, window_size_samples: int
-    ):
-        """process remaining frames"""
-        step = int(step_size_samples)
-        if step <= 0:
-            step = int(window_size_samples)
+    def _extract_frame(self, observation: EnvObservation) -> AudioFrame | None:
+        if observation.payload is None:
+            return None
 
-        to_discard = step
-        while to_discard > 0 and frames:
-            f0 = frames[0]
-            n_per_ch = int(f0.samples_per_channel)
-            ch = int(f0.num_channels)
-
-            if to_discard >= n_per_ch:
-                to_discard -= n_per_ch
-                frames.pop(0)
-            else:
-                start_h = to_discard * ch
-                total_h = n_per_ch * ch
-                suffix_bytes = f0.data[start_h:total_h].cast("B").tobytes()
-                rest_samples = n_per_ch - to_discard
-                new_frame = rtc.AudioFrame(
-                    data=suffix_bytes,
-                    sample_rate=f0.sample_rate,
-                    num_channels=f0.num_channels,
-                    samples_per_channel=rest_samples,
-                )
-                frames[0] = new_frame
-                to_discard = 0
-
-    async def _inference_speaker_vector(self, input_frame: rtc.AudioFrame, timestamp: str) -> None:
-        start_time = time.perf_counter()
-
-        if self._speaker_vector_config.sample_rate != input_frame.sample_rate:
-            if not self._speaker_vector_resampler:
-                self._speaker_vector_resampler = rtc.AudioResampler(
-                    input_frame.sample_rate,
-                    self._speaker_vector_config.sample_rate,
-                    quality=rtc.AudioResamplerQuality.QUICK,
-                )
-
-        if self._speaker_vector_resampler is not None:
-            self._speaker_vector_frames.extend(self._speaker_vector_resampler.push(input_frame))
-        else:
-            self._speaker_vector_frames.append(input_frame)
-
-        available_inference_samples = sum(
-            [frame.samples_per_channel for frame in self._speaker_vector_frames]
-        )
-        if available_inference_samples < self._speaker_vector_config.window_size_samples:
-            self.frames_tagger[timestamp] = TimeTag(timestamp, None)  # add a invalid tag
-            return
-
-        # convert data to f32
-        inference_f32_data = np.empty(
-            self._speaker_vector_config.window_size_samples, dtype=np.float32
-        )
-        inference_frame = utils.combine_frames(self._speaker_vector_frames)
-        np.divide(
-            inference_frame.data[: self._speaker_vector_config.window_size_samples],
-            np.iinfo(np.int16).max,
-            out=inference_f32_data,
-            dtype=np.float32,
-        )
-
-        # infer
-        speak_vector_bytes = await asyncio.wait_for(
-            self._executor.do_inference(
-                SpeakerVectorRunner.INFERENCE_METHOD, inference_f32_data.tobytes()
-            ),
-            timeout=self._speaker_vector_config.inference_timeout_sec,
-        )
-        speaker_vector = np.frombuffer(speak_vector_bytes, dtype=np.float32)
-
-        inference_duration = time.perf_counter() - start_time
-        extra_inference_time = max(
-            0.0,
-            inference_duration - self._speaker_window_duration,
-        )
-        if inference_duration > SPEAKER_INFERENCE_THRESHOLD:
-            logger.warning(
-                "[SpeakerVector] inference is slower than realtime",
-                extra={"delay": extra_inference_time},
-            )
-
-        # Match & Retrieve & Update Speaker
-        uid = await self._activity_persona.match_speaker_vector(speaker_vector=speaker_vector)
-        if uid is not None:
-            await self._activity_persona.update_speaker_vector(
-                uid=uid, speaker_vector=speaker_vector
-            )
-        else:
-            json_data = {
-                "op": VectorRunnerOP.search_speaker_vector,
-                "param": {
-                    "speaker_vector": NumpyOP.l2_normalize(speaker_vector).tolist(),
-                    "threshold": SPEAKER_MATCH_THRESHOLD,
-                },
-            }
-            json_data = json.dumps(json_data).encode()
-            results = await asyncio.wait_for(
-                self._executor.do_inference(self.inference_method, json_data),
-                timeout=self._speaker_vector_config.inference_timeout_sec,
-            )
-            if results:
-                data: dict[str, Any] = json.loads(results.decode())
-                uid = data.get("user_id", "")
-                await self._activity_persona.load_profile(uid=uid)
-                await self._activity_persona.update_speaker_vector(
-                    uid=uid, speaker_vector=speaker_vector
-                )
-            else:
-                await self._activity_persona.insert_speaker_vector(speaker_vector=speaker_vector)
-
-        # add frame tag
-        self.frames_tagger[timestamp] = TimeTag(timestamp=timestamp, uid=uid)
-
-        # process remaining frames
-        self.slide_frames(
-            self._speaker_vector_frames,
-            self._speaker_vector_config.step_size_samples,
-            self._speaker_vector_config.window_size_samples,
-        )
-
-    async def _inference_speaker_attribute(
-        self, input_frame: rtc.AudioFrame, timestamp: str
-    ) -> None:
-        start_time = time.perf_counter()
-
-        if self._speaker_attribute_config.sample_rate != input_frame.sample_rate:
-            if not self._speaker_attribute_resampler:
-                self._speaker_attribute_resampler = rtc.AudioResampler(
-                    input_frame.sample_rate,
-                    self._speaker_attribute_config.sample_rate,
-                    quality=rtc.AudioResamplerQuality.QUICK,
-                )
-
-        if self._speaker_attribute_resampler is not None:
-            self._speaker_attribute_frames.extend(
-                self._speaker_attribute_resampler.push(input_frame)
-            )
-        else:
-            self._speaker_attribute_frames.append(input_frame)
-
-        available_inference_samples = sum(
-            [frame.samples_per_channel for frame in self._speaker_attribute_frames]
-        )
-        if available_inference_samples < self._speaker_attribute_config.window_size_samples:
-            return
-
-        # wait
-        wait_budget = self._speaker_attribute_config.inference_timeout_sec
-        poll_interval = 0.01
-        elapsed = 0.0
-        while timestamp not in self.frames_tagger:
-            if elapsed >= wait_budget:
-                self.slide_frames(
-                    self._speaker_attribute_frames,
-                    self._speaker_attribute_config.step_size_samples,
-                    self._speaker_attribute_config.window_size_samples,
-                )
-                return
-            await asyncio.sleep(poll_interval)
-            elapsed += poll_interval
-
-        # infer
-        time_tag: TimeTag = self.frames_tagger[timestamp]
-        if time_tag.uid:
-            inference_f32_data = np.empty(
-                self._speaker_attribute_config.window_size_samples, dtype=np.float32
-            )
-            inference_frame = utils.combine_frames(self._speaker_attribute_frames)
-            np.divide(
-                inference_frame.data[: self._speaker_attribute_config.window_size_samples],
-                np.iinfo(np.int16).max,
-                out=inference_f32_data,
-                dtype=np.float32,
-            )
-
-            result = await asyncio.wait_for(
-                self._executor.do_inference(
-                    SpeakerAttributeRunner.INFERENCE_METHOD, inference_f32_data.tobytes()
-                ),
-                timeout=self._speaker_attribute_config.inference_timeout_sec,
-            )
-
-            inference_duration = time.perf_counter() - start_time
-            extra_inference_time = max(
-                0.0,
-                inference_duration - self._speaker_window_duration,
-            )
-            if inference_duration > SPEAKER_INFERENCE_THRESHOLD:
-                logger.warning(
-                    "[SpeakerAttribute] inference is slower than realtime",
-                    extra={"delay": extra_inference_time},
-                )
-
-            speaker_attribute: dict[str, np.ndarray] = SpeakerAttributeRunner.decode(result)  # type: ignore
-            await self._activity_persona.update_speaker_attribute(
-                uid=time_tag.uid, speaker_attribute=speaker_attribute
-            )
-
-        # process remaining frames
-        self.slide_frames(
-            self._speaker_attribute_frames,
-            self._speaker_attribute_config.step_size_samples,
-            self._speaker_attribute_config.window_size_samples,
-        )
-
-    async def _run(self) -> None:
-        vad_stream = self._vad.stream()
-
-        recognize_q: asyncio.Queue[vad.VADEvent | Any] = asyncio.Queue(maxsize=256)
-        speaker_vector_q: asyncio.Queue[vad.VADEvent | Any] = asyncio.Queue(maxsize=256)
-        speaker_attribute_q: asyncio.Queue[vad.VADEvent | Any] = asyncio.Queue(maxsize=256)
-        _SENTINEL = object()
-
-        async def _queue_iter(q: asyncio.Queue) -> AsyncIterator[vad.VADEvent]:
-            """Turn a queue into an async generator with async-for interface."""
-            while True:
-                item = await q.get()
-                if item is _SENTINEL:
-                    break
-                yield item
-
-        # Dispath
-        async def _forward_input() -> None:
-            """forward input to vad"""
-            async for input in self._input_ch:
-                if isinstance(input, self._FlushSentinel):
-                    vad_stream.flush()
-                    continue
-                vad_stream.push_frame(input)
-            vad_stream.end_input()
-
-        async def _dispatch_events() -> None:
-            try:
-                async for event in vad_stream:
-                    await recognize_q.put(event)
-                    await speaker_vector_q.put(event)
-                    await speaker_attribute_q.put(event)
-            finally:
-                await recognize_q.put(_SENTINEL)
-                await speaker_vector_q.put(_SENTINEL)
-                await speaker_attribute_q.put(_SENTINEL)
-
-        # Parallel threads
-        async def _recognize() -> None:
-            """recognize speech from vad"""
-            async for event in _queue_iter(recognize_q):
-                if event.type == vad.VADEventType.START_OF_SPEECH:
-                    self._event_ch.send_nowait(stt.SpeechEvent(stt.SpeechEventType.START_OF_SPEECH))
-                elif event.type == vad.VADEventType.END_OF_SPEECH:
-                    self._event_ch.send_nowait(
-                        stt.SpeechEvent(
-                            type=stt.SpeechEventType.END_OF_SPEECH,
-                        )
-                    )
-
-                    merged_frames = utils.merge_frames(event.frames)
-                    t_event = await self._wrapped_stt.recognize(
-                        buffer=merged_frames,
-                        language=self._language,
-                        conn_options=self._wrapped_stt_conn_options,
-                    )
-
-                    if len(t_event.alternatives) == 0:
-                        continue
-                    elif not t_event.alternatives[0].text:
-                        continue
-
-                    self._event_ch.send_nowait(
-                        stt.SpeechEvent(
-                            type=stt.SpeechEventType.FINAL_TRANSCRIPT,
-                            alternatives=[t_event.alternatives[0]],
-                        )
-                    )
-
-        async def _speaker_vector() -> None:
-            async for event in _queue_iter(speaker_vector_q):
-                if event.type == vad.VADEventType.END_OF_SPEECH:
-                    input_frame = utils.merge_frames(event.frames)
-                    await self._inference_speaker_vector(
-                        input_frame, timestamp=str(event.timestamp)
-                    )
-
-        async def _speaker_attribute() -> None:
-            async for event in _queue_iter(speaker_attribute_q):
-                if event.type == vad.VADEventType.END_OF_SPEECH:
-                    input_frame = utils.merge_frames(event.frames)
-                    await self._inference_speaker_attribute(
-                        input_frame, timestamp=str(event.timestamp)
-                    )
-
-        # Run
-        tasks = [
-            asyncio.create_task(_forward_input(), name="forward_input"),
-            asyncio.create_task(_dispatch_events(), name="dispatch"),
-            asyncio.create_task(_recognize(), name="recognize"),
-            asyncio.create_task(_speaker_vector(), name="speaker_vector"),
-            asyncio.create_task(_speaker_attribute(), name="speaker_attribute"),
-        ]
         try:
-            await asyncio.gather(*tasks)
-        finally:
-            await utils.aio.cancel_and_wait(*tasks)
-            await vad_stream.aclose()
+            frame = observation.payload.get(
+                PayloadFormat.AUDIO_FRAME,
+                view=PayloadView.RAW,
+                fallback_to_raw=False,
+            )
+        except PayloadFormatUnavailable:
+            return None
+
+        return frame if isinstance(frame, AudioFrame) else None
+
+    def _get_source_id(self, observation: EnvObservation) -> str:
+        return str(observation.metadata.get("source_id") or observation.source_id)
+
+    def _remember_observation(
+        self,
+        state: SpeakerSourceState,
+        observation_id: str,
+    ) -> bool:
+        if observation_id in state.seen_observation_ids:
+            return False
+
+        state.seen_observation_ids.add(observation_id)
+        state.seen_order.append(observation_id)
+
+        while len(state.seen_order) > self.MAX_SEEN_OBSERVATIONS:
+            removed = state.seen_order.popleft()
+            state.seen_observation_ids.discard(removed)
+
+        return True
+
+    def _enqueue_window(self, window: SpeakerWindow) -> None:
+        try:
+            self._inference_queue.put_nowait(window)
+            return
+        except asyncio.QueueFull:
+            pass
+
+        try:
+            self._inference_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            pass
+
+        try:
+            self._inference_queue.put_nowait(window)
+        except asyncio.QueueFull:
+            logger.warning(
+                "Speaker inference queue is full source_id=%s window_index=%s",
+                window.source_id,
+                window.window_index,
+            )
+
+    def _append_frame(self, observation: EnvObservation, frame: AudioFrame) -> None:
+        source_id = self._get_source_id(observation)
+
+        if frame.sample_rate != self._sample_rate or frame.num_channels != 1:
+            logger.warning(
+                "Speaker received unsupported audio source_id=%s sample_rate=%s channels=%s",
+                source_id,
+                frame.sample_rate,
+                frame.num_channels,
+            )
+            return
+
+        state = self._sources.get(source_id)
+
+        if state is None:
+            state = SpeakerSourceState(
+                source_id=source_id,
+                sample_rate=frame.sample_rate,
+                num_channels=frame.num_channels,
+            )
+            self._sources[source_id] = state
+
+        source_observation_id = str(
+            observation.metadata.get("source_observation_id") or observation.observation_id
+        )
+
+        # Router may publish the same raw pre-roll frame for two adjacent
+        # segments. Speaker inference should only consume it once.
+        if not self._remember_observation(state, source_observation_id):
+            return
+
+        state.pcm.extend(frame.data)
+        segment_id = observation.metadata.get("segment_id")
+
+        while len(state.pcm) >= self._window_bytes:
+            pcm16 = bytes(state.pcm[: self._window_bytes])
+            audio = np.frombuffer(pcm16, dtype="<i2").astype(np.float32)
+            audio /= 32768.0
+
+            state.window_index += 1
+
+            self._enqueue_window(
+                SpeakerWindow(
+                    source_id=source_id,
+                    segment_id=str(segment_id) if segment_id else None,
+                    window_index=state.window_index,
+                    audio_f32=audio.tobytes(),
+                )
+            )
+
+            del state.pcm[: self._step_bytes]
+
+    """Inference worker"""
+
+    async def _resolve_speaker(self, window: SpeakerWindow) -> str | None:
+        result = await asyncio.wait_for(
+            self.inference_executor.do_inference(
+                SpeakerVectorRunner.INFERENCE_METHOD,
+                window.audio_f32,
+            ),
+            timeout=self._vector_config.inference_timeout_sec,
+        )
+
+        if result is None:
+            raise RuntimeError("Speaker vector runner returned no result")
+
+        speaker_vector = np.frombuffer(result, dtype=np.float32)
+        uid = await self.activity_persona.match_speaker_vector(speaker_vector=speaker_vector)
+
+        if uid is not None:
+            await self.activity_persona.update_speaker_vector(
+                uid=uid,
+                speaker_vector=speaker_vector,
+            )
+            return uid
+
+        request = {
+            "op": VectorRunnerOP.search_speaker_vector,
+            "param": {
+                "speaker_vector": NumpyOP.l2_normalize(speaker_vector).tolist(),
+                "threshold": SPEAKER_MATCH_THRESHOLD,
+            },
+        }
+
+        search_result = await asyncio.wait_for(
+            self.inference_executor.do_inference(
+                self.vdb_inference_method,
+                json.dumps(request).encode(),
+            ),
+            timeout=self._vector_config.inference_timeout_sec,
+        )
+
+        if search_result:
+            data: dict[str, Any] = json.loads(search_result.decode())
+            uid = data.get("user_id") or None
+
+            if uid is not None:
+                await self.activity_persona.load_profile(uid=uid)
+                await self.activity_persona.update_speaker_vector(
+                    uid=uid,
+                    speaker_vector=speaker_vector,
+                )
+                return uid
+
+        return await self.activity_persona.insert_speaker_vector(speaker_vector=speaker_vector)
+
+    async def _infer_attribute(
+        self,
+        window: SpeakerWindow,
+        uid: str,
+    ) -> None:
+        result = await asyncio.wait_for(
+            self.inference_executor.do_inference(
+                SpeakerAttributeRunner.INFERENCE_METHOD,
+                window.audio_f32,
+            ),
+            timeout=self._attribute_config.inference_timeout_sec,
+        )
+
+        if result is None:
+            raise RuntimeError("Speaker attribute runner returned no result")
+
+        speaker_attribute: dict[str, np.ndarray] = SpeakerAttributeRunner.decode(result)  # type: ignore
+        await self.activity_persona.update_speaker_attribute(
+            uid=uid,
+            speaker_attribute=speaker_attribute,
+        )
+
+    async def _inference_loop(self) -> None:
+        while True:
+            item = await self._inference_queue.get()
+
+            if item is _STOP:
+                return
+
+            if not isinstance(item, SpeakerWindow):
+                continue
+
+            started = time.perf_counter()
+
+            try:
+                uid = await self._resolve_speaker(item)
+
+                if uid is not None and (item.window_index - 1) % self._attribute_every == 0:
+                    await self._infer_attribute(item, uid)
+
+                duration = time.perf_counter() - started
+
+                if duration > self._step_sec:
+                    logger.warning(
+                        "Speaker inference is falling behind "
+                        "duration=%.3fs interval=%.3fs queue_size=%s "
+                        "source_id=%s window_index=%s",
+                        duration,
+                        self._step_sec,
+                        self._inference_queue.qsize(),
+                        item.source_id,
+                        item.window_index,
+                    )
+
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "Speaker window inference failed source_id=%s segment_id=%s window_index=%s",
+                    item.source_id,
+                    item.segment_id,
+                    item.window_index,
+                )
+
+    """Perception consumer"""
+
+    async def _consume_loop(self) -> None:
+        while True:
+            try:
+                await self.perception_runtime.wait_for_pending_observations(
+                    consumer_id=self.CONSUMER_ID,
+                    streams={"speech"},
+                )
+
+                window = self.perception_runtime.take_pending_observations(
+                    consumer_id=self.CONSUMER_ID,
+                    streams={"speech"},
+                    require_payload=True,
+                )
+
+                if window.has_gap:
+                    logger.warning(
+                        "Persona Speaker observed speech gap missed=%s",
+                        window.missed_count,
+                    )
+                    self._sources.clear()
+
+                for observation in window.audio_frames:
+                    frame = self._extract_frame(observation)
+                    if frame is not None:
+                        self._append_frame(observation, frame)
+
+                self.perception_runtime.commit_observations(window)
+
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Persona Speaker failed to consume speech observations")
+                await asyncio.sleep(0.05)
+
+    """Runtime operations"""
+
+    async def start(self) -> None:
+        if self._started:
+            return
+
+        self._started = True
+
+        self._inference_task = asyncio.create_task(
+            self._inference_loop(),
+            name="persona_speaker_inference",
+        )
+        self._consume_task = asyncio.create_task(
+            self._consume_loop(),
+            name="persona_speaker_consumer",
+        )
+
+        logger.info(
+            "Persona Speaker started "
+            "sample_rate=%s window_samples=%s step_samples=%s "
+            "step_sec=%.2f attribute_interval_sec=%.2f queue_size=%s",
+            self._sample_rate,
+            self._window_samples,
+            self._step_samples,
+            self._step_sec,
+            self.ATTRIBUTE_INTERVAL_SEC,
+            self._inference_queue.maxsize,
+        )
+
+    async def stop(self) -> None:
+        if not self._started:
+            return
+
+        self._started = False
+
+        if self._consume_task is not None:
+            self._consume_task.cancel()
+            await asyncio.gather(self._consume_task, return_exceptions=True)
+            self._consume_task = None
+
+        if self._inference_task is not None:
+            self._inference_task.cancel()
+            await asyncio.gather(self._inference_task, return_exceptions=True)
+            self._inference_task = None
+
+        self._sources.clear()
+        self.perception_runtime.clear_consumer(
+            self.CONSUMER_ID,
+            streams={"speech"},
+        )
+
+        logger.info("Persona Speaker stopped")

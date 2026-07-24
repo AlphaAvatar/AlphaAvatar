@@ -18,8 +18,8 @@ import os
 from typing import Any
 
 from livekit.agents import RunContext
-from livekit.agents.job import get_job_context
 
+from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.tools import MCPHostBase
 from alphaavatar.agents.tools.mcp_api import MCPOp
 
@@ -27,18 +27,20 @@ from .log import logger
 
 
 class MCPHost(MCPHostBase):
-    def __init__(self, servers: dict[str, dict], **kwargs) -> None:
-        super().__init__(servers_info=self._build_config_servers_info(servers), **kwargs)
+    def __init__(self, *, runtime: AvatarRuntime, servers: dict[str, dict], **kwargs) -> None:
+        super().__init__(
+            runtime=runtime, servers_info=self._build_config_servers_info(servers), **kwargs
+        )
         self._servers = servers
 
     @property
-    def inference_method(self) -> str:
-        method = os.getenv("MCP_INFERENCE_METHOD")
+    def vdb_inference_method(self) -> str:
+        method = os.getenv("MCP_VDB_INFERENCE_METHOD")
         if not method:
             raise RuntimeError(
-                "MCP_INFERENCE_METHOD is not configured. "
-                "Make sure AvatarPlugin.bootstrap_inference_runners() is called before "
-                "MCPHost is used."
+                "MCP_VDB_INFERENCE_METHOD is not configured. "
+                "Make sure the MCP VDB runner is registered before "
+                "MCPHost starts."
             )
         return method
 
@@ -54,9 +56,9 @@ class MCPHost(MCPHostBase):
         return "MCPHost configured servers:\n" + "\n".join(lines)
 
     async def _run_mcp_inference(self, *, op: Any, param: dict[str, Any]) -> dict[str, Any]:
-        if self.inference_method is None:
+        if self.vdb_inference_method is None:
             raise RuntimeError(
-                "env MCP_INFERENCE_METHOD is not configured. "
+                "env MCP_VDB_INFERENCE_METHOD is not configured. "
                 "Set MCP_VDB_TYPE=lancedb and register LanceDBRunner."
             )
 
@@ -68,8 +70,7 @@ class MCPHost(MCPHostBase):
             ensure_ascii=False,
         ).encode()
 
-        job_ctx = get_job_context()
-        raw = await job_ctx.inference_executor.do_inference(self.inference_method, payload)
+        raw = await self.inference_executor.do_inference(self.vdb_inference_method, payload)
 
         if raw is None:
             return {"error": "MCP inference runner returned None"}

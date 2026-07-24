@@ -20,6 +20,7 @@ from .plugins.character_config import VirtualCharacterConfig
 from .plugins.llm_config import LLMConfig
 from .plugins.memory_config import MemoryConfig
 from .plugins.persona_config import PersonaConfig
+from .plugins.router_config import RouterConfig
 from .plugins.status_config import StatusConfig
 from .plugins.tools_config import ToolsConfig
 from .plugins.vision_config import VisionConfig
@@ -27,36 +28,41 @@ from .plugins.voice_config import VoiceConfig
 
 
 class AvatarConfig(BaseModel):
-    """Dataclass which contains all avatar-related configuration. This
-    simplifies passing around the distinct configurations in the codebase.
+    """
+    Top-level Avatar configuration.
+
+    Contains runtime settings and all configurable Avatar plugins.
     """
 
     avatar: AvatarInfoConfig = Field(default_factory=AvatarInfoConfig)
-    """Avatar Information configuration."""
+    """Avatar information configuration."""
 
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     """Runtime configuration, which will creat for each session."""
 
     status: StatusConfig = Field(default_factory=StatusConfig)
-    """Avatar Intermediate Status Plugin configuration."""
+    """Intermediate status plugin configuration."""
 
     llm: LLMConfig = Field(default_factory=LLMConfig)
-    """LLM configuration."""
+    """LLM plugin configuration."""
 
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
-    """Voice configuration."""
+    """Voice plugin configuration."""
 
     vision: VisionConfig = Field(default_factory=VisionConfig)
-    """Vision configuration."""
+    """Vision plugin configuration."""
+
+    router: RouterConfig = Field(default_factory=RouterConfig)
+    """Interaction Router plugin configuration."""
 
     character: VirtualCharacterConfig = Field(default_factory=VirtualCharacterConfig)
-    """Avatar Virtual Character configuration."""
+    """Virtual character plugin configuration."""
 
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
-    """Avatar Memory configuration."""
+    """Memory plugin configuration."""
 
     persona: PersonaConfig = Field(default_factory=PersonaConfig)
-    """Avatar Persona configuration."""
+    """Persona plugin configuration."""
 
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
-    """Avatar Tools configuration."""
+    """Tool plugin configuration."""

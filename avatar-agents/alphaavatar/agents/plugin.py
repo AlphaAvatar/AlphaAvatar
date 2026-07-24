@@ -18,7 +18,6 @@ from collections.abc import Callable
 from enum import Enum
 
 from livekit.agents import Plugin
-from livekit.agents.inference_runner import _InferenceRunner
 
 from .log import logger
 
@@ -30,8 +29,12 @@ class AvatarModule(str, Enum):
     AVATAR_ENGINE = "avatar_engine"
 
     # Voice modules
+    VOICE_VAD = "voice_vad"
     VOICE_STT = "voice_stt"
     VOICE_TTS = "voice_tts"
+
+    # Interaction router modules
+    INTERACTION_ROUTER = "interaction_router"
 
     # Status modules
     STATUS = "status"
@@ -89,26 +92,6 @@ class AvatarPlugin(Plugin):
             return None
 
         return module_plugins[name].get_plugin(*args, **kwargs)
-
-    @staticmethod
-    def register_inference_runner_once(
-        runner_cls: type[_InferenceRunner],
-    ) -> None:
-        """
-        Register a LiveKit inference runner idempotently.
-
-        Plugin packages should use this instead of calling
-        _InferenceRunner.register_runner(...) directly.
-        """
-        method = runner_cls.INFERENCE_METHOD
-        registered = getattr(_InferenceRunner, "registered_runners", {})
-
-        if method in registered:
-            logger.info("Inference runner already registered: %s", method)
-            return
-
-        _InferenceRunner.register_runner(runner_cls)
-        logger.info("Inference runner registered: %s", method)
 
     @classmethod
     def register_inference_runner_bootstrap(

@@ -24,7 +24,6 @@ from livekit.agents import llm
 from alphaavatar.agents.avatar.perception import (
     to_livekit_video_frame,
 )
-from alphaavatar.agents.avatar.vision.base import VisionBase, _VisualFrameSnapshot
 from alphaavatar.agents.configs.plugins.vision_config import VisionInputMode
 from alphaavatar.agents.constants import VIDEO_VISION_INTERVAL_SEC
 from alphaavatar.agents.log import debug_every, logger
@@ -36,13 +35,12 @@ from alphaavatar.core.media import (
     VideoFrame,
 )
 
+from .base import VisionBase, _VisualFrameSnapshot
 from .constants import (
     LATEST_VIDEO_FRAME_LABEL,
     VIDEO_FRAME_LABEL_PREFIX,
     VISUAL_INPUT_PREFIX,
 )
-
-VISION_BUS_POLL_INTERVAL_SEC = 0.05
 
 
 class SampledFrameVision(VisionBase):
@@ -130,14 +128,12 @@ class SampledFrameVision(VisionBase):
             metadata=dict(observation.metadata or {}),
         )
 
-    def _pull_pending_visual_frames(self) -> None:
+    def _consume_pending_visual_frames(self) -> None:
         vision_config = self.agent.avatar_config.vision
 
         if not vision_config.use_sampled_frame_input:
             return
 
-        # Small delay gives asynchronous face inference a chance to publish
-        # an annotated representation before this frame enters the vision buffer.
         window = self.agent.perception_runtime.take_pending_observations(
             consumer_id=self.CONSUMER_ID,
             streams={"video", "screen"},
@@ -145,34 +141,44 @@ class SampledFrameVision(VisionBase):
             min_age_sec=0.25,
         )
 
-        observations = window.observations
+        try:
+            if window.has_gap:
+                logger.warning(
+                    "AvatarVision observed visual stream gap missed=%s",
+                    window.missed_count,
+                )
 
-        if not observations:
+            accepted_count = 0
+
+            for observation in window.observations:
+                try:
+                    snapshot = self._observation_to_snapshot(observation)
+                except Exception:
+                    logger.exception(
+                        "Failed to process visual observation observation_id=%s",
+                        observation.observation_id,
+                    )
+                    continue
+
+                if snapshot is None:
+                    continue
+
+                self._video_frame_buffer.append(snapshot)
+                accepted_count += 1
+
+            if accepted_count:
+                debug_every(
+                    "Pulled visual frames accepted=%s pending=%s buffer=%s",
+                    accepted_count,
+                    len(window.observations),
+                    len(self._video_frame_buffer),
+                    key=f"vision:sampled_frames_pulled:{self.agent.session_runtime.session_id}",
+                    interval_sec=10.0,
+                )
+
+        finally:
+            # The snapshot already holds a reference to the observation, so the cursor can be committed immediately.
             self.agent.perception_runtime.commit_observations(window)
-            return
-
-        accepted_count = 0
-
-        for observation in observations:
-            snapshot = self._observation_to_snapshot(observation)
-
-            if snapshot is None:
-                continue
-
-            self._video_frame_buffer.append(snapshot)
-            accepted_count += 1
-
-        self.agent.perception_runtime.commit_observations(window)
-
-        if accepted_count:
-            debug_every(
-                "Pulled visual frames accepted=%s pending=%s buffer=%s",
-                accepted_count,
-                len(observations),
-                len(self._video_frame_buffer),
-                key=(f"vision:sampled_frames_pulled:{self.agent.session_runtime.session_id}"),
-                interval_sec=10.0,
-            )
 
     def _select_visual_frames_for_turn(self) -> list[_VisualFrameSnapshot]:
         vision_config = self.agent.avatar_config.vision
@@ -303,13 +309,20 @@ class SampledFrameVision(VisionBase):
     async def _visual_observation_loop(self) -> None:
         while True:
             try:
-                self._pull_pending_visual_frames()
+                await self.agent.perception_runtime.wait_for_pending_observations(
+                    consumer_id=self.CONSUMER_ID,
+                    streams={"video", "screen"},
+                    min_age_sec=0.25,
+                )
+
+                self._consume_pending_visual_frames()
+
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                logger.exception("AvatarVision failed to pull visual frames from perception bus")
 
-            await asyncio.sleep(VISION_BUS_POLL_INTERVAL_SEC)
+            except Exception:
+                logger.exception("AvatarVision failed to consume visual observations")
+                await asyncio.sleep(0.05)
 
     """Base Op"""
 
@@ -407,9 +420,10 @@ class SampledFrameVision(VisionBase):
         )
 
         logger.info(
-            "AvatarVision observation loop started consumer_id=%s interval=%ss sample_interval=%ss",
+            "AvatarVision observation loop started consumer_id=%s "
+            "annotation_grace=%ss sample_interval=%ss",
             self.CONSUMER_ID,
-            VISION_BUS_POLL_INTERVAL_SEC,
+            0.25,
             VIDEO_VISION_INTERVAL_SEC,
         )
 

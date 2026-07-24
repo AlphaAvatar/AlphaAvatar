@@ -17,6 +17,8 @@ from abc import abstractmethod
 from typing import TYPE_CHECKING
 
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.inference import InferenceExecutor
+from alphaavatar.core.perception import PerceptionRuntime
 
 if TYPE_CHECKING:
     from .base import PersonaBase
@@ -33,6 +35,14 @@ class FaceStreamBase:
     ) -> None:
         self.runtime = runtime
         self._activity_persona = activity_persona
+
+    @property
+    def perception_runtime(self) -> PerceptionRuntime:
+        return self.runtime.perception
+
+    @property
+    def inference_executor(self) -> InferenceExecutor:
+        return self.runtime.inference
 
     @abstractmethod
     async def start(self) -> None: ...

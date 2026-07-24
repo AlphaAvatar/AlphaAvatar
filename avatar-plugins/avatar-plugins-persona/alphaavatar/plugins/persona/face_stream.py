@@ -22,7 +22,6 @@ from typing import Any
 
 import cv2
 import numpy as np
-from livekit.agents.job import get_job_context
 
 from alphaavatar.agents.avatar.perception import (
     bgr_to_video_frame,
@@ -52,8 +51,6 @@ from .log import logger
 from .models import FACE_MODEL_CONFIG
 from .runner.face_analysis_runner import FaceAnalysisRunner
 
-FACE_POLL_INTERVAL_SEC = 0.1
-
 
 @dataclass(slots=True)
 class FaceFrameJob:
@@ -82,7 +79,6 @@ class FaceStreamWrapper(FaceStreamBase):
             activity_persona=activity_persona,
         )
 
-        self._executor = get_job_context().inference_executor
         self._face_config = FACE_MODEL_CONFIG[FaceAnalysisRunner.MODEL_TYPE]
 
         self._last_sample_ts: dict[str, float] = {}
@@ -101,19 +97,34 @@ class FaceStreamWrapper(FaceStreamBase):
         self._renderer_registered = False
 
     @property
-    def inference_method(self) -> str:
-        method = os.getenv("PERSONA_INFERENCE_METHOD")
-
+    def vdb_inference_method(self) -> str:
+        method = os.getenv("PERSONA_VDB_INFERENCE_METHOD")
         if not method:
             raise RuntimeError(
-                "PERSONA_INFERENCE_METHOD is not configured. "
-                "Make sure AvatarPlugin.bootstrap_inference_runners() "
-                "is called before FaceStreamWrapper is used."
+                "PERSONA_VDB_INFERENCE_METHOD is not configured. "
+                "Make sure the Persona VDB runner is registered before "
+                "FaceStreamWrapper starts."
             )
-
         return method
 
     """Observation helpers"""
+
+    def _enqueue_latest(self, job: FaceFrameJob) -> bool:
+        try:
+            self._frame_q.put_nowait(job)
+            return True
+
+        except asyncio.QueueFull:
+            try:
+                self._frame_q.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+
+            try:
+                self._frame_q.put_nowait(job)
+                return True
+            except asyncio.QueueFull:
+                return False
 
     def _maybe_enqueue_observation(
         self,
@@ -161,24 +172,15 @@ class FaceStreamWrapper(FaceStreamBase):
             participant_identity=metadata.get("participant_identity"),
         )
 
-        try:
-            self._frame_q.put_nowait(job)
+        if self._enqueue_latest(job):
+            self._last_sample_ts[source_key] = timestamp
+            return
 
-        except asyncio.QueueFull:
-            # Drop the oldest pending frame and retain the latest frame.
-            try:
-                self._frame_q.get_nowait()
-            except asyncio.QueueEmpty:
-                pass
-
-            try:
-                self._frame_q.put_nowait(job)
-            except asyncio.QueueFull:
-                logger.debug(
-                    "Face frame queue full; drop frame source_id=%s frame_id=%s",
-                    observation.source_id,
-                    observation.frame_id,
-                )
+        logger.debug(
+            "Face frame queue full; drop frame source_id=%s frame_id=%s",
+            observation.source_id,
+            observation.frame_id,
+        )
 
     def _select_best_face(self, faces: list[dict[str, Any]]) -> dict[str, Any] | None:
         candidates: list[
@@ -259,7 +261,7 @@ class FaceStreamWrapper(FaceStreamBase):
 
         selected_bbox = selected_face.get("bbox") if selected_face else None
 
-        self.runtime.perception.publish_annotation(
+        self.perception_runtime.publish_annotation(
             EnvAnnotation(
                 observation_id=(job.observation.observation_id),
                 frame_id=job.observation.frame_id,
@@ -408,37 +410,6 @@ class FaceStreamWrapper(FaceStreamBase):
         if annotation.annotation_id not in rendered_annotations:
             rendered_annotations.append(annotation.annotation_id)
 
-    """Perception consumer"""
-
-    async def _face_observation_loop(self) -> None:
-        while True:
-            try:
-                window = self.runtime.perception.take_pending_observations(
-                    consumer_id=self.CONSUMER_ID,
-                    streams={
-                        "video",
-                        "screen",
-                    },
-                    require_payload=True,
-                    min_age_sec=0.0,
-                )
-
-                for observation in window.observations:
-                    self._maybe_enqueue_observation(observation)
-
-                # Commit the cursor even when no observations were accepted.
-                # The window can still contain a cursor advance over filtered
-                # or unavailable records.
-                self.runtime.perception.commit_observations(window)
-
-            except asyncio.CancelledError:
-                raise
-
-            except Exception:
-                logger.exception("Face stream failed to consume perception observations")
-
-            await asyncio.sleep(FACE_POLL_INTERVAL_SEC)
-
     """Inference worker"""
 
     async def _face_worker(self) -> None:
@@ -492,7 +463,7 @@ class FaceStreamWrapper(FaceStreamBase):
             return
 
         results = await asyncio.wait_for(
-            self._executor.do_inference(
+            self.inference_executor.do_inference(
                 FaceAnalysisRunner.INFERENCE_METHOD,
                 image_bytes,
             ),
@@ -555,8 +526,8 @@ class FaceStreamWrapper(FaceStreamBase):
             }
 
             results = await asyncio.wait_for(
-                self._executor.do_inference(
-                    self.inference_method,
+                self.inference_executor.do_inference(
+                    self.vdb_inference_method,
                     json.dumps(json_data).encode(),
                 ),
                 timeout=(self._face_config.inference_timeout_sec),
@@ -600,24 +571,63 @@ class FaceStreamWrapper(FaceStreamBase):
             uid=uid,
         )
 
+    """Perception consumer"""
+
+    async def _face_observation_loop(self) -> None:
+        while True:
+            try:
+                await self.perception_runtime.wait_for_pending_observations(
+                    consumer_id=self.CONSUMER_ID,
+                    streams={"video", "screen"},
+                )
+
+                window = self.perception_runtime.take_pending_observations(
+                    consumer_id=self.CONSUMER_ID,
+                    streams={"video", "screen"},
+                    require_payload=True,
+                )
+
+                try:
+                    if window.has_gap:
+                        logger.warning(
+                            "Face stream observed visual gap missed=%s",
+                            window.missed_count,
+                        )
+
+                    for observation in window.observations:
+                        try:
+                            self._maybe_enqueue_observation(observation)
+                        except Exception:
+                            logger.exception(
+                                "Face stream failed to enqueue observation observation_id=%s",
+                                observation.observation_id,
+                            )
+
+                finally:
+                    self.perception_runtime.commit_observations(window)
+
+            except asyncio.CancelledError:
+                raise
+
+            except Exception:
+                logger.exception("Face stream failed to consume perception observations")
+                await asyncio.sleep(0.05)
+
     """Runtime operations"""
 
     async def start(self) -> None:
         if not self._renderer_registered:
-            self.runtime.perception.add_annotation_renderer(self._render_face_annotation)
+            self.perception_runtime.add_annotation_renderer(self._render_face_annotation)
             self._renderer_registered = True
 
-        if self._worker_task is None or self._worker_task.done():
-            self._worker_task = asyncio.create_task(
-                self._face_worker(),
-                name="face_worker",
-            )
-
-        if self._poll_task is None or self._poll_task.done():
-            self._poll_task = asyncio.create_task(
-                self._face_observation_loop(),
-                name="face_observation_loop",
-            )
+        self._worker_task = asyncio.create_task(
+            self._face_worker(),
+            name="face_worker",
+        )
+        self._poll_task = asyncio.create_task(
+            self._face_observation_loop(),
+            name="face_observation_loop",
+        )
 
         logger.info(
             "Persona face stream started consumer_id=%s",
@@ -648,7 +658,7 @@ class FaceStreamWrapper(FaceStreamBase):
             self._worker_task = None
 
         if self._renderer_registered:
-            self.runtime.perception.remove_annotation_renderer(self._render_face_annotation)
+            self.perception_runtime.remove_annotation_renderer(self._render_face_annotation)
             self._renderer_registered = False
 
         while not self._frame_q.empty():

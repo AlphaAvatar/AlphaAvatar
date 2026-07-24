@@ -16,13 +16,14 @@ import os
 
 import cv2
 import numpy as np
-from livekit.agents.inference_runner import _InferenceRunner
+
+from alphaavatar.agents.runtime.inference import InferenceRunner
 
 from ..log import logger
 from ..models import FACE_MODEL_CONFIG, FaceModelType
 
 
-class FaceAnalysisRunner(_InferenceRunner):
+class FaceAnalysisRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar_persona_face_analysis"
     MODEL_TYPE: FaceModelType = "buffalo_l"
 

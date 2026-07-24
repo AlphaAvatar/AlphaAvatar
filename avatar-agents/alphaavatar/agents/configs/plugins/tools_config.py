@@ -23,11 +23,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.log import logger
+from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.tools import ToolBase
 from alphaavatar.agents.utils import resolve_env_placeholders
 
 if TYPE_CHECKING:
-    from alphaavatar.agents.runtime import SessionRuntime
     from alphaavatar.agents.status import StatusEmitter
 
 
@@ -100,7 +100,7 @@ class ToolsConfig(BaseModel):
 
     def get_tools(
         self,
-        session_runtime: SessionRuntime,
+        runtime: AvatarRuntime,
         *,
         status_emitter: StatusEmitter | None = None,
     ) -> list[llm.FunctionTool | llm.RawFunctionTool]:
@@ -112,7 +112,7 @@ class ToolsConfig(BaseModel):
             deepresearch_tool: ToolBase | None = AvatarPlugin.get_avatar_plugin(
                 AvatarModule.DEEPRESEARCH,
                 self.deepresearch.plugin,
-                session_runtime=session_runtime,
+                session_runtime=runtime.session,
                 status_emitter=status_emitter,
                 deepresearch_init_config=self.deepresearch.init_config,
             )
@@ -124,7 +124,7 @@ class ToolsConfig(BaseModel):
             rag_tool: ToolBase | None = AvatarPlugin.get_avatar_plugin(
                 AvatarModule.RAG,
                 self.rag.plugin,
-                session_runtime=session_runtime,
+                session_runtime=runtime.session,
                 status_emitter=status_emitter,
                 rag_init_config=self.rag.init_config,
             )
@@ -146,7 +146,7 @@ class ToolsConfig(BaseModel):
         mcp_tool: ToolBase | None = AvatarPlugin.get_avatar_plugin(
             AvatarModule.MCP,
             self.mcp.plugin,
-            session_runtime=session_runtime,
+            runtime=runtime,
             status_emitter=status_emitter,
             mcp_init_config=self.mcp.init_config,
         )

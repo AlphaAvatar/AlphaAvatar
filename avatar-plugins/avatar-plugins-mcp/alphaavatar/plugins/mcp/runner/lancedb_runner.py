@@ -11,73 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""
-LanceDB-backed MCP runner lifecycle.
-
-This runner moves MCP server initialization out of per-user Agent sessions and into
-the LiveKit worker-level inference runner. The goal is to initialize MCP servers,
-MCP client sessions, and the tool registry only once per worker process, then let
-all Agent sessions access MCP through LiveKit's inference executor.
-
-Lifecycle:
-
-1. Worker startup
-   - LiveKit creates this _InferenceRunner when the runner is registered.
-   - initialize() reads MCP_VDB_CONFIG and opens / creates the LanceDB tool table.
-   - initialize() reads MCP_SERVERS and submits _initialize_mcp() to a dedicated
-     MCP event loop thread.
-
-2. MCP initialization
-   - _initialize_mcp() creates one MCPServerRemote per configured server key.
-   - Each MCP server is initialized in parallel.
-   - Tools are listed from all ready servers.
-   - In-memory runtime indexes are built:
-       _clients_by_key: server_key -> MCPServerRemote
-       _mcp_tools: tool_id -> MCPTool
-       _server_info_by_tool_id: tool_id -> server metadata
-       _tool_server_key: tool_id -> server_key
-
-3. Tool indexing
-   - _sync_tools_to_vdb() compares the current in-memory tool set with LanceDB.
-   - Stale tools are deleted.
-   - New tools are embedded and inserted.
-   - Changed tools are deleted, re-embedded, and reinserted.
-   - Unchanged tools are left untouched.
-
-4. Tool search
-   - Agent sessions call MCPHost.search_tools().
-   - MCPHost forwards TOOL_SEARCH to this runner through inference_executor.
-   - _search_tools() embeds the query, searches LanceDB, applies lightweight
-     hybrid reranking, filters out tools not present in the live in-memory registry,
-     and returns agent-friendly usage hints.
-
-5. Tool invocation
-   - Agent sessions call MCPHost.call_tools().
-   - MCPHost forwards TOOL_CALL to this runner through inference_executor.
-   - _call_tools() submits the async tool calls to the MCP loop thread.
-   - _call_tools_async() validates tool IDs and invokes tools concurrently.
-   - _call_one() validates arguments against each tool's input schema before calling.
-
-6. Reconnect behavior
-   - If a tool call fails with a connection-like error, the runner reconnects only
-     the affected MCP server.
-   - Reconnect is protected by a per-server asyncio.Lock to avoid duplicate
-     concurrent reconnects.
-   - After reconnect, in-memory tools for that server are refreshed and the current
-     tool call is retried once.
-   - LanceDB sync is intentionally skipped during reconnect to avoid blocking the
-     MCP event loop; a future refresh_tools operation can handle explicit VDB refresh.
-
-Important design notes:
-
-- Tool IDs should be stable and based on the configured MCP server key, for example:
-  "github.search_repositories" instead of relying only on remote serverInfo.name.
-- MCP client sessions live in the dedicated MCP loop thread. MCPTool.call() marshals
-  calls back to that loop when needed.
-- LanceDB is used only for tool retrieval. The live source of truth for invocation is
-  always the in-memory _mcp_tools registry.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -88,11 +21,11 @@ import threading
 import time
 from typing import Any
 
-from livekit.agents.inference_runner import _InferenceRunner
 from livekit.agents.llm.tool_context import ToolError
 
 from alphaavatar.agents.providers import ProviderKind, ProviderTaskConfig
 from alphaavatar.agents.providers.embedding import create_embedding_model
+from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.tools.mcp_api import MCPOp
 from alphaavatar.agents.utils.loop_thread import AsyncLoopThread
 from alphaavatar.agents.utils.vdb import lancedb
@@ -103,7 +36,7 @@ from ..mcp_server_remote import MCPServerRemote
 from ..mcp_tool import MCPTool
 
 
-class LanceDBRunner(_InferenceRunner):
+class LanceDBRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar_mcp_lancedb"
 
     def __init__(self):

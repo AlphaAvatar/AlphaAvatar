@@ -26,7 +26,6 @@ from alphaavatar.agents.runtime import (
 )
 from alphaavatar.agents.runtime.session_runtime import ParticipantInfo
 from alphaavatar.agents.utils import NumpyOP
-from alphaavatar.core.perception import PerceptionRuntime
 
 from .cache import FaceCacheBase, PersonaCache, SpeakerCacheBase
 from .face import FaceStreamBase
@@ -59,16 +58,13 @@ class PersonaBase(AvatarRuntimePlugin):
         # The initial default uid is not necessarily a real user.
         self._resolved_uids: set[str] = set()
 
-        # The face stream runtime instance, which is initialized when the session starts.
+        # The face/speaker stream runtime instance, which is initialized when the session starts.
         self._face_stream_runtime: FaceStreamBase | None = None
+        self._speaker_stream_runtime: SpeakerStreamBase | None = None
 
     @property
     def session_runtime(self) -> SessionRuntime:
         return self.runtime.session
-
-    @property
-    def perception_runtime(self) -> PerceptionRuntime:
-        return self.runtime.perception
 
     @property
     def profiler(self) -> ProfilerBase:
@@ -221,7 +217,7 @@ class PersonaBase(AvatarRuntimePlugin):
 
         # Load (The new participant will load before the profile loads.)
         participant = self.session_runtime.get_participant(user_id=uid)
-        user_profile = await self.profiler.load(uid=uid, work_dir=self.session_runtime.avatar_path)
+        user_profile = await self.profiler.load(uid=uid)
 
         if participant is None and (user_profile is None or user_profile.is_empty):
             logger.error(
@@ -293,9 +289,7 @@ class PersonaBase(AvatarRuntimePlugin):
 
         # save profiler
         for _uid, persona in persona_tuple:
-            await self.profiler.save(
-                uid=_uid, persona=persona, work_dir=self.session_runtime.avatar_path
-            )
+            await self.profiler.save(uid=_uid, persona=persona)
 
     """Profiler Op"""
 
@@ -310,10 +304,8 @@ class PersonaBase(AvatarRuntimePlugin):
         else:
             persona_tuple = [(uid, self.persona_cache[uid])]
 
-        for _uid, persona in persona_tuple:
-            await self.profiler.update(
-                uid=_uid, persona=persona, session_runtime=self.session_runtime
-            )
+        for _uid, persona_cache in persona_tuple:
+            await self.profiler.update(uid=_uid, persona=persona_cache)
 
     """Speaker Op"""
 
@@ -487,19 +479,41 @@ class PersonaBase(AvatarRuntimePlugin):
 
     async def on_session_start(self) -> None:
         primary_user_id = self.session_runtime.primary_user_id
-        if not primary_user_id:
-            return
 
-        await self.load_profile(uid=primary_user_id)
+        if primary_user_id:
+            await self.load_profile(uid=primary_user_id)
 
         face_stream_cls = self.face_stream
+        speaker_stream_cls = self.speaker_stream
+
         self._face_stream_runtime = face_stream_cls(
             runtime=self.runtime,
             activity_persona=self,
         )
-        await self._face_stream_runtime.start()
+        self._speaker_stream_runtime = speaker_stream_cls(
+            runtime=self.runtime,
+            activity_persona=self,
+        )
+
+        try:
+            await self._face_stream_runtime.start()
+            await self._speaker_stream_runtime.start()
+        except Exception:
+            if self._speaker_stream_runtime is not None:
+                await self._speaker_stream_runtime.stop()
+                self._speaker_stream_runtime = None
+
+            if self._face_stream_runtime is not None:
+                await self._face_stream_runtime.stop()
+                self._face_stream_runtime = None
+
+            raise
 
     async def on_session_stop(self) -> None:
+        if self._speaker_stream_runtime is not None:
+            await self._speaker_stream_runtime.stop()
+            self._speaker_stream_runtime = None
+
         if self._face_stream_runtime is not None:
             await self._face_stream_runtime.stop()
             self._face_stream_runtime = None

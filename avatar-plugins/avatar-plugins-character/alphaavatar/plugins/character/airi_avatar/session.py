@@ -23,10 +23,10 @@ from livekit.agents import (
     AgentSession,
     NotGivenOr,
 )
-from livekit.agents.job import get_job_context
 from livekit.agents.types import ATTRIBUTE_PUBLISH_ON_BEHALF
 
 from alphaavatar.agents.avatar.character import VirtualCharacterSession
+from alphaavatar.agents.runtime import AvatarRuntime
 
 from ..log import logger
 from ..runner_op import RunnerOP
@@ -37,11 +37,13 @@ _AVATAR_IDENTITY = "airi-avatar-worker"
 
 
 class AiriCharacterSession(VirtualCharacterSession):
-    def __init__(self, avatar_config: AiriConfig):
+    def __init__(self, *, runtime: AvatarRuntime, avatar_config: AiriConfig):
+        super().__init__(
+            runtime=runtime,
+        )
+
         self._avatar_config = avatar_config
         self._avatar_participant_identity = _AVATAR_IDENTITY
-
-        self._executor = get_job_context().inference_executor
 
     async def _wait_avatar_ready(self, room: rtc.Room) -> None:
         loop = asyncio.get_running_loop()
@@ -118,7 +120,7 @@ class AiriCharacterSession(VirtualCharacterSession):
         }
         json_data = json.dumps(json_data).encode()
         await asyncio.wait_for(
-            self._executor.do_inference(AiriRunner.INFERENCE_METHOD, json_data),
+            self.inference_executor.do_inference(AiriRunner.INFERENCE_METHOD, json_data),
             timeout=30.0,
         )
 

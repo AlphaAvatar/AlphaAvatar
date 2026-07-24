@@ -20,7 +20,8 @@ from abc import abstractmethod
 from typing import TYPE_CHECKING
 
 from alphaavatar.agents.log import logger
-from alphaavatar.agents.runtime.session_runtime import SessionRuntime
+from alphaavatar.agents.runtime import AvatarRuntime, SessionRuntime
+from alphaavatar.agents.runtime.inference import InferenceExecutor
 from alphaavatar.agents.utils.files.user_dirs import UserPath, mk_user_dirs
 from alphaavatar.agents.utils.files.work_dirs import AvatarPath
 
@@ -35,18 +36,29 @@ _RUNTIME_JSON_END = "<!-- alphaavatar_runtime_state_json:end -->"
 
 
 class ProfilerBase:
-    def __init__(self): ...
+    def __init__(self, *, runtime: AvatarRuntime) -> None:
+        self.runtime = runtime
 
-    def _get_runtime_path_for_user(self, uid: str, work_dir: AvatarPath) -> pathlib.Path:
-        user_path: UserPath = mk_user_dirs(work_dir.users_dir, uid)
+    @property
+    def work_dir(self) -> AvatarPath:
+        return self.runtime.session.avatar_path
+
+    @property
+    def session_runtime(self) -> SessionRuntime:
+        return self.runtime.session
+
+    @property
+    def inference_executor(self) -> InferenceExecutor:
+        return self.runtime.inference
+
+    def _get_runtime_path_for_user(self, uid: str) -> pathlib.Path:
+        user_path: UserPath = mk_user_dirs(self.work_dir.users_dir, uid)
         path = user_path.runtime_dir
         path = path / "runtime_state.md"
         return path
 
-    async def load_runtime_state(
-        self, *, uid: str, work_dir: AvatarPath
-    ) -> UserRuntimeState | None:
-        path = self._get_runtime_path_for_user(uid, work_dir)
+    async def load_runtime_state(self, *, uid: str) -> UserRuntimeState | None:
+        path = self._get_runtime_path_for_user(uid)
         if not path.exists():
             return None
 
@@ -74,9 +86,8 @@ class ProfilerBase:
         *,
         uid: str,
         runtime_state: UserRuntimeState,
-        work_dir: AvatarPath,
     ) -> pathlib.Path:
-        path = self._get_runtime_path_for_user(uid=uid, work_dir=work_dir)
+        path = self._get_runtime_path_for_user(uid=uid)
 
         state_data = runtime_state.model_dump(mode="json", exclude_none=True)
 
@@ -126,13 +137,13 @@ class ProfilerBase:
         return path
 
     @abstractmethod
-    async def load(self, *, uid: str, work_dir: AvatarPath) -> UserProfile: ...
+    async def load(self, *, uid: str) -> UserProfile: ...
 
     @abstractmethod
     async def search(self, *, profile: UserProfile): ...
 
     @abstractmethod
-    async def update(self, *, uid: str, persona: PersonaCache, session_runtime: SessionRuntime): ...
+    async def update(self, *, uid: str, persona: PersonaCache): ...
 
     @abstractmethod
-    async def save(self, *, uid: str, persona: PersonaCache, work_dir: AvatarPath) -> None: ...
+    async def save(self, *, uid: str, persona: PersonaCache) -> None: ...

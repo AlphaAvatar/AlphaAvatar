@@ -1,174 +1,130 @@
-# 👤 Persona Plugin for AlphaAvatar
+# 🧬 AlphaAvatar Persona Plugin
 
-> Give AlphaAvatar the ability to **recognize who you are** — by your voice, your face, and your conversation style.
+The Persona Plugin provides user identity recognition and profile management for AlphaAvatar.
 
----
+## 🧩 Module Overview
 
-## 🤔 What is the Persona Plugin?
+The plugin is responsible for:
 
-Imagine if every time you walked into a store, the staff forgot who you were. Frustrating, right?
+* identifying users through face and speaker embeddings;
+* associating temporary face, speaker, and session identities with stable users;
+* maintaining user profile attributes;
+* exposing the active user persona to the Avatar Runtime;
+* publishing identity-related annotations into `PerceptionRuntime`.
 
-The **Persona Plugin** solves this for AlphaAvatar. It builds a **profile of each user** based on how they talk, what they look like, and how they behave — so AlphaAvatar can:
+Persona processing is divided into independent paths:
 
-- Recognize you by your **voice**
-- Recognize you by your **face**
-- Understand your **personality, preferences, and habits**
-- Instantly personalize every response just for you
+```text
+Visual Observation
+    └── → Face Recognition
 
-Think of it like AlphaAvatar building a mental picture of who you are — and getting better at recognizing you over time.
+Speech Observation
+    └── → Speaker Recognition
 
----
-
-## 💡 How Does it Work? (Simple Flow)
-
-```
-You start talking to AlphaAvatar
-            ↓
-Persona Plugin listens and watches
-(your voice, face, conversation style)
-            ↓
-It extracts key traits about you
-(who you are, how you speak, what you look like)
-            ↓
-Your profile is saved as a vector (a smart fingerprint)
-            ↓
-Next time you interact
-            ↓
-AlphaAvatar matches your voice/face to your saved profile
-            ↓
-Instantly knows who you are and personalizes the response
+Conversation Context
+    └── → Persona Profile
 ```
 
-No manual login needed. It recognizes you automatically.
+The resulting identity and profile information can be used by Memory, prompting, retrieval, and other runtime modules.
 
----
+## 🔍 Identity Processing
 
-## ✨ Features
+### 👁️ Face Recognition
 
-### 🧠 Automatic Persona Extraction
-AlphaAvatar builds your profile automatically — you don't have to fill out any form or settings.
+The face stream consumes visual observations from `PerceptionRuntime`.
 
-It learns from:
-- Your **conversation history** (what you talk about, how you phrase things)
-- Your **behavioral cues** (how you interact, what you ask for)
-- **Multimodal inputs** (your voice tone, your face)
+```text
+Video / Screen Observation
+            ↓
+      PerceptionRuntime
+            ↓
+       FaceStreamWrapper
+            ↓
+     FaceAnalysisRunner
+            ↓
+ Face Embedding and Attributes
+            ↓
+      User Identity Match
+```
 
-Your profile is stored as a **vector embedding** — a smart digital fingerprint that makes matching fast and accurate.
+Face processing:
 
-### ⚡ Real-time Persona Matching
-Every time you interact, AlphaAvatar instantly matches your voice and face against saved profiles — so it knows who you are within seconds, even in a group conversation.
+* samples frames independently from the shared visual stream;
+* performs face detection and embedding extraction;
+* matches embeddings against known user profiles;
+* updates face attributes and identity associations;
+* publishes face annotations back to the original observation;
+* optionally renders face bounding boxes into the annotated payload view.
 
----
+Raw video observations remain unchanged. Rendered overlays are stored in the separate annotated payload view.
 
-## 📦 What Does a Persona Profile Contain?
+### 🎤 Speaker Recognition
 
-| Type | Example |
-|------|---------|
-| 🗣️ Voice fingerprint | Unique pattern of how your voice sounds |
-| 😊 Face fingerprint | Unique pattern of your facial features |
-| 💬 Conversation style | How formal/casual you speak |
-| ❤️ Preferences | Topics you care about, things you've mentioned |
-| 👤 Identity | Your name, age group, gender (if detected) |
-| 🔁 Behavioral patterns | How often you interact, what you typically ask |
+The speaker stream consumes routed speech observations rather than subscribing directly to LiveKit audio.
 
----
+```text
+PerceptionRuntime.audio
+          ↓
+AudioActivityProcessor
+          ↓
+PerceptionRuntime.speech
+          ↓
+     Speaker Stream
+          ↓
+ Speaker Embedding and Match
+```
 
-## 🔧 Installation
+Speaker processing uses rolling speech windows to:
+
+* create speaker embeddings;
+* match speech against known users;
+* update voice identity attributes;
+* associate temporary speaker identities with stable user profiles.
+
+Raw audio frames are used only during runtime processing and are not stored as persona profiles.
+
+## 🧩 Supported Components
+
+| Component               | Input                             | Output                               | Function                                                                                    |
+| ----------------------- | --------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------- |
+| `FaceStreamWrapper`     | `video` and `screen` observations | Face annotations and user matches    | Detects faces, generates embeddings, matches users, and updates face attributes.            |
+| `SpeakerStreamWrapper`  | Routed `speech` observations      | Speaker matches and voice attributes | Builds rolling speech windows, generates speaker embeddings, and resolves voice identities. |
+| Persona profile runtime | Conversation and identity context | Active persona content               | Maintains user profile information and exposes it to the Avatar Runtime.                    |
+| Identity alias handling | Temporary and stable identity IDs | Identity relationships               | Links session, face, speaker, and user identities across runtime modules.                   |
+
+Persona profiles may contain:
+
+* stable user identifiers;
+* face and speaker embeddings;
+* face and voice attributes;
+* profile text;
+* temporary identity aliases;
+* session and runtime metadata.
+
+## 🔗 Module Relationships
+
+```text
+PerceptionRuntime
+    ├── → Face observations
+    └── → Speech observations
+
+Router Plugin
+    └── → Routed speech stream
+
+Persona Plugin
+    ├── → Active user identity
+    ├── → Persona prompt context
+    ├── → Face and speaker annotations
+    └── → Identity aliases
+
+Memory Plugin
+    └── → User ownership and identity-aware retrieval
+```
+
+## 📦 Installation
 
 ```bash
 pip install alpha-avatar-plugins-persona
 ```
 
-That's it. The plugin works automatically when you run AlphaAvatar.
-
----
-
-## 🛠️ How it Recognizes You (The Tech Behind It)
-
-You don't need to understand this to use AlphaAvatar — but here's a simple breakdown of what's happening under the hood:
-
-### 🗄️ Vector Store (Where profiles are saved)
-
-| Module | What it Does |
-|--------|-------------|
-| **Qdrant** | Stores your persona profile as a smart searchable fingerprint |
-
-### 👤 Profile Extraction (How traits are pulled out)
-
-| Module | What it Does |
-|--------|-------------|
-| **LangChain** | Reads your conversations and extracts key personality traits and preferences |
-
-### 🎤 Speaker Recognition (How your voice is identified)
-
-| Module | What it Does |
-|--------|-------------|
-| **ERes2NetV2** | State-of-the-art model that creates a unique fingerprint from your voice |
-| **wav2vec2** | Identifies your voice and also detects your age group and gender |
-
-### 👁️ Face Recognition (How your face is identified)
-
-| Module | What it Does |
-|--------|-------------|
-| **buffalo_l** | Creates a unique fingerprint from your face and links it to your persona profile |
-
----
-
-## 🔗 How Persona Connects to Other Plugins
-
-Persona doesn't work alone — it feeds into the entire AlphaAvatar experience:
-
-```
-Persona Plugin
-      ├── → Memory Plugin    (stores what was learned about you)
-      ├── → RAG Plugin       (retrieves documents relevant to your profile)
-      ├── → Reflection*      (refines your profile over time)
-      └── → Planning*        (sets reminders based on your habits and goals)
-
-* Coming soon
-```
-
----
-
-## 🙋 Common Questions
-
-**Q: Does AlphaAvatar need me to log in to recognize me?**
-No — it recognizes you automatically using your voice and face.
-
-**Q: What if two people sound similar?**
-The speaker recognition models are trained to distinguish even similar voices. Face recognition adds an extra layer of accuracy.
-
-**Q: Can I use Persona without a camera?**
-Yes — voice-only recognition works without a camera. Face recognition is an optional extra layer.
-
-**Q: Is my face and voice data stored safely?**
-All data is stored locally on your machine by default as vector embeddings — not as raw images or audio recordings.
-
-**Q: Can I delete my persona profile?**
-The ability to view and delete persona profiles is coming soon.
-
----
-
-## 🚀 Coming Soon
-
-The Persona plugin is actively being improved. Here's what's coming:
-
-| Feature | Description |
-|---------|-------------|
-| 🌐 Multimodal Persona | Build profiles from voice, face, text, and video together |
-| 👥 Multi-user Support | Recognize and separate multiple users in the same session |
-| 🔒 Privacy Controls | Let users view, edit, export, or delete their persona profile |
-| 📊 Persona Dashboard | Visual panel to see what AlphaAvatar knows about you |
-| 🔄 Continuous Learning | Profile gets smarter and more accurate the more you interact |
-
----
-
-## 📚 Related Links
-
-- [Qdrant Documentation](https://qdrant.tech)
-- [LangChain Documentation](https://www.langchain.com)
-- [3D-Speaker (ERes2NetV2)](https://github.com/modelscope/3D-Speaker)
-- [wav2vec2 Age & Gender Model](https://github.com/audeering/w2v2-age-gender-how-to)
-- [InsightFace (buffalo_l)](https://github.com/deepinsight/insightface)
-- [AlphaAvatar ROADMAP — Persona Section](https://github.com/AlphaAvatar/AlphaAvatar/blob/main/ROADMAP.md#-persona)
-- [Memory Plugin](https://github.com/AlphaAvatar/AlphaAvatar/blob/main/avatar-plugins/avatar-plugins-memory/README.md)
+The plugin is loaded through the AlphaAvatar configuration.

@@ -26,6 +26,10 @@ from livekit.protocol import agent
 
 from alphaavatar.agents import AvatarPlugin
 from alphaavatar.agents.log import logger
+from alphaavatar.agents.runtime.inference import (
+    InferenceRunner,
+    InferenceRuntime,
+)
 
 
 class AvatarServer(livekit_worker.AgentServer):
@@ -110,15 +114,19 @@ class AvatarServer(livekit_worker.AgentServer):
                 logger.exception("AlphaAvatar inference runner bootstrap failed")
                 raise
 
-            registered_runners = getattr(_InferenceRunner, "registered_runners", {})
+            avatar_runners = dict(InferenceRunner.registered_runners)
 
             logger.info(
-                "AlphaAvatar registered inference runners before executor creation",
-                extra={
-                    "runners": list(registered_runners.keys())
-                    if isinstance(registered_runners, dict)
-                    else [getattr(r, "INFERENCE_METHOD", str(r)) for r in registered_runners],
-                },
+                "AlphaAvatar inference runners registered",
+                extra={"runners": list(avatar_runners)},
+            )
+
+            self._avatar_inference_runtime = InferenceRuntime(
+                avatar_runners,
+                mp_ctx=self._mp_ctx,
+                initialize_timeout=5 * 60,
+                request_timeout=30,
+                close_timeout=5,
             )
 
             if len(_InferenceRunner.registered_runners) > 0:
@@ -171,6 +179,11 @@ class AvatarServer(livekit_worker.AgentServer):
             self._reserved_slots: int = 0  # jobs we said "available" to but not yet launched
 
             async def health_check(_: Any) -> web.Response:
+                if not self._avatar_inference_runtime.is_alive:
+                    return web.Response(
+                        status=503, text="AlphaAvatar inference runtime not running"
+                    )
+
                 if self._inference_executor and not self._inference_executor.is_alive():
                     return web.Response(status=503, text="inference process not running")
 
@@ -249,6 +262,22 @@ class AvatarServer(livekit_worker.AgentServer):
                 plugin_packages = [p.package for p in Plugin.registered_plugins] + ["av"]
                 logger.info("preloading plugins", extra={"packages": plugin_packages})
                 self._mp_ctx.set_forkserver_preload(plugin_packages)
+
+            logger.info(
+                "Starting AlphaAvatar inference runtime",
+                extra={
+                    "runners": list(InferenceRunner.registered_runners),
+                },
+            )
+            await self._avatar_inference_runtime.start()
+
+            logger.info(
+                "AlphaAvatar inference runtime started",
+                extra={
+                    "endpoint": self._avatar_inference_runtime.endpoint,
+                    "runners": list(InferenceRunner.registered_runners),
+                },
+            )
 
             if self._inference_executor is not None:
                 logger.info("starting inference executor")
@@ -334,4 +363,8 @@ class AvatarServer(livekit_worker.AgentServer):
 
             self.emit("worker_started")
 
-        await self._close_future
+        try:
+            await self._close_future
+        finally:
+            logger.info("Closing AlphaAvatar inference runtime")
+            await self._avatar_inference_runtime.close()

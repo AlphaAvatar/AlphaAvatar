@@ -13,9 +13,12 @@
 # limitations under the License.
 from __future__ import annotations
 
+import asyncio
+from typing import Any
+
 from alphaavatar.core.env import EnvAnnotation, EnvObservation
 
-from .stream import PerceptionStream, StreamRead
+from .stream import PerceptionStream
 from .timeline import EnvAnnotationRenderer, PerceptionTimeline
 from .window import PerceptionWindow, PerceptionWindowBuilder
 
@@ -24,95 +27,173 @@ class PerceptionRuntime:
     """
     Session-scoped full-duplex perception runtime.
 
-    Runtime relation:
-        SessionRuntime
-        ContextRuntime
-        PerceptionRuntime
+    Owns:
+    - bounded multi-consumer observation streams;
+    - short-lived observation/annotation alignment;
+    - asynchronous consumer wake-up;
+    - cursor-based observation reads.
 
-    These are parallel runtime components.
+    Does not own RTC input, inference, VAD, STT, routing, or persona policies.
     """
 
-    def __init__(
-        self,
-        *,
-        session_id: str,
-    ) -> None:
+    _STREAM_BY_OBSERVATION_KIND = {
+        "video_frame": "video",
+        "screen_frame": "screen",
+        "audio_frame": "audio",
+        "audio_segment": "audio",
+    }
+
+    _STREAM_MAXLEN = {
+        "video": 512,
+        "screen": 256,
+        "audio": 1024,
+        "speech": 1024,
+        "events": 512,
+    }
+
+    _TIMELINE_RETENTION_BY_KIND = {
+        "video_frame": 256,
+        "screen_frame": 128,
+        "video_clip": 32,
+        "audio_frame": 128,
+        "audio_segment": 64,
+    }
+
+    def __init__(self, *, session_id: str) -> None:
+        if not session_id:
+            raise ValueError("session_id cannot be empty")
+
         self.session_id = session_id
 
+        # Visual
         self.video = PerceptionStream[EnvObservation](
-            name="video",
-            maxlen=256,
+            name="video", maxlen=self._STREAM_MAXLEN["video"]
         )
-
-        self.audio = PerceptionStream[EnvObservation](
-            name="audio",
-            maxlen=512,
-        )
-
         self.screen = PerceptionStream[EnvObservation](
-            name="screen",
-            maxlen=128,
+            name="screen", maxlen=self._STREAM_MAXLEN["screen"]
         )
 
+        # Voice
+        self.audio = PerceptionStream[EnvObservation](
+            name="audio", maxlen=self._STREAM_MAXLEN["audio"]
+        )
+        self.speech = PerceptionStream[EnvObservation](
+            name="speech", maxlen=self._STREAM_MAXLEN["speech"]
+        )
+
+        # other
         self.events = PerceptionStream[EnvObservation](
-            name="events",
-            maxlen=512,
+            name="events", maxlen=self._STREAM_MAXLEN["events"]
         )
 
-        self.annotations = PerceptionStream[EnvAnnotation](
-            name="annotations",
-            maxlen=1024,
-        )
+        self._observation_streams = {
+            "video": self.video,
+            "screen": self.screen,
+            "audio": self.audio,
+            "speech": self.speech,
+            "events": self.events,
+        }
 
         self.timeline = PerceptionTimeline(
-            max_observations=1024,
+            max_observations=128,
+            retention_by_kind=self._TIMELINE_RETENTION_BY_KIND,
+            pending_annotation_ttl_sec=5.0,
+            max_pending_annotations=512,
         )
+        self.window_builder = PerceptionWindowBuilder(streams=self._observation_streams)
 
-        self.window_builder = PerceptionWindowBuilder(
-            streams={
-                "video": self.video,
-                "audio": self.audio,
-                "screen": self.screen,
-                "events": self.events,
-            }
-        )
+    def _get_observation_streams(
+        self, stream_names: set[str]
+    ) -> tuple[PerceptionStream[EnvObservation], ...]:
+        if not stream_names:
+            raise ValueError("At least one perception stream is required")
 
-    def add_annotation_renderer(
+        unknown = stream_names.difference(self._observation_streams)
+        if unknown:
+            names = ", ".join(repr(name) for name in sorted(unknown))
+            raise ValueError(f"Unknown perception stream(s): {names}")
+
+        return tuple(self._observation_streams[name] for name in sorted(stream_names))
+
+    async def _wait_for_streams(
         self,
-        renderer: EnvAnnotationRenderer,
-    ) -> None:
+        *,
+        consumer_id: str,
+        streams: tuple[PerceptionStream[Any], ...],
+        timeout: float | None,
+        min_age_sec: float,
+    ) -> bool:
+        if len(streams) == 1:
+            return await streams[0].wait_for_pending(
+                consumer_id=consumer_id,
+                timeout=timeout,
+                min_age_sec=min_age_sec,
+            )
+
+        tasks = [
+            asyncio.create_task(
+                stream.wait_for_pending(
+                    consumer_id=consumer_id,
+                    min_age_sec=min_age_sec,
+                ),
+                name=f"perception_wait:{consumer_id}:{stream.name}",
+            )
+            for stream in streams
+        ]
+
+        try:
+            done, _ = await asyncio.wait(
+                tasks,
+                timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            return bool(done) and any(task.result() for task in done)
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    """Annotation operations"""
+
+    def add_annotation_renderer(self, renderer: EnvAnnotationRenderer) -> None:
         self.timeline.add_renderer(renderer)
 
-    def remove_annotation_renderer(
-        self,
-        renderer: EnvAnnotationRenderer,
-    ) -> None:
+    def remove_annotation_renderer(self, renderer: EnvAnnotationRenderer) -> None:
         self.timeline.remove_renderer(renderer)
 
-    def publish_observation(
-        self,
-        observation: EnvObservation,
-    ) -> int:
+    def publish_annotation(self, annotation: EnvAnnotation) -> EnvObservation | None:
+        return self.timeline.add_annotation(annotation)
+
+    """Observation operations"""
+
+    def publish_observation(self, observation: EnvObservation) -> int:
         self.timeline.add_observation(observation)
+        stream_name = self._STREAM_BY_OBSERVATION_KIND.get(observation.kind, "events")
+        return self._observation_streams[stream_name].publish(observation)
 
-        if observation.kind == "video_frame":
-            return self.video.publish(observation)
+    def publish_speech_observation(self, observation: EnvObservation) -> int:
+        if observation.kind not in {"audio_frame", "audio_segment"}:
+            raise ValueError(
+                f"Speech stream only accepts audio_frame or audio_segment, got {observation.kind!r}"
+            )
 
-        if observation.kind == "screen_frame":
-            return self.screen.publish(observation)
+        return self.speech.publish(observation)
 
-        if observation.kind == "audio_segment":
-            return self.audio.publish(observation)
-
-        return self.events.publish(observation)
-
-    def publish_annotation(
+    async def wait_for_pending_observations(
         self,
-        annotation: EnvAnnotation,
-    ) -> EnvObservation | None:
-        observation = self.timeline.add_annotation(annotation)
-        self.annotations.publish(annotation)
-        return observation
+        *,
+        consumer_id: str,
+        streams: set[str],
+        timeout: float | None = None,
+        min_age_sec: float = 0.0,
+    ) -> bool:
+        return await self._wait_for_streams(
+            consumer_id=consumer_id,
+            streams=self._get_observation_streams(streams),
+            timeout=timeout,
+            min_age_sec=min_age_sec,
+        )
 
     def take_pending_observations(
         self,
@@ -131,32 +212,20 @@ class PerceptionRuntime:
             limit_per_stream=limit_per_stream,
         )
 
-    def commit_observations(
-        self,
-        window: PerceptionWindow,
-    ) -> None:
+    def commit_observations(self, window: PerceptionWindow) -> None:
         self.window_builder.commit(window)
 
-    def take_pending_annotations(
+    def clear_consumer(
         self,
-        *,
         consumer_id: str,
-        min_age_sec: float = 0.0,
-        limit: int | None = None,
-    ) -> StreamRead[EnvAnnotation]:
-        return self.annotations.read_pending(
-            consumer_id=consumer_id,
-            min_age_sec=min_age_sec,
-            limit=limit,
+        *,
+        streams: set[str] | None = None,
+    ) -> None:
+        selected = (
+            self._get_observation_streams(streams)
+            if streams is not None
+            else tuple(self._observation_streams.values())
         )
 
-    def commit_annotations(
-        self,
-        *,
-        consumer_id: str,
-        cursor_seq: int,
-    ) -> None:
-        self.annotations.commit(
-            consumer_id=consumer_id,
-            cursor_seq=cursor_seq,
-        )
+        for stream in selected:
+            stream.clear_consumer(consumer_id)

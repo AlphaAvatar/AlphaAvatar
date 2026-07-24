@@ -1,6 +1,6 @@
-# AlphaAvatar Status Plugin
+# 🟢 AlphaAvatar Status Plugin
 
-🟢 **AlphaAvatar Status Plugin** provides the default runtime implementation for AlphaAvatar's intermediate status system.
+**AlphaAvatar Status Plugin** provides the default runtime implementation for AlphaAvatar's intermediate status system.
 
 It is used to send short, user-facing or UI-facing status updates while the agent is thinking, calling tools, processing tool results, or recovering from tool errors.
 

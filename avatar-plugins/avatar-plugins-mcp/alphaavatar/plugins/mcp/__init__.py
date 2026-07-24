@@ -15,6 +15,8 @@ import json
 import os
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
+from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.tools import MCPAPI
 
 from .log import logger
@@ -34,6 +36,7 @@ class MCPRemotePlugin(AvatarPlugin):
 
     def get_plugin(
         self,
+        runtime: AvatarRuntime,
         mcp_init_config: dict,
         *args,
         **kwargs,
@@ -45,6 +48,7 @@ class MCPRemotePlugin(AvatarPlugin):
             servers = json.loads(servers)
 
             mcp_host = MCPHost(
+                runtime=runtime,
                 servers=servers,
                 **mcp_init_config,
                 **kwargs,
@@ -59,22 +63,26 @@ class MCPRemotePlugin(AvatarPlugin):
             ) from e
 
 
-def bootstrap_inference_runners() -> None:
-    """
-    Plugin-owned runner bootstrap.
+def configure_vdb_runner(vdb_type: str | None = None) -> None:
+    vdb_type = vdb_type or os.getenv("MCP_VDB_TYPE")
 
-    Called by AlphaAvatar core after AvatarConfig is parsed.
-    """
-    mcp_vdb_type = os.getenv("MCP_VDB_TYPE", "lancedb")
+    logger.info("Configuring Persona plugin with VDB type: %s", vdb_type)
 
-    if mcp_vdb_type == "lancedb":
+    if vdb_type == "lancedb":
         from .runner import LanceDBRunner
 
-        os.environ["MCP_INFERENCE_METHOD"] = LanceDBRunner.INFERENCE_METHOD
-        AvatarPlugin.register_inference_runner_once(LanceDBRunner)
-        return
+        method = LanceDBRunner.INFERENCE_METHOD
+        InferenceRunner.register(LanceDBRunner)
 
-    logger.warning("Unsupported MCP_VDB_TYPE=%r", mcp_vdb_type)
+    else:
+        logger.warning(
+            "Unsupported MCP_VDB_TYPE=%r. Expected 'lancedb'.",
+            vdb_type,
+        )
+        return None
+
+    os.environ["MCP_VDB_INFERENCE_METHOD"] = method
+    return None
 
 
 # Plugin register
@@ -84,8 +92,8 @@ AvatarPlugin.register_avatar_plugin(
     MCPRemotePlugin(),
 )
 
-# Runner bootstrap register
+# Inference Runners
 AvatarPlugin.register_inference_runner_bootstrap(
-    "alphaavatar.plugins.mcp",
-    bootstrap_inference_runners,
+    "alphaavatar.plugins.mcp.vdb",
+    configure_vdb_runner,
 )
