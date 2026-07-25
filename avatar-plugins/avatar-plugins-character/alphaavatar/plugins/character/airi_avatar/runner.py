@@ -63,7 +63,7 @@ if not AIRI_REPO_DIR.exists():
 
 
 class AiriRunner(InferenceRunner):
-    INFERENCE_METHOD = "alphaavatar_character_airi"
+    INFERENCE_METHOD = "alphaavatar.character.airi"
 
     def __init__(self) -> None:
         super().__init__()

@@ -21,7 +21,7 @@ from ..models import SILERO_MODEL_CONFIG, resolve_silero_model_path
 
 
 class SileroVADRunner(InferenceRunner):
-    INFERENCE_METHOD = "alphaavatar_voice_vad_silero"
+    INFERENCE_METHOD = "alphaavatar.voice.vad.silero"
 
     def initialize(self) -> None:
         import onnxruntime as ort

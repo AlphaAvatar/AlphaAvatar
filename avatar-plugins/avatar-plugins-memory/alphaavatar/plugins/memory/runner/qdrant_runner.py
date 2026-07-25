@@ -34,7 +34,7 @@ from alphaavatar.agents.utils.vdb import qdrant
 
 
 class QdrantRunner(InferenceRunner):
-    INFERENCE_METHOD = "alphaavatar_memory_qdrant"
+    INFERENCE_METHOD = "alphaavatar.memory.vdb.qdrant"
 
     def __init__(self):
         super().__init__()

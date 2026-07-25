@@ -23,7 +23,7 @@ from alphaavatar.agents.utils.vdb import lancedb
 
 
 class LanceDBRunner(InferenceRunner):
-    INFERENCE_METHOD = "alphaavatar_memory_lancedb"
+    INFERENCE_METHOD = "alphaavatar.memory.vdb.lancedb"
 
     def __init__(self):
         super().__init__()

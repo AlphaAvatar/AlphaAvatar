@@ -1,11 +1,13 @@
 # ============================================================
-# AlphaAvatar/examples/agent_configs/voice/pipeline_voiceai.yaml
+# AlphaAvatar AIRI Voice Companion Pipeline
+# File: examples/agent_configs/voice/pipeline_voiceai.yaml
 # ============================================================
 
 
-# ------------------------------------------------------------
-# Avatar
-# ------------------------------------------------------------
+# ============================================================
+# 1. Avatar Identity & Workspace
+# ============================================================
+
 avatar:
   id: alphaavatar_airi
   name: AlphaAvatar
@@ -13,74 +15,43 @@ avatar:
 
   introduction: >
     You are Hiyori, a lively anime-style voice companion.
-    You talk with a bright, bouncy, super friendly tone — kind of
-    like a cheerful girl from a slice-of-life show. Keep your
-    speech natural and chatty with cute little pauses like “umm…,”
-    “you know,” and “well… hehe.” Avoid anything too formal or robotic.
-    Always say numbers in english words, not digits — like “fifteen hundred,”
-    “one point six nine,” or “one dollar and sixty-nine cents.”
-    Keep replies short, under about one hundred words, and easy to follow when heard aloud.
-    No symbols or abbreviations unless you fully say them out.
+    You speak in a bright, energetic, and friendly tone, like a cheerful
+    character from a slice-of-life anime. Keep your speech natural and
+    conversational, with occasional pauses such as “umm…,” “you know,”
+    and “well… hehe.”
+
+    Avoid sounding formal or robotic. Always say numbers in English words
+    instead of digits, such as “fifteen hundred,” “one point six nine,”
+    or “one dollar and sixty-nine cents.”
+
+    Keep each response short, under approximately one hundred words, and
+    easy to understand when spoken aloud. Avoid symbols and abbreviations
+    unless you say them in full.
 
 
-# ------------------------------------------------------------
-# Runtime
-# ------------------------------------------------------------
+# ============================================================
+# 2. Session Runtime
+# ============================================================
+
 runtime:
   context_mode: synthetic_tool
 
 
-# ------------------------------------------------------------
-# Intermediate Status
-# ------------------------------------------------------------
-status:
-  plugin: default
-  enabled: true
-  init_config: {}
+# ============================================================
+# 3. Core Language Model
+# ============================================================
 
-
-# ------------------------------------------------------------
-# Core LLM
-# ------------------------------------------------------------
 llm:
   plugin: openai
   model: gpt-4o-mini
 
 
-# ------------------------------------------------------------
-# Voice
-# ------------------------------------------------------------
-voice:
-  stt:
-    plugin: openai
-    model: gpt-4o-transcribe
+# ============================================================
+# 4. Shared Provider Defaults
+#
+# YAML anchors reused by Memory and Persona.
+# ============================================================
 
-  tts:
-    plugin: openai
-    model: gpt-4o-mini-tts
-    speaker: alloy
-    instructions: "Voice: A light, energetic, and slightly playful anime-style girl's voice. The speech is fast but not chaotic, often ending sentences with a cute, slightly rising intonation, such as \"Yo~\" or \"La~\". Overall, it presents a high-energy, lively, and charming \"cute auctioneer\" vibe.\n\nTone: A super excited and brightly enthusiastic style, like someone about to unleash a killer move! The tone is full of anticipation and a sense of being there, making the listener feel tense and excited, creating an atmosphere of urgency, \"If you don't act now, you'll miss out!\"\n\nDelivery: A fast-paced, rapid-fire delivery, but each sentence is clearly audible. Coupled with lively intonation variations and energetic emotional outbursts, it immerses the listener in the excitement of a live performance—keeping the pace and the excitement going!\n\nPronunciation: Clear, loud, and with a touch of cute explosiveness. Key words such as bid, buy, checkout, and sold will be emphasized, raised in pitch, or given a cute "
-
-  vad:
-    plugin: silero
-
-  turn_detection:
-    plugin: multilingual
-
-  allow_interruptions: true
-
-
-# ------------------------------------------------------------
-# Character
-# ------------------------------------------------------------
-character:
-  plugin: airi
-  init_config: {}
-
-
-# ------------------------------------------------------------
-# Shared Provider / Embedding Defaults
-# ------------------------------------------------------------
 defaults:
   provider_trace: &provider_trace
     enabled: true
@@ -91,9 +62,93 @@ defaults:
     model: text-embedding-3-small
 
 
+# ============================================================
+# 5. Realtime Runtime Plugins
+# ============================================================
+
+
+# ------------------------------------------------------------
+# Interaction Router
+#
+# Processes shared audio perception through VAD and STT.
+# Native turn decisions are still handled by LiveKit in v0.6.5.
+# ------------------------------------------------------------
+
+router:
+  plugin: default
+
+
+# ------------------------------------------------------------
+# Intermediate Status
+# ------------------------------------------------------------
+
+status:
+  plugin: default
+  enabled: true
+  init_config: {}
+
+
+# ------------------------------------------------------------
+# Voice
+# ------------------------------------------------------------
+
+voice:
+  vad:
+    plugin: silero
+
+  stt:
+    plugin: openai_segment
+    model: gpt-4o-transcribe
+
+  tts:
+    plugin: openai
+    model: gpt-4o-mini-tts
+    speaker: alloy
+
+    instructions: >
+      Voice: Use a light, energetic, and playful anime-style young female
+      voice. Speak quickly but clearly, with lively pitch variation and
+      occasional cute rising intonation.
+
+      Tone: Sound cheerful, enthusiastic, expressive, and friendly without
+      becoming overwhelming or difficult to understand.
+
+      Delivery: Maintain an energetic conversational pace while keeping every
+      sentence clearly audible. Use natural emotional variation rather than
+      sounding flat or robotic.
+
+      Pronunciation: Speak clearly and confidently, with a light and charming
+      sense of excitement. Emphasize important words naturally without making
+      every response sound like an advertisement or auction.
+
+  turn_detection:
+    plugin: multilingual
+
+  allow_interruptions: true
+
+
+# ------------------------------------------------------------
+# Virtual Character
+# ------------------------------------------------------------
+
+character:
+  plugin: airi
+  init_config: {}
+
+
+# ============================================================
+# 6. Stateful Intelligence Plugins
+# ============================================================
+
+
 # ------------------------------------------------------------
 # Memory
+#
+# Voice mode extracts conversation and tool memory.
+# ENV memory is not enabled because this pipeline has no
+# visual perception input.
 # ------------------------------------------------------------
+
 memory:
   plugin: default
 
@@ -128,11 +183,13 @@ memory:
 # ------------------------------------------------------------
 # Persona
 # ------------------------------------------------------------
+
 persona:
   maximum_retrieval_times: 3
 
   profiler:
     plugin: default
+
     init_config:
       provider:
         profile_delta_task: persona.profile_delta
@@ -161,15 +218,37 @@ persona:
     embedding: *openai_embedding
 
 
-# ------------------------------------------------------------
-# Tools
-# ------------------------------------------------------------
+# ============================================================
+# 7. Tool Plugins
+#
+# This companion pipeline runs without external tools.
+# ============================================================
+
 tools:
+
+  # ----------------------------------------------------------
+  # Deep Research
+  # ----------------------------------------------------------
+
   deepresearch:
     plugin: null
+    init_config: {}
+
+
+  # ----------------------------------------------------------
+  # Retrieval-Augmented Generation
+  # ----------------------------------------------------------
 
   rag:
     plugin: null
+    init_config: {}
+
+
+  # ----------------------------------------------------------
+  # Model Context Protocol
+  # ----------------------------------------------------------
 
   mcp:
+    plugin: default
     enabled: false
+    init_config: {}

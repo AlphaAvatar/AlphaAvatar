@@ -16,7 +16,7 @@
 * [AlphaAvatar Agent](#alphaavatar-agent)
 
   * [Core Function](#core-function)
-  * [Prompt & Runtime Context](#prompt--runtime-context)
+  * [Prompt & Context](#prompt-context)
   * [Runtime](#runtime)
   * [Vision](#vision)
 * [AlphaAvatar Plugins](#alphaavatar-plugins)
@@ -46,7 +46,7 @@
 
 | Plugin / System           | Description                                                                                                                           |     Stage     |
 | :------------------------ | :------------------------------------------------------------------------------------------------------------------------------------ | :-----------: |
-| 🎯 **Interaction Router** | Routes user input based on intention, interaction context, and response necessity; may also select early status feedback.             |   🧩 Planned  |
+| 🎯 **Interaction Router** | Processes shared perception streams through VAD and STT, publishes derived speech and transcription events, and will gradually take ownership of native turn and response decisions. | ⏳ In Progress |
 | 💡 **Reflection**         | Generates metacognitive insights from memory, persona, tool usage, failures, and interaction history.                                 |   🧩 Planned  |
 | 📅 **Planning**           | Generates short-term tasks, long-term plans, reminders, and follow-up actions from memory, reflection, and tool results.              |   🧩 Planned  |
 | ⚙️ **Behavior**           | Controls response style, workflow selection, tool-use policy, and proactive assistance rules.                                         |   🧩 Planned  |
@@ -64,6 +64,7 @@
 | 2026-07 | **Multi-representation Media Payload** | Added `MediaPayload`, `PayloadFormat`, `PayloadView`, and AlphaAvatar-owned video-frame representations without RTC-specific types. |
 | 2026-07 | **Typed Perception Runtime**           | Added independent video, audio, screen, event, and annotation streams with consumer-specific cursors. |
 | 2026-07 | **Shared Timeline and Window Builder** | Added observation–annotation alignment and ordered consumer windows for Persona, Memory, Vision, and future routers. |
+| 2026-07 | **Shared Audio and Speech Perception** | Added normalized audio observations and a derived speech stream, allowing Router, transcription, speaker recognition, and future audio processors to consume the same source independently. |
 
 ### 🧭 TODO
 
@@ -85,13 +86,14 @@
 | 2026-07 | **RTC Adapter Boundary**          | RTC-specific media conversion is isolated from `avatar-core`; core observations no longer store LiveKit frame types directly. |
 | 2026-07 | **LiveKit Video Input Runtime**   | LiveKit video frames are normalized into AlphaAvatar media payloads and published once into `PerceptionRuntime`. |
 | 2026-07 | **Model-bound Frame Conversion**  | Generic AlphaAvatar frames are converted back to LiveKit frames only at the LiveKit model adapter boundary. |
+| 2026-07 | **LiveKit Audio Input Runtime**   | LiveKit microphone frames are normalized into AlphaAvatar audio payloads and published once into `PerceptionRuntime.audio`. |
 
 ### 🧭 TODO
 
 | Priority | Task | Stage |
 | :------- | :--- | :---: |
 | 🔸 | Extract reusable RTC interfaces and adapters into a standalone `avatar-rtc` package. | ⏳ In Progress |
-| 🔸 | Add unified audio, screen-share, data-channel, and output adapters on top of the RTC abstraction. | ⏳ In Progress |
+| 🔸 | Add unified screen-share, data-channel, and output adapters on top of the RTC abstraction. | ⏳ In Progress |
 | 🔹 | Add alternative RTC backends such as native WebRTC, `aiortc`, and custom RTC providers. | 🧩 Planned |
 | 🔹 | Add RTC-level reconnect, transport recovery, flow control, and health monitoring. | 🧩 Planned |
 
@@ -122,7 +124,7 @@
 | 🔹 | Solve the cocktail-party problem for multi-speaker scenarios, including speaker separation, speaker tracking, overlapping speech handling, and per-user context routing. | 🧩 Planned |
 | 🔹 | Add user upload lifecycle management, including temporary session storage, identity-aware persistence, artifact indexing, and cleanup policies. | 🧩 Planned |
 
-## Prompt & Runtime Context
+## Prompt & Context
 
 ### ✅ DONE
 
@@ -153,15 +155,17 @@
 
 | Date    | Milestone                            | Notes |
 | :------ | :----------------------------------- | :---- |
-| 2026-07 | **AvatarRuntime Composition**        | Added `AvatarRuntime` as the session-scoped composition root for `SessionRuntime`, `ContextRuntime`, and `PerceptionRuntime`. |
+| 2026-07 | **AvatarRuntime Composition**        | Added `AvatarRuntime` as the session-scoped composition root for `SessionRuntime`, `ContextRuntime`, `PerceptionRuntime`, and `InferenceExecutor`. |
 | 2026-07 | **Simplified Plugin Lifecycle**      | Runtime dependencies are injected during plugin construction, while `on_session_start()` and `on_session_stop()` only manage lifecycle work. |
 | 2026-07 | **Producer / Consumer Orchestration**| Perception consumers start before RTC producers, while producers stop before consumers to preserve clean full-duplex lifecycle boundaries. |
+| 2026-07 | **AlphaAvatar Inference Runtime**    | Added Worker-owned `InferenceRuntime`, session-scoped `InferenceExecutor`, Unix domain socket IPC, and persistent runner processes independent of LiveKit Agent inference internals. |
+| 2026-07 | **Isolated Inference Runners**       | VAD, speaker vector, speaker attributes, face analysis, and all Persona, Memory, and MCP VDB workloads now run in independent persistent processes. |
 
 ### 🧭 TODO
 
 | Priority | Task | Stage |
 | :------- | :--- | :---: |
-| 🔹 | Add richer plugin lifecycle hooks such as `on_user_path_changed`, `close`, and `health_check`. | 🧩 Planned |
+| 🔹 | Standardize runtime lifecycle contracts such as `aclose`, startup rollback, health checks, resource ownership, and worker recovery. | 🧩 Planned |
 | 🔹 | Add session replay and audit tooling based on turns, provider traces, memory events, and runtime status events. | 🧩 Planned |
 | 🔹 | Add richer error handling and recovery policies across model calls, tool invocation, plugin initialization, channel adapters, and realtime media streams. | 🧩 Planned |
 | 🔹 | Enrich the logging and tracing system with per-room, per-session, per-participant, per-user, per-turn, and per-provider-task prefixes. | 🧩 Planned |
@@ -227,16 +231,20 @@
 
 ### ✅ DONE
 
-| Date | Milestone | Notes |
-| :--- | :-------- | :---- |
-| - | - | - |
+| Date    | Milestone                           | Notes |
+| :------ | :---------------------------------- | :---- |
+| 2026-07 | **Interaction Router Runtime**      | Added a plugin-based processing runtime between raw perception streams and derived interaction streams. |
+| 2026-07 | **Audio Activity Processing**       | Added AlphaAvatar-native Silero VAD processing with pre-roll, bounded queues, speech boundaries, and publication into `PerceptionRuntime.speech`. |
+| 2026-07 | **Speech Transcription Processing** | Added `openai_segment` and `openai_realtime` STT paths with normalized transcription events and a temporary LiveKit turn-pipeline bridge. |
 
 ### 🧭 TODO
 
 | Priority | Task | Stage |
 | :------- | :--- | :---: |
-| 🔸 | Detect whether the current input is directed to the Avatar or should be ignored. | 🧩 Planned |
-| 🔸 | Route inputs into answer, ignore, clarify, tool workflow, or status-only paths. | 🧩 Planned |
+| 🔸 | Move user-turn commitment and response decisions from the temporary LiveKit bridge into the Interaction Router. | ⏳ In Progress |
+| 🔸 | Remove duplicate LiveKit VAD processing and the temporary STT bridge after native turn management is complete. | ⏳ In Progress |
+| 🔸 | Detect whether the current input is directed to the Avatar or should be ignored. | ⏳ In Progress |
+| 🔸 | Route inputs into answer, ignore, clarify, tool workflow, or status-only paths. | ⏳ In Progress |
 | 🔹 | Select early status feedback based on user intention, task type, and interaction mode. | 🧩 Planned |
 | 🔹 | Support multi-user routing for voice, visual, and group conversation scenarios. | 🧩 Planned |
 
@@ -275,6 +283,8 @@
 | 2026-07 | **Online ENV Memory Extraction**            | Added periodic ENV memory extraction from ordered live visual observation windows through configurable multimodal provider tasks. |
 | 2026-07 | **Annotated Visual Evidence**               | ENV extraction prefers annotated JPEG views and falls back to raw visual evidence without persisting runtime frame payloads. |
 | 2026-07 | **ENV Memory Consolidation**                | Added `MemoryType.ENV` updates and final fusion with conversation and tool memory during the session lifecycle. |
+| 2026-07 | **Asynchronous ENV Scheduler** | Separated fast perception capture and cursor commits from serialized multimodal extraction, with pending-batch merging, bounded retries, and session-stop draining. |
+| 2026-07 | **Memory VDB Runtime Migration** | Migrated Memory LanceDB and Qdrant workloads from LiveKit’s shared inference executor to dedicated AlphaAvatar runner processes. |
 
 ### 🧭 TODO
 
@@ -308,6 +318,9 @@
 | 2026-06 | **Face-based Identity Support** | Integrated face vectors with Persona identity resolution, local cache matching, and VDB-backed persistence. |
 | 2026-07 | **Perception-based FaceStream** | FaceStream consumes shared visual observations instead of subscribing directly to LiveKit tracks. |
 | 2026-07 | **Face Annotation Rendering** | Face detections are published as `EnvAnnotation` records and rendered into alternate annotated payload views. |
+| 2026-07 | **Perception-based SpeakerStream** | Speaker recognition now consumes routed speech observations from `PerceptionRuntime.speech` instead of depending on LiveKit VAD segmentation. |
+| 2026-07 | **Rolling Speaker Inference** | Added rolling speech windows, configurable inference cadence, reduced speaker-attribute frequency, and latest-window queue behavior. |
+| 2026-07 | **Isolated Persona Inference** | Speaker vector, speaker attributes, face analysis, and Persona VDB operations now run through independent AlphaAvatar inference processes. |
 
 ### 🧭 TODO
 
@@ -438,6 +451,7 @@
 | 2026-05 | **LanceDB-backed MCP Tool Retrieval** | Stores MCP tool metadata in LanceDB and supports top-k semantic tool search from agent queries.                          |
 | 2026-05 | **MCP Tool Runtime Robustness**       | Adds stable tool IDs, agent-friendly tool usage hints, argument validation, hybrid reranking, and server reconnect.      |
 | 2026-05 | **Status-aware MCP Tool**             | Emits `TOOL_START` status with optional model-generated monologue and supports `TOOL_ERROR` fallback through ToolBase.   |
+| 2026-07 | **MCP VDB Runtime Migration**         | Migrated MCP LanceDB and Qdrant retrieval workloads to dedicated AlphaAvatar inference runner processes. |
 
 ### 🧭 TODO
 
@@ -506,9 +520,9 @@
 
 | Quarter | Focus | Expected Outcome |
 | :------ | :---- | :--------------- |
-| Q3-2026 | Perception Runtime Expansion | Add audio, screen, event, retention, backpressure, and multimodal alignment capabilities. |
+| Q3-2026 | Perception Runtime Expansion | Add screen, event, retention, payload pruning, backpressure, consumer-lag observability, and richer multimodal alignment capabilities. |
 | Q3-2026 | ENV Memory Retrieval | Add richer object-, event-, identity-, and time-aware visual-history retrieval. |
-| Q3-2026 | Interaction Router Foundation | Detect whether input is directed to the Avatar, route requests by interaction type, and choose early status feedback. |
+| Q3-2026 | Native Interaction Decisions | Add input-directedness detection, native turn commitment, response routing, early status selection, and remove the temporary LiveKit STT/VAD compatibility path. |
 | Q3-2026 | Notion MCP Integration | Use Notion as an external long-term workspace for notes, memory summaries, plans, and user knowledge. |
 | Q3-2026 | RAG Workspace Evolution | Add data-source scoped retrieval, metadata-aware indexing, temp-to-real RAG migration policy, and skill retrieval. |
 | Q4-2026 | Reflection Plugin Alpha | Build autonomous self-analysis from memory, persona, tool results, status traces, and repeated user interaction patterns. |

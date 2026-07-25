@@ -32,7 +32,7 @@ atexit.register(_resource_files.close)
 
 
 class SpeakerAttributeRunner(InferenceRunner):
-    INFERENCE_METHOD = "alphaavatar_persona_speaker_attribute"
+    INFERENCE_METHOD = "alphaavatar.persona.speaker.attribute"
     MODEL_TYPE: SpeakerModelType = "w2v2l6"
 
     def __init__(self):

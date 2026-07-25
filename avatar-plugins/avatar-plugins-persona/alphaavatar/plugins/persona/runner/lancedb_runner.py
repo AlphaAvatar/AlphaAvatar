@@ -28,7 +28,7 @@ from .speaker_vector_runner import SpeakerVectorRunner
 
 
 class LanceDBRunner(InferenceRunner):
-    INFERENCE_METHOD = "alphaavatar_persona_lancedb"
+    INFERENCE_METHOD = "alphaavatar.persona.vdb.lancedb"
 
     def __init__(self):
         super().__init__()

@@ -31,7 +31,7 @@ atexit.register(_resource_files.close)
 
 
 class SpeakerVectorRunner(InferenceRunner):
-    INFERENCE_METHOD = "alphaavatar_persona_speaker_vector"
+    INFERENCE_METHOD = "alphaavatar.persona.speaker.vector"
     MODEL_TYPE: SpeakerModelType = "eres2netv2"
 
     def __init__(self):

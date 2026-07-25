@@ -24,7 +24,7 @@ from ..models import FACE_MODEL_CONFIG, FaceModelType
 
 
 class FaceAnalysisRunner(InferenceRunner):
-    INFERENCE_METHOD = "alphaavatar_persona_face_analysis"
+    INFERENCE_METHOD = "alphaavatar.persona.face.analysis"
     MODEL_TYPE: FaceModelType = "buffalo_l"
 
     def __init__(self):

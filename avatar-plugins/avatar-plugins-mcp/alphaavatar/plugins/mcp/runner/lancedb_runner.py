@@ -37,7 +37,7 @@ from ..mcp_tool import MCPTool
 
 
 class LanceDBRunner(InferenceRunner):
-    INFERENCE_METHOD = "alphaavatar_mcp_lancedb"
+    INFERENCE_METHOD = "alphaavatar.mcp.vdb.lancedb"
 
     def __init__(self):
         super().__init__()

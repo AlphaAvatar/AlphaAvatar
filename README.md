@@ -78,7 +78,7 @@ AlphaAvatar follows a layered realtime multimodal architecture:
 - **🎙️ User & Channels**: voice, text, camera, screen, files, and messaging platforms.
 - **🔌 RTC Adapter**: connects LiveKit and other realtime communication backends.
 - **👁️ Core Perception**: normalizes multimodal observations, streams, timelines, and windows.
-- **⚙️ Agent & Runtime**: manages sessions, context, routing, and interaction workflows.
+- **⚙️ Agent & Runtime**: manages sessions, context, interaction routing, shared inference access, and runtime lifecycle.
 - **🧩 Plugin Ecosystem**: adds Memory, Persona, RAG, MCP, Character, and other capabilities.
 - **🧠 Provider & Infrastructure**: connects models, embeddings, routing, tracing, and structured output.
 - **💾 Storage & Data**: stores identity, memory, vectors, traces, artifacts, and media.
@@ -175,11 +175,11 @@ AlphaAvatar follows a layered realtime multimodal architecture:
 <td width="50%">
 <h3>🎯 Interaction Router</h3>
 <p>
-  <img src="https://img.shields.io/badge/Planned-6c757d?style=flat" alt="Planned" />
+  <img src="https://img.shields.io/badge/In_Progress-28a745?style=flat" alt="In Progress" />
 </p>
 <p>Omni interaction routing module that decides whether the Avatar should respond, how the request should be handled, and which status feedback should be emitted.</p>
 <p>
-<a href="#">README↗</a>
+<a href="https://github.com/AlphaAvatar/AlphaAvatar/blob/main/avatar-plugins/avatar-plugins-router/README.md">README↗</a>
 </p>
 </td>
 </tr>
@@ -311,6 +311,7 @@ AlphaAvatar follows a layered realtime multimodal architecture:
 <h2>Latest News 🔥</h2>
 
 - [2026/07] Released AlphaAvatar **version 0.6.4**: Added a transport-agnostic perception runtime with typed multimodal streams, shared timelines, annotated payload views, and online ENV memory extraction from live visual observations.
+  - Released AlphaAvatar **version 0.6.5**: Added shared realtime audio perception, the Interaction Router, AlphaAvatar-native VAD and STT, isolated per-runner inference processes, and migrated all AlphaAvatar VDB workloads away from LiveKit’s shared inference executor.
 
 - [2026/06] Released AlphaAvatar **version 0.6.0**: Added the **Status plugin**, sampled visual input support, and status-aware DeepResearch / RAG / MCP tool feedback.
   - Released AlphaAvatar **version 0.6.1**: Added visual identity support for Persona, including face detection, face vector matching, speaker-face identity fusion, and several bug fixes.
