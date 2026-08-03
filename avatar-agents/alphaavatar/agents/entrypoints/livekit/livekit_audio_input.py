@@ -15,21 +15,17 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import TYPE_CHECKING, Any
-
-from livekit import rtc
+from typing import Any
 
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.plugin import AvatarRuntimePlugin
+from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.utils.id_utils import get_md5_id
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.media import AudioFramePayload
-from alphaavatar.core.perception import PerceptionRuntime
+from livekit import rtc
 
 from .livekit_audio_codec import from_livekit_audio_frame
-
-if TYPE_CHECKING:
-    from alphaavatar.agents.avatar.engine import AvatarEngine
 
 
 class LiveKitAudioInputRuntime(AvatarRuntimePlugin):
@@ -49,8 +45,8 @@ class LiveKitAudioInputRuntime(AvatarRuntimePlugin):
     def __init__(
         self,
         *,
-        engine: AvatarEngine,
-        perception_runtime: PerceptionRuntime,
+        room: rtc.Room,
+        runtime: AvatarRuntime,
         sample_rate: int = 48_000,
         num_channels: int = 1,
         frame_size_ms: int = 20,
@@ -62,8 +58,8 @@ class LiveKitAudioInputRuntime(AvatarRuntimePlugin):
         if frame_size_ms <= 0:
             raise ValueError(f"frame_size_ms must be positive: {frame_size_ms}")
 
-        self.engine = engine
-        self.perception_runtime = perception_runtime
+        self._room = room
+        self._runtime = runtime
 
         self._sample_rate = sample_rate
         self._num_channels = num_channels
@@ -76,12 +72,6 @@ class LiveKitAudioInputRuntime(AvatarRuntimePlugin):
         self._started = False
 
     """Helper operations"""
-
-    def _get_room(self) -> rtc.Room | None:
-        room = self.engine.livekit_room
-        if room is None:
-            logger.warning("LiveKit room is not bound to AvatarEngine")
-        return room
 
     def _register_task(self, task: asyncio.Task[None]) -> None:
         self._audio_tasks.add(task)
@@ -117,7 +107,7 @@ class LiveKitAudioInputRuntime(AvatarRuntimePlugin):
         timestamp_text = str(timestamp)
         frame_id = get_md5_id(
             [
-                self.engine.session_runtime.session_id,
+                self._runtime.session.session_id,
                 track_sid,
                 str(frame_index),
                 timestamp_text,
@@ -176,10 +166,10 @@ class LiveKitAudioInputRuntime(AvatarRuntimePlugin):
             )
             return
 
-        self.perception_runtime.publish_observation(observation)
+        self._runtime.perception.publish_observation(observation)
 
     def _try_attach_existing_audio_tracks(self) -> None:
-        room = self._get_room()
+        room = self._room
         if room is None:
             return
 
@@ -199,7 +189,7 @@ class LiveKitAudioInputRuntime(AvatarRuntimePlugin):
         if self._listeners_registered:
             return
 
-        room = self._get_room()
+        room = self._room
         if room is None:
             return
 
@@ -329,7 +319,7 @@ class LiveKitAudioInputRuntime(AvatarRuntimePlugin):
 
         logger.info(
             "LiveKit audio input runtime started session_id=%s sample_rate=%s channels=%s",
-            self.engine.session_runtime.session_id,
+            self._runtime.session.session_id,
             self._sample_rate,
             self._num_channels,
         )
@@ -362,5 +352,5 @@ class LiveKitAudioInputRuntime(AvatarRuntimePlugin):
 
         logger.info(
             "LiveKit audio input runtime stopped session_id=%s",
-            self.engine.session_runtime.session_id,
+            self._runtime.session.session_id,
         )

@@ -16,6 +16,9 @@ from .livekit_audio_codec import (
     to_livekit_audio_frame,
 )
 from .livekit_audio_input import LiveKitAudioInputRuntime
+from .livekit_audio_output import LiveKitTransientAudioOutput
+from .livekit_status_output import LiveKitStatusOutput
+from .livekit_transcript_output import LiveKitTranscriptOutput
 from .livekit_video_codec import (
     bgr_to_video_frame,
     encode_video_frame_to_jpeg,
@@ -27,6 +30,9 @@ from .livekit_video_input import LiveKitVideoInputRuntime
 
 __all__ = [
     "LiveKitAudioInputRuntime",
+    "LiveKitTransientAudioOutput",
+    "LiveKitStatusOutput",
+    "LiveKitTranscriptOutput",
     "LiveKitVideoInputRuntime",
     "bgr_to_video_frame",
     "encode_video_frame_to_jpeg",

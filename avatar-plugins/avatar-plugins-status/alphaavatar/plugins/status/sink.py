@@ -14,27 +14,17 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import time
-from enum import StrEnum
 from hashlib import sha1
-from typing import TYPE_CHECKING, Any
+from typing import Any
+from uuid import uuid4
 
 from alphaavatar.agents import AvatarModule
-from alphaavatar.agents.entrypoints.schema.room_type import RoomType
-from alphaavatar.agents.status import LiveKitDataPublisherMixin, StatusEvent, StatusSinkBase
+from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.status import StatusEvent, StatusSinkBase
+from alphaavatar.core.output import OutputLane, OutputTextMode
 
 from .log import logger
-
-if TYPE_CHECKING:
-    from alphaavatar.agents.avatar.engine import AvatarEngine
-
-
-class StatusDeliveryMode(StrEnum):
-    TEXT = "text"
-    VOICE = "voice"
-    BOTH = "both"
-    NONE = "none"
 
 
 class CompositeStatusSink(StatusSinkBase):
@@ -44,15 +34,18 @@ class CompositeStatusSink(StatusSinkBase):
     def add_sink(self, sink: StatusSinkBase) -> None:
         self._sinks.append(sink)
 
-    def bind_engine(self, engine: Any) -> None:
-        for sink in self._sinks:
-            sink.bind_engine(engine)
+    async def start_turn(self, *, turn_id: str) -> None:
+        if not self._sinks:
+            return
 
-    def start_turn(self) -> None:
-        for sink in self._sinks:
-            start_turn = getattr(sink, "start_turn", None)
-            if callable(start_turn):
-                start_turn()
+        results = await asyncio.gather(
+            *(sink.start_turn(turn_id=turn_id) for sink in self._sinks),
+            return_exceptions=True,
+        )
+
+        for result in results:
+            if isinstance(result, Exception):
+                logger.warning("Status sink start_turn failed: %s", result)
 
     async def emit(self, event: StatusEvent, text: str | None) -> None:
         if not self._sinks:
@@ -80,293 +73,155 @@ class LoggerStatusSink(StatusSinkBase):
         )
 
 
-class StatusActionEventSink(StatusSinkBase, LiveKitDataPublisherMixin):
+class StatusVoiceOutput:
     """
-    Publish structured status action events.
+    Convert selected status messages into AUDIO_SYNCED transient source text.
 
-    This is for UI components / avatar animation / client-side state machines.
-    It does not mean "send a user-visible text message".
-    """
-
-    def __init__(
-        self,
-        *,
-        topic: str = "agent.status.action",
-        reliable: bool = True,
-    ) -> None:
-        self.topic = topic
-        self.reliable = reliable
-        self._engine: AvatarEngine | None = None
-
-    def bind_engine(self, engine: AvatarEngine) -> None:
-        self._engine = engine
-
-    async def emit(self, event: StatusEvent, text: str | None) -> None:
-        if self._engine is None:
-            return
-
-        # Only publish action events when there is an active client room.
-        local_participant = self._get_local_participant()
-        if local_participant is None:
-            return
-
-        payload = {
-            "type": "agent_status_action",
-            "event": event.to_dict(),
-            "text": text,
-            "action": self._to_action(event),
-        }
-
-        await self._publish_data(local_participant, payload, topic=self.topic)
-
-    def _to_action(self, event: StatusEvent) -> dict[str, Any]:
-        return {
-            "source": event.to_dict().get("source"),
-            "stage": event.to_dict().get("stage"),
-            "status_type": event.to_dict().get("type"),
-        }
-
-
-class TextOrVoiceStatusSink(StatusSinkBase, LiveKitDataPublisherMixin):
-    """
-    Deliver short user-facing status through text and/or voice.
-
-    Routing is decided by room type / interaction mode.
-    Voice delivery has lightweight per-source throttling, so generic thinking
-    does not block concrete tool progress.
+    This class only creates semantic message output. Router handles TTS and
+    transport adapters handle actual delivery.
     """
 
     def __init__(
         self,
         *,
-        text_topic: str = "agent.status.text",
-        reliable: bool = True,
-        min_voice_interval_sec: float = 1.2,
-        max_voice_events_per_turn: int = 3,
+        runtime: AvatarRuntime,
+        min_interval_sec: float = 1.2,
+        max_events_per_turn: int = 3,
     ) -> None:
-        self.text_topic = text_topic
-        self.reliable = reliable
-        self.min_voice_interval_sec = min_voice_interval_sec
-        self.max_voice_events_per_turn = max_voice_events_per_turn
+        self._runtime = runtime
+        self._min_interval_sec = min_interval_sec
+        self._max_events_per_turn = max_events_per_turn
 
-        self._engine: AvatarEngine | None = None
-
-        self._voice_lock = asyncio.Lock()
-        self._voice_tasks: set[asyncio.Task] = set()
-
-        self._spoken_count: int = 0
+        self._turn_id: str | None = None
+        self._spoken_count = 0
         self._last_spoken_at_by_bucket: dict[str, float] = {}
         self._spoken_keys: set[tuple[Any, ...]] = set()
 
-    def bind_engine(self, engine: AvatarEngine) -> None:
-        self._engine = engine
-
-    def start_turn(self) -> None:
+    async def start_turn(self, *, turn_id: str) -> None:
+        self._turn_id = turn_id
         self._spoken_count = 0
         self._last_spoken_at_by_bucket.clear()
         self._spoken_keys.clear()
+        await self._runtime.output.start_turn(turn_id=turn_id)
 
-    async def emit(self, event: StatusEvent, text: str | None) -> None:
-        if self._engine is None:
-            return
-
-        if not text:
-            return
-
-        mode = self._resolve_delivery_mode()
-
-        if mode == StatusDeliveryMode.NONE:
-            return
-
-        if mode in {StatusDeliveryMode.TEXT, StatusDeliveryMode.BOTH}:
-            await self._publish_text_status(
-                event,
-                text.strip(),
-            )
-
-        if mode in {StatusDeliveryMode.VOICE, StatusDeliveryMode.BOTH}:
-            self._speak_nowait(
-                event,
-                text.strip(),
-            )
-
-    def _resolve_delivery_mode(self) -> StatusDeliveryMode:
-        interaction = self._get_interaction_method()
-        if interaction is None:
-            return StatusDeliveryMode.NONE
-
-        room_type = str(getattr(interaction, "room_type", "") or "")
-        text_output = bool(getattr(interaction, "text_output", False))
-        audio_output = bool(getattr(interaction, "audio_output", False))
-
-        # Bridged text channels.
-        if room_type in {
-            RoomType.WHATSAPP.value,
-            RoomType.TELEGRAM.value,
-            RoomType.SLACK.value,
-            RoomType.DISCORD.value,
-        }:
-            return StatusDeliveryMode.TEXT
-
-        # API rooms usually should not speak.
-        if room_type == RoomType.API.value:
-            return StatusDeliveryMode.TEXT if text_output else StatusDeliveryMode.NONE
-
-        # Generic fallback based on actual outputs.
-        if text_output and audio_output:
-            return StatusDeliveryMode.BOTH
-
-        if text_output:
-            return StatusDeliveryMode.TEXT
-
-        if audio_output:
-            return StatusDeliveryMode.VOICE
-
-        return StatusDeliveryMode.NONE
-
-    def _get_interaction_method(self):
-        return self._engine.context_runtime.interaction_method
-
-    async def _publish_text_status(self, event: StatusEvent, text: str) -> None:
-        local_participant = self._get_local_participant()
-        if local_participant is None:
-            return
-
-        payload = {
-            "type": "agent_status_text",
-            "event": event.to_dict(),
-            "text": text,
-        }
-
-        await self._publish_data(local_participant, payload, topic=self.text_topic)
-
-    def _speak_nowait(self, event: StatusEvent, text: str) -> None:
+    async def emit(self, event: StatusEvent, text: str) -> str | None:
+        interaction = self._runtime.context.interaction_method
+        if not bool(getattr(interaction, "audio_output", False)):
+            return None
         if not self._should_speak(event):
-            return
+            return None
 
-        task = asyncio.create_task(self._speak_safely(event, text))
-        self._track_voice_task(task)
+        output_id = uuid4().hex
+        published = await self._runtime.output.publish_text_chunk(
+            text=text,
+            output_id=output_id,
+            turn_id=self._turn_id,
+            lane=OutputLane.TRANSIENT,
+            mode=OutputTextMode.AUDIO_SYNCED,
+            replace_lane=True,
+            is_final=True,
+            metadata={
+                "source": str(event.source),
+                "stage": event.stage,
+                "status_type": str(event.type),
+                "status_event": event.to_dict(),
+            },
+        )
+        if published is None:
+            return None
+
+        now = time.monotonic()
+        bucket = self._voice_bucket(event)
+        self._last_spoken_at_by_bucket[bucket] = now
+        self._spoken_count += 1
+        self._spoken_keys.add(self._spoken_key(event))
+        return output_id
 
     def _should_speak(self, event: StatusEvent) -> bool:
-        if self._spoken_count >= self.max_voice_events_per_turn:
+        if self._spoken_count >= self._max_events_per_turn:
             return False
 
         key = self._spoken_key(event)
         if key in self._spoken_keys:
             return False
 
-        now = time.time()
-        bucket = self._voice_bucket(event)
+        last_spoken_at = self._last_spoken_at_by_bucket.get(self._voice_bucket(event))
+        return (
+            last_spoken_at is None
+            or time.monotonic() - last_spoken_at >= self._min_interval_for(event)
+        )
 
-        last_spoken_at = self._last_spoken_at_by_bucket.get(bucket)
-        if last_spoken_at is not None:
-            if now - last_spoken_at < self._min_interval_for(event):
-                return False
-
-        return True
-
-    async def _speak_safely(self, event: StatusEvent, text: str) -> None:
-        async with self._voice_lock:
-            try:
-                await self._speak(text)
-
-                now = time.time()
-                self._last_spoken_at_by_bucket[self._voice_bucket(event)] = now
-                self._spoken_count += 1
-                self._spoken_keys.add(self._spoken_key(event))
-
-            except Exception as e:
-                logger.warning("Voice status speak failed: %s", e)
-
-    async def _speak(self, text: str) -> None:
-        if self._engine is None:
-            return
-
-        # Preferred explicit hook on AvatarEngine.
-        speak_status_text = getattr(self._engine, "speak_status_text", None)
-        if callable(speak_status_text):
-            result = speak_status_text(
-                text,
-                allow_interruptions=True,
-                add_to_chat_ctx=False,
-            )
-            if asyncio.iscoroutine(result):
-                await result
-            return
-
-        logger.debug("TextOrVoiceStatusSink skipped voice because no safe TTS method was found.")
-
-    def _voice_bucket(self, event: StatusEvent) -> str:
-        # Generic thinking and concrete tool progress should not block each other.
+    @staticmethod
+    def _voice_bucket(event: StatusEvent) -> str:
         return str(event.source)
 
     def _min_interval_for(self, event: StatusEvent) -> float:
-        # Generic thinking should not repeat too often.
         if str(event.source) == AvatarModule.AVATAR_ENGINE:
             return 3.0
-
-        # Tool monologues are concrete progress updates and can follow thinking sooner.
-        if event.source in {
-            AvatarModule.DEEPRESEARCH,
-            AvatarModule.MCP,
-            AvatarModule.RAG,
-        }:
+        if event.source in {AvatarModule.DEEPRESEARCH, AvatarModule.MCP, AvatarModule.RAG}:
             return 1.2
-
-        return self.min_voice_interval_sec
+        return self._min_interval_sec
 
     def _spoken_key(self, event: StatusEvent) -> tuple[Any, ...]:
-        return (
-            event.source,
-            event.stage,
-            event.type,
-            self._semantic_key(event),
-        )
+        return event.source, event.stage, event.type, self._semantic_key(event)
 
-    def _semantic_key(self, event: StatusEvent) -> str | None:
+    @staticmethod
+    def _semantic_key(event: StatusEvent) -> str | None:
         query = event.metadata.get("query")
         if isinstance(query, str) and query.strip():
-            return self._short_hash(query.strip())
-
+            return StatusVoiceOutput._short_hash(query.strip())
         if event.message:
-            return self._short_hash(event.message.strip())
+            return StatusVoiceOutput._short_hash(event.message.strip())
 
         url_count = event.metadata.get("url_count")
         if url_count is not None:
             return f"url_count:{url_count}"
 
         op = event.metadata.get("op")
-        if op is not None:
-            return str(op)
+        return str(op) if op is not None else None
 
-        return None
-
-    def _short_hash(self, text: str) -> str:
+    @staticmethod
+    def _short_hash(text: str) -> str:
         return sha1(text.encode("utf-8")).hexdigest()[:12]
 
-    async def _call_with_supported_kwargs(self, func, *args, **kwargs) -> None:
-        sig = inspect.signature(func)
-        supported_kwargs = {key: value for key, value in kwargs.items() if key in sig.parameters}
 
-        result = func(*args, **supported_kwargs)
-        if asyncio.iscoroutine(result):
-            await result
+class RuntimeStatusSink(StatusSinkBase):
+    """
+    Publish semantic status actions and optional transient messages.
 
-    def _track_voice_task(self, task: asyncio.Task) -> None:
-        self._voice_tasks.add(task)
+    STATUS contains only machine-readable state. Rendered text is not included
+    in STATUS and cannot be consumed as a user-visible message by transports.
+    """
 
-        def _cleanup(t: asyncio.Task) -> None:
-            self._voice_tasks.discard(t)
+    def __init__(self, *, runtime: AvatarRuntime, voice_output: StatusVoiceOutput) -> None:
+        self._runtime = runtime
+        self._voice_output = voice_output
+        self._turn_id: str | None = None
 
-            try:
-                exc = t.exception()
-            except asyncio.CancelledError:
-                return
-            except Exception as e:
-                logger.debug("Failed to inspect voice status task result: %s", e)
-                return
+    async def start_turn(self, *, turn_id: str) -> None:
+        self._turn_id = turn_id
+        await self._voice_output.start_turn(turn_id=turn_id)
 
-            if exc is not None:
-                logger.warning("Voice status task failed: %s", exc)
+    async def emit(self, event: StatusEvent, text: str | None) -> None:
+        event_payload = event.to_dict()
 
-        task.add_done_callback(_cleanup)
+        await self._runtime.output.publish_status(
+            turn_id=self._turn_id,
+            payload={
+                "event": event_payload,
+                "action": {
+                    "source": event_payload.get("source"),
+                    "stage": event_payload.get("stage"),
+                    "status_type": event_payload.get("type"),
+                },
+            },
+            metadata={
+                "source": str(event.source),
+                "stage": event.stage,
+                "status_type": str(event.type),
+            },
+        )
+
+        rendered_text = text.strip() if isinstance(text, str) and text.strip() else None
+        if rendered_text:
+            await self._voice_output.emit(event, rendered_text)

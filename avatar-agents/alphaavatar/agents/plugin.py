@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import threading
+from abc import ABC, abstractmethod
 from collections.abc import Callable
 from enum import Enum
 
@@ -125,16 +126,20 @@ class AvatarPlugin(Plugin):
                 ) from e
 
 
-class AvatarRuntimePlugin:
+class AvatarRuntimePlugin(ABC):
     """
     Base lifecycle interface for session-scoped runtime plugins.
 
     Long-lived dependencies must be injected through the constructor.
-    Lifecycle methods only express start and stop.
+    Lifecycle methods only express session start and stop.
     """
 
+    @abstractmethod
     async def on_session_start(self) -> None:
-        pass
+        """Start session-scoped tasks and acquire session resources."""
+        raise NotImplementedError
 
+    @abstractmethod
     async def on_session_stop(self) -> None:
-        pass
+        """Stop session-scoped tasks and release session resources."""
+        raise NotImplementedError

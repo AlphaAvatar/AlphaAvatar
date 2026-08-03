@@ -16,9 +16,8 @@ from __future__ import annotations
 import sys
 from array import array
 
-from livekit import rtc
-
 from alphaavatar.core.media import AudioFrame, AudioSampleFormat
+from livekit import rtc
 
 
 def _to_pcm_s16le_bytes(frame: rtc.AudioFrame) -> bytes:

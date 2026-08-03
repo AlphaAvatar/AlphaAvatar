@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from alphaavatar.agents import AvatarModule, AvatarPlugin
+from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.status import StatusEmitter
 
 from .log import logger
@@ -20,8 +21,8 @@ from .renderer import DefaultStatusRenderer
 from .sink import (
     CompositeStatusSink,
     LoggerStatusSink,
-    StatusActionEventSink,
-    TextOrVoiceStatusSink,
+    RuntimeStatusSink,
+    StatusVoiceOutput,
 )
 from .version import __version__
 
@@ -31,50 +32,52 @@ __all__ = [
     "DefaultStatusRenderer",
     "CompositeStatusSink",
     "LoggerStatusSink",
-    "StatusActionEventSink",
-    "TextOrVoiceStatusSink",
+    "RuntimeStatusSink",
+    "StatusVoiceOutput",
 ]
 
 
 class DefaultStatusPlugin(AvatarPlugin):
     def __init__(self) -> None:
-        super().__init__(__name__, __version__, __package__, logger)  # type: ignore
+        super().__init__(__name__, __version__, __package__, logger)
 
-    def download_files(self): ...
+    def download_files(self):
+        return None
 
     def get_plugin(
         self,
         *,
+        runtime: AvatarRuntime,
         enabled: bool = True,
-        action_topic: str = "agent.status.action",
-        text_topic: str = "agent.status.text",
         **kwargs,
     ) -> StatusEmitter:
         renderer = DefaultStatusRenderer()
         policy = DefaultStatusPolicy()
 
+        voice_output = StatusVoiceOutput(
+            runtime=runtime,
+        )
+
         sink = CompositeStatusSink(
             [
-                # Always enabled for observability.
                 LoggerStatusSink(),
-                # Emits structured action events.
-                # The sink itself becomes useful only when a LiveKit room exists.
-                StatusActionEventSink(
-                    topic=action_topic,
-                ),
-                # Automatically chooses text or voice based on interaction_method.
-                TextOrVoiceStatusSink(
-                    text_topic=text_topic,
+                RuntimeStatusSink(
+                    runtime=runtime,
+                    voice_output=voice_output,
                 ),
             ]
         )
 
         return StatusEmitter(
-            sink=sink,
             renderer=renderer,
             policy=policy,
+            sink=sink,
             enabled=enabled,
         )
 
 
-AvatarPlugin.register_avatar_plugin(AvatarModule.STATUS, "default", DefaultStatusPlugin())
+AvatarPlugin.register_avatar_plugin(
+    AvatarModule.STATUS,
+    "default",
+    DefaultStatusPlugin(),
+)

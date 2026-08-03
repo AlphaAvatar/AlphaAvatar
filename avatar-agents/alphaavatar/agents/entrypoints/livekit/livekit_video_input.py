@@ -15,25 +15,21 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import TYPE_CHECKING, Any
-
-from livekit import rtc
+from typing import Any
 
 from alphaavatar.agents.constants import VIDEO_RTC_INTERVAL_SEC
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.plugin import AvatarRuntimePlugin
+from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.utils.id_utils import get_md5_id
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.media import VideoFramePayload
-from alphaavatar.core.perception import PerceptionRuntime
+from livekit import rtc
 
 from .livekit_video_codec import (
     encode_video_frame_to_jpeg,
     from_livekit_video_frame,
 )
-
-if TYPE_CHECKING:
-    from alphaavatar.agents.avatar.engine import AvatarEngine
 
 
 class LiveKitVideoInputRuntime(AvatarRuntimePlugin):
@@ -55,15 +51,14 @@ class LiveKitVideoInputRuntime(AvatarRuntimePlugin):
     def __init__(
         self,
         *,
-        engine: AvatarEngine,
-        perception_runtime: PerceptionRuntime,
+        room: rtc.Room,
+        runtime: AvatarRuntime,
         jpeg_quality: int = 85,
     ) -> None:
-        self.engine = engine
-        self.perception_runtime = perception_runtime
+        self._room = room
+        self._runtime = runtime
 
         self._jpeg_quality = jpeg_quality
-
         self._video_streams: dict[
             str,
             rtc.VideoStream,
@@ -82,23 +77,10 @@ class LiveKitVideoInputRuntime(AvatarRuntimePlugin):
 
     """Helper Op"""
 
-    def _get_room(self) -> rtc.Room | None:
-        room = self.engine.livekit_room
-
-        if room is None:
-            logger.warning("LiveKit room is not bound to AvatarEngine")
-
-        return room
-
-    def _register_task(
-        self,
-        task: asyncio.Task[None],
-    ) -> None:
+    def _register_task(self, task: asyncio.Task[None]) -> None:
         self._video_tasks.add(task)
 
-        def _on_done(
-            completed_task: asyncio.Task[None],
-        ) -> None:
+        def _on_done(completed_task: asyncio.Task[None]) -> None:
             self._video_tasks.discard(completed_task)
 
             if completed_task.cancelled():
@@ -148,7 +130,7 @@ class LiveKitVideoInputRuntime(AvatarRuntimePlugin):
 
         frame_id = get_md5_id(
             [
-                self.engine.session_runtime.session_id,
+                self._runtime.session.session_id,
                 track_sid,
                 str(frame_index),
                 timestamp_text,
@@ -211,12 +193,10 @@ class LiveKitVideoInputRuntime(AvatarRuntimePlugin):
             )
             return
 
-        self.perception_runtime.publish_observation(observation)
+        self._runtime.perception.publish_observation(observation)
 
-    def _try_attach_existing_video_tracks(
-        self,
-    ) -> None:
-        room = self._get_room()
+    def _try_attach_existing_video_tracks(self) -> None:
+        room = self._room
         if room is None:
             return
 
@@ -233,13 +213,11 @@ class LiveKitVideoInputRuntime(AvatarRuntimePlugin):
                     participant_identity=(participant.identity),
                 )
 
-    def _register_video_track_listeners(
-        self,
-    ) -> None:
+    def _register_video_track_listeners(self) -> None:
         if self._listeners_registered:
             return
 
-        room = self._get_room()
+        room = self._room
         if room is None:
             return
 
@@ -407,7 +385,7 @@ class LiveKitVideoInputRuntime(AvatarRuntimePlugin):
 
         logger.info(
             "LiveKit video input runtime started session_id=%s sample_interval=%ss",
-            self.engine.session_runtime.session_id,
+            self._runtime.session.session_id,
             VIDEO_RTC_INTERVAL_SEC,
         )
 
@@ -450,5 +428,5 @@ class LiveKitVideoInputRuntime(AvatarRuntimePlugin):
 
         logger.info(
             "LiveKit video input runtime stopped session_id=%s",
-            self.engine.session_runtime.session_id,
+            self._runtime.session.session_id,
         )

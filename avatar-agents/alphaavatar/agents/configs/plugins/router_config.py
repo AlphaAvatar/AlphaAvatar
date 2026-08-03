@@ -22,6 +22,7 @@ from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.avatar.voice import (
     STTBase,
     TranscriptionEvent,
+    TTSBase,
     VADBase,
 )
 from alphaavatar.agents.interaction import InteractionRouterBase
@@ -58,6 +59,7 @@ class RouterConfig(BaseModel):
         runtime: AvatarRuntime,
         vad: VADBase | None = None,
         stt: STTBase | None = None,
+        tts: TTSBase | None = None,
         on_transcription: Callable[[TranscriptionEvent], Awaitable[None] | None] | None = None,
     ) -> InteractionRouterBase:
         if self.max_buffer_sec < self.pre_roll_sec:
@@ -70,6 +72,7 @@ class RouterConfig(BaseModel):
             # Voice
             vad=vad,
             stt=stt,
+            tts=tts,
             on_transcription=on_transcription,
             pre_roll_sec=self.pre_roll_sec,
             max_buffer_sec=self.max_buffer_sec,

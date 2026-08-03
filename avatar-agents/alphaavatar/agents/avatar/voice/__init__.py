@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .livekit_bridge import LiveKitSTTBridge
+from .livekit_transcription_adapter import LiveKitTranscriptionAdapter
 from .schema import (
     TranscriptionEvent,
     TranscriptionEventType,
@@ -19,16 +20,20 @@ from .schema import (
     VoiceActivityEventType,
 )
 from .stt import STTBase, STTCapabilities, STTInputMode, STTStreamBase
+from .tts import LiveKitTTSAdapter, TTSBase
 from .vad import VADBase, VADStreamBase
 
 __all__ = [
     "LiveKitSTTBridge",
+    "LiveKitTranscriptionAdapter",
+    "LiveKitTTSAdapter",
     "STTInputMode",
     "STTCapabilities",
     "STTBase",
     "STTStreamBase",
     "TranscriptionEvent",
     "TranscriptionEventType",
+    "TTSBase",
     "VADBase",
     "VADStreamBase",
     "VoiceActivityEvent",

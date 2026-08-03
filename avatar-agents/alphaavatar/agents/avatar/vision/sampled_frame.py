@@ -21,11 +21,9 @@ from typing import Any
 from livekit import rtc
 from livekit.agents import llm
 
-from alphaavatar.agents.avatar.perception import (
-    to_livekit_video_frame,
-)
 from alphaavatar.agents.configs.plugins.vision_config import VisionInputMode
 from alphaavatar.agents.constants import VIDEO_VISION_INTERVAL_SEC
+from alphaavatar.agents.entrypoints.livekit import to_livekit_video_frame
 from alphaavatar.agents.log import debug_every, logger
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.media import (

@@ -15,16 +15,15 @@
 
 import asyncio
 import inspect
-from collections.abc import AsyncIterable
-from contextlib import suppress
+from collections.abc import AsyncIterable, Callable, Sequence
+from typing import Any
+from uuid import uuid4
 
 from livekit import rtc
-from livekit.agents import Agent, ModelSettings, llm, stt as livekit_stt
+from livekit.agents import Agent, ModelSettings, llm, stt as livekit_stt, tts as livekit_tts
 from livekit.agents.types import FlushSentinel
-from livekit.agents.voice.generation import update_instructions
 
 from alphaavatar.agents.configs import AvatarConfig
-from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
 from alphaavatar.agents.entrypoints.schema.room_type import RoomType
 from alphaavatar.agents.interaction import InteractionRouterBase
 from alphaavatar.agents.log import logger
@@ -41,17 +40,22 @@ from alphaavatar.agents.status import (
     StatusEvent,
     StatusType,
 )
-from alphaavatar.agents.utils import format_current_time
+from alphaavatar.core.output import OutputLane
 from alphaavatar.core.perception import PerceptionRuntime
 
 from .context import init_context_manager
 from .context.internal_tools import get_runtime_context_tool
+from .lifecycle import LifecyclePhase, RuntimePluginLifecycle
 from .patches import init_avatar_patches
-from .perception import LiveKitAudioInputRuntime, LiveKitVideoInputRuntime
 from .prompting.assembler import PromptAssembler
+from .prompting.model_call import (
+    AvatarModelContextBuilder,
+    ModelCallStatus,
+    extract_answer_text,
+)
 from .prompting.template import AvatarSysPromptTemplate, RuntimeContextTemplate
 from .vision import VisionBase, build_vision
-from .voice import LiveKitSTTBridge, TranscriptionEvent, TranscriptionEventType
+from .voice import LiveKitSTTBridge, LiveKitTranscriptionAdapter, LiveKitTTSAdapter
 
 
 class AvatarEngine(Agent):
@@ -60,34 +64,47 @@ class AvatarEngine(Agent):
         *,
         avatar_config: AvatarConfig,
         runtime: AvatarRuntime,
+        rtc_plugins: dict[str, Sequence[AvatarRuntimePlugin]],
     ) -> None:
-        # LiveKit room is provided by JobContext and explicitly bound after session.start.
-        self._livekit_room: rtc.Room | None = None
-
         self.avatar_config = avatar_config
         self.runtime = runtime
+        self._rtc_plugins = rtc_plugins
 
-        # Step1: initial prompt templates and assembler
+        # Step 1: initialize prompt components.
+        #
+        # The system template is required by Agent.__init__, so it must be
+        # created before super().__init__().
         self._avatar_prompt_template = AvatarSysPromptTemplate(
             self.avatar_config.avatar.introduction,
             interaction_method=self.context_runtime.interaction_method,
             stable_behavior_rules=self.context_runtime.global_behavior_rules,
         )
-
         self._runtime_context_template = RuntimeContextTemplate()
         self._prompt_assembler = PromptAssembler(
             injection_mode=self.avatar_config.runtime.context_mode,
         )
 
-        # Step2: initial plugins
-        self._status: StatusEmitter = avatar_config.status.get_plugin()
+        # Step 2: initialize the temporary AlphaAvatar STT -> LiveKit bridge.
+        self._livekit_transcription_adapter = LiveKitTranscriptionAdapter()
+
+        # Step 3: initialize runtime plugins and tools.
+        self._livekit_tts: livekit_tts.TTS | None = avatar_config.voice.get_tts_plugin()
+        self._tts = (
+            LiveKitTTSAdapter(self._livekit_tts, owns_provider=False)
+            if self._livekit_tts is not None
+            else None
+        )
+        self._status: StatusEmitter = avatar_config.status.get_plugin(
+            runtime=self.runtime,
+        )
         self._router: InteractionRouterBase = avatar_config.router.get_plugin(
             runtime=self.runtime,
             vad=avatar_config.voice.get_vad_plugin(
                 inference_executor=self.runtime.inference,
             ),
             stt=avatar_config.voice.get_stt_plugin(),
-            on_transcription=self._handle_transcription_event,
+            tts=self._tts,
+            on_transcription=self._livekit_transcription_adapter.handle_event,
         )
         self._memory: MemoryBase = avatar_config.memory.get_plugin(
             runtime=self.runtime,
@@ -100,53 +117,60 @@ class AvatarEngine(Agent):
         )
         self._tools.append(get_runtime_context_tool())
 
-        # Step3: initial avatar
-        self._livekit_stt_events: asyncio.Queue[livekit_stt.SpeechEvent] = asyncio.Queue()
+        # Step 4: initialize the underlying LiveKit Agent.
         super().__init__(
-            instructions=self.system_template.instructions(),
-            # llm
+            instructions=self._avatar_prompt_template.instructions(),
             llm=self.avatar_config.llm.get_plugin(),
-            # voice plugins
             turn_detection=self.avatar_config.voice.get_turn_detection_plugin(),
             stt=LiveKitSTTBridge(),
             vad=self.avatar_config.voice.get_legacy_livekit_vad_plugin(),
-            tts=self.avatar_config.voice.get_tts_plugin(),
+            tts=self._livekit_tts,
             allow_interruptions=self.avatar_config.voice.allow_interruptions,
-            # tools
             tools=self._tools,
         )
 
-        # Bind runtime engine to status components.
-        self._status.bind_engine(self)
-
-        # vision
+        # Step 5: bind components that require a fully initialized Agent.
         self._vision: VisionBase = build_vision(self)
 
-        # LiveKit audio/video input adapters
-        self._audio_input_runtime = LiveKitAudioInputRuntime(
-            engine=self,
-            perception_runtime=self.perception_runtime,
-            sample_rate=16_000,
-            num_channels=1,
+        # Step 6: configure staged plugin lifecycle.
+        #
+        # Consumers start concurrently before any producer is allowed to publish.
+        # During shutdown, producers stop concurrently before consumers stop.
+        self._plugin_lifecycle = RuntimePluginLifecycle(
+            phases=(
+                LifecyclePhase.create(
+                    "rtc_outputs",
+                    tuple(self._rtc_plugins.get("outputs", ())),
+                ),
+                LifecyclePhase.create(
+                    "perception_consumers",
+                    (
+                        self._persona,
+                        self._memory,
+                        self._vision,
+                    ),
+                ),
+                LifecyclePhase.create(
+                    "interaction_router",
+                    (self._router,),
+                ),
+                LifecyclePhase.create(
+                    "rtc_inputs",
+                    tuple(self._rtc_plugins.get("inputs", ())),
+                ),
+            )
         )
 
-        self._video_input_runtime = LiveKitVideoInputRuntime(
-            engine=self,
-            perception_runtime=self.perception_runtime,
+        # Step 7: initialize per-call model context preparation.
+        self._model_context_builder = AvatarModelContextBuilder(
+            context_runtime=self.context_runtime,
+            memory=self._memory,
+            persona=self._persona,
+            vision=self._vision,
+            system_template=self._avatar_prompt_template,
+            runtime_context_template=self._runtime_context_template,
+            prompt_assembler=self._prompt_assembler,
         )
-
-        # Runtime plugins are started/stopped in on_enter/on_exit, and refreshed every turn.
-        self._perception_consumers: list[AvatarRuntimePlugin] = [
-            self._router,
-            self._persona,
-            self._memory,
-            self._vision,
-        ]
-
-        self._perception_producers: list[AvatarRuntimePlugin] = [
-            self._audio_input_runtime,
-            self._video_input_runtime,
-        ]
 
     @property
     def session_runtime(self) -> SessionRuntime:
@@ -161,10 +185,6 @@ class AvatarEngine(Agent):
         return self.runtime.perception
 
     @property
-    def livekit_room(self) -> rtc.Room | None:
-        return self._livekit_room
-
-    @property
     def memory(self) -> MemoryBase:
         """Get the memory instance."""
         return self._memory
@@ -174,129 +194,76 @@ class AvatarEngine(Agent):
         """Get the memory instance."""
         return self._persona
 
-    @property
-    def system_template(self) -> AvatarSysPromptTemplate:
-        return self._avatar_prompt_template
-
-    @property
-    def runtime_context_template(self) -> RuntimeContextTemplate:
-        return self._runtime_context_template
-
-    @property
-    def prompt_assembler(self) -> PromptAssembler:
-        return self._prompt_assembler
-
     """Helper Op"""
 
-    def _refresh_context_runtime_for_turn(self) -> None:
-        """
-        Sync plugin-produced context into ContextRuntime.
+    @staticmethod
+    async def _run_shutdown_step(
+        label: str,
+        operation: Callable[[], Any],
+        errors: list[Exception],
+    ) -> None:
+        try:
+            result = operation()
 
-        Note:
-        user_persona is system-level context, but it may become available after
-        the session starts, for example after speaker/user identity is resolved.
-        Therefore, we refresh it every turn and let the system prompt update when needed.
-        """
+            if inspect.isawaitable(result):
+                await result
 
-        # 1. Refresh current time for this turn.
-        new_timestamp = format_current_time(
-            self.context_runtime.timestamp.timezone,
-            self.context_runtime.timestamp.timezone_source,
-        )
-        self.context_runtime.timestamp = new_timestamp
-
-        # 2. Refresh persona every turn.
-        #
-        # Persona belongs to system prompt, but it can be empty at session start
-        # and become available after user/speaker identification.
-        self.context_runtime.user_persona = self.persona.persona_content or DEFAULT_SYSTEM_VALUE
-
-        # 3. Dynamic memory for current turn.
-        self.context_runtime.memory_content = self.memory.memory_content or DEFAULT_SYSTEM_VALUE
-
-        # 4. Dynamic plan / reflection / turn behavior rules.
-        #
-        # TODO:
-        # Replace these with plugin values when behavior/plan/reflection plugins are added.
-        self.context_runtime.plan_content = (
-            self.context_runtime.plan_content or DEFAULT_SYSTEM_VALUE
-        )
-        self.context_runtime.reflection_content = (
-            self.context_runtime.reflection_content or DEFAULT_SYSTEM_VALUE
-        )
-        self.context_runtime.turn_behavior_rules = (
-            self.context_runtime.turn_behavior_rules or DEFAULT_SYSTEM_VALUE
-        )
-
-    def _handle_transcription_event(self, event: TranscriptionEvent) -> None:
-        if event.type == TranscriptionEventType.ERROR:
-            logger.warning(
-                "STT error source_id=%s segment_id=%s reason=%s",
-                event.source_id,
-                event.segment_id,
-                event.reason,
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception(
+                "AvatarEngine shutdown step failed: %s",
+                label,
             )
-            return
 
-        text = event.text.strip()
-        if not text:
-            return
+            error = RuntimeError(f"AvatarEngine shutdown step failed: {label}")
+            error.__cause__ = exc
+            errors.append(error)
 
-        if event.type == TranscriptionEventType.INTERIM_TRANSCRIPT:
-            event_type = livekit_stt.SpeechEventType.INTERIM_TRANSCRIPT
-        elif event.type == TranscriptionEventType.FINAL_TRANSCRIPT:
-            event_type = livekit_stt.SpeechEventType.FINAL_TRANSCRIPT
+    @staticmethod
+    async def _call_with_supported_kwargs(
+        func: Callable[..., Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        try:
+            signature = inspect.signature(func)
+        except (TypeError, ValueError):
+            # Some extension or dynamically generated callables do not expose
+            # an inspectable signature.
+            supported_kwargs = kwargs
         else:
-            return
+            parameters = signature.parameters
 
-        self._livekit_stt_events.put_nowait(
-            livekit_stt.SpeechEvent(
-                type=event_type,
-                request_id=event.segment_id,
-                alternatives=[
-                    livekit_stt.SpeechData(
-                        language=event.language or "en",
-                        text=text,
-                        start_time=event.start_time if event.start_time is not None else 0.0,
-                        end_time=event.end_time if event.end_time is not None else 0.0,
-                        confidence=event.confidence if event.confidence is not None else 0.0,
-                        speaker_id=event.source_id,
-                    )
-                ],
+            accepts_arbitrary_kwargs = any(
+                parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
             )
-        )
 
-    async def _start_runtime_plugins(self) -> None:
-        # Consumers first: register renderers and start consumer loops before
-        # the RTC adapter begins publishing frames.
-        for plugin in self._perception_consumers:
-            await plugin.on_session_start()
+            if accepts_arbitrary_kwargs:
+                supported_kwargs = kwargs
+            else:
+                keyword_parameters = {
+                    name
+                    for name, parameter in parameters.items()
+                    if parameter.kind
+                    in {
+                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                        inspect.Parameter.KEYWORD_ONLY,
+                    }
+                }
 
-        for plugin in self._perception_producers:
-            await plugin.on_session_start()
-
-    async def _stop_runtime_plugins(self) -> None:
-        # Stop producers first so no new frames enter while consumers shut down.
-        for plugin in reversed(self._perception_producers):
-            await plugin.on_session_stop()
-
-        for plugin in reversed(self._perception_consumers):
-            await plugin.on_session_stop()
-
-    async def _call_with_supported_kwargs(self, func, *args, **kwargs):
-        sig = inspect.signature(func)
-        supported_kwargs = {key: value for key, value in kwargs.items() if key in sig.parameters}
+                supported_kwargs = {
+                    key: value for key, value in kwargs.items() if key in keyword_parameters
+                }
 
         result = func(*args, **supported_kwargs)
-        if asyncio.iscoroutine(result):
+
+        if inspect.isawaitable(result):
             return await result
 
         return result
 
     """Base Op"""
-
-    def bind_livekit_room(self, room: rtc.Room) -> None:
-        self._livekit_room = room
 
     async def speak_status_text(
         self,
@@ -331,10 +298,7 @@ class AvatarEngine(Agent):
                 add_to_chat_ctx=add_to_chat_ctx,
             )
 
-            # Some LiveKit versions return a SpeechHandle from session.say().
-            # Awaiting it here makes speak_status_text complete when playback completes.
-            # If the speech is interrupted, this may raise/cancel depending on SDK behavior.
-            if handle is not None and hasattr(handle, "__await__"):
+            if handle is not None and inspect.isawaitable(handle):
                 await handle
 
         except asyncio.CancelledError:
@@ -342,19 +306,13 @@ class AvatarEngine(Agent):
         except Exception as e:
             logger.debug("Status speech failed or was interrupted: %s", e)
 
-    async def on_enter(self):
-        # BUG: Before entering the function to send a greeting, the front end allows the user to input, but the system cannot recognize it.
-
-        # init patches and context manager
+    async def on_enter(self) -> None:
         init_avatar_patches(self)
         init_context_manager(self)
 
-        # init plugin runtime
-        await self._start_runtime_plugins()
+        await self._plugin_lifecycle.start()
 
-        # Do not use LLM-generated greeting here.
-        # It may trigger llm_node and produce awkward thinking status during startup.
-        if self.context_runtime.interaction_method.room_type in (RoomType.WEB_APP.value,):
+        if self.context_runtime.interaction_method.room_type == RoomType.WEB_APP.value:
             self._status.emit_nowait(
                 StatusEvent(
                     type=StatusType.READY,
@@ -363,18 +321,47 @@ class AvatarEngine(Agent):
                 )
             )
 
-    async def on_exit(self):
-        if hasattr(self._chat_ctx.items, "wait_pending"):
-            await self._chat_ctx.items.wait_pending()
+    async def on_exit(self) -> None:
+        errors: list[Exception] = []
 
-        # close plugins
-        await self._stop_runtime_plugins()
+        wait_pending = getattr(
+            getattr(self._chat_ctx, "items", None),
+            "wait_pending",
+            None,
+        )
 
-        # close runtime
-        await self.runtime.aclose()
+        if callable(wait_pending):
+            await self._run_shutdown_step(
+                "chat context pending flush",
+                wait_pending,
+                errors,
+            )
 
-        # Flush User Path
-        self.session_runtime.flush_user_path_migrations(remove_old=True)
+        await self._run_shutdown_step(
+            "runtime plugin shutdown",
+            self._plugin_lifecycle.stop,
+            errors,
+        )
+
+        await self._run_shutdown_step(
+            "avatar runtime shutdown",
+            self.runtime.aclose,
+            errors,
+        )
+
+        await self._run_shutdown_step(
+            "session user path migration flush",
+            lambda: self.session_runtime.flush_user_path_migrations(
+                remove_old=True,
+            ),
+            errors,
+        )
+
+        if errors:
+            raise ExceptionGroup(
+                "AvatarEngine shutdown completed with errors.",
+                errors,
+            )
 
     """Node Op"""
 
@@ -389,37 +376,7 @@ class AvatarEngine(Agent):
         AlphaAvatar owns transcription inference. LiveKit continues to own
         turn detection, endpointing and user-turn commitment in v0.6.5.
         """
-
-        async def _gen():
-            async def _drain_audio() -> None:
-                async for _ in audio:
-                    pass
-
-            drain_task = asyncio.create_task(
-                _drain_audio(),
-                name="livekit_stt_audio_drain",
-            )
-
-            try:
-                while True:
-                    yield await self._livekit_stt_events.get()
-            finally:
-                drain_task.cancel()
-                await asyncio.gather(drain_task, return_exceptions=True)
-
-        return _gen()
-
-    async def on_user_turn_completed(
-        self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage
-    ) -> None:
-        """
-        STT -> Text -> [on_user_turn_completed] -> Text append to chat context
-
-        Override [livekit.agents.voice.agent.Agent::on_user_turn_completed] method to handle user turn completion.
-        Only Voice Input will call this function, and it is called after the user stops speaking and the final transcription is ready.
-        """
-        # BUG: When multiple separate user messages are entered consecutively, LiveKit will only use the latest one.
-        ...
+        return self._livekit_transcription_adapter.stream(audio)
 
     def llm_node(
         self,
@@ -427,169 +384,50 @@ class AvatarEngine(Agent):
         tools: list[llm.Tool],
         model_settings: ModelSettings,
     ) -> AsyncIterable[llm.ChatChunk | str | FlushSentinel]:
-        """
-        STT -> Text -> Text append to chat context -> chat context [llm_node] -> llm
+        async def _generate():
+            prepared = self._model_context_builder.prepare(chat_ctx)
 
-        Static content stays in system prompt for prefix-cache friendliness.
-        Dynamic per-turn context is injected after the latest user query.
-        """
-
-        # NOTE:
-        # The user query in llm_node is appended after copying the chat_context.
-        # It's a temporary state. The user query and answer are only inserted into
-        # the chat_context after the answer is generated.
-
-        def _latest_input_kind(ctx: llm.ChatContext) -> str | None:
-            for item in reversed(getattr(ctx, "items", [])):
-                role = getattr(item, "role", None)
-                item_type = getattr(item, "type", None)
-
-                if role == "user":
-                    return "user"
-
-                if role in {"tool", "function"}:
-                    return "tool_output"
-
-                if item_type in {
-                    "tool_result",
-                    "tool_output",
-                    "function_result",
-                    "function_output",
-                    "function_call_output",
-                }:
-                    return "tool_output"
-
-                if role is not None:
-                    return str(role)
-
-            return None
-
-        def _is_answer_chunk(chunk: llm.ChatChunk | str | FlushSentinel) -> bool:
-            if isinstance(chunk, str):
-                return bool(chunk.strip())
-
-            delta = getattr(chunk, "delta", None)
-            if delta is None:
-                return False
-
-            # Tool-call chunks should not cancel initial thinking.
-            # Thinking covers the period where the model is still deciding/generating a tool call.
-            tool_calls = getattr(delta, "tool_calls", None) or getattr(delta, "toolCalls", None)
-            if tool_calls:
-                return False
-
-            content = getattr(delta, "content", None)
-            if isinstance(content, str) and content.strip():
-                return True
-
-            return False
-
-        async def _gen():
-            # 1. Sync all plugin-produced context into context_runtime.
-            self._refresh_context_runtime_for_turn()
-
-            # 2. Render system-level prompt.
-            update_instructions(
-                chat_ctx,
-                instructions=self.system_template.instructions(
-                    stable_persona=self.context_runtime.user_persona,
-                ),
-                add_if_missing=True,
+            model_call_status = ModelCallStatus(
+                emitter=self._status,
+                input_kind=prepared.input_kind,
             )
+            await model_call_status.start()
 
-            # 3. Build model-facing context.
-            # Original chat_ctx keeps full history.
-            model_chat_ctx = self.prompt_assembler.prepare_model_chat_context(
-                chat_ctx,
-                strip_historical_visuals=True,
-                add_visual_placeholder=True,
-            )
-
-            # 4. Inject current visual frames into temporary context only.
-            self._vision.inject_into_chat_ctx(model_chat_ctx)
-
-            # 5. Render turn-level runtime context.
-            runtime_context_text = self.runtime_context_template.render(
-                context_runtime=self.context_runtime
-            )
-
-            # 6. Inject runtime context after latest user query.
-            injected_chat_ctx = self.prompt_assembler.inject_runtime_context(
-                model_chat_ctx,
-                runtime_context=runtime_context_text,
-            )
-
-            # 7. Schedule status events depending on what triggered this model call.
-            latest_input_kind = _latest_input_kind(model_chat_ctx)
-
-            thinking_task = None
-            finalizing_task = None
-
-            if latest_input_kind == "user":
-                # First model call after user input:
-                # emit delayed thinking only if the model does not start answering quickly.
-                self._status.start_turn()
-                thinking_task = self._status.emit_delayed(
-                    StatusEvent(
-                        type=StatusType.THINKING,
-                        source=AvatarModule.AVATAR_ENGINE,
-                        stage="thinking",
-                    ),
-                    delay_sec=1.5,
-                )
-
-            elif latest_input_kind == "tool_output":
-                # Model call after tool/function output:
-                # emit delayed organizing/finalizing only if model takes noticeable time
-                # before deciding the next tool call or producing the final answer.
-                finalizing_task = self._status.emit_delayed(
-                    StatusEvent(
-                        type=StatusType.FINALIZING,
-                        source=AvatarModule.AVATAR_ENGINE,
-                        stage="after_tool",
-                    ),
-                    delay_sec=1.2,
-                )
-
-            thinking_cancelled = False
-            finalizing_cancelled = False
+            assistant_output_id = uuid4().hex
+            assistant_text_started = False
 
             try:
                 async for chunk in Agent.default.llm_node(
                     self,
-                    injected_chat_ctx,
+                    prepared.chat_ctx,
                     tools,
                     model_settings,
                 ):
-                    # For user-query calls, only real answer text cancels thinking.
-                    # Tool-call chunks do not cancel it; tool execution status will take over later.
-                    if (
-                        not thinking_cancelled
-                        and thinking_task is not None
-                        and _is_answer_chunk(chunk)
-                    ):
-                        if not thinking_task.done():
-                            thinking_task.cancel()
-                            with suppress(asyncio.CancelledError):
-                                await thinking_task
-                        thinking_cancelled = True
+                    await model_call_status.on_chunk(chunk)
 
-                    # For tool-output calls, any first chunk means the model has resumed:
-                    # it may be another tool call or the final answer, so cancel the delayed status.
-                    if not finalizing_cancelled and finalizing_task is not None:
-                        if not finalizing_task.done():
-                            finalizing_task.cancel()
-                            with suppress(asyncio.CancelledError):
-                                await finalizing_task
-                        finalizing_cancelled = True
+                    text = extract_answer_text(chunk)
+                    if text is not None:
+                        assistant_text_started = True
+
+                        # During the migration period this mirrors the text stream.
+                        # AgentSession still performs the actual final TTS.
+                        await self.runtime.output.publish_text_chunk(
+                            text=text,
+                            output_id=assistant_output_id,
+                            turn_id=model_call_status.turn_id,
+                            lane=OutputLane.ASSISTANT,
+                        )
 
                     yield chunk
 
             finally:
-                for task in (thinking_task, finalizing_task):
-                    if task is not None and not task.done():
-                        task.cancel()
-                        with suppress(asyncio.CancelledError):
-                            await task
+                if assistant_text_started:
+                    await self.runtime.output.complete(
+                        lane=OutputLane.ASSISTANT,
+                        output_id=assistant_output_id,
+                        turn_id=model_call_status.turn_id,
+                    )
 
-        return _gen()
+                await model_call_status.close()
+
+        return _generate()

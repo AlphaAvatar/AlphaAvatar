@@ -54,10 +54,7 @@ class AudioActivityProcessor(RouterProcessorBase):
     def name(self) -> str:
         return "audio_activity"
 
-    def _extract_frame(
-        self,
-        observation: EnvObservation,
-    ) -> AudioFrame | None:
+    def _extract_frame(self, observation: EnvObservation) -> AudioFrame | None:
         if observation.payload is None:
             return None
 
@@ -102,10 +99,7 @@ class AudioActivityProcessor(RouterProcessorBase):
 
         return self._create_source(observation, frame)
 
-    async def _consume_observation(
-        self,
-        observation: EnvObservation,
-    ) -> None:
+    async def _consume_observation(self, observation: EnvObservation) -> None:
         frame = self._extract_frame(observation)
 
         if frame is None:

@@ -42,6 +42,13 @@ from .channels.bootstrap import register_builtin_channels
 from .channels.factory import build_channel_adapters
 from .io.dispatcher import InputDispatcher
 from .io.envelopes import InputEnvelope
+from .livekit import (
+    LiveKitAudioInputRuntime,
+    LiveKitStatusOutput,
+    LiveKitTranscriptOutput,
+    LiveKitTransientAudioOutput,
+    LiveKitVideoInputRuntime,
+)
 from .schema.room_type import SUPPORTED_ADAPTER_TYPES, detect_room_type
 from .schema.session_mode import SessionMode, resolve_session_mode
 from .schema.session_type import resolve_session_type
@@ -252,6 +259,52 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
         context=context_runtime,
     )
 
+    # Build RTC Plugins
+    transient_audio_output = LiveKitTransientAudioOutput(
+        room=ctx.room,
+        output_runtime=avatar_runtime.output,
+        sample_rate=24_000,
+        num_channels=1,
+    )
+
+    status_output = LiveKitStatusOutput(
+        room=ctx.room,
+        output_runtime=avatar_runtime.output,
+        action_topic=avatar_config.status.action_topic,
+    )
+
+    transcript_output = LiveKitTranscriptOutput(
+        room=ctx.room,
+        output_runtime=avatar_runtime.output,
+        track_sid=lambda: transient_audio_output.track_sid,
+    )
+    rtc_plugins = {
+        "outputs": (
+            transient_audio_output,
+            status_output,
+            transcript_output,
+        ),
+        "inputs": (
+            LiveKitAudioInputRuntime(
+                room=ctx.room,
+                runtime=avatar_runtime,
+                sample_rate=16_000,
+                num_channels=1,
+            ),
+            LiveKitVideoInputRuntime(
+                room=ctx.room,
+                runtime=avatar_runtime,
+            ),
+        ),
+    }
+
+    # Build Avatar Engine
+    avatar_engine = AvatarEngine(
+        avatar_config=avatar_config,
+        runtime=avatar_runtime,
+        rtc_plugins=rtc_plugins,
+    )
+
     # logging
     logger.info(
         textwrap.dedent(f"""Connecting to room...
@@ -290,14 +343,6 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
                 "Linked participant disconnected. AgentSession should close via close_on_disconnect. room=%s",
                 ctx.room.name,
             )
-
-    avatar_engine = AvatarEngine(
-        avatar_config=avatar_config,
-        runtime=avatar_runtime,
-    )
-
-    # Bind room before session.start so status sinks can publish early events.
-    avatar_engine.bind_livekit_room(ctx.room)
 
     # Start character
     avatar_character = avatar_config.character.get_plugin(runtime=avatar_runtime)

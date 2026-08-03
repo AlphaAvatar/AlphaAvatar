@@ -294,7 +294,7 @@ def rebuild_from_items(items: list[dict[str, Any]]) -> dict[str, Any]:
         tokens = parse_pointer(path)
         if typ == ValueType.scalar:
             value = meta.get("value")
-            write_set(out, tokens, value, timestamp)
+            write_set(out, tokens, value, timestamp, source)
         elif typ == ValueType.list_item:
             value = meta.get("value")
             lst = _ensure_list(out, tokens)

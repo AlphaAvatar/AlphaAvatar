@@ -16,6 +16,3 @@ from collections.abc import Awaitable, Callable
 from alphaavatar.agents.status.schema import StatusEvent
 
 StatusCallback = Callable[[StatusEvent], Awaitable[None]]
-
-# text can be None for event-only status.
-StatusSink = Callable[[StatusEvent, str | None], Awaitable[None]]

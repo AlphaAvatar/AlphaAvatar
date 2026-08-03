@@ -271,10 +271,7 @@ class PersonaPluginsTemplate:
                     skip_empty=skip_empty,
                 )
                 if details_lines:
-                    sections.append(
-                        "### User profile details\n"
-                        "LLM-extracted long-term user profile.\n" + "\n".join(details_lines)
-                    )
+                    sections.append("### User profile details\n\n".join(details_lines))
 
             if sections:
                 profile_blocks.append("\n\n".join(sections))

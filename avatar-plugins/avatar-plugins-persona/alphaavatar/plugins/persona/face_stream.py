@@ -23,14 +23,14 @@ from typing import Any
 import cv2
 import numpy as np
 
-from alphaavatar.agents.avatar.perception import (
-    bgr_to_video_frame,
-    video_frame_to_bgr,
-)
 from alphaavatar.agents.constants import (
     FACE_INFERENCE_THRESHOLD,
     FACE_MATCH_THRESHOLD,
     VIDEO_PERSONA_INTERVAL_SEC,
+)
+from alphaavatar.agents.entrypoints.livekit import (
+    bgr_to_video_frame,
+    video_frame_to_bgr,
 )
 from alphaavatar.agents.persona import (
     FaceStreamBase,

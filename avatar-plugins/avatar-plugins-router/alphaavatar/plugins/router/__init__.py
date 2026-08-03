@@ -12,9 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from alphaavatar.agents import AvatarModule, AvatarPlugin
+from alphaavatar.agents.avatar.voice import STTBase, TTSBase, VADBase
+from alphaavatar.core.output import OutputLane
 
 from .log import logger
-from .processors import AudioActivityProcessor, SpeechTranscriptionProcessor
+from .processors import (
+    AudioActivityProcessor,
+    SpeechSynthesisProcessor,
+    SpeechTranscriptionProcessor,
+    TranscriptSynchronizationProcessor,
+)
 from .runtime import InteractionRouterRuntime
 from .version import __version__
 
@@ -31,8 +38,9 @@ class DefaultRouterPlugin(AvatarPlugin):
         self,
         *,
         runtime,
-        vad=None,
-        stt=None,
+        vad: VADBase | None = None,
+        stt: STTBase | None = None,
+        tts: TTSBase | None = None,
         on_transcription=None,
         pre_roll_sec: float = 0.3,
         max_buffer_sec: float = 2.0,
@@ -40,7 +48,7 @@ class DefaultRouterPlugin(AvatarPlugin):
     ):
         processors = []
 
-        if stt is not None:
+        if vad is not None:
             processors.append(
                 AudioActivityProcessor(
                     runtime=runtime,
@@ -64,10 +72,24 @@ class DefaultRouterPlugin(AvatarPlugin):
                 )
             )
 
-        return InteractionRouterRuntime(
-            runtime=runtime,
-            processors=processors,
-        )
+        if tts is not None:
+            # Register transcript synchronization before synthesis so its subscription
+            # is ready before the first AUDIO_SYNCED source message arrives.
+            processors.append(
+                TranscriptSynchronizationProcessor(
+                    runtime=runtime,
+                    lanes=(OutputLane.TRANSIENT,),
+                )
+            )
+            processors.append(
+                SpeechSynthesisProcessor(
+                    runtime=runtime,
+                    tts=tts,
+                    lanes=(OutputLane.TRANSIENT,),
+                )
+            )
+
+        return InteractionRouterRuntime(runtime=runtime, processors=processors)
 
 
 AvatarPlugin.register_avatar_plugin(

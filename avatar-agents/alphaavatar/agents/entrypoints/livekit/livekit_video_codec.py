@@ -15,17 +15,15 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
-from livekit import rtc
 
 from alphaavatar.core.media import (
     PixelFormat,
     VideoFrame,
 )
+from livekit import rtc
 
 
-def from_livekit_video_frame(
-    frame: rtc.VideoFrame,
-) -> VideoFrame:
+def from_livekit_video_frame(frame: rtc.VideoFrame) -> VideoFrame:
     rgba = frame.convert(rtc.VideoBufferType.RGBA)
 
     return VideoFrame(
@@ -37,9 +35,7 @@ def from_livekit_video_frame(
     )
 
 
-def to_livekit_video_frame(
-    frame: VideoFrame,
-) -> rtc.VideoFrame:
+def to_livekit_video_frame(frame: VideoFrame) -> rtc.VideoFrame:
     if frame.pixel_format != PixelFormat.RGBA:
         bgr = video_frame_to_bgr(frame)
         frame = bgr_to_video_frame(bgr)
@@ -52,9 +48,7 @@ def to_livekit_video_frame(
     )
 
 
-def video_frame_to_bgr(
-    frame: VideoFrame,
-) -> np.ndarray:
+def video_frame_to_bgr(frame: VideoFrame) -> np.ndarray:
     channels = frame.channels
     stride = int(frame.stride or frame.packed_stride)
 
@@ -93,9 +87,7 @@ def video_frame_to_bgr(
     return packed.copy()
 
 
-def bgr_to_video_frame(
-    bgr: np.ndarray,
-) -> VideoFrame:
+def bgr_to_video_frame(bgr: np.ndarray) -> VideoFrame:
     rgba = cv2.cvtColor(
         bgr,
         cv2.COLOR_BGR2RGBA,

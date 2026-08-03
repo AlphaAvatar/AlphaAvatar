@@ -12,9 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .audio_activity import AudioActivityProcessor
+from .speech_synthesis import SpeechSynthesisProcessor
 from .speech_transcription import SpeechTranscriptionProcessor
+from .transcript_synchronization import TranscriptSynchronizationProcessor
 
 __all__ = [
     "AudioActivityProcessor",
+    "SpeechSynthesisProcessor",
     "SpeechTranscriptionProcessor",
+    "TranscriptSynchronizationProcessor",
 ]
