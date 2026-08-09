@@ -19,6 +19,7 @@ from .config import (
     MemoryPipelineConfig,
     ValueConfig,
 )
+from .registry import build_maintenance_strategy
 
 __all__ = [
     "ExtractionConfig",
@@ -27,4 +28,5 @@ __all__ = [
     "MaintenanceOp",
     "MemoryPipelineConfig",
     "ValueConfig",
+    "build_maintenance_strategy",
 ]

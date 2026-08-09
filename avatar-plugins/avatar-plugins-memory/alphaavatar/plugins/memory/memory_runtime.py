@@ -25,6 +25,7 @@ from alphaavatar.agents.memory import (
     MemoryCache,
     MemoryCacheType,
     MemoryItem,
+    MemoryNote,
     MemoryPluginsTemplate,
     MemoryType,
     VectorRunnerOP,
@@ -39,6 +40,7 @@ from .graph import (
     save_memory_graph_stubs,
 )
 from .log import logger
+from .maintenance import JudgeDecision, JudgeVerdict
 from .memory_delta_extractor import MemoryDeltaExtractor, MemoryProviderConfig
 from .memory_markdown import save_memory_items_to_markdown
 from .memory_op import (
@@ -49,7 +51,7 @@ from .memory_op import (
     norm_token,
     rebuild_from_items,
 )
-from .pipeline import MemoryPipelineConfig
+from .pipeline import MemoryPipelineConfig, build_maintenance_strategy
 
 ENV_SAVE_TIMEOUT_SEC = 8.0
 SHUTDOWN_UPDATE_TIMEOUT_SEC = 12.0
@@ -85,6 +87,66 @@ def _merge_object_ids(*values: Any) -> list[str]:
     return merged
 
 
+def _render_judge_payload(
+    *,
+    incoming: list[MemoryItem],
+    candidates_by_index: dict[int, list[MemoryItem]],
+    allow_update: bool,
+) -> str:
+    allowed = "add, noop, update" if allow_update else "add, noop"
+    blocks = [f"Allowed decisions: {allowed}", ""]
+
+    for index, record in enumerate(incoming):
+        blocks.append(f"### Incoming memory [index={index}]")
+        blocks.append(record.render_line())
+        blocks.append("")
+        blocks.append("Existing memories close to it:")
+
+        candidates = candidates_by_index.get(index) or []
+        if not candidates:
+            blocks.append("(none)")
+        else:
+            for candidate in candidates:
+                blocks.append(f"- id={candidate.memory_id}: {candidate.render_line()}")
+        blocks.append("")
+
+    return "\n".join(blocks)
+
+
+def _collect_update_targets(
+    *,
+    verdicts: list[JudgeVerdict],
+    candidates_by_index: dict[int, list[MemoryItem]],
+) -> list[MemoryItem]:
+    targets: dict[str, MemoryItem] = {}
+
+    for verdict in verdicts:
+        if verdict.decision != JudgeDecision.UPDATE:
+            continue
+
+        by_id = {c.memory_id: c for c in candidates_by_index.get(verdict.index) or []}
+        for target_id in verdict.target_ids:
+            candidate = by_id.get(target_id)
+            if candidate is not None:
+                targets[target_id] = candidate
+
+    return list(targets.values())
+
+
+def _render_rewrite_payload(
+    *,
+    incoming: list[MemoryItem],
+    targets: list[MemoryItem],
+) -> str:
+    blocks = ["### Incoming memories", ""]
+    blocks.extend(record.render_line() for record in incoming)
+    blocks.append("")
+    blocks.append("### Existing memories to rewrite (return one object each, same order)")
+    blocks.append("")
+    blocks.extend(f"- id={t.memory_id}: {t.render_line()}" for t in targets)
+    return "\n".join(blocks)
+
+
 class MemoryRuntime(MemoryBase):
     def __init__(
         self,
@@ -113,6 +175,13 @@ class MemoryRuntime(MemoryBase):
 
         self._pipeline_config = (
             MemoryPipelineConfig(**pipeline) if pipeline else MemoryPipelineConfig()
+        )
+
+        self._maintenance = build_maintenance_strategy(
+            self._pipeline_config.maintenance,
+            candidate_search=self._maintenance_candidate_search,
+            judge=self._maintenance_judge,
+            rewriter=self._maintenance_rewrite,
         )
 
         # ENV Memory init
@@ -644,11 +713,15 @@ class MemoryRuntime(MemoryBase):
             has_tool_event = self._has_explicit_tool_event(chat_context)
 
             if cache.cache_type == MemoryCacheType.SESSION_INTERACTION:
+                extraction = self._pipeline_config.extraction
+
                 if has_tool_event:
                     conversation_delta, tool_delta = await asyncio.gather(
-                        self._delta_extractor.extract_conversation_delta(
+                        self._delta_extractor.extract_conversation_note(
                             session_content=message_content,
                             memory_cache=cache,
+                            session_gate=extraction.session_gate,
+                            keywords=extraction.keywords,
                             timeout=30.0,
                         ),
                         self._delta_extractor.extract_tool_delta(
@@ -658,22 +731,56 @@ class MemoryRuntime(MemoryBase):
                         ),
                     )
                 else:
-                    conversation_delta = await self._delta_extractor.extract_conversation_delta(
+                    conversation_delta = await self._delta_extractor.extract_conversation_note(
                         session_content=message_content,
                         memory_cache=cache,
+                        session_gate=extraction.session_gate,
+                        keywords=extraction.keywords,
                         timeout=30.0,
                     )
                     tool_delta = None
 
-                conv_avatar, conv_user = self._apply_delta_to_bucket(
-                    avatar_id=avatar_id,
-                    delta=conversation_delta,
-                    memory_cache=cache,
-                    user_or_tool_memory_type=MemoryType.CONVERSATION,
+                all_assistant.extend(
+                    self._build_memory_items_from_patches(
+                        memory_cache=cache,
+                        memory_type=MemoryType.Avatar,
+                        patches=conversation_delta.assistant_memory_entries,
+                        object_ids=[avatar_id],
+                    )
                 )
 
-                all_assistant.extend(conv_avatar)
-                all_user.extend(conv_user)
+                note_patch = conversation_delta.note
+                if norm_token(note_patch.summary) or note_patch.facts:
+                    note = MemoryNote(
+                        session_id=cache.session_id,
+                        object_ids=cache.object_ids,
+                        topic=_norm_topic(note_patch.topic),
+                        timestamp=cache.time,
+                        memory_type=MemoryType.CONVERSATION,
+                        summary=note_patch.summary,
+                        facts=list(note_patch.facts),
+                        keywords=list(note_patch.keywords),
+                    )
+
+                    maintained = await self._maintenance.apply(
+                        [note],
+                        trace_metadata=self._delta_extractor.base_trace_metadata(
+                            memory_cache=cache,
+                            operation="maintenance",
+                            memory_type=MemoryType.CONVERSATION,
+                            component="memory_maintenance",
+                        ),
+                    )
+
+                    logger.info(
+                        "[sid: %s] maintenance inserted=%d rewritten=%d dropped=%d",
+                        current_sid,
+                        len(maintained.to_insert),
+                        len(maintained.to_rewrite),
+                        len(maintained.dropped),
+                    )
+
+                    all_user.extend(maintained.all_writes())
 
                 if tool_delta is not None:
                     tool_avatar, tool_memories = self._apply_delta_to_bucket(
@@ -722,6 +829,142 @@ class MemoryRuntime(MemoryBase):
             timeout=timeout,
         ):
             logger.warning("Memory SAVE incomplete; updated items remain pending.")
+
+    """Maintenance Op"""
+
+    async def _maintenance_candidate_search(
+        self,
+        texts: list[str],
+        *,
+        timeout: float = 5.0,
+    ) -> list[list[dict[str, Any]]]:
+        empty: list[list[dict[str, Any]]] = [[] for _ in texts]
+
+        if not texts:
+            return []
+
+        json_data = {
+            "op": VectorRunnerOP.search_similar_batch,
+            "param": {
+                "texts": texts,
+                "top_k": self._pipeline_config.maintenance.max_candidates_per_note,
+                "object_ids": _merge_object_ids([self.avatar_id]),
+                "memory_type": MemoryType.CONVERSATION.value,
+            },
+        }
+
+        try:
+            result = await asyncio.wait_for(
+                self.inference_executor.do_inference(
+                    self.vdb_inference_method,
+                    json.dumps(json_data).encode(),
+                ),
+                timeout=timeout,
+            )
+        except Exception as e:
+            logger.warning("Memory [maintenance candidate search] failed: %s", e)
+            return empty
+
+        if result is None:
+            return empty
+
+        data = json.loads(result.decode())
+
+        if data.get("error"):
+            logger.warning("Memory [maintenance candidate search] err: %s", data["error"])
+            return empty
+
+        results = data.get("results") or []
+
+        # Never let a short response shift candidates onto the wrong record.
+        if len(results) != len(texts):
+            logger.warning(
+                "Memory [maintenance] candidate count mismatch: got %d want %d",
+                len(results),
+                len(texts),
+            )
+            return empty
+
+        return results
+
+    async def _maintenance_judge(
+        self,
+        *,
+        incoming: list[MemoryItem],
+        candidates_by_index: dict[int, list[MemoryItem]],
+        allow_update: bool,
+        trace_metadata: dict[str, Any],
+    ) -> list[JudgeVerdict]:
+        payload = _render_judge_payload(
+            incoming=incoming,
+            candidates_by_index=candidates_by_index,
+            allow_update=allow_update,
+        )
+
+        verdicts = await self._delta_extractor.judge_maintenance(
+            payload=payload,
+            metadata={**trace_metadata, "operation": "maintenance_judge"},
+            timeout=self._pipeline_config.maintenance.timeout,
+        )
+        return verdicts.verdicts
+
+    async def _maintenance_rewrite(
+        self,
+        *,
+        incoming: list[MemoryItem],
+        verdicts: list[JudgeVerdict],
+        candidates_by_index: dict[int, list[MemoryItem]],
+        trace_metadata: dict[str, Any],
+    ) -> dict[str, MemoryItem]:
+        targets = _collect_update_targets(
+            verdicts=verdicts,
+            candidates_by_index=candidates_by_index,
+        )
+
+        if not targets:
+            return {}
+
+        payload = _render_rewrite_payload(incoming=incoming, targets=targets)
+
+        rewritten = await self._delta_extractor.rewrite_memories(
+            payload=payload,
+            metadata={**trace_metadata, "operation": "maintenance_rewrite"},
+            timeout=self._pipeline_config.maintenance.timeout,
+        )
+
+        by_id: dict[str, MemoryItem] = {}
+        target_by_id = {t.memory_id: t for t in targets}
+
+        for update in rewritten.updates:
+            original = target_by_id.get(update.id)
+            if not isinstance(original, MemoryNote):
+                continue
+
+            # Immutable update: a new object. The original memory_id is kept so
+            # the VDB save (delete-by-id + reinsert) acts as an upsert, and the
+            # original timestamp is kept because it records when the fact was
+            # observed -- overwriting it would corrupt temporal reasoning.
+            # `value` is recomposed by the MemoryNote validator.
+            by_id[update.id] = MemoryNote(
+                memory_id=original.memory_id,
+                session_id=original.session_id,
+                object_ids=list(original.object_ids),
+                topic=original.topic,
+                timestamp=original.timestamp,
+                memory_type=original.memory_type,
+                summary=update.summary or original.summary,
+                facts=list(update.facts or original.facts),
+                keywords=list(update.keywords or original.keywords),
+                graph_nodes=list(original.graph_nodes),
+                graph_links=list(original.graph_links),
+                extra_data={
+                    **original.extra_data,
+                    "updated_at": self.context_runtime.timestamp.time_str,
+                    "updated_in_session": self.session_runtime.session_id,
+                },
+            )
+
+        return by_id
 
     """Runtime Op"""
 

@@ -29,6 +29,12 @@ from alphaavatar.agents.providers.schema import (
 )
 
 from .log import logger
+from .maintenance import (
+    JUDGE_PROMPT,
+    REWRITE_PROMPT,
+    JudgeVerdicts,
+    RewrittenMemories,
+)
 from .memory_op import ConversationDelta, EnvMemoryDelta, MemoryDelta
 from .memory_prompts import (
     CONVERSATION_DELTA_PROMPT,
@@ -228,6 +234,40 @@ class MemoryDeltaExtractor:
                 operation="conversation_delta",
                 memory_type=MemoryType.CONVERSATION,
             ),
+            timeout=timeout,
+        )
+
+    async def judge_maintenance(
+        self,
+        *,
+        payload: str,
+        metadata: dict[str, Any],
+        timeout: float,
+    ) -> JudgeVerdicts:
+        return await self._safe_ainvoke_structured(
+            task_name=self._conversation_delta_task,
+            prompt=JUDGE_PROMPT,
+            payload={"payload": payload},
+            output_schema=JudgeVerdicts,
+            fallback_output=JudgeVerdicts(),
+            metadata=metadata,
+            timeout=timeout,
+        )
+
+    async def rewrite_memories(
+        self,
+        *,
+        payload: str,
+        metadata: dict[str, Any],
+        timeout: float,
+    ) -> RewrittenMemories:
+        return await self._safe_ainvoke_structured(
+            task_name=self._conversation_delta_task,
+            prompt=REWRITE_PROMPT,
+            payload={"payload": payload},
+            output_schema=RewrittenMemories,
+            fallback_output=RewrittenMemories(),
+            metadata=metadata,
             timeout=timeout,
         )
 
