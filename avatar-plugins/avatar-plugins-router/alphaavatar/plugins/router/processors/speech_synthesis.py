@@ -70,7 +70,8 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
         tts: TTSBase | None,
         lanes: tuple[OutputLane, ...] = (OutputLane.TRANSIENT,),
     ) -> None:
-        self._runtime = runtime
+        super().__init__(runtime=runtime)
+
         self._tts = tts
         self._lanes = lanes
         self._subscription: OutputSubscription | None = None
@@ -82,47 +83,15 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
     def name(self) -> str:
         return "speech_synthesis"
 
-    async def start(self) -> None:
-        if self._started:
-            return
-
-        self._subscription = await self._runtime.output.stream.subscribe(
-            self.CONSUMER_ID,
-            kinds=(OutputKind.TEXT_CHUNK, OutputKind.SPEECH_REQUEST, OutputKind.CONTROL),
-            lanes=self._lanes,
-            max_pending=128,
-            reliable=True,
-        )
-        self._run_task = asyncio.create_task(self._run(), name=self.CONSUMER_ID)
-        self._started = True
-
-    async def stop(self) -> None:
-        if not self._started:
-            return
-
-        self._started = False
-        run_task = self._run_task
-        self._run_task = None
-
-        if run_task is not None and not run_task.done():
-            run_task.cancel()
-        if run_task is not None:
-            await asyncio.gather(run_task, return_exceptions=True)
-
-        jobs = tuple(self._jobs.values())
-        self._jobs.clear()
-
-        for job in jobs:
-            if not job.task.done():
-                job.task.cancel()
-
-        if jobs:
-            await asyncio.gather(*(job.task for job in jobs), return_exceptions=True)
-
-        if self._subscription is not None:
-            await self._runtime.output.stream.unsubscribe(self.CONSUMER_ID)
-
-        self._subscription = None
+    @staticmethod
+    def _matches_control(job: _SpeechJob, control: OutputControl) -> bool:
+        if control.target_output_id is not None and job.output_id != control.target_output_id:
+            return False
+        if control.target_lane is not None and job.lane != control.target_lane:
+            return False
+        if control.target_turn_id is not None and job.turn_id != control.target_turn_id:
+            return False
+        return True
 
     async def _run(self) -> None:
         subscription = self._subscription
@@ -136,8 +105,6 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
                 try:
                     if event.kind == OutputKind.TEXT_CHUNK:
                         await self._handle_text_chunk(event)
-                    elif event.kind == OutputKind.SPEECH_REQUEST:
-                        await self._handle_legacy_speech_request(event)
                     elif event.kind == OutputKind.CONTROL:
                         await self._handle_control(event)
                 except asyncio.CancelledError:
@@ -167,25 +134,6 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
                 text=payload.text,
                 source_chunk_id=payload.chunk_id,
                 is_final=payload.is_final,
-                metadata=dict(event.metadata),
-            ),
-        )
-
-    async def _handle_legacy_speech_request(self, event: OutputEvent) -> None:
-        payload = event.payload
-        if not isinstance(payload, dict):
-            return
-
-        text = payload.get("text")
-        if not isinstance(text, str):
-            return
-
-        await self._enqueue_segment(
-            event,
-            _SpeechSegment(
-                text=text,
-                source_chunk_id=payload.get("chunk_id"),
-                is_final=bool(payload.get("is_final", True)),
                 metadata=dict(event.metadata),
             ),
         )
@@ -362,12 +310,44 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
         await asyncio.gather(job.task, return_exceptions=True)
         logger.debug("Speech synthesis job cancelled output_id=%s reason=%s", output_id, reason)
 
-    @staticmethod
-    def _matches_control(job: _SpeechJob, control: OutputControl) -> bool:
-        if control.target_output_id is not None and job.output_id != control.target_output_id:
-            return False
-        if control.target_lane is not None and job.lane != control.target_lane:
-            return False
-        if control.target_turn_id is not None and job.turn_id != control.target_turn_id:
-            return False
-        return True
+    async def start(self) -> None:
+        if self._started:
+            return
+
+        self._subscription = await self._runtime.output.stream.subscribe(
+            self.CONSUMER_ID,
+            kinds=(OutputKind.TEXT_CHUNK, OutputKind.CONTROL),
+            lanes=self._lanes,
+            max_pending=128,
+            reliable=True,
+        )
+        self._run_task = asyncio.create_task(self._run(), name=self.CONSUMER_ID)
+        self._started = True
+
+    async def stop(self) -> None:
+        if not self._started:
+            return
+
+        self._started = False
+        run_task = self._run_task
+        self._run_task = None
+
+        if run_task is not None and not run_task.done():
+            run_task.cancel()
+        if run_task is not None:
+            await asyncio.gather(run_task, return_exceptions=True)
+
+        jobs = tuple(self._jobs.values())
+        self._jobs.clear()
+
+        for job in jobs:
+            if not job.task.done():
+                job.task.cancel()
+
+        if jobs:
+            await asyncio.gather(*(job.task for job in jobs), return_exceptions=True)
+
+        if self._subscription is not None:
+            await self._runtime.output.stream.unsubscribe(self.CONSUMER_ID)
+
+        self._subscription = None

@@ -15,59 +15,57 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 from alphaavatar.core.media import MediaPayload
+from alphaavatar.core.time import RuntimeTimeRange
 
 from .annotation import EnvAnnotation
 
 
+class ObservationKind(StrEnum):
+    VIDEO_FRAME = "video_frame"
+    VIDEO_CLIP = "video_clip"
+    SCREEN_FRAME = "screen_frame"
+
+    AUDIO_FRAME = "audio_frame"
+    AUDIO_SEGMENT = "audio_segment"
+    SPEECH_FRAME = "speech_frame"
+    SPEECH_SEGMENT = "speech_segment"
+
+    TRANSCRIPT_DELTA = "transcript_delta"
+    TRANSCRIPT_SEGMENT = "transcript_segment"
+    TEXT_INPUT = "text_input"
+
+    IMAGE_INPUT = "image_input"
+
+
 @dataclass(slots=True)
 class EnvObservation:
-    """
-    Runtime environment observation envelope.
-
-    payload:
-        AlphaAvatar-owned MediaPayload.
-
-        It must not directly contain:
-        - LiveKit rtc.VideoFrame
-        - provider-specific content blocks
-        - LangChain message objects
-
-    path:
-        Optional persisted evidence path.
-    """
-
-    kind: str
-    timestamp: str
+    kind: ObservationKind
+    time_range: RuntimeTimeRange
     source_id: str
-
     observation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-
     path: str | None = None
     mime_type: str | None = None
-
-    payload: MediaPayload | None = field(
-        default=None,
-        repr=False,
-        compare=False,
-    )
-
+    payload: MediaPayload | None = field(default=None, repr=False, compare=False)
     metadata: dict[str, Any] = field(default_factory=dict)
     annotations: list[EnvAnnotation] = field(default_factory=list)
 
     @property
+    def timestamp(self) -> str:
+        return str(self.time_range.end.unix_seconds)
+
+    @property
     def frame_id(self) -> str | None:
-        metadata_frame_id = self.metadata.get("frame_id")
-        if metadata_frame_id:
-            return str(metadata_frame_id)
+        value = self.metadata.get("frame_id") or getattr(self.payload, "frame_id", None)
+        return str(value) if value else None
 
-        payload_frame_id = getattr(self.payload, "frame_id", None)
-        if payload_frame_id:
-            return str(payload_frame_id)
-
-        return None
+    @property
+    def segment_id(self) -> str | None:
+        value = self.metadata.get("segment_id") or getattr(self.payload, "segment_id", None)
+        return str(value) if value else None
 
     @property
     def has_payload(self) -> bool:
@@ -78,101 +76,52 @@ class EnvObservation:
         return bool(self.path)
 
     def add_annotation(self, annotation: EnvAnnotation) -> bool:
-        """
-        Add annotation once.
-
-        Returns True when added and False when it already existed.
-        """
-
-        for current in self.annotations:
-            if current.annotation_id == annotation.annotation_id:
-                return False
-
+        if any(current.annotation_id == annotation.annotation_id for current in self.annotations):
+            return False
         self.annotations.append(annotation)
         return True
 
     def clear_payload(self) -> None:
         if self.payload is not None:
             self.payload.clear()
-
         self.payload = None
 
     def to_evidence_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "observation_id": self.observation_id,
+            "kind": self.kind.value,
+            "source_id": self.source_id,
+            "timestamp": self.timestamp,
+            "time_range": {
+                "start_unix_ns": self.time_range.start.unix_ns,
+                "start_monotonic_ns": self.time_range.start.monotonic_ns,
+                "end_unix_ns": self.time_range.end.unix_ns,
+                "end_monotonic_ns": self.time_range.end.monotonic_ns,
+            },
+            "mime_type": self.mime_type,
+            "metadata": dict(self.metadata),
+            "annotations": [annotation.to_dict() for annotation in self.annotations],
+        }
         if self.path:
-            data: dict[str, Any] = {
-                "observation_id": self.observation_id,
-                "kind": self.kind,
-                "timestamp": self.timestamp,
-                "source_id": self.source_id,
-                "mime_type": self.mime_type,
-                "metadata": self.metadata,
-                "annotations": [annotation.to_dict() for annotation in self.annotations],
-                "path": self.path,
-            }
-
-            return data
-        else:
-            return {}
+            data["path"] = self.path
+        return data
 
     @classmethod
-    def video_frame(
+    def _create(
         cls,
         *,
-        timestamp: str,
-        source_id: str,
-        payload: MediaPayload,
-        path: str | None = None,
-        metadata: dict[str, Any] | None = None,
-        annotations: list[EnvAnnotation] | None = None,
-    ) -> EnvObservation:
-        return cls(
-            kind="video_frame",
-            timestamp=timestamp,
-            source_id=source_id,
-            path=path,
-            mime_type="image/jpeg",
-            payload=payload,
-            metadata=metadata or {},
-            annotations=annotations or [],
-        )
-
-    @classmethod
-    def screen_frame(
-        cls,
-        *,
-        timestamp: str,
-        source_id: str,
-        payload: MediaPayload,
-        path: str | None = None,
-        metadata: dict[str, Any] | None = None,
-        annotations: list[EnvAnnotation] | None = None,
-    ) -> EnvObservation:
-        return cls(
-            kind="screen_frame",
-            timestamp=timestamp,
-            source_id=source_id,
-            path=path,
-            mime_type="image/jpeg",
-            payload=payload,
-            metadata=metadata or {},
-            annotations=annotations or [],
-        )
-
-    @classmethod
-    def video_clip(
-        cls,
-        *,
-        timestamp: str,
+        kind: ObservationKind,
+        time_range: RuntimeTimeRange,
         source_id: str,
         payload: MediaPayload | None = None,
         path: str | None = None,
-        mime_type: str = "video/mp4",
+        mime_type: str | None = None,
         metadata: dict[str, Any] | None = None,
         annotations: list[EnvAnnotation] | None = None,
     ) -> EnvObservation:
         return cls(
-            kind="video_clip",
-            timestamp=timestamp,
+            kind=kind,
+            time_range=time_range,
             source_id=source_id,
             path=path,
             mime_type=mime_type,
@@ -182,61 +131,56 @@ class EnvObservation:
         )
 
     @classmethod
-    def audio_frame(
-        cls,
-        *,
-        timestamp: str,
-        source_id: str,
-        payload: MediaPayload,
-        path: str | None = None,
-        mime_type: str = "audio/pcm",
-        metadata: dict[str, Any] | None = None,
-        annotations: list[EnvAnnotation] | None = None,
-    ) -> EnvObservation:
-        """
-        Create one atomic runtime audio-frame observation.
-
-        The payload should normally be AudioFramePayload containing an
-        AlphaAvatar-owned AudioFrame and its PCM representation.
-        """
-
-        return cls(
-            kind="audio_frame",
-            timestamp=timestamp,
-            source_id=source_id,
-            path=path,
-            mime_type=mime_type,
-            payload=payload,
-            metadata=metadata or {},
-            annotations=annotations or [],
-        )
+    def video_frame(cls, **kwargs: Any) -> EnvObservation:
+        kwargs.setdefault("mime_type", "image/jpeg")
+        return cls._create(kind=ObservationKind.VIDEO_FRAME, **kwargs)
 
     @classmethod
-    def audio_segment(
-        cls,
-        *,
-        timestamp: str,
-        source_id: str,
-        payload: MediaPayload | None = None,
-        path: str | None = None,
-        mime_type: str = "audio/pcm",
-        metadata: dict[str, Any] | None = None,
-        annotations: list[EnvAnnotation] | None = None,
-    ) -> EnvObservation:
-        """
-        Create one completed logical audio segment.
+    def screen_frame(cls, **kwargs: Any) -> EnvObservation:
+        kwargs.setdefault("mime_type", "image/jpeg")
+        return cls._create(kind=ObservationKind.SCREEN_FRAME, **kwargs)
 
-        A speech segment should normally be produced by Interaction Router
-        after VAD has accepted and finalized a continuous speech region.
-        """
+    @classmethod
+    def video_clip(cls, **kwargs: Any) -> EnvObservation:
+        kwargs.setdefault("mime_type", "video/mp4")
+        return cls._create(kind=ObservationKind.VIDEO_CLIP, **kwargs)
 
-        return cls(
-            kind="audio_segment",
-            timestamp=timestamp,
-            source_id=source_id,
-            path=path,
-            mime_type=mime_type,
-            payload=payload,
-            metadata=metadata or {},
-            annotations=annotations or [],
-        )
+    @classmethod
+    def audio_frame(cls, **kwargs: Any) -> EnvObservation:
+        kwargs.setdefault("mime_type", "audio/pcm")
+        return cls._create(kind=ObservationKind.AUDIO_FRAME, **kwargs)
+
+    @classmethod
+    def audio_segment(cls, **kwargs: Any) -> EnvObservation:
+        kwargs.setdefault("mime_type", "audio/pcm")
+        return cls._create(kind=ObservationKind.AUDIO_SEGMENT, **kwargs)
+
+    @classmethod
+    def speech_frame(cls, **kwargs: Any) -> EnvObservation:
+        kwargs.setdefault("mime_type", "audio/pcm")
+        return cls._create(kind=ObservationKind.SPEECH_FRAME, **kwargs)
+
+    @classmethod
+    def speech_segment(cls, **kwargs: Any) -> EnvObservation:
+        kwargs.setdefault("mime_type", "audio/pcm")
+        return cls._create(kind=ObservationKind.SPEECH_SEGMENT, **kwargs)
+
+    @classmethod
+    def transcript_delta(cls, **kwargs: Any) -> EnvObservation:
+        kwargs.setdefault("mime_type", "text/plain")
+        return cls._create(kind=ObservationKind.TRANSCRIPT_DELTA, **kwargs)
+
+    @classmethod
+    def transcript_segment(cls, **kwargs: Any) -> EnvObservation:
+        kwargs.setdefault("mime_type", "text/plain")
+        return cls._create(kind=ObservationKind.TRANSCRIPT_SEGMENT, **kwargs)
+
+    @classmethod
+    def text_input(cls, **kwargs: Any) -> EnvObservation:
+        kwargs.setdefault("mime_type", "text/plain")
+        return cls._create(kind=ObservationKind.TEXT_INPUT, **kwargs)
+
+    @classmethod
+    def image_input(cls, **kwargs: Any) -> EnvObservation:
+        kwargs.setdefault("mime_type", "image/*")
+        return cls._create(kind=ObservationKind.IMAGE_INPUT, **kwargs)

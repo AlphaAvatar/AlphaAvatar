@@ -21,8 +21,9 @@ from typing import Any
 from pydantic import BaseModel
 
 from alphaavatar.agents.log import logger
-from alphaavatar.agents.providers.schema import ProviderTraceConfig, ProviderTraceRecord
 from alphaavatar.agents.utils import local_now_iso, short_hash
+
+from .schema import ProviderTraceConfig, ProviderTraceRecord
 
 PROVIDER_TASKS_DIR = "tasks"
 PROVIDER_TRACE_FILE = "traces.jsonl"

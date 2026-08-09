@@ -22,16 +22,19 @@ from alphaavatar.agents.avatar.voice import (
     STTBase,
     STTStreamBase,
     TranscriptionEvent,
+    TranscriptionEventType,
 )
 from alphaavatar.agents.interaction import RouterProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env import EnvObservation, ObservationKind
 from alphaavatar.core.media import (
     AudioFrame,
     PayloadFormat,
     PayloadFormatUnavailable,
     PayloadView,
+    TextPayload,
 )
+from alphaavatar.core.time import RuntimeTimeRange
 
 from ..log import logger
 
@@ -71,12 +74,14 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
         if close_timeout_sec <= 0:
             raise ValueError("close_timeout_sec must be positive")
 
-        self.stt = stt
+        self._stt = stt
         self._on_event = on_event
         self._close_timeout_sec = close_timeout_sec
 
         self._sources: dict[str, _STTSource] = {}
         self._discarded_segments: set[tuple[str, str]] = set()
+        self._segment_ranges: dict[tuple[str, str], RuntimeTimeRange] = {}
+
         self._consume_task: asyncio.Task[None] | None = None
         self._started = False
 
@@ -88,6 +93,26 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
     def _segment_id(observation: EnvObservation) -> str | None:
         segment_id = observation.metadata.get("segment_id")
         return str(segment_id) if segment_id else None
+
+    @staticmethod
+    def _transcript_source_id(source_id: str) -> str:
+        return f"router:transcript:{source_id}"
+
+    @staticmethod
+    def _merge_time_range(
+        current: RuntimeTimeRange | None,
+        incoming: RuntimeTimeRange,
+    ) -> RuntimeTimeRange:
+        if current is None:
+            return incoming
+
+        start = (
+            current.start
+            if current.start.monotonic_ns <= incoming.start.monotonic_ns
+            else incoming.start
+        )
+        end = current.end if current.end.monotonic_ns >= incoming.end.monotonic_ns else incoming.end
+        return RuntimeTimeRange(start=start, end=end)
 
     @staticmethod
     def _extract_frame(observation: EnvObservation) -> AudioFrame | None:
@@ -108,7 +133,7 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
     def _create_source(self, source_id: str) -> _STTSource:
         source = _STTSource(
             source_id=source_id,
-            stream=self.stt.stream(source_id=source_id),
+            stream=self._stt.stream(source_id=source_id),
         )
         source.event_task = asyncio.create_task(
             self._event_loop(source),
@@ -119,10 +144,55 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
         logger.info(
             "Speech transcription source created source_id=%s provider=%s model=%s",
             source_id,
-            self.stt.provider,
-            self.stt.model,
+            self._stt.provider,
+            self._stt.model,
         )
         return source
+
+    def _publish_transcription_observation(
+        self,
+        event: TranscriptionEvent,
+    ) -> None:
+        if event.type not in {
+            TranscriptionEventType.INTERIM_TRANSCRIPT,
+            TranscriptionEventType.FINAL_TRANSCRIPT,
+        }:
+            return
+
+        text = event.text.strip()
+        if not text:
+            return
+
+        key = event.source_id, event.segment_id
+        time_range = self._segment_ranges.get(key) or self._runtime.clock.point()
+        metadata = {
+            "segment_id": event.segment_id,
+            "speech_source_id": event.source_id,
+            "language": event.language,
+            "confidence": event.confidence,
+            "provider": event.provider,
+            "model": event.model,
+        }
+        payload = TextPayload.create(
+            text=text,
+            language=event.language,
+            metadata=dict(metadata),
+        )
+
+        factory = (
+            EnvObservation.transcript_segment
+            if event.type == TranscriptionEventType.FINAL_TRANSCRIPT
+            else EnvObservation.transcript_delta
+        )
+
+        self._runtime.perception.publish_observation(
+            factory(
+                time_range=time_range,
+                source_id=self._transcript_source_id(event.source_id),
+                payload=payload,
+                metadata=metadata,
+            )
+        )
 
     async def _close_source(self, source: _STTSource, *, graceful: bool) -> None:
         if self._sources.get(source.source_id) is source:
@@ -136,7 +206,7 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
                     asyncio.shield(task),
                     timeout=self._close_timeout_sec,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     "Speech transcription source drain timed out source_id=%s",
                     source.source_id,
@@ -166,6 +236,20 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
             await self._close_source(source, graceful=graceful)
 
     async def _dispatch_event(self, event: TranscriptionEvent) -> None:
+        key = event.source_id, event.segment_id
+
+        if event.type in {
+            TranscriptionEventType.INTERIM_TRANSCRIPT,
+            TranscriptionEventType.FINAL_TRANSCRIPT,
+        }:
+            self._publish_transcription_observation(event)
+
+        if event.type in {
+            TranscriptionEventType.FINAL_TRANSCRIPT,
+            TranscriptionEventType.ERROR,
+        }:
+            self._segment_ranges.pop(key, None)
+
         try:
             result = self._on_event(event)
 
@@ -269,13 +353,21 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
         if not source_id or segment_id is None:
             return
 
-        if observation.kind == "audio_frame":
+        key = source_id, segment_id
+
+        if observation.kind == ObservationKind.SPEECH_FRAME:
+            self._segment_ranges[key] = self._merge_time_range(
+                self._segment_ranges.get(key),
+                observation.time_range,
+            )
             await self._consume_frame(
                 observation,
                 source_id=source_id,
                 segment_id=segment_id,
             )
-        elif observation.kind == "audio_segment":
+
+        elif observation.kind == ObservationKind.SPEECH_SEGMENT:
+            self._segment_ranges[key] = observation.time_range
             await self._commit_segment(
                 source_id=source_id,
                 segment_id=segment_id,
@@ -284,12 +376,12 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
     async def _consume_loop(self) -> None:
         while True:
             try:
-                await self.perception_runtime.wait_for_pending_observations(
+                await self._runtime.perception.wait_for_pending_observations(
                     consumer_id=self.CONSUMER_ID,
                     streams={"speech"},
                 )
 
-                window = self.perception_runtime.take_pending_observations(
+                window = self._runtime.perception.take_pending_observations(
                     consumer_id=self.CONSUMER_ID,
                     streams={"speech"},
                     require_payload=True,
@@ -300,6 +392,7 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
                         "Speech transcription observed input gap missed=%s",
                         window.missed_count,
                     )
+                    self._segment_ranges.clear()
                     await self._close_sources(graceful=False)
                     self._discarded_segments.clear()
 
@@ -319,7 +412,7 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
                                 observation.kind,
                             )
 
-                self.perception_runtime.commit_observations(window)
+                self._runtime.perception.commit_observations(window)
 
             except asyncio.CancelledError:
                 raise
@@ -339,9 +432,9 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
 
         logger.info(
             "Speech transcription started provider=%s model=%s streaming=%s",
-            self.stt.provider,
-            self.stt.model,
-            self.stt.streaming,
+            self._stt.provider,
+            self._stt.model,
+            self._stt.streaming,
         )
 
     async def stop(self) -> None:
@@ -358,9 +451,11 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
         await self._close_sources(graceful=True)
         self._discarded_segments.clear()
 
-        self.perception_runtime.clear_consumer(
+        self._runtime.perception.clear_consumer(
             self.CONSUMER_ID,
             streams={"speech"},
         )
+
+        self._segment_ranges.clear()
 
         logger.info("Speech transcription stopped")

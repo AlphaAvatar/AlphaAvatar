@@ -54,16 +54,14 @@ class DefaultStatusPlugin(AvatarPlugin):
         renderer = DefaultStatusRenderer()
         policy = DefaultStatusPolicy()
 
-        voice_output = StatusVoiceOutput(
-            runtime=runtime,
-        )
-
         sink = CompositeStatusSink(
             [
                 LoggerStatusSink(),
+                StatusVoiceOutput(
+                    runtime=runtime,
+                ),
                 RuntimeStatusSink(
                     runtime=runtime,
-                    voice_output=voice_output,
                 ),
             ]
         )

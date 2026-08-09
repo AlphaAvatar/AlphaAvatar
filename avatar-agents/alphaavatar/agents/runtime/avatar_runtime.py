@@ -19,10 +19,12 @@ from dataclasses import dataclass
 
 from alphaavatar.core.output import OutputRuntime
 from alphaavatar.core.perception import PerceptionRuntime
+from alphaavatar.core.time import RuntimeClock
 
 from .context_runtime import ContextRuntime
 from .inference import InferenceExecutor
 from .session_runtime import SessionRuntime
+from .turn_runtime import TurnRuntime
 
 
 @dataclass(slots=True, frozen=True)
@@ -30,13 +32,16 @@ class AvatarRuntime:
     """
     Session-scoped runtime composition root.
 
-    This class owns runtime references, but does not own transport adapters or
-    runtime plugins.
+    Transport adapters and runtime plugins depend on this composition, while
+    core runtimes remain independent from LiveKit and provider implementations.
     """
+
+    clock: RuntimeClock
 
     session: SessionRuntime
     context: ContextRuntime
     perception: PerceptionRuntime
+    turn: TurnRuntime
     output: OutputRuntime
     inference: InferenceExecutor
 
@@ -46,16 +51,23 @@ class AvatarRuntime:
         if session_id != self.perception.session_id:
             raise ValueError(
                 "SessionRuntime and PerceptionRuntime session IDs differ: "
-                f"session={session_id!r}, "
-                f"perception={self.perception.session_id!r}"
+                f"session={session_id!r}, perception={self.perception.session_id!r}"
             )
 
         if session_id != self.output.session_id:
             raise ValueError(
                 "SessionRuntime and OutputRuntime session IDs differ: "
-                f"session={session_id!r}, "
-                f"output={self.output.session_id!r}"
+                f"session={session_id!r}, output={self.output.session_id!r}"
             )
+
+        if self.perception.clock is not self.clock:
+            raise ValueError("PerceptionRuntime must use AvatarRuntime.clock")
+
+        if self.output.clock is not self.clock:
+            raise ValueError("OutputRuntime must use AvatarRuntime.clock")
+
+        if self.turn.perception is not self.perception:
+            raise ValueError("TurnRuntime must use AvatarRuntime.perception")
 
     @classmethod
     def create(
@@ -65,13 +77,17 @@ class AvatarRuntime:
         context: ContextRuntime,
         inference: InferenceExecutor | None = None,
     ) -> AvatarRuntime:
+        clock = RuntimeClock()
         session_id = session.session_id
+        perception = PerceptionRuntime(session_id=session_id, clock=clock)
 
         return cls(
+            clock=clock,
             session=session,
             context=context,
-            perception=PerceptionRuntime(session_id=session_id),
-            output=OutputRuntime(session_id=session_id),
+            perception=perception,
+            turn=TurnRuntime(perception=perception),
+            output=OutputRuntime(session_id=session_id, clock=clock),
             inference=inference or InferenceExecutor.from_env(),
         )
 

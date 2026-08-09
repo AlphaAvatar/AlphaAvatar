@@ -11,7 +11,20 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-VISUAL_INPUT_PREFIX = "[Live video context]"
-VIDEO_FRAME_LABEL_PREFIX = "[Live video moment "
-LATEST_VIDEO_FRAME_LABEL = "[Current live video moment]"
-HISTORICAL_VISUAL_PLACEHOLDER_PREFIX = "[Previous live video context omitted:"
+from __future__ import annotations
+
+from .base import ProviderInputAdapter
+from .langchain_gemini import LangChainGeminiInputAdapter
+
+
+class ProviderInputAdapterRegistry:
+    def __init__(self) -> None:
+        self._adapters: dict[str, ProviderInputAdapter] = {
+            "langchain_gemini": LangChainGeminiInputAdapter(),
+        }
+
+    def resolve(self, name: str) -> ProviderInputAdapter:
+        try:
+            return self._adapters[name]
+        except KeyError as exc:
+            raise ValueError(f"Unknown provider input adapter: {name!r}") from exc

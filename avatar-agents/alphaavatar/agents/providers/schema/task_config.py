@@ -29,6 +29,10 @@ class ProviderTaskConfig(BaseModel):
 
     prompt_version: str | None = None
 
+    # Converts AlphaAvatar ModelInput into provider SDK input.
+    input_adapter: str | None = None
+    input_options: dict[str, Any] = Field(default_factory=dict)
+
     # Provider-specific kwargs, such as:
     # - base_url
     # - max_tokens

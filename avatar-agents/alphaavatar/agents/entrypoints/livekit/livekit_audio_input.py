@@ -14,7 +14,8 @@
 from __future__ import annotations
 
 import asyncio
-import time
+from collections.abc import Coroutine
+from dataclasses import dataclass
 from typing import Any
 
 from alphaavatar.agents.log import logger
@@ -23,24 +24,34 @@ from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.utils.id_utils import get_md5_id
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.media import AudioFramePayload
+from alphaavatar.core.perception import (
+    MediaModality,
+    MediaSourceKind,
+    MediaSourceState,
+    MediaSourceStateEvent,
+)
+from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
 from livekit import rtc
 
 from .livekit_audio_codec import from_livekit_audio_frame
 
 
-class LiveKitAudioInputRuntime(AvatarRuntimePlugin):
-    """
-    LiveKit audio input adapter.
+@dataclass(slots=True)
+class _AudioTrackBinding:
+    track_sid: str
+    track_name: str
+    track_source: int
+    participant_identity: str
+    source_id: str
+    generation: int
+    publication: rtc.RemoteTrackPublication
+    stream: rtc.AudioStream
+    state: MediaSourceState | None = None
+    reader_task: asyncio.Task[None] | None = None
 
-    Responsibilities:
-    - subscribe to LiveKit audio tracks;
-    - normalize incoming RTC audio into a stable sample rate/channel layout;
-    - convert rtc.AudioFrame into AlphaAvatar AudioFrame;
-    - publish audio_frame observations into PerceptionRuntime.
 
-    It must not run VAD, STT, speaker inference, audio classification, or
-    interaction routing.
-    """
+class LiveKitAudioInput(AvatarRuntimePlugin):
+    """Translate LiveKit microphone tracks into audio observations and source-state events."""
 
     def __init__(
         self,
@@ -52,73 +63,157 @@ class LiveKitAudioInputRuntime(AvatarRuntimePlugin):
         frame_size_ms: int = 20,
     ) -> None:
         if sample_rate <= 0:
-            raise ValueError(f"sample_rate must be positive: {sample_rate}")
+            raise ValueError("sample_rate must be positive")
         if num_channels <= 0:
-            raise ValueError(f"num_channels must be positive: {num_channels}")
+            raise ValueError("num_channels must be positive")
         if frame_size_ms <= 0:
-            raise ValueError(f"frame_size_ms must be positive: {frame_size_ms}")
+            raise ValueError("frame_size_ms must be positive")
 
         self._room = room
         self._runtime = runtime
-
         self._sample_rate = sample_rate
         self._num_channels = num_channels
         self._frame_size_ms = frame_size_ms
-
-        self._audio_streams: dict[str, rtc.AudioStream] = {}
-        self._audio_tasks: set[asyncio.Task[None]] = set()
-
+        self._bindings: dict[str, _AudioTrackBinding] = {}
+        self._generation_by_source: dict[str, int] = {}
+        self._tasks: set[asyncio.Task[None]] = set()
         self._listeners_registered = False
         self._started = False
 
-    """Helper operations"""
+    def _spawn(self, coroutine: Coroutine[Any, Any, None], *, name: str) -> asyncio.Task[None]:
+        task = asyncio.create_task(coroutine, name=name)
+        self._tasks.add(task)
 
-    def _register_task(self, task: asyncio.Task[None]) -> None:
-        self._audio_tasks.add(task)
-
-        def _on_done(completed_task: asyncio.Task[None]) -> None:
-            self._audio_tasks.discard(completed_task)
-
-            if completed_task.cancelled():
+        def on_done(completed: asyncio.Task[None]) -> None:
+            self._tasks.discard(completed)
+            if completed.cancelled():
                 return
-
-            try:
-                error = completed_task.exception()
-            except asyncio.CancelledError:
-                return
-
+            error = completed.exception()
             if error is not None:
                 logger.error(
-                    "LiveKit audio background task failed",
+                    "LiveKit audio background task failed task=%s",
+                    completed.get_name(),
                     exc_info=(type(error), error, error.__traceback__),
                 )
 
-        task.add_done_callback(_on_done)
+        task.add_done_callback(on_done)
+        return task
+
+    @staticmethod
+    def _source_id(participant_identity: str, track_sid: str) -> str:
+        return f"env:microphone:{participant_identity or track_sid}"
+
+    def _next_generation(self, source_id: str) -> int:
+        generation = self._generation_by_source.get(source_id, 0) + 1
+        self._generation_by_source[source_id] = generation
+        return generation
+
+    def _publish_source_state(
+        self,
+        binding: _AudioTrackBinding,
+        state: MediaSourceState,
+        *,
+        reason: str,
+    ) -> None:
+        if binding.state == state:
+            return
+        binding.state = state
+        self._runtime.perception.publish_source_state(
+            MediaSourceStateEvent(
+                source_id=binding.source_id,
+                generation=binding.generation,
+                modality=MediaModality.AUDIO,
+                source_kind=MediaSourceKind.MICROPHONE,
+                state=state,
+                reason=reason,
+                metadata={
+                    "rtc_backend": "livekit",
+                    "track_sid": binding.track_sid,
+                    "track_name": binding.track_name,
+                    "track_source": binding.track_source,
+                    "participant_identity": binding.participant_identity,
+                },
+            )
+        )
+        logger.info(
+            "LiveKit audio source state source_id=%s generation=%s state=%s reason=%s",
+            binding.source_id,
+            binding.generation,
+            state.value,
+            reason,
+        )
+
+    def _binding_for_publication(
+        self,
+        publication: rtc.RemoteTrackPublication,
+    ) -> _AudioTrackBinding | None:
+        binding = self._bindings.get(publication.sid)
+        return binding if binding is not None and binding.publication is publication else None
+
+    def _detach_binding(
+        self,
+        binding: _AudioTrackBinding,
+        *,
+        state: MediaSourceState,
+        reason: str,
+    ) -> bool:
+        if self._bindings.get(binding.track_sid) is not binding:
+            return False
+        self._bindings.pop(binding.track_sid)
+        self._publish_source_state(binding, state, reason=reason)
+        return True
+
+    def _detach_publication(
+        self,
+        publication: rtc.RemoteTrackPublication,
+        *,
+        state: MediaSourceState,
+        reason: str,
+    ) -> _AudioTrackBinding | None:
+        binding = self._binding_for_publication(publication)
+        return (
+            binding
+            if binding and self._detach_binding(binding, state=state, reason=reason)
+            else None
+        )
+
+    def _schedule_close(self, binding: _AudioTrackBinding | None) -> None:
+        if binding is not None:
+            self._spawn(
+                self._close_binding(binding),
+                name=f"livekit_audio_close:{binding.track_sid}:{binding.generation}",
+            )
 
     def _build_observation(
         self,
         *,
+        binding: _AudioTrackBinding,
         frame: rtc.AudioFrame,
-        track_sid: str,
-        participant_identity: str,
         frame_index: int,
-        timestamp: float,
+        ended_at: RuntimeTime,
     ) -> EnvObservation:
-        timestamp_text = str(timestamp)
+        audio_frame = from_livekit_audio_frame(frame)
+        time_range = RuntimeTimeRange(
+            start=ended_at.shifted(-audio_frame.duration_sec),
+            end=ended_at,
+        )
         frame_id = get_md5_id(
             [
                 self._runtime.session.session_id,
-                track_sid,
+                binding.track_sid,
+                str(binding.generation),
                 str(frame_index),
-                timestamp_text,
+                str(ended_at.unix_ns),
             ]
         )
-
-        audio_frame = from_livekit_audio_frame(frame)
         metadata: dict[str, Any] = {
             "frame_id": frame_id,
-            "track_sid": track_sid,
-            "participant_identity": participant_identity,
+            "track_sid": binding.track_sid,
+            "track_name": binding.track_name,
+            "track_source": binding.track_source,
+            "participant_identity": binding.participant_identity,
+            "source_generation": binding.generation,
+            "source_kind": MediaSourceKind.MICROPHONE.value,
             "frame_index": frame_index,
             "sample_rate": audio_frame.sample_rate,
             "num_channels": audio_frame.num_channels,
@@ -126,197 +221,238 @@ class LiveKitAudioInputRuntime(AvatarRuntimePlugin):
             "duration_sec": audio_frame.duration_sec,
             "rtc_backend": "livekit",
         }
-
         payload = AudioFramePayload.create(
             frame=audio_frame,
             frame_id=frame_id,
             metadata=dict(metadata),
         )
-
         return EnvObservation.audio_frame(
-            timestamp=timestamp_text,
-            source_id=f"env:audio:{track_sid}",
+            time_range=time_range,
+            source_id=binding.source_id,
             payload=payload,
             metadata=metadata,
         )
 
-    def _publish_audio_frame(
+    async def _read_stream(self, binding: _AudioTrackBinding) -> None:
+        frame_index = 0
+        terminal_state = MediaSourceState.ENDED
+        terminal_reason = "reader_ended"
+        try:
+            async for event in binding.stream:
+                if not self._started or self._bindings.get(binding.track_sid) is not binding:
+                    break
+                if binding.state == MediaSourceState.MUTED:
+                    continue
+                frame_index += 1
+                ended_at = self._runtime.clock.now()
+                try:
+                    observation = self._build_observation(
+                        binding=binding,
+                        frame=event.frame,
+                        frame_index=frame_index,
+                        ended_at=ended_at,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to convert LiveKit audio frame participant=%s track_sid=%s generation=%s frame_index=%s",
+                        binding.participant_identity,
+                        binding.track_sid,
+                        binding.generation,
+                        frame_index,
+                    )
+                    continue
+                if (
+                    not self._started
+                    or self._bindings.get(binding.track_sid) is not binding
+                    or binding.state not in {MediaSourceState.STARTED, MediaSourceState.ACTIVE}
+                ):
+                    continue
+                self._publish_source_state(
+                    binding, MediaSourceState.ACTIVE, reason="frame_received"
+                )
+                self._runtime.perception.publish_observation(observation)
+        except asyncio.CancelledError:
+            terminal_reason = "reader_cancelled"
+            raise
+        except Exception:
+            terminal_state = MediaSourceState.ERROR
+            terminal_reason = "reader_error"
+            logger.exception(
+                "LiveKit audio reader failed participant=%s track_sid=%s generation=%s",
+                binding.participant_identity,
+                binding.track_sid,
+                binding.generation,
+            )
+        finally:
+            if self._detach_binding(binding, state=terminal_state, reason=terminal_reason):
+                await self._close_stream(binding)
+
+    def _create_stream(
         self,
         *,
-        frame: rtc.AudioFrame,
-        track_sid: str,
+        track: rtc.Track,
+        publication: rtc.RemoteTrackPublication,
         participant_identity: str,
-        frame_index: int,
-        timestamp: float,
     ) -> None:
+        if not self._started:
+            return
+        existing = self._bindings.get(publication.sid)
+        if existing is not None:
+            if existing.publication is publication:
+                return
+            if self._detach_binding(
+                existing, state=MediaSourceState.ENDED, reason="track_replaced"
+            ):
+                self._schedule_close(existing)
+
+        source_id = self._source_id(participant_identity, publication.sid)
+        binding = _AudioTrackBinding(
+            track_sid=publication.sid,
+            track_name=publication.name,
+            track_source=int(publication.source),
+            participant_identity=participant_identity,
+            source_id=source_id,
+            generation=self._next_generation(source_id),
+            publication=publication,
+            stream=rtc.AudioStream(
+                track,
+                sample_rate=self._sample_rate,
+                num_channels=self._num_channels,
+                frame_size_ms=self._frame_size_ms,
+            ),
+        )
+        self._bindings[binding.track_sid] = binding
+        self._publish_source_state(
+            binding,
+            MediaSourceState.MUTED if publication.muted else MediaSourceState.STARTED,
+            reason="track_subscribed",
+        )
+        binding.reader_task = self._spawn(
+            self._read_stream(binding),
+            name=f"livekit_audio_reader:{binding.track_sid}:{binding.generation}",
+        )
+
+    async def _close_stream(self, binding: _AudioTrackBinding) -> None:
         try:
-            observation = self._build_observation(
-                frame=frame,
-                track_sid=track_sid,
-                participant_identity=participant_identity,
-                frame_index=frame_index,
-                timestamp=timestamp,
-            )
+            await binding.stream.aclose()
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.exception(
-                "Failed to convert LiveKit audio frame participant=%s track_sid=%s frame_index=%s",
-                participant_identity,
-                track_sid,
-                frame_index,
+                "Failed to close LiveKit audio stream participant=%s track_sid=%s generation=%s",
+                binding.participant_identity,
+                binding.track_sid,
+                binding.generation,
             )
-            return
 
-        self._runtime.perception.publish_observation(observation)
+    async def _close_binding(self, binding: _AudioTrackBinding) -> None:
+        await self._close_stream(binding)
+        task = binding.reader_task
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            await asyncio.gather(task, return_exceptions=True)
 
-    def _try_attach_existing_audio_tracks(self) -> None:
-        room = self._room
-        if room is None:
-            return
-
-        for participant in room.remote_participants.values():
+    def _attach_existing_tracks(self) -> None:
+        for participant in self._room.remote_participants.values():
             for publication in participant.track_publications.values():
                 track = publication.track
-                if track is None or track.kind != rtc.TrackKind.KIND_AUDIO:
-                    continue
+                if track is not None and publication.kind == rtc.TrackKind.KIND_AUDIO:
+                    self._create_stream(
+                        track=track,
+                        publication=publication,
+                        participant_identity=participant.identity,
+                    )
 
-                self._create_audio_stream(
-                    track=track,
-                    track_sid=publication.sid,
-                    participant_identity=participant.identity,
-                )
-
-    def _register_audio_track_listeners(self) -> None:
+    def _register_listeners(self) -> None:
         if self._listeners_registered:
             return
-
-        room = self._room
-        if room is None:
-            return
-
         self._listeners_registered = True
 
-        @room.on("track_subscribed")
+        @self._room.on("track_subscribed")
         def on_track_subscribed(
             track: rtc.Track,
             publication: rtc.RemoteTrackPublication,
             participant: rtc.RemoteParticipant,
         ) -> None:
-            if not self._started or track.kind != rtc.TrackKind.KIND_AUDIO:
-                return
+            if self._started and track.kind == rtc.TrackKind.KIND_AUDIO:
+                self._create_stream(
+                    track=track,
+                    publication=publication,
+                    participant_identity=participant.identity,
+                )
 
-            self._create_audio_stream(
-                track=track,
-                track_sid=publication.sid,
-                participant_identity=participant.identity,
-            )
+        @self._room.on("track_muted")
+        def on_track_muted(
+            publication: rtc.RemoteTrackPublication,
+            participant: rtc.RemoteParticipant,
+        ) -> None:
+            if publication.kind == rtc.TrackKind.KIND_AUDIO and (
+                binding := self._binding_for_publication(publication)
+            ):
+                self._publish_source_state(binding, MediaSourceState.MUTED, reason="track_muted")
 
-        @room.on("track_unsubscribed")
+        @self._room.on("track_unmuted")
+        def on_track_unmuted(
+            publication: rtc.RemoteTrackPublication,
+            participant: rtc.RemoteParticipant,
+        ) -> None:
+            if publication.kind == rtc.TrackKind.KIND_AUDIO and (
+                binding := self._binding_for_publication(publication)
+            ):
+                self._publish_source_state(
+                    binding, MediaSourceState.STARTED, reason="track_unmuted"
+                )
+
+        @self._room.on("track_unsubscribed")
         def on_track_unsubscribed(
             track: rtc.Track,
             publication: rtc.RemoteTrackPublication,
             participant: rtc.RemoteParticipant,
         ) -> None:
-            if track.kind != rtc.TrackKind.KIND_AUDIO:
-                return
-
-            task = asyncio.create_task(
-                self._aclose_audio_stream(
-                    track_sid=publication.sid,
-                    participant_identity=participant.identity,
-                ),
-                name=f"livekit_audio_stream_close:{publication.sid}",
-            )
-            self._register_task(task)
-
-    def _create_audio_stream(
-        self,
-        *,
-        track: rtc.Track,
-        track_sid: str,
-        participant_identity: str,
-    ) -> None:
-        if not self._started or track_sid in self._audio_streams:
-            return
-
-        audio_stream = rtc.AudioStream(
-            track,
-            sample_rate=self._sample_rate,
-            num_channels=self._num_channels,
-            frame_size_ms=self._frame_size_ms,
-        )
-        self._audio_streams[track_sid] = audio_stream
-
-        async def read_stream() -> None:
-            frame_index = 0
-
-            try:
-                async for event in audio_stream:
-                    if not self._started:
-                        break
-
-                    frame_index += 1
-                    self._publish_audio_frame(
-                        frame=event.frame,
-                        track_sid=track_sid,
-                        participant_identity=participant_identity,
-                        frame_index=frame_index,
-                        timestamp=time.time(),
+            if track.kind == rtc.TrackKind.KIND_AUDIO:
+                self._schedule_close(
+                    self._detach_publication(
+                        publication,
+                        state=MediaSourceState.ENDED,
+                        reason="track_unsubscribed",
                     )
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception(
-                    "Audio stream reader failed participant=%s track_sid=%s",
-                    participant_identity,
-                    track_sid,
                 )
-            finally:
-                if self._audio_streams.get(track_sid) is audio_stream:
-                    self._audio_streams.pop(track_sid, None)
 
-        task = asyncio.create_task(
-            read_stream(),
-            name=f"livekit_audio_stream_reader:{track_sid}",
-        )
-        self._register_task(task)
+        @self._room.on("track_unpublished")
+        def on_track_unpublished(
+            publication: rtc.RemoteTrackPublication,
+            participant: rtc.RemoteParticipant,
+        ) -> None:
+            if publication.kind == rtc.TrackKind.KIND_AUDIO:
+                self._schedule_close(
+                    self._detach_publication(
+                        publication,
+                        state=MediaSourceState.ENDED,
+                        reason="track_unpublished",
+                    )
+                )
 
-        logger.info(
-            "LiveKit audio track attached participant=%s track_sid=%s sample_rate=%s channels=%s",
-            participant_identity,
-            track_sid,
-            self._sample_rate,
-            self._num_channels,
-        )
-
-    async def _aclose_audio_stream(
-        self,
-        *,
-        track_sid: str,
-        participant_identity: str,
-    ) -> None:
-        audio_stream = self._audio_streams.pop(track_sid, None)
-        if audio_stream is None:
-            return
-
-        try:
-            await audio_stream.aclose()
-        except Exception:
-            logger.exception(
-                "Failed to close audio stream participant=%s track_sid=%s",
-                participant_identity,
-                track_sid,
-            )
-
-    """Runtime operations"""
+        @self._room.on("participant_disconnected")
+        def on_participant_disconnected(participant: rtc.RemoteParticipant) -> None:
+            bindings = [
+                binding
+                for binding in self._bindings.values()
+                if binding.participant_identity == participant.identity
+            ]
+            for binding in bindings:
+                if self._detach_binding(
+                    binding,
+                    state=MediaSourceState.ENDED,
+                    reason="participant_disconnected",
+                ):
+                    self._schedule_close(binding)
 
     async def on_session_start(self) -> None:
         if self._started:
             return
 
         self._started = True
-        self._register_audio_track_listeners()
-        self._try_attach_existing_audio_tracks()
-
+        self._register_listeners()
+        self._attach_existing_tracks()
         logger.info(
             "LiveKit audio input runtime started session_id=%s sample_rate=%s channels=%s",
             self._runtime.session.session_id,
@@ -329,27 +465,19 @@ class LiveKitAudioInputRuntime(AvatarRuntimePlugin):
             return
 
         self._started = False
-
-        streams = list(self._audio_streams.items())
-        self._audio_streams.clear()
-
-        for track_sid, audio_stream in streams:
-            try:
-                await audio_stream.aclose()
-            except Exception:
-                logger.exception("Failed to close audio stream track_sid=%s", track_sid)
-
-        tasks = list(self._audio_tasks)
-
-        for task in tasks:
-            if not task.done():
-                task.cancel()
-
+        bindings = list(self._bindings.values())
+        for binding in bindings:
+            self._detach_binding(binding, state=MediaSourceState.ENDED, reason="session_stopped")
+        if bindings:
+            await asyncio.gather(
+                *(self._close_binding(binding) for binding in bindings), return_exceptions=True
+            )
+        tasks = list(self._tasks)
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-
-        self._audio_tasks.clear()
-
+        self._bindings.clear()
+        self._generation_by_source.clear()
+        self._tasks.clear()
         logger.info(
             "LiveKit audio input runtime stopped session_id=%s",
             self._runtime.session.session_id,

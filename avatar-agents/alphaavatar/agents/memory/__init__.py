@@ -17,6 +17,7 @@ from .enum.cache_type import MemoryCacheType
 from .enum.memory_type import MemoryType
 from .enum.runner_op import VectorRunnerOP
 from .schema.memory_item import MemoryItem
+from .template import MemoryPluginsTemplate
 
 __all__ = [
     "MemoryBase",
@@ -25,4 +26,5 @@ __all__ = [
     "MemoryCacheType",
     "MemoryType",
     "VectorRunnerOP",
+    "MemoryPluginsTemplate",
 ]

@@ -22,8 +22,13 @@ from typing import Any
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
-from alphaavatar.agents.avatar.prompting import PersonaPluginsTemplate
-from alphaavatar.agents.persona import PersonaCache, ProfilerBase, UserProfile, VectorRunnerOP
+from alphaavatar.agents.persona import (
+    PersonaCache,
+    PersonaPluginsTemplate,
+    ProfilerBase,
+    UserProfile,
+    VectorRunnerOP,
+)
 from alphaavatar.agents.providers import (
     ProviderGateway,
     ProvidersConfig,

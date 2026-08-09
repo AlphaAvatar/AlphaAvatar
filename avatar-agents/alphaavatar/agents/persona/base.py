@@ -16,7 +16,6 @@ from typing import Any
 import numpy as np
 from livekit.agents.llm import ChatItem
 
-from alphaavatar.agents.avatar.prompting import PersonaPluginsTemplate
 from alphaavatar.agents.constants import FACE_MATCH_THRESHOLD, SPEAKER_MATCH_THRESHOLD
 from alphaavatar.agents.log import debug_every, logger
 from alphaavatar.agents.plugin import AvatarRuntimePlugin
@@ -32,6 +31,7 @@ from .face import FaceStreamBase
 from .profiler import ProfilerBase
 from .schema.user_profile import UserProfile, UserRuntimeState
 from .speaker import SpeakerStreamBase
+from .template import PersonaPluginsTemplate
 
 
 class PersonaBase(AvatarRuntimePlugin):

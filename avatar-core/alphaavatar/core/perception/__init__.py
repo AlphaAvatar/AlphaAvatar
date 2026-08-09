@@ -11,28 +11,58 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from .alignment import (
+    AlignedPerception,
+    AlignedSpeechSegment,
+    PerceptionTemporalAligner,
+    TemporalAlignmentMode,
+    TemporalAlignmentPolicy,
+    TemporalSlice,
+    TemporalSliceKind,
+)
+from .event import (
+    MediaModality,
+    MediaSourceKind,
+    MediaSourceSnapshot,
+    MediaSourceState,
+    MediaSourceStateEvent,
+    PerceptionCutoff,
+    PerceptionEvent,
+    PerceptionEventKind,
+    PerceptionSnapshot,
+)
 from .runtime import PerceptionRuntime
-from .stream import (
-    PerceptionStream,
-    StreamRead,
-    StreamRecord,
-)
-from .timeline import (
-    EnvAnnotationRenderer,
-    PerceptionTimeline,
-)
-from .window import (
-    PerceptionWindow,
-    PerceptionWindowBuilder,
-)
+from .source_registry import MediaSourceRegistry, advance_source_states
+from .stream import PerceptionStream, StreamRead, StreamRecord, StreamSlice
+from .timeline import EnvAnnotationRenderer, PerceptionTimeline
+from .window import PerceptionWindow, PerceptionWindowBuilder
 
 __all__ = [
+    "AlignedPerception",
+    "AlignedSpeechSegment",
     "EnvAnnotationRenderer",
+    "MediaModality",
+    "MediaSourceKind",
+    "MediaSourceRegistry",
+    "MediaSourceSnapshot",
+    "MediaSourceState",
+    "MediaSourceStateEvent",
+    "PerceptionCutoff",
+    "PerceptionEvent",
+    "PerceptionEventKind",
     "PerceptionRuntime",
+    "PerceptionSnapshot",
     "PerceptionStream",
+    "PerceptionTemporalAligner",
     "PerceptionTimeline",
     "PerceptionWindow",
     "PerceptionWindowBuilder",
     "StreamRead",
     "StreamRecord",
+    "StreamSlice",
+    "TemporalAlignmentMode",
+    "TemporalAlignmentPolicy",
+    "TemporalSlice",
+    "TemporalSliceKind",
+    "advance_source_states",
 ]

@@ -11,14 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .audio import (
-    AudioFrame,
-    AudioFramePayload,
-    AudioSampleFormat,
-    AudioSegmentPayload,
-)
+from .audio import AudioFrame, AudioFramePayload, AudioSampleFormat, AudioSegmentPayload
 from .formats import PayloadFormat, PayloadView
+from .image import ImagePayload
 from .payload import MediaPayload, PayloadFormatUnavailable
+from .text import TextPayload
 from .video import PixelFormat, VideoFrame, VideoFramePayload
 
 __all__ = [
@@ -26,11 +23,13 @@ __all__ = [
     "AudioFramePayload",
     "AudioSampleFormat",
     "AudioSegmentPayload",
+    "ImagePayload",
     "MediaPayload",
     "PayloadFormat",
     "PayloadFormatUnavailable",
     "PayloadView",
     "PixelFormat",
+    "TextPayload",
     "VideoFrame",
     "VideoFramePayload",
 ]

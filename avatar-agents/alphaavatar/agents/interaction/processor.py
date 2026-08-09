@@ -16,7 +16,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.core.perception import PerceptionRuntime
 
 
 class RouterProcessorBase(ABC):
@@ -28,11 +27,7 @@ class RouterProcessorBase(ABC):
     """
 
     def __init__(self, *, runtime: AvatarRuntime) -> None:
-        self.runtime = runtime
-
-    @property
-    def perception_runtime(self) -> PerceptionRuntime:
-        return self.runtime.perception
+        self._runtime = runtime
 
     @property
     @abstractmethod

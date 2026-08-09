@@ -42,29 +42,37 @@ class DeepResearchBase(ABC):
     """Base class for RAG API tools."""
 
     name = "DeepResearch"
-    description = """Perform deep web research and content acquisition for a given topic.
+    description = """Search and research the public web.
 
-This tool is best used when the task requires:
-- Broad information gathering from multiple sources
-- Exploratory research on unfamiliar or complex topics
-- Collecting background knowledge, trends, or comparisons
-- Answering open-ended questions that cannot be resolved from a single source
+Use this tool for public-internet information, especially:
+- Current or time-sensitive facts, such as stock prices, company or market
+  information, news, recent events, schedules, and product information
+- Direct factual web lookups that require fresh external information
+- Broad or exploratory research across multiple public sources
+- Comparisons, trends, background research, and evidence synthesis
+- Fetching, extracting, or downloading known web pages
 
-It exposes four operations (op) that can be composed into a pipeline:
+Routing rules:
+- For a direct current fact or quick public-web lookup, use op="search".
+- For a complex question requiring multiple sources, comparison, or synthesis,
+  use op="research".
+- Use op="scrape" only when URLs are already known and their page contents
+  need to be extracted.
+- Use op="download" only when URLs need to be saved as PDF artifacts.
+- Prefer this tool over MCP for general public-web information.
+- MCP is limited to capabilities explicitly exposed by its configured servers;
+  it is not a general public-web search fallback.
+
+Operations:
 - search:
-    Perform a lightweight web search for quick discovery. Use this when you
-    need fast, broad results with minimal reasoning.
+    Fast public-web search for a direct fact or recent information.
 - research:
-    Perform deep, multi-step research. Use this when the question requires
-    decomposition, iterative searching, cross-source comparison, and reasoning.
+    Deeper multi-source public-web research and synthesis.
 - scrape:
-    Given a list of URLs, fetch and extract the main page contents, then
-    merge them into an integrated Markdown text suitable for downstream
-    processing (e.g., summarization, indexing).
+    Fetch known URLs and return integrated Markdown content.
 - download:
-    Given a list of URLs, fetch pages and convert them into stored PDF
-    artifacts, returning a list of stored file references (string list)
-    for downstream tools/plugins (e.g., a RAG plugin building a local index)."""
+    Fetch known URLs and save them as PDF artifacts.
+"""
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__()
@@ -105,40 +113,31 @@ It exposes four operations (op) that can be composed into a pipeline:
 class DeepResearchAPI(ToolBase):
     args_description = """Args:
     op:
-        The operation to perform. One of:
-        - "search": Simple web search (fast discovery, minimal reasoning).
-        - "research": Deep multi-step research (query decomposition, iterative
-          searching, cross-source synthesis).
-        - "scrape": Fetch the given URL list and return ONE integrated Markdown
-          text that merges the extracted contents for assistant answering direct questions.
-        - "download": Fetch the given URL list, convert pages to PDFs, store them to disk,
-          and return a list of stored file references (strings) for downstream
-          tools/plugins (e.g., RAG indexing func).
+        Operation to perform:
+        - "search": Default for direct current facts and quick public-web
+          lookups, including prices, news, company information, recent events,
+          schedules, and product information.
+        - "research": Use for multi-source analysis, comparison, investigation,
+          and synthesis.
+        - "scrape": Extract and merge contents from known URLs.
+        - "download": Download known URLs as stored PDF artifacts.
 
     query:
-        The research question or search topic. Required for "search" and
-        "research". Should be a natural-language description of what information
-        is needed.
+        Required for "search" and "research". Describe exactly what current
+        public information or research result is needed.
 
     urls:
-        A list of URLs to process. Required for "scrape" and "download".
-        Use URLs returned by "search" or "research".
+        Required for "scrape" and "download".
 
     monologue:
-        Optional short user-facing status message to show or speak while this
-        tool is running. Keep it brief, natural, and in the same language as the
-        user. Do not reveal hidden reasoning. Examples:
-        - "我查一下。"
-        - "我深入查一下。"
-        - "I’ll check that."
-        - "I’ll dig into it."
+        Optional short user-facing status message. Keep it natural, brief,
+        and in the user's language. Do not reveal hidden reasoning.
 
-Expected returns by op:
-    - search(query) -> search results (e.g., list of {title, url, snippet}, etc.)
-    - research(query) -> enriched results + synthesis (e.g., ranked sources,
-      key findings, structured summary)
-    - scrape(urls) -> integrated Markdown string (merged content from all URLs)
-    - download(urls) -> str of stored PDF file references/paths
+Expected returns:
+    - search(query): public-web search results
+    - research(query): multi-source findings and synthesis
+    - scrape(urls): integrated Markdown
+    - download(urls): stored PDF references
 """
 
     def __init__(
@@ -200,7 +199,7 @@ Expected returns by op:
             DeepResearchOp.RESEARCH,
             DeepResearchOp.SCRAPE,
             DeepResearchOp.DOWNLOAD,
-        ],
+        ] = DeepResearchOp.SEARCH,
         query: str | None = None,
         urls: list[str] | None = None,
         monologue: str | None = None,
@@ -211,6 +210,12 @@ Expected returns by op:
             msg = f"Unsupported DeepResearch operation: {op}"
             logger.error(msg)
             raise ToolError(msg)
+
+        if op in {DeepResearchOp.SEARCH, DeepResearchOp.RESEARCH} and not query:
+            raise ToolError(f"DeepResearch {op.value} requires a non-empty query.")
+
+        if op in {DeepResearchOp.SCRAPE, DeepResearchOp.DOWNLOAD} and not urls:
+            raise ToolError(f"DeepResearch {op.value} requires at least one URL.")
 
         self._current_op = op
 

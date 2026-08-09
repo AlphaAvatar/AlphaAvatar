@@ -11,9 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from .input_builder import (
+    EnvMemoryInput,
+    EnvMemoryInputBuilder,
+)
 from .scheduler import EnvMemoryBatch, EnvMemoryScheduler
 
 __all__ = [
     "EnvMemoryBatch",
+    "EnvMemoryInput",
+    "EnvMemoryInputBuilder",
     "EnvMemoryScheduler",
 ]

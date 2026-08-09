@@ -13,29 +13,26 @@
 # limitations under the License.
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
-from livekit.agents.llm import ChatItem, ChatMessage, ChatRole, FunctionCall, FunctionCallOutput
+from xml.sax.saxutils import escape
 
 from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
-from alphaavatar.agents.log import logger
-from alphaavatar.agents.memory import MemoryCacheType
 from alphaavatar.agents.runtime import ContextRuntime, InteractionMethod
 
 from .prompts.avatar_system_prompts import AVATAR_SYSTEM_PROMPT
 from .prompts.runtime_context_prompts import RUNTIME_CONTEXT_PROMPT
+from .prompts.xlm_protocol_prompts import XML_PROTOCOL_PROMPT
 
-if TYPE_CHECKING:
-    from alphaavatar.agents.persona import UserProfile
+
+def _xml_text(value: object | None) -> str:
+    return escape(str(value or DEFAULT_SYSTEM_VALUE))
 
 
 class AvatarSysPromptTemplate:
     """
-    Static system prompt template for the Avatar Agent.
+    Stable system prompt template.
 
-    This template should only contain stable information to improve prefix cache hit rate.
-    Dynamic per-turn context such as memory, current time, plan, and reflection should not
-    be rendered here.
+    Dynamic time, memory, plan, reflection and per-turn behavior rules belong
+    to RuntimeContextTemplate and are injected for the current answer only.
     """
 
     def __init__(
@@ -45,7 +42,7 @@ class AvatarSysPromptTemplate:
         interaction_method: InteractionMethod | None = None,
         stable_persona: str = DEFAULT_SYSTEM_VALUE,
         stable_behavior_rules: str = DEFAULT_SYSTEM_VALUE,
-    ):
+    ) -> None:
         self._avatar_introduction = avatar_introduction
         self._interaction_method = interaction_method or InteractionMethod()
         self._stable_persona = stable_persona
@@ -59,224 +56,43 @@ class AvatarSysPromptTemplate:
         stable_persona: str | None = None,
         stable_behavior_rules: str | None = None,
     ) -> str:
-        if avatar_introduction:
-            self._avatar_introduction = avatar_introduction
-
-        if interaction_method:
-            self._interaction_method = interaction_method
-
-        if stable_persona is not None:
-            self._stable_persona = stable_persona or DEFAULT_SYSTEM_VALUE
-
-        if stable_behavior_rules is not None:
-            self._stable_behavior_rules = stable_behavior_rules or DEFAULT_SYSTEM_VALUE
-
-        return AVATAR_SYSTEM_PROMPT.format(
-            avatar_introduction=self._avatar_introduction,
-            interaction_method=self._interaction_method.render(),
-            stable_persona=self._stable_persona,
-            stable_behavior_rules=self._stable_behavior_rules,
+        introduction = (
+            self._avatar_introduction if avatar_introduction is None else avatar_introduction
         )
+        method = self._interaction_method if interaction_method is None else interaction_method
+        persona = (
+            self._stable_persona
+            if stable_persona is None
+            else stable_persona or DEFAULT_SYSTEM_VALUE
+        )
+        behavior_rules = (
+            self._stable_behavior_rules
+            if stable_behavior_rules is None
+            else stable_behavior_rules or DEFAULT_SYSTEM_VALUE
+        )
+
+        base_prompt = AVATAR_SYSTEM_PROMPT.format(
+            avatar_introduction=introduction,
+            interaction_method=method.render(),
+            stable_persona=persona,
+            stable_behavior_rules=behavior_rules,
+        ).strip()
+
+        return f"{base_prompt}\n\n{XML_PROTOCOL_PROMPT}"
 
 
 class RuntimeContextTemplate:
-    """
-    Per-turn runtime context template.
-
-    Only dynamic current-turn information should be rendered here.
-    Stable persona should stay in the system prompt.
-    """
+    """Render dynamic current-answer-only runtime context."""
 
     def render(
         self,
         *,
         context_runtime: ContextRuntime,
     ) -> str:
-        current_time = context_runtime.timestamp.time_str
-        memory_content = context_runtime.memory_content
-        plan_content = context_runtime.plan_content
-        reflection_content = context_runtime.reflection_content
-        behavior_rules = context_runtime.turn_behavior_rules
-
         return RUNTIME_CONTEXT_PROMPT.format(
-            current_time=current_time or DEFAULT_SYSTEM_VALUE,
-            memory_content=memory_content or DEFAULT_SYSTEM_VALUE,
-            plan_content=plan_content or DEFAULT_SYSTEM_VALUE,
-            reflection_content=reflection_content or DEFAULT_SYSTEM_VALUE,
-            behavior_rules=behavior_rules or DEFAULT_SYSTEM_VALUE,
+            current_time=_xml_text(context_runtime.timestamp.time_str),
+            memory_content=_xml_text(context_runtime.memory_content),
+            plan_content=_xml_text(context_runtime.plan_content),
+            reflection_content=_xml_text(context_runtime.reflection_content),
+            behavior_rules=_xml_text(context_runtime.turn_behavior_rules),
         )
-
-
-class MemoryPluginsTemplate:
-    @classmethod
-    def apply_update_template(
-        cls, chat_context: list[ChatItem], cache_type: MemoryCacheType
-    ) -> str:
-        """Apply the profile update template with the given keyword arguments."""
-        memory_strings = []
-        for msg in chat_context:
-            if isinstance(msg, ChatMessage):
-                role = msg.role
-                # TODO: Handle different content types more robustly
-                if cache_type == MemoryCacheType.SESSION_INTERACTION and role not in [
-                    "user",
-                    "assistant",
-                ]:
-                    logger.debug(f"Skipping message with role {role} for cache type {cache_type}.")
-                    continue
-
-                msg_str = msg.text_content
-                memory_strings.append(f"### {role}:\n{msg_str}")
-            elif isinstance(msg, FunctionCall):
-                role = f"assistant call function [{msg.name}]"
-                msg_str = f"Function arguments: {msg.arguments}"
-                memory_strings.append(f"### {role}:\n{msg_str}")
-            elif isinstance(msg, FunctionCallOutput):
-                role = f"function [{msg.name}] output"
-                msg_str = msg.output
-                memory_strings.append(f"### {role}:\n{msg_str}")
-
-        return "\n\n".join(memory_strings)
-
-    @classmethod
-    def apply_search_template(
-        cls, messages: list[ChatItem], *, filter_roles: list[ChatRole] | None = None
-    ):
-        """Apply the memory search template with the given keyword arguments."""
-        if filter_roles is None:
-            filter_roles = []
-        memory_strings = []
-        for msg in messages:
-            if isinstance(msg, ChatMessage):
-                role = msg.role
-                if role in filter_roles:
-                    continue
-
-                msg_str = msg.text_content  # TODO: Handle different content types more robustly
-                memory_strings.append(f"### {role}:\n{msg_str}")
-
-        return "\n\n".join(memory_strings)
-
-
-class PersonaPluginsTemplate:
-    @classmethod
-    def _render_flat_model(
-        cls,
-        data: dict[str, Any],
-        *,
-        list_sep: str = ", ",
-        sort_keys: bool = True,
-        skip_empty: bool = True,
-    ) -> list[str]:
-        keys = list(data.keys())
-        if sort_keys:
-            keys.sort()
-
-        lines: list[str] = []
-
-        for attr in keys:
-            value = data[attr]
-            if value is None:
-                continue
-
-            if isinstance(value, list):
-                attr_values = []
-                for v in value:
-                    if not isinstance(v, dict):
-                        continue
-                    val = v.get("value", "")
-                    source = v.get("source", "")
-                    timestamp = v.get("timestamp", "")
-                    attr_values.append(f"{val} (updated at {timestamp}) | source from: {source}")
-                if attr_values:
-                    lines.append(f"- {attr}: {list_sep.join(attr_values)}")
-            elif isinstance(value, dict):
-                val = value.get("value", "")
-                source = value.get("source", "")
-                timestamp = value.get("timestamp", "")
-
-                if skip_empty and (val is None or (isinstance(val, str) and val.strip() == "")):
-                    continue
-
-                lines.append(f"- {attr}: {val} (updated at {timestamp}) | source from: {source}")
-            else:
-                if skip_empty and (
-                    value is None or (isinstance(value, str) and value.strip() == "")
-                ):
-                    continue
-
-                lines.append(f"- {attr}: {value}")
-
-        return lines
-
-    @classmethod
-    def apply_update_template(cls, chat_context: list[ChatItem]) -> str:
-        """Apply the profile update template with the given keyword arguments."""
-        memory_strings = []
-        for msg in chat_context:
-            if isinstance(msg, ChatMessage):
-                role = msg.role
-
-                # TODO: Handle different content types more robustly
-                if role not in ["user", "assistant"]:
-                    continue
-
-                msg_str = msg.text_content
-                memory_strings.append(f"### {role}:\n{msg_str}")
-
-        return "\n\n".join(memory_strings)
-
-    @classmethod
-    def apply_system_template(
-        cls,
-        user_profiles: list[UserProfile],
-        *,
-        list_sep: str = ", ",
-        sort_keys: bool = True,
-        skip_empty: bool = True,
-    ) -> str:
-        """
-        Render UserProfile(s) into a human-readable prompt for Avatar system.
-
-        Includes:
-        - Runtime state: system-observed login/session state
-        - Details: LLM-extracted profile details
-        """
-        profile_blocks: list[str] = []
-
-        for profile in user_profiles:
-            sections: list[str] = []
-
-            if profile and profile.runtime_state:
-                runtime_data = profile.runtime_state.model_dump()
-                runtime_lines = cls._render_flat_model(
-                    runtime_data,
-                    list_sep=list_sep,
-                    sort_keys=sort_keys,
-                    skip_empty=skip_empty,
-                )
-                if runtime_lines:
-                    sections.append(
-                        "### Runtime state\n"
-                        "System-observed login/session state. Use subtly; do not mention unless helpful.\n"
-                        + "\n".join(runtime_lines)
-                    )
-
-            if profile and profile.details:
-                details_data = profile.details.model_dump()
-                details_lines = cls._render_flat_model(
-                    details_data,
-                    list_sep=list_sep,
-                    sort_keys=sort_keys,
-                    skip_empty=skip_empty,
-                )
-                if details_lines:
-                    sections.append("### User profile details\n\n".join(details_lines))
-
-            if sections:
-                profile_blocks.append("\n\n".join(sections))
-
-        if len(profile_blocks) <= 1:
-            return profile_blocks[0] if profile_blocks else ""
-
-        return "\n\n".join(f"User {idx}\n{block}" for idx, block in enumerate(profile_blocks))

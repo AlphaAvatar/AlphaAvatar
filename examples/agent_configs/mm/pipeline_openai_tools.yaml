@@ -27,7 +27,8 @@ avatar:
 # ============================================================
 
 runtime:
-  context_mode: synthetic_tool
+  temporal_alignment:
+    mode: auto
 
 
 # ============================================================
@@ -110,20 +111,10 @@ voice:
 # ------------------------------------------------------------
 
 vision:
-  input:
-    plugin: sampled_frame
-    enabled: true
-    mode: sampled_frames_per_turn
-
-  sampling:
-    frames_per_turn: 3
-    frame_buffer_size: 8
-
-  inference:
-    width: 512
-    height: 512
-
-  clear_after_turn: true
+  enabled: true
+  input_mode: vlm
+  sample_interval_sec: 1.0
+  max_frames: 6
 
 
 # ------------------------------------------------------------
@@ -175,6 +166,7 @@ memory:
             provider: google
             model: gemini-2.5-flash
             temperature: 0.1
+            input_adapter: langchain_gemini
 
   vdb_config:
     collection_name: memory

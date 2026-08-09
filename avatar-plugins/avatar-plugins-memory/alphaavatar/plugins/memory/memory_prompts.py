@@ -69,9 +69,9 @@ B) PatchOp.value FORMAT
 
 For conversation memory, PatchOp.value must be exactly one clean memory block:
 
-[MEMORY]
+[CONV]
 <1-4 sentences describing the durable conversational memory. Include what the user wanted, what was decided or clarified, and what continuing context matters.>
-[/MEMORY]
+[/CONV]
 
 Rules:
 - Do not include labels inside the memory block.
@@ -200,9 +200,9 @@ If no, do not write it.
 
 Avatar PatchOp.value uses the same format:
 
-[MEMORY]
+[CONV]
 <1-2 sentences of reusable assistant-global memory.>
-[/MEMORY]
+[/CONV]
 
 At most 1 assistant_memory_entries item unless the session clearly contains multiple distinct durable learnings.
 
@@ -562,9 +562,9 @@ A visible person was sitting at a desk in an indoor room while interacting with 
 [/ENV]
 
 Bad value:
-[MEMORY]
+[CONV]
 A visible person was sitting indoors.
-[/MEMORY]
+[/CONV]
 
 Bad value:
 [ENV]
@@ -989,7 +989,7 @@ CONVERSATION_DELTA_PROMPT = ChatPromptTemplate.from_messages(
             "- Extract only durable conversation memory that is likely to help future continuity.\n"
             "- If the session content only contains transient observations, trivial conversation, or repeated facts with no new durable value, output empty lists.\n\n"
             "### WRITING RULES\n"
-            "- Each PatchOp.value MUST be exactly one clean [MEMORY]...[/MEMORY] block.\n"
+            "- Each PatchOp.value MUST be exactly one clean [CONV]...[/CONV] block.\n"
             "- PatchOp.value MUST NOT contain kind/topic/type/who/evidence/metadata/node_mentions labels.\n"
             "- Use PatchOp.topic for the stable topic.\n"
             "- Use PatchOp.node_mentions for high-signal graph retrieval anchors.\n"

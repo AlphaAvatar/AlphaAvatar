@@ -1,0 +1,55 @@
+# Copyright 2026 AlphaAvatar project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+from __future__ import annotations
+
+from livekit.agents.llm import ChatItem, ChatMessage, ChatRole, FunctionCall, FunctionCallOutput
+
+from .enum.cache_type import MemoryCacheType
+
+
+class MemoryPluginsTemplate:
+    @classmethod
+    def apply_update_template(
+        cls, chat_context: list[ChatItem], cache_type: MemoryCacheType
+    ) -> str:
+        blocks: list[str] = []
+        for item in chat_context:
+            if isinstance(item, ChatMessage):
+                if cache_type == MemoryCacheType.SESSION_INTERACTION and item.role not in {
+                    "user",
+                    "assistant",
+                }:
+                    continue
+                blocks.append(f"### {item.role}:\n{item.text_content or ''}")
+            elif isinstance(item, FunctionCall):
+                blocks.append(
+                    f"### assistant call function [{item.name}]:\nFunction arguments: {item.arguments}"
+                )
+            elif isinstance(item, FunctionCallOutput):
+                blocks.append(f"### function [{item.name}] output:\n{item.output}")
+        return "\n\n".join(blocks)
+
+    @classmethod
+    def apply_search_template(
+        cls,
+        messages: list[ChatItem],
+        *,
+        filter_roles: list[ChatRole] | None = None,
+    ) -> str:
+        filtered = set(filter_roles or [])
+        return "\n\n".join(
+            f"### {item.role}:\n{item.text_content or ''}"
+            for item in messages
+            if isinstance(item, ChatMessage) and item.role not in filtered
+        )

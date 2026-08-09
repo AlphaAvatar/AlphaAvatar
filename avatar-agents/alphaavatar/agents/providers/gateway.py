@@ -19,26 +19,31 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from alphaavatar.agents.providers.llm import create_llm_model
-from alphaavatar.agents.providers.registry import ProviderRegistry
-from alphaavatar.agents.providers.schema import (
+from alphaavatar.agents.utils import local_now_iso, sha256_text
+
+from .input_adapters import ProviderInputAdapterRegistry
+from .llm import create_llm_model
+from .registry import ProviderRegistry
+from .schema import (
+    ModelInput,
     ProviderResult,
     ProvidersConfig,
+    ProviderTaskConfig,
     ProviderTraceRecord,
 )
-from alphaavatar.agents.providers.trace import (
+from .trace import (
     ProviderTracer,
     safe_json_dumps,
     to_jsonable,
 )
-from alphaavatar.agents.providers.usage import normalize_usage
-from alphaavatar.agents.utils import local_now_iso, sha256_text
+from .usage import normalize_usage
 
 
 class ProviderGateway:
     def __init__(self, config: ProvidersConfig | None = None) -> None:
         self._registry = ProviderRegistry(config)
         self._tracer = ProviderTracer(self._registry.config.trace)
+        self._input_adapters = ProviderInputAdapterRegistry()
 
     @property
     def registry(self) -> ProviderRegistry:
@@ -47,6 +52,105 @@ class ProviderGateway:
     @property
     def tracer(self) -> ProviderTracer:
         return self._tracer
+
+    """Input Helper"""
+
+    async def _adapt_payload(
+        self,
+        *,
+        task_config: ProviderTaskConfig,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        model_inputs = {
+            key: value for key, value in payload.items() if isinstance(value, ModelInput)
+        }
+
+        if not model_inputs:
+            return payload
+
+        if not task_config.input_adapter:
+            raise ValueError(
+                "Provider task received ModelInput but has no input_adapter: "
+                f"provider={task_config.provider!r}, model={task_config.model!r}"
+            )
+
+        adapter = self._input_adapters.resolve(task_config.input_adapter)
+        adapted = dict(payload)
+
+        for key, model_input in model_inputs.items():
+            adapted[key] = await adapter.adapt(
+                model_input,
+                config=task_config,
+            )
+
+        return adapted
+
+    """Output Helper"""
+
+    def _with_structured_output(
+        self,
+        *,
+        llm: Any,
+        output_schema: type[BaseModel],
+        include_raw: bool,
+    ) -> Any:
+        """
+        Prefer include_raw=True so we can keep provider usage metadata.
+        Some wrappers may not support include_raw; fallback gracefully.
+        """
+        try:
+            return llm.with_structured_output(output_schema, include_raw=include_raw)
+        except TypeError:
+            return llm.with_structured_output(output_schema)
+
+    def _extract_parsed_output(self, raw_result: Any) -> Any:
+        """
+        LangChain with_structured_output(include_raw=True) usually returns:
+        {
+            "raw": AIMessage,
+            "parsed": PydanticModel,
+            "parsing_error": None
+        }
+
+        Without include_raw, it may return the parsed Pydantic object directly.
+        """
+        if isinstance(raw_result, dict) and "parsed" in raw_result:
+            parsed = raw_result.get("parsed")
+            parsing_error = raw_result.get("parsing_error")
+
+            if parsed is None and parsing_error is not None:
+                raise ValueError(f"Structured output parsing failed: {parsing_error}")
+
+            return parsed
+
+        return raw_result
+
+    def _extract_raw_response(self, raw_result: Any) -> Any:
+        if isinstance(raw_result, dict) and "raw" in raw_result:
+            return raw_result.get("raw")
+
+        return raw_result
+
+    def _extract_generation_id(self, raw_result: Any) -> str | None:
+        raw_response = self._extract_raw_response(raw_result)
+
+        response_metadata = getattr(raw_response, "response_metadata", None)
+        if isinstance(response_metadata, dict):
+            for key in ["id", "generation_id", "response_id"]:
+                value = response_metadata.get(key)
+                if value:
+                    return str(value)
+
+        additional_kwargs = getattr(raw_response, "additional_kwargs", None)
+        if isinstance(additional_kwargs, dict):
+            for key in ["id", "generation_id", "response_id"]:
+                value = additional_kwargs.get(key)
+                if value:
+                    return str(value)
+
+        return None
+
+    """API"""
 
     def validate_tasks(self, task_names: Iterable[str]) -> None:
         self._registry.validate_tasks(task_names)
@@ -126,7 +230,11 @@ class ProviderGateway:
 
             chain = prompt | structured_llm
 
-            raw_result = await chain.ainvoke(payload)
+            adapted_payload = await self._adapt_payload(
+                task_config=task_config,
+                payload=payload,
+            )
+            raw_result = await chain.ainvoke(adapted_payload)
 
             latency_ms = (time.perf_counter() - started_at) * 1000
 
@@ -205,66 +313,3 @@ class ProviderGateway:
             self._tracer.emit_record(record)
 
             raise
-
-    def _with_structured_output(
-        self,
-        *,
-        llm: Any,
-        output_schema: type[BaseModel],
-        include_raw: bool,
-    ) -> Any:
-        """
-        Prefer include_raw=True so we can keep provider usage metadata.
-        Some wrappers may not support include_raw; fallback gracefully.
-        """
-        try:
-            return llm.with_structured_output(output_schema, include_raw=include_raw)
-        except TypeError:
-            return llm.with_structured_output(output_schema)
-
-    def _extract_parsed_output(self, raw_result: Any) -> Any:
-        """
-        LangChain with_structured_output(include_raw=True) usually returns:
-        {
-            "raw": AIMessage,
-            "parsed": PydanticModel,
-            "parsing_error": None
-        }
-
-        Without include_raw, it may return the parsed Pydantic object directly.
-        """
-        if isinstance(raw_result, dict) and "parsed" in raw_result:
-            parsed = raw_result.get("parsed")
-            parsing_error = raw_result.get("parsing_error")
-
-            if parsed is None and parsing_error is not None:
-                raise ValueError(f"Structured output parsing failed: {parsing_error}")
-
-            return parsed
-
-        return raw_result
-
-    def _extract_raw_response(self, raw_result: Any) -> Any:
-        if isinstance(raw_result, dict) and "raw" in raw_result:
-            return raw_result.get("raw")
-
-        return raw_result
-
-    def _extract_generation_id(self, raw_result: Any) -> str | None:
-        raw_response = self._extract_raw_response(raw_result)
-
-        response_metadata = getattr(raw_response, "response_metadata", None)
-        if isinstance(response_metadata, dict):
-            for key in ["id", "generation_id", "response_id"]:
-                value = response_metadata.get(key)
-                if value:
-                    return str(value)
-
-        additional_kwargs = getattr(raw_response, "additional_kwargs", None)
-        if isinstance(additional_kwargs, dict):
-            for key in ["id", "generation_id", "response_id"]:
-                value = additional_kwargs.get(key)
-                if value:
-                    return str(value)
-
-        return None

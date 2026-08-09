@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .annotation import EnvAnnotation
-from .observation import EnvObservation
+from .observation import EnvObservation, ObservationKind
 
 __all__ = [
     "EnvAnnotation",
     "EnvObservation",
+    "ObservationKind",
 ]

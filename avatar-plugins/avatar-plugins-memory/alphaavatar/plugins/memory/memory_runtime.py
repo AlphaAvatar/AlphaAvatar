@@ -20,12 +20,12 @@ from typing import Any
 
 from livekit.agents.llm import ChatItem, ChatMessage
 
-from alphaavatar.agents.avatar.prompting import MemoryPluginsTemplate
 from alphaavatar.agents.memory import (
     MemoryBase,
     MemoryCache,
     MemoryCacheType,
     MemoryItem,
+    MemoryPluginsTemplate,
     MemoryType,
     VectorRunnerOP,
 )
@@ -49,6 +49,9 @@ from .memory_op import (
     norm_token,
     rebuild_from_items,
 )
+
+ENV_SAVE_TIMEOUT_SEC = 8.0
+SHUTDOWN_UPDATE_TIMEOUT_SEC = 12.0
 
 
 def _norm_topic(value: str | None) -> str | None:
@@ -91,7 +94,6 @@ class MemoryRuntime(MemoryBase):
         memory_recall_num: int = 10,
         maximum_memory_num: int = 24,
         provider: dict[str, Any] | None = None,
-        env_streams: list[str] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(
@@ -109,7 +111,8 @@ class MemoryRuntime(MemoryBase):
 
         # ENV Memory init
         self._env_scheduler: EnvMemoryScheduler | None = None
-        self._env_streams = tuple(env_streams) if env_streams else None
+
+        self._save_lock = asyncio.Lock()
 
     @property
     def vdb_inference_method(self) -> str:
@@ -241,7 +244,7 @@ class MemoryRuntime(MemoryBase):
             ]
         )
 
-    async def _save_to_vdb(self, *, memory_items: list[dict], timeout: float) -> None:
+    async def _save_to_vdb(self, *, memory_items: list[dict], timeout: float) -> bool:
         json_data = {
             "op": VectorRunnerOP.save,
             "param": {"memory_items": memory_items},
@@ -255,29 +258,122 @@ class MemoryRuntime(MemoryBase):
                 ),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("Memory SAVE timeout!")
-            return
+            return False
+        except Exception:
+            logger.exception("Memory SAVE failed")
+            return False
 
         if result is None:
             logger.warning("Memory SAVE failed, result is None!")
-            return
+            return False
 
-        payload = json.loads(result.decode())
+        try:
+            payload = json.loads(result.decode())
+        except Exception:
+            logger.exception("Memory SAVE returned invalid JSON")
+            return False
+
         if payload.get("error") is not None:
-            logger.error(f"Memory SAVE failed, because: {payload['error']}")
-            return
+            logger.error(
+                "Memory SAVE failed, because: %s",
+                payload["error"],
+            )
+            return False
 
-        payload.pop("error", None)
-        logger.info(f"Memory SAVE success: {payload}")
+        logger.info(
+            "Memory SAVE success: %s",
+            {key: value for key, value in payload.items() if key != "error"},
+        )
+        return True
+
+    async def _persist_memory_items(
+        self,
+        items: list[MemoryItem],
+        *,
+        timeout: float,
+    ) -> bool:
+        async with self._save_lock:
+            selected = sorted(
+                (item for item in items if item.updated),
+                key=lambda item: item.timestamp or "",
+            )
+
+            if not selected:
+                return True
+
+            flattened = flatten_items(selected)
+
+            if not flattened:
+                return True
+
+            avatar_path = self.session_runtime.avatar_path
+            session_path = self.session_runtime.session_path
+
+            if avatar_path is None:
+                raise RuntimeError("SessionRuntime.avatar_path is not initialized")
+
+            if session_path is None:
+                raise RuntimeError("SessionRuntime.session_path is not initialized")
+
+            markdown_result, graph_result = await asyncio.gather(
+                asyncio.to_thread(
+                    save_memory_items_to_markdown,
+                    avatar_memory_path=avatar_path.memory_dir,
+                    session_memory_path=session_path.memory_dir,
+                    memory_items=flattened,
+                ),
+                asyncio.to_thread(
+                    save_memory_graph_stubs,
+                    graph_path=avatar_path.graph_dir,
+                    memory_items=flattened,
+                ),
+                return_exceptions=True,
+            )
+
+            if isinstance(markdown_result, Exception):
+                logger.error(
+                    "Memory local markdown backup failed",
+                    exc_info=(
+                        type(markdown_result),
+                        markdown_result,
+                        markdown_result.__traceback__,
+                    ),
+                )
+            else:
+                logger.info(
+                    "Memory local markdown backup success: %s",
+                    markdown_result,
+                )
+
+            if isinstance(graph_result, Exception):
+                logger.error(
+                    "Memory graph stubs save failed",
+                    exc_info=(
+                        type(graph_result),
+                        graph_result,
+                        graph_result.__traceback__,
+                    ),
+                )
+            else:
+                logger.info(
+                    "Memory graph stubs save success: %s",
+                    graph_result,
+                )
+
+            if not await self._save_to_vdb(
+                memory_items=flattened,
+                timeout=timeout,
+            ):
+                return False
+
+            self.memory_state.mark_saved({item.memory_id for item in selected})
+            return True
 
     """Env Memory Op"""
 
-    async def _process_env_batch(
-        self,
-        batch: EnvMemoryBatch,
-        timeout: float,
-    ) -> list[MemoryItem]:
+    async def _process_env_batch(self, batch: EnvMemoryBatch, timeout: float) -> list[MemoryItem]:
         sid = batch.session_id
 
         if sid not in self.memory_cache:
@@ -290,20 +386,20 @@ class MemoryRuntime(MemoryBase):
         cache = self.memory_cache[sid]
         evidence = batch.build_evidence()
 
-        cache.evidence = evidence
-
         previous_env_memory = self.memory_state.render(
             memory_type=MemoryType.ENV,
             session_id=sid,
         )
 
         delta: EnvMemoryDelta = await self._delta_extractor.extract_env_delta(
-            observations=batch.observations,
+            memory_input=batch.memory_input,
             memory_cache=cache,
             previous_env_memory=previous_env_memory or None,
             conversation_context=batch.conversation_context,
             timeout=timeout,
         )
+
+        cache.evidence = evidence
 
         env_memories = self._build_memory_items_from_patches(
             memory_cache=cache,
@@ -312,7 +408,7 @@ class MemoryRuntime(MemoryBase):
             object_ids=cache.object_ids,
             extra_data={
                 "trigger": batch.trigger_text,
-                "evidence": evidence,
+                # "evidence": evidence,  # TODO: Temporary annotation
                 "perception_missed_count": batch.missed_count,
             },
         )
@@ -332,9 +428,15 @@ class MemoryRuntime(MemoryBase):
 
         cache.add_object_ids([object_id for item in env_memories for object_id in item.object_ids])
 
+        saved = await self._persist_memory_items(
+            env_memories,
+            timeout=ENV_SAVE_TIMEOUT_SEC,
+        )
+
         logger.info(
-            "[Memory] ENV memory updated sid=%s trigger=%s generated=%s "
-            "observations=%s raw_observations=%s messages=%s attempts=%s",
+            "[Memory] ENV memory updated "
+            "sid=%s trigger=%s generated=%s observations=%s "
+            "raw_observations=%s messages=%s attempts=%s saved=%s",
             sid,
             batch.trigger_text,
             len(env_memories),
@@ -342,6 +444,7 @@ class MemoryRuntime(MemoryBase):
             batch.raw_observation_count,
             batch.message_count,
             batch.attempts + 1,
+            saved,
         )
 
         return env_memories
@@ -370,10 +473,7 @@ class MemoryRuntime(MemoryBase):
 
         scheduler.request("user_turn")
 
-    def save_graph_aliases(
-        self,
-        aliases: list[dict[str, Any]],
-    ) -> dict[str, Any]:
+    def save_graph_aliases(self, aliases: list[dict[str, Any]]) -> dict[str, Any]:
         avatar_path = self.session_runtime.avatar_path
 
         if avatar_path is None:
@@ -610,57 +710,12 @@ class MemoryRuntime(MemoryBase):
         self.user_memory = all_user
         self.tool_memory = all_tool
 
-    async def save(
-        self,
-        timeout: float = 3,
-    ) -> None:
-        updated_items = [item for item in self.memory_items if item.updated]
-
-        if not updated_items:
-            logger.info("Memory SAVE skip!")
-            return
-
-        selected = sorted(
-            updated_items,
-            key=lambda item: item.timestamp or "",
-        )
-
-        memory_items: list[dict[str, Any]] = flatten_items(selected)
-
-        if not memory_items:
-            logger.info("Memory SAVE skip after flattening.")
-            return
-
-        avatar_path = self.session_runtime.avatar_path
-        session_path = self.session_runtime.session_path
-
-        if avatar_path is None:
-            raise RuntimeError("SessionRuntime.avatar_path is not initialized")
-
-        if session_path is None:
-            raise RuntimeError("SessionRuntime.session_path is not initialized")
-
-        try:
-            markdown_result = save_memory_items_to_markdown(
-                avatar_memory_path=avatar_path.memory_dir,
-                session_memory_path=session_path.memory_dir,
-                memory_items=memory_items,
-            )
-
-            logger.info("Memory local markdown backup success: %s", markdown_result)
-        except Exception as e:
-            logger.exception(f"Memory local markdown backup failed: {e}")
-
-        try:
-            graph_result = save_memory_graph_stubs(
-                graph_path=avatar_path.graph_dir,
-                memory_items=memory_items,
-            )
-            logger.info(f"Memory graph stubs save success: {graph_result}")
-        except Exception as e:
-            logger.exception(f"Memory graph stubs save failed: {e}")
-
-        await self._save_to_vdb(memory_items=memory_items, timeout=timeout)
+    async def save(self, timeout: float = 8.0) -> None:
+        if not await self._persist_memory_items(
+            self.memory_items,
+            timeout=timeout,
+        ):
+            logger.warning("Memory SAVE incomplete; updated items remain pending.")
 
     """Runtime Op"""
 
@@ -678,18 +733,15 @@ class MemoryRuntime(MemoryBase):
             perception_runtime=self.perception_runtime,
             memory_cache=cache,
             process=self._process_env_batch,
-            streams=self._env_streams,
+            render_messages=lambda messages: MemoryPluginsTemplate.apply_update_template(
+                messages,
+                cache.cache_type,
+            ),
         )
 
         await self._env_scheduler.start()
 
-        logger.info(
-            "[Memory] ENV scheduler started sid=%s interval=%ss annotation_grace=%ss streams=%s",
-            sid,
-            self._env_scheduler.interval_sec,
-            self._env_scheduler.annotation_grace_sec,
-            sorted(self._env_scheduler.streams),
-        )
+        logger.info("[Memory] ENV scheduler started sid=%s", sid)
 
     async def on_session_stop(self) -> None:
         if self._env_scheduler is not None:

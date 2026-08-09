@@ -15,10 +15,12 @@ from .livekit_audio_codec import (
     from_livekit_audio_frame,
     to_livekit_audio_frame,
 )
-from .livekit_audio_input import LiveKitAudioInputRuntime
+from .livekit_audio_input import LiveKitAudioInput
 from .livekit_audio_output import LiveKitTransientAudioOutput
+from .livekit_model_input import LiveKitModelInput
 from .livekit_status_output import LiveKitStatusOutput
 from .livekit_transcript_output import LiveKitTranscriptOutput
+from .livekit_turn_input import LiveKitTurnInput
 from .livekit_video_codec import (
     bgr_to_video_frame,
     encode_video_frame_to_jpeg,
@@ -26,14 +28,16 @@ from .livekit_video_codec import (
     to_livekit_video_frame,
     video_frame_to_bgr,
 )
-from .livekit_video_input import LiveKitVideoInputRuntime
+from .livekit_video_input import LiveKitVideoInput
 
 __all__ = [
-    "LiveKitAudioInputRuntime",
+    "LiveKitAudioInput",
     "LiveKitTransientAudioOutput",
     "LiveKitStatusOutput",
     "LiveKitTranscriptOutput",
-    "LiveKitVideoInputRuntime",
+    "LiveKitVideoInput",
+    "LiveKitModelInput",
+    "LiveKitTurnInput",
     "bgr_to_video_frame",
     "encode_video_frame_to_jpeg",
     "from_livekit_audio_frame",

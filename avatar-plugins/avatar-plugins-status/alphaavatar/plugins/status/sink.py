@@ -14,12 +14,8 @@
 from __future__ import annotations
 
 import asyncio
-import time
-from hashlib import sha1
-from typing import Any
 from uuid import uuid4
 
-from alphaavatar.agents import AvatarModule
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.status import StatusEvent, StatusSinkBase
 from alphaavatar.core.output import OutputLane, OutputTextMode
@@ -73,7 +69,7 @@ class LoggerStatusSink(StatusSinkBase):
         )
 
 
-class StatusVoiceOutput:
+class StatusVoiceOutput(StatusSinkBase):
     """
     Convert selected status messages into AUDIO_SYNCED transient source text.
 
@@ -81,34 +77,20 @@ class StatusVoiceOutput:
     transport adapters handle actual delivery.
     """
 
-    def __init__(
-        self,
-        *,
-        runtime: AvatarRuntime,
-        min_interval_sec: float = 1.2,
-        max_events_per_turn: int = 3,
-    ) -> None:
+    def __init__(self, *, runtime: AvatarRuntime) -> None:
         self._runtime = runtime
-        self._min_interval_sec = min_interval_sec
-        self._max_events_per_turn = max_events_per_turn
-
         self._turn_id: str | None = None
-        self._spoken_count = 0
-        self._last_spoken_at_by_bucket: dict[str, float] = {}
-        self._spoken_keys: set[tuple[Any, ...]] = set()
 
     async def start_turn(self, *, turn_id: str) -> None:
         self._turn_id = turn_id
-        self._spoken_count = 0
-        self._last_spoken_at_by_bucket.clear()
-        self._spoken_keys.clear()
-        await self._runtime.output.start_turn(turn_id=turn_id)
 
     async def emit(self, event: StatusEvent, text: str) -> str | None:
         interaction = self._runtime.context.interaction_method
         if not bool(getattr(interaction, "audio_output", False)):
             return None
-        if not self._should_speak(event):
+
+        rendered_text = text.strip() if isinstance(text, str) and text.strip() else None
+        if not rendered_text:
             return None
 
         output_id = uuid4().hex
@@ -130,59 +112,7 @@ class StatusVoiceOutput:
         if published is None:
             return None
 
-        now = time.monotonic()
-        bucket = self._voice_bucket(event)
-        self._last_spoken_at_by_bucket[bucket] = now
-        self._spoken_count += 1
-        self._spoken_keys.add(self._spoken_key(event))
         return output_id
-
-    def _should_speak(self, event: StatusEvent) -> bool:
-        if self._spoken_count >= self._max_events_per_turn:
-            return False
-
-        key = self._spoken_key(event)
-        if key in self._spoken_keys:
-            return False
-
-        last_spoken_at = self._last_spoken_at_by_bucket.get(self._voice_bucket(event))
-        return (
-            last_spoken_at is None
-            or time.monotonic() - last_spoken_at >= self._min_interval_for(event)
-        )
-
-    @staticmethod
-    def _voice_bucket(event: StatusEvent) -> str:
-        return str(event.source)
-
-    def _min_interval_for(self, event: StatusEvent) -> float:
-        if str(event.source) == AvatarModule.AVATAR_ENGINE:
-            return 3.0
-        if event.source in {AvatarModule.DEEPRESEARCH, AvatarModule.MCP, AvatarModule.RAG}:
-            return 1.2
-        return self._min_interval_sec
-
-    def _spoken_key(self, event: StatusEvent) -> tuple[Any, ...]:
-        return event.source, event.stage, event.type, self._semantic_key(event)
-
-    @staticmethod
-    def _semantic_key(event: StatusEvent) -> str | None:
-        query = event.metadata.get("query")
-        if isinstance(query, str) and query.strip():
-            return StatusVoiceOutput._short_hash(query.strip())
-        if event.message:
-            return StatusVoiceOutput._short_hash(event.message.strip())
-
-        url_count = event.metadata.get("url_count")
-        if url_count is not None:
-            return f"url_count:{url_count}"
-
-        op = event.metadata.get("op")
-        return str(op) if op is not None else None
-
-    @staticmethod
-    def _short_hash(text: str) -> str:
-        return sha1(text.encode("utf-8")).hexdigest()[:12]
 
 
 class RuntimeStatusSink(StatusSinkBase):
@@ -193,14 +123,12 @@ class RuntimeStatusSink(StatusSinkBase):
     in STATUS and cannot be consumed as a user-visible message by transports.
     """
 
-    def __init__(self, *, runtime: AvatarRuntime, voice_output: StatusVoiceOutput) -> None:
+    def __init__(self, *, runtime: AvatarRuntime) -> None:
         self._runtime = runtime
-        self._voice_output = voice_output
         self._turn_id: str | None = None
 
     async def start_turn(self, *, turn_id: str) -> None:
         self._turn_id = turn_id
-        await self._voice_output.start_turn(turn_id=turn_id)
 
     async def emit(self, event: StatusEvent, text: str | None) -> None:
         event_payload = event.to_dict()
@@ -221,7 +149,3 @@ class RuntimeStatusSink(StatusSinkBase):
                 "status_type": str(event.type),
             },
         )
-
-        rendered_text = text.strip() if isinstance(text, str) and text.strip() else None
-        if rendered_text:
-            await self._voice_output.emit(event, rendered_text)

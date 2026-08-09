@@ -11,37 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
-from alphaavatar.agents.avatar.vision.base import NoopVision, VisionBase
-from alphaavatar.agents.avatar.vision.realtime import RealtimeVision
-from alphaavatar.agents.avatar.vision.sampled_frame import SampledFrameVision
-
-if TYPE_CHECKING:
-    from alphaavatar.agents.avatar.engine import AvatarEngine
-
-
-def build_vision(agent: AvatarEngine) -> VisionBase:
-    vision_config = agent.avatar_config.vision
-
-    if not vision_config.input.enabled:
-        return NoopVision(agent)
-
-    if vision_config.use_sampled_frame_input:
-        return SampledFrameVision(agent)
-
-    if vision_config.use_realtime_video_input:
-        return RealtimeVision(agent)
-
-    return NoopVision(agent)
-
+from .schema import SelectedVisualFrame, VisualSelection, VisualSliceSelection
+from .selector import VisualFrameSelector
 
 __all__ = [
-    "VisionBase",
-    "NoopVision",
-    "SampledFrameVision",
-    "RealtimeVision",
-    "build_vision",
+    "SelectedVisualFrame",
+    "VisualFrameSelector",
+    "VisualSelection",
+    "VisualSliceSelection",
 ]

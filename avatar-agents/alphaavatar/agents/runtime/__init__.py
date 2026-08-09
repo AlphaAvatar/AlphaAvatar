@@ -18,6 +18,7 @@ from .session_runtime import (
     ParticipantUpdateResult,
     SessionRuntime,
 )
+from .turn_runtime import TurnInputModality, TurnRuntime, TurnSnapshot
 
 __all__ = [
     "AvatarRuntime",
@@ -26,4 +27,7 @@ __all__ = [
     "ParticipantInfo",
     "ParticipantUpdateResult",
     "SessionRuntime",
+    "TurnInputModality",
+    "TurnRuntime",
+    "TurnSnapshot",
 ]

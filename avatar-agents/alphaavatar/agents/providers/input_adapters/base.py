@@ -13,19 +13,18 @@
 # limitations under the License.
 from __future__ import annotations
 
-from livekit.agents import llm
+from typing import Any, Protocol
 
-from alphaavatar.agents.avatar.vision.base import VisionBase
+from alphaavatar.agents.providers.schema import (
+    ModelInput,
+    ProviderTaskConfig,
+)
 
 
-class RealtimeVision(VisionBase):
-    """Realtime model visual input strategy.
-
-    Reserved for realtime multimodal models.
-
-    Unlike SampledFrameVision, this strategy should not inject ImageContent into
-    ChatContext manually. It should configure the LiveKit room/model pipeline so
-    the realtime model can receive video input directly.
-    """
-
-    def inject_into_chat_ctx(self, chat_ctx: llm.ChatContext) -> None: ...
+class ProviderInputAdapter(Protocol):
+    async def adapt(
+        self,
+        model_input: ModelInput,
+        *,
+        config: ProviderTaskConfig,
+    ) -> Any: ...

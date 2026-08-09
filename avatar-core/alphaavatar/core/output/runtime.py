@@ -16,11 +16,11 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from dataclasses import dataclass
 from uuid import uuid4
 
 from alphaavatar.core.media import AudioFrame
+from alphaavatar.core.time import RuntimeClock
 
 from .schema import (
     OutputControl,
@@ -74,11 +74,19 @@ class OutputRuntime:
     Interrupted or completed output IDs can never be reopened.
     """
 
-    def __init__(self, *, session_id: str, timeline_max_items: int = 4096) -> None:
+    def __init__(
+        self,
+        *,
+        session_id: str,
+        clock: RuntimeClock | None = None,
+        timeline_max_items: int = 4096,
+    ) -> None:
         if not session_id:
             raise ValueError("OutputRuntime requires a non-empty session_id")
 
         self.session_id = session_id
+        self.clock = clock or RuntimeClock()
+
         self.stream = OutputStream()
         self.timeline = OutputTimeline(max_items=timeline_max_items)
 
@@ -216,12 +224,13 @@ class OutputRuntime:
 
         async with self._sequence_lock:
             self._sequence += 1
+            now = self.clock.now()
             event = OutputEvent(
                 event_id=uuid4().hex,
                 sequence=self._sequence,
                 session_id=self.session_id,
-                created_at=time.time(),
-                monotonic_ns=time.monotonic_ns(),
+                created_at=now.unix_seconds,
+                monotonic_ns=now.monotonic_ns,
                 kind=kind,
                 lane=lane,
                 output_id=output_id,
@@ -259,47 +268,6 @@ class OutputRuntime:
             output_id=None,
             turn_id=turn_id,
             payload=payload,
-            metadata=metadata,
-        )
-
-    async def request_speech(
-        self,
-        *,
-        text: str,
-        lane: OutputLane = OutputLane.TRANSIENT,
-        output_id: str | None = None,
-        turn_id: str | None = None,
-        replace_lane: bool = True,
-        is_final: bool = True,
-        metadata: dict | None = None,
-    ) -> OutputEvent | None:
-        text = text.strip()
-        if not text:
-            raise ValueError("Speech request requires non-empty text")
-
-        resolved_output_id = output_id or uuid4().hex
-        record, created = await self._prepare_output(
-            output_id=resolved_output_id,
-            lane=lane,
-            turn_id=turn_id,
-            origin_kind=OutputKind.SPEECH_REQUEST,
-            replace_lane=replace_lane,
-            replace_reason="replaced_by_new_speech_request",
-        )
-        if record is None:
-            return None
-
-        return await self._publish(
-            kind=OutputKind.SPEECH_REQUEST,
-            lane=lane,
-            output_id=resolved_output_id,
-            turn_id=turn_id,
-            payload={
-                "text": text,
-                "chunk_id": uuid4().hex,
-                "is_first": created,
-                "is_final": is_final,
-            },
             metadata=metadata,
         )
 

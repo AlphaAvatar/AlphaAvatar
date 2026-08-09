@@ -91,7 +91,8 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
         runtime: AvatarRuntime,
         lanes: tuple[OutputLane, ...] = (OutputLane.TRANSIENT,),
     ) -> None:
-        self._runtime = runtime
+        super().__init__(runtime=runtime)
+
         self._lanes = lanes
         self._subscription: OutputSubscription | None = None
         self._run_task: asyncio.Task[None] | None = None
@@ -102,43 +103,76 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
     def name(self) -> str:
         return "transcript_synchronization"
 
-    async def start(self) -> None:
-        if self._started:
-            return
+    @staticmethod
+    def _matches_control(state: _TranscriptState, control: OutputControl) -> bool:
+        if control.target_output_id is not None and state.output_id != control.target_output_id:
+            return False
+        if control.target_lane is not None and state.lane != control.target_lane:
+            return False
+        if control.target_turn_id is not None and state.turn_id != control.target_turn_id:
+            return False
+        return True
 
-        self._subscription = await self._runtime.output.stream.subscribe(
-            self.CONSUMER_ID,
-            kinds=(
-                OutputKind.TEXT_CHUNK,
-                OutputKind.ALIGNMENT,
-                OutputKind.PLAYBACK,
-                OutputKind.CONTROL,
-            ),
-            lanes=self._lanes,
-            max_pending=256,
-            reliable=True,
-        )
-        self._run_task = asyncio.create_task(self._run(), name=self.CONSUMER_ID)
-        self._started = True
+    @staticmethod
+    def _split_units(text: str) -> tuple[str, ...]:
+        raw_tokens = _TOKEN_PATTERN.findall(text)
+        units: list[str] = []
+        pending_space = ""
 
-    async def stop(self) -> None:
-        if not self._started:
-            return
+        for token in raw_tokens:
+            if token.isspace():
+                pending_space += token
+            elif (
+                TranscriptSynchronizationProcessor._is_punctuation(token)
+                and units
+                and not pending_space
+            ):
+                units[-1] += token
+            else:
+                units.append(pending_space + token)
+                pending_space = ""
 
-        self._started = False
-        run_task = self._run_task
-        self._run_task = None
+        if pending_space:
+            if units:
+                units[-1] += pending_space
+            else:
+                units.append(pending_space)
 
-        if run_task is not None and not run_task.done():
-            run_task.cancel()
-        if run_task is not None:
-            await asyncio.gather(run_task, return_exceptions=True)
+        return tuple(units)
 
-        if self._subscription is not None:
-            await self._runtime.output.stream.unsubscribe(self.CONSUMER_ID)
+    @staticmethod
+    def _is_punctuation(token: str) -> bool:
+        return bool(token) and all(not char.isalnum() and not char.isspace() for char in token)
 
-        self._subscription = None
-        self._states.clear()
+    @staticmethod
+    def _unit_weight(unit: str) -> float:
+        visible_length = len(unit.strip())
+        return float(max(visible_length, 1))
+
+    @staticmethod
+    def _target_unit_count(alignment: _AlignmentState, ratio: float) -> int:
+        if ratio >= 1.0:
+            return len(alignment.units)
+        if ratio <= 0.0 or alignment.total_weight <= 0:
+            return 0
+
+        threshold = alignment.total_weight * ratio
+        accumulated = 0.0
+        count = 0
+
+        for weight in alignment.weights:
+            if accumulated + weight > threshold:
+                break
+            accumulated += weight
+            count += 1
+
+        return count
+
+    @staticmethod
+    def _weight_ratio(alignment: _AlignmentState, unit_count: int) -> float:
+        if alignment.total_weight <= 0:
+            return 0.0
+        return min(sum(alignment.weights[:unit_count]) / alignment.total_weight, 1.0)
 
     async def _run(self) -> None:
         subscription = self._subscription
@@ -340,73 +374,40 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
 
         return state
 
-    @staticmethod
-    def _matches_control(state: _TranscriptState, control: OutputControl) -> bool:
-        if control.target_output_id is not None and state.output_id != control.target_output_id:
-            return False
-        if control.target_lane is not None and state.lane != control.target_lane:
-            return False
-        if control.target_turn_id is not None and state.turn_id != control.target_turn_id:
-            return False
-        return True
+    async def start(self) -> None:
+        if self._started:
+            return
 
-    @staticmethod
-    def _split_units(text: str) -> tuple[str, ...]:
-        raw_tokens = _TOKEN_PATTERN.findall(text)
-        units: list[str] = []
-        pending_space = ""
+        self._subscription = await self._runtime.output.stream.subscribe(
+            self.CONSUMER_ID,
+            kinds=(
+                OutputKind.TEXT_CHUNK,
+                OutputKind.ALIGNMENT,
+                OutputKind.PLAYBACK,
+                OutputKind.CONTROL,
+            ),
+            lanes=self._lanes,
+            max_pending=256,
+            reliable=True,
+        )
+        self._run_task = asyncio.create_task(self._run(), name=self.CONSUMER_ID)
+        self._started = True
 
-        for token in raw_tokens:
-            if token.isspace():
-                pending_space += token
-            elif (
-                TranscriptSynchronizationProcessor._is_punctuation(token)
-                and units
-                and not pending_space
-            ):
-                units[-1] += token
-            else:
-                units.append(pending_space + token)
-                pending_space = ""
+    async def stop(self) -> None:
+        if not self._started:
+            return
 
-        if pending_space:
-            if units:
-                units[-1] += pending_space
-            else:
-                units.append(pending_space)
+        self._started = False
+        run_task = self._run_task
+        self._run_task = None
 
-        return tuple(units)
+        if run_task is not None and not run_task.done():
+            run_task.cancel()
+        if run_task is not None:
+            await asyncio.gather(run_task, return_exceptions=True)
 
-    @staticmethod
-    def _is_punctuation(token: str) -> bool:
-        return bool(token) and all(not char.isalnum() and not char.isspace() for char in token)
+        if self._subscription is not None:
+            await self._runtime.output.stream.unsubscribe(self.CONSUMER_ID)
 
-    @staticmethod
-    def _unit_weight(unit: str) -> float:
-        visible_length = len(unit.strip())
-        return float(max(visible_length, 1))
-
-    @staticmethod
-    def _target_unit_count(alignment: _AlignmentState, ratio: float) -> int:
-        if ratio >= 1.0:
-            return len(alignment.units)
-        if ratio <= 0.0 or alignment.total_weight <= 0:
-            return 0
-
-        threshold = alignment.total_weight * ratio
-        accumulated = 0.0
-        count = 0
-
-        for weight in alignment.weights:
-            if accumulated + weight > threshold:
-                break
-            accumulated += weight
-            count += 1
-
-        return count
-
-    @staticmethod
-    def _weight_ratio(alignment: _AlignmentState, unit_count: int) -> float:
-        if alignment.total_weight <= 0:
-            return 0.0
-        return min(sum(alignment.weights[:unit_count]) / alignment.total_weight, 1.0)
+        self._subscription = None
+        self._states.clear()

@@ -16,35 +16,35 @@ RUNTIME_CONTEXT_END = "</alphaavatar_runtime_context>"
 
 RUNTIME_CONTEXT_PROMPT = f"""
 {RUNTIME_CONTEXT_BEGIN}
-<context_scope>current_answer_only</context_scope>
+  <context_scope>current_answer_only</context_scope>
 
-<current_time>
-{{current_time}}
-</current_time>
+  <current_time>
+    {{current_time}}
+  </current_time>
 
-<retrieved_memory>
-{{memory_content}}
-</retrieved_memory>
+  <retrieved_memory>
+    {{memory_content}}
+  </retrieved_memory>
 
-<active_plan>
-{{plan_content}}
-</active_plan>
+  <active_plan>
+    {{plan_content}}
+  </active_plan>
 
-<reflection>
-{{reflection_content}}
-</reflection>
+  <reflection>
+    {{reflection_content}}
+  </reflection>
 
-<temporary_behavior_rules>
-{{behavior_rules}}
-</temporary_behavior_rules>
+  <temporary_behavior_rules>
+    {{behavior_rules}}
+  </temporary_behavior_rules>
 
-<priority_rules>
-- The latest user message has the highest priority.
-- Runtime context is relevant only to the current answer.
-- Retrieved memory is helpful context, but it may be outdated.
-- If runtime context conflicts with the latest user message, follow the latest user message.
-- Stable persona is already provided in the system prompt.
-- Do not expose raw runtime context unless the user explicitly asks for it.
-</priority_rules>
+  <priority_rules>
+    <rule rank="1">The latest user input has the highest priority.</rule>
+    <rule rank="2">Runtime context applies only to the current answer.</rule>
+    <rule rank="3">Retrieved memory may be incomplete or outdated.</rule>
+    <rule rank="4">If runtime context conflicts with the latest user input, follow the latest user input.</rule>
+    <rule rank="5">Stable persona is already provided in the system prompt.</rule>
+    <rule rank="6">Do not expose raw runtime context unless the user explicitly asks for it.</rule>
+  </priority_rules>
 {RUNTIME_CONTEXT_END}
 """.strip()

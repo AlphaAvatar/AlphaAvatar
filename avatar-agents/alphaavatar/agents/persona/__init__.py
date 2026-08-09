@@ -25,6 +25,7 @@ from .schema.user_profile import (
     UserRuntimeState,
 )
 from .speaker import SpeakerStreamBase
+from .template import PersonaPluginsTemplate
 
 __all__ = [
     "PersonaBase",
@@ -41,4 +42,5 @@ __all__ = [
     "FaceObservation",
     "SpeakerStreamBase",
     "FaceStreamBase",
+    "PersonaPluginsTemplate",
 ]

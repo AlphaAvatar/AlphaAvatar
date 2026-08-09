@@ -43,11 +43,11 @@ from .channels.factory import build_channel_adapters
 from .io.dispatcher import InputDispatcher
 from .io.envelopes import InputEnvelope
 from .livekit import (
-    LiveKitAudioInputRuntime,
+    LiveKitAudioInput,
     LiveKitStatusOutput,
     LiveKitTranscriptOutput,
     LiveKitTransientAudioOutput,
-    LiveKitVideoInputRuntime,
+    LiveKitVideoInput,
 )
 from .schema.room_type import SUPPORTED_ADAPTER_TYPES, detect_room_type
 from .schema.session_mode import SessionMode, resolve_session_mode
@@ -224,7 +224,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
         primary=True,
     )
 
-    visual_input_enabled = session_mode.video_input_enabled and avatar_config.vision.input.enabled
+    visual_input_enabled = session_mode.video_input_enabled and avatar_config.vision.enabled
 
     interaction_method = InteractionMethod(
         room_type=room_type.value,
@@ -285,13 +285,13 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
             transcript_output,
         ),
         "inputs": (
-            LiveKitAudioInputRuntime(
+            LiveKitAudioInput(
                 room=ctx.room,
                 runtime=avatar_runtime,
                 sample_rate=16_000,
                 num_channels=1,
             ),
-            LiveKitVideoInputRuntime(
+            LiveKitVideoInput(
                 room=ctx.room,
                 runtime=avatar_runtime,
             ),

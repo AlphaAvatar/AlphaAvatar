@@ -11,16 +11,48 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from .model_input import (
+    ModelAudioPart,
+    ModelControlItem,
+    ModelFunctionCall,
+    ModelFunctionOutput,
+    ModelImagePart,
+    ModelInput,
+    ModelInputItem,
+    ModelInputMessage,
+    ModelInputPart,
+    ModelInputType,
+    ModelRole,
+    ModelTemporalPart,
+    ModelTemporalSlice,
+    ModelTextPart,
+    RealtimeModelInput,
+)
 from .provider_result import ProviderResult
 from .task_config import ProvidersConfig, ProviderTaskConfig, ProviderTraceConfig
 from .trace_record import ProviderTraceRecord
 from .usage import ProviderUsage
 
 __all__ = [
+    "ModelAudioPart",
+    "ModelControlItem",
+    "ModelFunctionCall",
+    "ModelFunctionOutput",
+    "ModelImagePart",
+    "ModelInput",
+    "ModelInputItem",
+    "ModelInputMessage",
+    "ModelInputPart",
+    "ModelInputType",
+    "ModelRole",
+    "ModelTextPart",
+    "ModelTemporalPart",
+    "ModelTemporalSlice",
     "ProviderResult",
     "ProviderTaskConfig",
     "ProviderTraceConfig",
     "ProvidersConfig",
     "ProviderTraceRecord",
     "ProviderUsage",
+    "RealtimeModelInput",
 ]

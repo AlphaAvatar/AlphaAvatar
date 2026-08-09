@@ -27,6 +27,7 @@ from alphaavatar.agents.avatar.voice import (
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.media import AudioFrame, AudioSegmentPayload
 from alphaavatar.core.perception import PerceptionRuntime
+from alphaavatar.core.time import RuntimeTimeRange
 
 from ..log import logger
 
@@ -154,14 +155,14 @@ class AudioActivitySource:
             "router_processor": "audio_activity",
         }
 
-        routed = EnvObservation.audio_frame(
-            timestamp=frame_ref.observation.timestamp,
+        routed = EnvObservation.speech_frame(
+            time_range=frame_ref.observation.time_range,
             source_id=self.routed_source_id,
             payload=frame_ref.observation.payload,
             metadata=metadata,
         )
 
-        self.perception_runtime.publish_speech_observation(routed)
+        self.perception_runtime.publish_observation(routed)
 
         frame_ref.routed_segment_id = segment_id
         self._segment_frames.append(frame_ref)
@@ -193,6 +194,18 @@ class AudioActivitySource:
             if routed is not None:
                 first = False
 
+    def _time_at_sample(
+        self,
+        frames: list[AudioFrameRef],
+        sample: int,
+    ):
+        for frame_ref in frames:
+            if frame_ref.start_sample <= sample <= frame_ref.end_sample:
+                offset_sec = (sample - frame_ref.start_sample) / self.sample_rate
+                return frame_ref.observation.time_range.start.shifted(offset_sec)
+
+        return None
+
     def _finish_segment(self, event: VoiceActivityEvent) -> None:
         segment_id = self._segment_id
 
@@ -210,6 +223,20 @@ class AudioActivitySource:
         ]
 
         if frames:
+            segment_start = self._time_at_sample(frames, self._speech_start_sample)
+            segment_end = self._time_at_sample(frames, speech_end)
+
+            if segment_start is None or segment_end is None:
+                segment_range = RuntimeTimeRange(
+                    start=frames[0].observation.time_range.start,
+                    end=frames[-1].observation.time_range.end,
+                )
+            else:
+                segment_range = RuntimeTimeRange(
+                    start=segment_start,
+                    end=segment_end,
+                )
+
             source_ids = [frame_ref.observation.observation_id for frame_ref in frames]
 
             metadata = {
@@ -235,14 +262,14 @@ class AudioActivitySource:
                 metadata=dict(metadata),
             )
 
-            segment = EnvObservation.audio_segment(
-                timestamp=frames[-1].observation.timestamp,
+            segment = EnvObservation.speech_segment(
+                time_range=segment_range,
                 source_id=self.routed_source_id,
                 payload=payload,
                 metadata=metadata,
             )
 
-            self.perception_runtime.publish_speech_observation(segment)
+            self.perception_runtime.publish_observation(segment)
 
         self._segment_id = None
         self._segment_frames.clear()
@@ -278,7 +305,7 @@ class AudioActivitySource:
                     asyncio.shield(self._event_task),
                     timeout=1.0,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
         if not self._event_task.done():

@@ -43,7 +43,7 @@ class AudioActivityProcessor(RouterProcessorBase):
     ) -> None:
         super().__init__(runtime=runtime)
 
-        self.vad = vad
+        self._vad = vad
         self._pre_roll_sec = pre_roll_sec
         self._max_buffer_sec = max_buffer_sec
         self._sources: dict[str, AudioActivitySource] = {}
@@ -75,9 +75,9 @@ class AudioActivityProcessor(RouterProcessorBase):
         frame: AudioFrame,
     ) -> AudioActivitySource:
         source = AudioActivitySource(
-            perception_runtime=self.perception_runtime,
+            perception_runtime=self._runtime.perception,
             source_id=observation.source_id,
-            vad=self.vad,
+            vad=self._vad,
             sample_rate=frame.sample_rate,
             num_channels=frame.num_channels,
             pre_roll_sec=self._pre_roll_sec,
@@ -134,12 +134,12 @@ class AudioActivityProcessor(RouterProcessorBase):
     async def _consume_loop(self) -> None:
         while True:
             try:
-                await self.perception_runtime.wait_for_pending_observations(
+                await self._runtime.perception.wait_for_pending_observations(
                     consumer_id=self.CONSUMER_ID,
                     streams={"audio"},
                 )
 
-                window = self.perception_runtime.take_pending_observations(
+                window = self._runtime.perception.take_pending_observations(
                     consumer_id=self.CONSUMER_ID,
                     streams={"audio"},
                     require_payload=True,
@@ -155,7 +155,7 @@ class AudioActivityProcessor(RouterProcessorBase):
                 for observation in window.audio_frames:
                     await self._consume_observation(observation)
 
-                self.perception_runtime.commit_observations(window)
+                self._runtime.perception.commit_observations(window)
 
             except asyncio.CancelledError:
                 raise
@@ -186,7 +186,7 @@ class AudioActivityProcessor(RouterProcessorBase):
             self._task = None
 
         await self._close_sources(graceful=True)
-        self.perception_runtime.clear_consumer(
+        self._runtime.perception.clear_consumer(
             self.CONSUMER_ID,
             streams={"audio"},
         )
