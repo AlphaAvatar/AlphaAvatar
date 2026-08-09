@@ -45,7 +45,7 @@ from .memory_op import (
     EnvMemoryDelta,
     MemoryDelta,
     PatchOp,
-    flatten_items,
+    flatten_records,
     norm_token,
     rebuild_from_items,
 )
@@ -303,7 +303,7 @@ class MemoryRuntime(MemoryBase):
             if not selected:
                 return True
 
-            flattened = flatten_items(selected)
+            flattened = flatten_records(selected, include_topic=True)
 
             if not flattened:
                 return True
