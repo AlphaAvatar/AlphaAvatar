@@ -49,6 +49,7 @@ from .memory_op import (
     norm_token,
     rebuild_from_items,
 )
+from .pipeline import MemoryPipelineConfig
 
 ENV_SAVE_TIMEOUT_SEC = 8.0
 SHUTDOWN_UPDATE_TIMEOUT_SEC = 12.0
@@ -94,6 +95,7 @@ class MemoryRuntime(MemoryBase):
         memory_recall_num: int = 10,
         maximum_memory_num: int = 24,
         provider: dict[str, Any] | None = None,
+        pipeline: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(
@@ -108,6 +110,10 @@ class MemoryRuntime(MemoryBase):
             MemoryProviderConfig(**provider) if provider else MemoryProviderConfig()
         )
         self._delta_extractor = MemoryDeltaExtractor(self._provider_config)
+
+        self._pipeline_config = (
+            MemoryPipelineConfig(**pipeline) if pipeline else MemoryPipelineConfig()
+        )
 
         # ENV Memory init
         self._env_scheduler: EnvMemoryScheduler | None = None
