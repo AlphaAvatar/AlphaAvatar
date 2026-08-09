@@ -57,6 +57,38 @@ class MemoryDelta(BaseModel):
     )
 
 
+class NotePatch(BaseModel):
+    summary: str = Field(
+        default="",
+        description="One-paragraph summary of what durably matters from this session.",
+    )
+    facts: list[str] = Field(
+        default_factory=list,
+        description="Standalone factual statements. Each must be understandable on its own.",
+    )
+    keywords: list[str] = Field(
+        default_factory=list,
+        description="Short retrieval keywords: entities, topics, artifacts mentioned.",
+    )
+    topic: str | None = Field(
+        default=None,
+        description="Stable short topic label for the session.",
+    )
+
+
+class ConversationDelta(BaseModel):
+    """Output of the conversation extraction path.
+
+    One session yields exactly one note plus zero or more Avatar memories.
+    MemoryDelta and EnvMemoryDelta are left untouched so each of the three
+    extraction paths has its own explicit output type, rather than one field
+    changing meaning depending on the caller.
+    """
+
+    note: NotePatch = Field(default_factory=NotePatch)
+    assistant_memory_entries: list[PatchOp] = Field(default_factory=list)
+
+
 class EnvMemoryDelta(BaseModel):
     env_memory_entries: list[PatchOp] = Field(
         default_factory=list,

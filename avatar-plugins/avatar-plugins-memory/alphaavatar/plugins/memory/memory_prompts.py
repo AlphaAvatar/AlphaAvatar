@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from functools import lru_cache
+
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 CONVERSATION_MEMORY_EXTRACT_PROMPT = """You are an "AlphaAvatar Conversation Memory Extractor".
@@ -1067,3 +1069,106 @@ ENV_DELTA_PROMPT = ChatPromptTemplate.from_messages(
         MessagesPlaceholder("env_messages"),
     ]
 )
+
+
+SESSION_GATE_FRAGMENT = """
+----------------------------------------------------------------------
+SESSION VALUE GATE
+----------------------------------------------------------------------
+
+Before writing anything, decide whether this session contains information
+worth remembering beyond this conversation.
+
+If it does NOT, return an empty summary, an empty facts list, and an empty
+keywords list. Do not invent content to fill the fields.
+
+A session is NOT worth remembering when it contains only:
+- greetings, small talk, or acknowledgements
+- one-off factual answers with no likely follow-up value
+- requests that were fully satisfied and leave no continuing direction
+""".strip()
+
+
+KEYWORDS_FRAGMENT = """
+----------------------------------------------------------------------
+KEYWORDS RULES
+----------------------------------------------------------------------
+
+Fill NotePatch.keywords with short retrieval keys for this session.
+
+Rules:
+- 3 to 12 keywords.
+- Prefer concrete entities, artifacts, tools, projects, and topics.
+- Lowercase. No sentences. No duplicates.
+- Do not include generic words such as "user", "assistant", "conversation".
+""".strip()
+
+
+CONVERSATION_NOTE_SYSTEM = """You are an "AlphaAvatar Conversation Note Extractor".
+
+You read one whole session and produce ONE note describing what should be
+remembered about the user from it.
+
+----------------------------------------------------------------------
+OUTPUT
+----------------------------------------------------------------------
+
+NotePatch.summary
+- One paragraph. What durably matters about the user from this session.
+- Written so it stays understandable months later, without the transcript.
+
+NotePatch.facts
+- Standalone factual statements about the user.
+- Each fact must be understandable on its own, with no pronouns pointing
+  outside the sentence.
+- No duplicates. Do not restate the summary.
+
+NotePatch.topic
+- A stable short label. Lowercase preferred.
+- Good: "trip planning", "coffee preference", "memory architecture"
+- Bad: "discussion", "user request", "conversation"
+
+assistant_memory_entries
+- Reusable Avatar-level rules grounded in this session, if any.
+- At most 1 unless the session clearly contains several durable rules.
+- Leave empty when nothing generalizes beyond this user.
+""".strip()
+
+
+NOTE_HUMAN_TEMPLATE = (
+    "SESSION CONTENT:\n"
+    "```text\n"
+    "{session_content}\n"
+    "```\n\n"
+    "Output only `ConversationDelta`.\n\n"
+    "### SESSION CONTENT MEANING\n"
+    "- The session content may include user messages, assistant messages, current "
+    "session ENV memory, visual observations, audio/speaker context, face/object "
+    "references, high-level tool summaries, and runtime metadata.\n"
+    "- Treat it as source material. Do not copy it back as a transcript.\n"
+)
+
+
+@lru_cache(maxsize=4)
+def build_conversation_note_prompt(
+    *,
+    session_gate: bool,
+    keywords: bool,
+) -> ChatPromptTemplate:
+    """Assemble the conversation-note prompt from fragments.
+
+    Fragments must contain no literal braces -- ChatPromptTemplate reads those
+    as variable placeholders.
+    """
+    parts = [CONVERSATION_NOTE_SYSTEM]
+    if session_gate:
+        parts.append(SESSION_GATE_FRAGMENT)
+    if keywords:
+        parts.append(KEYWORDS_FRAGMENT)
+
+    return ChatPromptTemplate.from_messages(
+        [
+            ("system", "\n\n".join(parts)),
+            ("human", NOTE_HUMAN_TEMPLATE),
+        ]
+    )
