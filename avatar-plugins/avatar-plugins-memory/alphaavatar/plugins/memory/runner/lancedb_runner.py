@@ -649,6 +649,64 @@ class LanceDBRunner(InferenceRunner):
         self._ensure_collection(self._collection_name, embedding_dim)
         self._memory_table = self._client.open_table(self._collection_name)
 
+    def _search_similar_batch(
+        self,
+        *,
+        texts: list[str],
+        top_k: int = 5,
+        object_ids: list[str] | None = None,
+        memory_type: str | None = None,
+    ) -> dict:
+        """Nearest neighbours for a batch of texts, in one round trip.
+
+        Returns one result list per input text, in the same order. Similarity is
+        1 - cosine distance, so it is directly comparable against a threshold.
+        """
+        out: dict = {"results": [], "error": None}
+
+        try:
+            if not texts:
+                return out
+
+            all_count = self._memory_table.count_rows()
+            if all_count == 0:
+                out["results"] = [[] for _ in texts]
+                return out
+
+            vectors = self._embeddings.embed_documents(texts)
+            fetch_k = min(max(top_k * 12, 48), all_count)
+
+            for vector in vectors:
+                rows = self._memory_table.search(vector).metric("cosine").limit(fetch_k).to_list()
+
+                hits = []
+                for row in rows:
+                    if not self._row_matches_filters(
+                        row,
+                        doc_kind="memory_item",
+                        object_ids=object_ids,
+                        memory_type=memory_type,
+                    ):
+                        continue
+
+                    hits.append(
+                        {
+                            "item": self._row_to_item(row),
+                            "score": 1.0 - float(row.get("_distance", 1.0)),
+                        }
+                    )
+
+                    if len(hits) >= top_k:
+                        break
+
+                out["results"].append(hits)
+
+        except Exception as e:
+            out["error"] = str(e)
+            out["results"] = [[] for _ in texts]
+
+        return out
+
     def run(self, data: bytes) -> bytes | None:
         json_data = json.loads(data)
 
@@ -658,6 +716,9 @@ class LanceDBRunner(InferenceRunner):
                 return json.dumps(result).encode()
             case VectorRunnerOP.search_by_graph_node:
                 result = self._search_by_graph_node(**json_data["param"])
+                return json.dumps(result).encode()
+            case VectorRunnerOP.search_similar_batch:
+                result = self._search_similar_batch(**json_data["param"])
                 return json.dumps(result).encode()
             case VectorRunnerOP.save:
                 result = self._save(**json_data["param"])

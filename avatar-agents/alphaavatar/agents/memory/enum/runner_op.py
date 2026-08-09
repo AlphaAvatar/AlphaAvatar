@@ -17,4 +17,5 @@ from enum import StrEnum
 class VectorRunnerOP(StrEnum):
     search_by_context = "search memory by context"
     search_by_graph_node = "search_by_graph_node"
+    search_similar_batch = "search_similar_batch"
     save = "save"
