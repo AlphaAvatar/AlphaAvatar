@@ -5,7 +5,7 @@ from alphaavatar.agents.memory.schema.memory_item import render_note_value
 def _note(**kw) -> MemoryNote:
     base = {
         "session_id": "s1",
-        "timestamp": "2026-08-09 10:00:00",
+        "timestamp": "Timezone: Asia/Shanghai; Timezone Source: test; Time: Sunday, August 9, 2026, 10:00 AM",
         "memory_type": MemoryType.CONVERSATION,
         "topic": "trip planning",
         "summary": "User planned a Kyoto trip for November.",
@@ -32,7 +32,7 @@ def test_explicit_value_is_preserved():
 
 def test_render_line_is_single_line_and_labelled():
     assert _note().render_line() == (
-        "Timestamp: 2026-08-09 10:00:00; "
+        "Timestamp: Timezone: Asia/Shanghai; Timezone Source: test; Time: Sunday, August 9, 2026, 10:00 AM; "
         "Topic: trip planning; "
         "Summary: User planned a Kyoto trip for November.; "
         "Details: User will travel to Kyoto in November. | "
@@ -42,7 +42,7 @@ def test_render_line_is_single_line_and_labelled():
 
 def test_render_line_omits_details_when_no_facts():
     assert _note(facts=[]).render_line() == (
-        "Timestamp: 2026-08-09 10:00:00; "
+        "Timestamp: Timezone: Asia/Shanghai; Timezone Source: test; Time: Sunday, August 9, 2026, 10:00 AM; "
         "Topic: trip planning; "
         "Summary: User planned a Kyoto trip for November."
     )
@@ -50,7 +50,7 @@ def test_render_line_omits_details_when_no_facts():
 
 def test_render_line_strips_trailing_whitespace():
     assert _note(summary="Kyoto trip.", facts=["Travelling in November.   "]).render_line() == (
-        "Timestamp: 2026-08-09 10:00:00; "
+        "Timestamp: Timezone: Asia/Shanghai; Timezone Source: test; Time: Sunday, August 9, 2026, 10:00 AM; "
         "Topic: trip planning; "
         "Summary: Kyoto trip.; "
         "Details: Travelling in November."
