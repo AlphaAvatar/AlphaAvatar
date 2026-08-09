@@ -41,3 +41,17 @@ class MemoryItem(BaseModel):
     graph_links: list[MemoryGraphLink] = Field(default_factory=list)
 
     extra_data: dict[str, Any] = Field(default_factory=dict)
+
+    def render_line(self) -> str:
+        """Single-line prompt-facing rendering (the V side)."""
+        parts = [f"Timestamp: {self.timestamp}"]
+        if self.topic:
+            parts.append(f"Topic: {self.topic}")
+        parts.append(f"Content: {self.value}")
+        return "; ".join(parts).strip()
+
+    def embedding_text(self, *, include_topic: bool = False) -> str:
+        """Text handed to the embedder (the K side)."""
+        if include_topic and self.topic:
+            return f"{self.topic}\n{self.value}"
+        return self.value
