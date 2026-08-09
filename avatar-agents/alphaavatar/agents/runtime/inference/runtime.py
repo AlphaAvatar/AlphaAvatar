@@ -211,7 +211,7 @@ class _RunnerProcess:
                     _read_frame(self._reader),
                     timeout=timeout or self._request_timeout,
                 )
-            except TimeoutError:
+            except asyncio.TimeoutError:
                 await self._terminate()
                 raise TimeoutError(f"Inference runner `{self.method}` timed out") from None
 

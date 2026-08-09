@@ -72,7 +72,7 @@ class AiriCharacterSession(VirtualCharacterSession):
 
         try:
             await asyncio.wait_for(fut, timeout=60.0)
-        except TimeoutError:
+        except asyncio.TimeoutError:
             logger.warning("wait_avatar_ready timeout, continue anyway")
 
     async def start(
