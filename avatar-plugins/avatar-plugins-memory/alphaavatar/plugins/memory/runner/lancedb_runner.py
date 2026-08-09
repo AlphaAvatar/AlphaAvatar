@@ -323,7 +323,7 @@ class LanceDBRunner(InferenceRunner):
         fetch_k = min(max(top_k * 16, 64), all_count)
 
         try:
-            rows = self._memory_table.search(query_vec).limit(fetch_k).to_list()
+            rows = self._memory_table.search(query_vec).metric("cosine").limit(fetch_k).to_list()
         except Exception:
             rows = []
 
@@ -371,7 +371,7 @@ class LanceDBRunner(InferenceRunner):
         fetch_k = min(max(k * 12, 48), all_count)
 
         try:
-            rows = table.search(query_vec).limit(fetch_k).to_list()
+            rows = table.search(query_vec).metric("cosine").limit(fetch_k).to_list()
         except Exception:
             rows = []
 
@@ -532,7 +532,11 @@ class LanceDBRunner(InferenceRunner):
                 result["deleted_ids"] = memory_ids
 
             # 1. Save memory item rows
-            memory_texts = [it["page_content"] for it in memory_items]
+            # page_content is the display/backup text; embedding_text is the K side.
+            # Callers that only send page_content still work.
+            memory_texts = [
+                it.get("embedding_text") or it.get("page_content", "") for it in memory_items
+            ]
             memory_vectors = self._embeddings.embed_documents(memory_texts)
 
             rows = [
