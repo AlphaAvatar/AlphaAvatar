@@ -752,6 +752,7 @@ class MemoryRuntime(MemoryBase):
                 note_patch = conversation_delta.note
                 if norm_token(note_patch.summary) or note_patch.facts:
                     note = MemoryNote(
+                        updated=True,
                         session_id=cache.session_id,
                         object_ids=cache.object_ids,
                         topic=_norm_topic(note_patch.topic),
@@ -946,6 +947,9 @@ class MemoryRuntime(MemoryBase):
             # observed -- overwriting it would corrupt temporal reasoning.
             # `value` is recomposed by the MemoryNote validator.
             by_id[update.id] = MemoryNote(
+                # _persist_memory_items only writes records flagged as updated;
+                # a rewritten note must carry the flag or it never reaches the VDB.
+                updated=True,
                 memory_id=original.memory_id,
                 session_id=original.session_id,
                 object_ids=list(original.object_ids),
