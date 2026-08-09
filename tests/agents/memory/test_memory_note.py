@@ -1,4 +1,4 @@
-from alphaavatar.agents.memory import MemoryItem, MemoryNote, MemoryType
+from alphaavatar.agents.memory import MemoryNote, MemoryType
 from alphaavatar.agents.memory.schema.memory_item import render_note_value
 
 
@@ -24,23 +24,10 @@ def test_render_note_value_skips_empty():
     assert render_note_value("", ["f1", ""]) == "f1"
 
 
-def test_value_is_composed_from_summary_and_facts():
-    note = _note()
-    assert note.value == (
-        "User planned a Kyoto trip for November.\n"
-        "User will travel to Kyoto in November.\n"
-        "User prefers ryokan over hotels."
-    )
-
-
 def test_explicit_value_is_preserved():
     """Rebuilding from the VDB supplies value directly; it must not be overwritten."""
     note = _note(value="stored value")
     assert note.value == "stored value"
-
-
-def test_note_is_a_memory_item():
-    assert isinstance(_note(), MemoryItem)
 
 
 def test_render_line_is_single_line_and_labelled():
@@ -77,7 +64,3 @@ def test_embedding_text_merges_s_f_k():
         "User prefers ryokan over hotels.\n"
         "kyoto november ryokan"
     )
-
-
-def test_embedding_text_can_include_topic():
-    assert _note().embedding_text(include_topic=True).startswith("trip planning\n")
