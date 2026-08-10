@@ -55,6 +55,7 @@ from .pipeline import MemoryPipelineConfig, build_maintenance_strategy
 
 ENV_SAVE_TIMEOUT_SEC = 8.0
 SHUTDOWN_UPDATE_TIMEOUT_SEC = 12.0
+SESSION_SAVE_TIMEOUT_SEC = 8.0
 
 
 def _norm_topic(value: str | None) -> str | None:
@@ -823,6 +824,21 @@ class MemoryRuntime(MemoryBase):
         self.avatar_memory = all_assistant
         self.user_memory = all_user
         self.tool_memory = all_tool
+
+        # Persist the complete extracted lists, not self.memory_items.
+        # MemoryState caps each bucket at maximum_memory_num -- a rendering
+        # constraint ("the maximum number of memory items to use") -- so reading
+        # the persistence path off it drops the earliest records of any type
+        # that extracted more than the cap in one session. ENV already persists
+        # its full batch directly for the same reason; this makes the
+        # conversation, tool, and avatar paths behave the same way.
+        extracted = all_assistant + all_user + all_tool
+
+        if extracted and not await self._persist_memory_items(
+            extracted,
+            timeout=SESSION_SAVE_TIMEOUT_SEC,
+        ):
+            logger.warning("[Memory] session UPDATE persist incomplete; items remain pending.")
 
     async def save(self, timeout: float = 8.0) -> None:
         if not await self._persist_memory_items(
