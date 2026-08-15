@@ -334,7 +334,24 @@ v0.6.6 已用"ENV 每批即时落盘"修掉 ENV 一侧。本次让会话抽取�
 
 ---
 
-## 11. 下一轮（图索引改造）预览
+## 11. TODO：维护阶段的候选来源做成可配置
+
+**决定（2026-08-15）**：维护阶段的候选记忆来源做成两种，可配置切换，**两种实现都保留**。
+
+| 来源 | 说明 | 成本 |
+|---|---|---|
+| `query_recall`（新增） | 复用 session 内每轮 `search_by_context` 累积的召回集 | 零额外 RPC |
+| `note_lookup`（现状） | 用 note 的 `embedding_text` 单独查一次 | 一次 RPC |
+
+**`query_recall` 的实现约束**：必须**单独累积一份完整召回记录**，不能读 `MemoryState`——视图有 `maximum_memory_num` 上限（示例配置为 28，而 `recall_num=6`，长会话下留存率很低），且按时间戳保留最新，旧记忆优先被挤掉，而那恰恰是最可能需要 update 的部分。
+
+**已知的残余风险**：检索窗口是 `chat_context[-search_context:]` 的原始对话文本，note 的 `embedding_text` 是 summary + facts + keywords 的抽象形态。两者在向量空间中位置不同，ANN 近邻集不保证互相覆盖——summary 层尤其没有任何窗口的字面对应物。这是二阶效应，但需要实测确认。
+
+**验证方法**：在真实 session 上同时记录 A（窗口召回全集去重）与 B（note 直查结果），算差集 `B \ A`。稳定接近空则 `query_recall` 可作默认；否则保留 `note_lookup` 或两者取并集。该测量顺带产出 `recall_num` 是否够用的数据。
+
+---
+
+## 12. 下一轮（图索引改造）预览
 
 不属本次范围，此处仅记录已确认的方向：
 
