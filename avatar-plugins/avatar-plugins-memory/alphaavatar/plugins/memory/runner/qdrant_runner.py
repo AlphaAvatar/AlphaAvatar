@@ -34,6 +34,8 @@ from alphaavatar.agents.providers.embedding import create_embedding_model
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import qdrant
 
+from ..memory_op import resolve_value_to_note
+
 
 class QdrantRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.memory.vdb.qdrant"
@@ -443,8 +445,9 @@ class QdrantRunner(InferenceRunner):
         context_str: str,
         object_ids: list[str] | None = None,
         top_k: int = 10,
+        resolve_covered_items: bool = False,
     ) -> dict:
-        out = {"memory_items": [], "error": None}
+        out = {"memory_items": [], "recalled_count": 0, "error": None}
 
         try:
             query_vec = self._embeddings.embed_query(context_str)
@@ -475,7 +478,18 @@ class QdrantRunner(InferenceRunner):
             for item in self._get_memory_items_by_ids(graph_memory_ids):
                 merged[item["id"]] = item
 
-            out["memory_items"] = list(merged.values())[:top_k]
+            items = list(merged.values())
+            out["recalled_count"] = len(items)
+
+            # Before truncation, so the caller still gets exactly top_k rows.
+            if resolve_covered_items:
+                items = resolve_value_to_note(
+                    items,
+                    fetch_notes=self._get_memory_items_by_ids,
+                    max_fetch=top_k,
+                )
+
+            out["memory_items"] = items[:top_k]
 
         except Exception as exc:
             out["error"] = str(exc)

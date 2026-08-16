@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from collections.abc import Callable
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -57,38 +58,6 @@ class MemoryDelta(BaseModel):
     )
 
 
-class NotePatch(BaseModel):
-    summary: str = Field(
-        default="",
-        description="One-paragraph summary of what durably matters from this session.",
-    )
-    facts: list[str] = Field(
-        default_factory=list,
-        description="Standalone factual statements. Each must be understandable on its own.",
-    )
-    keywords: list[str] = Field(
-        default_factory=list,
-        description="Short retrieval keywords: entities, topics, artifacts mentioned.",
-    )
-    topic: str | None = Field(
-        default=None,
-        description="Stable short topic label for the session.",
-    )
-
-
-class ConversationDelta(BaseModel):
-    """Output of the conversation extraction path.
-
-    One session yields exactly one note plus zero or more Avatar memories.
-    MemoryDelta and EnvMemoryDelta are left untouched so each of the three
-    extraction paths has its own explicit output type, rather than one field
-    changing meaning depending on the caller.
-    """
-
-    note: NotePatch = Field(default_factory=NotePatch)
-    assistant_memory_entries: list[PatchOp] = Field(default_factory=list)
-
-
 class EnvMemoryDelta(BaseModel):
     env_memory_entries: list[PatchOp] = Field(
         default_factory=list,
@@ -101,12 +70,56 @@ def norm_token(s: Any) -> str:
     return " ".join(str(s).strip().lower().split())
 
 
-NOTE_PAYLOAD_KEY = "_note"
+def norm_topic(value: str | None) -> str | None:
+    if not value:
+        return None
+
+    value = " ".join(value.strip().split())
+    return value.lower()[:64]
+
+
+def merge_object_ids(*values: Any) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+
+    for value in values:
+        if value is None:
+            continue
+
+        items = value if isinstance(value, list) else [value]
+
+        for item in items:
+            normalized = str(item).strip()
+
+            if not normalized or normalized in seen:
+                continue
+
+            seen.add(normalized)
+            merged.append(normalized)
+
+    return merged
+
 
 # doc_kind separates memory rows from graph-node rows in the VDB table.
 # Notes are MemoryItems and MUST keep this value, otherwise _search_rows
 # (which filters doc_kind == "memory_item") would never return them.
 DOC_KIND_MEMORY = "memory_item"
+
+# The item and note layers share one table and one doc_kind. They are told
+# apart by two reserved keys inside metadata.extra_data -- NOT by table
+# columns: _ensure_collection freezes the schema by inserting and deleting a
+# seed row with hard-coded column names, so adding a column would make
+# existing tables unreadable.
+NOTE_PAYLOAD_KEY = "_note"  # note rows only: {"item_ids": [...]}
+NOTE_BACKREF_KEY = "_note_id"  # absorbed item rows only: the note's memory_id
+
+LAYER_ITEM = "item"
+LAYER_NOTE = "note"
+
+
+def row_layer(extra_data: dict[str, Any] | None) -> str:
+    """Which layer a stored record belongs to, from its extra_data payload."""
+    return LAYER_NOTE if NOTE_PAYLOAD_KEY in (extra_data or {}) else LAYER_ITEM
 
 
 def flatten_records(
@@ -120,11 +133,7 @@ def flatten_records(
         extra_data = dict(memory.extra_data or {})
 
         if isinstance(memory, MemoryNote):
-            extra_data[NOTE_PAYLOAD_KEY] = {
-                "summary": memory.summary,
-                "facts": list(memory.facts),
-                "keywords": list(memory.keywords),
-            }
+            extra_data[NOTE_PAYLOAD_KEY] = {"item_ids": list(memory.item_ids)}
 
         items.append(
             {
@@ -184,15 +193,104 @@ def rebuild_from_items(items: list[dict[str, Any]]) -> list[MemoryItem]:
         }
 
         if isinstance(note_payload, dict):
-            out.append(
-                MemoryNote(
-                    **common,
-                    summary=str(note_payload.get("summary", "")),
-                    facts=list(note_payload.get("facts") or []),
-                    keywords=list(note_payload.get("keywords") or []),
-                )
-            )
+            # Notes written before the layering change carried summary/facts
+            # instead of item_ids. They stay readable and updatable; they just
+            # cover no items, so nothing resolves onto them.
+            out.append(MemoryNote(**common, item_ids=list(note_payload.get("item_ids") or [])))
         else:
             out.append(MemoryItem(**common))
 
     return out
+
+
+def _covered_item_ids(rows: list[dict[str, Any]]) -> tuple[set[str], dict[str, str]]:
+    """Split rows into (ids covered by a note present here, item -> note backref)."""
+    covered: set[str] = set()
+    backrefs: dict[str, str] = {}
+
+    for row in rows:
+        extra_data = _row_extra_data(row)
+
+        payload = extra_data.get(NOTE_PAYLOAD_KEY)
+        if isinstance(payload, dict):
+            covered.update(str(x) for x in payload.get("item_ids") or [])
+            continue
+
+        backref = extra_data.get(NOTE_BACKREF_KEY)
+        if backref:
+            backrefs[str(row.get("id"))] = str(backref)
+
+    return covered, backrefs
+
+
+def _row_extra_data(row: dict[str, Any]) -> dict[str, Any]:
+    metadata = row.get("metadata") or {}
+    extra_data = metadata.get("extra_data") or {}
+    return extra_data if isinstance(extra_data, dict) else {}
+
+
+def resolve_value_to_note(
+    rows: list[dict[str, Any]],
+    *,
+    fetch_notes: Callable[[list[str]], list[dict[str, Any]]] | None = None,
+    max_fetch: int = 0,
+) -> list[dict[str, Any]]:
+    """Let a note supply the V of every atomic item it has absorbed.
+
+    K/V separation: both layers stay searchable (an item's atomic wording is
+    often the better retrieval handle), but the prompt-facing value of an
+    absorbed item comes from its note -- the reconciled version. Without this,
+    an item that a later note corrected would be re-injected alongside the
+    correction, which is exactly the contradiction the note exists to resolve.
+
+    Nothing stored is deleted or modified; this is pure render-time resolution.
+    Rows keep their relative order, and each note appears at most once.
+
+    `fetch_notes` resolves notes that were not co-retrieved, via the
+    `_note_id` back-reference. It is capped by `max_fetch`; pass no fetcher to
+    only collapse notes already present in `rows`.
+    """
+    covered, backrefs = _covered_item_ids(rows)
+
+    if fetch_notes is not None and max_fetch > 0:
+        present = {str(row.get("id")) for row in rows}
+        missing: list[str] = []
+
+        for item_id, note_id in backrefs.items():
+            if item_id in covered or note_id in present or note_id in missing:
+                continue
+            missing.append(note_id)
+            if len(missing) >= max_fetch:
+                break
+
+        if missing:
+            fetched = fetch_notes(missing)
+            rows = [*rows, *fetched]
+            covered, _ = _covered_item_ids(rows)
+
+    resolved: list[dict[str, Any]] = []
+    by_id = {str(row.get("id")): row for row in rows}
+    seen: set[str] = set()
+
+    for row in rows:
+        row_id = str(row.get("id"))
+
+        if row_id in covered:
+            note_id = backrefs.get(row_id)
+            note_row = by_id.get(note_id) if note_id else None
+
+            if note_row is not None:
+                row_id, row = note_id or row_id, note_row
+            else:
+                # Covered by a note in this batch whose id we cannot name (the
+                # item predates back-references). Drop it: the note is present
+                # and already carries the reconciled content.
+                continue
+
+        if row_id in seen:
+            continue
+
+        seen.add(row_id)
+        resolved.append(row)
+
+    return resolved

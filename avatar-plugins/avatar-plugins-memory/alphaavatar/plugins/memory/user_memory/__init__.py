@@ -11,13 +11,20 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .base import ConsolidationResult
-from .candidates import RecallLedger, filter_hits, merge_candidates, notes_from_hits
+from .consolidator import NoteConsolidator
+from .notes import apply_assignments, build_note, rewrite_note
+from .prompts import CONSOLIDATE_NOTES_PROMPT, SESSION_SUMMARY_PROMPT
+from .schema import NEW_NOTE_PREFIX, NoteAssignment, NoteConsolidation, NoteDraft
 
 __all__ = [
-    "ConsolidationResult",
-    "RecallLedger",
-    "filter_hits",
-    "merge_candidates",
-    "notes_from_hits",
+    "CONSOLIDATE_NOTES_PROMPT",
+    "NEW_NOTE_PREFIX",
+    "SESSION_SUMMARY_PROMPT",
+    "NoteAssignment",
+    "NoteConsolidation",
+    "NoteConsolidator",
+    "NoteDraft",
+    "apply_assignments",
+    "build_note",
+    "rewrite_note",
 ]

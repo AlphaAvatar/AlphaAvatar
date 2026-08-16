@@ -180,3 +180,6 @@ pyrightconfig.json
 .alphaavatar_workspace
 
 docs/releases/.generated/
+
+# Local-only: dev-time verification, not part of the published tree.
+/tests/

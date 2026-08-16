@@ -14,7 +14,7 @@
 import uuid
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 from ..enum.memory_type import MemoryType
 from .graph import MemoryGraphLink, MemoryGraphNode
@@ -57,51 +57,19 @@ class MemoryItem(BaseModel):
         return self.value
 
 
-def render_note_value(summary: str, facts: list[str]) -> str:
-    """Compose the human-readable value of a note from its summary and facts."""
-    parts: list[str] = []
-    if summary:
-        parts.append(summary)
-    parts.extend(fact for fact in facts if fact)
-    return "\n".join(parts)
-
-
 class MemoryNote(MemoryItem):
-    """Session-level aggregation of dialog memory. Only for MemoryType.CONVERSATION.
+    """Aggregation layer over immutable atomic MemoryItems.
 
-    `value` is composed from summary + facts at construction time and is therefore
-    optional. Updating a note must produce a new object (the project forbids
-    in-place mutation); otherwise `value` would go stale.
+    Adds nothing but the coverage set: `value` carries the consolidated
+    narrative, and the atomic statements it consolidates stay in the item
+    layer, addressed here by `item_ids`.
+
+    `session_id` means "the session in which this note was last updated", not
+    a boundary -- a note may span any number of sessions. `timestamp` keeps the
+    time the event was first observed and is never overwritten by an update.
+
+    Updating a note must produce a NEW object; the project forbids in-place
+    mutation of memory records.
     """
 
-    value: str = ""
-
-    summary: str = ""
-    facts: list[str] = Field(default_factory=list)
-    keywords: list[str] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def _compose_value(self) -> "MemoryNote":
-        if not self.value:
-            self.value = render_note_value(self.summary, self.facts)
-        return self
-
-    def render_line(self) -> str:
-        parts = [f"Timestamp: {self.timestamp}"]
-        if self.topic:
-            parts.append(f"Topic: {self.topic}")
-        parts.append(f"Summary: {self.summary}")
-        if self.facts:
-            parts.append("Details: " + " | ".join(self.facts))
-        return "; ".join(parts).strip()
-
-    def embedding_text(self, *, include_topic: bool = False) -> str:
-        parts: list[str] = []
-        if include_topic and self.topic:
-            parts.append(self.topic)
-        if self.summary:
-            parts.append(self.summary)
-        parts.extend(fact for fact in self.facts if fact)
-        if self.keywords:
-            parts.append(" ".join(self.keywords))
-        return "\n".join(parts)
+    item_ids: list[str] = Field(default_factory=list)

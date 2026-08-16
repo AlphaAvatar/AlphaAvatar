@@ -12,46 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from dataclasses import dataclass, field
-from typing import Any, Protocol
 
-from alphaavatar.agents.memory import MemoryItem
+from alphaavatar.agents.memory import MemoryItem, MemoryNote
 
 
 @dataclass
-class MaintenanceResult:
-    """Outcome of the indexing/maintenance stage.
+class ConsolidationResult:
+    """Outcome of the note consolidation stage.
 
-    to_insert  -- newly created records
-    to_rewrite -- existing records whose content was merged/updated. These KEEP
+    items      -- the session's atomic memories, re-created carrying the
+                  `_note_id` back-reference of whichever note absorbed them.
+                  The item layer is append-only: nothing here is ever dropped.
+    to_insert  -- newly created notes
+    to_rewrite -- existing notes whose content was merged/updated. These KEEP
                   their original memory_id so the VDB save (delete-by-id +
                   reinsert) behaves as an upsert.
-    dropped    -- records discarded as redundant (the Noop operation)
     """
 
-    to_insert: list[MemoryItem] = field(default_factory=list)
-    to_rewrite: list[MemoryItem] = field(default_factory=list)
-    dropped: list[MemoryItem] = field(default_factory=list)
+    items: list[MemoryItem] = field(default_factory=list)
+    to_insert: list[MemoryNote] = field(default_factory=list)
+    to_rewrite: list[MemoryNote] = field(default_factory=list)
 
     def all_writes(self) -> list[MemoryItem]:
-        return [*self.to_insert, *self.to_rewrite]
-
-
-class MaintenanceStrategy(Protocol):
-    async def apply(
-        self,
-        records: list[MemoryItem],
-        *,
-        trace_metadata: dict[str, Any],
-    ) -> MaintenanceResult: ...
-
-
-class AddOnlyStrategy:
-    """ops == [add]. Every extracted record is inserted verbatim."""
-
-    async def apply(
-        self,
-        records: list[MemoryItem],
-        *,
-        trace_metadata: dict[str, Any],
-    ) -> MaintenanceResult:
-        return MaintenanceResult(to_insert=list(records))
+        return [*self.items, *self.to_insert, *self.to_rewrite]

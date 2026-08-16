@@ -12,21 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .config import (
+    CandidateSource,
     ExtractionConfig,
+    ItemOp,
     KeyConfig,
     MaintenanceConfig,
-    MaintenanceOp,
     MemoryPipelineConfig,
+    NoteConfig,
+    NoteMode,
     ValueConfig,
 )
-from .registry import build_maintenance_strategy
 
 __all__ = [
+    "CandidateSource",
     "ExtractionConfig",
+    "ItemOp",
     "KeyConfig",
     "MaintenanceConfig",
-    "MaintenanceOp",
     "MemoryPipelineConfig",
+    "NoteConfig",
+    "NoteMode",
     "ValueConfig",
-    "build_maintenance_strategy",
 ]

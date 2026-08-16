@@ -29,18 +29,16 @@ from alphaavatar.agents.providers.schema import (
 )
 
 from .log import logger
-from .maintenance import (
-    JUDGE_PROMPT,
-    REWRITE_PROMPT,
-    JudgeVerdicts,
-    RewrittenMemories,
-)
-from .memory_op import ConversationDelta, EnvMemoryDelta, MemoryDelta
-from .memory_prompts import (
-    CONVERSATION_DELTA_PROMPT,
+from .memory_op import EnvMemoryDelta, MemoryDelta
+from .prompts import (
     ENV_DELTA_PROMPT,
     TOOL_DELTA_PROMPT,
-    build_conversation_note_prompt,
+    build_conversation_delta_prompt,
+)
+from .user_memory import (
+    CONSOLIDATE_NOTES_PROMPT,
+    SESSION_SUMMARY_PROMPT,
+    NoteConsolidation,
 )
 
 if TYPE_CHECKING:
@@ -219,11 +217,12 @@ class MemoryDeltaExtractor:
         *,
         session_content: str,
         memory_cache: MemoryCache,
+        session_gate: bool = False,
         timeout: float = 12.0,
     ) -> MemoryDelta:
         return await self._safe_ainvoke_structured(
             task_name=self._conversation_delta_task,
-            prompt=CONVERSATION_DELTA_PROMPT,
+            prompt=build_conversation_delta_prompt(session_gate=session_gate),
             payload={
                 "session_content": session_content,
             },
@@ -237,68 +236,21 @@ class MemoryDeltaExtractor:
             timeout=timeout,
         )
 
-    async def judge_maintenance(
+    async def consolidate_notes(
         self,
         *,
-        payload: str,
+        payload: dict[str, Any],
+        session_summary: bool,
         metadata: dict[str, Any],
         timeout: float,
-    ) -> JudgeVerdicts:
+    ) -> NoteConsolidation:
         return await self._safe_ainvoke_structured(
             task_name=self._conversation_delta_task,
-            prompt=JUDGE_PROMPT,
-            payload={"payload": payload},
-            output_schema=JudgeVerdicts,
-            fallback_output=JudgeVerdicts(),
-            metadata=metadata,
-            timeout=timeout,
-        )
-
-    async def rewrite_memories(
-        self,
-        *,
-        payload: str,
-        metadata: dict[str, Any],
-        timeout: float,
-    ) -> RewrittenMemories:
-        return await self._safe_ainvoke_structured(
-            task_name=self._conversation_delta_task,
-            prompt=REWRITE_PROMPT,
-            payload={"payload": payload},
-            output_schema=RewrittenMemories,
-            fallback_output=RewrittenMemories(),
-            metadata=metadata,
-            timeout=timeout,
-        )
-
-    async def extract_conversation_note(
-        self,
-        *,
-        session_content: str,
-        memory_cache: MemoryCache,
-        session_gate: bool,
-        keywords: bool,
-        timeout: float = 30.0,
-    ) -> ConversationDelta:
-        payload = {
-            "type": MemoryType.CONVERSATION.value,
-            "session_content": session_content,
-        }
-
-        return await self._safe_ainvoke_structured(
-            task_name=self._conversation_delta_task,
-            prompt=build_conversation_note_prompt(
-                session_gate=session_gate,
-                keywords=keywords,
-            ),
+            prompt=SESSION_SUMMARY_PROMPT if session_summary else CONSOLIDATE_NOTES_PROMPT,
             payload=payload,
-            output_schema=ConversationDelta,
-            fallback_output=ConversationDelta(),
-            metadata=self.base_trace_metadata(
-                memory_cache=memory_cache,
-                operation="conversation_note",
-                memory_type=MemoryType.CONVERSATION,
-            ),
+            output_schema=NoteConsolidation,
+            fallback_output=NoteConsolidation(),
+            metadata=metadata,
             timeout=timeout,
         )
 

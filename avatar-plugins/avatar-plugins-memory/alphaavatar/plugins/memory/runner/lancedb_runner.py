@@ -21,6 +21,8 @@ from alphaavatar.agents.providers.embedding import create_embedding_model
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import lancedb
 
+from ..memory_op import resolve_value_to_note, row_layer
+
 
 class LanceDBRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.memory.vdb.lancedb"
@@ -85,8 +87,11 @@ class LanceDBRunner(InferenceRunner):
         session_id: str | None = None,
         node_type: str | None = None,
         node_key: str | None = None,
+        layer: str | None = None,
     ) -> bool:
         if doc_kind and str(row.get("doc_kind", "")) != doc_kind:
+            return False
+        if layer and row_layer(self._json_loads(row.get("extra_data_json"), {})) != layer:
             return False
         if node_key and str(row.get("node_key", "")) != node_key:
             return False
@@ -396,9 +401,11 @@ class LanceDBRunner(InferenceRunner):
         context_str: str,
         object_ids: list[str] | None = None,
         top_k: int = 10,
+        resolve_covered_items: bool = False,
     ) -> dict:
         out = {
             "memory_items": [],
+            "recalled_count": 0,
             "error": None,
         }
 
@@ -432,7 +439,19 @@ class LanceDBRunner(InferenceRunner):
             for item in self._get_memory_items_by_ids(graph_memory_ids):
                 merged[item["id"]] = item
 
-            out["memory_items"] = list(merged.values())[:top_k]
+            items = list(merged.values())
+            out["recalled_count"] = len(items)
+
+            # V resolution runs BEFORE truncation, so the caller still gets
+            # exactly top_k records and no over-fetch factor is needed.
+            if resolve_covered_items:
+                items = resolve_value_to_note(
+                    items,
+                    fetch_notes=self._get_memory_items_by_ids,
+                    max_fetch=top_k,
+                )
+
+            out["memory_items"] = items[:top_k]
 
         except Exception as e:
             out["error"] = str(e)
@@ -656,6 +675,7 @@ class LanceDBRunner(InferenceRunner):
         top_k: int = 5,
         object_ids: list[str] | None = None,
         memory_type: str | None = None,
+        layer: str | None = None,
     ) -> dict:
         """Nearest neighbours for a batch of texts, in one round trip.
 
@@ -686,6 +706,7 @@ class LanceDBRunner(InferenceRunner):
                         doc_kind="memory_item",
                         object_ids=object_ids,
                         memory_type=memory_type,
+                        layer=layer,
                     ):
                         continue
 
