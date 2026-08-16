@@ -181,5 +181,7 @@ pyrightconfig.json
 
 docs/releases/.generated/
 
-# Local-only: dev-time verification, not part of the published tree.
+# Local-only: dev-time verification and working notes, not part of the
+# published tree.
 /tests/
+docs/_local/
