@@ -13,11 +13,11 @@
 # limitations under the License.
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from textwrap import indent
-from typing import Protocol
 from xml.sax.saxutils import escape, quoteattr
 
+from alphaavatar.agents.avatar.context.schema import ContextBuildRequest
 from alphaavatar.agents.avatar.vision import (
     SelectedVisualFrame,
     VisualSelection,
@@ -30,7 +30,6 @@ from alphaavatar.agents.providers.schema import (
     ModelInputType,
     ModelRole,
     ModelTextPart,
-    RealtimeModelInput,
 )
 from alphaavatar.core.env import EnvObservation, ObservationKind
 from alphaavatar.core.media import (
@@ -51,43 +50,6 @@ _VISUAL_OBSERVATION_KINDS = {
     ObservationKind.VIDEO_FRAME,
     ObservationKind.SCREEN_FRAME,
 }
-
-
-@dataclass(frozen=True, slots=True)
-class PromptRenderRequest:
-    base_input: ModelInput
-    input_id: str
-    alignment: AlignedPerception
-    visual_selection: VisualSelection
-    model_input_type: ModelInputType
-
-
-@dataclass(frozen=True, slots=True)
-class PromptRenderResult:
-    model_input: ModelInput
-
-
-class PromptRenderer(Protocol):
-    def render(self, request: PromptRenderRequest) -> PromptRenderResult: ...
-
-
-class PromptRendererRegistry:
-    def __init__(self) -> None:
-        self._renderers: dict[ModelInputType, PromptRenderer] = {}
-
-    def register(
-        self,
-        *,
-        input_type: ModelInputType,
-        renderer: PromptRenderer,
-    ) -> None:
-        self._renderers[input_type] = renderer
-
-    def resolve(self, input_type: ModelInputType) -> PromptRenderer:
-        try:
-            return self._renderers[input_type]
-        except KeyError as exc:
-            raise ValueError(f"No PromptRenderer registered for {input_type.value!r}") from exc
 
 
 def _xml_attr(value: object) -> str:
@@ -407,12 +369,7 @@ def _slice_open_xml(
     )
 
     if speech_xml:
-        lines.append(
-            _indent_xml(
-                speech_xml,
-                6,
-            )
-        )
+        lines.append(_indent_xml(speech_xml, 6))
 
     return "\n".join(lines)
 
@@ -423,13 +380,7 @@ def _ordered_slice_parts(
     alignment: AlignedPerception,
     frames: tuple[SelectedVisualFrame, ...],
 ) -> tuple[ModelInputPart, ...]:
-    entries: list[
-        tuple[
-            int,
-            int,
-            tuple[ModelInputPart, ...],
-        ]
-    ] = []
+    entries: list[tuple[int, int, tuple[ModelInputPart, ...]]] = []
 
     for event in temporal_slice.source_events:
         event_xml = _source_event_xml(
@@ -561,7 +512,7 @@ def _direct_input_parts(
     return tuple(parts)
 
 
-def _replace_current(
+def replace_current(
     base_input: ModelInput,
     input_id: str,
     parts: tuple[ModelInputPart, ...],
@@ -586,8 +537,8 @@ def _replace_current(
     )
 
 
-def _render_current_input(
-    request: PromptRenderRequest,
+def render_current_input(
+    request: ContextBuildRequest,
     *,
     include_images: bool,
 ) -> tuple[ModelInputPart, ...]:
@@ -663,14 +614,7 @@ def _render_current_input(
                 )
 
                 if event_xml:
-                    parts.append(
-                        ModelTextPart(
-                            _indent_xml(
-                                event_xml,
-                                6,
-                            )
-                        )
-                    )
+                    parts.append(ModelTextPart(_indent_xml(event_xml, 6)))
 
             if visual_count:
                 parts.append(
@@ -718,45 +662,3 @@ def _render_current_input(
     parts.append(ModelTextPart("</turn_input>"))
 
     return tuple(parts)
-
-
-class TextRenderer:
-    def render(self, request: PromptRenderRequest) -> PromptRenderResult:
-        return PromptRenderResult(
-            model_input=_replace_current(
-                request.base_input,
-                request.input_id,
-                _render_current_input(
-                    request,
-                    include_images=False,
-                ),
-            )
-        )
-
-
-class VLMRenderer:
-    def render(self, request: PromptRenderRequest) -> PromptRenderResult:
-        return PromptRenderResult(
-            model_input=_replace_current(
-                request.base_input,
-                request.input_id,
-                _render_current_input(
-                    request,
-                    include_images=True,
-                ),
-            )
-        )
-
-
-class RealtimeRenderer:
-    def render(self, request: PromptRenderRequest) -> PromptRenderResult:
-        return PromptRenderResult(
-            model_input=replace(
-                request.base_input.remove(request.input_id),
-                realtime=RealtimeModelInput(
-                    alignment=request.alignment,
-                    visual_selection=request.visual_selection,
-                    direct_inputs=request.alignment.direct_inputs,
-                ),
-            )
-        )

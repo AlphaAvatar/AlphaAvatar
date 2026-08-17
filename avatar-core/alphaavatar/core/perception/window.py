@@ -16,8 +16,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env import EnvObservation, ObservationKind
 
+from .enum import PerceptionStreamKind
 from .stream import PerceptionStream, StreamRead
 
 
@@ -37,31 +38,45 @@ def _timestamp_sort_key(value: str) -> float:
 class PerceptionWindow:
     consumer_id: str
     observations: list[EnvObservation] = field(default_factory=list)
-    stream_reads: dict[str, StreamRead[EnvObservation]] = field(default_factory=dict)
+    stream_reads: dict[PerceptionStreamKind, StreamRead[EnvObservation]] = field(
+        default_factory=dict
+    )
 
     @property
     def stream_cursors(self) -> dict[str, int]:
         return {stream_name: result.cursor_seq for stream_name, result in self.stream_reads.items()}
 
-    def by_kind(self, *kinds: str) -> list[EnvObservation]:
+    def by_kind(self, *kinds: ObservationKind) -> list[EnvObservation]:
         accepted = set(kinds)
         return [observation for observation in self.observations if observation.kind in accepted]
 
     @property
     def video_frames(self) -> list[EnvObservation]:
-        return self.by_kind("video_frame", "screen_frame")
+        return self.by_kind(ObservationKind.VIDEO_FRAME, ObservationKind.SCREEN_FRAME)
 
     @property
     def audio_frames(self) -> list[EnvObservation]:
-        return self.by_kind("audio_frame")
+        return self.by_kind(ObservationKind.AUDIO_FRAME)
 
     @property
     def audio_segments(self) -> list[EnvObservation]:
-        return self.by_kind("audio_segment")
+        return self.by_kind(ObservationKind.AUDIO_SEGMENT)
 
     @property
     def audio_observations(self) -> list[EnvObservation]:
-        return self.by_kind("audio_frame", "audio_segment")
+        return self.by_kind(ObservationKind.AUDIO_FRAME, ObservationKind.AUDIO_SEGMENT)
+
+    @property
+    def speech_frames(self) -> list[EnvObservation]:
+        return self.by_kind(ObservationKind.SPEECH_FRAME)
+
+    @property
+    def speech_segments(self) -> list[EnvObservation]:
+        return self.by_kind(ObservationKind.SPEECH_SEGMENT)
+
+    @property
+    def speech_observations(self) -> list[EnvObservation]:
+        return self.by_kind(ObservationKind.SPEECH_FRAME, ObservationKind.SPEECH_SEGMENT)
 
     @property
     def has_gap(self) -> bool:
@@ -72,7 +87,7 @@ class PerceptionWindow:
         return sum(result.missed_count for result in self.stream_reads.values())
 
     @property
-    def gaps(self) -> dict[str, StreamRead[EnvObservation]]:
+    def gaps(self) -> dict[PerceptionStreamKind, StreamRead[EnvObservation]]:
         return {
             stream_name: result
             for stream_name, result in self.stream_reads.items()
@@ -89,10 +104,12 @@ class PerceptionWindow:
 
 
 class PerceptionWindowBuilder:
-    def __init__(self, *, streams: dict[str, PerceptionStream[EnvObservation]]) -> None:
+    def __init__(
+        self, *, streams: dict[PerceptionStreamKind, PerceptionStream[EnvObservation]]
+    ) -> None:
         self._streams = streams
 
-    def _get_stream(self, stream_name: str) -> PerceptionStream[EnvObservation]:
+    def _get_stream(self, stream_name: PerceptionStreamKind) -> PerceptionStream[EnvObservation]:
         stream = self._streams.get(stream_name)
         if stream is None:
             raise ValueError(f"Unknown perception stream: {stream_name!r}")
@@ -102,7 +119,7 @@ class PerceptionWindowBuilder:
         self,
         *,
         consumer_id: str,
-        streams: set[str],
+        streams: set[PerceptionStreamKind],
         require_payload: bool = False,
         min_age_sec: float = 0.0,
         limit_per_stream: int | None = None,
@@ -111,7 +128,7 @@ class PerceptionWindowBuilder:
             raise ValueError("At least one perception stream is required")
 
         observations: list[EnvObservation] = []
-        reads: dict[str, StreamRead[EnvObservation]] = {}
+        reads: dict[PerceptionStreamKind, StreamRead[EnvObservation]] = {}
         predicate = (lambda observation: observation.has_payload) if require_payload else None
 
         for stream_name in sorted(streams):

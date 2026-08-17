@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from datetime import datetime
+
 import numpy as np
 
 from alphaavatar.agents.persona import FaceCacheBase, ProfileItemSource, ProfileItemView
@@ -93,7 +95,7 @@ class FaceCache(FaceCacheBase):
         self,
         profile_details: UserProfileDetails | None,
         face_attribute: dict,
-        timestamp: str,
+        updated_at: datetime,
     ) -> UserProfileDetails:
         if profile_details is None:
             profile_details = UserProfileDetails(**{})
@@ -112,7 +114,7 @@ class FaceCache(FaceCacheBase):
                 profile_details.age = ProfileItemView(
                     value=age_range,
                     source=ProfileItemSource.face,
-                    timestamp=timestamp,
+                    updated_at=updated_at,
                 )
 
         if gender is not None:
@@ -128,7 +130,7 @@ class FaceCache(FaceCacheBase):
                     profile_details.gender = ProfileItemView(
                         value=gender_value,
                         source=ProfileItemSource.face,
-                        timestamp=timestamp,
+                        updated_at=updated_at,
                     )
 
         return profile_details

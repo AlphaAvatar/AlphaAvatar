@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import uuid
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+from alphaavatar.agents.utils.time import application_now
 
 from ..enum.memory_type import MemoryType
 from .graph import MemoryGraphLink, MemoryGraphNode
@@ -27,13 +30,13 @@ class MemoryItem(BaseModel):
     session_id: str
 
     # all related runtime owners or participants
-    object_ids: list[str] = Field(
-        default_factory=list
-    )  # Avatar id / user id / tool id / env source id
+    # object_ids: Avatar id / user id / tool id / env source id
+    object_ids: list[str] = Field(default_factory=list)
 
     value: str
     topic: str | None = None
-    timestamp: str
+
+    created_at: datetime = Field(default_factory=application_now)
 
     memory_type: MemoryType
 

@@ -36,7 +36,7 @@ from alphaavatar.agents.runtime import (
     SessionRuntime,
 )
 from alphaavatar.agents.utils.id_utils import get_session_id, get_user_id
-from alphaavatar.agents.utils.time_utils import TimeStamp, build_time_context_from_metadata
+from alphaavatar.agents.utils.time import build_user_time_context
 
 from .channels.bootstrap import register_builtin_channels
 from .channels.factory import build_channel_adapters
@@ -201,7 +201,6 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     agent_identity = ctx.token_claims().identity
     participant = await ctx.wait_for_participant()
     participant_metadata = json.loads(participant.metadata) if participant.metadata else {}
-    room_identity = participant.identity
 
     room_type = detect_room_type(ctx.room)
     session_type = resolve_session_type(room_type, participant_metadata)
@@ -209,17 +208,18 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
 
     user_id = participant_metadata.get("user_id", get_user_id())
     session_id = participant_metadata.get("session_id", get_session_id(room_type))
-    timestamp: TimeStamp = build_time_context_from_metadata(participant_metadata)
+    user_time = build_user_time_context(participant_metadata)
 
     # Build Runtime Components
     session_runtime = SessionRuntime(
         session_id=session_id,
     )
     session_runtime.add_participant(
+        participant_identity=participant.identity,
         user_id=user_id,
-        room_identity=room_identity,
+        room_id=ctx.room.name,
         room_type=room_type.value,
-        timestamp=timestamp,
+        user_time=user_time,
         metadata=participant_metadata,
         primary=True,
     )
@@ -242,7 +242,6 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
 
     context_runtime = ContextRuntime(
         interaction_method=interaction_method,
-        timestamp=timestamp,
         global_behavior_rules=participant_metadata.get(
             "global_behavior_rules",
             DEFAULT_CONTEXT_VALUE,
@@ -257,6 +256,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     avatar_runtime = AvatarRuntime.create(
         session=session_runtime,
         context=context_runtime,
+        config=avatar_config.runtime,
     )
 
     # Build RTC Plugins
@@ -278,7 +278,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
         output_runtime=avatar_runtime.output,
         track_sid=lambda: transient_audio_output.track_sid,
     )
-    rtc_plugins = {
+    rtc_adapters = {
         "outputs": (
             transient_audio_output,
             status_output,
@@ -290,10 +290,12 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
                 runtime=avatar_runtime,
                 sample_rate=16_000,
                 num_channels=1,
+                frame_size_ms=avatar_config.runtime.perception.audio_frame_size_ms,
             ),
             LiveKitVideoInput(
                 room=ctx.room,
                 runtime=avatar_runtime,
+                publish_interval_sec=avatar_config.runtime.perception.video_publish_interval_sec,
             ),
         ),
     }
@@ -302,7 +304,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     avatar_engine = AvatarEngine(
         avatar_config=avatar_config,
         runtime=avatar_runtime,
-        rtc_plugins=rtc_plugins,
+        rtc_adapters=rtc_adapters,
     )
 
     # logging
@@ -335,10 +337,10 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
             "Participant disconnected room=%s identity=%s linked_identity=%s",
             ctx.room.name,
             disconnected_participant.identity,
-            room_identity,
+            participant.identity,
         )
 
-        if disconnected_participant.identity == room_identity:
+        if disconnected_participant.identity == participant.identity:
             logger.info(
                 "Linked participant disconnected. AgentSession should close via close_on_disconnect. room=%s",
                 ctx.room.name,
@@ -355,7 +357,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
         agent=avatar_engine,
         room_options=build_room_options(
             session_mode,
-            participant_identity=room_identity,
+            participant_identity=participant.identity,
         ),
     )
 

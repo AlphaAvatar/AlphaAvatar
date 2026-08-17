@@ -61,7 +61,7 @@ class LanceDBRunner(InferenceRunner):
             "page_content": item.get("page_content", ""),
             "user_id": str(metadata.get("user_id", "")),
             "topic": metadata.get("topic", ""),
-            "ts": metadata.get("ts", ""),
+            "updated_at": metadata.get("updated_at", ""),
             "entities": self._normalize_str_list(metadata.get("entities")),
             "raw_metadata": json.dumps(metadata, ensure_ascii=False),
         }
@@ -78,7 +78,7 @@ class LanceDBRunner(InferenceRunner):
         # As a fallback to prevent missing metadata fields
         metadata.setdefault("user_id", row.get("user_id", ""))
         metadata.setdefault("topic", row.get("topic", ""))
-        metadata.setdefault("ts", row.get("ts", ""))
+        metadata.setdefault("updated_at", row.get("updated_at", ""))
         metadata.setdefault("entities", row.get("entities", []))
 
         return {
@@ -485,7 +485,7 @@ class LanceDBRunner(InferenceRunner):
                 "page_content": "__init__",
                 "user_id": "",
                 "topic": "",
-                "ts": "",
+                "updated_at": "",
                 "entities": ["__init__"],
                 "raw_metadata": "{}",
             }

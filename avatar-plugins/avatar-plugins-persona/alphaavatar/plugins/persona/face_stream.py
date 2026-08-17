@@ -39,13 +39,14 @@ from alphaavatar.agents.persona import (
 )
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.utils import NumpyOP
-from alphaavatar.core.env import EnvAnnotation, EnvObservation
+from alphaavatar.core.env import EnvAnnotation, EnvObservation, ObservationKind
 from alphaavatar.core.media import (
     PayloadFormat,
     PayloadFormatUnavailable,
     PayloadView,
     VideoFrame,
 )
+from alphaavatar.core.perception import PerceptionStreamKind
 
 from .log import logger
 from .models import FACE_MODEL_CONFIG
@@ -126,11 +127,8 @@ class FaceStreamWrapper(FaceStreamBase):
             except asyncio.QueueFull:
                 return False
 
-    def _maybe_enqueue_observation(
-        self,
-        observation: EnvObservation,
-    ) -> None:
-        if observation.kind not in {"video_frame", "screen_frame"}:
+    def _maybe_enqueue_observation(self, observation: EnvObservation) -> None:
+        if observation.kind not in {ObservationKind.VIDEO_FRAME}:
             return
 
         payload = observation.payload
@@ -578,12 +576,12 @@ class FaceStreamWrapper(FaceStreamBase):
             try:
                 await self.perception_runtime.wait_for_pending_observations(
                     consumer_id=self.CONSUMER_ID,
-                    streams={"video", "screen"},
+                    streams={PerceptionStreamKind.VIDEO, PerceptionStreamKind.SCREEN},
                 )
 
                 window = self.perception_runtime.take_pending_observations(
                     consumer_id=self.CONSUMER_ID,
-                    streams={"video", "screen"},
+                    streams={PerceptionStreamKind.VIDEO, PerceptionStreamKind.SCREEN},
                     require_payload=True,
                 )
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from alphaavatar.agents.configs.runtime_config import RuntimeConfig
 from alphaavatar.core.output import OutputRuntime
 from alphaavatar.core.perception import PerceptionRuntime
 from alphaavatar.core.time import RuntimeClock
@@ -75,11 +76,16 @@ class AvatarRuntime:
         *,
         session: SessionRuntime,
         context: ContextRuntime,
+        config: RuntimeConfig,
         inference: InferenceExecutor | None = None,
     ) -> AvatarRuntime:
         clock = RuntimeClock()
         session_id = session.session_id
-        perception = PerceptionRuntime(session_id=session_id, clock=clock)
+        perception = PerceptionRuntime(
+            session_id=session_id,
+            stream_maxlens=config.perception.build_stream_maxlens(),
+            clock=clock,
+        )
 
         return cls(
             clock=clock,

@@ -16,8 +16,7 @@ from .cache import FaceCacheBase, PersonaCache, SpeakerCacheBase
 from .enum.runner_op import VectorRunnerOP
 from .face import FaceStreamBase
 from .profiler import ProfilerBase
-from .schema.face import FaceObservation
-from .schema.user_profile import (
+from .schema import (
     DetailsBase,
     ProfileItemSource,
     ProfileItemView,
@@ -39,7 +38,6 @@ __all__ = [
     "ProfileItemView",
     "UserProfile",
     "UserRuntimeState",
-    "FaceObservation",
     "SpeakerStreamBase",
     "FaceStreamBase",
     "PersonaPluginsTemplate",

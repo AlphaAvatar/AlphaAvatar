@@ -310,6 +310,7 @@ AlphaAvatar follows a layered realtime multimodal architecture:
 
 <h2>Latest News 🔥</h2>
 
+- [2026/08] Released AlphaAvatar **version 0.6.6**: Added a unified time-aligned multimodal runtime, adaptive audiovisual ENV Memory, provider-neutral model input, runtime capability awareness, time-based perception retention, participant-scoped timezone context, and date-grouped session storage.
 - [2026/07] Released AlphaAvatar **version 0.6.4**: Added a transport-agnostic perception runtime with typed multimodal streams, shared timelines, annotated payload views, and online ENV memory extraction from live visual observations.
   - Released AlphaAvatar **version 0.6.5**: Added shared realtime audio perception, the Interaction Router, AlphaAvatar-native VAD and STT, isolated per-runner inference processes, and migrated all AlphaAvatar VDB workloads away from LiveKit’s shared inference executor.
 

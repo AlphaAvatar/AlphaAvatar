@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class Context:
+class LivekitContext:
     mode: Literal["pipeline", "realtime"]
     speech_handle: Any
     chat_ctx: llm.ChatContext
@@ -37,11 +37,11 @@ class Context:
     tools_messages: Sequence[llm.ChatItem] | None = None
 
 
-class ContextSearch:
+class LivekitContextSearch:
     def __init__(self, engine: AvatarEngine) -> None:
         self._engine = engine
 
-    async def memory_search(self, ctx: Context) -> None:
+    async def memory_search(self, ctx: LivekitContext) -> None:
         if ctx.chat_ctx:
             chat_context = ctx.chat_ctx.copy()
             if ctx.new_message is not None:
@@ -52,7 +52,7 @@ class ContextSearch:
                     chat_context=chat_context.items,
                 )
 
-    async def __call__(self, ctx: Context) -> None:
+    async def __call__(self, ctx: LivekitContext) -> None:
         # Perform context search based on mode
         await self.memory_search(ctx)
 
@@ -61,7 +61,7 @@ def install_context_search_patch(engine: AvatarEngine) -> None:
     """Patch the AgentActivity inside the engine to run hooks before reply tasks."""
     activity = engine._get_activity_or_raise()
 
-    context_search = ContextSearch(engine)
+    context_search = LivekitContextSearch(engine)
 
     # --- pipeline --- #
     _orig_pipeline = activity._pipeline_reply_task
@@ -78,7 +78,7 @@ def install_context_search_patch(engine: AvatarEngine) -> None:
         _previous_user_metrics: llm.MetricsReport | None = None,
         _previous_tools_messages: Sequence[llm.FunctionCall | llm.FunctionCallOutput] | None = None,
     ):
-        ro = Context(
+        ro = LivekitContext(
             mode="pipeline",
             speech_handle=speech_handle,
             chat_ctx=chat_ctx,

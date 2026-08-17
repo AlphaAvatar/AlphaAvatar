@@ -17,6 +17,7 @@ import asyncio
 import json
 import os
 from copy import deepcopy
+from datetime import datetime
 from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
@@ -34,6 +35,7 @@ from alphaavatar.agents.providers import (
     ProvidersConfig,
 )
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.utils.time import application_now
 
 from .log import logger
 from .profiler_details import UserProfileDetails
@@ -151,40 +153,32 @@ class ProfilerRuntime(ProfilerBase):
         return result.output
 
     def _apply_delta(
-        self, update_time: str, profile_details_dump: dict, delta: ProfileDelta
+        self,
+        updated_at: datetime,
+        profile_details_dump: dict,
+        delta: ProfileDelta,
     ) -> tuple[bool, dict[str, Any]]:
-        """
-        Apply PatchOps to a (FLAT) UserProfileDetails:
-          - set: overwrite value (scalar/list) at path
-          - append/remove:
-              * list[str]: append/remove item
-              * str: append concatenated text (+=)
-          - clear:
-              * list -> []
-              * str  -> ""
-              * others -> None
-        """
         data: dict[str, Any] = deepcopy(profile_details_dump)
 
         is_updated = False
-        for op in delta.ops:
-            tokens = parse_pointer(op.path)
+        for patch in delta.ops:
+            tokens = parse_pointer(patch.path)
             if not tokens or len(tokens) != 1:
                 continue
             try:
-                if op.op == "set":
-                    write_set(data, tokens, op.value, update_time)
-                elif op.op == "clear":
+                if patch.op == "set":
+                    write_set(data, tokens, patch.value, updated_at)
+                elif patch.op == "clear":
                     clear_path(data, tokens)
-                elif op.op == "append" and op.value is not None:
+                elif patch.op == "append" and patch.value is not None:
                     key = tokens[0]
                     cur = data.get(key, None)
                     if isinstance(cur, list):
-                        append_string(data, tokens, op.value, update_time)
+                        append_string(data, tokens, patch.value, updated_at)
                     else:
-                        append_text(data, tokens, op.value, update_time)
-                elif op.op == "remove" and op.value is not None:
-                    remove_string(data, tokens, op.value)
+                        append_text(data, tokens, patch.value, updated_at)
+                elif patch.op == "remove" and patch.value is not None:
+                    remove_string(data, tokens, patch.value)
 
                 is_updated = True
             except Exception:
@@ -234,6 +228,8 @@ class ProfilerRuntime(ProfilerBase):
             face_vector=face_vector,
         )
 
+    async def search(self, *, profile: UserProfile): ...
+
     async def update(self, *, uid: str, persona: PersonaCache):
         """Async delta extraction -> in-memory patch."""
         if persona.profile_details:
@@ -241,7 +237,7 @@ class ProfilerRuntime(ProfilerBase):
         else:
             data = {}
 
-        update_time: str = persona.time
+        updated_at = application_now()
         chat_context = persona.messages
         if not chat_context:
             logger.info(f"[uid: {uid}] User Profile message is empty, UPDATE skip!")
@@ -253,7 +249,7 @@ class ProfilerRuntime(ProfilerBase):
             profile_details_dump=persona.profile_details_dump_value,
             new_turn=new_turn,
         )
-        is_updated, updated_profile_details = self._apply_delta(update_time, data, delta)
+        is_updated, updated_profile_details = self._apply_delta(updated_at, data, delta)
 
         if is_updated:
             logger.info(f"[uid: {uid}] User Profile UPDATE success: {updated_profile_details}")

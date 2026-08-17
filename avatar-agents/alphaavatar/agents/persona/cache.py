@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from datetime import datetime
 from typing import Any
 
 import numpy as np
@@ -22,6 +23,7 @@ from livekit.agents.llm import ChatItem, ChatMessage
 from alphaavatar.agents.constants import FACE_BETA, SPEAKER_BETA
 from alphaavatar.agents.runtime.session_runtime import ParticipantInfo
 from alphaavatar.agents.utils import NumpyOP
+from alphaavatar.agents.utils.time import application_now
 
 from .schema.user_profile import DetailsBase, UserProfile, UserRuntimeState
 
@@ -44,10 +46,6 @@ class PersonaCache:
         self._current_retrieval_times = current_retrieval_times
 
         self._messages: list[ChatItem] = []
-
-    @property
-    def time(self) -> str:
-        return self._participant.timestamp.time_str
 
     @property
     def retrieval_times(self) -> int:
@@ -168,12 +166,16 @@ class PersonaCache:
 
     def update_speaker_profile(self, speaker_attribute: dict[str, Any]):
         self.profile_details = self._speaker_cache.update_profile_detail(
-            self.profile_details, speaker_attribute, timestamp=self.time
+            self.profile_details,
+            speaker_attribute,
+            updated_at=application_now(),
         )
 
     def update_face_profile(self, face_attribute: dict[str, Any]):
         self.profile_details = self._face_cache.update_profile_detail(
-            self.profile_details, face_attribute, timestamp=self.time
+            self.profile_details,
+            face_attribute,
+            updated_at=application_now(),
         )
 
 
@@ -182,7 +184,10 @@ class SpeakerCacheBase:
 
     @abstractmethod
     def update_profile_detail(
-        self, profile_details: Any, speaker_attribute: dict[str, Any], timestamp: str
+        self,
+        profile_details: Any,
+        speaker_attribute: dict[str, Any],
+        updated_at: datetime,
     ) -> Any: ...
 
 
@@ -191,5 +196,8 @@ class FaceCacheBase:
 
     @abstractmethod
     def update_profile_detail(
-        self, profile_details: Any, face_attribute: dict[str, Any], timestamp: str
+        self,
+        profile_details: Any,
+        face_attribute: dict[str, Any],
+        updated_at: datetime,
     ) -> Any: ...

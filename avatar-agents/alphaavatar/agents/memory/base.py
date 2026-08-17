@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import copy
 from abc import abstractmethod
 from typing import Any
 
@@ -23,8 +22,12 @@ from alphaavatar.agents.runtime import (
     ContextRuntime,
     SessionRuntime,
 )
+from alphaavatar.agents.runtime.capability import (
+    AvatarCapability,
+    AvatarCapabilityName,
+    avatar_capability,
+)
 from alphaavatar.agents.runtime.inference import InferenceExecutor
-from alphaavatar.agents.utils import TimeStamp, time_str_to_datetime
 from alphaavatar.agents.utils.files.work_dirs import SessionPath
 from alphaavatar.core.perception import PerceptionRuntime
 
@@ -35,22 +38,35 @@ from .schema.memory_item import MemoryItem
 from .state import MemoryState
 
 
-def deduplicate_keep_latest(items: list[MemoryItem]) -> list[MemoryItem]:
-    latest_items: dict[str, MemoryItem] = {}
-    for item in items:
-        if item.memory_id not in latest_items:
-            latest_items[item.memory_id] = item
-        else:
-            current_time = time_str_to_datetime(item.timestamp)
-            existing_time = time_str_to_datetime(latest_items[item.memory_id].timestamp)
-            if current_time > existing_time:
-                latest_items[item.memory_id] = item
-
-    sorted_items = sorted(latest_items.values(), key=lambda x: time_str_to_datetime(x.timestamp))
-    return sorted_items
-
-
+@avatar_capability(
+    name=AvatarCapabilityName.MEMORY_CONVERSATION,
+    description=(
+        "Can retain and recall relevant information learned from conversations across sessions."
+    ),
+)
+@avatar_capability(
+    name=AvatarCapabilityName.MEMORY_ENVIRONMENT,
+    description=(
+        "Can form and recall persistent memories from relevant visual, audio, "
+        "and environmental observations when such perception is available."
+    ),
+)
+@avatar_capability(
+    name=AvatarCapabilityName.MEMORY_TOOL,
+    description=(
+        "Can retain and recall useful information from previous tool interactions and results."
+    ),
+)
+@avatar_capability(
+    name=AvatarCapabilityName.MEMORY_GRAPH,
+    description=(
+        "Can connect and retrieve related memories through entities, aliases, "
+        "and graph relationships."
+    ),
+)
 class MemoryBase(AvatarRuntimePlugin):
+    capabilities: tuple[AvatarCapability, ...]
+
     def __init__(
         self,
         *,
@@ -190,12 +206,10 @@ class MemoryBase(AvatarRuntimePlugin):
         session_id: str,
         session_path: SessionPath,
         object_ids: list[str] | str | None,
-        timestamp: TimeStamp,
         cache_type: MemoryCacheType = MemoryCacheType.SESSION_INTERACTION,
     ) -> MemoryCache:
         if session_id not in self.memory_cache:
             self.memory_cache[session_id] = MemoryCache(
-                timestamp=copy.deepcopy(timestamp),
                 session_id=session_id,
                 session_path=session_path,
                 object_ids=object_ids,
@@ -290,7 +304,6 @@ class MemoryBase(AvatarRuntimePlugin):
             session_id=self.session_runtime.session_id,
             session_path=session_path,
             object_ids=primary_user_id,
-            timestamp=self.context_runtime.timestamp,
         )
 
     async def on_session_stop(self) -> None:

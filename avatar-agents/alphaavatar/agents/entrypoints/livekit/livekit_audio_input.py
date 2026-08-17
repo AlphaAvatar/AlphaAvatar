@@ -58,9 +58,9 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
         *,
         room: rtc.Room,
         runtime: AvatarRuntime,
+        frame_size_ms: int,
         sample_rate: int = 48_000,
         num_channels: int = 1,
-        frame_size_ms: int = 20,
     ) -> None:
         if sample_rate <= 0:
             raise ValueError("sample_rate must be positive")

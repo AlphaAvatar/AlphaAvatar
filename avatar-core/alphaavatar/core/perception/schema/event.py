@@ -14,44 +14,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
 
-
-class MediaModality(StrEnum):
-    VIDEO = "video"
-    AUDIO = "audio"
-
-
-class MediaSourceKind(StrEnum):
-    CAMERA = "camera"
-    SCREEN = "screen"
-    MICROPHONE = "microphone"
-
-
-class MediaSourceState(StrEnum):
-    STARTED = "started"
-    ACTIVE = "active"
-    MUTED = "muted"
-    ENDED = "ended"
-    ERROR = "error"
-
-    @property
-    def available(self) -> bool:
-        return self in {MediaSourceState.STARTED, MediaSourceState.ACTIVE}
-
-    @property
-    def terminal(self) -> bool:
-        return self in {MediaSourceState.ENDED, MediaSourceState.ERROR}
-
-
-class PerceptionEventKind(StrEnum):
-    OBSERVATION = "observation"
-    SOURCE_STATE = "source_state"
+from ..enum import (
+    MediaModality,
+    MediaSourceKind,
+    MediaSourceState,
+    PerceptionEventKind,
+)
 
 
 @dataclass(frozen=True, slots=True)

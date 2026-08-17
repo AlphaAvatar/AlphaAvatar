@@ -17,6 +17,11 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.capability import (
+    AvatarCapability,
+    AvatarCapabilityName,
+    avatar_capability,
+)
 from alphaavatar.agents.runtime.inference import InferenceExecutor
 from alphaavatar.core.perception import PerceptionRuntime
 
@@ -24,6 +29,13 @@ if TYPE_CHECKING:
     from .base import PersonaBase
 
 
+@avatar_capability(
+    name=AvatarCapabilityName.PERSONA_SPEAKER_RECOGNITION,
+    description=(
+        "Can recognize previously known users from their voice and infer speaker "
+        "attributes when speech audio is available."
+    ),
+)
 class SpeakerStreamBase(ABC):
     """
     Session-scoped streaming speaker perception runtime.
@@ -31,6 +43,8 @@ class SpeakerStreamBase(ABC):
     It consumes routed speech observations from PerceptionRuntime and must not
     own VAD, STT or RTC input.
     """
+
+    capabilities: tuple[AvatarCapability, ...]
 
     CONSUMER_ID = "persona.speaker"
 

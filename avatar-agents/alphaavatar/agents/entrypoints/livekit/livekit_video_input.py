@@ -18,7 +18,6 @@ from collections.abc import Coroutine
 from dataclasses import dataclass
 from typing import Any
 
-from alphaavatar.agents.constants import VIDEO_RTC_INTERVAL_SEC
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.plugin import AvatarRuntimePlugin
 from alphaavatar.agents.runtime import AvatarRuntime
@@ -65,10 +64,15 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
         *,
         room: rtc.Room,
         runtime: AvatarRuntime,
+        publish_interval_sec: float,
         jpeg_quality: int = 85,
     ) -> None:
+        if publish_interval_sec <= 0:
+            raise ValueError("publish_interval_sec must be positive")
+
         self._room = room
         self._runtime = runtime
+        self._publish_interval_sec = publish_interval_sec
         self._jpeg_quality = jpeg_quality
         self._bindings: dict[str, _VideoTrackBinding] = {}
         self._generation_by_source: dict[str, int] = {}
@@ -240,7 +244,7 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
         last = binding.last_publish_monotonic_ns
         if (
             last is not None
-            and (occurred_at.monotonic_ns - last) / 1_000_000_000 < VIDEO_RTC_INTERVAL_SEC
+            and (occurred_at.monotonic_ns - last) / 1_000_000_000 < self._publish_interval_sec
         ):
             return False
         binding.last_publish_monotonic_ns = occurred_at.monotonic_ns
@@ -499,7 +503,7 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
         logger.info(
             "LiveKit video input runtime started session_id=%s sample_interval=%ss",
             self._runtime.session.session_id,
-            VIDEO_RTC_INTERVAL_SEC,
+            self._publish_interval_sec,
         )
 
     async def on_session_stop(self) -> None:

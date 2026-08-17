@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from alphaavatar.agents.constants import DEFAULT_CONTEXT_VALUE
-from alphaavatar.agents.utils.time_utils import TimeStamp
+from alphaavatar.agents.utils.time import ParticipantTimeContext
 
 
 @dataclass
@@ -154,7 +154,7 @@ class ContextRuntime:
     - global_behavior_rules
 
     Turn-level:
-    - timestamp
+    - user_time
     - memory_content
     - plan_content
     - reflection_content
@@ -162,7 +162,7 @@ class ContextRuntime:
     """
 
     interaction_method: InteractionMethod = field(default_factory=InteractionMethod)
-    timestamp: TimeStamp = field(default_factory=TimeStamp)
+    participant_times: dict[str, ParticipantTimeContext] = field(default_factory=dict)
 
     # System-level, but may be refreshed during session when identity/persona is resolved.
     user_persona: str = DEFAULT_CONTEXT_VALUE

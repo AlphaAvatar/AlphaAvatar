@@ -30,6 +30,7 @@ from alphaavatar.agents.memory import (
     VectorRunnerOP,
 )
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.utils.time import application_now
 
 from .env_memory import EnvMemoryBatch, EnvMemoryScheduler
 from .graph import (
@@ -188,6 +189,7 @@ class MemoryRuntime(MemoryBase):
         extra_data: dict[str, Any] | None = None,
     ) -> list[MemoryItem]:
         items: list[MemoryItem] = []
+        created_at = application_now()
 
         for patch in patches:
             topic = _norm_topic(patch.topic)
@@ -201,7 +203,7 @@ class MemoryRuntime(MemoryBase):
                 object_ids=object_ids,
                 value=patch.value,
                 topic=topic,
-                timestamp=memory_cache.time,
+                created_at=created_at,
                 memory_type=memory_type,
                 extra_data=dict(extra_data or {}),
             )
@@ -297,7 +299,7 @@ class MemoryRuntime(MemoryBase):
         async with self._save_lock:
             selected = sorted(
                 (item for item in items if item.updated),
-                key=lambda item: item.timestamp or "",
+                key=lambda item: item.created_at,
             )
 
             if not selected:

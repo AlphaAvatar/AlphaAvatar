@@ -30,11 +30,15 @@ avatar:
 
 
 # ============================================================
-# 2. Session Runtime
+# 2. Runtime
 # ============================================================
 
 runtime:
-  context_mode: synthetic_tool
+  temporal_alignment:
+    mode: auto
+
+  perception:
+    retention_sec: 60
 
 
 # ============================================================
@@ -43,7 +47,7 @@ runtime:
 
 llm:
   plugin: openai
-  model: gpt-4o-mini
+  model: gpt-4.1-mini-2025-04-14
 
 
 # ============================================================

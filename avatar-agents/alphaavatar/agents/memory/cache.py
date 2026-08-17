@@ -16,7 +16,6 @@ from typing import Any
 
 from livekit.agents.llm import ChatItem, ChatMessage, FunctionCall, FunctionCallOutput
 
-from alphaavatar.agents.utils import TimeStamp
 from alphaavatar.agents.utils.files.work_dirs import SessionPath
 
 from .enum.cache_type import MemoryCacheType
@@ -46,13 +45,12 @@ class MemoryCache:
 
     def __init__(
         self,
-        timestamp: TimeStamp,
+        *,
         session_id: str,
         session_path: SessionPath,
         object_ids: list[str] | str | None,
         cache_type: MemoryCacheType = MemoryCacheType.SESSION_INTERACTION,
     ):
-        self._timestamp = timestamp
         self._object_ids = _normalize_object_ids(object_ids)
         self._session_id = session_id
         self._session_path = session_path
@@ -63,10 +61,6 @@ class MemoryCache:
 
         self._env_message_cursor: int = 0
         self._evidence: list[dict[str, Any]] = []
-
-    @property
-    def time(self) -> str:
-        return self._timestamp.time_str
 
     @property
     def object_ids(self) -> list[str]:

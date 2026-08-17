@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+from datetime import date
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -56,10 +57,8 @@ class AvatarPath(BaseModel):
     logs_dir: pathlib.Path
     cache_dir: pathlib.Path
 
-    def session_dir(self, session_id: str) -> pathlib.Path:
-        path = self.sessions_dir / sanitize_id(session_id)
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+    def session_dir(self, session_id: str, created_date: date) -> pathlib.Path:
+        return self.sessions_dir / created_date.isoformat() / sanitize_id(session_id)
 
 
 class SessionPath(BaseModel):
@@ -118,9 +117,14 @@ def mk_avatar_dirs(work_dir: str | pathlib.Path) -> AvatarPath:
     )
 
 
-def mk_session_dirs(avatar_path: AvatarPath, session_id: str) -> SessionPath:
+def mk_session_dirs(
+    avatar_path: AvatarPath,
+    session_id: str,
+    *,
+    created_date: date,
+) -> SessionPath:
     sid = sanitize_id(session_id)
-    session_root = avatar_path.sessions_dir / sid
+    session_root = avatar_path.session_dir(sid, created_date)
 
     provider_dir = session_root / "provider"
     memory_dir = session_root / "memory"

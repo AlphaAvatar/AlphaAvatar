@@ -25,6 +25,7 @@ from alphaavatar.core.media import (
     PayloadFormatUnavailable,
     PayloadView,
 )
+from alphaavatar.core.perception import PerceptionStreamKind
 
 from ..log import logger
 from .audio_activity_source import AudioActivitySource
@@ -136,12 +137,12 @@ class AudioActivityProcessor(RouterProcessorBase):
             try:
                 await self._runtime.perception.wait_for_pending_observations(
                     consumer_id=self.CONSUMER_ID,
-                    streams={"audio"},
+                    streams={PerceptionStreamKind.AUDIO},
                 )
 
                 window = self._runtime.perception.take_pending_observations(
                     consumer_id=self.CONSUMER_ID,
-                    streams={"audio"},
+                    streams={PerceptionStreamKind.AUDIO},
                     require_payload=True,
                 )
 
@@ -188,5 +189,5 @@ class AudioActivityProcessor(RouterProcessorBase):
         await self._close_sources(graceful=True)
         self._runtime.perception.clear_consumer(
             self.CONSUMER_ID,
-            streams={"audio"},
+            streams={PerceptionStreamKind.AUDIO},
         )

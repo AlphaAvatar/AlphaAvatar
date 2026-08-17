@@ -15,30 +15,13 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from enum import StrEnum
 from typing import Any
 
 from alphaavatar.core.media import MediaPayload
 from alphaavatar.core.time import RuntimeTimeRange
 
 from .annotation import EnvAnnotation
-
-
-class ObservationKind(StrEnum):
-    VIDEO_FRAME = "video_frame"
-    VIDEO_CLIP = "video_clip"
-    SCREEN_FRAME = "screen_frame"
-
-    AUDIO_FRAME = "audio_frame"
-    AUDIO_SEGMENT = "audio_segment"
-    SPEECH_FRAME = "speech_frame"
-    SPEECH_SEGMENT = "speech_segment"
-
-    TRANSCRIPT_DELTA = "transcript_delta"
-    TRANSCRIPT_SEGMENT = "transcript_segment"
-    TEXT_INPUT = "text_input"
-
-    IMAGE_INPUT = "image_input"
+from .enum import ObservationKind
 
 
 @dataclass(slots=True)

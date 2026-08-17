@@ -19,7 +19,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from alphaavatar.agents.utils import local_now_iso, sha256_text
+from alphaavatar.agents.utils import sha256_text
 
 from .input_adapters import ProviderInputAdapterRegistry
 from .llm import create_llm_model
@@ -271,7 +271,6 @@ class ProviderGateway:
                 provider=task_config.provider,
                 model=task_config.model,
                 status="success",
-                created_at=local_now_iso(),
                 latency_ms=latency_ms,
                 usage=usage,
                 prompt_hash=prompt_hash,
@@ -301,7 +300,6 @@ class ProviderGateway:
                 provider=task_config.provider,
                 model=task_config.model,
                 status="failed",
-                created_at=local_now_iso(),
                 latency_ms=latency_ms,
                 prompt_hash=prompt_hash,
                 input_hash=input_hash,

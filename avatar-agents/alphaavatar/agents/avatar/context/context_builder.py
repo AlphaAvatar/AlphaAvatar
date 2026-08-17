@@ -32,16 +32,15 @@ from alphaavatar.agents.providers.schema import (
 )
 
 from .renderer import (
-    PromptRendererRegistry,
-    PromptRenderRequest,
-    PromptRenderResult,
     RealtimeRenderer,
+    RendererRegistry,
     TextRenderer,
     VLMRenderer,
 )
+from .schema import ContextBuildRequest, ContextBuildResult
 
 
-class PromptManager:
+class ContextBuilder:
     """
     Build one temporary model-facing input.
 
@@ -59,9 +58,9 @@ class PromptManager:
 
     def __init__(
         self,
-        registry: PromptRendererRegistry | None = None,
+        registry: RendererRegistry | None = None,
     ) -> None:
-        self._registry = registry or PromptRendererRegistry()
+        self._registry = registry or RendererRegistry()
 
         if registry is None:
             self._registry.register(
@@ -228,13 +227,13 @@ class PromptManager:
 
         return replace(model_input, items=tuple(items))
 
-    def render(
+    def build(
         self,
         *,
-        request: PromptRenderRequest,
+        request: ContextBuildRequest,
         system_prompt: str,
         runtime_context: str,
-    ) -> PromptRenderResult:
+    ) -> ContextBuildResult:
         base_input = self._prepare_base_input(
             request.base_input,
             current_input_id=request.input_id,
@@ -252,7 +251,7 @@ class PromptManager:
             )
         )
 
-        return PromptRenderResult(
+        return ContextBuildResult(
             model_input=self._inject_runtime_context(
                 rendered.model_input,
                 input_id=request.input_id,

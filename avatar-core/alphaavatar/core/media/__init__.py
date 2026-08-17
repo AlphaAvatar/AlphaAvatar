@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .audio import AudioFrame, AudioFramePayload, AudioSampleFormat, AudioSegmentPayload
-from .formats import PayloadFormat, PayloadView
+from .enum.formats import PayloadFormat, PayloadView
 from .image import ImagePayload
 from .payload import MediaPayload, PayloadFormatUnavailable
 from .text import TextPayload

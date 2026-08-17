@@ -13,19 +13,28 @@
 # limitations under the License.
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from datetime import datetime
+from typing import Any
 
 from livekit.agents.llm import ChatItem, ChatMessage
 
-if TYPE_CHECKING:
-    from .schema.user_profile import UserProfile
+from alphaavatar.agents.utils.time import format_datetime_for_timezone
+
+from .schema import UserProfile, UserRuntimeState
 
 
 class PersonaPluginsTemplate:
     @staticmethod
+    def _render_profile_updated_at(value: Any, timezone: str | None) -> str:
+        if not isinstance(value, datetime):
+            return str(value or "")
+        return format_datetime_for_timezone(value, timezone)
+
+    @staticmethod
     def _render_flat_model(
         data: dict[str, Any],
         *,
+        timezone: str | None = None,
         list_sep: str = ", ",
         sort_keys: bool = True,
         skip_empty: bool = True,
@@ -37,7 +46,11 @@ class PersonaPluginsTemplate:
                 continue
             if isinstance(value, list):
                 values = [
-                    f"{item.get('value', '')} (updated at {item.get('timestamp', '')}) | source from: {item.get('source', '')}"
+                    (
+                        f"{item.get('value', '')} "
+                        f"(updated at {PersonaPluginsTemplate._render_profile_updated_at(item.get('updated_at'), timezone)}) "
+                        f"| source from: {item.get('source', '')}"
+                    )
                     for item in value
                     if isinstance(item, dict)
                 ]
@@ -48,11 +61,44 @@ class PersonaPluginsTemplate:
                 if skip_empty and (rendered is None or str(rendered).strip() == ""):
                     continue
                 lines.append(
-                    f"- {attr}: {rendered} (updated at {value.get('timestamp', '')}) | "
+                    f"- {attr}: {rendered} "
+                    f"(updated at {PersonaPluginsTemplate._render_profile_updated_at(value.get('updated_at'), timezone)}) | "
                     f"source from: {value.get('source', '')}"
                 )
             elif not skip_empty or str(value).strip():
                 lines.append(f"- {attr}: {value}")
+        return lines
+
+    @classmethod
+    def _render_runtime_state(
+        cls,
+        state: UserRuntimeState,
+    ) -> list[str]:
+        data = state.model_dump()
+
+        current_login_at = data.pop("current_login_at", None)
+        last_login_at = data.pop("last_login_at", None)
+
+        lines = cls._render_flat_model(data)
+
+        if current_login_at is not None:
+            lines.append(
+                "- current_login_at: "
+                + format_datetime_for_timezone(
+                    current_login_at,
+                    state.current_timezone,
+                )
+            )
+
+        if last_login_at is not None:
+            lines.append(
+                "- last_login_at: "
+                + format_datetime_for_timezone(
+                    last_login_at,
+                    state.last_timezone,
+                )
+            )
+
         return lines
 
     @classmethod
@@ -66,22 +112,23 @@ class PersonaPluginsTemplate:
     @classmethod
     def apply_system_template(
         cls,
-        user_profiles: list[UserProfile],
+        user_profiles: dict[str, UserProfile],
         *,
         list_sep: str = ", ",
         sort_keys: bool = True,
         skip_empty: bool = True,
     ) -> str:
         blocks: list[str] = []
-        for profile in user_profiles:
+        for uid, profile in user_profiles.items():
             sections: list[str] = []
+            timezone = (
+                profile.runtime_state.current_timezone
+                if profile and profile.runtime_state
+                else None
+            )
+
             if profile and profile.runtime_state:
-                lines = cls._render_flat_model(
-                    profile.runtime_state.model_dump(),
-                    list_sep=list_sep,
-                    sort_keys=sort_keys,
-                    skip_empty=skip_empty,
-                )
+                lines = cls._render_runtime_state(profile.runtime_state)
                 if lines:
                     sections.append(
                         "### Runtime state\n"
@@ -92,6 +139,7 @@ class PersonaPluginsTemplate:
             if profile and profile.details:
                 lines = cls._render_flat_model(
                     profile.details.model_dump(),
+                    timezone=timezone,
                     list_sep=list_sep,
                     sort_keys=sort_keys,
                     skip_empty=skip_empty,
@@ -100,9 +148,6 @@ class PersonaPluginsTemplate:
                     sections.append("### User profile details\n" + "\n".join(lines))
 
             if sections:
-                blocks.append("\n\n".join(sections))
+                blocks.append(f"## User {uid}\n" + "\n\n".join(sections))
 
-        if len(blocks) <= 1:
-            return blocks[0] if blocks else ""
-
-        return "\n\n".join(f"User {index}\n{block}" for index, block in enumerate(blocks))
+        return "\n\n".join(blocks)

@@ -15,7 +15,12 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from alphaavatar.core.perception import TemporalAlignmentMode, TemporalAlignmentPolicy
+from alphaavatar.core.perception import (
+    PerceptionRetentionPolicy,
+    PerceptionStreamKind,
+    TemporalAlignmentMode,
+    TemporalAlignmentPolicy,
+)
 
 
 class TemporalAlignmentConfig(BaseModel):
@@ -45,6 +50,37 @@ class TemporalAlignmentConfig(BaseModel):
         )
 
 
+class PerceptionConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    retention_sec: float = Field(default=60.0, gt=0, le=600.0)
+    headroom: float = Field(default=1.25, ge=1.0, le=4.0)
+
+    video_publish_interval_sec: float = Field(default=0.1, gt=0, le=10.0)
+    audio_frame_size_ms: int = Field(default=20, gt=0, le=1000)
+
+    text_maxlen: int = Field(default=1024, gt=0)
+    event_maxlen: int = Field(default=8192, gt=0)
+
+    def build_stream_maxlens(self) -> dict[PerceptionStreamKind, int]:
+        policy = PerceptionRetentionPolicy(
+            retention_sec=self.retention_sec,
+            headroom=self.headroom,
+        )
+        audio_interval_sec = self.audio_frame_size_ms / 1000
+
+        return {
+            PerceptionStreamKind.VIDEO: policy.capacity(self.video_publish_interval_sec),
+            PerceptionStreamKind.SCREEN: policy.capacity(self.video_publish_interval_sec),
+            PerceptionStreamKind.AUDIO: policy.capacity(audio_interval_sec),
+            PerceptionStreamKind.SPEECH: policy.capacity(audio_interval_sec),
+            PerceptionStreamKind.TEXT: self.text_maxlen,
+            PerceptionStreamKind.EVENT: self.event_maxlen,
+        }
+
+
 class RuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
     temporal_alignment: TemporalAlignmentConfig = Field(default_factory=TemporalAlignmentConfig)
+    perception: PerceptionConfig = Field(default_factory=PerceptionConfig)

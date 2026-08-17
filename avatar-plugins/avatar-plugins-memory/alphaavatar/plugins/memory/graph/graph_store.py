@@ -95,7 +95,7 @@ def _node_stub_from_graph_node(
     session_id: str,
     object_ids: list[str],
     memory_type: str,
-    timestamp: str,
+    created_at: str,
 ) -> dict[str, Any]:
     node_key = str(node.get("key", "") or node.get("id", "")).strip()
     extra_data = node.get("extra_data") or {}
@@ -106,8 +106,8 @@ def _node_stub_from_graph_node(
         "content": str(node.get("content", "")),
         "weight": float(node.get("weight", 1.0)),
         "count": 1,
-        "first_seen": timestamp,
-        "last_seen": timestamp,
+        "first_seen": created_at,
+        "last_seen": created_at,
         "memory_ids": [memory_id],
         "session_ids": [session_id],
         "object_ids": object_ids,
@@ -177,7 +177,7 @@ def _node_item_stub(
     session_id: str,
     object_ids: list[str],
     memory_type: str,
-    timestamp: str,
+    created_at: str,
     topic: str | None,
 ) -> dict[str, Any]:
     return {
@@ -186,7 +186,7 @@ def _node_item_stub(
         "session_id": session_id,
         "object_ids": object_ids,
         "memory_type": memory_type,
-        "timestamp": timestamp,
+        "created_at": created_at,
         "topic": topic,
     }
 
@@ -224,7 +224,7 @@ def save_memory_graph_stubs(
         session_id = str(metadata.get("session_id", "")).strip()
         memory_type = str(metadata.get("memory_type", "")).strip()
         object_ids = metadata.get("object_ids") or []
-        timestamp = str(metadata.get("ts", "")).strip()
+        created_at = str(metadata.get("created_at", "")).strip()
         topic = metadata.get("topic")
 
         graph_nodes = metadata.get("graph_nodes") or []
@@ -254,7 +254,7 @@ def save_memory_graph_stubs(
                 session_id=session_id,
                 object_ids=object_ids,
                 memory_type=memory_type,
-                timestamp=timestamp,
+                created_at=created_at,
             )
 
             if node_key in nodes:
@@ -272,7 +272,7 @@ def save_memory_graph_stubs(
                     session_id=session_id,
                     object_ids=object_ids,
                     memory_type=memory_type,
-                    timestamp=timestamp,
+                    created_at=created_at,
                     topic=topic,
                 )
                 row["node_item_key"] = node_item_key
@@ -308,8 +308,8 @@ def save_memory_graph_stubs(
                 "target_key": max(source_key, target_key),
                 "weight": float(link.get("weight", 1.0)),
                 "count": 1,
-                "first_seen": timestamp,
-                "last_seen": timestamp,
+                "first_seen": created_at,
+                "last_seen": created_at,
                 "memory_ids": [memory_id],
                 "session_ids": [session_id],
                 "memory_types": [memory_type],
@@ -320,7 +320,7 @@ def save_memory_graph_stubs(
                 old = links[key]
                 old["count"] = int(old.get("count", 0)) + 1
                 old["weight"] = max(float(old.get("weight", 1.0)), float(new_link["weight"]))
-                old["last_seen"] = max(str(old.get("last_seen", "")), timestamp)
+                old["last_seen"] = max(str(old.get("last_seen", "")), created_at)
                 old["memory_ids"] = _merge_unique(
                     _as_list(old.get("memory_ids")),
                     [memory_id],

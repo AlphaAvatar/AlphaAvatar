@@ -16,11 +16,16 @@ from __future__ import annotations
 import json
 import pathlib
 import re
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.runtime import AvatarRuntime, SessionRuntime
+from alphaavatar.agents.runtime.capability import (
+    AvatarCapability,
+    AvatarCapabilityName,
+    avatar_capability,
+)
 from alphaavatar.agents.runtime.inference import InferenceExecutor
 from alphaavatar.agents.utils.files.user_dirs import UserPath, mk_user_dirs
 from alphaavatar.agents.utils.files.work_dirs import AvatarPath
@@ -35,7 +40,16 @@ _RUNTIME_JSON_BEGIN = "<!-- alphaavatar_runtime_state_json:start -->"
 _RUNTIME_JSON_END = "<!-- alphaavatar_runtime_state_json:end -->"
 
 
-class ProfilerBase:
+@avatar_capability(
+    name=AvatarCapabilityName.PERSONA_PROFILE,
+    description=(
+        "Can maintain persistent user profiles from conversations and observed traits, "
+        "and use them to personalize interactions across sessions."
+    ),
+)
+class ProfilerBase(ABC):
+    capabilities: tuple[AvatarCapability, ...]
+
     def __init__(self, *, runtime: AvatarRuntime) -> None:
         self.runtime = runtime
 
