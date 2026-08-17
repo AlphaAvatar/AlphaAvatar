@@ -187,9 +187,16 @@ class MemoryRetrievalMixin:
         self,
         texts: list[str],
         *,
+        object_ids: list[str],
         timeout: float = 5.0,
     ) -> list[list[dict[str, Any]]]:
-        """Nearest existing notes for each incoming atomic memory."""
+        """Nearest existing notes for each incoming atomic memory.
+
+        `object_ids` must be the owners the notes were written under -- the
+        participants, not the avatar. Conversation memory is stored against the
+        user, so filtering by avatar id alone intersects with nothing and the
+        search silently returns no candidates at all.
+        """
         empty: list[list[dict[str, Any]]] = [[] for _ in texts]
 
         if not texts:
@@ -200,7 +207,7 @@ class MemoryRetrievalMixin:
             "param": {
                 "texts": texts,
                 "top_k": self._pipeline_config.maintenance.max_candidates_per_item,
-                "object_ids": merge_object_ids([self.avatar_id]),
+                "object_ids": merge_object_ids(object_ids),
                 "memory_type": MemoryType.CONVERSATION.value,
                 "layer": LAYER_NOTE,
             },

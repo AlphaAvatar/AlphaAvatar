@@ -29,7 +29,7 @@ from .notes import apply_assignments
 from .prompts import render_candidates, render_incoming
 from .schema import NoteConsolidation
 
-CandidateSearch = Callable[[list[str]], Awaitable[list[list[dict[str, Any]]]]]
+CandidateSearch = Callable[..., Awaitable[list[list[dict[str, Any]]]]]
 Consolidate = Callable[..., Awaitable[NoteConsolidation]]
 
 
@@ -73,7 +73,11 @@ class NoteConsolidator:
             return ConsolidationResult(items=list(items))
 
         try:
-            candidates = await self._collect_candidates(items, recall_ledger=recall_ledger)
+            candidates = await self._collect_candidates(
+                items,
+                recall_ledger=recall_ledger,
+                object_ids=memory_cache.object_ids,
+            )
             consolidation = await self._invoke(
                 items,
                 candidates=candidates,
@@ -114,6 +118,7 @@ class NoteConsolidator:
         items: list[MemoryItem],
         *,
         recall_ledger: RecallLedger,
+        object_ids: list[str],
     ) -> list[MemoryNote]:
         if self._config.note.mode is NoteMode.SESSION_SUMMARY:
             # A summary note never merges into an existing one, so recalling
@@ -129,7 +134,10 @@ class NoteConsolidator:
 
         from_lookup: list[MemoryNote] = []
         if source in (CandidateSource.NOTE_LOOKUP, CandidateSource.UNION):
-            hits = await self._candidate_search([item.embedding_text() for item in items])
+            hits = await self._candidate_search(
+                [item.embedding_text() for item in items],
+                object_ids=object_ids,
+            )
             from_lookup = notes_from_hits(
                 hits,
                 threshold=maintenance.similarity_threshold,
