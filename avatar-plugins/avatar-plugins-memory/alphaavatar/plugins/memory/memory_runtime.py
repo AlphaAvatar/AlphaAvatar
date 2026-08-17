@@ -28,6 +28,7 @@ from alphaavatar.agents.memory import (
     MemoryType,
 )
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.utils.time import application_now
 
 from .env_memory import EnvMemoryBatch, EnvMemoryScheduler
 from .graph import (
@@ -172,6 +173,7 @@ class MemoryRuntime(MemoryPersistenceMixin, MemoryRetrievalMixin, MemoryBase):
         extra_data: dict[str, Any] | None = None,
     ) -> list[MemoryItem]:
         items: list[MemoryItem] = []
+        created_at = application_now()
 
         for patch in patches:
             topic = norm_topic(patch.topic)
@@ -185,7 +187,7 @@ class MemoryRuntime(MemoryPersistenceMixin, MemoryRetrievalMixin, MemoryBase):
                 object_ids=object_ids,
                 value=patch.value,
                 topic=topic,
-                timestamp=memory_cache.time,
+                created_at=created_at,
                 memory_type=memory_type,
                 extra_data=dict(extra_data or {}),
             )
@@ -412,7 +414,7 @@ class MemoryRuntime(MemoryPersistenceMixin, MemoryRetrievalMixin, MemoryBase):
                     session_content=message_content,
                     memory_cache=cache,
                     recall_ledger=self._recall_ledger,
-                    updated_at=self.context_runtime.timestamp.time_str,
+                    updated_at=application_now(),
                     trace_metadata=self._delta_extractor.base_trace_metadata(
                         memory_cache=cache,
                         operation="note_consolidation",

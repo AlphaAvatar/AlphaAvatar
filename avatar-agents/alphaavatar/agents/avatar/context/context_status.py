@@ -29,7 +29,7 @@ from alphaavatar.agents.status import (
 )
 
 
-class AgentContextStatus:
+class AvatarContextStatus:
     def __init__(
         self,
         *,

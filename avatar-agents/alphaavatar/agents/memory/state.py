@@ -15,8 +15,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from alphaavatar.agents.utils import time_str_to_datetime
-
 from .enum.memory_type import MemoryType
 from .schema.memory_item import MemoryItem
 
@@ -25,17 +23,11 @@ def deduplicate_keep_latest(items: list[MemoryItem]) -> list[MemoryItem]:
     latest_items: dict[str, MemoryItem] = {}
 
     for item in items:
-        if item.memory_id not in latest_items:
-            latest_items[item.memory_id] = item
-            continue
-
-        current_time = time_str_to_datetime(item.timestamp)
-        existing_time = time_str_to_datetime(latest_items[item.memory_id].timestamp)
-
-        if current_time > existing_time:
+        existing = latest_items.get(item.memory_id)
+        if existing is None or item.created_at > existing.created_at:
             latest_items[item.memory_id] = item
 
-    return sorted(latest_items.values(), key=lambda x: time_str_to_datetime(x.timestamp))
+    return sorted(latest_items.values(), key=lambda item: item.created_at)
 
 
 @dataclass
@@ -84,7 +76,7 @@ class MemoryState:
         if updated is not None:
             items = [item for item in items if item.updated is updated]
 
-        return sorted(items, key=lambda x: time_str_to_datetime(x.timestamp))
+        return sorted(items, key=lambda item: item.created_at)
 
     def render(
         self,

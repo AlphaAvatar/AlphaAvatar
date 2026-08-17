@@ -34,6 +34,7 @@ from alphaavatar.core.media import (
     PayloadView,
     TextPayload,
 )
+from alphaavatar.core.perception import PerceptionStreamKind
 from alphaavatar.core.time import RuntimeTimeRange
 
 from ..log import logger
@@ -378,12 +379,12 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
             try:
                 await self._runtime.perception.wait_for_pending_observations(
                     consumer_id=self.CONSUMER_ID,
-                    streams={"speech"},
+                    streams={PerceptionStreamKind.SPEECH},
                 )
 
                 window = self._runtime.perception.take_pending_observations(
                     consumer_id=self.CONSUMER_ID,
-                    streams={"speech"},
+                    streams={PerceptionStreamKind.SPEECH},
                     require_payload=True,
                 )
 
@@ -396,21 +397,18 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
                     await self._close_sources(graceful=False)
                     self._discarded_segments.clear()
 
-                stream_read = window.stream_reads.get("speech")
-
-                if stream_read is not None:
-                    for observation in stream_read.items:
-                        try:
-                            await self._consume_observation(observation)
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception:
-                            logger.exception(
-                                "Speech transcription failed to process observation "
-                                "observation_id=%s kind=%s",
-                                observation.observation_id,
-                                observation.kind,
-                            )
+                for observation in window.speech_observations:
+                    try:
+                        await self._consume_observation(observation)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.exception(
+                            "Speech transcription failed to process observation "
+                            "observation_id=%s kind=%s",
+                            observation.observation_id,
+                            observation.kind,
+                        )
 
                 self._runtime.perception.commit_observations(window)
 
@@ -453,7 +451,7 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
 
         self._runtime.perception.clear_consumer(
             self.CONSUMER_ID,
-            streams={"speech"},
+            streams={PerceptionStreamKind.SPEECH},
         )
 
         self._segment_ranges.clear()

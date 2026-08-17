@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from datetime import datetime
 from enum import StrEnum
 from typing import Any, get_args, get_origin
 
@@ -18,6 +19,8 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, field_serializer, field_validator
 
 from alphaavatar.agents.utils import NumpyOP
+
+from .user_state import UserRuntimeState
 
 
 class ProfileItemSource(StrEnum):
@@ -29,31 +32,7 @@ class ProfileItemSource(StrEnum):
 class ProfileItemView(BaseModel):
     value: str
     source: ProfileItemSource
-    timestamp: str
-
-
-class UserRuntimeState(BaseModel):
-    """
-    Runtime/login/session state for a user.
-
-    This is system-observed state, not LLM-extracted profile details.
-    Persist this to local markdown, not vector DB.
-    """
-
-    # Current session state
-    current_timezone: str | None = None
-    current_login_time: str | None = None
-    current_session_id: str | None = None
-    current_room_type: str | None = None
-
-    # Previous session state
-    last_timezone: str | None = None
-    last_login_time: str | None = None
-    last_session_id: str | None = None
-    last_room_type: str | None = None
-
-    # Aggregate
-    login_count: int = 0
+    updated_at: datetime
 
 
 class DetailsBase(BaseModel):
@@ -117,7 +96,7 @@ class DetailsBase(BaseModel):
 class UserProfile(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    details: "DetailsBase | None" = None
+    details: DetailsBase | None = None
     runtime_state: UserRuntimeState | None = None
     speaker_vector: np.ndarray | None = None
     face_vector: np.ndarray | None = None

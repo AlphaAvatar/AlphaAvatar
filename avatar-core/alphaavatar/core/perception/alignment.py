@@ -21,7 +21,7 @@ from math import ceil, floor
 from alphaavatar.core.env import EnvObservation, ObservationKind
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
 
-from .event import MediaSourceSnapshot, PerceptionEvent
+from .schema import MediaSourceSnapshot, PerceptionEvent
 
 
 class TemporalAlignmentMode(StrEnum):

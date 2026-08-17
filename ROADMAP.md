@@ -46,7 +46,7 @@
 
 | Plugin / System           | Description                                                                                                                           |     Stage     |
 | :------------------------ | :------------------------------------------------------------------------------------------------------------------------------------ | :-----------: |
-| 🎯 **Interaction Router** | Processes shared perception streams through VAD and STT, publishes derived speech and transcription events, and will gradually take ownership of native turn and response decisions. | ⏳ In Progress |
+| 🎯 **Interaction Router** | Routes shared realtime input and output processing through VAD, STT, speech synthesis, transcript synchronization, and cancellation, and will gradually take ownership of native turn and response decisions. | ⏳ In Progress |
 | 💡 **Reflection**         | Generates metacognitive insights from memory, persona, tool usage, failures, and interaction history.                                 |   🧩 Planned  |
 | 📅 **Planning**           | Generates short-term tasks, long-term plans, reminders, and follow-up actions from memory, reflection, and tool results.              |   🧩 Planned  |
 | ⚙️ **Behavior**           | Controls response style, workflow selection, tool-use policy, and proactive assistance rules.                                         |   🧩 Planned  |
@@ -65,13 +65,17 @@
 | 2026-07 | **Typed Perception Runtime**           | Added independent video, audio, screen, event, and annotation streams with consumer-specific cursors. |
 | 2026-07 | **Shared Timeline and Window Builder** | Added observation–annotation alignment and ordered consumer windows for Persona, Memory, Vision, and future routers. |
 | 2026-07 | **Shared Audio and Speech Perception** | Added normalized audio observations and a derived speech stream, allowing Router, transcription, speaker recognition, and future audio processors to consume the same source independently. |
+| 2026-08 | **Unified Temporal Runtime** | Added `RuntimeClock`, `RuntimeTime`, `RuntimeTimeRange`, ordered perception events, source-state tracking, immutable perception cutoffs, and shared multimodal temporal alignment. |
+| 2026-08 | **Time-based Perception Retention** | Replaced modality-owned fixed stream sizes with configurable retention derived from producer cadence, retention horizon, and safety headroom. |
+| 2026-08 | **Typed Perception Contracts v2** | Stream, observation, event, and media-source kinds now use explicit enums and schemas across the perception runtime. |
+| 2026-08 | **Transport-independent Output Runtime** | Added AlphaAvatar-owned output streams, output timelines, delivery state, interruption semantics, and playback-aware output tracking. |
 
 ### 🧭 TODO
 
 | Priority | Task | Stage |
 | :------- | :--- | :---: |
-| 🔸 | Add configurable retention, payload pruning, backpressure, and consumer-lag policies for long-running sessions. | ⏳ In Progress |
-| 🔹 | Add richer multimodal alignment across video frames, audio segments, speakers, screens, and runtime events. | 🧩 Planned |
+| 🔸 | Add source-aware retention, payload pruning, backpressure, and consumer-lag observability for long-running and multi-source sessions. | ⏳ In Progress |
+| 🔹 | Extend temporal alignment to richer multi-source, multi-speaker, annotation-fusion, and long-running event scenarios. | 🧩 Planned |
 | 🔹 | Add annotation fusion for face, speaker, object, action, scene, and screen understanding. | 🧩 Planned |
 | 🔹 | Add reusable core policies for observation selection, temporal windows, and payload lifecycle management. | 🧩 Planned |
 
@@ -114,12 +118,15 @@
 | 2026-05 | Added LiveKit room binding support for runtime components that need direct room-level access, such as status sinks and data channel publishers.                                                 |
 | 2026-06 | Introduced a unified provider layer for task-based LLM and embedding calls, including structured output, usage normalization, provider tracing, and provider-based Memory / Persona extraction. |
 | 2026-06 | Refactored runtime and configuration foundations with `SessionRuntime`, `ContextRuntime`, participant-aware sessions, nested YAML config, and initial plugin lifecycle boundaries.              |
+| 2026-08 | Added explicit separation between participant transport identity, session-scoped participant ID, temporary user identity, and Persona-resolved user identity. |
+| 2026-08 | Added application-, participant-, and runtime-time separation so persistence, user timezone context, and realtime temporal alignment use independent time semantics. |
+| 2026-08 | Added creation-date session storage using `sessions/YYYY-MM-DD/<session_id>/` while keeping the session creation date immutable across long-running sessions. |
 
 ### 🧭 TODO
 
 | Priority | Task | Stage |
 | :------- | :--- | :---: |
-| 🔸 | Add multi-user streaming identity management, including participant-level speaker tracking, face recognition, user resolution, and conflict handling. | ⏳ In Progress |
+| 🔸 | Complete multi-user streaming identity management with participant-level speaker tracking, face tracking, concurrent Persona resolution, conflict handling, and per-user routing. | ⏳ In Progress |
 | 🔹 | Improve provider runtime capabilities with fallback chains, retry policies, cost estimation, provider health checks, and model compatibility validation. | 🧩 Planned |
 | 🔹 | Solve the cocktail-party problem for multi-speaker scenarios, including speaker separation, speaker tracking, overlapping speech handling, and per-user context routing. | 🧩 Planned |
 | 🔹 | Add user upload lifecycle management, including temporary session storage, identity-aware persistence, artifact indexing, and cleanup policies. | 🧩 Planned |
@@ -135,12 +142,16 @@
 | 2026-05 | **Synthetic Tool Runtime Context Mode** | Added a model-compatible way to inject runtime context using synthetic tool-call / tool-output frames. |
 | 2026-05 | **Interaction Method Awareness** | Runtime prompt understands whether the current room supports text, voice, audio output, video input, and video output. |
 | 2026-05 | **Browser Timezone Integration** | Web demo passes browser timezone, locale, and UTC offset through LiveKit participant metadata so AlphaAvatar can build natural login time context. |
+| 2026-08 | **Provider-neutral Model Input** | Added AlphaAvatar-owned text, image, audio, temporal, function-call, and function-output model input structures with input-type-specific renderers and provider-boundary conversion. |
+| 2026-08 | **Structured Temporal Input Context** | Current multimodal input is rendered as a time-aligned structured timeline containing speech, visual evidence, source-state transitions, pauses, perception gaps, and direct inputs. |
+| 2026-08 | **Runtime Capability Awareness** | Added typed internal capability metadata for Memory and Persona and injects currently enabled capabilities into the stable Avatar system prompt. |
+| 2026-08 | **Participant-scoped Time Context** | Runtime context can represent independent current-time and timezone views for multiple participants without coupling persistence timestamps to user-facing time. |
 
 ### 🧭 TODO
 
 | Priority | Task | Stage |
 | :------- | :--- | :---: |
-| 🔸 | Optimize user prompt construction based on the user’s current input mode: text, voice, camera, screen sharing, uploaded files, or mixed modalities. | ⏳ In Progress |
+| 🔸 | Add adaptive prompt budgeting and context selection based on modality, model capability, context size, latency target, and active participant. | ⏳ In Progress |
 | 🔸 | Add response style adaptation based on interaction mode, such as shorter voice responses, richer text responses, and visual grounding when video input exists. | ⏳ In Progress |
 | 🔹 | Add country / location hint support based on browser timezone, locale, and optional IP-based geo hints, while treating them as soft signals. | 🧩 Planned |
 | 🔹 | Add runtime context compression to avoid long dynamic prompts when memory, RAG, reflection, and plans become large. | 🧩 Planned |
@@ -160,12 +171,16 @@
 | 2026-07 | **Producer / Consumer Orchestration**| Perception consumers start before RTC producers, while producers stop before consumers to preserve clean full-duplex lifecycle boundaries. |
 | 2026-07 | **AlphaAvatar Inference Runtime**    | Added Worker-owned `InferenceRuntime`, session-scoped `InferenceExecutor`, Unix domain socket IPC, and persistent runner processes independent of LiveKit Agent inference internals. |
 | 2026-07 | **Isolated Inference Runners**       | VAD, speaker vector, speaker attributes, face analysis, and all Persona, Memory, and MCP VDB workloads now run in independent persistent processes. |
+| 2026-08 | **Immutable Turn Snapshots** | Added turn-scoped immutable perception snapshots so retries and tool follow-ups reuse the original input boundary instead of observing later realtime state. |
+| 2026-08 | **Staged Concurrent Lifecycle** | Runtime plugins now start and stop in dependency-safe stages, execute independent lifecycle work concurrently, roll back failed startup, and stop producers before consumers. |
+| 2026-08 | **Runtime Capability Metadata** | Added reusable capability contracts that allow internal runtime components to expose model-facing semantic capabilities independently of concrete plugin implementations. |
 
 ### 🧭 TODO
 
 | Priority | Task | Stage |
 | :------- | :--- | :---: |
-| 🔹 | Standardize runtime lifecycle contracts such as `aclose`, startup rollback, health checks, resource ownership, and worker recovery. | 🧩 Planned |
+| 🔸 | Remove remaining `livekit.agents` runtime ownership by migrating native turn commitment, final Assistant delivery, interruption, and session lifecycle into AlphaAvatar-owned runtime and entrypoint adapters. | ⏳ In Progress |
+| 🔹 | Complete runtime lifecycle contracts with consistent `aclose`, health checks, explicit resource ownership, worker recovery, and runtime health observability. | 🧩 Planned |
 | 🔹 | Add session replay and audit tooling based on turns, provider traces, memory events, and runtime status events. | 🧩 Planned |
 | 🔹 | Add richer error handling and recovery policies across model calls, tool invocation, plugin initialization, channel adapters, and realtime media streams. | 🧩 Planned |
 | 🔹 | Enrich the logging and tracing system with per-room, per-session, per-participant, per-user, per-turn, and per-provider-task prefixes. | 🧩 Planned |
@@ -183,6 +198,8 @@
 | 2026-05 | **Runtime Visual Context Injection** | Injects current sampled frames into the temporary model-facing context, strips stale historical visuals, and adds placeholders when needed. |
 | 2026-07 | **Shared Perception Consumption**    | Sampled Frame Vision consumes asynchronous observation windows from `PerceptionRuntime` instead of subscribing to RTC tracks directly. |
 | 2026-07 | **Late-bound Annotated Frames**      | Vision snapshots retain shared observations and resolve annotated frame views when visual context is injected into the model. |
+| 2026-08 | **Stateless Visual Selection** | Removed the stateful Sampled Frame Vision runtime and replaced it with pure `VisualFrameSelector` selection over immutable aligned perception. |
+| 2026-08 | **Temporal Visual Grounding** | Visual evidence now preserves temporal slices and authoritative start/end source state so historical frames cannot be mistaken for a currently active camera or screen. |
 
 ### 🧭 TODO
 
@@ -236,6 +253,7 @@
 | 2026-07 | **Interaction Router Runtime**      | Added a plugin-based processing runtime between raw perception streams and derived interaction streams. |
 | 2026-07 | **Audio Activity Processing**       | Added AlphaAvatar-native Silero VAD processing with pre-roll, bounded queues, speech boundaries, and publication into `PerceptionRuntime.speech`. |
 | 2026-07 | **Speech Transcription Processing** | Added `openai_segment` and `openai_realtime` STT paths with normalized transcription events and a temporary LiveKit turn-pipeline bridge. |
+| 2026-08 | **Output Processing Runtime**       | Extended the Router into speech synthesis and playback-aware transcript synchronization while preserving transport-independent cancellation and output ordering. |
 
 ### 🧭 TODO
 
@@ -283,8 +301,12 @@
 | 2026-07 | **Online ENV Memory Extraction**            | Added periodic ENV memory extraction from ordered live visual observation windows through configurable multimodal provider tasks. |
 | 2026-07 | **Annotated Visual Evidence**               | ENV extraction prefers annotated JPEG views and falls back to raw visual evidence without persisting runtime frame payloads. |
 | 2026-07 | **ENV Memory Consolidation**                | Added `MemoryType.ENV` updates and final fusion with conversation and tool memory during the session lifecycle. |
-| 2026-07 | **Asynchronous ENV Scheduler** | Separated fast perception capture and cursor commits from serialized multimodal extraction, with pending-batch merging, bounded retries, and session-stop draining. |
-| 2026-07 | **Memory VDB Runtime Migration** | Migrated Memory LanceDB and Qdrant workloads from LiveKit’s shared inference executor to dedicated AlphaAvatar runner processes. |
+| 2026-07 | **Asynchronous ENV Scheduler**              | Separated fast perception capture and cursor commits from serialized multimodal extraction, with pending-batch merging, bounded retries, and session-stop draining. |
+| 2026-07 | **Memory VDB Runtime Migration**            | Migrated Memory LanceDB and Qdrant workloads from LiveKit’s shared inference executor to dedicated AlphaAvatar runner processes. |
+| 2026-08 | **Audiovisual ENV Memory**                  | ENV Memory now combines sampled visual observations with continuous raw environmental audio while excluding speech-derived and direct-user input streams from environment evidence. |
+| 2026-08 | **Adaptive ENV Memory Scheduling**          | Periodic ENV updates defer boundaries during active speech, commit at complete speech boundaries when possible, and enforce a bounded maximum defer duration. |
+| 2026-08 | **Memory VDB Backend Parity**               | Unified LanceDB and Qdrant Memory runner behavior and persistence contracts. |
+| 2026-08 | **Structured Memory Timestamps**            | Memory items now persist structured `created_at` timestamps instead of user-facing session-time strings, enabling reliable ordering across sessions and timezones. |
 
 ### 🧭 TODO
 
@@ -293,11 +315,11 @@
 | 🔸 | Improve ENV memory retrieval with object-, event-, identity-, location-, and time-aware visual-history queries. | ⏳ In Progress |
 | 🔸 | Refine ENV graph-node extraction so only concrete observed entities become graph anchors. | ⏳ In Progress |
 | 🔹 | Add `node_merge` for graph node canonicalization, including alias conflict handling, duplicate node merging, scoped-local-to-canonical mapping, and optional VDB reindexing. | 🧩 Planned |
-| 🔹 | Add audio ENV memory from speaker, sound, and environmental audio streams. | 🧩 Planned |
+| 🔹 | Decompose Memory into independently registered Conversation, Environment, Tool, Graph, and future capability modules under a shared Memory runtime contract. | 🧩 Planned |
 | 🔹 | Add cross-window event consolidation and duplicate suppression for long-running sessions. | 🧩 Planned |
 | 🔹 | Allow users to actively query, recall, correct, or delete specific memories on demand. | 🧩 Planned |
 | 🔹 | Add multi-user memory isolation when multiple users are interacting in the same session. | 🧩 Planned |
-| 🔹 | Add event-driven memory updates for reflection, planning, behavior adaptation, and status-aware interaction traces. | 🧩 Planned |
+| 🔹 | Extend event-driven memory triggers beyond current periodic/user-turn ENV updates to reflection, planning, behavior adaptation, and status-aware interaction events. | 🧩 Planned |
 | 🔹 | Add omni-memory updates from text, voice, images, video, tools, files, and external workspaces. | 🧩 Planned |
 | 🔹 | Expand graph-aware retrieval to richer relationships, temporal events, aliases, and long-term user goals. | 🧩 Planned |
 | 🔹 | Add memory confidence, source attribution, and conflict resolution. | 🧩 Planned |
@@ -321,6 +343,9 @@
 | 2026-07 | **Perception-based SpeakerStream** | Speaker recognition now consumes routed speech observations from `PerceptionRuntime.speech` instead of depending on LiveKit VAD segmentation. |
 | 2026-07 | **Rolling Speaker Inference** | Added rolling speech windows, configurable inference cadence, reduced speaker-attribute frequency, and latest-window queue behavior. |
 | 2026-07 | **Isolated Persona Inference** | Speaker vector, speaker attributes, face analysis, and Persona VDB operations now run through independent AlphaAvatar inference processes. |
+| 2026-08 | **Structured Persona Time Semantics** | Persona runtime state and profile fields now keep structured login/update datetimes while user-facing rendering converts them into each participant's current timezone. |
+| 2026-08 | **Persona Capability Metadata** | Profile, speaker-recognition, and face-recognition capabilities are declared at the abstract component level and automatically exposed to the Avatar system prompt. |
+| 2026-08 | **Participant-aware Identity Foundation** | Persona identity resolution updates resolved user identity while preserving stable participant identity and shared runtime references. |
 
 ### 🧭 TODO
 
@@ -520,9 +545,9 @@
 
 | Quarter | Focus | Expected Outcome |
 | :------ | :---- | :--------------- |
-| Q3-2026 | Perception Runtime Expansion | Add screen, event, retention, payload pruning, backpressure, consumer-lag observability, and richer multimodal alignment capabilities. |
-| Q3-2026 | ENV Memory Retrieval | Add richer object-, event-, identity-, and time-aware visual-history retrieval. |
-| Q3-2026 | Native Interaction Decisions | Add input-directedness detection, native turn commitment, response routing, early status selection, and remove the temporary LiveKit STT/VAD compatibility path. |
+| Q3-2026 | Perception Runtime Hardening | Add source-aware retention, payload pruning, backpressure, consumer-lag observability, annotation fusion, multi-source alignment, and long-session health policies. |
+| Q3-2026 | ENV Memory Retrieval | Add richer object-, event-, identity-, sound-, location-, and time-aware audiovisual history retrieval. |
+| Q3-2026 | Native Interaction & LiveKit Decoupling | Move turn commitment, response routing, Assistant delivery, interruption, and session ownership into AlphaAvatar and remove remaining temporary `livekit.agents` VAD/STT/turn compatibility paths. |
 | Q3-2026 | Notion MCP Integration | Use Notion as an external long-term workspace for notes, memory summaries, plans, and user knowledge. |
 | Q3-2026 | RAG Workspace Evolution | Add data-source scoped retrieval, metadata-aware indexing, temp-to-real RAG migration policy, and skill retrieval. |
 | Q4-2026 | Reflection Plugin Alpha | Build autonomous self-analysis from memory, persona, tool results, status traces, and repeated user interaction patterns. |

@@ -153,7 +153,7 @@ def build_memory_item_node(item: MemoryItem) -> MemoryGraphNode:
             "object_ids": item.object_ids,
             "memory_type": str(item.memory_type),
             "topic": item.topic,
-            "timestamp": item.timestamp,
+            "created_at": item.created_at.isoformat(),
         },
     )
 

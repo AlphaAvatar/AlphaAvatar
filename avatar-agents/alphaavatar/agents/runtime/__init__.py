@@ -14,8 +14,8 @@
 from .avatar_runtime import AvatarRuntime
 from .context_runtime import ContextRuntime, InteractionMethod
 from .session_runtime import (
+    ParticipantIdentityResolution,
     ParticipantInfo,
-    ParticipantUpdateResult,
     SessionRuntime,
 )
 from .turn_runtime import TurnInputModality, TurnRuntime, TurnSnapshot
@@ -25,7 +25,7 @@ __all__ = [
     "ContextRuntime",
     "InteractionMethod",
     "ParticipantInfo",
-    "ParticipantUpdateResult",
+    "ParticipantIdentityResolution",
     "SessionRuntime",
     "TurnInputModality",
     "TurnRuntime",

@@ -21,6 +21,8 @@ can overwrite an arbitrary historical memory or lose an atomic fact.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from alphaavatar.agents.memory import MemoryItem, MemoryNote, MemoryType
 
 from ..maintenance import ConsolidationResult
@@ -31,7 +33,7 @@ from .schema import NEW_NOTE_PREFIX, NoteConsolidation
 def _with_backref(item: MemoryItem, note_id: str) -> MemoryItem:
     """Attach a note back-reference by building a NEW item.
 
-    Only membership metadata is added. `value`, `topic`, `timestamp` and the
+    Only membership metadata is added. `value`, `topic`, `created_at` and the
     graph payload are untouched: the content of an atomic fact stays immutable.
     The project also forbids in-place mutation, hence the copy.
     """
@@ -63,7 +65,7 @@ def build_note(
     item_ids: list[str],
     session_id: str,
     object_ids: list[str],
-    timestamp: str,
+    created_at: datetime,
 ) -> MemoryNote:
     return MemoryNote(
         # _persist_memory_items only writes records flagged as updated; a note
@@ -73,7 +75,7 @@ def build_note(
         object_ids=list(object_ids),
         value=value,
         topic=topic,
-        timestamp=timestamp,
+        created_at=created_at,
         memory_type=MemoryType.CONVERSATION,
         item_ids=list(item_ids),
     )
@@ -86,13 +88,13 @@ def rewrite_note(
     topic: str | None,
     added_item_ids: list[str],
     session_id: str,
-    updated_at: str,
+    updated_at: datetime,
     max_item_ids: int,
 ) -> MemoryNote:
     """Immutable update of an existing note.
 
     The original memory_id is kept so the VDB save (delete-by-id + reinsert)
-    acts as an upsert, and the original timestamp is kept because it records
+    acts as an upsert, and the original created_at is kept because it records
     when the event was first observed -- overwriting it would corrupt temporal
     reasoning. `session_id` moves to the session that produced this update.
     """
@@ -103,7 +105,7 @@ def rewrite_note(
         object_ids=list(original.object_ids),
         value=value or original.value,
         topic=topic or original.topic,
-        timestamp=original.timestamp,
+        created_at=original.created_at,
         memory_type=original.memory_type,
         item_ids=_merge_item_ids(original.item_ids, added_item_ids, limit=max_item_ids),
         graph_nodes=list(original.graph_nodes),
@@ -111,7 +113,7 @@ def rewrite_note(
         extra_data={
             **original.extra_data,
             "updated_in_session": session_id,
-            "updated_at": updated_at,
+            "updated_at": updated_at.isoformat(),
         },
     )
 
@@ -121,7 +123,7 @@ def _fallback_single_note(
     *,
     session_id: str,
     object_ids: list[str],
-    timestamp: str,
+    created_at: datetime,
 ) -> ConsolidationResult:
     """Degrade to session_summary shape: one note over everything, nothing lost."""
     note = build_note(
@@ -130,7 +132,7 @@ def _fallback_single_note(
         item_ids=[item.memory_id for item in items],
         session_id=session_id,
         object_ids=object_ids,
-        timestamp=timestamp,
+        created_at=created_at,
     )
 
     return ConsolidationResult(
@@ -146,8 +148,8 @@ def apply_assignments(
     candidates: list[MemoryNote],
     session_id: str,
     object_ids: list[str],
-    timestamp: str,
-    updated_at: str,
+    created_at: datetime,
+    updated_at: datetime,
     max_item_ids: int,
 ) -> ConsolidationResult:
     """Turn one consolidation response into the records to persist."""
@@ -156,7 +158,7 @@ def apply_assignments(
 
     if consolidation is None or not consolidation.notes:
         return _fallback_single_note(
-            items, session_id=session_id, object_ids=object_ids, timestamp=timestamp
+            items, session_id=session_id, object_ids=object_ids, created_at=created_at
         )
 
     candidate_by_id = {note.memory_id: note for note in candidates}
@@ -194,7 +196,7 @@ def apply_assignments(
 
     if not assigned:
         return _fallback_single_note(
-            items, session_id=session_id, object_ids=object_ids, timestamp=timestamp
+            items, session_id=session_id, object_ids=object_ids, created_at=created_at
         )
 
     result = ConsolidationResult()
@@ -222,7 +224,7 @@ def apply_assignments(
                 item_ids=item_ids[-max_item_ids:],
                 session_id=session_id,
                 object_ids=object_ids,
-                timestamp=timestamp,
+                created_at=created_at,
             )
             result.to_insert.append(note)
 
@@ -236,7 +238,7 @@ def apply_assignments(
             item_ids=[item.memory_id for item in leftovers],
             session_id=session_id,
             object_ids=object_ids,
-            timestamp=timestamp,
+            created_at=created_at,
         )
         result.to_insert.append(leftover_note)
 

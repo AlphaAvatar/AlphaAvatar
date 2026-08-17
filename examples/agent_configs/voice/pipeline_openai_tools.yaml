@@ -23,11 +23,15 @@ avatar:
 
 
 # ============================================================
-# 2. Session Runtime
+# 2. Runtime
 # ============================================================
 
 runtime:
-  context_mode: synthetic_tool
+  temporal_alignment:
+    mode: auto
+
+  perception:
+    retention_sec: 60
 
 
 # ============================================================

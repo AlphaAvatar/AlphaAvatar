@@ -13,10 +13,15 @@
 # limitations under the License.
 from __future__ import annotations
 
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.capability import (
+    AvatarCapability,
+    AvatarCapabilityName,
+    avatar_capability,
+)
 from alphaavatar.agents.runtime.inference import InferenceExecutor
 from alphaavatar.core.perception import PerceptionRuntime
 
@@ -24,7 +29,16 @@ if TYPE_CHECKING:
     from .base import PersonaBase
 
 
-class FaceStreamBase:
+@avatar_capability(
+    name=AvatarCapabilityName.PERSONA_FACE_RECOGNITION,
+    description=(
+        "Can recognize previously known users from visible faces and infer face "
+        "attributes when visual observations are available."
+    ),
+)
+class FaceStreamBase(ABC):
+    capabilities: tuple[AvatarCapability, ...]
+
     CONSUMER_ID = "persona.face"
 
     def __init__(

@@ -14,23 +14,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
-
-import numpy as np
+from math import ceil
 
 
-@dataclass
-class FaceObservation:
-    timestamp: float
-    participant_identity: str | None
-    track_sid: str | None
+@dataclass(frozen=True, slots=True)
+class PerceptionRetentionPolicy:
+    retention_sec: float = 60.0
+    headroom: float = 1.25
 
-    bbox: list[float]
-    det_score: float
-    quality_score: float | None
+    def __post_init__(self) -> None:
+        if self.retention_sec <= 0:
+            raise ValueError("retention_sec must be positive")
+        if self.headroom < 1:
+            raise ValueError("headroom must be at least 1")
 
-    embedding: np.ndarray
-    age: int | None = None
-    gender: str | None = None
-
-    landmarks: Any | None = None
+    def capacity(self, interval_sec: float) -> int:
+        if interval_sec <= 0:
+            raise ValueError("interval_sec must be positive")
+        return max(1, ceil(self.retention_sec / interval_sec * self.headroom))

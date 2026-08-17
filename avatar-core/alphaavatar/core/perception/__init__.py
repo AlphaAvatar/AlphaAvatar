@@ -20,18 +20,22 @@ from .alignment import (
     TemporalSlice,
     TemporalSliceKind,
 )
-from .event import (
+from .enum import (
     MediaModality,
     MediaSourceKind,
-    MediaSourceSnapshot,
     MediaSourceState,
+    PerceptionEventKind,
+    PerceptionStreamKind,
+)
+from .runtime import PerceptionRuntime
+from .schema import (
+    MediaSourceSnapshot,
     MediaSourceStateEvent,
     PerceptionCutoff,
     PerceptionEvent,
-    PerceptionEventKind,
+    PerceptionRetentionPolicy,
     PerceptionSnapshot,
 )
-from .runtime import PerceptionRuntime
 from .source_registry import MediaSourceRegistry, advance_source_states
 from .stream import PerceptionStream, StreamRead, StreamRecord, StreamSlice
 from .timeline import EnvAnnotationRenderer, PerceptionTimeline
@@ -51,6 +55,8 @@ __all__ = [
     "PerceptionEvent",
     "PerceptionEventKind",
     "PerceptionRuntime",
+    "PerceptionRetentionPolicy",
+    "PerceptionStreamKind",
     "PerceptionSnapshot",
     "PerceptionStream",
     "PerceptionTemporalAligner",

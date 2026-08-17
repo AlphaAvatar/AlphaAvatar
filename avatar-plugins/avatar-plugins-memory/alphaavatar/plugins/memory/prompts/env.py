@@ -64,8 +64,6 @@ kind, topic, type, who, evidence, metadata, node_mentions, actions, next_steps, 
 PatchOp.topic carries the stable environment topic.
 PatchOp.node_mentions carries graph retrieval anchors.
 
-Runtime, not the model, controls evidence, object_ids, session_id, timestamp, memory_type, graph scoping, and identity aliasing.
-
 ----------------------------------------------------------------------
 B) PatchOp.value FORMAT
 ----------------------------------------------------------------------

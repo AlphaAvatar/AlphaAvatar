@@ -16,9 +16,11 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Any
 
 from alphaavatar.agents.memory import MemoryCache, MemoryItem, MemoryNote
+from alphaavatar.agents.utils.time import application_now
 
 from ..log import logger
 from ..maintenance import ConsolidationResult, RecallLedger, merge_candidates, notes_from_hits
@@ -56,7 +58,7 @@ class NoteConsolidator:
         session_content: str,
         memory_cache: MemoryCache,
         recall_ledger: RecallLedger,
-        updated_at: str,
+        updated_at: datetime,
         trace_metadata: dict[str, Any],
     ) -> ConsolidationResult:
         """Return the records to persist for this session, notes included.
@@ -91,7 +93,7 @@ class NoteConsolidator:
             candidates=candidates,
             session_id=memory_cache.session_id,
             object_ids=memory_cache.object_ids,
-            timestamp=memory_cache.time,
+            created_at=application_now(),
             updated_at=updated_at,
             max_item_ids=self._config.note.max_item_ids,
         )

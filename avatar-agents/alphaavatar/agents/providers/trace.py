@@ -21,7 +21,8 @@ from typing import Any
 from pydantic import BaseModel
 
 from alphaavatar.agents.log import logger
-from alphaavatar.agents.utils import local_now_iso, short_hash
+from alphaavatar.agents.utils import short_hash
+from alphaavatar.agents.utils.time import application_now
 
 from .schema import ProviderTraceConfig, ProviderTraceRecord
 
@@ -106,7 +107,7 @@ class ProviderTracer:
         return self._config.save_raw_response
 
     def build_trace_id(self, *, task_name: str, input_hash: str) -> str:
-        seed = f"{task_name}:{input_hash}:{local_now_iso()}"
+        seed = f"{task_name}:{input_hash}:{application_now().isoformat()}"
         return f"ptrace_{short_hash(seed, 20)}"
 
     def get_task_dir(
@@ -286,7 +287,7 @@ class ProviderTracer:
             "prompt": to_jsonable(prompt),
             "payload": to_jsonable(payload),
             "metadata": to_jsonable(metadata or {}),
-            "created_at": local_now_iso(),
+            "created_at": application_now().isoformat(),
         }
 
         serialized = safe_json_dumps(prompt_payload)

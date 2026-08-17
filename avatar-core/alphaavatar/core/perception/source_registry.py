@@ -18,9 +18,11 @@ from dataclasses import replace
 
 from alphaavatar.core.time import RuntimeTime
 
-from .event import (
+from .enum import (
     MediaModality,
     MediaSourceKind,
+)
+from .schema import (
     MediaSourceSnapshot,
     MediaSourceStateEvent,
     PerceptionEvent,

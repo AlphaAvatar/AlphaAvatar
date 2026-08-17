@@ -11,16 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from __future__ import annotations
-
-from enum import Enum
+from enum import StrEnum
 
 
-class RuntimeContextInjectionMode(str, Enum):
-    """
-    How to inject dynamic runtime context into the model input.
-    """
-
-    USER_APPEND = "user_append"
-    SYNTHETIC_TOOL = "synthetic_tool"
-    CUSTOM_ROLE = "custom_role"
+class PerceptionEventKind(StrEnum):
+    OBSERVATION = "observation"
+    SOURCE_STATE = "source_state"

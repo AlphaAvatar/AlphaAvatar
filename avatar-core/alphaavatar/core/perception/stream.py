@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from threading import RLock
 from typing import Generic, TypeVar
 
+from .enum import PerceptionStreamKind
+
 T = TypeVar("T")
 
 
@@ -68,7 +70,7 @@ class StreamSlice(Generic[T]):
 
 
 class PerceptionStream(Generic[T]):
-    def __init__(self, *, name: str, maxlen: int) -> None:
+    def __init__(self, *, name: PerceptionStreamKind, maxlen: int) -> None:
         if not name:
             raise ValueError("PerceptionStream name cannot be empty")
         if maxlen <= 0:

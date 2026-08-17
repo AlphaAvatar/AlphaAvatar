@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from datetime import datetime
+
 import numpy as np
 
 from alphaavatar.agents.persona import ProfileItemSource, ProfileItemView, SpeakerCacheBase
@@ -74,7 +76,7 @@ class SpeakerCache(SpeakerCacheBase):
         self,
         profile_details: UserProfileDetails | None,
         speaker_attribute: dict[str, np.ndarray],
-        timestamp: str,
+        updated_at: datetime,
     ) -> UserProfileDetails:
         """
         Update and smooth speaker attributes, and derive age range and gender.
@@ -119,11 +121,11 @@ class SpeakerCache(SpeakerCacheBase):
             profile_details.age is None
             or (
                 profile_details.age.source == ProfileItemSource.speech
-                and profile_details.age != age_range
+                and profile_details.age.value != age_range
             )
         ):
             profile_details.age = ProfileItemView(
-                value=age_range, source=ProfileItemSource.speech, timestamp=timestamp
+                value=age_range, source=ProfileItemSource.speech, updated_at=updated_at
             )
 
         # 3) Compute gender probabilities and select top label
@@ -132,7 +134,7 @@ class SpeakerCache(SpeakerCacheBase):
         gender = self._gender_labels[idx]
         if profile_details.gender is None or profile_details.gender.value != gender:
             profile_details.gender = ProfileItemView(
-                value=gender, source=ProfileItemSource.speech, timestamp=timestamp
+                value=gender, source=ProfileItemSource.speech, updated_at=updated_at
             )
 
         return profile_details

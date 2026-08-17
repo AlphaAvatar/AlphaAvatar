@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -32,10 +33,10 @@ from alphaavatar.agents.utils.files.work_dirs import (
     mk_session_dirs,
 )
 from alphaavatar.agents.utils.id_utils import get_md5_id, sanitize_id
-from alphaavatar.agents.utils.time_utils import TimeStamp
+from alphaavatar.agents.utils.time import UserTimeContext, application_now
 
 
-class ParticipantUpdateResult(BaseModel):
+class ParticipantIdentityResolution(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     participant_id: str
@@ -54,6 +55,7 @@ class ParticipantInfo(BaseModel):
 
     # Participant Identity
     participant_id: str
+    participant_identity: str
 
     # Room Identity
     room_id: str
@@ -66,7 +68,9 @@ class ParticipantInfo(BaseModel):
 
     metadata: dict[str, Any] = Field(default_factory=dict)
 
-    timestamp: TimeStamp
+    user_time: UserTimeContext
+    joined_at: datetime = Field(default_factory=application_now)
+
     user_path: UserPath | None = None
 
     @property
@@ -82,6 +86,11 @@ class SessionRuntime(BaseModel):
         description="Session ID for the current session.",
     )
 
+    created_at: datetime = Field(
+        default_factory=application_now,
+        description="Application-local wall-clock time when the session was created.",
+    )
+
     session_timeout: int = Field(
         default=300,
         description="Session timeout in seconds.",
@@ -93,7 +102,7 @@ class SessionRuntime(BaseModel):
     avatar_path: AvatarPath | None = None
     session_path: SessionPath | None = None
 
-    pending_user_path_migrations: list[ParticipantUpdateResult] = Field(default_factory=list)
+    pending_user_path_migrations: list[ParticipantIdentityResolution] = Field(default_factory=list)
 
     @property
     def primary_participant(self) -> ParticipantInfo | None:
@@ -122,39 +131,43 @@ class SessionRuntime(BaseModel):
         # Dir Building
         work_dir = os.getenv("AVATAR_WORK_DIR", "")
         self.avatar_path = mk_avatar_dirs(work_dir)
-        self.session_path = mk_session_dirs(self.avatar_path, self.session_id)
+        self.session_path = mk_session_dirs(
+            self.avatar_path,
+            self.session_id,
+            created_date=self.created_at.date(),
+        )
 
     def add_participant(
         self,
         *,
+        participant_identity: str,
         user_id: str,
-        room_identity: str,
-        room_type: str | None = None,
-        timestamp: TimeStamp | None = None,
+        room_id: str,
+        room_type: str,
+        user_time: UserTimeContext,
         metadata: dict[str, Any] | None = None,
         primary: bool = False,
     ) -> ParticipantInfo:
         uid = sanitize_id(user_id)
-        rid = sanitize_id(room_identity)
-        pid = get_md5_id([rid, timestamp.time_str])
+        rid = sanitize_id(room_id)
+        identity = sanitize_id(participant_identity)
+        pid = get_md5_id([self.session_id, rid, identity])
 
         if pid in self.participants:
             participant = self.participants[pid]
-            if room_type:
-                participant.room_type = room_type
-            if timestamp:
-                participant.timestamp = timestamp
+            participant.room_type = room_type
+            participant.user_time = user_time
+
             if metadata:
                 participant.metadata.update(metadata)
-            if uid and participant.user_id != uid:
-                self.update_participant_user_id(pid, uid)
         else:
             participant = ParticipantInfo(
                 participant_id=pid,
+                participant_identity=identity,
                 room_id=rid,
                 room_type=room_type,
                 user_id=uid,
-                timestamp=timestamp,
+                user_time=user_time,
                 metadata=metadata or {},
             )
 
@@ -185,70 +198,56 @@ class SessionRuntime(BaseModel):
 
         return None
 
-    def update_participant_user_id(
+    def resolve_participant_user(
         self,
         *,
         participant_id: str,
         user_id: str,
         confidence: float | None = None,
-    ) -> ParticipantUpdateResult:
+    ) -> ParticipantIdentityResolution:
         pid = sanitize_id(participant_id)
+        uid = sanitize_id(user_id)
 
-        if pid not in self.participants:
-            self.add_participant(participant_id=pid)
+        participant = self.participants.get(pid)
+        if participant is None:
+            raise KeyError(f"Participant not found: {pid}")
 
-        participant = self.participants[pid]
+        if not uid:
+            raise ValueError("Resolved user_id cannot be empty")
 
         old_user_id = participant.effective_user_id
-        old_user_path_snapshot = (
+        old_user_path = (
             participant.user_path.snapshot() if participant.user_path is not None else None
         )
 
-        # Same resolved user, no path migration needed.
-        if old_user_id == user_id and participant.user_path is not None:
-            if confidence is not None:
-                participant.identity_confidence = confidence
-
-            return ParticipantUpdateResult(
-                participant_id=pid,
-                old_user_id=old_user_id,
-                new_user_id=user_id,
-                old_user_path=old_user_path_snapshot,
-                new_user_path=participant.user_path.snapshot(),
-                changed=False,
-            )
-
-        participant.user_id = user_id
-        participant.resolved_user_id = user_id
-
+        participant.resolved_user_id = uid
         if confidence is not None:
             participant.identity_confidence = confidence
 
         new_user_path = mk_user_dirs(
             users_dir=self.avatar_path.users_dir,
-            user_id=user_id,
+            user_id=uid,
         )
 
         if participant.user_path is None:
             participant.user_path = new_user_path
-        else:
-            # Important:
-            # Mutate existing UserPath object in place so plugins holding the same
-            # UserPath reference can see the updated path immediately.
+        elif participant.user_path.user_root.resolve() != new_user_path.user_root.resolve():
             participant.user_path.update_from(new_user_path)
 
         new_user_path_snapshot = participant.user_path.snapshot()
+        changed = old_user_id != uid
 
-        result = ParticipantUpdateResult(
+        result = ParticipantIdentityResolution(
             participant_id=pid,
             old_user_id=old_user_id,
-            new_user_id=user_id,
-            old_user_path=old_user_path_snapshot,
+            new_user_id=uid,
+            old_user_path=old_user_path,
             new_user_path=new_user_path_snapshot,
-            changed=True,
+            changed=changed,
         )
 
-        self.pending_user_path_migrations.append(result)
+        if changed:
+            self.pending_user_path_migrations.append(result)
 
         return result
 

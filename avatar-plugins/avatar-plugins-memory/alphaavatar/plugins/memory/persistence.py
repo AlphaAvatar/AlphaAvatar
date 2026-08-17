@@ -85,7 +85,7 @@ class MemoryPersistenceMixin:
         async with self._save_lock:
             selected = sorted(
                 (item for item in items if item.updated),
-                key=lambda item: item.timestamp or "",
+                key=lambda item: item.created_at,
             )
 
             if not selected:

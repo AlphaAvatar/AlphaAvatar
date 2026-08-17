@@ -49,15 +49,14 @@ from alphaavatar.agents.status import (
 )
 from alphaavatar.core.output import OutputLane
 
-from .context import init_context_manager
+from .context import (
+    AvatarContextManager,
+    AvatarContextStatus,
+    extract_answer_text,
+)
 from .context.internal_tools import get_runtime_context_tool
 from .lifecycle import LifecyclePhase, RuntimePluginLifecycle
 from .patches import init_avatar_patches
-from .prompting import (
-    AgentContextBuilder,
-    AgentContextStatus,
-    extract_answer_text,
-)
 from .voice import LiveKitSTTBridge, LiveKitTranscriptionAdapter, LiveKitTTSAdapter
 
 
@@ -67,11 +66,11 @@ class AvatarEngine(Agent):
         *,
         avatar_config: AvatarConfig,
         runtime: AvatarRuntime,
-        rtc_plugins: dict[str, Sequence[AvatarRuntimePlugin]],
+        rtc_adapters: dict[str, Sequence[AvatarRuntimePlugin]],
     ) -> None:
         self._avatar_config = avatar_config
         self._runtime = runtime
-        self._rtc_plugins = rtc_plugins
+        self._rtc_adapters = rtc_adapters
 
         # Step 1: initialize the temporary AlphaAvatar STT -> LiveKit bridge.
         self._livekit_model_input = LiveKitModelInput(clock=runtime.clock)
@@ -110,16 +109,16 @@ class AvatarEngine(Agent):
         self._tools.append(get_runtime_context_tool())
 
         # Step 3: initialize per-call model context preparation.
-        self._context_builder = AgentContextBuilder(
+        self._context_manager = AvatarContextManager(
             avatar_config=self._avatar_config,
-            context_runtime=self._runtime.context,
+            runtime=self._runtime,
             memory=self._memory,
             persona=self._persona,
         )
 
         # Step 4: initialize the underlying LiveKit Agent.
         super().__init__(
-            instructions=self._context_builder.initial_instructions,
+            instructions=self._context_manager.initial_instructions,
             llm=self._avatar_config.llm.get_plugin(),
             turn_detection=self._avatar_config.voice.get_turn_detection_plugin(),
             stt=LiveKitSTTBridge(),
@@ -137,7 +136,7 @@ class AvatarEngine(Agent):
             phases=(
                 LifecyclePhase.create(
                     "rtc_outputs",
-                    tuple(self._rtc_plugins.get("outputs", ())),
+                    tuple(self._rtc_adapters.get("outputs", ())),
                 ),
                 LifecyclePhase.create(
                     "perception_consumers",
@@ -152,7 +151,7 @@ class AvatarEngine(Agent):
                 ),
                 LifecyclePhase.create(
                     "rtc_inputs",
-                    tuple(self._rtc_plugins.get("inputs", ())),
+                    tuple(self._rtc_adapters.get("inputs", ())),
                 ),
             )
         )
@@ -213,7 +212,6 @@ class AvatarEngine(Agent):
 
     async def on_enter(self) -> None:
         init_avatar_patches(self)
-        init_context_manager(self)
 
         await self._plugin_lifecycle.start()
 
@@ -307,13 +305,13 @@ class AvatarEngine(Agent):
                 chat_ctx,
                 deferred_message_ids={turn_snapshot.input_id},
             )
-            context = self._context_builder.build(
+            context = self._context_manager.build(
                 base_input,
                 turn_snapshot=turn_snapshot,
             )
             transport_input = self._livekit_model_input.to_chat_context(context.model_input)
 
-            model_call_status = AgentContextStatus(
+            model_call_status = AvatarContextStatus(
                 runtime=self._runtime,
                 emitter=self._status,
                 input_kind=context.input_kind,

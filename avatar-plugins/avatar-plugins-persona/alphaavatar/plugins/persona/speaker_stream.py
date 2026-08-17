@@ -35,6 +35,7 @@ from alphaavatar.core.media import (
     PayloadFormatUnavailable,
     PayloadView,
 )
+from alphaavatar.core.perception import PerceptionStreamKind
 
 from .log import logger
 from .models import SPEAKER_MODEL_CONFIG
@@ -347,12 +348,11 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
             try:
                 await self.perception_runtime.wait_for_pending_observations(
                     consumer_id=self.CONSUMER_ID,
-                    streams={"speech"},
+                    streams={PerceptionStreamKind.SPEECH},
                 )
-
                 window = self.perception_runtime.take_pending_observations(
                     consumer_id=self.CONSUMER_ID,
-                    streams={"speech"},
+                    streams={PerceptionStreamKind.SPEECH},
                     require_payload=True,
                 )
 
@@ -363,7 +363,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
                     )
                     self._sources.clear()
 
-                for observation in window.audio_frames:
+                for observation in window.speech_frames:
                     frame = self._extract_frame(observation)
                     if frame is not None:
                         self._append_frame(observation, frame)
@@ -424,7 +424,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
         self._sources.clear()
         self.perception_runtime.clear_consumer(
             self.CONSUMER_ID,
-            streams={"speech"},
+            streams={PerceptionStreamKind.SPEECH},
         )
 
         logger.info("Persona Speaker stopped")

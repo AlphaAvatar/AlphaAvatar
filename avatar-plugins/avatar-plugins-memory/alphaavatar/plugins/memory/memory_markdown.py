@@ -16,8 +16,6 @@ import pathlib
 from collections import defaultdict
 from typing import Any
 
-from alphaavatar.agents.utils import time_utils
-
 
 def _safe_name(value: str) -> str:
     return "".join(c if c.isalnum() or c in ("-", "_", ".") else "_" for c in str(value))
@@ -70,7 +68,7 @@ def _render_memory_entry(item: dict[str, Any]) -> str:
     session_id = str(metadata.get("session_id", "")).strip()
     object_ids = metadata.get("object_ids") or []
     topic = str(metadata.get("topic", "")).strip()
-    ts = str(metadata.get("ts", "")).strip()
+    created_at = str(metadata.get("created_at", "")).strip()
     memory_type = str(metadata.get("memory_type", "")).strip()
     graph_nodes = metadata.get("graph_nodes") or []
     graph_links = metadata.get("graph_links") or []
@@ -79,7 +77,7 @@ def _render_memory_entry(item: dict[str, Any]) -> str:
     lines = [
         f"## Memory: {memory_id}",
         "",
-        f"- **ts**: {ts}",
+        f"- **created_at**: {created_at}",
         f"- **memory_type**: {memory_type}",
         f"- **object_ids**: {', '.join(str(x) for x in object_ids) if object_ids else 'N/A'}",
         f"- **session_id**: {session_id}",
@@ -124,7 +122,7 @@ def _split_existing_entries(text: str) -> dict[str, dict[str, Any]]:
     - map of memory_id -> parsed entry dict:
         {
             "raw": "...full rendered section...",
-            "ts": "...",
+            "created_at": "...",
         }
     """
     marker = "\n## Memory: "
@@ -161,23 +159,23 @@ def _split_existing_entries(text: str) -> dict[str, dict[str, Any]]:
         if not memory_id:
             continue
 
-        ts = ""
+        created_at = ""
         for line in lines:
-            if line.startswith("- **ts**: "):
-                ts = line.replace("- **ts**: ", "", 1).strip()
+            if line.startswith("- **created_at**: "):
+                created_at = line.replace("- **created_at**: ", "", 1).strip()
                 break
 
         entries[memory_id] = {
             "raw": chunk,
-            "ts": ts,
+            "created_at": created_at,
         }
 
     return entries
 
 
 def _entry_sort_key(memory_id: str, entry: dict[str, Any]) -> tuple[str, str]:
-    ts = str(entry.get("ts", "") or "")
-    return (ts, memory_id)
+    created_at = str(entry.get("created_at", "") or "")
+    return (created_at, memory_id)
 
 
 def _merge_entries(
@@ -197,11 +195,11 @@ def _merge_entries(
             continue
 
         metadata = item.get("metadata", {}) or {}
-        ts = str(metadata.get("ts", "")).strip()
+        created_at = str(metadata.get("created_at", "")).strip()
 
         entries[memory_id] = {
             "raw": _render_memory_entry(item),
-            "ts": ts,
+            "created_at": created_at,
         }
 
     return entries
@@ -261,11 +259,11 @@ def save_memory_items_to_markdown(
         metadata = item.get("metadata", {}) or {}
         memory_type = str(metadata.get("memory_type", ""))
         session_id = str(metadata.get("session_id", "") or "unknown_session")
-        ts = metadata.get("ts", "")
+        created_at = metadata.get("created_at", "")
 
         is_avatar = _is_avatar_memory_type(memory_type)
         if is_avatar:
-            day = time_utils.time_str_to_datetime(ts).strftime("%Y-%m-%d")
+            day = created_at.strftime("%Y-%m-%d")
             avatar_groups[day].append(item)
         else:
             session_groups[session_id].append(item)

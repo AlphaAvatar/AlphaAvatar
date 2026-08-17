@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from .formats import PayloadFormat, PayloadView
+from .enum.formats import PayloadFormat, PayloadView
 from .payload import MediaPayload
 
 

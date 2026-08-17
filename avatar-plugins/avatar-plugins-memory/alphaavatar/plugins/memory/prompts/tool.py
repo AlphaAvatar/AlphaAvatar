@@ -61,8 +61,6 @@ type, who, topic, component, inputs, outcome, evidence, error, actions, metadata
 PatchOp.topic carries the stable topic.
 PatchOp.node_mentions carries graph retrieval anchors.
 
-Runtime, not the model, controls evidence, object_ids, session_id, timestamp, memory_type, graph scoping, and identity aliasing.
-
 ----------------------------------------------------------------------
 B) TOOL EVENT GATE
 ----------------------------------------------------------------------

@@ -21,14 +21,17 @@ from typing import Any
 from alphaavatar.core.env import EnvAnnotation, EnvObservation, ObservationKind
 from alphaavatar.core.time import RuntimeClock, RuntimeTime, RuntimeTimeRange
 
-from .event import (
+from .enum import (
     MediaModality,
     MediaSourceKind,
+    PerceptionEventKind,
+    PerceptionStreamKind,
+)
+from .schema import (
     MediaSourceSnapshot,
     MediaSourceStateEvent,
     PerceptionCutoff,
     PerceptionEvent,
-    PerceptionEventKind,
     PerceptionSnapshot,
 )
 from .source_registry import MediaSourceRegistry
@@ -41,31 +44,22 @@ class PerceptionRuntime:
     """Session-scoped full-duplex perception runtime."""
 
     _STREAM_BY_OBSERVATION_KIND = {
-        ObservationKind.VIDEO_FRAME: "video",
-        ObservationKind.VIDEO_CLIP: "video",
-        ObservationKind.SCREEN_FRAME: "screen",
-        ObservationKind.AUDIO_FRAME: "audio",
-        ObservationKind.AUDIO_SEGMENT: "audio",
-        ObservationKind.SPEECH_FRAME: "speech",
-        ObservationKind.SPEECH_SEGMENT: "speech",
-        ObservationKind.TRANSCRIPT_DELTA: "text",
-        ObservationKind.TRANSCRIPT_SEGMENT: "text",
-        ObservationKind.TEXT_INPUT: "text",
-    }
-
-    _STREAM_MAXLEN = {
-        "video": 512,
-        "screen": 256,
-        "audio": 1024,
-        "speech": 1024,
-        "text": 1024,
-        "event": 8192,
+        ObservationKind.VIDEO_FRAME: PerceptionStreamKind.VIDEO,
+        ObservationKind.VIDEO_CLIP: PerceptionStreamKind.VIDEO,
+        ObservationKind.SCREEN_FRAME: PerceptionStreamKind.SCREEN,
+        ObservationKind.AUDIO_FRAME: PerceptionStreamKind.AUDIO,
+        ObservationKind.AUDIO_SEGMENT: PerceptionStreamKind.AUDIO,
+        ObservationKind.SPEECH_FRAME: PerceptionStreamKind.SPEECH,
+        ObservationKind.SPEECH_SEGMENT: PerceptionStreamKind.SPEECH,
+        ObservationKind.TRANSCRIPT_DELTA: PerceptionStreamKind.TEXT,
+        ObservationKind.TRANSCRIPT_SEGMENT: PerceptionStreamKind.TEXT,
+        ObservationKind.TEXT_INPUT: PerceptionStreamKind.TEXT,
     }
 
     _TIMELINE_RETENTION_BY_KIND = {
         ObservationKind.VIDEO_FRAME: 256,
-        ObservationKind.SCREEN_FRAME: 128,
         ObservationKind.VIDEO_CLIP: 32,
+        ObservationKind.SCREEN_FRAME: 128,
         ObservationKind.AUDIO_SEGMENT: 64,
         ObservationKind.SPEECH_SEGMENT: 64,
         ObservationKind.TRANSCRIPT_SEGMENT: 128,
@@ -90,46 +84,59 @@ class PerceptionRuntime:
         self,
         *,
         session_id: str,
+        stream_maxlens: dict[PerceptionStreamKind, int],
         clock: RuntimeClock | None = None,
     ) -> None:
         if not session_id:
             raise ValueError("session_id cannot be empty")
+
+        required_streams = set(PerceptionStreamKind)
+        missing = required_streams.difference(stream_maxlens)
+        if missing:
+            raise ValueError(f"Missing perception stream maxlen: {', '.join(sorted(missing))}")
 
         self.session_id = session_id
         self.clock = clock or RuntimeClock()
 
         # Visual
         self.video = PerceptionStream[EnvObservation](
-            name="video", maxlen=self._STREAM_MAXLEN["video"]
+            name=PerceptionStreamKind.VIDEO,
+            maxlen=stream_maxlens[PerceptionStreamKind.VIDEO],
         )
         self.screen = PerceptionStream[EnvObservation](
-            name="screen", maxlen=self._STREAM_MAXLEN["screen"]
+            name=PerceptionStreamKind.SCREEN,
+            maxlen=stream_maxlens[PerceptionStreamKind.SCREEN],
         )
 
         # Voice
         self.audio = PerceptionStream[EnvObservation](
-            name="audio", maxlen=self._STREAM_MAXLEN["audio"]
+            name=PerceptionStreamKind.AUDIO,
+            maxlen=stream_maxlens[PerceptionStreamKind.AUDIO],
         )
         self.speech = PerceptionStream[EnvObservation](
-            name="speech", maxlen=self._STREAM_MAXLEN["speech"]
+            name=PerceptionStreamKind.SPEECH,
+            maxlen=stream_maxlens[PerceptionStreamKind.SPEECH],
         )
 
         # Text
         self.text = PerceptionStream[EnvObservation](
-            name="text", maxlen=self._STREAM_MAXLEN["text"]
+            name=PerceptionStreamKind.TEXT,
+            maxlen=stream_maxlens[PerceptionStreamKind.TEXT],
         )
 
         # Session-level Events
         self.events = PerceptionStream[PerceptionEvent](
-            name="events", maxlen=self._STREAM_MAXLEN["event"]
+            name=PerceptionStreamKind.EVENT,
+            maxlen=stream_maxlens[PerceptionStreamKind.EVENT],
         )
 
+        # Stream
         self._observation_streams = {
-            "video": self.video,
-            "screen": self.screen,
-            "audio": self.audio,
-            "speech": self.speech,
-            "text": self.text,
+            self.video.name: self.video,
+            self.screen.name: self.screen,
+            self.audio.name: self.audio,
+            self.speech.name: self.speech,
+            self.text.name: self.text,
         }
 
         self.timeline = PerceptionTimeline(
@@ -184,10 +191,7 @@ class PerceptionRuntime:
 
         return observation.source_id, str(segment_id)
 
-    def _update_speech_activity_locked(
-        self,
-        observation: EnvObservation,
-    ) -> None:
+    def _update_speech_activity_locked(self, observation: EnvObservation) -> None:
         key = self._speech_segment_key(observation)
 
         if key is None:
@@ -410,7 +414,7 @@ class PerceptionRuntime:
     """Observation operations"""
 
     def _get_observation_streams(
-        self, names: set[str]
+        self, names: set[PerceptionStreamKind]
     ) -> tuple[PerceptionStream[EnvObservation], ...]:
         if not names:
             raise ValueError("At least one perception stream is required")
@@ -465,7 +469,7 @@ class PerceptionRuntime:
         self,
         *,
         consumer_id: str,
-        streams: set[str],
+        streams: set[PerceptionStreamKind],
         timeout: float | None = None,
         min_age_sec: float = 0.0,
     ) -> bool:
@@ -480,7 +484,7 @@ class PerceptionRuntime:
         self,
         *,
         consumer_id: str,
-        streams: set[str],
+        streams: set[PerceptionStreamKind],
         require_payload: bool = False,
         min_age_sec: float = 0.0,
         limit_per_stream: int | None = None,
@@ -496,7 +500,9 @@ class PerceptionRuntime:
     def commit_observations(self, window: PerceptionWindow) -> None:
         self.window_builder.commit(window)
 
-    def clear_consumer(self, consumer_id: str, *, streams: set[str] | None = None) -> None:
+    def clear_consumer(
+        self, consumer_id: str, *, streams: set[PerceptionStreamKind] | None = None
+    ) -> None:
         selected = (
             self._get_observation_streams(streams)
             if streams is not None

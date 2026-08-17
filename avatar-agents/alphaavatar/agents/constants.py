@@ -16,7 +16,6 @@ DEFAULT_CONTEXT_VALUE = "No reliable information is currently available."
 
 RUNTIME_CONTEXT_TOOL_NAME = "alphaavatar_runtime_context"
 
-VIDEO_RTC_INTERVAL_SEC = 0.1
 VIDEO_VISION_INTERVAL_SEC = 1
 VIDEO_PERSONA_INTERVAL_SEC = 0.2
 VIDEO_MEMORY_INTERVAL_SEC = 0.5

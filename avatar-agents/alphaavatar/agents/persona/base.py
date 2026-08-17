@@ -19,17 +19,15 @@ from livekit.agents.llm import ChatItem
 from alphaavatar.agents.constants import FACE_MATCH_THRESHOLD, SPEAKER_MATCH_THRESHOLD
 from alphaavatar.agents.log import debug_every, logger
 from alphaavatar.agents.plugin import AvatarRuntimePlugin
-from alphaavatar.agents.runtime import (
-    AvatarRuntime,
-    SessionRuntime,
-)
+from alphaavatar.agents.runtime import AvatarRuntime, SessionRuntime
+from alphaavatar.agents.runtime.capability import AvatarCapability
 from alphaavatar.agents.runtime.session_runtime import ParticipantInfo
 from alphaavatar.agents.utils import NumpyOP
 
 from .cache import FaceCacheBase, PersonaCache, SpeakerCacheBase
 from .face import FaceStreamBase
 from .profiler import ProfilerBase
-from .schema.user_profile import UserProfile, UserRuntimeState
+from .schema import UserProfile, UserRuntimeState
 from .speaker import SpeakerStreamBase
 from .template import PersonaPluginsTemplate
 
@@ -44,11 +42,17 @@ class PersonaBase(AvatarRuntimePlugin):
         face_cls: tuple[type[FaceStreamBase], type[FaceCacheBase]],
         maximum_retrieval_times: int = 3,
     ):
-        self.runtime = runtime
+        self._runtime = runtime
 
         self._profiler = profiler
         self._speaker_cls = speaker_cls
         self._face_cls = face_cls
+
+        self._capabilities: tuple[AvatarCapability, ...] = (
+            *profiler.capabilities,
+            *speaker_cls[0].capabilities,
+            *face_cls[0].capabilities,
+        )
 
         self._maximum_retrieval_times = maximum_retrieval_times
 
@@ -63,8 +67,12 @@ class PersonaBase(AvatarRuntimePlugin):
         self._speaker_stream_runtime: SpeakerStreamBase | None = None
 
     @property
+    def capabilities(self) -> tuple[AvatarCapability, ...]:
+        return self._capabilities
+
+    @property
     def session_runtime(self) -> SessionRuntime:
-        return self.runtime.session
+        return self._runtime.session
 
     @property
     def profiler(self) -> ProfilerBase:
@@ -92,9 +100,11 @@ class PersonaBase(AvatarRuntimePlugin):
 
     @property
     def persona_content(self) -> str:
-        user_profiles = [
-            cache.profile for uid, cache in self.persona_cache.items() if cache.profile is not None
-        ]
+        user_profiles = {
+            uid: cache.profile
+            for uid, cache in self.persona_cache.items()
+            if cache.profile is not None
+        }
         return PersonaPluginsTemplate.apply_system_template(user_profiles)
 
     """Helper Op"""
@@ -113,24 +123,26 @@ class PersonaBase(AvatarRuntimePlugin):
         participant: ParticipantInfo,
         user_profile: UserProfile,
     ) -> None:
-        """Update the runtime state of the user profile based on the current timestamp and session information."""
         state = self._ensure_runtime_state(user_profile=user_profile)
+        session_id = self.session_runtime.session_id
 
-        if state.current_timezone:
-            state.last_timezone = state.current_timezone
-        if state.current_login_time:
-            state.last_login_time = state.current_login_time
+        if state.current_session_id == session_id:
+            state.current_timezone = participant.user_time.timezone
+            state.current_login_at = participant.joined_at
+            state.current_room_type = participant.room_type
+            return
+
         if state.current_session_id:
+            state.last_timezone = state.current_timezone
+            state.last_login_at = state.current_login_at
             state.last_session_id = state.current_session_id
-        if state.current_room_type:
             state.last_room_type = state.current_room_type
 
-        state.current_timezone = participant.timestamp.timezone or ""
-        state.current_login_time = participant.timestamp.time_str or ""
-        state.current_session_id = self.session_runtime.session_id
-        state.current_room_type = participant.room_type or ""
-
-        state.login_count = int(state.login_count or 0) + 1
+        state.current_timezone = participant.user_time.timezone
+        state.current_login_at = participant.joined_at
+        state.current_session_id = session_id
+        state.current_room_type = participant.room_type
+        state.login_count += 1
 
     def _can_merge_profiles(
         self,
@@ -251,21 +263,25 @@ class PersonaBase(AvatarRuntimePlugin):
                 session_profile=cache_profile,
                 loaded_profile=user_profile,
             ):
-                self.session_runtime.update_participant_user_id(
-                    participant_id=cache_participant.participant_id, user_id=uid
+                self.session_runtime.resolve_participant_user(
+                    participant_id=cache_participant.participant_id,
+                    user_id=uid,
                 )
-                self._update_runtime_state(participant=cache_participant, user_profile=user_profile)
+
+                self._update_runtime_state(
+                    participant=cache_participant,
+                    user_profile=user_profile,
+                )
+
                 user_profile = self._merge_profile_for_identity_resolution(
                     session_profile=cache_profile,
                     loaded_profile=user_profile,
                 )
 
-                cache.participant = self.session_runtime.get_participant(user_id=uid)
                 cache.profile = user_profile
 
                 old_uid = cache_uid
                 del self.persona_cache[cache_uid]
-
                 self.persona_cache[uid] = cache
 
                 logger.info(
@@ -487,11 +503,11 @@ class PersonaBase(AvatarRuntimePlugin):
         speaker_stream_cls = self.speaker_stream
 
         self._face_stream_runtime = face_stream_cls(
-            runtime=self.runtime,
+            runtime=self._runtime,
             activity_persona=self,
         )
         self._speaker_stream_runtime = speaker_stream_cls(
-            runtime=self.runtime,
+            runtime=self._runtime,
             activity_persona=self,
         )
 

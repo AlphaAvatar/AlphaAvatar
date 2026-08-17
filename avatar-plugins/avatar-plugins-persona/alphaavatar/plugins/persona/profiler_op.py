@@ -13,15 +13,14 @@
 # limitations under the License.
 from __future__ import annotations
 
-import os
 import uuid
+from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
 from alphaavatar.agents.persona import ProfileItemSource
-from alphaavatar.agents.utils import format_current_time
 
 # --------------------------------- Patch models ---------------------------------
 JSONScalar = str | int | float | bool
@@ -89,6 +88,10 @@ def _norm_token(s: Any) -> str:
     return " ".join(str(s).strip().lower().split())
 
 
+def _datetime_iso(value: datetime | str) -> str:
+    return value.isoformat() if isinstance(value, datetime) else value
+
+
 # --------------------------------- OP helpers ---------------------------------
 def parse_pointer(path: str) -> list[str]:
     """Split a JSON Pointer-like path into tokens (no RFC6901 escaping for brevity)."""
@@ -103,15 +106,20 @@ def write_set(
     container: dict[str, Any],
     tokens: list[str],
     value: Any,
-    update_time: str,
+    updated_at: datetime | str,
     source: ProfileItemSource = ProfileItemSource.chat,
 ) -> None:
     """Set value at path (overwrite)."""
     parent, key = _ensure_parent(container, tokens)
-    if isinstance(parent, dict):
-        parent[key] = {"value": value, "source": source, "timestamp": update_time}
-    else:
+
+    if not isinstance(parent, dict):
         raise TypeError(f"Cannot set at non-dict parent for key '{key}'")
+
+    parent[key] = {
+        "value": value,
+        "source": source,
+        "updated_at": updated_at,
+    }
 
 
 def clear_path(container: dict[str, Any], tokens: list[str]) -> None:
@@ -128,21 +136,27 @@ def append_string(
     container: dict[str, Any],
     tokens: list[str],
     value: Any,
-    update_time: str,
+    updated_at: datetime | str,
     source: ProfileItemSource = ProfileItemSource.chat,
 ) -> None:
     """Append a string to a list at path with de-dup."""
     lst: list[dict] = _ensure_list(container, tokens)
-    seen = {_norm_token(x["value"]): True for x in lst}
-    if _norm_token(value) not in seen:
-        lst.append({"value": value, "source": source, "timestamp": update_time})
+
+    if _norm_token(value) not in {_norm_token(x["value"]) for x in lst}:
+        lst.append(
+            {
+                "value": value,
+                "source": source,
+                "updated_at": updated_at,
+            }
+        )
 
 
 def append_text(
     container: dict[str, Any],
     tokens: list[str],
     value: Any,
-    update_time: str,
+    updated_at: datetime | str,
     sep: str = " ",
     source: ProfileItemSource = ProfileItemSource.chat,
 ) -> None:
@@ -152,28 +166,39 @@ def append_text(
       - Else -> concatenate with a single separator (default space)
     """
     parent, key = _ensure_parent(container, tokens)
-    cur: dict | list = parent.get(key)
-    if cur is None or (isinstance(cur, dict) and cur["vluae"].strip() == ""):
-        parent[key]["vluae"] = value
-        parent[key]["source"] = source
-        parent[key]["timestamp"] = update_time
+    cur = parent.get(key)
+
+    if cur is None:
+        parent[key] = {
+            "value": value,
+            "source": source,
+            "updated_at": updated_at,
+        }
         return
 
     if isinstance(cur, list):
-        lst: list[dict] = _ensure_list(container, tokens)
-        if _norm_token(value) not in {_norm_token(x["value"]) for x in lst}:
-            lst.append({"value": value, "source": source, "timestamp": update_time})
+        if _norm_token(value) not in {_norm_token(x["value"]) for x in cur}:
+            cur.append(
+                {
+                    "value": value,
+                    "source": source,
+                    "updated_at": updated_at,
+                }
+            )
         return
 
-    cur_str = cur["vluae"]
-    if cur_str.endswith((" ", sep)):
-        parent[key] = {"value": f"{cur_str}{value}", "source": source, "timestamp": update_time}
-    else:
-        parent[key] = {
-            "value": f"{cur_str}{sep}{value}",
-            "source": source,
-            "timestamp": update_time,
-        }
+    if not isinstance(cur, dict):
+        raise TypeError(f"Cannot append text to type {type(cur)}")
+
+    current = str(cur.get("value", ""))
+
+    parent[key] = {
+        "value": value
+        if not current.strip()
+        else f"{current}{'' if current.endswith((' ', sep)) else sep}{value}",
+        "source": source,
+        "updated_at": updated_at,
+    }
 
 
 def remove_string(container: dict[str, Any], tokens: list[str], value: Any) -> None:
@@ -216,12 +241,12 @@ def flatten_items(user_id: str, data: dict[str, Any], prefix: str = "") -> list[
         if isinstance(item, dict):
             val = item.get("value", "")
             source = item.get("source", ProfileItemSource.chat)
-            ts = item.get(
-                "timestamp", format_current_time(os.getenv("AVATAR_TIMEZONE", None)).time_str
-            )
+            updated_at = item.get("updated_at")
 
-            if val is None or (isinstance(val, str) and val.strip() == ""):
+            if val is None or (isinstance(val, str) and not val.strip()):
                 continue
+            if updated_at is None:
+                raise ValueError(f"Profile item '{path}' is missing updated_at")
 
             items.append(
                 {
@@ -233,11 +258,10 @@ def flatten_items(user_id: str, data: dict[str, Any], prefix: str = "") -> list[
                         "type": ValueType.scalar,
                         "value": str(val),
                         "source": source,
-                        "ts": ts,
+                        "updated_at": _datetime_iso(updated_at),
                     },
                 }
             )
-            continue
 
         # Lists
         if isinstance(item, list):
@@ -247,9 +271,9 @@ def flatten_items(user_id: str, data: dict[str, Any], prefix: str = "") -> list[
             for it in item:
                 val = it.get("value", "")
                 source = it.get("source", ProfileItemSource.chat)
-                ts = it.get(
-                    "timestamp", format_current_time(os.getenv("AVATAR_TIMEZONE", None)).time_str
-                )
+                updated_at = it.get("updated_at")
+                if updated_at is None:
+                    raise ValueError(f"Profile item '{path}' is missing updated_at")
 
                 if val is None or (isinstance(val, str) and val.strip() == ""):
                     continue
@@ -264,7 +288,7 @@ def flatten_items(user_id: str, data: dict[str, Any], prefix: str = "") -> list[
                             "type": ValueType.list_item,
                             "value": str(val),
                             "source": source,
-                            "ts": ts,
+                            "updated_at": _datetime_iso(updated_at),
                         },
                     }
                 )
@@ -289,17 +313,33 @@ def rebuild_from_items(items: list[dict[str, Any]]) -> dict[str, Any]:
         typ = meta.get("type")
         path = meta.get("path", "")
         source = meta.get("source", ProfileItemSource.chat)
-        timestamp = meta.get("ts", "")
+        updated_at = meta.get("updated_at")
+        if updated_at is None:
+            raise ValueError(f"Profile item metadata is missing updated_at: {path}")
 
         tokens = parse_pointer(path)
         if typ == ValueType.scalar:
-            value = meta.get("value")
-            write_set(out, tokens, value, timestamp, source)
+            write_set(
+                out,
+                tokens,
+                meta.get("value"),
+                updated_at,
+                source,
+            )
+
         elif typ == ValueType.list_item:
             value = meta.get("value")
             lst = _ensure_list(out, tokens)
-            seen = {_norm_token(x["value"]): True for x in lst if isinstance(x, dict)}
-            if _norm_token(value) not in seen:
-                lst.append({"value": value, "source": source, "timestamp": timestamp})
+
+            if _norm_token(value) not in {
+                _norm_token(x["value"]) for x in lst if isinstance(x, dict)
+            }:
+                lst.append(
+                    {
+                        "value": value,
+                        "source": source,
+                        "updated_at": updated_at,
+                    }
+                )
 
     return out

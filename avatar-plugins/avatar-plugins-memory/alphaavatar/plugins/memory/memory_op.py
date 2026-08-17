@@ -145,7 +145,7 @@ def flatten_records(
                     "session_id": memory.session_id,
                     "object_ids": memory.object_ids,
                     "topic": memory.topic,
-                    "ts": memory.timestamp,
+                    "created_at": memory.created_at.isoformat(),
                     "memory_type": (
                         memory.memory_type.value
                         if hasattr(memory.memory_type, "value")
@@ -181,7 +181,7 @@ def rebuild_from_items(items: list[dict[str, Any]]) -> list[MemoryItem]:
             "session_id": meta.get("session_id"),
             "object_ids": meta.get("object_ids") or [],
             "topic": meta.get("topic"),
-            "timestamp": meta.get("ts"),
+            "created_at": meta["created_at"],
             "memory_type": meta.get("memory_type"),
             "graph_nodes": [
                 MemoryGraphNode.model_validate(x) for x in meta.get("graph_nodes") or []

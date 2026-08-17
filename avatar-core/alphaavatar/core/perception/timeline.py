@@ -19,7 +19,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from threading import RLock
 
-from alphaavatar.core.env import EnvAnnotation, EnvObservation
+from alphaavatar.core.env import EnvAnnotation, EnvObservation, ObservationKind
 
 EnvAnnotationRenderer = Callable[[EnvObservation, EnvAnnotation], None]
 
@@ -42,19 +42,11 @@ class PerceptionTimeline:
     Rendering always happens outside the timeline lock.
     """
 
-    DEFAULT_RETENTION_BY_KIND = {
-        "video_frame": 256,
-        "screen_frame": 128,
-        "audio_frame": 256,
-        "audio_segment": 64,
-        "video_clip": 32,
-    }
-
     def __init__(
         self,
         *,
         max_observations: int = 256,
-        retention_by_kind: Mapping[str, int] | None = None,
+        retention_by_kind: Mapping[ObservationKind, int] | None = None,
         pending_annotation_ttl_sec: float = 5.0,
         max_pending_annotations: int = 512,
     ) -> None:
@@ -66,8 +58,8 @@ class PerceptionTimeline:
             raise ValueError("max_pending_annotations must be positive")
 
         self._default_retention = max_observations
-        self._retention_by_kind = dict(self.DEFAULT_RETENTION_BY_KIND)
 
+        self._retention_by_kind = {}
         if retention_by_kind:
             for kind, limit in retention_by_kind.items():
                 if limit < 0:
@@ -107,7 +99,7 @@ class PerceptionTimeline:
             if renderer in self._renderers:
                 self._renderers.remove(renderer)
 
-    def _retention_limit(self, kind: str) -> int:
+    def _retention_limit(self, kind: ObservationKind) -> int:
         return self._retention_by_kind.get(kind, self._default_retention)
 
     def _remove_observation_locked(self, observation_id: str) -> EnvObservation | None:
@@ -121,7 +113,7 @@ class PerceptionTimeline:
 
         return observation
 
-    def _evict_kind_locked(self, kind: str) -> None:
+    def _evict_kind_locked(self, kind: ObservationKind) -> None:
         order = self._observation_order_by_kind.get(kind)
         if order is None:
             return
@@ -167,11 +159,7 @@ class PerceptionTimeline:
         )
         self._pending_annotation_ids.add(annotation.annotation_id)
 
-    def _take_pending_locked(
-        self,
-        observation: EnvObservation,
-        now: float,
-    ) -> list[EnvAnnotation]:
+    def _take_pending_locked(self, observation: EnvObservation, now: float) -> list[EnvAnnotation]:
         self._prune_pending_locked(now)
 
         target_keys = {f"observation:{observation.observation_id}"}
