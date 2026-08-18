@@ -186,6 +186,5 @@ docs/releases/.generated/
 /tests/
 docs/_local/
 
-# Local agent/editor state, not part of the published tree.
+# Local agent state, not part of the published tree.
 .claude/
-Makefile.bak
