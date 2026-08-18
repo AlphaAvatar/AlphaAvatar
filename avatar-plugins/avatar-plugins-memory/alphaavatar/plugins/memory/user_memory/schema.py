@@ -32,6 +32,13 @@ class NoteAssignment(BaseModel):
             "it in a new note numbered k."
         )
     )
+    reason: str = Field(
+        default="",
+        description=(
+            "One sentence on why this memory belongs there rather than anywhere "
+            "else. Names the evidence that decided it."
+        ),
+    )
 
 
 class NoteDraft(BaseModel):
@@ -43,7 +50,6 @@ class NoteDraft(BaseModel):
             "newly assigned memories. Plain prose, no structured labels."
         ),
     )
-    topic: str | None = Field(default=None, description="Stable short topic label.")
 
 
 class NoteConsolidation(BaseModel):

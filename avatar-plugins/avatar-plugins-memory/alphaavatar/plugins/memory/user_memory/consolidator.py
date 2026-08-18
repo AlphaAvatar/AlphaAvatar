@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
@@ -31,6 +32,39 @@ from .schema import NoteConsolidation
 
 CandidateSearch = Callable[..., Awaitable[list[list[dict[str, Any]]]]]
 Consolidate = Callable[..., Awaitable[NoteConsolidation]]
+
+
+def _log_hit_scores(
+    items: list[MemoryItem],
+    hits: list[list[dict[str, Any]]],
+    *,
+    threshold: float,
+) -> None:
+    """Record what the nearest-neighbour search actually scored.
+
+    Whether a note gets merged into hinges on these numbers, but they are
+    otherwise invisible: only the surviving count reaches the result. Without
+    them, "no candidates" cannot be told apart from "candidates just under the
+    line", and the threshold cannot be calibrated on real data.
+    """
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+
+    for item, item_hits in zip(items, hits, strict=False):
+        if not item_hits:
+            logger.debug("[Memory] candidate scores item=%s: none returned", item.memory_id[:8])
+            continue
+
+        ranked = sorted(
+            (float(h.get("score", 0.0)), str((h.get("item") or {}).get("id", ""))[:8])
+            for h in item_hits
+        )
+        logger.debug(
+            "[Memory] candidate scores item=%s threshold=%.2f -> %s",
+            item.memory_id[:8],
+            threshold,
+            ", ".join(f"{note_id}:{score:.4f}" for score, note_id in reversed(ranked)),
+        )
 
 
 class NoteConsolidator:
@@ -138,6 +172,7 @@ class NoteConsolidator:
                 [item.embedding_text() for item in items],
                 object_ids=object_ids,
             )
+            _log_hit_scores(items, hits, threshold=maintenance.similarity_threshold)
             from_lookup = notes_from_hits(
                 hits,
                 threshold=maintenance.similarity_threshold,

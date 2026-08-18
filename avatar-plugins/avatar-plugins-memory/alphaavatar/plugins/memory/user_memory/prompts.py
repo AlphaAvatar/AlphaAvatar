@@ -55,17 +55,24 @@ For EVERY incoming memory, one assignment:
   cover. Use DIFFERENT new ids for unrelated subjects. Do not put unrelated
   subjects in one note just because they came from the same session.
 
+Give a one-sentence `reason` with every assignment, naming the evidence
+that decided it.
+
 Then, for every note id you used, the rewritten note text.
 
 ----------------------------------------------------------------------
 WRITING THE NOTE
 ----------------------------------------------------------------------
 
-- Plain prose. No labels, no bullet markup, no JSON inside the value.
 - Understandable months later without the transcript.
-- When an incoming memory contradicts the existing note, the note must state
-  the CURRENT truth, and say that the earlier record was wrong where that is
-  useful. Do not leave both versions standing side by side.
+- Where new information meets what the note already says, use the SESSION
+  CONTENT to work out how the two relate, and write that relationship down:
+    a correction -> what is true now, and that the earlier record was wrong
+    a change over time -> both, and when each held
+    an addition or a later stage of the same work -> fold it in
+    you cannot tell -> what each source claims, and that it is unsettled
+  Difference alone does not make the earlier record wrong. Only the session
+  can tell you that.
 - Likely transcription errors (a name that is nearly but not quite a known
   one) should be corrected in the note when the session gives you the
   evidence. Never guess a correction the session does not support.
@@ -73,8 +80,6 @@ WRITING THE NOTE
 
 {_RETENTION_RULES}
 
-- topic: a stable short label, lowercase preferred. Good: "game remake",
-  "coffee preference". Bad: "discussion", "user request".
 """.strip()
 
 
@@ -93,7 +98,7 @@ _CONSOLIDATE_HUMAN = (
     "```\n\n"
     "Output only `NoteConsolidation`. Every incoming memory id must appear in "
     "`assignments` exactly once, and every note id used there must appear in "
-    "`notes` with a non-empty value.\n"
+    "`notes` with a non-empty value. Every assignment carries a `reason`.\n"
 )
 
 

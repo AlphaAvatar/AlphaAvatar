@@ -58,6 +58,37 @@ def _merge_item_ids(existing: list[str], added: list[str], *, limit: int) -> lis
     return merged[-limit:]
 
 
+# A note's key is only as wide as the subjects it advertises. Carrying just
+# one member topic leaves most of what the note covers invisible to search,
+# which is why they are joined rather than picked.
+TOPIC_SEPARATOR = "|"
+MAX_TOPIC_PARTS = 8
+
+
+def merge_topics(*sources: str | None, limit: int = MAX_TOPIC_PARTS) -> str | None:
+    """Union of topics, order preserved, joined for a single stored field."""
+    parts: list[str] = []
+    seen: set[str] = set()
+
+    for source in sources:
+        for part in (source or "").split(TOPIC_SEPARATOR):
+            part = part.strip()
+            if not part or part in seen:
+                continue
+            seen.add(part)
+            parts.append(part)
+
+    if not parts:
+        return None
+
+    # Newest last, so an over-full topic drops what it advertised earliest.
+    return TOPIC_SEPARATOR.join(parts[-limit:])
+
+
+def topics_of(items: list[MemoryItem]) -> str | None:
+    return merge_topics(*(item.topic for item in items))
+
+
 def build_note(
     *,
     value: str,
@@ -104,7 +135,7 @@ def rewrite_note(
         session_id=session_id,
         object_ids=list(original.object_ids),
         value=value or original.value,
-        topic=topic or original.topic,
+        topic=merge_topics(original.topic, topic),
         created_at=original.created_at,
         memory_type=original.memory_type,
         item_ids=_merge_item_ids(original.item_ids, added_item_ids, limit=max_item_ids),
@@ -128,7 +159,7 @@ def _fallback_single_note(
     """Degrade to session_summary shape: one note over everything, nothing lost."""
     note = build_note(
         value="\n".join(item.value for item in items if item.value),
-        topic=next((item.topic for item in items if item.topic), None),
+        topic=topics_of(items),
         item_ids=[item.memory_id for item in items],
         session_id=session_id,
         object_ids=object_ids,
@@ -210,7 +241,7 @@ def apply_assignments(
             note = rewrite_note(
                 original,
                 value=draft.value,
-                topic=draft.topic,
+                topic=topics_of([item_by_id[i] for i in item_ids if i in item_by_id]),
                 added_item_ids=item_ids,
                 session_id=session_id,
                 updated_at=updated_at,
@@ -220,7 +251,7 @@ def apply_assignments(
         else:
             note = build_note(
                 value=draft.value,
-                topic=draft.topic,
+                topic=topics_of([item_by_id[i] for i in item_ids if i in item_by_id]),
                 item_ids=item_ids[-max_item_ids:],
                 session_id=session_id,
                 object_ids=object_ids,
@@ -234,7 +265,7 @@ def apply_assignments(
     if leftovers:
         leftover_note = build_note(
             value="\n".join(item.value for item in leftovers if item.value),
-            topic=next((item.topic for item in leftovers if item.topic), None),
+            topic=topics_of(leftovers),
             item_ids=[item.memory_id for item in leftovers],
             session_id=session_id,
             object_ids=object_ids,
