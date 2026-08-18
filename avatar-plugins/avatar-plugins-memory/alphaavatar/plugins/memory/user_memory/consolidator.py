@@ -11,12 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Note consolidation: candidate recall, one LLM call, deterministic mapping."""
-
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import datetime
 from typing import Any
 
@@ -24,11 +22,13 @@ from alphaavatar.agents.memory import MemoryCache, MemoryItem, MemoryNote
 from alphaavatar.agents.utils.time import application_now
 
 from ..log import logger
-from ..maintenance import ConsolidationResult, RecallLedger, merge_candidates, notes_from_hits
-from ..pipeline import CandidateSource, MemoryPipelineConfig, NoteMode
-from .notes import apply_assignments
+from .candidates import RecallLedger, merge_candidates, notes_from_hits
+from .config import CandidateSource, MemoryPipelineConfig, NoteMode
+from .note_op import apply_assignments
 from .prompts import render_candidates, render_incoming
-from .schema import NoteConsolidation
+from .schema import ConsolidationResult, NoteConsolidation
+
+# Note consolidation: candidate recall, one LLM call, deterministic mapping.
 
 CandidateSearch = Callable[..., Awaitable[list[list[dict[str, Any]]]]]
 Consolidate = Callable[..., Awaitable[NoteConsolidation]]
@@ -80,10 +80,15 @@ class NoteConsolidator:
         self._config = config
         self._candidate_search = candidate_search
         self._consolidate = consolidate
+        self._recall_ledger = RecallLedger()
 
     @property
     def enabled(self) -> bool:
         return self._config.note.enabled
+
+    def record_recall(self, records: Iterable[MemoryItem]) -> None:
+        """Tally what retrieval surfaced; recalled notes can become candidates."""
+        self._recall_ledger.record(records)
 
     async def consolidate_session(
         self,
@@ -91,15 +96,33 @@ class NoteConsolidator:
         *,
         session_content: str,
         memory_cache: MemoryCache,
-        recall_ledger: RecallLedger,
         updated_at: datetime,
         trace_metadata: dict[str, Any],
-    ) -> ConsolidationResult:
+    ) -> list[MemoryItem]:
         """Return the records to persist for this session, notes included.
 
         Never raises and never drops an item: on any failure the items are
         returned untouched so the append-only layer still lands on disk.
         """
+        return (
+            await self._consolidate_session(
+                items,
+                session_content=session_content,
+                memory_cache=memory_cache,
+                updated_at=updated_at,
+                trace_metadata=trace_metadata,
+            )
+        ).all_writes()
+
+    async def _consolidate_session(
+        self,
+        items: list[MemoryItem],
+        *,
+        session_content: str,
+        memory_cache: MemoryCache,
+        updated_at: datetime,
+        trace_metadata: dict[str, Any],
+    ) -> ConsolidationResult:
         if not items:
             return ConsolidationResult()
 
@@ -109,7 +132,6 @@ class NoteConsolidator:
         try:
             candidates = await self._collect_candidates(
                 items,
-                recall_ledger=recall_ledger,
                 object_ids=memory_cache.object_ids,
             )
             consolidation = await self._invoke(
@@ -151,7 +173,6 @@ class NoteConsolidator:
         self,
         items: list[MemoryItem],
         *,
-        recall_ledger: RecallLedger,
         object_ids: list[str],
     ) -> list[MemoryNote]:
         if self._config.note.mode is NoteMode.SESSION_SUMMARY:
@@ -164,7 +185,7 @@ class NoteConsolidator:
 
         from_recall: list[MemoryNote] = []
         if source in (CandidateSource.QUERY_RECALL, CandidateSource.UNION):
-            from_recall = recall_ledger.notes()
+            from_recall = self._recall_ledger.notes()
 
         from_lookup: list[MemoryNote] = []
         if source in (CandidateSource.NOTE_LOOKUP, CandidateSource.UNION):

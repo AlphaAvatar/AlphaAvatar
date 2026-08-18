@@ -165,13 +165,6 @@ memory:
         # mentions. Not implemented; entities alone become graph nodes.
         relations: false
 
-      key:
-        organization: merge_by_value
-        include_topic: true
-
-      value:
-        source: item
-
       note:
         # off             -- atomic item layer only
         # session_summary -- one immutable note per session, keeps the detail

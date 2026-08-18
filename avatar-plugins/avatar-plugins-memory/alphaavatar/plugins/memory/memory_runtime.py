@@ -37,7 +37,6 @@ from .graph import (
     save_graph_aliases,
 )
 from .log import logger
-from .maintenance import RecallLedger
 from .memory_delta_extractor import MemoryDeltaExtractor, MemoryProviderConfig
 from .memory_op import (
     EnvMemoryDelta,
@@ -47,9 +46,8 @@ from .memory_op import (
     norm_topic,
 )
 from .persistence import MemoryPersistenceMixin
-from .pipeline import MemoryPipelineConfig
 from .retrieval import MemoryRetrievalMixin
-from .user_memory import NoteConsolidator
+from .user_memory import MemoryPipelineConfig, NoteConsolidator
 
 ENV_SAVE_TIMEOUT_SEC = 8.0
 SHUTDOWN_UPDATE_TIMEOUT_SEC = 12.0
@@ -87,7 +85,6 @@ class MemoryRuntime(MemoryPersistenceMixin, MemoryRetrievalMixin, MemoryBase):
         )
 
         # User (conversation) memory: atomic item layer + note layer on top
-        self._recall_ledger = RecallLedger()
         self._note_consolidator = NoteConsolidator(
             self._pipeline_config,
             candidate_search=self._note_candidate_search,
@@ -409,21 +406,20 @@ class MemoryRuntime(MemoryPersistenceMixin, MemoryRetrievalMixin, MemoryBase):
                 # the note that absorbed it. Re-saving them afterwards would
                 # also re-append older sessions' items to THIS session's
                 # markdown file.
-                consolidated = await self._note_consolidator.consolidate_session(
-                    conversation_items,
-                    session_content=message_content,
-                    memory_cache=cache,
-                    recall_ledger=self._recall_ledger,
-                    updated_at=application_now(),
-                    trace_metadata=self._delta_extractor.base_trace_metadata(
+                all_user.extend(
+                    await self._note_consolidator.consolidate_session(
+                        conversation_items,
+                        session_content=message_content,
                         memory_cache=cache,
-                        operation="note_consolidation",
-                        memory_type=MemoryType.CONVERSATION,
-                        component="memory_note_consolidator",
-                    ),
+                        updated_at=application_now(),
+                        trace_metadata=self._delta_extractor.base_trace_metadata(
+                            memory_cache=cache,
+                            operation="note_consolidation",
+                            memory_type=MemoryType.CONVERSATION,
+                            component="memory_note_consolidator",
+                        ),
+                    )
                 )
-
-                all_user.extend(consolidated.all_writes())
 
                 if tool_delta is not None:
                     tool_avatar, tool_memories = self._apply_delta_to_bucket(

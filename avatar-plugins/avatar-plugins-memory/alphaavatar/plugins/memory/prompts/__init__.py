@@ -11,12 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Extraction prompts, split by memory domain.
-
-Re-exported here so callers keep a single import site; the split exists only
-to keep each file readable.
-"""
-
+# Extraction prompts, split by memory domain. Re-exported here so callers keep
+# a single import site.
 from .conversation import (
     CONVERSATION_DELTA_PROMPT,
     CONVERSATION_MEMORY_EXTRACT_PROMPT,

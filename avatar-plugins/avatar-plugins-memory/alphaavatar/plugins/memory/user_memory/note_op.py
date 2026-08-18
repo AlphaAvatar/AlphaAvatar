@@ -11,23 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Pure mapping from an untrusted LLM consolidation onto records to write.
-
-Everything here is deterministic and free of LLM/VDB access. The model may
-hallucinate note ids, skip items, return nothing, or assign one item twice --
-every one of those is handled in this module so that no single bad response
-can overwrite an arbitrary historical memory or lose an atomic fact.
-"""
-
 from __future__ import annotations
 
 from datetime import datetime
 
 from alphaavatar.agents.memory import MemoryItem, MemoryNote, MemoryType
 
-from ..maintenance import ConsolidationResult
-from ..memory_op import NOTE_BACKREF_KEY, norm_token
-from .schema import NEW_NOTE_PREFIX, NoteConsolidation
+from ..memory_op import NOTE_BACKREF_KEY
+from .schema import NEW_NOTE_PREFIX, ConsolidationResult, NoteConsolidation
+
+# --------------------------------- Note building ---------------------------------
+# Deterministic, free of LLM/VDB access. The model may hallucinate note ids,
+# skip items, return nothing, or assign one item twice -- all of it is handled
+# here so no single bad response can overwrite a historical memory or lose a fact.
 
 
 def _with_backref(item: MemoryItem, note_id: str) -> MemoryItem:
@@ -210,7 +206,7 @@ def apply_assignments(
             continue
 
         draft = drafts.get(note_id)
-        if draft is None or not norm_token(draft.value):
+        if draft is None or not draft.value.strip():
             continue
 
         # An id that names neither a retrieved candidate nor a new note is a

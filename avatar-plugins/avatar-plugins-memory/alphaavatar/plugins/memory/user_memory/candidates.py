@@ -11,8 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Where the note-consolidation stage gets its candidate notes from."""
-
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -20,6 +18,8 @@ from collections.abc import Iterable
 from alphaavatar.agents.memory import MemoryItem, MemoryNote
 
 from ..memory_op import rebuild_from_items
+
+# Where the note-consolidation stage gets its candidate notes from.
 
 
 class RecallLedger:

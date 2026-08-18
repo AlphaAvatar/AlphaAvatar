@@ -36,7 +36,7 @@ class MemoryRetrievalMixin:
     Split out of MemoryRuntime for file size only; behaviour is unchanged.
     Requires from the host class: `inference_executor`, `vdb_inference_method`,
     `memory_cache`, `memory_recall_num`, `avatar_id`, `_pipeline_config`,
-    `_recall_ledger`, and the four memory-bucket setters.
+    `_note_consolidator`, and the four memory-bucket setters.
     """
 
     async def search_by_context(
@@ -102,7 +102,7 @@ class MemoryRetrievalMixin:
             # and it must not read MemoryState: that view is capped and evicts
             # the oldest first -- precisely the records most likely to need an
             # update.
-            self._recall_ledger.record(memory_items)
+            self._note_consolidator.record_recall(memory_items)
 
             self.avatar_memory = [
                 item for item in memory_items if item.memory_type == MemoryType.Avatar

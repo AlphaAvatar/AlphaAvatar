@@ -15,12 +15,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-# Only these values are implemented. The keys exist so that the K and V axes of
-# the UnifiedMem framework are explicit in configuration; adding a value later
-# is an enum extension rather than a refactor. Unimplemented values raise --
-# silent downgrades hide which pipeline actually ran.
-IMPLEMENTED_KEY_ORGANIZATIONS = {"merge_by_value"}
-IMPLEMENTED_VALUE_SOURCES = {"item"}
+# --------------------------------- Stage enums ---------------------------------
 
 
 class NoteMode(str, Enum):
@@ -39,6 +34,9 @@ class CandidateSource(str, Enum):
     NOTE_LOOKUP = "note_lookup"
     QUERY_RECALL = "query_recall"
     UNION = "union"
+
+
+# --------------------------------- Stage configs ---------------------------------
 
 
 class ExtractionConfig(BaseModel):
@@ -62,35 +60,6 @@ class ExtractionConfig(BaseModel):
                 "extraction.relations=True is not implemented. Entities are already "
                 "extracted as graph nodes; relation extraction will reuse them as "
                 "endpoints. See docs/_local/specs/memory-layering--2026-08-16-design.md"
-            )
-        return v
-
-
-class KeyConfig(BaseModel):
-    organization: str = Field(default="merge_by_value")
-    include_topic: bool = Field(default=True)
-
-    @field_validator("organization")
-    @classmethod
-    def _check_organization(cls, v: str) -> str:
-        if v not in IMPLEMENTED_KEY_ORGANIZATIONS:
-            raise ValueError(
-                f"key.organization={v!r} is not implemented. "
-                f"Available: {sorted(IMPLEMENTED_KEY_ORGANIZATIONS)}"
-            )
-        return v
-
-
-class ValueConfig(BaseModel):
-    source: str = Field(default="item")
-
-    @field_validator("source")
-    @classmethod
-    def _check_source(cls, v: str) -> str:
-        if v not in IMPLEMENTED_VALUE_SOURCES:
-            raise ValueError(
-                f"value.source={v!r} is not implemented. "
-                f"Available: {sorted(IMPLEMENTED_VALUE_SOURCES)}"
             )
         return v
 
@@ -138,7 +107,5 @@ class MaintenanceConfig(BaseModel):
 
 class MemoryPipelineConfig(BaseModel):
     extraction: ExtractionConfig = Field(default_factory=ExtractionConfig)
-    key: KeyConfig = Field(default_factory=KeyConfig)
-    value: ValueConfig = Field(default_factory=ValueConfig)
     note: NoteConfig = Field(default_factory=NoteConfig)
     maintenance: MaintenanceConfig = Field(default_factory=MaintenanceConfig)

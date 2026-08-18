@@ -11,20 +11,48 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from .candidates import RecallLedger, filter_hits, merge_candidates, notes_from_hits
+from .config import (
+    CandidateSource,
+    ExtractionConfig,
+    ItemOp,
+    MaintenanceConfig,
+    MemoryPipelineConfig,
+    NoteConfig,
+    NoteMode,
+)
 from .consolidator import NoteConsolidator
-from .notes import apply_assignments, build_note, rewrite_note
+from .note_op import apply_assignments, build_note, rewrite_note
 from .prompts import CONSOLIDATE_NOTES_PROMPT, SESSION_SUMMARY_PROMPT
-from .schema import NEW_NOTE_PREFIX, NoteAssignment, NoteConsolidation, NoteDraft
+from .schema import (
+    NEW_NOTE_PREFIX,
+    ConsolidationResult,
+    NoteAssignment,
+    NoteConsolidation,
+    NoteDraft,
+)
 
 __all__ = [
     "CONSOLIDATE_NOTES_PROMPT",
     "NEW_NOTE_PREFIX",
     "SESSION_SUMMARY_PROMPT",
+    "CandidateSource",
+    "ConsolidationResult",
+    "ExtractionConfig",
+    "ItemOp",
+    "MaintenanceConfig",
+    "MemoryPipelineConfig",
     "NoteAssignment",
+    "NoteConfig",
     "NoteConsolidation",
     "NoteConsolidator",
     "NoteDraft",
+    "NoteMode",
+    "RecallLedger",
     "apply_assignments",
     "build_note",
+    "filter_hits",
+    "merge_candidates",
+    "notes_from_hits",
     "rewrite_note",
 ]
