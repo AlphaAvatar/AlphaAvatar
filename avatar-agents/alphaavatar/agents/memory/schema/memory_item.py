@@ -44,3 +44,36 @@ class MemoryItem(BaseModel):
     graph_links: list[MemoryGraphLink] = Field(default_factory=list)
 
     extra_data: dict[str, Any] = Field(default_factory=dict)
+
+    def render_line(self) -> str:
+        """Single-line prompt-facing rendering (the V side)."""
+        parts = [f"Created At: {self.created_at.isoformat()}"]
+        if self.topic:
+            parts.append(f"Topic: {self.topic}")
+        parts.append(f"Content: {self.value}")
+        return "; ".join(parts).strip()
+
+    def embedding_text(self, *, include_topic: bool = False) -> str:
+        """Text handed to the embedder (the K side)."""
+        if include_topic and self.topic:
+            return f"{self.topic}\n{self.value}"
+        return self.value
+
+
+class MemoryNote(MemoryItem):
+    """Aggregation layer over immutable atomic MemoryItems.
+
+    Adds nothing but the coverage set: `value` carries the consolidated
+    narrative, and the atomic statements it consolidates stay in the item
+    layer, addressed here by `item_ids`.
+
+    `session_id` means "the session in which this note was last updated", not
+    a boundary -- a note may span any number of sessions. `created_at` keeps
+    the time the event was first observed and is never overwritten by an
+    update.
+
+    Updating a note must produce a NEW object; the project forbids in-place
+    mutation of memory records.
+    """
+
+    item_ids: list[str] = Field(default_factory=list)

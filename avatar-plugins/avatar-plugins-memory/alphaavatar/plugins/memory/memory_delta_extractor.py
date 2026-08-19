@@ -30,10 +30,15 @@ from alphaavatar.agents.providers.schema import (
 
 from .log import logger
 from .memory_op import EnvMemoryDelta, MemoryDelta
-from .memory_prompts import (
-    CONVERSATION_DELTA_PROMPT,
+from .prompts import (
     ENV_DELTA_PROMPT,
     TOOL_DELTA_PROMPT,
+    build_conversation_delta_prompt,
+)
+from .user_memory import (
+    CONSOLIDATE_NOTES_PROMPT,
+    SESSION_SUMMARY_PROMPT,
+    NoteConsolidation,
 )
 
 if TYPE_CHECKING:
@@ -78,7 +83,7 @@ class MemoryDeltaExtractor:
     """Trace helpers"""
 
     @staticmethod
-    def _base_trace_metadata(
+    def base_trace_metadata(
         *,
         memory_cache: MemoryCache,
         operation: str,
@@ -212,21 +217,40 @@ class MemoryDeltaExtractor:
         *,
         session_content: str,
         memory_cache: MemoryCache,
+        session_gate: bool = False,
         timeout: float = 12.0,
     ) -> MemoryDelta:
         return await self._safe_ainvoke_structured(
             task_name=self._conversation_delta_task,
-            prompt=CONVERSATION_DELTA_PROMPT,
+            prompt=build_conversation_delta_prompt(session_gate=session_gate),
             payload={
                 "session_content": session_content,
             },
             output_schema=MemoryDelta,
             fallback_output=MemoryDelta(),
-            metadata=self._base_trace_metadata(
+            metadata=self.base_trace_metadata(
                 memory_cache=memory_cache,
                 operation="conversation_delta",
                 memory_type=MemoryType.CONVERSATION,
             ),
+            timeout=timeout,
+        )
+
+    async def consolidate_notes(
+        self,
+        *,
+        payload: dict[str, Any],
+        session_summary: bool,
+        metadata: dict[str, Any],
+        timeout: float,
+    ) -> NoteConsolidation:
+        return await self._safe_ainvoke_structured(
+            task_name=self._conversation_delta_task,
+            prompt=SESSION_SUMMARY_PROMPT if session_summary else CONSOLIDATE_NOTES_PROMPT,
+            payload=payload,
+            output_schema=NoteConsolidation,
+            fallback_output=NoteConsolidation(),
+            metadata=metadata,
             timeout=timeout,
         )
 
@@ -245,7 +269,7 @@ class MemoryDeltaExtractor:
             },
             output_schema=MemoryDelta,
             fallback_output=MemoryDelta(),
-            metadata=self._base_trace_metadata(
+            metadata=self.base_trace_metadata(
                 memory_cache=memory_cache,
                 operation="tool_delta",
                 memory_type=MemoryType.TOOLS,
@@ -283,7 +307,7 @@ class MemoryDeltaExtractor:
             },
             output_schema=EnvMemoryDelta,
             fallback_output=EnvMemoryDelta(),
-            metadata=self._base_trace_metadata(
+            metadata=self.base_trace_metadata(
                 memory_cache=memory_cache,
                 operation="env_delta",
                 memory_type=MemoryType.ENV,

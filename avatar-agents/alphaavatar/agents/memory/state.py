@@ -85,20 +85,14 @@ class MemoryState:
         session_id: str | None = None,
         updated: bool | None = None,
     ) -> str:
-        lines: list[str] = []
-
-        for item in self.get(
-            memory_type=memory_type,
-            session_id=session_id,
-            updated=updated,
-        ):
-            memory = f"Created At: {item.created_at.isoformat()}; "
-            if item.topic:
-                memory += f"Topic: {item.topic}; "
-            memory += f"Content: {item.value}"
-            lines.append(memory)
-
-        return "\n".join(lines)
+        return "\n".join(
+            item.render_line()
+            for item in self.get(
+                memory_type=memory_type,
+                session_id=session_id,
+                updated=updated,
+            )
+        )
 
     def mark_saved(self, memory_ids: set[str]) -> None:
         for item in self.all_items:

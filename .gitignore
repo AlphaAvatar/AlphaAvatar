@@ -180,3 +180,11 @@ pyrightconfig.json
 .alphaavatar_workspace
 
 docs/releases/.generated/
+
+# Local-only: dev-time verification and working notes, not part of the
+# published tree.
+/tests/
+docs/_local/
+
+# Local agent state, not part of the published tree.
+.claude/

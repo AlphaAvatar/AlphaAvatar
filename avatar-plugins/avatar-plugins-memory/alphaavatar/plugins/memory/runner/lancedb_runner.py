@@ -21,6 +21,8 @@ from alphaavatar.agents.providers.embedding import create_embedding_model
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import lancedb
 
+from ..memory_op import resolve_value_to_note, row_layer
+
 
 class LanceDBRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.memory.vdb.lancedb"
@@ -85,8 +87,11 @@ class LanceDBRunner(InferenceRunner):
         session_id: str | None = None,
         node_type: str | None = None,
         node_key: str | None = None,
+        layer: str | None = None,
     ) -> bool:
         if doc_kind and str(row.get("doc_kind", "")) != doc_kind:
+            return False
+        if layer and row_layer(self._json_loads(row.get("extra_data_json"), {})) != layer:
             return False
         if node_key and str(row.get("node_key", "")) != node_key:
             return False
@@ -323,7 +328,7 @@ class LanceDBRunner(InferenceRunner):
         fetch_k = min(max(top_k * 16, 64), all_count)
 
         try:
-            rows = self._memory_table.search(query_vec).limit(fetch_k).to_list()
+            rows = self._memory_table.search(query_vec).metric("cosine").limit(fetch_k).to_list()
         except Exception:
             rows = []
 
@@ -371,7 +376,7 @@ class LanceDBRunner(InferenceRunner):
         fetch_k = min(max(k * 12, 48), all_count)
 
         try:
-            rows = table.search(query_vec).limit(fetch_k).to_list()
+            rows = table.search(query_vec).metric("cosine").limit(fetch_k).to_list()
         except Exception:
             rows = []
 
@@ -396,9 +401,11 @@ class LanceDBRunner(InferenceRunner):
         context_str: str,
         object_ids: list[str] | None = None,
         top_k: int = 10,
+        resolve_covered_items: bool = False,
     ) -> dict:
         out = {
             "memory_items": [],
+            "recalled_count": 0,
             "error": None,
         }
 
@@ -432,7 +439,19 @@ class LanceDBRunner(InferenceRunner):
             for item in self._get_memory_items_by_ids(graph_memory_ids):
                 merged[item["id"]] = item
 
-            out["memory_items"] = list(merged.values())[:top_k]
+            items = list(merged.values())
+            out["recalled_count"] = len(items)
+
+            # V resolution runs BEFORE truncation, so the caller still gets
+            # exactly top_k records and no over-fetch factor is needed.
+            if resolve_covered_items:
+                items = resolve_value_to_note(
+                    items,
+                    fetch_notes=self._get_memory_items_by_ids,
+                    max_fetch=top_k,
+                )
+
+            out["memory_items"] = items[:top_k]
 
         except Exception as e:
             out["error"] = str(e)
@@ -532,7 +551,11 @@ class LanceDBRunner(InferenceRunner):
                 result["deleted_ids"] = memory_ids
 
             # 1. Save memory item rows
-            memory_texts = [it["page_content"] for it in memory_items]
+            # page_content is the display/backup text; embedding_text is the K side.
+            # Callers that only send page_content still work.
+            memory_texts = [
+                it.get("embedding_text") or it.get("page_content", "") for it in memory_items
+            ]
             memory_vectors = self._embeddings.embed_documents(memory_texts)
 
             rows = [
@@ -645,6 +668,66 @@ class LanceDBRunner(InferenceRunner):
         self._ensure_collection(self._collection_name, embedding_dim)
         self._memory_table = self._client.open_table(self._collection_name)
 
+    def _search_similar_batch(
+        self,
+        *,
+        texts: list[str],
+        top_k: int = 5,
+        object_ids: list[str] | None = None,
+        memory_type: str | None = None,
+        layer: str | None = None,
+    ) -> dict:
+        """Nearest neighbours for a batch of texts, in one round trip.
+
+        Returns one result list per input text, in the same order. Similarity is
+        1 - cosine distance, so it is directly comparable against a threshold.
+        """
+        out: dict = {"results": [], "error": None}
+
+        try:
+            if not texts:
+                return out
+
+            all_count = self._memory_table.count_rows()
+            if all_count == 0:
+                out["results"] = [[] for _ in texts]
+                return out
+
+            vectors = self._embeddings.embed_documents(texts)
+            fetch_k = min(max(top_k * 12, 48), all_count)
+
+            for vector in vectors:
+                rows = self._memory_table.search(vector).metric("cosine").limit(fetch_k).to_list()
+
+                hits = []
+                for row in rows:
+                    if not self._row_matches_filters(
+                        row,
+                        doc_kind="memory_item",
+                        object_ids=object_ids,
+                        memory_type=memory_type,
+                        layer=layer,
+                    ):
+                        continue
+
+                    hits.append(
+                        {
+                            "item": self._row_to_item(row),
+                            "score": 1.0 - float(row.get("_distance", 1.0)),
+                        }
+                    )
+
+                    if len(hits) >= top_k:
+                        break
+
+                out["results"].append(hits)
+
+        except Exception as e:
+            out["error"] = str(e)
+            out["results"] = [[] for _ in texts]
+
+        return out
+
     def run(self, data: bytes) -> bytes | None:
         json_data = json.loads(data)
 
@@ -654,6 +737,9 @@ class LanceDBRunner(InferenceRunner):
                 return json.dumps(result).encode()
             case VectorRunnerOP.search_by_graph_node:
                 result = self._search_by_graph_node(**json_data["param"])
+                return json.dumps(result).encode()
+            case VectorRunnerOP.search_similar_batch:
+                result = self._search_similar_batch(**json_data["param"])
                 return json.dumps(result).encode()
             case VectorRunnerOP.save:
                 result = self._save(**json_data["param"])

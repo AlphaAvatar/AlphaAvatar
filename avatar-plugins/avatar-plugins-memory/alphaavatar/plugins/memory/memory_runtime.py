@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 from typing import Any
 
@@ -27,7 +26,6 @@ from alphaavatar.agents.memory import (
     MemoryItem,
     MemoryPluginsTemplate,
     MemoryType,
-    VectorRunnerOP,
 )
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.utils.time import application_now
@@ -37,55 +35,26 @@ from .graph import (
     GraphLookup,
     build_graph_from_mentions,
     save_graph_aliases,
-    save_memory_graph_stubs,
 )
 from .log import logger
 from .memory_delta_extractor import MemoryDeltaExtractor, MemoryProviderConfig
-from .memory_markdown import save_memory_items_to_markdown
 from .memory_op import (
     EnvMemoryDelta,
     MemoryDelta,
     PatchOp,
-    flatten_items,
     norm_token,
-    rebuild_from_items,
+    norm_topic,
 )
+from .persistence import MemoryPersistenceMixin
+from .retrieval import MemoryRetrievalMixin
+from .user_memory import MemoryPipelineConfig, NoteConsolidator
 
 ENV_SAVE_TIMEOUT_SEC = 8.0
 SHUTDOWN_UPDATE_TIMEOUT_SEC = 12.0
+SESSION_SAVE_TIMEOUT_SEC = 8.0
 
 
-def _norm_topic(value: str | None) -> str | None:
-    if not value:
-        return None
-
-    value = " ".join(value.strip().split())
-    return value.lower()[:64]
-
-
-def _merge_object_ids(*values: Any) -> list[str]:
-    merged: list[str] = []
-    seen: set[str] = set()
-
-    for value in values:
-        if value is None:
-            continue
-
-        items = value if isinstance(value, list) else [value]
-
-        for item in items:
-            normalized = str(item).strip()
-
-            if not normalized or normalized in seen:
-                continue
-
-            seen.add(normalized)
-            merged.append(normalized)
-
-    return merged
-
-
-class MemoryRuntime(MemoryBase):
+class MemoryRuntime(MemoryPersistenceMixin, MemoryRetrievalMixin, MemoryBase):
     def __init__(
         self,
         *,
@@ -95,6 +64,7 @@ class MemoryRuntime(MemoryBase):
         memory_recall_num: int = 10,
         maximum_memory_num: int = 24,
         provider: dict[str, Any] | None = None,
+        pipeline: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(
@@ -109,6 +79,17 @@ class MemoryRuntime(MemoryBase):
             MemoryProviderConfig(**provider) if provider else MemoryProviderConfig()
         )
         self._delta_extractor = MemoryDeltaExtractor(self._provider_config)
+
+        self._pipeline_config = (
+            MemoryPipelineConfig(**pipeline) if pipeline else MemoryPipelineConfig()
+        )
+
+        # User (conversation) memory: atomic item layer + note layer on top
+        self._note_consolidator = NoteConsolidator(
+            self._pipeline_config,
+            candidate_search=self._note_candidate_search,
+            consolidate=self._delta_extractor.consolidate_notes,
+        )
 
         # ENV Memory init
         self._env_scheduler: EnvMemoryScheduler | None = None
@@ -192,7 +173,7 @@ class MemoryRuntime(MemoryBase):
         created_at = application_now()
 
         for patch in patches:
-            topic = _norm_topic(patch.topic)
+            topic = norm_topic(patch.topic)
 
             if not norm_token(patch.value):
                 continue
@@ -245,133 +226,6 @@ class MemoryRuntime(MemoryBase):
                 "[END CURRENT SESSION ENV MEMORY]",
             ]
         )
-
-    async def _save_to_vdb(self, *, memory_items: list[dict], timeout: float) -> bool:
-        json_data = {
-            "op": VectorRunnerOP.save,
-            "param": {"memory_items": memory_items},
-        }
-
-        try:
-            result = await asyncio.wait_for(
-                self.inference_executor.do_inference(
-                    self.vdb_inference_method,
-                    json.dumps(json_data).encode(),
-                ),
-                timeout=timeout,
-            )
-        except TimeoutError:
-            logger.error("Memory SAVE timeout!")
-            return False
-        except Exception:
-            logger.exception("Memory SAVE failed")
-            return False
-
-        if result is None:
-            logger.warning("Memory SAVE failed, result is None!")
-            return False
-
-        try:
-            payload = json.loads(result.decode())
-        except Exception:
-            logger.exception("Memory SAVE returned invalid JSON")
-            return False
-
-        if payload.get("error") is not None:
-            logger.error(
-                "Memory SAVE failed, because: %s",
-                payload["error"],
-            )
-            return False
-
-        logger.info(
-            "Memory SAVE success: %s",
-            {key: value for key, value in payload.items() if key != "error"},
-        )
-        return True
-
-    async def _persist_memory_items(
-        self,
-        items: list[MemoryItem],
-        *,
-        timeout: float,
-    ) -> bool:
-        async with self._save_lock:
-            selected = sorted(
-                (item for item in items if item.updated),
-                key=lambda item: item.created_at,
-            )
-
-            if not selected:
-                return True
-
-            flattened = flatten_items(selected)
-
-            if not flattened:
-                return True
-
-            avatar_path = self.session_runtime.avatar_path
-            session_path = self.session_runtime.session_path
-
-            if avatar_path is None:
-                raise RuntimeError("SessionRuntime.avatar_path is not initialized")
-
-            if session_path is None:
-                raise RuntimeError("SessionRuntime.session_path is not initialized")
-
-            markdown_result, graph_result = await asyncio.gather(
-                asyncio.to_thread(
-                    save_memory_items_to_markdown,
-                    avatar_memory_path=avatar_path.memory_dir,
-                    session_memory_path=session_path.memory_dir,
-                    memory_items=flattened,
-                ),
-                asyncio.to_thread(
-                    save_memory_graph_stubs,
-                    graph_path=avatar_path.graph_dir,
-                    memory_items=flattened,
-                ),
-                return_exceptions=True,
-            )
-
-            if isinstance(markdown_result, Exception):
-                logger.error(
-                    "Memory local markdown backup failed",
-                    exc_info=(
-                        type(markdown_result),
-                        markdown_result,
-                        markdown_result.__traceback__,
-                    ),
-                )
-            else:
-                logger.info(
-                    "Memory local markdown backup success: %s",
-                    markdown_result,
-                )
-
-            if isinstance(graph_result, Exception):
-                logger.error(
-                    "Memory graph stubs save failed",
-                    exc_info=(
-                        type(graph_result),
-                        graph_result,
-                        graph_result.__traceback__,
-                    ),
-                )
-            else:
-                logger.info(
-                    "Memory graph stubs save success: %s",
-                    graph_result,
-                )
-
-            if not await self._save_to_vdb(
-                memory_items=flattened,
-                timeout=timeout,
-            ):
-                return False
-
-            self.memory_state.mark_saved({item.memory_id for item in selected})
-            return True
 
     """Env Memory Op"""
 
@@ -486,131 +340,6 @@ class MemoryRuntime(MemoryBase):
             aliases=aliases,
         )
 
-    async def search_by_context(
-        self,
-        *,
-        avatar_id: str,
-        session_id: str,
-        chat_context: list[ChatItem],
-        timeout: float = 3,
-    ) -> None:
-        """Search for relevant memories based on the query."""
-        context_str = MemoryPluginsTemplate.apply_search_template(
-            chat_context[-getattr(self, "memory_search_context", 3) :],
-            filter_roles=["system"],
-        )
-
-        if not context_str:
-            return
-
-        json_data = {
-            "op": VectorRunnerOP.search_by_context,
-            "param": {
-                "context_str": context_str,
-                "object_ids": _merge_object_ids(
-                    [avatar_id],
-                    self.memory_cache[session_id].object_ids,
-                ),
-                "top_k": self.memory_recall_num,
-            },
-        }
-
-        result = await asyncio.wait_for(
-            self.inference_executor.do_inference(
-                self.vdb_inference_method,
-                json.dumps(json_data).encode(),
-            ),
-            timeout=timeout,
-        )
-
-        if result is None:
-            logger.warning("Memory [search_by_context] failed, result is None!")
-            return
-
-        data: dict[str, Any] = json.loads(result.decode())
-
-        if data.get("memory_items"):
-            memory_items = rebuild_from_items(data["memory_items"])
-
-            self.avatar_memory = [
-                item for item in memory_items if item.memory_type == MemoryType.Avatar
-            ]
-
-            self.user_memory = [
-                item for item in memory_items if item.memory_type == MemoryType.CONVERSATION
-            ]
-
-            self.tool_memory = [
-                item for item in memory_items if item.memory_type == MemoryType.TOOLS
-            ]
-
-            self.env_memory = [item for item in memory_items if item.memory_type == MemoryType.ENV]
-
-        if data.get("error"):
-            logger.warning("Memory [search_by_context] err: %s", data["error"])
-
-    async def search_by_graph_node(
-        self,
-        *,
-        node_key: str | None = None,
-        node_query: str | None = None,
-        object_ids: list[str] | None = None,
-        session_id: str | None = None,
-        memory_type: str | None = None,
-        node_type: str | None = None,
-        max_hops: int = 0,
-        top_k: int = 50,
-        timeout: float = 3,
-    ) -> list[MemoryItem]:
-        node_keys: list[str] = []
-
-        if node_key:
-            lookup = self._graph_lookup()
-            resolved = lookup.resolve_keys(node_key)
-
-            if max_hops > 0:
-                node_keys = lookup.expand_node_keys(
-                    node_keys=resolved,
-                    max_hops=max_hops,
-                    max_neighbors_per_node=16,
-                    min_weight=0.0,
-                )
-            else:
-                node_keys = resolved
-
-        json_data = {
-            "op": VectorRunnerOP.search_by_graph_node,
-            "param": {
-                "node_keys": node_keys,
-                "node_query": node_query,
-                "object_ids": object_ids,
-                "session_id": session_id,
-                "memory_type": memory_type,
-                "node_type": node_type,
-                "top_k": top_k,
-            },
-        }
-
-        result = await asyncio.wait_for(
-            self.inference_executor.do_inference(
-                self.vdb_inference_method,
-                json.dumps(json_data).encode(),
-            ),
-            timeout=timeout,
-        )
-
-        if result is None:
-            logger.warning("Memory [search_by_graph_node] failed, result is None!")
-            return []
-
-        data: dict[str, Any] = json.loads(result.decode())
-
-        if data.get("error"):
-            logger.warning("Memory [search_by_graph_node] err: %s", data["error"])
-            return []
-
-        return rebuild_from_items(data.get("memory_items") or [])
-
     async def update(self, *, avatar_id: str, session_id: str | None = None):
         if session_id is not None and session_id not in self.memory_cache:
             raise ValueError(
@@ -645,6 +374,7 @@ class MemoryRuntime(MemoryBase):
                         self._delta_extractor.extract_conversation_delta(
                             session_content=message_content,
                             memory_cache=cache,
+                            session_gate=self._pipeline_config.extraction.session_gate,
                             timeout=30.0,
                         ),
                         self._delta_extractor.extract_tool_delta(
@@ -657,19 +387,39 @@ class MemoryRuntime(MemoryBase):
                     conversation_delta = await self._delta_extractor.extract_conversation_delta(
                         session_content=message_content,
                         memory_cache=cache,
+                        session_gate=self._pipeline_config.extraction.session_gate,
                         timeout=30.0,
                     )
                     tool_delta = None
 
-                conv_avatar, conv_user = self._apply_delta_to_bucket(
+                conversation_avatar, conversation_items = self._apply_delta_to_bucket(
                     avatar_id=avatar_id,
                     delta=conversation_delta,
                     memory_cache=cache,
                     user_or_tool_memory_type=MemoryType.CONVERSATION,
                 )
 
-                all_assistant.extend(conv_avatar)
-                all_user.extend(conv_user)
+                all_assistant.extend(conversation_avatar)
+
+                # Notes are built before the items are written, not after, so
+                # each item lands once already carrying the back-reference of
+                # the note that absorbed it. Re-saving them afterwards would
+                # also re-append older sessions' items to THIS session's
+                # markdown file.
+                all_user.extend(
+                    await self._note_consolidator.consolidate_session(
+                        conversation_items,
+                        session_content=message_content,
+                        memory_cache=cache,
+                        updated_at=application_now(),
+                        trace_metadata=self._delta_extractor.base_trace_metadata(
+                            memory_cache=cache,
+                            operation="note_consolidation",
+                            memory_type=MemoryType.CONVERSATION,
+                            component="memory_note_consolidator",
+                        ),
+                    )
+                )
 
                 if tool_delta is not None:
                     tool_avatar, tool_memories = self._apply_delta_to_bucket(
@@ -711,6 +461,21 @@ class MemoryRuntime(MemoryBase):
         self.avatar_memory = all_assistant
         self.user_memory = all_user
         self.tool_memory = all_tool
+
+        # Persist the complete extracted lists, not self.memory_items.
+        # MemoryState caps each bucket at maximum_memory_num -- a rendering
+        # constraint ("the maximum number of memory items to use") -- so reading
+        # the persistence path off it drops the earliest records of any type
+        # that extracted more than the cap in one session. ENV already persists
+        # its full batch directly for the same reason; this makes the
+        # conversation, tool, and avatar paths behave the same way.
+        extracted = all_assistant + all_user + all_tool
+
+        if extracted and not await self._persist_memory_items(
+            extracted,
+            timeout=SESSION_SAVE_TIMEOUT_SEC,
+        ):
+            logger.warning("[Memory] session UPDATE persist incomplete; items remain pending.")
 
     async def save(self, timeout: float = 8.0) -> None:
         if not await self._persist_memory_items(
