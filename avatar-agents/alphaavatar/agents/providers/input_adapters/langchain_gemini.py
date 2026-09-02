@@ -37,7 +37,11 @@ from alphaavatar.agents.providers.schema import (
     ModelTextPart,
     ProviderTaskConfig,
 )
-from alphaavatar.core.env import EnvObservation, ObservationKind
+from alphaavatar.core.env import (
+    EnvObservation,
+    ObservationKind,
+    PerceptionSourceRef,
+)
 from alphaavatar.core.media import (
     AudioFrame,
     PayloadFormat,
@@ -56,8 +60,7 @@ class _AudioPiece:
 
 @dataclass(frozen=True, slots=True)
 class _AudioTrack:
-    source_id: str
-    generation: int | None
+    source: PerceptionSourceRef
     start_ns: int
     end_ns: int
     wav_bytes: bytes
@@ -112,14 +115,6 @@ class LangChainGeminiInputAdapter:
         monotonic_ns: int,
     ) -> str:
         return f"+{cls._relative_sec(temporal, monotonic_ns):.2f}s"
-
-    @staticmethod
-    def _source_key(observation: EnvObservation) -> tuple[str, int | None]:
-        generation = observation.metadata.get("source_generation")
-        return (
-            observation.source_id,
-            generation if isinstance(generation, int) else None,
-        )
 
     @staticmethod
     def _audio_piece(observation: EnvObservation) -> _AudioPiece | None:
@@ -196,6 +191,7 @@ class LangChainGeminiInputAdapter:
 
     def _build_audio_track(
         self,
+        source: PerceptionSourceRef,
         pieces: list[_AudioPiece],
     ) -> _AudioTrack:
         pieces.sort(
@@ -214,6 +210,9 @@ class LangChainGeminiInputAdapter:
             item.sample_rate != sample_rate or item.num_channels != num_channels for item in pieces
         ):
             raise ValueError("One audio source contains mixed sample rates or channels")
+
+        if any(item.observation.source != source for item in pieces):
+            raise ValueError("Audio track contains observations from multiple sources")
 
         start_ns = min(item.observation.time_range.start.monotonic_ns for item in pieces)
         end_ns = max(item.observation.time_range.end.monotonic_ns for item in pieces)
@@ -247,11 +246,8 @@ class LangChainGeminiInputAdapter:
 
             pcm[target_byte : target_byte + size] = item.data[source_byte : source_byte + size]
 
-        source_id, generation = self._source_key(first.observation)
-
         return _AudioTrack(
-            source_id=source_id,
-            generation=generation,
+            source=source,
             start_ns=start_ns,
             end_ns=end_ns,
             wav_bytes=self._wav(
@@ -272,29 +268,35 @@ class LangChainGeminiInputAdapter:
         ]
 
         raw_sources = {
-            self._source_key(observation)
+            observation.source
             for observation in observations
             if observation.kind == ObservationKind.AUDIO_FRAME
         }
 
-        groups: dict[
-            tuple[str, int | None],
-            list[_AudioPiece],
-        ] = {}
-
+        groups: dict[PerceptionSourceRef, list[_AudioPiece]] = {}
         for observation in observations:
-            source_key = self._source_key(observation)
+            source = observation.source
 
-            if observation.kind == ObservationKind.AUDIO_SEGMENT and source_key in raw_sources:
+            if observation.kind == ObservationKind.AUDIO_SEGMENT and source in raw_sources:
                 continue
 
             piece = self._audio_piece(observation)
 
             if piece is not None:
-                groups.setdefault(source_key, []).append(piece)
+                groups.setdefault(source, []).append(piece)
+
+        ordered_sources = sorted(
+            groups,
+            key=lambda source: (
+                source.source_id,
+                source.source_generation,
+            ),
+        )
 
         return tuple(
-            self._build_audio_track(pieces) for _, pieces in sorted(groups.items()) if pieces
+            self._build_audio_track(source, groups[source])
+            for source in ordered_sources
+            if groups[source]
         )
 
     @staticmethod
@@ -351,8 +353,8 @@ class LangChainGeminiInputAdapter:
 
         lines.extend(
             "  <source "
-            f"source_id={self._attr(state.source_id)} "
-            f"generation={self._attr(state.generation)} "
+            f"source_id={self._attr(state.source.source_id)} "
+            f"source_generation={self._attr(state.source.source_generation)} "
             f"modality={self._attr(state.modality.value)} "
             f"kind={self._attr(state.source_kind.value)} "
             f"state={self._attr(state.state.value)} "
@@ -403,15 +405,11 @@ class LangChainGeminiInputAdapter:
         )
 
         for track in tracks:
-            generation = (
-                "" if track.generation is None else f" generation={self._attr(track.generation)}"
-            )
-
             self._append_text(
                 content,
                 "  <audio_track "
-                f"source_id={self._attr(track.source_id)}"
-                f"{generation} "
+                f"source_id={self._attr(track.source.source_id)} "
+                f"source_generation={self._attr(track.source.source_generation)} "
                 f"start={self._attr(self._relative_label(temporal, track.start_ns))} "
                 f"end={self._attr(self._relative_label(temporal, track.end_ns))}>",
             )
@@ -450,7 +448,6 @@ class LangChainGeminiInputAdapter:
 
             for event in item.source_events:
                 state = event.source_state
-
                 if state is None:
                     continue
 
@@ -464,8 +461,8 @@ class LangChainGeminiInputAdapter:
                     content,
                     "    <source_event "
                     f"at={self._attr(at)} "
-                    f"source_id={self._attr(state.source_id)} "
-                    f"generation={self._attr(state.generation)} "
+                    f"source_id={self._attr(state.source.source_id)} "
+                    f"source_generation={self._attr(state.source.source_generation)} "
                     f"kind={self._attr(state.source_kind.value)} "
                     f"state={self._attr(state.state.value)}"
                     f"{reason} "
@@ -490,7 +487,8 @@ class LangChainGeminiInputAdapter:
                     content,
                     "    <visual_evidence "
                     f"observation_id={self._attr(observation.observation_id)} "
-                    f"source_id={self._attr(observation.source_id)} "
+                    f"source_id={self._attr(observation.source.source_id)} "
+                    f"source_generation={self._attr(observation.source.source_generation)} "
                     f"captured_at={self._attr(captured_at)}>",
                 )
                 content.append(block)

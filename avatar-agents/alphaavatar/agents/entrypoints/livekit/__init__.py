@@ -21,6 +21,7 @@ from .livekit_model_input import LiveKitModelInput
 from .livekit_status_output import LiveKitStatusOutput
 from .livekit_transcript_output import LiveKitTranscriptOutput
 from .livekit_turn_input import LiveKitTurnInput
+from .livekit_turn_response import LiveKitTurnResponseSink
 from .livekit_video_codec import (
     bgr_to_video_frame,
     encode_video_frame_to_jpeg,
@@ -38,6 +39,7 @@ __all__ = [
     "LiveKitVideoInput",
     "LiveKitModelInput",
     "LiveKitTurnInput",
+    "LiveKitTurnResponseSink",
     "bgr_to_video_frame",
     "encode_video_frame_to_jpeg",
     "from_livekit_audio_frame",

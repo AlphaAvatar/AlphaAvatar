@@ -31,19 +31,17 @@ class ProfilerPlugin(AvatarPlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
 
-    def download_files(self): ...
-
     def get_plugin(
         self,
         *,
         runtime: AvatarRuntime,
-        profiler_init_config: dict,
+        init_config: dict,
         **kwargs,
     ):
         try:
             return ProfilerRuntime(
                 runtime=runtime,
-                **profiler_init_config,
+                **init_config,
             )
         except Exception as e:
             raise RuntimeError(f"Failed to initialize ProfilerRuntime: {e}") from e
@@ -54,7 +52,7 @@ class SpeakerPlugin(AvatarPlugin):
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
 
     def download_files(self):
-        from .models import SPEAKER_MODEL_CONFIG, download_from_hf_hub
+        from .model_files import SPEAKER_MODEL_CONFIG, download_from_hf_hub
 
         for model_name in SPEAKER_MODEL_CONFIG.keys():
             download_from_hf_hub(
@@ -63,7 +61,7 @@ class SpeakerPlugin(AvatarPlugin):
                 revision=SPEAKER_MODEL_CONFIG[model_name].revision,
             )
 
-    def get_plugin(self, speaker_init_config: dict, *args, **kwargs):
+    def get_plugin(self, init_config: dict, *args, **kwargs):
         from .speaker_cache import SpeakerCache
         from .speaker_stream import SpeakerStreamWrapper
 
@@ -74,12 +72,7 @@ class FacePlugin(AvatarPlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
 
-    def download_files(self):
-        # InsightFace downloads buffalo_l by default during initialization.
-        # This can be changed to explicitly pre-download it to INSIGHTFACE_ROOT.
-        pass
-
-    def get_plugin(self, face_init_config: dict | None = None, *args, **kwargs):
+    def get_plugin(self, init_config: dict | None = None, *args, **kwargs):
         from .face_cache import FaceCache
         from .face_stream import FaceStreamWrapper
 

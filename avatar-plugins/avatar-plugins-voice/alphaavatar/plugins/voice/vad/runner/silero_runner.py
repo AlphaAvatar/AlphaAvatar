@@ -17,7 +17,7 @@ import numpy as np
 
 from alphaavatar.agents.runtime.inference import InferenceRunner
 
-from ..models import SILERO_MODEL_CONFIG, resolve_silero_model_path
+from ..model_files import SILERO_MODEL_CONFIG, resolve_silero_model_path
 
 
 class SileroVADRunner(InferenceRunner):
@@ -26,7 +26,7 @@ class SileroVADRunner(InferenceRunner):
     def initialize(self) -> None:
         import onnxruntime as ort
 
-        model_path = resolve_silero_model_path(local_files_only=True)
+        model_path = resolve_silero_model_path(local_files_only=False)
 
         options = ort.SessionOptions()
         options.add_session_config_entry("session.intra_op.allow_spinning", "0")

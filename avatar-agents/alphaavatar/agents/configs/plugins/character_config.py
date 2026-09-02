@@ -17,7 +17,7 @@ import os
 from pydantic import BaseModel, Field
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
-from alphaavatar.agents.avatar.character import VirtualCharacterSession
+from alphaavatar.agents.character import VirtualCharacterSession
 from alphaavatar.agents.runtime import AvatarRuntime
 
 importlib.import_module("alphaavatar.plugins.character")
@@ -46,5 +46,5 @@ class VirtualCharacterConfig(BaseModel):
             AvatarModule.CHARACTER,
             self.plugin,
             runtime=runtime,
-            character_init_config=self.init_config,
+            init_config=self.init_config,
         )

@@ -21,17 +21,17 @@ from collections.abc import AsyncIterable, Callable, Sequence
 from typing import Any
 from uuid import uuid4
 
-from livekit import rtc
-from livekit.agents import Agent, ModelSettings, llm, stt as livekit_stt, tts as livekit_tts
+from livekit.agents import Agent, ModelSettings, llm, tts as livekit_tts
 from livekit.agents.types import FlushSentinel
 
 from alphaavatar.agents.configs import AvatarConfig
 from alphaavatar.agents.entrypoints.livekit import (
     LiveKitModelInput,
     LiveKitTurnInput,
+    LiveKitTurnResponseSink,
 )
 from alphaavatar.agents.entrypoints.schema.room_type import RoomType
-from alphaavatar.agents.interaction import InteractionRouterBase
+from alphaavatar.agents.interaction import InteractionRouterBase, InteractionRouterDependencies
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.memory import MemoryBase
 from alphaavatar.agents.persona import PersonaBase
@@ -57,7 +57,8 @@ from .context import (
 from .context.internal_tools import get_runtime_context_tool
 from .lifecycle import LifecyclePhase, RuntimePluginLifecycle
 from .patches import init_avatar_patches
-from .voice import LiveKitSTTBridge, LiveKitTranscriptionAdapter, LiveKitTTSAdapter
+from .turn_controller import AvatarTurnController
+from .voice import LiveKitTTSAdapter
 
 
 class AvatarEngine(Agent):
@@ -72,13 +73,12 @@ class AvatarEngine(Agent):
         self._runtime = runtime
         self._rtc_adapters = rtc_adapters
 
-        # Step 1: initialize the temporary AlphaAvatar STT -> LiveKit bridge.
+        # Step 1: initialize temporary LiveKit model/response adapters.
         self._livekit_model_input = LiveKitModelInput(clock=runtime.clock)
         self._livekit_turn_input = LiveKitTurnInput(
             clock=runtime.clock,
             turn_runtime=runtime.turn,
         )
-        self._livekit_transcription_adapter = LiveKitTranscriptionAdapter()
 
         # Step 2: initialize runtime plugins and tools.
         self._livekit_tts: livekit_tts.TTS | None = avatar_config.voice.get_tts_plugin()
@@ -91,11 +91,12 @@ class AvatarEngine(Agent):
             runtime=runtime,
         )
         self._router: InteractionRouterBase = avatar_config.router.get_plugin(
-            runtime=runtime,
-            vad=avatar_config.voice.get_vad_plugin(inference_executor=runtime.inference),
-            stt=avatar_config.voice.get_stt_plugin(),
-            tts=self._tts,
-            on_transcription=self._livekit_transcription_adapter.handle_event,
+            dependencies=InteractionRouterDependencies(
+                runtime=runtime,
+                vad=avatar_config.voice.get_vad_plugin(inference_executor=runtime.inference),
+                stt=avatar_config.voice.get_stt_plugin(),
+                tts=self._tts,
+            )
         )
         self._memory: MemoryBase = avatar_config.memory.get_plugin(
             runtime=runtime,
@@ -120,22 +121,30 @@ class AvatarEngine(Agent):
         super().__init__(
             instructions=self._context_manager.initial_instructions,
             llm=self._avatar_config.llm.get_plugin(),
-            turn_detection=self._avatar_config.voice.get_turn_detection_plugin(),
-            stt=LiveKitSTTBridge(),
-            vad=self._avatar_config.voice.get_legacy_livekit_vad_plugin(),
+            turn_detection="manual",
+            stt=None,
+            vad=None,
             tts=self._livekit_tts,
             allow_interruptions=self._avatar_config.voice.allow_interruptions,
             tools=self._tools,
         )
 
-        # Step 5: configure staged plugin lifecycle.
+        # Step5: Avatar Turn Controller init
+        self._turn_controller = AvatarTurnController(
+            runtime=runtime,
+            sink=LiveKitTurnResponseSink(
+                session_provider=lambda: self.session,
+            ),
+        )
+
+        # Step 6: configure staged plugin lifecycle.
         #
         # Consumers start concurrently before any producer is allowed to publish.
         # During shutdown, producers stop concurrently before consumers stop.
         self._plugin_lifecycle = RuntimePluginLifecycle(
             phases=(
                 LifecyclePhase.create(
-                    "rtc_outputs",
+                    "avatar-rtc-output",
                     tuple(self._rtc_adapters.get("outputs", ())),
                 ),
                 LifecyclePhase.create(
@@ -143,6 +152,7 @@ class AvatarEngine(Agent):
                     (
                         self._persona,
                         self._memory,
+                        self._turn_controller,
                     ),
                 ),
                 LifecyclePhase.create(
@@ -150,7 +160,7 @@ class AvatarEngine(Agent):
                     (self._router,),
                 ),
                 LifecyclePhase.create(
-                    "rtc_inputs",
+                    "avatar-rtc-input",
                     tuple(self._rtc_adapters.get("inputs", ())),
                 ),
             )
@@ -195,7 +205,17 @@ class AvatarEngine(Agent):
             errors.append(error)
 
     def _ensure_turn_snapshot(self, chat_ctx: llm.ChatContext) -> TurnSnapshot:
-        snapshot = self._livekit_turn_input.commit_chat_context(chat_ctx, source="livekit_llm_node")
+        message = self._livekit_turn_input.latest_user_message(chat_ctx)
+
+        if message is not None:
+            snapshot = self._runtime.turn.get(message.id)
+            if snapshot is not None:
+                return snapshot
+
+        snapshot = self._livekit_turn_input.commit_chat_context(
+            chat_ctx,
+            source="livekit_llm_node",
+        )
         if snapshot is not None:
             return snapshot
 
@@ -267,30 +287,6 @@ class AvatarEngine(Agent):
             )
 
     """Node Op"""
-
-    def stt_node(
-        self,
-        audio: AsyncIterable[rtc.AudioFrame],
-        model_settings: ModelSettings,
-    ) -> AsyncIterable[livekit_stt.SpeechEvent]:
-        """
-        Temporary AlphaAvatar STT -> LiveKit turn-handling bridge.
-
-        AlphaAvatar owns transcription inference. LiveKit continues to own
-        turn detection, endpointing and user-turn commitment in v0.6.5.
-        """
-        return self._livekit_transcription_adapter.stream(audio)
-
-    async def on_user_turn_completed(
-        self,
-        turn_ctx: llm.ChatContext,
-        new_message: llm.ChatMessage,
-    ) -> None:
-        self._livekit_turn_input.commit_message(
-            new_message,
-            source="livekit_user_turn_completed",
-            transcribed=True,
-        )
 
     def llm_node(
         self,

@@ -37,7 +37,11 @@ from alphaavatar.agents.providers.schema import (
     ModelRole,
     ModelTextPart,
 )
-from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env import (
+    EnvObservation,
+    PerceptionSegmentRef,
+    PerceptionSourceRef,
+)
 from alphaavatar.core.media import (
     AudioFrame,
     AudioSegmentPayload,
@@ -61,6 +65,18 @@ def _runtime_time(clock: RuntimeClock, unix_seconds: float | None) -> RuntimeTim
     )
 
 
+def _direct_source(
+    kind: str,
+    *,
+    message_id: str,
+    content_index: int,
+) -> PerceptionSourceRef:
+    return PerceptionSourceRef(
+        source_id=f"entrypoint:livekit:{kind}:{message_id}:{content_index}",
+        source_generation=1,
+    )
+
+
 def message_content(message: llm.ChatMessage) -> tuple[Any, ...]:
     content = message.content
     if content is None:
@@ -77,6 +93,12 @@ def image_content_to_observation(
     at: RuntimeTime | None = None,
 ) -> EnvObservation:
     occurred_at = at or clock.now()
+    source = _direct_source(
+        "image",
+        message_id=message_id,
+        content_index=content_index,
+    )
+
     metadata: dict[str, Any] = {
         "message_id": message_id,
         "content_id": content.id,
@@ -101,7 +123,7 @@ def image_content_to_observation(
     )
     return EnvObservation.image_input(
         time_range=RuntimeTimeRange.point(occurred_at),
-        source_id=f"entrypoint:livekit:image:{message_id}:{content.id}",
+        source=source,
         payload=payload,
         mime_type=content.mime_type or "image/*",
         metadata=metadata,
@@ -121,24 +143,33 @@ def audio_content_to_observation(
     if not frames:
         return None
 
-    segment_id = f"chat:{message_id}:{content_index}"
+    source = _direct_source(
+        "audio",
+        message_id=message_id,
+        content_index=content_index,
+    )
+    segment = PerceptionSegmentRef(
+        source=source,
+        segment_id=f"chat:{message_id}:{content_index}",
+    )
+
     end = at or _runtime_time(clock, created_at)
     duration = sum(frame.duration_sec for frame in frames)
     metadata = {
         "message_id": message_id,
         "content_index": content_index,
-        "segment_id": segment_id,
         "input_origin": "direct_upload",
     }
     payload = AudioSegmentPayload.from_frames(
-        segment_id=segment_id,
+        segment_id=segment.segment_id,
         frames=frames,
         source_observation_ids=(),
         metadata=dict(metadata),
     )
     return EnvObservation.audio_segment(
         time_range=RuntimeTimeRange(start=end.shifted(-duration), end=end),
-        source_id=f"entrypoint:livekit:audio:{message_id}",
+        source=source,
+        segment=segment,
         payload=payload,
         metadata=metadata,
     )

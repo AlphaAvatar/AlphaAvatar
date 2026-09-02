@@ -18,7 +18,7 @@ import io
 import os
 import time
 import wave
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -51,6 +51,12 @@ class _FrameCommand:
 @dataclass(slots=True, frozen=True)
 class _CommitCommand:
     segment_id: str
+
+
+@dataclass(slots=True)
+class _SegmentBuffer:
+    sample_rate: int
+    pcm: bytearray = field(default_factory=bytearray)
 
 
 @dataclass(slots=True, frozen=True)
@@ -292,93 +298,67 @@ class OpenAISegmentSTTStream(STTStreamBase):
         )
 
     async def _ingest_loop(self) -> None:
-        current_segment_id: str | None = None
-        current_sample_rate: int | None = None
-        current_pcm = bytearray()
+        segments: dict[str, _SegmentBuffer] = {}
 
-        def reset() -> None:
-            nonlocal current_segment_id, current_sample_rate
-
-            current_segment_id = None
-            current_sample_rate = None
-            current_pcm.clear()
-
-        def commit_current(expected_segment_id: str | None = None) -> None:
-            if current_segment_id is None:
+        def commit(segment_id: str) -> None:
+            state = segments.pop(segment_id, None)
+            if state is None:
+                self._emit_error(segment_id, "STT segment committed without buffered audio")
                 return
 
-            if expected_segment_id is not None and expected_segment_id != current_segment_id:
-                raise RuntimeError(
-                    "STT segment commit order mismatch: "
-                    f"active={current_segment_id!r}, "
-                    f"committed={expected_segment_id!r}"
-                )
-
-            if not current_pcm or current_sample_rate is None:
-                self._emit_error(
-                    current_segment_id,
-                    "Cannot commit an empty STT audio segment",
-                )
-                reset()
+            if not state.pcm:
+                self._emit_error(segment_id, "Cannot commit an empty STT audio segment")
                 return
 
             job = _SegmentJob(
-                segment_id=current_segment_id,
-                pcm=bytes(current_pcm),
-                sample_rate=current_sample_rate,
+                segment_id=segment_id,
+                pcm=bytes(state.pcm),
+                sample_rate=state.sample_rate,
             )
 
             try:
                 self._job_q.put_nowait(job)
             except asyncio.QueueFull:
                 self._emit_error(
-                    current_segment_id,
+                    segment_id,
                     "OpenAI STT request queue is full; segment discarded",
                 )
-
-            reset()
 
         while True:
             command = await self._input_q.get()
 
             if command is _FLUSH:
-                reset()
+                segments.clear()
                 continue
 
             if command is _END_INPUT:
-                commit_current()
+                for segment_id in tuple(segments):
+                    commit(segment_id)
+
                 await self._job_q.put(_END_JOBS)
                 return
 
             if isinstance(command, _CommitCommand):
-                commit_current(command.segment_id)
+                commit(command.segment_id)
                 continue
 
             if not isinstance(command, _FrameCommand):
                 continue
 
             frame = command.frame
+            state = segments.get(command.segment_id)
 
-            if current_segment_id is None:
-                current_segment_id = command.segment_id
-                current_sample_rate = frame.sample_rate
-
-            elif command.segment_id != current_segment_id:
+            if state is None:
+                state = _SegmentBuffer(sample_rate=frame.sample_rate)
+                segments[command.segment_id] = state
+            elif frame.sample_rate != state.sample_rate:
                 raise RuntimeError(
-                    "Received a new STT segment before the current segment "
-                    "was committed: "
-                    f"active={current_segment_id!r}, "
-                    f"incoming={command.segment_id!r}"
-                )
-
-            elif frame.sample_rate != current_sample_rate:
-                raise RuntimeError(
-                    "STT input sample rate changed inside one segment: "
-                    f"expected={current_sample_rate}, "
+                    f"STT input sample rate changed inside segment "
+                    f"{command.segment_id!r}: expected={state.sample_rate}, "
                     f"actual={frame.sample_rate}"
                 )
 
-            current_pcm.extend(frame.data)
+            state.pcm.extend(frame.data)
 
     @staticmethod
     def _wav_bytes(job: _SegmentJob) -> bytes:

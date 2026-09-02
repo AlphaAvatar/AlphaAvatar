@@ -18,7 +18,11 @@ from dataclasses import dataclass
 from enum import StrEnum
 from math import ceil, floor
 
-from alphaavatar.core.env import EnvObservation, ObservationKind
+from alphaavatar.core.env import (
+    EnvObservation,
+    ObservationKind,
+    PerceptionSegmentRef,
+)
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
 
 from .schema import MediaSourceSnapshot, PerceptionEvent
@@ -61,8 +65,7 @@ class TemporalAlignmentPolicy:
 
 @dataclass(frozen=True, slots=True)
 class AlignedSpeechSegment:
-    source_id: str
-    segment_id: str
+    segment: PerceptionSegmentRef
     time_range: RuntimeTimeRange
     speech: EnvObservation | None = None
     transcript: EnvObservation | None = None
@@ -110,8 +113,7 @@ class AlignedPerception:
 
 @dataclass(slots=True)
 class _SpeechGroup:
-    source_id: str
-    segment_id: str
+    segment: PerceptionSegmentRef
     speech: EnvObservation | None = None
     transcript: EnvObservation | None = None
 
@@ -186,7 +188,7 @@ class PerceptionTemporalAligner:
             str(modality),
             str(source_kind),
             state.source_id,
-            state.generation,
+            state.source_generation,
         )
 
     """Time operations"""
@@ -487,25 +489,11 @@ class PerceptionTemporalAligner:
 
     """Speech alignment"""
 
-    @staticmethod
-    def _segment_key(
-        observation: EnvObservation,
-    ) -> tuple[str, str] | None:
-        segment_id = getattr(observation, "segment_id", None)
-        segment_id = segment_id or observation.metadata.get("segment_id")
-
-        source_id = observation.metadata.get("speech_source_id") or observation.source_id
-
-        if not source_id or not segment_id:
-            return None
-
-        return str(source_id), str(segment_id)
-
     def _speech_segments(
         self,
         observations: Sequence[EnvObservation],
     ) -> tuple[AlignedSpeechSegment, ...]:
-        groups: dict[tuple[str, str], _SpeechGroup] = {}
+        groups: dict[PerceptionSegmentRef, _SpeechGroup] = {}
 
         for observation in observations:
             if observation.kind not in {
@@ -514,17 +502,13 @@ class PerceptionTemporalAligner:
             }:
                 continue
 
-            key = self._segment_key(observation)
-
-            if key is None:
+            segment = observation.segment
+            if segment is None:
                 continue
 
             group = groups.setdefault(
-                key,
-                _SpeechGroup(
-                    source_id=key[0],
-                    segment_id=key[1],
-                ),
+                segment,
+                _SpeechGroup(segment=segment),
             )
 
             if observation.kind == ObservationKind.SPEECH_SEGMENT:
@@ -542,8 +526,7 @@ class PerceptionTemporalAligner:
 
             segments.append(
                 AlignedSpeechSegment(
-                    source_id=group.source_id,
-                    segment_id=group.segment_id,
+                    segment=group.segment,
                     time_range=anchor.time_range,
                     speech=group.speech,
                     transcript=group.transcript,
@@ -556,8 +539,9 @@ class PerceptionTemporalAligner:
                 key=lambda item: (
                     item.time_range.start.monotonic_ns,
                     item.time_range.end.monotonic_ns,
-                    item.source_id,
-                    item.segment_id,
+                    item.segment.source.source_id,
+                    item.segment.source.source_generation,
+                    item.segment.segment_id,
                 ),
             )
         )

@@ -11,8 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .livekit_bridge import LiveKitSTTBridge
-from .livekit_transcription_adapter import LiveKitTranscriptionAdapter
 from .schema import (
     TranscriptionEvent,
     TranscriptionEventType,
@@ -24,8 +22,6 @@ from .tts import LiveKitTTSAdapter, TTSBase
 from .vad import VADBase, VADStreamBase
 
 __all__ = [
-    "LiveKitSTTBridge",
-    "LiveKitTranscriptionAdapter",
     "LiveKitTTSAdapter",
     "STTInputMode",
     "STTCapabilities",

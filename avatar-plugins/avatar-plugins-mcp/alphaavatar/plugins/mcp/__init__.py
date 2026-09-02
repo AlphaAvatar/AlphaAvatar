@@ -32,12 +32,10 @@ class MCPRemotePlugin(AvatarPlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
 
-    def download_files(self): ...
-
     def get_plugin(
         self,
         runtime: AvatarRuntime,
-        mcp_init_config: dict,
+        init_config: dict,
         *args,
         **kwargs,
     ) -> MCPAPI:
@@ -50,7 +48,7 @@ class MCPRemotePlugin(AvatarPlugin):
             mcp_host = MCPHost(
                 runtime=runtime,
                 servers=servers,
-                **mcp_init_config,
+                **init_config,
                 **kwargs,
             )
             return MCPAPI(mcp_host, status_emitter=status_emitter)

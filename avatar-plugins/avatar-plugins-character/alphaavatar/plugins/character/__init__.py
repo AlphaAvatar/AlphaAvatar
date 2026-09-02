@@ -29,13 +29,11 @@ class AiriCharacterPlugin(AvatarPlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
 
-    def download_files(self): ...
-
-    def get_plugin(self, *, runtime: AvatarRuntime, character_init_config: dict, **kwargs):
+    def get_plugin(self, *, runtime: AvatarRuntime, init_config: dict, **kwargs):
         from .airi_avatar import AiriCharacterSession, AiriConfig
 
         try:
-            avatar_config = AiriConfig(**character_init_config)
+            avatar_config = AiriConfig(**init_config)
             return AiriCharacterSession(runtime=runtime, avatar_config=avatar_config)
         except Exception as e:
             raise ImportError(

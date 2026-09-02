@@ -39,8 +39,6 @@ if TYPE_CHECKING:
 class FaceStreamBase(ABC):
     capabilities: tuple[AvatarCapability, ...]
 
-    CONSUMER_ID = "persona.face"
-
     def __init__(
         self,
         *,

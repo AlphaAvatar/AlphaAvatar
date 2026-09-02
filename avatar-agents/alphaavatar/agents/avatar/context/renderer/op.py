@@ -114,10 +114,10 @@ def _effective_states(
     ] = {}
 
     for state in states:
-        key = state.source_id, state.source_kind
+        key = state.source.source_id, state.source_kind
         current = latest.get(key)
 
-        if current is None or state.generation > current.generation:
+        if current is None or state.source.source_generation > current.source.source_generation:
             latest[key] = state
 
     return tuple(
@@ -125,7 +125,7 @@ def _effective_states(
             latest.values(),
             key=lambda item: (
                 _enum_value(item.source_kind),
-                item.source_id,
+                item.source.source_id,
             ),
         )
     )
@@ -146,16 +146,21 @@ def _source_states_xml(
     ]
 
     for state in effective:
-        lines.append(
-            "  <source "
-            f"source_id={_xml_attr(state.source_id)} "
-            f"generation={_xml_attr(state.generation)} "
-            f"modality={_xml_attr(_enum_value(state.modality))} "
-            f"kind={_xml_attr(_enum_value(state.source_kind))} "
-            f"state={_xml_attr(_enum_value(state.state))} "
-            f"available={_xml_attr(str(state.available).lower())} "
-            "/>"
-        )
+        attributes = [
+            f"source_id={_xml_attr(state.source.source_id)}",
+            f"source_generation={_xml_attr(state.source.source_generation)}",
+            f"modality={_xml_attr(_enum_value(state.modality))}",
+            f"kind={_xml_attr(_enum_value(state.source_kind))}",
+            f"state={_xml_attr(_enum_value(state.state))}",
+            f"available={_xml_attr(str(state.available).lower())}",
+        ]
+
+        if state.transport_participant_id is not None:
+            attributes.append(
+                f"transport_participant_id={_xml_attr(state.transport_participant_id)}"
+            )
+
+        lines.append(f"  <source {' '.join(attributes)} />")
 
     lines.append("</source_states>")
     return "\n".join(lines)
@@ -189,10 +194,12 @@ def _speech_xml(
         return None
 
     transcript = _text(speech.transcript)
+    segment = speech.segment
     lines = [
         "<speech "
-        f"source_id={_xml_attr(speech.source_id)} "
-        f"segment_id={_xml_attr(speech.segment_id)} "
+        f"source_id={_xml_attr(segment.source.source_id)} "
+        f"source_generation={_xml_attr(segment.source.source_generation)} "
+        f"segment_id={_xml_attr(segment.segment_id)} "
         f"start={_xml_attr(_relative_label(alignment, speech.time_range.start.monotonic_ns))} "
         f"end={_xml_attr(_relative_label(alignment, speech.time_range.end.monotonic_ns))} "
         f"audio_available={_xml_attr(str(speech.speech is not None).lower())}>"
@@ -220,7 +227,10 @@ def _speech_xml(
     return "\n".join(lines)
 
 
-def _source_event_xml(event: PerceptionEvent, alignment: AlignedPerception) -> str:
+def _source_event_xml(
+    event: PerceptionEvent,
+    alignment: AlignedPerception,
+) -> str:
     state = event.source_state
 
     if state is None:
@@ -228,12 +238,15 @@ def _source_event_xml(event: PerceptionEvent, alignment: AlignedPerception) -> s
 
     attributes = [
         f"at={_xml_attr(_relative_label(alignment, event.time_range.end.monotonic_ns))}",
-        f"source_id={_xml_attr(state.source_id)}",
-        f"generation={_xml_attr(state.generation)}",
+        f"source_id={_xml_attr(state.source.source_id)}",
+        f"source_generation={_xml_attr(state.source.source_generation)}",
         f"modality={_xml_attr(_enum_value(state.modality))}",
         f"kind={_xml_attr(_enum_value(state.source_kind))}",
         f"state={_xml_attr(_enum_value(state.state))}",
     ]
+
+    if state.transport_participant_id is not None:
+        attributes.append(f"transport_participant_id={_xml_attr(state.transport_participant_id)}")
 
     if state.reason:
         attributes.append(f"reason={_xml_attr(state.reason)}")
@@ -248,6 +261,7 @@ def _visual_availability_xml(
     model_input_type: ModelInputType,
 ) -> str:
     states = _effective_states(alignment.source_states_at_end)
+
     visual_states = [
         state
         for state in states
@@ -257,23 +271,14 @@ def _visual_availability_xml(
             MediaSourceKind.SCREEN,
         }
     ]
+
     active_states = [state for state in visual_states if state.available]
-    active_keys = {(state.source_id, state.generation) for state in active_states}
 
-    selected_keys = set()
+    active_sources = {state.source for state in active_states}
 
-    for frame in visual_selection.frames:
-        generation = frame.observation.metadata.get("source_generation")
+    selected_sources = {frame.observation.source for frame in visual_selection.frames}
 
-        if isinstance(generation, int):
-            selected_keys.add(
-                (
-                    frame.observation.source_id,
-                    generation,
-                )
-            )
-
-    has_matching_evidence = bool(active_keys.intersection(selected_keys))
+    has_matching_evidence = bool(active_sources.intersection(selected_sources))
 
     if model_input_type == ModelInputType.TEXT and active_states:
         status = "active_without_model_visual_evidence"
@@ -383,41 +388,32 @@ def _ordered_slice_parts(
     entries: list[tuple[int, int, tuple[ModelInputPart, ...]]] = []
 
     for event in temporal_slice.source_events:
-        event_xml = _source_event_xml(
-            event,
-            alignment,
-        )
+        event_xml = _source_event_xml(event, alignment)
 
         if event_xml:
             entries.append(
                 (
                     event.time_range.end.monotonic_ns,
                     0,
-                    (
-                        ModelTextPart(
-                            _indent_xml(
-                                event_xml,
-                                6,
-                            )
-                        ),
-                    ),
+                    (ModelTextPart(_indent_xml(event_xml, 6)),),
                 )
             )
 
     for frame in frames:
         observation = frame.observation
-        generation = observation.metadata.get("source_generation")
-
         attributes = [
             f"observation_id={_xml_attr(observation.observation_id)}",
-            f"source_id={_xml_attr(observation.source_id)}",
+            f"source_id={_xml_attr(observation.source.source_id)}",
+            f"source_generation={_xml_attr(observation.source.source_generation)}",
             f"kind={_xml_attr(_enum_value(observation.kind))}",
             f"captured_at={_xml_attr(_relative_label(alignment, observation.time_range.end.monotonic_ns))}",
             'sampled="true"',
         ]
 
-        if isinstance(generation, int):
-            attributes.append(f"source_generation={_xml_attr(generation)}")
+        if observation.transport_participant_id is not None:
+            attributes.append(
+                f"transport_participant_id={_xml_attr(observation.transport_participant_id)}"
+            )
 
         entries.append(
             (
@@ -431,12 +427,7 @@ def _ordered_slice_parts(
                         )
                     ),
                     ModelImagePart(observation),
-                    ModelTextPart(
-                        _indent_xml(
-                            "</visual_evidence>",
-                            6,
-                        )
-                    ),
+                    ModelTextPart(_indent_xml("</visual_evidence>", 6)),
                 ),
             )
         )
@@ -468,11 +459,19 @@ def _direct_input_parts(
     ]
 
     for index, observation in enumerate(alignment.direct_inputs):
-        common_attributes = (
-            f"index={_xml_attr(index)} "
-            f"observation_id={_xml_attr(observation.observation_id)} "
-            f"source_id={_xml_attr(observation.source_id)}"
-        )
+        attributes = [
+            f"index={_xml_attr(index)}",
+            f"observation_id={_xml_attr(observation.observation_id)}",
+            f"source_id={_xml_attr(observation.source.source_id)}",
+            f"source_generation={_xml_attr(observation.source.source_generation)}",
+        ]
+
+        if observation.transport_participant_id is not None:
+            attributes.append(
+                f"transport_participant_id={_xml_attr(observation.transport_participant_id)}"
+            )
+
+        common_attributes = " ".join(attributes)
 
         if observation.kind == ObservationKind.TEXT_INPUT:
             value = _text(observation)

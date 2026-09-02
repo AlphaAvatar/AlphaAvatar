@@ -20,7 +20,7 @@ import numpy as np
 from alphaavatar.agents.runtime.inference import InferenceRunner
 
 from ..log import logger
-from ..models import FACE_MODEL_CONFIG, FaceModelType
+from ..model_files import FACE_MODEL_CONFIG, FaceModelType
 
 
 class FaceAnalysisRunner(InferenceRunner):
@@ -70,12 +70,18 @@ class FaceAnalysisRunner(InferenceRunner):
 
     def run(self, data: bytes) -> bytes:
         arr = np.frombuffer(data, dtype=np.uint8)
-        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if image is None:
+            return json.dumps(
+                {
+                    "image_width": 0,
+                    "image_height": 0,
+                    "faces": [],
+                }
+            ).encode()
 
-        if img is None:
-            return json.dumps({"faces": []}).encode()
-
-        faces = self._app.get(img)
+        image_height, image_width = image.shape[:2]
+        faces = self._app.get(image)
 
         output = []
         for face in faces:
@@ -83,15 +89,15 @@ class FaceAnalysisRunner(InferenceRunner):
             if embedding is None:
                 embedding = getattr(face, "embedding", None)
 
-            if embedding is None:
-                continue
+            if embedding is not None:
+                embedding = np.asarray(embedding, dtype=np.float32)
+                norm = float(np.linalg.norm(embedding))
 
-            embedding = np.asarray(embedding, dtype=np.float32)
-            norm = float(np.linalg.norm(embedding))
-            if norm > 0:
-                embedding = embedding / norm
+                if norm > 0:
+                    embedding = embedding / norm
 
             bbox = getattr(face, "bbox", None)
+            keypoints = getattr(face, "kps", None)
             det_score = getattr(face, "det_score", None)
 
             gender = getattr(face, "sex", None)
@@ -100,14 +106,23 @@ class FaceAnalysisRunner(InferenceRunner):
                 if raw_gender is not None:
                     gender = "female" if int(raw_gender) == 0 else "male"
 
-            output.append(
-                {
-                    "bbox": bbox.astype(float).tolist() if bbox is not None else None,
-                    "det_score": float(det_score) if det_score is not None else 0.0,
-                    "embedding": embedding.astype(np.float32).tolist(),
-                    "age": int(face.age) if getattr(face, "age", None) is not None else None,
-                    "gender": str(gender).lower() if gender is not None else None,
-                }
-            )
+            result = {
+                "bbox": (bbox.astype(float).tolist() if bbox is not None else None),
+                "kps": (keypoints.astype(float).tolist() if keypoints is not None else None),
+                "det_score": (float(det_score) if det_score is not None else 0.0),
+                "age": (int(face.age) if getattr(face, "age", None) is not None else None),
+                "gender": (str(gender).lower() if gender is not None else None),
+            }
 
-        return json.dumps({"faces": output}).encode()
+            if embedding is not None:
+                result["embedding"] = embedding.astype(np.float32).tolist()
+
+            output.append(result)
+
+        return json.dumps(
+            {
+                "image_width": image_width,
+                "image_height": image_height,
+                "faces": output,
+            }
+        ).encode()

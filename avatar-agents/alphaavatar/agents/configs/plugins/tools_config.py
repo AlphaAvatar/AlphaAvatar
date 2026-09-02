@@ -114,7 +114,7 @@ class ToolsConfig(BaseModel):
                 self.deepresearch.plugin,
                 session_runtime=runtime.session,
                 status_emitter=status_emitter,
-                deepresearch_init_config=self.deepresearch.init_config,
+                init_config=self.deepresearch.init_config,
             )
             if deepresearch_tool:
                 tools.append(deepresearch_tool.tool)
@@ -126,7 +126,7 @@ class ToolsConfig(BaseModel):
                 self.rag.plugin,
                 session_runtime=runtime.session,
                 status_emitter=status_emitter,
-                rag_init_config=self.rag.init_config,
+                init_config=self.rag.init_config,
             )
             if rag_tool:
                 tools.append(rag_tool.tool)
@@ -148,7 +148,7 @@ class ToolsConfig(BaseModel):
             self.mcp.plugin,
             runtime=runtime,
             status_emitter=status_emitter,
-            mcp_init_config=self.mcp.init_config,
+            init_config=self.mcp.init_config,
         )
         if mcp_tool:
             tools.append(mcp_tool.tool)

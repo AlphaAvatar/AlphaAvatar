@@ -22,7 +22,7 @@ from alphaavatar.agents.log import logger
 from alphaavatar.agents.plugin import AvatarRuntimePlugin
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.utils.id_utils import get_md5_id
-from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env import EnvObservation, PerceptionSourceRef
 from alphaavatar.core.media import VideoFramePayload
 from alphaavatar.core.perception import (
     MediaModality,
@@ -45,15 +45,24 @@ class _VideoTrackBinding:
     track_sid: str
     track_name: str
     track_source: int
-    participant_identity: str
-    source_id: str
+
+    source: PerceptionSourceRef
     source_kind: MediaSourceKind
-    generation: int
+    transport_participant_id: str
+
     publication: rtc.RemoteTrackPublication
     stream: rtc.VideoStream
     state: MediaSourceState | None = None
     reader_task: asyncio.Task[None] | None = None
     last_publish_monotonic_ns: int | None = None
+
+    @property
+    def source_id(self) -> str:
+        return self.source.source_id
+
+    @property
+    def source_generation(self) -> int:
+        return self.source.source_generation
 
 
 class LiveKitVideoInput(AvatarRuntimePlugin):
@@ -75,7 +84,6 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
         self._publish_interval_sec = publish_interval_sec
         self._jpeg_quality = jpeg_quality
         self._bindings: dict[str, _VideoTrackBinding] = {}
-        self._generation_by_source: dict[str, int] = {}
         self._tasks: set[asyncio.Task[None]] = set()
         self._listeners_registered = False
         self._started = False
@@ -108,14 +116,23 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
         )
 
     @staticmethod
-    def _source_id(participant_identity: str, source_kind: MediaSourceKind, track_sid: str) -> str:
-        identity = participant_identity or track_sid
-        return f"env:{source_kind.value}:{identity}"
+    def _source_id(
+        transport_participant_id: str,
+        source_kind: MediaSourceKind,
+        publication: rtc.RemoteTrackPublication,
+    ) -> str:
+        owner = transport_participant_id or "anonymous"
 
-    def _next_generation(self, source_id: str) -> int:
-        generation = self._generation_by_source.get(source_id, 0) + 1
-        self._generation_by_source[source_id] = generation
-        return generation
+        # Standard LiveKit camera/screenshare publications represent one logical
+        # source per participant. Re-publication becomes a new source generation.
+        if publication.source in {
+            rtc.TrackSource.SOURCE_CAMERA,
+            rtc.TrackSource.SOURCE_SCREENSHARE,
+        }:
+            return f"env:{source_kind.value}:{owner}"
+
+        # Unknown/custom tracks must remain independently addressable.
+        return f"env:{source_kind.value}:{owner}:track:{publication.sid}"
 
     def _publish_source_state(
         self,
@@ -126,28 +143,29 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
     ) -> None:
         if binding.state == state:
             return
+
         binding.state = state
         self._runtime.perception.publish_source_state(
             MediaSourceStateEvent(
-                source_id=binding.source_id,
-                generation=binding.generation,
+                source=binding.source,
                 modality=MediaModality.VIDEO,
                 source_kind=binding.source_kind,
                 state=state,
+                transport_participant_id=binding.transport_participant_id,
                 reason=reason,
                 metadata={
                     "rtc_backend": "livekit",
                     "track_sid": binding.track_sid,
                     "track_name": binding.track_name,
                     "track_source": binding.track_source,
-                    "participant_identity": binding.participant_identity,
                 },
             )
         )
+
         logger.info(
             "LiveKit video source state source_id=%s generation=%s state=%s reason=%s",
             binding.source_id,
-            binding.generation,
+            binding.source_generation,
             state.value,
             reason,
         )
@@ -168,6 +186,7 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
     ) -> bool:
         if self._bindings.get(binding.track_sid) is not binding:
             return False
+
         self._bindings.pop(binding.track_sid)
         self._publish_source_state(binding, state, reason=reason)
         return True
@@ -190,7 +209,7 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
         if binding is not None:
             self._spawn(
                 self._close_binding(binding),
-                name=f"livekit_video_close:{binding.track_sid}:{binding.generation}",
+                name=f"livekit_video_close:{binding.track_sid}:{binding.source_generation}",
             )
 
     def _build_observation(
@@ -205,37 +224,42 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
             [
                 self._runtime.session.session_id,
                 binding.track_sid,
-                str(binding.generation),
+                str(binding.source_generation),
                 str(frame_index),
                 str(occurred_at.unix_ns),
             ]
         )
+
         generic_frame = from_livekit_video_frame(frame)
         metadata: dict[str, Any] = {
-            "frame_id": frame_id,
             "track_sid": binding.track_sid,
             "track_name": binding.track_name,
             "track_source": binding.track_source,
-            "participant_identity": binding.participant_identity,
-            "source_generation": binding.generation,
-            "source_kind": binding.source_kind.value,
             "frame_index": frame_index,
             "rtc_backend": "livekit",
         }
+
         payload = VideoFramePayload.create(
             frame=generic_frame,
             frame_id=frame_id,
-            jpeg_bytes=encode_video_frame_to_jpeg(generic_frame, jpeg_quality=self._jpeg_quality),
+            jpeg_bytes=encode_video_frame_to_jpeg(
+                generic_frame,
+                jpeg_quality=self._jpeg_quality,
+            ),
             metadata=dict(metadata),
         )
+
         factory = (
             EnvObservation.screen_frame
             if binding.source_kind == MediaSourceKind.SCREEN
             else EnvObservation.video_frame
         )
+
         return factory(
             time_range=RuntimeTimeRange.point(occurred_at),
-            source_id=binding.source_id,
+            source=binding.source,
+            frame_id=frame_id,
+            transport_participant_id=binding.transport_participant_id,
             payload=payload,
             metadata=metadata,
         )
@@ -247,6 +271,7 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
             and (occurred_at.monotonic_ns - last) / 1_000_000_000 < self._publish_interval_sec
         ):
             return False
+
         binding.last_publish_monotonic_ns = occurred_at.monotonic_ns
         return True
 
@@ -254,16 +279,20 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
         frame_index = 0
         terminal_state = MediaSourceState.ENDED
         terminal_reason = "reader_ended"
+
         try:
             async for event in binding.stream:
                 if not self._started or self._bindings.get(binding.track_sid) is not binding:
                     break
                 if binding.state == MediaSourceState.MUTED:
                     continue
+
                 frame_index += 1
                 occurred_at = self._runtime.clock.now()
+
                 if not self._should_publish(binding, occurred_at):
                     continue
+
                 try:
                     observation = await asyncio.to_thread(
                         self._build_observation,
@@ -276,23 +305,29 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
                     raise
                 except Exception:
                     logger.exception(
-                        "Failed to convert LiveKit video frame participant=%s track_sid=%s generation=%s frame_index=%s",
-                        binding.participant_identity,
+                        "Failed to convert LiveKit video frame participant=%s "
+                        "track_sid=%s generation=%s frame_index=%s",
+                        binding.transport_participant_id,
                         binding.track_sid,
-                        binding.generation,
+                        binding.source_generation,
                         frame_index,
                     )
                     continue
+
                 if (
                     not self._started
                     or self._bindings.get(binding.track_sid) is not binding
                     or binding.state not in {MediaSourceState.STARTED, MediaSourceState.ACTIVE}
                 ):
                     continue
+
                 self._publish_source_state(
-                    binding, MediaSourceState.ACTIVE, reason="frame_received"
+                    binding,
+                    MediaSourceState.ACTIVE,
+                    reason="frame_received",
                 )
                 self._runtime.perception.publish_observation(observation)
+
         except asyncio.CancelledError:
             terminal_reason = "reader_cancelled"
             raise
@@ -301,12 +336,16 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
             terminal_reason = "reader_error"
             logger.exception(
                 "LiveKit video reader failed participant=%s track_sid=%s generation=%s",
-                binding.participant_identity,
+                binding.transport_participant_id,
                 binding.track_sid,
-                binding.generation,
+                binding.source_generation,
             )
         finally:
-            if self._detach_binding(binding, state=terminal_state, reason=terminal_reason):
+            if self._detach_binding(
+                binding,
+                state=terminal_state,
+                reason=terminal_reason,
+            ):
                 await self._close_stream(binding)
 
     def _create_stream(
@@ -314,41 +353,51 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
         *,
         track: rtc.Track,
         publication: rtc.RemoteTrackPublication,
-        participant_identity: str,
+        transport_participant_id: str,
     ) -> None:
         if not self._started:
             return
+
         existing = self._bindings.get(publication.sid)
         if existing is not None:
             if existing.publication is publication:
                 return
             if self._detach_binding(
-                existing, state=MediaSourceState.ENDED, reason="track_replaced"
+                existing,
+                state=MediaSourceState.ENDED,
+                reason="track_replaced",
             ):
                 self._schedule_close(existing)
 
         source_kind = self._source_kind(publication)
-        source_id = self._source_id(participant_identity, source_kind, publication.sid)
+        source_id = self._source_id(
+            transport_participant_id,
+            source_kind,
+            publication,
+        )
+
         binding = _VideoTrackBinding(
             track_sid=publication.sid,
             track_name=publication.name,
             track_source=int(publication.source),
-            participant_identity=participant_identity,
-            source_id=source_id,
+            source=self._runtime.perception.next_source(source_id),
             source_kind=source_kind,
-            generation=self._next_generation(source_id),
+            transport_participant_id=transport_participant_id,
             publication=publication,
             stream=rtc.VideoStream(track),
         )
+
         self._bindings[binding.track_sid] = binding
+
         self._publish_source_state(
             binding,
             MediaSourceState.MUTED if publication.muted else MediaSourceState.STARTED,
             reason="track_subscribed",
         )
+
         binding.reader_task = self._spawn(
             self._read_stream(binding),
-            name=f"livekit_video_reader:{binding.track_sid}:{binding.generation}",
+            name=f"livekit_video_reader:{binding.track_sid}:{binding.source_generation}",
         )
 
     async def _close_stream(self, binding: _VideoTrackBinding) -> None:
@@ -361,7 +410,7 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
             logger.warning(
                 "Timed out closing LiveKit video stream track_sid=%s generation=%s",
                 binding.track_sid,
-                binding.generation,
+                binding.source_generation,
             )
         except asyncio.CancelledError:
             raise
@@ -369,7 +418,7 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
             logger.exception(
                 "Failed to close LiveKit video stream track_sid=%s generation=%s",
                 binding.track_sid,
-                binding.generation,
+                binding.source_generation,
             )
 
     async def _close_binding(self, binding: _VideoTrackBinding) -> None:
@@ -384,17 +433,14 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
 
             try:
                 await asyncio.wait_for(
-                    asyncio.gather(
-                        reader_task,
-                        return_exceptions=True,
-                    ),
+                    asyncio.gather(reader_task, return_exceptions=True),
                     timeout=VIDEO_READER_STOP_TIMEOUT_SEC,
                 )
             except TimeoutError:
                 logger.warning(
                     "Timed out stopping LiveKit video reader track_sid=%s generation=%s",
                     binding.track_sid,
-                    binding.generation,
+                    binding.source_generation,
                 )
 
         await self._close_stream(binding)
@@ -407,12 +453,13 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
                     self._create_stream(
                         track=track,
                         publication=publication,
-                        participant_identity=participant.identity,
+                        transport_participant_id=participant.identity,
                     )
 
     def _register_listeners(self) -> None:
         if self._listeners_registered:
             return
+
         self._listeners_registered = True
 
         @self._room.on("track_subscribed")
@@ -425,7 +472,7 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
                 self._create_stream(
                     track=track,
                     publication=publication,
-                    participant_identity=participant.identity,
+                    transport_participant_id=participant.identity,
                 )
 
         @self._room.on("track_muted")
@@ -436,7 +483,11 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
             if publication.kind == rtc.TrackKind.KIND_VIDEO and (
                 binding := self._binding_for_publication(publication)
             ):
-                self._publish_source_state(binding, MediaSourceState.MUTED, reason="track_muted")
+                self._publish_source_state(
+                    binding,
+                    MediaSourceState.MUTED,
+                    reason="track_muted",
+                )
 
         @self._room.on("track_unmuted")
         def on_track_unmuted(
@@ -447,7 +498,9 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
                 binding := self._binding_for_publication(publication)
             ):
                 self._publish_source_state(
-                    binding, MediaSourceState.STARTED, reason="track_unmuted"
+                    binding,
+                    MediaSourceState.STARTED,
+                    reason="track_unmuted",
                 )
 
         @self._room.on("track_unsubscribed")
@@ -484,8 +537,9 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
             bindings = [
                 binding
                 for binding in self._bindings.values()
-                if binding.participant_identity == participant.identity
+                if binding.transport_participant_id == participant.identity
             ]
+
             for binding in bindings:
                 if self._detach_binding(
                     binding,
@@ -497,9 +551,11 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
     async def on_session_start(self) -> None:
         if self._started:
             return
+
         self._started = True
         self._register_listeners()
         self._attach_existing_tracks()
+
         logger.info(
             "LiveKit video input runtime started session_id=%s sample_interval=%ss",
             self._runtime.session.session_id,
@@ -547,13 +603,9 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
                 task.cancel()
 
             if pending:
-                await asyncio.gather(
-                    *pending,
-                    return_exceptions=True,
-                )
+                await asyncio.gather(*pending, return_exceptions=True)
 
         self._bindings.clear()
-        self._generation_by_source.clear()
         self._tasks.clear()
 
         logger.info(

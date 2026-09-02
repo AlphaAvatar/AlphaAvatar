@@ -45,6 +45,8 @@ class TurnSnapshot:
     modality: TurnInputModality
     text: str | None
 
+    input_observation_ids: tuple[str, ...]
+
     started_at: RuntimeTime
     committed_at: RuntimeTime
 
@@ -117,24 +119,37 @@ class TurnRuntime:
         input_id: str,
         modality: TurnInputModality,
         text: str | None = None,
+        input_observation_ids: Sequence[str] = (),
         final_observations: Sequence[EnvObservation] = (),
         metadata: Mapping[str, Any] | None = None,
     ) -> TurnSnapshot:
         if not input_id:
             raise ValueError("input_id cannot be empty")
+
         if existing := self._snapshots.get(input_id):
             return existing
+
+        observation_ids = tuple(
+            dict.fromkeys(
+                (
+                    *input_observation_ids,
+                    *(observation.observation_id for observation in final_observations),
+                )
+            )
+        )
 
         start_cutoff = self._last_cutoff
         perception = self._perception.capture_snapshot(
             after_sequence=start_cutoff.sequence,
             final_observations=final_observations,
         )
+
         snapshot = TurnSnapshot(
             turn_id=uuid4().hex,
             input_id=input_id,
             modality=modality,
             text=text,
+            input_observation_ids=observation_ids,
             started_at=start_cutoff.captured_at,
             committed_at=perception.cutoff.captured_at,
             start_cutoff=start_cutoff,
@@ -144,10 +159,62 @@ class TurnRuntime:
             missed_perception_events=perception.missed_count,
             metadata=MappingProxyType(dict(metadata or {})),
         )
+
         self._snapshots[input_id] = snapshot
         self._last_cutoff = perception.cutoff
+
         while len(self._snapshots) > self._max_snapshots:
             self._snapshots.popitem(last=False)
+
+        return snapshot
+
+    def commit_event_input(
+        self,
+        *,
+        input_id: str,
+        modality: TurnInputModality,
+        text: str | None,
+        started_at: RuntimeTime,
+        committed_at: RuntimeTime,
+        cutoff_sequence: int,
+        input_observation_ids: Sequence[str] = (),
+        metadata: Mapping[str, Any] | None = None,
+    ) -> TurnSnapshot:
+        if not input_id:
+            raise ValueError("input_id cannot be empty")
+
+        if existing := self._snapshots.get(input_id):
+            return existing
+
+        start_cutoff = self._last_cutoff
+        perception = self._perception.capture_snapshot_until(
+            after_cutoff=start_cutoff,
+            until_sequence=cutoff_sequence,
+            captured_at=committed_at,
+        )
+
+        snapshot = TurnSnapshot(
+            turn_id=uuid4().hex,
+            input_id=input_id,
+            modality=modality,
+            text=text,
+            input_observation_ids=tuple(dict.fromkeys(input_observation_ids)),
+            started_at=started_at,
+            committed_at=committed_at,
+            start_cutoff=start_cutoff,
+            cutoff=perception.cutoff,
+            perception_events=perception.events,
+            perception_gap=perception.has_gap,
+            missed_perception_events=perception.missed_count,
+            metadata=MappingProxyType(dict(metadata or {})),
+        )
+
+        self._snapshots[input_id] = snapshot
+        self._last_cutoff = perception.cutoff
+
+        while len(self._snapshots) > self._max_snapshots:
+            self._snapshots.popitem(last=False)
+
         return snapshot
 
     def clear(self) -> None:

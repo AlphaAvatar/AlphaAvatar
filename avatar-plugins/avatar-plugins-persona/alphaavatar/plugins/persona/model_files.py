@@ -11,29 +11,44 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from pathlib import Path
 from typing import Any, Literal
 
 from huggingface_hub import errors
 
+from alphaavatar.agents.utils.files import build_model_cache_dir
+
 from .log import logger
+
+
+def _model_dir() -> Path:
+    return build_model_cache_dir(
+        "persona",
+    )
 
 
 def download_from_hf_hub(repo_id: str, filename: str, **kwargs: Any) -> str:
     from huggingface_hub import hf_hub_download
 
     try:
-        local_path = hf_hub_download(repo_id=repo_id, filename=filename, **kwargs)
-    except (errors.LocalEntryNotFoundError, OSError):
+        return hf_hub_download(
+            repo_id=repo_id,
+            filename=filename,
+            **kwargs,
+        )
+    except (errors.LocalEntryNotFoundError, OSError) as exc:
         logger.error(
-            f'Could not find file "{filename}". '
-            "Make sure you have downloaded the model before running the agent. "
-            "Use `python3 your_agent.py download-files` to download the model."
+            'Failed to load file "%s" from Hugging Face repository "%s": %s',
+            filename,
+            repo_id,
+            exc,
         )
         raise RuntimeError(
-            "livekit-plugins-turn-detector initialization failed. "
-            f'Could not find file "{filename}".'
-        ) from None
-    return local_path
+            "Turn-taking processor initialization failed because the required "
+            f'file "{filename}" could not be loaded from Hugging Face repository '
+            f'"{repo_id}". Check that the repository and filename are correct, '
+            "and that the file is available locally or can be downloaded."
+        ) from exc
 
 
 class RunnerSpeakerModelConfig:
@@ -118,7 +133,7 @@ SPEAKER_MODEL_CONFIG: dict[SpeakerModelType, RunnerSpeakerModelConfig] = {
 FACE_MODEL_CONFIG: dict[FaceModelType, RunnerFaceModelConfig] = {
     "buffalo_l": RunnerFaceModelConfig(
         model_name="buffalo_l",
-        root="~/.insightface",
+        root=_model_dir() / "insightface",
         allowed_modules=["detection", "recognition", "genderage"],
         det_size=(640, 640),
         det_thresh=0.65,

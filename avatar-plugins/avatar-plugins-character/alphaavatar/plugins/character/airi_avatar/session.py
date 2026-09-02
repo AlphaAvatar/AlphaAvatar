@@ -25,7 +25,7 @@ from livekit.agents import (
 )
 from livekit.agents.types import ATTRIBUTE_PUBLISH_ON_BEHALF
 
-from alphaavatar.agents.avatar.character import VirtualCharacterSession
+from alphaavatar.agents.character import VirtualCharacterSession
 from alphaavatar.agents.runtime import AvatarRuntime
 
 from ..log import logger
@@ -72,7 +72,7 @@ class AiriCharacterSession(VirtualCharacterSession):
 
         try:
             await asyncio.wait_for(fut, timeout=60.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("wait_avatar_ready timeout, continue anyway")
 
     async def start(

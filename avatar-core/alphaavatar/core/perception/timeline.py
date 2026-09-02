@@ -89,16 +89,6 @@ class PerceptionTimeline:
         with self._lock:
             return len(self._pending_annotations)
 
-    def add_renderer(self, renderer: EnvAnnotationRenderer) -> None:
-        with self._lock:
-            if renderer not in self._renderers:
-                self._renderers.append(renderer)
-
-    def remove_renderer(self, renderer: EnvAnnotationRenderer) -> None:
-        with self._lock:
-            if renderer in self._renderers:
-                self._renderers.remove(renderer)
-
     def _retention_limit(self, kind: ObservationKind) -> int:
         return self._retention_by_kind.get(kind, self._default_retention)
 
@@ -139,10 +129,10 @@ class PerceptionTimeline:
             removed = self._pending_annotations.popleft()
             self._pending_annotation_ids.discard(removed.annotation.annotation_id)
 
-    def _store_pending_locked(self, annotation: EnvAnnotation, now: float) -> None:
+    def _store_pending_locked(self, annotation: EnvAnnotation, now: float) -> bool:
         target_key = annotation.target_key
         if target_key is None or annotation.annotation_id in self._pending_annotation_ids:
-            return
+            return False
 
         self._prune_pending_locked(now)
 
@@ -158,6 +148,7 @@ class PerceptionTimeline:
             )
         )
         self._pending_annotation_ids.add(annotation.annotation_id)
+        return True
 
     def _take_pending_locked(self, observation: EnvObservation, now: float) -> list[EnvAnnotation]:
         self._prune_pending_locked(now)
@@ -193,6 +184,29 @@ class PerceptionTimeline:
                 return self._observations_by_id.get(observation_id)
 
         return None
+
+    def attach_annotation(
+        self,
+        annotation: EnvAnnotation,
+    ) -> tuple[EnvObservation | None, bool]:
+        with self._lock:
+            observation = self._find_observation_locked(annotation)
+
+            if observation is None:
+                return None, self._store_pending_locked(annotation, time.monotonic())
+
+            return observation, observation.add_annotation(annotation)
+
+    def render_annotation(
+        self,
+        observation: EnvObservation,
+        annotation: EnvAnnotation,
+    ) -> None:
+        with self._lock:
+            renderers = tuple(self._renderers)
+
+        for renderer in renderers:
+            renderer(observation, annotation)
 
     def add_observation(self, observation: EnvObservation) -> None:
         render_jobs: list[tuple[EnvAnnotationRenderer, EnvObservation, EnvAnnotation]] = []
@@ -246,6 +260,17 @@ class PerceptionTimeline:
         for renderer, target, annotation in render_jobs:
             renderer(target, annotation)
 
+    def add_annotation(self, annotation: EnvAnnotation) -> EnvObservation | None:
+        observation, added = self.attach_annotation(annotation)
+        if added and observation is not None:
+            self.render_annotation(observation, annotation)
+        return observation
+
+    def add_renderer(self, renderer: EnvAnnotationRenderer) -> None:
+        with self._lock:
+            if renderer not in self._renderers:
+                self._renderers.append(renderer)
+
     def get_observation(
         self,
         *,
@@ -262,23 +287,10 @@ class PerceptionTimeline:
 
             return None
 
-    def add_annotation(self, annotation: EnvAnnotation) -> EnvObservation | None:
+    def remove_renderer(self, renderer: EnvAnnotationRenderer) -> None:
         with self._lock:
-            observation = self._find_observation_locked(annotation)
-
-            if observation is None:
-                self._store_pending_locked(annotation, time.monotonic())
-                return None
-
-            if not observation.add_annotation(annotation):
-                return observation
-
-            renderers = tuple(self._renderers)
-
-        for renderer in renderers:
-            renderer(observation, annotation)
-
-        return observation
+            if renderer in self._renderers:
+                self._renderers.remove(renderer)
 
     def clear(self) -> None:
         with self._lock:

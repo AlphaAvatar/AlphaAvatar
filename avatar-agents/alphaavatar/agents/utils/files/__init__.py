@@ -11,6 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from .model_cache import (
+    MODEL_CACHE_ENV,
+    build_model_cache_dir,
+    model_cache_root,
+)
 from .url_to_pdf import save_single_url_content_to_pdf
 
-__all__ = ["save_single_url_content_to_pdf"]
+__all__ = [
+    "MODEL_CACHE_ENV",
+    "build_model_cache_dir",
+    "model_cache_root",
+    "save_single_url_content_to_pdf",
+]

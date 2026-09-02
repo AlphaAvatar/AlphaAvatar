@@ -29,7 +29,7 @@ from alphaavatar.agents.runtime.inference import InferenceExecutor
 from alphaavatar.core.media import AudioFrame, AudioSampleFormat
 
 from ..log import logger
-from .models import SILERO_MODEL_CONFIG
+from .model_files import SILERO_MODEL_CONFIG
 from .runner.silero_runner import SileroVADRunner
 
 _FLUSH = object()

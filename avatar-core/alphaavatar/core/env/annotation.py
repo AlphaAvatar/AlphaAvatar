@@ -15,31 +15,25 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from .enum import AnnotationKind
+
 
 @dataclass(slots=True)
 class EnvAnnotation:
     """
     Lightweight environment annotation attached to an observation or frame.
 
-    Examples:
-    - face boxes from persona.face_stream
-    - object boxes from interaction_router
-    - gaze/focus regions from avatar vision
-    - OCR/screen regions
-    - speaker/voice alignment metadata
-
-    This object must stay LiveKit-independent.
+    This object must stay transport- and runtime-independent.
     """
 
     source: str
-    annotation_type: str
+    kind: AnnotationKind
     data: dict[str, Any]
 
     # Usually one of these two is enough.
     frame_id: str | None = None
     observation_id: str | None = None
 
-    timestamp: str | None = None
     annotation_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     @property
@@ -54,9 +48,19 @@ class EnvAnnotation:
         return {
             "annotation_id": self.annotation_id,
             "source": self.source,
-            "type": self.annotation_type,
-            "timestamp": self.timestamp,
+            "kind": self.kind.value,
             "frame_id": self.frame_id,
             "observation_id": self.observation_id,
             "data": self.data,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "EnvAnnotation":
+        return cls(
+            annotation_id=data["annotation_id"],
+            source=data["source"],
+            kind=AnnotationKind(data["kind"]),
+            frame_id=data.get("frame_id"),
+            observation_id=data.get("observation_id"),
+            data=data.get("data", {}),
+        )

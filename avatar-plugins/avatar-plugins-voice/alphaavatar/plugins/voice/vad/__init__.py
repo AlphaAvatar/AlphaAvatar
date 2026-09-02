@@ -15,7 +15,6 @@ from alphaavatar.agents import AvatarPlugin
 
 from ..log import logger
 from ..version import __version__
-from .models import resolve_silero_model_path
 from .runner.silero_runner import SileroVADRunner
 from .silero import SileroVAD
 
@@ -23,9 +22,6 @@ from .silero import SileroVAD
 class SileroVADPlugin(AvatarPlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
-
-    def download_files(self):
-        resolve_silero_model_path(local_files_only=False)
 
     def get_plugin(self, *args, **kwargs):
         return SileroVAD(**kwargs)

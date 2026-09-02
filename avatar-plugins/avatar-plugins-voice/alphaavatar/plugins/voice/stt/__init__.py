@@ -23,8 +23,6 @@ class OpenAIRealtimeSTTPlugin(AvatarPlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)
 
-    def download_files(self): ...
-
     def get_plugin(self, *args, **kwargs):
         return OpenAIRealtimeSTT(*args, **kwargs)
 
@@ -32,8 +30,6 @@ class OpenAIRealtimeSTTPlugin(AvatarPlugin):
 class OpenAISegmentSTTPlugin(AvatarPlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)
-
-    def download_files(self): ...
 
     def get_plugin(self, *args, **kwargs):
         return OpenAISegmentSTT(*args, **kwargs)

@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from alphaavatar.agents.memory import MemoryCache
-from alphaavatar.core.env import ObservationKind
+from alphaavatar.core.env import EnvObservation, ObservationKind
 from alphaavatar.core.perception import (
     AlignedPerception,
     PerceptionCutoff,
@@ -58,7 +58,7 @@ class EnvMemoryBatch:
     attempts: int = 0
 
     @property
-    def observations(self) -> list:
+    def observations(self) -> list[EnvObservation]:
         return list(self.memory_input.observations)
 
     @property

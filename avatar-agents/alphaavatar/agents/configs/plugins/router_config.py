@@ -14,25 +14,21 @@
 from __future__ import annotations
 
 import importlib
-from collections.abc import Awaitable, Callable
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
-from alphaavatar.agents.avatar.voice import (
-    STTBase,
-    TranscriptionEvent,
-    TTSBase,
-    VADBase,
+from alphaavatar.agents.interaction import (
+    InteractionRouterBase,
+    InteractionRouterDependencies,
 )
-from alphaavatar.agents.interaction import InteractionRouterBase
-from alphaavatar.agents.runtime import AvatarRuntime
 
 importlib.import_module("alphaavatar.plugins.router")
 
 
 class RouterConfig(BaseModel):
-    """Interaction Router plugin configuration."""
+    """Interaction Router plugin selection and plugin-owned options."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -40,41 +36,16 @@ class RouterConfig(BaseModel):
         default="default",
         description="Interaction Router plugin to use.",
     )
-
-    pre_roll_sec: float = Field(
-        default=0.3,
-        ge=0.0,
-        description="Audio retained before confirmed speech start.",
-    )
-
-    max_buffer_sec: float = Field(
-        default=2.0,
-        gt=0.0,
-        description="Maximum raw audio retained by each router source.",
-    )
+    init_config: dict[str, Any] = Field(default_factory=dict)
 
     def get_plugin(
         self,
         *,
-        runtime: AvatarRuntime,
-        vad: VADBase | None = None,
-        stt: STTBase | None = None,
-        tts: TTSBase | None = None,
-        on_transcription: Callable[[TranscriptionEvent], Awaitable[None] | None] | None = None,
+        dependencies: InteractionRouterDependencies,
     ) -> InteractionRouterBase:
-        if self.max_buffer_sec < self.pre_roll_sec:
-            raise ValueError("router.max_buffer_sec cannot be smaller than router.pre_roll_sec")
-
         return AvatarPlugin.get_avatar_plugin(
             AvatarModule.INTERACTION_ROUTER,
             self.plugin,
-            runtime=runtime,
-            # Voice
-            vad=vad,
-            stt=stt,
-            tts=tts,
-            on_transcription=on_transcription,
-            pre_roll_sec=self.pre_roll_sec,
-            max_buffer_sec=self.max_buffer_sec,
-            # Visual
+            dependencies=dependencies,
+            init_config=self.init_config,
         )

@@ -85,5 +85,5 @@ class MemoryConfig(BaseModel):
             memory_search_context=self.search_context,
             memory_recall_num=self.recall_num,
             maximum_memory_num=self.maximum_memory_num,
-            memory_init_config=self.init_config,
+            init_config=self.init_config,
         )

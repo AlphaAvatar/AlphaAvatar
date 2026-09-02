@@ -25,7 +25,7 @@ from livekit.agents.utils import hw
 from alphaavatar.agents.runtime.inference import InferenceRunner
 
 from ..log import logger
-from ..models import SPEAKER_MODEL_CONFIG, SpeakerModelType, download_from_hf_hub
+from ..model_files import SPEAKER_MODEL_CONFIG, SpeakerModelType, download_from_hf_hub
 
 _resource_files = ExitStack()
 atexit.register(_resource_files.close)

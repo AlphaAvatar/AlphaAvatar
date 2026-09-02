@@ -37,8 +37,6 @@ dependencies = [
     "livekit-blingfire~=1.0",
     "livekit-agents~=1.4",
     "livekit-plugins-noise-cancellation~=0.2",
-    "livekit-plugins-silero~=1.4",
-    "livekit-plugins-turn-detector~=1.4",
     "langchain-core",
     "langchain-community",
 ]

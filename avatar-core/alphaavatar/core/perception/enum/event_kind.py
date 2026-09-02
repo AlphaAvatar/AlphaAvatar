@@ -16,4 +16,5 @@ from enum import StrEnum
 
 class PerceptionEventKind(StrEnum):
     OBSERVATION = "observation"
+    ANNOTATION = "annotation"
     SOURCE_STATE = "source_state"

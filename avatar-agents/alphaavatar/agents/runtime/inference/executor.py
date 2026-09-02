@@ -166,11 +166,7 @@ class InferenceExecutor:
 
         return cls(endpoint)
 
-    async def do_inference(
-        self,
-        method: str,
-        data: bytes,
-    ) -> bytes | None:
+    async def do_inference(self, method: str, data: bytes) -> bytes | None:
         async with self._lock:
             if self._closed:
                 raise RuntimeError("Inference executor is closed")

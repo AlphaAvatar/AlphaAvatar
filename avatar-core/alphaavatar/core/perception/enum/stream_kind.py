@@ -22,5 +22,6 @@ class PerceptionStreamKind(StrEnum):
     SPEECH = "speech"
 
     TEXT = "text"
+    ANNOTATION = "annotations"
 
     EVENT = "events"

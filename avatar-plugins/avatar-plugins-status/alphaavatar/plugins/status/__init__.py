@@ -41,9 +41,6 @@ class DefaultStatusPlugin(AvatarPlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)
 
-    def download_files(self):
-        return None
-
     def get_plugin(
         self,
         *,

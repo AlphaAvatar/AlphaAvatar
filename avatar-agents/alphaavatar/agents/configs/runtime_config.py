@@ -75,6 +75,7 @@ class PerceptionConfig(BaseModel):
             PerceptionStreamKind.AUDIO: policy.capacity(audio_interval_sec),
             PerceptionStreamKind.SPEECH: policy.capacity(audio_interval_sec),
             PerceptionStreamKind.TEXT: self.text_maxlen,
+            PerceptionStreamKind.ANNOTATION: self.event_maxlen,
             PerceptionStreamKind.EVENT: self.event_maxlen,
         }
 

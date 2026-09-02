@@ -30,8 +30,6 @@ class MemoryPlugin(AvatarPlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
 
-    def download_files(self): ...
-
     def get_plugin(
         self,
         runtime: AvatarRuntime,
@@ -39,7 +37,7 @@ class MemoryPlugin(AvatarPlugin):
         memory_search_context: int,
         memory_recall_num: int,
         maximum_memory_num: int,
-        memory_init_config: dict,
+        init_config: dict,
         *args,
         **kwargs,
     ) -> MemoryRuntime:
@@ -50,7 +48,7 @@ class MemoryPlugin(AvatarPlugin):
                 memory_search_context=memory_search_context,
                 memory_recall_num=memory_recall_num,
                 maximum_memory_num=maximum_memory_num,
-                **memory_init_config,
+                **init_config,
             )
         except Exception as e:
             raise ImportError(f"Failed to initialize MemoryRuntime plugin: {e}") from e

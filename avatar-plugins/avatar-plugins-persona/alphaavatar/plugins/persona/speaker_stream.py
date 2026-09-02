@@ -28,7 +28,11 @@ from alphaavatar.agents.constants import SPEAKER_MATCH_THRESHOLD
 from alphaavatar.agents.persona import PersonaBase, SpeakerStreamBase, VectorRunnerOP
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.utils import NumpyOP
-from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env import (
+    EnvObservation,
+    PerceptionSegmentRef,
+    PerceptionSourceRef,
+)
 from alphaavatar.core.media import (
     AudioFrame,
     PayloadFormat,
@@ -38,7 +42,7 @@ from alphaavatar.core.media import (
 from alphaavatar.core.perception import PerceptionStreamKind
 
 from .log import logger
-from .models import SPEAKER_MODEL_CONFIG
+from .model_files import SPEAKER_MODEL_CONFIG
 from .runner import SpeakerAttributeRunner, SpeakerVectorRunner
 
 _STOP = object()
@@ -46,7 +50,7 @@ _STOP = object()
 
 @dataclass(slots=True)
 class SpeakerSourceState:
-    source_id: str
+    source: PerceptionSourceRef
     sample_rate: int
     num_channels: int
     pcm: bytearray = field(default_factory=bytearray)
@@ -57,13 +61,15 @@ class SpeakerSourceState:
 
 @dataclass(slots=True, frozen=True)
 class SpeakerWindow:
-    source_id: str
-    segment_id: str | None
+    source: PerceptionSourceRef
+    segment: PerceptionSegmentRef | None
     window_index: int
     audio_f32: bytes
 
 
 class SpeakerStreamWrapper(SpeakerStreamBase):
+    CONSUMER_ID = "persona.speaker"
+
     MAX_SEEN_OBSERVATIONS = 2048
     ATTRIBUTE_INTERVAL_SEC = 5.0
 
@@ -95,7 +101,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
             math.ceil(self.ATTRIBUTE_INTERVAL_SEC / self._step_sec),
         )
 
-        self._sources: dict[str, SpeakerSourceState] = {}
+        self._sources: dict[PerceptionSourceRef, SpeakerSourceState] = {}
         self._inference_queue: asyncio.Queue[SpeakerWindow | object] = asyncio.Queue(
             maxsize=inference_queue_size
         )
@@ -130,9 +136,6 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
 
         return frame if isinstance(frame, AudioFrame) else None
 
-    def _get_source_id(self, observation: EnvObservation) -> str:
-        return str(observation.metadata.get("source_id") or observation.source_id)
-
     def _remember_observation(
         self,
         state: SpeakerSourceState,
@@ -166,44 +169,43 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
             self._inference_queue.put_nowait(window)
         except asyncio.QueueFull:
             logger.warning(
-                "Speaker inference queue is full source_id=%s window_index=%s",
-                window.source_id,
+                "Speaker inference queue is full source_id=%s generation=%s window_index=%s",
+                window.source.source_id,
+                window.source.source_generation,
                 window.window_index,
             )
 
     def _append_frame(self, observation: EnvObservation, frame: AudioFrame) -> None:
-        source_id = self._get_source_id(observation)
-
+        source = observation.source
         if frame.sample_rate != self._sample_rate or frame.num_channels != 1:
             logger.warning(
-                "Speaker received unsupported audio source_id=%s sample_rate=%s channels=%s",
-                source_id,
+                "Speaker received unsupported audio "
+                "source_id=%s generation=%s sample_rate=%s channels=%s",
+                source.source_id,
+                source.source_generation,
                 frame.sample_rate,
                 frame.num_channels,
             )
             return
 
-        state = self._sources.get(source_id)
-
+        state = self._sources.get(source)
         if state is None:
             state = SpeakerSourceState(
-                source_id=source_id,
+                source=source,
                 sample_rate=frame.sample_rate,
                 num_channels=frame.num_channels,
             )
-            self._sources[source_id] = state
+            self._sources[source] = state
 
+        # Adjacent speech segments may reuse the same raw pre-roll observation.
+        # Persona Speaker should consume that source observation only once.
         source_observation_id = str(
             observation.metadata.get("source_observation_id") or observation.observation_id
         )
-
-        # Router may publish the same raw pre-roll frame for two adjacent
-        # segments. Speaker inference should only consume it once.
         if not self._remember_observation(state, source_observation_id):
             return
 
         state.pcm.extend(frame.data)
-        segment_id = observation.metadata.get("segment_id")
 
         while len(state.pcm) >= self._window_bytes:
             pcm16 = bytes(state.pcm[: self._window_bytes])
@@ -214,8 +216,8 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
 
             self._enqueue_window(
                 SpeakerWindow(
-                    source_id=source_id,
-                    segment_id=str(segment_id) if segment_id else None,
+                    source=source,
+                    segment=observation.segment,
                     window_index=state.window_index,
                     audio_f32=audio.tobytes(),
                 )
@@ -323,11 +325,12 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
                     logger.warning(
                         "Speaker inference is falling behind "
                         "duration=%.3fs interval=%.3fs queue_size=%s "
-                        "source_id=%s window_index=%s",
+                        "source_id=%s generation=%s window_index=%s",
                         duration,
                         self._step_sec,
                         self._inference_queue.qsize(),
-                        item.source_id,
+                        item.source.source_id,
+                        item.source.source_generation,
                         item.window_index,
                     )
 
@@ -335,9 +338,10 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
                 raise
             except Exception:
                 logger.exception(
-                    "Speaker window inference failed source_id=%s segment_id=%s window_index=%s",
-                    item.source_id,
-                    item.segment_id,
+                    "Speaker window inference failed source_id=%s generation=%s segment_id=%s window_index=%s",
+                    item.source.source_id,
+                    item.source.source_generation,
+                    item.segment.segment_id if item.segment else None,
                     item.window_index,
                 )
 
@@ -422,7 +426,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
             self._inference_task = None
 
         self._sources.clear()
-        self.perception_runtime.clear_consumer(
+        self.perception_runtime.clear_observation_consumer(
             self.CONSUMER_ID,
             streams={PerceptionStreamKind.SPEECH},
         )

@@ -78,11 +78,10 @@ class MemoryRuntime(MemoryPersistenceMixin, MemoryRetrievalMixin, MemoryBase):
         self._provider_config = (
             MemoryProviderConfig(**provider) if provider else MemoryProviderConfig()
         )
-        self._delta_extractor = MemoryDeltaExtractor(self._provider_config)
-
         self._pipeline_config = (
             MemoryPipelineConfig(**pipeline) if pipeline else MemoryPipelineConfig()
         )
+        self._delta_extractor = MemoryDeltaExtractor(self._provider_config)
 
         # User (conversation) memory: atomic item layer + note layer on top
         self._note_consolidator = NoteConsolidator(

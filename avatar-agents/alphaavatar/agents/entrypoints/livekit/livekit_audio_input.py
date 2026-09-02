@@ -22,7 +22,7 @@ from alphaavatar.agents.log import logger
 from alphaavatar.agents.plugin import AvatarRuntimePlugin
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.utils.id_utils import get_md5_id
-from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env import EnvObservation, PerceptionSourceRef
 from alphaavatar.core.media import AudioFramePayload
 from alphaavatar.core.perception import (
     MediaModality,
@@ -41,13 +41,22 @@ class _AudioTrackBinding:
     track_sid: str
     track_name: str
     track_source: int
-    participant_identity: str
-    source_id: str
-    generation: int
+
+    source: PerceptionSourceRef
+    transport_participant_id: str
+
     publication: rtc.RemoteTrackPublication
     stream: rtc.AudioStream
     state: MediaSourceState | None = None
     reader_task: asyncio.Task[None] | None = None
+
+    @property
+    def source_id(self) -> str:
+        return self.source.source_id
+
+    @property
+    def source_generation(self) -> int:
+        return self.source.source_generation
 
 
 class LiveKitAudioInput(AvatarRuntimePlugin):
@@ -75,7 +84,6 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
         self._num_channels = num_channels
         self._frame_size_ms = frame_size_ms
         self._bindings: dict[str, _AudioTrackBinding] = {}
-        self._generation_by_source: dict[str, int] = {}
         self._tasks: set[asyncio.Task[None]] = set()
         self._listeners_registered = False
         self._started = False
@@ -100,13 +108,14 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
         return task
 
     @staticmethod
-    def _source_id(participant_identity: str, track_sid: str) -> str:
-        return f"env:microphone:{participant_identity or track_sid}"
-
-    def _next_generation(self, source_id: str) -> int:
-        generation = self._generation_by_source.get(source_id, 0) + 1
-        self._generation_by_source[source_id] = generation
-        return generation
+    def _source_id(
+        participant_identity: str,
+        track_sid: str,
+        track_source: int,
+    ) -> str:
+        owner = participant_identity or "anonymous"
+        discriminator = f"source:{track_source}" if track_source else f"track:{track_sid}"
+        return f"env:audio:{owner}:{discriminator}"
 
     def _publish_source_state(
         self,
@@ -120,25 +129,24 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
         binding.state = state
         self._runtime.perception.publish_source_state(
             MediaSourceStateEvent(
-                source_id=binding.source_id,
-                generation=binding.generation,
+                source=binding.source,
                 modality=MediaModality.AUDIO,
                 source_kind=MediaSourceKind.MICROPHONE,
                 state=state,
+                transport_participant_id=binding.transport_participant_id,
                 reason=reason,
                 metadata={
                     "rtc_backend": "livekit",
                     "track_sid": binding.track_sid,
                     "track_name": binding.track_name,
                     "track_source": binding.track_source,
-                    "participant_identity": binding.participant_identity,
                 },
             )
         )
         logger.info(
             "LiveKit audio source state source_id=%s generation=%s state=%s reason=%s",
             binding.source_id,
-            binding.generation,
+            binding.source_generation,
             state.value,
             reason,
         )
@@ -181,7 +189,7 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
         if binding is not None:
             self._spawn(
                 self._close_binding(binding),
-                name=f"livekit_audio_close:{binding.track_sid}:{binding.generation}",
+                name=f"livekit_audio_close:{binding.track_sid}:{binding.source_generation}",
             )
 
     def _build_observation(
@@ -201,36 +209,33 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
             [
                 self._runtime.session.session_id,
                 binding.track_sid,
-                str(binding.generation),
+                str(binding.source_generation),
                 str(frame_index),
                 str(ended_at.unix_ns),
             ]
         )
-        metadata: dict[str, Any] = {
-            "frame_id": frame_id,
-            "track_sid": binding.track_sid,
-            "track_name": binding.track_name,
-            "track_source": binding.track_source,
-            "participant_identity": binding.participant_identity,
-            "source_generation": binding.generation,
-            "source_kind": MediaSourceKind.MICROPHONE.value,
-            "frame_index": frame_index,
-            "sample_rate": audio_frame.sample_rate,
-            "num_channels": audio_frame.num_channels,
-            "samples_per_channel": audio_frame.samples_per_channel,
-            "duration_sec": audio_frame.duration_sec,
-            "rtc_backend": "livekit",
-        }
+
         payload = AudioFramePayload.create(
             frame=audio_frame,
             frame_id=frame_id,
-            metadata=dict(metadata),
         )
         return EnvObservation.audio_frame(
             time_range=time_range,
-            source_id=binding.source_id,
+            source=binding.source,
+            frame_id=frame_id,
+            transport_participant_id=binding.transport_participant_id,
             payload=payload,
-            metadata=metadata,
+            metadata={
+                "track_sid": binding.track_sid,
+                "track_name": binding.track_name,
+                "track_source": binding.track_source,
+                "frame_index": frame_index,
+                "sample_rate": audio_frame.sample_rate,
+                "num_channels": audio_frame.num_channels,
+                "samples_per_channel": audio_frame.samples_per_channel,
+                "duration_sec": audio_frame.duration_sec,
+                "rtc_backend": "livekit",
+            },
         )
 
     async def _read_stream(self, binding: _AudioTrackBinding) -> None:
@@ -254,10 +259,11 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
                     )
                 except Exception:
                     logger.exception(
-                        "Failed to convert LiveKit audio frame participant=%s track_sid=%s generation=%s frame_index=%s",
-                        binding.participant_identity,
+                        "Failed to convert LiveKit audio frame participant=%s track_sid=%s "
+                        "generation=%s frame_index=%s",
+                        binding.transport_participant_id,
                         binding.track_sid,
-                        binding.generation,
+                        binding.source_generation,
                         frame_index,
                     )
                     continue
@@ -279,9 +285,9 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
             terminal_reason = "reader_error"
             logger.exception(
                 "LiveKit audio reader failed participant=%s track_sid=%s generation=%s",
-                binding.participant_identity,
+                binding.transport_participant_id,
                 binding.track_sid,
-                binding.generation,
+                binding.source_generation,
             )
         finally:
             if self._detach_binding(binding, state=terminal_state, reason=terminal_reason):
@@ -292,7 +298,7 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
         *,
         track: rtc.Track,
         publication: rtc.RemoteTrackPublication,
-        participant_identity: str,
+        transport_participant_id: str,
     ) -> None:
         if not self._started:
             return
@@ -305,14 +311,17 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
             ):
                 self._schedule_close(existing)
 
-        source_id = self._source_id(participant_identity, publication.sid)
+        source_id = self._source_id(
+            transport_participant_id,
+            publication.sid,
+            int(publication.source),
+        )
         binding = _AudioTrackBinding(
             track_sid=publication.sid,
             track_name=publication.name,
             track_source=int(publication.source),
-            participant_identity=participant_identity,
-            source_id=source_id,
-            generation=self._next_generation(source_id),
+            source=self._runtime.perception.next_source(source_id),
+            transport_participant_id=transport_participant_id,
             publication=publication,
             stream=rtc.AudioStream(
                 track,
@@ -329,7 +338,7 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
         )
         binding.reader_task = self._spawn(
             self._read_stream(binding),
-            name=f"livekit_audio_reader:{binding.track_sid}:{binding.generation}",
+            name=f"livekit_audio_reader:{binding.track_sid}:{binding.source_generation}",
         )
 
     async def _close_stream(self, binding: _AudioTrackBinding) -> None:
@@ -340,9 +349,9 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
         except Exception:
             logger.exception(
                 "Failed to close LiveKit audio stream participant=%s track_sid=%s generation=%s",
-                binding.participant_identity,
+                binding.transport_participant_id,
                 binding.track_sid,
-                binding.generation,
+                binding.source_generation,
             )
 
     async def _close_binding(self, binding: _AudioTrackBinding) -> None:
@@ -359,7 +368,7 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
                     self._create_stream(
                         track=track,
                         publication=publication,
-                        participant_identity=participant.identity,
+                        transport_participant_id=participant.identity,
                     )
 
     def _register_listeners(self) -> None:
@@ -377,7 +386,7 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
                 self._create_stream(
                     track=track,
                     publication=publication,
-                    participant_identity=participant.identity,
+                    transport_participant_id=participant.identity,
                 )
 
         @self._room.on("track_muted")
@@ -436,7 +445,7 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
             bindings = [
                 binding
                 for binding in self._bindings.values()
-                if binding.participant_identity == participant.identity
+                if binding.transport_participant_id == participant.identity
             ]
             for binding in bindings:
                 if self._detach_binding(
@@ -476,7 +485,6 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._bindings.clear()
-        self._generation_by_source.clear()
         self._tasks.clear()
         logger.info(
             "LiveKit audio input runtime stopped session_id=%s",

@@ -18,7 +18,7 @@ import base64
 import json
 import os
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -39,6 +39,7 @@ from alphaavatar.core.media import AudioFrame, AudioSampleFormat
 from ..log import logger
 
 _TARGET_SAMPLE_RATE = 24_000
+
 _FLUSH = object()
 _END_INPUT = object()
 _END_EVENTS = object()
@@ -53,6 +54,15 @@ class _FrameCommand:
 @dataclass(slots=True, frozen=True)
 class _CommitCommand:
     segment_id: str
+
+
+@dataclass(slots=True)
+class _SegmentState:
+    sample_rate: int
+    pcm: bytearray = field(default_factory=bytearray)
+    resampler: soxr.ResampleStream | None = None
+    commit_requested: bool = False
+    sent_audio: bool = False
 
 
 class OpenAIRealtimeSTT(STTBase):
@@ -188,7 +198,7 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
         )
 
     def _put_input(self, item: _FrameCommand | _CommitCommand | object) -> bool:
-        if self._closed:
+        if not self._accepting_input or self._closed:
             return False
 
         try:
@@ -198,8 +208,6 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
             return False
 
     def push_frame(self, frame: AudioFrame, *, segment_id: str) -> bool:
-        if not self._accepting_input or self._closed:
-            return False
         if not segment_id:
             raise ValueError("STT audio frame requires a segment_id")
         if frame.sample_format != AudioSampleFormat.PCM_S16LE:
@@ -212,8 +220,6 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
         return self._put_input(_FrameCommand(frame=frame, segment_id=segment_id))
 
     def commit_segment(self, segment_id: str) -> bool:
-        if not self._accepting_input or self._closed:
-            return False
         if not segment_id:
             raise ValueError("commit_segment requires a segment_id")
 
@@ -246,6 +252,18 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
                 return
 
             yield item
+
+    def _emit_error(self, segment_id: str, reason: str) -> None:
+        self._event_q.put_nowait(
+            TranscriptionEvent(
+                type=TranscriptionEventType.ERROR,
+                source_id=self._source_id,
+                segment_id=segment_id,
+                provider="openai",
+                model=self._model,
+                reason=reason,
+            )
+        )
 
     def _headers(self) -> dict[str, str]:
         headers = {"Authorization": f"Bearer {self._api_key}"}
@@ -282,10 +300,7 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
 
     @staticmethod
     def _pcm_bytes(samples: np.ndarray) -> bytes:
-        if samples.size == 0:
-            return b""
-
-        return np.asarray(samples, dtype="<i2").tobytes()
+        return b"" if samples.size == 0 else np.asarray(samples, dtype="<i2").tobytes()
 
     async def _send_pcm(
         self,
@@ -303,133 +318,193 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
         )
         return True
 
+    async def _send_segment_audio(
+        self,
+        ws: aiohttp.ClientWebSocketResponse,
+        state: _SegmentState,
+    ) -> None:
+        if not state.pcm:
+            return
+
+        pcm = bytes(state.pcm)
+        state.pcm.clear()
+
+        samples = np.frombuffer(pcm, dtype="<i2")
+
+        if state.sample_rate != _TARGET_SAMPLE_RATE:
+            if state.resampler is None:
+                state.resampler = soxr.ResampleStream(
+                    state.sample_rate,
+                    _TARGET_SAMPLE_RATE,
+                    1,
+                    dtype="int16",
+                    quality="LQ",
+                )
+
+            samples = state.resampler.resample_chunk(samples, last=False)
+
+        state.sent_audio = (
+            await self._send_pcm(
+                ws,
+                self._pcm_bytes(samples),
+            )
+            or state.sent_audio
+        )
+
+    async def _commit_remote_segment(
+        self,
+        ws: aiohttp.ClientWebSocketResponse,
+        segment_id: str,
+        state: _SegmentState,
+    ) -> None:
+        await self._send_segment_audio(ws, state)
+
+        if state.resampler is not None:
+            tail = state.resampler.resample_chunk(
+                np.empty(0, dtype=np.int16),
+                last=True,
+            )
+            state.sent_audio = (
+                await self._send_pcm(
+                    ws,
+                    self._pcm_bytes(tail),
+                )
+                or state.sent_audio
+            )
+
+        if not state.sent_audio:
+            self._emit_error(
+                segment_id,
+                "Cannot commit an empty STT audio segment",
+            )
+            return
+
+        self._pending_commits.append(segment_id)
+        self._drained.clear()
+
+        await ws.send_json({"type": "input_audio_buffer.commit"})
+
+    async def _drain_segments(
+        self,
+        ws: aiohttp.ClientWebSocketResponse,
+        segments: dict[str, _SegmentState],
+        order: deque[str],
+    ) -> None:
+        while order:
+            segment_id = order[0]
+            state = segments[segment_id]
+
+            await self._send_segment_audio(ws, state)
+
+            if not state.commit_requested:
+                return
+
+            await self._commit_remote_segment(
+                ws,
+                segment_id,
+                state,
+            )
+
+            segments.pop(segment_id, None)
+            order.popleft()
+
+    async def _flush_input(
+        self,
+        ws: aiohttp.ClientWebSocketResponse,
+        segments: dict[str, _SegmentState],
+        order: deque[str],
+    ) -> None:
+        if order:
+            state = segments.get(order[0])
+            if state is not None and state.sent_audio:
+                await ws.send_json({"type": "input_audio_buffer.clear"})
+
+        segments.clear()
+        order.clear()
+
     async def _send_loop(self, ws: aiohttp.ClientWebSocketResponse) -> None:
-        current_segment_id: str | None = None
-        current_sample_rate: int | None = None
-        resampler: soxr.ResampleStream | None = None
-        sent_audio = False
-
-        def reset_segment() -> None:
-            nonlocal current_segment_id, current_sample_rate, resampler, sent_audio
-
-            current_segment_id = None
-            current_sample_rate = None
-            resampler = None
-            sent_audio = False
-
-        async def commit_current() -> None:
-            nonlocal sent_audio
-
-            if current_segment_id is None:
-                return
-
-            if resampler is not None:
-                tail = resampler.resample_chunk(
-                    np.empty(0, dtype=np.int16),
-                    last=True,
-                )
-                sent_audio = (
-                    await self._send_pcm(
-                        ws,
-                        self._pcm_bytes(tail),
-                    )
-                    or sent_audio
-                )
-
-            if not sent_audio:
-                self._event_q.put_nowait(
-                    TranscriptionEvent(
-                        type=TranscriptionEventType.ERROR,
-                        source_id=self._source_id,
-                        segment_id=current_segment_id,
-                        provider="openai",
-                        model=self._model,
-                        reason="Cannot commit an empty STT audio segment",
-                    )
-                )
-                reset_segment()
-                return
-
-            self._pending_commits.append(current_segment_id)
-            self._drained.clear()
-            await ws.send_json({"type": "input_audio_buffer.commit"})
-            reset_segment()
+        segments: dict[str, _SegmentState] = {}
+        order: deque[str] = deque()
 
         while True:
             command = await self._input_q.get()
 
             if command is _FLUSH:
-                if current_segment_id is not None:
-                    await ws.send_json({"type": "input_audio_buffer.clear"})
-                    reset_segment()
+                await self._flush_input(ws, segments, order)
                 continue
 
             if command is _END_INPUT:
-                await commit_current()
+                for state in segments.values():
+                    state.commit_requested = True
+
+                await self._drain_segments(ws, segments, order)
+
                 self._input_ended = True
                 self._update_drained()
                 return
 
             if isinstance(command, _CommitCommand):
-                if current_segment_id is None:
+                state = segments.get(command.segment_id)
+
+                if state is None:
+                    self._emit_error(
+                        command.segment_id,
+                        "STT segment committed without buffered audio",
+                    )
                     continue
 
-                if command.segment_id != current_segment_id:
-                    raise RuntimeError(
-                        "STT segment commit order mismatch: "
-                        f"active={current_segment_id!r}, "
-                        f"committed={command.segment_id!r}"
-                    )
-
-                await commit_current()
+                state.commit_requested = True
+                await self._drain_segments(ws, segments, order)
                 continue
 
             if not isinstance(command, _FrameCommand):
                 continue
 
             frame = command.frame
+            state = segments.get(command.segment_id)
 
-            if current_segment_id is None:
-                current_segment_id = command.segment_id
-                current_sample_rate = frame.sample_rate
-
-                if frame.sample_rate != _TARGET_SAMPLE_RATE:
-                    resampler = soxr.ResampleStream(
-                        frame.sample_rate,
-                        _TARGET_SAMPLE_RATE,
-                        1,
-                        dtype="int16",
-                        quality="LQ",
-                    )
-
-            elif command.segment_id != current_segment_id:
+            if state is None:
+                state = _SegmentState(sample_rate=frame.sample_rate)
+                segments[command.segment_id] = state
+                order.append(command.segment_id)
+            elif frame.sample_rate != state.sample_rate:
                 raise RuntimeError(
-                    "Received a new STT segment before the current segment was committed: "
-                    f"active={current_segment_id!r}, incoming={command.segment_id!r}"
+                    f"STT input sample rate changed inside segment "
+                    f"{command.segment_id!r}: expected={state.sample_rate}, "
+                    f"actual={frame.sample_rate}"
                 )
 
-            elif frame.sample_rate != current_sample_rate:
+            if state.commit_requested:
                 raise RuntimeError(
-                    "STT input sample rate changed inside one segment: "
-                    f"expected={current_sample_rate}, actual={frame.sample_rate}"
+                    f"Received STT audio after segment commit was requested: "
+                    f"segment_id={command.segment_id!r}"
                 )
 
-            samples = np.frombuffer(frame.data, dtype="<i2")
-
-            if resampler is not None:
-                samples = resampler.resample_chunk(samples, last=False)
-
-            sent_audio = (
-                await self._send_pcm(
-                    ws,
-                    self._pcm_bytes(samples),
-                )
-                or sent_audio
-            )
+            state.pcm.extend(frame.data)
+            await self._drain_segments(ws, segments, order)
 
     def _update_drained(self) -> None:
         if self._input_ended and not self._pending_commits and not self._item_to_segment:
             self._drained.set()
+
+    def _emit_transcript(
+        self,
+        *,
+        event_type: TranscriptionEventType,
+        segment_id: str,
+        text: str,
+    ) -> None:
+        self._event_q.put_nowait(
+            TranscriptionEvent(
+                type=event_type,
+                source_id=self._source_id,
+                segment_id=segment_id,
+                text=text,
+                language=self._language,
+                provider="openai",
+                model=self._model,
+            )
+        )
 
     async def _emit_item_event(
         self,
@@ -449,32 +524,18 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
             text = self._item_text.get(item_id, "") + delta
             self._item_text[item_id] = text
 
-            self._event_q.put_nowait(
-                TranscriptionEvent(
-                    type=TranscriptionEventType.INTERIM_TRANSCRIPT,
-                    source_id=self._source_id,
-                    segment_id=segment_id,
-                    text=text,
-                    language=self._language,
-                    provider="openai",
-                    model=self._model,
-                )
+            self._emit_transcript(
+                event_type=TranscriptionEventType.INTERIM_TRANSCRIPT,
+                segment_id=segment_id,
+                text=text,
             )
             return
 
         if event_type == "conversation.item.input_audio_transcription.failed":
             error = event.get("error") or {}
-            reason = str(error.get("message") or error or "OpenAI transcription failed")
-
-            self._event_q.put_nowait(
-                TranscriptionEvent(
-                    type=TranscriptionEventType.ERROR,
-                    source_id=self._source_id,
-                    segment_id=segment_id,
-                    provider="openai",
-                    model=self._model,
-                    reason=reason,
-                )
+            self._emit_error(
+                segment_id,
+                str(error.get("message") or error or "OpenAI transcription failed"),
             )
 
             self._item_to_segment.pop(item_id, None)
@@ -485,17 +546,10 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
         if event_type != "conversation.item.input_audio_transcription.completed":
             return
 
-        text = str(event.get("transcript") or self._item_text.get(item_id, ""))
-        self._event_q.put_nowait(
-            TranscriptionEvent(
-                type=TranscriptionEventType.FINAL_TRANSCRIPT,
-                source_id=self._source_id,
-                segment_id=segment_id,
-                text=text,
-                language=self._language,
-                provider="openai",
-                model=self._model,
-            )
+        self._emit_transcript(
+            event_type=TranscriptionEventType.FINAL_TRANSCRIPT,
+            segment_id=segment_id,
+            text=str(event.get("transcript") or self._item_text.get(item_id, "")),
         )
 
         self._item_to_segment.pop(item_id, None)
@@ -518,7 +572,7 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
 
             self._item_to_segment[item_id] = self._pending_commits.popleft()
 
-            for orphan in self._orphan_events.pop(item_id, []):
+            for orphan in self._orphan_events.pop(item_id, ()):
                 await self._emit_item_event(item_id, orphan)
 
             self._update_drained()
@@ -530,10 +584,8 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
             "conversation.item.input_audio_transcription.failed",
         }:
             item_id = str(event.get("item_id") or "")
-
             if item_id:
                 await self._emit_item_event(item_id, event)
-
             return
 
         if event_type != "error":
@@ -558,18 +610,15 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
             }:
                 return
 
-        error = ws.exception()
-        if error is not None:
-            raise RuntimeError("OpenAI realtime WebSocket closed with an error") from error
+        if ws.exception() is not None:
+            raise RuntimeError("OpenAI realtime WebSocket closed with an error") from ws.exception()
 
     async def _run(self) -> None:
         sender: asyncio.Task[None] | None = None
         receiver: asyncio.Task[None] | None = None
 
         try:
-            timeout = aiohttp.ClientTimeout(total=None)
-
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None)) as session:
                 ws = await asyncio.wait_for(
                     session.ws_connect(
                         self._url,
@@ -611,7 +660,8 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
                         )
                     except TimeoutError:
                         logger.warning(
-                            "OpenAI STT drain timed out source_id=%s pending_commits=%s pending_items=%s",
+                            "OpenAI STT drain timed out source_id=%s "
+                            "pending_commits=%s pending_items=%s",
                             self._source_id,
                             len(self._pending_commits),
                             len(self._item_to_segment),
@@ -635,20 +685,15 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
 
         except Exception as error:
             self._error = error
+
             logger.exception(
                 "OpenAI realtime STT stream failed source_id=%s",
                 self._source_id,
             )
 
-            self._event_q.put_nowait(
-                TranscriptionEvent(
-                    type=TranscriptionEventType.ERROR,
-                    source_id=self._source_id,
-                    segment_id="unknown",
-                    provider="openai",
-                    model=self._model,
-                    reason=str(error),
-                )
+            self._emit_error(
+                "unknown",
+                str(error) or error.__class__.__name__,
             )
 
         finally:
@@ -665,5 +710,9 @@ class OpenAIRealtimeSTTStream(STTStreamBase):
         if not self._worker_task.done():
             self._worker_task.cancel()
 
-        await asyncio.gather(self._worker_task, return_exceptions=True)
+        await asyncio.gather(
+            self._worker_task,
+            return_exceptions=True,
+        )
+
         self._closed = True

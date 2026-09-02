@@ -12,26 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import importlib
-import importlib.util
 from typing import Literal
 
-from livekit.agents import tts, vad as livekit_vad
+from livekit.agents import tts
 from pydantic import BaseModel, ConfigDict, Field
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.avatar.voice import STTBase, VADBase
 from alphaavatar.agents.runtime.inference import InferenceExecutor
-
-# livekit turn_detector
-english_spec = importlib.util.find_spec("livekit.plugins.turn_detector.english")
-multilingual_spec = importlib.util.find_spec("livekit.plugins.turn_detector.multilingual")
-
-if english_spec is not None:
-    importlib.import_module("livekit.plugins.turn_detector.english")
-
-if multilingual_spec is not None:
-    importlib.import_module("livekit.plugins.turn_detector.multilingual")
-
 
 # alphaavatar voice plugins
 importlib.import_module("alphaavatar.plugins.voice")
@@ -171,74 +159,6 @@ class VADConfig(BaseModel):
             inference_executor=inference_executor,
         )
 
-    def get_legacy_livekit_plugin(self) -> livekit_vad.VAD:
-        """
-        Temporary compatibility VAD for the existing LiveKit Agent voice path.
-
-        Remove after STT and Persona Speaker consume Router output.
-        """
-        try:
-            from livekit.plugins import silero
-        except ImportError as error:
-            raise ImportError(
-                "The temporary livekit-plugins-silero dependency is required "
-                "until the legacy speaker_node path is removed."
-            ) from error
-
-        deactivation_threshold = (
-            self.deactivation_threshold
-            if self.deactivation_threshold is not None
-            else max(self.activation_threshold - 0.15, 0.01)
-        )
-
-        return silero.VAD.load(
-            min_speech_duration=self.min_speech_duration,
-            min_silence_duration=self.min_silence_duration,
-            activation_threshold=self.activation_threshold,
-            deactivation_threshold=deactivation_threshold,
-            sample_rate=16_000,
-        )
-
-
-class TurnDetectionConfig(BaseModel):
-    """Configuration for turn detection."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    plugin: Literal["multilingual", "english"] | None = Field(
-        default=None,
-        description="Turn detection plugin to use for detecting speech turns.",
-    )
-
-    def get_plugin(self):
-        match self.plugin:
-            case "multilingual":
-                try:
-                    from livekit.plugins.turn_detector.multilingual import MultilingualModel
-                except ImportError as e:
-                    raise ImportError(
-                        "The 'turn_detector.multilingual' plugin is required "
-                        "but is not installed.\n"
-                        "Install it with: `pip install livekit-plugins-turn-detector`"
-                    ) from e
-
-                return MultilingualModel()
-
-            case "english":
-                try:
-                    from livekit.plugins.turn_detector.english import EnglishModel
-                except ImportError as e:
-                    raise ImportError(
-                        "The 'turn_detector.english' plugin is required "
-                        "but is not installed.\n"
-                        "Install it with: `pip install livekit-plugins-turn-detector`"
-                    ) from e
-
-                return EnglishModel()
-
-            case _:
-                return None
-
 
 class VoiceConfig(BaseModel):
     """Configuration for AlphaAvatar voice plugins used in the agent."""
@@ -248,7 +168,6 @@ class VoiceConfig(BaseModel):
     stt: STTConfig = Field(default_factory=STTConfig)
     tts: TTSConfig = Field(default_factory=TTSConfig)
     vad: VADConfig = Field(default_factory=VADConfig)
-    turn_detection: TurnDetectionConfig = Field(default_factory=TurnDetectionConfig)
 
     allow_interruptions: bool = Field(
         default=True,
@@ -269,9 +188,3 @@ class VoiceConfig(BaseModel):
         return self.vad.get_plugin(
             inference_executor=inference_executor,
         )
-
-    def get_legacy_livekit_vad_plugin(self) -> livekit_vad.VAD | None:
-        return self.vad.get_legacy_livekit_plugin()
-
-    def get_turn_detection_plugin(self):
-        return self.turn_detection.get_plugin()

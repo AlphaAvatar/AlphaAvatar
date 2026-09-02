@@ -36,7 +36,7 @@ from .schema import (
     PerceptionRetentionPolicy,
     PerceptionSnapshot,
 )
-from .source_registry import MediaSourceRegistry, advance_source_states
+from .source_registry import MediaSourceRegistry
 from .stream import PerceptionStream, StreamRead, StreamRecord, StreamSlice
 from .timeline import EnvAnnotationRenderer, PerceptionTimeline
 from .window import PerceptionWindow, PerceptionWindowBuilder
@@ -70,5 +70,4 @@ __all__ = [
     "TemporalAlignmentPolicy",
     "TemporalSlice",
     "TemporalSliceKind",
-    "advance_source_states",
 ]

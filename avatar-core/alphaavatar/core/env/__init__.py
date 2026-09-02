@@ -12,11 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .annotation import EnvAnnotation
-from .enum import ObservationKind
+from .enum import AnnotationKind, ObservationKind
 from .observation import EnvObservation
+from .schema import (
+    PerceptionEntityRef,
+    PerceptionSegmentRef,
+    PerceptionSourceRef,
+)
 
 __all__ = [
+    "AnnotationKind",
     "EnvAnnotation",
     "EnvObservation",
     "ObservationKind",
+    "PerceptionEntityRef",
+    "PerceptionSegmentRef",
+    "PerceptionSourceRef",
 ]

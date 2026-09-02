@@ -86,17 +86,17 @@ class PersonaConfig(BaseModel):
                 AvatarModule.PROFILER,
                 self.profiler.plugin,
                 runtime=runtime,
-                profiler_init_config=self.profiler.init_config,
+                init_config=self.profiler.init_config,
             ),
             speaker_cls=AvatarPlugin.get_avatar_plugin(
                 AvatarModule.SPEAKER,
                 self.speaker.plugin,
-                speaker_init_config=self.speaker.init_config,
+                init_config=self.speaker.init_config,
             ),
             face_cls=AvatarPlugin.get_avatar_plugin(
                 AvatarModule.FACE,
                 self.face.plugin,
-                face_init_config=self.face.init_config,
+                init_config=self.face.init_config,
             ),
             maximum_retrieval_times=self.maximum_retrieval_times,
         )

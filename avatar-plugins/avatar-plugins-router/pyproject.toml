@@ -31,7 +31,12 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3 :: Only",
 ]
-dependencies = []
+dependencies = [
+    "sherpa-onnx==1.13.6",
+    "sherpa-onnx-core==1.13.6",
+    "pypinyin",
+    "sentencepiece",
+]
 
 [project.optional-dependencies]
 

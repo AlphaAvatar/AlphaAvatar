@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .device_utils import gpu_available
-from .dual_key_dict import DualKeyDict
 from .env_utils import resolve_env_placeholders
 from .hash_utils import sha256_text, short_hash
 from .id_utils import get_md5_id, get_session_id, get_user_id, url_to_filename_id
@@ -21,7 +20,6 @@ from .numpy_utils import NumpyOP
 
 __all__ = [
     "gpu_available",
-    "DualKeyDict",
     "resolve_env_placeholders",
     "sha256_text",
     "short_hash",

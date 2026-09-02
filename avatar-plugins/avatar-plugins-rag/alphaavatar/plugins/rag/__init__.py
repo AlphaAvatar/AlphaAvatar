@@ -28,12 +28,10 @@ class RAGAnythingPlugin(AvatarPlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
 
-    def download_files(self): ...
-
     def get_plugin(
         self,
         session_runtime: SessionRuntime,
-        rag_init_config: dict,
+        init_config: dict,
         *args,
         **kwargs,
     ) -> RAGAPI:
@@ -41,7 +39,7 @@ class RAGAnythingPlugin(AvatarPlugin):
             status_emitter = kwargs.pop("status_emitter", None)
 
             rag_obj = RAGAnythingTool(
-                session_path=session_runtime.session_path, **rag_init_config, **kwargs
+                session_path=session_runtime.session_path, **init_config, **kwargs
             )
         except (ImportError, ModuleNotFoundError) as e:
             raise ImportError(

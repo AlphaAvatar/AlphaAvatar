@@ -28,12 +28,10 @@ class TavilyPlugin(AvatarPlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
 
-    def download_files(self): ...
-
     def get_plugin(
         self,
         session_runtime: SessionRuntime,
-        deepresearch_init_config: dict,
+        init_config: dict,
         *args,
         **kwargs,
     ) -> TavilyDeepResearchTool:
@@ -42,7 +40,7 @@ class TavilyPlugin(AvatarPlugin):
 
             deepresearch_obj = TavilyDeepResearchTool(
                 session_path=session_runtime.session_path,
-                **deepresearch_init_config,
+                **init_config,
                 **kwargs,
             )
             deepresearch_api = DeepResearchAPI(

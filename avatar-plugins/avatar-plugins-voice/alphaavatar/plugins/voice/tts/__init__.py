@@ -18,8 +18,6 @@ class VoiceAITTSPlugin(AvatarPlugin):
     def __init__(self, version, logger) -> None:
         super().__init__(__name__, version, __package__, logger)  # type: ignore
 
-    def download_files(self): ...
-
     def get_plugin(self, model: str, speaker: str, *args, **kwargs):
         from .voiceai import TTS
 

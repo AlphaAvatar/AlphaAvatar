@@ -46,6 +46,9 @@ class LLMConfig(BaseModel):
                         "The 'openai.LLM' plugin is required for livekit.plugins.openai but is not installed.\n"
                         "To fix this, install the optional dependency: `pip install livekit-plugins-openai`"
                     )
-                return openai.LLM(model=self.model)
+                return openai.LLM(
+                    model=self.model,
+                    reasoning_effort="none",
+                )
             case _:
                 return None

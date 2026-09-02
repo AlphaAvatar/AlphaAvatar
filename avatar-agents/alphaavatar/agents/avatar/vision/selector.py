@@ -17,10 +17,14 @@ from collections import defaultdict
 
 from alphaavatar.agents.configs.plugins.vision_config import VisionConfig
 from alphaavatar.agents.providers.schema import ModelInputType
-from alphaavatar.core.env import EnvObservation, ObservationKind
+from alphaavatar.core.env import (
+    EnvObservation,
+    ObservationKind,
+    PerceptionSourceRef,
+)
 from alphaavatar.core.perception import AlignedPerception, TemporalSlice, TemporalSliceKind
 
-from .schema import SelectedVisualFrame, VisualSelection, VisualSliceSelection
+from .schema.visual_selection import SelectedVisualFrame, VisualSelection, VisualSliceSelection
 
 
 class VisualFrameSelector:
@@ -45,10 +49,11 @@ class VisualFrameSelector:
         interval_sec: float,
     ) -> list[EnvObservation]:
         interval_ns = max(1, round(interval_sec * 1_000_000_000))
-        buckets: dict[tuple[str, int], EnvObservation] = {}
+        buckets: dict[tuple[PerceptionSourceRef, int], EnvObservation] = {}
         for observation in observations:
             bucket = max(0, observation.time_range.end.monotonic_ns - start_ns) // interval_ns
-            buckets[observation.source_id, bucket] = observation
+            buckets[observation.source, bucket] = observation
+
         return sorted(
             buckets.values(),
             key=lambda item: (item.time_range.end.monotonic_ns, item.observation_id),

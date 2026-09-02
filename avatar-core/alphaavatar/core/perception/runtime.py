@@ -14,11 +14,17 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from threading import RLock
 from typing import Any
 
-from alphaavatar.core.env import EnvAnnotation, EnvObservation, ObservationKind
+from alphaavatar.core.env import (
+    EnvAnnotation,
+    EnvObservation,
+    ObservationKind,
+    PerceptionSegmentRef,
+    PerceptionSourceRef,
+)
 from alphaavatar.core.time import RuntimeClock, RuntimeTime, RuntimeTimeRange
 
 from .enum import (
@@ -35,7 +41,7 @@ from .schema import (
     PerceptionSnapshot,
 )
 from .source_registry import MediaSourceRegistry
-from .stream import PerceptionStream
+from .stream import PerceptionStream, StreamRead
 from .timeline import EnvAnnotationRenderer, PerceptionTimeline
 from .window import PerceptionWindow, PerceptionWindowBuilder
 
@@ -124,6 +130,12 @@ class PerceptionRuntime:
             maxlen=stream_maxlens[PerceptionStreamKind.TEXT],
         )
 
+        # Derived annotations
+        self.annotation_events = PerceptionStream[PerceptionEvent](
+            name=PerceptionStreamKind.ANNOTATION,
+            maxlen=stream_maxlens[PerceptionStreamKind.ANNOTATION],
+        )
+
         # Session-level Events
         self.events = PerceptionStream[PerceptionEvent](
             name=PerceptionStreamKind.EVENT,
@@ -152,7 +164,7 @@ class PerceptionRuntime:
         self._lock = RLock()
 
         # speech active event
-        self._active_speech_segments: set[tuple[str, str]] = set()
+        self._active_speech_segments: set[PerceptionSegmentRef] = set()
         self._speech_idle_event = asyncio.Event()
         self._speech_idle_event.set()
         self._last_speech_idle_cutoff = self._capture_cutoff_locked()
@@ -168,37 +180,25 @@ class PerceptionRuntime:
             return bool(self._active_speech_segments)
 
     @property
-    def active_speech_segments(self) -> tuple[tuple[str, str], ...]:
+    def active_speech_segments(self) -> tuple[PerceptionSegmentRef, ...]:
         with self._lock:
             return tuple(sorted(self._active_speech_segments))
 
-    @staticmethod
-    def _speech_segment_key(
-        observation: EnvObservation,
-    ) -> tuple[str, str] | None:
+    """Helper"""
+
+    def _update_speech_activity_locked(self, observation: EnvObservation) -> None:
         if observation.kind not in {
             ObservationKind.SPEECH_FRAME,
             ObservationKind.SPEECH_SEGMENT,
         }:
-            return None
+            return
 
-        segment_id = getattr(observation, "segment_id", None) or observation.metadata.get(
-            "segment_id"
-        )
-
-        if not segment_id:
-            return None
-
-        return observation.source_id, str(segment_id)
-
-    def _update_speech_activity_locked(self, observation: EnvObservation) -> None:
-        key = self._speech_segment_key(observation)
-
-        if key is None:
+        segment = observation.segment
+        if segment is None:
             return
 
         if observation.kind == ObservationKind.SPEECH_FRAME:
-            if key in self._active_speech_segments:
+            if segment in self._active_speech_segments:
                 return
 
             if not self._active_speech_segments:
@@ -206,11 +206,11 @@ class PerceptionRuntime:
                 # waiting on the event belonging to their current speech period.
                 self._speech_idle_event = asyncio.Event()
 
-            self._active_speech_segments.add(key)
+            self._active_speech_segments.add(segment)
             return
 
         was_active = bool(self._active_speech_segments)
-        self._active_speech_segments.discard(key)
+        self._active_speech_segments.discard(segment)
 
         if was_active and not self._active_speech_segments:
             # SPEECH_SEGMENT has already entered the global event stream when this
@@ -222,10 +222,11 @@ class PerceptionRuntime:
         self,
         *,
         kind: PerceptionEventKind,
-        payload: EnvObservation | MediaSourceStateEvent,
+        payload: EnvObservation | EnvAnnotation | MediaSourceStateEvent,
         time_range: RuntimeTimeRange,
     ) -> PerceptionEvent:
         self._event_sequence += 1
+
         event = PerceptionEvent(
             session_id=self.session_id,
             sequence=self._event_sequence,
@@ -239,6 +240,11 @@ class PerceptionRuntime:
             raise RuntimeError(
                 f"Perception event sequence diverged: stream={sequence}, session={event.sequence}"
             )
+
+        self._source_registry.apply_event(event)
+
+        if kind == PerceptionEventKind.ANNOTATION:
+            self.annotation_events.publish(event)
 
         return event
 
@@ -257,16 +263,6 @@ class PerceptionRuntime:
                 time_range=observation.time_range,
             )
 
-            generation = observation.metadata.get("source_generation")
-
-            if isinstance(generation, int):
-                self._source_registry.observe(
-                    source_id=observation.source_id,
-                    generation=generation,
-                    sequence=event.sequence,
-                    at=observation.time_range.end,
-                )
-
         self._update_speech_activity_locked(observation)
         return event
 
@@ -283,8 +279,61 @@ class PerceptionRuntime:
     def remove_annotation_renderer(self, renderer: EnvAnnotationRenderer) -> None:
         self.timeline.remove_renderer(renderer)
 
-    def publish_annotation(self, annotation: EnvAnnotation) -> EnvObservation | None:
-        return self.timeline.add_annotation(annotation)
+    def publish_annotation(self, annotation: EnvAnnotation) -> PerceptionEvent | None:
+        observation, added = self.timeline.attach_annotation(annotation)
+        if not added:
+            return None
+
+        with self._lock:
+            event = self._publish_event_locked(
+                kind=PerceptionEventKind.ANNOTATION,
+                payload=annotation,
+                time_range=self.clock.point(),
+            )
+
+        if observation is not None:
+            self.timeline.render_annotation(observation, annotation)
+
+        return event
+
+    async def wait_for_pending_annotations(
+        self,
+        *,
+        consumer_id: str,
+        timeout: float | None = None,
+        min_age_sec: float = 0.0,
+    ) -> bool:
+        return await self.annotation_events.wait_for_pending(
+            consumer_id=consumer_id,
+            timeout=timeout,
+            min_age_sec=min_age_sec,
+        )
+
+    def take_pending_annotations(
+        self,
+        *,
+        consumer_id: str,
+        predicate: Callable[[EnvAnnotation], bool] | None = None,
+        min_age_sec: float = 0.0,
+        limit: int | None = None,
+    ) -> StreamRead[PerceptionEvent]:
+        event_predicate = (
+            None
+            if predicate is None
+            else lambda event: event.annotation is not None and predicate(event.annotation)
+        )
+        return self.annotation_events.read_pending(
+            consumer_id=consumer_id,
+            predicate=event_predicate,
+            min_age_sec=min_age_sec,
+            limit=limit,
+        )
+
+    def commit_annotations(self, *, consumer_id: str, cursor_seq: int) -> None:
+        self.annotation_events.commit(consumer_id=consumer_id, cursor_seq=cursor_seq)
+
+    def clear_annotation_consumer(self, consumer_id: str) -> None:
+        self.annotation_events.clear_consumer(consumer_id)
 
     """Cutoff operations"""
 
@@ -332,6 +381,48 @@ class PerceptionRuntime:
         self._add_to_timeline(final_observations)
         return PerceptionSnapshot(
             after_sequence=after_sequence,
+            cutoff=cutoff,
+            events=event_slice.items,
+            first_available_sequence=event_slice.first_available_seq,
+            missed_count=event_slice.missed_count,
+        )
+
+    def capture_snapshot_until(
+        self,
+        *,
+        after_cutoff: PerceptionCutoff,
+        until_sequence: int,
+        captured_at: RuntimeTime,
+    ) -> PerceptionSnapshot:
+        if until_sequence < after_cutoff.sequence:
+            raise ValueError(
+                "until_sequence cannot precede after_cutoff: "
+                f"until={until_sequence}, after={after_cutoff.sequence}"
+            )
+
+        with self._lock:
+            if until_sequence > self._event_sequence:
+                raise ValueError(
+                    "until_sequence cannot exceed current event sequence: "
+                    f"until={until_sequence}, current={self._event_sequence}"
+                )
+
+            event_slice = self.events.read_range(
+                after_seq=after_cutoff.sequence,
+                until_seq=until_sequence,
+            )
+
+        cutoff = PerceptionCutoff(
+            sequence=until_sequence,
+            captured_at=captured_at,
+            sources=MediaSourceRegistry.project_snapshot(
+                initial_sources=after_cutoff.sources,
+                events=event_slice.items,
+            ),
+        )
+
+        return PerceptionSnapshot(
+            after_sequence=after_cutoff.sequence,
             cutoff=cutoff,
             events=event_slice.items,
             first_available_sequence=event_slice.first_available_seq,
@@ -398,7 +489,6 @@ class PerceptionRuntime:
                 payload=source_state,
                 time_range=RuntimeTimeRange.point(occurred_at),
             )
-            self._source_registry.apply(source_state, sequence=event.sequence, at=occurred_at)
 
         return event
 
@@ -410,6 +500,10 @@ class PerceptionRuntime:
     ) -> tuple[MediaSourceSnapshot, ...]:
         with self._lock:
             return self._source_registry.snapshot(modality=modality, source_kind=source_kind)
+
+    def next_source(self, source_id: str) -> PerceptionSourceRef:
+        with self._lock:
+            return self._source_registry.next_source(source_id)
 
     """Observation operations"""
 
@@ -500,7 +594,7 @@ class PerceptionRuntime:
     def commit_observations(self, window: PerceptionWindow) -> None:
         self.window_builder.commit(window)
 
-    def clear_consumer(
+    def clear_observation_consumer(
         self, consumer_id: str, *, streams: set[PerceptionStreamKind] | None = None
     ) -> None:
         selected = (

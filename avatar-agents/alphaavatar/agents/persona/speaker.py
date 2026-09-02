@@ -46,8 +46,6 @@ class SpeakerStreamBase(ABC):
 
     capabilities: tuple[AvatarCapability, ...]
 
-    CONSUMER_ID = "persona.speaker"
-
     def __init__(self, *, runtime: AvatarRuntime, activity_persona: PersonaBase) -> None:
         self.runtime = runtime
         self.activity_persona = activity_persona

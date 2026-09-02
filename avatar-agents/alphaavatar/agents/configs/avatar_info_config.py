@@ -35,8 +35,8 @@ class AvatarInfoConfig(BaseModel):
         default="You are a helpful voice AI assistant.",
         description="Introduction of the avatar.",
     )
-    timezone: str = Field(
-        default="server local time",
+    timezone: str | None = Field(
+        default=None,
         description="The time zone where the Avatar is deployed is used to align with the user's time zone for related task execution",
     )
 
@@ -56,7 +56,8 @@ class AvatarInfoConfig(BaseModel):
         self.work_dir = os.getenv("AVATAR_WORK_DIR") or self.work_dir
 
         # Set environment variables based on the configuration
-        os.environ["AVATAR_TIMEZONE"] = self.timezone
+        if self.timezone:
+            os.environ["AVATAR_TIMEZONE"] = self.timezone
 
         if self.work_dir and self.work_dir.strip():
             work_dir = pathlib.Path(self.work_dir) / self.id

@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 from alphaavatar.agents.runtime import TurnInputModality, TurnRuntime, TurnSnapshot
-from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env import EnvObservation, PerceptionSourceRef
 from alphaavatar.core.media import TextPayload
 from alphaavatar.core.time import RuntimeClock, RuntimeTimeRange
 from livekit.agents import llm
@@ -109,7 +109,10 @@ class LiveKitTurnInput:
                 final_observations.append(
                     EnvObservation.text_input(
                         time_range=point,
-                        source_id="entrypoint:livekit:text",
+                        source=PerceptionSourceRef(
+                            source_id="entrypoint:livekit:text",
+                            source_generation=1,
+                        ),
                         payload=TextPayload.create(text=content, metadata=dict(metadata)),
                         metadata=metadata,
                     )
