@@ -29,7 +29,6 @@ class AddressingMode(StrEnum):
 
 
 class AddressingEvidenceKind(StrEnum):
-    INVOCATION = "invocation"
     VISUAL_ORIENTATION = "visual_orientation"
     SEMANTIC = "semantic"
     CONVERSATION_FOCUS = "conversation_focus"

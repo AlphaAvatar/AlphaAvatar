@@ -12,18 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from alphaavatar.agents import AvatarModule, AvatarPlugin
-from alphaavatar.agents.interaction import InteractionRouterDependencies
+from alphaavatar.agents.router import InteractionRouterDependencies
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.core.output import OutputLane
 
-from .addressing.invocation import SherpaKeywordSpotterRunner, create_invocation_detector
+from .addressing.semantic import (
+    SemanticAddressingQwen3Runner,
+    create_semantic_addressing_model,
+)
 from .config import DefaultRouterConfig
 from .log import logger
 from .processors import (
     AudioActivityProcessor,
-    InvocationAddressingProcessor,
     MultimodalTurnTakingProcessor,
+    SemanticAddressingProcessor,
     SpeechSynthesisProcessor,
     SpeechTranscriptionProcessor,
     TranscriptSynchronizationProcessor,
@@ -71,32 +74,25 @@ class DefaultRouterPlugin(AvatarPlugin):
             )
         ]
 
-    def _create_invocation_addressing_processors(
+    def _create_semantic_addressing_processors(
         self,
         config: DefaultRouterConfig,
         runtime: AvatarRuntime,
     ) -> list:
-        invocation = config.addressing.invocation
-
-        if not invocation.enabled:
+        semantic = config.addressing.semantic
+        if not semantic.enabled:
             return []
 
-        detector = create_invocation_detector(
-            invocation.provider,
+        model = create_semantic_addressing_model(
+            semantic.model.name,
             inference_executor=runtime.inference,
-            phrases=tuple(phrase.build() for phrase in invocation.phrases),
-            chunk_duration_ms=invocation.chunk_duration_ms,
-            max_pending_chunks=invocation.max_pending_chunks,
-            tail_padding_sec=invocation.tail_padding_sec,
         )
-
         return [
-            InvocationAddressingProcessor(
+            SemanticAddressingProcessor(
                 runtime=runtime,
-                detector=detector,
-                evidence_confidence=invocation.evidence_confidence,
-                early_window_sec=invocation.early_window_sec,
-                late_confidence_scale=invocation.late_confidence_scale,
+                model=model,
+                avatar_identities=semantic.avatar_identities,
+                history_turns=semantic.history_turns,
             )
         ]
 
@@ -104,6 +100,8 @@ class DefaultRouterPlugin(AvatarPlugin):
         self,
         config: DefaultRouterConfig,
         runtime: AvatarRuntime,
+        *,
+        required_addressing_sources: tuple[str, ...] = (),
     ) -> list:
         turn_taking = config.turn_taking
         fusion = config.addressing.fusion
@@ -116,7 +114,6 @@ class DefaultRouterPlugin(AvatarPlugin):
             inference_executor=runtime.inference,
         )
         turn_fusion = DefaultAddressingFusion(
-            min_confidence=fusion.min_confidence,
             conflict_margin=fusion.conflict_margin,
         )
         turn_policy = DefaultTurnTakingPolicy(
@@ -138,6 +135,7 @@ class DefaultRouterPlugin(AvatarPlugin):
                 transcript_wait_sec=turn_taking.transcript_wait_sec,
                 max_hold_sec=turn_taking.policy.max_hold_sec,
                 unsegmented_alignment_sec=turn_taking.unsegmented_alignment_sec,
+                required_addressing_sources=required_addressing_sources,
             )
         ]
 
@@ -162,7 +160,8 @@ class DefaultRouterPlugin(AvatarPlugin):
             )
 
         processors.extend(self._create_visual_addressing_processor(config, runtime))
-        processors.extend(self._create_invocation_addressing_processors(config, runtime))
+
+        semantic_enabled = config.addressing.semantic.enabled and dependencies.stt is not None
 
         if dependencies.stt is not None:
             processors.append(
@@ -172,7 +171,20 @@ class DefaultRouterPlugin(AvatarPlugin):
                 )
             )
 
-        processors.extend(self._create_turn_taking_processor(config, runtime))
+            if semantic_enabled:
+                processors.extend(self._create_semantic_addressing_processors(config, runtime))
+
+        required_addressing_sources = (
+            (SemanticAddressingProcessor.SEMANTIC_SOURCE,) if semantic_enabled else ()
+        )
+
+        processors.extend(
+            self._create_turn_taking_processor(
+                config,
+                runtime,
+                required_addressing_sources=required_addressing_sources,
+            )
+        )
 
         if dependencies.tts is not None:
             processors.extend(
@@ -205,4 +217,4 @@ AvatarPlugin.register_avatar_plugin(
 
 # Inference Runners
 InferenceRunner.register(SmartTurnV3Runner)
-InferenceRunner.register(SherpaKeywordSpotterRunner)
+InferenceRunner.register(SemanticAddressingQwen3Runner)

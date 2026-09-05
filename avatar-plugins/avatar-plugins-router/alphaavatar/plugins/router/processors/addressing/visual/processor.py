@@ -20,7 +20,7 @@ from alphaavatar.agents.avatar.vision import (
     FaceDetection,
     FaceDetectionResult,
 )
-from alphaavatar.agents.interaction import (
+from alphaavatar.agents.router import (
     AddressingEvidenceKind,
     AddressingMode,
     InteractionAddressingEvidence,

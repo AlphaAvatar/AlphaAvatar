@@ -77,8 +77,8 @@ AlphaAvatar follows a layered realtime multimodal architecture:
 
 - **🎙️ User & Channels**: voice, text, camera, screen, files, and messaging platforms.
 - **🔌 RTC Adapter**: connects LiveKit and other realtime communication backends.
-- **👁️ Core Perception**: normalizes multimodal observations, streams, timelines, and windows.
-- **⚙️ Agent & Runtime**: manages sessions, context, interaction routing, shared inference access, and runtime lifecycle.
+- **👁️ Core Perception**: normalizes typed multimodal observations, source and segment lineage, ordered perception events, annotations, timelines, and historical snapshots.
+- **⚙️ Agent & Runtime**: manages sessions, context, semantic addressing, conversation focus, multimodal turn taking, shared inference access, and runtime lifecycle.
 - **🧩 Plugin Ecosystem**: adds Memory, Persona, RAG, MCP, Character, and other capabilities.
 - **🧠 Provider & Infrastructure**: connects models, embeddings, routing, tracing, and structured output.
 - **💾 Storage & Data**: stores identity, memory, vectors, traces, artifacts, and media.
@@ -177,7 +177,7 @@ AlphaAvatar follows a layered realtime multimodal architecture:
 <p>
   <img src="https://img.shields.io/badge/In_Progress-28a745?style=flat" alt="In Progress" />
 </p>
-<p>Omni interaction routing module that decides whether the Avatar should respond, how the request should be handled, and which status feedback should be emitted.</p>
+<p>Realtime multimodal interaction runtime for speech routing, Semantic Addressing, conversation focus, turn taking, interruption, and transport-independent output coordination.</p>
 <p>
 <a href="https://github.com/AlphaAvatar/AlphaAvatar/blob/main/avatar-plugins/avatar-plugins-router/README.md">README↗</a>
 </p>
@@ -310,6 +310,7 @@ AlphaAvatar follows a layered realtime multimodal architecture:
 
 <h2>Latest News 🔥</h2>
 
+- [2026/09] Released AlphaAvatar **version 0.6.7**: Added AlphaAvatar-owned multimodal turn taking, local Semantic Addressing with per-speaker conversation focus, typed addressing evidence and fusion, exact annotation-driven turn snapshots, full-duplex interruption, and removed LiveKit text turn detection and the legacy acoustic invocation path.
 - [2026/08] Released AlphaAvatar **version 0.6.6**: Added a unified time-aligned multimodal runtime, adaptive audiovisual ENV Memory, provider-neutral model input, runtime capability awareness, time-based perception retention, participant-scoped timezone context, and date-grouped session storage.
 - [2026/07] Released AlphaAvatar **version 0.6.4**: Added a transport-agnostic perception runtime with typed multimodal streams, shared timelines, annotated payload views, and online ENV memory extraction from live visual observations.
   - Released AlphaAvatar **version 0.6.5**: Added shared realtime audio perception, the Interaction Router, AlphaAvatar-native VAD and STT, isolated per-runner inference processes, and migrated all AlphaAvatar VDB workloads away from LiveKit’s shared inference executor.

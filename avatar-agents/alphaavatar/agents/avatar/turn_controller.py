@@ -16,13 +16,13 @@ from __future__ import annotations
 import asyncio
 from typing import Protocol
 
-from alphaavatar.agents.interaction import (
+from alphaavatar.agents.log import logger
+from alphaavatar.agents.plugin import AvatarRuntimePlugin
+from alphaavatar.agents.router import (
     TurnTakingAction,
     TurnTakingDecision,
     TurnTakingMode,
 )
-from alphaavatar.agents.log import logger
-from alphaavatar.agents.plugin import AvatarRuntimePlugin
 from alphaavatar.agents.runtime import (
     AvatarRuntime,
     TurnInputModality,

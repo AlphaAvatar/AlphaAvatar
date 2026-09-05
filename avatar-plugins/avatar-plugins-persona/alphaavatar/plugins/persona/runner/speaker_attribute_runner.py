@@ -19,7 +19,6 @@ import os
 from contextlib import ExitStack
 
 import numpy as np
-from huggingface_hub import errors
 from livekit.agents.utils import hw
 
 from alphaavatar.agents.runtime.inference import InferenceRunner
@@ -70,51 +69,38 @@ class SpeakerAttributeRunner(InferenceRunner):
         """Initialize the ONNX Runtime session with dynamic provider selection."""
         import onnxruntime as ort
 
-        try:
-            local_path_onnx = download_from_hf_hub(
-                SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].hf_model,
-                SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].file_name,
-                revision=SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].revision,
-                local_files_only=True,
-            )
-            opts = ort.SessionOptions()
-            opts.intra_op_num_threads = max(
-                1, min(math.ceil(hw.get_cpu_monitor().cpu_count()) // 2, 4)
-            )
-            opts.inter_op_num_threads = 1
-            opts.add_session_config_entry("session.dynamic_block_base", "4")
+        local_path_onnx = download_from_hf_hub(
+            SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].hf_model,
+            SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].file_name,
+            revision=SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].revision,
+            cache_dir=SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].cache_dir,
+            local_files_only=False,
+        )
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = max(1, min(math.ceil(hw.get_cpu_monitor().cpu_count()) // 2, 4))
+        opts.inter_op_num_threads = 1
+        opts.add_session_config_entry("session.dynamic_block_base", "4")
 
-            available = ort.get_available_providers()
-            if os.getenv("FORCE_CPU", "0") == "1" and "CPUExecutionProvider" in available:
-                logger.info("[SpeakerAttributeRunner] Running on CPU")
-                self._session = ort.InferenceSession(
-                    local_path_onnx, providers=["CPUExecutionProvider"], sess_options=opts
-                )
-            elif "CUDAExecutionProvider" in available:
-                logger.info("[SpeakerAttributeRunner] Running on GPU (CUDA)")
-                self._session = ort.InferenceSession(
-                    local_path_onnx, providers=["CUDAExecutionProvider"], sess_options=opts
-                )
-            else:
-                logger.info("[SpeakerAttributeRunner] Fallback: default provider")
-                self._session = ort.InferenceSession(local_path_onnx, sess_options=opts)
-
-            # Cache input/output names
-            self._input_names = [i.name for i in self._session.get_inputs()]
-            self._output_names = [o.name for o in self._session.get_outputs()]
-            logger.info(f"[SpeakerAttributeRunner] Inputs: {self._input_names}")
-            logger.info(f"[SpeakerAttributeRunner] Outputs: {self._output_names}")
-
-        except (errors.LocalEntryNotFoundError, OSError):
-            logger.error(
-                f"[SpeakerAttributeRunner] Could not find model {SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].hf_model} with revision {SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].revision}. "
-                "Make sure you have downloaded the model before running the agent. "
-                "Use `python3 your_agent.py download-files` to download the models."
+        available = ort.get_available_providers()
+        if os.getenv("FORCE_CPU", "0") == "1" and "CPUExecutionProvider" in available:
+            logger.info("[SpeakerAttributeRunner] Running on CPU")
+            self._session = ort.InferenceSession(
+                local_path_onnx, providers=["CPUExecutionProvider"], sess_options=opts
             )
-            raise RuntimeError(
-                "[SpeakerAttributeRunner] alphaavatar-plugins-persona initialization failed. "
-                f"Could not find model {SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].hf_model} with revision {SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].revision}."
-            ) from None
+        elif "CUDAExecutionProvider" in available:
+            logger.info("[SpeakerAttributeRunner] Running on GPU (CUDA)")
+            self._session = ort.InferenceSession(
+                local_path_onnx, providers=["CUDAExecutionProvider"], sess_options=opts
+            )
+        else:
+            logger.info("[SpeakerAttributeRunner] Fallback: default provider")
+            self._session = ort.InferenceSession(local_path_onnx, sess_options=opts)
+
+        # Cache input/output names
+        self._input_names = [i.name for i in self._session.get_inputs()]
+        self._output_names = [o.name for o in self._session.get_outputs()]
+        logger.info(f"[SpeakerAttributeRunner] Inputs: {self._input_names}")
+        logger.info(f"[SpeakerAttributeRunner] Outputs: {self._output_names}")
 
     def run(self, data: bytes) -> bytes:
         """
@@ -138,10 +124,15 @@ class SpeakerAttributeRunner(InferenceRunner):
         """
         # Decode bytes to float32 waveform
         wav = np.frombuffer(data, dtype=np.float32).reshape(1, -1)
-        ort_inputs = {self._input_names[0]: wav}
+        wav = (wav - wav.mean(axis=-1, keepdims=True)) / np.sqrt(
+            wav.var(axis=-1, keepdims=True) + 1e-7
+        )
 
         # Run model and collect outputs
-        ort_results = self._session.run(self._output_names, ort_inputs)
+        ort_results = self._session.run(
+            self._output_names,
+            {self._input_names[0]: wav},
+        )
 
         # Combine outputs in a dict
         result_dict = dict(zip(self._output_names, ort_results, strict=False))

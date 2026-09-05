@@ -33,7 +33,7 @@ from alphaavatar.core.media import AudioFrame, AudioSegmentPayload
 from alphaavatar.core.perception import PerceptionRuntime
 from alphaavatar.core.time import RuntimeTimeRange
 
-from ..log import logger
+from ...log import logger
 
 
 @dataclass(slots=True)

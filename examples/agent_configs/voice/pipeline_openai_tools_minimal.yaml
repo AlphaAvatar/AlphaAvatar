@@ -23,7 +23,7 @@ avatar:
 
 
 # ============================================================
-# 2. Session Runtime
+# 2. Runtime
 # ============================================================
 
 runtime:
@@ -40,7 +40,7 @@ runtime:
 
 llm:
   plugin: openai
-  model: gpt-4o-mini
+  model: gpt-5.6-luna
 
 
 # ============================================================
@@ -66,13 +66,50 @@ defaults:
 
 # ------------------------------------------------------------
 # Interaction Router
-#
-# Processes shared audio perception through VAD and STT.
-# Native turn decisions are still handled by LiveKit in v0.6.5.
 # ------------------------------------------------------------
 
 router:
   plugin: default
+
+  init_config:
+    audio_activity:
+      enabled: true
+      pre_roll_sec: 0.3
+      max_buffer_sec: 2.0
+
+    addressing:
+      addressing_wait_sec: 0.5
+
+      semantic:
+        enabled: true
+        avatar_identities:
+          - AlphaAvatar
+          - Alpha
+        history_turns: 2
+
+        model:
+          name: qwen3_0_6b_q8_0
+
+      visual:
+        enabled: false
+
+      fusion:
+        conflict_margin: 0.1
+
+    turn_taking:
+      enabled: true
+      transcript_wait_sec: 3.0
+
+      model:
+        name: smart_turn_v3
+
+      policy:
+        commit_threshold: 0.5
+        max_hold_sec: 1.5
+
+      interruption:
+        enabled: true
+        audio_only_speech_start: true
 
 
 # ------------------------------------------------------------
@@ -103,9 +140,6 @@ voice:
     speaker: ash
     instructions: Speak in a friendly and conversational tone.
 
-  turn_detection:
-    plugin: multilingual
-
   allow_interruptions: true
 
 
@@ -125,10 +159,6 @@ character:
 
 # ------------------------------------------------------------
 # Memory
-#
-# Voice mode extracts conversation and tool memory.
-# ENV memory is not enabled because this pipeline has no
-# visual perception input.
 # ------------------------------------------------------------
 
 memory:

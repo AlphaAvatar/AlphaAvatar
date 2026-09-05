@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 
 from alphaavatar.agents.avatar.voice import VADBase
-from alphaavatar.agents.interaction import RouterProcessorBase
+from alphaavatar.agents.router import RouterProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.core.env import EnvObservation, PerceptionSourceRef
 from alphaavatar.core.media import (
@@ -27,8 +27,8 @@ from alphaavatar.core.media import (
 )
 from alphaavatar.core.perception import PerceptionStreamKind
 
-from ..log import logger
-from .audio_activity_source import AudioActivitySource
+from ...log import logger
+from .source import AudioActivitySource
 
 
 class AudioActivityProcessor(RouterProcessorBase):

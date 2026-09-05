@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from uuid import uuid4
 
-from alphaavatar.agents.interaction import (
+from alphaavatar.agents.router import (
     InteractionAddressingEvidence,
     InteractionEntityKind,
     InteractionEntityRef,

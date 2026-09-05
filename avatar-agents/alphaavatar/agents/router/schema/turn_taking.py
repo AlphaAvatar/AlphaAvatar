@@ -127,6 +127,10 @@ class InteractionAddressingEvidence:
         ):
             raise ValueError(f"{self.addressing_mode.value} addressing requires addressees")
 
+    @property
+    def abstains(self) -> bool:
+        return self.addressing_mode == AddressingMode.UNKNOWN
+
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {
             "evidence_kind": self.evidence_kind.value,

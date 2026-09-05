@@ -11,10 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .factory import create_invocation_detector
-from .runner.sherpa import SherpaKeywordSpotterRunner
+from alphaavatar.agents.router import SemanticAddressingModelBase
+from alphaavatar.agents.runtime.inference import InferenceExecutor
 
-__all__ = [
-    "create_invocation_detector",
-    "SherpaKeywordSpotterRunner",
-]
+from .model import Qwen3SemanticAddressingModel
+
+
+def create_semantic_addressing_model(
+    name: str,
+    *,
+    inference_executor: InferenceExecutor,
+) -> SemanticAddressingModelBase:
+    if name == "qwen3_0_6b_q8_0":
+        return Qwen3SemanticAddressingModel(inference_executor=inference_executor)
+
+    raise ValueError(f"Unsupported Semantic Addressing model: {name!r}")

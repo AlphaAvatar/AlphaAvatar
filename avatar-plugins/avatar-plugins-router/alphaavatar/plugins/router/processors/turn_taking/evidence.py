@@ -13,7 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
-from alphaavatar.agents.interaction import (
+from alphaavatar.agents.router import (
     TurnTakingAudioEvidence,
     TurnTakingEvidence,
     TurnTakingMode,

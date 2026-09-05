@@ -11,27 +11,28 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from .base import InteractionRouterBase, InteractionRouterDependencies
 from .enum import (
     AddressingEvidenceKind,
     AddressingMode,
     InteractionEntityKind,
+    SemanticAddressingLabel,
     TurnTakingAction,
     TurnTakingMode,
 )
 from .models import (
-    InvocationDetectorBase,
-    InvocationDetectorStreamBase,
+    SemanticAddressingModelBase,
     TurnTakingModelBase,
     TurnTakingModelCapabilities,
 )
 from .processor import RouterProcessorBase
-from .router import InteractionRouterBase, InteractionRouterDependencies
 from .schema import (
     InteractionAddressing,
     InteractionAddressingEvidence,
     InteractionEntityRef,
-    InvocationDetection,
-    InvocationPhrase,
+    SemanticAddressingRequest,
+    SemanticAddressingResult,
+    SemanticAddressingTranscript,
     TurnTakingAssessment,
     TurnTakingAudioEvidence,
     TurnTakingDecision,
@@ -39,12 +40,8 @@ from .schema import (
 )
 
 __all__ = [
-    "AddressingMode",
     "AddressingEvidenceKind",
-    "InvocationDetection",
-    "InvocationPhrase",
-    "InvocationDetectorBase",
-    "InvocationDetectorStreamBase",
+    "AddressingMode",
     "InteractionAddressing",
     "InteractionAddressingEvidence",
     "InteractionEntityKind",
@@ -52,12 +49,17 @@ __all__ = [
     "InteractionRouterBase",
     "InteractionRouterDependencies",
     "RouterProcessorBase",
+    "SemanticAddressingLabel",
+    "SemanticAddressingModelBase",
+    "SemanticAddressingRequest",
+    "SemanticAddressingResult",
+    "SemanticAddressingTranscript",
     "TurnTakingAction",
-    "TurnTakingDecision",
-    "TurnTakingMode",
-    "TurnTakingAudioEvidence",
-    "TurnTakingEvidence",
     "TurnTakingAssessment",
+    "TurnTakingAudioEvidence",
+    "TurnTakingDecision",
+    "TurnTakingEvidence",
+    "TurnTakingMode",
     "TurnTakingModelBase",
     "TurnTakingModelCapabilities",
 ]

@@ -46,7 +46,7 @@
 
 | Plugin / System           | Description                                                                                                                           |     Stage     |
 | :------------------------ | :------------------------------------------------------------------------------------------------------------------------------------ | :-----------: |
-| 🎯 **Interaction Router** | Routes shared realtime input and output processing through VAD, STT, speech synthesis, transcript synchronization, and cancellation, and will gradually take ownership of native turn and response decisions. | ⏳ In Progress |
+| 🎯 **Interaction Router** | Owns realtime speech routing, Semantic Addressing, conversation focus, multimodal turn taking, interruption, speech synthesis, transcript synchronization, and transport-independent interaction decisions. | ⏳ In Progress |
 | 💡 **Reflection**         | Generates metacognitive insights from memory, persona, tool usage, failures, and interaction history.                                 |   🧩 Planned  |
 | 📅 **Planning**           | Generates short-term tasks, long-term plans, reminders, and follow-up actions from memory, reflection, and tool results.              |   🧩 Planned  |
 | ⚙️ **Behavior**           | Controls response style, workflow selection, tool-use policy, and proactive assistance rules.                                         |   🧩 Planned  |
@@ -69,6 +69,9 @@
 | 2026-08 | **Time-based Perception Retention** | Replaced modality-owned fixed stream sizes with configurable retention derived from producer cadence, retention horizon, and safety headroom. |
 | 2026-08 | **Typed Perception Contracts v2** | Stream, observation, event, and media-source kinds now use explicit enums and schemas across the perception runtime. |
 | 2026-08 | **Transport-independent Output Runtime** | Added AlphaAvatar-owned output streams, output timelines, delivery state, interruption semantics, and playback-aware output tracking. |
+| 2026-09 | **Typed Perception Identity & Annotation Events** | Promoted annotations into ordered Perception Events and added typed source, source-generation, segment, entity, and transport-participant references for exact multimodal lineage. |
+| 2026-09 | **Exact Decision-bound Perception Snapshots** | Added historical perception capture at an exact Perception Event sequence so committed turns cannot include observations arriving after the turn decision. |
+
 
 ### 🧭 TODO
 
@@ -174,12 +177,14 @@
 | 2026-08 | **Immutable Turn Snapshots** | Added turn-scoped immutable perception snapshots so retries and tool follow-ups reuse the original input boundary instead of observing later realtime state. |
 | 2026-08 | **Staged Concurrent Lifecycle** | Runtime plugins now start and stop in dependency-safe stages, execute independent lifecycle work concurrently, roll back failed startup, and stop producers before consumers. |
 | 2026-08 | **Runtime Capability Metadata** | Added reusable capability contracts that allow internal runtime components to expose model-facing semantic capabilities independently of concrete plugin implementations. |
+| 2026-09 | **Native User-turn Authority** | Added annotation-driven AvatarTurnController, explicit Router COMMIT / INTERRUPT decisions, and exact immutable turn snapshots independent of LiveKit text turn detection. |
+| 2026-09 | **Router Contract Separation** | Moved reusable interaction-routing contracts under alphaavatar.agents.router, separating public Router schemas and model interfaces from concrete plugin implementations. |
 
 ### 🧭 TODO
 
 | Priority | Task | Stage |
 | :------- | :--- | :---: |
-| 🔸 | Remove remaining `livekit.agents` runtime ownership by migrating native turn commitment, final Assistant delivery, interruption, and session lifecycle into AlphaAvatar-owned runtime and entrypoint adapters. | ⏳ In Progress |
+| 🔸 | Remove remaining `livekit.agents` ownership of final Assistant delivery and session lifecycle by moving response delivery and transport orchestration into AlphaAvatar-owned runtime and entrypoint adapters. | ⏳ In Progress |
 | 🔹 | Complete runtime lifecycle contracts with consistent `aclose`, health checks, explicit resource ownership, worker recovery, and runtime health observability. | 🧩 Planned |
 | 🔹 | Add session replay and audit tooling based on turns, provider traces, memory events, and runtime status events. | 🧩 Planned |
 | 🔹 | Add richer error handling and recovery policies across model calls, tool invocation, plugin initialization, channel adapters, and realtime media streams. | 🧩 Planned |
@@ -254,17 +259,23 @@
 | 2026-07 | **Audio Activity Processing**       | Added AlphaAvatar-native Silero VAD processing with pre-roll, bounded queues, speech boundaries, and publication into `PerceptionRuntime.speech`. |
 | 2026-07 | **Speech Transcription Processing** | Added `openai_segment` and `openai_realtime` STT paths with normalized transcription events and a temporary LiveKit turn-pipeline bridge. |
 | 2026-08 | **Output Processing Runtime**       | Extended the Router into speech synthesis and playback-aware transcript synchronization while preserving transport-independent cancellation and output ordering. |
+| 2026-09 | **Multimodal Turn-Taking Runtime**  | Added revisioned speaker-scoped turn candidates, immutable evidence snapshots, Smart Turn endpoint assessment, deterministic turn policy, and explicit HOLD, COMMIT, PASSIVE, INTERRUPT, and CANCEL decisions. |
+| 2026-09 | **Semantic Addressing**             | Replaced acoustic invocation with transcript-based Semantic Addressing using Avatar identities, recent conversation context, and model-independent local inference contracts. |
+| 2026-09 | **Conversation Focus**              | Added per-speaker conversation focus where explicit AVATAR / NON_AVATAR evidence updates focus and UNKNOWN preserves the existing state. |
+| 2026-09 | **Addressing Fusion**               | Added typed Semantic, Conversation Focus, Visual, and future explicit addressing evidence with conservative conflict resolution and evidence provenance. |
+| 2026-09 | **Full-Duplex Turn Interruption**   | Separated speech-start interruption from endpoint completion so Avatar output can stop immediately while addressing and final turn decisions continue asynchronously. |
+| 2026-09 | **LiveKit Turn Detection Removal**  | Removed LiveKit text turn detection and the legacy acoustic invocation path from AlphaAvatar-owned user-turn decisions. |
 
 ### 🧭 TODO
 
 | Priority | Task | Stage |
 | :------- | :--- | :---: |
-| 🔸 | Move user-turn commitment and response decisions from the temporary LiveKit bridge into the Interaction Router. | ⏳ In Progress |
-| 🔸 | Remove duplicate LiveKit VAD processing and the temporary STT bridge after native turn management is complete. | ⏳ In Progress |
-| 🔸 | Detect whether the current input is directed to the Avatar or should be ignored. | ⏳ In Progress |
-| 🔸 | Route inputs into answer, ignore, clarify, tool workflow, or status-only paths. | ⏳ In Progress |
-| 🔹 | Select early status feedback based on user intention, task type, and interaction mode. | 🧩 Planned |
-| 🔹 | Support multi-user routing for voice, visual, and group conversation scenarios. | 🧩 Planned |
+| 🔸 | Improve Semantic Addressing accuracy, latency, quantization efficiency, and multi-speaker robustness with stronger local models and task-specific training. | ⏳ In Progress |
+| 🔸 | Add concrete visual addressing signals such as gaze, face orientation, gesture, and visual attention on top of the existing visual evidence interface. | ⏳ In Progress |
+| 🔸 | Add visual-only proactive turn producers for help requests, unusual events, and environment-driven interaction. | ⏳ In Progress |
+| 🔹 | Extend multimodal routing to richer multi-user, shared-microphone, overlapping-speech, and group-conversation scenarios. | 🧩 Planned |
+| 🔹 | Route committed interaction into answer, clarify, tool workflow, status-only, or other behavior paths using higher-level intention and Behavior policy. | 🧩 Planned |
+| 🔹 | Select early status feedback based on user intention, task type, interaction mode, and expected latency. | 🧩 Planned |
 
 ---
 
@@ -346,6 +357,7 @@
 | 2026-08 | **Structured Persona Time Semantics** | Persona runtime state and profile fields now keep structured login/update datetimes while user-facing rendering converts them into each participant's current timezone. |
 | 2026-08 | **Persona Capability Metadata** | Profile, speaker-recognition, and face-recognition capabilities are declared at the abstract component level and automatically exposed to the Avatar system prompt. |
 | 2026-08 | **Participant-aware Identity Foundation** | Persona identity resolution updates resolved user identity while preserving stable participant identity and shared runtime references. |
+| 2026-09 | **Speaker Model Packaging & Validation** | Migrated speaker-vector and speaker-attribute ONNX models into dedicated versioned Hugging Face repositories, corrected speaker-attribute preprocessing and gender-label ordering, and separated model caches by purpose. |
 
 ### 🧭 TODO
 
@@ -547,9 +559,10 @@
 | :------ | :---- | :--------------- |
 | Q3-2026 | Perception Runtime Hardening | Add source-aware retention, payload pruning, backpressure, consumer-lag observability, annotation fusion, multi-source alignment, and long-session health policies. |
 | Q3-2026 | ENV Memory Retrieval | Add richer object-, event-, identity-, sound-, location-, and time-aware audiovisual history retrieval. |
-| Q3-2026 | Native Interaction & LiveKit Decoupling | Move turn commitment, response routing, Assistant delivery, interruption, and session ownership into AlphaAvatar and remove remaining temporary `livekit.agents` VAD/STT/turn compatibility paths. |
+| Q3-2026 | Final LiveKit Runtime Decoupling | Move final Assistant delivery and remaining session lifecycle ownership into AlphaAvatar runtime and entrypoint adapters, leaving LiveKit as an RTC transport rather than an Agent runtime authority. |
 | Q3-2026 | Notion MCP Integration | Use Notion as an external long-term workspace for notes, memory summaries, plans, and user knowledge. |
 | Q3-2026 | RAG Workspace Evolution | Add data-source scoped retrieval, metadata-aware indexing, temp-to-real RAG migration policy, and skill retrieval. |
+| Q3-2026 | Semantic & Multimodal Interaction | Improve Semantic Addressing models, add visual addressing signals, strengthen multi-speaker conversation focus, and develop visual-only proactive turn producers. |
 | Q4-2026 | Reflection Plugin Alpha | Build autonomous self-analysis from memory, persona, tool results, status traces, and repeated user interaction patterns. |
 | Q4-2026 | Reminder & Calendar Foundation | Enable reminders, follow-ups, recurring plans, and schedule-aware assistance through Calendar / Todoist integrations. |
 | Q4-2026 | Proactive Assistant Loop | Combine perception, memory, persona, interaction routing, reflection, planning, tools, and status feedback into proactive personal assistant workflows. |

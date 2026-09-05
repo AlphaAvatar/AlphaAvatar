@@ -51,16 +51,6 @@ class SpeakerPlugin(AvatarPlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
 
-    def download_files(self):
-        from .model_files import SPEAKER_MODEL_CONFIG, download_from_hf_hub
-
-        for model_name in SPEAKER_MODEL_CONFIG.keys():
-            download_from_hf_hub(
-                SPEAKER_MODEL_CONFIG[model_name].hf_model,
-                SPEAKER_MODEL_CONFIG[model_name].file_name,
-                revision=SPEAKER_MODEL_CONFIG[model_name].revision,
-            )
-
     def get_plugin(self, init_config: dict, *args, **kwargs):
         from .speaker_cache import SpeakerCache
         from .speaker_stream import SpeakerStreamWrapper

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from alphaavatar.agents.interaction import (
+from alphaavatar.agents.router import (
     AddressingMode,
     InteractionAddressing,
     InteractionAddressingEvidence,
@@ -210,26 +210,22 @@ class DefaultTurnTakingPolicy:
             assessment.addressing_evidence_observation_ids if assessment is not None else ()
         )
 
-        if evidence.turn_mode == TurnTakingMode.AUDIO_ONLY:
+        if assessment is not None and assessment.addressees:
+            addressees = assessment.addressees
+            addressing_mode = assessment.addressing_mode
+
+            if self._addresses_avatar(addressees):
+                action = TurnTakingAction.COMMIT
+            elif addressing_mode == AddressingMode.GROUP and self._respond_to_group:
+                action = TurnTakingAction.COMMIT
+            else:
+                action = TurnTakingAction.PASSIVE
+
+        elif evidence.turn_mode == TurnTakingMode.AUDIO_ONLY:
             addressees = (self._avatar(),)
             addressing_mode = AddressingMode.DIRECT
             action = TurnTakingAction.COMMIT
-        elif assessment is not None and self._addresses_avatar(assessment.addressees):
-            addressees = assessment.addressees
-            addressing_mode = assessment.addressing_mode
-            action = TurnTakingAction.COMMIT
-        elif (
-            assessment is not None
-            and assessment.addressing_mode == AddressingMode.GROUP
-            and self._respond_to_group
-        ):
-            addressees = assessment.addressees
-            addressing_mode = assessment.addressing_mode
-            action = TurnTakingAction.COMMIT
-        elif assessment is not None and assessment.addressees:
-            addressees = assessment.addressees
-            addressing_mode = assessment.addressing_mode
-            action = TurnTakingAction.PASSIVE
+
         else:
             addressees = ()
             addressing_mode = AddressingMode.UNKNOWN
@@ -241,7 +237,9 @@ class DefaultTurnTakingPolicy:
             confidence=0.0,
             addressees=addressees,
             addressing_mode=addressing_mode,
-            addressing_confidence=0.0,
+            addressing_confidence=(
+                assessment.addressing_confidence if assessment is not None else None
+            ),
             addressing_evidence_ids=addressing_ids,
             reason=reason,
         )

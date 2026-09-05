@@ -19,7 +19,7 @@ import asyncio
 import re
 from dataclasses import dataclass, field
 
-from alphaavatar.agents.interaction import RouterProcessorBase
+from alphaavatar.agents.router import RouterProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.core.output import (
     OutputControl,

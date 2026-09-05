@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .addressing import InvocationAddressingProcessor, VisualAddressingProcessor
+from .addressing import SemanticAddressingProcessor, VisualAddressingProcessor
 from .audio_activity import AudioActivityProcessor
 from .speech_synthesis import SpeechSynthesisProcessor
 from .speech_transcription import SpeechTranscriptionProcessor
@@ -20,8 +20,8 @@ from .turn_taking import MultimodalTurnTakingProcessor
 
 __all__ = [
     "AudioActivityProcessor",
-    "InvocationAddressingProcessor",
     "MultimodalTurnTakingProcessor",
+    "SemanticAddressingProcessor",
     "SpeechSynthesisProcessor",
     "SpeechTranscriptionProcessor",
     "TranscriptSynchronizationProcessor",

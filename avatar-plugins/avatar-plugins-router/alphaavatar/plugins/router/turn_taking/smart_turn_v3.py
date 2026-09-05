@@ -17,7 +17,7 @@ import asyncio
 
 import numpy as np
 
-from alphaavatar.agents.interaction import (
+from alphaavatar.agents.router import (
     AddressingMode,
     TurnTakingAssessment,
     TurnTakingEvidence,

@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,4 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-__version__ = "0.6.7"
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+
+from ..schema import SemanticAddressingRequest, SemanticAddressingResult
+
+
+class SemanticAddressingModelBase(ABC):
+    @property
+    @abstractmethod
+    def name(self) -> str: ...
+
+    @abstractmethod
+    async def assess(self, request: SemanticAddressingRequest) -> SemanticAddressingResult:
+        """Assess whether the current speaker is addressing the Avatar."""

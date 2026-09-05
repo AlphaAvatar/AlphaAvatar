@@ -22,7 +22,7 @@ from alphaavatar.agents.avatar.voice import (
     TranscriptionEvent,
     TranscriptionEventType,
 )
-from alphaavatar.agents.interaction import RouterProcessorBase
+from alphaavatar.agents.router import RouterProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.core.env import (
     EnvObservation,

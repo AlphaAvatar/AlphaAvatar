@@ -11,18 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .turn_taking import (
-    AddressingEvidenceKind,
-    AddressingMode,
-    InteractionEntityKind,
-    TurnTakingAction,
-    TurnTakingMode,
-)
+from enum import StrEnum
 
-__all__ = [
-    "AddressingEvidenceKind",
-    "AddressingMode",
-    "InteractionEntityKind",
-    "TurnTakingAction",
-    "TurnTakingMode",
-]
+
+class SemanticAddressingLabel(StrEnum):
+    AVATAR = "avatar"
+    NON_AVATAR = "non_avatar"
+    UNKNOWN = "unknown"

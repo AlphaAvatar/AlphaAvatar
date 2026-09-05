@@ -13,7 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
-from alphaavatar.agents.interaction import TurnTakingModelBase
+from alphaavatar.agents.router import TurnTakingModelBase
 from alphaavatar.agents.runtime.inference import InferenceExecutor
 
 from .smart_turn_v3 import SmartTurnV3Model

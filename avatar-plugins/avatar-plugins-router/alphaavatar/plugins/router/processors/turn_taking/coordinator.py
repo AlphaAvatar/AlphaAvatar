@@ -18,7 +18,7 @@ from collections.abc import Hashable
 from dataclasses import replace
 from typing import TypeVar
 
-from alphaavatar.agents.interaction import (
+from alphaavatar.agents.router import (
     InteractionAddressingEvidence,
     TurnTakingAction,
     TurnTakingAssessment,
@@ -67,6 +67,7 @@ class TurnTakingCoordinator:
         transcript_wait_sec: float,
         max_hold_sec: float,
         unsegmented_alignment_sec: float,
+        required_addressing_sources: tuple[str, ...] = (),
     ) -> None:
         if addressing_wait_sec <= 0:
             raise ValueError("addressing_wait_sec must be positive")
@@ -87,6 +88,7 @@ class TurnTakingCoordinator:
         self._transcript_wait_sec = transcript_wait_sec
         self._max_hold_sec = max_hold_sec
         self._unsegmented_alignment_ns = int(unsegmented_alignment_sec * 1_000_000_000)
+        self._required_addressing_sources = frozenset(required_addressing_sources)
 
         self._candidates: dict[SpeakerKey, TurnCandidate] = {}
         self._segment_owners: dict[PerceptionSegmentRef, SpeakerKey] = {}
@@ -384,6 +386,31 @@ class TurnTakingCoordinator:
                 return
 
             candidate = self._candidates[key]
+            if not self._addressing_ready(candidate):
+                self._publish_result(
+                    candidate,
+                    self._operational_result(
+                        evidence,
+                        action=TurnTakingAction.HOLD,
+                        reason="awaiting_addressing",
+                    ),
+                )
+
+                await asyncio.sleep(self._addressing_wait_sec)
+                if not self._is_current(key, evidence):
+                    return
+
+                candidate = self._candidates[key]
+                if not self._addressing_ready(candidate):
+                    result = self._policy.resolve_timeout(
+                        evidence=evidence,
+                        assessment=assessment,
+                        reason="addressing_timeout",
+                    )
+                    self._publish_result(candidate, result)
+                    self._drop_candidate(key)
+                    return
+
             assessment = self._fusion.apply(
                 assessment=assessment,
                 records=candidate.addressing_evidence.values(),
@@ -441,6 +468,20 @@ class TurnTakingCoordinator:
 
     """Addressing Helper"""
 
+    def _addressing_ready(self, candidate: TurnCandidate) -> bool:
+        if not self._required_addressing_sources:
+            return True
+        if not candidate.segments:
+            return False
+
+        latest_segment = candidate.segments[-1]
+
+        return all(
+            (record := candidate.addressing_evidence.get(source)) is not None
+            and record.target_segment == latest_segment
+            for source in self._required_addressing_sources
+        )
+
     def _current_addressing(
         self,
         candidate: TurnCandidate,
@@ -481,12 +522,16 @@ class TurnTakingCoordinator:
             )
             return
 
+        was_ready = self._addressing_ready(candidate)
         previous = self._current_addressing(candidate)
+
         if not candidate.update_addressing_evidence(record):
             return
 
+        is_ready = self._addressing_ready(candidate)
         current = self._current_addressing(candidate)
-        if self._fusion.same_target(previous, current):
+
+        if was_ready == is_ready and self._fusion.same_target(previous, current):
             return
 
         candidate.mark_addressing_changed()

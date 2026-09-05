@@ -80,31 +80,21 @@ router:
     addressing:
       addressing_wait_sec: 0.5
 
-      fusion:
-        min_confidence: 0.6
-
-      invocation:
+      semantic:
         enabled: true
-        provider: sherpa_onnx
+        avatar_identities:
+          - AlphaAvatar
+          - Alpha
+        history_turns: 2
 
-        evidence_confidence: 0.9
-        early_window_sec: 2.0
-        late_confidence_scale: 0.6
+        model:
+          name: qwen3_0_6b_q8_0
 
-        chunk_duration_ms: 160
-        max_pending_chunks: 8
-        tail_padding_sec: 0.66
+      visual:
+        enabled: true
 
-        phrases:
-          - phrase_id: alpha_avatar
-            text: ALPHA AVATAR
-            boosting_score: 1.0
-            trigger_threshold: 0.25
-
-          - phrase_id: hey_alpha_avatar
-            text: HEY ALPHA AVATAR
-            boosting_score: 1.0
-            trigger_threshold: 0.25
+      fusion:
+        conflict_margin: 0.1
 
     turn_taking:
       enabled: true

@@ -19,7 +19,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
-from alphaavatar.agents.interaction import (
+from alphaavatar.agents.router import (
     InteractionRouterBase,
     InteractionRouterDependencies,
 )

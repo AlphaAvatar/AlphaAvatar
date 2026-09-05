@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from alphaavatar.agents.interaction import InteractionRouterBase, RouterProcessorBase
+from alphaavatar.agents.router import InteractionRouterBase, RouterProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
 
 from .log import logger

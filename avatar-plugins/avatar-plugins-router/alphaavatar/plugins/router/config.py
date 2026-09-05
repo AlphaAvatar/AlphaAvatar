@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -18,8 +19,6 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-
-from alphaavatar.agents.interaction import InvocationPhrase
 
 """
 Addressing Config
@@ -29,7 +28,6 @@ Addressing Config
 class AddressingFusionConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    min_confidence: float = Field(default=0.6, ge=0.0, le=1.0)
     conflict_margin: float = Field(default=0.1, ge=0.0, le=1.0)
 
 
@@ -59,56 +57,27 @@ class VisualAddressingConfig(BaseModel):
         return self
 
 
-class InvocationPhraseConfig(BaseModel):
+class SemanticAddressingModelConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    phrase_id: str
-    text: str
-    boosting_score: float = Field(default=1.0, gt=0.0)
-    trigger_threshold: float = Field(default=0.25, ge=0.0, le=1.0)
+    name: str = "qwen3_0_6b_q8_0"
 
-    @field_validator("phrase_id")
+
+class SemanticAddressingConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    avatar_identities: tuple[str, ...] = ("AlphaAvatar",)
+    history_turns: int = Field(default=2, ge=0)
+    model: SemanticAddressingModelConfig = Field(default_factory=SemanticAddressingModelConfig)
+
+    @field_validator("avatar_identities")
     @classmethod
-    def validate_phrase_id(cls, value: str) -> str:
-        if not value or any(character.isspace() or character in {"/", "@"} for character in value):
-            raise ValueError("phrase_id cannot be empty or contain whitespace, '/' or '@'")
-        return value
-
-    def build(self) -> InvocationPhrase:
-        return InvocationPhrase(
-            phrase_id=self.phrase_id,
-            text=self.text,
-            boosting_score=self.boosting_score,
-            trigger_threshold=self.trigger_threshold,
-        )
-
-
-class InvocationAddressingConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = False
-    provider: str = "sherpa_onnx"
-
-    evidence_confidence: float = Field(default=0.9, ge=0.0, le=1.0)
-    early_window_sec: float = Field(default=2.0, ge=0.0)
-    late_confidence_scale: float = Field(default=0.6, ge=0.0, le=1.0)
-
-    chunk_duration_ms: int = Field(default=160, ge=20)
-    max_pending_chunks: int = Field(default=8, gt=0)
-    tail_padding_sec: float = Field(default=0.66, ge=0.0)
-
-    phrases: tuple[InvocationPhraseConfig, ...] = ()
-
-    @model_validator(mode="after")
-    def validate_phrases(self) -> "InvocationAddressingConfig":
-        if self.enabled and not self.phrases:
-            raise ValueError("Invocation addressing requires at least one phrase")
-
-        phrase_ids = [phrase.phrase_id for phrase in self.phrases]
-        if len(phrase_ids) != len(set(phrase_ids)):
-            raise ValueError("Invocation phrase_id values must be unique")
-
-        return self
+    def validate_avatar_identities(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        values = tuple(dict.fromkeys(value.strip() for value in values if value.strip()))
+        if not values:
+            raise ValueError("Semantic addressing requires at least one Avatar identity")
+        return values
 
 
 class AddressingConfig(BaseModel):
@@ -116,8 +85,8 @@ class AddressingConfig(BaseModel):
 
     addressing_wait_sec: float = Field(default=0.5, gt=0.0)
 
+    semantic: SemanticAddressingConfig = Field(default_factory=SemanticAddressingConfig)
     visual: VisualAddressingConfig = Field(default_factory=VisualAddressingConfig)
-    invocation: InvocationAddressingConfig = Field(default_factory=InvocationAddressingConfig)
     fusion: AddressingFusionConfig = Field(default_factory=AddressingFusionConfig)
 
 

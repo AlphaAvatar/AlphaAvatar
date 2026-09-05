@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 
-from alphaavatar.agents.interaction import (
+from alphaavatar.agents.router import (
     RouterProcessorBase,
     TurnTakingModelBase,
 )
@@ -44,6 +44,7 @@ class MultimodalTurnTakingProcessor(RouterProcessorBase):
         transcript_wait_sec: float = 0.75,
         max_hold_sec: float = 1.2,
         unsegmented_alignment_sec: float = 0.75,
+        required_addressing_sources: tuple[str, ...] = (),
     ) -> None:
         super().__init__(runtime=runtime)
 
@@ -66,6 +67,7 @@ class MultimodalTurnTakingProcessor(RouterProcessorBase):
             transcript_wait_sec=transcript_wait_sec,
             max_hold_sec=max_hold_sec,
             unsegmented_alignment_sec=unsegmented_alignment_sec,
+            required_addressing_sources=required_addressing_sources,
         )
 
         self._tasks: tuple[asyncio.Task[None], ...] = ()

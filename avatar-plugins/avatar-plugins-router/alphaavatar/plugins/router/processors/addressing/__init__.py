@@ -11,7 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .invocation import InvocationAddressingProcessor
+from .semantic import SemanticAddressingProcessor
 from .visual import VisualAddressingProcessor
 
-__all__ = ["InvocationAddressingProcessor", "VisualAddressingProcessor"]
+__all__ = [
+    "SemanticAddressingProcessor",
+    "VisualAddressingProcessor",
+]

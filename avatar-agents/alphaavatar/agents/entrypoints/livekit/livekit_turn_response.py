@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from alphaavatar.agents.avatar.turn_controller import AvatarTurnSink
-from alphaavatar.agents.interaction import TurnTakingDecision
+from alphaavatar.agents.router import TurnTakingDecision
 from alphaavatar.agents.runtime import TurnSnapshot
 from livekit.agents import AgentSession, llm
 

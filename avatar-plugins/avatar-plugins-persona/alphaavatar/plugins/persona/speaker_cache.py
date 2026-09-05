@@ -27,7 +27,7 @@ class SpeakerCache(SpeakerCacheBase):
         self._logits_gender: np.ndarray | None = None  # shape [1,3]
         self._alpha_age = float(alpha_age)
         self._alpha_gender = float(alpha_gender)
-        self._gender_labels = ["female", "male", "child"]  # consistent with model output order
+        self._gender_labels = ["child", "female", "male"]
 
     @staticmethod
     def _ema(prev: np.ndarray | None, new: np.ndarray, alpha: float) -> np.ndarray:
@@ -87,7 +87,7 @@ class SpeakerCache(SpeakerCacheBase):
                 {
                     "hidden_states": np.ndarray [1, 1024],  # pooled transformer layer
                     "logits_age":    np.ndarray [1, 1],     # normalized 0–1 age score
-                    "logits_gender": np.ndarray [1, 3],     # logits for [female, male, child]
+                    "logits_gender": np.ndarray [1, 3],     # logits for [child, female, male]
                 }
 
         Process:

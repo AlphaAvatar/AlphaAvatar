@@ -16,7 +16,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import replace
 
-from alphaavatar.agents.interaction import (
+from alphaavatar.agents.router import (
+    AddressingEvidenceKind,
     AddressingMode,
     InteractionAddressingEvidence,
     InteractionEntityRef,
@@ -47,18 +48,9 @@ def _target_key(evidence: InteractionAddressingEvidence) -> _TargetKey:
 
 
 class DefaultAddressingFusion:
-    def __init__(
-        self,
-        *,
-        min_confidence: float = 0.6,
-        conflict_margin: float = 0.1,
-    ) -> None:
-        if not 0.0 <= min_confidence <= 1.0:
-            raise ValueError("min_confidence must be between 0 and 1")
+    def __init__(self, *, conflict_margin: float = 0.1) -> None:
         if not 0.0 <= conflict_margin <= 1.0:
             raise ValueError("conflict_margin must be between 0 and 1")
-
-        self._min_confidence = min_confidence
         self._conflict_margin = conflict_margin
 
     @staticmethod
@@ -68,29 +60,53 @@ class DefaultAddressingFusion:
     ) -> bool:
         if left is None or right is None:
             return left is right
-
         return _target_key(left) == _target_key(right)
 
     def resolve(
         self,
         records: Iterable[AddressingEvidenceRecord],
     ) -> InteractionAddressingEvidence | None:
-        candidates = sorted(
-            (record for record in records if record.evidence.confidence >= self._min_confidence),
-            key=lambda record: (record.evidence.confidence, record.sequence),
-            reverse=True,
-        )
+        active = [record for record in records if not record.evidence.abstains]
+        primary = [
+            record
+            for record in active
+            if record.evidence.evidence_kind != AddressingEvidenceKind.CONVERSATION_FOCUS
+        ]
+        candidates = primary or active
+
         if not candidates:
             return None
 
+        candidates.sort(
+            key=lambda record: (record.evidence.confidence, record.sequence),
+            reverse=True,
+        )
+
         best = candidates[0]
         best_key = _target_key(best.evidence)
-        conflict = any(
+
+        if any(
             _target_key(record.evidence) != best_key
             and record.evidence.confidence >= best.evidence.confidence - self._conflict_margin
             for record in candidates[1:]
+        ):
+            return None
+
+        supporting = sorted(
+            (record for record in candidates if _target_key(record.evidence) == best_key),
+            key=lambda record: record.sequence,
         )
-        return None if conflict else best.evidence
+
+        return replace(
+            best.evidence,
+            evidence_observation_ids=tuple(
+                dict.fromkeys(
+                    observation_id
+                    for record in supporting
+                    for observation_id in record.evidence.evidence_observation_ids
+                )
+            ),
+        )
 
     def apply(
         self,
@@ -114,5 +130,4 @@ class DefaultAddressingFusion:
             addressing_mode=evidence.addressing_mode,
             addressing_confidence=evidence.confidence,
             addressing_evidence_observation_ids=evidence.evidence_observation_ids,
-            confidence=min(assessment.confidence, evidence.confidence),
         )

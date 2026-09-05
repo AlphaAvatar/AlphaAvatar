@@ -17,7 +17,6 @@ import os
 from contextlib import ExitStack
 
 import numpy as np
-from huggingface_hub import errors
 from livekit.agents.utils import hw
 
 from alphaavatar.agents.runtime.inference import InferenceRunner
@@ -41,53 +40,40 @@ class SpeakerVectorRunner(InferenceRunner):
         """Initialize the ONNX Runtime session with dynamic provider selection."""
         import onnxruntime as ort
 
-        try:
-            local_path_onnx = download_from_hf_hub(
-                SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].hf_model,
-                SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].file_name,
-                revision=SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].revision,
-                local_files_only=True,
+        local_path_onnx = download_from_hf_hub(
+            SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].hf_model,
+            SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].file_name,
+            revision=SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].revision,
+            cache_dir=SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].cache_dir,
+            local_files_only=False,
+        )
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = max(1, min(math.ceil(hw.get_cpu_monitor().cpu_count()) // 2, 4))
+        opts.inter_op_num_threads = 1
+        opts.add_session_config_entry("session.dynamic_block_base", "4")
+
+        available = ort.get_available_providers()
+        if os.getenv("FORCE_CPU", "0") == "1" and "CPUExecutionProvider" in available:
+            logger.info("[SpeakerVectorRunner] Running on CPU")
+            self._session = ort.InferenceSession(
+                local_path_onnx, providers=["CPUExecutionProvider"], sess_options=opts
             )
-            opts = ort.SessionOptions()
-            opts.intra_op_num_threads = max(
-                1, min(math.ceil(hw.get_cpu_monitor().cpu_count()) // 2, 4)
+        elif "CUDAExecutionProvider" in available:
+            logger.info("[SpeakerVectorRunner] Running on GPU (CUDA)")
+            self._session = ort.InferenceSession(
+                local_path_onnx, providers=["CUDAExecutionProvider"], sess_options=opts
             )
-            opts.inter_op_num_threads = 1
-            opts.add_session_config_entry("session.dynamic_block_base", "4")
+        else:
+            logger.info("[SpeakerVectorRunner] Fallback: default provider")
+            self._session = ort.InferenceSession(local_path_onnx, sess_options=opts)
 
-            available = ort.get_available_providers()
-            if os.getenv("FORCE_CPU", "0") == "1" and "CPUExecutionProvider" in available:
-                logger.info("[SpeakerVectorRunner] Running on CPU")
-                self._session = ort.InferenceSession(
-                    local_path_onnx, providers=["CPUExecutionProvider"], sess_options=opts
-                )
-            elif "CUDAExecutionProvider" in available:
-                logger.info("[SpeakerVectorRunner] Running on GPU (CUDA)")
-                self._session = ort.InferenceSession(
-                    local_path_onnx, providers=["CUDAExecutionProvider"], sess_options=opts
-                )
-            else:
-                logger.info("[SpeakerVectorRunner] Fallback: default provider")
-                self._session = ort.InferenceSession(local_path_onnx, sess_options=opts)
+        self._feature_extractor = FBank(80, sample_rate=16000, mean_nor=True)
 
-            self._feature_extractor = FBank(80, sample_rate=16000, mean_nor=True)
-
-            # Cache input/output names
-            self._input_names = [i.name for i in self._session.get_inputs()]
-            self._output_names = [o.name for o in self._session.get_outputs()]
-            logger.info(f"[SpeakerVectorRunner] Inputs: {self._input_names}")
-            logger.info(f"[SpeakerVectorRunner] Outputs: {self._output_names}")
-
-        except (errors.LocalEntryNotFoundError, OSError):
-            logger.error(
-                f"[SpeakerVectorRunner] Could not find model {SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].hf_model} with revision {SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].revision}. "
-                "Make sure you have downloaded the model before running the agent. "
-                "Use `python3 your_agent.py download-files` to download the models."
-            )
-            raise RuntimeError(
-                "[SpeakerVectorRunner] alphaavatar-plugins-persona initialization failed. "
-                f"Could not find model {SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].hf_model} with revision {SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].revision}."
-            ) from None
+        # Cache input/output names
+        self._input_names = [i.name for i in self._session.get_inputs()]
+        self._output_names = [o.name for o in self._session.get_outputs()]
+        logger.info(f"[SpeakerVectorRunner] Inputs: {self._input_names}")
+        logger.info(f"[SpeakerVectorRunner] Outputs: {self._output_names}")
 
     def run(self, data: bytes) -> bytes:
         wav_data = np.frombuffer(data, dtype=np.float32)
