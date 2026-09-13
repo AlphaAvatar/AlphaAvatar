@@ -215,9 +215,16 @@ memory:
 # ------------------------------------------------------------
 
 persona:
-  maximum_retrieval_times: 3
+  plugin: default
+
+  vdb_config:
+    profiler_collection_name: persona_profiler
+    speaker_collection_name: persona_speaker
+    face_collection_name: persona_face
+    embedding: *openai_embedding
 
   profiler:
+    enabled: true
     plugin: default
 
     init_config:
@@ -234,18 +241,14 @@ persona:
               temperature: 0.1
 
   speaker:
+    enabled: true
     plugin: default
     init_config: {}
 
   face:
+    enabled: true
     plugin: default
     init_config: {}
-
-  vdb_config:
-    profiler_collection_name: persona_profiler
-    speaker_collection_name: persona_speaker
-    face_collection_name: persona_face
-    embedding: *openai_embedding
 
 
 # ============================================================

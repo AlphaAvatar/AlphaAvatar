@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,9 +21,9 @@ from livekit.agents.utils import hw
 
 from alphaavatar.agents.runtime.inference import InferenceRunner
 
-from ..log import logger
-from ..model_files import SPEAKER_MODEL_CONFIG, SpeakerModelType, download_from_hf_hub
-from ..utils.fbank import FBank
+from ...log import logger
+from ...model_files import SPEAKER_MODEL_CONFIG, SpeakerModelType, download_from_hf_hub
+from .fbank import FBank
 
 _resource_files = ExitStack()
 atexit.register(_resource_files.close)

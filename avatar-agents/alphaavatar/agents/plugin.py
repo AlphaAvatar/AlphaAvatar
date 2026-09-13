@@ -35,7 +35,7 @@ class AvatarModule(str, Enum):
     VOICE_TTS = "voice_tts"
 
     # Interaction router modules
-    INTERACTION_ROUTER = "interaction_router"
+    ROUTER = "router"
 
     # Status modules
     STATUS = "status"

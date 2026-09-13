@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from datetime import datetime
-from enum import StrEnum
 from typing import Any, get_args, get_origin
 
 import numpy as np
@@ -20,13 +19,8 @@ from pydantic import BaseModel, ConfigDict, field_serializer, field_validator
 
 from alphaavatar.agents.utils import NumpyOP
 
+from ..enums import ProfileItemSource
 from .user_state import UserRuntimeState
-
-
-class ProfileItemSource(StrEnum):
-    chat = "chat"
-    speech = "speech"
-    face = "face"
 
 
 class ProfileItemView(BaseModel):

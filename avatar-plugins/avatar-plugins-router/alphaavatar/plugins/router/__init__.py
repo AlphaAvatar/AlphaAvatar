@@ -171,8 +171,8 @@ class DefaultRouterPlugin(AvatarPlugin):
                 )
             )
 
-            if semantic_enabled:
-                processors.extend(self._create_semantic_addressing_processors(config, runtime))
+        if semantic_enabled:
+            processors.extend(self._create_semantic_addressing_processors(config, runtime))
 
         required_addressing_sources = (
             (SemanticAddressingProcessor.SEMANTIC_SOURCE,) if semantic_enabled else ()
@@ -209,7 +209,7 @@ class DefaultRouterPlugin(AvatarPlugin):
 
 # Plugin register
 AvatarPlugin.register_avatar_plugin(
-    AvatarModule.INTERACTION_ROUTER,
+    AvatarModule.ROUTER,
     "default",
     DefaultRouterPlugin(),
 )

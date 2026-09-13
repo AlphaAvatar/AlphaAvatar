@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 # limitations under the License.
 from pydantic import Field
 
-from alphaavatar.agents.persona import DetailsBase, ProfileItemView
+from alphaavatar.agents.persona.schemas import DetailsBase, ProfileItemView
 
 
 class UserProfileDetails(DetailsBase):

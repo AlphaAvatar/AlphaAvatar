@@ -15,14 +15,14 @@ from datetime import datetime
 
 import numpy as np
 
-from alphaavatar.agents.persona import FaceCacheBase, ProfileItemSource, ProfileItemView
+from alphaavatar.agents.persona.enums import ProfileItemSource
+from alphaavatar.agents.persona.schemas import ProfileItemView
 
-from .profiler_details import UserProfileDetails
+from ...profile import UserProfileDetails
 
 
-class FaceCache(FaceCacheBase):
+class FaceCache:
     def __init__(self, *, alpha_age: float = 0.2, alpha_gender: float = 0.2):
-        super().__init__()
         self._age: float | None = None
         self._gender_probs: dict[str, float] = {}
         self._alpha_age = float(alpha_age)

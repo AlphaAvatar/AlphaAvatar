@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,33 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .base import PersonaBase
-from .cache import FaceCacheBase, PersonaCache, SpeakerCacheBase
-from .enum.runner_op import VectorRunnerOP
-from .face import FaceStreamBase
-from .profiler import ProfilerBase
-from .schema import (
-    DetailsBase,
-    ProfileItemSource,
-    ProfileItemView,
-    UserProfile,
-    UserRuntimeState,
-)
-from .speaker import SpeakerStreamBase
+from .cache import PersonaCache
+from .face import FaceProcessorBase
+from .processor import PersonaProcessorBase
+from .profiler import ProfilerProcessorBase
+from .speaker import SpeakerProcessorBase
 from .template import PersonaPluginsTemplate
 
 __all__ = [
+    "FaceProcessorBase",
     "PersonaBase",
     "PersonaCache",
-    "SpeakerCacheBase",
-    "FaceCacheBase",
-    "VectorRunnerOP",
-    "ProfilerBase",
-    "DetailsBase",
-    "ProfileItemSource",
-    "ProfileItemView",
-    "UserProfile",
-    "UserRuntimeState",
-    "SpeakerStreamBase",
-    "FaceStreamBase",
     "PersonaPluginsTemplate",
+    "PersonaProcessorBase",
+    "ProfilerProcessorBase",
+    "SpeakerProcessorBase",
 ]

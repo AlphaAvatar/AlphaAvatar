@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,191 +13,74 @@
 # limitations under the License.
 from __future__ import annotations
 
-from abc import abstractmethod
-from datetime import datetime
-from typing import Any
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
-from livekit.agents.llm import ChatItem, ChatMessage
+if TYPE_CHECKING:
+    import numpy as np
+    from livekit.agents.llm import ChatItem
 
-from alphaavatar.agents.constants import FACE_BETA, SPEAKER_BETA
-from alphaavatar.agents.runtime.session_runtime import ParticipantInfo
-from alphaavatar.agents.utils import NumpyOP
-from alphaavatar.agents.utils.time import application_now
+    from alphaavatar.agents.runtime.session_runtime import ParticipantInfo
 
-from .schema.user_profile import DetailsBase, UserProfile, UserRuntimeState
+    from .schemas import DetailsBase, UserProfile, UserRuntimeState
 
 
-class PersonaCache:
-    def __init__(
-        self,
-        *,
-        participant: ParticipantInfo,
-        user_profile: UserProfile,
-        speaker_cache: SpeakerCacheBase,
-        face_cache: FaceCacheBase,
-        current_retrieval_times: int = 0,
-    ):
-        self._participant = participant
-
-        self._user_profile = user_profile
-        self._speaker_cache = speaker_cache
-        self._face_cache = face_cache
-        self._current_retrieval_times = current_retrieval_times
-
-        self._messages: list[ChatItem] = []
+class PersonaCache(ABC):
+    @property
+    @abstractmethod
+    def messages(self) -> list[ChatItem]: ...
 
     @property
-    def retrieval_times(self) -> int:
-        return self._current_retrieval_times
-
-    @property
-    def messages(self) -> list[ChatItem]:
-        return self._messages
-
-    @property
-    def participant(self) -> ParticipantInfo:
-        return self._participant
-
-    @property
-    def profile(self) -> UserProfile | None:
-        if self._user_profile is None or self._user_profile.is_empty:
-            return None
-
-        if (
-            self._user_profile.details is not None
-            or self._user_profile.runtime_state is not None
-            or self._user_profile.speaker_vector is not None
-            or self._user_profile.face_vector is not None
-        ):
-            return self._user_profile
-
-        return None
-
-    @property
-    def profile_details(self) -> DetailsBase | None:
-        return self._user_profile.details
-
-    @property
-    def profile_details_dump_value(self) -> dict:
-        if self.profile_details:
-            json_dump = self.profile_details.model_dump()
-            json_dump_value = {}
-            for key in json_dump:
-                val = json_dump[key]
-                if val is None:
-                    continue
-
-                if isinstance(val, dict):
-                    json_dump_value[key] = val["value"]
-                elif isinstance(val, list):
-                    json_dump_value[key] = [x["value"] for x in val if isinstance(x, dict)]
-
-            return json_dump_value
-        else:
-            return {}
-
-    @property
-    def runtime_state(self) -> UserRuntimeState | None:
-        return self._user_profile.runtime_state
-
-    @property
-    def speaker_vector(self) -> np.ndarray | None:
-        return self._user_profile.speaker_vector
-
-    @property
-    def face_vector(self) -> np.ndarray | None:
-        return self._user_profile.face_vector
+    @abstractmethod
+    def participant(self) -> ParticipantInfo: ...
 
     @participant.setter
-    def participant(self, participant: ParticipantInfo):
-        self._participant = participant
+    @abstractmethod
+    def participant(self, participant: ParticipantInfo) -> None: ...
+
+    @property
+    @abstractmethod
+    def profile(self) -> UserProfile | None: ...
 
     @profile.setter
-    def profile(self, profile: UserProfile):
-        self._user_profile = profile
+    @abstractmethod
+    def profile(self, profile: UserProfile) -> None: ...
+
+    @property
+    @abstractmethod
+    def profile_details(self) -> DetailsBase | None: ...
 
     @profile_details.setter
-    def profile_details(self, profile_details: DetailsBase | None):
-        self._user_profile.details = profile_details
+    @abstractmethod
+    def profile_details(self, profile_details: DetailsBase | None) -> None: ...
+
+    @property
+    @abstractmethod
+    def profile_details_dump_value(self) -> dict[str, Any]: ...
+
+    @property
+    @abstractmethod
+    def runtime_state(self) -> UserRuntimeState | None: ...
 
     @runtime_state.setter
-    def runtime_state(self, runtime_state: UserRuntimeState):
-        self._user_profile.runtime_state = runtime_state
+    @abstractmethod
+    def runtime_state(self, runtime_state: UserRuntimeState) -> None: ...
+
+    @property
+    @abstractmethod
+    def speaker_vector(self) -> np.ndarray | None: ...
 
     @speaker_vector.setter
-    def speaker_vector(self, vector: np.ndarray):
-        if self._user_profile is None:
-            self._user_profile = UserProfile()
+    @abstractmethod
+    def speaker_vector(self, vector: np.ndarray) -> None: ...
 
-        current = getattr(self._user_profile, "speaker_vector", None)
-        if current is None:
-            self._user_profile.speaker_vector = vector
-        else:
-            if current.shape != vector.shape:
-                raise ValueError(
-                    f"speaker_vector shape mismatch: {current.shape} vs {vector.shape}"
-                )
-            self._user_profile.speaker_vector = NumpyOP.l2_normalize(
-                SPEAKER_BETA * current + (1 - SPEAKER_BETA) * vector
-            )
+    @property
+    @abstractmethod
+    def face_vector(self) -> np.ndarray | None: ...
 
     @face_vector.setter
-    def face_vector(self, vector: np.ndarray):
-        if self._user_profile is None:
-            self._user_profile = UserProfile()
-
-        current = getattr(self._user_profile, "face_vector", None)
-        if current is None:
-            self._user_profile.face_vector = NumpyOP.l2_normalize(vector)
-        else:
-            if current.shape != vector.shape:
-                raise ValueError(f"face_vector shape mismatch: {current.shape} vs {vector.shape}")
-
-            self._user_profile.face_vector = NumpyOP.l2_normalize(
-                FACE_BETA * current + (1 - FACE_BETA) * vector
-            )
-
-    def add_message(self, message: ChatItem):
-        """Add a new message to the cache."""
-        if isinstance(message, ChatMessage) and message.role in ("user", "assistant"):
-            self._messages.append(message)
-            self._messages.sort(key=lambda x: x.created_at)
-
-    def update_speaker_profile(self, speaker_attribute: dict[str, Any]):
-        self.profile_details = self._speaker_cache.update_profile_detail(
-            self.profile_details,
-            speaker_attribute,
-            updated_at=application_now(),
-        )
-
-    def update_face_profile(self, face_attribute: dict[str, Any]):
-        self.profile_details = self._face_cache.update_profile_detail(
-            self.profile_details,
-            face_attribute,
-            updated_at=application_now(),
-        )
-
-
-class SpeakerCacheBase:
-    def __init__(self): ...
+    @abstractmethod
+    def face_vector(self, vector: np.ndarray) -> None: ...
 
     @abstractmethod
-    def update_profile_detail(
-        self,
-        profile_details: Any,
-        speaker_attribute: dict[str, Any],
-        updated_at: datetime,
-    ) -> Any: ...
-
-
-class FaceCacheBase:
-    def __init__(self): ...
-
-    @abstractmethod
-    def update_profile_detail(
-        self,
-        profile_details: Any,
-        face_attribute: dict[str, Any],
-        updated_at: datetime,
-    ) -> Any: ...
+    def add_message(self, message: ChatItem) -> None: ...

@@ -13,20 +13,12 @@
 # limitations under the License.
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
-
-from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import (
-    AvatarCapability,
     AvatarCapabilityName,
     avatar_capability,
 )
-from alphaavatar.agents.runtime.inference import InferenceExecutor
-from alphaavatar.core.perception import PerceptionRuntime
 
-if TYPE_CHECKING:
-    from .base import PersonaBase
+from .processor import PersonaProcessorBase
 
 
 @avatar_capability(
@@ -36,28 +28,7 @@ if TYPE_CHECKING:
         "attributes when visual observations are available."
     ),
 )
-class FaceStreamBase(ABC):
-    capabilities: tuple[AvatarCapability, ...]
-
-    def __init__(
-        self,
-        *,
-        runtime: AvatarRuntime,
-        activity_persona: PersonaBase,
-    ) -> None:
-        self.runtime = runtime
-        self._activity_persona = activity_persona
-
+class FaceProcessorBase(PersonaProcessorBase):
     @property
-    def perception_runtime(self) -> PerceptionRuntime:
-        return self.runtime.perception
-
-    @property
-    def inference_executor(self) -> InferenceExecutor:
-        return self.runtime.inference
-
-    @abstractmethod
-    async def start(self) -> None: ...
-
-    @abstractmethod
-    async def stop(self) -> None: ...
+    def name(self) -> str:
+        return "face"

@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,22 +13,15 @@
 # limitations under the License.
 from __future__ import annotations
 
-import uuid
 from datetime import datetime
-from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from alphaavatar.agents.persona import ProfileItemSource
+from alphaavatar.agents.persona.enums import ProfileItemSource
 
 # --------------------------------- Patch models ---------------------------------
 JSONScalar = str | int | float | bool
-
-
-class ValueType(StrEnum):
-    scalar = "scalar"
-    list_item = "list_item"
 
 
 class PatchOp(BaseModel):
@@ -86,10 +79,6 @@ def _ensure_list(container: dict[str, Any], tokens: list[str]) -> list[Any]:
 def _norm_token(s: Any) -> str:
     """Normalize for case/whitespace-insensitive equality."""
     return " ".join(str(s).strip().lower().split())
-
-
-def _datetime_iso(value: datetime | str) -> str:
-    return value.isoformat() if isinstance(value, datetime) else value
 
 
 # --------------------------------- OP helpers ---------------------------------
@@ -211,135 +200,3 @@ def remove_string(container: dict[str, Any], tokens: list[str], value: Any) -> N
     parent[key] = [
         x for x in cur if not (isinstance(x["value"], str) and _norm_token(x["value"]) == norm)
     ]
-
-
-# --------------------------------- Flatten / Rebuild for VectorStore ---------------------------------
-def flatten_items(user_id: str, data: dict[str, Any], prefix: str = "") -> list[dict[str, Any]]:
-    """
-    Flatten a FLAT dict (top-level keys only) into vector-store "items".
-    Each item dict has: id, page_content, metadata.
-
-    Rules:
-      - Scalars -> one item: "path = value"
-      - list of primitives -> items per element: "path += element"
-      - Other types (dict / list of non-primitives / objects) -> JSON-string as scalar
-      - Skip None or empty-string scalars
-    """
-    items: list[dict[str, Any]] = []
-    base = prefix.strip("/")
-
-    def _mk_path(key: str) -> tuple[str, str]:
-        path = f"{base}/{key}" if base else key
-        path = path.strip("/")
-        meta_path = f"/{path}"
-        return path, meta_path
-
-    for key, item in (data or {}).items():
-        path, meta_path = _mk_path(key)
-
-        # Scalars
-        if isinstance(item, dict):
-            val = item.get("value", "")
-            source = item.get("source", ProfileItemSource.chat)
-            updated_at = item.get("updated_at")
-
-            if val is None or (isinstance(val, str) and not val.strip()):
-                continue
-            if updated_at is None:
-                raise ValueError(f"Profile item '{path}' is missing updated_at")
-
-            items.append(
-                {
-                    "id": str(uuid.uuid4()),
-                    "page_content": f"{path} = {val}",
-                    "metadata": {
-                        "user_id": user_id,
-                        "path": meta_path,
-                        "type": ValueType.scalar,
-                        "value": str(val),
-                        "source": source,
-                        "updated_at": _datetime_iso(updated_at),
-                    },
-                }
-            )
-
-        # Lists
-        if isinstance(item, list):
-            if not item:
-                continue
-
-            for it in item:
-                val = it.get("value", "")
-                source = it.get("source", ProfileItemSource.chat)
-                updated_at = it.get("updated_at")
-                if updated_at is None:
-                    raise ValueError(f"Profile item '{path}' is missing updated_at")
-
-                if val is None or (isinstance(val, str) and val.strip() == ""):
-                    continue
-
-                items.append(
-                    {
-                        "id": str(uuid.uuid4()),
-                        "page_content": f"{path} += {val}",
-                        "metadata": {
-                            "user_id": user_id,
-                            "path": meta_path,
-                            "type": ValueType.list_item,
-                            "value": str(val),
-                            "source": source,
-                            "updated_at": _datetime_iso(updated_at),
-                        },
-                    }
-                )
-            continue
-
-    return items
-
-
-def rebuild_from_items(items: list[dict[str, Any]]) -> dict[str, Any]:
-    """
-    Reconstruct (flatten) dict from vector-store items.
-
-    Note:
-    - Only handles ValueType.scalar and ValueType.list_item.
-    - For list_item: accumulate into list[str] using string deduplication rules.
-    - No longer assembles object lists or nested structures.
-    """
-    out: dict[str, Any] = {}
-
-    for it in items:
-        meta = it.get("metadata", {})
-        typ = meta.get("type")
-        path = meta.get("path", "")
-        source = meta.get("source", ProfileItemSource.chat)
-        updated_at = meta.get("updated_at")
-        if updated_at is None:
-            raise ValueError(f"Profile item metadata is missing updated_at: {path}")
-
-        tokens = parse_pointer(path)
-        if typ == ValueType.scalar:
-            write_set(
-                out,
-                tokens,
-                meta.get("value"),
-                updated_at,
-                source,
-            )
-
-        elif typ == ValueType.list_item:
-            value = meta.get("value")
-            lst = _ensure_list(out, tokens)
-
-            if _norm_token(value) not in {
-                _norm_token(x["value"]) for x in lst if isinstance(x, dict)
-            }:
-                lst.append(
-                    {
-                        "value": value,
-                        "source": source,
-                        "updated_at": updated_at,
-                    }
-                )
-
-    return out

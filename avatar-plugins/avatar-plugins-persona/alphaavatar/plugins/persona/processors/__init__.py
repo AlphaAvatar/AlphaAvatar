@@ -11,24 +11,23 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from __future__ import annotations
-
-from alphaavatar.agents.runtime.capability import (
-    AvatarCapabilityName,
-    avatar_capability,
+from .face import FaceAnalysisRunner, FacePlugin, FaceProcessor
+from .profiler import ProfilerPlugin, ProfilerProcessor
+from .speaker import (
+    SpeakerAttributeRunner,
+    SpeakerPlugin,
+    SpeakerProcessor,
+    SpeakerVectorRunner,
 )
 
-from .processor import PersonaProcessorBase
-
-
-@avatar_capability(
-    name=AvatarCapabilityName.PERSONA_SPEAKER_RECOGNITION,
-    description=(
-        "Can recognize previously known users from their voice and infer speaker "
-        "attributes when speech audio is available."
-    ),
-)
-class SpeakerProcessorBase(PersonaProcessorBase):
-    @property
-    def name(self) -> str:
-        return "speaker"
+__all__ = [
+    "FaceAnalysisRunner",
+    "FacePlugin",
+    "FaceProcessor",
+    "ProfilerPlugin",
+    "ProfilerProcessor",
+    "SpeakerAttributeRunner",
+    "SpeakerPlugin",
+    "SpeakerProcessor",
+    "SpeakerVectorRunner",
+]

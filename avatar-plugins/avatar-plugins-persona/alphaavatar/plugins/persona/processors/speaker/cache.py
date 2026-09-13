@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,14 +15,14 @@ from datetime import datetime
 
 import numpy as np
 
-from alphaavatar.agents.persona import ProfileItemSource, ProfileItemView, SpeakerCacheBase
+from alphaavatar.agents.persona.enums import ProfileItemSource
+from alphaavatar.agents.persona.schemas import ProfileItemView
 
-from .profiler_details import UserProfileDetails
+from ...profile import UserProfileDetails
 
 
-class SpeakerCache(SpeakerCacheBase):
+class SpeakerCache:
     def __init__(self, *, alpha_age: float = 0.2, alpha_gender: float = 0.2):
-        super().__init__()
         self._logits_age: np.ndarray | None = None  # shape [1,1]
         self._logits_gender: np.ndarray | None = None  # shape [1,3]
         self._alpha_age = float(alpha_age)

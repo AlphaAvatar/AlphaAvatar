@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,23 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from __future__ import annotations
-
 import asyncio
-import json
 import math
-import os
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any
 
 import numpy as np
 
-from alphaavatar.agents.constants import SPEAKER_MATCH_THRESHOLD
-from alphaavatar.agents.persona import PersonaBase, SpeakerStreamBase, VectorRunnerOP
+from alphaavatar.agents.persona import PersonaBase, SpeakerProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.utils import NumpyOP
+from alphaavatar.agents.utils.time import application_now
 from alphaavatar.core.env import (
     EnvObservation,
     PerceptionSegmentRef,
@@ -41,11 +35,11 @@ from alphaavatar.core.media import (
 )
 from alphaavatar.core.perception import PerceptionStreamKind
 
-from .log import logger
-from .model_files import SPEAKER_MODEL_CONFIG
-from .runner import SpeakerAttributeRunner, SpeakerVectorRunner
-
-_STOP = object()
+from ...log import logger
+from ...model_files import SPEAKER_MODEL_CONFIG
+from .attribute_runner import SpeakerAttributeRunner
+from .cache import SpeakerCache
+from .vector_runner import SpeakerVectorRunner
 
 
 @dataclass(slots=True)
@@ -67,7 +61,7 @@ class SpeakerWindow:
     audio_f32: bytes
 
 
-class SpeakerStreamWrapper(SpeakerStreamBase):
+class SpeakerProcessor(SpeakerProcessorBase):
     CONSUMER_ID = "persona.speaker"
 
     MAX_SEEN_OBSERVATIONS = 2048
@@ -77,10 +71,10 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
         self,
         *,
         runtime: AvatarRuntime,
-        activity_persona: PersonaBase,
+        persona: PersonaBase,
         inference_queue_size: int = 1,
     ) -> None:
-        super().__init__(runtime=runtime, activity_persona=activity_persona)
+        super().__init__(runtime=runtime, persona=persona)
 
         self._vector_config = SPEAKER_MODEL_CONFIG[SpeakerVectorRunner.MODEL_TYPE]
         self._attribute_config = SPEAKER_MODEL_CONFIG[SpeakerAttributeRunner.MODEL_TYPE]
@@ -94,7 +88,6 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
 
         self._window_bytes = self._window_samples * 2
         self._step_bytes = self._step_samples * 2
-
         self._step_sec = self._step_samples / self._sample_rate
         self._attribute_every = max(
             1,
@@ -102,24 +95,13 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
         )
 
         self._sources: dict[PerceptionSourceRef, SpeakerSourceState] = {}
-        self._inference_queue: asyncio.Queue[SpeakerWindow | object] = asyncio.Queue(
+        self._profile_caches: dict[str, SpeakerCache] = {}
+        self._inference_queue: asyncio.Queue[SpeakerWindow] = asyncio.Queue(
             maxsize=inference_queue_size
         )
 
         self._consume_task: asyncio.Task[None] | None = None
         self._inference_task: asyncio.Task[None] | None = None
-        self._started = False
-
-    @property
-    def vdb_inference_method(self) -> str:
-        method = os.getenv("PERSONA_VDB_INFERENCE_METHOD")
-        if not method:
-            raise RuntimeError(
-                "PERSONA_VDB_INFERENCE_METHOD is not configured. "
-                "Make sure the Persona VDB runner is registered before "
-                "SpeakerStreamWrapper starts."
-            )
-        return method
 
     def _extract_frame(self, observation: EnvObservation) -> AudioFrame | None:
         if observation.payload is None:
@@ -235,49 +217,13 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
             ),
             timeout=self._vector_config.inference_timeout_sec,
         )
-
         if result is None:
             raise RuntimeError("Speaker vector runner returned no result")
 
-        speaker_vector = np.frombuffer(result, dtype=np.float32)
-        uid = await self.activity_persona.match_speaker_vector(speaker_vector=speaker_vector)
-
-        if uid is not None:
-            await self.activity_persona.update_speaker_vector(
-                uid=uid,
-                speaker_vector=speaker_vector,
-            )
-            return uid
-
-        request = {
-            "op": VectorRunnerOP.search_speaker_vector,
-            "param": {
-                "speaker_vector": NumpyOP.l2_normalize(speaker_vector).tolist(),
-                "threshold": SPEAKER_MATCH_THRESHOLD,
-            },
-        }
-
-        search_result = await asyncio.wait_for(
-            self.inference_executor.do_inference(
-                self.vdb_inference_method,
-                json.dumps(request).encode(),
-            ),
+        return await self.persona.resolve_speaker_vector(
+            speaker_vector=np.frombuffer(result, dtype=np.float32),
             timeout=self._vector_config.inference_timeout_sec,
         )
-
-        if search_result:
-            data: dict[str, Any] = json.loads(search_result.decode())
-            uid = data.get("user_id") or None
-
-            if uid is not None:
-                await self.activity_persona.load_profile(uid=uid)
-                await self.activity_persona.update_speaker_vector(
-                    uid=uid,
-                    speaker_vector=speaker_vector,
-                )
-                return uid
-
-        return await self.activity_persona.insert_speaker_vector(speaker_vector=speaker_vector)
 
     async def _infer_attribute(
         self,
@@ -295,18 +241,23 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
         if result is None:
             raise RuntimeError("Speaker attribute runner returned no result")
 
-        speaker_attribute: dict[str, np.ndarray] = SpeakerAttributeRunner.decode(result)  # type: ignore
-        await self.activity_persona.update_speaker_attribute(
-            uid=uid,
-            speaker_attribute=speaker_attribute,
+        speaker_attribute: dict[str, np.ndarray] = SpeakerAttributeRunner.decode(result)
+        persona_cache = self.persona.persona_cache.get(uid)
+        if persona_cache is None:
+            return
+
+        profile_cache = self._profile_caches.setdefault(uid, SpeakerCache())
+        persona_cache.profile_details = profile_cache.update_profile_detail(
+            persona_cache.profile_details,
+            speaker_attribute,
+            updated_at=application_now(),
         )
+
+    """Runtime Loop"""
 
     async def _inference_loop(self) -> None:
         while True:
             item = await self._inference_queue.get()
-
-            if item is _STOP:
-                return
 
             if not isinstance(item, SpeakerWindow):
                 continue
@@ -345,8 +296,6 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
                     item.window_index,
                 )
 
-    """Perception consumer"""
-
     async def _consume_loop(self) -> None:
         while True:
             try:
@@ -382,12 +331,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
 
     """Runtime operations"""
 
-    async def start(self) -> None:
-        if self._started:
-            return
-
-        self._started = True
-
+    async def _start(self) -> None:
         self._inference_task = asyncio.create_task(
             self._inference_loop(),
             name="persona_speaker_inference",
@@ -409,12 +353,7 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
             self._inference_queue.maxsize,
         )
 
-    async def stop(self) -> None:
-        if not self._started:
-            return
-
-        self._started = False
-
+    async def _stop(self, *, finalize: bool) -> None:
         if self._consume_task is not None:
             self._consume_task.cancel()
             await asyncio.gather(self._consume_task, return_exceptions=True)
@@ -425,7 +364,15 @@ class SpeakerStreamWrapper(SpeakerStreamBase):
             await asyncio.gather(self._inference_task, return_exceptions=True)
             self._inference_task = None
 
+        while not self._inference_queue.empty():
+            try:
+                self._inference_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
         self._sources.clear()
+        self._profile_caches.clear()
+
         self.perception_runtime.clear_observation_consumer(
             self.CONSUMER_ID,
             streams={PerceptionStreamKind.SPEECH},

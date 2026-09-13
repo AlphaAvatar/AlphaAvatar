@@ -20,7 +20,7 @@ from livekit.agents.llm import ChatItem, ChatMessage
 
 from alphaavatar.agents.utils.time import format_datetime_for_timezone
 
-from .schema import UserProfile, UserRuntimeState
+from .schemas import UserProfile, UserRuntimeState
 
 
 class PersonaPluginsTemplate:

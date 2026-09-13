@@ -11,11 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from __future__ import annotations
-
 import asyncio
 import json
-import os
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -30,20 +27,15 @@ from alphaavatar.agents.avatar.vision import (
 )
 from alphaavatar.agents.constants import (
     FACE_INFERENCE_THRESHOLD,
-    FACE_MATCH_THRESHOLD,
     VIDEO_PERSONA_INTERVAL_SEC,
 )
 from alphaavatar.agents.entrypoints.livekit import (
     bgr_to_video_frame,
     video_frame_to_bgr,
 )
-from alphaavatar.agents.persona import (
-    FaceStreamBase,
-    PersonaBase,
-    VectorRunnerOP,
-)
+from alphaavatar.agents.persona import FaceProcessorBase, PersonaBase
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.utils import NumpyOP
+from alphaavatar.agents.utils.time import application_now
 from alphaavatar.core.env import (
     AnnotationKind,
     EnvAnnotation,
@@ -59,9 +51,10 @@ from alphaavatar.core.media import (
 )
 from alphaavatar.core.perception import PerceptionStreamKind
 
-from .log import logger
-from .model_files import FACE_MODEL_CONFIG
-from .runner.face_analysis_runner import FaceAnalysisRunner
+from ...log import logger
+from ...model_files import FACE_MODEL_CONFIG
+from .analysis_runner import FaceAnalysisRunner
+from .cache import FaceCache
 
 
 @dataclass(slots=True)
@@ -69,7 +62,7 @@ class FaceFrameJob:
     observation: EnvObservation
 
 
-class FaceStreamWrapper(FaceStreamBase):
+class FaceProcessor(FaceProcessorBase):
     CONSUMER_ID = "persona.face_stream"
     SOURCE = "persona.face_stream"
 
@@ -77,40 +70,22 @@ class FaceStreamWrapper(FaceStreamBase):
         self,
         *,
         runtime: AvatarRuntime,
-        activity_persona: PersonaBase,
+        persona: PersonaBase,
     ) -> None:
-        super().__init__(
-            runtime=runtime,
-            activity_persona=activity_persona,
-        )
+        super().__init__(runtime=runtime, persona=persona)
 
         self._face_config = FACE_MODEL_CONFIG[FaceAnalysisRunner.MODEL_TYPE]
-
         self._last_sample_ts: dict[PerceptionSourceRef, float] = {}
+        self._profile_caches: dict[str, FaceCache] = {}
 
         self._det_score_threshold = self._face_config.det_thresh
         self._min_face_size = self._face_config.min_face_size
         self._jpeg_quality = self._face_config.jpeg_quality
 
-        # Keep the queue small. For realtime identity detection, the newest
-        # frame is generally more useful than accumulated stale frames.
         self._frame_q: asyncio.Queue[FaceFrameJob] = asyncio.Queue(maxsize=2)
-
         self._worker_task: asyncio.Task[None] | None = None
         self._poll_task: asyncio.Task[None] | None = None
-
         self._renderer_registered = False
-
-    @property
-    def vdb_inference_method(self) -> str:
-        method = os.getenv("PERSONA_VDB_INFERENCE_METHOD")
-        if not method:
-            raise RuntimeError(
-                "PERSONA_VDB_INFERENCE_METHOD is not configured. "
-                "Make sure the Persona VDB runner is registered before "
-                "FaceStreamWrapper starts."
-            )
-        return method
 
     """Observation helpers"""
 
@@ -439,39 +414,10 @@ class FaceStreamWrapper(FaceStreamBase):
 
         #  Match & Retrieve & Update Face
         face_vector = np.asarray(embedding, dtype=np.float32)
-        uid = await self._activity_persona.match_face_vector(face_vector=face_vector)
-        if uid is not None:
-            await self._activity_persona.update_face_vector(
-                uid=uid,
-                face_vector=face_vector,
-            )
-
-        else:
-            json_data = {
-                "op": VectorRunnerOP.search_face_vector,
-                "param": {
-                    "face_vector": NumpyOP.l2_normalize(face_vector).tolist(),
-                    "threshold": (FACE_MATCH_THRESHOLD),
-                },
-            }
-
-            results = await self.inference_executor.do_inference(
-                self.vdb_inference_method,
-                json.dumps(json_data).encode(),
-            )
-
-            if results:
-                match_data = json.loads(results.decode())
-                uid = match_data.get("user_id", "")
-                if uid:
-                    await self._activity_persona.load_profile(uid=uid)
-                    await self._activity_persona.update_face_vector(
-                        uid=uid,
-                        face_vector=face_vector,
-                    )
-
-            else:
-                uid = await self._activity_persona.insert_face_vector(face_vector=face_vector)
+        uid = await self.persona.resolve_face_vector(
+            face_vector=face_vector,
+            timeout=self._face_config.inference_timeout_sec,
+        )
 
         face_attribute = {
             "age": face.get("age"),
@@ -485,10 +431,14 @@ class FaceStreamWrapper(FaceStreamBase):
         }
 
         if uid:
-            await self._activity_persona.update_face_attribute(
-                uid=uid,
-                face_attribute=face_attribute,
-            )
+            persona_cache = self.persona.persona_cache.get(uid)
+            if persona_cache is not None:
+                profile_cache = self._profile_caches.setdefault(uid, FaceCache())
+                persona_cache.profile_details = profile_cache.update_profile_detail(
+                    persona_cache.profile_details,
+                    face_attribute,
+                    updated_at=application_now(),
+                )
 
         self._publish_face_annotation(
             job=job,
@@ -498,7 +448,9 @@ class FaceStreamWrapper(FaceStreamBase):
             image_height=int(data["image_height"]),
         )
 
-    async def _face_worker(self) -> None:
+    """Runtime Loop"""
+
+    async def _inference_loop(self) -> None:
         while True:
             job = await self._frame_q.get()
 
@@ -518,9 +470,7 @@ class FaceStreamWrapper(FaceStreamBase):
                     exc_info=True,
                 )
 
-    """Perception consumer"""
-
-    async def _face_observation_loop(self) -> None:
+    async def _consume_loop(self) -> None:
         while True:
             try:
                 await self.perception_runtime.wait_for_pending_observations(
@@ -562,46 +512,34 @@ class FaceStreamWrapper(FaceStreamBase):
 
     """Runtime operations"""
 
-    async def start(self) -> None:
+    async def _start(self) -> None:
         if not self._renderer_registered:
             self.perception_runtime.add_annotation_renderer(self._render_face_annotation)
             self._renderer_registered = True
 
         self._worker_task = asyncio.create_task(
-            self._face_worker(),
-            name="face_worker",
+            self._inference_loop(),
+            name="persona_face_inference",
         )
         self._poll_task = asyncio.create_task(
-            self._face_observation_loop(),
-            name="face_observation_loop",
+            self._consume_loop(),
+            name="persona_face_consumer",
         )
 
         logger.info(
-            "Persona face stream started consumer_id=%s",
+            "Persona Face started consumer_id=%s",
             self.CONSUMER_ID,
         )
 
-    async def stop(self) -> None:
-        # Stop reading new observations first.
+    async def _stop(self, *, finalize: bool) -> None:
         if self._poll_task is not None:
             self._poll_task.cancel()
-
-            await asyncio.gather(
-                self._poll_task,
-                return_exceptions=True,
-            )
-
+            await asyncio.gather(self._poll_task, return_exceptions=True)
             self._poll_task = None
 
-        # Then stop the inference worker.
         if self._worker_task is not None:
             self._worker_task.cancel()
-
-            await asyncio.gather(
-                self._worker_task,
-                return_exceptions=True,
-            )
-
+            await asyncio.gather(self._worker_task, return_exceptions=True)
             self._worker_task = None
 
         if self._renderer_registered:
@@ -614,9 +552,18 @@ class FaceStreamWrapper(FaceStreamBase):
             except asyncio.QueueEmpty:
                 break
 
+        self.perception_runtime.clear_observation_consumer(
+            self.CONSUMER_ID,
+            streams={
+                PerceptionStreamKind.VIDEO,
+                PerceptionStreamKind.SCREEN,
+            },
+        )
+
         self._last_sample_ts.clear()
+        self._profile_caches.clear()
 
         logger.info(
-            "Persona face stream stopped consumer_id=%s",
+            "Persona Face stopped consumer_id=%s",
             self.CONSUMER_ID,
         )

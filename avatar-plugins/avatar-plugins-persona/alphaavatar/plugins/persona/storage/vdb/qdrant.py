@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,15 +29,15 @@ from qdrant_client.models import (
     VectorParams,
 )
 
-from alphaavatar.agents.persona import VectorRunnerOP
+from alphaavatar.agents.persona.enums import VectorRunnerOP
 from alphaavatar.agents.providers import ProviderKind, ProviderTaskConfig
 from alphaavatar.agents.providers.embedding import create_embedding_model
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import qdrant
 
-from ..model_files import FACE_MODEL_CONFIG, SPEAKER_MODEL_CONFIG
-from .face_analysis_runner import FaceAnalysisRunner
-from .speaker_vector_runner import SpeakerVectorRunner
+from ...model_files import FACE_MODEL_CONFIG, SPEAKER_MODEL_CONFIG
+from ...processors.face.analysis_runner import FaceAnalysisRunner
+from ...processors.speaker.vector_runner import SpeakerVectorRunner
 
 
 class QdrantRunner(InferenceRunner):

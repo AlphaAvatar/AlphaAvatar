@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import importlib
 import json
 import os
@@ -26,77 +28,65 @@ from alphaavatar.agents.utils.vdb import qdrant
 importlib.import_module("alphaavatar.plugins.persona")
 
 
-class PersonaPluginConfig(BaseModel):
-    """Common plugin config for persona submodules."""
+class PersonaProcessorConfig(BaseModel):
+    """Configuration for a Persona component factory."""
 
     model_config = ConfigDict(extra="forbid")
 
-    plugin: str = Field(
-        default="default",
-        description="Persona sub-plugin name.",
+    enabled: bool = Field(
+        default=True,
+        description="Whether this Persona processor is enabled.",
     )
+    plugin: str = Field(default="default", description="Persona component plugin name.")
     init_config: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Custom initialization parameters for this persona sub-plugin.",
+        default_factory=dict, description="Component initialization parameters."
     )
 
 
 class PersonaConfig(BaseModel):
-    """Configuration for the Persona plugin used in the agent."""
+    """Configuration for the Persona runtime plugin."""
 
     model_config = ConfigDict(extra="forbid")
 
-    maximum_retrieval_times: int = Field(
-        default=3,
-        description=(
-            "The maximum number of retrieval attempts used to determine whether "
-            "a new user matches existing persona data."
-        ),
-    )
-
-    profiler: PersonaPluginConfig = Field(default_factory=PersonaPluginConfig)
-    speaker: PersonaPluginConfig = Field(default_factory=PersonaPluginConfig)
-    face: PersonaPluginConfig = Field(default_factory=PersonaPluginConfig)
-
+    plugin: str = Field(default="default", description="Persona runtime plugin name.")
     vdb_config: dict[str, Any] = Field(
-        default_factory=dict,
-        description=(
-            "Custom initialization parameters for the persona VDB backend "
-            "(e.g. host, port, url, api_key, prefer_grpc, embedding)."
-        ),
+        default_factory=dict, description="Persona VDB initialization parameters."
     )
 
-    def model_post_init(self, __context):
+    profiler: PersonaProcessorConfig = Field(default_factory=PersonaProcessorConfig)
+    speaker: PersonaProcessorConfig = Field(default_factory=PersonaProcessorConfig)
+    face: PersonaProcessorConfig = Field(default_factory=PersonaProcessorConfig)
+
+    def model_post_init(self, __context: Any) -> None:
         os.environ["PERSONA_VDB_CONFIG"] = json.dumps(self.vdb_config)
 
-        if self.profiler.plugin == "default":
-            try:
-                qdrant.get_client(**self.vdb_config)
-                persona_vdb_type = "qdrant"
-            except ValueError:
-                persona_vdb_type = "lancedb"
+        if self.plugin != "default":
+            return
 
-            os.environ["PERSONA_VDB_TYPE"] = persona_vdb_type
+        try:
+            qdrant.get_client(**self.vdb_config)
+            vdb_type = "qdrant"
+        except ValueError:
+            vdb_type = "lancedb"
+
+        os.environ["PERSONA_VDB_TYPE"] = vdb_type
 
     def get_plugin(self, runtime: AvatarRuntime) -> PersonaBase:
-        """Returns the Persona plugin instance based on the configuration."""
-        return PersonaBase(
+        persona = AvatarPlugin.get_avatar_plugin(
+            AvatarModule.PERSONA,
+            self.plugin,
             runtime=runtime,
-            profiler=AvatarPlugin.get_avatar_plugin(
-                AvatarModule.PROFILER,
-                self.profiler.plugin,
-                runtime=runtime,
-                init_config=self.profiler.init_config,
+            init_config=self.model_dump(
+                exclude={
+                    "plugin",
+                    "vdb_config",
+                }
             ),
-            speaker_cls=AvatarPlugin.get_avatar_plugin(
-                AvatarModule.SPEAKER,
-                self.speaker.plugin,
-                init_config=self.speaker.init_config,
-            ),
-            face_cls=AvatarPlugin.get_avatar_plugin(
-                AvatarModule.FACE,
-                self.face.plugin,
-                init_config=self.face.init_config,
-            ),
-            maximum_retrieval_times=self.maximum_retrieval_times,
         )
+        if persona is None:
+            raise ValueError(f"Persona plugin '{self.plugin}' is not registered or returned None.")
+        if not isinstance(persona, PersonaBase):
+            raise TypeError(
+                f"Persona plugin '{self.plugin}' must return PersonaBase, got {type(persona).__name__}."
+            )
+        return persona

@@ -19,8 +19,8 @@ import numpy as np
 
 from alphaavatar.agents.runtime.inference import InferenceRunner
 
-from ..log import logger
-from ..model_files import FACE_MODEL_CONFIG, FaceModelType
+from ...log import logger
+from ...model_files import FACE_MODEL_CONFIG, FaceModelType
 
 
 class FaceAnalysisRunner(InferenceRunner):

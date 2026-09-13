@@ -44,7 +44,7 @@ class RouterConfig(BaseModel):
         dependencies: InteractionRouterDependencies,
     ) -> InteractionRouterBase:
         return AvatarPlugin.get_avatar_plugin(
-            AvatarModule.INTERACTION_ROUTER,
+            AvatarModule.ROUTER,
             self.plugin,
             dependencies=dependencies,
             init_config=self.init_config,
