@@ -33,8 +33,12 @@ from alphaavatar.agents.entrypoints.livekit import (
     bgr_to_video_frame,
     video_frame_to_bgr,
 )
-from alphaavatar.agents.persona import FaceProcessorBase, PersonaBase
+from alphaavatar.agents.persona import PersonaBase, PersonaProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.capability import (
+    AvatarCapabilityName,
+    avatar_capability,
+)
 from alphaavatar.agents.utils.time import application_now
 from alphaavatar.core.env import (
     AnnotationKind,
@@ -62,7 +66,14 @@ class FaceFrameJob:
     observation: EnvObservation
 
 
-class FaceProcessor(FaceProcessorBase):
+@avatar_capability(
+    name=AvatarCapabilityName.PERSONA_FACE_RECOGNITION,
+    description=(
+        "Can recognize previously known users from visible faces and infer face "
+        "attributes when visual observations are available."
+    ),
+)
+class FaceProcessor(PersonaProcessorBase):
     CONSUMER_ID = "persona.face_stream"
     SOURCE = "persona.face_stream"
 
@@ -86,6 +97,10 @@ class FaceProcessor(FaceProcessorBase):
         self._worker_task: asyncio.Task[None] | None = None
         self._poll_task: asyncio.Task[None] | None = None
         self._renderer_registered = False
+
+    @property
+    def name(self) -> str:
+        return "face"
 
     """Observation helpers"""
 

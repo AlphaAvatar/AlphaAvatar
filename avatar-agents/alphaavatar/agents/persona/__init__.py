@@ -13,18 +13,12 @@
 # limitations under the License.
 from .base import PersonaBase
 from .cache import PersonaCache
-from .face import FaceProcessorBase
 from .processor import PersonaProcessorBase
-from .profiler import ProfilerProcessorBase
-from .speaker import SpeakerProcessorBase
 from .template import PersonaPluginsTemplate
 
 __all__ = [
-    "FaceProcessorBase",
     "PersonaBase",
     "PersonaCache",
     "PersonaPluginsTemplate",
     "PersonaProcessorBase",
-    "ProfilerProcessorBase",
-    "SpeakerProcessorBase",
 ]

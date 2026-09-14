@@ -19,8 +19,12 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from alphaavatar.agents.persona import PersonaBase, SpeakerProcessorBase
+from alphaavatar.agents.persona import PersonaBase, PersonaProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.capability import (
+    AvatarCapabilityName,
+    avatar_capability,
+)
 from alphaavatar.agents.utils.time import application_now
 from alphaavatar.core.env import (
     EnvObservation,
@@ -61,7 +65,14 @@ class SpeakerWindow:
     audio_f32: bytes
 
 
-class SpeakerProcessor(SpeakerProcessorBase):
+@avatar_capability(
+    name=AvatarCapabilityName.PERSONA_SPEAKER_RECOGNITION,
+    description=(
+        "Can recognize previously known users from their voice and infer speaker "
+        "attributes when speech audio is available."
+    ),
+)
+class SpeakerProcessor(PersonaProcessorBase):
     CONSUMER_ID = "persona.speaker"
 
     MAX_SEEN_OBSERVATIONS = 2048
@@ -102,6 +113,10 @@ class SpeakerProcessor(SpeakerProcessorBase):
 
         self._consume_task: asyncio.Task[None] | None = None
         self._inference_task: asyncio.Task[None] | None = None
+
+    @property
+    def name(self) -> str:
+        return "speaker"
 
     def _extract_frame(self, observation: EnvObservation) -> AudioFrame | None:
         if observation.payload is None:

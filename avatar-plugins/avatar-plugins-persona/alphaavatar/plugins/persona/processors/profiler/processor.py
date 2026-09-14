@@ -23,10 +23,14 @@ from alphaavatar.agents.persona import (
     PersonaBase,
     PersonaCache,
     PersonaPluginsTemplate,
-    ProfilerProcessorBase,
+    PersonaProcessorBase,
 )
 from alphaavatar.agents.providers import ProviderGateway, ProvidersConfig
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.capability import (
+    AvatarCapabilityName,
+    avatar_capability,
+)
 from alphaavatar.agents.utils.time import application_now
 
 from ...log import logger
@@ -83,7 +87,14 @@ class ProfilerRuntimeConfig(BaseModel):
     gateway: ProvidersConfig = Field(default_factory=ProvidersConfig)
 
 
-class ProfilerProcessor(ProfilerProcessorBase):
+@avatar_capability(
+    name=AvatarCapabilityName.PERSONA_PROFILE,
+    description=(
+        "Can maintain persistent user profiles from conversations and observed traits, "
+        "and use them to personalize interactions across sessions."
+    ),
+)
+class ProfilerProcessor(PersonaProcessorBase):
     def __init__(
         self,
         *,
@@ -98,6 +109,10 @@ class ProfilerProcessor(ProfilerProcessorBase):
         self._profile_delta_task = config.profile_delta_task
         self._provider_gateway = ProviderGateway(config.gateway)
         self._provider_gateway.validate_tasks([self._profile_delta_task])
+
+    @property
+    def name(self) -> str:
+        return "profiler"
 
     async def _aextract_delta(
         self,
