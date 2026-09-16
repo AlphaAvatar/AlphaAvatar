@@ -15,19 +15,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .enum.memory_type import MemoryType
-from .schema.memory_item import MemoryItem
+from .enums.memory_type import MemoryType
+from .schemas.memory_item import MemoryItem
 
 
 def deduplicate_keep_latest(items: list[MemoryItem]) -> list[MemoryItem]:
-    latest_items: dict[str, MemoryItem] = {}
+    latest: dict[str, MemoryItem] = {}
 
     for item in items:
-        existing = latest_items.get(item.memory_id)
-        if existing is None or item.created_at > existing.created_at:
-            latest_items[item.memory_id] = item
+        current = latest.get(item.memory_id)
 
-    return sorted(latest_items.values(), key=lambda item: item.created_at)
+        if current is None or (
+            item.revision,
+            item.updated_at or item.created_at,
+        ) > (
+            current.revision,
+            current.updated_at or current.created_at,
+        ):
+            latest[item.memory_id] = item
+
+    return sorted(latest.values(), key=lambda item: item.created_at)
 
 
 @dataclass
@@ -62,19 +69,16 @@ class MemoryState:
         self,
         *,
         memory_type: MemoryType | None = None,
-        session_id: str | None = None,
-        updated: bool | None = None,
+        context_id: str | None = None,
     ) -> list[MemoryItem]:
-        if memory_type is None:
-            items = [item for bucket in self._buckets.values() for item in bucket]
-        else:
-            items = list(self._buckets.get(memory_type, []))
+        items = (
+            [item for bucket in self._buckets.values() for item in bucket]
+            if memory_type is None
+            else list(self._buckets.get(memory_type, []))
+        )
 
-        if session_id is not None:
-            items = [item for item in items if item.session_id == session_id]
-
-        if updated is not None:
-            items = [item for item in items if item.updated is updated]
+        if context_id is not None:
+            items = [item for item in items if item.context.context_id == context_id]
 
         return sorted(items, key=lambda item: item.created_at)
 
@@ -82,19 +86,8 @@ class MemoryState:
         self,
         *,
         memory_type: MemoryType | None = None,
-        session_id: str | None = None,
-        updated: bool | None = None,
+        context_id: str | None = None,
     ) -> str:
         return "\n".join(
-            item.render_line()
-            for item in self.get(
-                memory_type=memory_type,
-                session_id=session_id,
-                updated=updated,
-            )
+            item.render_line() for item in self.get(memory_type=memory_type, context_id=context_id)
         )
-
-    def mark_saved(self, memory_ids: set[str]) -> None:
-        for item in self.all_items:
-            if item.memory_id in memory_ids:
-                item.updated = False

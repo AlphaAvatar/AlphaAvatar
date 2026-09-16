@@ -22,11 +22,10 @@ from livekit.agents.llm import ChatItem, ChatMessage
 from alphaavatar.agents.memory import (
     MemoryBase,
     MemoryCache,
-    MemoryCacheType,
-    MemoryItem,
     MemoryPluginsTemplate,
-    MemoryType,
 )
+from alphaavatar.agents.memory.enums import MemoryCacheType, MemoryType
+from alphaavatar.agents.memory.schemas import MemoryItem
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.utils.time import application_now
 
@@ -47,7 +46,11 @@ from .memory_op import (
 )
 from .persistence import MemoryPersistenceMixin
 from .retrieval import MemoryRetrievalMixin
-from .user_memory import MemoryPipelineConfig, NoteConsolidator
+from .storage import MemoryStore
+from .user_memory import (
+    MemoryConsolidator,
+    MemoryPipelineConfig,
+)
 
 ENV_SAVE_TIMEOUT_SEC = 8.0
 SHUTDOWN_UPDATE_TIMEOUT_SEC = 12.0
@@ -60,6 +63,7 @@ class MemoryRuntime(MemoryPersistenceMixin, MemoryRetrievalMixin, MemoryBase):
         *,
         runtime: AvatarRuntime,
         avatar_id: str,
+        store: MemoryStore,
         memory_search_context: int = 3,
         memory_recall_num: int = 10,
         maximum_memory_num: int = 24,
@@ -75,6 +79,8 @@ class MemoryRuntime(MemoryPersistenceMixin, MemoryRetrievalMixin, MemoryBase):
             maximum_memory_num=maximum_memory_num,
         )
 
+        self._store = store
+
         self._provider_config = (
             MemoryProviderConfig(**provider) if provider else MemoryProviderConfig()
         )
@@ -84,16 +90,20 @@ class MemoryRuntime(MemoryPersistenceMixin, MemoryRetrievalMixin, MemoryBase):
         self._delta_extractor = MemoryDeltaExtractor(self._provider_config)
 
         # User (conversation) memory: atomic item layer + note layer on top
-        self._note_consolidator = NoteConsolidator(
+        self._memory_consolidator = MemoryConsolidator(
             self._pipeline_config,
-            candidate_search=self._note_candidate_search,
-            consolidate=self._delta_extractor.consolidate_notes,
+            candidate_search=self._consolidation_candidate_search,
+            plan=self._delta_extractor.plan_consolidation,
         )
 
         # ENV Memory init
         self._env_scheduler: EnvMemoryScheduler | None = None
 
         self._save_lock = asyncio.Lock()
+
+    @property
+    def store(self) -> MemoryStore:
+        return self._store
 
     @property
     def vdb_inference_method(self) -> str:
@@ -400,22 +410,17 @@ class MemoryRuntime(MemoryPersistenceMixin, MemoryRetrievalMixin, MemoryBase):
 
                 all_assistant.extend(conversation_avatar)
 
-                # Notes are built before the items are written, not after, so
-                # each item lands once already carrying the back-reference of
-                # the note that absorbed it. Re-saving them afterwards would
-                # also re-append older sessions' items to THIS session's
-                # markdown file.
                 all_user.extend(
-                    await self._note_consolidator.consolidate_session(
+                    await self._memory_consolidator.consolidate_session(
                         conversation_items,
                         session_content=message_content,
                         memory_cache=cache,
                         updated_at=application_now(),
                         trace_metadata=self._delta_extractor.base_trace_metadata(
                             memory_cache=cache,
-                            operation="note_consolidation",
+                            operation="memory_consolidation",
                             memory_type=MemoryType.CONVERSATION,
-                            component="memory_note_consolidator",
+                            component="memory_consolidator",
                         ),
                     )
                 )
@@ -486,6 +491,7 @@ class MemoryRuntime(MemoryPersistenceMixin, MemoryRetrievalMixin, MemoryBase):
     """Runtime Op"""
 
     async def on_session_start(self) -> None:
+        await self._store.initialize()
         await super().on_session_start()
 
         sid = self.session_runtime.session_id

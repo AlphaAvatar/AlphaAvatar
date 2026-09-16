@@ -31,11 +31,11 @@ from alphaavatar.agents.runtime.inference import InferenceExecutor
 from alphaavatar.agents.utils.files.work_dirs import SessionPath
 from alphaavatar.core.perception import PerceptionRuntime
 
-from .cache import MemoryCache
-from .enum.cache_type import MemoryCacheType
-from .enum.memory_type import MemoryType
-from .schema.memory_item import MemoryItem
-from .state import MemoryState
+from .context_state import MemoryContextState
+from .enums.cache_type import MemoryCacheType
+from .enums.memory_type import MemoryType
+from .memory_state import MemoryState
+from .schemas.memory_item import MemoryItem
 
 
 @avatar_capability(
@@ -87,7 +87,7 @@ class MemoryBase(AvatarRuntimePlugin):
         self._maximum_memory_num = maximum_memory_num
 
         # memory content init
-        self._memory_cache: dict[str, MemoryCache] = {}
+        self._memory_contexts: dict[str, MemoryContextState] = {}
         self._memory_state = MemoryState(maximum_memory_num=maximum_memory_num)
 
     @property
@@ -115,8 +115,8 @@ class MemoryBase(AvatarRuntimePlugin):
         return self._memory_recall_num
 
     @property
-    def memory_cache(self) -> dict[str, MemoryCache]:
-        return self._memory_cache
+    def memory_contexts(self) -> dict[str, MemoryContextState]:
+        return self._memory_contexts
 
     @property
     def memory_state(self) -> MemoryState:
@@ -171,14 +171,11 @@ class MemoryBase(AvatarRuntimePlugin):
 
     """Helper Op"""
 
-    def _get_cache_or_raise(self, session_id: str) -> MemoryCache:
-        if session_id not in self._memory_cache:
-            raise ValueError(
-                f"Session ID {session_id} not found in memory cache. "
-                "You need to call 'init_cache' first."
-            )
-
-        return self._memory_cache[session_id]
+    def _get_context_state_or_raise(self, context_id: str) -> MemoryContextState:
+        state = self._memory_contexts.get(context_id)
+        if state is None:
+            raise ValueError(f"Memory context not found: {context_id}")
+        return state
 
     def _sync_object_ids(self) -> None:
         for pend_result in self.session_runtime.pending_user_path_migrations:
@@ -207,15 +204,15 @@ class MemoryBase(AvatarRuntimePlugin):
         session_path: SessionPath,
         object_ids: list[str] | str | None,
         cache_type: MemoryCacheType = MemoryCacheType.SESSION_INTERACTION,
-    ) -> MemoryCache:
-        if session_id not in self.memory_cache:
-            self.memory_cache[session_id] = MemoryCache(
+    ) -> MemoryContextState:
+        if session_id not in self._memory_contexts:
+            self._memory_contexts[session_id] = MemoryContextState(
                 session_id=session_id,
                 session_path=session_path,
                 object_ids=object_ids,
                 cache_type=cache_type,
             )
-            return self.memory_cache[session_id]
+            return self._memory_contexts[session_id]
 
         raise ValueError(
             f"Session with id '{session_id}' already exists in memory cache. "

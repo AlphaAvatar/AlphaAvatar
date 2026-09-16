@@ -189,28 +189,26 @@ memory:
 
     pipeline:
       extraction:
-        # Emit nothing when the session holds no durable value.
         session_gate: false
-        # Semantic relations between the entities each memory already
-        # mentions. Not implemented; entities alone become graph nodes.
         relations: false
 
-      note:
-        # off             -- atomic item layer only
-        # session_summary -- one immutable note per session, keeps the detail
-        #                    atomic extraction drops
-        # session_merge   -- notes merge across sessions, so a later
-        #                    correction takes effect
+      consolidation:
+        # off             -- atomic memories only
+        # session_summary -- one session-level consolidated memory;
+        #                    source memories remain independently visible
+        # session_merge   -- consolidated memories can evolve across sessions;
+        #                    superseded source memories resolve to the current version
         mode: session_merge
-        # null follows the mode default: on for session_merge, off otherwise.
-        resolve_covered_items: null
-        max_item_ids: 200
+
+        # null follows mode defaults:
+        # true for session_merge, false otherwise
+        resolve_superseded_items: null
 
       maintenance:
-        item_ops: [add]
-        # note_lookup (one RPC) | query_recall (reuses this session's recalls)
-        # | union
-        candidate_source: note_lookup
+        item_ops:
+          - add
+
+        candidate_source: consolidated_lookup
         similarity_threshold: 0.82
         max_candidates_per_item: 5
         timeout: 30.0

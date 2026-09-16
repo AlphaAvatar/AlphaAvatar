@@ -13,102 +13,149 @@
 # limitations under the License.
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Iterable
 from datetime import datetime
 from typing import Any
 
-from alphaavatar.agents.memory import MemoryCache, MemoryItem, MemoryNote
-from alphaavatar.agents.utils.time import application_now
+from alphaavatar.agents.memory.enums import MemoryKind
+from alphaavatar.agents.memory.schemas import (
+    MemoryItem,
+    MemorySearchHit,
+)
 
 from ..log import logger
-from .candidates import RecallLedger, merge_candidates, notes_from_hits
-from .config import CandidateSource, MemoryPipelineConfig, NoteMode
-from .note_op import apply_assignments
+from .candidates import (
+    RecalledCandidateCache,
+    consolidated_from_hits,
+    merge_candidates,
+)
+from .config import CandidateSource, ConsolidationMode, MemoryPipelineConfig
+from .consolidation_op import apply_assignments
 from .prompts import render_candidates, render_incoming
-from .schema import ConsolidationResult, NoteConsolidation
+from .schema import ConsolidationPlan, ConsolidationResult
 
-# Note consolidation: candidate recall, one LLM call, deterministic mapping.
+CandidateSearch = Callable[
+    ...,
+    Awaitable[list[list[MemorySearchHit]]],
+]
+PlanConsolidation = Callable[..., Awaitable[ConsolidationPlan]]
 
-CandidateSearch = Callable[..., Awaitable[list[list[dict[str, Any]]]]]
-Consolidate = Callable[..., Awaitable[NoteConsolidation]]
+
+def _owner_keys(item: MemoryItem) -> tuple[str, ...]:
+    return tuple(sorted(ref.key for ref in item.owner_refs))
+
+
+def _validate_batch(items: list[MemoryItem]) -> MemoryItem:
+    if not items:
+        raise ValueError("Consolidation batch cannot be empty")
+
+    first = items[0]
+    if first.kind is not MemoryKind.ATOMIC:
+        raise ValueError("Consolidation batch must contain atomic memories")
+
+    owners = _owner_keys(first)
+
+    for item in items[1:]:
+        if item.kind is not MemoryKind.ATOMIC:
+            raise ValueError("Consolidation batch must contain atomic memories")
+        if item.memory_type != first.memory_type:
+            raise ValueError("Cannot consolidate different memory types")
+        if item.scope.key != first.scope.key:
+            raise ValueError("Cannot consolidate memories across scopes")
+        if _owner_keys(item) != owners:
+            raise ValueError("Cannot consolidate memories across owner domains")
+
+    return first
+
+
+def _compatible_candidates(
+    items: list[MemoryItem],
+    candidates: Iterable[MemoryItem],
+) -> list[MemoryItem]:
+    first = _validate_batch(items)
+    owners = _owner_keys(first)
+
+    return [
+        candidate
+        for candidate in candidates
+        if candidate.kind is MemoryKind.CONSOLIDATED
+        and candidate.memory_type == first.memory_type
+        and candidate.scope.key == first.scope.key
+        and _owner_keys(candidate) == owners
+    ]
 
 
 def _log_hit_scores(
     items: list[MemoryItem],
-    hits: list[list[dict[str, Any]]],
+    hits: list[list[MemorySearchHit]],
     *,
     threshold: float,
 ) -> None:
-    """Record what the nearest-neighbour search actually scored.
-
-    Whether a note gets merged into hinges on these numbers, but they are
-    otherwise invisible: only the surviving count reaches the result. Without
-    them, "no candidates" cannot be told apart from "candidates just under the
-    line", and the threshold cannot be calibrated on real data.
-    """
     if not logger.isEnabledFor(logging.DEBUG):
         return
 
     for item, item_hits in zip(items, hits, strict=False):
         if not item_hits:
-            logger.debug("[Memory] candidate scores item=%s: none returned", item.memory_id[:8])
+            logger.debug(
+                "[Memory] consolidation candidates memory=%s none",
+                item.memory_id[:8],
+            )
             continue
 
         ranked = sorted(
-            (float(h.get("score", 0.0)), str((h.get("item") or {}).get("id", ""))[:8])
-            for h in item_hits
+            (
+                hit.score,
+                hit.memory.memory_id[:8],
+            )
+            for hit in item_hits
         )
+
         logger.debug(
-            "[Memory] candidate scores item=%s threshold=%.2f -> %s",
+            "[Memory] consolidation candidates memory=%s threshold=%.2f -> %s",
             item.memory_id[:8],
             threshold,
-            ", ".join(f"{note_id}:{score:.4f}" for score, note_id in reversed(ranked)),
+            ", ".join(f"{memory_id}:{score:.4f}" for score, memory_id in reversed(ranked)),
         )
 
 
-class NoteConsolidator:
-    """Builds and maintains the note layer above a session's atomic memories."""
-
+class MemoryConsolidator:
     def __init__(
         self,
         config: MemoryPipelineConfig,
         *,
         candidate_search: CandidateSearch,
-        consolidate: Consolidate,
+        plan: PlanConsolidation,
     ) -> None:
         self._config = config
         self._candidate_search = candidate_search
-        self._consolidate = consolidate
-        self._recall_ledger = RecallLedger()
+        self._plan = plan
+        self._recalled_candidates = RecalledCandidateCache()
 
     @property
     def enabled(self) -> bool:
-        return self._config.note.enabled
+        return self._config.consolidation.enabled
+
+    @property
+    def resolve_sources(self) -> bool:
+        return self._config.consolidation.mode is ConsolidationMode.SESSION_MERGE
 
     def record_recall(self, records: Iterable[MemoryItem]) -> None:
-        """Tally what retrieval surfaced; recalled notes can become candidates."""
-        self._recall_ledger.record(records)
+        self._recalled_candidates.record(records)
 
     async def consolidate_session(
         self,
         items: list[MemoryItem],
         *,
         session_content: str,
-        memory_cache: MemoryCache,
         updated_at: datetime,
         trace_metadata: dict[str, Any],
     ) -> list[MemoryItem]:
-        """Return the records to persist for this session, notes included.
-
-        Never raises and never drops an item: on any failure the items are
-        returned untouched so the append-only layer still lands on disk.
-        """
         return (
             await self._consolidate_session(
                 items,
                 session_content=session_content,
-                memory_cache=memory_cache,
                 updated_at=updated_at,
                 trace_metadata=trace_metadata,
             )
@@ -119,48 +166,55 @@ class NoteConsolidator:
         items: list[MemoryItem],
         *,
         session_content: str,
-        memory_cache: MemoryCache,
         updated_at: datetime,
         trace_metadata: dict[str, Any],
     ) -> ConsolidationResult:
         if not items:
-            return ConsolidationResult()
+            return ConsolidationResult(
+                source_items=[],
+                to_insert=[],
+                to_rewrite=[],
+            )
+
+        first = _validate_batch(items)
+        fallback = ConsolidationResult(
+            source_items=list(items),
+            to_insert=[],
+            to_rewrite=[],
+        )
 
         if not self.enabled:
-            return ConsolidationResult(items=list(items))
+            return fallback
 
         try:
-            candidates = await self._collect_candidates(
-                items,
-                object_ids=memory_cache.object_ids,
-            )
-            consolidation = await self._invoke(
+            candidates = await self._collect_candidates(items)
+
+            plan = await self._invoke(
                 items,
                 candidates=candidates,
                 session_content=session_content,
                 trace_metadata=trace_metadata,
             )
+
+            result = apply_assignments(
+                items,
+                candidates,
+                plan,
+                resolve_sources=self.resolve_sources,
+                updated_at=updated_at,
+            )
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.exception(
-                "[Memory] note consolidation failed sid=%s; persisting items without notes",
-                memory_cache.session_id,
+                "[Memory] consolidation failed context=%s; persisting atomic memories",
+                first.context.context_id,
             )
-            return ConsolidationResult(items=list(items))
-
-        result = apply_assignments(
-            consolidation,
-            items=items,
-            candidates=candidates,
-            session_id=memory_cache.session_id,
-            object_ids=memory_cache.object_ids,
-            created_at=application_now(),
-            updated_at=updated_at,
-            max_item_ids=self._config.note.max_item_ids,
-        )
+            return fallback
 
         logger.info(
-            "[sid: %s] note consolidation items=%d candidates=%d inserted=%d rewritten=%d",
-            memory_cache.session_id,
+            "[Memory] consolidation context=%s items=%d candidates=%d inserted=%d rewritten=%d",
+            first.context.context_id,
             len(items),
             len(candidates),
             len(result.to_insert),
@@ -172,45 +226,63 @@ class NoteConsolidator:
     async def _collect_candidates(
         self,
         items: list[MemoryItem],
-        *,
-        object_ids: list[str],
-    ) -> list[MemoryNote]:
-        if self._config.note.mode is NoteMode.SESSION_SUMMARY:
-            # A summary note never merges into an existing one, so recalling
-            # candidates would only cost an RPC.
+    ) -> list[MemoryItem]:
+        first = _validate_batch(items)
+
+        if self._config.consolidation.mode is ConsolidationMode.SESSION_SUMMARY:
             return []
 
         maintenance = self._config.maintenance
         source = maintenance.candidate_source
+        from_recall: list[MemoryItem] = []
 
-        from_recall: list[MemoryNote] = []
-        if source in (CandidateSource.QUERY_RECALL, CandidateSource.UNION):
-            from_recall = self._recall_ledger.notes()
+        if source in (
+            CandidateSource.QUERY_RECALL,
+            CandidateSource.UNION,
+        ):
+            from_recall = self._recalled_candidates.candidates()
 
-        from_lookup: list[MemoryNote] = []
-        if source in (CandidateSource.NOTE_LOOKUP, CandidateSource.UNION):
+        from_lookup: list[MemoryItem] = []
+
+        if source in (
+            CandidateSource.CONSOLIDATED_LOOKUP,
+            CandidateSource.UNION,
+        ):
             hits = await self._candidate_search(
                 [item.embedding_text() for item in items],
-                object_ids=object_ids,
+                owner_refs=first.owner_refs,
+                context=first.context,
             )
-            _log_hit_scores(items, hits, threshold=maintenance.similarity_threshold)
-            from_lookup = notes_from_hits(
+
+            _log_hit_scores(
+                items,
+                hits,
+                threshold=maintenance.similarity_threshold,
+            )
+
+            from_lookup = consolidated_from_hits(
                 hits,
                 threshold=maintenance.similarity_threshold,
                 limit=maintenance.max_candidates_per_item,
             )
 
-        return merge_candidates(from_lookup, from_recall)
+        return _compatible_candidates(
+            items,
+            merge_candidates(
+                from_lookup,
+                from_recall,
+            ),
+        )
 
     async def _invoke(
         self,
         items: list[MemoryItem],
         *,
-        candidates: list[MemoryNote],
+        candidates: list[MemoryItem],
         session_content: str,
         trace_metadata: dict[str, Any],
-    ) -> NoteConsolidation:
-        session_summary = self._config.note.mode is NoteMode.SESSION_SUMMARY
+    ) -> ConsolidationPlan:
+        session_summary = self._config.consolidation.mode is ConsolidationMode.SESSION_SUMMARY
 
         payload: dict[str, Any] = {
             "session_content": session_content,
@@ -220,9 +292,12 @@ class NoteConsolidator:
         if not session_summary:
             payload["candidates"] = render_candidates(candidates)
 
-        return await self._consolidate(
+        return await self._plan(
             payload=payload,
             session_summary=session_summary,
-            metadata={**trace_metadata, "operation": "note_consolidation"},
+            metadata={
+                **trace_metadata,
+                "operation": "memory_consolidation",
+            },
             timeout=self._config.maintenance.timeout,
         )

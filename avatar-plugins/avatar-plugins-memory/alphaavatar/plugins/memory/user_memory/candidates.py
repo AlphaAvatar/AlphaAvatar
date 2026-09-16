@@ -15,76 +15,75 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from alphaavatar.agents.memory import MemoryItem, MemoryNote
-
-from ..memory_op import rebuild_from_items
-
-# Where the note-consolidation stage gets its candidate notes from.
+from alphaavatar.agents.memory.enums import MemoryKind
+from alphaavatar.agents.memory.schemas import MemoryItem, MemorySearchHit
 
 
-class RecallLedger:
-    """Every memory recalled during a session, without the MemoryState caps.
-
-    MemoryState is a rendering view: it caps each bucket at maximum_memory_num
-    and keeps the most recent by timestamp, so the oldest records get evicted
-    first -- and those are exactly the ones most likely to need updating. The
-    candidate source therefore keeps its own unbounded tally.
-    """
-
+class RecalledCandidateCache:
     def __init__(self) -> None:
         self._by_id: dict[str, MemoryItem] = {}
 
     def record(self, records: Iterable[MemoryItem]) -> None:
         for record in records:
-            if record.memory_id:
+            if record.kind is not MemoryKind.CONSOLIDATED:
+                continue
+
+            current = self._by_id.get(record.memory_id)
+            if current is None or record.revision >= current.revision:
                 self._by_id[record.memory_id] = record
 
-    def notes(self) -> list[MemoryNote]:
-        return [r for r in self._by_id.values() if isinstance(r, MemoryNote)]
+    def candidates(self) -> list[MemoryItem]:
+        return list(self._by_id.values())
+
+    def clear(self) -> None:
+        self._by_id.clear()
 
     def __len__(self) -> int:
         return len(self._by_id)
 
 
 def filter_hits(
-    hits: list[dict],
+    hits: list[MemorySearchHit],
     *,
     threshold: float,
     limit: int,
-) -> list[dict]:
-    kept = [hit for hit in hits if float(hit.get("score", 0.0)) >= threshold]
-    return kept[:limit]
+) -> list[MemorySearchHit]:
+    if limit <= 0:
+        return []
+
+    return [hit for hit in hits if hit.score >= threshold][:limit]
 
 
-def notes_from_hits(
-    all_hits: list[list[dict]],
+def consolidated_from_hits(
+    all_hits: list[list[MemorySearchHit]],
     *,
     threshold: float,
     limit: int,
-) -> list[MemoryNote]:
-    """Flatten per-item nearest-neighbour hits into a deduplicated note set."""
-    rows: list[dict] = []
-    seen: set[str] = set()
-
-    for hits in all_hits:
-        for hit in filter_hits(hits, threshold=threshold, limit=limit):
-            item = hit.get("item") or {}
-            item_id = str(item.get("id", ""))
-
-            if not item_id or item_id in seen:
-                continue
-
-            seen.add(item_id)
-            rows.append(item)
-
-    return [record for record in rebuild_from_items(rows) if isinstance(record, MemoryNote)]
+) -> list[MemoryItem]:
+    return merge_candidates(
+        hit.memory
+        for hits in all_hits
+        for hit in filter_hits(
+            hits,
+            threshold=threshold,
+            limit=limit,
+        )
+        if hit.memory.kind is MemoryKind.CONSOLIDATED
+    )
 
 
-def merge_candidates(*groups: Iterable[MemoryNote]) -> list[MemoryNote]:
-    merged: dict[str, MemoryNote] = {}
+def merge_candidates(
+    *groups: Iterable[MemoryItem],
+) -> list[MemoryItem]:
+    merged: dict[str, MemoryItem] = {}
 
     for group in groups:
-        for note in group:
-            merged.setdefault(note.memory_id, note)
+        for memory in group:
+            if memory.kind is not MemoryKind.CONSOLIDATED:
+                continue
+
+            current = merged.get(memory.memory_id)
+            if current is None or memory.revision >= current.revision:
+                merged[memory.memory_id] = memory
 
     return list(merged.values())

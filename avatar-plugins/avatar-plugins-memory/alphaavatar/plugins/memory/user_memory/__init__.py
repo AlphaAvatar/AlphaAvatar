@@ -11,48 +11,60 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .candidates import RecallLedger, filter_hits, merge_candidates, notes_from_hits
+from .candidates import (
+    RecallLedger,
+    consolidated_from_hits,
+    filter_hits,
+    merge_candidates,
+)
 from .config import (
     CandidateSource,
+    ConsolidationConfig,
+    ConsolidationMode,
     ExtractionConfig,
     ItemOp,
     MaintenanceConfig,
     MemoryPipelineConfig,
-    NoteConfig,
-    NoteMode,
 )
-from .consolidator import NoteConsolidator
-from .note_op import apply_assignments, build_note, rewrite_note
-from .prompts import CONSOLIDATE_NOTES_PROMPT, SESSION_SUMMARY_PROMPT
+from .consolidation_op import (
+    apply_assignments,
+    build_consolidated_memory,
+    rewrite_consolidated_memory,
+)
+from .consolidator import MemoryConsolidator
+from .prompts import (
+    CONSOLIDATION_PROMPT,
+    SESSION_SUMMARY_PROMPT,
+)
 from .schema import (
-    NEW_NOTE_PREFIX,
+    NEW_CONSOLIDATED_PREFIX,
+    ConsolidatedMemoryDraft,
+    ConsolidationPlan,
     ConsolidationResult,
-    NoteAssignment,
-    NoteConsolidation,
-    NoteDraft,
+    MemoryAssignment,
 )
 
 __all__ = [
-    "CONSOLIDATE_NOTES_PROMPT",
-    "NEW_NOTE_PREFIX",
+    "CONSOLIDATION_PROMPT",
+    "NEW_CONSOLIDATED_PREFIX",
     "SESSION_SUMMARY_PROMPT",
     "CandidateSource",
+    "ConsolidatedMemoryDraft",
+    "ConsolidationConfig",
+    "ConsolidationMode",
+    "ConsolidationPlan",
     "ConsolidationResult",
     "ExtractionConfig",
     "ItemOp",
     "MaintenanceConfig",
+    "MemoryAssignment",
+    "MemoryConsolidator",
     "MemoryPipelineConfig",
-    "NoteAssignment",
-    "NoteConfig",
-    "NoteConsolidation",
-    "NoteConsolidator",
-    "NoteDraft",
-    "NoteMode",
     "RecallLedger",
     "apply_assignments",
-    "build_note",
+    "build_consolidated_memory",
+    "consolidated_from_hits",
     "filter_hits",
     "merge_candidates",
-    "notes_from_hits",
-    "rewrite_note",
+    "rewrite_consolidated_memory",
 ]

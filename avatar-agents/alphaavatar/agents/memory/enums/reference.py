@@ -11,18 +11,28 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .base import StatusPolicyBase, StatusRendererBase, StatusSinkBase
-from .emitter import StatusEmitter
-from .enum import StatusPriority, StatusType
-from .schema import StatusEvent, StatusPolicyConfig
+from enum import StrEnum
 
-__all__ = [
-    "StatusEmitter",
-    "StatusPolicyBase",
-    "StatusRendererBase",
-    "StatusSinkBase",
-    "StatusEvent",
-    "StatusPolicyConfig",
-    "StatusPriority",
-    "StatusType",
-]
+
+class MemoryOwnerKind(StrEnum):
+    USER = "user"
+    AVATAR = "avatar"
+
+
+class MemoryParticipantKind(StrEnum):
+    USER = "user"
+    AVATAR = "avatar"
+    TOOL = "tool"
+    ENTITY = "entity"
+
+
+class MemorySourceKind(StrEnum):
+    MESSAGE = "message"
+    TOOL_CALL = "tool_call"
+    TOOL_RESULT = "tool_result"
+
+    PERCEPTION_SOURCE = "perception_source"
+    PERCEPTION_SEGMENT = "perception_segment"
+    PERCEPTION_ENTITY = "perception_entity"
+
+    RUNTIME_EVENT = "runtime_event"

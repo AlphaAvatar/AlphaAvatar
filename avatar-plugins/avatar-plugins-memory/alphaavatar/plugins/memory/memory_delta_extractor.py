@@ -19,7 +19,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from alphaavatar.agents.memory import MemoryCache, MemoryType
+from alphaavatar.agents.memory import MemoryCache
+from alphaavatar.agents.memory.enums import MemoryType
 from alphaavatar.agents.providers import ProviderGateway, ProvidersConfig
 from alphaavatar.agents.providers.schema import (
     ModelInput,
@@ -36,9 +37,9 @@ from .prompts import (
     build_conversation_delta_prompt,
 )
 from .user_memory import (
-    CONSOLIDATE_NOTES_PROMPT,
+    CONSOLIDATION_PROMPT,
     SESSION_SUMMARY_PROMPT,
-    NoteConsolidation,
+    ConsolidationPlan,
 )
 
 if TYPE_CHECKING:
@@ -236,20 +237,20 @@ class MemoryDeltaExtractor:
             timeout=timeout,
         )
 
-    async def consolidate_notes(
+    async def plan_consolidation(
         self,
         *,
         payload: dict[str, Any],
         session_summary: bool,
         metadata: dict[str, Any],
         timeout: float,
-    ) -> NoteConsolidation:
+    ) -> ConsolidationPlan:
         return await self._safe_ainvoke_structured(
             task_name=self._conversation_delta_task,
-            prompt=SESSION_SUMMARY_PROMPT if session_summary else CONSOLIDATE_NOTES_PROMPT,
+            prompt=(SESSION_SUMMARY_PROMPT if session_summary else CONSOLIDATION_PROMPT),
             payload=payload,
-            output_schema=NoteConsolidation,
-            fallback_output=NoteConsolidation(),
+            output_schema=ConsolidationPlan,
+            fallback_output=ConsolidationPlan(),
             metadata=metadata,
             timeout=timeout,
         )

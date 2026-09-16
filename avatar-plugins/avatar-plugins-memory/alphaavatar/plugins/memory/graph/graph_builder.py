@@ -15,11 +15,11 @@ import hashlib
 from collections.abc import Iterable
 from itertools import combinations
 
-from alphaavatar.agents.memory import MemoryItem
-from alphaavatar.agents.memory.schema.graph import (
+from alphaavatar.agents.memory.schemas import (
     GraphNodeMention,
     MemoryGraphLink,
     MemoryGraphNode,
+    MemoryItem,
 )
 
 LOCAL_NODE_TYPES = {"face", "voice", "speaker", "object"}

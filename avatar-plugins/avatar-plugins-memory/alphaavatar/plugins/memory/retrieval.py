@@ -13,236 +13,128 @@
 # limitations under the License.
 from __future__ import annotations
 
-import asyncio
-import json
-from typing import Any
-
 from livekit.agents.llm import ChatItem
 
-from alphaavatar.agents.memory import (
+from alphaavatar.agents.memory import MemoryPluginsTemplate
+from alphaavatar.agents.memory.enums import MemoryType
+from alphaavatar.agents.memory.schemas import (
+    MemoryContextRef,
     MemoryItem,
-    MemoryPluginsTemplate,
-    MemoryType,
-    VectorRunnerOP,
+    MemoryOwnerRef,
 )
 
 from .log import logger
-from .memory_op import LAYER_NOTE, merge_object_ids, rebuild_from_items
 
 
 class MemoryRetrievalMixin:
-    """Vector recall: by context, by graph node, and note candidates.
-
-    Split out of MemoryRuntime for file size only; behaviour is unchanged.
-    Requires from the host class: `inference_executor`, `vdb_inference_method`,
-    `memory_cache`, `memory_recall_num`, `avatar_id`, `_pipeline_config`,
-    `_note_consolidator`, and the four memory-bucket setters.
-    """
-
     async def search_by_context(
         self,
         *,
         avatar_id: str,
         session_id: str,
         chat_context: list[ChatItem],
-        timeout: float = 3,
+        timeout: float = 3.0,
     ) -> None:
-        """Search for relevant memories based on the query."""
         context_str = MemoryPluginsTemplate.apply_search_template(
-            chat_context[-getattr(self, "memory_search_context", 3) :],
+            chat_context[-self.memory_search_context :],
             filter_roles=["system"],
         )
-
         if not context_str:
-            # Without this line, "nothing in the log" means either success or
-            # never-ran, and a missing recall cannot be told apart afterwards.
-            logger.debug(
-                "Memory [search_by_context] skipped: empty search context sid=%s", session_id
+            logger.debug("Memory context recall skipped: empty query sid=%s", session_id)
+            return
+
+        state = self._get_context_state_or_raise(session_id)
+        owners = self._recall_owners(avatar_id, state.owner_refs)
+
+        try:
+            items = await self.store.recall_by_context(
+                context_str=context_str,
+                owner_refs=owners,
+                context=state.context,
+                top_k=self.memory_recall_num,
+                timeout=timeout,
             )
+        except Exception as exc:
+            logger.warning("Memory context recall failed sid=%s: %s", session_id, exc)
             return
 
-        json_data = {
-            "op": VectorRunnerOP.search_by_context,
-            "param": {
-                "context_str": context_str,
-                "object_ids": merge_object_ids(
-                    [avatar_id],
-                    self.memory_cache[session_id].object_ids,
-                ),
-                "top_k": self.memory_recall_num,
-                "resolve_covered_items": self._pipeline_config.note.resolves_covered_items,
-            },
-        }
+        self._memory_consolidator.record_recall(items)
+        self.avatar_memory = [item for item in items if item.memory_type == MemoryType.Avatar]
+        self.user_memory = [item for item in items if item.memory_type == MemoryType.CONVERSATION]
+        self.tool_memory = [item for item in items if item.memory_type == MemoryType.TOOLS]
+        self.env_memory = [item for item in items if item.memory_type == MemoryType.ENV]
 
-        result = await asyncio.wait_for(
-            self.inference_executor.do_inference(
-                self.vdb_inference_method,
-                json.dumps(json_data).encode(),
-            ),
-            timeout=timeout,
-        )
-
-        if result is None:
-            logger.warning("Memory [search_by_context] failed, result is None!")
-            return
-
-        data: dict[str, Any] = json.loads(result.decode())
-
-        logger.debug(
-            "Memory [search_by_context] sid=%s recalled=%d resolved=%d",
-            session_id,
-            int(data.get("recalled_count") or 0),
-            len(data.get("memory_items") or []),
-        )
-
-        if data.get("memory_items"):
-            memory_items = rebuild_from_items(data["memory_items"])
-
-            # The candidate source for note maintenance may read this ledger,
-            # and it must not read MemoryState: that view is capped and evicts
-            # the oldest first -- precisely the records most likely to need an
-            # update.
-            self._note_consolidator.record_recall(memory_items)
-
-            self.avatar_memory = [
-                item for item in memory_items if item.memory_type == MemoryType.Avatar
-            ]
-
-            self.user_memory = [
-                item for item in memory_items if item.memory_type == MemoryType.CONVERSATION
-            ]
-
-            self.tool_memory = [
-                item for item in memory_items if item.memory_type == MemoryType.TOOLS
-            ]
-
-            self.env_memory = [item for item in memory_items if item.memory_type == MemoryType.ENV]
-
-        if data.get("error"):
-            logger.warning("Memory [search_by_context] err: %s", data["error"])
+        logger.debug("Memory context recall sid=%s resolved=%d", session_id, len(items))
 
     async def search_by_graph_node(
         self,
         *,
         node_key: str | None = None,
         node_query: str | None = None,
-        object_ids: list[str] | None = None,
         session_id: str | None = None,
         memory_type: str | None = None,
         node_type: str | None = None,
         max_hops: int = 0,
         top_k: int = 50,
-        timeout: float = 3,
+        timeout: float = 3.0,
     ) -> list[MemoryItem]:
+        sid = session_id or self.session_runtime.session_id
+        state = self._get_context_state_or_raise(sid)
+        owners = self._recall_owners(self.avatar_id, state.owner_refs)
         node_keys: list[str] = []
 
         if node_key:
-            lookup = self._graph_lookup()
-            resolved = lookup.resolve_keys(node_key)
-
-            if max_hops > 0:
-                node_keys = lookup.expand_node_keys(
+            resolved = self._graph_lookup().resolve_keys(node_key)
+            node_keys = (
+                self._graph_lookup().expand_node_keys(
                     node_keys=resolved,
                     max_hops=max_hops,
                     max_neighbors_per_node=16,
                     min_weight=0.0,
                 )
-            else:
-                node_keys = resolved
+                if max_hops > 0
+                else resolved
+            )
 
-        json_data = {
-            "op": VectorRunnerOP.search_by_graph_node,
-            "param": {
-                "node_keys": node_keys,
-                "node_query": node_query,
-                "object_ids": object_ids,
-                "session_id": session_id,
-                "memory_type": memory_type,
-                "node_type": node_type,
-                "top_k": top_k,
-            },
-        }
-
-        result = await asyncio.wait_for(
-            self.inference_executor.do_inference(
-                self.vdb_inference_method,
-                json.dumps(json_data).encode(),
-            ),
-            timeout=timeout,
-        )
-
-        if result is None:
-            logger.warning("Memory [search_by_graph_node] failed, result is None!")
+        try:
+            return await self.store.recall_by_graph_node(
+                owner_refs=owners,
+                context=state.context,
+                node_keys=node_keys,
+                node_query=node_query,
+                memory_type=MemoryType(memory_type) if memory_type else None,
+                node_type=node_type,
+                top_k=top_k,
+                timeout=timeout,
+            )
+        except Exception as exc:
+            logger.warning("Memory graph recall failed sid=%s: %s", sid, exc)
             return []
 
-        data: dict[str, Any] = json.loads(result.decode())
-
-        if data.get("error"):
-            logger.warning("Memory [search_by_graph_node] err: %s", data["error"])
-            return []
-
-        return rebuild_from_items(data.get("memory_items") or [])
-
-    async def _note_candidate_search(
+    async def _consolidation_candidate_search(
         self,
         texts: list[str],
         *,
-        object_ids: list[str],
+        owner_refs: list[MemoryOwnerRef],
+        context: MemoryContextRef,
         timeout: float = 5.0,
-    ) -> list[list[dict[str, Any]]]:
-        """Nearest existing notes for each incoming atomic memory.
-
-        `object_ids` must be the owners the notes were written under -- the
-        participants, not the avatar. Conversation memory is stored against the
-        user, so filtering by avatar id alone intersects with nothing and the
-        search silently returns no candidates at all.
-        """
-        empty: list[list[dict[str, Any]]] = [[] for _ in texts]
-
-        if not texts:
-            return []
-
-        json_data = {
-            "op": VectorRunnerOP.search_similar_batch,
-            "param": {
-                "texts": texts,
-                "top_k": self._pipeline_config.maintenance.max_candidates_per_item,
-                "object_ids": merge_object_ids(object_ids),
-                "memory_type": MemoryType.CONVERSATION.value,
-                "layer": LAYER_NOTE,
-            },
-        }
-
+    ):
         try:
-            result = await asyncio.wait_for(
-                self.inference_executor.do_inference(
-                    self.vdb_inference_method,
-                    json.dumps(json_data).encode(),
-                ),
+            return await self.store.search_consolidation_candidates(
+                texts,
+                owner_refs=owner_refs,
+                context=context,
+                top_k=self._pipeline_config.maintenance.max_candidates_per_item,
                 timeout=timeout,
             )
-        except Exception as e:
-            logger.warning("Memory [note candidate search] failed: %s", e)
-            return empty
+        except Exception as exc:
+            logger.warning("Memory consolidation candidate search failed: %s", exc)
+            return [[] for _ in texts]
 
-        if result is None:
-            return empty
-
-        data = json.loads(result.decode())
-
-        if data.get("error"):
-            logger.warning("Memory [note candidate search] err: %s", data["error"])
-            return empty
-
-        results = data.get("results") or []
-
-        # Never let a short response shift candidates onto the wrong record.
-        if len(results) != len(texts):
-            logger.warning(
-                "Memory [note candidate search] count mismatch: got %d want %d",
-                len(results),
-                len(texts),
-            )
-            return empty
-
-        return results
+    @staticmethod
+    def _recall_owners(
+        avatar_id: str,
+        owner_refs: list[MemoryOwnerRef],
+    ) -> list[MemoryOwnerRef]:
+        refs = [MemoryOwnerRef.avatar(avatar_id), *owner_refs]
+        return list({ref.key: ref for ref in refs}.values())

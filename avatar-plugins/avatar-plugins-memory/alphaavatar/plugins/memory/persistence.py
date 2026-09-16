@@ -16,7 +16,8 @@ from __future__ import annotations
 import asyncio
 import json
 
-from alphaavatar.agents.memory import MemoryItem, VectorRunnerOP
+from alphaavatar.agents.memory.enums import VectorRunnerOP
+from alphaavatar.agents.memory.schemas import MemoryItem
 
 from .graph import save_memory_graph_stubs
 from .log import logger

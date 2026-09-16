@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,22 +11,26 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .base import MemoryBase
-from .context_state import MemoryContextState
-from .store import (
-    MemoryCheckpointConflict,
-    MemoryRevisionConflict,
-    MemoryStoreBackend,
-    MemoryStoreConflict,
+from .cache_type import MemoryCacheType
+from .memory_kind import MemoryKind
+from .memory_type import MemoryType
+from .outbox import MemoryOutboxTarget
+from .reference import (
+    MemoryOwnerKind,
+    MemoryParticipantKind,
+    MemorySourceKind,
 )
-from .template import MemoryPluginsTemplate
+from .runner_op import VectorRunnerOP
+from .scope import MemoryScopeKind
 
 __all__ = [
-    "MemoryBase",
-    "MemoryContextState",
-    "MemoryPluginsTemplate",
-    "MemoryCheckpointConflict",
-    "MemoryRevisionConflict",
-    "MemoryStoreBackend",
-    "MemoryStoreConflict",
+    "MemoryCacheType",
+    "MemoryKind",
+    "MemoryOwnerKind",
+    "MemoryParticipantKind",
+    "MemoryScopeKind",
+    "MemorySourceKind",
+    "MemoryType",
+    "MemoryOutboxTarget",
+    "VectorRunnerOP",
 ]

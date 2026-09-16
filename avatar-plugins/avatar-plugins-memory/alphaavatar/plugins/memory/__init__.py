@@ -19,6 +19,7 @@ from alphaavatar.agents.runtime.inference import InferenceRunner
 
 from .log import logger
 from .memory_runtime import MemoryRuntime
+from .storage import MemoryStore
 from .version import __version__
 
 __all__ = [
@@ -42,9 +43,11 @@ class MemoryPlugin(AvatarPlugin):
         **kwargs,
     ) -> MemoryRuntime:
         try:
+            store = MemoryStore(runtime=runtime)
             return MemoryRuntime(
                 runtime=runtime,
                 avatar_id=avatar_id,
+                store=store,
                 memory_search_context=memory_search_context,
                 memory_recall_num=memory_recall_num,
                 maximum_memory_num=maximum_memory_num,

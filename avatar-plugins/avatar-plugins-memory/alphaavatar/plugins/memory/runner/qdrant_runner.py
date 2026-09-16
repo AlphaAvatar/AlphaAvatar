@@ -28,13 +28,11 @@ from qdrant_client.models import (
     VectorParams,
 )
 
-from alphaavatar.agents.memory import VectorRunnerOP
+from alphaavatar.agents.memory.enums import VectorRunnerOP
 from alphaavatar.agents.providers import ProviderKind, ProviderTaskConfig
 from alphaavatar.agents.providers.embedding import create_embedding_model
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import qdrant
-
-from ..memory_op import resolve_value_to_note
 
 
 class QdrantRunner(InferenceRunner):
@@ -43,131 +41,128 @@ class QdrantRunner(InferenceRunner):
     _PAYLOAD_INDEX_FIELDS = (
         "doc_kind",
         "memory_id",
+        "memory_kind",
+        "memory_type",
+        "scope_key",
+        "owner_keys",
         "node_key",
         "node_type",
-        "memory_type",
-        "session_id",
-        "object_ids",
     )
 
     def __init__(self):
         super().__init__()
 
-    """Helper Op"""
-
     @staticmethod
     def _as_str_list(value: Any) -> list[str]:
         if value is None:
             return []
-
-        values = value if isinstance(value, list | tuple) else [value]
+        values = value if isinstance(value, list | tuple | set) else [value]
         out: list[str] = []
         seen: set[str] = set()
-
         for item in values:
-            value = str(item).strip()
-            if not value or value in seen:
+            if item is None:
                 continue
-            seen.add(value)
-            out.append(value)
-
+            item = str(item).strip()
+            if item and item not in seen:
+                seen.add(item)
+                out.append(item)
         return out
 
     @staticmethod
     def _json_safe(value: Any, fallback: Any) -> Any:
         if value is None:
             return fallback
-
         try:
-            return json.loads(
-                json.dumps(
-                    value,
-                    ensure_ascii=False,
-                    default=str,
-                )
-            )
+            return json.loads(json.dumps(value, ensure_ascii=False, default=str))
         except Exception:
             return fallback
 
     @staticmethod
     def _point_id(logical_id: str) -> str:
-        """Qdrant physical ID. AlphaAvatar logical ID remains in payload."""
-        return str(
-            uuid5(
-                NAMESPACE_URL,
-                f"alphaavatar.memory.qdrant:{logical_id}",
-            )
-        )
+        return str(uuid5(NAMESPACE_URL, f"alphaavatar.memory.qdrant:{logical_id}"))
+
+    @staticmethod
+    def _merge_candidates(*groups: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+        merged: dict[str, float] = {}
+        for group in groups:
+            for candidate in group:
+                memory_id = str(candidate.get("memory_id") or "").strip()
+                if not memory_id:
+                    continue
+                score = float(candidate.get("score") or 0.0)
+                merged[memory_id] = max(score, merged.get(memory_id, float("-inf")))
+        return [
+            {"memory_id": memory_id, "score": score}
+            for memory_id, score in sorted(merged.items(), key=lambda item: item[1], reverse=True)[
+                :limit
+            ]
+        ]
 
     def _build_filter(
         self,
         *,
         doc_kind: str | None = None,
-        object_ids: list[str] | None = None,
+        owner_keys: list[str] | None = None,
+        scope_keys: list[str] | None = None,
         memory_type: str | None = None,
-        session_id: str | None = None,
+        memory_kind: str | None = None,
         node_type: str | None = None,
         node_keys: list[str] | None = None,
         memory_ids: list[str] | None = None,
     ) -> Filter | None:
-        must = []
+        must = [
+            FieldCondition(key=key, match=MatchValue(value=value))
+            for key, value in (
+                ("doc_kind", doc_kind),
+                ("memory_type", memory_type),
+                ("memory_kind", memory_kind),
+                ("node_type", node_type),
+            )
+            if value
+        ]
 
-        for key, value in (
-            ("doc_kind", doc_kind),
-            ("memory_type", memory_type),
-            ("session_id", session_id),
-            ("node_type", node_type),
+        for key, values in (
+            ("owner_keys", owner_keys),
+            ("scope_key", scope_keys),
+            ("node_key", node_keys),
+            ("memory_id", memory_ids),
         ):
-            if value:
-                must.append(
-                    FieldCondition(
-                        key=key,
-                        match=MatchValue(value=value),
-                    )
-                )
-
-        if values := self._as_str_list(object_ids):
-            must.append(
-                FieldCondition(
-                    key="object_ids",
-                    match=MatchAny(any=values),
-                )
-            )
-
-        if values := self._as_str_list(node_keys):
-            must.append(
-                FieldCondition(
-                    key="node_key",
-                    match=MatchAny(any=values),
-                )
-            )
-
-        if values := self._as_str_list(memory_ids):
-            must.append(
-                FieldCondition(
-                    key="memory_id",
-                    match=MatchAny(any=values),
-                )
-            )
+            if values := self._as_str_list(values):
+                must.append(FieldCondition(key=key, match=MatchAny(any=values)))
 
         return Filter(must=must) if must else None
 
-    """Qdrant row conversion"""
+    def _base_payload(self, item: dict) -> dict[str, Any]:
+        metadata = item.get("metadata", {}) or {}
+        return {
+            "memory_id": str(item["id"]),
+            "memory_kind": str(metadata.get("memory_kind", "")),
+            "memory_type": str(metadata.get("memory_type", "")),
+            "conversation_id": str(metadata.get("conversation_id", "")),
+            "context_id": str(metadata.get("context_id", "")),
+            "runtime_session_id": str(metadata.get("runtime_session_id", "")),
+            "parent_context_id": str(metadata.get("parent_context_id") or ""),
+            "task_id": str(metadata.get("task_id") or ""),
+            "scope_key": str(metadata.get("scope_key", "")),
+            "owner_keys": self._as_str_list(metadata.get("owner_keys")),
+            "owner_refs": self._json_safe(metadata.get("owner_refs"), []),
+            "participant_refs": self._json_safe(metadata.get("participant_refs"), []),
+            "source_refs": self._json_safe(metadata.get("source_refs"), []),
+            "topic": str(metadata.get("topic") or ""),
+            "created_at": str(metadata.get("created_at", "")),
+            "updated_at": str(metadata.get("updated_at", "")),
+            "revision": int(metadata.get("revision") or 1),
+            "source_memory_ids": self._as_str_list(metadata.get("source_memory_ids")),
+            "supersedes_memory_ids": self._as_str_list(metadata.get("supersedes_memory_ids")),
+        }
 
     def _to_memory_payload(self, item: dict) -> dict[str, Any]:
         metadata = item.get("metadata", {}) or {}
-        memory_id = str(item["id"])
-
         return {
-            "id": memory_id,
+            "id": str(item["id"]),
             "page_content": item.get("page_content", ""),
             "doc_kind": "memory_item",
-            "session_id": str(metadata.get("session_id", "")),
-            "object_ids": self._as_str_list(metadata.get("object_ids")),
-            "topic": str(metadata.get("topic", "")),
-            "created_at": str(metadata.get("created_at", "")),
-            "memory_type": str(metadata.get("memory_type", "")),
-            "memory_id": memory_id,
+            **self._base_payload(item),
             "node_id": "",
             "node_key": "",
             "node_type": "",
@@ -186,34 +181,19 @@ class QdrantRunner(InferenceRunner):
         memory_id = str(item["id"])
         rows: list[tuple[dict[str, Any], list[float]]] = []
 
-        vector_idx = 0
-
-        for node in metadata.get("graph_nodes") or []:
+        for node, vector in zip(metadata.get("graph_nodes") or [], vectors, strict=True):
             extra_data = node.get("extra_data") or {}
-
-            # memory_item already has its own row.
-            if extra_data.get("node_kind") == "memory_item":
-                continue
-
             content = str(node.get("content", "")).strip()
-            if not content:
+            if extra_data.get("node_kind") == "memory_item" or not content:
                 continue
 
-            node_key = str(node.get("key", "") or node.get("id", ""))
-            node_id = str(node.get("id", ""))
-            row_id = f"graph_node::{memory_id}::{node_key}"
-
+            node_key = str(node.get("key") or node.get("id") or "")
             payload = {
-                "id": row_id,
+                "id": f"graph_node::{memory_id}::{node_key}",
                 "page_content": content,
                 "doc_kind": "graph_node",
-                "session_id": str(metadata.get("session_id", "")),
-                "object_ids": self._as_str_list(metadata.get("object_ids")),
-                "topic": str(metadata.get("topic", "")),
-                "created_at": str(metadata.get("created_at", "")),
-                "memory_type": str(metadata.get("memory_type", "")),
-                "memory_id": memory_id,
-                "node_id": node_id,
+                **self._base_payload(item),
+                "node_id": str(node.get("id", "")),
                 "node_key": node_key,
                 "node_type": str(node.get("type", "text")),
                 "node_weight": float(node.get("weight", 1.0)),
@@ -221,34 +201,13 @@ class QdrantRunner(InferenceRunner):
                 "graph_links": [],
                 "extra_data": self._json_safe(extra_data, {}),
             }
-
-            rows.append((payload, vectors[vector_idx]))
-            vector_idx += 1
+            rows.append((payload, vector))
 
         return rows
 
-    @staticmethod
-    def _payload_to_item(payload: dict[str, Any]) -> dict:
-        return {
-            "id": str(payload.get("id", "")),
-            "page_content": payload.get("page_content", ""),
-            "metadata": {
-                "session_id": payload.get("session_id", ""),
-                "object_ids": payload.get("object_ids") or [],
-                "topic": payload.get("topic", ""),
-                "created_at": payload.get("created_at", ""),
-                "memory_type": payload.get("memory_type", ""),
-                "graph_nodes": payload.get("graph_nodes") or [],
-                "graph_links": payload.get("graph_links") or [],
-                "extra_data": payload.get("extra_data") or {},
-            },
-        }
-
-    """Qdrant query helpers"""
-
-    def _query_payloads(
+    def _query_candidates(
         self,
-        query_vec: list[float],
+        vector: list[float],
         *,
         query_filter: Filter | None,
         limit: int,
@@ -258,16 +217,19 @@ class QdrantRunner(InferenceRunner):
 
         response = self._client.query_points(
             collection_name=self._collection_name,
-            query=query_vec,
+            query=vector,
             query_filter=query_filter,
             limit=limit,
             with_payload=True,
             with_vectors=False,
         )
+        return [
+            {"memory_id": memory_id, "score": float(point.score or 0.0)}
+            for point in response.points
+            if (memory_id := str((point.payload or {}).get("memory_id") or "").strip())
+        ]
 
-        return [dict(point.payload or {}) for point in response.points]
-
-    def _scroll_payloads(
+    def _scroll_candidates(
         self,
         *,
         scroll_filter: Filter | None,
@@ -277,220 +239,57 @@ class QdrantRunner(InferenceRunner):
             return []
 
         out: list[dict[str, Any]] = []
+        seen: set[str] = set()
         offset = None
 
         while len(out) < limit:
             records, next_offset = self._client.scroll(
                 collection_name=self._collection_name,
                 scroll_filter=scroll_filter,
-                limit=min(256, limit - len(out)),
-                offset=offset,
-                with_payload=True,
-                with_vectors=False,
-            )
-
-            out.extend(dict(record.payload or {}) for record in records)
-
-            if next_offset is None or not records:
-                break
-
-            offset = next_offset
-
-        return out
-
-    def _get_memory_items_by_ids(
-        self,
-        memory_ids: list[str],
-    ) -> list[dict]:
-        ordered_ids = self._as_str_list(memory_ids)
-        if not ordered_ids:
-            return []
-
-        rows = self._scroll_payloads(
-            scroll_filter=self._build_filter(
-                doc_kind="memory_item",
-                memory_ids=ordered_ids,
-            ),
-            limit=len(ordered_ids),
-        )
-
-        item_by_id = {
-            str(row.get("memory_id", "")): self._payload_to_item(row)
-            for row in rows
-            if row.get("memory_id")
-        }
-
-        return [item_by_id[memory_id] for memory_id in ordered_ids if memory_id in item_by_id]
-
-    def _find_memory_ids_by_node_keys(
-        self,
-        *,
-        node_keys: list[str],
-        top_k: int,
-        memory_type: str | None = None,
-        session_id: str | None = None,
-        object_ids: list[str] | None = None,
-        node_type: str | None = None,
-    ) -> list[str]:
-        keys = self._as_str_list(node_keys)
-        if not keys or top_k <= 0:
-            return []
-
-        query_filter = self._build_filter(
-            doc_kind="graph_node",
-            node_keys=keys,
-            node_type=node_type,
-            memory_type=memory_type,
-            session_id=session_id,
-            object_ids=object_ids,
-        )
-
-        out: list[str] = []
-        seen: set[str] = set()
-        offset = None
-
-        while len(out) < top_k:
-            records, next_offset = self._client.scroll(
-                collection_name=self._collection_name,
-                scroll_filter=query_filter,
-                limit=max(64, top_k * 4),
+                limit=min(max(limit * 2, 64), 256),
                 offset=offset,
                 with_payload=True,
                 with_vectors=False,
             )
 
             for record in records:
-                memory_id = str((record.payload or {}).get("memory_id", ""))
-
-                if not memory_id or memory_id in seen:
-                    continue
-
-                seen.add(memory_id)
-                out.append(memory_id)
-
-                if len(out) >= top_k:
-                    break
+                memory_id = str((record.payload or {}).get("memory_id") or "").strip()
+                if memory_id and memory_id not in seen:
+                    seen.add(memory_id)
+                    out.append({"memory_id": memory_id, "score": 1.0})
+                    if len(out) >= limit:
+                        break
 
             if next_offset is None or not records:
                 break
-
             offset = next_offset
 
         return out
-
-    def _find_memory_ids_by_node_query(
-        self,
-        *,
-        node_query: str,
-        top_k: int,
-        memory_type: str | None = None,
-        session_id: str | None = None,
-        object_ids: list[str] | None = None,
-        node_type: str | None = None,
-    ) -> list[str]:
-        if not node_query.strip() or top_k <= 0:
-            return []
-
-        rows = self._query_payloads(
-            self._embeddings.embed_query(node_query),
-            query_filter=self._build_filter(
-                doc_kind="graph_node",
-                node_type=node_type,
-                memory_type=memory_type,
-                session_id=session_id,
-                object_ids=object_ids,
-            ),
-            limit=max(top_k * 16, 64),
-        )
-
-        out: list[str] = []
-        seen: set[str] = set()
-
-        for row in rows:
-            memory_id = str(row.get("memory_id", ""))
-
-            if not memory_id or memory_id in seen:
-                continue
-
-            seen.add(memory_id)
-            out.append(memory_id)
-
-            if len(out) >= top_k:
-                break
-
-        return out
-
-    """Search Op"""
-
-    def _search_rows(
-        self,
-        query_vec: list[float],
-        *,
-        object_ids: list[str] | None,
-        doc_kind: str,
-        k: int,
-    ) -> list[dict[str, Any]]:
-        return self._query_payloads(
-            query_vec,
-            query_filter=self._build_filter(
-                doc_kind=doc_kind,
-                object_ids=object_ids,
-            ),
-            limit=k,
-        )
 
     def _search_by_context(
         self,
         *,
         context_str: str,
-        object_ids: list[str] | None = None,
+        owner_keys: list[str] | None = None,
+        scope_keys: list[str] | None = None,
         top_k: int = 10,
-        resolve_covered_items: bool = False,
-    ) -> dict:
-        out = {"memory_items": [], "recalled_count": 0, "error": None}
+    ) -> dict[str, Any]:
+        out = {"candidates": [], "error": None}
 
         try:
-            query_vec = self._embeddings.embed_query(context_str)
-
-            memory_rows = self._search_rows(
-                query_vec,
-                object_ids=object_ids,
-                doc_kind="memory_item",
-                k=top_k,
+            vector = self._embeddings.embed_query(context_str)
+            common = {"owner_keys": owner_keys, "scope_keys": scope_keys}
+            memories = self._query_candidates(
+                vector,
+                query_filter=self._build_filter(doc_kind="memory_item", **common),
+                limit=top_k,
             )
-            graph_rows = self._search_rows(
-                query_vec,
-                object_ids=object_ids,
-                doc_kind="graph_node",
-                k=top_k,
+            graph = self._query_candidates(
+                vector,
+                query_filter=self._build_filter(doc_kind="graph_node", **common),
+                limit=top_k,
             )
-
-            merged: dict[str, dict] = {}
-
-            for row in memory_rows:
-                item = self._payload_to_item(row)
-                merged[item["id"]] = item
-
-            graph_memory_ids = [
-                str(row.get("memory_id", "")) for row in graph_rows if row.get("memory_id")
-            ]
-
-            for item in self._get_memory_items_by_ids(graph_memory_ids):
-                merged[item["id"]] = item
-
-            items = list(merged.values())
-            out["recalled_count"] = len(items)
-
-            # Before truncation, so the caller still gets exactly top_k rows.
-            if resolve_covered_items:
-                items = resolve_value_to_note(
-                    items,
-                    fetch_notes=self._get_memory_items_by_ids,
-                    max_fetch=top_k,
-                )
-
-            out["memory_items"] = items[:top_k]
-
+            out["candidates"] = self._merge_candidates(memories, graph, limit=top_k)
         except Exception as exc:
             out["error"] = str(exc)
 
@@ -499,62 +298,85 @@ class QdrantRunner(InferenceRunner):
     def _search_by_graph_node(
         self,
         *,
-        node_key: str | None = None,
         node_keys: list[str] | None = None,
         node_query: str | None = None,
-        top_k: int = 50,
+        owner_keys: list[str] | None = None,
+        scope_keys: list[str] | None = None,
         memory_type: str | None = None,
-        session_id: str | None = None,
-        object_ids: list[str] | None = None,
         node_type: str | None = None,
-    ) -> dict:
-        out = {"memory_items": [], "error": None}
+        top_k: int = 50,
+    ) -> dict[str, Any]:
+        out = {"candidates": [], "error": None}
 
         try:
-            memory_ids: list[str] = []
-
-            exact_keys = self._as_str_list([node_key, *(node_keys or [])])
-            if exact_keys:
-                memory_ids.extend(
-                    self._find_memory_ids_by_node_keys(
-                        node_keys=exact_keys,
-                        top_k=top_k,
-                        memory_type=memory_type,
-                        session_id=session_id,
-                        object_ids=object_ids,
-                        node_type=node_type,
-                    )
+            common = {
+                "doc_kind": "graph_node",
+                "owner_keys": owner_keys,
+                "scope_keys": scope_keys,
+                "memory_type": memory_type,
+                "node_type": node_type,
+            }
+            exact = (
+                self._scroll_candidates(
+                    scroll_filter=self._build_filter(node_keys=node_keys, **common),
+                    limit=top_k,
                 )
-
-            if node_query:
-                memory_ids.extend(
-                    self._find_memory_ids_by_node_query(
-                        node_query=node_query,
-                        top_k=top_k,
-                        memory_type=memory_type,
-                        session_id=session_id,
-                        object_ids=object_ids,
-                        node_type=node_type,
-                    )
-                )
-
-            out["memory_items"] = self._get_memory_items_by_ids(
-                self._as_str_list(memory_ids)[:top_k]
+                if self._as_str_list(node_keys)
+                else []
             )
-
+            semantic = (
+                self._query_candidates(
+                    self._embeddings.embed_query(node_query),
+                    query_filter=self._build_filter(**common),
+                    limit=top_k,
+                )
+                if node_query and node_query.strip()
+                else []
+            )
+            out["candidates"] = self._merge_candidates(exact, semantic, limit=top_k)
         except Exception as exc:
             out["error"] = str(exc)
 
         return out
 
-    """Save Op"""
+    def _search_similar_batch(
+        self,
+        *,
+        texts: list[str],
+        top_k: int = 5,
+        owner_keys: list[str] | None = None,
+        scope_keys: list[str] | None = None,
+        memory_type: str | None = None,
+        layer: str | None = None,
+    ) -> dict[str, Any]:
+        out = {"results": [], "error": None}
 
-    def _save(self, *, memory_items: list[dict]) -> dict:
-        result = {
-            "deleted_ids": [],
-            "inserted": 0,
-            "error": None,
-        }
+        try:
+            if not texts:
+                return out
+            if top_k <= 0:
+                out["results"] = [[] for _ in texts]
+                return out
+
+            query_filter = self._build_filter(
+                doc_kind="memory_item",
+                owner_keys=owner_keys,
+                scope_keys=scope_keys,
+                memory_type=memory_type,
+                memory_kind=layer,
+            )
+            out["results"] = [
+                self._query_candidates(vector, query_filter=query_filter, limit=top_k)
+                for vector in self._embeddings.embed_documents(texts)
+            ]
+        except Exception as exc:
+            out["error"] = str(exc)
+            out["results"] = [[] for _ in texts]
+
+        return out
+
+    def _save(self, *, memory_items: list[dict]) -> dict[str, Any]:
+        result = {"deleted_ids": [], "inserted": 0, "error": None}
 
         try:
             if not memory_items:
@@ -563,7 +385,6 @@ class QdrantRunner(InferenceRunner):
             memory_ids = self._as_str_list(
                 item.get("id") for item in memory_items if item.get("id")
             )
-
             if memory_ids:
                 self._client.delete(
                     collection_name=self._collection_name,
@@ -574,81 +395,42 @@ class QdrantRunner(InferenceRunner):
                 )
                 result["deleted_ids"] = memory_ids
 
-            # 1. Memory item embeddings.
-            memory_vectors = self._embeddings.embed_documents(
-                [item.get("page_content", "") for item in memory_items]
-            )
-
-            points: list[PointStruct] = []
-
-            for item, vector in zip(
-                memory_items,
-                memory_vectors,
-                strict=True,
-            ):
-                payload = self._to_memory_payload(item)
-
-                points.append(
-                    PointStruct(
-                        id=self._point_id(f"memory_item::{payload['memory_id']}"),
-                        vector=vector,
-                        payload=payload,
-                    )
+            memory_texts = [
+                item.get("embedding_text") or item.get("page_content", "") for item in memory_items
+            ]
+            memory_vectors = self._embeddings.embed_documents(memory_texts)
+            points = [
+                PointStruct(
+                    id=self._point_id(f"memory_item::{item['id']}"),
+                    vector=vector,
+                    payload=self._to_memory_payload(item),
                 )
+                for item, vector in zip(memory_items, memory_vectors, strict=True)
+            ]
 
-            # 2. Graph node embeddings.
+            graph_nodes: list[tuple[dict, dict]] = []
             graph_texts: list[str] = []
-            graph_items: list[dict] = []
-
             for item in memory_items:
-                valid_nodes = []
-
                 for node in item.get("metadata", {}).get("graph_nodes") or []:
                     extra_data = node.get("extra_data") or {}
-
-                    if extra_data.get("node_kind") == "memory_item":
-                        continue
-
                     content = str(node.get("content", "")).strip()
-
-                    if not content:
+                    if extra_data.get("node_kind") == "memory_item" or not content:
                         continue
-
-                    valid_nodes.append(node)
+                    graph_nodes.append((item, node))
                     graph_texts.append(content)
 
-                if valid_nodes:
-                    graph_items.append(
-                        {
-                            "item": item,
-                            "valid_nodes": valid_nodes,
-                        }
-                    )
-
             graph_vectors = self._embeddings.embed_documents(graph_texts) if graph_texts else []
-
-            vector_offset = 0
-
-            for bundle in graph_items:
-                item = bundle["item"]
-                valid_nodes = bundle["valid_nodes"]
-
+            for (item, node), vector in zip(graph_nodes, graph_vectors, strict=True):
                 item_copy = dict(item)
-                metadata = dict(item.get("metadata", {}) or {})
-                metadata["graph_nodes"] = valid_nodes
+                metadata = dict(item_copy.get("metadata", {}) or {})
+                metadata["graph_nodes"] = [node]
                 item_copy["metadata"] = metadata
 
-                node_vectors = graph_vectors[vector_offset : vector_offset + len(valid_nodes)]
-                vector_offset += len(valid_nodes)
-
-                for payload, vector in self._to_graph_node_payloads(
-                    item_copy,
-                    node_vectors,
-                ):
+                for payload, node_vector in self._to_graph_node_payloads(item_copy, [vector]):
                     points.append(
                         PointStruct(
                             id=self._point_id(payload["id"]),
-                            vector=vector,
+                            vector=node_vector,
                             payload=payload,
                         )
                     )
@@ -661,37 +443,30 @@ class QdrantRunner(InferenceRunner):
                 )
 
             result["inserted"] = len(points)
-
         except Exception as exc:
             result["error"] = str(exc)
 
         return result
 
-    """Runner Interface"""
-
     def _ensure_collection(self, collection_name: str, embedding_dim: int) -> None:
         if not self._client.collection_exists(collection_name):
             self._client.create_collection(
                 collection_name=collection_name,
-                vectors_config=VectorParams(
-                    size=embedding_dim,
-                    distance=Distance.COSINE,
-                ),
+                vectors_config=VectorParams(size=embedding_dim, distance=Distance.COSINE),
             )
 
-        collection = self._client.get_collection(collection_name)
-        indexed_fields = set((collection.payload_schema or {}).keys())
+        indexed_fields = set(
+            (self._client.get_collection(collection_name).payload_schema or {}).keys()
+        )
 
         for field in self._PAYLOAD_INDEX_FIELDS:
-            if field in indexed_fields:
-                continue
-
-            self._client.create_payload_index(
-                collection_name=collection_name,
-                field_name=field,
-                field_schema=PayloadSchemaType.KEYWORD,
-                wait=True,
-            )
+            if field not in indexed_fields:
+                self._client.create_payload_index(
+                    collection_name=collection_name,
+                    field_name=field,
+                    field_schema=PayloadSchemaType.KEYWORD,
+                    wait=True,
+                )
 
     @staticmethod
     def _get_vdb_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -702,7 +477,6 @@ class QdrantRunner(InferenceRunner):
     @staticmethod
     def _get_memory_embeddings(config: dict[str, Any]):
         embedding_config = config.get("embedding")
-
         if not embedding_config:
             raise ValueError("`embedding` is required in MEMORY_VDB_CONFIG")
 
@@ -712,7 +486,6 @@ class QdrantRunner(InferenceRunner):
 
         if not provider:
             raise ValueError("`embedding.provider` is required in MEMORY_VDB_CONFIG")
-
         if not model:
             raise ValueError("`embedding.model` is required in MEMORY_VDB_CONFIG")
 
@@ -728,13 +501,11 @@ class QdrantRunner(InferenceRunner):
     def initialize(self) -> None:
         config = json.loads(os.getenv("MEMORY_VDB_CONFIG", "{}"))
         self._collection_name = config.get("collection_name")
-
         if not self._collection_name:
             raise ValueError("collection_name is required in MEMORY_VDB_CONFIG")
 
         self._client = qdrant.get_client(**self._get_vdb_config(config))
         self._embeddings = self._get_memory_embeddings(config)
-
         embedding_dim = len(self._embeddings.embed_query("dimension-probe"))
         self._ensure_collection(self._collection_name, embedding_dim)
 
@@ -746,6 +517,8 @@ class QdrantRunner(InferenceRunner):
                 result = self._search_by_context(**json_data["param"])
             case VectorRunnerOP.search_by_graph_node:
                 result = self._search_by_graph_node(**json_data["param"])
+            case VectorRunnerOP.search_similar_batch:
+                result = self._search_similar_batch(**json_data["param"])
             case VectorRunnerOP.save:
                 result = self._save(**json_data["param"])
             case _:

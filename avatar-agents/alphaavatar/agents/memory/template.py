@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from livekit.agents.llm import ChatItem, ChatMessage, ChatRole, FunctionCall, FunctionCallOutput
 
-from .enum.cache_type import MemoryCacheType
+from .enums.cache_type import MemoryCacheType
 
 
 class MemoryPluginsTemplate:

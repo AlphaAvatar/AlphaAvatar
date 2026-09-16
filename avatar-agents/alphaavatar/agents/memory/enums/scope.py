@@ -11,8 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from collections.abc import Awaitable, Callable
+from enum import StrEnum
 
-from alphaavatar.agents.status.schema import StatusEvent
 
-StatusCallback = Callable[[StatusEvent], Awaitable[None]]
+class MemoryScopeKind(StrEnum):
+    OWNER = "owner"
+    CONVERSATION = "conversation"
+    CONTEXT = "context"
