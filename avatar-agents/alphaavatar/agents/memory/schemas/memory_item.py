@@ -73,6 +73,7 @@ class MemoryItem(BaseModel):
 
     value: str
     topic: str | None = None
+
     created_at: datetime = Field(default_factory=application_now)
     updated_at: datetime | None = None
     revision: int = Field(default=1, ge=1)
@@ -83,6 +84,7 @@ class MemoryItem(BaseModel):
 
     graph_nodes: list[MemoryGraphNode] = Field(default_factory=list)
     graph_links: list[MemoryGraphLink] = Field(default_factory=list)
+
     extra_data: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("owner_refs", mode="after")

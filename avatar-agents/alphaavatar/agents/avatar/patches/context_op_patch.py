@@ -54,7 +54,7 @@ class LivekitContextPatch:
     ):
         if op == OpType.INSERT:
             self._engine.memory.add_message(
-                session_id=self._engine.session_runtime.session_id,
+                context_id=self._engine.memory.root_context_id,
                 chat_item=payload["value"],
             )
 

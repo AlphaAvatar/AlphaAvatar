@@ -14,11 +14,11 @@
 from .graph_alias import save_graph_aliases
 from .graph_builder import build_graph_from_mentions
 from .graph_lookup import GraphLookup
-from .graph_store import save_memory_graph_stubs
+from .graph_store import export_memory_graph
 
 __all__ = [
     "save_graph_aliases",
     "build_graph_from_mentions",
     "GraphLookup",
-    "save_memory_graph_stubs",
+    "export_memory_graph",
 ]

@@ -19,7 +19,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from alphaavatar.agents.memory import MemoryCache
+from alphaavatar.agents.memory import MemoryContextState
 from alphaavatar.agents.memory.enums import MemoryType
 from alphaavatar.agents.providers import ProviderGateway, ProvidersConfig
 from alphaavatar.agents.providers.schema import (
@@ -31,11 +31,7 @@ from alphaavatar.agents.providers.schema import (
 
 from .log import logger
 from .memory_op import EnvMemoryDelta, MemoryDelta
-from .prompts import (
-    ENV_DELTA_PROMPT,
-    TOOL_DELTA_PROMPT,
-    build_conversation_delta_prompt,
-)
+from .prompts import ENV_DELTA_PROMPT, TOOL_DELTA_PROMPT, build_conversation_delta_prompt
 from .user_memory import (
     CONSOLIDATION_PROMPT,
     SESSION_SUMMARY_PROMPT,
@@ -52,62 +48,56 @@ class MemoryProviderConfig(BaseModel):
     conversation_delta_task: str = "memory.conversation_delta"
     tool_delta_task: str = "memory.tool_delta"
     env_delta_task: str | None = None
-
     gateway: ProvidersConfig = Field(default_factory=ProvidersConfig)
 
 
 class MemoryDeltaExtractor:
-    """Provider-backed conversation, tool and environment memory extraction."""
-
     def __init__(self, config: MemoryProviderConfig | None = None) -> None:
         self._config = config or MemoryProviderConfig()
         self._conversation_delta_task = self._config.conversation_delta_task
         self._tool_delta_task = self._config.tool_delta_task
         self._env_delta_task = self._config.env_delta_task
-
-        tasks = [
-            task
-            for task in (
-                self._conversation_delta_task,
-                self._tool_delta_task,
-                self._env_delta_task,
-            )
-            if task
-        ]
         self._provider_gateway = ProviderGateway(self._config.gateway)
-        self._provider_gateway.validate_tasks(tasks)
+        self._provider_gateway.validate_tasks(
+            [
+                task
+                for task in (
+                    self._conversation_delta_task,
+                    self._tool_delta_task,
+                    self._env_delta_task,
+                )
+                if task
+            ]
+        )
 
     @property
     def config(self) -> MemoryProviderConfig:
         return self._config
 
-    """Trace helpers"""
-
     @staticmethod
     def base_trace_metadata(
         *,
-        memory_cache: MemoryCache,
+        context_state: MemoryContextState,
         operation: str,
         memory_type: MemoryType,
         component: str = "memory_delta_extractor",
         extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        metadata: dict[str, Any] = {
-            "provider_dir": str(memory_cache.provider_dir),
+        context = context_state.context
+        metadata = {
+            "provider_dir": str(context_state.provider_dir),
             "plugin": "memory",
             "component": component,
             "operation": operation,
-            "session_id": memory_cache.session_id,
-            "cache_type": str(memory_cache.cache_type),
+            "conversation_id": context.conversation_id,
+            "context_id": context.context_id,
+            "session_id": context.session_id,
+            "cache_type": context_state.cache_type.value,
             "memory_type": memory_type.value,
         }
-
         if extra:
             metadata.update(extra)
-
         return metadata
-
-    """ENV memory op"""
 
     def _build_env_model_input(
         self,
@@ -137,21 +127,15 @@ class MemoryDeltaExtractor:
                 "</conversation_context>",
             )
         )
-
         return ModelInput(
             items=(
                 ModelInputMessage(
                     id=f"memory.env:{uuid4().hex}",
                     role=ModelRole.USER,
-                    parts=(
-                        ModelTextPart(instructions),
-                        memory_input.temporal,
-                    ),
+                    parts=(ModelTextPart(instructions), memory_input.temporal),
                 ),
             )
         )
-
-    """Provider invocation"""
 
     async def _safe_ainvoke_structured(
         self,
@@ -178,19 +162,13 @@ class MemoryDeltaExtractor:
                 ),
                 timeout=timeout,
             )
-
-            if isinstance(result.output, output_schema):
-                return result.output
-
-            return output_schema.model_validate(result.output)
-
-        except TimeoutError:
-            logger.warning(
-                "[Memory] extraction timeout task=%s timeout=%s",
-                task_name,
-                timeout,
+            return (
+                result.output
+                if isinstance(result.output, output_schema)
+                else output_schema.model_validate(result.output)
             )
-
+        except TimeoutError:
+            logger.warning("[Memory] extraction timeout task=%s timeout=%s", task_name, timeout)
             if raise_on_error:
                 raise
 
@@ -198,39 +176,29 @@ class MemoryDeltaExtractor:
 
         except asyncio.CancelledError:
             raise
-
-        except Exception as error:
-            logger.exception(
-                "[Memory] extraction failed task=%s error=%s",
-                task_name,
-                str(error),
-            )
-
+        except Exception as exc:
+            logger.exception("[Memory] extraction failed task=%s error=%s", task_name, exc)
             if raise_on_error:
                 raise
 
             return fallback_output
 
-    """Delta operations"""
-
     async def extract_conversation_delta(
         self,
         *,
         session_content: str,
-        memory_cache: MemoryCache,
+        context_state: MemoryContextState,
         session_gate: bool = False,
         timeout: float = 12.0,
     ) -> MemoryDelta:
         return await self._safe_ainvoke_structured(
             task_name=self._conversation_delta_task,
             prompt=build_conversation_delta_prompt(session_gate=session_gate),
-            payload={
-                "session_content": session_content,
-            },
+            payload={"session_content": session_content},
             output_schema=MemoryDelta,
             fallback_output=MemoryDelta(),
             metadata=self.base_trace_metadata(
-                memory_cache=memory_cache,
+                context_state=context_state,
                 operation="conversation_delta",
                 memory_type=MemoryType.CONVERSATION,
             ),
@@ -247,7 +215,7 @@ class MemoryDeltaExtractor:
     ) -> ConsolidationPlan:
         return await self._safe_ainvoke_structured(
             task_name=self._conversation_delta_task,
-            prompt=(SESSION_SUMMARY_PROMPT if session_summary else CONSOLIDATION_PROMPT),
+            prompt=SESSION_SUMMARY_PROMPT if session_summary else CONSOLIDATION_PROMPT,
             payload=payload,
             output_schema=ConsolidationPlan,
             fallback_output=ConsolidationPlan(),
@@ -259,19 +227,17 @@ class MemoryDeltaExtractor:
         self,
         *,
         session_content: str,
-        memory_cache: MemoryCache,
+        context_state: MemoryContextState,
         timeout: float = 12.0,
     ) -> MemoryDelta:
         return await self._safe_ainvoke_structured(
             task_name=self._tool_delta_task,
             prompt=TOOL_DELTA_PROMPT,
-            payload={
-                "session_content": session_content,
-            },
+            payload={"session_content": session_content},
             output_schema=MemoryDelta,
             fallback_output=MemoryDelta(),
             metadata=self.base_trace_metadata(
-                memory_cache=memory_cache,
+                context_state=context_state,
                 operation="tool_delta",
                 memory_type=MemoryType.TOOLS,
             ),
@@ -282,7 +248,7 @@ class MemoryDeltaExtractor:
         self,
         *,
         memory_input: EnvMemoryInput,
-        memory_cache: MemoryCache,
+        context_state: MemoryContextState,
         previous_env_memory: str | None = None,
         conversation_context: str | None = None,
         timeout: float = 25.0,
@@ -303,13 +269,11 @@ class MemoryDeltaExtractor:
         return await self._safe_ainvoke_structured(
             task_name=self._env_delta_task,
             prompt=ENV_DELTA_PROMPT,
-            payload={
-                "env_messages": model_input,
-            },
+            payload={"env_messages": model_input},
             output_schema=EnvMemoryDelta,
             fallback_output=EnvMemoryDelta(),
             metadata=self.base_trace_metadata(
-                memory_cache=memory_cache,
+                context_state=context_state,
                 operation="env_delta",
                 memory_type=MemoryType.ENV,
                 extra={

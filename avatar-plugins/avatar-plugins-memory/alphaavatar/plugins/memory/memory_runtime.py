@@ -14,50 +14,39 @@
 from __future__ import annotations
 
 import asyncio
-import os
+from collections.abc import Iterable
 from typing import Any
 
-from livekit.agents.llm import ChatItem, ChatMessage
+from livekit.agents.llm import ChatItem, ChatMessage, FunctionCall, FunctionCallOutput
 
-from alphaavatar.agents.memory import (
-    MemoryBase,
-    MemoryCache,
-    MemoryPluginsTemplate,
-)
+from alphaavatar.agents.memory import MemoryBase, MemoryContextState, MemoryPluginsTemplate
 from alphaavatar.agents.memory.enums import MemoryCacheType, MemoryType
-from alphaavatar.agents.memory.schemas import MemoryItem
+from alphaavatar.agents.memory.schemas import (
+    MemoryCheckpointAdvance,
+    MemoryItem,
+    MemoryOwnerRef,
+    MemoryParticipantRef,
+    MemoryScope,
+    MemorySourceRef,
+)
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.utils.time import application_now
 
 from .env_memory import EnvMemoryBatch, EnvMemoryScheduler
-from .graph import (
-    GraphLookup,
-    build_graph_from_mentions,
-    save_graph_aliases,
-)
+from .graph import GraphLookup, build_graph_from_mentions, save_graph_aliases
 from .log import logger
 from .memory_delta_extractor import MemoryDeltaExtractor, MemoryProviderConfig
-from .memory_op import (
-    EnvMemoryDelta,
-    MemoryDelta,
-    PatchOp,
-    norm_token,
-    norm_topic,
-)
-from .persistence import MemoryPersistenceMixin
+from .memory_op import EnvMemoryDelta, MemoryDelta, PatchOp, norm_token, norm_topic
 from .retrieval import MemoryRetrievalMixin
 from .storage import MemoryStore
-from .user_memory import (
-    MemoryConsolidator,
-    MemoryPipelineConfig,
-)
+from .user_memory import MemoryConsolidator, MemoryPipelineConfig
 
-ENV_SAVE_TIMEOUT_SEC = 8.0
-SHUTDOWN_UPDATE_TIMEOUT_SEC = 12.0
-SESSION_SAVE_TIMEOUT_SEC = 8.0
+CONVERSATION_PROCESSOR = "conversation"
+TOOL_PROCESSOR = "tool"
+ENV_PROCESSOR = "environment"
 
 
-class MemoryRuntime(MemoryPersistenceMixin, MemoryRetrievalMixin, MemoryBase):
+class MemoryRuntime(MemoryRetrievalMixin, MemoryBase):
     def __init__(
         self,
         *,
@@ -78,9 +67,7 @@ class MemoryRuntime(MemoryPersistenceMixin, MemoryRetrievalMixin, MemoryBase):
             memory_recall_num=memory_recall_num,
             maximum_memory_num=maximum_memory_num,
         )
-
         self._store = store
-
         self._provider_config = (
             MemoryProviderConfig(**provider) if provider else MemoryProviderConfig()
         )
@@ -88,259 +75,366 @@ class MemoryRuntime(MemoryPersistenceMixin, MemoryRetrievalMixin, MemoryBase):
             MemoryPipelineConfig(**pipeline) if pipeline else MemoryPipelineConfig()
         )
         self._delta_extractor = MemoryDeltaExtractor(self._provider_config)
-
-        # User (conversation) memory: atomic item layer + note layer on top
         self._memory_consolidator = MemoryConsolidator(
             self._pipeline_config,
             candidate_search=self._consolidation_candidate_search,
             plan=self._delta_extractor.plan_consolidation,
         )
-
-        # ENV Memory init
         self._env_scheduler: EnvMemoryScheduler | None = None
-
-        self._save_lock = asyncio.Lock()
+        self._processor_locks: dict[tuple[str, str], asyncio.Lock] = {}
 
     @property
     def store(self) -> MemoryStore:
         return self._store
 
-    @property
-    def vdb_inference_method(self) -> str:
-        method = os.getenv("MEMORY_VDB_INFERENCE_METHOD")
-        if not method:
-            raise RuntimeError(
-                "MEMORY_VDB_INFERENCE_METHOD is not configured. "
-                "Make sure the Memory VDB runner is registered before "
-                "MemoryRuntime starts."
-            )
-        return method
-
-    """Helper Op"""
-
     def _graph_lookup(self) -> GraphLookup:
         return GraphLookup(self.session_runtime.avatar_path.graph_dir)
 
-    def _apply_delta_to_bucket(
-        self,
-        *,
-        avatar_id: str,
-        delta: MemoryDelta,
-        memory_cache: MemoryCache,
-        user_or_tool_memory_type: MemoryType,
-        target_object_ids: list[str] | None = None,
-        extra_data: dict[str, Any] | None = None,
-    ) -> tuple[list[MemoryItem], list[MemoryItem]]:
-        assistant_memories = self._build_memory_items_from_patches(
-            memory_cache=memory_cache,
-            memory_type=MemoryType.Avatar,
-            patches=delta.assistant_memory_entries,
-            object_ids=[avatar_id],
-            extra_data=extra_data,
+    def _processor_lock(self, context_id: str, processor: str) -> asyncio.Lock:
+        return self._processor_locks.setdefault((context_id, processor), asyncio.Lock())
+
+    @staticmethod
+    def _deduplicate_refs(refs: Iterable) -> list:
+        return list({ref.key: ref for ref in refs}.values())
+
+    @classmethod
+    def _source_refs(cls, messages: list[ChatItem]) -> list[MemorySourceRef]:
+        refs: list[MemorySourceRef] = []
+
+        for item in messages:
+            if isinstance(item, ChatMessage):
+                if source_id := str(getattr(item, "id", "") or "").strip():
+                    refs.append(MemorySourceRef.message(source_id))
+                continue
+
+            call_id = str(getattr(item, "call_id", "") or getattr(item, "id", "") or "").strip()
+            tool_id = str(getattr(item, "name", "") or "").strip()
+
+            if not call_id or not tool_id:
+                continue
+
+            if isinstance(item, FunctionCall):
+                refs.append(MemorySourceRef.tool_call(tool_id, call_id))
+            elif isinstance(item, FunctionCallOutput):
+                refs.append(MemorySourceRef.tool_result(tool_id, call_id))
+
+        return cls._deduplicate_refs(refs)
+
+    @classmethod
+    def _tool_participants(
+        cls,
+        state: MemoryContextState,
+        messages: list[ChatItem],
+    ) -> list[MemoryParticipantRef]:
+        refs = list(state.participant_refs)
+        refs.extend(
+            MemoryParticipantRef.tool(tool_id)
+            for item in messages
+            if isinstance(item, FunctionCall | FunctionCallOutput)
+            and (tool_id := str(getattr(item, "name", "") or "").strip())
+        )
+        return cls._deduplicate_refs(refs)
+
+    @staticmethod
+    def _has_explicit_tool_event(messages: list[ChatItem]) -> bool:
+        return any(
+            isinstance(item, FunctionCall | FunctionCallOutput)
+            or getattr(item, "tool_calls", None)
+            or getattr(item, "function_call", None)
+            or getattr(item, "type", None)
+            in {"function_call", "function_call_output", "agent_config_update", "agent_handoff"}
+            for item in messages
         )
 
-        target_memories = self._build_memory_items_from_patches(
-            memory_cache=memory_cache,
-            memory_type=user_or_tool_memory_type,
-            patches=delta.user_or_tool_memory_entries,
-            object_ids=target_object_ids or memory_cache.object_ids,
-            extra_data=extra_data,
-        )
-
-        return assistant_memories, target_memories
-
-    def _has_explicit_tool_event(self, chat_context: list[ChatItem]) -> bool:
-        for item in chat_context:
-            item_type = getattr(item, "type", None)
-
-            if item_type in {
-                "function_call",
-                "function_call_output",
-                "agent_config_update",
-                "agent_handoff",
-            }:
-                return True
-
-            if getattr(item, "tool_calls", None):
-                return True
-
-            if getattr(item, "function_call", None):
-                return True
-
-        return False
-
-    def _build_memory_items_from_patches(
+    def _build_memory_items(
         self,
         *,
-        memory_cache: MemoryCache,
+        state: MemoryContextState,
         memory_type: MemoryType,
         patches: list[PatchOp],
-        object_ids: list[str],
+        owner_refs: list[MemoryOwnerRef],
+        participant_refs: list[MemoryParticipantRef],
+        source_refs: list[MemorySourceRef],
+        scope: MemoryScope,
         extra_data: dict[str, Any] | None = None,
     ) -> list[MemoryItem]:
-        items: list[MemoryItem] = []
         created_at = application_now()
+        items: list[MemoryItem] = []
 
         for patch in patches:
-            topic = norm_topic(patch.topic)
-
             if not norm_token(patch.value):
                 continue
 
             item = MemoryItem(
-                updated=True,
-                session_id=memory_cache.session_id,
-                object_ids=object_ids,
+                context=state.context,
+                scope=scope,
+                owner_refs=owner_refs,
+                participant_refs=participant_refs,
+                source_refs=source_refs,
                 value=patch.value,
-                topic=topic,
+                topic=norm_topic(patch.topic),
                 created_at=created_at,
                 memory_type=memory_type,
                 extra_data=dict(extra_data or {}),
             )
-
-            graph_nodes, graph_links = build_graph_from_mentions(
+            item.graph_nodes, item.graph_links = build_graph_from_mentions(
                 item=item,
                 mentions=patch.node_mentions,
             )
-            item.graph_nodes = graph_nodes
-            item.graph_links = graph_links
-
             items.append(item)
 
         return items
 
-    def _build_session_content_for_update(
+    def _apply_delta(
         self,
         *,
-        cache: MemoryCache,
+        state: MemoryContextState,
+        delta: MemoryDelta,
+        target_type: MemoryType,
+        messages: list[ChatItem],
+    ) -> tuple[list[MemoryItem], list[MemoryItem]]:
+        source_refs = self._source_refs(messages)
+        participants = (
+            self._tool_participants(state, messages)
+            if target_type is MemoryType.TOOLS
+            else state.participant_refs
+        )
+
+        assistant = self._build_memory_items(
+            state=state,
+            memory_type=MemoryType.Avatar,
+            patches=delta.assistant_memory_entries,
+            owner_refs=[MemoryOwnerRef.avatar(self.avatar_id)],
+            participant_refs=participants,
+            source_refs=source_refs,
+            scope=MemoryScope.owner(),
+        )
+        target = self._build_memory_items(
+            state=state,
+            memory_type=target_type,
+            patches=delta.user_or_tool_memory_entries,
+            owner_refs=state.owner_refs,
+            participant_refs=participants,
+            source_refs=source_refs,
+            scope=MemoryScope.owner(),
+        )
+        return assistant, target
+
+    def _build_context_content(
+        self,
+        state: MemoryContextState,
+        messages: list[ChatItem],
     ) -> str:
-        message_content = MemoryPluginsTemplate.apply_update_template(
-            cache.messages,
-            cache.cache_type,
-        )
-
-        current_session_env_memory = self.memory_state.render(
+        content = MemoryPluginsTemplate.apply_update_template(messages, state.cache_type)
+        env_memory = self.memory_state.render(
             memory_type=MemoryType.ENV,
-            session_id=cache.session_id,
+            context_id=state.context_id,
         )
-
-        if not current_session_env_memory:
-            return message_content
+        if not env_memory:
+            return content
 
         return "\n\n".join(
-            [
-                message_content,
-                "[CURRENT SESSION ENV MEMORY]",
-                current_session_env_memory,
-                "[END CURRENT SESSION ENV MEMORY]",
-            ]
+            (
+                content,
+                "[CURRENT CONTEXT ENV MEMORY]",
+                env_memory,
+                "[END CURRENT CONTEXT ENV MEMORY]",
+            )
         )
 
-    """Env Memory Op"""
+    async def _checkpoint_window(
+        self,
+        state: MemoryContextState,
+        processor: str,
+    ) -> tuple[int, int, list[ChatItem]]:
+        start = await self.store.get_checkpoint(
+            context_id=state.context_id,
+            processor=processor,
+        )
+        end = state.message_sequence
 
-    async def _process_env_batch(self, batch: EnvMemoryBatch, timeout: float) -> list[MemoryItem]:
-        sid = batch.session_id
-
-        if sid not in self.memory_cache:
-            logger.warning(
-                "[Memory] ENV processing skipped, cache not found: %s",
-                sid,
+        if start > end:
+            raise RuntimeError(
+                f"Memory checkpoint exceeds context message sequence: "
+                f"{state.context_id}:{processor} checkpoint={start} messages={end}"
             )
-            return []
 
-        cache = self.memory_cache[sid]
-        evidence = batch.build_evidence()
+        return start, end, state.messages_between(start, end)
 
-        previous_env_memory = self.memory_state.render(
+    def _apply_committed_items(self, items: list[MemoryItem]) -> None:
+        superseded = {memory_id for item in items for memory_id in item.supersedes_memory_ids}
+
+        if superseded:
+            self.memory_state.discard(superseded)
+
+        current = [item for item in items if item.memory_id not in superseded]
+
+        for memory_type in MemoryType:
+            bucket = [item for item in current if item.memory_type is memory_type]
+            if bucket:
+                self.memory_state.add(memory_type, bucket)
+
+    async def _commit_items(
+        self,
+        *,
+        state: MemoryContextState,
+        processor: str,
+        start: int,
+        end: int,
+        items: list[MemoryItem],
+    ) -> None:
+        await self.store.commit(
+            items,
+            context_id=state.context_id,
+            processor=processor,
+            idempotency_key=f"{state.context_id}:{processor}:{start}:{end}",
+            checkpoint=MemoryCheckpointAdvance(
+                from_sequence=start,
+                to_sequence=end,
+            ),
+        )
+        self._apply_committed_items(items)
+
+    async def _update_conversation(self, state: MemoryContextState) -> None:
+        async with self._processor_lock(state.context_id, CONVERSATION_PROCESSOR):
+            start, end, messages = await self._checkpoint_window(
+                state,
+                CONVERSATION_PROCESSOR,
+            )
+            if start == end:
+                return
+
+            content = self._build_context_content(state, messages)
+            delta = await self._delta_extractor.extract_conversation_delta(
+                session_content=content,
+                context_state=state,
+                session_gate=self._pipeline_config.extraction.session_gate,
+                timeout=30.0,
+            )
+            assistant, conversation = self._apply_delta(
+                state=state,
+                delta=delta,
+                target_type=MemoryType.CONVERSATION,
+                messages=messages,
+            )
+            conversation = await self._memory_consolidator.consolidate_session(
+                conversation,
+                session_content=content,
+                updated_at=application_now(),
+                trace_metadata=self._delta_extractor.base_trace_metadata(
+                    context_state=state,
+                    operation="memory_consolidation",
+                    memory_type=MemoryType.CONVERSATION,
+                    component="memory_consolidator",
+                ),
+            )
+            await self._commit_items(
+                state=state,
+                processor=CONVERSATION_PROCESSOR,
+                start=start,
+                end=end,
+                items=[*assistant, *conversation],
+            )
+
+    async def _update_tools(self, state: MemoryContextState) -> None:
+        async with self._processor_lock(state.context_id, TOOL_PROCESSOR):
+            start, end, messages = await self._checkpoint_window(
+                state,
+                TOOL_PROCESSOR,
+            )
+            if start == end:
+                return
+
+            if not self._has_explicit_tool_event(messages):
+                await self._commit_items(
+                    state=state,
+                    processor=TOOL_PROCESSOR,
+                    start=start,
+                    end=end,
+                    items=[],
+                )
+                return
+
+            content = self._build_context_content(state, messages)
+            delta = await self._delta_extractor.extract_tool_delta(
+                session_content=content,
+                context_state=state,
+                timeout=30.0,
+            )
+            assistant, tools = self._apply_delta(
+                state=state,
+                delta=delta,
+                target_type=MemoryType.TOOLS,
+                messages=messages,
+            )
+            await self._commit_items(
+                state=state,
+                processor=TOOL_PROCESSOR,
+                start=start,
+                end=end,
+                items=[*assistant, *tools],
+            )
+
+    async def _process_env_batch(
+        self,
+        batch: EnvMemoryBatch,
+        timeout: float,
+    ) -> list[MemoryItem]:
+        state = self._get_context_state_or_raise(batch.context_id)
+        previous = self.memory_state.render(
             memory_type=MemoryType.ENV,
-            session_id=sid,
+            context_id=state.context_id,
         )
 
         delta: EnvMemoryDelta = await self._delta_extractor.extract_env_delta(
             memory_input=batch.memory_input,
-            memory_cache=cache,
-            previous_env_memory=previous_env_memory or None,
+            context_state=state,
+            previous_env_memory=previous or None,
             conversation_context=batch.conversation_context,
             timeout=timeout,
         )
-
-        cache.evidence = evidence
-
-        env_memories = self._build_memory_items_from_patches(
-            memory_cache=cache,
+        items = self._build_memory_items(
+            state=state,
             memory_type=MemoryType.ENV,
             patches=delta.env_memory_entries,
-            object_ids=cache.object_ids,
+            owner_refs=state.owner_refs,
+            participant_refs=state.participant_refs,
+            source_refs=[
+                MemorySourceRef.runtime_event(f"{state.context.session_id}:{event.sequence}")
+                for event in batch.events
+            ],
+            scope=MemoryScope.context(state.context_id),
             extra_data={
                 "trigger": batch.trigger_text,
-                # "evidence": evidence,  # TODO: Temporary annotation
                 "perception_missed_count": batch.missed_count,
             },
         )
-
-        if not env_memories:
-            logger.debug(
-                "[Memory] ENV delta produced no memory "
-                "sid=%s trigger=%s observations=%s messages=%s",
-                sid,
-                batch.trigger_text,
-                len(batch.observations),
-                batch.message_count,
-            )
-            return []
-
-        self.env_memory = env_memories
-
-        cache.add_object_ids([object_id for item in env_memories for object_id in item.object_ids])
-
-        saved = await self._persist_memory_items(
-            env_memories,
-            timeout=ENV_SAVE_TIMEOUT_SEC,
+        await self._commit_items(
+            state=state,
+            processor=ENV_PROCESSOR,
+            start=batch.from_sequence,
+            end=batch.to_sequence,
+            items=items,
         )
+        return items
 
-        logger.info(
-            "[Memory] ENV memory updated "
-            "sid=%s trigger=%s generated=%s observations=%s "
-            "raw_observations=%s messages=%s attempts=%s saved=%s",
-            sid,
-            batch.trigger_text,
-            len(env_memories),
-            len(batch.observations),
-            batch.raw_observation_count,
-            batch.message_count,
-            batch.attempts + 1,
-            saved,
-        )
-
-        return env_memories
-
-    """Base Op"""
-
-    def on_cache_message_added(
+    def on_context_message_added(
         self,
         *,
-        session_id: str,
+        context_id: str,
         chat_item: ChatItem,
     ) -> None:
-        if not isinstance(chat_item, ChatMessage):
+        if not isinstance(chat_item, ChatMessage) or chat_item.role != "user":
             return
 
-        if chat_item.role != "user":
-            return
+        if self._env_scheduler is not None and context_id == self._env_scheduler.context_id:
+            self._env_scheduler.request("user_turn")
 
-        scheduler = self._env_scheduler
-
-        if scheduler is None:
-            return
-
-        if session_id != scheduler.session_id:
-            return
-
-        scheduler.request("user_turn")
-
-    def save_graph_aliases(self, aliases: list[dict[str, Any]]) -> dict[str, Any]:
+    def save_graph_aliases(
+        self,
+        aliases: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         avatar_path = self.session_runtime.avatar_path
-
         if avatar_path is None:
             raise RuntimeError("SessionRuntime.avatar_path is not initialized")
 
@@ -349,175 +443,89 @@ class MemoryRuntime(MemoryPersistenceMixin, MemoryRetrievalMixin, MemoryBase):
             aliases=aliases,
         )
 
-    async def update(self, *, avatar_id: str, session_id: str | None = None):
-        if session_id is not None and session_id not in self.memory_cache:
-            raise ValueError(
-                f"Session ID {session_id} not found in memory cache. "
-                "You need to call 'init_cache' first."
+    async def _update_context(self, state: MemoryContextState) -> None:
+        if state.cache_type is MemoryCacheType.SESSION_INTERACTION:
+            await asyncio.gather(
+                self._update_conversation(state),
+                self._update_tools(state),
             )
+        elif state.cache_type is MemoryCacheType.AGENT_TOOL_INTERACTION:
+            await self._update_tools(state)
 
-        memory_tuple = (
-            [(sid, cache) for sid, cache in self.memory_cache.items()]
-            if session_id is None
-            else [(session_id, self.memory_cache[session_id])]
+    async def update(self, *, context_id: str | None = None) -> None:
+        states = (
+            [self._get_context_state_or_raise(context_id)]
+            if context_id is not None
+            else list(self.memory_contexts.values())
         )
-
-        all_assistant: list[MemoryItem] = []
-        all_user: list[MemoryItem] = []
-        all_tool: list[MemoryItem] = []
-
-        for current_sid, cache in memory_tuple:
-            chat_context = cache.messages
-
-            if not chat_context:
-                logger.warning("[sid: %s] Memory message is empty, UPDATE skip!", current_sid)
-                continue
-
-            message_content = self._build_session_content_for_update(cache=cache)
-
-            has_tool_event = self._has_explicit_tool_event(chat_context)
-
-            if cache.cache_type == MemoryCacheType.SESSION_INTERACTION:
-                if has_tool_event:
-                    conversation_delta, tool_delta = await asyncio.gather(
-                        self._delta_extractor.extract_conversation_delta(
-                            session_content=message_content,
-                            memory_cache=cache,
-                            session_gate=self._pipeline_config.extraction.session_gate,
-                            timeout=30.0,
-                        ),
-                        self._delta_extractor.extract_tool_delta(
-                            session_content=message_content,
-                            memory_cache=cache,
-                            timeout=30.0,
-                        ),
-                    )
-                else:
-                    conversation_delta = await self._delta_extractor.extract_conversation_delta(
-                        session_content=message_content,
-                        memory_cache=cache,
-                        session_gate=self._pipeline_config.extraction.session_gate,
-                        timeout=30.0,
-                    )
-                    tool_delta = None
-
-                conversation_avatar, conversation_items = self._apply_delta_to_bucket(
-                    avatar_id=avatar_id,
-                    delta=conversation_delta,
-                    memory_cache=cache,
-                    user_or_tool_memory_type=MemoryType.CONVERSATION,
-                )
-
-                all_assistant.extend(conversation_avatar)
-
-                all_user.extend(
-                    await self._memory_consolidator.consolidate_session(
-                        conversation_items,
-                        session_content=message_content,
-                        memory_cache=cache,
-                        updated_at=application_now(),
-                        trace_metadata=self._delta_extractor.base_trace_metadata(
-                            memory_cache=cache,
-                            operation="memory_consolidation",
-                            memory_type=MemoryType.CONVERSATION,
-                            component="memory_consolidator",
-                        ),
-                    )
-                )
-
-                if tool_delta is not None:
-                    tool_avatar, tool_memories = self._apply_delta_to_bucket(
-                        avatar_id=avatar_id,
-                        delta=tool_delta,
-                        memory_cache=cache,
-                        user_or_tool_memory_type=MemoryType.TOOLS,
-                    )
-
-                    all_assistant.extend(tool_avatar)
-                    all_tool.extend(tool_memories)
-
-            else:
-                if not has_tool_event:
-                    logger.debug(
-                        "[sid: %s] No explicit tool event found "
-                        "for cache type %s, TOOL update skip.",
-                        current_sid,
-                        cache.cache_type,
-                    )
-                    continue
-
-                tool_delta = await self._delta_extractor.extract_tool_delta(
-                    session_content=message_content,
-                    memory_cache=cache,
-                    timeout=30.0,
-                )
-
-                tool_avatar, tool_memories = self._apply_delta_to_bucket(
-                    avatar_id=avatar_id,
-                    delta=tool_delta,
-                    memory_cache=cache,
-                    user_or_tool_memory_type=MemoryType.TOOLS,
-                )
-
-                all_assistant.extend(tool_avatar)
-                all_tool.extend(tool_memories)
-
-        self.avatar_memory = all_assistant
-        self.user_memory = all_user
-        self.tool_memory = all_tool
-
-        # Persist the complete extracted lists, not self.memory_items.
-        # MemoryState caps each bucket at maximum_memory_num -- a rendering
-        # constraint ("the maximum number of memory items to use") -- so reading
-        # the persistence path off it drops the earliest records of any type
-        # that extracted more than the cap in one session. ENV already persists
-        # its full batch directly for the same reason; this makes the
-        # conversation, tool, and avatar paths behave the same way.
-        extracted = all_assistant + all_user + all_tool
-
-        if extracted and not await self._persist_memory_items(
-            extracted,
-            timeout=SESSION_SAVE_TIMEOUT_SEC,
-        ):
-            logger.warning("[Memory] session UPDATE persist incomplete; items remain pending.")
-
-    async def save(self, timeout: float = 8.0) -> None:
-        if not await self._persist_memory_items(
-            self.memory_items,
-            timeout=timeout,
-        ):
-            logger.warning("Memory SAVE incomplete; updated items remain pending.")
-
-    """Runtime Op"""
+        await asyncio.gather(*(self._update_context(state) for state in states))
 
     async def on_session_start(self) -> None:
-        await self._store.initialize()
-        await super().on_session_start()
+        await self.store.start()
 
-        sid = self.session_runtime.session_id
-        cache = self.memory_cache.get(sid)
+        try:
+            await super().on_session_start()
 
-        if cache is None:
-            logger.debug("[Memory] ENV scheduler not started because memory cache is unavailable.")
-            return
+            if self._root_context_id is None:
+                return
 
-        self._env_scheduler = EnvMemoryScheduler(
-            perception_runtime=self.perception_runtime,
-            memory_cache=cache,
-            process=self._process_env_batch,
-            render_messages=lambda messages: MemoryPluginsTemplate.apply_update_template(
-                messages,
-                cache.cache_type,
-            ),
-        )
+            state = self._get_context_state_or_raise(self.root_context_id)
+            initial_cutoff = self.perception_runtime.capture_cutoff()
+            checkpoint = await self.store.get_checkpoint(
+                context_id=state.context_id,
+                processor=ENV_PROCESSOR,
+            )
 
-        await self._env_scheduler.start()
+            if checkpoint > initial_cutoff.sequence:
+                raise RuntimeError(
+                    f"ENV checkpoint exceeds perception sequence: "
+                    f"context={state.context_id} checkpoint={checkpoint} "
+                    f"perception={initial_cutoff.sequence}"
+                )
 
-        logger.info("[Memory] ENV scheduler started sid=%s", sid)
+            if checkpoint < initial_cutoff.sequence:
+                await self.store.commit(
+                    [],
+                    context_id=state.context_id,
+                    processor=ENV_PROCESSOR,
+                    idempotency_key=(
+                        f"{state.context_id}:{ENV_PROCESSOR}:{checkpoint}:{initial_cutoff.sequence}"
+                    ),
+                    checkpoint=MemoryCheckpointAdvance(
+                        from_sequence=checkpoint,
+                        to_sequence=initial_cutoff.sequence,
+                    ),
+                )
+
+            self._env_scheduler = EnvMemoryScheduler(
+                perception_runtime=self.perception_runtime,
+                context_state=state,
+                initial_cutoff=initial_cutoff,
+                process=self._process_env_batch,
+                render_messages=lambda messages: MemoryPluginsTemplate.apply_update_template(
+                    messages,
+                    state.cache_type,
+                ),
+            )
+            await self._env_scheduler.start()
+
+        except BaseException:
+            if self._env_scheduler is not None:
+                try:
+                    await self._env_scheduler.stop()
+                except Exception:
+                    logger.exception("Failed to rollback Memory ENV scheduler")
+                self._env_scheduler = None
+
+            await self.store.stop()
+            raise
 
     async def on_session_stop(self) -> None:
-        if self._env_scheduler is not None:
-            await self._env_scheduler.stop()
-            self._env_scheduler = None
+        try:
+            if self._env_scheduler is not None:
+                await self._env_scheduler.stop()
+                self._env_scheduler = None
 
-        await super().on_session_stop()
+            await super().on_session_stop()
+        finally:
+            await self.store.stop()

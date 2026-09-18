@@ -18,7 +18,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from alphaavatar.agents.memory import MemoryCache
+from alphaavatar.agents.memory import MemoryContextState
 from alphaavatar.core.env import EnvObservation, ObservationKind
 from alphaavatar.core.perception import (
     AlignedPerception,
@@ -47,7 +47,9 @@ DEFAULT_MAX_ATTEMPTS = 2
 
 @dataclass(slots=True)
 class EnvMemoryBatch:
-    session_id: str
+    context_id: str
+    from_sequence: int
+    to_sequence: int
     events: tuple[PerceptionEvent, ...]
     alignment: AlignedPerception
     memory_input: EnvMemoryInput
@@ -87,8 +89,12 @@ class EnvMemoryBatch:
         aligner: PerceptionTemporalAligner,
         input_builder: EnvMemoryInputBuilder,
     ) -> None:
-        if self.session_id != other.session_id:
-            raise ValueError("Cannot merge ENV memory batches from different sessions")
+        if self.context_id != other.context_id:
+            raise ValueError("Cannot merge ENV memory batches from different contexts")
+
+        self.from_sequence = min(self.from_sequence, other.from_sequence)
+        self.to_sequence = max(self.to_sequence, other.to_sequence)
+        self.attempts = 0
 
         by_sequence = {event.sequence: event for event in self.events}
         by_sequence.update({event.sequence: event for event in other.events})
@@ -145,25 +151,28 @@ class EnvMemoryScheduler:
         self,
         *,
         perception_runtime: PerceptionRuntime,
-        memory_cache: MemoryCache,
+        context_state: MemoryContextState,
+        initial_cutoff: PerceptionCutoff,
         process: ProcessCallback,
         render_messages: MessageRenderer,
         alignment_policy: TemporalAlignmentPolicy | None = None,
         include_audio: bool = True,
     ) -> None:
         policy = alignment_policy or TemporalAlignmentPolicy(mode=TemporalAlignmentMode.FIXED)
+
         self._perception_runtime = perception_runtime
-        self._memory_cache = memory_cache
+        self._context_state = context_state
         self._process = process
         self._render_messages = render_messages
         self._include_audio = include_audio
 
         self._aligner = PerceptionTemporalAligner(policy)
         self._input_builder = EnvMemoryInputBuilder(include_audio=include_audio)
-        self._last_cutoff = perception_runtime.capture_cutoff()
+        self._last_cutoff = initial_cutoff
+
         perception_runtime.events.commit(
             consumer_id=self.CONSUMER_ID,
-            cursor_seq=self._last_cutoff.sequence,
+            cursor_seq=initial_cutoff.sequence,
         )
 
         self._requested_triggers: set[str] = set()
@@ -174,8 +183,8 @@ class EnvMemoryScheduler:
         self._stopping = False
 
     @property
-    def session_id(self) -> str:
-        return self._memory_cache.session_id
+    def context_id(self) -> str:
+        return self._context_state.context_id
 
     def _take_requested_triggers(self) -> set[str]:
         self._wake_event.clear()
@@ -209,6 +218,15 @@ class EnvMemoryScheduler:
             input_builder=self._input_builder,
         )
 
+    async def _restore_pending_batch(self, batch: EnvMemoryBatch) -> None:
+        if self._pending_batch is not None:
+            await batch.merge(
+                self._pending_batch,
+                aligner=self._aligner,
+                input_builder=self._input_builder,
+            )
+        self._pending_batch = batch
+
     async def _resolve_capture_cutoff(self, triggers: set[str]) -> PerceptionCutoff:
         """
         Resolve a semantic capture boundary.
@@ -238,7 +256,7 @@ class EnvMemoryScheduler:
 
             logger.debug(
                 "[Memory] ENV capture deferred to speech boundary sid=%s deferred=%.2fs",
-                self.session_id,
+                self.context_id,
                 deferred_sec,
             )
             return cutoff
@@ -247,7 +265,7 @@ class EnvMemoryScheduler:
 
         logger.warning(
             "[Memory] ENV speech-boundary wait timed out sid=%s timeout=%ss active_segments=%s",
-            self.session_id,
+            self.context_id,
             DEFAULT_MAX_SPEECH_DEFER_SEC,
             self._perception_runtime.active_speech_segments,
         )
@@ -277,7 +295,7 @@ class EnvMemoryScheduler:
         if has_gap:
             logger.warning(
                 "[Memory] ENV event gap sid=%s triggers=%s missed=%s range=%s..%s",
-                self.session_id,
+                self.context_id,
                 sorted(triggers),
                 missed_count,
                 start_cutoff.sequence,
@@ -315,13 +333,12 @@ class EnvMemoryScheduler:
         )
         self._last_cutoff = target_cutoff
 
-        if not memory_input.has_environment_evidence:
-            return None
-
-        messages = list(self._memory_cache.take_pending_env_messages())
+        messages = self._context_state.take_pending_env_messages()
 
         batch = EnvMemoryBatch(
-            session_id=self.session_id,
+            context_id=self.context_id,
+            from_sequence=start_cutoff.sequence,
+            to_sequence=target_cutoff.sequence,
             events=events,
             alignment=alignment,
             memory_input=memory_input,
@@ -331,7 +348,7 @@ class EnvMemoryScheduler:
             message_count=len(messages),
         )
 
-        self._memory_cache.commit_env_messages()
+        self._context_state.commit_env_messages()
         return batch
 
     async def _enqueue_batch(self, batch: EnvMemoryBatch) -> None:
@@ -340,7 +357,7 @@ class EnvMemoryScheduler:
         if not self._stopping and (self._processor_task is None or self._processor_task.done()):
             self._processor_task = asyncio.create_task(
                 self._processor_loop(),
-                name=f"memory_env_processor:{self.session_id}",
+                name=f"memory_env_processor:{self.context_id}",
             )
 
     async def _capture_and_enqueue(
@@ -382,8 +399,8 @@ class EnvMemoryScheduler:
 
         except Exception:
             logger.exception(
-                "[Memory] ENV capture failed sid=%s triggers=%s",
-                self.session_id,
+                "[Memory] ENV capture failed cid=%s triggers=%s",
+                self.context_id,
                 sorted(triggers),
             )
             return False
@@ -418,8 +435,8 @@ class EnvMemoryScheduler:
                 raise
             except Exception:
                 logger.exception(
-                    "[Memory] ENV scheduler failed sid=%s",
-                    self.session_id,
+                    "[Memory] ENV scheduler failed cid=%s",
+                    self.context_id,
                 )
                 await asyncio.sleep(0.05)
 
@@ -431,42 +448,35 @@ class EnvMemoryScheduler:
             try:
                 while True:
                     try:
-                        await self._process(
-                            batch,
-                            DEFAULT_PROCESS_TIMEOUT_SEC,
-                        )
+                        await self._process(batch, DEFAULT_PROCESS_TIMEOUT_SEC)
                         break
-
                     except asyncio.CancelledError:
                         raise
-
                     except Exception:
                         batch.attempts += 1
+
                         if batch.attempts >= DEFAULT_MAX_ATTEMPTS:
                             logger.exception(
-                                "[Memory] ENV batch dropped sid=%s attempts=%s triggers=%s events=%s",
-                                batch.session_id,
+                                "[Memory] ENV batch retained context=%s attempts=%s "
+                                "triggers=%s events=%s",
+                                batch.context_id,
                                 batch.attempts,
                                 sorted(batch.triggers),
                                 len(batch.events),
                             )
-                            break
+                            await self._restore_pending_batch(batch)
+                            return
 
                         logger.warning(
-                            "[Memory] ENV processing failed; retrying sid=%s attempt=%s",
-                            batch.session_id,
+                            "[Memory] ENV processing failed; retrying context=%s attempt=%s",
+                            batch.context_id,
                             batch.attempts,
                             exc_info=True,
                         )
                         await asyncio.sleep(DEFAULT_RETRY_DELAY_SEC)
+
             except asyncio.CancelledError:
-                if self._pending_batch is not None:
-                    await batch.merge(
-                        self._pending_batch,
-                        aligner=self._aligner,
-                        input_builder=self._input_builder,
-                    )
-                self._pending_batch = batch
+                await self._restore_pending_batch(batch)
                 raise
 
     def request(self, trigger: str) -> None:
@@ -482,7 +492,7 @@ class EnvMemoryScheduler:
         self._stopping = False
         self._scheduler_task = asyncio.create_task(
             self._scheduler_loop(),
-            name=f"memory_env_scheduler:{self.session_id}",
+            name=f"memory_env_scheduler:{self.context_id}",
         )
 
     async def stop(self) -> None:
@@ -492,8 +502,8 @@ class EnvMemoryScheduler:
         self._stopping = True
 
         logger.info(
-            "[Memory] ENV scheduler stopping sid=%s",
-            self.session_id,
+            "[Memory] ENV scheduler stopping cid=%s",
+            self.context_id,
         )
 
         if self._scheduler_task is not None:
@@ -534,23 +544,10 @@ class EnvMemoryScheduler:
                         self._process(batch, DEFAULT_SHUTDOWN_PROCESS_TIMEOUT_SEC),
                         timeout=DEFAULT_SHUTDOWN_PROCESS_TIMEOUT_SEC + 1.0,
                     )
-                except TimeoutError:
-                    logger.warning(
-                        "[Memory] ENV final processing timed out sid=%s timeout=%ss",
-                        self.session_id,
-                        DEFAULT_SHUTDOWN_PROCESS_TIMEOUT_SEC,
-                    )
-                except Exception:
-                    logger.exception(
-                        "[Memory] ENV final processing failed sid=%s",
-                        self.session_id,
-                    )
+                except BaseException:
+                    self._pending_batch = batch
+                    raise
 
         finally:
-            self._pending_batch = None
             self._perception_runtime.events.clear_consumer(self.CONSUMER_ID)
-
-            logger.info(
-                "[Memory] ENV scheduler stopped sid=%s",
-                self.session_id,
-            )
+            logger.info("[Memory] ENV scheduler stopped context=%s", self.context_id)

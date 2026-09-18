@@ -30,13 +30,15 @@ from alphaavatar.agents.memory.schemas import (
     MemoryCommitResult,
     MemoryContextRef,
     MemoryItem,
-    MemoryOutboxEvent,
     MemoryOwnerRef,
     MemoryScope,
     MemorySearchHit,
 )
 from alphaavatar.agents.runtime import AvatarRuntime
 
+from .export import MemoryExportSink
+from .index_serialization import serialize_memory_items
+from .outbox import MemoryOutboxWorker
 from .sqlite import SQLiteMemoryStore
 
 
@@ -47,16 +49,32 @@ class MemoryStore:
         runtime: AvatarRuntime,
         backend: MemoryStoreBackend | None = None,
     ) -> None:
+        avatar_path = runtime.session.avatar_path
+
+        if avatar_path is None:
+            raise RuntimeError("SessionRuntime.avatar_path is not initialized")
+
         self._runtime = runtime
+        self._backend = backend or SQLiteMemoryStore(avatar_path.memory_dir / "records.sqlite3")
 
-        if backend is None:
-            avatar_path = runtime.session.avatar_path
-            if avatar_path is None:
-                raise RuntimeError("SessionRuntime.avatar_path is not initialized")
+        export_sink = MemoryExportSink(
+            export_dir=avatar_path.memory_dir / "exports",
+            graph_dir=avatar_path.graph_dir,
+        )
 
-            backend = SQLiteMemoryStore(avatar_path.memory_dir / "records.sqlite3")
-
-        self._backend = backend
+        self._outbox_workers = (
+            MemoryOutboxWorker(
+                backend=self._backend,
+                target=MemoryOutboxTarget.INDEX,
+                handler=self._index_items,
+            ),
+            MemoryOutboxWorker(
+                backend=self._backend,
+                target=MemoryOutboxTarget.EXPORT,
+                handler=export_sink,
+            ),
+        )
+        self._started = False
 
     @property
     def vdb_inference_method(self) -> str:
@@ -115,8 +133,13 @@ class MemoryStore:
             )
         )
 
-    async def initialize(self) -> None:
-        await self._backend.initialize()
+    async def _index_items(self, items: list[MemoryItem]) -> None:
+        if items:
+            await self._infer(
+                op=VectorRunnerOP.save,
+                param={"memory_items": serialize_memory_items(items)},
+                timeout=15.0,
+            )
 
     async def recall_by_context(
         self,
@@ -265,13 +288,19 @@ class MemoryStore:
         idempotency_key: str,
         checkpoint: MemoryCheckpointAdvance | None = None,
     ) -> MemoryCommitResult:
-        return await self._backend.commit(
+        result = await self._backend.commit(
             items,
             context_id=context_id,
             processor=processor,
             idempotency_key=idempotency_key,
             checkpoint=checkpoint,
         )
+
+        if result.memory_ids:
+            for worker in self._outbox_workers:
+                worker.wake()
+
+        return result
 
     async def get_many(
         self,
@@ -333,43 +362,20 @@ class MemoryStore:
             processor=processor,
         )
 
-    async def claim_outbox(
-        self,
-        *,
-        target: MemoryOutboxTarget,
-        worker_id: str,
-        limit: int = 64,
-        lease_seconds: float = 30.0,
-    ) -> list[MemoryOutboxEvent]:
-        return await self._backend.claim_outbox(
-            target=target,
-            worker_id=worker_id,
-            limit=limit,
-            lease_seconds=lease_seconds,
-        )
+    async def start(self) -> None:
+        if self._started:
+            return
 
-    async def complete_outbox(
-        self,
-        event_ids: list[int],
-        *,
-        worker_id: str,
-    ) -> None:
-        await self._backend.complete_outbox(
-            event_ids,
-            worker_id=worker_id,
-        )
+        await self._backend.initialize()
 
-    async def retry_outbox(
-        self,
-        event_id: int,
-        *,
-        worker_id: str,
-        error: str,
-        delay_seconds: float,
-    ) -> None:
-        await self._backend.retry_outbox(
-            event_id,
-            worker_id=worker_id,
-            error=error,
-            delay_seconds=delay_seconds,
-        )
+        for worker in self._outbox_workers:
+            worker.start()
+
+        self._started = True
+
+    async def stop(self) -> None:
+        if not self._started:
+            return
+
+        await asyncio.gather(*(worker.stop() for worker in reversed(self._outbox_workers)))
+        self._started = False

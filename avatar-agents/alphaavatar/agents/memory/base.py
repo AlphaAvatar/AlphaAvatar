@@ -11,38 +11,37 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
+import pathlib
 from abc import abstractmethod
 from typing import Any
 
 from livekit.agents.llm import ChatItem
 
 from alphaavatar.agents.plugin import AvatarRuntimePlugin
-from alphaavatar.agents.runtime import (
-    AvatarRuntime,
-    ContextRuntime,
-    SessionRuntime,
-)
+from alphaavatar.agents.runtime import AvatarRuntime, ContextRuntime, SessionRuntime
 from alphaavatar.agents.runtime.capability import (
     AvatarCapability,
     AvatarCapabilityName,
     avatar_capability,
 )
-from alphaavatar.agents.runtime.inference import InferenceExecutor
-from alphaavatar.agents.utils.files.work_dirs import SessionPath
 from alphaavatar.core.perception import PerceptionRuntime
 
 from .context_state import MemoryContextState
-from .enums.cache_type import MemoryCacheType
-from .enums.memory_type import MemoryType
+from .enums import MemoryCacheType, MemoryType
 from .memory_state import MemoryState
-from .schemas.memory_item import MemoryItem
+from .schemas import (
+    MemoryContextRef,
+    MemoryItem,
+    MemoryOwnerRef,
+    MemoryParticipantRef,
+)
 
 
 @avatar_capability(
     name=AvatarCapabilityName.MEMORY_CONVERSATION,
-    description=(
-        "Can retain and recall relevant information learned from conversations across sessions."
-    ),
+    description="Can retain and recall relevant information learned from conversations across sessions.",
 )
 @avatar_capability(
     name=AvatarCapabilityName.MEMORY_ENVIRONMENT,
@@ -53,9 +52,7 @@ from .schemas.memory_item import MemoryItem
 )
 @avatar_capability(
     name=AvatarCapabilityName.MEMORY_TOOL,
-    description=(
-        "Can retain and recall useful information from previous tool interactions and results."
-    ),
+    description="Can retain and recall useful information from previous tool interactions and results.",
 )
 @avatar_capability(
     name=AvatarCapabilityName.MEMORY_GRAPH,
@@ -77,18 +74,13 @@ class MemoryBase(AvatarRuntimePlugin):
         maximum_memory_num: int = 24,
     ) -> None:
         super().__init__()
-
         self.runtime = runtime
         self.avatar_id = avatar_id
-
-        # memory config init
         self._memory_search_context = memory_search_context
         self._memory_recall_num = memory_recall_num
-        self._maximum_memory_num = maximum_memory_num
-
-        # memory content init
         self._memory_contexts: dict[str, MemoryContextState] = {}
         self._memory_state = MemoryState(maximum_memory_num=maximum_memory_num)
+        self._root_context_id: str | None = None
 
     @property
     def session_runtime(self) -> SessionRuntime:
@@ -103,10 +95,6 @@ class MemoryBase(AvatarRuntimePlugin):
         return self.runtime.perception
 
     @property
-    def inference_executor(self) -> InferenceExecutor:
-        return self.runtime.inference
-
-    @property
     def memory_search_context(self) -> int:
         return self._memory_search_context
 
@@ -117,6 +105,12 @@ class MemoryBase(AvatarRuntimePlugin):
     @property
     def memory_contexts(self) -> dict[str, MemoryContextState]:
         return self._memory_contexts
+
+    @property
+    def root_context_id(self) -> str:
+        if self._root_context_id is None:
+            raise RuntimeError("Memory root context is not initialized")
+        return self._root_context_id
 
     @property
     def memory_state(self) -> MemoryState:
@@ -141,12 +135,7 @@ class MemoryBase(AvatarRuntimePlugin):
     @property
     def memory_content(self) -> str:
         return "\n".join(
-            [
-                self.avatar_memory,
-                self.user_memory,
-                self.tool_memory,
-                self.env_memory,
-            ]
+            filter(None, (self.avatar_memory, self.user_memory, self.tool_memory, self.env_memory))
         )
 
     @property
@@ -154,22 +143,20 @@ class MemoryBase(AvatarRuntimePlugin):
         return self._memory_state.all_items
 
     @avatar_memory.setter
-    def avatar_memory(self, avatar_memory: list[MemoryItem]) -> None:
-        self._memory_state.add(MemoryType.Avatar, avatar_memory)
+    def avatar_memory(self, items: list[MemoryItem]) -> None:
+        self._memory_state.add(MemoryType.Avatar, items)
 
     @user_memory.setter
-    def user_memory(self, user_memory: list[MemoryItem]) -> None:
-        self._memory_state.add(MemoryType.CONVERSATION, user_memory)
+    def user_memory(self, items: list[MemoryItem]) -> None:
+        self._memory_state.add(MemoryType.CONVERSATION, items)
 
     @tool_memory.setter
-    def tool_memory(self, tool_memory: list[MemoryItem]) -> None:
-        self._memory_state.add(MemoryType.TOOLS, tool_memory)
+    def tool_memory(self, items: list[MemoryItem]) -> None:
+        self._memory_state.add(MemoryType.TOOLS, items)
 
     @env_memory.setter
-    def env_memory(self, env_memory: list[MemoryItem]) -> None:
-        self._memory_state.add(MemoryType.ENV, env_memory)
-
-    """Helper Op"""
+    def env_memory(self, items: list[MemoryItem]) -> None:
+        self._memory_state.add(MemoryType.ENV, items)
 
     def _get_context_state_or_raise(self, context_id: str) -> MemoryContextState:
         state = self._memory_contexts.get(context_id)
@@ -177,79 +164,68 @@ class MemoryBase(AvatarRuntimePlugin):
             raise ValueError(f"Memory context not found: {context_id}")
         return state
 
-    def _sync_object_ids(self) -> None:
-        for pend_result in self.session_runtime.pending_user_path_migrations:
-            ori_id = pend_result.old_user_id
-            tgt_id = pend_result.new_user_id
+    def _sync_user_refs(self) -> None:
+        for migration in self.session_runtime.pending_user_path_migrations:
+            for state in self._memory_contexts.values():
+                state.replace_user_id(migration.old_user_id, migration.new_user_id)
 
-            for cache in self._memory_cache.values():
-                cache.object_ids = [tgt_id if x == ori_id else x for x in cache.object_ids]
-
-    """Base Op"""
-
-    def add_message(self, *, session_id: str, chat_item: ChatItem):
-        if session_id not in self._memory_cache:
-            raise ValueError(
-                f"Session ID {session_id} not found in memory cache. You need to call 'init_cache' first."
-            )
-
-        self._memory_cache[session_id].add_message(chat_item)
-        self.on_cache_message_added(session_id=session_id, chat_item=chat_item)
-        self._sync_object_ids()
-
-    async def init_cache(
+    def open_context(
         self,
         *,
-        session_id: str,
-        session_path: SessionPath,
-        object_ids: list[str] | str | None,
+        context: MemoryContextRef,
+        provider_dir: pathlib.Path,
+        owner_refs: list[MemoryOwnerRef],
+        participant_refs: list[MemoryParticipantRef] | None = None,
         cache_type: MemoryCacheType = MemoryCacheType.SESSION_INTERACTION,
     ) -> MemoryContextState:
-        if session_id not in self._memory_contexts:
-            self._memory_contexts[session_id] = MemoryContextState(
-                session_id=session_id,
-                session_path=session_path,
-                object_ids=object_ids,
-                cache_type=cache_type,
-            )
-            return self._memory_contexts[session_id]
+        if context.context_id in self._memory_contexts:
+            raise ValueError(f"Memory context already exists: {context.context_id}")
 
-        raise ValueError(
-            f"Session with id '{session_id}' already exists in memory cache. "
-            "Please use a unique session_id."
+        if context.parent_context_id:
+            parent = self._get_context_state_or_raise(context.parent_context_id)
+            if parent.context.conversation_id != context.conversation_id:
+                raise ValueError("Parent and child memory contexts must share conversation_id")
+
+        state = MemoryContextState(
+            context=context,
+            provider_dir=provider_dir,
+            owner_refs=owner_refs,
+            participant_refs=participant_refs,
+            cache_type=cache_type,
         )
+        self._memory_contexts[context.context_id] = state
+        return state
 
-    """ABC Op"""
+    def close_context(self, context_id: str) -> MemoryContextState:
+        state = self._get_context_state_or_raise(context_id)
+        if any(
+            item.context.parent_context_id == context_id for item in self._memory_contexts.values()
+        ):
+            raise RuntimeError(f"Memory context has open children: {context_id}")
+
+        del self._memory_contexts[context_id]
+        if self._root_context_id == context_id:
+            self._root_context_id = None
+        return state
+
+    def add_message(self, *, context_id: str, chat_item: ChatItem) -> None:
+        state = self._get_context_state_or_raise(context_id)
+        state.add_message(chat_item)
+        self._sync_user_refs()
+        self.on_context_message_added(context_id=context_id, chat_item=chat_item)
 
     @abstractmethod
-    def on_cache_message_added(self, *, session_id: str, chat_item: ChatItem) -> None:
-        """
-        Runtime hook.
-
-        MemoryRuntime can override this for user-turn env memory trigger.
-        """
-        ...
+    def on_context_message_added(self, *, context_id: str, chat_item: ChatItem) -> None: ...
 
     @abstractmethod
-    def save_graph_aliases(
-        self,
-        aliases: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        """
-        Save graph aliases for identity/entity merge.
-
-        Example:
-            face:local:{session_id}:tmp_1 -> user:{user_id}
-            voice:local:{session_id}:speaker_0 -> user:{user_id}
-
-        This only writes graph alias stubs. It should not rewrite VDB directly.
-        Query-time alias expansion is handled by search_by_graph_node().
-        """
-        ...
+    def save_graph_aliases(self, aliases: list[dict[str, Any]]) -> dict[str, Any]: ...
 
     @abstractmethod
     async def search_by_context(
-        self, *, avatar_id: str, session_id: str, chat_context: list[ChatItem]
+        self,
+        *,
+        context_id: str,
+        chat_context: list[ChatItem],
     ) -> None: ...
 
     @abstractmethod
@@ -258,51 +234,42 @@ class MemoryBase(AvatarRuntimePlugin):
         *,
         node_key: str | None = None,
         node_query: str | None = None,
-        object_ids: list[str] | None = None,
-        session_id: str | None = None,
-        memory_type: str | None = None,
+        context_id: str | None = None,
+        memory_type: MemoryType | None = None,
         node_type: str | None = None,
         max_hops: int = 0,
         top_k: int = 50,
-        timeout: float = 3,
-    ) -> list[MemoryItem]:
-        """
-        Search memory items by graph node.
-
-        Supports:
-        - node_key exact/canonical/alias lookup
-        - node_query semantic graph-node search
-        - optional object_ids/session/memory_type/node_type filters
-        - optional graph neighbor expansion through data/graph links
-
-        This API is intended for Persona, ENV memory extraction, tools,
-        channels, or other plugins that need graph-aware memory retrieval.
-        """
-        ...
+        timeout: float = 3.0,
+    ) -> list[MemoryItem]: ...
 
     @abstractmethod
-    async def update(self, *, avatar_id: str, session_id: str | None = None): ...
-
-    @abstractmethod
-    async def save(self): ...
-
-    """Runtime Op"""
+    async def update(self, *, context_id: str | None = None) -> None: ...
 
     async def on_session_start(self) -> None:
-        primary_user_id = self.session_runtime.primary_user_id
-        if not primary_user_id:
-            return
-
+        user_id = self.session_runtime.primary_user_id
         session_path = self.session_runtime.session_path
+        if not user_id:
+            return
         if session_path is None:
             raise RuntimeError("SessionRuntime.session_path is not initialized")
 
-        await self.init_cache(
-            session_id=self.session_runtime.session_id,
-            session_path=session_path,
-            object_ids=primary_user_id,
+        session_id = self.session_runtime.session_id
+        context = MemoryContextRef(
+            conversation_id=session_id,
+            context_id=session_id,
+            session_id=session_id,
+            created_at=self.session_runtime.created_at,
         )
+        self.open_context(
+            context=context,
+            provider_dir=session_path.provider_dir,
+            owner_refs=[MemoryOwnerRef.user(user_id)],
+            participant_refs=[
+                MemoryParticipantRef.user(user_id),
+                MemoryParticipantRef.avatar(self.avatar_id),
+            ],
+        )
+        self._root_context_id = context.context_id
 
     async def on_session_stop(self) -> None:
-        await self.update(avatar_id=self.avatar_id)
-        await self.save()
+        await self.update()

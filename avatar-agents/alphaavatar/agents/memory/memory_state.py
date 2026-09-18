@@ -13,6 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from .enums.memory_type import MemoryType
@@ -62,8 +63,15 @@ class MemoryState:
         bucket.extend(items)
         self._buckets[memory_type] = deduplicate_keep_latest(bucket)[-self.maximum_memory_num :]
 
-    def replace(self, memory_type: MemoryType, items: list[MemoryItem]) -> None:
-        self._buckets[memory_type] = deduplicate_keep_latest(items)[-self.maximum_memory_num :]
+    def discard(self, memory_ids: Iterable[str]) -> None:
+        memory_ids = set(memory_ids)
+        if not memory_ids:
+            return
+
+        for memory_type, bucket in self._buckets.items():
+            self._buckets[memory_type] = [
+                item for item in bucket if item.memory_id not in memory_ids
+            ]
 
     def get(
         self,
@@ -81,6 +89,9 @@ class MemoryState:
             items = [item for item in items if item.context.context_id == context_id]
 
         return sorted(items, key=lambda item: item.created_at)
+
+    def replace(self, memory_type: MemoryType, items: list[MemoryItem]) -> None:
+        self._buckets[memory_type] = deduplicate_keep_latest(items)[-self.maximum_memory_num :]
 
     def render(
         self,

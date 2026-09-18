@@ -135,12 +135,6 @@ def commit_sync(
         # Write records first so relations inside the same transaction can
         # reference newly inserted MemoryItems.
         for item in items:
-            if item.context.context_id != context_id:
-                raise ValueError(
-                    f"Memory {item.memory_id} belongs to context "
-                    f"{item.context.context_id!r}, expected {context_id!r}"
-                )
-
             row = connection.execute(
                 """
                 SELECT revision

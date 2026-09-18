@@ -11,8 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import pathlib
-from typing import Any
 
 from livekit.agents.llm import ChatItem, ChatMessage, FunctionCall, FunctionCallOutput
 
@@ -47,10 +48,8 @@ class MemoryContextState:
         self._owner_refs = _deduplicate_refs(owner_refs)
         self._participant_refs = _deduplicate_refs(participant_refs or [])
         self._cache_type = cache_type
-
         self._messages: list[ChatItem] = []
         self._env_message_cursor = 0
-        self._evidence: list[dict[str, Any]] = []
 
     @property
     def context(self) -> MemoryContextRef:
@@ -85,12 +84,13 @@ class MemoryContextState:
         return self._messages
 
     @property
-    def evidence(self) -> list[dict[str, Any]]:
-        return self._evidence
+    def message_sequence(self) -> int:
+        return len(self._messages)
 
-    @evidence.setter
-    def evidence(self, value: list[dict[str, Any]] | None) -> None:
-        self._evidence.extend(value or [])
+    def messages_between(self, start: int, end: int) -> list[ChatItem]:
+        if not 0 <= start <= end <= len(self._messages):
+            raise ValueError(f"Invalid Memory context message range: {start}..{end}")
+        return list(self._messages[start:end])
 
     def replace_user_id(self, old_user_id: str | None, new_user_id: str) -> None:
         if not old_user_id or old_user_id == new_user_id:
@@ -104,7 +104,6 @@ class MemoryContextState:
                 for ref in self._owner_refs
             ]
         )
-
         self._participant_refs = _deduplicate_refs(
             [
                 MemoryParticipantRef.user(new_user_id)
@@ -119,8 +118,6 @@ class MemoryContextState:
             self._messages.append(message)
         elif isinstance(message, FunctionCall | FunctionCallOutput):
             self._messages.append(message)
-
-        self._messages.sort(key=lambda item: item.created_at)
 
     def take_pending_env_messages(self) -> list[ChatItem]:
         return self._messages[self._env_message_cursor :]

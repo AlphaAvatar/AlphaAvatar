@@ -11,309 +11,164 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import json
 import pathlib
 from collections import defaultdict
 from typing import Any
 
+from alphaavatar.agents.memory.schemas import MemoryItem
+
 
 def _safe_name(value: str) -> str:
-    return "".join(c if c.isalnum() or c in ("-", "_", ".") else "_" for c in str(value))
+    return "".join(char if char.isalnum() or char in "-_." else "_" for char in str(value))
 
 
-def _render_frontmatter(
-    *,
-    title: str,
-    memory_scope: str,
-    session_id: str = "",
-    day: str = "",
-    memory_count: int = 0,
-) -> str:
+def _write_atomic(path: pathlib.Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(path.suffix + ".tmp")
+    temp.write_text(text, encoding="utf-8")
+    temp.replace(path)
+
+
+def _wrap_text(text: str) -> list[str]:
+    fence = "````" if "```" in text else "```"
+    return [f"{fence}text", text or "_empty_", fence]
+
+
+def _json_block(value: Any) -> list[str]:
+    return _wrap_text(json.dumps(value, ensure_ascii=False, indent=2, default=str))
+
+
+def _render_entry(item: MemoryItem) -> str:
     lines = [
-        "---",
-        f'title: "{title}"',
-        f'type: "{memory_scope}"',
-        f"memory_count: {memory_count}",
-    ]
-
-    if session_id:
-        lines.append(f'session_id: "{session_id}"')
-    if day:
-        lines.append(f'day: "{day}"')
-
-    lines += [
-        "---",
+        f"## Memory: {item.memory_id}",
         "",
-    ]
-    return "\n".join(lines)
-
-
-def _wrap_text_block(text: str) -> list[str]:
-    text = text or "_empty_"
-    fence = "```"
-    if "```" in text:
-        fence = "````"
-    return [f"{fence}text", text, fence]
-
-
-def _render_json_block(value: Any) -> list[str]:
-    return _wrap_text_block(json.dumps(value, ensure_ascii=False, indent=2, default=str))
-
-
-def _render_memory_entry(item: dict[str, Any]) -> str:
-    metadata = item.get("metadata", {}) or {}
-
-    memory_id = str(item.get("id", "")).strip()
-    page_content = str(item.get("page_content", "")).strip()
-    session_id = str(metadata.get("session_id", "")).strip()
-    object_ids = metadata.get("object_ids") or []
-    topic = str(metadata.get("topic", "")).strip()
-    created_at = str(metadata.get("created_at", "")).strip()
-    memory_type = str(metadata.get("memory_type", "")).strip()
-    graph_nodes = metadata.get("graph_nodes") or []
-    graph_links = metadata.get("graph_links") or []
-    extra_data = metadata.get("extra_data") or {}
-
-    lines = [
-        f"## Memory: {memory_id}",
-        "",
-        f"- **created_at**: {created_at}",
-        f"- **memory_type**: {memory_type}",
-        f"- **object_ids**: {', '.join(str(x) for x in object_ids) if object_ids else 'N/A'}",
-        f"- **session_id**: {session_id}",
-        f"- **topic**: {topic or 'N/A'}",
+        f"- **revision**: {item.revision}",
+        f"- **kind**: {item.kind.value}",
+        f"- **memory_type**: {item.memory_type.value}",
+        f"- **scope**: {item.scope.key}",
+        f"- **created_at**: {item.created_at.isoformat()}",
+        f"- **updated_at**: {(item.updated_at or item.created_at).isoformat()}",
+        f"- **owners**: {', '.join(ref.key for ref in item.owner_refs)}",
+        f"- **participants**: {', '.join(ref.key for ref in item.participant_refs) or 'N/A'}",
+        f"- **sources**: {', '.join(ref.key for ref in item.source_refs) or 'N/A'}",
+        f"- **topic**: {item.topic or 'N/A'}",
+        f"- **source_memory_ids**: {', '.join(item.source_memory_ids) or 'N/A'}",
+        f"- **supersedes_memory_ids**: {', '.join(item.supersedes_memory_ids) or 'N/A'}",
         "",
         "### Content",
         "",
-        *_wrap_text_block(page_content),
+        *_wrap_text(item.value),
         "",
     ]
 
-    if graph_nodes:
-        lines += [
-            "### Graph Nodes",
-            "",
-            *_render_json_block(graph_nodes),
-            "",
-        ]
+    if item.graph_nodes:
+        lines.extend(
+            [
+                "### Graph Nodes",
+                "",
+                *_json_block([node.model_dump(mode="json") for node in item.graph_nodes]),
+                "",
+            ]
+        )
 
-    if graph_links:
-        lines += [
-            "### Graph Links",
-            "",
-            *_render_json_block(graph_links),
-            "",
-        ]
+    if item.graph_links:
+        lines.extend(
+            [
+                "### Graph Links",
+                "",
+                *_json_block([link.model_dump(mode="json") for link in item.graph_links]),
+                "",
+            ]
+        )
 
-    if extra_data:
-        lines += [
-            "### Extra Data",
-            "",
-            *_render_json_block(extra_data),
-            "",
-        ]
+    if item.extra_data:
+        lines.extend(["### Extra Data", "", *_json_block(item.extra_data), ""])
 
-    return "\n".join(lines)
+    return "\n".join(lines).rstrip()
 
 
-def _split_existing_entries(text: str) -> dict[str, dict[str, Any]]:
-    """
-    Split an existing markdown file into:
-    - map of memory_id -> parsed entry dict:
-        {
-            "raw": "...full rendered section...",
-            "created_at": "...",
-        }
-    """
-    marker = "\n## Memory: "
-    if text.startswith("## Memory: "):
-        rest = text
-    else:
-        idx = text.find("\n## Memory: ")
-        if idx == -1:
-            return {}
-        rest = text[idx + 1 :]
+def _split_entries(text: str) -> dict[str, tuple[int, str]]:
+    marker = "## Memory: "
+    starts = [index for index in range(len(text)) if text.startswith(marker, index)]
+    entries: dict[str, tuple[int, str]] = {}
 
-    parts = rest.split(marker)
-    entries: dict[str, dict[str, Any]] = {}
+    for index, start in enumerate(starts):
+        end = starts[index + 1] if index + 1 < len(starts) else len(text)
+        raw = text[start:end].strip()
+        lines = raw.splitlines()
 
-    if parts:
-        first = parts[0]
-        chunks = [first] + [f"## Memory: {p}" for p in parts[1:]]
-    else:
-        chunks = []
-
-    normalized_chunks: list[str] = []
-    for i, chunk in enumerate(chunks):
-        if i == 0 and not chunk.startswith("## Memory: "):
-            chunk = "## Memory: " + chunk
-        normalized_chunks.append(chunk.strip() + "\n")
-
-    for chunk in normalized_chunks:
-        lines = chunk.splitlines()
         if not lines:
             continue
 
-        first_line = lines[0].strip()
-        memory_id = first_line.replace("## Memory: ", "", 1).strip()
-        if not memory_id:
-            continue
+        memory_id = lines[0].removeprefix(marker).strip()
+        revision = 0
 
-        created_at = ""
-        for line in lines:
-            if line.startswith("- **created_at**: "):
-                created_at = line.replace("- **created_at**: ", "", 1).strip()
-                break
+        for line in lines[1:]:
+            if not line.startswith("- **revision**: "):
+                continue
+            try:
+                revision = int(line.removeprefix("- **revision**: ").strip())
+            except ValueError:
+                revision = 0
+            break
 
-        entries[memory_id] = {
-            "raw": chunk,
-            "created_at": created_at,
-        }
-
-    return entries
-
-
-def _entry_sort_key(memory_id: str, entry: dict[str, Any]) -> tuple[str, str]:
-    created_at = str(entry.get("created_at", "") or "")
-    return (created_at, memory_id)
-
-
-def _merge_entries(
-    existing_text: str,
-    new_items: list[dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
-    """
-    Merge old + new entries and return:
-    - merged entries map
-    - original prefix
-    """
-    entries = _split_existing_entries(existing_text)
-
-    for item in new_items:
-        memory_id = str(item.get("id", "")).strip()
-        if not memory_id:
-            continue
-
-        metadata = item.get("metadata", {}) or {}
-        created_at = str(metadata.get("created_at", "")).strip()
-
-        entries[memory_id] = {
-            "raw": _render_memory_entry(item),
-            "created_at": created_at,
-        }
+        if memory_id:
+            entries[memory_id] = (revision, raw)
 
     return entries
 
 
-def _render_merged_document(
-    *,
-    frontmatter: str,
-    entries: dict[str, dict[str, Any]],
-) -> str:
-    ordered_ids = sorted(
-        entries.keys(),
-        key=lambda mid: _entry_sort_key(mid, entries[mid]),
+def _render_document(items: list[MemoryItem], entries: dict[str, tuple[int, str]]) -> str:
+    context = items[0].context
+    body = "\n\n".join(
+        raw
+        for _, raw in sorted(
+            entries.values(),
+            key=lambda value: value[1].splitlines()[0],
+        )
     )
-    body = "\n\n".join(entries[mid]["raw"].rstrip() for mid in ordered_ids).strip()
 
-    if body:
-        return frontmatter.rstrip() + "\n\n" + body + "\n"
-
-    return frontmatter.rstrip() + "\n"
-
-
-def _is_avatar_memory_type(memory_type: Any) -> bool:
-    value = str(memory_type)
-    return value in {
-        "Avatar",
-        "MemoryType.Avatar",
-        "Assistant Memory",
-    } or value.endswith(".Avatar")
-
-
-def save_memory_items_to_markdown(
-    *,
-    avatar_memory_path: str | pathlib.Path,
-    session_memory_path: str | pathlib.Path,
-    memory_items: list[dict[str, Any]],
-) -> dict[str, list[str]]:
-    """
-    Save memory items into markdown files.
-
-    Rules:
-    - Avatar memory: grouped by day under avatar_memory_path
-      file name: YYYY-MM-DD.md
-    - Non-avatar memory: grouped by session_id under session_memory_path
-      file name: <session_id>.md
-    """
-    avatar_memory_path = pathlib.Path(avatar_memory_path)
-    session_memory_path = pathlib.Path(session_memory_path)
-
-    avatar_memory_path.mkdir(parents=True, exist_ok=True)
-    session_memory_path.mkdir(parents=True, exist_ok=True)
-
-    avatar_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    session_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
-
-    for item in memory_items:
-        metadata = item.get("metadata", {}) or {}
-        memory_type = str(metadata.get("memory_type", ""))
-        session_id = str(metadata.get("session_id", "") or "unknown_session")
-        created_at = metadata.get("created_at", "")
-
-        is_avatar = _is_avatar_memory_type(memory_type)
-        if is_avatar:
-            day = created_at.strftime("%Y-%m-%d")
-            avatar_groups[day].append(item)
-        else:
-            session_groups[session_id].append(item)
-
-    written_avatar_files: list[str] = []
-    written_session_files: list[str] = []
-
-    # save avatar memory
-    for day, items in avatar_groups.items():
-        file_path = avatar_memory_path / f"{_safe_name(day)}.md"
-        existing = file_path.read_text(encoding="utf-8") if file_path.exists() else ""
-
-        merged_entries = _merge_entries(existing, items)
-
-        frontmatter = _render_frontmatter(
-            title=f"Avatar Memory - {day}",
-            memory_scope="avatar_daily_memory",
-            day=day,
-            memory_count=len(merged_entries),
+    return "\n".join(
+        (
+            "---",
+            'type: "memory_context_export"',
+            f"conversation_id: {json.dumps(context.conversation_id)}",
+            f"context_id: {json.dumps(context.context_id)}",
+            f"memory_count: {len(entries)}",
+            "---",
+            "",
+            body,
+            "",
         )
+    )
 
-        final_text = _render_merged_document(
-            frontmatter=frontmatter,
-            entries=merged_entries,
+
+def export_memory_items(export_dir: pathlib.Path, items: list[MemoryItem]) -> list[pathlib.Path]:
+    groups: dict[tuple[str, str], list[MemoryItem]] = defaultdict(list)
+
+    for item in items:
+        groups[(item.context.conversation_id, item.context.context_id)].append(item)
+
+    written: list[pathlib.Path] = []
+
+    for (conversation_id, context_id), group in groups.items():
+        path = (
+            export_dir
+            / "conversations"
+            / _safe_name(conversation_id)
+            / f"{_safe_name(context_id)}.md"
         )
-        file_path.write_text(final_text, encoding="utf-8")
-        written_avatar_files.append(str(file_path))
+        entries = _split_entries(path.read_text(encoding="utf-8")) if path.exists() else {}
 
-    # save session memory
-    for session_id, items in session_groups.items():
-        file_path = session_memory_path / f"{_safe_name(session_id)}.md"
-        existing = file_path.read_text(encoding="utf-8") if file_path.exists() else ""
+        for item in group:
+            current = entries.get(item.memory_id)
+            if current is None or item.revision >= current[0]:
+                entries[item.memory_id] = (item.revision, _render_entry(item))
 
-        merged_entries = _merge_entries(existing, items)
+        _write_atomic(path, _render_document(group, entries))
+        written.append(path)
 
-        frontmatter = _render_frontmatter(
-            title=f"Session Memory - {session_id}",
-            memory_scope="session_memory",
-            session_id=session_id,
-            memory_count=len(merged_entries),
-        )
-
-        final_text = _render_merged_document(
-            frontmatter=frontmatter,
-            entries=merged_entries,
-        )
-        file_path.write_text(final_text, encoding="utf-8")
-        written_session_files.append(str(file_path))
-
-    return {
-        "avatar_files": written_avatar_files,
-        "session_files": written_session_files,
-    }
+    return written

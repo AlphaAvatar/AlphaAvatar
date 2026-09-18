@@ -47,8 +47,7 @@ class LivekitContextSearch:
             if ctx.new_message is not None:
                 chat_context.insert(ctx.new_message)
                 await self._engine.memory.search_by_context(
-                    avatar_id=self._engine._avatar_config.avatar.id,
-                    session_id=self._engine.session_runtime.session_id,
+                    context_id=self._engine.memory.root_context_id,
                     chat_context=chat_context.items,
                 )
 

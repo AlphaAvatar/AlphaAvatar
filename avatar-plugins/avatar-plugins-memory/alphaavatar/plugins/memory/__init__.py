@@ -60,7 +60,7 @@ class MemoryPlugin(AvatarPlugin):
 def configure_vdb_runner(vdb_type: str | None = None) -> None:
     vdb_type = vdb_type or os.getenv("MEMORY_VDB_TYPE")
 
-    logger.info("Configuring Persona plugin with VDB type: %s", vdb_type)
+    logger.info("Configuring Memory plugin with VDB type: %s", vdb_type)
 
     if vdb_type == "qdrant":
         from .runner import QdrantRunner
