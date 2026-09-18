@@ -15,89 +15,53 @@ from __future__ import annotations
 
 from typing import Any
 
-from alphaavatar.agents import AvatarModule, AvatarPlugin
-from alphaavatar.agents.persona import PersonaBase, PersonaProcessorBase
+from alphaavatar.agents import AvatarPlugin
+from alphaavatar.agents.persona import PersonaBase
 from alphaavatar.agents.runtime import AvatarRuntime
 
+from .config import DefaultPersonaConfig
 from .log import logger
+from .processors import FaceProcessor, ProfilerProcessor, SpeakerProcessor
 from .runtime import PersonaRuntime
 from .storage import PersonaStore
 from .version import __version__
 
 
-def _create_processor(
-    module: AvatarModule,
-    config: dict[str, Any],
-    *,
-    runtime: AvatarRuntime,
-    persona: PersonaBase,
-) -> PersonaProcessorBase | None:
-    if not config.get("enabled", True):
-        return None
-
-    processor = AvatarPlugin.get_avatar_plugin(
-        module,
-        config["plugin"],
-        runtime=runtime,
-        persona=persona,
-        init_config=config["init_config"],
-    )
-
-    if not isinstance(processor, PersonaProcessorBase):
-        raise TypeError(
-            f"Persona plugin {module.value}:{config['plugin']} must return "
-            f"PersonaProcessorBase, got {type(processor).__name__}."
-        )
-
-    return processor
-
-
 class PersonaPlugin(AvatarPlugin):
     def __init__(self) -> None:
-        super().__init__(__name__, __version__, __package__, logger)  # type: ignore
+        super().__init__(__name__, __version__, __package__, logger)
 
     def get_plugin(
         self,
         *,
         runtime: AvatarRuntime,
-        init_config: dict[str, Any],
+        init_config: dict[str, Any] | None = None,
     ) -> PersonaBase:
-        config = dict(init_config)
+        config = DefaultPersonaConfig.model_validate(init_config or {})
+        store = PersonaStore(runtime=runtime)
+        persona = PersonaRuntime(runtime=runtime, store=store)
+        processors = []
 
-        profiler_config = config.pop("profiler")
-        speaker_config = config.pop("speaker")
-        face_config = config.pop("face")
-
-        persona = PersonaRuntime(
-            runtime=runtime,
-            store=PersonaStore(runtime=runtime),
-            **config,
-        )
-
-        processors = [
-            processor
-            for processor in (
-                _create_processor(
-                    AvatarModule.PROFILER,
-                    profiler_config,
+        if config.profiler.enabled:
+            processors.append(
+                ProfilerProcessor(
                     runtime=runtime,
                     persona=persona,
-                ),
-                _create_processor(
-                    AvatarModule.SPEAKER,
-                    speaker_config,
-                    runtime=runtime,
-                    persona=persona,
-                ),
-                _create_processor(
-                    AvatarModule.FACE,
-                    face_config,
-                    runtime=runtime,
-                    persona=persona,
-                ),
+                    provider=config.profiler.provider,
+                )
             )
-            if processor is not None
-        ]
+
+        if config.speaker.enabled:
+            processors.append(
+                SpeakerProcessor(
+                    runtime=runtime,
+                    persona=persona,
+                    inference_queue_size=config.speaker.inference_queue_size,
+                )
+            )
+
+        if config.face.enabled:
+            processors.append(FaceProcessor(runtime=runtime, persona=persona))
 
         persona.bind_processors(processors)
         return persona

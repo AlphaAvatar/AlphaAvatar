@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING
 from alphaavatar.agents.plugin import AvatarRuntimePlugin
 
 if TYPE_CHECKING:
-    import numpy as np
     from livekit.agents.llm import ChatItem
 
     from alphaavatar.agents.runtime import SessionRuntime
@@ -58,19 +57,3 @@ class PersonaBase(AvatarRuntimePlugin):
 
     @abstractmethod
     async def save(self, *, uid: str | None = None) -> None: ...
-
-    @abstractmethod
-    async def resolve_speaker_vector(
-        self,
-        *,
-        speaker_vector: np.ndarray,
-        timeout: float | None = None,
-    ) -> str | None: ...
-
-    @abstractmethod
-    async def resolve_face_vector(
-        self,
-        *,
-        face_vector: np.ndarray,
-        timeout: float | None = None,
-    ) -> str | None: ...

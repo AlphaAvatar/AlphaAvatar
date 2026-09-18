@@ -20,14 +20,7 @@ from alphaavatar.agents.runtime.inference import InferenceRunner
 
 from .factory import PersonaPlugin
 from .log import logger
-from .processors import (
-    FaceAnalysisRunner,
-    FacePlugin,
-    ProfilerPlugin,
-    SpeakerAttributeRunner,
-    SpeakerPlugin,
-    SpeakerVectorRunner,
-)
+from .processors import FaceAnalysisRunner, SpeakerAttributeRunner, SpeakerVectorRunner
 from .version import __version__
 
 __all__ = ["__version__"]
@@ -35,7 +28,6 @@ __all__ = ["__version__"]
 
 def configure_vdb_runner(vdb_type: str | None = None) -> None:
     vdb_type = vdb_type or os.getenv("PERSONA_VDB_TYPE")
-
     logger.info("Configuring Persona plugin with VDB type: %s", vdb_type)
 
     if vdb_type == "qdrant":
@@ -49,6 +41,7 @@ def configure_vdb_runner(vdb_type: str | None = None) -> None:
 
         method = LanceDBRunner.INFERENCE_METHOD
         InferenceRunner.register(LanceDBRunner)
+
     else:
         logger.warning(
             "Unsupported PERSONA_VDB_TYPE=%r. Expected 'qdrant' or 'lancedb'.",
@@ -65,25 +58,6 @@ AvatarPlugin.register_avatar_plugin(
     "default",
     PersonaPlugin(),
 )
-
-AvatarPlugin.register_avatar_plugin(
-    AvatarModule.PROFILER,
-    "default",
-    ProfilerPlugin(),
-)
-
-AvatarPlugin.register_avatar_plugin(
-    AvatarModule.SPEAKER,
-    "default",
-    SpeakerPlugin(),
-)
-
-AvatarPlugin.register_avatar_plugin(
-    AvatarModule.FACE,
-    "default",
-    FacePlugin(),
-)
-
 
 # Inference Runners
 InferenceRunner.register(SpeakerAttributeRunner)

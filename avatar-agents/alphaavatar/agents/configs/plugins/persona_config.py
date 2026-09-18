@@ -28,34 +28,18 @@ from alphaavatar.agents.utils.vdb import qdrant
 importlib.import_module("alphaavatar.plugins.persona")
 
 
-class PersonaProcessorConfig(BaseModel):
-    """Configuration for a Persona component factory."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = Field(
-        default=True,
-        description="Whether this Persona processor is enabled.",
-    )
-    plugin: str = Field(default="default", description="Persona component plugin name.")
-    init_config: dict[str, Any] = Field(
-        default_factory=dict, description="Component initialization parameters."
-    )
-
-
 class PersonaConfig(BaseModel):
-    """Configuration for the Persona runtime plugin."""
-
     model_config = ConfigDict(extra="forbid")
 
     plugin: str = Field(default="default", description="Persona runtime plugin name.")
     vdb_config: dict[str, Any] = Field(
-        default_factory=dict, description="Persona VDB initialization parameters."
+        default_factory=dict,
+        description="Persona VDB initialization parameters.",
     )
-
-    profiler: PersonaProcessorConfig = Field(default_factory=PersonaProcessorConfig)
-    speaker: PersonaProcessorConfig = Field(default_factory=PersonaProcessorConfig)
-    face: PersonaProcessorConfig = Field(default_factory=PersonaProcessorConfig)
+    init_config: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Persona plugin-owned configuration.",
+    )
 
     def model_post_init(self, __context: Any) -> None:
         os.environ["PERSONA_VDB_CONFIG"] = json.dumps(self.vdb_config)
@@ -76,17 +60,13 @@ class PersonaConfig(BaseModel):
             AvatarModule.PERSONA,
             self.plugin,
             runtime=runtime,
-            init_config=self.model_dump(
-                exclude={
-                    "plugin",
-                    "vdb_config",
-                }
-            ),
+            init_config=self.init_config,
         )
         if persona is None:
             raise ValueError(f"Persona plugin '{self.plugin}' is not registered or returned None.")
         if not isinstance(persona, PersonaBase):
             raise TypeError(
-                f"Persona plugin '{self.plugin}' must return PersonaBase, got {type(persona).__name__}."
+                f"Persona plugin '{self.plugin}' must return PersonaBase, "
+                f"got {type(persona).__name__}."
             )
         return persona

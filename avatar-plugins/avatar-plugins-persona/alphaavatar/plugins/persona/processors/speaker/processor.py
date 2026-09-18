@@ -19,12 +19,14 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from alphaavatar.agents.persona import PersonaBase, PersonaProcessorBase
+from alphaavatar.agents.constants import SPEAKER_MATCH_THRESHOLD
+from alphaavatar.agents.persona import PersonaProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import (
     AvatarCapabilityName,
     avatar_capability,
 )
+from alphaavatar.agents.utils import NumpyOP
 from alphaavatar.agents.utils.time import application_now
 from alphaavatar.core.env import (
     EnvObservation,
@@ -41,6 +43,7 @@ from alphaavatar.core.perception import PerceptionStreamKind
 
 from ...log import logger
 from ...model_files import SPEAKER_MODEL_CONFIG
+from ...runtime import PersonaRuntime
 from .attribute_runner import SpeakerAttributeRunner
 from .cache import SpeakerCache
 from .vector_runner import SpeakerVectorRunner
@@ -82,7 +85,7 @@ class SpeakerProcessor(PersonaProcessorBase):
         self,
         *,
         runtime: AvatarRuntime,
-        persona: PersonaBase,
+        persona: PersonaRuntime,
         inference_queue_size: int = 1,
     ) -> None:
         super().__init__(runtime=runtime, persona=persona)
@@ -117,6 +120,8 @@ class SpeakerProcessor(PersonaProcessorBase):
     @property
     def name(self) -> str:
         return "speaker"
+
+    """Observation helpers"""
 
     def _extract_frame(self, observation: EnvObservation) -> AudioFrame | None:
         if observation.payload is None:
@@ -224,6 +229,45 @@ class SpeakerProcessor(PersonaProcessorBase):
 
     """Inference worker"""
 
+    async def _resolve_speaker_vector(
+        self,
+        speaker_vector: np.ndarray,
+        *,
+        timeout: float | None = None,
+    ) -> str | None:
+        vector = NumpyOP.l2_normalize(NumpyOP.to_np(speaker_vector))
+
+        uid = NumpyOP.best_cosine_match(
+            vector,
+            {
+                uid: cache.speaker_vector
+                for uid, cache in self.persona.persona_cache.items()
+                if cache.speaker_vector is not None
+            },
+            SPEAKER_MATCH_THRESHOLD,
+        )
+
+        if uid is None:
+            uid = await self.persona.store.search_speaker_vector(
+                speaker_vector=vector,
+                threshold=SPEAKER_MATCH_THRESHOLD,
+                timeout=timeout,
+            )
+            if uid is not None:
+                await self.persona.load_profile(uid=uid)
+
+        if uid is not None:
+            if cache := self.persona.persona_cache.get(uid):
+                cache.speaker_vector = vector
+            return uid
+
+        for uid, cache in self.persona.persona_cache.items():
+            if cache.speaker_vector is None:
+                cache.speaker_vector = vector
+                return uid
+
+        return None
+
     async def _resolve_speaker(self, window: SpeakerWindow) -> str | None:
         result = await asyncio.wait_for(
             self.inference_executor.do_inference(
@@ -235,8 +279,8 @@ class SpeakerProcessor(PersonaProcessorBase):
         if result is None:
             raise RuntimeError("Speaker vector runner returned no result")
 
-        return await self.persona.resolve_speaker_vector(
-            speaker_vector=np.frombuffer(result, dtype=np.float32),
+        return await self._resolve_speaker_vector(
+            np.frombuffer(result, dtype=np.float32),
             timeout=self._vector_config.inference_timeout_sec,
         )
 

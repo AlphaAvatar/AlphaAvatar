@@ -11,23 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .face import FaceAnalysisRunner, FacePlugin, FaceProcessor
-from .profiler import ProfilerPlugin, ProfilerProcessor
+from .face import FaceAnalysisRunner, FaceProcessor
+from .profiler import ProfilerProcessor
 from .speaker import (
     SpeakerAttributeRunner,
-    SpeakerPlugin,
     SpeakerProcessor,
     SpeakerVectorRunner,
 )
 
 __all__ = [
     "FaceAnalysisRunner",
-    "FacePlugin",
     "FaceProcessor",
-    "ProfilerPlugin",
     "ProfilerProcessor",
     "SpeakerAttributeRunner",
-    "SpeakerPlugin",
     "SpeakerProcessor",
     "SpeakerVectorRunner",
 ]

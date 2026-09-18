@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 
-import numpy as np
 from livekit.agents.llm import ChatItem
 
 from alphaavatar.agents.constants import FACE_MATCH_THRESHOLD, SPEAKER_MATCH_THRESHOLD
@@ -73,6 +72,10 @@ class PersonaRuntime(PersonaBase):
         return self._persona_cache
 
     @property
+    def store(self) -> PersonaStore:
+        return self._store
+
+    @property
     def persona_content(self) -> str:
         profiles = {
             uid: cache.profile
@@ -123,22 +126,6 @@ class PersonaRuntime(PersonaBase):
             loaded_profile.face_vector = session_profile.face_vector
 
         return loaded_profile
-
-    @staticmethod
-    def _match_vector(
-        vector: np.ndarray,
-        gallery: dict[str, np.ndarray],
-        threshold: float,
-    ) -> str | None:
-        if not gallery:
-            return None
-
-        ids = list(gallery)
-        matrix = np.stack([NumpyOP.to_np(gallery[uid]) for uid in ids], axis=0)
-        scores = matrix @ NumpyOP.l2_normalize(NumpyOP.to_np(vector))
-        index = int(np.argmax(scores))
-
-        return ids[index] if float(scores[index]) >= threshold else None
 
     def _ensure_runtime_state(self, profile: UserProfile) -> UserRuntimeState:
         if profile.runtime_state is None:
@@ -260,86 +247,6 @@ class PersonaRuntime(PersonaBase):
         errors = [result for result in results if isinstance(result, Exception)]
         if errors:
             raise ExceptionGroup("One or more Persona profiles failed to save", errors)
-
-    async def resolve_speaker_vector(
-        self,
-        *,
-        speaker_vector: np.ndarray,
-        timeout: float | None = None,
-    ) -> str | None:
-        vector = NumpyOP.l2_normalize(NumpyOP.to_np(speaker_vector))
-
-        uid = self._match_vector(
-            vector,
-            {
-                uid: cache.speaker_vector
-                for uid, cache in self._persona_cache.items()
-                if cache.speaker_vector is not None
-            },
-            SPEAKER_MATCH_THRESHOLD,
-        )
-
-        if uid is None:
-            uid = await self._store.search_speaker_vector(
-                speaker_vector=vector,
-                threshold=SPEAKER_MATCH_THRESHOLD,
-                timeout=timeout,
-            )
-            if uid is not None:
-                await self.load_profile(uid=uid)
-
-        if uid is not None:
-            cache = self._persona_cache.get(uid)
-            if cache is not None:
-                cache.speaker_vector = vector
-            return uid
-
-        for cache_uid, cache in self._persona_cache.items():
-            if cache.speaker_vector is None:
-                cache.speaker_vector = vector
-                return cache_uid
-
-        return None
-
-    async def resolve_face_vector(
-        self,
-        *,
-        face_vector: np.ndarray,
-        timeout: float | None = None,
-    ) -> str | None:
-        vector = NumpyOP.l2_normalize(NumpyOP.to_np(face_vector))
-
-        uid = self._match_vector(
-            vector,
-            {
-                uid: cache.face_vector
-                for uid, cache in self._persona_cache.items()
-                if cache.face_vector is not None
-            },
-            FACE_MATCH_THRESHOLD,
-        )
-
-        if uid is None:
-            uid = await self._store.search_face_vector(
-                face_vector=vector,
-                threshold=FACE_MATCH_THRESHOLD,
-                timeout=timeout,
-            )
-            if uid is not None:
-                await self.load_profile(uid=uid)
-
-        if uid is not None:
-            cache = self._persona_cache.get(uid)
-            if cache is not None:
-                cache.face_vector = vector
-            return uid
-
-        for cache_uid, cache in self._persona_cache.items():
-            if cache.face_vector is None:
-                cache.face_vector = vector
-                return cache_uid
-
-        return None
 
     async def on_session_start(self) -> None:
         if self._started:

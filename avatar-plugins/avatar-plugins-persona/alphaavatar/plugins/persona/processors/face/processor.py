@@ -27,18 +27,20 @@ from alphaavatar.agents.avatar.vision import (
 )
 from alphaavatar.agents.constants import (
     FACE_INFERENCE_THRESHOLD,
+    FACE_MATCH_THRESHOLD,
     VIDEO_PERSONA_INTERVAL_SEC,
 )
 from alphaavatar.agents.entrypoints.livekit import (
     bgr_to_video_frame,
     video_frame_to_bgr,
 )
-from alphaavatar.agents.persona import PersonaBase, PersonaProcessorBase
+from alphaavatar.agents.persona import PersonaProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import (
     AvatarCapabilityName,
     avatar_capability,
 )
+from alphaavatar.agents.utils import NumpyOP
 from alphaavatar.agents.utils.time import application_now
 from alphaavatar.core.env import (
     AnnotationKind,
@@ -57,6 +59,7 @@ from alphaavatar.core.perception import PerceptionStreamKind
 
 from ...log import logger
 from ...model_files import FACE_MODEL_CONFIG
+from ...runtime import PersonaRuntime
 from .analysis_runner import FaceAnalysisRunner
 from .cache import FaceCache
 
@@ -81,7 +84,7 @@ class FaceProcessor(PersonaProcessorBase):
         self,
         *,
         runtime: AvatarRuntime,
-        persona: PersonaBase,
+        persona: PersonaRuntime,
     ) -> None:
         super().__init__(runtime=runtime, persona=persona)
 
@@ -357,6 +360,45 @@ class FaceProcessor(PersonaProcessorBase):
 
     """Inference worker"""
 
+    async def _resolve_face_vector(
+        self,
+        face_vector: np.ndarray,
+        *,
+        timeout: float | None = None,
+    ) -> str | None:
+        vector = NumpyOP.l2_normalize(NumpyOP.to_np(face_vector))
+
+        uid = NumpyOP.best_cosine_match(
+            vector,
+            {
+                uid: cache.face_vector
+                for uid, cache in self.persona.persona_cache.items()
+                if cache.face_vector is not None
+            },
+            FACE_MATCH_THRESHOLD,
+        )
+
+        if uid is None:
+            uid = await self.persona.store.search_face_vector(
+                face_vector=vector,
+                threshold=FACE_MATCH_THRESHOLD,
+                timeout=timeout,
+            )
+            if uid is not None:
+                await self.persona.load_profile(uid=uid)
+
+        if uid is not None:
+            if cache := self.persona.persona_cache.get(uid):
+                cache.face_vector = vector
+            return uid
+
+        for uid, cache in self.persona.persona_cache.items():
+            if cache.face_vector is None:
+                cache.face_vector = vector
+                return uid
+
+        return None
+
     async def _inference_face_job(self, job: FaceFrameJob) -> None:
         start_time = time.perf_counter()
 
@@ -429,8 +471,8 @@ class FaceProcessor(PersonaProcessorBase):
 
         #  Match & Retrieve & Update Face
         face_vector = np.asarray(embedding, dtype=np.float32)
-        uid = await self.persona.resolve_face_vector(
-            face_vector=face_vector,
+        uid = await self._resolve_face_vector(
+            face_vector,
             timeout=self._face_config.inference_timeout_sec,
         )
 

@@ -51,9 +51,6 @@ class AvatarModule(str, Enum):
 
     # Persona modules
     PERSONA = "persona"
-    PROFILER = "persona_profiler"
-    SPEAKER = "persona_speaker"
-    FACE = "persona_face"
 
     # deepresearch
     DEEPRESEARCH = "deepresearch"

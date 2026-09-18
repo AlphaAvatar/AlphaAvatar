@@ -227,11 +227,9 @@ persona:
     face_collection_name: persona_face
     embedding: *openai_embedding
 
-  profiler:
-    enabled: true
-    plugin: default
-
-    init_config:
+  init_config:
+    profiler:
+      enabled: true
       provider:
         profile_delta_task: persona.profile_delta
 
@@ -244,15 +242,12 @@ persona:
               model: gpt-4o
               temperature: 0.1
 
-  speaker:
-    enabled: true
-    plugin: default
-    init_config: {}
+    speaker:
+      enabled: true
+      inference_queue_size: 1
 
-  face:
-    enabled: true
-    plugin: default
-    init_config: {}
+    face:
+      enabled: true
 
 
 # ============================================================
