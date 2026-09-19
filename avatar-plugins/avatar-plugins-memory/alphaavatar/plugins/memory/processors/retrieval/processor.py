@@ -36,7 +36,7 @@ from ...storage.graph import GraphLookup
 from ...template import MemoryPluginsTemplate
 from ..base import MemoryProcessor
 from .config import RetrievalConfig
-from .schema import RetrievalCapabilityInput
+from .schema import RetrievalCapabilityInput, RetrievalOp
 
 if TYPE_CHECKING:
     from ...runtime import MemoryRuntime
@@ -215,3 +215,20 @@ class RetrievalProcessor(MemoryProcessor):
                 exc,
             )
             return []
+
+    async def invoke(self, request: RetrievalCapabilityInput) -> str:
+        match request.op:
+            case RetrievalOp.TEXT_SEARCH:
+                items = await self.search_text(request.query or "", top_k=request.top_k)
+            case RetrievalOp.GRAPH_SEARCH:
+                items = await self.search_graph(
+                    node_key=request.node_key,
+                    node_query=request.node_query,
+                    node_type=request.node_type,
+                    max_hops=request.max_hops,
+                    top_k=request.top_k,
+                )
+            case _:
+                raise ValueError(f"Unsupported retrieval operation: {request.op}")
+
+        return "\n".join(item.render_line() for item in items) or "No relevant memory was found."

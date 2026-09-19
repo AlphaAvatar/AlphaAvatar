@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from typing import Any
 
 from livekit.agents.llm import ChatItem
 
@@ -27,7 +28,7 @@ from alphaavatar.agents.persona import (
 )
 from alphaavatar.agents.persona.schemas import UserProfile, UserRuntimeState
 from alphaavatar.agents.runtime import AvatarRuntime, SessionRuntime
-from alphaavatar.agents.runtime.capability import AvatarCapability
+from alphaavatar.agents.runtime.capability import AvatarCapability, AvatarCapabilityRegistry
 from alphaavatar.agents.runtime.session_runtime import ParticipantInfo
 from alphaavatar.agents.utils import NumpyOP
 from alphaavatar.agents.utils.files.work_dirs import prepare_user_path
@@ -54,11 +55,16 @@ class PersonaRuntime(PersonaBase):
         self._processors_bound = False
         self._profiler_enabled = False
         self._started = False
-        self._capabilities: tuple[AvatarCapability, ...] = ()
+
+        self._capability_registry = AvatarCapabilityRegistry()
+
+    @property
+    def capability_registry(self) -> AvatarCapabilityRegistry:
+        return self._capability_registry
 
     @property
     def capabilities(self) -> tuple[AvatarCapability, ...]:
-        return self._capabilities
+        return self._capability_registry.capabilities
 
     @property
     def processors(self) -> tuple[PersonaProcessorBase, ...]:
@@ -177,16 +183,12 @@ class PersonaRuntime(PersonaBase):
         if len(names) != len(set(names)):
             raise ValueError(f"Persona processor names must be unique: {names}")
 
+        registry = AvatarCapabilityRegistry(*processors)
+
         self._processors = tuple(processors)
-        self._processors_bound = True
         self._profiler_enabled = "profiler" in names
-
-        capabilities: dict[object, AvatarCapability] = {}
-        for processor in processors:
-            for capability in processor.capabilities:
-                capabilities.setdefault(capability.name, capability)
-
-        self._capabilities = tuple(capabilities.values())
+        self._capability_registry = registry
+        self._processors_bound = True
 
     async def load_profile(self, *, uid: str) -> None:
         if uid in self._persona_cache:
@@ -252,6 +254,15 @@ class PersonaRuntime(PersonaBase):
         errors = [result for result in results if isinstance(result, Exception)]
         if errors:
             raise ExceptionGroup("One or more Persona profiles failed to save", errors)
+
+    async def invoke(
+        self,
+        name: str,
+        arguments: dict[str, Any] | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> Any:
+        return await self._capability_registry.invoke(name, arguments, timeout=timeout)
 
     async def on_session_start(self) -> None:
         if self._started:

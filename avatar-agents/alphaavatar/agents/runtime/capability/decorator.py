@@ -11,23 +11,44 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .enum import AvatarCapabilityName
+from __future__ import annotations
+
+import inspect
+from typing import Any
+
+from pydantic import BaseModel
+
 from .schema import AvatarCapability
 
 
-def avatar_capability(*, name: AvatarCapabilityName, description: str):
-    description = description.strip()
-    if not description:
-        raise ValueError(f"Avatar capability {name!r} requires a description.")
+def validate_handler(handler: Any, *, bound: bool = True) -> None:
+    if not inspect.iscoroutinefunction(handler) or getattr(handler, "__isabstractmethod__", False):
+        raise TypeError("Callable capabilities require a concrete async invoke handler")
+    parameters = tuple(inspect.signature(handler).parameters.values())
+    positional = {inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD}
+    if len(parameters) != (1 if bound else 2) or any(p.kind not in positional for p in parameters):
+        raise TypeError("Expected async invoke(self, request), or an async handler(request)")
 
-    capability = AvatarCapability(name=name, description=description)
 
-    def decorator(cls):
-        capabilities = tuple(getattr(cls, "capabilities", ()))
-        if any(c.name == name for c in capabilities):
-            cls.capabilities = tuple(capability if c.name == name else c for c in capabilities)
-        else:
-            cls.capabilities = (capability, *capabilities)
+def avatar_capability(
+    *,
+    name: str,
+    description: str,
+    input_schema: type[BaseModel] | dict[str, Any] | None = None,
+):
+    capability = AvatarCapability(name, description, input_schema)
+
+    def decorate(cls: type) -> type:
+        if not inspect.isclass(cls):
+            raise TypeError("avatar_capability decorates classes")
+        if capability.callable:
+            validate_handler(inspect.getattr_static(cls, "invoke", None), bound=False)
+
+        inherited = tuple(getattr(cls, "capabilities", ()))
+        declared = cls.__dict__.get("capabilities", ())
+        if any(item.id == capability.id for item in declared):
+            raise ValueError(f"Capability already declared on {cls.__name__}: {capability.id}")
+        cls.capabilities = (*[item for item in inherited if item.id != capability.id], capability)
         return cls
 
-    return decorator
+    return decorate

@@ -31,7 +31,9 @@ def _xml_text(value: object | None) -> str:
 
 def _render_capabilities(capabilities: tuple[AvatarCapability, ...]) -> str:
     return (
-        "\n".join(f"- {c.name.value}: {c.description}" for c in capabilities)
+        "\n".join(
+            f"- {capability.id}: {capability.model_description}" for capability in capabilities
+        )
         or DEFAULT_SYSTEM_VALUE
     )
 

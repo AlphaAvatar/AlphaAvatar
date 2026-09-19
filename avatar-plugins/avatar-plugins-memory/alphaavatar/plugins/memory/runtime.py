@@ -34,7 +34,7 @@ from alphaavatar.agents.memory.schemas import (
     MemorySourceRef,
 )
 from alphaavatar.agents.runtime import AvatarRuntime, SessionRuntime
-from alphaavatar.agents.runtime.capability import AvatarCapability
+from alphaavatar.agents.runtime.capability import AvatarCapability, AvatarCapabilityRegistry
 from alphaavatar.agents.utils.time import application_now
 
 from .processors.base import MemoryProcessor
@@ -70,7 +70,8 @@ class MemoryRuntime(MemoryBase):
         self._started_processors: list[MemoryProcessor] = []
         self._processors_bound = False
         self._started = False
-        self._capabilities: tuple[AvatarCapability, ...] = ()
+
+        self._capability_registry = AvatarCapabilityRegistry()
 
     @property
     def runtime(self) -> AvatarRuntime:
@@ -85,8 +86,12 @@ class MemoryRuntime(MemoryBase):
         return self._store
 
     @property
+    def capability_registry(self) -> AvatarCapabilityRegistry:
+        return self._capability_registry
+
+    @property
     def capabilities(self) -> tuple[AvatarCapability, ...]:
-        return self._capabilities
+        return self._capability_registry.capabilities
 
     @property
     def processors(self) -> tuple[MemoryProcessor, ...]:
@@ -138,16 +143,12 @@ class MemoryRuntime(MemoryBase):
         if len(names) != len(set(names)):
             raise ValueError(f"Memory processor names must be unique: {names}")
 
+        registry = AvatarCapabilityRegistry(*processors)
+
         self._processors = tuple(processors)
         self._processors_by_name = {processor.name: processor for processor in processors}
+        self._capability_registry = registry
         self._processors_bound = True
-
-        capabilities: dict[object, AvatarCapability] = {}
-        for processor in processors:
-            for capability in processor.capabilities:
-                capabilities.setdefault(capability.name, capability)
-
-        self._capabilities = tuple(capabilities.values())
 
     def processor(self, name: str) -> MemoryProcessor | None:
         return self._processors_by_name.get(name)
@@ -467,6 +468,15 @@ class MemoryRuntime(MemoryBase):
         )
 
         self._root_context_id = context.context_id
+
+    async def invoke(
+        self,
+        name: str,
+        arguments: dict[str, Any] | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> Any:
+        return await self._capability_registry.invoke(name, arguments, timeout=timeout)
 
     async def on_session_start(self) -> None:
         if self._started:
