@@ -18,7 +18,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from alphaavatar.agents.memory import MemoryContextState
 from alphaavatar.core.env import EnvObservation, ObservationKind
 from alphaavatar.core.perception import (
     AlignedPerception,
@@ -32,6 +31,7 @@ from alphaavatar.core.perception import (
 from alphaavatar.core.time import RuntimeTimeRange
 
 from ...log import logger
+from ...state import MemoryContextState
 from .input_builder import EnvMemoryInput, EnvMemoryInputBuilder
 
 DEFAULT_ENV_MEMORY_INTERVAL_SEC = 30.0
@@ -137,8 +137,6 @@ MessageRenderer = Callable[[list[Any]], str | None]
 
 
 class EnvMemoryScheduler:
-    CONSUMER_ID = "memory.env"
-
     _ENV_OBSERVATION_KINDS = {
         ObservationKind.VIDEO_FRAME,
         ObservationKind.SCREEN_FRAME,
@@ -170,8 +168,10 @@ class EnvMemoryScheduler:
         self._input_builder = EnvMemoryInputBuilder(include_audio=include_audio)
         self._last_cutoff = initial_cutoff
 
+        self._consumer_id = f"memory.environment:{context_state.context_id}"
+        self._message_cursor = 0
         perception_runtime.events.commit(
-            consumer_id=self.CONSUMER_ID,
+            consumer_id=self._consumer_id,
             cursor_seq=initial_cutoff.sequence,
         )
 
@@ -327,13 +327,11 @@ class EnvMemoryScheduler:
             alignment,
         )
 
-        self._perception_runtime.events.commit(
-            consumer_id=self.CONSUMER_ID,
-            cursor_seq=target_cutoff.sequence,
+        message_end = self._context_state.message_sequence
+        messages = self._context_state.messages_between(
+            self._message_cursor,
+            message_end,
         )
-        self._last_cutoff = target_cutoff
-
-        messages = self._context_state.take_pending_env_messages()
 
         batch = EnvMemoryBatch(
             context_id=self.context_id,
@@ -348,7 +346,12 @@ class EnvMemoryScheduler:
             message_count=len(messages),
         )
 
-        self._context_state.commit_env_messages()
+        self._perception_runtime.events.commit(
+            consumer_id=self._consumer_id,
+            cursor_seq=target_cutoff.sequence,
+        )
+        self._last_cutoff = target_cutoff
+        self._message_cursor = message_end
         return batch
 
     async def _enqueue_batch(self, batch: EnvMemoryBatch) -> None:
@@ -495,7 +498,11 @@ class EnvMemoryScheduler:
             name=f"memory_env_scheduler:{self.context_id}",
         )
 
-    async def stop(self) -> None:
+    async def stop(
+        self,
+        *,
+        finalize: bool = True,
+    ) -> None:
         if self._stopping:
             return
 
@@ -526,6 +533,10 @@ class EnvMemoryScheduler:
         self._processor_task = None
 
         try:
+            if not finalize:
+                self._pending_batch = None
+                return
+
             final_cutoff = self._perception_runtime.capture_cutoff()
             final_batch = await self._capture_batch(
                 {"session_stop"},
@@ -549,5 +560,5 @@ class EnvMemoryScheduler:
                     raise
 
         finally:
-            self._perception_runtime.events.clear_consumer(self.CONSUMER_ID)
+            self._perception_runtime.events.clear_consumer(self._consumer_id)
             logger.info("[Memory] ENV scheduler stopped context=%s", self.context_id)

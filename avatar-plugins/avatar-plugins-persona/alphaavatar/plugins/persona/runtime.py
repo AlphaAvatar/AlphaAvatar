@@ -23,7 +23,6 @@ from alphaavatar.agents.log import logger
 from alphaavatar.agents.persona import (
     PersonaBase,
     PersonaCache,
-    PersonaPluginsTemplate,
     PersonaProcessorBase,
 )
 from alphaavatar.agents.persona.schemas import UserProfile, UserRuntimeState
@@ -35,6 +34,7 @@ from alphaavatar.agents.utils.files.work_dirs import prepare_user_path
 
 from .cache import DefaultPersonaCache
 from .storage import PersonaStore
+from .template import PersonaPluginsTemplate
 
 
 class PersonaRuntime(PersonaBase):

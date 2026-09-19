@@ -36,16 +36,14 @@ def _render_capabilities(capabilities: tuple[AvatarCapability, ...]) -> str:
     )
 
 
-def _render_participant_times(
-    participant_times: dict[str, ParticipantTimeContext],
-) -> str:
-    if not participant_times:
+def _render_participant_time(participant_time: dict[str, ParticipantTimeContext]) -> str:
+    if not participant_time:
         return DEFAULT_SYSTEM_VALUE
 
     return "\n".join(
         f"- User {_xml_text(p.user_id or f'participant:{p.participant_id}')}: "
         f"{_xml_text(p.user_time.time_str)}"
-        for p in participant_times.values()
+        for p in participant_time.values()
     )
 
 
@@ -111,7 +109,7 @@ class RuntimeContextTemplate:
         context_runtime: ContextRuntime,
     ) -> str:
         return RUNTIME_CONTEXT_PROMPT.format(
-            participant_times=_render_participant_times(context_runtime.participant_times),
+            participant_time=_render_participant_time(context_runtime.participant_time),
             memory_content=_xml_text(context_runtime.memory_content),
             plan_content=_xml_text(context_runtime.plan_content),
             reflection_content=_xml_text(context_runtime.reflection_content),

@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,93 +14,212 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable
-from typing import Any
+import pathlib
+from abc import abstractmethod
+from collections.abc import Iterable, Sequence
+from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from livekit.agents.llm import ChatItem, ChatMessage, FunctionCall, FunctionCallOutput
 
-from alphaavatar.agents import AvatarModule
-from alphaavatar.agents.memory import MemoryBase, MemoryContextState, MemoryPluginsTemplate
+from alphaavatar.agents.memory import MemoryBase
 from alphaavatar.agents.memory.enums import MemoryCacheType, MemoryType
 from alphaavatar.agents.memory.schemas import (
     MemoryCheckpointAdvance,
+    MemoryContextRef,
     MemoryItem,
     MemoryOwnerRef,
     MemoryParticipantRef,
     MemoryScope,
     MemorySourceRef,
 )
-from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime import AvatarRuntime, SessionRuntime
+from alphaavatar.agents.runtime.capability import AvatarCapability
 from alphaavatar.agents.utils.time import application_now
 
-from .log import logger
-from .memory_delta_extractor import MemoryDeltaExtractor, MemoryProviderConfig
-from .processors.conversation.consolidation import MemoryConsolidator, MemoryPipelineConfig
-from .processors.environment import EnvMemoryBatch, EnvMemoryScheduler
-from .retrieval import MemoryRetrievalMixin
-from .schemas.patch import EnvMemoryDelta, MemoryDelta, PatchOp, norm_token, norm_topic
+from .processors.base import MemoryProcessor
+from .schemas import PatchOp, norm_token, norm_topic
+from .state import MemoryContextState, MemoryState
 from .storage import MemoryStore
-from .storage.graph import GraphLookup, build_graph_from_mentions, save_graph_aliases
+from .storage.graph import build_graph_from_mentions
+from .template import MemoryPluginsTemplate
 
-CONVERSATION_PROCESSOR = "conversation"
-TOOL_PROCESSOR = "tool"
-ENV_PROCESSOR = "environment"
+if TYPE_CHECKING:
+    pass
 
 
-class MemoryRuntime(MemoryRetrievalMixin, MemoryBase):
+class MemoryRuntime(MemoryBase):
     def __init__(
         self,
         *,
         runtime: AvatarRuntime,
         avatar_id: str,
         store: MemoryStore,
-        memory_search_context: int = 3,
-        memory_recall_num: int = 10,
         maximum_memory_num: int = 24,
-        provider: dict[str, Any] | None = None,
-        pipeline: dict[str, Any] | None = None,
-        **kwargs: Any,
     ) -> None:
-        super().__init__(
-            runtime=runtime,
-            avatar_id=avatar_id,
-            memory_search_context=memory_search_context,
-            memory_recall_num=memory_recall_num,
-            maximum_memory_num=maximum_memory_num,
-        )
+        self._runtime = runtime
+        self._avatar_id = avatar_id
         self._store = store
-        self._provider_config = (
-            MemoryProviderConfig(**provider) if provider else MemoryProviderConfig()
-        )
-        self._pipeline_config = (
-            MemoryPipelineConfig(**pipeline) if pipeline else MemoryPipelineConfig()
-        )
-        self._delta_extractor = MemoryDeltaExtractor(self._provider_config)
-        self._memory_consolidator = MemoryConsolidator(
-            self._pipeline_config,
-            candidate_search=self._consolidation_candidate_search,
-            plan=self._delta_extractor.plan_consolidation,
-        )
-        self._env_scheduler: EnvMemoryScheduler | None = None
-        self._processor_locks: dict[tuple[str, str], asyncio.Lock] = {}
+
+        self._memory_contexts: dict[str, MemoryContextState] = {}
+        self._memory_state = MemoryState(maximum_memory_num=maximum_memory_num)
+        self._root_context_id: str | None = None
+
+        self._processors: tuple[MemoryProcessor, ...] = ()
+        self._processors_by_name: dict[str, MemoryProcessor] = {}
+        self._started_processors: list[MemoryProcessor] = []
+        self._processors_bound = False
+        self._started = False
+        self._capabilities: tuple[AvatarCapability, ...] = ()
+
+    @property
+    def runtime(self) -> AvatarRuntime:
+        return self._runtime
+
+    @property
+    def avatar_id(self) -> str:
+        return self._avatar_id
 
     @property
     def store(self) -> MemoryStore:
         return self._store
 
-    def _graph_lookup(self) -> GraphLookup:
-        graph = self.runtime.workspace.graph.namespace(AvatarModule.MEMORY.value)
-        return GraphLookup(graph.root)
+    @property
+    def capabilities(self) -> tuple[AvatarCapability, ...]:
+        return self._capabilities
 
-    def _processor_lock(self, context_id: str, processor: str) -> asyncio.Lock:
-        return self._processor_locks.setdefault((context_id, processor), asyncio.Lock())
+    @property
+    def processors(self) -> tuple[MemoryProcessor, ...]:
+        return self._processors
+
+    @property
+    def session_runtime(self) -> SessionRuntime:
+        return self._runtime.session
+
+    @property
+    def root_context_id(self) -> str:
+        if self._root_context_id is None:
+            raise RuntimeError("Memory root context is not initialized")
+        return self._root_context_id
+
+    @property
+    def memory_contexts(self) -> dict[str, MemoryContextState]:
+        return self._memory_contexts
+
+    @property
+    def memory_state(self) -> MemoryState:
+        return self._memory_state
+
+    @property
+    def memory_items(self) -> list[MemoryItem]:
+        return self._memory_state.all_items
+
+    @property
+    def memory_content(self) -> str:
+        return "\n".join(
+            filter(
+                None,
+                (
+                    self._memory_state.render(memory_type=MemoryType.Avatar),
+                    self._memory_state.render(memory_type=MemoryType.CONVERSATION),
+                    self._memory_state.render(memory_type=MemoryType.TOOLS),
+                    self._memory_state.render(memory_type=MemoryType.ENV),
+                ),
+            )
+        )
+
+    def bind_processors(self, processors: Sequence[MemoryProcessor]) -> None:
+        if self._processors_bound:
+            raise RuntimeError("Memory processors have already been bound")
+        if self._started:
+            raise RuntimeError("Memory processors cannot be bound after runtime start")
+
+        names = [processor.name for processor in processors]
+        if len(names) != len(set(names)):
+            raise ValueError(f"Memory processor names must be unique: {names}")
+
+        self._processors = tuple(processors)
+        self._processors_by_name = {processor.name: processor for processor in processors}
+        self._processors_bound = True
+
+        capabilities: dict[object, AvatarCapability] = {}
+        for processor in processors:
+            for capability in processor.capabilities:
+                capabilities.setdefault(capability.name, capability)
+
+        self._capabilities = tuple(capabilities.values())
+
+    def processor(self, name: str) -> MemoryProcessor | None:
+        return self._processors_by_name.get(name)
+
+    def context_state(self, context_id: str) -> MemoryContextState:
+        state = self._memory_contexts.get(context_id)
+        if state is None:
+            raise ValueError(f"Memory context not found: {context_id}")
+        return state
+
+    def open_context(
+        self,
+        *,
+        context: MemoryContextRef,
+        provider_dir: pathlib.Path,
+        owner_refs: list[MemoryOwnerRef],
+        participant_refs: list[MemoryParticipantRef] | None = None,
+        cache_type: MemoryCacheType = MemoryCacheType.SESSION_INTERACTION,
+    ) -> MemoryContextState:
+        if context.context_id in self._memory_contexts:
+            raise ValueError(f"Memory context already exists: {context.context_id}")
+
+        state = MemoryContextState(
+            context=context,
+            provider_dir=provider_dir,
+            owner_refs=owner_refs,
+            participant_refs=participant_refs,
+            cache_type=cache_type,
+        )
+        self._memory_contexts[context.context_id] = state
+        return state
+
+    def close_context(self, context_id: str) -> MemoryContextState:
+        state = self.context_state(context_id)
+
+        if any(
+            item.context.parent_context_id == context_id for item in self._memory_contexts.values()
+        ):
+            raise RuntimeError(f"Memory context has open children: {context_id}")
+
+        del self._memory_contexts[context_id]
+
+        if self._root_context_id == context_id:
+            self._root_context_id = None
+
+        return state
+
+    def _sync_user_refs(self) -> None:
+        for migration in self.session_runtime.pending_user_path_migrations:
+            for state in self._memory_contexts.values():
+                state.replace_user_id(
+                    migration.old_user_id,
+                    migration.new_user_id,
+                )
+
+    def add_message(self, *, context_id: str, chat_item: ChatItem) -> None:
+        state = self.context_state(context_id)
+        state.add_message(chat_item)
+        self._sync_user_refs()
+
+        for processor in self._processors:
+            processor.on_message(
+                state=state,
+                chat_item=chat_item,
+            )
 
     @staticmethod
-    def _deduplicate_refs(refs: Iterable) -> list:
+    def deduplicate_refs(refs: Iterable) -> list:
         return list({ref.key: ref for ref in refs}.values())
 
     @classmethod
-    def _source_refs(cls, messages: list[ChatItem]) -> list[MemorySourceRef]:
+    def source_refs(cls, messages: list[ChatItem]) -> list[MemorySourceRef]:
         refs: list[MemorySourceRef] = []
 
         for item in messages:
@@ -120,35 +239,9 @@ class MemoryRuntime(MemoryRetrievalMixin, MemoryBase):
             elif isinstance(item, FunctionCallOutput):
                 refs.append(MemorySourceRef.tool_result(tool_id, call_id))
 
-        return cls._deduplicate_refs(refs)
+        return cls.deduplicate_refs(refs)
 
-    @classmethod
-    def _tool_participants(
-        cls,
-        state: MemoryContextState,
-        messages: list[ChatItem],
-    ) -> list[MemoryParticipantRef]:
-        refs = list(state.participant_refs)
-        refs.extend(
-            MemoryParticipantRef.tool(tool_id)
-            for item in messages
-            if isinstance(item, FunctionCall | FunctionCallOutput)
-            and (tool_id := str(getattr(item, "name", "") or "").strip())
-        )
-        return cls._deduplicate_refs(refs)
-
-    @staticmethod
-    def _has_explicit_tool_event(messages: list[ChatItem]) -> bool:
-        return any(
-            isinstance(item, FunctionCall | FunctionCallOutput)
-            or getattr(item, "tool_calls", None)
-            or getattr(item, "function_call", None)
-            or getattr(item, "type", None)
-            in {"function_call", "function_call_output", "agent_config_update", "agent_handoff"}
-            for item in messages
-        )
-
-    def _build_memory_items(
+    def build_memory_items(
         self,
         *,
         state: MemoryContextState,
@@ -187,51 +280,20 @@ class MemoryRuntime(MemoryRetrievalMixin, MemoryBase):
 
         return items
 
-    def _apply_delta(
-        self,
-        *,
-        state: MemoryContextState,
-        delta: MemoryDelta,
-        target_type: MemoryType,
-        messages: list[ChatItem],
-    ) -> tuple[list[MemoryItem], list[MemoryItem]]:
-        source_refs = self._source_refs(messages)
-        participants = (
-            self._tool_participants(state, messages)
-            if target_type is MemoryType.TOOLS
-            else state.participant_refs
-        )
-
-        assistant = self._build_memory_items(
-            state=state,
-            memory_type=MemoryType.Avatar,
-            patches=delta.assistant_memory_entries,
-            owner_refs=[MemoryOwnerRef.avatar(self.avatar_id)],
-            participant_refs=participants,
-            source_refs=source_refs,
-            scope=MemoryScope.owner(),
-        )
-        target = self._build_memory_items(
-            state=state,
-            memory_type=target_type,
-            patches=delta.user_or_tool_memory_entries,
-            owner_refs=state.owner_refs,
-            participant_refs=participants,
-            source_refs=source_refs,
-            scope=MemoryScope.owner(),
-        )
-        return assistant, target
-
-    def _build_context_content(
+    def render_context_content(
         self,
         state: MemoryContextState,
         messages: list[ChatItem],
     ) -> str:
-        content = MemoryPluginsTemplate.apply_update_template(messages, state.cache_type)
-        env_memory = self.memory_state.render(
+        content = MemoryPluginsTemplate.apply_update_template(
+            messages,
+            state.cache_type,
+        )
+        env_memory = self._memory_state.render(
             memory_type=MemoryType.ENV,
             context_id=state.context_id,
         )
+
         if not env_memory:
             return content
 
@@ -244,12 +306,12 @@ class MemoryRuntime(MemoryRetrievalMixin, MemoryBase):
             )
         )
 
-    async def _checkpoint_window(
+    async def checkpoint_window(
         self,
         state: MemoryContextState,
         processor: str,
     ) -> tuple[int, int, list[ChatItem]]:
-        start = await self.store.get_checkpoint(
+        start = await self._store.get_checkpoint(
             context_id=state.context_id,
             processor=processor,
         )
@@ -257,26 +319,27 @@ class MemoryRuntime(MemoryRetrievalMixin, MemoryBase):
 
         if start > end:
             raise RuntimeError(
-                f"Memory checkpoint exceeds context message sequence: "
-                f"{state.context_id}:{processor} checkpoint={start} messages={end}"
+                "Memory checkpoint exceeds context message sequence: "
+                f"{state.context_id}:{processor} "
+                f"checkpoint={start} messages={end}"
             )
 
         return start, end, state.messages_between(start, end)
 
-    def _apply_committed_items(self, items: list[MemoryItem]) -> None:
+    def apply_items(self, items: list[MemoryItem]) -> None:
         superseded = {memory_id for item in items for memory_id in item.supersedes_memory_ids}
 
         if superseded:
-            self.memory_state.discard(superseded)
+            self._memory_state.discard(superseded)
 
         current = [item for item in items if item.memory_id not in superseded]
 
         for memory_type in MemoryType:
             bucket = [item for item in current if item.memory_type is memory_type]
             if bucket:
-                self.memory_state.add(memory_type, bucket)
+                self._memory_state.add(memory_type, bucket)
 
-    async def _commit_items(
+    async def commit_items(
         self,
         *,
         state: MemoryContextState,
@@ -285,7 +348,7 @@ class MemoryRuntime(MemoryRetrievalMixin, MemoryBase):
         end: int,
         items: list[MemoryItem],
     ) -> None:
-        await self.store.commit(
+        await self._store.commit(
             items,
             context_id=state.context_id,
             processor=processor,
@@ -295,230 +358,166 @@ class MemoryRuntime(MemoryRetrievalMixin, MemoryBase):
                 to_sequence=end,
             ),
         )
-        self._apply_committed_items(items)
+        self.apply_items(items)
 
-    async def _update_conversation(self, state: MemoryContextState) -> None:
-        async with self._processor_lock(state.context_id, CONVERSATION_PROCESSOR):
-            start, end, messages = await self._checkpoint_window(
-                state,
-                CONVERSATION_PROCESSOR,
-            )
-            if start == end:
-                return
-
-            content = self._build_context_content(state, messages)
-            delta = await self._delta_extractor.extract_conversation_delta(
-                session_content=content,
-                context_state=state,
-                session_gate=self._pipeline_config.extraction.session_gate,
-                timeout=30.0,
-            )
-            assistant, conversation = self._apply_delta(
-                state=state,
-                delta=delta,
-                target_type=MemoryType.CONVERSATION,
-                messages=messages,
-            )
-            conversation = await self._memory_consolidator.consolidate_session(
-                conversation,
-                session_content=content,
-                updated_at=application_now(),
-                trace_metadata=self._delta_extractor.base_trace_metadata(
-                    context_state=state,
-                    operation="memory_consolidation",
-                    memory_type=MemoryType.CONVERSATION,
-                    component="memory_consolidator",
-                ),
-            )
-            await self._commit_items(
-                state=state,
-                processor=CONVERSATION_PROCESSOR,
-                start=start,
-                end=end,
-                items=[*assistant, *conversation],
-            )
-
-    async def _update_tools(self, state: MemoryContextState) -> None:
-        async with self._processor_lock(state.context_id, TOOL_PROCESSOR):
-            start, end, messages = await self._checkpoint_window(
-                state,
-                TOOL_PROCESSOR,
-            )
-            if start == end:
-                return
-
-            if not self._has_explicit_tool_event(messages):
-                await self._commit_items(
-                    state=state,
-                    processor=TOOL_PROCESSOR,
-                    start=start,
-                    end=end,
-                    items=[],
-                )
-                return
-
-            content = self._build_context_content(state, messages)
-            delta = await self._delta_extractor.extract_tool_delta(
-                session_content=content,
-                context_state=state,
-                timeout=30.0,
-            )
-            assistant, tools = self._apply_delta(
-                state=state,
-                delta=delta,
-                target_type=MemoryType.TOOLS,
-                messages=messages,
-            )
-            await self._commit_items(
-                state=state,
-                processor=TOOL_PROCESSOR,
-                start=start,
-                end=end,
-                items=[*assistant, *tools],
-            )
-
-    async def _process_env_batch(
+    def recall_owners(
         self,
-        batch: EnvMemoryBatch,
-        timeout: float,
-    ) -> list[MemoryItem]:
-        state = self._get_context_state_or_raise(batch.context_id)
-        previous = self.memory_state.render(
-            memory_type=MemoryType.ENV,
-            context_id=state.context_id,
+        owner_refs: list[MemoryOwnerRef],
+    ) -> list[MemoryOwnerRef]:
+        return self.deduplicate_refs(
+            [
+                MemoryOwnerRef.avatar(self._avatar_id),
+                *owner_refs,
+            ]
         )
 
-        delta: EnvMemoryDelta = await self._delta_extractor.extract_env_delta(
-            memory_input=batch.memory_input,
-            context_state=state,
-            previous_env_memory=previous or None,
-            conversation_context=batch.conversation_context,
-            timeout=timeout,
-        )
-        items = self._build_memory_items(
-            state=state,
-            memory_type=MemoryType.ENV,
-            patches=delta.env_memory_entries,
-            owner_refs=state.owner_refs,
-            participant_refs=state.participant_refs,
-            source_refs=[
-                MemorySourceRef.runtime_event(f"{state.context.session_id}:{event.sequence}")
-                for event in batch.events
-            ],
-            scope=MemoryScope.context(state.context_id),
-            extra_data={
-                "trigger": batch.trigger_text,
-                "perception_missed_count": batch.missed_count,
-            },
-        )
-        await self._commit_items(
-            state=state,
-            processor=ENV_PROCESSOR,
-            start=batch.from_sequence,
-            end=batch.to_sequence,
-            items=items,
-        )
-        return items
+    def trace_metadata(
+        self,
+        *,
+        state: MemoryContextState,
+        component: str,
+        operation: str,
+        memory_type: MemoryType,
+        extra: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        context = state.context
 
-    def on_context_message_added(
+        metadata = {
+            "provider_dir": str(state.provider_dir),
+            "plugin": "memory",
+            "component": component,
+            "operation": operation,
+            "episode_id": context.episode_id,
+            "context_id": context.context_id,
+            "session_id": context.session_id,
+            "cache_type": state.cache_type.value,
+            "memory_type": memory_type.value,
+        }
+
+        if extra:
+            metadata.update(extra)
+
+        return metadata
+
+    @abstractmethod
+    async def update(self, *, context_id: str | None = None) -> None:
+        states = (
+            [self.context_state(context_id)]
+            if context_id is not None
+            else list(self._memory_contexts.values())
+        )
+
+        await asyncio.gather(
+            *(processor.update(state) for processor in self._processors for state in states)
+        )
+
+    # Temporary bridge until passive retrieval is moved to committed TurnSnapshot.
+    async def search_by_context(
         self,
         *,
         context_id: str,
-        chat_item: ChatItem,
+        chat_context: list[ChatItem],
+        timeout: float = 3.0,
     ) -> None:
-        if not isinstance(chat_item, ChatMessage) or chat_item.role != "user":
+        processor = self._processors_by_name.get("retrieval")
+
+        if processor is None:
             return
 
-        if self._env_scheduler is not None and context_id == self._env_scheduler.context_id:
-            self._env_scheduler.request("user_turn")
-
-    def save_graph_aliases(self, aliases: list[dict[str, Any]]) -> dict[str, Any]:
-        graph = self.runtime.workspace.graph.namespace(AvatarModule.MEMORY.value)
-        return save_graph_aliases(graph_path=graph.root, aliases=aliases)
-
-    async def _update_context(self, state: MemoryContextState) -> None:
-        if state.cache_type is MemoryCacheType.SESSION_INTERACTION:
-            await asyncio.gather(
-                self._update_conversation(state),
-                self._update_tools(state),
-            )
-        elif state.cache_type is MemoryCacheType.AGENT_TOOL_INTERACTION:
-            await self._update_tools(state)
-
-    async def update(self, *, context_id: str | None = None) -> None:
-        states = (
-            [self._get_context_state_or_raise(context_id)]
-            if context_id is not None
-            else list(self.memory_contexts.values())
+        await processor.search_context(
+            context_id=context_id,
+            chat_context=chat_context,
+            timeout=timeout,
         )
-        await asyncio.gather(*(self._update_context(state) for state in states))
+
+    # Temporary bridge for existing callers. Not part of MemoryBase.
+    async def search_by_graph_node(self, **kwargs) -> list[MemoryItem]:
+        processor = self._processors_by_name.get("retrieval")
+
+        if processor is None:
+            return []
+
+        return await processor.search_graph(**kwargs)
+
+    def _open_root_context(self) -> None:
+        user_id = self.session_runtime.primary_user_id
+        session_path = self.session_runtime.session_path
+
+        if not user_id:
+            return
+
+        if session_path is None:
+            raise RuntimeError("SessionRuntime.session_path is not initialized")
+
+        context = MemoryContextRef(
+            episode_id=uuid4().hex,
+            context_id=uuid4().hex,
+            session_id=self.session_runtime.session_id,
+            created_at=self.session_runtime.created_at,
+        )
+
+        self.open_context(
+            context=context,
+            provider_dir=session_path.provider_dir,
+            owner_refs=[MemoryOwnerRef.user(user_id)],
+            participant_refs=[
+                MemoryParticipantRef.user(user_id),
+                MemoryParticipantRef.avatar(self._avatar_id),
+            ],
+        )
+
+        self._root_context_id = context.context_id
 
     async def on_session_start(self) -> None:
-        await self.store.start()
+        if self._started:
+            return
+
+        if not self._processors_bound:
+            raise RuntimeError("Memory processors have not been bound")
+
+        await self._store.start()
+        self._open_root_context()
 
         try:
-            await super().on_session_start()
-
-            if self._root_context_id is None:
-                return
-
-            state = self._get_context_state_or_raise(self.root_context_id)
-            initial_cutoff = self.perception_runtime.capture_cutoff()
-            checkpoint = await self.store.get_checkpoint(
-                context_id=state.context_id,
-                processor=ENV_PROCESSOR,
-            )
-
-            if checkpoint > initial_cutoff.sequence:
-                raise RuntimeError(
-                    f"ENV checkpoint exceeds perception sequence: "
-                    f"context={state.context_id} checkpoint={checkpoint} "
-                    f"perception={initial_cutoff.sequence}"
-                )
-
-            if checkpoint < initial_cutoff.sequence:
-                await self.store.commit(
-                    [],
-                    context_id=state.context_id,
-                    processor=ENV_PROCESSOR,
-                    idempotency_key=(
-                        f"{state.context_id}:{ENV_PROCESSOR}:{checkpoint}:{initial_cutoff.sequence}"
-                    ),
-                    checkpoint=MemoryCheckpointAdvance(
-                        from_sequence=checkpoint,
-                        to_sequence=initial_cutoff.sequence,
-                    ),
-                )
-
-            self._env_scheduler = EnvMemoryScheduler(
-                perception_runtime=self.perception_runtime,
-                context_state=state,
-                initial_cutoff=initial_cutoff,
-                process=self._process_env_batch,
-                render_messages=lambda messages: MemoryPluginsTemplate.apply_update_template(
-                    messages,
-                    state.cache_type,
-                ),
-            )
-            await self._env_scheduler.start()
+            for processor in self._processors:
+                await processor.start()
+                self._started_processors.append(processor)
 
         except BaseException:
-            if self._env_scheduler is not None:
+            for processor in reversed(self._started_processors):
                 try:
-                    await self._env_scheduler.stop()
+                    await processor.stop(finalize=False)
                 except Exception:
-                    logger.exception("Failed to rollback Memory ENV scheduler")
-                self._env_scheduler = None
+                    pass
 
-            await self.store.stop()
+            self._started_processors.clear()
+            await self._store.stop()
             raise
 
-    async def on_session_stop(self) -> None:
-        try:
-            if self._env_scheduler is not None:
-                await self._env_scheduler.stop()
-                self._env_scheduler = None
+        self._started = True
 
-            await super().on_session_stop()
-        finally:
-            await self.store.stop()
+    async def on_session_stop(self) -> None:
+        if not self._started and not self._started_processors:
+            return
+
+        errors: list[Exception] = []
+
+        for processor in reversed(self._started_processors):
+            try:
+                await processor.stop()
+            except Exception as exc:
+                errors.append(exc)
+
+        self._started_processors.clear()
+        self._started = False
+
+        try:
+            await self._store.stop()
+        except Exception as exc:
+            errors.append(exc)
+
+        if errors:
+            raise ExceptionGroup(
+                "Memory shutdown failed",
+                errors,
+            )

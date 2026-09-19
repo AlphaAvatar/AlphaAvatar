@@ -168,54 +168,59 @@ memory:
   recall_num: 6
   maximum_memory_num: 28
 
-  init_config:
-    provider:
-      conversation_delta_task: memory.conversation_delta
-      tool_delta_task: memory.tool_delta
-
-      gateway:
-        trace: *provider_trace
-
-        tasks:
-          memory.conversation_delta:
-            provider: openai
-            model: gpt-4o
-            temperature: 0.1
-
-          memory.tool_delta:
-            provider: openai
-            model: gpt-4o
-            temperature: 0.1
-
-    pipeline:
-      extraction:
-        session_gate: false
-        relations: false
-
-      consolidation:
-        # off             -- atomic memories only
-        # session_summary -- one session-level consolidated memory;
-        #                    source memories remain independently visible
-        # session_merge   -- consolidated memories can evolve across sessions;
-        #                    superseded source memories resolve to the current version
-        mode: session_merge
-
-        # null follows mode defaults:
-        # true for session_merge, false otherwise
-        resolve_superseded_items: null
-
-      maintenance:
-        item_ops:
-          - add
-
-        candidate_source: consolidated_lookup
-        similarity_threshold: 0.82
-        max_candidates_per_item: 5
-        timeout: 30.0
-
   vdb_config:
     collection_name: memory
     embedding: *openai_embedding
+
+  init_config:
+    retrieval:
+      enabled: true
+
+    conversation:
+      enabled: true
+
+      provider:
+        task: memory.conversation_delta
+        gateway:
+          trace: *provider_trace
+          tasks:
+            memory.conversation_delta:
+              provider: openai
+              model: gpt-4o
+              temperature: 0.1
+
+      pipeline:
+        extraction:
+          session_gate: false
+          relations: false
+
+        consolidation:
+          mode: session_merge
+          resolve_superseded_items: null
+
+        maintenance:
+          item_ops:
+            - add
+          candidate_source: consolidated_lookup
+          similarity_threshold: 0.82
+          max_candidates_per_item: 5
+          timeout: 30.0
+
+    tool:
+      enabled: true
+
+      provider:
+        task: memory.tool_delta
+        gateway:
+          trace: *provider_trace
+          tasks:
+            memory.tool_delta:
+              provider: openai
+              model: gpt-4o
+              temperature: 0.1
+
+    environment:
+      enabled: false
 
 
 # ------------------------------------------------------------

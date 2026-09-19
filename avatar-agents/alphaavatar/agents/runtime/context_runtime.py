@@ -162,7 +162,7 @@ class ContextRuntime:
     """
 
     interaction_method: InteractionMethod = field(default_factory=InteractionMethod)
-    participant_times: dict[str, ParticipantTimeContext] = field(default_factory=dict)
+    participant_time: dict[str, ParticipantTimeContext] = field(default_factory=dict)
 
     # System-level, but may be refreshed during session when identity/persona is resolved.
     user_persona: str = DEFAULT_CONTEXT_VALUE

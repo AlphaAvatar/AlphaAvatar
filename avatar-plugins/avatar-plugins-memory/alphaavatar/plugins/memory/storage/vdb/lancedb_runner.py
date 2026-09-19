@@ -309,12 +309,17 @@ class LanceDBRunner(InferenceRunner):
         context_str: str,
         owner_keys: list[str] | None = None,
         scope_keys: list[str] | None = None,
+        memory_type: str | None = None,
         top_k: int = 10,
     ) -> dict[str, Any]:
         out = {"candidates": [], "error": None}
         try:
             vector = self._embeddings.embed_query(context_str)
-            common = {"owner_keys": owner_keys, "scope_keys": scope_keys}
+            common = {
+                "owner_keys": owner_keys,
+                "scope_keys": scope_keys,
+                "memory_type": memory_type,
+            }
             memories = self._query_candidates(
                 vector,
                 where=self._where(doc_kind="memory_item", **common),
@@ -379,7 +384,7 @@ class LanceDBRunner(InferenceRunner):
         owner_keys: list[str] | None = None,
         scope_keys: list[str] | None = None,
         memory_type: str | None = None,
-        layer: str | None = None,
+        memory_kind: str | None = None,
     ) -> dict[str, Any]:
         out = {"results": [], "error": None}
         try:
@@ -394,7 +399,7 @@ class LanceDBRunner(InferenceRunner):
                 owner_keys=owner_keys,
                 scope_keys=scope_keys,
                 memory_type=memory_type,
-                memory_kind=layer,
+                memory_kind=memory_kind,
             )
             out["results"] = [
                 self._query_candidates(vector, where=where, limit=top_k)

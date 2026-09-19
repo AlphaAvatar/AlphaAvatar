@@ -14,52 +14,17 @@
 import os
 
 from alphaavatar.agents import AvatarModule, AvatarPlugin
-from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.inference import InferenceRunner
 
+from .factory import MemoryPlugin
 from .log import logger
-from .runtime import MemoryRuntime
-from .storage import MemoryStore
 from .version import __version__
 
-__all__ = [
-    "__version__",
-]
-
-
-class MemoryPlugin(AvatarPlugin):
-    def __init__(self) -> None:
-        super().__init__(__name__, __version__, __package__, logger)  # type: ignore
-
-    def get_plugin(
-        self,
-        runtime: AvatarRuntime,
-        avatar_id: str,
-        memory_search_context: int,
-        memory_recall_num: int,
-        maximum_memory_num: int,
-        init_config: dict,
-        *args,
-        **kwargs,
-    ) -> MemoryRuntime:
-        try:
-            store = MemoryStore(runtime=runtime)
-            return MemoryRuntime(
-                runtime=runtime,
-                avatar_id=avatar_id,
-                store=store,
-                memory_search_context=memory_search_context,
-                memory_recall_num=memory_recall_num,
-                maximum_memory_num=maximum_memory_num,
-                **init_config,
-            )
-        except Exception as e:
-            raise ImportError(f"Failed to initialize MemoryRuntime plugin: {e}") from e
+__all__ = ["__version__"]
 
 
 def configure_vdb_runner(vdb_type: str | None = None) -> None:
     vdb_type = vdb_type or os.getenv("MEMORY_VDB_TYPE")
-
     logger.info("Configuring Memory plugin with VDB type: %s", vdb_type)
 
     if vdb_type == "qdrant":
@@ -79,10 +44,9 @@ def configure_vdb_runner(vdb_type: str | None = None) -> None:
             "Unsupported MEMORY_VDB_TYPE=%r. Expected 'qdrant' or 'lancedb'.",
             vdb_type,
         )
-        return None
+        return
 
     os.environ["MEMORY_VDB_INFERENCE_METHOD"] = method
-    return None
 
 
 # Plugin register

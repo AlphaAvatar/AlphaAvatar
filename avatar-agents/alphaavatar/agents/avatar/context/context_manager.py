@@ -113,20 +113,20 @@ class AvatarContextManager:
     def _refresh_runtime_context(self) -> None:
         context = self._runtime.context
 
-        participant_times: dict[str, ParticipantTimeContext] = {}
+        participant_time: dict[str, ParticipantTimeContext] = {}
         for participant_id, participant in self._runtime.session.participants.items():
             participant.user_time = format_user_time(
                 participant.user_time.timezone,
                 participant.user_time.timezone_source,
             )
 
-            participant_times[participant_id] = ParticipantTimeContext(
+            participant_time[participant_id] = ParticipantTimeContext(
                 participant_id=participant_id,
                 user_id=participant.effective_user_id,
                 user_time=participant.user_time,
             )
 
-        context.participant_times = participant_times
+        context.participant_time = participant_time
         context.user_persona = self._persona.persona_content or DEFAULT_SYSTEM_VALUE
         context.memory_content = self._memory.memory_content or DEFAULT_SYSTEM_VALUE
         context.plan_content = context.plan_content or DEFAULT_SYSTEM_VALUE

@@ -147,6 +147,7 @@ class MemoryStore:
         owner_refs: list[MemoryOwnerRef],
         context: MemoryContextRef,
         top_k: int,
+        memory_type: MemoryType | None = None,
         timeout: float = 3.0,
     ) -> list[MemoryItem]:
         if top_k <= 0 or not context_str.strip() or not owner_refs:
@@ -158,6 +159,7 @@ class MemoryStore:
                 "context_str": context_str,
                 "owner_keys": self._owner_keys(owner_refs),
                 "scope_keys": self._scope_keys(context),
+                "memory_type": memory_type.value if memory_type is not None else None,
                 "top_k": max(top_k * 3, top_k),
             },
             timeout=timeout,
@@ -218,12 +220,14 @@ class MemoryStore:
 
         return memories[:top_k]
 
-    async def search_consolidation_candidates(
+    async def search_similar_batch(
         self,
         texts: list[str],
         *,
         owner_refs: list[MemoryOwnerRef],
         context: MemoryContextRef,
+        memory_type: MemoryType | None = None,
+        kind: MemoryKind | None = None,
         top_k: int,
         timeout: float = 5.0,
     ) -> list[list[MemorySearchHit]]:
@@ -240,8 +244,8 @@ class MemoryStore:
                 "top_k": top_k,
                 "owner_keys": self._owner_keys(owner_refs),
                 "scope_keys": self._scope_keys(context),
-                "memory_type": (MemoryType.CONVERSATION.value),
-                "layer": (MemoryKind.CONSOLIDATED.value),
+                "memory_type": memory_type.value if memory_type is not None else None,
+                "memory_kind": kind.value if kind is not None else None,
             },
             timeout=timeout,
         )

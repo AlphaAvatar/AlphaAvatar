@@ -18,9 +18,8 @@ from typing import Any
 
 from livekit.agents.llm import ChatItem, ChatMessage
 
+from alphaavatar.agents.persona.schemas import UserProfile, UserRuntimeState
 from alphaavatar.agents.utils.time import format_datetime_for_timezone
-
-from .schemas import UserProfile, UserRuntimeState
 
 
 class PersonaPluginsTemplate:

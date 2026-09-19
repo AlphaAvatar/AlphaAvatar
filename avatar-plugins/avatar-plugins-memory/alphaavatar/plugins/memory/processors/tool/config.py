@@ -11,10 +11,20 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .config import EnvironmentConfig
-from .processor import EnvironmentProcessor
+from pydantic import BaseModel, ConfigDict, Field
 
-__all__ = [
-    "EnvironmentConfig",
-    "EnvironmentProcessor",
-]
+from alphaavatar.agents.providers import ProvidersConfig
+
+
+class ToolProviderConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task: str = "memory.tool_delta"
+    gateway: ProvidersConfig = Field(default_factory=ProvidersConfig)
+
+
+class ToolConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    provider: ToolProviderConfig = Field(default_factory=ToolProviderConfig)

@@ -11,10 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .config import EnvironmentConfig
-from .processor import EnvironmentProcessor
+from pydantic import BaseModel, ConfigDict
 
-__all__ = [
-    "EnvironmentConfig",
-    "EnvironmentProcessor",
-]
+
+class RetrievalConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True

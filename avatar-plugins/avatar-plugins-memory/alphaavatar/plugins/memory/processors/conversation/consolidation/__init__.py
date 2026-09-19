@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .candidates import (
-    RecallLedger,
+    RecalledCandidateCache,
     consolidated_from_hits,
     filter_hits,
     merge_candidates,
@@ -60,7 +60,7 @@ __all__ = [
     "MemoryAssignment",
     "MemoryConsolidator",
     "MemoryPipelineConfig",
-    "RecallLedger",
+    "RecalledCandidateCache",
     "apply_assignments",
     "build_consolidated_memory",
     "consolidated_from_hits",

@@ -22,7 +22,6 @@ from pydantic import BaseModel, Field
 from alphaavatar.agents.persona import (
     PersonaBase,
     PersonaCache,
-    PersonaPluginsTemplate,
     PersonaProcessorBase,
 )
 from alphaavatar.agents.providers import ProviderGateway, ProvidersConfig
@@ -35,6 +34,7 @@ from alphaavatar.agents.utils.time import application_now
 
 from ...log import logger
 from ...profile import UserProfileDetails
+from ...template import PersonaPluginsTemplate
 from .op import (
     ProfileDelta,
     append_string,

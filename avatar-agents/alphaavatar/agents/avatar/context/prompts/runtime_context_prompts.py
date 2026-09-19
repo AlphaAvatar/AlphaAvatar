@@ -18,9 +18,9 @@ RUNTIME_CONTEXT_PROMPT = f"""
 {RUNTIME_CONTEXT_BEGIN}
   <context_scope>current_answer_only</context_scope>
 
-  <participant_times>
-    {{participant_times}}
-  </participant_times>
+  <participant_time>
+    {{participant_time}}
+  </participant_time>
 
   <retrieved_memory>
     {{memory_content}}

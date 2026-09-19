@@ -190,28 +190,32 @@ memory:
   recall_num: 6
   maximum_memory_num: 28
 
-  init_config:
-    provider:
-      conversation_delta_task: memory.conversation_delta
-      tool_delta_task: memory.tool_delta
-
-      gateway:
-        trace: *provider_trace
-
-        tasks:
-          memory.conversation_delta:
-            provider: openai
-            model: gpt-4o
-            temperature: 0.1
-
-          memory.tool_delta:
-            provider: openai
-            model: gpt-4o
-            temperature: 0.1
-
   vdb_config:
     collection_name: memory
     embedding: *openai_embedding
+
+  init_config:
+    retrieval:
+      enabled: true
+
+    conversation:
+      enabled: true
+
+      provider:
+        task: memory.conversation_delta
+        gateway:
+          trace: *provider_trace
+          tasks:
+            memory.conversation_delta:
+              provider: openai
+              model: gpt-4o
+              temperature: 0.1
+
+    tool:
+      enabled: false
+
+    environment:
+      enabled: false
 
 
 # ------------------------------------------------------------
