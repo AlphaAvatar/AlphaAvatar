@@ -28,22 +28,21 @@ def _normalize_id(value: str) -> str:
 
 
 class MemoryContextRef(BaseModel):
-    conversation_id: str
+    episode_id: str
     context_id: str
-
-    session_id: str
+    session_id: str | None = None
 
     parent_context_id: str | None = None
     task_id: str | None = None
 
     created_at: datetime = Field(default_factory=application_now)
 
-    @field_validator("conversation_id", "context_id", "session_id")
+    @field_validator("episode_id", "context_id")
     @classmethod
     def _validate_required_id(cls, value: str) -> str:
         return _normalize_id(value)
 
-    @field_validator("parent_context_id", "task_id")
+    @field_validator("parent_context_id", "session_id", "task_id")
     @classmethod
     def _validate_optional_id(cls, value: str | None) -> str | None:
         return _normalize_id(value) if value is not None else None
@@ -58,13 +57,14 @@ class MemoryContextRef(BaseModel):
         self,
         *,
         context_id: str,
+        episode_id: str | None = None,
         session_id: str | None = None,
         task_id: str | None = None,
     ) -> MemoryContextRef:
         return MemoryContextRef(
-            conversation_id=self.conversation_id,
+            episode_id=episode_id or self.episode_id,
             context_id=context_id,
             parent_context_id=self.context_id,
-            session_id=session_id or self.session_id,
+            session_id=session_id if session_id is not None else self.session_id,
             task_id=task_id,
         )

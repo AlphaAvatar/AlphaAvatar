@@ -16,6 +16,7 @@ from __future__ import annotations
 import pathlib
 from abc import abstractmethod
 from typing import Any
+from uuid import uuid4
 
 from livekit.agents.llm import ChatItem
 
@@ -53,13 +54,6 @@ from .schemas import (
 @avatar_capability(
     name=AvatarCapabilityName.MEMORY_TOOL,
     description="Can retain and recall useful information from previous tool interactions and results.",
-)
-@avatar_capability(
-    name=AvatarCapabilityName.MEMORY_GRAPH,
-    description=(
-        "Can connect and retrieve related memories through entities, aliases, "
-        "and graph relationships."
-    ),
 )
 class MemoryBase(AvatarRuntimePlugin):
     capabilities: tuple[AvatarCapability, ...]
@@ -181,11 +175,6 @@ class MemoryBase(AvatarRuntimePlugin):
         if context.context_id in self._memory_contexts:
             raise ValueError(f"Memory context already exists: {context.context_id}")
 
-        if context.parent_context_id:
-            parent = self._get_context_state_or_raise(context.parent_context_id)
-            if parent.context.conversation_id != context.conversation_id:
-                raise ValueError("Parent and child memory contexts must share conversation_id")
-
         state = MemoryContextState(
             context=context,
             provider_dir=provider_dir,
@@ -253,11 +242,10 @@ class MemoryBase(AvatarRuntimePlugin):
         if session_path is None:
             raise RuntimeError("SessionRuntime.session_path is not initialized")
 
-        session_id = self.session_runtime.session_id
         context = MemoryContextRef(
-            conversation_id=session_id,
-            context_id=session_id,
-            session_id=session_id,
+            episode_id=uuid4().hex,
+            context_id=uuid4().hex,
+            session_id=self.session_runtime.session_id,
             created_at=self.session_runtime.created_at,
         )
         self.open_context(

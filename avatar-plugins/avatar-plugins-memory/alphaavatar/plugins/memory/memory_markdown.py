@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import json
 import pathlib
-from collections import defaultdict
 from typing import Any
 
+from alphaavatar.agents.memory.enums import MemoryScopeKind
 from alphaavatar.agents.memory.schemas import MemoryItem
 
 
@@ -41,14 +41,35 @@ def _json_block(value: Any) -> list[str]:
     return _wrap_text(json.dumps(value, ensure_ascii=False, indent=2, default=str))
 
 
-def _render_entry(item: MemoryItem) -> str:
+def _read_revision(path: pathlib.Path) -> int:
+    if not path.exists():
+        return 0
+
+    for line in path.read_text(encoding="utf-8").splitlines()[:16]:
+        if line.startswith("revision:"):
+            try:
+                return int(line.partition(":")[2].strip())
+            except ValueError:
+                return 0
+    return 0
+
+
+def _render_document(item: MemoryItem) -> str:
     lines = [
-        f"## Memory: {item.memory_id}",
+        "---",
+        'type: "memory_export"',
+        f"memory_id: {json.dumps(item.memory_id)}",
+        f"revision: {item.revision}",
+        f"episode_id: {json.dumps(item.context.episode_id)}",
+        f"context_id: {json.dumps(item.context.context_id)}",
+        f"session_id: {json.dumps(item.context.session_id)}",
+        f"scope: {json.dumps(item.scope.key)}",
+        "---",
         "",
-        f"- **revision**: {item.revision}",
+        f"# Memory: {item.memory_id}",
+        "",
         f"- **kind**: {item.kind.value}",
         f"- **memory_type**: {item.memory_type.value}",
-        f"- **scope**: {item.scope.key}",
         f"- **created_at**: {item.created_at.isoformat()}",
         f"- **updated_at**: {(item.updated_at or item.created_at).isoformat()}",
         f"- **owners**: {', '.join(ref.key for ref in item.owner_refs)}",
@@ -58,7 +79,7 @@ def _render_entry(item: MemoryItem) -> str:
         f"- **source_memory_ids**: {', '.join(item.source_memory_ids) or 'N/A'}",
         f"- **supersedes_memory_ids**: {', '.join(item.supersedes_memory_ids) or 'N/A'}",
         "",
-        "### Content",
+        "## Content",
         "",
         *_wrap_text(item.value),
         "",
@@ -67,7 +88,7 @@ def _render_entry(item: MemoryItem) -> str:
     if item.graph_nodes:
         lines.extend(
             [
-                "### Graph Nodes",
+                "## Graph Nodes",
                 "",
                 *_json_block([node.model_dump(mode="json") for node in item.graph_nodes]),
                 "",
@@ -77,7 +98,7 @@ def _render_entry(item: MemoryItem) -> str:
     if item.graph_links:
         lines.extend(
             [
-                "### Graph Links",
+                "## Graph Links",
                 "",
                 *_json_block([link.model_dump(mode="json") for link in item.graph_links]),
                 "",
@@ -85,90 +106,38 @@ def _render_entry(item: MemoryItem) -> str:
         )
 
     if item.extra_data:
-        lines.extend(["### Extra Data", "", *_json_block(item.extra_data), ""])
+        lines.extend(["## Extra Data", "", *_json_block(item.extra_data), ""])
 
-    return "\n".join(lines).rstrip()
-
-
-def _split_entries(text: str) -> dict[str, tuple[int, str]]:
-    marker = "## Memory: "
-    starts = [index for index in range(len(text)) if text.startswith(marker, index)]
-    entries: dict[str, tuple[int, str]] = {}
-
-    for index, start in enumerate(starts):
-        end = starts[index + 1] if index + 1 < len(starts) else len(text)
-        raw = text[start:end].strip()
-        lines = raw.splitlines()
-
-        if not lines:
-            continue
-
-        memory_id = lines[0].removeprefix(marker).strip()
-        revision = 0
-
-        for line in lines[1:]:
-            if not line.startswith("- **revision**: "):
-                continue
-            try:
-                revision = int(line.removeprefix("- **revision**: ").strip())
-            except ValueError:
-                revision = 0
-            break
-
-        if memory_id:
-            entries[memory_id] = (revision, raw)
-
-    return entries
+    return "\n".join(lines).rstrip() + "\n"
 
 
-def _render_document(items: list[MemoryItem], entries: dict[str, tuple[int, str]]) -> str:
-    context = items[0].context
-    body = "\n\n".join(
-        raw
-        for _, raw in sorted(
-            entries.values(),
-            key=lambda value: value[1].splitlines()[0],
-        )
-    )
+def _export_paths(export_dir: pathlib.Path, item: MemoryItem) -> list[pathlib.Path]:
+    filename = f"{_safe_name(item.memory_id)}.md"
 
-    return "\n".join(
-        (
-            "---",
-            'type: "memory_context_export"',
-            f"conversation_id: {json.dumps(context.conversation_id)}",
-            f"context_id: {json.dumps(context.context_id)}",
-            f"memory_count: {len(entries)}",
-            "---",
-            "",
-            body,
-            "",
-        )
-    )
+    if item.scope.kind is MemoryScopeKind.OWNER:
+        return [
+            export_dir / "owners" / ref.kind.value / _safe_name(ref.id) / filename
+            for ref in item.owner_refs
+        ]
+
+    if item.scope.kind is MemoryScopeKind.EPISODE:
+        return [
+            export_dir / "episodes" / _safe_name(item.context.episode_id) / "memories" / filename
+        ]
+
+    return [export_dir / "contexts" / _safe_name(item.context.context_id) / "memories" / filename]
 
 
 def export_memory_items(export_dir: pathlib.Path, items: list[MemoryItem]) -> list[pathlib.Path]:
-    groups: dict[tuple[str, str], list[MemoryItem]] = defaultdict(list)
-
-    for item in items:
-        groups[(item.context.conversation_id, item.context.context_id)].append(item)
-
     written: list[pathlib.Path] = []
 
-    for (conversation_id, context_id), group in groups.items():
-        path = (
-            export_dir
-            / "conversations"
-            / _safe_name(conversation_id)
-            / f"{_safe_name(context_id)}.md"
-        )
-        entries = _split_entries(path.read_text(encoding="utf-8")) if path.exists() else {}
+    for item in items:
+        text = _render_document(item)
 
-        for item in group:
-            current = entries.get(item.memory_id)
-            if current is None or item.revision >= current[0]:
-                entries[item.memory_id] = (item.revision, _render_entry(item))
+        for path in _export_paths(export_dir, item):
+            if item.revision < _read_revision(path):
+                continue
+            _write_atomic(path, text)
+            written.append(path)
 
-        _write_atomic(path, _render_document(group, entries))
-        written.append(path)
-
-    return written
+    return list(dict.fromkeys(written))

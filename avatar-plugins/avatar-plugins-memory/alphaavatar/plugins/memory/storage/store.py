@@ -59,7 +59,7 @@ class MemoryStore:
 
         export_sink = MemoryExportSink(
             export_dir=avatar_path.memory_dir / "exports",
-            graph_dir=avatar_path.graph_dir,
+            graph_dir=avatar_path.graph_dir / "memory",
         )
 
         self._outbox_workers = (

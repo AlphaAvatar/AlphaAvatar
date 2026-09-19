@@ -265,7 +265,7 @@ transaction and therefore keeps Memory commits short, durable, and suitable
 for AlphaAvatar's low-latency asynchronous realtime pipeline.
 """
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS memory_records(
@@ -273,9 +273,9 @@ CREATE TABLE IF NOT EXISTS memory_records(
     kind TEXT NOT NULL,
     memory_type TEXT NOT NULL,
 
-    conversation_id TEXT NOT NULL,
+    episode_id TEXT NOT NULL,
     context_id TEXT NOT NULL,
-    runtime_session_id TEXT NOT NULL,
+    runtime_session_id TEXT,
     parent_context_id TEXT,
     task_id TEXT,
 
@@ -296,7 +296,7 @@ CREATE INDEX IF NOT EXISTS ix_memory_records_scope
 ON memory_records(scope_key, memory_type, kind, updated_ts DESC);
 
 CREATE INDEX IF NOT EXISTS ix_memory_records_context
-ON memory_records(conversation_id, context_id);
+ON memory_records(episode_id, context_id);
 
 CREATE TABLE IF NOT EXISTS memory_refs(
     memory_id TEXT NOT NULL

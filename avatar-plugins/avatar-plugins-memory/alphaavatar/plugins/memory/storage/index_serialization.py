@@ -31,7 +31,7 @@ def serialize_memory_items(
             "embedding_text": memory.embedding_text(include_topic=include_topic),
             "metadata": {
                 "memory_kind": memory.kind.value,
-                "conversation_id": memory.context.conversation_id,
+                "episode_id": memory.context.episode_id,
                 "context_id": memory.context.context_id,
                 "runtime_session_id": memory.context.session_id,
                 "parent_context_id": memory.context.parent_context_id,

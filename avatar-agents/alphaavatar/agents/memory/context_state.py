@@ -60,7 +60,7 @@ class MemoryContextState:
         return self._context.context_id
 
     @property
-    def session_id(self) -> str:
+    def session_id(self) -> str | None:
         return self._context.session_id
 
     @property

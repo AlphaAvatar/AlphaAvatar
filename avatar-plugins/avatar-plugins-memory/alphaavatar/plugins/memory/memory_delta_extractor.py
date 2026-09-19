@@ -89,7 +89,7 @@ class MemoryDeltaExtractor:
             "plugin": "memory",
             "component": component,
             "operation": operation,
-            "conversation_id": context.conversation_id,
+            "episode_id": context.episode_id,
             "context_id": context.context_id,
             "session_id": context.session_id,
             "cache_type": context_state.cache_type.value,

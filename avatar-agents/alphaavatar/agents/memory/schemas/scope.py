@@ -51,7 +51,7 @@ class MemoryScope(BaseModel):
     def applicable_keys(context: MemoryContextRef) -> tuple[str, str, str]:
         return (
             "owner:*",
-            f"conversation:{context.conversation_id}",
+            f"episode:{context.episode_id}",
             f"context:{context.context_id}",
         )
 
@@ -60,8 +60,8 @@ class MemoryScope(BaseModel):
         return cls(kind=MemoryScopeKind.OWNER)
 
     @classmethod
-    def conversation(cls, conversation_id: str) -> MemoryScope:
-        return cls(kind=MemoryScopeKind.CONVERSATION, scope_id=conversation_id)
+    def episode(cls, episode_id: str) -> MemoryScope:
+        return cls(kind=MemoryScopeKind.EPISODE, scope_id=episode_id)
 
     @classmethod
     def context(cls, context_id: str) -> MemoryScope:
@@ -70,6 +70,6 @@ class MemoryScope(BaseModel):
     def applies_to(self, context: MemoryContextRef) -> bool:
         if self.kind is MemoryScopeKind.OWNER:
             return True
-        if self.kind is MemoryScopeKind.CONVERSATION:
-            return self.scope_id == context.conversation_id
+        if self.kind is MemoryScopeKind.EPISODE:
+            return self.scope_id == context.episode_id
         return self.scope_id == context.context_id

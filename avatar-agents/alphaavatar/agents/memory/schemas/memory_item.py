@@ -110,10 +110,10 @@ class MemoryItem(BaseModel):
         self.updated_at = self.updated_at or self.created_at
 
         if (
-            self.scope.kind is MemoryScopeKind.CONVERSATION
-            and self.scope.scope_id != self.context.conversation_id
+            self.scope.kind is MemoryScopeKind.EPISODE
+            and self.scope.scope_id != self.context.episode_id
         ):
-            raise ValueError("conversation scope_id must match context.conversation_id")
+            raise ValueError("episode scope_id must match context.episode_id")
 
         if (
             self.scope.kind is MemoryScopeKind.CONTEXT

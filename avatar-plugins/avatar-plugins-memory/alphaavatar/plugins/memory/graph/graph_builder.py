@@ -55,18 +55,18 @@ def _norm_text(value: str) -> str:
     return " ".join(str(value or "").strip().lower().split())
 
 
-def _scope_local_key(*, key: str, node_type: str, session_id: str) -> tuple[str, str]:
+def _scope_local_key(*, key: str, node_type: str, context_id: str) -> tuple[str, str]:
     key = str(key or "").strip()
     node_type = _normalize_node_type(node_type)
 
     if not key:
         return "", "unknown"
     if _is_global_key(key) or _is_scoped_local_key(key):
-        return key, "global" if _is_global_key(key) else "session"
+        return key, "global" if _is_global_key(key) else "context"
 
     if node_type in LOCAL_NODE_TYPES:
         local_id = key.split(":", 1)[1] if ":" in key else key
-        return f"{node_type}:local:{session_id}:{local_id}", "session"
+        return f"{node_type}:local:{context_id}:{local_id}", "context"
 
     return key, "global"
 
@@ -80,7 +80,7 @@ def _stable_key(*, node_type: str, content: str) -> str:
 def normalize_mention(
     mention: GraphNodeMention,
     *,
-    session_id: str,
+    context_id: str,
 ) -> MemoryGraphNode | None:
     content = str(mention.content or "").strip()
     if not content:
@@ -90,12 +90,12 @@ def normalize_mention(
     raw_key = str(mention.key or "").strip()
 
     if raw_key:
-        key, key_scope = _scope_local_key(key=raw_key, node_type=node_type, session_id=session_id)
+        key, key_scope = _scope_local_key(key=raw_key, node_type=node_type, context_id=context_id)
     elif node_type in LOCAL_NODE_TYPES:
         digest = hashlib.sha256(
             f"{node_type}:{_norm_text(content)}".encode("utf-8", errors="ignore")
         ).hexdigest()[:16]
-        key, key_scope = f"{node_type}:local:{session_id}:{digest}", "session"
+        key, key_scope = f"{node_type}:local:{context_id}:{digest}", "context"
     else:
         key, key_scope = _stable_key(node_type=node_type, content=content), "global"
 
@@ -115,7 +115,7 @@ def normalize_mention(
 def _memory_metadata(item: MemoryItem) -> dict:
     return {
         "memory_id": item.memory_id,
-        "conversation_id": item.context.conversation_id,
+        "episode_id": item.context.episode_id,
         "context_id": item.context.context_id,
         "runtime_session_id": item.context.session_id,
         "owner_keys": [ref.key for ref in item.owner_refs],
@@ -149,7 +149,7 @@ def build_graph_from_mentions(
     nodes_by_key = {item_node.key: item_node}
 
     for mention in mentions:
-        node = normalize_mention(mention, session_id=item.context.session_id)
+        node = normalize_mention(mention, context_id=item.context.context_id)
         if node is None:
             continue
 

@@ -88,7 +88,7 @@ class MemoryRuntime(MemoryRetrievalMixin, MemoryBase):
         return self._store
 
     def _graph_lookup(self) -> GraphLookup:
-        return GraphLookup(self.session_runtime.avatar_path.graph_dir)
+        return GraphLookup(self.session_runtime.avatar_path.graph_dir / "memory")
 
     def _processor_lock(self, context_id: str, processor: str) -> asyncio.Lock:
         return self._processor_locks.setdefault((context_id, processor), asyncio.Lock())
@@ -439,7 +439,7 @@ class MemoryRuntime(MemoryRetrievalMixin, MemoryBase):
             raise RuntimeError("SessionRuntime.avatar_path is not initialized")
 
         return save_graph_aliases(
-            graph_path=avatar_path.graph_dir,
+            graph_path=avatar_path.graph_dir / "memory",
             aliases=aliases,
         )
 
