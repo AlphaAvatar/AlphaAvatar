@@ -24,7 +24,7 @@ from tempfile import NamedTemporaryFile
 from typing import TypeVar
 
 from alphaavatar.agents.persona.schemas import UserRuntimeState
-from alphaavatar.agents.utils.id_utils import sanitize_id
+from alphaavatar.agents.utils.files.work_dirs import UserPath
 
 from ..log import logger
 
@@ -45,8 +45,8 @@ class RuntimeStateStore:
         self._locks: dict[Path, asyncio.Lock] = {}
 
     @staticmethod
-    def _path(users_dir: str | Path, uid: str) -> Path:
-        return Path(users_dir) / sanitize_id(uid) / "runtime" / "runtime_state.md"
+    def _path(user_path: UserPath) -> Path:
+        return user_path.runtime_dir / "runtime_state.md"
 
     async def _run_io(self, path: Path, operation: Callable[[], T]) -> T:
         async with self._locks.setdefault(path, asyncio.Lock()):
@@ -72,14 +72,17 @@ class RuntimeStateStore:
 
             return task.result()
 
-    async def load(self, *, users_dir: str | Path, uid: str) -> UserRuntimeState | None:
-        path = self._path(users_dir, uid)
+    async def load(self, *, user_path: UserPath) -> UserRuntimeState | None:
+        path = self._path(user_path)
         return await self._run_io(path, partial(self._load, path))
 
     async def save(
-        self, *, users_dir: str | Path, uid: str, runtime_state: UserRuntimeState
+        self,
+        *,
+        user_path: UserPath,
+        runtime_state: UserRuntimeState,
     ) -> Path:
-        path = self._path(users_dir, uid)
+        path = self._path(user_path)
         snapshot = runtime_state.model_copy(deep=True)
         return await self._run_io(path, partial(self._save, path, snapshot))
 

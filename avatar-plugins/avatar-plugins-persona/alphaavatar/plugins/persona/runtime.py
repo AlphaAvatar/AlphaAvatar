@@ -31,6 +31,7 @@ from alphaavatar.agents.runtime import AvatarRuntime, SessionRuntime
 from alphaavatar.agents.runtime.capability import AvatarCapability
 from alphaavatar.agents.runtime.session_runtime import ParticipantInfo
 from alphaavatar.agents.utils import NumpyOP
+from alphaavatar.agents.utils.files.work_dirs import prepare_user_path
 
 from .cache import DefaultPersonaCache
 from .storage import PersonaStore
@@ -212,9 +213,13 @@ class PersonaRuntime(PersonaBase):
             if not self._can_merge_profiles(cache.profile, profile):
                 continue
 
+            user_path = self._runtime.workspace.users.get(uid)
+            prepare_user_path(user_path)
+
             self.session_runtime.resolve_participant_user(
                 participant_id=cache.participant.participant_id,
                 user_id=uid,
+                user_path=user_path,
             )
 
             self._update_runtime_state(

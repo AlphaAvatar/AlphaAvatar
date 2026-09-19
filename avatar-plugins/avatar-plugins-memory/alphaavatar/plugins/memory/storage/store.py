@@ -18,6 +18,7 @@ import json
 import os
 from typing import Any
 
+from alphaavatar.agents import AvatarModule
 from alphaavatar.agents.memory import MemoryStoreBackend
 from alphaavatar.agents.memory.enums import (
     MemoryKind,
@@ -54,12 +55,15 @@ class MemoryStore:
         if avatar_path is None:
             raise RuntimeError("SessionRuntime.avatar_path is not initialized")
 
+        memory_paths = runtime.workspace.data.memory
+        graph_paths = runtime.workspace.graph.namespace(AvatarModule.MEMORY.value)
+
         self._runtime = runtime
-        self._backend = backend or SQLiteMemoryStore(avatar_path.memory_dir / "records.sqlite3")
+        self._backend = backend or SQLiteMemoryStore(memory_paths.records_file)
 
         export_sink = MemoryExportSink(
-            export_dir=avatar_path.memory_dir / "exports",
-            graph_dir=avatar_path.graph_dir / "memory",
+            export_dir=memory_paths.exports.root,
+            graph_dir=graph_paths.root,
         )
 
         self._outbox_workers = (

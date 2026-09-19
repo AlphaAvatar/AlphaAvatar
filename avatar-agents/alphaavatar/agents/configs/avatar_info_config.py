@@ -17,7 +17,11 @@ import uuid
 
 from pydantic import BaseModel, Field
 
-from alphaavatar.agents.utils.files.work_dirs import default_work_dir
+from alphaavatar.agents.utils.files.work_dirs import (
+    WorkspacePaths,
+    default_work_dir,
+    prepare_workspace,
+)
 
 
 class AvatarInfoConfig(BaseModel):
@@ -59,10 +63,14 @@ class AvatarInfoConfig(BaseModel):
         if self.timezone:
             os.environ["AVATAR_TIMEZONE"] = self.timezone
 
-        if self.work_dir and self.work_dir.strip():
-            work_dir = pathlib.Path(self.work_dir) / self.id
-        else:
-            work_dir = default_work_dir(self.id)
+        root = (
+            pathlib.Path(self.work_dir).expanduser() / self.id
+            if self.work_dir.strip()
+            else default_work_dir(self.id)
+        )
 
-        work_dir.mkdir(parents=True, exist_ok=True)
-        os.environ["AVATAR_WORK_DIR"] = str(work_dir)
+        workspace = WorkspacePaths.from_root(root)
+        prepare_workspace(workspace)
+
+        self.work_dir = str(workspace.root)
+        os.environ["AVATAR_WORK_DIR"] = self.work_dir

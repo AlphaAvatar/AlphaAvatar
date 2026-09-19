@@ -41,10 +41,6 @@ class PersonaStore:
             raise RuntimeError("PERSONA_VDB_INFERENCE_METHOD is not configured.")
         return method
 
-    @property
-    def users_dir(self):
-        return self._runtime.session.avatar_path.users_dir
-
     async def _infer(self, payload: dict, *, timeout: float | None) -> bytes | None:
         return await asyncio.wait_for(
             self._runtime.inference.do_inference(
@@ -71,8 +67,7 @@ class PersonaStore:
         )
 
         runtime_state = await self._runtime_state_store.load(
-            users_dir=self.users_dir,
-            uid=uid,
+            user_path=self._runtime.workspace.users.get(uid),
         )
 
         return UserProfile(
@@ -175,8 +170,7 @@ class PersonaStore:
         if persona.runtime_state is not None:
             operations.append(
                 self._runtime_state_store.save(
-                    users_dir=self.users_dir,
-                    uid=uid,
+                    user_path=self._runtime.workspace.users.get(uid),
                     runtime_state=persona.runtime_state,
                 )
             )

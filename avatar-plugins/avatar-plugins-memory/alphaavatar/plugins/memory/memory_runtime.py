@@ -19,6 +19,7 @@ from typing import Any
 
 from livekit.agents.llm import ChatItem, ChatMessage, FunctionCall, FunctionCallOutput
 
+from alphaavatar.agents import AvatarModule
 from alphaavatar.agents.memory import MemoryBase, MemoryContextState, MemoryPluginsTemplate
 from alphaavatar.agents.memory.enums import MemoryCacheType, MemoryType
 from alphaavatar.agents.memory.schemas import (
@@ -88,7 +89,8 @@ class MemoryRuntime(MemoryRetrievalMixin, MemoryBase):
         return self._store
 
     def _graph_lookup(self) -> GraphLookup:
-        return GraphLookup(self.session_runtime.avatar_path.graph_dir / "memory")
+        graph = self.runtime.workspace.graph.namespace(AvatarModule.MEMORY.value)
+        return GraphLookup(graph.root)
 
     def _processor_lock(self, context_id: str, processor: str) -> asyncio.Lock:
         return self._processor_locks.setdefault((context_id, processor), asyncio.Lock())
@@ -430,18 +432,9 @@ class MemoryRuntime(MemoryRetrievalMixin, MemoryBase):
         if self._env_scheduler is not None and context_id == self._env_scheduler.context_id:
             self._env_scheduler.request("user_turn")
 
-    def save_graph_aliases(
-        self,
-        aliases: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        avatar_path = self.session_runtime.avatar_path
-        if avatar_path is None:
-            raise RuntimeError("SessionRuntime.avatar_path is not initialized")
-
-        return save_graph_aliases(
-            graph_path=avatar_path.graph_dir / "memory",
-            aliases=aliases,
-        )
+    def save_graph_aliases(self, aliases: list[dict[str, Any]]) -> dict[str, Any]:
+        graph = self.runtime.workspace.graph.namespace(AvatarModule.MEMORY.value)
+        return save_graph_aliases(graph_path=graph.root, aliases=aliases)
 
     async def _update_context(self, state: MemoryContextState) -> None:
         if state.cache_type is MemoryCacheType.SESSION_INTERACTION:

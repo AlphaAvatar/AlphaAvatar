@@ -23,10 +23,12 @@ from typing import Any
 
 from livekit.agents.llm.tool_context import ToolError
 
+from alphaavatar.agents import AvatarModule
 from alphaavatar.agents.providers import ProviderKind, ProviderTaskConfig
 from alphaavatar.agents.providers.embedding import create_embedding_model
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.tools.mcp_api import MCPOp
+from alphaavatar.agents.utils.files.work_dirs import WorkspacePaths
 from alphaavatar.agents.utils.loop_thread import AsyncLoopThread
 from alphaavatar.agents.utils.vdb import lancedb
 
@@ -815,7 +817,16 @@ class LanceDBRunner(InferenceRunner):
         if not self._collection_name:
             raise ValueError("collection_name is required in MCP_VDB_CONFIG")
 
-        self._client = lancedb.get_client(**self._get_vdb_config(config))
+        vdb_config = self._get_vdb_config(config)
+        if not vdb_config.get("client_path"):
+            vdb_config["client_path"] = str(
+                WorkspacePaths.from_env()
+                .data.indexes.namespace(AvatarModule.MCP.value)
+                .backend("lancedb")
+                .root
+            )
+
+        self._client = lancedb.get_client(**vdb_config)
 
         self._embeddings = self._get_mcp_embeddings(config)
         embedding_dim = len(self._embeddings.embed_query("dimension-probe"))

@@ -35,6 +35,10 @@ from alphaavatar.agents.runtime import (
     InteractionMethod,
     SessionRuntime,
 )
+from alphaavatar.agents.utils.files.work_dirs import (
+    WorkspacePaths,
+    prepare_user_path,
+)
 from alphaavatar.agents.utils.id_utils import get_session_id, get_user_id
 from alphaavatar.agents.utils.time import build_user_time_context
 
@@ -211,6 +215,10 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     user_time = build_user_time_context(participant_metadata)
 
     # Build Runtime Components
+    workspace = WorkspacePaths.from_env()
+    user_path = workspace.users.get(user_id)
+    prepare_user_path(user_path)
+
     session_runtime = SessionRuntime(
         session_id=session_id,
     )
@@ -220,6 +228,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
         room_id=ctx.room.name,
         room_type=room_type.value,
         user_time=user_time,
+        user_path=user_path,
         metadata=participant_metadata,
         primary=True,
     )
@@ -254,6 +263,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     )
 
     avatar_runtime = AvatarRuntime.create(
+        workspace=workspace,
         session=session_runtime,
         context=context_runtime,
         config=avatar_config.runtime,

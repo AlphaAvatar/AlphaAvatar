@@ -18,6 +18,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from alphaavatar.agents.configs.runtime_config import RuntimeConfig
+from alphaavatar.agents.utils.files.work_dirs import (
+    WorkspacePaths,
+    prepare_session_path,
+    prepare_workspace,
+)
 from alphaavatar.core.output import OutputRuntime
 from alphaavatar.core.perception import PerceptionRuntime
 from alphaavatar.core.time import RuntimeClock
@@ -38,6 +43,7 @@ class AvatarRuntime:
     """
 
     clock: RuntimeClock
+    workspace: WorkspacePaths
 
     session: SessionRuntime
     context: ContextRuntime
@@ -74,6 +80,7 @@ class AvatarRuntime:
     def create(
         cls,
         *,
+        workspace: WorkspacePaths,
         session: SessionRuntime,
         context: ContextRuntime,
         config: RuntimeConfig,
@@ -81,6 +88,16 @@ class AvatarRuntime:
     ) -> AvatarRuntime:
         clock = RuntimeClock()
         session_id = session.session_id
+
+        prepare_workspace(workspace)
+
+        session_path = workspace.data.sessions.get(
+            session.session_id,
+            session.created_at.date(),
+        )
+        prepare_session_path(session_path)
+        session.bind_path(session_path)
+
         perception = PerceptionRuntime(
             session_id=session_id,
             stream_maxlens=config.perception.build_stream_maxlens(),
@@ -89,6 +106,7 @@ class AvatarRuntime:
 
         return cls(
             clock=clock,
+            workspace=workspace,
             session=session,
             context=context,
             perception=perception,

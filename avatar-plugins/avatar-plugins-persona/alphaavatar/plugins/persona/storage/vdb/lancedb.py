@@ -16,10 +16,12 @@ import os
 from typing import Any
 from uuid import uuid4
 
+from alphaavatar.agents import AvatarModule
 from alphaavatar.agents.persona.enums import VectorRunnerOP
 from alphaavatar.agents.providers import ProviderKind, ProviderTaskConfig
 from alphaavatar.agents.providers.embedding import create_embedding_model
 from alphaavatar.agents.runtime.inference import InferenceRunner
+from alphaavatar.agents.utils.files.work_dirs import WorkspacePaths
 from alphaavatar.agents.utils.vdb import lancedb
 
 from ...model_files import FACE_MODEL_CONFIG, SPEAKER_MODEL_CONFIG
@@ -471,7 +473,16 @@ class LanceDBRunner(InferenceRunner):
             raise ValueError("`face_collection_name` is required in PERSONA_VDB_CONFIG")
 
         # init client
-        self._client = lancedb.get_client(**self._get_vdb_config(config))
+        vdb_config = self._get_vdb_config(config)
+        if not vdb_config.get("client_path"):
+            vdb_config["client_path"] = str(
+                WorkspacePaths.from_env()
+                .data.indexes.namespace(AvatarModule.PERSONA.value)
+                .backend("lancedb")
+                .root
+            )
+
+        self._client = lancedb.get_client(**vdb_config)
 
         # init embeddings for details_items
         self._profiler_embeddings = self._get_profiler_embeddings(config)

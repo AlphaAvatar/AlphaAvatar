@@ -15,10 +15,12 @@ import json
 import os
 from typing import Any
 
+from alphaavatar.agents import AvatarModule
 from alphaavatar.agents.memory.enums import VectorRunnerOP
 from alphaavatar.agents.providers import ProviderKind, ProviderTaskConfig
 from alphaavatar.agents.providers.embedding import create_embedding_model
 from alphaavatar.agents.runtime.inference import InferenceRunner
+from alphaavatar.agents.utils.files.work_dirs import WorkspacePaths
 from alphaavatar.agents.utils.vdb import lancedb
 
 
@@ -33,7 +35,8 @@ class LanceDBRunner(InferenceRunner):
         "memory_id",
         "memory_kind",
         "memory_type",
-        "episode_idcontext_id",
+        "episode_id",
+        "context_id",
         "runtime_session_id",
         "parent_context_id",
         "task_id",
@@ -485,7 +488,16 @@ class LanceDBRunner(InferenceRunner):
         if not self._collection_name:
             raise ValueError("collection_name is required in MEMORY_VDB_CONFIG")
 
-        self._client = lancedb.get_client(**self._get_vdb_config(config))
+        vdb_config = self._get_vdb_config(config)
+        if not vdb_config.get("client_path"):
+            vdb_config["client_path"] = str(
+                WorkspacePaths.from_env()
+                .data.indexes.namespace(AvatarModule.MEMORY.value)
+                .backend("lancedb")
+                .root
+            )
+
+        self._client = lancedb.get_client(**vdb_config)
         self._embeddings = self._get_memory_embeddings(config)
         embedding_dim = len(self._embeddings.embed_query("dimension-probe"))
         self._ensure_collection(self._collection_name, embedding_dim)

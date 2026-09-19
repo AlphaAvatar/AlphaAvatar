@@ -13,24 +13,16 @@
 # limitations under the License.
 from __future__ import annotations
 
-import os
 import uuid
 from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from alphaavatar.agents.utils.files.user_dirs import (
-    UserPath,
-    UserPathSnapshot,
-    migrate_user_path,
-    mk_user_dirs,
-)
 from alphaavatar.agents.utils.files.work_dirs import (
-    AvatarPath,
     SessionPath,
-    mk_avatar_dirs,
-    mk_session_dirs,
+    UserPath,
+    migrate_user_path,
 )
 from alphaavatar.agents.utils.id_utils import get_md5_id, sanitize_id
 from alphaavatar.agents.utils.time import UserTimeContext, application_now
@@ -44,8 +36,8 @@ class ParticipantIdentityResolution(BaseModel):
     old_user_id: str | None = None
     new_user_id: str
 
-    old_user_path: UserPathSnapshot | None = None
-    new_user_path: UserPathSnapshot | None = None
+    old_user_path: UserPath | None = None
+    new_user_path: UserPath | None = None
 
     changed: bool = False
 
@@ -99,7 +91,6 @@ class SessionRuntime(BaseModel):
     primary_participant_id: str | None = None
     participants: dict[str, ParticipantInfo] = Field(default_factory=dict)
 
-    avatar_path: AvatarPath | None = None
     session_path: SessionPath | None = None
 
     pending_user_path_migrations: list[ParticipantIdentityResolution] = Field(default_factory=list)
@@ -128,14 +119,15 @@ class SessionRuntime(BaseModel):
         # sanitize id
         self.session_id = sanitize_id(self.session_id)
 
-        # Dir Building
-        work_dir = os.getenv("AVATAR_WORK_DIR", "")
-        self.avatar_path = mk_avatar_dirs(work_dir)
-        self.session_path = mk_session_dirs(
-            self.avatar_path,
-            self.session_id,
-            created_date=self.created_at.date(),
-        )
+    def bind_path(self, session_path: SessionPath) -> None:
+        if session_path.session_id != self.session_id:
+            raise ValueError(
+                "SessionPath session_id does not match SessionRuntime: "
+                f"path={session_path.session_id!r}, runtime={self.session_id!r}"
+            )
+        if self.session_path is not None and self.session_path != session_path:
+            raise RuntimeError("SessionRuntime path has already been bound")
+        self.session_path = session_path
 
     def add_participant(
         self,
@@ -145,6 +137,7 @@ class SessionRuntime(BaseModel):
         room_id: str,
         room_type: str,
         user_time: UserTimeContext,
+        user_path: UserPath | None = None,
         metadata: dict[str, Any] | None = None,
         primary: bool = False,
     ) -> ParticipantInfo:
@@ -172,10 +165,7 @@ class SessionRuntime(BaseModel):
             )
 
             if uid:
-                participant.user_path = mk_user_dirs(
-                    users_dir=self.avatar_path.users_dir,
-                    user_id=uid,
-                )
+                participant.user_path = user_path
 
             self.participants[pid] = participant
 
@@ -203,6 +193,7 @@ class SessionRuntime(BaseModel):
         *,
         participant_id: str,
         user_id: str,
+        user_path: UserPath,
         confidence: float | None = None,
     ) -> ParticipantIdentityResolution:
         pid = sanitize_id(participant_id)
@@ -216,25 +207,13 @@ class SessionRuntime(BaseModel):
             raise ValueError("Resolved user_id cannot be empty")
 
         old_user_id = participant.effective_user_id
-        old_user_path = (
-            participant.user_path.snapshot() if participant.user_path is not None else None
-        )
+        old_user_path = participant.user_path
 
         participant.resolved_user_id = uid
+        participant.user_path = user_path
         if confidence is not None:
             participant.identity_confidence = confidence
 
-        new_user_path = mk_user_dirs(
-            users_dir=self.avatar_path.users_dir,
-            user_id=uid,
-        )
-
-        if participant.user_path is None:
-            participant.user_path = new_user_path
-        elif participant.user_path.user_root.resolve() != new_user_path.user_root.resolve():
-            participant.user_path.update_from(new_user_path)
-
-        new_user_path_snapshot = participant.user_path.snapshot()
         changed = old_user_id != uid
 
         result = ParticipantIdentityResolution(
@@ -242,7 +221,7 @@ class SessionRuntime(BaseModel):
             old_user_id=old_user_id,
             new_user_id=uid,
             old_user_path=old_user_path,
-            new_user_path=new_user_path_snapshot,
+            new_user_path=user_path,
             changed=changed,
         )
 
