@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,20 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .base import MemoryBase
-from .processor import MemoryProcessorBase
-from .store import (
-    MemoryCheckpointConflict,
-    MemoryRevisionConflict,
-    MemoryStoreBackend,
-    MemoryStoreConflict,
+from alphaavatar.agents.runtime.capability import (
+    AvatarCapabilityName,
+    avatar_capability,
 )
 
-__all__ = [
-    "MemoryBase",
-    "MemoryProcessorBase",
-    "MemoryCheckpointConflict",
-    "MemoryRevisionConflict",
-    "MemoryStoreBackend",
-    "MemoryStoreConflict",
-]
+from ..base import MemoryProcessor
+
+
+@avatar_capability(
+    name=AvatarCapabilityName.MEMORY_ENVIRONMENT,
+    description=(
+        "Can form and recall persistent memories from relevant visual, audio, "
+        "and environmental observations when such perception is available."
+    ),
+)
+class EnvironmentProcessor(MemoryProcessor): ...

@@ -50,11 +50,6 @@ class MemoryStore:
         runtime: AvatarRuntime,
         backend: MemoryStoreBackend | None = None,
     ) -> None:
-        avatar_path = runtime.session.avatar_path
-
-        if avatar_path is None:
-            raise RuntimeError("SessionRuntime.avatar_path is not initialized")
-
         memory_paths = runtime.workspace.data.memory
         graph_paths = runtime.workspace.graph.namespace(AvatarModule.MEMORY.value)
 

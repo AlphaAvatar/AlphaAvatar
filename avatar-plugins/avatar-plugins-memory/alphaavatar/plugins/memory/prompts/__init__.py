@@ -13,14 +13,14 @@
 # limitations under the License.
 # Extraction prompts, split by memory domain. Re-exported here so callers keep
 # a single import site.
-from .conversation import (
+from ..processors.conversation.fragments import SESSION_GATE_FRAGMENT
+from ..processors.conversation.prompt import (
     CONVERSATION_DELTA_PROMPT,
     CONVERSATION_MEMORY_EXTRACT_PROMPT,
     build_conversation_delta_prompt,
 )
-from .env import ENV_DELTA_PROMPT, ENV_MEMORY_EXTRACT_PROMPT
-from .fragments import SESSION_GATE_FRAGMENT
-from .tool import TOOL_DELTA_PROMPT, TOOL_MEMORY_EXTRACT_PROMPT
+from ..processors.environment.prompt import ENV_DELTA_PROMPT, ENV_MEMORY_EXTRACT_PROMPT
+from ..processors.tool.prompt import TOOL_DELTA_PROMPT, TOOL_MEMORY_EXTRACT_PROMPT
 
 __all__ = [
     "CONVERSATION_DELTA_PROMPT",

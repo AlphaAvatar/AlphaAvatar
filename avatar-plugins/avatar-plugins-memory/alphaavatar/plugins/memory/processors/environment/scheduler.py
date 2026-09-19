@@ -31,7 +31,7 @@ from alphaavatar.core.perception import (
 )
 from alphaavatar.core.time import RuntimeTimeRange
 
-from ..log import logger
+from ...log import logger
 from .input_builder import EnvMemoryInput, EnvMemoryInputBuilder
 
 DEFAULT_ENV_MEMORY_INTERVAL_SEC = 30.0

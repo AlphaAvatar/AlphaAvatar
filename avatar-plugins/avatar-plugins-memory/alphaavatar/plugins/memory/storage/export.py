@@ -18,8 +18,8 @@ import pathlib
 
 from alphaavatar.agents.memory.schemas import MemoryItem
 
-from ..graph.graph_store import export_memory_graph
-from ..memory_markdown import export_memory_items
+from .graph.graph_store import export_memory_graph
+from .markdown.export import export_memory_items
 
 
 class MemoryExportSink:

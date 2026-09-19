@@ -14,11 +14,41 @@
 from __future__ import annotations
 
 import pathlib
+from collections.abc import Iterable
+from dataclasses import dataclass, field
 
 from livekit.agents.llm import ChatItem, ChatMessage, FunctionCall, FunctionCallOutput
 
-from .enums import MemoryCacheType, MemoryOwnerKind, MemoryParticipantKind
-from .schemas import MemoryContextRef, MemoryOwnerRef, MemoryParticipantRef
+from alphaavatar.agents.memory.enums import (
+    MemoryCacheType,
+    MemoryOwnerKind,
+    MemoryParticipantKind,
+    MemoryType,
+)
+from alphaavatar.agents.memory.schemas import (
+    MemoryContextRef,
+    MemoryItem,
+    MemoryOwnerRef,
+    MemoryParticipantRef,
+)
+
+
+def _deduplicate_keep_latest(items: list[MemoryItem]) -> list[MemoryItem]:
+    latest: dict[str, MemoryItem] = {}
+
+    for item in items:
+        current = latest.get(item.memory_id)
+
+        if current is None or (
+            item.revision,
+            item.updated_at or item.created_at,
+        ) > (
+            current.revision,
+            current.updated_at or current.created_at,
+        ):
+            latest[item.memory_id] = item
+
+    return sorted(latest.values(), key=lambda item: item.created_at)
 
 
 def _deduplicate_refs(values):
@@ -28,6 +58,72 @@ def _deduplicate_refs(values):
             seen.add(value.key)
             out.append(value)
     return out
+
+
+@dataclass
+class MemoryState:
+    maximum_memory_num: int = 24
+
+    _buckets: dict[MemoryType, list[MemoryItem]] = field(
+        default_factory=lambda: {
+            MemoryType.Avatar: [],
+            MemoryType.CONVERSATION: [],
+            MemoryType.TOOLS: [],
+            MemoryType.ENV: [],
+        }
+    )
+
+    @property
+    def all_items(self) -> list[MemoryItem]:
+        return self.get()
+
+    def add(self, memory_type: MemoryType, items: list[MemoryItem]) -> None:
+        if not items:
+            return
+
+        bucket = self._buckets.setdefault(memory_type, [])
+        bucket.extend(items)
+        self._buckets[memory_type] = _deduplicate_keep_latest(bucket)[-self.maximum_memory_num :]
+
+    def discard(self, memory_ids: Iterable[str]) -> None:
+        memory_ids = set(memory_ids)
+        if not memory_ids:
+            return
+
+        for memory_type, bucket in self._buckets.items():
+            self._buckets[memory_type] = [
+                item for item in bucket if item.memory_id not in memory_ids
+            ]
+
+    def get(
+        self,
+        *,
+        memory_type: MemoryType | None = None,
+        context_id: str | None = None,
+    ) -> list[MemoryItem]:
+        items = (
+            [item for bucket in self._buckets.values() for item in bucket]
+            if memory_type is None
+            else list(self._buckets.get(memory_type, []))
+        )
+
+        if context_id is not None:
+            items = [item for item in items if item.context.context_id == context_id]
+
+        return sorted(items, key=lambda item: item.created_at)
+
+    def replace(self, memory_type: MemoryType, items: list[MemoryItem]) -> None:
+        self._buckets[memory_type] = _deduplicate_keep_latest(items)[-self.maximum_memory_num :]
+
+    def render(
+        self,
+        *,
+        memory_type: MemoryType | None = None,
+        context_id: str | None = None,
+    ) -> str:
+        return "\n".join(
+            item.render_line() for item in self.get(memory_type=memory_type, context_id=context_id)
+        )
 
 
 class MemoryContextState:
@@ -49,7 +145,6 @@ class MemoryContextState:
         self._participant_refs = _deduplicate_refs(participant_refs or [])
         self._cache_type = cache_type
         self._messages: list[ChatItem] = []
-        self._env_message_cursor = 0
 
     @property
     def context(self) -> MemoryContextRef:
@@ -118,9 +213,3 @@ class MemoryContextState:
             self._messages.append(message)
         elif isinstance(message, FunctionCall | FunctionCallOutput):
             self._messages.append(message)
-
-    def take_pending_env_messages(self) -> list[ChatItem]:
-        return self._messages[self._env_message_cursor :]
-
-    def commit_env_messages(self) -> None:
-        self._env_message_cursor = len(self._messages)

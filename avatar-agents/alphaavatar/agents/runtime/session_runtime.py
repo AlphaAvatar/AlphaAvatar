@@ -238,7 +238,7 @@ class SessionRuntime(BaseModel):
             if item.old_user_path is None or item.new_user_path is None:
                 continue
 
-            if item.old_user_path.user_root.resolve() == item.new_user_path.user_root.resolve():
+            if item.old_user_path.root.resolve() == item.new_user_path.root.resolve():
                 continue
 
             migrate_user_path(

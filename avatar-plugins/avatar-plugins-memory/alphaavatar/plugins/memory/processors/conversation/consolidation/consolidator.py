@@ -25,7 +25,7 @@ from alphaavatar.agents.memory.schemas import (
     MemorySearchHit,
 )
 
-from ..log import logger
+from ....log import logger
 from .candidates import (
     RecalledCandidateCache,
     consolidated_from_hits,

@@ -18,7 +18,7 @@ from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.inference import InferenceRunner
 
 from .log import logger
-from .memory_runtime import MemoryRuntime
+from .runtime import MemoryRuntime
 from .storage import MemoryStore
 from .version import __version__
 
@@ -63,13 +63,13 @@ def configure_vdb_runner(vdb_type: str | None = None) -> None:
     logger.info("Configuring Memory plugin with VDB type: %s", vdb_type)
 
     if vdb_type == "qdrant":
-        from .runner import QdrantRunner
+        from .storage.vdb import QdrantRunner
 
         method = QdrantRunner.INFERENCE_METHOD
         InferenceRunner.register(QdrantRunner)
 
     elif vdb_type == "lancedb":
-        from .runner import LanceDBRunner
+        from .storage.vdb import LanceDBRunner
 
         method = LanceDBRunner.INFERENCE_METHOD
         InferenceRunner.register(LanceDBRunner)

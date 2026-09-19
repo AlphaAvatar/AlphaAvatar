@@ -33,14 +33,14 @@ from alphaavatar.agents.memory.schemas import (
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.utils.time import application_now
 
-from .env_memory import EnvMemoryBatch, EnvMemoryScheduler
-from .graph import GraphLookup, build_graph_from_mentions, save_graph_aliases
 from .log import logger
 from .memory_delta_extractor import MemoryDeltaExtractor, MemoryProviderConfig
-from .memory_op import EnvMemoryDelta, MemoryDelta, PatchOp, norm_token, norm_topic
+from .processors.conversation.consolidation import MemoryConsolidator, MemoryPipelineConfig
+from .processors.environment import EnvMemoryBatch, EnvMemoryScheduler
 from .retrieval import MemoryRetrievalMixin
+from .schemas.patch import EnvMemoryDelta, MemoryDelta, PatchOp, norm_token, norm_topic
 from .storage import MemoryStore
-from .user_memory import MemoryConsolidator, MemoryPipelineConfig
+from .storage.graph import GraphLookup, build_graph_from_mentions, save_graph_aliases
 
 CONVERSATION_PROCESSOR = "conversation"
 TOOL_PROCESSOR = "tool"
