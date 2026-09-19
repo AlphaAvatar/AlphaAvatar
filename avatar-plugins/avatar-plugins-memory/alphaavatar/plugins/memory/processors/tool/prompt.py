@@ -192,7 +192,7 @@ Rules:
 - Do not write alias mappings.
 - Do not infer real identity from face_id, speaker_id, voice_id, or visual appearance.
 - For tools, modules, operations, errors, artifacts, and concepts, prefer stable keys when obvious.
-- For local face, voice, speaker, or object IDs, raw local keys are allowed; runtime will scope them to the session.
+- For local face, voice, speaker, or object IDs, raw local keys are allowed; runtime will scope them to the current context.
 
 Stable key examples:
 - tool:lancedb
@@ -309,7 +309,7 @@ TOOL_DELTA_PROMPT = ChatPromptTemplate.from_messages(
             "- Do not output embeddings.\n"
             "- Do not write aliases or canonical identity mappings.\n"
             "- Do not infer real identity from face_id, speaker_id, voice_id, visual appearance, or ENV observations.\n"
-            "- If local face/voice/object ids appear in an explicit tool/system event, you may include them as raw local node_mentions keys such as face:tmp_1, voice:speaker_0, or object:cup_1. The runtime will scope them to the session.\n"
+            "- If local face/voice/object ids appear in an explicit tool/system event, you may include them as raw local node_mentions keys such as face:tmp_1, voice:speaker_0, or object:cup_1. The runtime will scope them to the current context.\n"
             "- Include concrete component, operation, outcome, and relevant sanitized details in PatchOp.value when supported by the session content.\n"
             "- Aggregate repeated operations into one tool episode unless there is a meaningful boundary such as a different component, phase, failure, retry, fallback, or correction.\n"
             "- Do not invent details not supported by the session content.\n",

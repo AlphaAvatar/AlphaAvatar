@@ -316,7 +316,7 @@ Screen / device:
 Objects / plants / animals / vehicles / documents / applications:
 - Prefer an explicit runtime object, track, document, application, or device key.
 - An unkeyed node is allowed only when the entity is independently salient,
-  directly visible, concretely distinguishable, and expected to be session-scoped.
+  directly visible, concretely distinguishable, and expected to be context-scoped.
 - Use a specific noun phrase such as "red ceramic cup" or "small potted fern",
   not a broad category such as "object", "plant", or "document".
 - Do not create standalone nodes for worn or incidental accessories such as
@@ -366,7 +366,7 @@ G3) KEY RULES
 
 - Use a key only when input metadata or annotation explicitly provides it.
 - Preserve the supplied local/stable identifier; do not invent semantic global keys.
-- Local keys are allowed; runtime will scope them to the session.
+- Local keys are allowed; runtime will scope them to the current context.
 - If a node type requires a key under G1 and none is provided, omit that node.
 
 Allowed local key examples:
@@ -400,7 +400,7 @@ Conditionally acceptable unkeyed nodes:
 - null / plant / small potted fern
 
 These are acceptable only when directly visible, salient, distinguishable,
-and guaranteed by runtime policy to remain session-scoped.
+and guaranteed by runtime policy to remain context-scoped.
 
 Bad node_mentions:
 - null / person / visible person

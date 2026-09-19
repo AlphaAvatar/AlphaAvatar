@@ -26,12 +26,17 @@ from alphaavatar.agents import AvatarModule
 from alphaavatar.agents.memory.enums import MemoryType
 from alphaavatar.agents.memory.schemas import MemoryItem
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.capability import (
+    AvatarCapabilityName,
+    avatar_capability,
+)
 
 from ...log import logger
 from ...storage.graph import GraphLookup
 from ...template import MemoryPluginsTemplate
 from ..base import MemoryProcessor
 from .config import RetrievalConfig
+from .schema import RetrievalCapabilityInput
 
 if TYPE_CHECKING:
     from ...runtime import MemoryRuntime
@@ -42,6 +47,17 @@ RecallObserver = Callable[
 ]
 
 
+@avatar_capability(
+    name=AvatarCapabilityName.MEMORY_RETRIEVAL,
+    description=(
+        "Search persistent memory when the currently retrieved runtime context "
+        "is insufficient. Supports semantic text search and graph-linked retrieval "
+        "over memories visible to the current owner and context, including prior "
+        "decisions, preferences, tool outcomes, environment observations, and "
+        "related entities."
+    ),
+    input_schema=RetrievalCapabilityInput,
+)
 class RetrievalProcessor(MemoryProcessor):
     def __init__(
         self,
