@@ -16,10 +16,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from livekit.agents.llm import ChatItem, ChatMessage
-
 from alphaavatar.agents.persona.schemas import UserProfile, UserRuntimeState
 from alphaavatar.agents.utils.time import format_datetime_for_timezone
+from alphaavatar.core.turn import TurnSnapshot
 
 
 class PersonaPluginsTemplate:
@@ -101,15 +100,13 @@ class PersonaPluginsTemplate:
         return lines
 
     @classmethod
-    def apply_update_template(cls, chat_context: list[ChatItem]) -> str:
+    def apply_update_template(cls, turns: list[TurnSnapshot]) -> str:
         return "\n\n".join(
-            f"### {item.role}:\n{item.text_content or ''}"
-            for item in chat_context
-            if isinstance(item, ChatMessage) and item.role in {"user", "assistant"}
+            f"### user:\n{turn.text}" for turn in turns if turn.text and turn.text.strip()
         )
 
     @classmethod
-    def apply_system_template(
+    def apply_provider_template(
         cls,
         user_profiles: dict[str, UserProfile],
         *,

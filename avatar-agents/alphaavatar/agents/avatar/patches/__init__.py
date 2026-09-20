@@ -26,7 +26,5 @@ __all__ = ["AvatarServer"]
 def init_avatar_patches(engine: AvatarEngine) -> None:
     """Initialize avatar patches."""
     from .context_op_patch import install_context_op_patch
-    from .context_search_patch import install_context_search_patch
 
-    install_context_search_patch(engine)
     install_context_op_patch(engine)

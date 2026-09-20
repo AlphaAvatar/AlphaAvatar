@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from collections.abc import (
     Callable,
     Iterable,
@@ -33,6 +34,7 @@ from alphaavatar.agents.runtime.capability import (
     AvatarCapabilityName,
     avatar_capability,
 )
+from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
 
 from ...log import logger
 from ...storage.graph import GraphLookup
@@ -62,6 +64,8 @@ RecallObserver = Callable[
     input_schema=RetrievalCapabilityInput,
 )
 class RetrievalProcessor(MemoryProcessor):
+    TURN_CONSUMER_ID = "memory.retrieval.turn"
+
     def __init__(
         self,
         *,
@@ -81,6 +85,9 @@ class RetrievalProcessor(MemoryProcessor):
         self._search_context = search_context
         self._recall_num = recall_num
         self._recall_observers = recall_observers
+
+        self._consumer_task: asyncio.Task[None] | None = None
+        self._query_history: dict[str, deque[str]] = {}
 
     @property
     def name(self) -> str:
@@ -114,7 +121,25 @@ class RetrievalProcessor(MemoryProcessor):
     def _recall_owners(self, owner_refs: list[MemoryOwnerRef]) -> list[MemoryOwnerRef]:
         return self.deduplicate_refs([MemoryOwnerRef.avatar(self.avatar_id), *owner_refs])
 
-    async def search_text(
+    def _turn_context_id(self, snapshot: TurnSnapshot) -> str:
+        for context_id in snapshot.context_ids:
+            if context_id in self.memory_runtime.memory_contexts:
+                return context_id
+        return self.memory_runtime.root_context_id
+
+    def _turn_query(self, snapshot: TurnSnapshot, context_id: str) -> str:
+        text = (snapshot.text or "").strip()
+        if not text:
+            return ""
+
+        history = self._query_history.setdefault(
+            context_id,
+            deque(maxlen=max(1, self._search_context)),
+        )
+        history.append(text)
+        return "\n\n".join(f"### user:\n{item}" for item in history)
+
+    async def _search_text(
         self,
         query: str,
         *,
@@ -177,7 +202,7 @@ class RetrievalProcessor(MemoryProcessor):
         self._notify_passive_recall(items)
         self.memory_runtime.apply_items(items)
 
-    async def search_graph(
+    async def _search_graph(
         self,
         *,
         node_key: str | None = None,
@@ -222,12 +247,14 @@ class RetrievalProcessor(MemoryProcessor):
             )
             return []
 
+    """Processor invoke"""
+
     async def invoke(self, request: RetrievalCapabilityInput) -> str:
         match request.op:
             case RetrievalOp.TEXT_SEARCH:
-                items = await self.search_text(request.query or "", top_k=request.top_k)
+                items = await self._search_text(request.query or "", top_k=request.top_k)
             case RetrievalOp.GRAPH_SEARCH:
-                items = await self.search_graph(
+                items = await self._search_graph(
                     node_key=request.node_key,
                     node_query=request.node_query,
                     node_type=request.node_type,
@@ -238,3 +265,70 @@ class RetrievalProcessor(MemoryProcessor):
                 raise ValueError(f"Unsupported retrieval operation: {request.op}")
 
         return "\n".join(item.render_line() for item in items) or "No relevant memory was found."
+
+    """Processor Loop"""
+
+    async def _process_turn(self, snapshot: TurnSnapshot) -> None:
+        if snapshot.modality == TurnInputModality.SYSTEM:
+            return
+
+        context_id = self._turn_context_id(snapshot)
+        query = self._turn_query(snapshot, context_id)
+
+        if not query:
+            return
+
+        items = await self._search_text(
+            query,
+            context_id=context_id,
+            top_k=self._recall_num,
+        )
+
+        self._notify_passive_recall(items)
+        self.memory_runtime.apply_items(items)
+
+    async def _consume_loop(self) -> None:
+        stream = self.runtime.turn.events
+
+        while True:
+            try:
+                await stream.wait_for_pending(consumer_id=self.TURN_CONSUMER_ID)
+                batch = stream.read_pending(consumer_id=self.TURN_CONSUMER_ID, limit=1)
+
+                if batch.has_gap:
+                    logger.warning(
+                        "Memory retrieval missed committed turns missed=%s",
+                        batch.missed_count,
+                    )
+
+                if not batch.items:
+                    stream.commit(consumer_id=self.TURN_CONSUMER_ID, cursor_seq=batch.cursor_seq)
+                    continue
+
+                await self._process_turn(batch.items[0].snapshot)
+                stream.commit(consumer_id=self.TURN_CONSUMER_ID, cursor_seq=batch.cursor_seq)
+
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Memory retrieval turn consumer failed")
+                await asyncio.sleep(0.05)
+
+    """Runtime operations"""
+
+    async def _start(self) -> None:
+        self.runtime.turn.register_context_consumer(self.TURN_CONSUMER_ID)
+        self._consumer_task = asyncio.create_task(
+            self._consume_loop(),
+            name="memory_retrieval_turn_consumer",
+        )
+
+    async def _stop(self, *, finalize: bool) -> None:
+        if self._consumer_task is not None:
+            self._consumer_task.cancel()
+            await asyncio.gather(self._consumer_task, return_exceptions=True)
+            self._consumer_task = None
+
+        self.runtime.turn.events.clear_consumer(self.TURN_CONSUMER_ID)
+        self.runtime.turn.unregister_context_consumer(self.TURN_CONSUMER_ID)
+        self._query_history.clear()

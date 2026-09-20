@@ -13,94 +13,44 @@
 # limitations under the License.
 from __future__ import annotations
 
+import asyncio
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
-from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
 from uuid import uuid4
 
 from alphaavatar.core.env import EnvObservation
-from alphaavatar.core.perception import (
-    PerceptionCutoff,
-    PerceptionEvent,
-    PerceptionRuntime,
-)
+from alphaavatar.core.perception import PerceptionRuntime
 from alphaavatar.core.time import RuntimeTime
 
-
-class TurnInputModality(StrEnum):
-    SYSTEM = "system"
-    TEXT = "text"
-    AUDIO = "audio"
-    IMAGE = "image"
-    MULTIMODAL = "multimodal"
-
-
-@dataclass(frozen=True, slots=True)
-class TurnSnapshot:
-    turn_id: str
-    input_id: str
-    modality: TurnInputModality
-    text: str | None
-
-    input_observation_ids: tuple[str, ...]
-
-    started_at: RuntimeTime
-    committed_at: RuntimeTime
-
-    start_cutoff: PerceptionCutoff
-    cutoff: PerceptionCutoff
-    perception_events: tuple[PerceptionEvent, ...]
-
-    perception_gap: bool = False
-    missed_perception_events: int = 0
-    metadata: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
-
-    @property
-    def start_sequence(self) -> int:
-        return self.start_cutoff.sequence
-
-    @property
-    def cutoff_sequence(self) -> int:
-        return self.cutoff.sequence
-
-    @property
-    def source_states_at_start(self):
-        return self.start_cutoff.sources
-
-    @property
-    def source_states_at_commit(self):
-        return self.cutoff.sources
+from .schema import TurnEntityRef, TurnInputModality, TurnSnapshot
+from .stream import TurnStream
 
 
 class TurnRuntime:
-    """
-    Session-scoped immutable user-turn registry.
-
-    A turn is committed once for one input_id. Model retries and tool-response
-    generations reuse the same TurnSnapshot.
-    """
-
-    _DIRECT_TEXT_MODALITIES = {
-        TurnInputModality.TEXT,
-        TurnInputModality.MULTIMODAL,
-    }
-
     def __init__(
         self,
         *,
         perception: PerceptionRuntime,
         max_snapshots: int = 128,
+        event_maxlen: int = 256,
+        context_ready_timeout_sec: float = 0.5,
     ) -> None:
         if max_snapshots <= 0:
             raise ValueError("max_snapshots must be positive")
+        if context_ready_timeout_sec < 0:
+            raise ValueError("context_ready_timeout_sec cannot be negative")
 
         self._perception = perception
         self._max_snapshots = max_snapshots
+        self._context_ready_timeout_sec = context_ready_timeout_sec
         self._snapshots: OrderedDict[str, TurnSnapshot] = OrderedDict()
+        self._event_sequences: dict[str, int] = {}
+        self._context_consumers: set[str] = set()
         self._last_cutoff = perception.capture_cutoff()
+
+        self.events = TurnStream(session_id=perception.session_id, maxlen=event_maxlen)
 
     @property
     def latest(self) -> TurnSnapshot | None:
@@ -113,6 +63,18 @@ class TurnRuntime:
     def get(self, input_id: str) -> TurnSnapshot | None:
         return self._snapshots.get(input_id)
 
+    def _record(self, snapshot: TurnSnapshot) -> TurnSnapshot:
+        self._snapshots[snapshot.input_id] = snapshot
+        event = self.events.publish(snapshot)
+        self._event_sequences[snapshot.turn_id] = event.sequence
+        self._last_cutoff = snapshot.cutoff
+
+        while len(self._snapshots) > self._max_snapshots:
+            _, removed = self._snapshots.popitem(last=False)
+            self._event_sequences.pop(removed.turn_id, None)
+
+        return snapshot
+
     def commit_input(
         self,
         *,
@@ -121,6 +83,9 @@ class TurnRuntime:
         text: str | None = None,
         input_observation_ids: Sequence[str] = (),
         final_observations: Sequence[EnvObservation] = (),
+        actors: Sequence[TurnEntityRef] = (),
+        addressees: Sequence[TurnEntityRef] = (),
+        context_ids: Sequence[str] = (),
         metadata: Mapping[str, Any] | None = None,
     ) -> TurnSnapshot:
         if not input_id:
@@ -157,15 +122,13 @@ class TurnRuntime:
             perception_events=perception.events,
             perception_gap=perception.has_gap,
             missed_perception_events=perception.missed_count,
+            actors=tuple(actors),
+            addressees=tuple(addressees),
+            context_ids=tuple(dict.fromkeys(context_ids)),
             metadata=MappingProxyType(dict(metadata or {})),
         )
 
-        self._snapshots[input_id] = snapshot
-        self._last_cutoff = perception.cutoff
-
-        while len(self._snapshots) > self._max_snapshots:
-            self._snapshots.popitem(last=False)
-
+        self._record(snapshot)
         return snapshot
 
     def commit_event_input(
@@ -178,6 +141,9 @@ class TurnRuntime:
         committed_at: RuntimeTime,
         cutoff_sequence: int,
         input_observation_ids: Sequence[str] = (),
+        actors: Sequence[TurnEntityRef] = (),
+        addressees: Sequence[TurnEntityRef] = (),
+        context_ids: Sequence[str] = (),
         metadata: Mapping[str, Any] | None = None,
     ) -> TurnSnapshot:
         if not input_id:
@@ -206,17 +172,60 @@ class TurnRuntime:
             perception_events=perception.events,
             perception_gap=perception.has_gap,
             missed_perception_events=perception.missed_count,
+            actors=tuple(actors),
+            addressees=tuple(addressees),
+            context_ids=tuple(dict.fromkeys(context_ids)),
             metadata=MappingProxyType(dict(metadata or {})),
         )
 
-        self._snapshots[input_id] = snapshot
-        self._last_cutoff = perception.cutoff
-
-        while len(self._snapshots) > self._max_snapshots:
-            self._snapshots.popitem(last=False)
-
+        self._record(snapshot)
         return snapshot
+
+    def register_context_consumer(self, consumer_id: str) -> None:
+        if not consumer_id:
+            raise ValueError("consumer_id cannot be empty")
+        self._context_consumers.add(consumer_id)
+
+    def unregister_context_consumer(self, consumer_id: str) -> None:
+        self._context_consumers.discard(consumer_id)
+
+    async def wait_context_ready(
+        self,
+        snapshot: TurnSnapshot,
+        *,
+        timeout: float | None = None,
+    ) -> bool:
+        consumers = tuple(self._context_consumers)
+        if not consumers:
+            return True
+
+        sequence = self._event_sequences.get(snapshot.turn_id)
+        if sequence is None:
+            return True
+
+        timeout = self._context_ready_timeout_sec if timeout is None else timeout
+        if timeout < 0:
+            raise ValueError("timeout cannot be negative")
+        if timeout == 0:
+            return False
+
+        try:
+            async with asyncio.timeout(timeout):
+                await asyncio.gather(
+                    *(
+                        self.events.wait_until_consumed(
+                            consumer_id=consumer_id,
+                            cursor_seq=sequence,
+                        )
+                        for consumer_id in consumers
+                    )
+                )
+            return True
+        except TimeoutError:
+            return False
 
     def clear(self) -> None:
         self._snapshots.clear()
+        self._event_sequences.clear()
+        self.events.clear()
         self._last_cutoff = self._perception.capture_cutoff()

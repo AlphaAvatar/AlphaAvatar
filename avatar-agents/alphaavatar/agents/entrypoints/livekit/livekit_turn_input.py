@@ -13,10 +13,11 @@
 # limitations under the License.
 from __future__ import annotations
 
-from alphaavatar.agents.runtime import TurnInputModality, TurnRuntime, TurnSnapshot
+from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.core.env import EnvObservation, PerceptionSourceRef
 from alphaavatar.core.media import TextPayload
 from alphaavatar.core.time import RuntimeClock, RuntimeTimeRange
+from alphaavatar.core.turn import TurnEntityRef, TurnInputModality, TurnSnapshot
 from livekit.agents import llm
 
 from .livekit_model_input import (
@@ -31,9 +32,9 @@ class LiveKitTurnInput:
 
     DIRECT_TEXT_INDICES_KEY = "alphaavatar_direct_text_indices"
 
-    def __init__(self, *, clock: RuntimeClock, turn_runtime: TurnRuntime) -> None:
+    def __init__(self, *, clock: RuntimeClock, runtime: AvatarRuntime) -> None:
         self._clock = clock
-        self._turn_runtime = turn_runtime
+        self._runtime = runtime
 
     @staticmethod
     def latest_user_message(chat_ctx: llm.ChatContext) -> llm.ChatMessage | None:
@@ -83,6 +84,19 @@ class LiveKitTurnInput:
             return TurnInputModality.AUDIO
         return TurnInputModality.TEXT
 
+    def _actors(self) -> tuple[TurnEntityRef, ...]:
+        participant = self._runtime.session.primary_participant
+        if participant is None:
+            return ()
+
+        return (
+            TurnEntityRef(
+                kind="person",
+                user_id=participant.effective_user_id,
+                transport_participant_id=participant.participant_identity,
+            ),
+        )
+
     def commit_message(
         self,
         message: llm.ChatMessage,
@@ -90,7 +104,7 @@ class LiveKitTurnInput:
         source: str,
         transcribed: bool = False,
     ) -> TurnSnapshot:
-        if existing := self._turn_runtime.get(message.id):
+        if existing := self._runtime.turn.get(message.id):
             return existing
 
         occurred_at = self._clock.now()
@@ -139,7 +153,7 @@ class LiveKitTurnInput:
                 if observation is not None:
                     final_observations.append(observation)
 
-        return self._turn_runtime.commit_input(
+        return self._runtime.turn.commit_input(
             input_id=message.id,
             modality=self._modality(
                 message,
@@ -148,6 +162,7 @@ class LiveKitTurnInput:
             ),
             text=message.text_content,
             final_observations=final_observations,
+            actors=self._actors(),
             metadata={"source": source, "livekit_message_created_at": message.created_at},
         )
 

@@ -11,19 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .avatar_runtime import AvatarRuntime
-from .context_runtime import ContextRuntime, InteractionMethod
-from .session_runtime import (
-    ParticipantIdentityResolution,
-    ParticipantInfo,
-    SessionRuntime,
-)
+from .runtime import TurnRuntime
+from .schema import TurnEntityRef, TurnEvent, TurnInputModality, TurnSnapshot
+from .stream import TurnStream, TurnStreamRead
 
 __all__ = [
-    "AvatarRuntime",
-    "ContextRuntime",
-    "InteractionMethod",
-    "ParticipantInfo",
-    "ParticipantIdentityResolution",
-    "SessionRuntime",
+    "TurnEntityRef",
+    "TurnEvent",
+    "TurnInputModality",
+    "TurnSnapshot",
+    "TurnStream",
+    "TurnStreamRead",
+    "TurnRuntime",
 ]

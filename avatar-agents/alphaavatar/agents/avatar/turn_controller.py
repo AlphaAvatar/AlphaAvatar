@@ -19,19 +19,17 @@ from typing import Protocol
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.plugin import AvatarRuntimePlugin
 from alphaavatar.agents.router import (
+    InteractionEntityRef,
     TurnTakingAction,
     TurnTakingDecision,
     TurnTakingMode,
 )
-from alphaavatar.agents.runtime import (
-    AvatarRuntime,
-    TurnInputModality,
-    TurnSnapshot,
-)
+from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.core.env import AnnotationKind, EnvObservation, ObservationKind
 from alphaavatar.core.media import TextPayload
 from alphaavatar.core.output import OutputLane
 from alphaavatar.core.perception import PerceptionEvent
+from alphaavatar.core.turn import TurnEntityRef, TurnInputModality, TurnSnapshot
 
 
 class AvatarTurnSink(Protocol):
@@ -68,26 +66,6 @@ class AvatarTurnController(AvatarRuntimePlugin):
             return TurnInputModality.IMAGE
         return TurnInputModality.MULTIMODAL
 
-    def _observations(
-        self,
-        decision: TurnTakingDecision,
-    ) -> tuple[EnvObservation, ...]:
-        observations: list[EnvObservation] = []
-        seen: set[str] = set()
-
-        for observation_id in decision.input_observation_ids:
-            if observation_id in seen:
-                continue
-
-            observation = self._runtime.perception.timeline.get_observation(
-                observation_id=observation_id
-            )
-            if observation is not None:
-                observations.append(observation)
-                seen.add(observation_id)
-
-        return tuple(observations)
-
     @staticmethod
     def _text(observations: tuple[EnvObservation, ...]) -> str | None:
         parts: list[str] = []
@@ -120,6 +98,54 @@ class AvatarTurnController(AvatarRuntimePlugin):
         return min(
             (observation.time_range.start for observation in observations),
             key=lambda value: value.monotonic_ns,
+        )
+
+    def _observations(
+        self,
+        decision: TurnTakingDecision,
+    ) -> tuple[EnvObservation, ...]:
+        observations: list[EnvObservation] = []
+        seen: set[str] = set()
+
+        for observation_id in decision.input_observation_ids:
+            if observation_id in seen:
+                continue
+
+            observation = self._runtime.perception.timeline.get_observation(
+                observation_id=observation_id
+            )
+            if observation is not None:
+                observations.append(observation)
+                seen.add(observation_id)
+
+        return tuple(observations)
+
+    def _turn_entity(self, ref: InteractionEntityRef) -> TurnEntityRef:
+        participant = None
+
+        if ref.transport_participant_id:
+            participant = next(
+                (
+                    item
+                    for item in self._runtime.session.participants.values()
+                    if item.participant_identity == ref.transport_participant_id
+                ),
+                None,
+            )
+
+        user_id = (
+            ref.entity.resolved_entity_id
+            if ref.entity is not None and ref.entity.resolved_entity_id
+            else participant.effective_user_id
+            if participant is not None
+            else None
+        )
+
+        return TurnEntityRef(
+            kind=ref.kind.value,
+            user_id=user_id,
+            transport_participant_id=ref.transport_participant_id,
+            entity=ref.entity,
         )
 
     async def _interrupt(self, decision: TurnTakingDecision) -> None:
@@ -189,6 +215,8 @@ class AvatarTurnController(AvatarRuntimePlugin):
             committed_at=event.time_range.end,
             cutoff_sequence=event.sequence,
             input_observation_ids=decision.input_observation_ids,
+            actors=((self._turn_entity(decision.actor),) if decision.actor is not None else ()),
+            addressees=tuple(self._turn_entity(addressee) for addressee in decision.addressees),
             metadata={
                 "candidate_revision": decision.candidate_revision,
                 "decision_event_id": event.event_id,
@@ -196,8 +224,6 @@ class AvatarTurnController(AvatarRuntimePlugin):
                 "decision_annotation_id": (
                     annotation.annotation_id if annotation is not None else None
                 ),
-                "actor": (decision.actor.to_dict() if decision.actor is not None else None),
-                "addressees": [addressee.to_dict() for addressee in decision.addressees],
                 "reason": decision.reason,
             },
         )

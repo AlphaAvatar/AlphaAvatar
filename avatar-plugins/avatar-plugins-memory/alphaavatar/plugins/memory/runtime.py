@@ -13,6 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+import asyncio
 import pathlib
 from collections.abc import Sequence
 from uuid import uuid4
@@ -29,13 +30,17 @@ from alphaavatar.agents.memory.schemas import (
 )
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
+from alphaavatar.core.turn import TurnSnapshot
 
+from .log import logger
 from .processors.base import MemoryProcessor
 from .state import MemoryContextState, MemoryState
 from .storage import MemoryStore
 
 
 class MemoryRuntime(MemoryBase):
+    TURN_CONSUMER_ID = "memory.runtime.turn"
+
     def __init__(
         self,
         *,
@@ -59,6 +64,8 @@ class MemoryRuntime(MemoryBase):
         self._started = False
 
         self._capability_registry = AvatarCapabilityRegistry()
+
+        self._turn_task: asyncio.Task[None] | None = None
 
     @property
     def avatar_id(self) -> str:
@@ -123,6 +130,35 @@ class MemoryRuntime(MemoryBase):
             raise ValueError(f"Memory context not found: {context_id}")
         return state
 
+    def _open_root_context(self) -> None:
+        user_id = self._runtime.session.primary_user_id
+        session_path = self._runtime.session.session_path
+
+        if not user_id:
+            return
+
+        if session_path is None:
+            raise RuntimeError("SessionRuntime.session_path is not initialized")
+
+        context = MemoryContextRef(
+            episode_id=uuid4().hex,
+            context_id=uuid4().hex,
+            session_id=self._runtime.session.session_id,
+            created_at=self._runtime.session.created_at,
+        )
+
+        self.open_context(
+            context=context,
+            provider_dir=session_path.provider_dir,
+            owner_refs=[MemoryOwnerRef.user(user_id)],
+            participant_refs=[
+                MemoryParticipantRef.user(user_id),
+                MemoryParticipantRef.avatar(self._avatar_id),
+            ],
+        )
+
+        self._root_context_id = context.context_id
+
     def open_context(
         self,
         *,
@@ -169,15 +205,8 @@ class MemoryRuntime(MemoryBase):
                 )
 
     def add_message(self, *, context_id: str, chat_item: ChatItem) -> None:
-        state = self.context_state(context_id)
-        state.add_message(chat_item)
+        self.context_state(context_id).add_message(chat_item)
         self._sync_user_refs()
-
-        for processor in self._processors:
-            processor.on_message(
-                state=state,
-                chat_item=chat_item,
-            )
 
     def apply_items(self, items: list[MemoryItem]) -> None:
         superseded = {memory_id for item in items for memory_id in item.supersedes_memory_ids}
@@ -192,53 +221,63 @@ class MemoryRuntime(MemoryBase):
             if bucket:
                 self._memory_state.add(memory_type, bucket)
 
-    # Temporary bridge until passive retrieval is moved to committed TurnSnapshot.
-    async def search_by_context(
-        self,
-        *,
-        context_id: str,
-        chat_context: list[ChatItem],
-        timeout: float = 3.0,
-    ) -> None:
-        processor = self._processors_by_name.get("retrieval")
+    """Runtime Loop"""
 
-        if processor is None:
+    def _turn_context_id(self, snapshot: TurnSnapshot) -> str | None:
+        for context_id in snapshot.context_ids:
+            if context_id in self._memory_contexts:
+                return context_id
+        return self._root_context_id
+
+    def _record_turn(self, snapshot: TurnSnapshot) -> None:
+        context_id = self._turn_context_id(snapshot)
+        if context_id is None:
             return
 
-        await processor.search_context(
-            context_id=context_id,
-            chat_context=chat_context,
-            timeout=timeout,
-        )
+        self.context_state(context_id).add_turn(snapshot)
+        self._sync_user_refs()
 
-    def _open_root_context(self) -> None:
-        user_id = self._runtime.session.primary_user_id
-        session_path = self._runtime.session.session_path
+    def _drain_turns(self) -> None:
+        stream = self._runtime.turn.events
 
-        if not user_id:
-            return
+        while True:
+            batch = stream.read_pending(consumer_id=self.TURN_CONSUMER_ID, limit=32)
 
-        if session_path is None:
-            raise RuntimeError("SessionRuntime.session_path is not initialized")
+            for event in batch.items:
+                self._record_turn(event.snapshot)
 
-        context = MemoryContextRef(
-            episode_id=uuid4().hex,
-            context_id=uuid4().hex,
-            session_id=self._runtime.session.session_id,
-            created_at=self._runtime.session.created_at,
-        )
+            if batch.cursor_seq > batch.committed_cursor_seq:
+                stream.commit(
+                    consumer_id=self.TURN_CONSUMER_ID,
+                    cursor_seq=batch.cursor_seq,
+                )
 
-        self.open_context(
-            context=context,
-            provider_dir=session_path.provider_dir,
-            owner_refs=[MemoryOwnerRef.user(user_id)],
-            participant_refs=[
-                MemoryParticipantRef.user(user_id),
-                MemoryParticipantRef.avatar(self._avatar_id),
-            ],
-        )
+            if not batch.items or batch.remaining_count == 0:
+                return
 
-        self._root_context_id = context.context_id
+    async def _consume_turns(self) -> None:
+        stream = self._runtime.turn.events
+
+        while True:
+            try:
+                await stream.wait_for_pending(consumer_id=self.TURN_CONSUMER_ID)
+                batch = stream.read_pending(consumer_id=self.TURN_CONSUMER_ID, limit=16)
+
+                for event in batch.items:
+                    self._record_turn(event.snapshot)
+
+                stream.commit(
+                    consumer_id=self.TURN_CONSUMER_ID,
+                    cursor_seq=batch.cursor_seq,
+                )
+
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Memory turn consumer failed")
+                await asyncio.sleep(0.05)
+
+    """Runtime operations"""
 
     async def on_session_start(self) -> None:
         if self._started:
@@ -249,6 +288,11 @@ class MemoryRuntime(MemoryBase):
 
         await self._store.start()
         self._open_root_context()
+
+        self._turn_task = asyncio.create_task(
+            self._consume_turns(),
+            name="memory_turn_consumer",
+        )
 
         try:
             for processor in self._processors:

@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 import numpy as np
-from livekit.agents.llm import ChatItem, ChatMessage
 
 from alphaavatar.agents.constants import FACE_BETA, SPEAKER_BETA
 from alphaavatar.agents.persona.cache import PersonaCache
@@ -25,6 +24,7 @@ from alphaavatar.agents.persona.schemas.user_profile import (
 )
 from alphaavatar.agents.runtime.session_runtime import ParticipantInfo
 from alphaavatar.agents.utils import NumpyOP
+from alphaavatar.core.turn import TurnSnapshot
 
 
 class DefaultPersonaCache(PersonaCache):
@@ -36,11 +36,13 @@ class DefaultPersonaCache(PersonaCache):
     ):
         self._participant = participant
         self._user_profile = user_profile
-        self._messages: list[ChatItem] = []
+
+        self._turns: list[TurnSnapshot] = []
+        self._turn_ids: set[str] = set()
 
     @property
-    def messages(self) -> list[ChatItem]:
-        return self._messages
+    def turns(self) -> list[TurnSnapshot]:
+        return self._turns
 
     @property
     def participant(self) -> ParticipantInfo:
@@ -145,8 +147,8 @@ class DefaultPersonaCache(PersonaCache):
                 FACE_BETA * current + (1 - FACE_BETA) * vector
             )
 
-    def add_message(self, message: ChatItem):
-        """Add a new message to the cache."""
-        if isinstance(message, ChatMessage) and message.role in ("user", "assistant"):
-            self._messages.append(message)
-            self._messages.sort(key=lambda x: x.created_at)
+    def add_turn(self, snapshot: TurnSnapshot) -> None:
+        if snapshot.turn_id in self._turn_ids:
+            return
+        self._turns.append(snapshot)
+        self._turn_ids.add(snapshot.turn_id)

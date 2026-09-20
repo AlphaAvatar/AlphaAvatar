@@ -26,12 +26,12 @@ from alphaavatar.agents.utils.files.work_dirs import (
 from alphaavatar.core.output import OutputRuntime
 from alphaavatar.core.perception import PerceptionRuntime
 from alphaavatar.core.time import RuntimeClock
+from alphaavatar.core.turn import TurnRuntime
 
 from .capability import AvatarCapabilityRegistry
 from .context_runtime import ContextRuntime
 from .inference import InferenceExecutor
 from .session_runtime import SessionRuntime
-from .turn_runtime import TurnRuntime
 
 
 @dataclass(slots=True, frozen=True)
@@ -51,6 +51,7 @@ class AvatarRuntime:
     perception: PerceptionRuntime
     turn: TurnRuntime
     output: OutputRuntime
+
     inference: InferenceExecutor
 
     capability_registry: AvatarCapabilityRegistry = field(default_factory=AvatarCapabilityRegistry)
@@ -107,13 +108,20 @@ class AvatarRuntime:
             clock=clock,
         )
 
+        turn = TurnRuntime(
+            perception=perception,
+            max_snapshots=config.turn.snapshot_maxlen,
+            event_maxlen=config.turn.event_maxlen,
+            context_ready_timeout_sec=config.turn.context_ready_timeout_sec,
+        )
+
         return cls(
             clock=clock,
             workspace=workspace,
             session=session,
             context=context,
             perception=perception,
-            turn=TurnRuntime(perception=perception),
+            turn=turn,
             output=OutputRuntime(session_id=session_id, clock=clock),
             inference=inference or InferenceExecutor.from_env(),
         )

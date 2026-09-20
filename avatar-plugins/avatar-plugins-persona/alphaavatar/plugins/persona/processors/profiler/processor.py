@@ -31,6 +31,7 @@ from alphaavatar.agents.runtime.capability import (
     avatar_capability,
 )
 from alphaavatar.agents.utils.time import application_now
+from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
 
 from ...log import logger
 from ...profile import UserProfileDetails
@@ -95,6 +96,8 @@ class ProfilerRuntimeConfig(BaseModel):
     ),
 )
 class ProfilerProcessor(PersonaProcessorBase):
+    CONSUMER_ID = "persona.profiler.turn"
+
     def __init__(
         self,
         *,
@@ -109,6 +112,8 @@ class ProfilerProcessor(PersonaProcessorBase):
         self._profile_delta_task = config.profile_delta_task
         self._provider_gateway = ProviderGateway(config.gateway)
         self._provider_gateway.validate_tasks([self._profile_delta_task])
+
+        self._consumer_task: asyncio.Task[None] | None = None
 
     @property
     def name(self) -> str:
@@ -179,7 +184,7 @@ class ProfilerProcessor(PersonaProcessorBase):
         return updated, data
 
     async def _update_profile(self, uid: str, persona_cache: PersonaCache) -> None:
-        if not persona_cache.messages:
+        if not persona_cache.turns:
             return
 
         current = (
@@ -191,7 +196,7 @@ class ProfilerProcessor(PersonaProcessorBase):
         delta = await self._aextract_delta(
             uid=uid,
             profile_details_dump=persona_cache.profile_details_dump_value,
-            new_turn=PersonaPluginsTemplate.apply_update_template(persona_cache.messages),
+            new_turn=PersonaPluginsTemplate.apply_update_template(persona_cache.turns),
         )
 
         is_updated, details = self._apply_delta(application_now(), current, delta)
@@ -200,6 +205,68 @@ class ProfilerProcessor(PersonaProcessorBase):
             persona_cache.profile_details = UserProfileDetails(**details)
         else:
             logger.info(f"[uid: {uid}] User Profile output is empty, UPDATE skip!")
+
+    """Processor Loop"""
+
+    def _target_uids(self, snapshot: TurnSnapshot) -> tuple[str, ...]:
+        uids = []
+
+        for actor in snapshot.actors:
+            uid = actor.user_id or (
+                actor.entity.resolved_entity_id if actor.entity is not None else None
+            )
+            if uid and uid not in uids:
+                uids.append(uid)
+
+        if uids:
+            return tuple(uids)
+
+        if len(self.session_runtime.participants) == 1 and self.session_runtime.primary_user_id:
+            return (self.session_runtime.primary_user_id,)
+
+        return ()
+
+    async def _record_turn(self, snapshot: TurnSnapshot) -> None:
+        if snapshot.modality == TurnInputModality.SYSTEM or not (snapshot.text or "").strip():
+            return
+
+        for uid in self._target_uids(snapshot):
+            if uid not in self.persona.persona_cache:
+                await self.persona.load_profile(uid=uid)
+
+            cache = self.persona.persona_cache.get(uid)
+            if cache is not None:
+                cache.add_turn(snapshot)
+
+    async def _consume_turns(self) -> None:
+        stream = self.runtime.turn.events
+
+        while True:
+            try:
+                await stream.wait_for_pending(consumer_id=self.CONSUMER_ID)
+                batch = stream.read_pending(consumer_id=self.CONSUMER_ID, limit=8)
+
+                if batch.has_gap:
+                    logger.warning(
+                        "Persona profiler missed committed turns missed=%s",
+                        batch.missed_count,
+                    )
+
+                for event in batch.items:
+                    await self._record_turn(event.snapshot)
+
+                stream.commit(
+                    consumer_id=self.CONSUMER_ID,
+                    cursor_seq=batch.cursor_seq,
+                )
+
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Persona profiler turn consumer failed")
+                await asyncio.sleep(0.05)
+
+    """Runtime operations"""
 
     async def _start(self) -> None:
         logger.info("Persona Profiler started")

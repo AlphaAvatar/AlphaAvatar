@@ -30,6 +30,7 @@ from alphaavatar.agents.memory.schemas import (
 )
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.utils.time import application_now
+from alphaavatar.core.turn import TurnSnapshot
 
 from ..schemas import norm_token, norm_topic
 from ..storage.graph import build_graph_from_mentions
@@ -38,7 +39,7 @@ from ..template import MemoryPluginsTemplate
 if TYPE_CHECKING:
     from ..runtime import MemoryRuntime
     from ..schemas import PatchOp
-    from ..state import MemoryContextState
+    from ..state import MemoryContextItem, MemoryContextState
     from ..storage import MemoryStore
 
 
@@ -64,10 +65,14 @@ class MemoryProcessor(MemoryProcessorBase):
         return list({ref.key: ref for ref in refs}.values())
 
     @classmethod
-    def source_refs(cls, messages: list[ChatItem]) -> list[MemorySourceRef]:
+    def source_refs(cls, messages: list[MemoryContextItem]) -> list[MemorySourceRef]:
         refs = []
 
         for item in messages:
+            if isinstance(item, TurnSnapshot):
+                refs.append(MemorySourceRef.message(item.input_id))
+                continue
+
             if isinstance(item, ChatMessage):
                 if source_id := str(getattr(item, "id", "") or "").strip():
                     refs.append(MemorySourceRef.message(source_id))

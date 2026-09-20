@@ -18,9 +18,9 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import numpy as np
-    from livekit.agents.llm import ChatItem
 
     from alphaavatar.agents.runtime.session_runtime import ParticipantInfo
+    from alphaavatar.core.turn import TurnSnapshot
 
     from .schemas import DetailsBase, UserProfile, UserRuntimeState
 
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 class PersonaCache(ABC):
     @property
     @abstractmethod
-    def messages(self) -> list[ChatItem]: ...
+    def turns(self) -> list[TurnSnapshot]: ...
 
     @property
     @abstractmethod
@@ -83,4 +83,4 @@ class PersonaCache(ABC):
     def face_vector(self, vector: np.ndarray) -> None: ...
 
     @abstractmethod
-    def add_message(self, message: ChatItem) -> None: ...
+    def add_turn(self, snapshot: TurnSnapshot) -> None: ...

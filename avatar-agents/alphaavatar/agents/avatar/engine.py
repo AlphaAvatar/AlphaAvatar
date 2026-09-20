@@ -36,18 +36,14 @@ from alphaavatar.agents.memory import MemoryBase
 from alphaavatar.agents.persona import PersonaBase
 from alphaavatar.agents.plugin import AvatarModule, AvatarRuntimePlugin
 from alphaavatar.agents.router import InteractionRouterBase, InteractionRouterDependencies
-from alphaavatar.agents.runtime import (
-    AvatarRuntime,
-    SessionRuntime,
-    TurnInputModality,
-    TurnSnapshot,
-)
+from alphaavatar.agents.runtime import AvatarRuntime, SessionRuntime
 from alphaavatar.agents.status import (
     StatusEmitter,
     StatusEvent,
     StatusType,
 )
 from alphaavatar.core.output import OutputLane
+from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
 
 from .context import (
     AvatarContextManager,
@@ -77,7 +73,7 @@ class AvatarEngine(Agent):
         self._livekit_model_input = LiveKitModelInput(clock=runtime.clock)
         self._livekit_turn_input = LiveKitTurnInput(
             clock=runtime.clock,
-            turn_runtime=runtime.turn,
+            runtime=runtime,
         )
 
         # Step 2: initialize runtime plugins and tools.
@@ -300,6 +296,12 @@ class AvatarEngine(Agent):
     ) -> AsyncIterable[llm.ChatChunk | str | FlushSentinel]:
         async def _generate():
             turn_snapshot = self._ensure_turn_snapshot(chat_ctx)
+            context_ready = await self._runtime.turn.wait_context_ready(turn_snapshot)
+            if not context_ready:
+                logger.debug(
+                    "Turn context readiness timed out turn_id=%s",
+                    turn_snapshot.turn_id,
+                )
 
             base_input = self._livekit_model_input.from_chat_context(
                 chat_ctx,

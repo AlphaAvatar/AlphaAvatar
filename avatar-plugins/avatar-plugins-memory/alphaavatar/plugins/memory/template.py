@@ -13,19 +13,28 @@
 # limitations under the License.
 from __future__ import annotations
 
-from livekit.agents.llm import ChatItem, ChatMessage, ChatRole, FunctionCall, FunctionCallOutput
+from livekit.agents.llm import ChatMessage, FunctionCall, FunctionCallOutput
 
 from alphaavatar.agents.memory.enums.cache_type import MemoryCacheType
+from alphaavatar.core.turn import TurnSnapshot
+
+from .state import MemoryContextItem
 
 
 class MemoryPluginsTemplate:
     @classmethod
     def apply_update_template(
-        cls, chat_context: list[ChatItem], cache_type: MemoryCacheType
+        cls,
+        chat_context: list[MemoryContextItem],
+        cache_type: MemoryCacheType,
     ) -> str:
-        blocks: list[str] = []
+        blocks = []
+
         for item in chat_context:
-            if isinstance(item, ChatMessage):
+            if isinstance(item, TurnSnapshot):
+                if item.text:
+                    blocks.append(f"### user:\n{item.text}")
+            elif isinstance(item, ChatMessage):
                 if cache_type == MemoryCacheType.SESSION_INTERACTION and item.role not in {
                     "user",
                     "assistant",
@@ -34,22 +43,10 @@ class MemoryPluginsTemplate:
                 blocks.append(f"### {item.role}:\n{item.text_content or ''}")
             elif isinstance(item, FunctionCall):
                 blocks.append(
-                    f"### assistant call function [{item.name}]:\nFunction arguments: {item.arguments}"
+                    f"### assistant call function [{item.name}]:\n"
+                    f"Function arguments: {item.arguments}"
                 )
             elif isinstance(item, FunctionCallOutput):
                 blocks.append(f"### function [{item.name}] output:\n{item.output}")
-        return "\n\n".join(blocks)
 
-    @classmethod
-    def apply_search_template(
-        cls,
-        messages: list[ChatItem],
-        *,
-        filter_roles: list[ChatRole] | None = None,
-    ) -> str:
-        filtered = set(filter_roles or [])
-        return "\n\n".join(
-            f"### {item.role}:\n{item.text_content or ''}"
-            for item in messages
-            if isinstance(item, ChatMessage) and item.role not in filtered
-        )
+        return "\n\n".join(blocks)

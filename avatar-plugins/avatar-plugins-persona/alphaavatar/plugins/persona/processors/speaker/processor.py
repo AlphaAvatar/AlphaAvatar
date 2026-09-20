@@ -312,7 +312,7 @@ class SpeakerProcessor(PersonaProcessorBase):
             updated_at=application_now(),
         )
 
-    """Runtime Loop"""
+    """Processor Loop"""
 
     async def _inference_loop(self) -> None:
         while True:

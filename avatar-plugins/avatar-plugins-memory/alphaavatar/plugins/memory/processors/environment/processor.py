@@ -13,9 +13,8 @@
 # limitations under the License.
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
-
-from livekit.agents.llm import ChatItem, ChatMessage
 
 from alphaavatar.agents.memory.enums import MemoryType
 from alphaavatar.agents.memory.schemas import (
@@ -28,8 +27,9 @@ from alphaavatar.agents.runtime.capability import (
     AvatarCapabilityName,
     avatar_capability,
 )
+from alphaavatar.core.turn import TurnInputModality
 
-from ...state import MemoryContextState
+from ...log import logger
 from ...template import MemoryPluginsTemplate
 from ..base import MemoryProcessor
 from .config import EnvironmentConfig
@@ -52,6 +52,8 @@ if TYPE_CHECKING:
     ),
 )
 class EnvironmentProcessor(MemoryProcessor):
+    TURN_CONSUMER_ID = "memory.environment.turn"
+
     def __init__(
         self,
         *,
@@ -67,6 +69,8 @@ class EnvironmentProcessor(MemoryProcessor):
         self._config = config
         self._provider = EnvironmentProvider(config.provider)
         self._scheduler: EnvMemoryScheduler | None = None
+
+        self._turn_task: asyncio.Task[None] | None = None
 
     @property
     def name(self) -> str:
@@ -129,19 +133,35 @@ class EnvironmentProcessor(MemoryProcessor):
 
         return items
 
-    def on_message(
-        self,
-        *,
-        state: MemoryContextState,
-        chat_item: ChatItem,
-    ) -> None:
-        if (
-            isinstance(chat_item, ChatMessage)
-            and chat_item.role == "user"
-            and self._scheduler is not None
-            and self._scheduler.context_id == state.context_id
-        ):
-            self._scheduler.request("user_turn")
+    """Processor Loop"""
+
+    async def _consume_turns(self) -> None:
+        stream = self.runtime.turn.events
+
+        while True:
+            try:
+                await stream.wait_for_pending(consumer_id=self.TURN_CONSUMER_ID)
+                batch = stream.read_pending(consumer_id=self.TURN_CONSUMER_ID, limit=8)
+
+                for event in batch.items:
+                    if (
+                        event.snapshot.modality != TurnInputModality.SYSTEM
+                        and self._scheduler is not None
+                    ):
+                        self._scheduler.request("turn_committed")
+
+                stream.commit(
+                    consumer_id=self.TURN_CONSUMER_ID,
+                    cursor_seq=batch.cursor_seq,
+                )
+
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Environment memory turn consumer failed")
+                await asyncio.sleep(0.05)
+
+    """Runtime operations"""
 
     async def _start(self) -> None:
         if not self.memory_runtime.memory_contexts:
@@ -194,11 +214,23 @@ class EnvironmentProcessor(MemoryProcessor):
 
         await self._scheduler.start()
 
+        self._turn_task = asyncio.create_task(
+            self._consume_turns(),
+            name="memory_environment_turn_consumer",
+        )
+
     async def _stop(
         self,
         *,
         finalize: bool,
     ) -> None:
+        if self._turn_task is not None:
+            self._turn_task.cancel()
+            await asyncio.gather(self._turn_task, return_exceptions=True)
+            self._turn_task = None
+
+        self.runtime.turn.events.clear_consumer(self.TURN_CONSUMER_ID)
+
         if self._scheduler is None:
             return
 

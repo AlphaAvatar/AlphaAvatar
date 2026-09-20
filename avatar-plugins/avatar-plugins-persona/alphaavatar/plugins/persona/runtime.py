@@ -16,8 +16,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 
-from livekit.agents.llm import ChatItem
-
 from alphaavatar.agents.constants import FACE_MATCH_THRESHOLD, SPEAKER_MATCH_THRESHOLD
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.persona import (
@@ -52,7 +50,6 @@ class PersonaRuntime(PersonaBase):
         self._started_processors: list[PersonaProcessorBase] = []
 
         self._processors_bound = False
-        self._profiler_enabled = False
         self._started = False
 
         self._capability_registry = AvatarCapabilityRegistry()
@@ -76,7 +73,7 @@ class PersonaRuntime(PersonaBase):
             for uid, cache in self._persona_cache.items()
             if cache.profile is not None
         }
-        return PersonaPluginsTemplate.apply_system_template(profiles)
+        return PersonaPluginsTemplate.apply_provider_template(profiles)
 
     @staticmethod
     def _can_merge_profiles(
@@ -153,13 +150,6 @@ class PersonaRuntime(PersonaBase):
         state.current_room_type = participant.room_type
         state.login_count += 1
 
-    def add_message(self, *, chat_item: ChatItem) -> None:
-        if not self._profiler_enabled:
-            return
-
-        for cache in self._persona_cache.values():
-            cache.add_message(chat_item)
-
     def bind_processors(self, processors: Sequence[PersonaProcessorBase]) -> None:
         if self._processors_bound:
             raise RuntimeError("Persona processors have already been bound.")
@@ -173,7 +163,6 @@ class PersonaRuntime(PersonaBase):
         registry = AvatarCapabilityRegistry(*processors)
 
         self._processors = tuple(processors)
-        self._profiler_enabled = "profiler" in names
         self._capability_registry = registry
         self._processors_bound = True
 

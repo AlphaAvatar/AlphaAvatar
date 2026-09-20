@@ -16,6 +16,7 @@ from __future__ import annotations
 import pathlib
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from typing import TypeAlias
 
 from livekit.agents.llm import ChatItem, ChatMessage, FunctionCall, FunctionCallOutput
 
@@ -31,6 +32,9 @@ from alphaavatar.agents.memory.schemas import (
     MemoryOwnerRef,
     MemoryParticipantRef,
 )
+from alphaavatar.core.turn import TurnSnapshot
+
+MemoryContextItem: TypeAlias = ChatItem | TurnSnapshot
 
 
 def _deduplicate_keep_latest(items: list[MemoryItem]) -> list[MemoryItem]:
@@ -144,7 +148,10 @@ class MemoryContextState:
         self._owner_refs = _deduplicate_refs(owner_refs)
         self._participant_refs = _deduplicate_refs(participant_refs or [])
         self._cache_type = cache_type
-        self._messages: list[ChatItem] = []
+
+        self._messages: list[MemoryContextItem] = []
+        self._turn_ids: set[str] = set()
+        self._turn_input_ids: set[str] = set()
 
     @property
     def context(self) -> MemoryContextRef:
@@ -209,7 +216,29 @@ class MemoryContextState:
         )
 
     def add_message(self, message: ChatItem) -> None:
-        if isinstance(message, ChatMessage) and message.role in ("user", "assistant"):
+        if isinstance(message, ChatMessage):
+            if message.role not in {"user", "assistant"}:
+                return
+            if message.role == "user" and message.id in self._turn_input_ids:
+                return
             self._messages.append(message)
         elif isinstance(message, FunctionCall | FunctionCallOutput):
             self._messages.append(message)
+
+    def add_turn(self, snapshot: TurnSnapshot) -> None:
+        if snapshot.turn_id in self._turn_ids:
+            return
+
+        self._messages = [
+            item
+            for item in self._messages
+            if not (
+                isinstance(item, ChatMessage)
+                and item.role == "user"
+                and item.id == snapshot.input_id
+            )
+        ]
+
+        self._messages.append(snapshot)
+        self._turn_ids.add(snapshot.turn_id)
+        self._turn_input_ids.add(snapshot.input_id)

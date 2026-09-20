@@ -19,8 +19,6 @@ from typing import TYPE_CHECKING
 from alphaavatar.agents.plugin import AvatarRuntimePlugin
 
 if TYPE_CHECKING:
-    from livekit.agents.llm import ChatItem
-
     from alphaavatar.agents.persona.cache import PersonaCache
     from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
 
@@ -37,9 +35,6 @@ class PersonaBase(AvatarRuntimePlugin):
     @property
     @abstractmethod
     def persona_content(self) -> str: ...
-
-    @abstractmethod
-    def add_message(self, *, chat_item: ChatItem) -> None: ...
 
     @abstractmethod
     async def load_profile(self, *, uid: str) -> None: ...

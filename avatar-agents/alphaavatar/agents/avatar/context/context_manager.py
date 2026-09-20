@@ -23,7 +23,6 @@ from alphaavatar.agents.providers.schema import (
     ModelInput,
     ModelInputType,
 )
-from alphaavatar.agents.runtime import TurnSnapshot
 from alphaavatar.agents.utils.time import ParticipantTimeContext, format_user_time
 from alphaavatar.core.env import ObservationKind
 from alphaavatar.core.perception import (
@@ -31,6 +30,7 @@ from alphaavatar.core.perception import (
     TemporalAlignmentMode,
 )
 from alphaavatar.core.time import RuntimeTimeRange
+from alphaavatar.core.turn import TurnSnapshot
 
 from .context_builder import ContextBuilder
 from .schema import ContextBuildRequest, ContextBuildResult

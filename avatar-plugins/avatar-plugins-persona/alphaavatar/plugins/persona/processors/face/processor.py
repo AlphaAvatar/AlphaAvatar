@@ -505,7 +505,7 @@ class FaceProcessor(PersonaProcessorBase):
             image_height=int(data["image_height"]),
         )
 
-    """Runtime Loop"""
+    """Processor Loop"""
 
     async def _inference_loop(self) -> None:
         while True:

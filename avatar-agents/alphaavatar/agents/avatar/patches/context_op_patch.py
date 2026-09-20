@@ -58,20 +58,9 @@ class LivekitContextPatch:
                 chat_item=payload["value"],
             )
 
-    def persona_context_watcher(
-        self, chat_context: ObservableList, op: OpType, payload: dict[str, Any]
-    ):
-        if op == OpType.INSERT:
-            self._engine.persona.add_message(
-                chat_item=payload["value"],
-            )
-
     async def __call__(self, chat_context: ObservableList, op: OpType, payload: dict[str, Any]):
         # Notify memory
         self.memory_context_watcher(chat_context=chat_context, op=op, payload=payload)
-
-        # Notify persona
-        self.persona_context_watcher(chat_context=chat_context, op=op, payload=payload)
 
 
 class ObservableList(MutableSequence, Generic[T]):
