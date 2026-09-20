@@ -150,6 +150,9 @@ class MemoryRuntime(MemoryBase):
         return state
 
     def _open_root_context(self) -> None:
+        if self._root_context_id is not None:
+            return
+
         user_id = self._runtime.session.primary_user_id
         session_path = self._runtime.session.session_path
         runtime_context = self._runtime.context
@@ -288,15 +291,18 @@ class MemoryRuntime(MemoryBase):
     """Runtime operations"""
 
     async def _stop_turn_consumer(self, *, drain: bool) -> None:
+        self._runtime.turn.unregister_context_consumer(self.TURN_CONSUMER_ID)
+
         if self._turn_task is not None:
             self._turn_task.cancel()
             await asyncio.gather(self._turn_task, return_exceptions=True)
             self._turn_task = None
 
-        if drain:
-            self._drain_turns()
-
-        self._runtime.turn.events.clear_consumer(self.TURN_CONSUMER_ID)
+        try:
+            if drain:
+                self._drain_turns()
+        finally:
+            self._runtime.turn.events.clear_consumer(self.TURN_CONSUMER_ID)
 
     async def on_session_start(self) -> None:
         if self._started:
@@ -343,7 +349,6 @@ class MemoryRuntime(MemoryBase):
         errors: list[Exception] = []
 
         try:
-            self._runtime.turn.unregister_context_consumer(self.TURN_CONSUMER_ID)
             await self._stop_turn_consumer(drain=True)
         except Exception as exc:
             errors.append(exc)

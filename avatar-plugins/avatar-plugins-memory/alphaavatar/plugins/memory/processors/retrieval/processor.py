@@ -235,8 +235,15 @@ class RetrievalProcessor(MemoryProcessor):
             return
 
         context_id = self.memory_runtime.resolve_context_id(snapshot.context_ids)
-        query = self._turn_query(snapshot, context_id)
+        if context_id is None:
+            logger.warning(
+                "Memory retrieval has no context for turn turn_id=%s context_ids=%s",
+                snapshot.turn_id,
+                snapshot.context_ids,
+            )
+            return
 
+        query = self._turn_query(snapshot, context_id)
         if not query:
             return
 

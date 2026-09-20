@@ -55,6 +55,13 @@ class AvatarInfoConfig(BaseModel):
 
     def model_post_init(self, __context):
         # Get Global environment variables
+        # BUG: The first time, you might get:
+        # BUG: data/avatar-id
+        # BUG: If `AvatarInfoConfig` is instantiated again within the same process, the environment variable is already:
+        # BUG: /data/avatar-id
+        # BUG: It might then be concatenated again to form:
+        # BUG: /data/avatar-id/avatar-id
+
         self.name = os.getenv("AVATAR_NAME") or self.name
         self.timezone = os.getenv("AVATAR_TIMEZONE") or self.timezone
         self.work_dir = os.getenv("AVATAR_WORK_DIR") or self.work_dir
