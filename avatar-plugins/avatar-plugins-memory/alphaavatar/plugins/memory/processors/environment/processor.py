@@ -122,7 +122,6 @@ class EnvironmentProcessor(MemoryProcessor):
 
         await self.commit_items(
             state=state,
-            processor=self.name,
             start=batch.from_sequence,
             end=batch.to_sequence,
             items=items,
@@ -152,7 +151,7 @@ class EnvironmentProcessor(MemoryProcessor):
 
         initial_cutoff = self.perception_runtime.capture_cutoff()
 
-        checkpoint = await self.memory_runtime.store.get_checkpoint(
+        checkpoint = await self.store.get_checkpoint(
             context_id=state.context_id,
             processor=self.name,
         )
@@ -166,7 +165,7 @@ class EnvironmentProcessor(MemoryProcessor):
             )
 
         if checkpoint < initial_cutoff.sequence:
-            await self.memory_runtime.store.commit(
+            await self.store.commit(
                 [],
                 context_id=state.context_id,
                 processor=self.name,

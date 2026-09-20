@@ -111,16 +111,8 @@ class RetrievalProcessor(MemoryProcessor):
         for observer in self._recall_observers:
             observer(items)
 
-    def _recall_owners(
-        self,
-        owner_refs: list[MemoryOwnerRef],
-    ) -> list[MemoryOwnerRef]:
-        return self.deduplicate_refs(
-            [
-                MemoryOwnerRef.avatar(self._avatar_id),
-                *owner_refs,
-            ]
-        )
+    def _recall_owners(self, owner_refs: list[MemoryOwnerRef]) -> list[MemoryOwnerRef]:
+        return self.deduplicate_refs([MemoryOwnerRef.avatar(self.avatar_id), *owner_refs])
 
     async def search_text(
         self,
@@ -141,7 +133,7 @@ class RetrievalProcessor(MemoryProcessor):
         owners = self._recall_owners(state.owner_refs)
 
         try:
-            return await self.memory_runtime.store.recall_by_context(
+            return await self.store.recall_by_context(
                 context_str=query,
                 owner_refs=owners,
                 context=state.context,
@@ -211,7 +203,7 @@ class RetrievalProcessor(MemoryProcessor):
             )
 
         try:
-            return await self.memory_runtime.store.recall_by_graph_node(
+            return await self.store.recall_by_graph_node(
                 owner_refs=owners,
                 context=state.context,
                 node_keys=node_keys,

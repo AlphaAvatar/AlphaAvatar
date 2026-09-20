@@ -96,7 +96,7 @@ class ConversationProcessor(MemoryProcessor):
         timeout: float = 5.0,
     ):
         try:
-            return await self.memory_runtime.store.search_similar_batch(
+            return await self.store.search_similar_batch(
                 texts,
                 owner_refs=owner_refs,
                 context=context,
@@ -142,7 +142,7 @@ class ConversationProcessor(MemoryProcessor):
                 state=state,
                 memory_type=MemoryType.Avatar,
                 patches=delta.assistant_memory_entries,
-                owner_refs=[MemoryOwnerRef.avatar(self.memory_runtime.avatar_id)],
+                owner_refs=[MemoryOwnerRef.avatar(self.avatar_id)],
                 participant_refs=state.participant_refs,
                 source_refs=source_refs,
                 scope=MemoryScope.owner(),
@@ -174,7 +174,6 @@ class ConversationProcessor(MemoryProcessor):
 
             await self.commit_items(
                 state=state,
-                processor=self.name,
                 start=start,
                 end=end,
                 items=[

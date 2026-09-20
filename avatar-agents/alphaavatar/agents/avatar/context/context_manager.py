@@ -79,7 +79,7 @@ class AvatarContextManager:
         self._system_template = AvatarSysPromptTemplate(
             avatar_config.avatar.introduction,
             interaction_method=self._runtime.context.interaction_method,
-            internal_capabilities=(*memory.capabilities, *persona.capabilities),
+            internal_capabilities=self._runtime.capability_registry.capabilities,
             stable_behavior_rules=self._runtime.context.global_behavior_rules,
         )
         self._runtime_context_template = RuntimeContextTemplate()

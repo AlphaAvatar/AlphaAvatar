@@ -39,6 +39,3 @@ class MemoryBase(AvatarRuntimePlugin):
 
     @abstractmethod
     def add_message(self, *, context_id: str, chat_item: ChatItem) -> None: ...
-
-    @abstractmethod
-    async def update(self, *, context_id: str | None = None) -> None: ...

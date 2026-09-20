@@ -31,13 +31,15 @@ from alphaavatar.agents.memory.schemas import (
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.utils.time import application_now
 
+from ..schemas import norm_token, norm_topic
+from ..storage.graph import build_graph_from_mentions
+from ..template import MemoryPluginsTemplate
+
 if TYPE_CHECKING:
     from ..runtime import MemoryRuntime
-    from ..schemas import PatchOp, norm_token, norm_topic
+    from ..schemas import PatchOp
     from ..state import MemoryContextState
     from ..storage import MemoryStore
-    from ..storage.graph import build_graph_from_mentions
-    from ..template import MemoryPluginsTemplate
 
 
 class MemoryProcessor(MemoryProcessorBase):

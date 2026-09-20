@@ -129,13 +129,7 @@ class ToolProcessor(MemoryProcessor):
                 return
 
             if not self._has_tool_event(messages):
-                await self.commit_items(
-                    state=state,
-                    processor=self.name,
-                    start=start,
-                    end=end,
-                    items=[],
-                )
+                await self.commit_items(state=state, start=start, end=end, items=[])
                 return
 
             content = self.render_context_content(
@@ -163,7 +157,7 @@ class ToolProcessor(MemoryProcessor):
                 state=state,
                 memory_type=MemoryType.Avatar,
                 patches=delta.assistant_memory_entries,
-                owner_refs=[MemoryOwnerRef.avatar(self.memory_runtime.avatar_id)],
+                owner_refs=[MemoryOwnerRef.avatar(self.avatar_id)],
                 participant_refs=participants,
                 source_refs=source_refs,
                 scope=MemoryScope.owner(),
@@ -181,7 +175,6 @@ class ToolProcessor(MemoryProcessor):
 
             await self.commit_items(
                 state=state,
-                processor=self.name,
                 start=start,
                 end=end,
                 items=[
