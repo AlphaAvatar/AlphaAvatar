@@ -217,6 +217,7 @@ class AvatarTurnController(AvatarRuntimePlugin):
             input_observation_ids=decision.input_observation_ids,
             actors=((self._turn_entity(decision.actor),) if decision.actor is not None else ()),
             addressees=tuple(self._turn_entity(addressee) for addressee in decision.addressees),
+            context_ids=(self._runtime.context.context_id,),
             metadata={
                 "candidate_revision": decision.candidate_revision,
                 "decision_event_id": event.event_id,

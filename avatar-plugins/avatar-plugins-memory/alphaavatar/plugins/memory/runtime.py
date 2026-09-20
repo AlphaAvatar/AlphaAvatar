@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import pathlib
 from collections.abc import Sequence
-from uuid import uuid4
 
 from livekit.agents.llm import ChatItem
 
@@ -30,7 +29,7 @@ from alphaavatar.agents.memory.schemas import (
 )
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
-from alphaavatar.core.turn import TurnSnapshot
+from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
 
 from .log import logger
 from .processors.base import MemoryProcessor
@@ -58,7 +57,6 @@ class MemoryRuntime(MemoryBase):
         self._root_context_id: str | None = None
 
         self._processors: tuple[MemoryProcessor, ...] = ()
-        self._processors_by_name: dict[str, MemoryProcessor] = {}
         self._started_processors: list[MemoryProcessor] = []
         self._processors_bound = False
         self._started = False
@@ -120,7 +118,6 @@ class MemoryRuntime(MemoryBase):
         registry = AvatarCapabilityRegistry(*processors)
 
         self._processors = tuple(processors)
-        self._processors_by_name = {processor.name: processor for processor in processors}
         self._capability_registry = registry
         self._processors_bound = True
 
@@ -129,35 +126,6 @@ class MemoryRuntime(MemoryBase):
         if state is None:
             raise ValueError(f"Memory context not found: {context_id}")
         return state
-
-    def _open_root_context(self) -> None:
-        user_id = self._runtime.session.primary_user_id
-        session_path = self._runtime.session.session_path
-
-        if not user_id:
-            return
-
-        if session_path is None:
-            raise RuntimeError("SessionRuntime.session_path is not initialized")
-
-        context = MemoryContextRef(
-            episode_id=uuid4().hex,
-            context_id=uuid4().hex,
-            session_id=self._runtime.session.session_id,
-            created_at=self._runtime.session.created_at,
-        )
-
-        self.open_context(
-            context=context,
-            provider_dir=session_path.provider_dir,
-            owner_refs=[MemoryOwnerRef.user(user_id)],
-            participant_refs=[
-                MemoryParticipantRef.user(user_id),
-                MemoryParticipantRef.avatar(self._avatar_id),
-            ],
-        )
-
-        self._root_context_id = context.context_id
 
     def open_context(
         self,
@@ -180,6 +148,36 @@ class MemoryRuntime(MemoryBase):
         )
         self._memory_contexts[context.context_id] = state
         return state
+
+    def _open_root_context(self) -> None:
+        user_id = self._runtime.session.primary_user_id
+        session_path = self._runtime.session.session_path
+        runtime_context = self._runtime.context
+
+        if not user_id:
+            return
+
+        if session_path is None:
+            raise RuntimeError("SessionRuntime.session_path is not initialized")
+
+        context = MemoryContextRef(
+            episode_id=runtime_context.episode_id,
+            context_id=runtime_context.context_id,
+            session_id=self._runtime.session.session_id,
+            created_at=self._runtime.session.created_at,
+        )
+
+        self.open_context(
+            context=context,
+            provider_dir=session_path.provider_dir,
+            owner_refs=[MemoryOwnerRef.user(user_id)],
+            participant_refs=[
+                MemoryParticipantRef.user(user_id),
+                MemoryParticipantRef.avatar(self._avatar_id),
+            ],
+        )
+
+        self._root_context_id = context.context_id
 
     def close_context(self, context_id: str) -> MemoryContextState:
         state = self.context_state(context_id)
@@ -223,15 +221,25 @@ class MemoryRuntime(MemoryBase):
 
     """Runtime Loop"""
 
-    def _turn_context_id(self, snapshot: TurnSnapshot) -> str | None:
-        for context_id in snapshot.context_ids:
-            if context_id in self._memory_contexts:
-                return context_id
+    def resolve_context_id(self, context_ids: Sequence[str]) -> str | None:
+        if context_ids:
+            return next(
+                (context_id for context_id in context_ids if context_id in self._memory_contexts),
+                None,
+            )
         return self._root_context_id
 
     def _record_turn(self, snapshot: TurnSnapshot) -> None:
-        context_id = self._turn_context_id(snapshot)
+        if snapshot.modality == TurnInputModality.SYSTEM:
+            return
+
+        context_id = self.resolve_context_id(snapshot.context_ids)
         if context_id is None:
+            logger.warning(
+                "Memory has no context for turn turn_id=%s context_ids=%s",
+                snapshot.turn_id,
+                snapshot.context_ids,
+            )
             return
 
         self.context_state(context_id).add_turn(snapshot)
@@ -279,6 +287,17 @@ class MemoryRuntime(MemoryBase):
 
     """Runtime operations"""
 
+    async def _stop_turn_consumer(self, *, drain: bool) -> None:
+        if self._turn_task is not None:
+            self._turn_task.cancel()
+            await asyncio.gather(self._turn_task, return_exceptions=True)
+            self._turn_task = None
+
+        if drain:
+            self._drain_turns()
+
+        self._runtime.turn.events.clear_consumer(self.TURN_CONSUMER_ID)
+
     async def on_session_start(self) -> None:
         if self._started:
             return
@@ -289,6 +308,7 @@ class MemoryRuntime(MemoryBase):
         await self._store.start()
         self._open_root_context()
 
+        self._runtime.turn.register_context_consumer(self.TURN_CONSUMER_ID)
         self._turn_task = asyncio.create_task(
             self._consume_turns(),
             name="memory_turn_consumer",
@@ -304,19 +324,29 @@ class MemoryRuntime(MemoryBase):
                 try:
                     await processor.stop(finalize=False)
                 except Exception:
-                    pass
+                    logger.exception(
+                        "Failed to rollback Memory processor name=%s",
+                        processor.name,
+                    )
 
             self._started_processors.clear()
+            await self._stop_turn_consumer(drain=False)
             await self._store.stop()
             raise
 
         self._started = True
 
     async def on_session_stop(self) -> None:
-        if not self._started and not self._started_processors:
+        if not self._started and not self._started_processors and self._turn_task is None:
             return
 
         errors: list[Exception] = []
+
+        try:
+            self._runtime.turn.unregister_context_consumer(self.TURN_CONSUMER_ID)
+            await self._stop_turn_consumer(drain=True)
+        except Exception as exc:
+            errors.append(exc)
 
         for processor in reversed(self._started_processors):
             try:
@@ -333,7 +363,4 @@ class MemoryRuntime(MemoryBase):
             errors.append(exc)
 
         if errors:
-            raise ExceptionGroup(
-                "Memory shutdown failed",
-                errors,
-            )
+            raise ExceptionGroup("Memory shutdown failed", errors)

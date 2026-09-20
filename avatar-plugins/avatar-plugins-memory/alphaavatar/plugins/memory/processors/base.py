@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
-from livekit.agents.llm import ChatItem, ChatMessage, FunctionCall, FunctionCallOutput
+from livekit.agents.llm import ChatMessage, FunctionCall, FunctionCallOutput
 
 from alphaavatar.agents.memory import MemoryProcessorBase
 from alphaavatar.agents.memory.enums import MemoryType
@@ -159,7 +159,7 @@ class MemoryProcessor(MemoryProcessorBase):
     def render_context_content(
         self,
         state: MemoryContextState,
-        messages: list[ChatItem],
+        messages: list[MemoryContextItem],
     ) -> str:
         content = MemoryPluginsTemplate.apply_update_template(
             messages,
@@ -185,7 +185,7 @@ class MemoryProcessor(MemoryProcessorBase):
     async def checkpoint_window(
         self,
         state: MemoryContextState,
-    ) -> tuple[int, int, list[ChatItem]]:
+    ) -> tuple[int, int, list[MemoryContextItem]]:
         start = await self.store.get_checkpoint(context_id=state.context_id, processor=self.name)
         end = state.message_sequence
 

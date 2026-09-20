@@ -182,14 +182,14 @@ class MemoryContextState:
         return self._cache_type
 
     @property
-    def messages(self) -> list[ChatItem]:
+    def messages(self) -> list[MemoryContextItem]:
         return self._messages
 
     @property
     def message_sequence(self) -> int:
         return len(self._messages)
 
-    def messages_between(self, start: int, end: int) -> list[ChatItem]:
+    def messages_between(self, start: int, end: int) -> list[MemoryContextItem]:
         if not 0 <= start <= end <= len(self._messages):
             raise ValueError(f"Invalid Memory context message range: {start}..{end}")
         return list(self._messages[start:end])
@@ -229,16 +229,16 @@ class MemoryContextState:
         if snapshot.turn_id in self._turn_ids:
             return
 
-        self._messages = [
-            item
-            for item in self._messages
-            if not (
+        for index, item in enumerate(self._messages):
+            if (
                 isinstance(item, ChatMessage)
                 and item.role == "user"
                 and item.id == snapshot.input_id
-            )
-        ]
+            ):
+                self._messages[index] = snapshot
+                break
+        else:
+            self._messages.append(snapshot)
 
-        self._messages.append(snapshot)
         self._turn_ids.add(snapshot.turn_id)
         self._turn_input_ids.add(snapshot.input_id)

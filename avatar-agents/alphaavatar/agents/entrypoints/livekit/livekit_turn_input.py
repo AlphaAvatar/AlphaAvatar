@@ -163,6 +163,7 @@ class LiveKitTurnInput:
             text=message.text_content,
             final_observations=final_observations,
             actors=self._actors(),
+            context_ids=(self._runtime.context.context_id,),
             metadata={"source": source, "livekit_message_created_at": message.created_at},
         )
 

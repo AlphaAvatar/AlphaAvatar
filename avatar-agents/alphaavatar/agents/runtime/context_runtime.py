@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
+from uuid import uuid4
 
 from alphaavatar.agents.constants import DEFAULT_CONTEXT_VALUE
 from alphaavatar.agents.utils.time import ParticipantTimeContext
@@ -161,6 +162,9 @@ class ContextRuntime:
     - turn_behavior_rules
     """
 
+    episode_id: str = field(default_factory=lambda: uuid4().hex)
+    context_id: str = field(default_factory=lambda: uuid4().hex)
+
     interaction_method: InteractionMethod = field(default_factory=InteractionMethod)
     participant_time: dict[str, ParticipantTimeContext] = field(default_factory=dict)
 
@@ -175,6 +179,10 @@ class ContextRuntime:
     turn_behavior_rules: str = DEFAULT_CONTEXT_VALUE
 
     extra_context: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.episode_id or not self.context_id:
+            raise ValueError("episode_id and context_id cannot be empty")
 
     def render_extra_context(self) -> str:
         if not self.extra_context:

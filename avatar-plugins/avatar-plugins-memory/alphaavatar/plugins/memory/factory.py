@@ -39,8 +39,6 @@ class MemoryPlugin(AvatarPlugin):
         *,
         runtime: AvatarRuntime,
         avatar_id: str,
-        memory_search_context: int,
-        memory_recall_num: int,
         maximum_memory_num: int,
         init_config: dict[str, Any] | None = None,
     ) -> MemoryBase:
@@ -90,8 +88,6 @@ class MemoryPlugin(AvatarPlugin):
                     runtime=runtime,
                     memory=memory,
                     config=config.retrieval,
-                    search_context=memory_search_context,
-                    recall_num=memory_recall_num,
                     recall_observers=(
                         (conversation.record_recall,) if conversation is not None else ()
                     ),

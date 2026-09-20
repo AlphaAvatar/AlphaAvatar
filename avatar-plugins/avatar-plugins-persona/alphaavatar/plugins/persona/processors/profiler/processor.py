@@ -266,12 +266,50 @@ class ProfilerProcessor(PersonaProcessorBase):
                 logger.exception("Persona profiler turn consumer failed")
                 await asyncio.sleep(0.05)
 
+    async def _drain_turns(self) -> None:
+        stream = self.runtime.turn.events
+
+        while True:
+            batch = stream.read_pending(consumer_id=self.CONSUMER_ID, limit=32)
+
+            if batch.has_gap:
+                logger.warning(
+                    "Persona profiler missed committed turns missed=%s",
+                    batch.missed_count,
+                )
+
+            for event in batch.items:
+                await self._record_turn(event.snapshot)
+
+            if batch.cursor_seq > batch.committed_cursor_seq:
+                stream.commit(
+                    consumer_id=self.CONSUMER_ID,
+                    cursor_seq=batch.cursor_seq,
+                )
+
+            if not batch.items or batch.remaining_count == 0:
+                return
+
     """Runtime operations"""
 
     async def _start(self) -> None:
+        self._consumer_task = asyncio.create_task(
+            self._consume_turns(),
+            name="persona_profiler_turn_consumer",
+        )
         logger.info("Persona Profiler started")
 
     async def _stop(self, *, finalize: bool) -> None:
+        if self._consumer_task is not None:
+            self._consumer_task.cancel()
+            await asyncio.gather(self._consumer_task, return_exceptions=True)
+            self._consumer_task = None
+
+        if finalize:
+            await self._drain_turns()
+
+        self.runtime.turn.events.clear_consumer(self.CONSUMER_ID)
+
         if not finalize:
             logger.info("Persona Profiler stopped without finalization")
             return

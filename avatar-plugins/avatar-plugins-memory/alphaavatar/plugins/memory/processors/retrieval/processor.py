@@ -21,8 +21,6 @@ from collections.abc import (
 )
 from typing import TYPE_CHECKING
 
-from livekit.agents.llm import ChatItem
-
 from alphaavatar.agents import AvatarModule
 from alphaavatar.agents.memory.enums import MemoryType
 from alphaavatar.agents.memory.schemas import (
@@ -38,7 +36,6 @@ from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
 
 from ...log import logger
 from ...storage.graph import GraphLookup
-from ...template import MemoryPluginsTemplate
 from ..base import MemoryProcessor
 from .config import RetrievalConfig
 from .schema import RetrievalCapabilityInput, RetrievalOp
@@ -72,8 +69,6 @@ class RetrievalProcessor(MemoryProcessor):
         runtime: AvatarRuntime,
         memory: MemoryRuntime,
         config: RetrievalConfig,
-        search_context: int,
-        recall_num: int,
         recall_observers: tuple[
             RecallObserver,
             ...,
@@ -82,8 +77,8 @@ class RetrievalProcessor(MemoryProcessor):
         super().__init__(runtime=runtime, memory=memory)
 
         self._config = config
-        self._search_context = search_context
-        self._recall_num = recall_num
+        self._search_context = config.search_context
+        self._recall_num = config.recall_num
         self._recall_observers = recall_observers
 
         self._consumer_task: asyncio.Task[None] | None = None
@@ -121,24 +116,6 @@ class RetrievalProcessor(MemoryProcessor):
     def _recall_owners(self, owner_refs: list[MemoryOwnerRef]) -> list[MemoryOwnerRef]:
         return self.deduplicate_refs([MemoryOwnerRef.avatar(self.avatar_id), *owner_refs])
 
-    def _turn_context_id(self, snapshot: TurnSnapshot) -> str:
-        for context_id in snapshot.context_ids:
-            if context_id in self.memory_runtime.memory_contexts:
-                return context_id
-        return self.memory_runtime.root_context_id
-
-    def _turn_query(self, snapshot: TurnSnapshot, context_id: str) -> str:
-        text = (snapshot.text or "").strip()
-        if not text:
-            return ""
-
-        history = self._query_history.setdefault(
-            context_id,
-            deque(maxlen=max(1, self._search_context)),
-        )
-        history.append(text)
-        return "\n\n".join(f"### user:\n{item}" for item in history)
-
     async def _search_text(
         self,
         query: str,
@@ -174,33 +151,6 @@ class RetrievalProcessor(MemoryProcessor):
                 exc,
             )
             return []
-
-    async def search_context(
-        self,
-        *,
-        context_id: str,
-        chat_context: list[ChatItem],
-        timeout: float = 3.0,
-    ) -> None:
-        query = MemoryPluginsTemplate.apply_search_template(
-            chat_context[-self._search_context :],
-            filter_roles=["system"],
-        )
-
-        if not query:
-            return
-
-        items = await self.search_text(
-            query,
-            context_id=context_id,
-            top_k=self._recall_num,
-            timeout=timeout,
-        )
-
-        # Only passive recall contributes to the
-        # conversation consolidation recall ledger.
-        self._notify_passive_recall(items)
-        self.memory_runtime.apply_items(items)
 
     async def _search_graph(
         self,
@@ -268,11 +218,23 @@ class RetrievalProcessor(MemoryProcessor):
 
     """Processor Loop"""
 
+    def _turn_query(self, snapshot: TurnSnapshot, context_id: str) -> str:
+        text = (snapshot.text or "").strip()
+        if not text:
+            return ""
+
+        history = self._query_history.setdefault(
+            context_id,
+            deque(maxlen=max(1, self._search_context)),
+        )
+        history.append(text)
+        return "\n\n".join(f"### user:\n{item}" for item in history)
+
     async def _process_turn(self, snapshot: TurnSnapshot) -> None:
         if snapshot.modality == TurnInputModality.SYSTEM:
             return
 
-        context_id = self._turn_context_id(snapshot)
+        context_id = self.memory_runtime.resolve_context_id(snapshot.context_ids)
         query = self._turn_query(snapshot, context_id)
 
         if not query:

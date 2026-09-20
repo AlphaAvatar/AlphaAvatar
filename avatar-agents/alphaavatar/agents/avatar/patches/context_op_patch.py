@@ -20,7 +20,7 @@ from contextlib import contextmanager
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-from livekit.agents import ChatItem
+from livekit.agents import ChatItem, llm
 
 if TYPE_CHECKING:
     from ..engine import AvatarEngine
@@ -50,13 +50,23 @@ class LivekitContextPatch:
         self._engine = engine
 
     def memory_context_watcher(
-        self, chat_context: ObservableList, op: OpType, payload: dict[str, Any]
-    ):
-        if op == OpType.INSERT:
-            self._engine.memory.add_message(
-                context_id=self._engine.memory.root_context_id,
-                chat_item=payload["value"],
-            )
+        self,
+        chat_context: ObservableList,
+        op: OpType,
+        payload: dict[str, Any],
+    ) -> None:
+        if op != OpType.INSERT:
+            return
+
+        item = payload["value"]
+
+        if isinstance(item, llm.ChatMessage) and item.role == "user":
+            return
+
+        self._engine.memory.add_message(
+            context_id=self._engine.memory.root_context_id,
+            chat_item=item,
+        )
 
     async def __call__(self, chat_context: ObservableList, op: OpType, payload: dict[str, Any]):
         # Notify memory

@@ -46,11 +46,14 @@ class AvatarRuntime:
     clock: RuntimeClock
     workspace: WorkspacePaths
 
-    session: SessionRuntime
-    context: ContextRuntime
+    # core-level
     perception: PerceptionRuntime
     turn: TurnRuntime
     output: OutputRuntime
+
+    # agent-level
+    session: SessionRuntime
+    context: ContextRuntime
 
     inference: InferenceExecutor
 

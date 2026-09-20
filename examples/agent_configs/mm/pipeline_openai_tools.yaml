@@ -175,8 +175,6 @@ character:
 memory:
   plugin: default
 
-  search_context: 3
-  recall_num: 6
   maximum_memory_num: 28
 
   vdb_config:
@@ -186,6 +184,8 @@ memory:
   init_config:
     retrieval:
       enabled: true
+      search_context: 3
+      recall_num: 6
 
     conversation:
       enabled: true

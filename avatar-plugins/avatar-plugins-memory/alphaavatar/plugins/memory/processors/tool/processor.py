@@ -17,7 +17,6 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from livekit.agents.llm import (
-    ChatItem,
     FunctionCall,
     FunctionCallOutput,
 )
@@ -37,7 +36,7 @@ from alphaavatar.agents.runtime.capability import (
     avatar_capability,
 )
 
-from ...state import MemoryContextState
+from ...state import MemoryContextItem, MemoryContextState
 from ..base import MemoryProcessor
 from .config import ToolConfig
 from .provider import ToolProvider
@@ -78,7 +77,7 @@ class ToolProcessor(MemoryProcessor):
         )
 
     @staticmethod
-    def _has_tool_event(messages: list[ChatItem]) -> bool:
+    def _has_tool_event(messages: list[MemoryContextItem]) -> bool:
         return any(
             isinstance(
                 item,
@@ -99,7 +98,7 @@ class ToolProcessor(MemoryProcessor):
     def _participants(
         self,
         state: MemoryContextState,
-        messages: list[ChatItem],
+        messages: list[MemoryContextItem],
     ) -> list[MemoryParticipantRef]:
         refs = list(state.participant_refs)
 
