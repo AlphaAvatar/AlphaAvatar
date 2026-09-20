@@ -14,36 +14,20 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from alphaavatar.agents.plugin import AvatarRuntimePlugin
 
 if TYPE_CHECKING:
     from livekit.agents.llm import ChatItem
 
-    from alphaavatar.agents.runtime import SessionRuntime
-    from alphaavatar.agents.runtime.capability import AvatarCapability, AvatarCapabilityRegistry
-
-    from .processor import MemoryProcessorBase
-    from .schemas import MemoryItem
+    from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
 
 
 class MemoryBase(AvatarRuntimePlugin):
     @property
     @abstractmethod
-    def capabilities(self) -> tuple[AvatarCapability, ...]: ...
-
-    @property
-    @abstractmethod
     def capability_registry(self) -> AvatarCapabilityRegistry: ...
-
-    @property
-    @abstractmethod
-    def processors(self) -> tuple[MemoryProcessorBase, ...]: ...
-
-    @property
-    @abstractmethod
-    def session_runtime(self) -> SessionRuntime: ...
 
     @property
     @abstractmethod
@@ -53,21 +37,8 @@ class MemoryBase(AvatarRuntimePlugin):
     @abstractmethod
     def memory_content(self) -> str: ...
 
-    @property
-    @abstractmethod
-    def memory_items(self) -> list[MemoryItem]: ...
-
     @abstractmethod
     def add_message(self, *, context_id: str, chat_item: ChatItem) -> None: ...
 
     @abstractmethod
     async def update(self, *, context_id: str | None = None) -> None: ...
-
-    @abstractmethod
-    async def invoke(
-        self,
-        name: str,
-        arguments: dict[str, Any] | None = None,
-        *,
-        timeout: float | None = None,
-    ) -> Any: ...

@@ -88,7 +88,7 @@ class EnvironmentProcessor(MemoryProcessor):
             memory_input=batch.memory_input,
             previous_env_memory=previous or None,
             conversation_context=batch.conversation_context,
-            metadata=self.memory_runtime.trace_metadata(
+            metadata=self.trace_metadata(
                 state=state,
                 component="environment",
                 operation="environment_delta",
@@ -103,7 +103,7 @@ class EnvironmentProcessor(MemoryProcessor):
 
         source_prefix = state.context.session_id or state.context.episode_id
 
-        items = self.memory_runtime.build_memory_items(
+        items = self.build_memory_items(
             state=state,
             memory_type=MemoryType.ENV,
             patches=delta.env_memory_entries,
@@ -120,7 +120,7 @@ class EnvironmentProcessor(MemoryProcessor):
             },
         )
 
-        await self.memory_runtime.commit_items(
+        await self.commit_items(
             state=state,
             processor=self.name,
             start=batch.from_sequence,

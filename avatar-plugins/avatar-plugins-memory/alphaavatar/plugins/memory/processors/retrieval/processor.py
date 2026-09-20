@@ -24,7 +24,10 @@ from livekit.agents.llm import ChatItem
 
 from alphaavatar.agents import AvatarModule
 from alphaavatar.agents.memory.enums import MemoryType
-from alphaavatar.agents.memory.schemas import MemoryItem
+from alphaavatar.agents.memory.schemas import (
+    MemoryItem,
+    MemoryOwnerRef,
+)
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import (
     AvatarCapabilityName,
@@ -108,6 +111,17 @@ class RetrievalProcessor(MemoryProcessor):
         for observer in self._recall_observers:
             observer(items)
 
+    def _recall_owners(
+        self,
+        owner_refs: list[MemoryOwnerRef],
+    ) -> list[MemoryOwnerRef]:
+        return self.deduplicate_refs(
+            [
+                MemoryOwnerRef.avatar(self._avatar_id),
+                *owner_refs,
+            ]
+        )
+
     async def search_text(
         self,
         query: str,
@@ -124,7 +138,7 @@ class RetrievalProcessor(MemoryProcessor):
 
         state = self.memory_runtime.context_state(context_id or self.memory_runtime.root_context_id)
 
-        owners = self.memory_runtime.recall_owners(state.owner_refs)
+        owners = self._recall_owners(state.owner_refs)
 
         try:
             return await self.memory_runtime.store.recall_by_context(
@@ -185,7 +199,7 @@ class RetrievalProcessor(MemoryProcessor):
     ) -> list[MemoryItem]:
         state = self.memory_runtime.context_state(context_id or self.memory_runtime.root_context_id)
 
-        owners = self.memory_runtime.recall_owners(state.owner_refs)
+        owners = self._recall_owners(state.owner_refs)
 
         node_keys: list[str] = []
 

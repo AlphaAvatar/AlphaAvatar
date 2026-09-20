@@ -110,6 +110,10 @@ class AvatarEngine(Agent):
         self._tools.append(get_runtime_context_tool())
 
         # Step 3: initialize per-call model context preparation.
+        self._runtime.capability_registry.collect(
+            self._memory,
+            self._persona,
+        )
         self._context_manager = AvatarContextManager(
             avatar_config=self._avatar_config,
             runtime=self._runtime,

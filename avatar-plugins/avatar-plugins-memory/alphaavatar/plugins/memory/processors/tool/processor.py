@@ -113,7 +113,7 @@ class ToolProcessor(MemoryProcessor):
             and (tool_id := str(getattr(item, "name", "") or "").strip())
         )
 
-        return self.memory_runtime.deduplicate_refs(refs)
+        return self.deduplicate_refs(refs)
 
     async def update(self, state: MemoryContextState) -> None:
         if state.cache_type not in {
@@ -123,16 +123,13 @@ class ToolProcessor(MemoryProcessor):
             return
 
         async with self._lock(state.context_id):
-            start, end, messages = await self.memory_runtime.checkpoint_window(
-                state,
-                self.name,
-            )
+            start, end, messages = await self.checkpoint_window(state)
 
             if start == end:
                 return
 
             if not self._has_tool_event(messages):
-                await self.memory_runtime.commit_items(
+                await self.commit_items(
                     state=state,
                     processor=self.name,
                     start=start,
@@ -141,14 +138,14 @@ class ToolProcessor(MemoryProcessor):
                 )
                 return
 
-            content = self.memory_runtime.render_context_content(
+            content = self.render_context_content(
                 state,
                 messages,
             )
 
             delta = await self._provider.extract(
                 context_content=content,
-                metadata=self.memory_runtime.trace_metadata(
+                metadata=self.trace_metadata(
                     state=state,
                     component="tool",
                     operation="tool_delta",
@@ -160,9 +157,9 @@ class ToolProcessor(MemoryProcessor):
                 state,
                 messages,
             )
-            source_refs = self.memory_runtime.source_refs(messages)
+            source_refs = self.source_refs(messages)
 
-            avatar_items = self.memory_runtime.build_memory_items(
+            avatar_items = self.build_memory_items(
                 state=state,
                 memory_type=MemoryType.Avatar,
                 patches=delta.assistant_memory_entries,
@@ -172,7 +169,7 @@ class ToolProcessor(MemoryProcessor):
                 scope=MemoryScope.owner(),
             )
 
-            tool_items = self.memory_runtime.build_memory_items(
+            tool_items = self.build_memory_items(
                 state=state,
                 memory_type=MemoryType.TOOLS,
                 patches=delta.user_or_tool_memory_entries,
@@ -182,7 +179,7 @@ class ToolProcessor(MemoryProcessor):
                 scope=MemoryScope.owner(),
             )
 
-            await self.memory_runtime.commit_items(
+            await self.commit_items(
                 state=state,
                 processor=self.name,
                 start=start,

@@ -13,39 +13,26 @@
 # limitations under the License.
 from __future__ import annotations
 
-import asyncio
 import pathlib
-from abc import abstractmethod
-from collections.abc import Iterable, Sequence
-from typing import TYPE_CHECKING, Any
+from collections.abc import Sequence
 from uuid import uuid4
 
-from livekit.agents.llm import ChatItem, ChatMessage, FunctionCall, FunctionCallOutput
+from livekit.agents.llm import ChatItem
 
 from alphaavatar.agents.memory import MemoryBase
 from alphaavatar.agents.memory.enums import MemoryCacheType, MemoryType
 from alphaavatar.agents.memory.schemas import (
-    MemoryCheckpointAdvance,
     MemoryContextRef,
     MemoryItem,
     MemoryOwnerRef,
     MemoryParticipantRef,
-    MemoryScope,
-    MemorySourceRef,
 )
-from alphaavatar.agents.runtime import AvatarRuntime, SessionRuntime
-from alphaavatar.agents.runtime.capability import AvatarCapability, AvatarCapabilityRegistry
-from alphaavatar.agents.utils.time import application_now
+from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
 
 from .processors.base import MemoryProcessor
-from .schemas import PatchOp, norm_token, norm_topic
 from .state import MemoryContextState, MemoryState
 from .storage import MemoryStore
-from .storage.graph import build_graph_from_mentions
-from .template import MemoryPluginsTemplate
-
-if TYPE_CHECKING:
-    pass
 
 
 class MemoryRuntime(MemoryBase):
@@ -74,10 +61,6 @@ class MemoryRuntime(MemoryBase):
         self._capability_registry = AvatarCapabilityRegistry()
 
     @property
-    def runtime(self) -> AvatarRuntime:
-        return self._runtime
-
-    @property
     def avatar_id(self) -> str:
         return self._avatar_id
 
@@ -88,18 +71,6 @@ class MemoryRuntime(MemoryBase):
     @property
     def capability_registry(self) -> AvatarCapabilityRegistry:
         return self._capability_registry
-
-    @property
-    def capabilities(self) -> tuple[AvatarCapability, ...]:
-        return self._capability_registry.capabilities
-
-    @property
-    def processors(self) -> tuple[MemoryProcessor, ...]:
-        return self._processors
-
-    @property
-    def session_runtime(self) -> SessionRuntime:
-        return self._runtime.session
 
     @property
     def root_context_id(self) -> str:
@@ -114,10 +85,6 @@ class MemoryRuntime(MemoryBase):
     @property
     def memory_state(self) -> MemoryState:
         return self._memory_state
-
-    @property
-    def memory_items(self) -> list[MemoryItem]:
-        return self._memory_state.all_items
 
     @property
     def memory_content(self) -> str:
@@ -149,9 +116,6 @@ class MemoryRuntime(MemoryBase):
         self._processors_by_name = {processor.name: processor for processor in processors}
         self._capability_registry = registry
         self._processors_bound = True
-
-    def processor(self, name: str) -> MemoryProcessor | None:
-        return self._processors_by_name.get(name)
 
     def context_state(self, context_id: str) -> MemoryContextState:
         state = self._memory_contexts.get(context_id)
@@ -197,7 +161,7 @@ class MemoryRuntime(MemoryBase):
         return state
 
     def _sync_user_refs(self) -> None:
-        for migration in self.session_runtime.pending_user_path_migrations:
+        for migration in self._runtime.session.pending_user_path_migrations:
             for state in self._memory_contexts.values():
                 state.replace_user_id(
                     migration.old_user_id,
@@ -215,118 +179,6 @@ class MemoryRuntime(MemoryBase):
                 chat_item=chat_item,
             )
 
-    @staticmethod
-    def deduplicate_refs(refs: Iterable) -> list:
-        return list({ref.key: ref for ref in refs}.values())
-
-    @classmethod
-    def source_refs(cls, messages: list[ChatItem]) -> list[MemorySourceRef]:
-        refs: list[MemorySourceRef] = []
-
-        for item in messages:
-            if isinstance(item, ChatMessage):
-                if source_id := str(getattr(item, "id", "") or "").strip():
-                    refs.append(MemorySourceRef.message(source_id))
-                continue
-
-            call_id = str(getattr(item, "call_id", "") or getattr(item, "id", "") or "").strip()
-            tool_id = str(getattr(item, "name", "") or "").strip()
-
-            if not call_id or not tool_id:
-                continue
-
-            if isinstance(item, FunctionCall):
-                refs.append(MemorySourceRef.tool_call(tool_id, call_id))
-            elif isinstance(item, FunctionCallOutput):
-                refs.append(MemorySourceRef.tool_result(tool_id, call_id))
-
-        return cls.deduplicate_refs(refs)
-
-    def build_memory_items(
-        self,
-        *,
-        state: MemoryContextState,
-        memory_type: MemoryType,
-        patches: list[PatchOp],
-        owner_refs: list[MemoryOwnerRef],
-        participant_refs: list[MemoryParticipantRef],
-        source_refs: list[MemorySourceRef],
-        scope: MemoryScope,
-        extra_data: dict[str, Any] | None = None,
-    ) -> list[MemoryItem]:
-        created_at = application_now()
-        items: list[MemoryItem] = []
-
-        for patch in patches:
-            if not norm_token(patch.value):
-                continue
-
-            item = MemoryItem(
-                context=state.context,
-                scope=scope,
-                owner_refs=owner_refs,
-                participant_refs=participant_refs,
-                source_refs=source_refs,
-                value=patch.value,
-                topic=norm_topic(patch.topic),
-                created_at=created_at,
-                memory_type=memory_type,
-                extra_data=dict(extra_data or {}),
-            )
-            item.graph_nodes, item.graph_links = build_graph_from_mentions(
-                item=item,
-                mentions=patch.node_mentions,
-            )
-            items.append(item)
-
-        return items
-
-    def render_context_content(
-        self,
-        state: MemoryContextState,
-        messages: list[ChatItem],
-    ) -> str:
-        content = MemoryPluginsTemplate.apply_update_template(
-            messages,
-            state.cache_type,
-        )
-        env_memory = self._memory_state.render(
-            memory_type=MemoryType.ENV,
-            context_id=state.context_id,
-        )
-
-        if not env_memory:
-            return content
-
-        return "\n\n".join(
-            (
-                content,
-                "[CURRENT CONTEXT ENV MEMORY]",
-                env_memory,
-                "[END CURRENT CONTEXT ENV MEMORY]",
-            )
-        )
-
-    async def checkpoint_window(
-        self,
-        state: MemoryContextState,
-        processor: str,
-    ) -> tuple[int, int, list[ChatItem]]:
-        start = await self._store.get_checkpoint(
-            context_id=state.context_id,
-            processor=processor,
-        )
-        end = state.message_sequence
-
-        if start > end:
-            raise RuntimeError(
-                "Memory checkpoint exceeds context message sequence: "
-                f"{state.context_id}:{processor} "
-                f"checkpoint={start} messages={end}"
-            )
-
-        return start, end, state.messages_between(start, end)
-
     def apply_items(self, items: list[MemoryItem]) -> None:
         superseded = {memory_id for item in items for memory_id in item.supersedes_memory_ids}
 
@@ -339,78 +191,6 @@ class MemoryRuntime(MemoryBase):
             bucket = [item for item in current if item.memory_type is memory_type]
             if bucket:
                 self._memory_state.add(memory_type, bucket)
-
-    async def commit_items(
-        self,
-        *,
-        state: MemoryContextState,
-        processor: str,
-        start: int,
-        end: int,
-        items: list[MemoryItem],
-    ) -> None:
-        await self._store.commit(
-            items,
-            context_id=state.context_id,
-            processor=processor,
-            idempotency_key=f"{state.context_id}:{processor}:{start}:{end}",
-            checkpoint=MemoryCheckpointAdvance(
-                from_sequence=start,
-                to_sequence=end,
-            ),
-        )
-        self.apply_items(items)
-
-    def recall_owners(
-        self,
-        owner_refs: list[MemoryOwnerRef],
-    ) -> list[MemoryOwnerRef]:
-        return self.deduplicate_refs(
-            [
-                MemoryOwnerRef.avatar(self._avatar_id),
-                *owner_refs,
-            ]
-        )
-
-    def trace_metadata(
-        self,
-        *,
-        state: MemoryContextState,
-        component: str,
-        operation: str,
-        memory_type: MemoryType,
-        extra: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        context = state.context
-
-        metadata = {
-            "provider_dir": str(state.provider_dir),
-            "plugin": "memory",
-            "component": component,
-            "operation": operation,
-            "episode_id": context.episode_id,
-            "context_id": context.context_id,
-            "session_id": context.session_id,
-            "cache_type": state.cache_type.value,
-            "memory_type": memory_type.value,
-        }
-
-        if extra:
-            metadata.update(extra)
-
-        return metadata
-
-    @abstractmethod
-    async def update(self, *, context_id: str | None = None) -> None:
-        states = (
-            [self.context_state(context_id)]
-            if context_id is not None
-            else list(self._memory_contexts.values())
-        )
-
-        await asyncio.gather(
-            *(processor.update(state) for processor in self._processors for state in states)
-        )
 
     # Temporary bridge until passive retrieval is moved to committed TurnSnapshot.
     async def search_by_context(
@@ -431,18 +211,9 @@ class MemoryRuntime(MemoryBase):
             timeout=timeout,
         )
 
-    # Temporary bridge for existing callers. Not part of MemoryBase.
-    async def search_by_graph_node(self, **kwargs) -> list[MemoryItem]:
-        processor = self._processors_by_name.get("retrieval")
-
-        if processor is None:
-            return []
-
-        return await processor.search_graph(**kwargs)
-
     def _open_root_context(self) -> None:
-        user_id = self.session_runtime.primary_user_id
-        session_path = self.session_runtime.session_path
+        user_id = self._runtime.session.primary_user_id
+        session_path = self._runtime.session.session_path
 
         if not user_id:
             return
@@ -453,8 +224,8 @@ class MemoryRuntime(MemoryBase):
         context = MemoryContextRef(
             episode_id=uuid4().hex,
             context_id=uuid4().hex,
-            session_id=self.session_runtime.session_id,
-            created_at=self.session_runtime.created_at,
+            session_id=self._runtime.session.session_id,
+            created_at=self._runtime.session.created_at,
         )
 
         self.open_context(
@@ -468,15 +239,6 @@ class MemoryRuntime(MemoryBase):
         )
 
         self._root_context_id = context.context_id
-
-    async def invoke(
-        self,
-        name: str,
-        arguments: dict[str, Any] | None = None,
-        *,
-        timeout: float | None = None,
-    ) -> Any:
-        return await self._capability_registry.invoke(name, arguments, timeout=timeout)
 
     async def on_session_start(self) -> None:
         if self._started:

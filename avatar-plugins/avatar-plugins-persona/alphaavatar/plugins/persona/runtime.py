@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
-from typing import Any
 
 from livekit.agents.llm import ChatItem
 
@@ -27,8 +26,8 @@ from alphaavatar.agents.persona import (
     PersonaProcessorBase,
 )
 from alphaavatar.agents.persona.schemas import UserProfile, UserRuntimeState
-from alphaavatar.agents.runtime import AvatarRuntime, SessionRuntime
-from alphaavatar.agents.runtime.capability import AvatarCapability, AvatarCapabilityRegistry
+from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
 from alphaavatar.agents.runtime.session_runtime import ParticipantInfo
 from alphaavatar.agents.utils import NumpyOP
 from alphaavatar.agents.utils.files.work_dirs import prepare_user_path
@@ -61,18 +60,6 @@ class PersonaRuntime(PersonaBase):
     @property
     def capability_registry(self) -> AvatarCapabilityRegistry:
         return self._capability_registry
-
-    @property
-    def capabilities(self) -> tuple[AvatarCapability, ...]:
-        return self._capability_registry.capabilities
-
-    @property
-    def processors(self) -> tuple[PersonaProcessorBase, ...]:
-        return self._processors
-
-    @property
-    def session_runtime(self) -> SessionRuntime:
-        return self._runtime.session
 
     @property
     def persona_cache(self) -> dict[str, PersonaCache]:
@@ -146,7 +133,7 @@ class PersonaRuntime(PersonaBase):
         profile: UserProfile,
     ) -> None:
         state = self._ensure_runtime_state(profile)
-        session_id = self.session_runtime.session_id
+        session_id = self._runtime.session.session_id
 
         if state.current_session_id == session_id:
             state.current_timezone = participant.user_time.timezone
@@ -194,7 +181,7 @@ class PersonaRuntime(PersonaBase):
         if uid in self._persona_cache:
             return
 
-        participant = self.session_runtime.get_participant(user_id=uid)
+        participant = self._runtime.session.get_participant(user_id=uid)
         profile = await self._store.load(uid=uid)
 
         if participant is None and profile.is_empty:
@@ -218,7 +205,7 @@ class PersonaRuntime(PersonaBase):
             user_path = self._runtime.workspace.users.get(uid)
             prepare_user_path(user_path)
 
-            self.session_runtime.resolve_participant_user(
+            self._runtime.session.resolve_participant_user(
                 participant_id=cache.participant.participant_id,
                 user_id=uid,
                 user_path=user_path,
@@ -255,22 +242,13 @@ class PersonaRuntime(PersonaBase):
         if errors:
             raise ExceptionGroup("One or more Persona profiles failed to save", errors)
 
-    async def invoke(
-        self,
-        name: str,
-        arguments: dict[str, Any] | None = None,
-        *,
-        timeout: float | None = None,
-    ) -> Any:
-        return await self._capability_registry.invoke(name, arguments, timeout=timeout)
-
     async def on_session_start(self) -> None:
         if self._started:
             return
         if not self._processors_bound:
             raise RuntimeError("Persona processors have not been bound.")
 
-        primary_user_id = self.session_runtime.primary_user_id
+        primary_user_id = self._runtime.session.primary_user_id
         if primary_user_id:
             await self.load_profile(uid=primary_user_id)
 

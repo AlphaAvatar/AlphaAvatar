@@ -15,7 +15,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from alphaavatar.agents.configs.runtime_config import RuntimeConfig
 from alphaavatar.agents.utils.files.work_dirs import (
@@ -27,6 +27,7 @@ from alphaavatar.core.output import OutputRuntime
 from alphaavatar.core.perception import PerceptionRuntime
 from alphaavatar.core.time import RuntimeClock
 
+from .capability import AvatarCapabilityRegistry
 from .context_runtime import ContextRuntime
 from .inference import InferenceExecutor
 from .session_runtime import SessionRuntime
@@ -51,6 +52,8 @@ class AvatarRuntime:
     turn: TurnRuntime
     output: OutputRuntime
     inference: InferenceExecutor
+
+    capability_registry: AvatarCapabilityRegistry = field(default_factory=AvatarCapabilityRegistry)
 
     def __post_init__(self) -> None:
         session_id = self.session.session_id

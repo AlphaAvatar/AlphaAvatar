@@ -21,25 +21,14 @@ from alphaavatar.agents.plugin import AvatarRuntimePlugin
 if TYPE_CHECKING:
     from livekit.agents.llm import ChatItem
 
-    from alphaavatar.agents.runtime import SessionRuntime
-    from alphaavatar.agents.runtime.capability import AvatarCapability
-
-    from .cache import PersonaCache
-    from .processor import PersonaProcessorBase
+    from alphaavatar.agents.persona.cache import PersonaCache
+    from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
 
 
 class PersonaBase(AvatarRuntimePlugin):
     @property
     @abstractmethod
-    def capabilities(self) -> tuple[AvatarCapability, ...]: ...
-
-    @property
-    @abstractmethod
-    def processors(self) -> tuple[PersonaProcessorBase, ...]: ...
-
-    @property
-    @abstractmethod
-    def session_runtime(self) -> SessionRuntime: ...
+    def capability_registry(self) -> AvatarCapabilityRegistry: ...
 
     @property
     @abstractmethod

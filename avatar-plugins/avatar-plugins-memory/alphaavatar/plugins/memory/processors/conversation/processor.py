@@ -115,23 +115,20 @@ class ConversationProcessor(MemoryProcessor):
             return
 
         async with self._lock(state.context_id):
-            start, end, messages = await self.memory_runtime.checkpoint_window(
-                state,
-                self.name,
-            )
+            start, end, messages = await self.checkpoint_window(state)
 
             if start == end:
                 return
 
-            content = self.memory_runtime.render_context_content(
+            content = self.render_context_content(
                 state,
                 messages,
             )
 
             delta = await self._provider.extract(
                 context_content=content,
-                session_gate=(self._config.pipeline.extraction.session_gate),
-                metadata=self.memory_runtime.trace_metadata(
+                session_gate=self._config.pipeline.extraction.session_gate,
+                metadata=self.trace_metadata(
                     state=state,
                     component="conversation",
                     operation="conversation_delta",
@@ -139,9 +136,9 @@ class ConversationProcessor(MemoryProcessor):
                 ),
             )
 
-            source_refs = self.memory_runtime.source_refs(messages)
+            source_refs = self.source_refs(messages)
 
-            avatar_items = self.memory_runtime.build_memory_items(
+            avatar_items = self.build_memory_items(
                 state=state,
                 memory_type=MemoryType.Avatar,
                 patches=delta.assistant_memory_entries,
@@ -151,7 +148,7 @@ class ConversationProcessor(MemoryProcessor):
                 scope=MemoryScope.owner(),
             )
 
-            conversation_items = self.memory_runtime.build_memory_items(
+            conversation_items = self.build_memory_items(
                 state=state,
                 memory_type=MemoryType.CONVERSATION,
                 patches=delta.user_or_tool_memory_entries,
@@ -166,7 +163,7 @@ class ConversationProcessor(MemoryProcessor):
                 session_content=content,
                 updated_at=application_now(),
                 trace_metadata=(
-                    self.memory_runtime.trace_metadata(
+                    self.trace_metadata(
                         state=state,
                         component="conversation.consolidation",
                         operation="memory_consolidation",
@@ -175,7 +172,7 @@ class ConversationProcessor(MemoryProcessor):
                 ),
             )
 
-            await self.memory_runtime.commit_items(
+            await self.commit_items(
                 state=state,
                 processor=self.name,
                 start=start,
