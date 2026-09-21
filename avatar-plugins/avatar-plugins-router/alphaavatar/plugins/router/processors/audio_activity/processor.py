@@ -28,6 +28,7 @@ from alphaavatar.core.media import (
 from alphaavatar.core.perception import PerceptionStreamKind
 
 from ...log import logger
+from .config import AudioActivityConfig
 from .source import AudioActivitySource
 
 
@@ -39,14 +40,15 @@ class AudioActivityProcessor(RouterProcessorBase):
         *,
         runtime: AvatarRuntime,
         vad: VADBase,
-        pre_roll_sec: float = 0.15,
-        max_buffer_sec: float = 2.0,
+        config: AudioActivityConfig,
     ) -> None:
         super().__init__(runtime=runtime)
 
         self._vad = vad
-        self._pre_roll_sec = pre_roll_sec
-        self._max_buffer_sec = max_buffer_sec
+
+        self._config = config
+        self._pre_roll_sec = config.pre_roll_sec
+        self._max_buffer_sec = config.max_buffer_sec
 
         self._sources: dict[PerceptionSourceRef, AudioActivitySource] = {}
 

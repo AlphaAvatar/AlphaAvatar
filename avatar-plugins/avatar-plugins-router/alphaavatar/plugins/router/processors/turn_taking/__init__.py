@@ -11,12 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .fusion import DefaultAddressingFusion
-from .policy import DefaultTurnTakingPolicy
+from .config import TurnTakingConfig
 from .processor import MultimodalTurnTakingProcessor
+from .runner import SmartTurnV3Runner
 
 __all__ = [
-    "DefaultAddressingFusion",
-    "DefaultTurnTakingPolicy",
+    "TurnTakingConfig",
+    "SmartTurnV3Runner",
     "MultimodalTurnTakingProcessor",
 ]

@@ -11,16 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from pydantic import BaseModel, ConfigDict, Field
-
-from .processors.addressing import AddressingConfig
-from .processors.audio_activity import AudioActivityConfig
-from .processors.turn_taking import TurnTakingConfig
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-class RouterConfig(BaseModel):
+class AudioActivityConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    audio_activity: AudioActivityConfig = Field(default_factory=AudioActivityConfig)
-    addressing: AddressingConfig = Field(default_factory=AddressingConfig)
-    turn_taking: TurnTakingConfig = Field(default_factory=TurnTakingConfig)
+    enabled: bool = True
+    pre_roll_sec: float = Field(default=0.3, ge=0.0)
+    max_buffer_sec: float = Field(default=2.0, gt=0.0)
+
+    @model_validator(mode="after")
+    def validate_buffer(self) -> "AudioActivityConfig":
+        if self.max_buffer_sec < self.pre_roll_sec:
+            raise ValueError("max_buffer_sec cannot be smaller than pre_roll_sec")
+        return self

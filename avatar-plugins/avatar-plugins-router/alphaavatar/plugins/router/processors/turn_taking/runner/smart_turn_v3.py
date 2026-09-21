@@ -17,7 +17,7 @@ import numpy as np
 
 from alphaavatar.agents.runtime.inference import InferenceRunner
 
-from ..model_files import (
+from ..models.model_files import (
     SMART_TURN_V3_CONFIG,
     resolve_smart_turn_model_path,
 )

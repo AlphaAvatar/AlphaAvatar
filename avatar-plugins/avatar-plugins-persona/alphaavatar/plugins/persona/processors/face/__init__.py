@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .analysis_runner import FaceAnalysisRunner
+from .config import FaceConfig
 from .processor import FaceProcessor
 
-__all__ = ["FaceAnalysisRunner", "FaceProcessor"]
+__all__ = ["FaceAnalysisRunner", "FaceConfig", "FaceProcessor"]

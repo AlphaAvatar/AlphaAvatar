@@ -39,7 +39,7 @@ from ...log import logger
 from .evidence import TurnEvidenceBuilder
 from .fusion import DefaultAddressingFusion
 from .policy import DefaultTurnTakingPolicy, TurnTakingPolicyResult
-from .state import AddressingEvidenceRecord, SpeakerKey, TurnCandidate
+from .schemas.state import AddressingEvidenceRecord, SpeakerKey, TurnCandidate
 
 _Key = TypeVar("_Key", bound=Hashable)
 
@@ -69,15 +69,6 @@ class TurnTakingCoordinator:
         unsegmented_alignment_sec: float,
         required_addressing_sources: tuple[str, ...] = (),
     ) -> None:
-        if addressing_wait_sec <= 0:
-            raise ValueError("addressing_wait_sec must be positive")
-        if transcript_wait_sec < 0:
-            raise ValueError("transcript_wait_sec cannot be negative")
-        if max_hold_sec <= 0:
-            raise ValueError("max_hold_sec must be positive")
-        if unsegmented_alignment_sec <= 0:
-            raise ValueError("unsegmented_alignment_sec must be positive")
-
         self._runtime = runtime
         self._model = model
         self._policy = policy

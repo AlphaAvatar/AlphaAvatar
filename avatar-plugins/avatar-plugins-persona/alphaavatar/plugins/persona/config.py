@@ -11,29 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Any
-
 from pydantic import BaseModel, ConfigDict, Field
 
-
-class ProfilerConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = True
-    provider: dict[str, Any] | None = None
-
-
-class SpeakerConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = True
-    inference_queue_size: int = Field(default=1, ge=1)
-
-
-class FaceConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = True
+from .processors.face import FaceConfig
+from .processors.profiler import ProfilerConfig
+from .processors.speaker import SpeakerConfig
 
 
 class DefaultPersonaConfig(BaseModel):

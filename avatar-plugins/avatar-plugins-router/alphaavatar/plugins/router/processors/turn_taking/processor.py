@@ -15,18 +15,17 @@ from __future__ import annotations
 
 import asyncio
 
-from alphaavatar.agents.router import (
-    RouterProcessorBase,
-    TurnTakingModelBase,
-)
+from alphaavatar.agents.router import RouterProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.core.env import AnnotationKind
 from alphaavatar.core.perception import PerceptionStreamKind
 
 from ...log import logger
+from .config import TurnTakingConfig
 from .coordinator import TurnTakingCoordinator
-from .fusion import DefaultAddressingFusion
-from .policy import DefaultTurnTakingPolicy
+from .fusion import AddressingFusion
+from .models import create_turn_taking_model
+from .policy import TurnTakingPolicy
 
 
 class MultimodalTurnTakingProcessor(RouterProcessorBase):
@@ -37,36 +36,34 @@ class MultimodalTurnTakingProcessor(RouterProcessorBase):
         self,
         *,
         runtime: AvatarRuntime,
-        model: TurnTakingModelBase,
-        policy: DefaultTurnTakingPolicy | None = None,
-        fusion: DefaultAddressingFusion | None = None,
-        addressing_wait_sec: float = 0.5,
-        transcript_wait_sec: float = 0.75,
-        max_hold_sec: float = 1.2,
-        unsegmented_alignment_sec: float = 0.75,
+        config: TurnTakingConfig,
         required_addressing_sources: tuple[str, ...] = (),
     ) -> None:
         super().__init__(runtime=runtime)
 
-        if addressing_wait_sec <= 0:
-            raise ValueError("addressing_wait_sec must be positive")
-        if transcript_wait_sec < 0:
-            raise ValueError("transcript_wait_sec cannot be negative")
-        if max_hold_sec <= 0:
-            raise ValueError("max_hold_sec must be positive")
-        if unsegmented_alignment_sec <= 0:
-            raise ValueError("unsegmented_alignment_sec must be positive")
+        self._config = config
 
-        self._model = model
+        self._model = create_turn_taking_model(
+            config.model.name,
+            inference_executor=runtime.inference,
+        )
         self._coordinator = TurnTakingCoordinator(
             runtime=runtime,
-            model=model,
-            policy=policy or DefaultTurnTakingPolicy(),
-            fusion=fusion or DefaultAddressingFusion(),
-            addressing_wait_sec=addressing_wait_sec,
-            transcript_wait_sec=transcript_wait_sec,
-            max_hold_sec=max_hold_sec,
-            unsegmented_alignment_sec=unsegmented_alignment_sec,
+            model=self._model,
+            policy=TurnTakingPolicy(
+                commit_threshold=config.policy.commit_threshold,
+                audio_only_speech_start_interrupt=(
+                    config.interruption.enabled and config.interruption.audio_only_speech_start
+                ),
+                respond_to_group=config.policy.respond_to_group,
+            ),
+            fusion=AddressingFusion(
+                conflict_margin=config.fusion.conflict_margin,
+            ),
+            addressing_wait_sec=config.addressing_wait_sec,
+            transcript_wait_sec=config.transcript_wait_sec,
+            max_hold_sec=config.max_hold_sec,
+            unsegmented_alignment_sec=config.unsegmented_alignment_sec,
             required_addressing_sources=required_addressing_sources,
         )
 

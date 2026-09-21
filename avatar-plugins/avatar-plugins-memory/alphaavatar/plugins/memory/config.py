@@ -13,10 +13,10 @@
 # limitations under the License.
 from pydantic import BaseModel, ConfigDict, Field
 
-from .processors.conversation.config import ConversationConfig
-from .processors.environment.config import EnvironmentConfig
-from .processors.retrieval.config import RetrievalConfig
-from .processors.tool.config import ToolConfig
+from .processors.conversation import ConversationConfig
+from .processors.environment import EnvironmentConfig
+from .processors.retrieval import RetrievalConfig
+from .processors.tool import ToolConfig
 
 
 class DefaultMemoryConfig(BaseModel):

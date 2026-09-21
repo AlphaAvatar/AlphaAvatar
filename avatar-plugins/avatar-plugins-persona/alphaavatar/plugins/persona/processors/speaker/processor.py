@@ -46,6 +46,7 @@ from ...model_files import SPEAKER_MODEL_CONFIG
 from ...runtime import PersonaRuntime
 from .attribute_runner import SpeakerAttributeRunner
 from .cache import SpeakerCache
+from .config import SpeakerConfig
 from .vector_runner import SpeakerVectorRunner
 
 
@@ -86,10 +87,11 @@ class SpeakerProcessor(PersonaProcessorBase):
         *,
         runtime: AvatarRuntime,
         persona: PersonaRuntime,
-        inference_queue_size: int = 1,
+        config: SpeakerConfig,
     ) -> None:
         super().__init__(runtime=runtime, persona=persona)
 
+        self._config = config
         self._vector_config = SPEAKER_MODEL_CONFIG[SpeakerVectorRunner.MODEL_TYPE]
         self._attribute_config = SPEAKER_MODEL_CONFIG[SpeakerAttributeRunner.MODEL_TYPE]
 
@@ -99,19 +101,15 @@ class SpeakerProcessor(PersonaProcessorBase):
         self._sample_rate = self._vector_config.sample_rate
         self._window_samples = self._vector_config.window_size_samples
         self._step_samples = self._vector_config.step_size_samples
-
         self._window_bytes = self._window_samples * 2
         self._step_bytes = self._step_samples * 2
         self._step_sec = self._step_samples / self._sample_rate
-        self._attribute_every = max(
-            1,
-            math.ceil(self.ATTRIBUTE_INTERVAL_SEC / self._step_sec),
-        )
+        self._attribute_every = max(1, math.ceil(self.ATTRIBUTE_INTERVAL_SEC / self._step_sec))
 
         self._sources: dict[PerceptionSourceRef, SpeakerSourceState] = {}
         self._profile_caches: dict[str, SpeakerCache] = {}
         self._inference_queue: asyncio.Queue[SpeakerWindow] = asyncio.Queue(
-            maxsize=inference_queue_size
+            maxsize=config.inference_queue_size
         )
 
         self._consume_task: asyncio.Task[None] | None = None

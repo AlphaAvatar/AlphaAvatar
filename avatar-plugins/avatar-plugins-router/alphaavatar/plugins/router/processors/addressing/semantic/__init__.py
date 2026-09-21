@@ -11,16 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from pydantic import BaseModel, ConfigDict, Field
+from .config import SemanticAddressingConfig
+from .processor import SemanticAddressingProcessor
+from .runner import SemanticAddressingQwen3Runner
 
-from .processors.addressing import AddressingConfig
-from .processors.audio_activity import AudioActivityConfig
-from .processors.turn_taking import TurnTakingConfig
-
-
-class RouterConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    audio_activity: AudioActivityConfig = Field(default_factory=AudioActivityConfig)
-    addressing: AddressingConfig = Field(default_factory=AddressingConfig)
-    turn_taking: TurnTakingConfig = Field(default_factory=TurnTakingConfig)
+__all__ = [
+    "SemanticAddressingConfig",
+    "SemanticAddressingQwen3Runner",
+    "SemanticAddressingProcessor",
+]

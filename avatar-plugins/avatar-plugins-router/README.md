@@ -385,44 +385,6 @@ The current fallback synchronizer estimates word or character timing from synthe
 | `SpeechSynthesisProcessor`           | Output `AUDIO_SYNCED TEXT_CHUNK`              | `AUDIO_FRAME`, `ALIGNMENT`                | Maintains synthesis jobs and converts text into transport-independent audio.                         |
 | `TranscriptSynchronizationProcessor` | Output text, alignment, playback, and control | `TRANSCRIPT_CHUNK`                        | Releases visible transcript according to actual audio playout.                                       |
 
-## 🧱 Processor Structure
-
-The Router keeps larger interaction domains internally modular:
-
-```text
-processors/
-├── audio_activity/
-│   ├── processor.py
-│   └── source.py
-├── addressing/
-│   ├── semantic.py
-│   └── visual.py
-├── turn_taking/
-│   ├── processor.py
-│   ├── coordinator.py
-│   ├── evidence.py
-│   ├── fusion.py
-│   ├── policy.py
-│   └── state.py
-├── speech_transcription.py
-├── speech_synthesis.py
-└── transcript_synchronization.py
-```
-
-Public Router contracts live under:
-
-```text
-alphaavatar.agents.router
-```
-
-while concrete Router implementations live under:
-
-```text
-alphaavatar.plugins.router
-```
-
-This keeps reusable schemas, model contracts, and processor abstractions separate from plugin implementations.
-
 ## 🔌 Architectural Boundary
 
 The Router owns realtime interaction routing and coordination.

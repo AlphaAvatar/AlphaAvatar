@@ -38,6 +38,7 @@ from alphaavatar.core.env import (
 from alphaavatar.core.perception import PerceptionEvent
 
 from ....log import logger
+from .config import VisualAddressingConfig
 from .orientation import FaceOrientationEstimator
 
 
@@ -64,34 +65,21 @@ class VisualAddressingProcessor(RouterProcessorBase):
         self,
         *,
         runtime: AvatarRuntime,
-        estimator: FaceOrientationEstimator | None = None,
-        toward_threshold: float = 0.72,
-        away_threshold: float = 0.35,
-        ema_alpha: float = 0.55,
-        min_samples: int = 2,
-        republish_interval_sec: float = 0.75,
-        publish_away_evidence: bool = True,
+        config: VisualAddressingConfig,
     ) -> None:
         super().__init__(runtime=runtime)
 
-        if not 0.0 <= away_threshold < toward_threshold <= 1.0:
-            raise ValueError(
-                "Visual addressing thresholds must satisfy zero <= away < toward <= one"
-            )
-        if not 0.0 < ema_alpha <= 1.0:
-            raise ValueError("ema_alpha must be between zero and one")
-        if min_samples <= 0:
-            raise ValueError("min_samples must be positive")
-        if republish_interval_sec < 0:
-            raise ValueError("republish_interval_sec cannot be negative")
-
-        self._estimator = estimator or FaceOrientationEstimator()
-        self._toward_threshold = toward_threshold
-        self._away_threshold = away_threshold
-        self._ema_alpha = ema_alpha
-        self._min_samples = min_samples
-        self._republish_interval_ns = int(republish_interval_sec * 1_000_000_000)
-        self._publish_away_evidence = publish_away_evidence
+        self._estimator = FaceOrientationEstimator(
+            yaw_scale=config.yaw_scale,
+            roll_scale_deg=config.roll_scale_deg,
+            min_face_area_ratio=config.min_face_area_ratio,
+        )
+        self._toward_threshold = config.toward_threshold
+        self._away_threshold = config.away_threshold
+        self._ema_alpha = config.ema_alpha
+        self._min_samples = config.min_samples
+        self._republish_interval_ns = int(config.republish_interval_sec * 1_000_000_000)
+        self._publish_away_evidence = config.publish_away_evidence
 
         self._states: dict[VisualSubjectKey, VisualOrientationState] = {}
 

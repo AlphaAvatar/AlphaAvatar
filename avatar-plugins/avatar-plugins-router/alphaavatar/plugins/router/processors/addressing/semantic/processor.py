@@ -25,7 +25,6 @@ from alphaavatar.agents.router import (
     InteractionEntityRef,
     RouterProcessorBase,
     SemanticAddressingLabel,
-    SemanticAddressingModelBase,
     SemanticAddressingRequest,
     SemanticAddressingResult,
     SemanticAddressingTranscript,
@@ -42,7 +41,9 @@ from alphaavatar.core.env import (
 from alphaavatar.core.media import TextPayload
 from alphaavatar.core.perception import PerceptionEvent, PerceptionStreamKind
 
-from ...log import logger
+from ....log import logger
+from .config import SemanticAddressingConfig
+from .factory import create_semantic_addressing_model
 
 SpeakerKey = tuple[str, str]
 
@@ -94,22 +95,16 @@ class SemanticAddressingProcessor(RouterProcessorBase):
         self,
         *,
         runtime: AvatarRuntime,
-        model: SemanticAddressingModelBase,
-        avatar_identities: tuple[str, ...],
-        history_turns: int = 2,
+        config: SemanticAddressingConfig,
     ) -> None:
         super().__init__(runtime=runtime)
-        identities = tuple(
-            dict.fromkeys(identity.strip() for identity in avatar_identities if identity.strip())
-        )
-        if not identities:
-            raise ValueError("avatar_identities cannot be empty")
-        if history_turns < 0:
-            raise ValueError("history_turns cannot be negative")
 
-        self._model = model
-        self._avatar_identities = identities
-        self._history_turns = history_turns
+        self._model = create_semantic_addressing_model(
+            config.model.name,
+            inference_executor=runtime.inference,
+        )
+        self._avatar_identities = config.avatar_identities
+        self._history_turns = config.history_turns
         self._states: dict[SpeakerKey, _SpeakerState] = {}
         self._workers: set[asyncio.Task[None]] = set()
         self._tasks: tuple[asyncio.Task[None], ...] = ()

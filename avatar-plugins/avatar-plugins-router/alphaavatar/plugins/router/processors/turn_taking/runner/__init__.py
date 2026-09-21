@@ -11,12 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .factory import create_semantic_addressing_model
-from .model import Qwen3SemanticAddressingModel
-from .runner import SemanticAddressingQwen3Runner
+from .smart_turn_v3 import SmartTurnV3Runner
 
-__all__ = [
-    "Qwen3SemanticAddressingModel",
-    "SemanticAddressingQwen3Runner",
-    "create_semantic_addressing_model",
-]
+__all__ = ["SmartTurnV3Runner"]

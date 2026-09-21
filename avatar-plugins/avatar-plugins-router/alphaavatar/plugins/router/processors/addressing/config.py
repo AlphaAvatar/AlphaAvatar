@@ -13,14 +13,12 @@
 # limitations under the License.
 from pydantic import BaseModel, ConfigDict, Field
 
-from .processors.addressing import AddressingConfig
-from .processors.audio_activity import AudioActivityConfig
-from .processors.turn_taking import TurnTakingConfig
+from .semantic import SemanticAddressingConfig
+from .visual import VisualAddressingConfig
 
 
-class RouterConfig(BaseModel):
+class AddressingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    audio_activity: AudioActivityConfig = Field(default_factory=AudioActivityConfig)
-    addressing: AddressingConfig = Field(default_factory=AddressingConfig)
-    turn_taking: TurnTakingConfig = Field(default_factory=TurnTakingConfig)
+    semantic: SemanticAddressingConfig = Field(default_factory=SemanticAddressingConfig)
+    visual: VisualAddressingConfig = Field(default_factory=VisualAddressingConfig)

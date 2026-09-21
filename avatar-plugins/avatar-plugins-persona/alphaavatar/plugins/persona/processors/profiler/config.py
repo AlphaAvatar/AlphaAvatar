@@ -11,10 +11,20 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .factory import create_turn_taking_model
-from .runner.smart_turn_v3 import SmartTurnV3Runner
+from pydantic import BaseModel, ConfigDict, Field
 
-__all__ = [
-    "create_turn_taking_model",
-    "SmartTurnV3Runner",
-]
+from alphaavatar.agents.providers import ProvidersConfig
+
+
+class ProfilerProviderConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    profile_delta_task: str = "persona.profile_delta"
+    gateway: ProvidersConfig = Field(default_factory=ProvidersConfig)
+
+
+class ProfilerConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    provider: ProfilerProviderConfig = Field(default_factory=ProfilerProviderConfig)

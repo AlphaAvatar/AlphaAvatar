@@ -21,10 +21,12 @@ from alphaavatar.agents.runtime import AvatarRuntime
 
 from .config import DefaultMemoryConfig
 from .log import logger
-from .processors.conversation.processor import ConversationProcessor
-from .processors.environment.processor import EnvironmentProcessor
-from .processors.retrieval.processor import RetrievalProcessor
-from .processors.tool.processor import ToolProcessor
+from .processors import (
+    ConversationProcessor,
+    EnvironmentProcessor,
+    RetrievalProcessor,
+    ToolProcessor,
+)
 from .runtime import MemoryRuntime
 from .storage import MemoryStore
 from .version import __version__

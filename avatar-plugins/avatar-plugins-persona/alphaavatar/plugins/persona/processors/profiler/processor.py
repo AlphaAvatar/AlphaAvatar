@@ -16,26 +16,16 @@ from copy import deepcopy
 from datetime import datetime
 from typing import Any
 
-from langchain_core.prompts import ChatPromptTemplate
-from pydantic import BaseModel, Field
-
-from alphaavatar.agents.persona import (
-    PersonaBase,
-    PersonaCache,
-    PersonaProcessorBase,
-)
-from alphaavatar.agents.providers import ProviderGateway, ProvidersConfig
+from alphaavatar.agents.persona import PersonaBase, PersonaCache, PersonaProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.capability import (
-    AvatarCapabilityName,
-    avatar_capability,
-)
+from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_capability
 from alphaavatar.agents.utils.time import application_now
 from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
 
 from ...log import logger
 from ...profile import UserProfileDetails
 from ...template import PersonaPluginsTemplate
+from .config import ProfilerConfig
 from .op import (
     ProfileDelta,
     append_string,
@@ -45,47 +35,7 @@ from .op import (
     remove_string,
     write_set,
 )
-
-DELTA_PROMPT = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            """You are a "profile delta extractor". Compare the NEW TURN to the CURRENT PROFILE and output only CHANGES as PatchOps.
-
-Constraints (FLAT schema, no nested objects):
-- Paths MUST be single-segment, top-level keys ONLY (e.g., "/name", "/gender", "/preferences", "/constraints").
-  Do NOT use nested paths like "/preferences/interests" or "/location/country" — nested structures are NOT allowed.
-
-List fields (list of strings):
-  - Use op=append to add ONE string item (avoid duplicates)
-  - Use op=remove to remove ONE string item
-  - Use op=set ONLY if replacing the entire list (value must be a list of strings)
-
-String fields:
-  - Use op=set to overwrite the whole string
-  - Use op=append to CONCATENATE text to the end (like "+="). Keep it short and natural.
-  - Use op=clear to empty the string (set to "")
-
-General:
-- evidence must quote the original sentence or a tight paraphrase; set confidence in [0,1].
-- If nothing changes, return an empty list.
-- Avoid hallucinations. Do not invent values not clearly stated or strongly implied.
-""",
-        ),
-        (
-            "human",
-            "CURRENT PROFILE (JSON):\n```{current_profile}```\n\n"
-            "REFERENCE PROFILE FIELDS (type + description):\n```{profile_reference}```\n\n"
-            "NEW TURN:\n```{new_turn}```\n\n"
-            "Output only ProfileDelta (list of PatchOps, If nothing changes, return an empty list).",
-        ),
-    ]
-)
-
-
-class ProfilerRuntimeConfig(BaseModel):
-    profile_delta_task: str = "persona.profile_delta"
-    gateway: ProvidersConfig = Field(default_factory=ProvidersConfig)
+from .provider import ProfilerProvider
 
 
 @avatar_capability(
@@ -103,16 +53,12 @@ class ProfilerProcessor(PersonaProcessorBase):
         *,
         runtime: AvatarRuntime,
         persona: PersonaBase,
-        provider: dict[str, Any] | None = None,
-        **kwargs: Any,
+        config: ProfilerConfig,
     ) -> None:
         super().__init__(runtime=runtime, persona=persona)
 
-        config = ProfilerRuntimeConfig(**provider) if provider else ProfilerRuntimeConfig()
-        self._profile_delta_task = config.profile_delta_task
-        self._provider_gateway = ProviderGateway(config.gateway)
-        self._provider_gateway.validate_tasks([self._profile_delta_task])
-
+        self._config = config
+        self._provider = ProfilerProvider(config.provider)
         self._consumer_task: asyncio.Task[None] | None = None
 
     @property
@@ -123,18 +69,12 @@ class ProfilerProcessor(PersonaProcessorBase):
         self,
         *,
         uid: str,
-        profile_details_dump: dict,
+        profile_details_dump: dict[str, Any],
         new_turn: str,
     ) -> ProfileDelta:
-        result = await self._provider_gateway.ainvoke_structured(
-            task_name=self._profile_delta_task,
-            prompt=DELTA_PROMPT,
-            payload={
-                "current_profile": profile_details_dump,
-                "profile_reference": UserProfileDetails.field_descriptions_prompt(),
-                "new_turn": new_turn,
-            },
-            output_schema=ProfileDelta,
+        return await self._provider.extract(
+            profile_details_dump=profile_details_dump,
+            new_turn=new_turn,
             metadata={
                 "provider_dir": self.session_runtime.session_path.provider_dir,
                 "plugin": "persona",
@@ -144,7 +84,6 @@ class ProfilerProcessor(PersonaProcessorBase):
                 "session_id": self.session_runtime.session_id,
             },
         )
-        return result.output
 
     def _apply_delta(
         self,

@@ -29,7 +29,7 @@ from alphaavatar.core.media import (
 )
 from alphaavatar.core.perception import MediaModality, MediaSourceKind
 
-from .state import TurnCandidate
+from .schemas.state import TurnCandidate
 
 
 class TurnEvidenceBuilder:

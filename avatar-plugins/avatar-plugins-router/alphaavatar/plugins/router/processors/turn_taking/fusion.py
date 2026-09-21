@@ -24,7 +24,7 @@ from alphaavatar.agents.router import (
     TurnTakingAssessment,
 )
 
-from .state import AddressingEvidenceRecord
+from .schemas.state import AddressingEvidenceRecord
 
 _EntityKey = tuple[str, str, str, str]
 _TargetKey = tuple[str, tuple[_EntityKey, ...]]
@@ -47,7 +47,7 @@ def _target_key(evidence: InteractionAddressingEvidence) -> _TargetKey:
     )
 
 
-class DefaultAddressingFusion:
+class AddressingFusion:
     def __init__(self, *, conflict_margin: float = 0.1) -> None:
         if not 0.0 <= conflict_margin <= 1.0:
             raise ValueError("conflict_margin must be between 0 and 1")

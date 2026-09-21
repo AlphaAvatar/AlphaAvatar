@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from alphaavatar.agents import AvatarPlugin
-from alphaavatar.agents.persona import PersonaBase
+from alphaavatar.agents.persona import PersonaBase, PersonaProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
 
 from .config import DefaultPersonaConfig
@@ -40,28 +40,20 @@ class PersonaPlugin(AvatarPlugin):
         config = DefaultPersonaConfig.model_validate(init_config or {})
         store = PersonaStore(runtime=runtime)
         persona = PersonaRuntime(runtime=runtime, store=store)
-        processors = []
+        processors: list[PersonaProcessorBase] = []
 
         if config.profiler.enabled:
             processors.append(
-                ProfilerProcessor(
-                    runtime=runtime,
-                    persona=persona,
-                    provider=config.profiler.provider,
-                )
+                ProfilerProcessor(runtime=runtime, persona=persona, config=config.profiler)
             )
 
         if config.speaker.enabled:
             processors.append(
-                SpeakerProcessor(
-                    runtime=runtime,
-                    persona=persona,
-                    inference_queue_size=config.speaker.inference_queue_size,
-                )
+                SpeakerProcessor(runtime=runtime, persona=persona, config=config.speaker)
             )
 
         if config.face.enabled:
-            processors.append(FaceProcessor(runtime=runtime, persona=persona))
+            processors.append(FaceProcessor(runtime=runtime, persona=persona, config=config.face))
 
         persona.bind_processors(processors)
         return persona

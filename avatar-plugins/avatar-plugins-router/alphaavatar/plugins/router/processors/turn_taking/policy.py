@@ -35,7 +35,7 @@ class TurnTakingPolicyResult:
     addressing: InteractionAddressing | None = None
 
 
-class DefaultTurnTakingPolicy:
+class TurnTakingPolicy:
     def __init__(
         self,
         *,

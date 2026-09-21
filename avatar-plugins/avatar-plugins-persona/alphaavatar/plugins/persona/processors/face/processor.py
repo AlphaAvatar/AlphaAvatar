@@ -62,6 +62,7 @@ from ...model_files import FACE_MODEL_CONFIG
 from ...runtime import PersonaRuntime
 from .analysis_runner import FaceAnalysisRunner
 from .cache import FaceCache
+from .config import FaceConfig
 
 
 @dataclass(slots=True)
@@ -85,9 +86,11 @@ class FaceProcessor(PersonaProcessorBase):
         *,
         runtime: AvatarRuntime,
         persona: PersonaRuntime,
+        config: FaceConfig,
     ) -> None:
         super().__init__(runtime=runtime, persona=persona)
 
+        self._config = config
         self._face_config = FACE_MODEL_CONFIG[FaceAnalysisRunner.MODEL_TYPE]
         self._last_sample_ts: dict[PerceptionSourceRef, float] = {}
         self._profile_caches: dict[str, FaceCache] = {}

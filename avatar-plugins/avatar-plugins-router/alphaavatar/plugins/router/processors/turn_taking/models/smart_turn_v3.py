@@ -27,8 +27,8 @@ from alphaavatar.agents.router import (
 )
 from alphaavatar.agents.runtime.inference import InferenceExecutor
 
+from ..runner import SmartTurnV3Runner
 from .model_files import SMART_TURN_V3_CONFIG
-from .runner.smart_turn_v3 import SmartTurnV3Runner
 
 
 class SmartTurnV3Model(TurnTakingModelBase):

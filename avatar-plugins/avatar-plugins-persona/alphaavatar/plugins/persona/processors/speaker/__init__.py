@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .attribute_runner import SpeakerAttributeRunner
+from .config import SpeakerConfig
 from .processor import SpeakerProcessor
 from .vector_runner import SpeakerVectorRunner
 
 __all__ = [
     "SpeakerAttributeRunner",
+    "SpeakerConfig",
     "SpeakerProcessor",
     "SpeakerVectorRunner",
 ]
