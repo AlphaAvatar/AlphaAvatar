@@ -21,7 +21,6 @@ from typing import TypeVar
 from alphaavatar.agents.router import (
     InteractionAddressingEvidence,
     TurnTakingAction,
-    TurnTakingAssessment,
     TurnTakingDecision,
     TurnTakingEvidence,
     TurnTakingModelBase,
@@ -283,7 +282,6 @@ class TurnTakingCoordinator:
         key: SpeakerKey,
         evidence: TurnTakingEvidence,
         *,
-        assessment: TurnTakingAssessment | None,
         timeout_sec: float,
         reason: str,
     ) -> None:
@@ -298,7 +296,7 @@ class TurnTakingCoordinator:
 
         result = self._policy.resolve_timeout(
             evidence=evidence,
-            assessment=assessment,
+            addressing=self._current_addressing(candidate),
             reason=reason,
         )
 
@@ -362,7 +360,6 @@ class TurnTakingCoordinator:
                 await self._hold_then_resolve(
                     key,
                     evidence,
-                    assessment=None,
                     timeout_sec=self._max_hold_sec,
                     reason="assessment_error_timeout",
                 )
@@ -395,7 +392,7 @@ class TurnTakingCoordinator:
                 if not self._addressing_ready(candidate):
                     result = self._policy.resolve_timeout(
                         evidence=evidence,
-                        assessment=assessment,
+                        addressing=self._current_addressing(candidate),
                         reason="addressing_timeout",
                     )
                     if (
@@ -438,7 +435,6 @@ class TurnTakingCoordinator:
                 await self._hold_then_resolve(
                     key,
                     evidence,
-                    assessment=assessment,
                     timeout_sec=(
                         self._addressing_wait_sec if waiting_for_addressing else self._max_hold_sec
                     ),

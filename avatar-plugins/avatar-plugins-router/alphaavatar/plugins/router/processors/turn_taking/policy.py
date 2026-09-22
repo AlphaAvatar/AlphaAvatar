@@ -205,16 +205,12 @@ class TurnTakingPolicy:
         self,
         *,
         evidence: TurnTakingEvidence,
-        assessment: TurnTakingAssessment | None,
+        addressing: InteractionAddressingEvidence | None,
         reason: str,
     ) -> TurnTakingPolicyResult:
-        addressing_ids = (
-            assessment.addressing_evidence_observation_ids if assessment is not None else ()
-        )
-
-        if assessment is not None and assessment.addressees:
-            addressees = assessment.addressees
-            addressing_mode = assessment.addressing_mode
+        if addressing is not None and addressing.addressees:
+            addressees = addressing.addressees
+            addressing_mode = addressing.addressing_mode
 
             if self._addresses_avatar(addressees):
                 action = TurnTakingAction.COMMIT
@@ -239,9 +235,9 @@ class TurnTakingPolicy:
             confidence=0.0,
             addressees=addressees,
             addressing_mode=addressing_mode,
-            addressing_confidence=(
-                assessment.addressing_confidence if assessment is not None else None
+            addressing_confidence=addressing.confidence if addressing is not None else None,
+            addressing_evidence_ids=(
+                addressing.evidence_observation_ids if addressing is not None else ()
             ),
-            addressing_evidence_ids=addressing_ids,
             reason=reason,
         )
