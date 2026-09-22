@@ -90,6 +90,7 @@ class TurnTakingCoordinator:
         self._orphan_unsegmented_addressing: dict[str, AddressingEvidenceRecord] = {}
 
         self._assessment_tasks: dict[SpeakerKey, asyncio.Task[None]] = {}
+        self._assessment_workers: set[asyncio.Task[None]] = set()
 
     @staticmethod
     def _speaker_matches(
@@ -150,7 +151,8 @@ class TurnTakingCoordinator:
     ) -> None:
         decision = result.decision
         if (
-            decision.turn_candidate_id != candidate.turn_candidate_id
+            self._candidates.get(candidate.key) is not candidate
+            or decision.turn_candidate_id != candidate.turn_candidate_id
             or decision.candidate_revision != candidate.revision
         ):
             return
@@ -214,14 +216,22 @@ class TurnTakingCoordinator:
             )
         )
 
+    def _cancel_assessment(self, key: SpeakerKey) -> None:
+        task = self._assessment_tasks.pop(key, None)
+        if (
+            task is not None
+            and task is not asyncio.current_task()
+            and not task.done()
+            and not task.cancelling()
+        ):
+            task.cancel()
+
     def _drop_candidate(self, key: SpeakerKey) -> None:
         candidate = self._candidates.pop(key, None)
         if candidate is None:
             return
 
-        task = self._assessment_tasks.pop(key, None)
-        if task is not None and task is not asyncio.current_task() and not task.done():
-            task.cancel()
+        self._cancel_assessment(key)
 
         for segment in candidate.segments:
             if self._segment_owners.get(segment) == key:
@@ -229,11 +239,6 @@ class TurnTakingCoordinator:
 
             self._orphan_transcripts.pop(segment, None)
             self._orphan_addressing_by_segment.pop(segment, None)
-
-    def _cancel_assessment(self, key: SpeakerKey) -> None:
-        task = self._assessment_tasks.pop(key, None)
-        if task is not None and not task.done():
-            task.cancel()
 
     async def _wait_for_transcript(
         self,
@@ -344,6 +349,9 @@ class TurnTakingCoordinator:
             except asyncio.CancelledError:
                 raise
             except Exception:
+                if not self._is_current(key, evidence):
+                    return
+
                 logger.exception(
                     "Turn assessment failed turn_candidate_id=%s model=%s",
                     evidence.turn_candidate_id,
@@ -459,10 +467,13 @@ class TurnTakingCoordinator:
 
     def _schedule_assessment(self, key: SpeakerKey, turn_candidate_id: str) -> None:
         self._cancel_assessment(key)
-        self._assessment_tasks[key] = asyncio.create_task(
+        task = asyncio.create_task(
             self._assess_candidate(key, turn_candidate_id),
             name=f"router_turn_assessment:{turn_candidate_id}",
         )
+        self._assessment_tasks[key] = task
+        self._assessment_workers.add(task)
+        task.add_done_callback(self._assessment_workers.discard)
 
     """Addressing Helper"""
 
@@ -830,18 +841,20 @@ class TurnTakingCoordinator:
                 self._schedule_assessment(key, candidate.turn_candidate_id)
 
     async def reset(self) -> None:
-        tasks = tuple(self._assessment_tasks.values())
+        tasks = tuple(self._assessment_workers)
         self._assessment_tasks.clear()
-
-        for task in tasks:
-            task.cancel()
-
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-
         self._candidates.clear()
         self._segment_owners.clear()
         self._orphan_transcripts.clear()
         self._orphan_addressing_by_observation.clear()
         self._orphan_addressing_by_segment.clear()
         self._orphan_unsegmented_addressing.clear()
+
+        for task in tasks:
+            if not task.done() and not task.cancelling():
+                task.cancel()
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        self._assessment_workers.difference_update(tasks)
