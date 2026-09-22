@@ -85,34 +85,34 @@ router:
       max_buffer_sec: 2.0
 
     addressing:
-      addressing_wait_sec: 0.5
-
       semantic:
         enabled: true
         avatar_identities:
           - AlphaAvatar
           - Alpha
         history_turns: 2
-
         model:
           name: qwen3_0_6b_q8_0
 
       visual:
         enabled: false
 
-      fusion:
-        conflict_margin: 0.1
-
     turn_taking:
       enabled: true
+      addressing_wait_sec: 0.5
       transcript_wait_sec: 3.0
+      unsegmented_alignment_sec: 0.75
+      max_hold_sec: 1.5
+
+      fusion:
+        conflict_margin: 0.1
 
       model:
         name: smart_turn_v3
 
       policy:
         commit_threshold: 0.5
-        max_hold_sec: 1.5
+        respond_to_group: false
 
       interruption:
         enabled: true

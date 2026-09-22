@@ -40,6 +40,7 @@ class TurnTakingPolicy:
         self,
         *,
         commit_threshold: float = 0.5,
+        interruption_enabled: bool = True,
         audio_only_speech_start_interrupt: bool = True,
         respond_to_group: bool = False,
     ) -> None:
@@ -47,6 +48,7 @@ class TurnTakingPolicy:
             raise ValueError("commit_threshold must be between 0 and 1")
 
         self._commit_threshold = commit_threshold
+        self._interruption_enabled = interruption_enabled
         self._audio_only_speech_start_interrupt = audio_only_speech_start_interrupt
         self._respond_to_group = respond_to_group
 
@@ -165,7 +167,7 @@ class TurnTakingPolicy:
         evidence: TurnTakingEvidence,
         addressing: InteractionAddressingEvidence | None = None,
     ) -> TurnTakingPolicyResult | None:
-        if not evidence.speech_active:
+        if not self._interruption_enabled or not evidence.speech_active:
             return None
 
         if evidence.turn_mode == TurnTakingMode.AUDIO_ONLY:

@@ -52,14 +52,11 @@ class MultimodalTurnTakingProcessor(RouterProcessorBase):
             model=self._model,
             policy=TurnTakingPolicy(
                 commit_threshold=config.policy.commit_threshold,
-                audio_only_speech_start_interrupt=(
-                    config.interruption.enabled and config.interruption.audio_only_speech_start
-                ),
+                interruption_enabled=config.interruption.enabled,
+                audio_only_speech_start_interrupt=config.interruption.audio_only_speech_start,
                 respond_to_group=config.policy.respond_to_group,
             ),
-            fusion=AddressingFusion(
-                conflict_margin=config.fusion.conflict_margin,
-            ),
+            fusion=AddressingFusion(conflict_margin=config.fusion.conflict_margin),
             addressing_wait_sec=config.addressing_wait_sec,
             transcript_wait_sec=config.transcript_wait_sec,
             max_hold_sec=config.max_hold_sec,

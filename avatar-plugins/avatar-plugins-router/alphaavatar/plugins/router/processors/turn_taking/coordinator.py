@@ -37,8 +37,8 @@ from alphaavatar.core.perception import PerceptionEvent
 
 from ...log import logger
 from .evidence import TurnEvidenceBuilder
-from .fusion import DefaultAddressingFusion
-from .policy import DefaultTurnTakingPolicy, TurnTakingPolicyResult
+from .fusion import AddressingFusion
+from .policy import TurnTakingPolicy, TurnTakingPolicyResult
 from .schemas.state import AddressingEvidenceRecord, SpeakerKey, TurnCandidate
 
 _Key = TypeVar("_Key", bound=Hashable)
@@ -61,8 +61,8 @@ class TurnTakingCoordinator:
         *,
         runtime: AvatarRuntime,
         model: TurnTakingModelBase,
-        policy: DefaultTurnTakingPolicy,
-        fusion: DefaultAddressingFusion,
+        policy: TurnTakingPolicy,
+        fusion: AddressingFusion,
         addressing_wait_sec: float,
         transcript_wait_sec: float,
         max_hold_sec: float,
@@ -398,6 +398,17 @@ class TurnTakingCoordinator:
                         assessment=assessment,
                         reason="addressing_timeout",
                     )
+                    if (
+                        result.decision.action == TurnTakingAction.COMMIT
+                        and candidate.missing_transcripts
+                    ):
+                        await self._wait_for_transcript(
+                            key,
+                            evidence,
+                            reason="awaiting_transcript_after_addressing_timeout",
+                        )
+                        return
+
                     self._publish_result(candidate, result)
                     self._drop_candidate(key)
                     return

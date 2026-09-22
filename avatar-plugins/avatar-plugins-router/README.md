@@ -184,19 +184,13 @@ For audio-only interaction, the initial conversational prior is that the user is
 
 ## 👁️ Visual Addressing
 
-`VisualAddressingProcessor` reserves the visual addressing boundary for future multimodal interaction signals.
+`VisualAddressingProcessor` consumes `FACE_DETECTION` annotations and uses `FaceOrientationEstimator` to produce visual addressing evidence.
 
-Future implementations may publish evidence derived from:
+The processor maintains independent state for each visual subject, smooths orientation scores, applies configurable thresholds, and limits repeated evidence publication. Ambiguous multi-face observations are skipped when the active subject cannot be identified reliably.
 
-* gaze direction;
-* face orientation;
-* body orientation;
-* gestures;
-* visual attention;
-* scene events;
-* other multimodal interaction signals.
+Face orientation provides heuristic addressing evidence; it is not a direct measurement of eye gaze.
 
-Visual evidence uses the same addressing annotation contract as semantic evidence and can therefore be introduced without changing the Turn Taking processor.
+Gaze direction, body orientation, gestures, scene events, and other visual attention signals remain extension points. Additional producers can publish the same addressing annotation contract without changing the Turn Taking processor.
 
 ## 🔀 Addressing Fusion
 
@@ -279,7 +273,7 @@ VISUAL_ONLY
 
 Explicit `NON_AVATAR` evidence may suppress a response, while ambiguous or missing evidence can fall back to the audio-only conversational prior.
 
-`AUDIO_VISUAL` can combine semantic, conversational, and future visual evidence.
+`AUDIO_VISUAL` can combine semantic, conversational, and face-orientation evidence.
 
 `VISUAL_ONLY` is reserved for future proactive and observation-driven interaction behavior.
 
@@ -380,10 +374,36 @@ The current fallback synchronizer estimates word or character timing from synthe
 | `AudioActivityProcessor`             | Perception `audio`                            | `SPEECH_FRAME`, `SPEECH_SEGMENT`          | Applies VAD, maintains per-source speech state, preserves pre-roll, and publishes segmented speech.  |
 | `SpeechTranscriptionProcessor`       | Routed speech                                 | `TRANSCRIPT_SEGMENT`                      | Calls injected STT and publishes transcript observations without blocking audio processing.          |
 | `SemanticAddressingProcessor`        | Transcript segments                           | `INTERACTION_ADDRESSING_EVIDENCE`         | Determines whether speech is directed at the Avatar and maintains per-speaker conversation focus.    |
-| `VisualAddressingProcessor`          | Visual perception                             | Addressing evidence                       | Defines the extension boundary for future gaze, orientation, gesture, and visual-attention evidence. |
+| `VisualAddressingProcessor`          | `FACE_DETECTION` annotations                  | `INTERACTION_ADDRESSING_EVIDENCE`         | Estimates face orientation, smooths per-subject scores, and publishes visual addressing evidence.    |
 | `MultimodalTurnTakingProcessor`      | Speech, transcript, and addressing evidence   | Turn decisions and addressing annotations | Coordinates turn state, evidence fusion, interruption, commit, hold, and passive behavior.           |
 | `SpeechSynthesisProcessor`           | Output `AUDIO_SYNCED TEXT_CHUNK`              | `AUDIO_FRAME`, `ALIGNMENT`                | Maintains synthesis jobs and converts text into transport-independent audio.                         |
 | `TranscriptSynchronizationProcessor` | Output text, alignment, playback, and control | `TRANSCRIPT_CHUNK`                        | Releases visible transcript according to actual audio playout.                                       |
+
+## ⚙️ Configuration Ownership
+
+The top-level `RouterConfig` composes processor-owned configurations. `RouterPlugin` validates the configuration, selects enabled processors, and passes only the corresponding configuration subtree to each processor.
+
+```text
+router.init_config.audio_activity
+    → AudioActivityConfig
+
+router.init_config.addressing.semantic
+    → SemanticAddressingConfig
+
+router.init_config.addressing.visual
+    → VisualAddressingConfig
+
+router.init_config.turn_taking
+    → TurnTakingConfig
+```
+
+Addressing producers own their observation and model settings. Turn Taking owns evidence coordination, fusion, interruption policy, and timeout settings.
+
+`addressing_wait_sec`, `transcript_wait_sec`, `unsegmented_alignment_sec`, `max_hold_sec`, and `fusion` belong directly to `turn_taking`. The `policy` section contains decision-policy settings such as `commit_threshold` and `respond_to_group`.
+
+`interruption.enabled` controls interruption across supported turn modes. `interruption.audio_only_speech_start` additionally controls immediate speech-start interruption in audio-only mode.
+
+Disabled processors are not constructed by `RouterPlugin`. Inference runner registration and model initialization are managed separately.
 
 ## 🔌 Architectural Boundary
 

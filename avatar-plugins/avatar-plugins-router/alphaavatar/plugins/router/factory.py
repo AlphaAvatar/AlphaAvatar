@@ -13,8 +13,10 @@
 # limitations under the License.
 from __future__ import annotations
 
+from typing import Any
+
 from alphaavatar.agents import AvatarPlugin
-from alphaavatar.agents.router import InteractionRouterDependencies
+from alphaavatar.agents.router import InteractionRouterDependencies, RouterProcessorBase
 from alphaavatar.core.output import OutputLane
 
 from .config import RouterConfig
@@ -40,64 +42,53 @@ class RouterPlugin(AvatarPlugin):
         self,
         *,
         dependencies: InteractionRouterDependencies,
-        init_config: dict | None = None,
-    ):
+        init_config: dict[str, Any] | None = None,
+    ) -> InteractionRouterRuntime:
         config = RouterConfig.model_validate(init_config or {})
         runtime = dependencies.runtime
-        processors = []
+        processors: list[RouterProcessorBase] = []
 
         if dependencies.vad is not None and config.audio_activity.enabled:
             processors.append(
                 AudioActivityProcessor(
-                    runtime=runtime,
-                    vad=dependencies.vad,
-                    config=config,
+                    runtime=runtime, vad=dependencies.vad, config=config.audio_activity
                 )
             )
 
         if dependencies.stt is not None:
-            processors.append(
-                SpeechTranscriptionProcessor(
-                    runtime=runtime,
-                    stt=dependencies.stt,
-                )
-            )
+            processors.append(SpeechTranscriptionProcessor(runtime=runtime, stt=dependencies.stt))
 
         if dependencies.tts is not None:
             processors.extend(
                 (
                     TranscriptSynchronizationProcessor(
-                        runtime=runtime,
-                        lanes=(OutputLane.TRANSIENT,),
+                        runtime=runtime, lanes=(OutputLane.TRANSIENT,)
                     ),
                     SpeechSynthesisProcessor(
-                        runtime=runtime,
-                        tts=dependencies.tts,
-                        lanes=(OutputLane.TRANSIENT,),
+                        runtime=runtime, tts=dependencies.tts, lanes=(OutputLane.TRANSIENT,)
                     ),
                 )
             )
 
-        processors.append(VisualAddressingProcessor(runtime=runtime, config=config))
-
-        semantic_enabled = config.addressing.semantic.enabled and dependencies.stt is not None
-        if semantic_enabled:
+        if config.addressing.visual.enabled:
             processors.append(
-                SemanticAddressingProcessor(
-                    runtime=runtime,
-                    config=config,
-                )
+                VisualAddressingProcessor(runtime=runtime, config=config.addressing.visual)
+            )
+
+        required_addressing_sources: tuple[str, ...] = ()
+        if config.addressing.semantic.enabled and dependencies.stt is not None:
+            processors.append(
+                SemanticAddressingProcessor(runtime=runtime, config=config.addressing.semantic)
             )
             required_addressing_sources = (SemanticAddressingProcessor.SEMANTIC_SOURCE,)
-        else:
-            required_addressing_sources = ()
 
-        processors.append(
-            MultimodalTurnTakingProcessor(
-                runtime=runtime,
-                config=config,
-                required_addressing_sources=required_addressing_sources,
+        if config.turn_taking.enabled:
+            processors.append(
+                MultimodalTurnTakingProcessor(
+                    runtime=runtime,
+                    config=config.turn_taking,
+                    required_addressing_sources=required_addressing_sources,
+                )
             )
-        )
 
         return InteractionRouterRuntime(runtime=runtime, processors=processors)
