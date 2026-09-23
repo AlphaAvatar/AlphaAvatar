@@ -16,8 +16,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
-from alphaavatar.agents.configs.runtime_config import RuntimeConfig
 from alphaavatar.agents.utils.files.work_dirs import (
     WorkspacePaths,
     prepare_session_path,
@@ -32,6 +32,9 @@ from .capability import AvatarCapabilityRegistry
 from .context_runtime import ContextRuntime
 from .inference import InferenceExecutor
 from .session_runtime import SessionRuntime
+
+if TYPE_CHECKING:
+    from alphaavatar.agents.configs.runtime_config import RuntimeConfig
 
 
 @dataclass(slots=True, frozen=True)
