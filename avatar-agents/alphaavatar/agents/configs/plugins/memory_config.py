@@ -17,9 +17,9 @@ import os
 
 from pydantic import BaseModel, Field
 
-from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.memory import MemoryBase
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 from alphaavatar.agents.utils.vdb import qdrant
 
 importlib.import_module("alphaavatar.plugins.memory")
@@ -69,7 +69,7 @@ class MemoryConfig(BaseModel):
 
     def get_plugin(self, runtime: AvatarRuntime, avatar_id: str) -> MemoryBase:
         """Returns the Memory plugin instance based on the configuration."""
-        return AvatarPlugin.get_avatar_plugin(
+        return AvatarModulePlugin.create(
             AvatarModule.MEMORY,
             self.plugin,
             runtime=runtime,

@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 
 from alphaavatar.agents.log import logger
-from alphaavatar.agents.plugin import AvatarRuntimePlugin
+from alphaavatar.agents.runtime.plugin import AvatarRuntimePlugin
 from alphaavatar.core.media import AudioFrame
 from alphaavatar.core.output import (
     OutputControl,

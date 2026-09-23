@@ -13,8 +13,11 @@
 # limitations under the License.
 import os
 
-from alphaavatar.agents import AvatarModule, AvatarPlugin
-from alphaavatar.agents.runtime.inference import InferenceRunner
+from alphaavatar.agents.runtime.inference import (
+    InferenceRunner,
+    register_inference_runner_bootstrap,
+)
+from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 
 from .factory import MemoryPlugin
 from .log import logger
@@ -50,14 +53,14 @@ def configure_vdb_runner(vdb_type: str | None = None) -> None:
 
 
 # Plugin register
-AvatarPlugin.register_avatar_plugin(
+AvatarModulePlugin.register(
     AvatarModule.MEMORY,
     "default",
     MemoryPlugin(),
 )
 
 # Inference Runners
-AvatarPlugin.register_inference_runner_bootstrap(
+register_inference_runner_bootstrap(
     "alphaavatar.plugins.memory.vdb",
     configure_vdb_runner,
 )

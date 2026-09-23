@@ -18,7 +18,6 @@ import json
 import os
 from typing import Any
 
-from alphaavatar.agents import AvatarModule
 from alphaavatar.agents.memory import MemoryStoreBackend
 from alphaavatar.agents.memory.enums import (
     MemoryKind,
@@ -36,6 +35,7 @@ from alphaavatar.agents.memory.schemas import (
     MemorySearchHit,
 )
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.plugin import AvatarModule
 
 from .export import MemoryExportSink
 from .index_serialization import serialize_memory_items

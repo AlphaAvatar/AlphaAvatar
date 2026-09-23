@@ -15,7 +15,7 @@ import time
 from hashlib import sha1
 from typing import Any
 
-from alphaavatar.agents import AvatarModule
+from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.agents.status import (
     StatusEvent,
     StatusPolicyBase,

@@ -20,9 +20,9 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.persona import PersonaBase
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 from alphaavatar.agents.utils.vdb import qdrant
 
 importlib.import_module("alphaavatar.plugins.persona")
@@ -56,7 +56,7 @@ class PersonaConfig(BaseModel):
         os.environ["PERSONA_VDB_TYPE"] = vdb_type
 
     def get_plugin(self, runtime: AvatarRuntime) -> PersonaBase:
-        persona = AvatarPlugin.get_avatar_plugin(
+        persona = AvatarModulePlugin.create(
             AvatarModule.PERSONA,
             self.plugin,
             runtime=runtime,

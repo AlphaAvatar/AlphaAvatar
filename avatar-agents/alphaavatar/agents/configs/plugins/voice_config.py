@@ -17,9 +17,9 @@ from typing import Literal
 from livekit.agents import tts
 from pydantic import BaseModel, ConfigDict, Field
 
-from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.avatar.voice import STTBase, VADBase
 from alphaavatar.agents.runtime.inference import InferenceExecutor
+from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 
 # alphaavatar voice plugins
 importlib.import_module("alphaavatar.plugins.voice")
@@ -48,6 +48,8 @@ class STTConfig(BaseModel):
     )
 
     def get_plugin(self) -> STTBase | None:
+        if self.plugin is None:
+            return None
         if self.model is None:
             raise ValueError(f"voice.stt.model is required when voice.stt.plugin={self.plugin!r}")
 
@@ -61,7 +63,7 @@ class STTConfig(BaseModel):
         if self.base_url is not None:
             kwargs["base_url"] = self.base_url
 
-        return AvatarPlugin.get_avatar_plugin(
+        return AvatarModulePlugin.create(
             AvatarModule.VOICE_STT,
             self.plugin,
             **kwargs,
@@ -115,7 +117,7 @@ class TTSConfig(BaseModel):
                 )
 
             case _:
-                return AvatarPlugin.get_avatar_plugin(
+                return AvatarModulePlugin.create(
                     AvatarModule.VOICE_TTS,
                     self.plugin,
                     model=self.model,
@@ -146,7 +148,7 @@ class VADConfig(BaseModel):
         *,
         inference_executor: InferenceExecutor,
     ) -> VADBase | None:
-        return AvatarPlugin.get_avatar_plugin(
+        return AvatarModulePlugin.create(
             AvatarModule.VOICE_VAD,
             self.plugin,
             min_speech_duration=self.min_speech_duration,

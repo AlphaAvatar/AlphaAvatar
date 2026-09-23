@@ -17,8 +17,8 @@ from abc import ABC
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from alphaavatar.agents.plugin import AvatarRuntimePlugin
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.plugin import AvatarRuntimePlugin
 from alphaavatar.core.perception import PerceptionRuntime
 
 if TYPE_CHECKING:

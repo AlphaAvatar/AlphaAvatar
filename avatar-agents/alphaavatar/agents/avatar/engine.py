@@ -34,9 +34,9 @@ from alphaavatar.agents.entrypoints.schema.room_type import RoomType
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.memory import MemoryBase
 from alphaavatar.agents.persona import PersonaBase
-from alphaavatar.agents.plugin import AvatarModule, AvatarRuntimePlugin
 from alphaavatar.agents.router import InteractionRouterBase, InteractionRouterDependencies
 from alphaavatar.agents.runtime import AvatarRuntime, SessionRuntime
+from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarRuntimePlugin
 from alphaavatar.agents.status import (
     StatusEmitter,
     StatusEvent,

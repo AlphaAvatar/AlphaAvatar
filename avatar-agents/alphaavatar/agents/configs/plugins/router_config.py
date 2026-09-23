@@ -18,11 +18,11 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.router import (
     InteractionRouterBase,
     InteractionRouterDependencies,
 )
+from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 
 importlib.import_module("alphaavatar.plugins.router")
 
@@ -43,7 +43,7 @@ class RouterConfig(BaseModel):
         *,
         dependencies: InteractionRouterDependencies,
     ) -> InteractionRouterBase:
-        return AvatarPlugin.get_avatar_plugin(
+        return AvatarModulePlugin.create(
             AvatarModule.ROUTER,
             self.plugin,
             dependencies=dependencies,

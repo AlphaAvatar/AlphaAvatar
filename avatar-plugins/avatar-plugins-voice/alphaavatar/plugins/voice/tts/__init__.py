@@ -11,10 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from alphaavatar.agents import AvatarPlugin
+from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
 
 
-class VoiceAITTSPlugin(AvatarPlugin):
+class VoiceAITTSPlugin(AvatarModulePlugin):
     def __init__(self, version, logger) -> None:
         super().__init__(__name__, version, __package__, logger)  # type: ignore
 

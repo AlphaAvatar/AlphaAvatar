@@ -21,7 +21,6 @@ from collections.abc import (
 )
 from typing import TYPE_CHECKING
 
-from alphaavatar.agents import AvatarModule
 from alphaavatar.agents.memory.enums import MemoryType
 from alphaavatar.agents.memory.schemas import (
     MemoryItem,
@@ -32,6 +31,7 @@ from alphaavatar.agents.runtime.capability import (
     AvatarCapabilityName,
     avatar_capability,
 )
+from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
 
 from ...log import logger

@@ -15,8 +15,11 @@ from __future__ import annotations
 
 import os
 
-from alphaavatar.agents import AvatarModule, AvatarPlugin
-from alphaavatar.agents.runtime.inference import InferenceRunner
+from alphaavatar.agents.runtime.inference import (
+    InferenceRunner,
+    register_inference_runner_bootstrap,
+)
+from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 
 from .factory import PersonaPlugin
 from .log import logger
@@ -53,7 +56,7 @@ def configure_vdb_runner(vdb_type: str | None = None) -> None:
 
 
 # Plugin register
-AvatarPlugin.register_avatar_plugin(
+AvatarModulePlugin.register(
     AvatarModule.PERSONA,
     "default",
     PersonaPlugin(),
@@ -64,7 +67,7 @@ InferenceRunner.register(SpeakerAttributeRunner)
 InferenceRunner.register(SpeakerVectorRunner)
 InferenceRunner.register(FaceAnalysisRunner)
 
-AvatarPlugin.register_inference_runner_bootstrap(
+register_inference_runner_bootstrap(
     "alphaavatar.plugins.persona.vdb",
     configure_vdb_runner,
 )

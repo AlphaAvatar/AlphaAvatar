@@ -23,10 +23,10 @@ from typing import Any
 
 from livekit.agents.llm.tool_context import ToolError
 
-from alphaavatar.agents import AvatarModule
 from alphaavatar.agents.providers import ProviderKind, ProviderTaskConfig
 from alphaavatar.agents.providers.embedding import create_embedding_model
 from alphaavatar.agents.runtime.inference import InferenceRunner
+from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.agents.tools.mcp_api import MCPOp
 from alphaavatar.agents.utils.files.work_dirs import WorkspacePaths
 from alphaavatar.agents.utils.loop_thread import AsyncLoopThread

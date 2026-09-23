@@ -15,9 +15,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from alphaavatar.agents import AvatarPlugin
 from alphaavatar.agents.persona import PersonaBase, PersonaProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
 
 from .config import DefaultPersonaConfig
 from .log import logger
@@ -27,7 +27,7 @@ from .storage import PersonaStore
 from .version import __version__
 
 
-class PersonaPlugin(AvatarPlugin):
+class PersonaPlugin(AvatarModulePlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)
 

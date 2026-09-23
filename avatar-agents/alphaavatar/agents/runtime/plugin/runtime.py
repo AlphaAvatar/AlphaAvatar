@@ -11,25 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from alphaavatar.agents.runtime.inference import InferenceRunner
-from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
-
-from .factory import RouterPlugin
-from .processors.addressing import SemanticAddressingQwen3Runner
-from .processors.turn_taking import SmartTurnV3Runner
-from .version import __version__
-
-__all__ = ["__version__"]
+from abc import ABC, abstractmethod
 
 
-# Plugin register
-AvatarModulePlugin.register(
-    AvatarModule.ROUTER,
-    "default",
-    RouterPlugin(),
-)
+class AvatarRuntimePlugin(ABC):
+    """Session-scoped lifecycle; dependencies are injected through the constructor."""
 
+    @abstractmethod
+    async def on_session_start(self) -> None:
+        """Start session-scoped tasks and acquire session resources."""
+        raise NotImplementedError
 
-# Inference Runners
-InferenceRunner.register(SmartTurnV3Runner)
-InferenceRunner.register(SemanticAddressingQwen3Runner)
+    @abstractmethod
+    async def on_session_stop(self) -> None:
+        """Stop session-scoped tasks and release session resources."""
+        raise NotImplementedError

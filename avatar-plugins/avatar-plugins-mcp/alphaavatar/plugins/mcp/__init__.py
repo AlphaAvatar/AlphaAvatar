@@ -14,9 +14,12 @@
 import json
 import os
 
-from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.inference import InferenceRunner
+from alphaavatar.agents.runtime.inference import (
+    InferenceRunner,
+    register_inference_runner_bootstrap,
+)
+from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 from alphaavatar.agents.tools import MCPAPI
 
 from .log import logger
@@ -28,7 +31,7 @@ __all__ = [
 ]
 
 
-class MCPRemotePlugin(AvatarPlugin):
+class MCPRemotePlugin(AvatarModulePlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
 
@@ -84,14 +87,14 @@ def configure_vdb_runner(vdb_type: str | None = None) -> None:
 
 
 # Plugin register
-AvatarPlugin.register_avatar_plugin(
+AvatarModulePlugin.register(
     AvatarModule.MCP,
     "default",
     MCPRemotePlugin(),
 )
 
 # Inference Runners
-AvatarPlugin.register_inference_runner_bootstrap(
+register_inference_runner_bootstrap(
     "alphaavatar.plugins.mcp.vdb",
     configure_vdb_runner,
 )

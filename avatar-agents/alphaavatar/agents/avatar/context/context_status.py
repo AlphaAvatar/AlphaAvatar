@@ -20,8 +20,8 @@ from livekit.agents import llm
 from livekit.agents.types import FlushSentinel
 
 from alphaavatar.agents.log import logger
-from alphaavatar.agents.plugin import AvatarModule
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.agents.status import (
     StatusEmitter,
     StatusEvent,

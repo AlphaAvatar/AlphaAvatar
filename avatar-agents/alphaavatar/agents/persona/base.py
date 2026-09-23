@@ -16,7 +16,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import TYPE_CHECKING
 
-from alphaavatar.agents.plugin import AvatarRuntimePlugin
+from alphaavatar.agents.runtime.plugin import AvatarRuntimePlugin
 
 if TYPE_CHECKING:
     from alphaavatar.agents.persona.cache import PersonaCache

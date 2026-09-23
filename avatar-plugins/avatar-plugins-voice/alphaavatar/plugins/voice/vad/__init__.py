@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from alphaavatar.agents import AvatarPlugin
+from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
 
 from ..log import logger
 from ..version import __version__
@@ -19,7 +19,7 @@ from .runner.silero_runner import SileroVADRunner
 from .silero import SileroVAD
 
 
-class SileroVADPlugin(AvatarPlugin):
+class SileroVADPlugin(AvatarModulePlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
 

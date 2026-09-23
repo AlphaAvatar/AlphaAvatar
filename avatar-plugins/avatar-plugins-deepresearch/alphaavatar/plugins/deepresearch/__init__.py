@@ -11,8 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.runtime import SessionRuntime
+from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 from alphaavatar.agents.tools import DeepResearchAPI
 
 from .deepresearch_tavily import TavilyDeepResearchTool
@@ -24,7 +24,7 @@ __all__ = [
 ]
 
 
-class TavilyPlugin(AvatarPlugin):
+class TavilyPlugin(AvatarModulePlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
 
@@ -56,4 +56,4 @@ class TavilyPlugin(AvatarPlugin):
 
 
 # plugin init
-AvatarPlugin.register_avatar_plugin(AvatarModule.DEEPRESEARCH, "default", TavilyPlugin())
+AvatarModulePlugin.register(AvatarModule.DEEPRESEARCH, "default", TavilyPlugin())

@@ -11,8 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.runtime import SessionRuntime
+from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 from alphaavatar.agents.tools import RAGAPI
 
 from .log import logger
@@ -24,7 +24,7 @@ __all__ = [
 ]
 
 
-class RAGAnythingPlugin(AvatarPlugin):
+class RAGAnythingPlugin(AvatarModulePlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
 
@@ -51,4 +51,4 @@ class RAGAnythingPlugin(AvatarPlugin):
 
 
 # plugin init
-AvatarPlugin.register_avatar_plugin(AvatarModule.RAG, "default", RAGAnythingPlugin())
+AvatarModulePlugin.register(AvatarModule.RAG, "default", RAGAnythingPlugin())

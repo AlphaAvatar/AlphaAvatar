@@ -15,8 +15,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from alphaavatar.agents import AvatarPlugin
 from alphaavatar.agents.router import InteractionRouterDependencies, RouterProcessorBase
+from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
 from alphaavatar.core.output import OutputLane
 
 from .config import RouterConfig
@@ -34,7 +34,7 @@ from .runtime import InteractionRouterRuntime
 from .version import __version__
 
 
-class RouterPlugin(AvatarPlugin):
+class RouterPlugin(AvatarModulePlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)
 

@@ -17,7 +17,6 @@ import asyncio
 from typing import Protocol
 
 from alphaavatar.agents.log import logger
-from alphaavatar.agents.plugin import AvatarRuntimePlugin
 from alphaavatar.agents.router import (
     InteractionEntityRef,
     TurnTakingAction,
@@ -25,6 +24,7 @@ from alphaavatar.agents.router import (
     TurnTakingMode,
 )
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.plugin import AvatarRuntimePlugin
 from alphaavatar.core.env import AnnotationKind, EnvObservation, ObservationKind
 from alphaavatar.core.media import TextPayload
 from alphaavatar.core.output import OutputLane

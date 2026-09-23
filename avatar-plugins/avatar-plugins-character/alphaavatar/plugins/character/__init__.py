@@ -13,9 +13,12 @@
 # limitations under the License.
 import os
 
-from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.inference import InferenceRunner
+from alphaavatar.agents.runtime.inference import (
+    InferenceRunner,
+    register_inference_runner_bootstrap,
+)
+from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 
 from .log import logger
 from .version import __version__
@@ -25,7 +28,7 @@ __all__ = [
 ]
 
 
-class AiriCharacterPlugin(AvatarPlugin):
+class AiriCharacterPlugin(AvatarModulePlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)  # type: ignore
 
@@ -70,14 +73,14 @@ def configure_character_runner() -> None:
 
 
 # Plugin register
-AvatarPlugin.register_avatar_plugin(
+AvatarModulePlugin.register(
     AvatarModule.CHARACTER,
     "airi",
     AiriCharacterPlugin(),
 )
 
 # Inference Runners
-AvatarPlugin.register_inference_runner_bootstrap(
+register_inference_runner_bootstrap(
     "alphaavatar.plugins.character",
     configure_character_runner,
 )

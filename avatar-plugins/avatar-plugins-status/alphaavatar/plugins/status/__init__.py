@@ -11,8 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 from alphaavatar.agents.status import StatusEmitter
 
 from .log import logger
@@ -37,7 +37,7 @@ __all__ = [
 ]
 
 
-class DefaultStatusPlugin(AvatarPlugin):
+class DefaultStatusPlugin(AvatarModulePlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)
 
@@ -71,7 +71,7 @@ class DefaultStatusPlugin(AvatarPlugin):
         )
 
 
-AvatarPlugin.register_avatar_plugin(
+AvatarModulePlugin.register(
     AvatarModule.STATUS,
     "default",
     DefaultStatusPlugin(),
