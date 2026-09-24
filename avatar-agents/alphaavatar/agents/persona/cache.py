@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import numpy as np
 
-    from alphaavatar.agents.runtime.session_runtime import ParticipantInfo
+    from alphaavatar.agents.runtime.modules.session.runtime import ParticipantInfo
     from alphaavatar.core.turn import TurnSnapshot
 
     from .schemas import DetailsBase, UserProfile, UserRuntimeState

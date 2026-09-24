@@ -14,27 +14,13 @@
 from __future__ import annotations
 
 from abc import ABC
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.plugin import AvatarRuntimePlugin
-from alphaavatar.core.perception import PerceptionRuntime
 
 if TYPE_CHECKING:
-    from alphaavatar.agents.avatar.voice import (
-        STTBase,
-        TTSBase,
-        VADBase,
-    )
-
-
-@dataclass(frozen=True, slots=True)
-class InteractionRouterDependencies:
-    runtime: AvatarRuntime
-    vad: VADBase | None = None
-    stt: STTBase | None = None
-    tts: TTSBase | None = None
+    from alphaavatar.agents.runtime import AvatarRuntime
+    from alphaavatar.core.perception import PerceptionRuntime
 
 
 class InteractionRouterBase(AvatarRuntimePlugin, ABC):

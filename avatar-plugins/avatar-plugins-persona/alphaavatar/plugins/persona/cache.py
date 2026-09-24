@@ -22,7 +22,7 @@ from alphaavatar.agents.persona.schemas.user_profile import (
     UserProfile,
     UserRuntimeState,
 )
-from alphaavatar.agents.runtime.session_runtime import ParticipantInfo
+from alphaavatar.agents.runtime.modules.session.runtime import ParticipantInfo
 from alphaavatar.agents.utils import NumpyOP
 from alphaavatar.core.turn import TurnSnapshot
 

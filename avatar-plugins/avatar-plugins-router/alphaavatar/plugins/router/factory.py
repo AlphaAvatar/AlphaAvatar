@@ -13,9 +13,8 @@
 # limitations under the License.
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from alphaavatar.agents.router import InteractionRouterDependencies, RouterProcessorBase
 from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
 from alphaavatar.core.output import OutputLane
 
@@ -33,6 +32,10 @@ from .processors import (
 from .runtime import InteractionRouterRuntime
 from .version import __version__
 
+if TYPE_CHECKING:
+    from alphaavatar.agents.router import RouterProcessorBase
+    from alphaavatar.agents.runtime import AvatarRuntime
+
 
 class RouterPlugin(AvatarModulePlugin):
     def __init__(self) -> None:
@@ -41,31 +44,29 @@ class RouterPlugin(AvatarModulePlugin):
     def get_plugin(
         self,
         *,
-        dependencies: InteractionRouterDependencies,
+        runtime: AvatarRuntime,
         init_config: dict[str, Any] | None = None,
     ) -> InteractionRouterRuntime:
         config = RouterConfig.model_validate(init_config or {})
-        runtime = dependencies.runtime
+        voice = runtime.foundation.voice
         processors: list[RouterProcessorBase] = []
 
-        if dependencies.vad is not None and config.audio_activity.enabled:
+        if voice.vad is not None and config.audio_activity.enabled:
             processors.append(
-                AudioActivityProcessor(
-                    runtime=runtime, vad=dependencies.vad, config=config.audio_activity
-                )
+                AudioActivityProcessor(runtime=runtime, vad=voice.vad, config=config.audio_activity)
             )
 
-        if dependencies.stt is not None:
-            processors.append(SpeechTranscriptionProcessor(runtime=runtime, stt=dependencies.stt))
+        if voice.stt is not None:
+            processors.append(SpeechTranscriptionProcessor(runtime=runtime, stt=voice.stt))
 
-        if dependencies.tts is not None:
+        if voice.tts is not None:
             processors.extend(
                 (
                     TranscriptSynchronizationProcessor(
                         runtime=runtime, lanes=(OutputLane.TRANSIENT,)
                     ),
                     SpeechSynthesisProcessor(
-                        runtime=runtime, tts=dependencies.tts, lanes=(OutputLane.TRANSIENT,)
+                        runtime=runtime, tts=voice.tts, lanes=(OutputLane.TRANSIENT,)
                     ),
                 )
             )
@@ -76,7 +77,7 @@ class RouterPlugin(AvatarModulePlugin):
             )
 
         required_addressing_sources: tuple[str, ...] = ()
-        if config.addressing.semantic.enabled and dependencies.stt is not None:
+        if config.addressing.semantic.enabled and voice.stt is not None:
             processors.append(
                 SemanticAddressingProcessor(runtime=runtime, config=config.addressing.semantic)
             )

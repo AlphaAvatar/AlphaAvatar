@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .base import InteractionRouterBase, InteractionRouterDependencies
+from .base import InteractionRouterBase
 from .enum import (
     AddressingEvidenceKind,
     AddressingMode,
@@ -47,7 +47,6 @@ __all__ = [
     "InteractionEntityKind",
     "InteractionEntityRef",
     "InteractionRouterBase",
-    "InteractionRouterDependencies",
     "RouterProcessorBase",
     "SemanticAddressingLabel",
     "SemanticAddressingModelBase",

@@ -26,7 +26,7 @@ from alphaavatar.agents.persona import (
 from alphaavatar.agents.persona.schemas import UserProfile, UserRuntimeState
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
-from alphaavatar.agents.runtime.session_runtime import ParticipantInfo
+from alphaavatar.agents.runtime.modules.session.runtime import ParticipantInfo
 from alphaavatar.agents.utils import NumpyOP
 from alphaavatar.agents.utils.files.work_dirs import prepare_user_path
 

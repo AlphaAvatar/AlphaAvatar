@@ -66,6 +66,10 @@ class STTBase(ABC):
     def stream(self, *, source_id: str) -> STTStreamBase:
         """Create one stateful transcription stream for an audio source."""
 
+    async def aclose(self) -> None:
+        """Release shared factory resources; consumers close their own streams."""
+        return None
+
 
 class STTStreamBase(ABC):
     """

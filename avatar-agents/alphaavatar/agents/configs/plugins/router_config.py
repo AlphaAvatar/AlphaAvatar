@@ -14,15 +14,15 @@
 from __future__ import annotations
 
 import importlib
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from alphaavatar.agents.router import (
-    InteractionRouterBase,
-    InteractionRouterDependencies,
-)
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
+
+if TYPE_CHECKING:
+    from alphaavatar.agents.router import InteractionRouterBase
+    from alphaavatar.agents.runtime import AvatarRuntime
 
 importlib.import_module("alphaavatar.plugins.router")
 
@@ -32,20 +32,13 @@ class RouterConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    plugin: str = Field(
-        default="default",
-        description="Interaction Router plugin to use.",
-    )
+    plugin: str = Field(default="default", description="Interaction Router plugin to use.")
     init_config: dict[str, Any] = Field(default_factory=dict)
 
-    def get_plugin(
-        self,
-        *,
-        dependencies: InteractionRouterDependencies,
-    ) -> InteractionRouterBase:
+    def get_plugin(self, *, runtime: AvatarRuntime) -> InteractionRouterBase:
         return AvatarModulePlugin.create(
             AvatarModule.ROUTER,
             self.plugin,
-            dependencies=dependencies,
+            runtime=runtime,
             init_config=self.init_config,
         )

@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import importlib
+from contextlib import AsyncExitStack
 from typing import Literal
 
 from livekit.agents import tts
 from pydantic import BaseModel, ConfigDict, Field
 
-from alphaavatar.agents.avatar.voice import STTBase, VADBase
+from alphaavatar.agents.avatar.voice import LiveKitTTSAdapter, STTBase, VADBase
 from alphaavatar.agents.runtime.inference import InferenceExecutor
+from alphaavatar.agents.runtime.modules.foundation import VoiceService
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 
 # alphaavatar voice plugins
@@ -172,21 +174,27 @@ class VoiceConfig(BaseModel):
     vad: VADConfig = Field(default_factory=VADConfig)
 
     allow_interruptions: bool = Field(
-        default=True,
-        description="Allow interruptions during speech.",
+        default=True, description="Allow interruptions during speech."
     )
 
-    def get_stt_plugin(self) -> STTBase | None:
-        return self.stt.get_plugin()
+    async def create_service(self, *, inference_executor: InferenceExecutor) -> VoiceService:
+        async with AsyncExitStack() as resources:
+            vad = self.vad.get_plugin(inference_executor=inference_executor)
+            if vad is not None:
+                resources.push_async_callback(vad.aclose)
 
-    def get_tts_plugin(self):
-        return self.tts.get_plugin()
+            stt = self.stt.get_plugin()
+            if stt is not None:
+                resources.push_async_callback(stt.aclose)
 
-    def get_vad_plugin(
-        self,
-        *,
-        inference_executor: InferenceExecutor,
-    ) -> VADBase | None:
-        return self.vad.get_plugin(
-            inference_executor=inference_executor,
-        )
+            tts = self.tts.get_plugin()
+            if tts is not None:
+                resources.push_async_callback(tts.aclose)
+
+            service = VoiceService(
+                vad=vad,
+                stt=stt,
+                tts=LiveKitTTSAdapter(tts, owns_provider=True) if tts is not None else None,
+            )
+            resources.pop_all()
+            return service

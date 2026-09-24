@@ -20,7 +20,8 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from alphaavatar.agents.log import logger
-from alphaavatar.agents.runtime.plugin import AvatarRuntimePlugin
+
+from .plugin import AvatarRuntimePlugin
 
 
 class PluginLifecycleError(RuntimeError):

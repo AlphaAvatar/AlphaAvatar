@@ -21,7 +21,7 @@ from collections.abc import AsyncIterable, Callable, Sequence
 from typing import Any
 from uuid import uuid4
 
-from livekit.agents import Agent, ModelSettings, llm, tts as livekit_tts
+from livekit.agents import Agent, ModelSettings, llm
 from livekit.agents.types import FlushSentinel
 
 from alphaavatar.agents.configs import AvatarConfig
@@ -34,8 +34,9 @@ from alphaavatar.agents.entrypoints.schema.room_type import RoomType
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.memory import MemoryBase
 from alphaavatar.agents.persona import PersonaBase
-from alphaavatar.agents.router import InteractionRouterBase, InteractionRouterDependencies
+from alphaavatar.agents.router import InteractionRouterBase
 from alphaavatar.agents.runtime import AvatarRuntime, SessionRuntime
+from alphaavatar.agents.runtime.lifecycle import LifecyclePhase, RuntimePluginLifecycle
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarRuntimePlugin
 from alphaavatar.agents.status import (
     StatusEmitter,
@@ -51,7 +52,6 @@ from .context import (
     extract_answer_text,
 )
 from .context.internal_tools import get_runtime_context_tool
-from .lifecycle import LifecyclePhase, RuntimePluginLifecycle
 from .patches import init_avatar_patches
 from .turn_controller import AvatarTurnController
 from .voice import LiveKitTTSAdapter
@@ -77,23 +77,13 @@ class AvatarEngine(Agent):
         )
 
         # Step 2: initialize runtime plugins and tools.
-        self._livekit_tts: livekit_tts.TTS | None = avatar_config.voice.get_tts_plugin()
-        self._tts = (
-            LiveKitTTSAdapter(self._livekit_tts, owns_provider=False)
-            if self._livekit_tts is not None
-            else None
-        )
+        voice_tts = runtime.foundation.voice.tts
+        if voice_tts is not None and not isinstance(voice_tts, LiveKitTTSAdapter):
+            raise TypeError("The current LiveKit response path requires LiveKitTTSAdapter")
         self._status: StatusEmitter = avatar_config.status.get_plugin(
             runtime=runtime,
         )
-        self._router: InteractionRouterBase = avatar_config.router.get_plugin(
-            dependencies=InteractionRouterDependencies(
-                runtime=runtime,
-                vad=avatar_config.voice.get_vad_plugin(inference_executor=runtime.inference),
-                stt=avatar_config.voice.get_stt_plugin(),
-                tts=self._tts,
-            )
-        )
+        self._router: InteractionRouterBase = avatar_config.router.get_plugin(runtime=runtime)
         self._memory: MemoryBase = avatar_config.memory.get_plugin(
             runtime=runtime,
             avatar_id=avatar_config.avatar.id,
@@ -124,7 +114,7 @@ class AvatarEngine(Agent):
             turn_detection="manual",
             stt=None,
             vad=None,
-            tts=self._livekit_tts,
+            tts=voice_tts.provider if voice_tts is not None else None,
             allow_interruptions=self._avatar_config.voice.allow_interruptions,
             tools=self._tools,
         )
@@ -264,12 +254,6 @@ class AvatarEngine(Agent):
         await self._run_shutdown_step(
             "runtime plugin shutdown",
             self._plugin_lifecycle.stop,
-            errors,
-        )
-
-        await self._run_shutdown_step(
-            "avatar runtime shutdown",
-            self._runtime.aclose,
             errors,
         )
 

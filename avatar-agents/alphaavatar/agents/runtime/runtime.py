@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -29,9 +30,10 @@ from alphaavatar.core.time import RuntimeClock
 from alphaavatar.core.turn import TurnRuntime
 
 from .capability import AvatarCapabilityRegistry
-from .context_runtime import ContextRuntime
 from .inference import InferenceExecutor
-from .session_runtime import SessionRuntime
+from .modules.context import ContextRuntime
+from .modules.foundation import FoundationRuntime
+from .modules.session import SessionRuntime
 
 if TYPE_CHECKING:
     from alphaavatar.agents.configs.runtime_config import RuntimeConfig
@@ -58,8 +60,11 @@ class AvatarRuntime:
     session: SessionRuntime
     context: ContextRuntime
 
+    # lifecycle-level
     inference: InferenceExecutor
+    foundation: FoundationRuntime
 
+    # capability
     capability_registry: AvatarCapabilityRegistry = field(default_factory=AvatarCapabilityRegistry)
 
     def __post_init__(self) -> None:
@@ -94,6 +99,7 @@ class AvatarRuntime:
         session: SessionRuntime,
         context: ContextRuntime,
         config: RuntimeConfig,
+        foundation: FoundationRuntime,
         inference: InferenceExecutor | None = None,
     ) -> AvatarRuntime:
         clock = RuntimeClock()
@@ -130,8 +136,11 @@ class AvatarRuntime:
             turn=turn,
             output=OutputRuntime(session_id=session_id, clock=clock),
             inference=inference or InferenceExecutor.from_env(),
+            foundation=foundation,
         )
 
     async def aclose(self) -> None:
-        await self.output.aclose()
-        await self.inference.close()
+        async with AsyncExitStack() as resources:
+            resources.push_async_callback(self.inference.close)
+            resources.push_async_callback(self.foundation.aclose)
+            resources.push_async_callback(self.output.aclose)
