@@ -135,7 +135,7 @@ class AvatarRuntime:
             perception=perception,
             turn=turn,
             output=OutputRuntime(session_id=session_id, clock=clock),
-            inference=inference or InferenceExecutor.from_env(),
+            inference=inference if inference is not None else InferenceExecutor.from_env(),
             foundation=foundation,
         )
 

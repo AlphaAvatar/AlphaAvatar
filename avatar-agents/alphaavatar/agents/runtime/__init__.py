@@ -28,11 +28,11 @@ __all__ = [
 ]
 
 _EXPORTS = {
-    "AvatarRuntime": ".avatar_runtime",
-    "ContextRuntime": ".context_runtime",
-    "InteractionMethod": ".context_runtime",
-    "ParticipantInfo": ".session_runtime",
-    "SessionRuntime": ".session_runtime",
+    "AvatarRuntime": ".runtime",
+    "ContextRuntime": ".modules.context.runtime",
+    "InteractionMethod": ".modules.context.runtime",
+    "ParticipantInfo": ".modules.session.runtime",
+    "SessionRuntime": ".modules.session.runtime",
 }
 
 
