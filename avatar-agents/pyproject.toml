@@ -26,6 +26,8 @@ classifiers = [
 dependencies = [
     "alpha-avatar-core",
     "python-dotenv",
+    "filelock>=3.12",
+    "huggingface-hub>=0.25",
     "mcp>=1.10.0, <2",
     "omegaconf",
     "markdown",

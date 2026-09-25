@@ -11,19 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from __future__ import annotations
-
-import hashlib
 import os
-import shutil
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-from alphaavatar.agents.utils.files import build_model_cache_dir
+from alphaavatar.agents.utils.files.model_files import resolve_url_file
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(frozen=True, slots=True)
 class SileroModelConfig:
     model: str
     version: str
@@ -64,67 +59,19 @@ SILERO_MODEL_CONFIG = SileroModelConfig(
 )
 
 
-def _model_dir() -> Path:
-    return build_model_cache_dir(
-        "voice",
-        "vad",
-        "silero",
-        SILERO_MODEL_CONFIG.version,
-    )
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-
-    with path.open("rb") as file:
-        for chunk in iter(lambda: file.read(1024 * 1024), b""):
-            digest.update(chunk)
-
-    return digest.hexdigest()
-
-
-def resolve_silero_model_path(*, local_files_only: bool) -> str:
+def resolve_silero_model_path() -> str:
     override = os.getenv("SILERO_VAD_MODEL_PATH")
-
     if override:
         path = Path(override).expanduser()
-
-        if not path.is_file():
-            raise FileNotFoundError(f"Silero VAD model not found: {path}")
-
+        if not path.is_file() or path.stat().st_size == 0:
+            raise FileNotFoundError(f"Silero VAD model not found or empty: {path}")
         return str(path)
-
     config = SILERO_MODEL_CONFIG
-    model_dir = _model_dir()
-    model_path = model_dir / config.file_name
-
-    if model_path.is_file() and _sha256(model_path) == config.sha256:
-        return str(model_path)
-
-    if local_files_only:
-        raise RuntimeError(
-            f"Silero VAD model is unavailable at {model_path}. "
-            "Run the `alphaavatar download-files` command first."
+    return str(
+        resolve_url_file(
+            namespace=("voice", "vad", "silero", config.version),
+            filename=config.file_name,
+            url=config.url,
+            sha256=config.sha256,
         )
-
-    model_dir.mkdir(parents=True, exist_ok=True)
-    temporary_path = model_path.with_suffix(model_path.suffix + ".part")
-
-    try:
-        with urllib.request.urlopen(config.url, timeout=60) as response:
-            with temporary_path.open("wb") as output:
-                shutil.copyfileobj(response, output)
-
-        actual_hash = _sha256(temporary_path)
-
-        if actual_hash != config.sha256:
-            raise RuntimeError(
-                "Silero VAD model checksum mismatch: "
-                f"expected={config.sha256}, actual={actual_hash}"
-            )
-
-        temporary_path.replace(model_path)
-        return str(model_path)
-
-    finally:
-        temporary_path.unlink(missing_ok=True)
+    )

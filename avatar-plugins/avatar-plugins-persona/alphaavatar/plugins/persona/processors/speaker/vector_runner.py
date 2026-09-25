@@ -22,8 +22,8 @@ from livekit.agents.utils import hw
 from alphaavatar.agents.runtime.inference import InferenceRunner
 
 from ...log import logger
-from ...model_files import SPEAKER_MODEL_CONFIG, SpeakerModelType, download_from_hf_hub
 from .fbank import FBank
+from .model_files import SpeakerModelType, resolve_speaker_model_path
 
 _resource_files = ExitStack()
 atexit.register(_resource_files.close)
@@ -40,13 +40,7 @@ class SpeakerVectorRunner(InferenceRunner):
         """Initialize the ONNX Runtime session with dynamic provider selection."""
         import onnxruntime as ort
 
-        local_path_onnx = download_from_hf_hub(
-            SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].hf_model,
-            SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].file_name,
-            revision=SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].revision,
-            cache_dir=SPEAKER_MODEL_CONFIG[self.MODEL_TYPE].cache_dir,
-            local_files_only=False,
-        )
+        local_path_onnx = resolve_speaker_model_path(self.MODEL_TYPE)
         opts = ort.SessionOptions()
         opts.intra_op_num_threads = max(1, min(math.ceil(hw.get_cpu_monitor().cpu_count()) // 2, 4))
         opts.inter_op_num_threads = 1

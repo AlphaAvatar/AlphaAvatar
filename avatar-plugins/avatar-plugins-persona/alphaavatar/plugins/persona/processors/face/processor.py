@@ -58,11 +58,11 @@ from alphaavatar.core.media import (
 from alphaavatar.core.perception import PerceptionStreamKind
 
 from ...log import logger
-from ...model_files import FACE_MODEL_CONFIG
 from ...runtime import PersonaRuntime
 from .analysis_runner import FaceAnalysisRunner
 from .cache import FaceCache
 from .config import FaceConfig
+from .model_files import FACE_MODEL_CONFIG
 
 
 @dataclass(slots=True)

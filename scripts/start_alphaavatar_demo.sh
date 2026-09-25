@@ -24,7 +24,6 @@ PYTHON_VERSION="${PYTHON_VERSION:-3.11}"
 
 VENV_DIR="${VENV_DIR:-.venv}"
 LOG_DIR="${LOG_DIR:-logs}"
-DOWNLOAD_FILES="${DOWNLOAD_FILES:-false}"
 
 mkdir -p "$LOG_DIR"
 
@@ -36,7 +35,6 @@ echo "Env file:      $ENV_FILE"
 echo "Config file:   $CONFIG_FILE"
 echo "Start mode:    $START_MODE"
 echo "Venv dir:      $VENV_DIR"
-echo "Download files:$DOWNLOAD_FILES"
 echo "============================================================"
 
 if [ ! -f "$ENV_FILE" ]; then
@@ -68,11 +66,6 @@ source "$VENV_DIR/bin/activate"
 
 echo "📦 Syncing dependencies..."
 uv sync --all-packages
-
-if [ "$DOWNLOAD_FILES" = "true" ]; then
-  echo "📥 Downloading AlphaAvatar required files..."
-  ENV_FILE="$ENV_FILE" alphaavatar download-files
-fi
 
 echo "✅ Environment ready."
 echo "🚀 Launching AlphaAvatar..."

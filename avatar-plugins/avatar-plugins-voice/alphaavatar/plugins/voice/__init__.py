@@ -11,26 +11,24 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from alphaavatar.agents.runtime.inference import InferenceRunner
+from alphaavatar.agents.runtime.inference import register_inference_runner_bootstrap
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 
+from .inference import configure_inference_runners
 from .log import logger
 from .stt import OpenAIRealtimeSTTPlugin, OpenAISegmentSTTPlugin
 from .tts import VoiceAITTSPlugin
-from .vad import SileroVADPlugin, SileroVADRunner
+from .vad import SileroVADPlugin
 from .version import __version__
 
 __all__ = ["__version__"]
 
-
-# VAD Plugins
+# Plugin register
 AvatarModulePlugin.register(
     AvatarModule.VOICE_VAD,
     "silero",
     SileroVADPlugin(),
 )
-
-# STT Plugins
 AvatarModulePlugin.register(
     AvatarModule.VOICE_STT,
     "openai_realtime",
@@ -41,8 +39,6 @@ AvatarModulePlugin.register(
     "openai_segment",
     OpenAISegmentSTTPlugin(),
 )
-
-# TTS Plugins
 AvatarModulePlugin.register(
     AvatarModule.VOICE_TTS,
     "voiceai",
@@ -50,4 +46,7 @@ AvatarModulePlugin.register(
 )
 
 # Inference Runners
-InferenceRunner.register(SileroVADRunner)
+register_inference_runner_bootstrap(
+    "alphaavatar.plugins.voice",
+    configure_inference_runners,
+)

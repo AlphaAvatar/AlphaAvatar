@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import json
-import os
 
 import cv2
 import numpy as np
@@ -20,7 +19,7 @@ import numpy as np
 from alphaavatar.agents.runtime.inference import InferenceRunner
 
 from ...log import logger
-from ...model_files import FACE_MODEL_CONFIG, FaceModelType
+from .model_files import FACE_MODEL_CONFIG, FaceModelType, resolve_face_model_root
 
 
 class FaceAnalysisRunner(InferenceRunner):
@@ -35,6 +34,7 @@ class FaceAnalysisRunner(InferenceRunner):
         from insightface.app import FaceAnalysis
 
         self._model_config = FACE_MODEL_CONFIG[self.MODEL_TYPE]
+        model_root = resolve_face_model_root(self.MODEL_TYPE)
 
         available = ort.get_available_providers()
 
@@ -49,7 +49,7 @@ class FaceAnalysisRunner(InferenceRunner):
 
         self._app = FaceAnalysis(
             name=self._model_config.model_name,
-            root=os.path.expanduser(self._model_config.root),
+            root=model_root,
             allowed_modules=self._model_config.allowed_modules,
             providers=providers,
         )
@@ -62,7 +62,7 @@ class FaceAnalysisRunner(InferenceRunner):
         logger.info(
             "[FaceAnalysisRunner] initialized model=%s root=%s det_size=%s det_thresh=%s providers=%s",
             self._model_config.model_name,
-            self._model_config.root,
+            model_root,
             self._model_config.det_size,
             self._model_config.det_thresh,
             providers,

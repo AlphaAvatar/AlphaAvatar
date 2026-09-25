@@ -395,16 +395,14 @@ cp .env.template .env.dev
 
 Edit .env.dev and set required environment variables.
 
-📦 Step 2. Download Required Files
+✅ Step 2. Run the Agent
+
+Enabled inference runners resolve their model files during initialization. Missing files are downloaded automatically; no separate download command is required.
+
+Set `ALPHAAVATAR_MODEL_CACHE` to choose the model cache directory. Set `ALPHAAVATAR_MODEL_OFFLINE=1` to require locally cached, validated files. See [Model Loading](docs/model-loading.md) for cache and integrity details.
 
 ```bash
-alphaavatar download-files
-```
-
-✅ Step 3. Run the Agent
-
-```bash
-ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/voice/pipeline_openai_tools.yaml
+ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/voice/pipeline_openai_tools_minimal.yaml
 # or
 ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/mm/pipeline_openai_tools.yaml
 ```

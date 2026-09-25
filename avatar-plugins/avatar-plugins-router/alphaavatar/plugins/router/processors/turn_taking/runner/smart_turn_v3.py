@@ -30,7 +30,7 @@ class SmartTurnV3Runner(InferenceRunner):
         import onnxruntime as ort
         from transformers import WhisperFeatureExtractor
 
-        model_path = resolve_smart_turn_model_path(local_files_only=False)
+        model_path = resolve_smart_turn_model_path()
 
         options = ort.SessionOptions()
         options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL

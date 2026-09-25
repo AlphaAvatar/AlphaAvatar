@@ -15,75 +15,34 @@ import json
 import os
 
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.inference import (
-    InferenceRunner,
-    register_inference_runner_bootstrap,
-)
+from alphaavatar.agents.runtime.inference import register_inference_runner_bootstrap
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 from alphaavatar.agents.tools import MCPAPI
 
+from .inference import configure_inference_runners
 from .log import logger
 from .mcp_host import MCPHost
 from .version import __version__
 
-__all__ = [
-    "__version__",
-]
+__all__ = ["__version__"]
 
 
 class MCPRemotePlugin(AvatarModulePlugin):
     def __init__(self) -> None:
-        super().__init__(__name__, __version__, __package__, logger)  # type: ignore
+        super().__init__(__name__, __version__, __package__, logger)
 
-    def get_plugin(
-        self,
-        runtime: AvatarRuntime,
-        init_config: dict,
-        *args,
-        **kwargs,
-    ) -> MCPAPI:
+    def get_plugin(self, runtime: AvatarRuntime, init_config: dict, *args, **kwargs) -> MCPAPI:
         try:
             status_emitter = kwargs.pop("status_emitter", None)
-
-            servers = os.getenv("MCP_SERVERS", "{}")
-            servers = json.loads(servers)
-
-            mcp_host = MCPHost(
-                runtime=runtime,
-                servers=servers,
-                **init_config,
-                **kwargs,
-            )
+            servers = json.loads(os.getenv("MCP_SERVERS", "{}"))
+            mcp_host = MCPHost(runtime=runtime, servers=servers, **init_config, **kwargs)
             return MCPAPI(mcp_host, status_emitter=status_emitter)
-        except Exception as e:
+        except Exception as exc:
             raise ImportError(
-                "The MCP plugin is required but failed to initialize.\n"
-                "To fix this, install the optional dependency: "
-                "`pip install alphaavatar-plugins-mcp`\n"
-                f"Original error: {e}"
-            ) from e
-
-
-def configure_vdb_runner(vdb_type: str | None = None) -> None:
-    vdb_type = vdb_type or os.getenv("MCP_VDB_TYPE")
-
-    logger.info("Configuring Persona plugin with VDB type: %s", vdb_type)
-
-    if vdb_type == "lancedb":
-        from .runner import LanceDBRunner
-
-        method = LanceDBRunner.INFERENCE_METHOD
-        InferenceRunner.register(LanceDBRunner)
-
-    else:
-        logger.warning(
-            "Unsupported MCP_VDB_TYPE=%r. Expected 'lancedb'.",
-            vdb_type,
-        )
-        return None
-
-    os.environ["MCP_VDB_INFERENCE_METHOD"] = method
-    return None
+                "The MCP plugin failed to initialize. "
+                "Install the optional dependency: `pip install alphaavatar-plugins-mcp`. "
+                f"Original error: {exc}"
+            ) from exc
 
 
 # Plugin register
@@ -95,6 +54,6 @@ AvatarModulePlugin.register(
 
 # Inference Runners
 register_inference_runner_bootstrap(
-    "alphaavatar.plugins.mcp.vdb",
-    configure_vdb_runner,
+    "alphaavatar.plugins.mcp",
+    configure_inference_runners,
 )

@@ -24,8 +24,9 @@ from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.agents.utils.files.work_dirs import WorkspacePaths
 from alphaavatar.agents.utils.vdb import lancedb
 
-from ...model_files import FACE_MODEL_CONFIG, SPEAKER_MODEL_CONFIG
 from ...processors.face.analysis_runner import FaceAnalysisRunner
+from ...processors.face.model_files import FACE_MODEL_CONFIG
+from ...processors.speaker.model_files import SPEAKER_MODEL_CONFIG
 from ...processors.speaker.vector_runner import SpeakerVectorRunner
 
 

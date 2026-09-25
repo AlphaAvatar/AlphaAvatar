@@ -11,7 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .bootstrap import bootstrap_inference_runners, register_inference_runner_bootstrap
+from .bootstrap import (
+    bootstrap_inference_runners,
+    prepare_inference_runners,
+    register_inference_runner_bootstrap,
+)
 from .executor import INFERENCE_ENDPOINT_ENV, InferenceExecutor
 from .runner import InferenceRunner
 from .runtime import InferenceRuntime
@@ -22,5 +26,6 @@ __all__ = [
     "InferenceRunner",
     "InferenceRuntime",
     "bootstrap_inference_runners",
+    "prepare_inference_runners",
     "register_inference_runner_bootstrap",
 ]

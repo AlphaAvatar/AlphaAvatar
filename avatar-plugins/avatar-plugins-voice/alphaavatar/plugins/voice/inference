@@ -1,0 +1,12 @@
+from collections.abc import Mapping
+from typing import Any
+
+from alphaavatar.agents.runtime.inference import InferenceRunner
+
+
+def configure_inference_runners(config: Mapping[str, Any]) -> tuple[type[InferenceRunner], ...]:
+    if config["voice"]["vad"]["plugin"] != "silero":
+        return ()
+    from .vad.runner.silero_runner import SileroVADRunner
+
+    return (SileroVADRunner,)

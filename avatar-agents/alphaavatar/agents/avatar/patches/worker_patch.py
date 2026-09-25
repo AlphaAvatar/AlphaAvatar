@@ -26,7 +26,6 @@ from livekit.protocol import agent
 
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.runtime.inference import (
-    InferenceRunner,
     InferenceRuntime,
     bootstrap_inference_runners,
 )
@@ -110,12 +109,10 @@ class AvatarServer(livekit_worker.AgentServer):
             # Do not rely only on main(), because dev/start may create the actual worker in a
             # different process context. AvatarServer.run() is the final shared path.
             try:
-                bootstrap_inference_runners()
+                avatar_runners = bootstrap_inference_runners()
             except Exception:
                 logger.exception("AlphaAvatar inference runner bootstrap failed")
                 raise
-
-            avatar_runners = dict(InferenceRunner.registered_runners)
 
             logger.info(
                 "AlphaAvatar inference runners registered",
@@ -272,7 +269,7 @@ class AvatarServer(livekit_worker.AgentServer):
             logger.info(
                 "Starting AlphaAvatar inference runtime",
                 extra={
-                    "runners": list(InferenceRunner.registered_runners),
+                    "runners": list(avatar_runners),
                 },
             )
             await self._avatar_inference_runtime.start()
@@ -281,7 +278,7 @@ class AvatarServer(livekit_worker.AgentServer):
                 "AlphaAvatar inference runtime started",
                 extra={
                     "endpoint": self._avatar_inference_runtime.endpoint,
-                    "runners": list(InferenceRunner.registered_runners),
+                    "runners": list(avatar_runners),
                 },
             )
 

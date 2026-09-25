@@ -139,11 +139,9 @@ Use the bundled startup script:
 bash scripts/start_alphaavatar_demo.sh
 ```
 
-First-time startup with required file download:
+Enabled inference runners download missing model files during their initialization. No pre-download command or `DOWNLOAD_FILES` setting is required.
 
-```bash
-DOWNLOAD_FILES=true bash scripts/start_alphaavatar_demo.sh
-```
+Persist `ALPHAAVATAR_MODEL_CACHE` across restarts. For offline startup, populate the same cache on a connected machine using the intended configuration, then set `ALPHAAVATAR_MODEL_OFFLINE=1`. Missing or invalid model files fail initialization rather than accessing the network.
 
 Override config file:
 
@@ -198,7 +196,6 @@ Environment=ENV_FILE=.env.demo
 Environment=CONFIG_FILE=examples/agent_configs/roles/demo.yaml
 Environment=START_MODE=start
 Environment=PYTHONUNBUFFERED=1
-Environment=DOWNLOAD_FILES=false
 
 ExecStart=/path/to/AlphaAvatar/scripts/start_alphaavatar_demo.sh
 

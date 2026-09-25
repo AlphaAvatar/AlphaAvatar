@@ -30,6 +30,7 @@ from alphaavatar.agents.constants import DEFAULT_CONTEXT_VALUE
 from alphaavatar.agents.env import init_env
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.runtime import ContextRuntime, InteractionMethod, SessionRuntime
+from alphaavatar.agents.runtime.inference import prepare_inference_runners
 from alphaavatar.agents.utils.files.work_dirs import (
     WorkspacePaths,
     prepare_user_path,
@@ -426,6 +427,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
 def main() -> None:
     args = read_args()
     avatar_config: AvatarConfig = get_avatar_args(args)
+    prepare_inference_runners(avatar_config.model_dump())
 
     opts = agents.worker.ServerOptions(
         agent_name=avatar_config.avatar.name,

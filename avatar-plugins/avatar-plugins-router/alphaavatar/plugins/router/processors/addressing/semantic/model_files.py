@@ -11,15 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from __future__ import annotations
-
-import hashlib
 from dataclasses import dataclass
-from pathlib import Path
 
-from huggingface_hub import hf_hub_download
-
-from alphaavatar.agents.utils.files import build_model_cache_dir
+from alphaavatar.agents.utils.files.model_files import resolve_hf_file
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,41 +48,21 @@ SEMANTIC_ADDRESSING_CONFIG = SemanticAddressingModelConfig(
 )
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as file:
-        for chunk in iter(lambda: file.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _resolve(filename: str, expected_sha256: str, *, local_files_only: bool) -> str:
+def resolve_semantic_addressing_files() -> tuple[str, str]:
     config = SEMANTIC_ADDRESSING_CONFIG
-    path = Path(
-        hf_hub_download(
-            repo_id=config.repo_id,
-            filename=filename,
-            revision=config.revision,
-            cache_dir=build_model_cache_dir(
-                "router",
-                "addressing",
-                "semantic_addressing",
-            ),
-            local_files_only=local_files_only,
-        )
+    namespace = ("router", "addressing", "semantic")
+    model = resolve_hf_file(
+        namespace=namespace,
+        repo_id=config.repo_id,
+        revision=config.revision,
+        filename=config.model_filename,
+        sha256=config.model_sha256,
     )
-    actual = _sha256(path)
-    if actual != expected_sha256:
-        raise RuntimeError(
-            f"Semantic Addressing checksum mismatch for {filename}: "
-            f"expected={expected_sha256}, actual={actual}"
-        )
-    return str(path)
-
-
-def resolve_semantic_addressing_files(*, local_files_only: bool = False) -> tuple[str, str]:
-    config = SEMANTIC_ADDRESSING_CONFIG
-    return (
-        _resolve(config.model_filename, config.model_sha256, local_files_only=local_files_only),
-        _resolve(config.prompt_filename, config.prompt_sha256, local_files_only=local_files_only),
+    prompt = resolve_hf_file(
+        namespace=namespace,
+        repo_id=config.repo_id,
+        revision=config.revision,
+        filename=config.prompt_filename,
+        sha256=config.prompt_sha256,
     )
+    return model, prompt

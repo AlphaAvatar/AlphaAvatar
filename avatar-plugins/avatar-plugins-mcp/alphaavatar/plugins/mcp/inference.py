@@ -11,24 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from alphaavatar.agents.runtime.inference import register_inference_runner_bootstrap
-from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
+import os
+from collections.abc import Mapping
+from typing import Any
 
-from .factory import RouterPlugin
-from .inference import configure_inference_runners
-from .version import __version__
+from alphaavatar.agents.runtime.inference import InferenceRunner
 
-__all__ = ["__version__"]
 
-# Plugin register
-AvatarModulePlugin.register(
-    AvatarModule.ROUTER,
-    "default",
-    RouterPlugin(),
-)
+def configure_inference_runners(config: Mapping[str, Any]) -> tuple[type[InferenceRunner], ...]:
+    options = config["tools"]["mcp"]
+    if not options["enabled"] or not options["servers"] or options["plugin"] != "default":
+        return ()
+    from .runner import LanceDBRunner
 
-# Inference Runners
-register_inference_runner_bootstrap(
-    "alphaavatar.plugins.router",
-    configure_inference_runners,
-)
+    os.environ["MCP_VDB_INFERENCE_METHOD"] = LanceDBRunner.INFERENCE_METHOD
+    return (LanceDBRunner,)

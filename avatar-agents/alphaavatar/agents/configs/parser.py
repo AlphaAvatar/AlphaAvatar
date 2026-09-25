@@ -47,6 +47,9 @@ def read_args() -> dict[str, Any]:
     if len(sys.argv) < 2:
         raise ValueError("No arguments provided. Provide a command and config/CLI args.")
 
+    if sys.argv[1] == "download-files":
+        raise ValueError("Models are resolved by enabled runners; use dev or start with a config.")
+
     if len(sys.argv) >= 3 and sys.argv[2].lower().endswith((".yaml", ".yml", ".json")):
         config_path = Path(sys.argv[2]).absolute()
 

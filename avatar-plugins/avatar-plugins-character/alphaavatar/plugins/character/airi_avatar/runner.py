@@ -19,21 +19,14 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
 from typing import TypeVar
 
+from playwright.async_api import Browser, Page, async_playwright
+
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.loop_thread import AsyncLoopThread
 
 from ..log import logger
 from ..runner_op import RunnerOP
 from .check import chromium_preflight_check
-
-try:
-    from playwright.async_api import Browser, Page, async_playwright
-except Exception:
-    logger.info("[AIRI] Installing Chromium for Playwright...")
-    import subprocess
-
-    subprocess.run(["playwright", "install", "chromium"], check=True)
-    from playwright.async_api import Browser, Page, async_playwright
 
 T = TypeVar("T")
 
