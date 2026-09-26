@@ -1,3 +1,32 @@
+# Contributing to AlphaAvatar
+
+## Plugin development
+
+Plugin packages are grouped by responsibility:
+
+| Layer | Package location | Responsibility |
+| :--- | :--- | :--- |
+| Foundation | `avatar-plugins/foundation/` | Shared service components used by other plugins. |
+| Perception | `avatar-plugins/perception/` | User understanding, memory, identity, and interaction. |
+| Tools | `avatar-plugins/tools/` | Research, document access, and external operations. |
+
+Read [Plugin Layout and Boundaries](avatar-plugins/README.md) before adding or moving a package.
+
+Keep public namespaces under `alphaavatar.plugins.<plugin>`. Do not encode layer names into Python imports or YAML plugin selections. Keep processor-specific configuration, prompts, model specifications, and business logic with their owning processor.
+
+Consumers own their tasks, streams, and request state; `FoundationRuntime` owns shared service components. Plugin registration must not initialize models. Select inference runners from the active configuration and resolve model files inside runner initialization.
+
+Package changes must keep workspace membership, `[tool.uv.sources]`, `scripts/release.sh`, dependency metadata, and `uv.lock` consistent. Review lockfile changes before committing, then verify:
+
+```bash
+uv lock --check
+uv sync --all-packages --locked
+```
+
+Update the root plugin catalog with a concise capability description and accurate status. Existing plugins link to their README; planned plugins must not use placeholder links or imply that an implementation is available.
+
+---
+
 ## 🧩 Release Process
 
 AlphaAvatar uses **Git tags**, **GitHub Actions**, and **GitHub Releases** to automate packaging and publishing all workspace packages.

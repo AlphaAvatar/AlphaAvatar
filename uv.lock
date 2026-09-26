@@ -270,7 +270,7 @@ provides-extras = ["livekit"]
 
 [[package]]
 name = "alpha-avatar-plugins-character"
-source = { editable = "avatar-plugins/avatar-plugins-character" }
+source = { editable = "avatar-plugins/perception/avatar-plugins-character" }
 dependencies = [
     { name = "playwright" },
 ]
@@ -280,7 +280,7 @@ requires-dist = [{ name = "playwright" }]
 
 [[package]]
 name = "alpha-avatar-plugins-deepresearch"
-source = { editable = "avatar-plugins/avatar-plugins-deepresearch" }
+source = { editable = "avatar-plugins/tools/avatar-plugins-deepresearch" }
 dependencies = [
     { name = "tavily" },
 ]
@@ -290,7 +290,7 @@ requires-dist = [{ name = "tavily" }]
 
 [[package]]
 name = "alpha-avatar-plugins-mcp"
-source = { editable = "avatar-plugins/avatar-plugins-mcp" }
+source = { editable = "avatar-plugins/tools/avatar-plugins-mcp" }
 dependencies = [
     { name = "mcp" },
 ]
@@ -300,7 +300,7 @@ requires-dist = [{ name = "mcp", specifier = ">=1.24.0,<2" }]
 
 [[package]]
 name = "alpha-avatar-plugins-memory"
-source = { editable = "avatar-plugins/avatar-plugins-memory" }
+source = { editable = "avatar-plugins/perception/avatar-plugins-memory" }
 dependencies = [
     { name = "torchaudio" },
 ]
@@ -310,7 +310,7 @@ requires-dist = [{ name = "torchaudio", specifier = ">=0.10.1" }]
 
 [[package]]
 name = "alpha-avatar-plugins-persona"
-source = { editable = "avatar-plugins/avatar-plugins-persona" }
+source = { editable = "avatar-plugins/perception/avatar-plugins-persona" }
 dependencies = [
     { name = "insightface" },
     { name = "onnxruntime" },
@@ -328,7 +328,7 @@ requires-dist = [
 
 [[package]]
 name = "alpha-avatar-plugins-rag"
-source = { editable = "avatar-plugins/avatar-plugins-rag" }
+source = { editable = "avatar-plugins/tools/avatar-plugins-rag" }
 dependencies = [
     { name = "docling" },
     { name = "raganything", extra = ["all"] },
@@ -342,7 +342,7 @@ requires-dist = [
 
 [[package]]
 name = "alpha-avatar-plugins-router"
-source = { editable = "avatar-plugins/avatar-plugins-router" }
+source = { editable = "avatar-plugins/perception/avatar-plugins-router" }
 dependencies = [
     { name = "llama-cpp-python" },
 ]
@@ -352,11 +352,11 @@ requires-dist = [{ name = "llama-cpp-python", specifier = "==0.3.35" }]
 
 [[package]]
 name = "alpha-avatar-plugins-status"
-source = { editable = "avatar-plugins/avatar-plugins-status" }
+source = { editable = "avatar-plugins/perception/avatar-plugins-status" }
 
 [[package]]
 name = "alpha-avatar-plugins-voice"
-source = { editable = "avatar-plugins/avatar-plugins-voice" }
+source = { editable = "avatar-plugins/foundation/avatar-plugins-voice" }
 dependencies = [
     { name = "aiohttp" },
     { name = "numpy" },
