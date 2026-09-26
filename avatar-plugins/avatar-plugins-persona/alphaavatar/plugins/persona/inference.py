@@ -11,22 +11,26 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import os
-from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING
 
 from alphaavatar.agents.runtime.inference import InferenceRunner
 
 from .config import DefaultPersonaConfig
 
+if TYPE_CHECKING:
+    from alphaavatar.agents.configs.avatar_config import AvatarConfig
 
-def configure_inference_runners(config: Mapping[str, Any]) -> tuple[type[InferenceRunner], ...]:
-    persona = config["persona"]
-    if persona["plugin"] != "default":
+
+def configure_inference_runners(config: AvatarConfig) -> tuple[type[InferenceRunner], ...]:
+    persona = config.persona
+    if persona.plugin != "default":
         return ()
-    options = DefaultPersonaConfig.model_validate(persona["init_config"])
+    options = DefaultPersonaConfig.model_validate(persona.init_config)
 
-    runners = []
+    runners: list[type[InferenceRunner]] = []
     if options.speaker.enabled:
         from .processors.speaker.attribute_runner import SpeakerAttributeRunner
         from .processors.speaker.vector_runner import SpeakerVectorRunner

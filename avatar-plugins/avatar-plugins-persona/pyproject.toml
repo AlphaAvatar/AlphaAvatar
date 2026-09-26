@@ -24,7 +24,6 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
 ]
 dependencies = [
-    "huggingface-hub",
     "onnxruntime==1.23.1",
     "opencv-python-headless==4.12.0.88",
     "insightface==1.0.1",

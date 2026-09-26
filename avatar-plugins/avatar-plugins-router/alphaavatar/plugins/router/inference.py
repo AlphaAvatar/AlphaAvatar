@@ -11,22 +11,26 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from collections.abc import Mapping
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from alphaavatar.agents.runtime.inference import InferenceRunner
 
 from .config import RouterConfig
 
+if TYPE_CHECKING:
+    from alphaavatar.agents.configs.avatar_config import AvatarConfig
 
-def configure_inference_runners(config: Mapping[str, Any]) -> tuple[type[InferenceRunner], ...]:
-    router = config["router"]
-    if router["plugin"] != "default":
+
+def configure_inference_runners(config: AvatarConfig) -> tuple[type[InferenceRunner], ...]:
+    router = config.router
+    if router.plugin != "default":
         return ()
-    options = RouterConfig.model_validate(router["init_config"])
+    options = RouterConfig.model_validate(router.init_config)
 
-    runners = []
-    if options.addressing.semantic.enabled and config["voice"]["stt"]["plugin"] is not None:
+    runners: list[type[InferenceRunner]] = []
+    if options.addressing.semantic.enabled and config.voice.stt.plugin is not None:
         if options.addressing.semantic.model.name != "qwen3_0_6b_q8_0":
             raise ValueError(
                 f"Unknown semantic addressing model: {options.addressing.semantic.model.name}"

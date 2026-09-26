@@ -16,15 +16,18 @@ from __future__ import annotations
 import importlib
 import json
 import os
-from collections.abc import Callable, Iterable, Mapping
-from typing import Any
+from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING
 
 from alphaavatar.agents.log import logger
 
 from .runner import InferenceRunner
 
+if TYPE_CHECKING:
+    from alphaavatar.agents.configs.avatar_config import AvatarConfig
+
 INFERENCE_PLAN_ENV = "ALPHAAVATAR_INFERENCE_PLAN"
-RunnerBootstrapFn = Callable[[Mapping[str, Any]], Iterable[type[InferenceRunner]]]
+RunnerBootstrapFn = Callable[["AvatarConfig"], Iterable[type[InferenceRunner]]]
 _runner_bootstraps: dict[str, RunnerBootstrapFn] = {}
 
 
@@ -51,7 +54,7 @@ def _add_runner(runners: dict[str, type[InferenceRunner]], runner: type[Inferenc
     runners[method] = runner
 
 
-def prepare_inference_runners(config: Mapping[str, Any]) -> tuple[str, ...]:
+def prepare_inference_runners(config: AvatarConfig) -> tuple[str, ...]:
     """Build a configuration-specific, download-free plan before CLI subprocesses start."""
     os.environ.pop(INFERENCE_PLAN_ENV, None)
     runners: dict[str, type[InferenceRunner]] = {}

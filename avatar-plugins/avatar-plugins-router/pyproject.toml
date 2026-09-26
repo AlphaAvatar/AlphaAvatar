@@ -32,7 +32,6 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
 ]
 dependencies = [
-    "huggingface-hub",
     "llama-cpp-python==0.3.35",
 ]
 

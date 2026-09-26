@@ -11,14 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from collections.abc import Mapping
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from alphaavatar.agents.runtime.inference import InferenceRunner
 
+if TYPE_CHECKING:
+    from alphaavatar.agents.configs.avatar_config import AvatarConfig
 
-def configure_inference_runners(config: Mapping[str, Any]) -> tuple[type[InferenceRunner], ...]:
-    if config["character"]["plugin"] != "airi":
+
+def configure_inference_runners(config: AvatarConfig) -> tuple[type[InferenceRunner], ...]:
+    if config.character.plugin != "airi":
         return ()
     from .airi_avatar import AiriRunner
 

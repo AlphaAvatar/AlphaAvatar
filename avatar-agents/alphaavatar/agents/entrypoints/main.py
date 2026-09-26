@@ -427,7 +427,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
 def main() -> None:
     args = read_args()
     avatar_config: AvatarConfig = get_avatar_args(args)
-    prepare_inference_runners(avatar_config.model_dump())
+    prepare_inference_runners(avatar_config)
 
     opts = agents.worker.ServerOptions(
         agent_name=avatar_config.avatar.name,

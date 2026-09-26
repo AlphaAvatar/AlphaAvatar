@@ -165,6 +165,9 @@ name = "alpha-avatar-agents"
 source = { editable = "avatar-agents" }
 dependencies = [
     { name = "alpha-avatar-core" },
+    { name = "filelock" },
+    { name = "huggingface-hub" },
+    { name = "jsonschema" },
     { name = "langchain-community" },
     { name = "langchain-core" },
     { name = "livekit" },
@@ -176,8 +179,10 @@ dependencies = [
     { name = "markdown" },
     { name = "mcp" },
     { name = "omegaconf" },
+    { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "python-slugify" },
+    { name = "referencing" },
     { name = "weasyprint" },
 ]
 
@@ -197,6 +202,9 @@ vdb = [
 [package.metadata]
 requires-dist = [
     { name = "alpha-avatar-core", editable = "avatar-core" },
+    { name = "filelock", specifier = ">=3.12" },
+    { name = "huggingface-hub", specifier = ">=0.25" },
+    { name = "jsonschema", specifier = ">=4.18,<5" },
     { name = "lancedb", marker = "extra == 'vdb'", specifier = "==0.30.2" },
     { name = "langchain-anthropic", marker = "extra == 'providers'" },
     { name = "langchain-community" },
@@ -214,9 +222,11 @@ requires-dist = [
     { name = "markdown" },
     { name = "mcp", specifier = ">=1.10.0,<2" },
     { name = "omegaconf" },
+    { name = "pydantic", specifier = ">=2,<3" },
     { name = "python-dotenv" },
     { name = "python-slugify" },
     { name = "qdrant-client", marker = "extra == 'vdb'" },
+    { name = "referencing", specifier = ">=0.30,<1" },
     { name = "weasyprint" },
 ]
 provides-extras = ["providers", "vdb"]
@@ -302,7 +312,6 @@ requires-dist = [{ name = "torchaudio", specifier = ">=0.10.1" }]
 name = "alpha-avatar-plugins-persona"
 source = { editable = "avatar-plugins/avatar-plugins-persona" }
 dependencies = [
-    { name = "huggingface-hub" },
     { name = "insightface" },
     { name = "onnxruntime" },
     { name = "opencv-python-headless" },
@@ -311,7 +320,6 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "huggingface-hub" },
     { name = "insightface", specifier = "==1.0.1" },
     { name = "onnxruntime", specifier = "==1.23.1" },
     { name = "opencv-python-headless", specifier = "==4.12.0.88" },
@@ -336,15 +344,11 @@ requires-dist = [
 name = "alpha-avatar-plugins-router"
 source = { editable = "avatar-plugins/avatar-plugins-router" }
 dependencies = [
-    { name = "huggingface-hub" },
     { name = "llama-cpp-python" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "huggingface-hub" },
-    { name = "llama-cpp-python", specifier = "==0.3.35" },
-]
+requires-dist = [{ name = "llama-cpp-python", specifier = "==0.3.35" }]
 
 [[package]]
 name = "alpha-avatar-plugins-status"

@@ -13,7 +13,6 @@
 # limitations under the License.
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING
 
 from alphaavatar.agents.runtime.inference import InferenceRunner
@@ -23,14 +22,8 @@ if TYPE_CHECKING:
 
 
 def configure_inference_runners(config: AvatarConfig) -> tuple[type[InferenceRunner], ...]:
-    if config.memory.plugin != "default":
+    if config.voice.vad.plugin != "silero":
         return ()
-    backend = os.getenv("MEMORY_VDB_TYPE")
-    if backend == "qdrant":
-        from .storage.vdb import QdrantRunner as runner
-    elif backend == "lancedb":
-        from .storage.vdb import LanceDBRunner as runner
-    else:
-        raise ValueError(f"Unsupported MEMORY_VDB_TYPE: {backend!r}")
-    os.environ["MEMORY_VDB_INFERENCE_METHOD"] = runner.INFERENCE_METHOD
-    return (runner,)
+    from .vad.runner.silero_runner import SileroVADRunner
+
+    return (SileroVADRunner,)
