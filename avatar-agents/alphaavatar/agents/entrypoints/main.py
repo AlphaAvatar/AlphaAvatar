@@ -266,7 +266,11 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
         session=session_runtime,
         context=context_runtime,
     )
-    ctx.add_shutdown_callback(partial(close_avatar_session, session, avatar_runtime))
+
+    async def _shutdown_avatar_session() -> None:
+        await close_avatar_session(session, avatar_runtime)
+
+    ctx.add_shutdown_callback(_shutdown_avatar_session)
 
     # Build RTC Plugins
     transient_audio_output = LiveKitTransientAudioOutput(
