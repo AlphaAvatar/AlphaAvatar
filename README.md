@@ -158,11 +158,11 @@ AlphaAvatar follows a layered realtime multimodal architecture:
 
 ---
 
-## AlphaAvatar Plugins
+<h2>AlphaAvatar Plugins</h2>
 
 AlphaAvatar organizes plugins into three layers: shared foundation services, perception and interaction capabilities, and tools for external tasks.
 
-*Available means implemented in this source tree; APIs are evolving. Planned entries are not yet available as standalone plugins.*
+*Available means implemented in this source tree, not necessarily enabled by default or API-stable. Planned entries are not yet available as standalone plugins.*
 
 ### ⚙️ Foundation
 
@@ -170,9 +170,9 @@ Shared components that other plugins use through `FoundationRuntime`.
 
 | Plugin | Capabilities | Status |
 | :--- | :--- | :---: |
-| [**Voice**][plugin-voice] | Voice activity detection, speech recognition, and speech synthesis. | Available |
-| **Provider** | Shared model access, task binding, and structured or streaming output. | Planned |
-| **Context** | Pluggable context construction, composition, and state access. | Planned |
+| [**Voice**][plugin-voice] | Provides voice activity detection, speech recognition, and speech synthesis.<br>Shares reusable voice components with Router and other consumers. | ![Available][status-available] |
+| **Provider** | Will provide shared model access and task execution.<br>Will unify structured responses and streaming output through the Foundation layer. | ![Planned][status-planned] |
+| **Context** | Will make context construction and composition independently pluggable.<br>Will expose shared context services to other plugins. | ![Planned][status-planned] |
 
 Provider and Context functionality already exists; their standalone Foundation plugins are planned. Voice is currently the only service attached to `FoundationRuntime`.
 
@@ -182,14 +182,14 @@ Capabilities for understanding users, maintaining memory, and coordinating inter
 
 | Plugin | Capabilities | Status |
 | :--- | :--- | :---: |
-| [**Router**][plugin-router] | Multimodal routing, addressing, turn taking, and interruption. | Available |
-| [**Memory**][plugin-memory] | Persistent conversation, tool, and environment memory. | Available |
-| [**Persona**][plugin-persona] | User profiles, speaker recognition, and face identity. | Available |
-| [**Character**][plugin-character] | Realtime virtual characters and synchronized audiovisual interaction. | Available |
-| [**Status**][plugin-status] | Progress feedback during thinking, tool use, and response generation. | Available |
-| **Reflection** | Reflection on memory, behavior, and interaction history. | Planned |
-| **Planning** | Goal planning and multi-step task coordination. | Planned |
-| **Behavior** | Response style, workflow policies, and proactive assistance. | Planned |
+| [**Router**][plugin-router] | Coordinates multimodal routing, addressing, turn taking, and interruption.<br>Combines speech, transcripts, and attention evidence for realtime interaction decisions. | ![Available][status-available] |
+| [**Memory**][plugin-memory] | Stores durable memories from conversations, tools, and environment observations.<br>Retrieves relevant information to maintain continuity across interactions. | ![Available][status-available] |
+| [**Persona**][plugin-persona] | Builds user profiles and recognizes speakers and faces.<br>Maintains identity continuity and supplies context for personalization. | ![Available][status-available] |
+| [**Character**][plugin-character] | Connects AlphaAvatar to realtime virtual-character interfaces.<br>Synchronizes character presentation with voice-based interaction. | ![Available][status-available] |
+| [**Status**][plugin-status] | Publishes progress feedback while AlphaAvatar thinks or uses tools.<br>Keeps intermediate activity visible during longer-running workflows. | ![Available][status-available] |
+| **Reflection** | Will review memories, behavior, and interaction history.<br>Will derive insights to support ongoing adaptation and improvement. | ![Planned][status-planned] |
+| **Planning** | Will turn goals into coordinated, multi-step plans.<br>Will track task progress and support longer-horizon execution. | ![Planned][status-planned] |
+| **Behavior** | Will manage response style, workflow policies, and proactive behavior.<br>Will adapt interaction strategies to user preferences and context. | ![Planned][status-planned] |
 
 ### 🧰 Tools
 
@@ -197,10 +197,10 @@ Integrations for research, document access, and external actions.
 
 | Plugin | Capabilities | Status |
 | :--- | :--- | :---: |
-| [**MCP**][plugin-mcp] | Discovery, retrieval, and invocation of external MCP tools. | Available |
-| [**DeepResearch**][plugin-deepresearch] | Web search, content extraction, and multi-step research. | Available |
-| [**RAG**][plugin-rag] | Document ingestion and retrieval-augmented knowledge access. | Available |
-| **Sandbox** | Isolated execution for external actions and agent collaboration. | Planned |
+| [**MCP**][plugin-mcp] | Discovers, retrieves, and invokes tools exposed by MCP servers.<br>Connects the assistant to external services and real-world operations. | ![Available][status-available] |
+| [**DeepResearch**][plugin-deepresearch] | Combines web search and content extraction for multi-step research.<br>Builds informed responses from external information. | ![Available][status-available] |
+| [**RAG**][plugin-rag] | Ingests documents and retrieves relevant knowledge for model responses.<br>Connects uploaded content to retrieval-augmented workflows. | ![Available][status-available] |
+| **Sandbox** | Will provide isolated execution for external actions.<br>Will support controlled interaction with tools and other agents. | ![Planned][status-planned] |
 
 See [Plugin Layout and Boundaries](avatar-plugins/README.md) for development details and the [Roadmap](ROADMAP.md) for planned work.
 
@@ -213,6 +213,8 @@ See [Plugin Layout and Boundaries](avatar-plugins/README.md) for development det
 [plugin-mcp]: avatar-plugins/tools/avatar-plugins-mcp/README.md
 [plugin-deepresearch]: avatar-plugins/tools/avatar-plugins-deepresearch/README.md
 [plugin-rag]: avatar-plugins/tools/avatar-plugins-rag/README.md
+[status-available]: https://img.shields.io/badge/Available-28a745?style=flat
+[status-planned]: https://img.shields.io/badge/Planned-6c757d?style=flat
 
 ---
 

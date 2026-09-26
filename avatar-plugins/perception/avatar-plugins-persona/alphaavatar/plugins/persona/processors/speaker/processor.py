@@ -42,11 +42,11 @@ from alphaavatar.core.media import (
 from alphaavatar.core.perception import PerceptionStreamKind
 
 from ...log import logger
-from ...model_files import SPEAKER_MODEL_CONFIG
 from ...runtime import PersonaRuntime
 from .attribute_runner import SpeakerAttributeRunner
 from .cache import SpeakerCache
 from .config import SpeakerConfig
+from .model_files import SPEAKER_MODEL_CONFIG
 from .vector_runner import SpeakerVectorRunner
 
 
