@@ -42,7 +42,7 @@ class EnvironmentProvider:
 
         self._task = config.task
         self._gateway = ProviderGateway(config.gateway)
-        self._gateway.validate_tasks([self._task])
+        self._gateway.validate_tasks([self._task], require_input_adapter=True)
 
     @staticmethod
     def _model_input(

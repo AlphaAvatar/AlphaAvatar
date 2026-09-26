@@ -238,9 +238,10 @@ memory:
           trace: *provider_trace
           tasks:
             memory.env_delta:
-              provider: openai
-              model: gpt-4o
+              provider: google
+              model: gemini-2.5-flash
               temperature: 0.1
+              input_adapter: langchain_gemini
 
 
 # ------------------------------------------------------------
