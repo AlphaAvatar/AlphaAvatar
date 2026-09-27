@@ -143,8 +143,11 @@ class AvatarEngine(Agent):
                         self._persona,
                         self._memory,
                         self._turn_controller,
-                        self._router,
                     ),
+                ),
+                LifecyclePhase.create(
+                    "avatar-plugins-perception-router",
+                    (self._router,),
                 ),
                 LifecyclePhase.create(
                     "avatar-rtc-input",
