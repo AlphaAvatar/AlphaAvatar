@@ -78,34 +78,34 @@ router:
       max_buffer_sec: 2.0
 
     addressing:
-      addressing_wait_sec: 0.5
-
       semantic:
         enabled: true
         avatar_identities:
           - AlphaAvatar
           - Alpha
         history_turns: 2
-
         model:
           name: qwen3_0_6b_q8_0
 
       visual:
         enabled: true
 
-      fusion:
-        conflict_margin: 0.1
-
     turn_taking:
       enabled: true
+      addressing_wait_sec: 0.5
       transcript_wait_sec: 3.0
+      unsegmented_alignment_sec: 0.75
+      max_hold_sec: 1.5
+
+      fusion:
+        conflict_margin: 0.1
 
       model:
         name: smart_turn_v3
 
       policy:
         commit_threshold: 0.5
-        max_hold_sec: 1.5
+        respond_to_group: false
 
       interruption:
         enabled: true
@@ -175,39 +175,75 @@ character:
 memory:
   plugin: default
 
-  search_context: 3
-  recall_num: 6
   maximum_memory_num: 28
-
-  init_config:
-    provider:
-      conversation_delta_task: memory.conversation_delta
-      tool_delta_task: memory.tool_delta
-      env_delta_task: memory.env_delta
-
-      gateway:
-        trace: *provider_trace
-
-        tasks:
-          memory.conversation_delta:
-            provider: openai
-            model: gpt-4o
-            temperature: 0.1
-
-          memory.tool_delta:
-            provider: openai
-            model: gpt-4o
-            temperature: 0.1
-
-          memory.env_delta:
-            provider: google
-            model: gemini-2.5-flash
-            temperature: 0.1
-            input_adapter: langchain_gemini
 
   vdb_config:
     collection_name: memory
     embedding: *openai_embedding
+
+  init_config:
+    retrieval:
+      enabled: true
+      search_context: 3
+      recall_num: 6
+
+    conversation:
+      enabled: true
+
+      provider:
+        task: memory.conversation_delta
+        gateway:
+          trace: *provider_trace
+          tasks:
+            memory.conversation_delta:
+              provider: openai
+              model: gpt-4o
+              temperature: 0.1
+
+      pipeline:
+        extraction:
+          session_gate: false
+          relations: false
+
+        consolidation:
+          mode: session_merge
+          resolve_superseded_items: null
+
+        maintenance:
+          item_ops:
+            - add
+          candidate_source: consolidated_lookup
+          similarity_threshold: 0.82
+          max_candidates_per_item: 5
+          timeout: 30.0
+
+    tool:
+      enabled: true
+
+      provider:
+        task: memory.tool_delta
+        gateway:
+          trace: *provider_trace
+          tasks:
+            memory.tool_delta:
+              provider: openai
+              model: gpt-4o
+              temperature: 0.1
+
+    environment:
+      enabled: true
+      include_audio: true
+
+      provider:
+        task: memory.env_delta
+        gateway:
+          trace: *provider_trace
+          tasks:
+            memory.env_delta:
+              provider: google
+              model: gemini-2.5-flash
+              temperature: 0.1
+              input_adapter: langchain_gemini
 
 
 # ------------------------------------------------------------
@@ -223,11 +259,9 @@ persona:
     face_collection_name: persona_face
     embedding: *openai_embedding
 
-  profiler:
-    enabled: true
-    plugin: default
-
-    init_config:
+  init_config:
+    profiler:
+      enabled: true
       provider:
         profile_delta_task: persona.profile_delta
 
@@ -240,15 +274,12 @@ persona:
               model: gpt-4o
               temperature: 0.1
 
-  speaker:
-    enabled: true
-    plugin: default
-    init_config: {}
+    speaker:
+      enabled: true
+      inference_queue_size: 1
 
-  face:
-    enabled: true
-    plugin: default
-    init_config: {}
+    face:
+      enabled: true
 
 
 # ============================================================

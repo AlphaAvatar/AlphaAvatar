@@ -14,11 +14,9 @@
 from .base import PersonaBase
 from .cache import PersonaCache
 from .processor import PersonaProcessorBase
-from .template import PersonaPluginsTemplate
 
 __all__ = [
     "PersonaBase",
     "PersonaCache",
-    "PersonaPluginsTemplate",
     "PersonaProcessorBase",
 ]

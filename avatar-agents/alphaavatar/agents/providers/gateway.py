@@ -152,8 +152,20 @@ class ProviderGateway:
 
     """API"""
 
-    def validate_tasks(self, task_names: Iterable[str]) -> None:
+    def validate_tasks(
+        self, task_names: Iterable[str], *, require_input_adapter: bool = False
+    ) -> None:
+        task_names = tuple(task_names)
         self._registry.validate_tasks(task_names)
+
+        for task_name in task_names:
+            task_config = self._registry.get_task_config(task_name)
+            if task_config.input_adapter:
+                self._input_adapters.resolve(task_config.input_adapter)
+            elif require_input_adapter:
+                raise ValueError(
+                    f"Provider task {task_name!r} requires input_adapter for ModelInput"
+                )
 
     async def ainvoke_structured(
         self,

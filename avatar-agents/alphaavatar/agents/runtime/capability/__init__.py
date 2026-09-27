@@ -13,10 +13,12 @@
 # limitations under the License.
 from .decorator import avatar_capability
 from .enum import AvatarCapabilityName
+from .registry import AvatarCapabilityRegistry
 from .schema import AvatarCapability
 
 __all__ = [
     "AvatarCapability",
     "AvatarCapabilityName",
+    "AvatarCapabilityRegistry",
     "avatar_capability",
 ]

@@ -16,31 +16,17 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import TYPE_CHECKING
 
-from alphaavatar.agents.plugin import AvatarRuntimePlugin
+from alphaavatar.agents.runtime.plugin import AvatarRuntimePlugin
 
 if TYPE_CHECKING:
-    import numpy as np
-    from livekit.agents.llm import ChatItem
-
-    from alphaavatar.agents.runtime import SessionRuntime
-    from alphaavatar.agents.runtime.capability import AvatarCapability
-
-    from .cache import PersonaCache
-    from .processor import PersonaProcessorBase
+    from alphaavatar.agents.persona.cache import PersonaCache
+    from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
 
 
 class PersonaBase(AvatarRuntimePlugin):
     @property
     @abstractmethod
-    def capabilities(self) -> tuple[AvatarCapability, ...]: ...
-
-    @property
-    @abstractmethod
-    def processors(self) -> tuple[PersonaProcessorBase, ...]: ...
-
-    @property
-    @abstractmethod
-    def session_runtime(self) -> SessionRuntime: ...
+    def capability_registry(self) -> AvatarCapabilityRegistry: ...
 
     @property
     @abstractmethod
@@ -51,26 +37,7 @@ class PersonaBase(AvatarRuntimePlugin):
     def persona_content(self) -> str: ...
 
     @abstractmethod
-    def add_message(self, *, chat_item: ChatItem) -> None: ...
-
-    @abstractmethod
     async def load_profile(self, *, uid: str) -> None: ...
 
     @abstractmethod
     async def save(self, *, uid: str | None = None) -> None: ...
-
-    @abstractmethod
-    async def resolve_speaker_vector(
-        self,
-        *,
-        speaker_vector: np.ndarray,
-        timeout: float | None = None,
-    ) -> str | None: ...
-
-    @abstractmethod
-    async def resolve_face_vector(
-        self,
-        *,
-        face_vector: np.ndarray,
-        timeout: float | None = None,
-    ) -> str | None: ...

@@ -21,7 +21,7 @@ import json
 from typing import Any
 
 from alphaavatar.agents.log import logger
-from alphaavatar.agents.plugin import AvatarRuntimePlugin
+from alphaavatar.agents.runtime.plugin import AvatarRuntimePlugin
 from alphaavatar.core.output import (
     OutputEvent,
     OutputKind,

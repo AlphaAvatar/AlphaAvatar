@@ -29,11 +29,11 @@ from alphaavatar.agents.configs import AvatarConfig, get_avatar_args, read_args
 from alphaavatar.agents.constants import DEFAULT_CONTEXT_VALUE
 from alphaavatar.agents.env import init_env
 from alphaavatar.agents.log import logger
-from alphaavatar.agents.runtime import (
-    AvatarRuntime,
-    ContextRuntime,
-    InteractionMethod,
-    SessionRuntime,
+from alphaavatar.agents.runtime import ContextRuntime, InteractionMethod, SessionRuntime
+from alphaavatar.agents.runtime.inference import prepare_inference_runners
+from alphaavatar.agents.utils.files.work_dirs import (
+    WorkspacePaths,
+    prepare_user_path,
 )
 from alphaavatar.agents.utils.id_utils import get_session_id, get_user_id
 from alphaavatar.agents.utils.time import build_user_time_context
@@ -49,6 +49,7 @@ from .livekit import (
     LiveKitTransientAudioOutput,
     LiveKitVideoInput,
 )
+from .runtime import close_avatar_session, create_avatar_runtime
 from .schema.room_type import SUPPORTED_ADAPTER_TYPES, detect_room_type
 from .schema.session_mode import SessionMode, resolve_session_mode
 from .schema.session_type import resolve_session_type
@@ -211,6 +212,10 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     user_time = build_user_time_context(participant_metadata)
 
     # Build Runtime Components
+    workspace = WorkspacePaths.from_env()
+    user_path = workspace.users.get(user_id)
+    prepare_user_path(user_path)
+
     session_runtime = SessionRuntime(
         session_id=session_id,
     )
@@ -220,6 +225,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
         room_id=ctx.room.name,
         room_type=room_type.value,
         user_time=user_time,
+        user_path=user_path,
         metadata=participant_metadata,
         primary=True,
     )
@@ -253,11 +259,18 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
         },
     )
 
-    avatar_runtime = AvatarRuntime.create(
+    session = AgentSession()
+    avatar_runtime = await create_avatar_runtime(
+        avatar_config=avatar_config,
+        workspace=workspace,
         session=session_runtime,
         context=context_runtime,
-        config=avatar_config.runtime,
     )
+
+    async def _shutdown_avatar_session() -> None:
+        await close_avatar_session(session, avatar_runtime)
+
+    ctx.add_shutdown_callback(_shutdown_avatar_session)
 
     # Build RTC Plugins
     transient_audio_output = LiveKitTransientAudioOutput(
@@ -321,7 +334,6 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     )
 
     # Build Agent & Virtual Character Session
-    session = AgentSession()
 
     @ctx.room.on("participant_connected")
     def on_participant_connected(connected_participant):
@@ -419,6 +431,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
 def main() -> None:
     args = read_args()
     avatar_config: AvatarConfig = get_avatar_args(args)
+    prepare_inference_runners(avatar_config)
 
     opts = agents.worker.ServerOptions(
         agent_name=avatar_config.avatar.name,
@@ -429,6 +442,7 @@ def main() -> None:
         load_fnc=worker_load,
         load_threshold=0.9,
         initialize_process_timeout=60,
+        shutdown_process_timeout=180,
     )
     server = AvatarServer.from_server_options(opts)
     agents.cli.run_app(server)

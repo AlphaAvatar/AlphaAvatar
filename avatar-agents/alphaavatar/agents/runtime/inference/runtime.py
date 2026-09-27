@@ -211,7 +211,7 @@ class _RunnerProcess:
                     _read_frame(self._reader),
                     timeout=timeout or self._request_timeout,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 await self._terminate()
                 raise TimeoutError(f"Inference runner `{self.method}` timed out") from None
 
@@ -278,16 +278,14 @@ class _RunnerProcess:
 class InferenceRuntime:
     def __init__(
         self,
-        runners: dict[str, type[InferenceRunner]] | None = None,
+        runners: dict[str, type[InferenceRunner]],
         *,
         mp_ctx: BaseContext | None = None,
         initialize_timeout: float = 300,
         request_timeout: float = 30,
         close_timeout: float = 5,
     ) -> None:
-        self._runner_classes = dict(
-            InferenceRunner.registered_runners if runners is None else runners
-        )
+        self._runner_classes = dict(runners)
         self._mp_ctx = mp_ctx or mp.get_context()
         self._initialize_timeout = initialize_timeout
         self._request_timeout = request_timeout

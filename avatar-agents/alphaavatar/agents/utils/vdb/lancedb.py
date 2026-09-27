@@ -11,10 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import os
 import pathlib
-
-from alphaavatar.agents.log import logger
 
 
 class LanceDBClient:
@@ -26,7 +23,7 @@ class LanceDBClient:
                 "LanceDB is not installed. Please install it with `pip install lancedb`."
             ) from e
 
-        self.path = pathlib.Path(path)
+        self.path = pathlib.Path(path).expanduser()
         self.path.mkdir(parents=True, exist_ok=True)
         self._db = lancedb.connect(str(self.path))
 
@@ -56,30 +53,9 @@ class LanceDBClient:
 
 def get_client(
     *,
-    client_path: str | None = None,
+    client_path: str | pathlib.Path,
     **kwargs,
 ) -> LanceDBClient:
-    """
-    Initialize LanceDB local client.
-
-    Args:
-        path: Base path for LanceDB local storage.
-            Default: <AVATAR_WORK_DIR>/data/vdb/lancedb
-
-    Returns:
-        LanceDBClient
-    """
-    work_dir = os.getenv("AVATAR_WORK_DIR", "")
-
-    if client_path and client_path.strip():
-        client_path = pathlib.Path(client_path)
-    else:
-        if not work_dir:
-            raise ValueError(
-                "AVATAR_WORK_DIR is not set. Please initialize AvatarInfoConfig first."
-            )
-
-        client_path = pathlib.Path(work_dir) / "data" / "vdb" / "lancedb"
-        logger.warning(f"LanceDB client path is not provided, defaulting to {client_path}.")
-
-    return LanceDBClient(path=str(client_path))
+    if not str(client_path).strip():
+        raise ValueError("LanceDB client_path cannot be empty")
+    return LanceDBClient(path=client_path)

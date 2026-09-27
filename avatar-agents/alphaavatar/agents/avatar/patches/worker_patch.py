@@ -24,12 +24,12 @@ from livekit.agents import Plugin, ipc, telemetry, utils, version, worker as liv
 from livekit.agents.inference_runner import _InferenceRunner
 from livekit.protocol import agent
 
-from alphaavatar.agents import AvatarPlugin
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.runtime.inference import (
-    InferenceRunner,
     InferenceRuntime,
+    bootstrap_inference_runners,
 )
+from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
 
 
 class AvatarServer(livekit_worker.AgentServer):
@@ -109,12 +109,10 @@ class AvatarServer(livekit_worker.AgentServer):
             # Do not rely only on main(), because dev/start may create the actual worker in a
             # different process context. AvatarServer.run() is the final shared path.
             try:
-                AvatarPlugin.bootstrap_inference_runners()
+                avatar_runners = bootstrap_inference_runners()
             except Exception:
                 logger.exception("AlphaAvatar inference runner bootstrap failed")
                 raise
-
-            avatar_runners = dict(InferenceRunner.registered_runners)
 
             logger.info(
                 "AlphaAvatar inference runners registered",
@@ -259,14 +257,19 @@ class AvatarServer(livekit_worker.AgentServer):
             )
 
             if self._mp_ctx_str == "forkserver":
-                plugin_packages = [p.package for p in Plugin.registered_plugins] + ["av"]
+                plugin_packages = [
+                    *AvatarModulePlugin.registered_packages(),
+                    *(p.package for p in Plugin.registered_plugins),
+                    "av",
+                ]
+                plugin_packages = list(dict.fromkeys(plugin_packages))
                 logger.info("preloading plugins", extra={"packages": plugin_packages})
                 self._mp_ctx.set_forkserver_preload(plugin_packages)
 
             logger.info(
                 "Starting AlphaAvatar inference runtime",
                 extra={
-                    "runners": list(InferenceRunner.registered_runners),
+                    "runners": list(avatar_runners),
                 },
             )
             await self._avatar_inference_runtime.start()
@@ -275,7 +278,7 @@ class AvatarServer(livekit_worker.AgentServer):
                 "AlphaAvatar inference runtime started",
                 extra={
                     "endpoint": self._avatar_inference_runtime.endpoint,
-                    "runners": list(InferenceRunner.registered_runners),
+                    "runners": list(avatar_runners),
                 },
             )
 

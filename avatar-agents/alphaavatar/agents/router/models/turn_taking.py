@@ -16,8 +16,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from ..enum import TurnTakingMode
-from ..schema import TurnTakingAssessment, TurnTakingEvidence
+from ..enums import TurnTakingMode
+from ..schemas import TurnTakingAssessment, TurnTakingEvidence
 
 
 @dataclass(frozen=True, slots=True)

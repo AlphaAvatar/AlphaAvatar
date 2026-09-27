@@ -24,4 +24,4 @@ class AvatarCapabilityName(StrEnum):
     MEMORY_CONVERSATION = "memory.conversation"
     MEMORY_ENVIRONMENT = "memory.environment"
     MEMORY_TOOL = "memory.tool"
-    MEMORY_GRAPH = "memory.graph"
+    MEMORY_RETRIEVAL = "memory.retrieval"

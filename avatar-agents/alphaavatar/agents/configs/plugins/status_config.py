@@ -17,8 +17,8 @@ import importlib
 
 from pydantic import BaseModel, Field
 
-from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 from alphaavatar.agents.status import StatusEmitter
 
 importlib.import_module("alphaavatar.plugins.status")
@@ -55,7 +55,7 @@ class StatusConfig(BaseModel):
         *,
         runtime: AvatarRuntime,
     ) -> StatusEmitter:
-        status_emitter: StatusEmitter | None = AvatarPlugin.get_avatar_plugin(
+        status_emitter: StatusEmitter | None = AvatarModulePlugin.create(
             AvatarModule.STATUS,
             self.plugin,
             runtime=runtime,
@@ -64,8 +64,6 @@ class StatusConfig(BaseModel):
         )
 
         if status_emitter is None:
-            return StatusEmitter(
-                enabled=False,
-            )
+            return StatusEmitter(enabled=False)
 
         return status_emitter

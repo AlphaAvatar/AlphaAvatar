@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from ..schema import SemanticAddressingRequest, SemanticAddressingResult
+from ..schemas import SemanticAddressingRequest, SemanticAddressingResult
 
 
 class SemanticAddressingModelBase(ABC):

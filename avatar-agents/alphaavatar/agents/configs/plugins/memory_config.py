@@ -17,9 +17,9 @@ import os
 
 from pydantic import BaseModel, Field
 
-from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.memory import MemoryBase
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 from alphaavatar.agents.utils.vdb import qdrant
 
 importlib.import_module("alphaavatar.plugins.memory")
@@ -34,14 +34,6 @@ class MemoryConfig(BaseModel):
     )
 
     # Memory Metadata
-    search_context: int = Field(
-        default=3,
-        description="The number of contexts used for memory searches.",
-    )
-    recall_num: int = Field(
-        default=10,
-        description="The number of items to recall from the memory vector database.",
-    )
     maximum_memory_num: int = Field(
         default=10,
         description="The maximum number of memory items to use",
@@ -77,13 +69,11 @@ class MemoryConfig(BaseModel):
 
     def get_plugin(self, runtime: AvatarRuntime, avatar_id: str) -> MemoryBase:
         """Returns the Memory plugin instance based on the configuration."""
-        return AvatarPlugin.get_avatar_plugin(
+        return AvatarModulePlugin.create(
             AvatarModule.MEMORY,
             self.plugin,
             runtime=runtime,
             avatar_id=avatar_id,
-            memory_search_context=self.search_context,
-            memory_recall_num=self.recall_num,
             maximum_memory_num=self.maximum_memory_num,
             init_config=self.init_config,
         )

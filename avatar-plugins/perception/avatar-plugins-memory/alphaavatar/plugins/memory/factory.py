@@ -1,0 +1,100 @@
+# Copyright 2026 AlphaAvatar project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+from __future__ import annotations
+
+from typing import Any
+
+from alphaavatar.agents.memory import MemoryBase
+from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
+
+from .config import DefaultMemoryConfig
+from .log import logger
+from .processors import (
+    ConversationProcessor,
+    EnvironmentProcessor,
+    RetrievalProcessor,
+    ToolProcessor,
+)
+from .runtime import MemoryRuntime
+from .storage import MemoryStore
+from .version import __version__
+
+
+class MemoryPlugin(AvatarModulePlugin):
+    def __init__(self) -> None:
+        super().__init__(__name__, __version__, __package__, logger)
+
+    def get_plugin(
+        self,
+        *,
+        runtime: AvatarRuntime,
+        avatar_id: str,
+        maximum_memory_num: int,
+        init_config: dict[str, Any] | None = None,
+    ) -> MemoryBase:
+        config = DefaultMemoryConfig.model_validate(init_config or {})
+
+        store = MemoryStore(runtime=runtime)
+        memory = MemoryRuntime(
+            runtime=runtime,
+            avatar_id=avatar_id,
+            store=store,
+            maximum_memory_num=maximum_memory_num,
+        )
+
+        processors = []
+        conversation = None
+
+        if config.conversation.enabled:
+            conversation = ConversationProcessor(
+                runtime=runtime,
+                memory=memory,
+                config=config.conversation,
+            )
+            processors.append(conversation)
+
+        if config.tool.enabled:
+            processors.append(
+                ToolProcessor(
+                    runtime=runtime,
+                    memory=memory,
+                    config=config.tool,
+                )
+            )
+
+        if config.environment.enabled:
+            processors.append(
+                EnvironmentProcessor(
+                    runtime=runtime,
+                    memory=memory,
+                    config=config.environment,
+                )
+            )
+
+        if config.retrieval.enabled:
+            processors.insert(
+                0,
+                RetrievalProcessor(
+                    runtime=runtime,
+                    memory=memory,
+                    config=config.retrieval,
+                    recall_observers=(
+                        (conversation.record_recall,) if conversation is not None else ()
+                    ),
+                ),
+            )
+
+        memory.bind_processors(processors)
+        return memory

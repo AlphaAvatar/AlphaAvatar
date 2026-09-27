@@ -21,9 +21,9 @@ from typing import TYPE_CHECKING, Any
 from livekit.agents import llm
 from pydantic import BaseModel, ConfigDict, Field
 
-from alphaavatar.agents import AvatarModule, AvatarPlugin
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 from alphaavatar.agents.tools import ToolBase
 from alphaavatar.agents.utils import resolve_env_placeholders
 
@@ -109,7 +109,7 @@ class ToolsConfig(BaseModel):
 
         # DeepResearch Tool
         if self.deepresearch.plugin is not None:
-            deepresearch_tool: ToolBase | None = AvatarPlugin.get_avatar_plugin(
+            deepresearch_tool: ToolBase | None = AvatarModulePlugin.create(
                 AvatarModule.DEEPRESEARCH,
                 self.deepresearch.plugin,
                 session_runtime=runtime.session,
@@ -121,7 +121,7 @@ class ToolsConfig(BaseModel):
 
         # RAG Tool
         if self.rag.plugin is not None:
-            rag_tool: ToolBase | None = AvatarPlugin.get_avatar_plugin(
+            rag_tool: ToolBase | None = AvatarModulePlugin.create(
                 AvatarModule.RAG,
                 self.rag.plugin,
                 session_runtime=runtime.session,
@@ -143,7 +143,7 @@ class ToolsConfig(BaseModel):
             logger.warning("MCP is enabled but tools.mcp.plugin is null.")
             return tools
 
-        mcp_tool: ToolBase | None = AvatarPlugin.get_avatar_plugin(
+        mcp_tool: ToolBase | None = AvatarModulePlugin.create(
             AvatarModule.MCP,
             self.mcp.plugin,
             runtime=runtime,

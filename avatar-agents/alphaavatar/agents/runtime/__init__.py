@@ -11,23 +11,35 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .avatar_runtime import AvatarRuntime
-from .context_runtime import ContextRuntime, InteractionMethod
-from .session_runtime import (
-    ParticipantIdentityResolution,
-    ParticipantInfo,
-    SessionRuntime,
-)
-from .turn_runtime import TurnInputModality, TurnRuntime, TurnSnapshot
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .modules.context.runtime import ContextRuntime, InteractionMethod
+    from .modules.session.runtime import ParticipantInfo, SessionRuntime
+    from .runtime import AvatarRuntime
 
 __all__ = [
     "AvatarRuntime",
     "ContextRuntime",
     "InteractionMethod",
     "ParticipantInfo",
-    "ParticipantIdentityResolution",
     "SessionRuntime",
-    "TurnInputModality",
-    "TurnRuntime",
-    "TurnSnapshot",
 ]
+
+_EXPORTS = {
+    "AvatarRuntime": ".runtime",
+    "ContextRuntime": ".modules.context.runtime",
+    "InteractionMethod": ".modules.context.runtime",
+    "ParticipantInfo": ".modules.session.runtime",
+    "SessionRuntime": ".modules.session.runtime",
+}
+
+
+def __getattr__(name: str) -> Any:
+    module_name = _EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(module_name, __name__), name)
+    globals()[name] = value
+    return value

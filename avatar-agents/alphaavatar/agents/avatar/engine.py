@@ -21,7 +21,7 @@ from collections.abc import AsyncIterable, Callable, Sequence
 from typing import Any
 from uuid import uuid4
 
-from livekit.agents import Agent, ModelSettings, llm, tts as livekit_tts
+from livekit.agents import Agent, ModelSettings, llm
 from livekit.agents.types import FlushSentinel
 
 from alphaavatar.agents.configs import AvatarConfig
@@ -34,20 +34,17 @@ from alphaavatar.agents.entrypoints.schema.room_type import RoomType
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.memory import MemoryBase
 from alphaavatar.agents.persona import PersonaBase
-from alphaavatar.agents.plugin import AvatarModule, AvatarRuntimePlugin
-from alphaavatar.agents.router import InteractionRouterBase, InteractionRouterDependencies
-from alphaavatar.agents.runtime import (
-    AvatarRuntime,
-    SessionRuntime,
-    TurnInputModality,
-    TurnSnapshot,
-)
+from alphaavatar.agents.router import InteractionRouterBase
+from alphaavatar.agents.runtime import AvatarRuntime, SessionRuntime
+from alphaavatar.agents.runtime.lifecycle import LifecyclePhase, RuntimePluginLifecycle
+from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarRuntimePlugin
 from alphaavatar.agents.status import (
     StatusEmitter,
     StatusEvent,
     StatusType,
 )
 from alphaavatar.core.output import OutputLane
+from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
 
 from .context import (
     AvatarContextManager,
@@ -55,7 +52,6 @@ from .context import (
     extract_answer_text,
 )
 from .context.internal_tools import get_runtime_context_tool
-from .lifecycle import LifecyclePhase, RuntimePluginLifecycle
 from .patches import init_avatar_patches
 from .turn_controller import AvatarTurnController
 from .voice import LiveKitTTSAdapter
@@ -77,27 +73,17 @@ class AvatarEngine(Agent):
         self._livekit_model_input = LiveKitModelInput(clock=runtime.clock)
         self._livekit_turn_input = LiveKitTurnInput(
             clock=runtime.clock,
-            turn_runtime=runtime.turn,
+            runtime=runtime,
         )
 
         # Step 2: initialize runtime plugins and tools.
-        self._livekit_tts: livekit_tts.TTS | None = avatar_config.voice.get_tts_plugin()
-        self._tts = (
-            LiveKitTTSAdapter(self._livekit_tts, owns_provider=False)
-            if self._livekit_tts is not None
-            else None
-        )
+        voice_tts = runtime.foundation.voice.tts
+        if voice_tts is not None and not isinstance(voice_tts, LiveKitTTSAdapter):
+            raise TypeError("The current LiveKit response path requires LiveKitTTSAdapter")
         self._status: StatusEmitter = avatar_config.status.get_plugin(
             runtime=runtime,
         )
-        self._router: InteractionRouterBase = avatar_config.router.get_plugin(
-            dependencies=InteractionRouterDependencies(
-                runtime=runtime,
-                vad=avatar_config.voice.get_vad_plugin(inference_executor=runtime.inference),
-                stt=avatar_config.voice.get_stt_plugin(),
-                tts=self._tts,
-            )
-        )
+        self._router: InteractionRouterBase = avatar_config.router.get_plugin(runtime=runtime)
         self._memory: MemoryBase = avatar_config.memory.get_plugin(
             runtime=runtime,
             avatar_id=avatar_config.avatar.id,
@@ -110,6 +96,10 @@ class AvatarEngine(Agent):
         self._tools.append(get_runtime_context_tool())
 
         # Step 3: initialize per-call model context preparation.
+        self._runtime.capability_registry.collect(
+            self._memory,
+            self._persona,
+        )
         self._context_manager = AvatarContextManager(
             avatar_config=self._avatar_config,
             runtime=self._runtime,
@@ -124,7 +114,7 @@ class AvatarEngine(Agent):
             turn_detection="manual",
             stt=None,
             vad=None,
-            tts=self._livekit_tts,
+            tts=voice_tts.provider if voice_tts is not None else None,
             allow_interruptions=self._avatar_config.voice.allow_interruptions,
             tools=self._tools,
         )
@@ -148,7 +138,7 @@ class AvatarEngine(Agent):
                     tuple(self._rtc_adapters.get("outputs", ())),
                 ),
                 LifecyclePhase.create(
-                    "perception_consumers",
+                    "avatar-plugins-perception",
                     (
                         self._persona,
                         self._memory,
@@ -156,7 +146,7 @@ class AvatarEngine(Agent):
                     ),
                 ),
                 LifecyclePhase.create(
-                    "interaction_router",
+                    "avatar-plugins-perception-router",
                     (self._router,),
                 ),
                 LifecyclePhase.create(
@@ -225,6 +215,7 @@ class AvatarEngine(Agent):
         return self._runtime.turn.commit_input(
             input_id=f"system:{uuid4().hex}",
             modality=TurnInputModality.SYSTEM,
+            context_ids=(self._runtime.context.context_id,),
             metadata={"source": "livekit_llm_node_system_trigger"},
         )
 
@@ -267,12 +258,6 @@ class AvatarEngine(Agent):
         )
 
         await self._run_shutdown_step(
-            "avatar runtime shutdown",
-            self._runtime.aclose,
-            errors,
-        )
-
-        await self._run_shutdown_step(
             "session user path migration flush",
             lambda: self._runtime.session.flush_user_path_migrations(
                 remove_old=True,
@@ -296,6 +281,12 @@ class AvatarEngine(Agent):
     ) -> AsyncIterable[llm.ChatChunk | str | FlushSentinel]:
         async def _generate():
             turn_snapshot = self._ensure_turn_snapshot(chat_ctx)
+            context_ready = await self._runtime.turn.wait_context_ready(turn_snapshot)
+            if not context_ready:
+                logger.debug(
+                    "Turn context readiness timed out turn_id=%s",
+                    turn_snapshot.turn_id,
+                )
 
             base_input = self._livekit_model_input.from_chat_context(
                 chat_ctx,

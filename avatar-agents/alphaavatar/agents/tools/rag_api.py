@@ -19,8 +19,8 @@ from typing import Any, Literal
 from livekit.agents import RunContext
 from livekit.agents.llm import ToolError
 
-from alphaavatar.agents import AvatarModule
 from alphaavatar.agents.log import logger
+from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.agents.status import (
     StatusEmitter,
     StatusEvent,

@@ -8,16 +8,17 @@ PACKAGES=(
   "avatar-core"
   "avatar-agents"
   "avatar-channels/avatar-channels-whatsapp"
-  "avatar-plugins/avatar-plugins-character"
-  "avatar-plugins/avatar-plugins-deepresearch"
-  "avatar-plugins/avatar-plugins-mcp"
-  "avatar-plugins/avatar-plugins-memory"
-  "avatar-plugins/avatar-plugins-persona"
-  "avatar-plugins/avatar-plugins-rag"
-  "avatar-plugins/avatar-plugins-router"
-  "avatar-plugins/avatar-plugins-status"
-  "avatar-plugins/avatar-plugins-voice"
+  "avatar-plugins/foundation/avatar-plugins-voice"
+  "avatar-plugins/perception/avatar-plugins-character"
+  "avatar-plugins/perception/avatar-plugins-memory"
+  "avatar-plugins/perception/avatar-plugins-persona"
+  "avatar-plugins/perception/avatar-plugins-router"
+  "avatar-plugins/perception/avatar-plugins-status"
+  "avatar-plugins/tools/avatar-plugins-deepresearch"
+  "avatar-plugins/tools/avatar-plugins-mcp"
+  "avatar-plugins/tools/avatar-plugins-rag"
 )
+
 
 REPO="${REPO:-pypi}"      # pypi | testpypi
 DRY="${DRY:-0}"

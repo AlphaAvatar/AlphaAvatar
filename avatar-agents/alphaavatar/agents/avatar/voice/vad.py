@@ -22,6 +22,38 @@ from alphaavatar.core.media import AudioFrame
 from .schema.voice_activity import VoiceActivityEvent
 
 
+class VADBase(ABC):
+    """
+    Factory owning reusable VAD model resources.
+
+    Every stream() call creates independent recurrent and activity state.
+    """
+
+    @property
+    @abstractmethod
+    def model(self) -> str: ...
+
+    @property
+    @abstractmethod
+    def provider(self) -> str: ...
+
+    @property
+    @abstractmethod
+    def sample_rate(self) -> int: ...
+
+    @property
+    @abstractmethod
+    def update_interval(self) -> float: ...
+
+    @abstractmethod
+    def stream(self) -> VADStreamBase:
+        """Create one stateful detector stream."""
+
+    async def aclose(self) -> None:
+        """Release shared factory resources; consumers close their own streams."""
+        return None
+
+
 class VADStreamBase(ABC):
     """
     Stateful streaming VAD instance for one ordered audio source.
@@ -65,31 +97,3 @@ class VADStreamBase(ABC):
         traceback: TracebackType | None,
     ) -> None:
         await self.aclose()
-
-
-class VADBase(ABC):
-    """
-    Factory owning reusable VAD model resources.
-
-    Every stream() call creates independent recurrent and activity state.
-    """
-
-    @property
-    @abstractmethod
-    def model(self) -> str: ...
-
-    @property
-    @abstractmethod
-    def provider(self) -> str: ...
-
-    @property
-    @abstractmethod
-    def sample_rate(self) -> int: ...
-
-    @property
-    @abstractmethod
-    def update_interval(self) -> float: ...
-
-    @abstractmethod
-    def stream(self) -> VADStreamBase:
-        """Create one stateful detector stream."""

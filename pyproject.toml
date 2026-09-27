@@ -17,7 +17,9 @@ members = [
     "avatar-core",
     "avatar-agents",
     "avatar-channels/*",
-    "avatar-plugins/*",
+    "avatar-plugins/foundation/*",
+    "avatar-plugins/perception/*",
+    "avatar-plugins/tools/*",
 ]
 exclude = []
 

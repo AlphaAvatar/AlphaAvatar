@@ -19,8 +19,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from alphaavatar.agents.log import logger
-from alphaavatar.agents.plugin import AvatarRuntimePlugin
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.runtime.plugin import AvatarRuntimePlugin
 from alphaavatar.agents.utils.id_utils import get_md5_id
 from alphaavatar.core.env import EnvObservation, PerceptionSourceRef
 from alphaavatar.core.media import AudioFramePayload

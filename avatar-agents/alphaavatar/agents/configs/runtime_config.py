@@ -80,8 +80,17 @@ class PerceptionConfig(BaseModel):
         }
 
 
+class TurnConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    snapshot_maxlen: int = Field(default=128, gt=0)
+    event_maxlen: int = Field(default=256, gt=0)
+    context_ready_timeout_sec: float = Field(default=0.5, ge=0, le=10.0)
+
+
 class RuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     temporal_alignment: TemporalAlignmentConfig = Field(default_factory=TemporalAlignmentConfig)
     perception: PerceptionConfig = Field(default_factory=PerceptionConfig)
+    turn: TurnConfig = Field(default_factory=TurnConfig)

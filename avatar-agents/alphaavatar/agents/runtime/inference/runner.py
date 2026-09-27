@@ -13,38 +13,11 @@
 # limitations under the License.
 from __future__ import annotations
 
-import threading
 from typing import ClassVar
 
 
 class InferenceRunner:
     INFERENCE_METHOD: ClassVar[str]
-
-    registered_runners: ClassVar[dict[str, type[InferenceRunner]]] = {}
-
-    @classmethod
-    def register(
-        cls,
-        runner_cls: type[InferenceRunner],
-    ) -> None:
-        if threading.current_thread() is not threading.main_thread():
-            raise RuntimeError("Inference runners must be registered on the main thread")
-
-        method = getattr(runner_cls, "INFERENCE_METHOD", "")
-        if not method:
-            raise ValueError(f"{runner_cls.__name__}.INFERENCE_METHOD cannot be empty")
-
-        existing = cls.registered_runners.get(method)
-        if existing is runner_cls:
-            return
-
-        if existing is not None:
-            raise ValueError(
-                f"Inference runner `{method}` already registered "
-                f"by {existing.__module__}.{existing.__name__}"
-            )
-
-        cls.registered_runners[method] = runner_cls
 
     def initialize(self) -> None:
         pass
