@@ -15,17 +15,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from alphaavatar.agents.router import (
+from alphaavatar.agents.router.enums import (
     AddressingMode,
+    InteractionEntityKind,
+    TurnTakingAction,
+    TurnTakingMode,
+)
+from alphaavatar.agents.router.schemas import (
     InteractionAddressing,
     InteractionAddressingEvidence,
-    InteractionEntityKind,
     InteractionEntityRef,
-    TurnTakingAction,
     TurnTakingAssessment,
     TurnTakingDecision,
     TurnTakingEvidence,
-    TurnTakingMode,
 )
 
 

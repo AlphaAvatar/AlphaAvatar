@@ -17,18 +17,20 @@ import asyncio
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 
-from alphaavatar.agents.router import (
+from alphaavatar.agents.router import RouterProcessorBase
+from alphaavatar.agents.router.enums import (
     AddressingEvidenceKind,
     AddressingMode,
-    InteractionAddressingEvidence,
     InteractionEntityKind,
-    InteractionEntityRef,
-    RouterProcessorBase,
     SemanticAddressingLabel,
+    TurnTakingAction,
+)
+from alphaavatar.agents.router.schemas import (
+    InteractionAddressingEvidence,
+    InteractionEntityRef,
     SemanticAddressingRequest,
     SemanticAddressingResult,
     SemanticAddressingTranscript,
-    TurnTakingAction,
     TurnTakingDecision,
 )
 from alphaavatar.agents.runtime import AvatarRuntime

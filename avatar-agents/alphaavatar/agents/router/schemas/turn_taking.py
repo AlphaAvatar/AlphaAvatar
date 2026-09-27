@@ -24,7 +24,7 @@ from alphaavatar.core.env import (
 )
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
 
-from ..enum import (
+from ..enums import (
     AddressingEvidenceKind,
     AddressingMode,
     InteractionEntityKind,

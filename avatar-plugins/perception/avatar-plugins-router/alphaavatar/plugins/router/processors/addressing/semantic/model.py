@@ -16,8 +16,8 @@ from __future__ import annotations
 import asyncio
 import json
 
-from alphaavatar.agents.router import (
-    SemanticAddressingModelBase,
+from alphaavatar.agents.router.models import SemanticAddressingModelBase
+from alphaavatar.agents.router.schemas import (
     SemanticAddressingRequest,
     SemanticAddressingResult,
 )

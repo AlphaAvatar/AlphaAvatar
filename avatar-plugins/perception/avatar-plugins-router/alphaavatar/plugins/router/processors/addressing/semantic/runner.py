@@ -19,8 +19,8 @@ import os
 
 import llama_cpp
 
-from alphaavatar.agents.router import (
-    SemanticAddressingLabel,
+from alphaavatar.agents.router.enums import SemanticAddressingLabel
+from alphaavatar.agents.router.schemas import (
     SemanticAddressingRequest,
     SemanticAddressingResult,
 )

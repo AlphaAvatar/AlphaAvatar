@@ -20,13 +20,15 @@ from alphaavatar.agents.avatar.vision import (
     FaceDetection,
     FaceDetectionResult,
 )
-from alphaavatar.agents.router import (
+from alphaavatar.agents.router import RouterProcessorBase
+from alphaavatar.agents.router.enums import (
     AddressingEvidenceKind,
     AddressingMode,
-    InteractionAddressingEvidence,
     InteractionEntityKind,
+)
+from alphaavatar.agents.router.schemas import (
+    InteractionAddressingEvidence,
     InteractionEntityRef,
-    RouterProcessorBase,
 )
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.core.env import (

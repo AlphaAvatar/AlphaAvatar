@@ -13,7 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
-from alphaavatar.agents.router import SemanticAddressingRequest
+from alphaavatar.agents.router.schemas import SemanticAddressingRequest
 
 
 class SemanticAddressingPrompt:

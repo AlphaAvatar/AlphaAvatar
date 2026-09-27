@@ -18,12 +18,12 @@ from collections.abc import Hashable
 from dataclasses import replace
 from typing import TypeVar
 
-from alphaavatar.agents.router import (
+from alphaavatar.agents.router.enums import TurnTakingAction
+from alphaavatar.agents.router.models import TurnTakingModelBase
+from alphaavatar.agents.router.schemas import (
     InteractionAddressingEvidence,
-    TurnTakingAction,
     TurnTakingDecision,
     TurnTakingEvidence,
-    TurnTakingModelBase,
 )
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.core.env import (

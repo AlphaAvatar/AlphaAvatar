@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from alphaavatar.agents.router import SemanticAddressingModelBase
+from alphaavatar.agents.router.models import SemanticAddressingModelBase
 from alphaavatar.agents.runtime.inference import InferenceExecutor
 
 from .model import Qwen3SemanticAddressingModel

@@ -17,13 +17,17 @@ import asyncio
 
 import numpy as np
 
-from alphaavatar.agents.router import (
+from alphaavatar.agents.router.enums import (
     AddressingMode,
-    TurnTakingAssessment,
-    TurnTakingEvidence,
     TurnTakingMode,
+)
+from alphaavatar.agents.router.models import (
     TurnTakingModelBase,
     TurnTakingModelCapabilities,
+)
+from alphaavatar.agents.router.schemas import (
+    TurnTakingAssessment,
+    TurnTakingEvidence,
 )
 from alphaavatar.agents.runtime.inference import InferenceExecutor
 

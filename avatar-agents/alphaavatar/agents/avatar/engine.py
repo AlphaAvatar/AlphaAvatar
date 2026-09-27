@@ -138,16 +138,13 @@ class AvatarEngine(Agent):
                     tuple(self._rtc_adapters.get("outputs", ())),
                 ),
                 LifecyclePhase.create(
-                    "perception_consumers",
+                    "avatar-plugins-perception",
                     (
                         self._persona,
                         self._memory,
                         self._turn_controller,
+                        self._router,
                     ),
-                ),
-                LifecyclePhase.create(
-                    "interaction_router",
-                    (self._router,),
                 ),
                 LifecyclePhase.create(
                     "avatar-rtc-input",

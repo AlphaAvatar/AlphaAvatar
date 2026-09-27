@@ -16,9 +16,11 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import replace
 
-from alphaavatar.agents.router import (
+from alphaavatar.agents.router.enums import (
     AddressingEvidenceKind,
     AddressingMode,
+)
+from alphaavatar.agents.router.schemas import (
     InteractionAddressingEvidence,
     InteractionEntityRef,
     TurnTakingAssessment,

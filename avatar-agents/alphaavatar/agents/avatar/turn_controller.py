@@ -17,11 +17,13 @@ import asyncio
 from typing import Protocol
 
 from alphaavatar.agents.log import logger
-from alphaavatar.agents.router import (
-    InteractionEntityRef,
+from alphaavatar.agents.router.enums import (
     TurnTakingAction,
-    TurnTakingDecision,
     TurnTakingMode,
+)
+from alphaavatar.agents.router.schemas import (
+    InteractionEntityRef,
+    TurnTakingDecision,
 )
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.plugin import AvatarRuntimePlugin

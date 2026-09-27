@@ -13,10 +13,10 @@
 # limitations under the License.
 from __future__ import annotations
 
-from alphaavatar.agents.router import (
+from alphaavatar.agents.router.enums import TurnTakingMode
+from alphaavatar.agents.router.schemas import (
     TurnTakingAudioEvidence,
     TurnTakingEvidence,
-    TurnTakingMode,
 )
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.core.env import EnvObservation, PerceptionSegmentRef

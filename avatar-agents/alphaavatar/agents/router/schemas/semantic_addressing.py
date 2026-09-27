@@ -17,7 +17,7 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-from ..enum import SemanticAddressingLabel
+from ..enums import SemanticAddressingLabel
 
 
 @dataclass(frozen=True, slots=True)

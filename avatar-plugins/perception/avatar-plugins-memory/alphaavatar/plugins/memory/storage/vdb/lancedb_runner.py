@@ -279,12 +279,12 @@ class LanceDBRunner(InferenceRunner):
             self._memory_table.search(vector)
             .metric("cosine")
             .where(where)
-            .select(["memory_id"])
+            .select(["memory_id", "_distance"])
             .limit(limit)
             .to_list()
         )
         return [
-            {"memory_id": memory_id, "score": 1.0 - float(row.get("_distance", 1.0))}
+            {"memory_id": memory_id, "score": 1.0 - float(row["_distance"])}
             for row in rows
             if (memory_id := str(row.get("memory_id") or "").strip())
         ]
