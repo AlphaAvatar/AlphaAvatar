@@ -18,6 +18,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from alphaavatar.agents.runtime.cleanup import wait_for_cleanup
 from alphaavatar.core.env import EnvObservation, ObservationKind
 from alphaavatar.core.perception import (
     AlignedPerception,
@@ -39,7 +40,7 @@ DEFAULT_ANNOTATION_GRACE_SEC = 0.75
 DEFAULT_MAX_SPEECH_DEFER_SEC = 15.0
 
 DEFAULT_PROCESS_TIMEOUT_SEC = 45.0
-DEFAULT_SHUTDOWN_PROCESS_TIMEOUT_SEC = 8.0
+DEFAULT_SHUTDOWN_TIMEOUT_SEC = 2 * DEFAULT_PROCESS_TIMEOUT_SEC + 5.0
 
 DEFAULT_RETRY_DELAY_SEC = 0.5
 DEFAULT_MAX_ATTEMPTS = 2
@@ -180,7 +181,9 @@ class EnvMemoryScheduler:
         self._pending_batch: EnvMemoryBatch | None = None
         self._scheduler_task: asyncio.Task[None] | None = None
         self._processor_task: asyncio.Task[None] | None = None
+
         self._stopping = False
+        self._stop_task: asyncio.Task[None] | None = None
 
     @property
     def context_id(self) -> str:
@@ -444,12 +447,16 @@ class EnvMemoryScheduler:
                 await asyncio.sleep(0.05)
 
     async def _processor_loop(self) -> None:
-        while self._pending_batch is not None:
+        while not self._stopping and self._pending_batch is not None:
             batch = self._pending_batch
             self._pending_batch = None
 
             try:
                 while True:
+                    if self._stopping and batch.attempts:
+                        await self._restore_pending_batch(batch)
+                        return
+
                     try:
                         await self._process(batch, DEFAULT_PROCESS_TIMEOUT_SEC)
                         break
@@ -458,7 +465,7 @@ class EnvMemoryScheduler:
                     except Exception:
                         batch.attempts += 1
 
-                        if batch.attempts >= DEFAULT_MAX_ATTEMPTS:
+                        if self._stopping or batch.attempts >= DEFAULT_MAX_ATTEMPTS:
                             logger.exception(
                                 "[Memory] ENV batch retained context=%s attempts=%s "
                                 "triggers=%s events=%s",
@@ -489,6 +496,10 @@ class EnvMemoryScheduler:
         self._wake_event.set()
 
     async def start(self) -> None:
+        if self._stop_task is not None:
+            await wait_for_cleanup(self._stop_task)
+            self._stop_task = None
+
         if self._scheduler_task is not None and not self._scheduler_task.done():
             return
 
@@ -498,67 +509,77 @@ class EnvMemoryScheduler:
             name=f"memory_env_scheduler:{self.context_id}",
         )
 
-    async def stop(
-        self,
-        *,
-        finalize: bool = True,
-    ) -> None:
-        if self._stopping:
-            return
-
-        self._stopping = True
-
-        logger.info(
-            "[Memory] ENV scheduler stopping cid=%s",
-            self.context_id,
-        )
-
-        if self._scheduler_task is not None:
-            self._scheduler_task.cancel()
-            await asyncio.gather(
-                self._scheduler_task,
-                return_exceptions=True,
-            )
-            self._scheduler_task = None
-
-        # Cancel the active provider request. _processor_loop restores its current
-        # batch to _pending_batch on cancellation.
-        if self._processor_task is not None and not self._processor_task.done():
-            self._processor_task.cancel()
-            await asyncio.gather(
-                self._processor_task,
-                return_exceptions=True,
-            )
-
-        self._processor_task = None
-
+    async def _shutdown(self, *, finalize: bool) -> None:
+        deadline = asyncio.timeout(DEFAULT_SHUTDOWN_TIMEOUT_SEC)
         try:
-            if not finalize:
-                self._pending_batch = None
-                return
+            async with deadline:
+                if self._scheduler_task is not None:
+                    self._scheduler_task.cancel()
+                    await asyncio.gather(self._scheduler_task, return_exceptions=True)
+                    self._scheduler_task = None
 
-            final_cutoff = self._perception_runtime.capture_cutoff()
-            final_batch = await self._capture_batch(
-                {"session_stop"},
-                target_cutoff=final_cutoff,
-            )
+                if not finalize:
+                    return
 
-            if final_batch is not None:
-                await self._merge_pending_batch(final_batch)
+                final_cutoff = self._perception_runtime.capture_cutoff()
 
-            batch = self._pending_batch
-            self._pending_batch = None
+                # Complete the active batch before capturing and processing the tail.
+                if self._processor_task is not None:
+                    await self._processor_task
+                    self._processor_task = None
 
-            if batch is not None:
-                try:
-                    await asyncio.wait_for(
-                        self._process(batch, DEFAULT_SHUTDOWN_PROCESS_TIMEOUT_SEC),
-                        timeout=DEFAULT_SHUTDOWN_PROCESS_TIMEOUT_SEC + 1.0,
-                    )
-                except BaseException:
-                    self._pending_batch = batch
-                    raise
+                final_batch = await self._capture_batch(
+                    {"session_stop"}, target_cutoff=final_cutoff
+                )
+                if final_batch is not None:
+                    await self._merge_pending_batch(final_batch)
+
+                batch = self._pending_batch
+                if batch is not None:
+                    await self._process(batch, DEFAULT_PROCESS_TIMEOUT_SEC)
+                    self._pending_batch = None
+
+        except TimeoutError as exc:
+            reason = "shutdown deadline" if deadline.expired() else "batch processing timeout"
+            raise TimeoutError(
+                f"ENV finalization failed: {reason}; context={self.context_id}"
+            ) from exc
 
         finally:
+            tasks = tuple(
+                task for task in (self._scheduler_task, self._processor_task) if task is not None
+            )
+            for task in tasks:
+                if not task.done() and not task.cancelling():
+                    task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+            self._scheduler_task = None
+            self._processor_task = None
+            self._requested_triggers.clear()
+            self._wake_event.clear()
+            if not finalize:
+                self._pending_batch = None
+
             self._perception_runtime.events.clear_consumer(self._consumer_id)
-            logger.info("[Memory] ENV scheduler stopped context=%s", self.context_id)
+            if self._pending_batch is not None:
+                batch = self._pending_batch
+                logger.warning(
+                    "[Memory] ENV stopped with uncommitted batch context=%s range=%s..%s; "
+                    "batch is only retained in memory",
+                    self.context_id,
+                    batch.from_sequence,
+                    batch.to_sequence,
+                )
+            else:
+                logger.info("[Memory] ENV scheduler stopped context=%s", self.context_id)
+
+    async def stop(self, *, finalize: bool = True) -> None:
+        if self._stop_task is None:
+            self._stopping = True
+            self._stop_task = asyncio.create_task(
+                self._shutdown(finalize=finalize),
+                name=f"memory_env_shutdown:{self.context_id}",
+            )
+        await wait_for_cleanup(self._stop_task)

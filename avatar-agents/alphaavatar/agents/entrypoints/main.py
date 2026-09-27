@@ -442,6 +442,7 @@ def main() -> None:
         load_fnc=worker_load,
         load_threshold=0.9,
         initialize_process_timeout=60,
+        shutdown_process_timeout=180,
     )
     server = AvatarServer.from_server_options(opts)
     agents.cli.run_app(server)

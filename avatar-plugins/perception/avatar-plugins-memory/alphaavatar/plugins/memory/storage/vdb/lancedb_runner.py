@@ -118,7 +118,7 @@ class LanceDBRunner(InferenceRunner):
             if value
         ]
         if owners := cls._as_str_list(owner_keys):
-            parts.append(f"array_contains_any(owner_keys, {cls._sql_list(owners)})")
+            parts.append(f"array_has_any(owner_keys, {cls._sql_list(owners)})")
         if scopes := cls._as_str_list(scope_keys):
             parts.append(f"scope_key IN {cls._sql_in(scopes)}")
         if keys := cls._as_str_list(node_keys):
@@ -417,7 +417,7 @@ class LanceDBRunner(InferenceRunner):
                 return result
 
             memory_ids = self._as_str_list(
-                item.get("id") for item in memory_items if item.get("id")
+                [item.get("id") for item in memory_items if item.get("id")]
             )
             if memory_ids:
                 self._memory_table.delete(f"memory_id IN {self._sql_in(memory_ids)}")

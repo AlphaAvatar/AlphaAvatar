@@ -155,7 +155,7 @@ class MemoryRuntime(MemoryBase):
 
         user_id = self._runtime.session.primary_user_id
         session_path = self._runtime.session.session_path
-        runtime_context = self._runtime.context
+        context_runtime = self._runtime.context
 
         if not user_id:
             return
@@ -164,8 +164,8 @@ class MemoryRuntime(MemoryBase):
             raise RuntimeError("SessionRuntime.session_path is not initialized")
 
         context = MemoryContextRef(
-            episode_id=runtime_context.episode_id,
-            context_id=runtime_context.context_id,
+            episode_id=context_runtime.episode_id,
+            context_id=context_runtime.context_id,
             session_id=self._runtime.session.session_id,
             created_at=self._runtime.session.created_at,
         )
