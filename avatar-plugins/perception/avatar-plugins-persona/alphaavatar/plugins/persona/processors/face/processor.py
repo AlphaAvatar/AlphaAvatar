@@ -30,10 +30,6 @@ from alphaavatar.agents.constants import (
     FACE_MATCH_THRESHOLD,
     VIDEO_PERSONA_INTERVAL_SEC,
 )
-from alphaavatar.agents.entrypoints.livekit import (
-    bgr_to_video_frame,
-    video_frame_to_bgr,
-)
 from alphaavatar.agents.persona import PersonaProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import (
@@ -55,6 +51,7 @@ from alphaavatar.core.media import (
     PayloadView,
     VideoFrame,
 )
+from alphaavatar.core.media.codecs.video import bgr_to_video_frame, video_frame_to_bgr
 from alphaavatar.core.perception import PerceptionStreamKind
 
 from ...log import logger

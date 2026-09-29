@@ -24,6 +24,7 @@ from alphaavatar.agents.runtime.plugin import AvatarRuntimePlugin
 from alphaavatar.agents.utils.id_utils import get_md5_id
 from alphaavatar.core.env import EnvObservation, PerceptionSourceRef
 from alphaavatar.core.media import VideoFramePayload
+from alphaavatar.core.media.codecs.video import encode_video_frame_to_jpeg
 from alphaavatar.core.perception import (
     MediaModality,
     MediaSourceKind,
@@ -31,9 +32,8 @@ from alphaavatar.core.perception import (
     MediaSourceStateEvent,
 )
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
+from alphaavatar.rtc.livekit.video_codec import from_livekit_video_frame
 from livekit import rtc
-
-from .livekit_video_codec import encode_video_frame_to_jpeg, from_livekit_video_frame
 
 VIDEO_READER_STOP_TIMEOUT_SEC = 1.0
 VIDEO_STREAM_CLOSE_TIMEOUT_SEC = 2.0

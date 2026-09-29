@@ -18,14 +18,6 @@ from types import MappingProxyType
 from typing import Any
 from uuid import uuid4
 
-from alphaavatar.agents.entrypoints.livekit.livekit_audio_codec import (
-    from_livekit_audio_frame,
-    to_livekit_audio_frame,
-)
-from alphaavatar.agents.entrypoints.livekit.livekit_video_codec import (
-    from_livekit_video_frame,
-    to_livekit_video_frame,
-)
 from alphaavatar.agents.providers.schema import (
     ModelAudioPart,
     ModelControlItem,
@@ -52,6 +44,8 @@ from alphaavatar.core.media import (
     VideoFrame,
 )
 from alphaavatar.core.time import RuntimeClock, RuntimeTime, RuntimeTimeRange
+from alphaavatar.rtc.livekit.audio_codec import from_livekit_audio_frame, to_livekit_audio_frame
+from alphaavatar.rtc.livekit.video_codec import from_livekit_video_frame, to_livekit_video_frame
 from livekit import rtc
 from livekit.agents import llm
 

@@ -1,4 +1,5 @@
 [tool.uv.sources]
+alpha-avatar-rtc = { workspace = true }
 alpha-avatar-core = { workspace = true }
 alpha-avatar-agents = { workspace = true }
 alpha-avatar-channels-whatsapp = { workspace = true }
@@ -14,6 +15,7 @@ alpha-avatar-plugins-voice = { workspace = true }
 
 [tool.uv.workspace]
 members = [
+    "avatar-rtc",
     "avatar-core",
     "avatar-agents",
     "avatar-channels/*",

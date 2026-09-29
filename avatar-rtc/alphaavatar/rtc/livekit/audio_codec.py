@@ -16,14 +16,14 @@ from __future__ import annotations
 import sys
 from array import array
 
-from alphaavatar.core.media import AudioFrame, AudioSampleFormat
 from livekit import rtc
+
+from alphaavatar.core.media import AudioFrame, AudioSampleFormat
 
 
 def _to_pcm_s16le_bytes(frame: rtc.AudioFrame) -> bytes:
     required_size = frame.samples_per_channel * frame.num_channels * 2
     data = frame.data.cast("B")[:required_size].tobytes()
-
     if sys.byteorder == "little":
         return data
 
@@ -39,7 +39,6 @@ def _to_native_pcm16_bytes(frame: AudioFrame) -> bytes:
             "LiveKit audio adapter currently supports only PCM_S16LE, "
             f"got {frame.sample_format.value!r}"
         )
-
     if sys.byteorder == "little":
         return frame.data
 
@@ -50,13 +49,7 @@ def _to_native_pcm16_bytes(frame: AudioFrame) -> bytes:
 
 
 def from_livekit_audio_frame(frame: rtc.AudioFrame) -> AudioFrame:
-    """
-    Convert one LiveKit audio frame into an AlphaAvatar-owned audio frame.
-
-    LiveKit may expose a buffer larger than the declared frame shape, so only
-    the exact declared sample region is copied.
-    """
-
+    """Copy the declared sample region into an AlphaAvatar-owned audio frame."""
     return AudioFrame(
         sample_rate=frame.sample_rate,
         num_channels=frame.num_channels,
@@ -66,13 +59,7 @@ def from_livekit_audio_frame(frame: rtc.AudioFrame) -> AudioFrame:
 
 
 def to_livekit_audio_frame(frame: AudioFrame) -> rtc.AudioFrame:
-    """
-    Convert an AlphaAvatar-owned audio frame back into a LiveKit frame.
-
-    This compatibility conversion will later be used by the LiveKit VAD and
-    STT adapters while the core and plugins remain RTC-independent.
-    """
-
+    """Convert an AlphaAvatar-owned audio frame into a LiveKit audio frame."""
     return rtc.AudioFrame(
         data=_to_native_pcm16_bytes(frame),
         sample_rate=frame.sample_rate,
