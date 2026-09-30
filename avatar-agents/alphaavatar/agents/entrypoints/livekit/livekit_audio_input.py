@@ -151,8 +151,7 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
         )
 
     def _binding_for_publication(
-        self,
-        publication: rtc.RemoteTrackPublication,
+        self, publication: rtc.TrackPublication
     ) -> _AudioTrackBinding | None:
         binding = self._bindings.get(publication.sid)
         return binding if binding is not None and binding.publication is publication else None
@@ -390,22 +389,22 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
 
         @self._room.on("track_muted")
         def on_track_muted(
-            publication: rtc.RemoteTrackPublication,
-            participant: rtc.RemoteParticipant,
+            participant: rtc.Participant,
+            publication: rtc.TrackPublication,
         ) -> None:
-            if publication.kind == rtc.TrackKind.KIND_AUDIO and (
-                binding := self._binding_for_publication(publication)
-            ):
+            if not self._started or publication.kind != rtc.TrackKind.KIND_AUDIO:
+                return
+            if binding := self._binding_for_publication(publication):
                 self._publish_source_state(binding, MediaSourceState.MUTED, reason="track_muted")
 
         @self._room.on("track_unmuted")
         def on_track_unmuted(
-            publication: rtc.RemoteTrackPublication,
-            participant: rtc.RemoteParticipant,
+            participant: rtc.Participant,
+            publication: rtc.TrackPublication,
         ) -> None:
-            if publication.kind == rtc.TrackKind.KIND_AUDIO and (
-                binding := self._binding_for_publication(publication)
-            ):
+            if not self._started or publication.kind != rtc.TrackKind.KIND_AUDIO:
+                return
+            if binding := self._binding_for_publication(publication):
                 self._publish_source_state(
                     binding, MediaSourceState.STARTED, reason="track_unmuted"
                 )

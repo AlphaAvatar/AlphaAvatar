@@ -277,38 +277,40 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
         sample_rate=24_000,
         num_channels=1,
     )
-
     status_output = LiveKitStatusOutput(
         room=ctx.room,
         output_runtime=avatar_runtime.output,
         action_topic=avatar_config.status.action_topic,
     )
-
     transcript_output = LiveKitTranscriptOutput(
         room=ctx.room,
         output_runtime=avatar_runtime.output,
         track_sid=lambda: transient_audio_output.track_sid,
     )
-    rtc_adapters: dict[str, Sequence[SessionLifecycle]] = {
-        "outputs": (
-            transient_audio_output,
-            status_output,
-            transcript_output,
-        ),
-        "inputs": (
+
+    rtc_inputs: list[SessionLifecycle] = []
+    if session_mode.audio_input_enabled:
+        rtc_inputs.append(
             LiveKitAudioInput(
                 room=ctx.room,
                 runtime=avatar_runtime,
                 sample_rate=16_000,
                 num_channels=1,
                 frame_size_ms=avatar_config.runtime.perception.audio_frame_size_ms,
-            ),
+            )
+        )
+    if visual_input_enabled:
+        rtc_inputs.append(
             LiveKitVideoInput(
                 room=ctx.room,
                 runtime=avatar_runtime,
                 publish_interval_sec=avatar_config.runtime.perception.video_publish_interval_sec,
-            ),
-        ),
+            )
+        )
+
+    rtc_adapters: dict[str, Sequence[SessionLifecycle]] = {
+        "outputs": (transient_audio_output, status_output, transcript_output),
+        "inputs": tuple(rtc_inputs),
     }
 
     # Build Avatar Engine

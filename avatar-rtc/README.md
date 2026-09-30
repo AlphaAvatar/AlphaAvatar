@@ -4,11 +4,11 @@
 `alpha-avatar-core`; the `livekit` extra enables LiveKit codecs and output adapters.
 
 ```python
-from alphaavatar.rtc.livekit.audio_codec import from_livekit_audio_frame, to_livekit_audio_frame
-from alphaavatar.rtc.livekit.audio_output import LiveKitTransientAudioOutput
-from alphaavatar.rtc.livekit.status_output import LiveKitStatusOutput
-from alphaavatar.rtc.livekit.transcript_output import LiveKitTranscriptOutput
-from alphaavatar.rtc.livekit.video_codec import from_livekit_video_frame, to_livekit_video_frame
+from alphaavatar.rtc.livekit.audio.codec import from_livekit_audio_frame, to_livekit_audio_frame
+from alphaavatar.rtc.livekit.audio.output import LiveKitTransientAudioOutput
+from alphaavatar.rtc.livekit.status.output import LiveKitStatusOutput
+from alphaavatar.rtc.livekit.transcript.output import LiveKitTranscriptOutput
+from alphaavatar.rtc.livekit.video.codec import from_livekit_video_frame, to_livekit_video_frame
 ```
 
 Transport-neutral image conversion lives in `alphaavatar.core.media.codecs.video`
