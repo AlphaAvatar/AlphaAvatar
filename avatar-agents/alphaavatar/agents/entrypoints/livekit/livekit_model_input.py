@@ -44,8 +44,8 @@ from alphaavatar.core.media import (
     VideoFrame,
 )
 from alphaavatar.core.time import RuntimeClock, RuntimeTime, RuntimeTimeRange
-from alphaavatar.rtc.livekit.audio_codec import from_livekit_audio_frame, to_livekit_audio_frame
-from alphaavatar.rtc.livekit.video_codec import from_livekit_video_frame, to_livekit_video_frame
+from alphaavatar.rtc.livekit.audio.codec import from_livekit_audio_frame, to_livekit_audio_frame
+from alphaavatar.rtc.livekit.video.codec import from_livekit_video_frame, to_livekit_video_frame
 from livekit import rtc
 from livekit.agents import llm
 

@@ -32,7 +32,7 @@ from alphaavatar.core.perception import (
     MediaSourceStateEvent,
 )
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
-from alphaavatar.rtc.livekit.video_codec import from_livekit_video_frame
+from alphaavatar.rtc.livekit.video.codec import from_livekit_video_frame
 from livekit import rtc
 
 VIDEO_READER_STOP_TIMEOUT_SEC = 1.0
@@ -547,6 +547,8 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
                     reason="participant_disconnected",
                 ):
                     self._schedule_close(binding)
+
+    """Runtime operations"""
 
     async def on_session_start(self) -> None:
         if self._started:

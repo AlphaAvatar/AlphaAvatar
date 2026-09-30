@@ -15,7 +15,7 @@ import asyncio
 import contextlib
 import json
 import os
-import textwrap
+from collections.abc import Sequence
 from functools import partial
 
 from livekit import agents, api
@@ -37,18 +37,16 @@ from alphaavatar.agents.utils.files.work_dirs import (
 )
 from alphaavatar.agents.utils.id_utils import get_session_id, get_user_id
 from alphaavatar.agents.utils.time import build_user_time_context
+from alphaavatar.core.lifecycle import SessionLifecycle
+from alphaavatar.rtc.livekit.audio.output import LiveKitTransientAudioOutput
+from alphaavatar.rtc.livekit.status.output import LiveKitStatusOutput
+from alphaavatar.rtc.livekit.transcript.output import LiveKitTranscriptOutput
 
 from .channels.bootstrap import register_builtin_channels
 from .channels.factory import build_channel_adapters
 from .io.dispatcher import InputDispatcher
 from .io.envelopes import InputEnvelope
-from .livekit import (
-    LiveKitAudioInput,
-    LiveKitStatusOutput,
-    LiveKitTranscriptOutput,
-    LiveKitTransientAudioOutput,
-    LiveKitVideoInput,
-)
+from .livekit import LiveKitAudioInput, LiveKitVideoInput
 from .runtime import close_avatar_session, create_avatar_runtime
 from .schema.room_type import SUPPORTED_ADAPTER_TYPES, detect_room_type
 from .schema.session_mode import SessionMode, resolve_session_mode
@@ -291,7 +289,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
         output_runtime=avatar_runtime.output,
         track_sid=lambda: transient_audio_output.track_sid,
     )
-    rtc_adapters = {
+    rtc_adapters: dict[str, Sequence[SessionLifecycle]] = {
         "outputs": (
             transient_audio_output,
             status_output,
@@ -322,15 +320,12 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
 
     # logging
     logger.info(
-        textwrap.dedent(f"""Connecting to room...
-    - Agent Identity: {agent_identity}
-    - Token: {ctx._info.token}
-    - Room Name: {ctx.room.name}
-    - Room Type: {room_type}
-    - Session Id: {session_id}
-    - Session Type: {session_type}
-    - Session Mode: {session_mode}
-    - Avatar Config: {avatar_config}""")
+        "Connected to room agent_identity=%s room=%s room_type=%s session_id=%s session_type=%s",
+        agent_identity,
+        ctx.room.name,
+        room_type,
+        session_id,
+        session_type,
     )
 
     # Build Agent & Virtual Character Session

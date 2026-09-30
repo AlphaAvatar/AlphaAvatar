@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from collections.abc import AsyncIterable, Callable, Sequence
+from collections.abc import AsyncIterable, Callable, Mapping, Sequence
 from typing import Any
 from uuid import uuid4
 
@@ -37,12 +37,13 @@ from alphaavatar.agents.persona import PersonaBase
 from alphaavatar.agents.router import InteractionRouterBase
 from alphaavatar.agents.runtime import AvatarRuntime, SessionRuntime
 from alphaavatar.agents.runtime.lifecycle import LifecyclePhase, RuntimePluginLifecycle
-from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarRuntimePlugin
+from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.agents.status import (
     StatusEmitter,
     StatusEvent,
     StatusType,
 )
+from alphaavatar.core.lifecycle import SessionLifecycle
 from alphaavatar.core.output import OutputLane
 from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
 
@@ -63,7 +64,7 @@ class AvatarEngine(Agent):
         *,
         avatar_config: AvatarConfig,
         runtime: AvatarRuntime,
-        rtc_adapters: dict[str, Sequence[AvatarRuntimePlugin]],
+        rtc_adapters: Mapping[str, Sequence[SessionLifecycle]],
     ) -> None:
         self._avatar_config = avatar_config
         self._runtime = runtime

@@ -20,8 +20,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from alphaavatar.agents.log import logger
-
-from .plugin import AvatarRuntimePlugin
+from alphaavatar.core.lifecycle import SessionLifecycle
 
 
 class PluginLifecycleError(RuntimeError):
@@ -32,7 +31,7 @@ class PluginLifecycleError(RuntimeError):
         *,
         action: str,
         phase: str,
-        plugin: AvatarRuntimePlugin,
+        plugin: SessionLifecycle,
     ) -> None:
         plugin_name = f"{type(plugin).__module__}.{type(plugin).__qualname__}"
         super().__init__(
@@ -49,13 +48,13 @@ class LifecyclePhase:
     """
 
     name: str
-    plugins: tuple[AvatarRuntimePlugin, ...]
+    plugins: tuple[SessionLifecycle, ...]
 
     @classmethod
     def create(
         cls,
         name: str,
-        plugins: Iterable[AvatarRuntimePlugin],
+        plugins: Iterable[SessionLifecycle],
     ) -> LifecyclePhase:
         return cls(name=name, plugins=tuple(plugins))
 
@@ -128,9 +127,9 @@ class RuntimePluginLifecycle:
         if not phase.plugins:
             return
 
-        started_plugins: list[AvatarRuntimePlugin] = []
+        started_plugins: list[SessionLifecycle] = []
 
-        async def _start_plugin(plugin: AvatarRuntimePlugin) -> None:
+        async def _start_plugin(plugin: SessionLifecycle) -> None:
             try:
                 logger.debug(
                     "Starting runtime plugin phase=%s plugin=%s",
@@ -191,7 +190,7 @@ class RuntimePluginLifecycle:
 
     async def _stop_plugins(
         self,
-        plugins: Iterable[AvatarRuntimePlugin],
+        plugins: Iterable[SessionLifecycle],
         *,
         phase_name: str,
         action: str,
@@ -200,7 +199,7 @@ class RuntimePluginLifecycle:
         if not plugin_list:
             return []
 
-        async def _stop_plugin(plugin: AvatarRuntimePlugin) -> None:
+        async def _stop_plugin(plugin: SessionLifecycle) -> None:
             try:
                 logger.debug(
                     "Stopping runtime plugin phase=%s plugin=%s",

@@ -31,7 +31,7 @@ from alphaavatar.core.perception import (
     MediaSourceStateEvent,
 )
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
-from alphaavatar.rtc.livekit.audio_codec import from_livekit_audio_frame
+from alphaavatar.rtc.livekit.audio.codec import from_livekit_audio_frame
 from livekit import rtc
 
 

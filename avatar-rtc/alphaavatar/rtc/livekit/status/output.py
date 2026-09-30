@@ -18,10 +18,11 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 from typing import Any
 
-from alphaavatar.agents.log import logger
-from alphaavatar.agents.runtime.plugin import AvatarRuntimePlugin
+from livekit import rtc
+
 from alphaavatar.core.output import (
     OutputEvent,
     OutputKind,
@@ -29,10 +30,11 @@ from alphaavatar.core.output import (
     OutputRuntime,
     OutputSubscription,
 )
-from livekit import rtc
+
+logger = logging.getLogger(__name__)
 
 
-class LiveKitStatusOutput(AvatarRuntimePlugin):
+class LiveKitStatusOutput:
     """Publish machine-readable status actions through LiveKit data packets."""
 
     def __init__(
@@ -55,6 +57,59 @@ class LiveKitStatusOutput(AvatarRuntimePlugin):
 
         self._subscription: OutputSubscription | None = None
         self._run_task: asyncio.Task[None] | None = None
+
+    """Runtime Loop"""
+
+    async def _handle_event(self, event: OutputEvent) -> None:
+        payload = event.payload
+        if not isinstance(payload, dict):
+            return
+
+        await self._publish_data(
+            {
+                "type": "agent_status_action",
+                "event": payload.get("event"),
+                "action": payload.get("action"),
+            },
+            topic=self._action_topic,
+        )
+
+    async def _publish_data(self, payload: dict[str, Any], *, topic: str) -> None:
+        participant = getattr(self._room, "local_participant", None)
+        if participant is None:
+            raise RuntimeError("LiveKit room has no local participant")
+
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        result = participant.publish_data(data, reliable=self._reliable, topic=topic)
+
+        if inspect.isawaitable(result):
+            await result
+
+    async def _run(self) -> None:
+        subscription = self._subscription
+        if subscription is None:
+            return
+
+        try:
+            while True:
+                event = await subscription.get()
+
+                try:
+                    await self._handle_event(event)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception(
+                        "Failed to publish status action event_id=%s sequence=%s",
+                        event.event_id,
+                        event.sequence,
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("LiveKit status output consumer stopped unexpectedly.")
+
+    """Runtime operations"""
 
     async def on_session_start(self) -> None:
         if self._run_task is not None:
@@ -84,52 +139,3 @@ class LiveKitStatusOutput(AvatarRuntimePlugin):
 
         self._subscription = None
         logger.info("LiveKit status output stopped")
-
-    async def _run(self) -> None:
-        subscription = self._subscription
-        if subscription is None:
-            return
-
-        try:
-            while True:
-                event = await subscription.get()
-
-                try:
-                    await self._handle_event(event)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logger.exception(
-                        "Failed to publish status action event_id=%s sequence=%s",
-                        event.event_id,
-                        event.sequence,
-                    )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("LiveKit status output consumer stopped unexpectedly.")
-
-    async def _handle_event(self, event: OutputEvent) -> None:
-        payload = event.payload
-        if not isinstance(payload, dict):
-            return
-
-        await self._publish_data(
-            {
-                "type": "agent_status_action",
-                "event": payload.get("event"),
-                "action": payload.get("action"),
-            },
-            topic=self._action_topic,
-        )
-
-    async def _publish_data(self, payload: dict[str, Any], *, topic: str) -> None:
-        participant = getattr(self._room, "local_participant", None)
-        if participant is None:
-            raise RuntimeError("LiveKit room has no local participant")
-
-        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        result = participant.publish_data(data, reliable=self._reliable, topic=topic)
-
-        if inspect.isawaitable(result):
-            await result

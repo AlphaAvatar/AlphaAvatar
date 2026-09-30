@@ -11,16 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .livekit_audio_input import LiveKitAudioInput
-from .livekit_model_input import LiveKitModelInput
-from .livekit_turn_input import LiveKitTurnInput
-from .livekit_turn_response import LiveKitTurnResponseSink
-from .livekit_video_input import LiveKitVideoInput
+from typing import Protocol
 
-__all__ = [
-    "LiveKitAudioInput",
-    "LiveKitVideoInput",
-    "LiveKitModelInput",
-    "LiveKitTurnInput",
-    "LiveKitTurnResponseSink",
-]
+
+class SessionLifecycle(Protocol):
+    """Session-scoped resource lifecycle, independent of plugin and transport types."""
+
+    async def on_session_start(self) -> None: ...
+
+    async def on_session_stop(self) -> None: ...
