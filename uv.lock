@@ -16,6 +16,7 @@ members = [
     "alpha-avatar-agents",
     "alpha-avatar-channels-whatsapp",
     "alpha-avatar-core",
+    "alpha-avatar-host",
     "alpha-avatar-plugins-character",
     "alpha-avatar-plugins-deepresearch",
     "alpha-avatar-plugins-mcp",
@@ -29,7 +30,10 @@ members = [
 ]
 
 [manifest.dependency-groups]
-avatar-agent-all = [{ name = "alpha-avatar-agents", extras = ["providers", "vdb"], editable = "avatar-agents" }]
+avatar-agent-all = [
+    { name = "alpha-avatar-agents", extras = ["providers", "vdb"], editable = "avatar-agents" },
+    { name = "alpha-avatar-host", extras = ["livekit"], editable = "avatar-host" },
+]
 dev = [
     { name = "jiwer", specifier = ">=3.1.0" },
     { name = "mypy" },
@@ -276,6 +280,35 @@ requires-dist = [
     { name = "opencv-python-headless", marker = "extra == 'video'", specifier = "==4.12.0.88" },
 ]
 provides-extras = ["livekit", "video"]
+
+[[package]]
+name = "alpha-avatar-host"
+source = { editable = "avatar-host" }
+dependencies = [
+    { name = "alpha-avatar-agents" },
+    { name = "alpha-avatar-core" },
+]
+
+[package.optional-dependencies]
+livekit = [
+    { name = "alpha-avatar-rtc", extra = ["livekit"] },
+    { name = "livekit" },
+    { name = "livekit-agents" },
+    { name = "livekit-api" },
+    { name = "livekit-plugins-noise-cancellation" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "alpha-avatar-agents", editable = "avatar-agents" },
+    { name = "alpha-avatar-core", editable = "avatar-core" },
+    { name = "alpha-avatar-rtc", extras = ["livekit"], marker = "extra == 'livekit'", editable = "avatar-rtc" },
+    { name = "livekit", marker = "extra == 'livekit'", specifier = ">=1.0.12,<2" },
+    { name = "livekit-agents", marker = "extra == 'livekit'", specifier = "~=1.4" },
+    { name = "livekit-api", marker = "extra == 'livekit'", specifier = ">=1.0.4,<2" },
+    { name = "livekit-plugins-noise-cancellation", marker = "extra == 'livekit'", specifier = "~=0.2" },
+]
+provides-extras = ["livekit"]
 
 [[package]]
 name = "alpha-avatar-plugins-character"

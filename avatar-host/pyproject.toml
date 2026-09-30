@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "alpha-avatar-host"
+dynamic = ["version"]
+description = "Application assembly and execution hosting for AlphaAvatar."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "alpha-avatar-core",
+    "alpha-avatar-agents",
+]
+
+[project.optional-dependencies]
+livekit = [
+    "alpha-avatar-rtc[livekit]",
+    "livekit>=1.0.12,<2",
+    "livekit-api>=1.0.4,<2",
+    "livekit-agents~=1.4",
+    "livekit-plugins-noise-cancellation~=0.2",
+]
+
+[project.scripts]
+alphaavatar = "alphaavatar.host.livekit.entrypoint:main"
+
+[project.urls]
+Source = "https://github.com/AlphaAvatar/AlphaAvatar"
+
+[tool.hatch.version]
+path = "alphaavatar/host/version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["alphaavatar"]
+
+[tool.hatch.build.targets.sdist]
+include = ["alphaavatar", "README.md", "pyproject.toml"]

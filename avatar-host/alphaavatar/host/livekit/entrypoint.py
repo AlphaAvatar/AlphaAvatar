@@ -27,30 +27,31 @@ from alphaavatar.agents.avatar import AvatarEngine
 from alphaavatar.agents.avatar.patches import AvatarServer
 from alphaavatar.agents.configs import AvatarConfig, get_avatar_args, read_args
 from alphaavatar.agents.constants import DEFAULT_CONTEXT_VALUE
+from alphaavatar.agents.entrypoints.channels.bootstrap import register_builtin_channels
+from alphaavatar.agents.entrypoints.channels.factory import build_channel_adapters
+from alphaavatar.agents.entrypoints.io.dispatcher import InputDispatcher
+from alphaavatar.agents.entrypoints.io.envelopes import InputEnvelope
+from alphaavatar.agents.entrypoints.livekit import LiveKitAudioInput, LiveKitVideoInput
+from alphaavatar.agents.entrypoints.schema.room_type import (
+    SUPPORTED_ADAPTER_TYPES,
+    detect_room_type,
+)
+from alphaavatar.agents.entrypoints.schema.session_mode import SessionMode, resolve_session_mode
+from alphaavatar.agents.entrypoints.schema.session_type import resolve_session_type
 from alphaavatar.agents.env import init_env
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.runtime import ContextRuntime, InteractionMethod, SessionRuntime
 from alphaavatar.agents.runtime.inference import prepare_inference_runners
-from alphaavatar.agents.utils.files.work_dirs import (
-    WorkspacePaths,
-    prepare_user_path,
-)
+from alphaavatar.agents.utils.files.work_dirs import WorkspacePaths, prepare_user_path
 from alphaavatar.agents.utils.id_utils import get_session_id, get_user_id
 from alphaavatar.agents.utils.time import build_user_time_context
 from alphaavatar.core.lifecycle import SessionLifecycle
+from alphaavatar.host.bootstrap import create_avatar_runtime
 from alphaavatar.rtc.livekit.audio.output import LiveKitTransientAudioOutput
 from alphaavatar.rtc.livekit.status.output import LiveKitStatusOutput
 from alphaavatar.rtc.livekit.transcript.output import LiveKitTranscriptOutput
 
-from .channels.bootstrap import register_builtin_channels
-from .channels.factory import build_channel_adapters
-from .io.dispatcher import InputDispatcher
-from .io.envelopes import InputEnvelope
-from .livekit import LiveKitAudioInput, LiveKitVideoInput
-from .runtime import close_avatar_session, create_avatar_runtime
-from .schema.room_type import SUPPORTED_ADAPTER_TYPES, detect_room_type
-from .schema.session_mode import SessionMode, resolve_session_mode
-from .schema.session_type import resolve_session_type
+from .lifecycle import close_session_execution
 
 init_env()
 
@@ -266,7 +267,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
     )
 
     async def _shutdown_avatar_session() -> None:
-        await close_avatar_session(session, avatar_runtime)
+        await close_session_execution(session, avatar_runtime)
 
     ctx.add_shutdown_callback(_shutdown_avatar_session)
 

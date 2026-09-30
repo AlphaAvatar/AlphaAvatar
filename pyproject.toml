@@ -1,4 +1,5 @@
 [tool.uv.sources]
+alpha-avatar-host = { workspace = true }
 alpha-avatar-rtc = { workspace = true }
 alpha-avatar-core = { workspace = true }
 alpha-avatar-agents = { workspace = true }
@@ -15,6 +16,7 @@ alpha-avatar-plugins-voice = { workspace = true }
 
 [tool.uv.workspace]
 members = [
+    "avatar-host",
     "avatar-rtc",
     "avatar-core",
     "avatar-agents",
@@ -43,6 +45,7 @@ docs = [
 ]
 avatar-agent-all = [
     "alpha-avatar-agents[providers, vdb]",
+    "alpha-avatar-host[livekit]",
 ]
 
 [tool.ruff]

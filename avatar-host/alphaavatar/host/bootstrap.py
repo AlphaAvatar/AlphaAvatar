@@ -13,18 +13,14 @@
 # limitations under the License.
 from __future__ import annotations
 
-import asyncio
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING
 
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.cleanup import wait_for_cleanup
 from alphaavatar.agents.runtime.inference import InferenceExecutor
 from alphaavatar.agents.runtime.modules.foundation import FoundationRuntime
 
 if TYPE_CHECKING:
-    from livekit.agents import AgentSession
-
     from alphaavatar.agents.configs import AvatarConfig
     from alphaavatar.agents.runtime import ContextRuntime, SessionRuntime
     from alphaavatar.agents.utils.files.work_dirs import WorkspacePaths
@@ -55,13 +51,3 @@ async def create_avatar_runtime(
         )
         resources.pop_all()
         return runtime
-
-
-async def close_avatar_session(session: AgentSession, runtime: AvatarRuntime) -> None:
-    async def close() -> None:
-        try:
-            await session.aclose()
-        finally:
-            await runtime.aclose()
-
-    await wait_for_cleanup(asyncio.create_task(close(), name="avatar_session_close"))
