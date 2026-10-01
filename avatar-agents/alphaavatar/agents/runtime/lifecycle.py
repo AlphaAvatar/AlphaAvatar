@@ -105,20 +105,29 @@ class RuntimePluginLifecycle:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                raise PluginLifecycleError(
-                    action="start",
-                    phase=phase.name,
-                    plugin=plugin,
-                ) from exc
+                raise PluginLifecycleError(action="start", phase=phase.name, plugin=plugin) from exc
 
         try:
             async with asyncio.TaskGroup() as task_group:
-                for plugin in phase.plugins:
+                tasks = {
                     task_group.create_task(
                         _start_plugin(plugin),
-                        name=(f"runtime_plugin_start:{phase.name}:{type(plugin).__qualname__}"),
-                    )
-
+                        name=f"runtime_plugin_start:{phase.name}:{type(plugin).__qualname__}",
+                    ): plugin
+                    for plugin in phase.plugins
+                }
+                pending = set(tasks)
+                while pending:
+                    done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                    for task in done:
+                        if not task.cancelled():
+                            continue
+                        try:
+                            task.result()
+                        except asyncio.CancelledError as exc:
+                            raise PluginLifecycleError(
+                                action="start", phase=phase.name, plugin=tasks[task]
+                            ) from exc
         except BaseException:
             await wait_for_cleanup(
                 asyncio.create_task(
@@ -165,28 +174,21 @@ class RuntimePluginLifecycle:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                raise PluginLifecycleError(
-                    action=action,
-                    phase=phase_name,
-                    plugin=plugin,
-                ) from exc
+                raise PluginLifecycleError(action=action, phase=phase_name, plugin=plugin) from exc
 
         results = await asyncio.gather(
-            *(_stop_plugin(plugin) for plugin in plugin_list),
-            return_exceptions=True,
+            *(_stop_plugin(plugin) for plugin in plugin_list), return_exceptions=True
         )
 
         errors: list[Exception] = []
-
-        for result in results:
+        for plugin, result in zip(plugin_list, results, strict=True):
             if isinstance(result, asyncio.CancelledError):
-                raise result
-
-            if isinstance(result, Exception):
+                error = PluginLifecycleError(action=action, phase=phase_name, plugin=plugin)
+                error.__cause__ = result
+                errors.append(error)
+            elif isinstance(result, Exception):
                 errors.append(result)
-                continue
-
-            if isinstance(result, BaseException):
+            elif isinstance(result, BaseException):
                 raise result
 
         return errors
