@@ -1,4 +1,4 @@
-# Copyright 2026 AlphaAvatar project
+# Copyright 2025 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,3 +11,458 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import asyncio
+import contextlib
+import json
+import os
+from functools import partial
+
+from livekit import agents, api
+from livekit.agents import AgentSession, room_io
+from livekit.agents.job import AutoSubscribe
+from livekit.plugins import noise_cancellation
+
+from alphaavatar.agents.avatar.patches import AvatarServer
+from alphaavatar.agents.configs import AvatarConfig, get_avatar_args, read_args
+from alphaavatar.agents.constants import DEFAULT_CONTEXT_VALUE
+from alphaavatar.agents.entrypoints.channels.bootstrap import register_builtin_channels
+from alphaavatar.agents.entrypoints.channels.factory import build_channel_adapters
+from alphaavatar.agents.entrypoints.io.dispatcher import InputDispatcher
+from alphaavatar.agents.entrypoints.io.envelopes import InputEnvelope
+from alphaavatar.agents.entrypoints.livekit import LiveKitAudioInput, LiveKitVideoInput
+from alphaavatar.agents.entrypoints.schema.room_type import (
+    SUPPORTED_ADAPTER_TYPES,
+    RoomType,
+    detect_room_type,
+)
+from alphaavatar.agents.entrypoints.schema.session_mode import SessionMode, resolve_session_mode
+from alphaavatar.agents.entrypoints.schema.session_type import resolve_session_type
+from alphaavatar.agents.env import init_env
+from alphaavatar.agents.log import logger
+from alphaavatar.agents.runtime import ContextRuntime, InteractionMethod, SessionRuntime
+from alphaavatar.agents.runtime.cleanup import wait_for_cleanup
+from alphaavatar.agents.runtime.inference import prepare_inference_runners
+from alphaavatar.agents.utils.files.work_dirs import WorkspacePaths, prepare_user_path
+from alphaavatar.agents.utils.id_utils import get_session_id, get_user_id
+from alphaavatar.agents.utils.time import build_user_time_context
+from alphaavatar.core.lifecycle import SessionLifecycle
+from alphaavatar.host.bootstrap import create_avatar_runtime
+from alphaavatar.rtc.livekit.audio.output import LiveKitTransientAudioOutput
+from alphaavatar.rtc.livekit.status.output import LiveKitStatusOutput
+from alphaavatar.rtc.livekit.transcript.output import LiveKitTranscriptOutput
+
+from .agent import LiveKitHostedAgent
+from .lifecycle import close_session_execution
+
+init_env()
+
+
+def get_max_session_seconds() -> int:
+    raw_value = os.getenv("ALPHAAVATAR_MAX_SESSION_SECONDS", "1800")
+    try:
+        return int(raw_value)
+    except ValueError:
+        logger.warning(
+            "Invalid ALPHAAVATAR_MAX_SESSION_SECONDS=%r, fallback to 1800",
+            raw_value,
+        )
+        return 1800
+
+
+MAX_SESSION_SECONDS = get_max_session_seconds()
+
+
+async def force_close_room_after_timeout(
+    *,
+    room_name: str,
+    session: AgentSession,
+) -> None:
+    if MAX_SESSION_SECONDS <= 0:
+        logger.info("Max session duration watchdog disabled for room=%s", room_name)
+        return
+
+    try:
+        await asyncio.sleep(MAX_SESSION_SECONDS)
+
+        logger.warning(
+            "Max session duration reached. Closing room=%s after %s seconds",
+            room_name,
+            MAX_SESSION_SECONDS,
+        )
+
+        # Close the AgentSession first.
+        session.shutdown(drain=True)
+
+        # Then force-delete the room so all participants are disconnected.
+        lkapi = api.LiveKitAPI()
+        try:
+            await lkapi.room.delete_room(
+                api.DeleteRoomRequest(room=room_name),
+            )
+            logger.warning("Deleted room after max duration: %s", room_name)
+        finally:
+            await lkapi.aclose()
+
+    except asyncio.CancelledError:
+        logger.info("Max session duration watchdog cancelled for room=%s", room_name)
+        raise
+    except Exception:
+        logger.exception("Failed to force close room=%s", room_name)
+
+
+def log_background_task_result(task: asyncio.Task) -> None:
+    with contextlib.suppress(asyncio.CancelledError):
+        exc = task.exception()
+        if exc:
+            logger.error(
+                "Background task failed",
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+
+
+def worker_load(worker) -> float:
+    return min(len(worker.active_jobs) / 5.0, 1.0)
+
+
+def build_room_options(
+    session_mode: SessionMode,
+    participant_identity: str | None = None,
+) -> room_io.RoomOptions:
+    kwargs = {
+        # RoomOptions-supported inputs.
+        "text_input": session_mode.text_input_enabled,
+        "video_input": session_mode.video_input_enabled,
+        # RoomOptions-supported outputs.
+        "text_output": session_mode.text_output_enabled,
+        "audio_output": session_mode.audio_output_enabled,
+        # Important lifecycle controls.
+        # Close AgentSession when the linked user disconnects.
+        "close_on_disconnect": True,
+        # Delete the LiveKit room when AgentSession is closed.
+        # Otherwise the room may remain active until all participants leave.
+        "delete_room_on_close": True,
+    }
+
+    if session_mode.audio_input_enabled:
+        if session_mode.enable_noise_cancellation:
+            kwargs["audio_input"] = room_io.AudioInputOptions(
+                noise_cancellation=noise_cancellation.BVC(),
+            )
+        else:
+            kwargs["audio_input"] = True
+    else:
+        kwargs["audio_input"] = False
+
+    if participant_identity:
+        kwargs["participant_identity"] = participant_identity
+
+    return room_io.RoomOptions(**kwargs)
+
+
+async def publish_ready_signal(ctx: agents.JobContext, room_type: str) -> None:
+    """
+    Explicitly notify bridge that the agent is fully ready to receive inbound channel messages.
+    Only publish ready for bridged adapter room types such as whatsapp.
+    """
+    if room_type not in SUPPORTED_ADAPTER_TYPES:
+        return
+
+    payload = {
+        "status": "ready",
+        "room_type": room_type,
+        "room_name": ctx.room.name,
+    }
+
+    await ctx.room.local_participant.publish_data(
+        json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        topic=f"{room_type}.ready",
+        reliable=True,
+    )
+
+    logger.info(
+        "Published ready signal topic=%s room=%s",
+        f"{room_type}.ready",
+        ctx.room.name,
+    )
+
+
+async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
+    # Wait connecting...
+
+    # Important:
+    # auto_subscribe controls whether the worker receives remote media tracks at the
+    # LiveKit transport layer. AgentSession room_options only controls which
+    # modalities are consumed by the agent pipeline.
+    #
+    # Do not use SUBSCRIBE_NONE for voice/video rooms, otherwise microphone tracks
+    # will never reach STT/VAD even if room_options.audio_input=True.
+    await ctx.connect(auto_subscribe=AutoSubscribe.SUBSCRIBE_ALL)
+
+    # Get Metadata
+    agent_identity = ctx.token_claims().identity
+    participant = await ctx.wait_for_participant()
+    participant_metadata = json.loads(participant.metadata) if participant.metadata else {}
+
+    room_type = detect_room_type(ctx.room)
+    session_type = resolve_session_type(room_type, participant_metadata)
+    session_mode = resolve_session_mode(session_type)
+
+    user_id = participant_metadata.get("user_id", get_user_id())
+    session_id = participant_metadata.get("session_id", get_session_id(room_type))
+    user_time = build_user_time_context(participant_metadata)
+
+    # Build Runtime Components
+    workspace = WorkspacePaths.from_env()
+    user_path = workspace.users.get(user_id)
+    prepare_user_path(user_path)
+
+    session_runtime = SessionRuntime(
+        session_id=session_id,
+    )
+    session_runtime.add_participant(
+        participant_identity=participant.identity,
+        user_id=user_id,
+        room_id=ctx.room.name,
+        room_type=room_type.value,
+        user_time=user_time,
+        user_path=user_path,
+        metadata=participant_metadata,
+        primary=True,
+    )
+
+    visual_input_enabled = session_mode.video_input_enabled and avatar_config.vision.enabled
+
+    interaction_method = InteractionMethod(
+        room_type=room_type.value,
+        session_type=session_type.value,
+        text_input=session_mode.text_input_enabled,
+        audio_input=session_mode.audio_input_enabled,
+        video_input=visual_input_enabled,
+        audio_output=session_mode.audio_output_enabled,
+        text_output=session_mode.text_output_enabled,
+        notes=[
+            "Adapt response style to the active room/session modality.",
+            "If visual input is enabled but no visual frame is available in the current turn, do not invent visual details.",
+        ],
+    )
+
+    context_runtime = ContextRuntime(
+        interaction_method=interaction_method,
+        global_behavior_rules=participant_metadata.get(
+            "global_behavior_rules",
+            DEFAULT_CONTEXT_VALUE,
+        ),
+        extra_context={
+            "room_name": ctx.room.name,
+            "agent_identity": agent_identity,
+            "session_id": session_id,
+        },
+    )
+
+    session = AgentSession()
+    avatar_runtime = await create_avatar_runtime(
+        avatar_config=avatar_config,
+        workspace=workspace,
+        session=session_runtime,
+        context=context_runtime,
+    )
+
+    avatar_engine: LiveKitHostedAgent | None = None
+    shutdown_task: asyncio.Task[None] | None = None
+
+    async def _shutdown_avatar_session() -> None:
+        nonlocal shutdown_task
+        if shutdown_task is None:
+            shutdown_task = asyncio.create_task(
+                close_session_execution(
+                    session,
+                    avatar_runtime,
+                    lifecycle=avatar_engine.host_lifecycle if avatar_engine is not None else None,
+                ),
+                name="avatar_host_shutdown",
+            )
+        await wait_for_cleanup(shutdown_task)
+
+    ctx.add_shutdown_callback(_shutdown_avatar_session)
+
+    # Build RTC Plugins
+    transient_audio_output = LiveKitTransientAudioOutput(
+        room=ctx.room,
+        output_runtime=avatar_runtime.output,
+        sample_rate=24_000,
+        num_channels=1,
+    )
+    status_output = LiveKitStatusOutput(
+        room=ctx.room,
+        output_runtime=avatar_runtime.output,
+        action_topic=avatar_config.status.action_topic,
+    )
+    transcript_output = LiveKitTranscriptOutput(
+        room=ctx.room,
+        output_runtime=avatar_runtime.output,
+        track_sid=lambda: transient_audio_output.track_sid,
+    )
+
+    rtc_inputs: list[SessionLifecycle] = []
+    if session_mode.audio_input_enabled:
+        rtc_inputs.append(
+            LiveKitAudioInput(
+                room=ctx.room,
+                runtime=avatar_runtime,
+                sample_rate=16_000,
+                num_channels=1,
+                frame_size_ms=avatar_config.runtime.perception.audio_frame_size_ms,
+            )
+        )
+    if visual_input_enabled:
+        rtc_inputs.append(
+            LiveKitVideoInput(
+                room=ctx.room,
+                runtime=avatar_runtime,
+                publish_interval_sec=avatar_config.runtime.perception.video_publish_interval_sec,
+            )
+        )
+
+    # Build Avatar Engine
+    avatar_engine = LiveKitHostedAgent(
+        avatar_config=avatar_config,
+        runtime=avatar_runtime,
+        outputs=(transient_audio_output, status_output, transcript_output),
+        inputs=tuple(rtc_inputs),
+    )
+
+    # logging
+    logger.info(
+        "Connected to room agent_identity=%s room=%s room_type=%s session_id=%s session_type=%s",
+        agent_identity,
+        ctx.room.name,
+        room_type,
+        session_id,
+        session_type,
+    )
+
+    # Build Agent & Virtual Character Session
+
+    @ctx.room.on("participant_connected")
+    def on_participant_connected(connected_participant):
+        logger.info(
+            "Participant connected room=%s identity=%s",
+            ctx.room.name,
+            connected_participant.identity,
+        )
+
+    @ctx.room.on("participant_disconnected")
+    def on_participant_disconnected(disconnected_participant):
+        logger.info(
+            "Participant disconnected room=%s identity=%s linked_identity=%s",
+            ctx.room.name,
+            disconnected_participant.identity,
+            participant.identity,
+        )
+
+        if disconnected_participant.identity == participant.identity:
+            logger.info(
+                "Linked participant disconnected. AgentSession should close via close_on_disconnect. room=%s",
+                ctx.room.name,
+            )
+
+    # Start character & Start Agent Session
+    try:
+        avatar_character = avatar_config.character.get_plugin(runtime=avatar_runtime)
+        if avatar_character:
+            await avatar_character.start(agent_identity, session, room=ctx.room)
+
+        await session.start(
+            room=ctx.room,
+            agent=avatar_engine,
+            room_options=build_room_options(
+                session_mode,
+                participant_identity=participant.identity,
+            ),
+        )
+        await avatar_engine.host_lifecycle.wait_ready()
+    except BaseException:
+        await _shutdown_avatar_session()
+        raise
+
+    if room_type == RoomType.WEB_APP:
+        avatar_engine.notify_ready()
+
+    # Session Watchdog
+    _max_duration_task = asyncio.create_task(
+        force_close_room_after_timeout(
+            room_name=ctx.room.name,
+            session=session,
+        )
+    )
+    _max_duration_task.add_done_callback(log_background_task_result)
+
+    # Explicit channel registration bootstrap
+    register_builtin_channels()
+
+    input_dispatcher = InputDispatcher(
+        room=ctx.room,
+        session=session,
+    )
+
+    built = None
+
+    async def _handle_adapter_input(envelope: InputEnvelope, raw_payload):
+        # TODO: Support more modalities by dispatching to different handlers based on envelope.modality and built.room_type
+        if envelope.modality != "text":
+            logger.warning(
+                "Unsupported modality for room_type=%s: %s",
+                built.room_type if built else "unknown",
+                envelope.modality,
+            )
+            return
+
+        output_envelope = await input_dispatcher.dispatch_text(envelope)
+        if built and built.egress:
+            await built.egress.send_text(output_envelope, raw_inbound=raw_payload)
+
+    built = build_channel_adapters(
+        room=ctx.room,
+        session=session,
+        on_input=_handle_adapter_input,
+    )
+
+    if built.room_type in SUPPORTED_ADAPTER_TYPES and built.ingress and built.egress:
+        built.ingress.start()
+        logger.info("Attached Channel=%s adapters to room=%s", built.room_type, ctx.room.name)
+
+        # IMPORTANT:
+        # Only publish ready after:
+        # 1) session.start() completed
+        # 2) adapters were built
+        # 3) ingress.start() completed
+        await publish_ready_signal(ctx, built.room_type)
+
+    else:
+        logger.info(
+            "No bridged adapters attached for room_type=%s room=%s", built.room_type, ctx.room.name
+        )
+
+
+def main() -> None:
+    args = read_args()
+    avatar_config: AvatarConfig = get_avatar_args(args)
+    prepare_inference_runners(avatar_config)
+
+    opts = agents.worker.ServerOptions(
+        agent_name=avatar_config.avatar.name,
+        entrypoint_fnc=partial(entrypoint, avatar_config),
+        job_memory_warn_mb=8192,
+        job_memory_limit_mb=0,
+        num_idle_processes=4,
+        load_fnc=worker_load,
+        load_threshold=0.9,
+        initialize_process_timeout=60,
+        shutdown_process_timeout=180,
+    )
+    server = AvatarServer.from_server_options(opts)
+    agents.cli.run_app(server)
+
+
+if __name__ == "__main__":
+    main()
