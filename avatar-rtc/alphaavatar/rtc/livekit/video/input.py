@@ -14,14 +14,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Coroutine
 from dataclasses import dataclass
 from typing import Any
 
-from alphaavatar.agents.log import logger
-from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.plugin import AvatarRuntimePlugin
-from alphaavatar.agents.utils.id_utils import get_md5_id
+from livekit import rtc
+
+from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.env import EnvObservation, PerceptionSourceRef
 from alphaavatar.core.media import VideoFramePayload
 from alphaavatar.core.media.codecs.video import encode_video_frame_to_jpeg
@@ -30,14 +30,17 @@ from alphaavatar.core.perception import (
     MediaSourceKind,
     MediaSourceState,
     MediaSourceStateEvent,
+    PerceptionRuntime,
 )
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
-from alphaavatar.rtc.livekit.video.codec import from_livekit_video_frame
-from livekit import rtc
+from alphaavatar.rtc.livekit.utils.events import RoomEventBindings
+from alphaavatar.rtc.livekit.utils.frame_id import create_frame_id
 
-VIDEO_READER_STOP_TIMEOUT_SEC = 1.0
+from .codec import from_livekit_video_frame
+
+logger = logging.getLogger(__name__)
+
 VIDEO_STREAM_CLOSE_TIMEOUT_SEC = 2.0
-VIDEO_TASK_DRAIN_TIMEOUT_SEC = 2.0
 
 
 @dataclass(slots=True)
@@ -65,14 +68,14 @@ class _VideoTrackBinding:
         return self.source.source_generation
 
 
-class LiveKitVideoInput(AvatarRuntimePlugin):
-    """Translate LiveKit video tracks into AlphaAvatar observations and source-state events."""
+class LiveKitVideoInput:
+    """Translate LiveKit video tracks into video observations and source-state events."""
 
     def __init__(
         self,
         *,
         room: rtc.Room,
-        runtime: AvatarRuntime,
+        perception: PerceptionRuntime,
         publish_interval_sec: float,
         jpeg_quality: int = 85,
     ) -> None:
@@ -80,26 +83,36 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
             raise ValueError("publish_interval_sec must be positive")
 
         self._room = room
-        self._runtime = runtime
+        self._perception = perception
         self._publish_interval_sec = publish_interval_sec
         self._jpeg_quality = jpeg_quality
+
         self._bindings: dict[str, _VideoTrackBinding] = {}
         self._tasks: set[asyncio.Task[None]] = set()
-        self._listeners_registered = False
+        self._reader_tasks: set[asyncio.Task[None]] = set()
+        self._events = RoomEventBindings(room)
+        self._stop_task: asyncio.Task[None] | None = None
+
         self._started = False
 
-    def _spawn(self, coroutine: Coroutine[Any, Any, None], *, name: str) -> asyncio.Task[None]:
+    def _spawn(
+        self, coroutine: Coroutine[Any, Any, None], *, name: str, reader: bool = False
+    ) -> asyncio.Task[None]:
         task = asyncio.create_task(coroutine, name=name)
         self._tasks.add(task)
+        if reader:
+            self._reader_tasks.add(task)
 
         def on_done(completed: asyncio.Task[None]) -> None:
             self._tasks.discard(completed)
+            self._reader_tasks.discard(completed)
             if completed.cancelled():
                 return
             error = completed.exception()
             if error is not None:
                 logger.error(
-                    "LiveKit video background task failed task=%s",
+                    "%s background task failed task=%s",
+                    type(self).__name__,
                     completed.get_name(),
                     exc_info=(type(error), error, error.__traceback__),
                 )
@@ -145,7 +158,7 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
             return
 
         binding.state = state
-        self._runtime.perception.publish_source_state(
+        self._perception.publish_source_state(
             MediaSourceStateEvent(
                 source=binding.source,
                 modality=MediaModality.VIDEO,
@@ -219,14 +232,12 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
         frame_index: int,
         occurred_at: RuntimeTime,
     ) -> EnvObservation:
-        frame_id = get_md5_id(
-            [
-                self._runtime.session.session_id,
-                binding.track_sid,
-                str(binding.source_generation),
-                str(frame_index),
-                str(occurred_at.unix_ns),
-            ]
+        frame_id = create_frame_id(
+            self._perception.session_id,
+            binding.track_sid,
+            binding.source_generation,
+            frame_index,
+            occurred_at.unix_ns,
         )
 
         generic_frame = from_livekit_video_frame(frame)
@@ -287,7 +298,7 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
                     continue
 
                 frame_index += 1
-                occurred_at = self._runtime.clock.now()
+                occurred_at = self._perception.clock.now()
 
                 if not self._should_publish(binding, occurred_at):
                     continue
@@ -325,7 +336,7 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
                     MediaSourceState.ACTIVE,
                     reason="frame_received",
                 )
-                self._runtime.perception.publish_observation(observation)
+                self._perception.publish_observation(observation)
 
         except asyncio.CancelledError:
             terminal_reason = "reader_cancelled"
@@ -379,7 +390,7 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
             track_sid=publication.sid,
             track_name=publication.name,
             track_source=int(publication.source),
-            source=self._runtime.perception.next_source(source_id),
+            source=self._perception.next_source(source_id),
             source_kind=source_kind,
             transport_participant_id=transport_participant_id,
             publication=publication,
@@ -397,52 +408,21 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
         binding.reader_task = self._spawn(
             self._read_stream(binding),
             name=f"livekit_video_reader:{binding.track_sid}:{binding.source_generation}",
+            reader=True,
         )
 
     async def _close_stream(self, binding: _VideoTrackBinding) -> None:
-        try:
-            await asyncio.wait_for(
-                binding.stream.aclose(),
-                timeout=VIDEO_STREAM_CLOSE_TIMEOUT_SEC,
-            )
-        except TimeoutError:
-            logger.warning(
-                "Timed out closing LiveKit video stream track_sid=%s generation=%s",
-                binding.track_sid,
-                binding.source_generation,
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception(
-                "Failed to close LiveKit video stream track_sid=%s generation=%s",
-                binding.track_sid,
-                binding.source_generation,
-            )
+        await asyncio.wait_for(binding.stream.aclose(), timeout=VIDEO_STREAM_CLOSE_TIMEOUT_SEC)
 
     async def _close_binding(self, binding: _VideoTrackBinding) -> None:
-        reader_task = binding.reader_task
-
-        if (
-            reader_task is not None
-            and reader_task is not asyncio.current_task()
-            and not reader_task.done()
-        ):
-            reader_task.cancel()
-
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(reader_task, return_exceptions=True),
-                    timeout=VIDEO_READER_STOP_TIMEOUT_SEC,
-                )
-            except TimeoutError:
-                logger.warning(
-                    "Timed out stopping LiveKit video reader track_sid=%s generation=%s",
-                    binding.track_sid,
-                    binding.source_generation,
-                )
-
-        await self._close_stream(binding)
+        task = binding.reader_task
+        try:
+            if task is not None and task is not asyncio.current_task():
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        finally:
+            await self._close_stream(binding)
 
     def _attach_existing_tracks(self) -> None:
         for participant in self._room.remote_participants.values():
@@ -456,12 +436,12 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
                     )
 
     def _register_listeners(self) -> None:
-        if self._listeners_registered:
+        if self._events.registered:
             return
 
         self._listeners_registered = True
 
-        @self._room.on("track_subscribed")
+        @self._events.on("track_subscribed")
         def on_track_subscribed(
             track: rtc.Track,
             publication: rtc.RemoteTrackPublication,
@@ -474,7 +454,7 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
                     transport_participant_id=participant.identity,
                 )
 
-        @self._room.on("track_muted")
+        @self._events.on("track_muted")
         def on_track_muted(
             participant: rtc.Participant,
             publication: rtc.TrackPublication,
@@ -484,7 +464,7 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
             if binding := self._binding_for_publication(publication):
                 self._publish_source_state(binding, MediaSourceState.MUTED, reason="track_muted")
 
-        @self._room.on("track_unmuted")
+        @self._events.on("track_unmuted")
         def on_track_unmuted(
             participant: rtc.Participant,
             publication: rtc.TrackPublication,
@@ -496,7 +476,7 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
                     binding, MediaSourceState.STARTED, reason="track_unmuted"
                 )
 
-        @self._room.on("track_unsubscribed")
+        @self._events.on("track_unsubscribed")
         def on_track_unsubscribed(
             track: rtc.Track,
             publication: rtc.RemoteTrackPublication,
@@ -511,7 +491,7 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
                     )
                 )
 
-        @self._room.on("track_unpublished")
+        @self._events.on("track_unpublished")
         def on_track_unpublished(
             publication: rtc.RemoteTrackPublication,
             participant: rtc.RemoteParticipant,
@@ -525,7 +505,7 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
                     )
                 )
 
-        @self._room.on("participant_disconnected")
+        @self._events.on("participant_disconnected")
         def on_participant_disconnected(participant: rtc.RemoteParticipant) -> None:
             bindings = [
                 binding
@@ -543,6 +523,52 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
 
     """Runtime operations"""
 
+    async def _stop(self) -> None:
+        errors: list[Exception] = []
+        try:
+            self._events.clear()
+        except Exception as exc:
+            errors.append(exc)
+
+        bindings = tuple(self._bindings.values())
+        self._bindings.clear()
+        for binding in bindings:
+            try:
+                self._publish_source_state(
+                    binding, MediaSourceState.ENDED, reason="session_stopped"
+                )
+            except Exception as exc:
+                errors.append(exc)
+
+        results = await asyncio.gather(
+            *(self._close_binding(binding) for binding in bindings), return_exceptions=True
+        )
+        tasks = tuple(self._tasks)
+        readers = set(self._reader_tasks)
+        if tasks:
+            pending_results = await asyncio.gather(*tasks, return_exceptions=True)
+            results.extend(
+                result
+                for task, result in zip(tasks, pending_results, strict=True)
+                if task not in readers or not isinstance(result, asyncio.CancelledError)
+            )
+        self._tasks.clear()
+        self._reader_tasks.clear()
+
+        for result in results:
+            if isinstance(result, asyncio.CancelledError):
+                error = RuntimeError(f"{type(self).__name__} cleanup task was cancelled")
+                error.__cause__ = result
+                errors.append(error)
+            elif isinstance(result, Exception):
+                errors.append(result)
+            elif isinstance(result, BaseException):
+                raise result
+
+        if errors:
+            raise ExceptionGroup(f"{type(self).__name__} cleanup failed", errors)
+        logger.info("%s stopped session_id=%s", type(self).__name__, self._perception.session_id)
+
     async def on_session_start(self) -> None:
         if self._started:
             return
@@ -553,57 +579,12 @@ class LiveKitVideoInput(AvatarRuntimePlugin):
 
         logger.info(
             "LiveKit video input runtime started session_id=%s sample_interval=%ss",
-            self._runtime.session.session_id,
+            self._perception.session_id,
             self._publish_interval_sec,
         )
 
     async def on_session_stop(self) -> None:
-        if not self._started:
-            return
-
-        self._started = False
-
-        logger.debug(
-            "Stopping LiveKit video input runtime session_id=%s bindings=%s tasks=%s",
-            self._runtime.session.session_id,
-            len(self._bindings),
-            len(self._tasks),
-        )
-
-        bindings: list[_VideoTrackBinding] = []
-
-        for binding in tuple(self._bindings.values()):
-            if self._detach_binding(
-                binding,
-                state=MediaSourceState.ENDED,
-                reason="session_stopped",
-            ):
-                bindings.append(binding)
-
-        if bindings:
-            await asyncio.gather(
-                *(self._close_binding(binding) for binding in bindings),
-                return_exceptions=True,
-            )
-
-        remaining_tasks = [task for task in self._tasks if not task.done()]
-
-        if remaining_tasks:
-            _, pending = await asyncio.wait(
-                remaining_tasks,
-                timeout=VIDEO_TASK_DRAIN_TIMEOUT_SEC,
-            )
-
-            for task in pending:
-                task.cancel()
-
-            if pending:
-                await asyncio.gather(*pending, return_exceptions=True)
-
-        self._bindings.clear()
-        self._tasks.clear()
-
-        logger.info(
-            "LiveKit video input runtime stopped session_id=%s",
-            self._runtime.session.session_id,
-        )
+        if self._stop_task is None:
+            self._started = False
+            self._stop_task = asyncio.create_task(self._stop(), name=f"{type(self).__name__}:stop")
+        await wait_for_cleanup(self._stop_task)

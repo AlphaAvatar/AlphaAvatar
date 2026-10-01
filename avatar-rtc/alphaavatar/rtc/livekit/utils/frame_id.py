@@ -11,12 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .livekit_model_input import LiveKitModelInput
-from .livekit_turn_input import LiveKitTurnInput
-from .livekit_turn_response import LiveKitTurnResponseSink
+import hashlib
+import json
 
-__all__ = [
-    "LiveKitModelInput",
-    "LiveKitTurnInput",
-    "LiveKitTurnResponseSink",
-]
+
+def create_frame_id(
+    session_id: str,
+    track_sid: str,
+    source_generation: int,
+    frame_index: int,
+    unix_ns: int,
+) -> str:
+    parts = [session_id, track_sid, str(source_generation), str(frame_index), str(unix_ns)]
+    payload = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.md5(payload.encode("utf-8"), usedforsecurity=False).hexdigest()

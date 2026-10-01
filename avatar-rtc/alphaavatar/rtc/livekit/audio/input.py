@@ -14,14 +14,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Coroutine
 from dataclasses import dataclass
 from typing import Any
 
-from alphaavatar.agents.log import logger
-from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.plugin import AvatarRuntimePlugin
-from alphaavatar.agents.utils.id_utils import get_md5_id
+from livekit import rtc
+
+from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.env import EnvObservation, PerceptionSourceRef
 from alphaavatar.core.media import AudioFramePayload
 from alphaavatar.core.perception import (
@@ -29,10 +29,17 @@ from alphaavatar.core.perception import (
     MediaSourceKind,
     MediaSourceState,
     MediaSourceStateEvent,
+    PerceptionRuntime,
 )
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
-from alphaavatar.rtc.livekit.audio.codec import from_livekit_audio_frame
-from livekit import rtc
+from alphaavatar.rtc.livekit.utils.events import RoomEventBindings
+from alphaavatar.rtc.livekit.utils.frame_id import create_frame_id
+
+from .codec import from_livekit_audio_frame
+
+logger = logging.getLogger(__name__)
+
+AUDIO_STREAM_CLOSE_TIMEOUT_SEC = 2.0
 
 
 @dataclass(slots=True)
@@ -58,14 +65,14 @@ class _AudioTrackBinding:
         return self.source.source_generation
 
 
-class LiveKitAudioInput(AvatarRuntimePlugin):
+class LiveKitAudioInput:
     """Translate LiveKit microphone tracks into audio observations and source-state events."""
 
     def __init__(
         self,
         *,
         room: rtc.Room,
-        runtime: AvatarRuntime,
+        perception: PerceptionRuntime,
         frame_size_ms: int,
         sample_rate: int = 48_000,
         num_channels: int = 1,
@@ -78,33 +85,18 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
             raise ValueError("frame_size_ms must be positive")
 
         self._room = room
-        self._runtime = runtime
+        self._perception = perception
         self._sample_rate = sample_rate
         self._num_channels = num_channels
         self._frame_size_ms = frame_size_ms
+
         self._bindings: dict[str, _AudioTrackBinding] = {}
         self._tasks: set[asyncio.Task[None]] = set()
-        self._listeners_registered = False
+        self._reader_tasks: set[asyncio.Task[None]] = set()
+        self._events = RoomEventBindings(room)
+        self._stop_task: asyncio.Task[None] | None = None
+
         self._started = False
-
-    def _spawn(self, coroutine: Coroutine[Any, Any, None], *, name: str) -> asyncio.Task[None]:
-        task = asyncio.create_task(coroutine, name=name)
-        self._tasks.add(task)
-
-        def on_done(completed: asyncio.Task[None]) -> None:
-            self._tasks.discard(completed)
-            if completed.cancelled():
-                return
-            error = completed.exception()
-            if error is not None:
-                logger.error(
-                    "LiveKit audio background task failed task=%s",
-                    completed.get_name(),
-                    exc_info=(type(error), error, error.__traceback__),
-                )
-
-        task.add_done_callback(on_done)
-        return task
 
     @staticmethod
     def _source_id(
@@ -116,6 +108,31 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
         discriminator = f"source:{track_source}" if track_source else f"track:{track_sid}"
         return f"env:audio:{owner}:{discriminator}"
 
+    def _spawn(
+        self, coroutine: Coroutine[Any, Any, None], *, name: str, reader: bool = False
+    ) -> asyncio.Task[None]:
+        task = asyncio.create_task(coroutine, name=name)
+        self._tasks.add(task)
+        if reader:
+            self._reader_tasks.add(task)
+
+        def on_done(completed: asyncio.Task[None]) -> None:
+            self._tasks.discard(completed)
+            self._reader_tasks.discard(completed)
+            if completed.cancelled():
+                return
+            error = completed.exception()
+            if error is not None:
+                logger.error(
+                    "%s background task failed task=%s",
+                    type(self).__name__,
+                    completed.get_name(),
+                    exc_info=(type(error), error, error.__traceback__),
+                )
+
+        task.add_done_callback(on_done)
+        return task
+
     def _publish_source_state(
         self,
         binding: _AudioTrackBinding,
@@ -126,7 +143,7 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
         if binding.state == state:
             return
         binding.state = state
-        self._runtime.perception.publish_source_state(
+        self._perception.publish_source_state(
             MediaSourceStateEvent(
                 source=binding.source,
                 modality=MediaModality.AUDIO,
@@ -203,14 +220,12 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
             start=ended_at.shifted(-audio_frame.duration_sec),
             end=ended_at,
         )
-        frame_id = get_md5_id(
-            [
-                self._runtime.session.session_id,
-                binding.track_sid,
-                str(binding.source_generation),
-                str(frame_index),
-                str(ended_at.unix_ns),
-            ]
+        frame_id = create_frame_id(
+            self._perception.session_id,
+            binding.track_sid,
+            binding.source_generation,
+            frame_index,
+            ended_at.unix_ns,
         )
 
         payload = AudioFramePayload.create(
@@ -247,7 +262,7 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
                 if binding.state == MediaSourceState.MUTED:
                     continue
                 frame_index += 1
-                ended_at = self._runtime.clock.now()
+                ended_at = self._perception.clock.now()
                 try:
                     observation = self._build_observation(
                         binding=binding,
@@ -274,7 +289,7 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
                 self._publish_source_state(
                     binding, MediaSourceState.ACTIVE, reason="frame_received"
                 )
-                self._runtime.perception.publish_observation(observation)
+                self._perception.publish_observation(observation)
         except asyncio.CancelledError:
             terminal_reason = "reader_cancelled"
             raise
@@ -318,7 +333,7 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
             track_sid=publication.sid,
             track_name=publication.name,
             track_source=int(publication.source),
-            source=self._runtime.perception.next_source(source_id),
+            source=self._perception.next_source(source_id),
             transport_participant_id=transport_participant_id,
             publication=publication,
             stream=rtc.AudioStream(
@@ -337,26 +352,21 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
         binding.reader_task = self._spawn(
             self._read_stream(binding),
             name=f"livekit_audio_reader:{binding.track_sid}:{binding.source_generation}",
+            reader=True,
         )
 
     async def _close_stream(self, binding: _AudioTrackBinding) -> None:
-        try:
-            await binding.stream.aclose()
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception(
-                "Failed to close LiveKit audio stream participant=%s track_sid=%s generation=%s",
-                binding.transport_participant_id,
-                binding.track_sid,
-                binding.source_generation,
-            )
+        await asyncio.wait_for(binding.stream.aclose(), timeout=AUDIO_STREAM_CLOSE_TIMEOUT_SEC)
 
     async def _close_binding(self, binding: _AudioTrackBinding) -> None:
-        await self._close_stream(binding)
         task = binding.reader_task
-        if task is not None and task is not asyncio.current_task() and not task.done():
-            await asyncio.gather(task, return_exceptions=True)
+        try:
+            if task is not None and task is not asyncio.current_task():
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        finally:
+            await self._close_stream(binding)
 
     def _attach_existing_tracks(self) -> None:
         for participant in self._room.remote_participants.values():
@@ -370,11 +380,12 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
                     )
 
     def _register_listeners(self) -> None:
-        if self._listeners_registered:
+        if self._events.registered:
             return
+
         self._listeners_registered = True
 
-        @self._room.on("track_subscribed")
+        @self._events.on("track_subscribed")
         def on_track_subscribed(
             track: rtc.Track,
             publication: rtc.RemoteTrackPublication,
@@ -387,7 +398,7 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
                     transport_participant_id=participant.identity,
                 )
 
-        @self._room.on("track_muted")
+        @self._events.on("track_muted")
         def on_track_muted(
             participant: rtc.Participant,
             publication: rtc.TrackPublication,
@@ -397,7 +408,7 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
             if binding := self._binding_for_publication(publication):
                 self._publish_source_state(binding, MediaSourceState.MUTED, reason="track_muted")
 
-        @self._room.on("track_unmuted")
+        @self._events.on("track_unmuted")
         def on_track_unmuted(
             participant: rtc.Participant,
             publication: rtc.TrackPublication,
@@ -409,7 +420,7 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
                     binding, MediaSourceState.STARTED, reason="track_unmuted"
                 )
 
-        @self._room.on("track_unsubscribed")
+        @self._events.on("track_unsubscribed")
         def on_track_unsubscribed(
             track: rtc.Track,
             publication: rtc.RemoteTrackPublication,
@@ -424,7 +435,7 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
                     )
                 )
 
-        @self._room.on("track_unpublished")
+        @self._events.on("track_unpublished")
         def on_track_unpublished(
             publication: rtc.RemoteTrackPublication,
             participant: rtc.RemoteParticipant,
@@ -438,7 +449,7 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
                     )
                 )
 
-        @self._room.on("participant_disconnected")
+        @self._events.on("participant_disconnected")
         def on_participant_disconnected(participant: rtc.RemoteParticipant) -> None:
             bindings = [
                 binding
@@ -453,6 +464,54 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
                 ):
                     self._schedule_close(binding)
 
+    """Runtime operations"""
+
+    async def _stop(self) -> None:
+        errors: list[Exception] = []
+        try:
+            self._events.clear()
+        except Exception as exc:
+            errors.append(exc)
+
+        bindings = tuple(self._bindings.values())
+        self._bindings.clear()
+        for binding in bindings:
+            try:
+                self._publish_source_state(
+                    binding, MediaSourceState.ENDED, reason="session_stopped"
+                )
+            except Exception as exc:
+                errors.append(exc)
+
+        results = await asyncio.gather(
+            *(self._close_binding(binding) for binding in bindings), return_exceptions=True
+        )
+        tasks = tuple(self._tasks)
+        readers = set(self._reader_tasks)
+        if tasks:
+            pending_results = await asyncio.gather(*tasks, return_exceptions=True)
+            results.extend(
+                result
+                for task, result in zip(tasks, pending_results, strict=True)
+                if task not in readers or not isinstance(result, asyncio.CancelledError)
+            )
+        self._tasks.clear()
+        self._reader_tasks.clear()
+
+        for result in results:
+            if isinstance(result, asyncio.CancelledError):
+                error = RuntimeError(f"{type(self).__name__} cleanup task was cancelled")
+                error.__cause__ = result
+                errors.append(error)
+            elif isinstance(result, Exception):
+                errors.append(result)
+            elif isinstance(result, BaseException):
+                raise result
+
+        if errors:
+            raise ExceptionGroup(f"{type(self).__name__} cleanup failed", errors)
+        logger.info("%s stopped session_id=%s", type(self).__name__, self._perception.session_id)
+
     async def on_session_start(self) -> None:
         if self._started:
             return
@@ -462,29 +521,13 @@ class LiveKitAudioInput(AvatarRuntimePlugin):
         self._attach_existing_tracks()
         logger.info(
             "LiveKit audio input runtime started session_id=%s sample_rate=%s channels=%s",
-            self._runtime.session.session_id,
+            self._perception.session_id,
             self._sample_rate,
             self._num_channels,
         )
 
     async def on_session_stop(self) -> None:
-        if not self._started:
-            return
-
-        self._started = False
-        bindings = list(self._bindings.values())
-        for binding in bindings:
-            self._detach_binding(binding, state=MediaSourceState.ENDED, reason="session_stopped")
-        if bindings:
-            await asyncio.gather(
-                *(self._close_binding(binding) for binding in bindings), return_exceptions=True
-            )
-        tasks = list(self._tasks)
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        self._bindings.clear()
-        self._tasks.clear()
-        logger.info(
-            "LiveKit audio input runtime stopped session_id=%s",
-            self._runtime.session.session_id,
-        )
+        if self._stop_task is None:
+            self._started = False
+            self._stop_task = asyncio.create_task(self._stop(), name=f"{type(self).__name__}:stop")
+        await wait_for_cleanup(self._stop_task)

@@ -20,7 +20,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from alphaavatar.agents.log import logger
-from alphaavatar.agents.runtime.cleanup import wait_for_cleanup
+from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.lifecycle import SessionLifecycle
 
 

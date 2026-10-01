@@ -18,7 +18,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from alphaavatar.agents.runtime.cleanup import wait_for_cleanup
+from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.env import EnvObservation, ObservationKind
 from alphaavatar.core.perception import (
     AlignedPerception,

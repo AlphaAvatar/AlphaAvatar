@@ -16,8 +16,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 
-from alphaavatar.agents.runtime.cleanup import wait_for_cleanup
 from alphaavatar.agents.runtime.lifecycle import LifecyclePhase, RuntimePluginLifecycle
+from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.lifecycle import SessionLifecycle
 
 

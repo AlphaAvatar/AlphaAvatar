@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from alphaavatar.agents.runtime.cleanup import wait_for_cleanup
+from alphaavatar.core.cleanup import wait_for_cleanup
 
 if TYPE_CHECKING:
     from livekit.agents import AgentSession

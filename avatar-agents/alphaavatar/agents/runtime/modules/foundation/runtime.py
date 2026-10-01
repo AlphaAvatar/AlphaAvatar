@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import asyncio
 
-from ...cleanup import wait_for_cleanup
+from alphaavatar.core.cleanup import wait_for_cleanup
+
 from .voice import VoiceService
 
 

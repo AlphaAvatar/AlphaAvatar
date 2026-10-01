@@ -52,8 +52,11 @@ failed or cancelled startup.
 `LiveKitHostedAgent` temporarily connects SDK lifecycle hooks to Host. It does not
 implement model execution and will be removed with the LiveKit Agents path.
 
-Audio/video input adapters, channel bridges, and LiveKit Agents execution
-ownership are still being migrated.
+Audio/video input adapters now live in `avatar-rtc` and receive the shared
+PerceptionRuntime through constructor injection. Host retains application
+assembly and lifecycle coordination.
+
+Channel bridges and LiveKit Agents execution ownership are still being migrated.
 
 `close_session_execution()` closes the SDK session, ensures Host components are
 closed, then closes the session-owned AvatarRuntime. It is not transport-only

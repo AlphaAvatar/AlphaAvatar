@@ -29,7 +29,6 @@ from alphaavatar.agents.entrypoints.channels.bootstrap import register_builtin_c
 from alphaavatar.agents.entrypoints.channels.factory import build_channel_adapters
 from alphaavatar.agents.entrypoints.io.dispatcher import InputDispatcher
 from alphaavatar.agents.entrypoints.io.envelopes import InputEnvelope
-from alphaavatar.agents.entrypoints.livekit import LiveKitAudioInput, LiveKitVideoInput
 from alphaavatar.agents.entrypoints.schema.room_type import (
     SUPPORTED_ADAPTER_TYPES,
     RoomType,
@@ -40,16 +39,18 @@ from alphaavatar.agents.entrypoints.schema.session_type import resolve_session_t
 from alphaavatar.agents.env import init_env
 from alphaavatar.agents.log import logger
 from alphaavatar.agents.runtime import ContextRuntime, InteractionMethod, SessionRuntime
-from alphaavatar.agents.runtime.cleanup import wait_for_cleanup
 from alphaavatar.agents.runtime.inference import prepare_inference_runners
 from alphaavatar.agents.utils.files.work_dirs import WorkspacePaths, prepare_user_path
 from alphaavatar.agents.utils.id_utils import get_session_id, get_user_id
 from alphaavatar.agents.utils.time import build_user_time_context
+from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.lifecycle import SessionLifecycle
 from alphaavatar.host.bootstrap import create_avatar_runtime
+from alphaavatar.rtc.livekit.audio.input import LiveKitAudioInput
 from alphaavatar.rtc.livekit.audio.output import LiveKitTransientAudioOutput
 from alphaavatar.rtc.livekit.status.output import LiveKitStatusOutput
 from alphaavatar.rtc.livekit.transcript.output import LiveKitTranscriptOutput
+from alphaavatar.rtc.livekit.video.input import LiveKitVideoInput
 
 from .agent import LiveKitHostedAgent
 from .lifecycle import close_session_execution
@@ -308,7 +309,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
         rtc_inputs.append(
             LiveKitAudioInput(
                 room=ctx.room,
-                runtime=avatar_runtime,
+                perception=avatar_runtime.perception,
                 sample_rate=16_000,
                 num_channels=1,
                 frame_size_ms=avatar_config.runtime.perception.audio_frame_size_ms,
@@ -318,7 +319,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
         rtc_inputs.append(
             LiveKitVideoInput(
                 room=ctx.room,
-                runtime=avatar_runtime,
+                perception=avatar_runtime.perception,
                 publish_interval_sec=avatar_config.runtime.perception.video_publish_interval_sec,
             )
         )
