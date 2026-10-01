@@ -570,18 +570,19 @@ class LiveKitVideoInput:
         logger.info("%s stopped session_id=%s", type(self).__name__, self._perception.session_id)
 
     async def on_session_start(self) -> None:
+        if self._stop_task is not None:
+            raise RuntimeError(f"{type(self).__name__} is closing or closed")
         if self._started:
             return
 
         self._started = True
-        self._register_listeners()
-        self._attach_existing_tracks()
-
-        logger.info(
-            "LiveKit video input runtime started session_id=%s sample_interval=%ss",
-            self._perception.session_id,
-            self._publish_interval_sec,
-        )
+        try:
+            self._register_listeners()
+            self._attach_existing_tracks()
+        except BaseException:
+            await self.on_session_stop()
+            raise
+        logger.info("%s started session_id=%s", type(self).__name__, self._perception.session_id)
 
     async def on_session_stop(self) -> None:
         if self._stop_task is None:
