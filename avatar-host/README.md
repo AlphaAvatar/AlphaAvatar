@@ -2,8 +2,8 @@
 
 `alpha-avatar-host` owns application assembly and execution lifecycle coordination.
 
-It connects Agent execution, transport adapters, and channel integrations without
-moving model execution or media processing into the application layer.
+It connects Agent execution and native-client transport adapters without moving
+model execution or media processing into the application layer.
 
 ## Entrypoint and CLI
 
@@ -33,15 +33,14 @@ Concurrent start and close requests share their respective tasks. A lifecycle
 instance is not restarted after closure. Startup failures roll back completed
 stages, and cancellation does not interrupt owned rollback or shutdown cleanup.
 
-The entrypoint waits for Host startup before sending READY or starting bridged
-channel ingress.
+The entrypoint waits for Host startup before sending native-client READY status.
 
 Components remain responsible for cleaning up resources acquired by their own
 failed or cancelled startup.
 
 ## Boundaries
 
-- Host may depend on Agent, RTC, and channel interfaces and implementations.
+- Host may depend on Agent and RTC interfaces and implementations.
 - Agent and RTC libraries must not import Host.
 - AvatarEngine does not receive RTC adapters or manage their lifecycle.
 - Package roots do not eagerly import execution components or transport backends.
@@ -56,7 +55,12 @@ Audio/video input adapters now live in `avatar-rtc` and receive the shared
 PerceptionRuntime through constructor injection. Host retains application
 assembly and lifecycle coordination.
 
-Channel bridges and LiveKit Agents execution ownership are still being migrated.
+External messaging bridges and their application dispatch path have been removed.
+LiveKit Agents execution ownership is still being migrated.
+
+Native session modes are configured in `alphaavatar.host.livekit.session`.
+The existing `chat`, `agent`, `audio`, and `video` values remain supported.
+Room names and external-channel metadata do not select execution paths.
 
 `close_session_execution()` closes the SDK session, ensures Host components are
 closed, then closes the session-owned AvatarRuntime. It is not transport-only

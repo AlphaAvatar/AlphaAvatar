@@ -37,7 +37,6 @@
 * [Channels](#channels)
 
   * [Web Demo](#web-demo)
-  * [WhatsApp](#whatsapp)
 * [NEXT STEPS](#next-steps)
 
 ---
@@ -187,10 +186,9 @@
 | 🔸 | Remove remaining `livekit.agents` ownership of final Assistant delivery and session lifecycle by moving response delivery and transport orchestration into AlphaAvatar-owned runtime and entrypoint adapters. | ⏳ In Progress |
 | 🔹 | Complete runtime lifecycle contracts with consistent `aclose`, health checks, explicit resource ownership, worker recovery, and runtime health observability. | 🧩 Planned |
 | 🔹 | Add session replay and audit tooling based on turns, provider traces, memory events, and runtime status events. | 🧩 Planned |
-| 🔹 | Add richer error handling and recovery policies across model calls, tool invocation, plugin initialization, channel adapters, and realtime media streams. | 🧩 Planned |
-| 🔹 | Enrich the logging and tracing system with per-room, per-session, per-participant, per-user, per-turn, and per-provider-task prefixes. | 🧩 Planned |
+| 🔹 | Add richer error handling and recovery policies across model calls, tool invocation, plugin initialization, native-client adapters, and realtime media streams. | 🧩 Planned |
 | 🔹 | Add version control and compatibility checks for each plugin package, provider integration, config schema, and runtime protocol. | 🧩 Planned |
-| 🔹 | Add latency profiling and optimization across the voice pipeline, provider calls, tool invocation, memory retrieval, RAG, MCP, status feedback, and channel adapters. | 🧩 Planned |
+| 🔹 | Add latency profiling and optimization across the voice pipeline, provider calls, tool invocation, memory retrieval, RAG, MCP, status feedback, and native-client adapters. | 🧩 Planned |
 
 ## Vision
 
@@ -366,7 +364,7 @@
 | 🔸 | Support persona visualization interface for profile inspection and correction. | ⏳ In Progress |
 | 🔸 | Add multi-user profile management for concurrent interactions. | ⏳ In Progress |
 | 🔸 | Add real-time profile retrieval and profile switching during active conversation. | ⏳ In Progress |
-| 🔹 | Add cross-platform identity linking for the same user across web, desktop, WhatsApp, and future channels. | 🧩 Planned |
+| 🔹 | Add shared user identity and explicit identity linking across AlphaAvatar Web, App, and OS clients. | 🧩 Planned |
 | 🔹 | Add user-confirmed identity merge and identity conflict resolution. | 🧩 Planned |
 | 🔹 | Add persona privacy controls, allowing users to inspect, edit, export, or delete profile fields. | 🧩 Planned |
 | 🔹 | Add event triggers for profile updates, reflection cycles, and planning refresh. | 🧩 Planned |
@@ -505,7 +503,9 @@
 
 ---
 
-# Channels
+# Native Clients
+
+The active client direction is AlphaAvatar Web, App, and OS. Third-party messaging bridges are outside the current implementation scope. External tools and personal-workspace integrations remain part of the project.
 
 ## 🌐 Web Demo
 
@@ -526,30 +526,6 @@
 | 🔹 | Add screen sharing and visual grounding support. | 🧩 Planned |
 | 🔹 | Add demo session debugging panel for room metadata, participant metadata, agent status, and tool status. | 🧩 Planned |
 | 🔹 | Add user login and persistent identity binding. | 🧩 Planned |
-
----
-
-## WhatsApp
-
-### ✅ DONE
-
-| Date    | Milestone | Notes |
-| :------ | :-------- | :---- |
-| 2026-02 | **WhatsApp Channel Integration v1** | Built the initial WhatsApp channel based on the Baileys driver + Python bridge architecture. |
-| 2026-02 | **QR Login & Persistent Session Support** | Supports WhatsApp authentication through QR code login with persistent local session storage. |
-| 2026-04 | **Whitelist Support** | Supports using a whitelist on WhatsApp to restrict users from accessing AlphaAvatar. Groups are blocked by default. |
-
-### 🧭 TODO
-
-| Priority | Task | Stage |
-| :------- | :--- | :---: |
-| 🔸 | LiveKit streaming integration. | ⏳ In Progress |
-| 🔸 | Voice / image / media support. | ⏳ In Progress |
-| 🔹 | Meta Cloud API driver. | 🧩 Planned |
-| 🔹 | Twilio driver. | 🧩 Planned |
-| 🔹 | Multi-driver runtime selection. | 🧩 Planned |
-| 🔹 | Group chat support with multi-user identity routing. | 🧩 Planned |
-| 🔹 | Cross-channel identity binding between WhatsApp users and web/demo users. | 🧩 Planned |
 
 ---
 

@@ -50,7 +50,9 @@ The audio output adapter still handles only `OutputLane.TRANSIENT`. Assistant
 response generation and final TTS remain on the temporary Agents path.
 
 The temporary Agents model/turn/response bridges remain in `avatar-agents` for
-removal in item 12. Channel bridges and SDK execution ownership are still being
-migrated.
+removal in item 12. SDK execution ownership is still being migrated.
+
+External messaging bridges are not part of this package or the current Host
+entrypoint. Native text interaction and RTC data-channel transport remain in scope.
 
 This migration does not change the current session-scoped execution semantics.

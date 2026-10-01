@@ -75,7 +75,8 @@ It is built around a **plugin-based real-time Agent architecture**, combining:
 
 AlphaAvatar follows a layered realtime multimodal architecture:
 
-- **🎙️ User & Channels**: voice, text, camera, screen, files, and messaging platforms.
+- **🎙️ Native Client Inputs**: realtime text, voice, camera, and screen observations from first-party clients.
+- **🏠 Application Host**: assembles Agent execution and RTC adapters, coordinates their lifecycle, and hosts the application entrypoint.
 - **🔌 RTC Adapter**: connects LiveKit and other realtime communication backends.
 - **👁️ Core Perception**: normalizes typed multimodal observations, source and segment lineage, ordered perception events, annotations, timelines, and historical snapshots.
 - **⚙️ Agent & Runtime**: manages sessions, context, semantic addressing, conversation focus, multimodal turn taking, shared inference access, and runtime lifecycle.
@@ -241,7 +242,7 @@ See [Plugin Layout and Boundaries](avatar-plugins/README.md) for development det
 
 - [2026/03] Released AlphaAvatar **version 0.5.0**:
   - Added the MCP plugin, enabling retrieval and concurrent invocation of MCP tools.
-  - Released AlphaAvatar **version 0.5.1**: Added [WhatsApp](https://github.com/AlphaAvatar/AlphaAvatar/blob/main/avatar-channels/avatar-channels-whatsapp/README.md) channel support via [Baileys](https://github.com/whiskeysockets/Baileys).
+    - Released AlphaAvatar **version 0.5.1**: Added the original WhatsApp bridge via Baileys. This is a historical milestone; external messaging bridges are removed from the v0.6.8 development line.
   - Released AlphaAvatar **version 0.5.2**: Added the AlphaAvatar Voice plugin with [Voice.ai](https://voice.ai/) TTS support.
 
 - [2026/02] Released AlphaAvatar **version 0.4.0**:
@@ -325,7 +326,9 @@ To see more examples, please refer to the [Examples README](https://github.com/A
 
 <h2>Usage 🚀</h2>
 
-AlphaAvatar supports multiple **Access Channels**, allowing different types of users — from end users to developers — to interact with the system.
+AlphaAvatar focuses on first-party realtime interaction. The Web Demo and Developer Playground are available today; dedicated App and OS experiences remain planned.
+
+External messaging bridges are not included in the current development scope. This does not remove native text chat or tool-based integrations with external services.
 
 ---
 
@@ -352,45 +355,6 @@ The Web Demo supports:
 </p>
 
 > The Web Demo is the recommended way to try AlphaAvatar with a full realtime multimodal experience.
-
----
-
-<h3>💬 Social & Messaging Platforms</h3>
-
-Interact with AlphaAvatar directly inside messaging platforms.
-
-Capabilities:
-
-- 💬 Text-based conversation
-- 🎤 Voice message interaction
-- 🧰 Tool invocation via chat interface
-
----
-
-<h4>WhatsApp</h4>
-
-
-<img src="https://img.shields.io/badge/Available-28a745?style=flat" />
-
-📦 Channel introduction: [README](https://github.com/AlphaAvatar/AlphaAvatar/blob/main/avatar-channels/avatar-channels-whatsapp/README.md)
-
-▶️ Start WhatsApp Channel
-
-> Make sure AlphaAvatar Agent is already running (see Quick Start above).
-
-```bash
-ENV_FILE=.env.dev sh examples/channels/start_whatsapp.sh
-```
-
-> 💡 The WhatsApp channel runs as an independent bridge process and connects to the Agent runtime.
-
-<h4>WeChat</h4>
-
-<img src="https://img.shields.io/badge/Planned-6c757d?style=flat" />
-
-<h4>Slack</h4>
-
-<img src="https://img.shields.io/badge/Planned-6c757d?style=flat" />
 
 ---
 

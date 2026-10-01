@@ -68,8 +68,8 @@ StatusRenderer
     ↓
 StatusSink(s)
         ├── LoggerStatusSink
-        ├── StatusActionEventSink
-        └── TextOrVoiceStatusSink
+        ├── RuntimeStatusSink
+        └── StatusVoiceOutput
 ```
 
 ---
@@ -142,17 +142,18 @@ Each file can contain multiple templates, one per line. The renderer randomly se
 
 ### 4. `StatusSink` delivers the event
 
-The plugin currently provides three sinks:
+The plugin provides semantic status sinks:
 
 ```text
 LoggerStatusSink
     Writes structured status logs.
 
-StatusActionEventSink
-    Sends structured UI/action events through LiveKit data channel.
+RuntimeStatusSink
+    Publishes machine-readable status actions into OutputRuntime.
 
-TextOrVoiceStatusSink
-    Sends short text or voice status depending on room type and interaction mode.
+StatusVoiceOutput
+    Publishes transient source text when audio output is enabled.
+    Router performs speech synthesis; RTC adapters handle transport delivery.
 ```
 
 ---
@@ -274,41 +275,27 @@ Writes status events to logs.
 
 Useful for debugging whether an event was emitted.
 
-#### `StatusActionEventSink`
+#### RuntimeStatusSink
 
-Publishes structured status action events through LiveKit data channel.
+Publishes machine-readable status actions through AlphaAvatar's OutputRuntime.
 
-Useful for UI state machines, avatar animations, loading indicators, and activity timelines.
+The RTC status adapter delivers these actions to the native client. The client
+decides how to display activity indicators, animation state, and progress.
 
-Example payload type:
+Rendered status speech is not embedded in the machine-readable STATUS event.
 
-```text
-agent_status_action
-```
+#### StatusVoiceOutput
 
-#### `TextOrVoiceStatusSink`
+Publishes selected user-facing status text into the transient output lane when
+the current interaction supports audio output.
 
-Delivers user-facing short status text.
+Router handles speech synthesis and transcript synchronization. RTC adapters
+handle audio and transcript delivery.
 
-It decides delivery mode based on room type and interaction mode.
+Text-only sessions do not generate status speech. Native clients may still render
+structured status actions.
 
-Example behavior:
-
-```text
-WhatsApp / Telegram / Slack / Discord
-    -> text status
-
-Web app
-    -> text + voice, or text only depending on delivery mode config
-
-Voice-only room
-    -> voice status
-
-API room
-    -> no voice by default
-```
-
-It also applies voice-specific throttling so generic thinking does not block more useful tool progress.
+Delivery is based on enabled output capabilities, not messaging-platform names.
 
 ---
 

@@ -20,8 +20,6 @@ from urllib.parse import parse_qsl, urlencode, urlparse
 
 from slugify import slugify
 
-from alphaavatar.agents.entrypoints.schema.room_type import RoomType
-
 _SAFE = re.compile(r"[^a-zA-Z0-9._-]+")
 
 
@@ -38,8 +36,8 @@ def get_user_id():
     return uuid.uuid4().hex
 
 
-def get_session_id(room_type: RoomType) -> str:
-    return f"{room_type.value}:{uuid.uuid4().hex}"
+def get_session_id() -> str:
+    return uuid.uuid4().hex
 
 
 def get_md5_id(items: Sequence[str]) -> str:
