@@ -59,6 +59,12 @@ AlphaAvatar Agent
 
 The Agent only sees **one tool: `MCP`**.
 
+Sensitive values are redacted from MCP logs: bearer/basic tokens, `Authorization`
+and `Cookie` headers, API keys, secrets and passwords (as `key=value` or in JSON),
+and URL credentials/query values. The filter covers the plugin logger and the
+`httpx` / `mcp.client.*` loggers, which would otherwise print the full server URL
+(including `?api_key=...`). Server URLs shown to the model are redacted the same way.
+
 For `op="tool_search"`, pass `query` and optionally `top_k` (1–50, default 8)
 and `server_keys` (a list of exact names from `mcp_servers`). For example,
 `{"op": "tool_search", "query": "search repository code", "top_k": 5, "server_keys": ["github-copilot"]}`.
