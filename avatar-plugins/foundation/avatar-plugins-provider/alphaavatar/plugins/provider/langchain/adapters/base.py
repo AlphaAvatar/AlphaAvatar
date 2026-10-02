@@ -23,7 +23,7 @@ from alphaavatar.agents.avatar.provider.schemas import (
 
 _ADAPTERS = {
     "langchain_text": (".text", "LangChainTextInputAdapter"),
-    "langchain_gemini": (".langchain_gemini", "LangChainGeminiInputAdapter"),
+    "langchain_gemini": (".gemini", "LangChainGeminiInputAdapter"),
 }
 
 

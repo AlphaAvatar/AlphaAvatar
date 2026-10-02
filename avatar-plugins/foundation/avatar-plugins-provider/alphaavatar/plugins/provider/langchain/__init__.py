@@ -20,7 +20,8 @@ from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 from ..version import __version__
 
 if TYPE_CHECKING:
-    from alphaavatar.agents.avatar.provider import LLMBase, ProviderTaskConfig, WorkerEmbeddingBase
+    from alphaavatar.agents.avatar.provider.base import LLMBase, WorkerEmbeddingBase
+    from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
 
 
 class LangChainLLMPlugin(AvatarModulePlugin):

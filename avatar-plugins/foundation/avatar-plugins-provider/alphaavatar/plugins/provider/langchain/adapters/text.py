@@ -17,10 +17,10 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, ChatMessage, HumanMessage, SystemMessage
 
+from alphaavatar.agents.avatar.provider.enums import ModelRole
 from alphaavatar.agents.avatar.provider.schemas import (
     ModelInput,
     ModelInputMessage,
-    ModelRole,
     ModelTextPart,
     ProviderTaskConfig,
 )

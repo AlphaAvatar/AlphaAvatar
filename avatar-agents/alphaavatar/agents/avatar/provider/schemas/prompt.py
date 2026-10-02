@@ -18,7 +18,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .model_input import ModelInput, ModelInputItem, ModelInputMessage, ModelRole, ModelTextPart
+from ..enums import ModelRole
+from .model_input import ModelInput, ModelInputItem, ModelInputMessage, ModelTextPart
 
 
 class ModelPromptMessage(BaseModel):
@@ -41,12 +42,12 @@ class ModelPrompt(BaseModel):
 
     @classmethod
     def from_messages(
-        cls, messages: Sequence[tuple[ModelRole | str, str] | ModelInputSlot]
+        cls, messages: Sequence[ModelPromptMessage | ModelInputSlot | tuple[ModelRole | str, str]]
     ) -> ModelPrompt:
         return cls(
             messages=tuple(
                 item
-                if isinstance(item, ModelInputSlot)
+                if isinstance(item, ModelPromptMessage | ModelInputSlot)
                 else ModelPromptMessage(role=ModelRole(item[0]), template=item[1])
                 for item in messages
             )
