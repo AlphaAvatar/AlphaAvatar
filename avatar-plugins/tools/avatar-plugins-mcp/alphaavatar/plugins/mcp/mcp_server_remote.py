@@ -154,7 +154,13 @@ class MCPServerRemote(mcp.MCPServerHTTP):
         start = time.perf_counter()
         tools = await self._client.list_tools()
         lk_tools = [
-            self._make_tool_cls(tool.name, tool.description, tool.inputSchema, tool.meta)
+            self._make_tool_cls(
+                tool.name,
+                tool.description,
+                tool.inputSchema,
+                tool.meta,
+                tool.annotations.model_dump(exclude_none=True) if tool.annotations else None,
+            )
             for tool in tools.tools
         ]
 
@@ -174,6 +180,7 @@ class MCPServerRemote(mcp.MCPServerHTTP):
         description: str | None,
         input_schema: dict[str, Any],
         meta: dict[str, Any] | None,
+        annotations: dict[str, Any] | None = None,
     ) -> MCPTool:
         tool = MCPTool(
             self._client,
@@ -184,6 +191,7 @@ class MCPServerRemote(mcp.MCPServerHTTP):
             meta,
             server_loop=self._loop,
             server_key=self._server_key,
+            annotations=annotations,
         )
         logger.info(
             "[MCPServerRemote] registered tool=%s server_key=%s server=%s",

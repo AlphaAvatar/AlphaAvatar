@@ -59,6 +59,17 @@ AlphaAvatar Agent
 
 The Agent only sees **one tool: `MCP`**.
 
+For `op="tool_search"`, pass `query` and optionally `top_k` (1–50, default 8)
+and `server_keys` (a list of exact names from `mcp_servers`). For example,
+`{"op": "tool_search", "query": "search repository code", "top_k": 5, "server_keys": ["github-copilot"]}`.
+Omit `server_keys` to search all configured servers.
+Use `categories` (`"read"`, `"write"`, `"unknown"`) to restrict candidates by the
+tool's MCP `readOnlyHint` annotation, e.g. `"categories": ["read"]` for read-only tools.
+
+For `op="tool_call"`, `output_mode` controls result size: `"raw"` (default) returns
+full results and echoed arguments; `"compact"` truncates each tool result to 2000
+characters (with a truncation note) and omits the echoed arguments.
+
 Internally, MCPHost:
 
 1. Discovers relevant tools

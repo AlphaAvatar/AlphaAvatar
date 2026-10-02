@@ -39,6 +39,15 @@ class MCPOp(StrEnum):
     TOOL_CALL = "tool_call"
 
 
+class MCPOutputMode(StrEnum):
+    COMPACT = "compact"
+    RAW = "raw"
+
+
+MCP_TOOL_CATEGORIES = ("read", "write", "unknown")
+MCP_TOP_K_RANGE = (1, 50)
+
+
 class MCPHostBase(ABC):
     name = "MCP"
     description = """Use tools exposed by the configured MCP servers listed below.
@@ -90,10 +99,24 @@ Rules:
         return self.runtime.inference
 
     @abstractmethod
-    async def search_tools(self, *, query: str, ctx: RunContext) -> Any: ...
+    async def search_tools(
+        self,
+        *,
+        query: str,
+        ctx: RunContext,
+        top_k: int = 8,
+        server_keys: list[str] | None = None,
+        categories: list[str] | None = None,
+    ) -> Any: ...
 
     @abstractmethod
-    async def call_tools(self, *, params: dict, ctx: RunContext) -> Any: ...
+    async def call_tools(
+        self,
+        *,
+        params: dict,
+        ctx: RunContext,
+        output_mode: str = MCPOutputMode.RAW,
+    ) -> Any: ...
 
 
 class MCPAPI(ToolBase):
@@ -108,6 +131,22 @@ class MCPAPI(ToolBase):
         The query must describe a capability clearly belonging to one of the
         configured MCP server scopes. Do not use it for general public-web
         lookup or to discover arbitrary capabilities outside those servers.
+
+    top_k:
+        Optional for op="tool_search". Number of candidates to return (1-50, default 8).
+
+    server_keys:
+        Optional for op="tool_search". Exact configured MCP server names to search.
+        Omit to search all configured servers.
+
+    categories:
+        Optional for op="tool_search". Restrict candidates by tool category:
+        "read" (read-only tools), "write" (tools that may change state) and
+        "unknown" (server did not declare it). Omit to search all categories.
+
+    output_mode:
+        Optional for op="tool_call". "raw" (default) returns full results;
+        "compact" truncates long per-tool results and omits echoed arguments.
 
     params_json:
         Required for op="tool_call". JSON string mapping tool_id to arguments.
@@ -188,6 +227,7 @@ Expected returns:
         *,
         params_json: str | None,
         ctx: RunContext,
+        output_mode: str = MCPOutputMode.RAW,
     ) -> Any:
         if not params_json:
             raise ToolError("MCP tool_call received empty params_json.")
@@ -200,7 +240,7 @@ Expected returns:
         if not isinstance(params, dict):
             raise ToolError("MCP tool_call params_json must decode to a JSON object.")
 
-        return await self._mcp_host.call_tools(params=params, ctx=ctx)
+        return await self._mcp_host.call_tools(params=params, ctx=ctx, output_mode=output_mode)
 
     async def invoke(
         self,
@@ -212,6 +252,10 @@ Expected returns:
         query: str | None = None,
         params_json: str | None = None,
         monologue: str | None = None,
+        top_k: int = 8,
+        server_keys: list[str] | None = None,
+        categories: list[str] | None = None,
+        output_mode: str = MCPOutputMode.RAW,
     ) -> Any:
         try:
             op = MCPOp(op)
@@ -223,14 +267,40 @@ Expected returns:
         self._current_op = op
 
         try:
+            if op == MCPOp.TOOL_SEARCH:
+                if isinstance(top_k, bool) or not isinstance(top_k, int) or not 1 <= top_k <= 50:
+                    raise ToolError("MCP tool_search top_k must be an integer from 1 to 50.")
+                if server_keys is not None and (
+                    not isinstance(server_keys, list)
+                    or not server_keys
+                    or any(not isinstance(key, str) or not key for key in server_keys)
+                ):
+                    raise ToolError("MCP tool_search server_keys must be a nonempty list of names.")
+                if categories is not None and (
+                    not isinstance(categories, list)
+                    or not categories
+                    or any(c not in MCP_TOOL_CATEGORIES for c in categories)
+                ):
+                    raise ToolError(
+                        "MCP tool_search categories must be a nonempty list of "
+                        f"{MCP_TOOL_CATEGORIES}."
+                    )
+            elif output_mode not in tuple(MCPOutputMode):
+                modes = tuple(m.value for m in MCPOutputMode)
+                raise ToolError(f"MCP tool_call output_mode must be one of {modes}.")
+
             handlers: dict[MCPOp, Callable[[], Awaitable[Any]]] = {
                 MCPOp.TOOL_SEARCH: lambda: self._mcp_host.search_tools(
                     query=query,
                     ctx=ctx,
+                    top_k=top_k,
+                    server_keys=server_keys,
+                    categories=categories,
                 ),
                 MCPOp.TOOL_CALL: lambda: self._call_tools_from_json(
                     params_json=params_json,
                     ctx=ctx,
+                    output_mode=output_mode,
                 ),
             }
 

@@ -27,7 +27,12 @@ from alphaavatar.agents.providers import ProviderKind, ProviderTaskConfig
 from alphaavatar.agents.providers.embedding import create_embedding_model
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.runtime.plugin import AvatarModule
-from alphaavatar.agents.tools.mcp_api import MCPOp
+from alphaavatar.agents.tools.mcp_api import (
+    MCP_TOOL_CATEGORIES,
+    MCP_TOP_K_RANGE,
+    MCPOp,
+    MCPOutputMode,
+)
 from alphaavatar.agents.utils.files.work_dirs import WorkspacePaths
 from alphaavatar.agents.utils.loop_thread import AsyncLoopThread
 from alphaavatar.agents.utils.vdb import lancedb
@@ -36,6 +41,8 @@ from ..config import DEFAULT_TIMEOUT
 from ..log import logger
 from ..mcp_server_remote import MCPServerRemote
 from ..mcp_tool import MCPTool
+
+COMPACT_RESULT_MAX_CHARS = 2000
 
 
 class LanceDBRunner(InferenceRunner):
@@ -442,13 +449,36 @@ class LanceDBRunner(InferenceRunner):
 
         return sorted(rows, key=rank_key)
 
-    def _search_tools(self, *, query: str, top_k: int = 8) -> dict[str, Any]:
+    def _search_tools(
+        self,
+        *,
+        query: str,
+        top_k: int = 8,
+        server_keys: list[str] | None = None,
+        categories: list[str] | None = None,
+    ) -> dict[str, Any]:
         out = {
             "tools": [],
             "error": None,
         }
 
         try:
+            low, high = MCP_TOP_K_RANGE
+            if isinstance(top_k, bool) or not isinstance(top_k, int) or not low <= top_k <= high:
+                raise ValueError(f"top_k must be an integer from {low} to {high}")
+            if server_keys is not None and (
+                not isinstance(server_keys, list)
+                or not server_keys
+                or any(not isinstance(key, str) or not key for key in server_keys)
+            ):
+                raise ValueError("server_keys must be a nonempty list of names")
+            if categories is not None and (
+                not isinstance(categories, list)
+                or not categories
+                or any(c not in MCP_TOOL_CATEGORIES for c in categories)
+            ):
+                raise ValueError(f"categories must be a nonempty list of {MCP_TOOL_CATEGORIES}")
+
             self._wait_initialized()
 
             if not query:
@@ -460,7 +490,27 @@ class LanceDBRunner(InferenceRunner):
                 return out
 
             fetch_k = min(max(top_k * 6, 32), all_count)
-            rows = self._tool_table.search(query_vec).limit(fetch_k).to_list()
+            search = self._tool_table.search(query_vec)
+            predicates: list[str] = []
+            if server_keys is not None:
+                quoted_keys = ",".join(
+                    f"'{self._quote_sql(key)}'" for key in sorted(set(server_keys))
+                )
+                predicates.append(f"server_key IN ({quoted_keys})")
+            if categories is not None:
+                # Category comes from live MCP annotations, so filter by tool_id
+                # instead of adding a column that would require a table migration.
+                wanted = set(categories)
+                tool_ids = sorted(
+                    t.tool_id for t in self._mcp_tools.values() if t.category in wanted
+                )
+                if not tool_ids:
+                    return out
+                quoted_ids = ",".join(f"'{self._quote_sql(x)}'" for x in tool_ids)
+                predicates.append(f"tool_id IN ({quoted_ids})")
+            if predicates:
+                search = search.where(" AND ".join(predicates), prefilter=True)
+            rows = search.limit(fetch_k).to_list()
             rows = self._rerank_tool_rows(query=query, rows=rows)
 
             seen: set[str] = set()
@@ -664,7 +714,10 @@ class LanceDBRunner(InferenceRunner):
 
             return await refreshed_tool.call(raw_args)
 
-    async def _call_tools_async(self, *, params: dict[str, Any]) -> dict[str, Any]:
+    async def _call_tools_async(
+        self, *, params: dict[str, Any], output_mode: str = MCPOutputMode.RAW
+    ) -> dict[str, Any]:
+        compact = output_mode == MCPOutputMode.COMPACT
         call_start = time.perf_counter()
 
         if not params:
@@ -726,11 +779,12 @@ class LanceDBRunner(InferenceRunner):
         for item in results:
             lines.append(f"#### {item['tool_id']}")
             lines.append("")
-            lines.append("**Args:**")
-            lines.append("```json")
-            lines.append(json.dumps(item["args"], ensure_ascii=False, indent=2))
-            lines.append("```")
-            lines.append("")
+            if not compact:
+                lines.append("**Args:**")
+                lines.append("```json")
+                lines.append(json.dumps(item["args"], ensure_ascii=False, indent=2))
+                lines.append("```")
+                lines.append("")
 
             if not item["ok"]:
                 lines.append("**Status:** ❌ Error")
@@ -743,9 +797,15 @@ class LanceDBRunner(InferenceRunner):
                 lines.append("")
                 lines.append("```text")
                 result = item["result"]
-                lines.append(
-                    result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
-                )
+                text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
+                if compact and len(text) > COMPACT_RESULT_MAX_CHARS:
+                    omitted = len(text) - COMPACT_RESULT_MAX_CHARS
+                    text = (
+                        text[:COMPACT_RESULT_MAX_CHARS]
+                        + f"\n... [truncated {omitted} chars; "
+                        + 'use output_mode="raw" for the full result]'
+                    )
+                lines.append(text)
                 lines.append("```")
 
             lines.append("")
@@ -763,10 +823,14 @@ class LanceDBRunner(InferenceRunner):
             "error": None,
         }
 
-    def _call_tools(self, *, params: dict[str, Any]) -> dict[str, Any]:
+    def _call_tools(
+        self, *, params: dict[str, Any], output_mode: str = MCPOutputMode.RAW
+    ) -> dict[str, Any]:
         try:
             self._wait_initialized()
-            fut = self._loop_thread.submit_future(self._call_tools_async(params=params))
+            fut = self._loop_thread.submit_future(
+                self._call_tools_async(params=params, output_mode=output_mode)
+            )
             return fut.result(timeout=DEFAULT_TIMEOUT)
         except Exception as e:
             logger.exception("[MCPRunner] call_tools failed")
