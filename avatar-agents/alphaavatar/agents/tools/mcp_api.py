@@ -37,6 +37,7 @@ from .base import ToolBase
 class MCPOp(StrEnum):
     TOOL_SEARCH = "tool_search"
     TOOL_CALL = "tool_call"
+    REFRESH_TOOLS = "refresh_tools"
 
 
 class MCPOutputMode(StrEnum):
@@ -81,6 +82,12 @@ Operations:
 2. tool_call
    Call one or more exact MCP tool identifiers returned by tool_search.
 
+3. refresh_tools
+   Reload tools from the configured MCP servers without restarting.
+
+   Use this only when a server's tool set has changed, or when a tool that
+   should exist is reported as missing. It is not needed for normal use.
+
 Rules:
 - Call only tools whose description and server instruction directly match the
   user's request.
@@ -110,6 +117,14 @@ Rules:
     ) -> Any: ...
 
     @abstractmethod
+    async def refresh_tools(
+        self,
+        *,
+        ctx: RunContext,
+        server_keys: list[str] | None = None,
+    ) -> Any: ...
+
+    @abstractmethod
     async def call_tools(
         self,
         *,
@@ -124,6 +139,7 @@ class MCPAPI(ToolBase):
     op:
         - "tool_search": Search tools inside configured MCP servers.
         - "tool_call": Call one or more exact MCP tool identifiers.
+        - "refresh_tools": Reload tools from configured MCP servers.
 
     query:
         Required for op="tool_search".
@@ -136,8 +152,8 @@ class MCPAPI(ToolBase):
         Optional for op="tool_search". Number of candidates to return (1-50, default 8).
 
     server_keys:
-        Optional for op="tool_search". Exact configured MCP server names to search.
-        Omit to search all configured servers.
+        Optional for op="tool_search" and op="refresh_tools". Exact configured MCP
+        server names to search or refresh. Omit to use all configured servers.
 
     categories:
         Optional for op="tool_search". Restrict candidates by tool category:
@@ -161,6 +177,7 @@ Expected returns:
     - tool_search: nearest MCP candidates; candidates still require a direct
       domain match before use
     - tool_call: results from the selected MCP tools
+    - refresh_tools: per-server summary of added, removed, and updated tools
 """
 
     def __init__(
@@ -222,6 +239,15 @@ Expected returns:
     def _status_stage(self):
         return self._current_op or "tool_error"
 
+    @staticmethod
+    def _validate_server_keys(op: MCPOp, server_keys: list[str] | None) -> None:
+        if server_keys is not None and (
+            not isinstance(server_keys, list)
+            or not server_keys
+            or any(not isinstance(key, str) or not key for key in server_keys)
+        ):
+            raise ToolError(f"MCP {op.value} server_keys must be a nonempty list of names.")
+
     async def _call_tools_from_json(
         self,
         *,
@@ -248,6 +274,7 @@ Expected returns:
         op: Literal[
             MCPOp.TOOL_SEARCH,
             MCPOp.TOOL_CALL,
+            MCPOp.REFRESH_TOOLS,
         ],
         query: str | None = None,
         params_json: str | None = None,
@@ -270,12 +297,7 @@ Expected returns:
             if op == MCPOp.TOOL_SEARCH:
                 if isinstance(top_k, bool) or not isinstance(top_k, int) or not 1 <= top_k <= 50:
                     raise ToolError("MCP tool_search top_k must be an integer from 1 to 50.")
-                if server_keys is not None and (
-                    not isinstance(server_keys, list)
-                    or not server_keys
-                    or any(not isinstance(key, str) or not key for key in server_keys)
-                ):
-                    raise ToolError("MCP tool_search server_keys must be a nonempty list of names.")
+                self._validate_server_keys(op, server_keys)
                 if categories is not None and (
                     not isinstance(categories, list)
                     or not categories
@@ -285,9 +307,12 @@ Expected returns:
                         "MCP tool_search categories must be a nonempty list of "
                         f"{MCP_TOOL_CATEGORIES}."
                     )
-            elif output_mode not in tuple(MCPOutputMode):
-                modes = tuple(m.value for m in MCPOutputMode)
-                raise ToolError(f"MCP tool_call output_mode must be one of {modes}.")
+            elif op == MCPOp.TOOL_CALL:
+                if output_mode not in tuple(MCPOutputMode):
+                    modes = tuple(m.value for m in MCPOutputMode)
+                    raise ToolError(f"MCP tool_call output_mode must be one of {modes}.")
+            elif op == MCPOp.REFRESH_TOOLS:
+                self._validate_server_keys(op, server_keys)
 
             handlers: dict[MCPOp, Callable[[], Awaitable[Any]]] = {
                 MCPOp.TOOL_SEARCH: lambda: self._mcp_host.search_tools(
@@ -301,6 +326,10 @@ Expected returns:
                     params_json=params_json,
                     ctx=ctx,
                     output_mode=output_mode,
+                ),
+                MCPOp.REFRESH_TOOLS: lambda: self._mcp_host.refresh_tools(
+                    ctx=ctx,
+                    server_keys=server_keys,
                 ),
             }
 

@@ -145,6 +145,46 @@ class MCPHost(MCPHostBase):
 
         return "\n".join(lines)
 
+    async def refresh_tools(
+        self,
+        *,
+        ctx: RunContext,
+        server_keys: list[str] | None = None,
+    ) -> str:
+        logger.info("[MCPHost] refresh_tools servers=%s", server_keys)
+
+        if server_keys is not None:
+            unknown = sorted(set(server_keys) - self._servers.keys())
+            if unknown:
+                return f"MCPHost REFRESH_TOOLS error: Unknown server keys: {', '.join(unknown)}"
+
+        try:
+            result = await self._run_mcp_inference(
+                op=MCPOp.REFRESH_TOOLS,
+                param={"server_keys": server_keys},
+            )
+        except Exception as e:
+            logger.exception("[MCPHost] refresh_tools failed")
+            return f"MCPHost REFRESH_TOOLS failed: {e}"
+
+        if result.get("error"):
+            return f"MCPHost REFRESH_TOOLS error: {result['error']}"
+
+        lines = ["MCPHost refreshed MCP tools:", ""]
+        for key, info in (result.get("servers") or {}).items():
+            if info.get("error"):
+                lines.append(f"- {key}: FAILED ({info['error']}); previous tools kept")
+                continue
+            lines.append(
+                f"- {key}: {info['total']} tools "
+                f"(added {len(info['added'])}, removed {len(info['removed'])}, "
+                f"updated {len(info['updated'])})"
+            )
+            for label in ("added", "removed", "updated"):
+                for tool_id in info[label]:
+                    lines.append(f"    {label}: {tool_id}")
+        return "\n".join(lines)
+
     async def call_tools(
         self,
         *,

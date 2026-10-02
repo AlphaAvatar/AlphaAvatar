@@ -663,6 +663,84 @@ class LanceDBRunner(InferenceRunner):
             logger.exception("[MCPRunner] failed to reinitialize server key=%s", server_key)
             return False
 
+    def _tool_texts_for_server(self, server_key: str) -> dict[str, str]:
+        return {
+            tid: self._mcp_tools[tid].to_vdb_text(
+                server_info=self._server_info_by_tool_id.get(tid, {})
+            )
+            for tid, key in self._tool_server_key.items()
+            if key == server_key and tid in self._mcp_tools
+        }
+
+    async def _refresh_one_server(self, server_key: str) -> dict[str, Any]:
+        info: dict[str, Any] = {
+            "added": [],
+            "removed": [],
+            "updated": [],
+            "total": 0,
+            "error": None,
+        }
+
+        if server_key not in self._servers:
+            info["error"] = "server is not configured"
+            return info
+
+        before = self._tool_texts_for_server(server_key)
+        client = self._clients_by_key.get(server_key)
+
+        try:
+            if client is None:
+                # The server never connected (or was dropped): do a full reconnect.
+                if not await self._reinitialize_server(server_key):
+                    raise RuntimeError("failed to connect to MCP server")
+            else:
+                lock = self._server_reconnect_locks.setdefault(server_key, asyncio.Lock())
+                async with lock:
+                    client.invalidate_cache()
+                    tools = await client.list_tools()
+                    server_info = client.info_dict
+
+                    for tid in [t for t, k in self._tool_server_key.items() if k == server_key]:
+                        self._mcp_tools.pop(tid, None)
+                        self._server_info_by_tool_id.pop(tid, None)
+                        self._tool_server_key.pop(tid, None)
+                    for tool in tools:
+                        self._mcp_tools[tool.tool_id] = tool
+                        self._server_info_by_tool_id[tool.tool_id] = server_info
+                        self._tool_server_key[tool.tool_id] = server_key
+        except Exception as e:
+            # Keep the previous tools untouched if listing failed before we mutated state.
+            logger.exception("[MCPRunner] refresh failed key=%s", server_key)
+            info["error"] = str(e)
+            return info
+
+        after = self._tool_texts_for_server(server_key)
+        info["added"] = sorted(after.keys() - before.keys())
+        info["removed"] = sorted(before.keys() - after.keys())
+        info["updated"] = sorted(t for t in after.keys() & before.keys() if after[t] != before[t])
+        info["total"] = len(after)
+        return info
+
+    async def _refresh_servers_async(self, server_keys: list[str] | None) -> dict[str, Any]:
+        targets = list(self._servers) if server_keys is None else sorted(set(server_keys))
+        return {key: await self._refresh_one_server(key) for key in targets}
+
+    def _refresh_tools(self, *, server_keys: list[str] | None = None) -> dict[str, Any]:
+        try:
+            self._wait_initialized()
+            fut = self._loop_thread.submit_future(self._refresh_servers_async(server_keys))
+            servers = fut.result(timeout=DEFAULT_TIMEOUT)
+
+            if any(not info["error"] for info in servers.values()):
+                sync = self._sync_tools_to_vdb()
+                if sync["error"]:
+                    return {"servers": servers, "error": f"VDB sync failed: {sync['error']}"}
+
+            return {"servers": servers, "error": None}
+        except Exception as e:
+            logger.exception("[MCPRunner] refresh_tools failed")
+            return {"servers": {}, "error": str(e)}
+
     async def _call_one(self, tool_id: str, raw_args: Any) -> Any:
         if tool_id not in self._mcp_tools:
             raise ToolError(f"MCP tool not found: {tool_id}")
@@ -914,6 +992,9 @@ class LanceDBRunner(InferenceRunner):
                 return json.dumps(result, ensure_ascii=False).encode()
             case MCPOp.TOOL_CALL:
                 result = self._call_tools(**json_data["param"])
+                return json.dumps(result, ensure_ascii=False).encode()
+            case MCPOp.REFRESH_TOOLS:
+                result = self._refresh_tools(**json_data["param"])
                 return json.dumps(result, ensure_ascii=False).encode()
             case _:
                 return None
