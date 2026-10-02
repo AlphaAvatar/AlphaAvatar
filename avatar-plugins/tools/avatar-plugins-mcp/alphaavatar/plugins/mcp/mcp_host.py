@@ -21,7 +21,7 @@ from livekit.agents import RunContext
 
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.tools import MCPHostBase
-from alphaavatar.agents.tools.mcp_api import MCPOp
+from alphaavatar.agents.tools.mcp_api import MCPOp, MCPOutputMode
 
 from .log import logger
 
@@ -77,15 +77,36 @@ class MCPHost(MCPHostBase):
 
         return json.loads(raw.decode())
 
-    async def search_tools(self, *, query: str, ctx: RunContext) -> str:
-        logger.info("[MCPHost] search_tools query=%s", query)
+    async def search_tools(
+        self,
+        *,
+        query: str,
+        ctx: RunContext,
+        top_k: int = 8,
+        server_keys: list[str] | None = None,
+        categories: list[str] | None = None,
+    ) -> str:
+        logger.info(
+            "[MCPHost] search_tools query=%s top_k=%d servers=%s categories=%s",
+            query,
+            top_k,
+            server_keys,
+            categories,
+        )
+
+        if server_keys is not None:
+            unknown = sorted(set(server_keys) - self._servers.keys())
+            if unknown:
+                return f"MCPHost TOOL_SEARCH error: Unknown server keys: {', '.join(unknown)}"
 
         try:
             result = await self._run_mcp_inference(
                 op=MCPOp.TOOL_SEARCH,
                 param={
                     "query": query,
-                    "top_k": 8,
+                    "top_k": top_k,
+                    "server_keys": server_keys,
+                    "categories": categories,
                 },
             )
         except Exception as e:
@@ -124,7 +145,13 @@ class MCPHost(MCPHostBase):
 
         return "\n".join(lines)
 
-    async def call_tools(self, *, params: dict, ctx: RunContext) -> str:
+    async def call_tools(
+        self,
+        *,
+        params: dict,
+        ctx: RunContext,
+        output_mode: str = MCPOutputMode.RAW,
+    ) -> str:
         logger.info("[MCPHost] call_tools count=%d", len(params) if params else 0)
 
         try:
@@ -132,6 +159,7 @@ class MCPHost(MCPHostBase):
                 op=MCPOp.TOOL_CALL,
                 param={
                     "params": params or {},
+                    "output_mode": str(output_mode),
                 },
             )
         except Exception as e:

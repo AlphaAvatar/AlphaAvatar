@@ -35,6 +35,7 @@ class MCPTool:
         meta: dict[str, Any] | None,
         server_loop: asyncio.AbstractEventLoop | None = None,
         server_key: str | None = None,
+        annotations: dict[str, Any] | None = None,
     ) -> None:
         self._client = client
         self._client_name = client_name
@@ -44,6 +45,7 @@ class MCPTool:
         self._description = description
         self._input_schema = input_schema
         self._meta = meta
+        self._annotations = annotations or {}
 
         # Stable tool id:
         # Prefer config key, not remote serverInfo.name.
@@ -67,6 +69,16 @@ class MCPTool:
     @property
     def server_key(self) -> str | None:
         return self._server_key
+
+    @property
+    def category(self) -> str:
+        """Coarse category derived from the MCP ``readOnlyHint`` annotation."""
+        read_only = self._annotations.get("readOnlyHint")
+        if read_only is True:
+            return "read"
+        if read_only is False:
+            return "write"
+        return "unknown"
 
     @property
     def input_schema(self) -> dict[str, Any]:
