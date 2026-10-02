@@ -34,7 +34,7 @@
   * [DeepResearch](#deepresearch)
   * [RAG](#rag)
   * [MCP](#mcp)
-* [Channels](#channels)
+* [Native Clients](#native-clients)
 
   * [Web Demo](#web-demo)
 * [NEXT STEPS](#next-steps)

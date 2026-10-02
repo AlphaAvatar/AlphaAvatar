@@ -21,6 +21,7 @@ members = [
     "alpha-avatar-plugins-mcp",
     "alpha-avatar-plugins-memory",
     "alpha-avatar-plugins-persona",
+    "alpha-avatar-plugins-provider",
     "alpha-avatar-plugins-rag",
     "alpha-avatar-plugins-router",
     "alpha-avatar-plugins-status",
@@ -32,6 +33,7 @@ members = [
 avatar-agent-all = [
     { name = "alpha-avatar-agents", extras = ["providers", "vdb"], editable = "avatar-agents" },
     { name = "alpha-avatar-host", extras = ["livekit"], editable = "avatar-host" },
+    { name = "alpha-avatar-plugins-provider", extras = ["langchain"], editable = "avatar-plugins/foundation/avatar-plugins-provider" },
 ]
 dev = [
     { name = "jiwer", specifier = ">=3.1.0" },
@@ -193,9 +195,6 @@ dependencies = [
 
 [package.optional-dependencies]
 providers = [
-    { name = "langchain-anthropic" },
-    { name = "langchain-google-genai" },
-    { name = "langchain-openai" },
     { name = "livekit-plugins-openai" },
 ]
 vdb = [
@@ -212,11 +211,8 @@ requires-dist = [
     { name = "huggingface-hub", specifier = ">=0.25" },
     { name = "jsonschema", specifier = ">=4.18,<5" },
     { name = "lancedb", marker = "extra == 'vdb'", specifier = "==0.30.2" },
-    { name = "langchain-anthropic", marker = "extra == 'providers'" },
     { name = "langchain-community" },
     { name = "langchain-core" },
-    { name = "langchain-google-genai", marker = "extra == 'providers'" },
-    { name = "langchain-openai", marker = "extra == 'providers'" },
     { name = "langchain-qdrant", marker = "extra == 'vdb'" },
     { name = "livekit", specifier = ">=1.0.12,<2" },
     { name = "livekit-agents", specifier = "~=1.4" },
@@ -350,6 +346,35 @@ requires-dist = [
     { name = "opencv-python-headless", specifier = "==4.12.0.88" },
     { name = "torchaudio", specifier = ">=0.10.1" },
 ]
+
+[[package]]
+name = "alpha-avatar-plugins-provider"
+source = { editable = "avatar-plugins/foundation/avatar-plugins-provider" }
+dependencies = [
+    { name = "alpha-avatar-agents" },
+    { name = "alpha-avatar-core" },
+    { name = "pydantic" },
+]
+
+[package.optional-dependencies]
+langchain = [
+    { name = "langchain-anthropic" },
+    { name = "langchain-core" },
+    { name = "langchain-google-genai" },
+    { name = "langchain-openai" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "alpha-avatar-agents", editable = "avatar-agents" },
+    { name = "alpha-avatar-core", editable = "avatar-core" },
+    { name = "langchain-anthropic", marker = "extra == 'langchain'" },
+    { name = "langchain-core", marker = "extra == 'langchain'" },
+    { name = "langchain-google-genai", marker = "extra == 'langchain'" },
+    { name = "langchain-openai", marker = "extra == 'langchain'" },
+    { name = "pydantic", specifier = ">=2,<3" },
+]
+provides-extras = ["langchain"]
 
 [[package]]
 name = "alpha-avatar-plugins-rag"

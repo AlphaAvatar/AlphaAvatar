@@ -23,8 +23,9 @@ from typing import Any
 
 from livekit.agents.llm.tool_context import ToolError
 
-from alphaavatar.agents.providers import ProviderKind, ProviderTaskConfig
-from alphaavatar.agents.providers.embedding import create_embedding_model
+from alphaavatar.agents.avatar.provider.enums import ProviderKind
+from alphaavatar.agents.avatar.provider.factory import create_embedding_model
+from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.agents.tools.mcp_api import MCPOp

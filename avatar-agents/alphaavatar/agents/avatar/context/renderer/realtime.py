@@ -14,7 +14,7 @@
 from dataclasses import replace
 
 from alphaavatar.agents.avatar.context.schema import ContextBuildRequest, ContextBuildResult
-from alphaavatar.agents.providers.schema import RealtimeModelInput
+from alphaavatar.agents.avatar.provider.schemas import RealtimeModelInput
 
 
 class RealtimeRenderer:

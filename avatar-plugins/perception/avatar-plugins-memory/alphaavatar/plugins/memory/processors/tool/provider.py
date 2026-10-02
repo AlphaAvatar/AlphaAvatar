@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from alphaavatar.agents.providers import ProviderGateway
+from alphaavatar.agents.avatar.provider import ProviderGateway
 
 from ...log import logger
 from ...schemas.patch import MemoryDelta

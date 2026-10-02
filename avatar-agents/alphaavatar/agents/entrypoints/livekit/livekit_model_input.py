@@ -18,7 +18,8 @@ from types import MappingProxyType
 from typing import Any
 from uuid import uuid4
 
-from alphaavatar.agents.providers.schema import (
+from alphaavatar.agents.avatar.provider.enums import ModelRole
+from alphaavatar.agents.avatar.provider.schemas import (
     ModelAudioPart,
     ModelControlItem,
     ModelFunctionCall,
@@ -26,7 +27,6 @@ from alphaavatar.agents.providers.schema import (
     ModelImagePart,
     ModelInput,
     ModelInputMessage,
-    ModelRole,
     ModelTextPart,
 )
 from alphaavatar.core.env import (
@@ -173,90 +173,6 @@ class LiveKitModelInput:
     def __init__(self, *, clock: RuntimeClock) -> None:
         self._clock = clock
 
-    def from_chat_context(
-        self,
-        chat_ctx: llm.ChatContext,
-        *,
-        deferred_message_ids: set[str] | None = None,
-    ) -> ModelInput:
-        deferred = deferred_message_ids or set()
-        items: list[Any] = []
-        for item in chat_ctx.items:
-            if isinstance(item, llm.ChatMessage):
-                parts: list[Any] = []
-                content_items = () if item.id in deferred else message_content(item)
-                for index, content in enumerate(content_items):
-                    if isinstance(content, str):
-                        parts.append(ModelTextPart(content))
-                    elif isinstance(content, llm.ImageContent):
-                        parts.append(
-                            ModelImagePart(
-                                image_content_to_observation(
-                                    content,
-                                    clock=self._clock,
-                                    message_id=item.id,
-                                    content_index=index,
-                                    at=_runtime_time(self._clock, item.created_at),
-                                )
-                            )
-                        )
-                    elif isinstance(content, llm.AudioContent):
-                        observation = audio_content_to_observation(
-                            content,
-                            clock=self._clock,
-                            message_id=item.id,
-                            content_index=index,
-                            created_at=item.created_at,
-                        )
-                        if observation is not None:
-                            parts.append(ModelAudioPart(observation))
-                items.append(
-                    ModelInputMessage(
-                        id=item.id,
-                        role=ModelRole(item.role),
-                        parts=tuple(parts),
-                        interrupted=item.interrupted,
-                        transcript_confidence=item.transcript_confidence,
-                        created_at=item.created_at,
-                        metadata=MappingProxyType(dict(item.extra or {})),
-                    )
-                )
-            elif isinstance(item, llm.FunctionCall):
-                items.append(
-                    ModelFunctionCall(
-                        id=item.id,
-                        call_id=item.call_id,
-                        name=item.name,
-                        arguments=item.arguments,
-                        created_at=item.created_at,
-                        group_id=item.group_id,
-                        metadata=MappingProxyType(dict(item.extra or {})),
-                    )
-                )
-            elif isinstance(item, llm.FunctionCallOutput):
-                items.append(
-                    ModelFunctionOutput(
-                        id=item.id,
-                        call_id=item.call_id,
-                        name=item.name,
-                        output=item.output,
-                        is_error=item.is_error,
-                        created_at=item.created_at,
-                    )
-                )
-            else:
-                items.append(
-                    ModelControlItem(
-                        id=getattr(item, "id", uuid4().hex),
-                        kind=str(getattr(item, "type", type(item).__name__)),
-                        data=MappingProxyType(
-                            item.model_dump() if hasattr(item, "model_dump") else {}
-                        ),
-                        created_at=getattr(item, "created_at", None),
-                    )
-                )
-        return ModelInput(items=tuple(items))
-
     @staticmethod
     def _image_content(part: ModelImagePart) -> llm.ImageContent:
         observation = part.observation
@@ -328,6 +244,90 @@ class LiveKitModelInput:
             frames = [to_livekit_audio_frame(frame)]
         return llm.AudioContent(frame=frames)
 
+    def from_chat_context(
+        self,
+        chat_ctx: llm.ChatContext,
+        *,
+        deferred_message_ids: set[str] | None = None,
+    ) -> ModelInput:
+        deferred = deferred_message_ids or set()
+        items: list[Any] = []
+        for item in chat_ctx.items:
+            if isinstance(item, llm.ChatMessage):
+                parts: list[Any] = []
+                content_items = () if item.id in deferred else message_content(item)
+                for index, content in enumerate(content_items):
+                    if isinstance(content, str):
+                        parts.append(ModelTextPart(content))
+                    elif isinstance(content, llm.ImageContent):
+                        parts.append(
+                            ModelImagePart(
+                                image_content_to_observation(
+                                    content,
+                                    clock=self._clock,
+                                    message_id=item.id,
+                                    content_index=index,
+                                    at=_runtime_time(self._clock, item.created_at),
+                                )
+                            )
+                        )
+                    elif isinstance(content, llm.AudioContent):
+                        observation = audio_content_to_observation(
+                            content,
+                            clock=self._clock,
+                            message_id=item.id,
+                            content_index=index,
+                            created_at=item.created_at,
+                        )
+                        if observation is not None:
+                            parts.append(ModelAudioPart(observation))
+                items.append(
+                    ModelInputMessage(
+                        id=item.id,
+                        role=ModelRole(item.role),
+                        parts=tuple(parts),
+                        interrupted=item.interrupted,
+                        transcript_confidence=item.transcript_confidence,
+                        created_at=item.created_at,
+                        metadata=MappingProxyType(dict(item.extra or {})),
+                    )
+                )
+            elif isinstance(item, llm.FunctionCall):
+                items.append(
+                    ModelFunctionCall(
+                        id=item.id,
+                        call_id=item.call_id,
+                        name=item.name,
+                        arguments=item.arguments,
+                        created_at=item.created_at,
+                        group_id=item.group_id,
+                        metadata=MappingProxyType(dict(item.extra or {})),
+                    )
+                )
+            elif isinstance(item, llm.FunctionCallOutput):
+                items.append(
+                    ModelFunctionOutput(
+                        id=item.id,
+                        call_id=item.call_id,
+                        name=item.name,
+                        parts=(ModelTextPart(item.output),),
+                        is_error=item.is_error,
+                        created_at=item.created_at,
+                    )
+                )
+            else:
+                items.append(
+                    ModelControlItem(
+                        id=getattr(item, "id", uuid4().hex),
+                        kind=str(getattr(item, "type", type(item).__name__)),
+                        data=MappingProxyType(
+                            item.model_dump() if hasattr(item, "model_dump") else {}
+                        ),
+                        created_at=getattr(item, "created_at", None),
+                    )
+                )
+        return ModelInput(items=tuple(items))
+
     def to_chat_context(self, model_input: ModelInput) -> llm.ChatContext:
         if model_input.realtime is not None:
             raise RuntimeError("Realtime ModelInput requires a native ModelProviderAdapter")
@@ -343,6 +343,10 @@ class LiveKitModelInput:
                         content.append(self._image_content(part))
                     elif isinstance(part, ModelAudioPart):
                         content.append(self._audio_content(part))
+                    else:
+                        raise TypeError(
+                            f"LiveKit Agents bridge cannot encode input part {type(part).__name__}"
+                        )
                 items.append(
                     llm.ChatMessage(
                         id=item.id,
@@ -367,12 +371,14 @@ class LiveKitModelInput:
                     )
                 )
             elif isinstance(item, ModelFunctionOutput):
+                if any(not isinstance(part, ModelTextPart) for part in item.parts):
+                    raise TypeError("LiveKit Agents bridge cannot encode multimodal tool results")
                 items.append(
                     llm.FunctionCallOutput(
                         id=item.id,
                         call_id=item.call_id,
                         name=item.name,
-                        output=item.output,
+                        output=item.text or "",
                         is_error=item.is_error,
                         created_at=item.created_at or 0.0,
                     )

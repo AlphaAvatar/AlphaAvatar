@@ -16,13 +16,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from alphaavatar.agents.avatar.provider.enums import ModelInputType
+from alphaavatar.agents.avatar.provider.schemas import ModelInput
 from alphaavatar.agents.avatar.vision import VisualFrameSelector
 from alphaavatar.agents.configs import AvatarConfig
 from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
-from alphaavatar.agents.providers.schema import (
-    ModelInput,
-    ModelInputType,
-)
 from alphaavatar.agents.utils.time import ParticipantTimeContext, format_user_time
 from alphaavatar.core.env import ObservationKind
 from alphaavatar.core.perception import (

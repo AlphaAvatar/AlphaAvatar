@@ -13,11 +13,9 @@
 # limitations under the License.
 from dataclasses import dataclass
 
+from alphaavatar.agents.avatar.provider.enums import ModelInputType
+from alphaavatar.agents.avatar.provider.schemas import ModelInput
 from alphaavatar.agents.avatar.vision import VisualSelection
-from alphaavatar.agents.providers.schema import (
-    ModelInput,
-    ModelInputType,
-)
 from alphaavatar.core.perception import AlignedPerception
 
 

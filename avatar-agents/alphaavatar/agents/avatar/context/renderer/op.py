@@ -18,18 +18,20 @@ from textwrap import indent
 from xml.sax.saxutils import escape, quoteattr
 
 from alphaavatar.agents.avatar.context.schema import ContextBuildRequest
-from alphaavatar.agents.avatar.vision import (
-    SelectedVisualFrame,
-    VisualSelection,
+from alphaavatar.agents.avatar.provider.enums import (
+    ModelInputType,
+    ModelRole,
 )
-from alphaavatar.agents.providers.schema import (
+from alphaavatar.agents.avatar.provider.schemas import (
     ModelImagePart,
     ModelInput,
     ModelInputMessage,
     ModelInputPart,
-    ModelInputType,
-    ModelRole,
     ModelTextPart,
+)
+from alphaavatar.agents.avatar.vision import (
+    SelectedVisualFrame,
+    VisualSelection,
 )
 from alphaavatar.core.env import EnvObservation, ObservationKind
 from alphaavatar.core.media import (

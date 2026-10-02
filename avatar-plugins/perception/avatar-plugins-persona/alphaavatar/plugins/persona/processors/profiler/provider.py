@@ -13,7 +13,7 @@
 # limitations under the License.
 from typing import Any
 
-from alphaavatar.agents.providers import ProviderGateway
+from alphaavatar.agents.avatar.provider import ProviderGateway
 
 from ...profile import UserProfileDetails
 from .config import ProfilerProviderConfig

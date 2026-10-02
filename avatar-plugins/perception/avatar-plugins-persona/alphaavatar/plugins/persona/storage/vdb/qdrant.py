@@ -29,9 +29,10 @@ from qdrant_client.models import (
     VectorParams,
 )
 
+from alphaavatar.agents.avatar.provider.enums import ProviderKind
+from alphaavatar.agents.avatar.provider.factory import create_embedding_model
+from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
 from alphaavatar.agents.persona.enums import VectorRunnerOP
-from alphaavatar.agents.providers import ProviderKind, ProviderTaskConfig
-from alphaavatar.agents.providers.embedding import create_embedding_model
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import qdrant
 

@@ -15,9 +15,10 @@ import json
 import os
 from typing import Any
 
+from alphaavatar.agents.avatar.provider.enums import ProviderKind
+from alphaavatar.agents.avatar.provider.factory import create_embedding_model
+from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
 from alphaavatar.agents.memory.enums import VectorRunnerOP
-from alphaavatar.agents.providers import ProviderKind, ProviderTaskConfig
-from alphaavatar.agents.providers.embedding import create_embedding_model
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.agents.utils.files.work_dirs import WorkspacePaths

@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from langchain_core.prompts import ChatPromptTemplate
+from alphaavatar.agents.avatar.provider.schemas import ModelPrompt
 
 TOOL_MEMORY_EXTRACT_PROMPT = """You are an "AlphaAvatar Tool Memory Extractor".
 
@@ -265,14 +265,14 @@ If a tool helped answer the user:
 """.strip()
 
 
-TOOL_DELTA_PROMPT = ChatPromptTemplate.from_messages(
+TOOL_DELTA_PROMPT = ModelPrompt.from_messages(
     [
         (
             "system",
             TOOL_MEMORY_EXTRACT_PROMPT,
         ),
         (
-            "human",
+            "user",
             "SESSION CONTENT:\n"
             "```text\n"
             "{session_content}\n"

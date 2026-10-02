@@ -17,11 +17,11 @@ import asyncio
 from typing import Any
 from uuid import uuid4
 
-from alphaavatar.agents.providers import ProviderGateway
-from alphaavatar.agents.providers.schema import (
+from alphaavatar.agents.avatar.provider import ProviderGateway
+from alphaavatar.agents.avatar.provider.enums import ModelRole
+from alphaavatar.agents.avatar.provider.schemas import (
     ModelInput,
     ModelInputMessage,
-    ModelRole,
     ModelTextPart,
 )
 

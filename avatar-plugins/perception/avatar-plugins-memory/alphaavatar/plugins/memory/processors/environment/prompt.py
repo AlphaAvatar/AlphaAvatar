@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from alphaavatar.agents.avatar.provider.schemas import ModelInputSlot, ModelPrompt
 
 ENV_MEMORY_EXTRACT_PROMPT = """You are an "AlphaAvatar Environment Memory Extractor".
 
@@ -498,9 +498,9 @@ If no item passes these checks, output empty env_memory_entries.
 """.strip()
 
 
-ENV_DELTA_PROMPT = ChatPromptTemplate.from_messages(
+ENV_DELTA_PROMPT = ModelPrompt.from_messages(
     [
         ("system", ENV_MEMORY_EXTRACT_PROMPT),
-        MessagesPlaceholder("env_messages"),
+        ModelInputSlot(variable_name="env_messages"),
     ]
 )

@@ -18,7 +18,8 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
-from alphaavatar.agents.providers import ProviderGateway
+from alphaavatar.agents.avatar.provider import ProviderGateway
+from alphaavatar.agents.avatar.provider.schemas import ModelPrompt
 
 from ...log import logger
 from ...schemas.patch import MemoryDelta
@@ -48,7 +49,7 @@ class ConversationProvider:
     async def _invoke(
         self,
         *,
-        prompt: Any,
+        prompt: ModelPrompt,
         payload: dict[str, Any],
         output_schema: type[TStructuredOutput],
         fallback: TStructuredOutput,

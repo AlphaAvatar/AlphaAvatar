@@ -50,9 +50,6 @@ dependencies = [
 [project.optional-dependencies]
 providers = [
     "livekit-plugins-openai~=1.4",
-    "langchain-openai",
-    "langchain-google-genai",
-    "langchain-anthropic",
 ]
 vdb = [
     "langchain-qdrant",

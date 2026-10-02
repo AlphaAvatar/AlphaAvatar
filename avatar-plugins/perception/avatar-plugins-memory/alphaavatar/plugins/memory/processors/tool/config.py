@@ -13,7 +13,7 @@
 # limitations under the License.
 from pydantic import BaseModel, ConfigDict, Field
 
-from alphaavatar.agents.providers import ProvidersConfig
+from alphaavatar.agents.avatar.provider.schemas import ProvidersConfig
 
 
 class ToolProviderConfig(BaseModel):

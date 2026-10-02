@@ -13,7 +13,7 @@
 # limitations under the License.
 from functools import lru_cache
 
-from langchain_core.prompts import ChatPromptTemplate
+from alphaavatar.agents.avatar.provider.schemas import ModelPrompt
 
 from .fragments import SESSION_GATE_FRAGMENT
 
@@ -225,14 +225,14 @@ If a fact is repeated with no new detail, do not write a duplicate.
 """.strip()
 
 
-CONVERSATION_DELTA_PROMPT = ChatPromptTemplate.from_messages(
+CONVERSATION_DELTA_PROMPT = ModelPrompt.from_messages(
     [
         (
             "system",
             CONVERSATION_MEMORY_EXTRACT_PROMPT,
         ),
         (
-            "human",
+            "user",
             "SESSION CONTENT:\n"
             "```text\n"
             "{session_content}\n"
@@ -270,7 +270,7 @@ CONVERSATION_DELTA_PROMPT = ChatPromptTemplate.from_messages(
 
 
 @lru_cache(maxsize=2)
-def build_conversation_delta_prompt(*, session_gate: bool) -> ChatPromptTemplate:
+def build_conversation_delta_prompt(*, session_gate: bool) -> ModelPrompt:
     """Assemble the conversation item-extraction prompt from fragments.
 
     Fragments must contain no literal braces -- ChatPromptTemplate reads those
@@ -279,7 +279,7 @@ def build_conversation_delta_prompt(*, session_gate: bool) -> ChatPromptTemplate
     if not session_gate:
         return CONVERSATION_DELTA_PROMPT
 
-    return ChatPromptTemplate.from_messages(
+    return ModelPrompt.from_messages(
         [
             ("system", "\n\n".join([CONVERSATION_MEMORY_EXTRACT_PROMPT, SESSION_GATE_FRAGMENT])),
             CONVERSATION_DELTA_PROMPT.messages[1],

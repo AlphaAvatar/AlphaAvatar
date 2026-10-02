@@ -15,8 +15,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from alphaavatar.agents.avatar.provider.enums import ModelInputType
 from alphaavatar.agents.configs.plugins.vision_config import VisionConfig
-from alphaavatar.agents.providers.schema import ModelInputType
 from alphaavatar.core.env import (
     EnvObservation,
     ObservationKind,
@@ -24,7 +24,7 @@ from alphaavatar.core.env import (
 )
 from alphaavatar.core.perception import AlignedPerception, TemporalSlice, TemporalSliceKind
 
-from .schema.visual_selection import SelectedVisualFrame, VisualSelection, VisualSliceSelection
+from .schemas.visual_selection import SelectedVisualFrame, VisualSelection, VisualSliceSelection
 
 
 class VisualFrameSelector:

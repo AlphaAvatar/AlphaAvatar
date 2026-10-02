@@ -16,11 +16,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from alphaavatar.agents.constants import VIDEO_MEMORY_INTERVAL_SEC
-from alphaavatar.agents.providers.schema import (
+from alphaavatar.agents.avatar.provider.schemas import (
     ModelTemporalPart,
     ModelTemporalSlice,
 )
+from alphaavatar.agents.constants import VIDEO_MEMORY_INTERVAL_SEC
 from alphaavatar.core.env import (
     EnvObservation,
     ObservationKind,

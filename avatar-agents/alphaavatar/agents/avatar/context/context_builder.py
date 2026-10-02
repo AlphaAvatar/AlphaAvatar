@@ -18,18 +18,17 @@ from dataclasses import replace
 from types import MappingProxyType
 from uuid import uuid4
 
-from alphaavatar.agents.constants import RUNTIME_CONTEXT_TOOL_NAME
-from alphaavatar.agents.providers.schema import (
+from alphaavatar.agents.avatar.provider.enums import ModelInputType, ModelRole
+from alphaavatar.agents.avatar.provider.schemas import (
     ModelAudioPart,
     ModelFunctionCall,
     ModelFunctionOutput,
     ModelImagePart,
     ModelInput,
     ModelInputMessage,
-    ModelInputType,
-    ModelRole,
     ModelTextPart,
 )
+from alphaavatar.agents.constants import RUNTIME_CONTEXT_TOOL_NAME
 
 from .renderer import (
     RealtimeRenderer,
@@ -205,10 +204,10 @@ class ContextBuilder:
         )
 
         function_output = ModelFunctionOutput(
-            id=call_id,
+            id=f"{call_id}:result",
             call_id=call_id,
             name=RUNTIME_CONTEXT_TOOL_NAME,
-            output=runtime_context,
+            parts=(ModelTextPart(runtime_context),),
             is_error=False,
         )
 

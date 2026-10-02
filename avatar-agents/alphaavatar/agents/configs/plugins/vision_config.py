@@ -15,8 +15,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from alphaavatar.agents.avatar.provider.enums import ModelInputType
 from alphaavatar.agents.constants import VIDEO_VISION_INTERVAL_SEC
-from alphaavatar.agents.providers.schema import ModelInputType
 
 
 class VisionConfig(BaseModel):
@@ -33,4 +33,5 @@ class VisionConfig(BaseModel):
             self.input_mode = ModelInputType.TEXT
         elif self.input_mode == ModelInputType.TEXT:
             self.enabled = False
+
         return self

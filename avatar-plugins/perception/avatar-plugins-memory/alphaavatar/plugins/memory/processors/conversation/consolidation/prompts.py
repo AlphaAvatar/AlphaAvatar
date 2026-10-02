@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from langchain_core.prompts import ChatPromptTemplate
+from alphaavatar.agents.avatar.provider.schemas import ModelPrompt
 
 _RETENTION_RULES = """
 Preserve these when the session contains them:
@@ -77,10 +77,10 @@ Every target id must appear in memories with a non-empty value.
 """.strip()
 
 
-CONSOLIDATION_PROMPT = ChatPromptTemplate.from_messages(
+CONSOLIDATION_PROMPT = ModelPrompt.from_messages(
     [
         ("system", _CONSOLIDATION_SYSTEM),
-        ("human", _CONSOLIDATION_HUMAN),
+        ("user", _CONSOLIDATION_HUMAN),
     ]
 )
 
@@ -101,11 +101,11 @@ Use target memory id "new:1" and assign every incoming memory to it.
 """.strip()
 
 
-SESSION_SUMMARY_PROMPT = ChatPromptTemplate.from_messages(
+SESSION_SUMMARY_PROMPT = ModelPrompt.from_messages(
     [
         ("system", _SESSION_SUMMARY_SYSTEM),
         (
-            "human",
+            "user",
             """
             SESSION CONTENT:
             ```text
