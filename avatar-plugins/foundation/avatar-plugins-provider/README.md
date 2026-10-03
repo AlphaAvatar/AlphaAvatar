@@ -1,70 +1,92 @@
 # AlphaAvatar Provider Plugin
 
-The public contract is `alphaavatar.agents.avatar.provider`. It owns task
-configuration, model input, prompts, media, tool call/result records, structured
-results, streaming types, and SDK-independent Gateway orchestration.
+Public model, prompt, tool-result, request, and stream contracts live in
+`alphaavatar.agents.avatar.provider`. SDK construction, message conversion,
+structured parsing, and usage normalization remain in this plugin.
 
-This package owns SDK-specific construction, input adaptation, output parsing,
-and usage normalization. The implemented backend in this migration is
-`langchain`; OpenAI, OpenRouter, Google, and Anthropic model access still uses the
-existing LangChain integrations. No empty native-vendor backends are registered.
+## Shared ownership
 
-`ProviderTaskConfig.backend` selects an installed backend implementation.
-`ProviderTaskConfig.provider` selects the model vendor or endpoint family inside
-that backend. They are distinct fields.
+Every `FoundationRuntime` owns one `ProviderService`, available as
+`runtime.foundation.provider`. A service belongs to the current runtime, not to
+a process-global registry. This does not introduce another ProviderRuntime.
 
-## Loading
+Memory Conversation, Environment, Tool, and Persona Profiler borrow gateways from
+that service. Each gateway retains its own immutable task-configuration snapshot,
+business task names, trace metadata, and prompt. Equal complete model configuration
+snapshots reuse one model wrapper and its SDK clients inside the same service.
+Different configurations and different service instances remain isolated.
 
-Install `alpha-avatar-plugins-provider[langchain]`. The `alphaavatar.provider`
-entry-point group discovers backend modules. Loading the selected module
-registers LLM and embedding factories through the existing AvatarModulePlugin
-registry. Entry-point metadata is discovery, not a second model registry.
+No message history or tool registry is stored in the service. The resource pool
+is not a result cache. Environment credentials are read on client initialization;
+credential or configuration changes require a new runtime rather than mutation of
+an active gateway. Pool keys do not contain plaintext credentials.
 
-Package roots do not load SDK clients. Factory metadata is resolved once per
-backend per process. Backend loading errors propagate instead of silently
-falling back to another provider.
+## Construction and invocation
 
-## Calls and ownership
+`backend` selects the installed implementation; `provider` selects its vendor or
+endpoint family. Entry-point discovery still registers factories through
+AvatarModulePlugin. Loading a factory is not a network request.
 
-Structured calls receive an AlphaAvatar ModelInput and a Pydantic schema. A
-backend must return a validated ProviderModelResult, not an SDK Runnable or
-message. The Gateway owns task-level tracing and never builds LangChain chains.
+LangChain LLM construction is lazy, single-flight, and runs off the event loop.
+The first caller's cancellation does not abandon the initialization task. Later
+requests reuse the same initialized client, and schema-bound structured runnables
+are cached by output schema class. There is no lock held across model requests.
 
-Business prompts and result schemas remain with their Memory/Persona
-processors. ModelPrompt renders text templates and ModelInputSlot values without
-converting observations, inventing perception events, or mutating input items.
+All model invocations use async SDK paths. `timeout` bounds the remote structured
+invocation, including SDK retries. Consumer-level deadlines still cover their
+whole workflow. Unsupported media and invalid structured output remain errors.
 
-LangChain SDK model construction retains the existing per-call behavior.
-Shared Foundation Provider service, pooled client ownership, and managed trace
-draining are not implemented by this boundary migration.
+Model initialization failures remain failed for that model binding. Recreate the
+runtime after correcting initialization configuration; there is no implicit
+credential refresh or hot replacement in this implementation.
 
-EmbeddingBase exposes asynchronous requests. WorkerEmbeddingBase additionally
-supports the existing blocking embedding calls in isolated VDB inference
-workers. These blocking methods are not realtime event-loop entrypoints. The
-private LangChain embedding wrapper also satisfies LangChain's Embeddings type
-for existing Qdrant integration.
+## Client resources
 
-## Multimodal and stream contracts
+OpenAI and OpenRouter receive explicitly owned sync and async HTTP transports.
+The narrow Anthropic subclass bypasses LangChain's process-cached HTTP transports.
+The Google client is detached from its wrapper and both its async and sync halves
+are explicitly closed. Blocking construction and sync close operations run in
+worker threads; model requests are not replaced with blocking SDK calls.
 
-ModelMediaPart holds bytes or a URI plus media kind and MIME type. Constructing
-it performs no I/O. ModelFunctionOutput uses `parts`, just like input messages;
-its `text` property is only a projection and never replaces the full content.
+The LangChain integration versions are constrained to the existing repository
+lock versions for this resource adapter. They are not upgraded by this change.
+The Anthropic `_client_params`/cached-property integration and Google client
+ownership must be rechecked when those integrations are upgraded.
 
-Adapters reject unsupported parts instead of silently discarding them. Schema
-representability does not imply support by every backend, model, or API mode.
-The existing Gemini ENV adapter retains its temporal audiovisual encoding.
-The default text task adapter does not accept media, tool, or control records.
+External client handles cannot be supplied in task `extra` fields. Stateful
+Anthropic container reuse is not supported by shared task models.
 
-ModelRequest carries model-facing tool definitions; it does not register or
-execute tools. The existing runtime capability registry remains authoritative.
+## Shutdown
 
-StreamingLLMBase defines a request-scoped async context manager. A successful
-stream ends with ModelResponseCompleted; exceptions and cancellation propagate.
-Exiting the context must close the request stream. Deltas are not complete tool
-arguments, and a completed tool call still requires argument validation before
-execution. Reasoning parts are separate from user-visible text.
+Consumers complete their own finalization before Foundation closes. Provider
+shutdown rejects new calls, cancels and awaits residual owned requests, waits for
+in-progress client/schema initialization, closes every model, and finally drains
+tracers. A failure in one close does not skip ordinary peer cleanup.
 
-The LangChain task backend does not advertise StreamingLLMBase. Native streaming
-implementation, capability/tool execution integration, final Assistant output,
-and LiveKit Agents removal remain separate work. Session/Episode semantics do
-not change here.
+Concurrent close callers share one close task. Caller cancellation is propagated
+after owned cleanup finishes. `LLMBase.aclose()` is now part of the contract;
+a model owner must stop requests before invoking it.
+
+## Tracing
+
+Each trace-policy configuration has one service-owned writer with a bounded
+queue (`trace.max_pending`, default 256). There is no synchronous fallback and no
+untracked task per write. File work stays off the event loop. Cancelled requests
+produce a cancelled terminal trace when they reached the tracing stage.
+
+Tracing is best-effort diagnostics, not a lossless audit log. Queue saturation
+drops new diagnostic writes and increments `dropped_writes`; warnings report the
+loss. Shutdown waits for accepted writes. Write failures are counted, logged, and
+reported by close after subsequent accepted jobs have been processed. Calls with
+no `provider_dir` destination increment `skipped_writes` and do not create a writer.
+
+## Remaining execution work
+
+The existing isolated VDB workers still own their Embedding instances. No SDK
+client is moved across process boundaries by the Foundation service. This batch
+does not redesign worker Embedding lifecycle.
+
+Streaming contracts remain defined, but the LangChain task backend does not yet
+advertise StreamingLLMBase. Native streaming model/tool execution, final Assistant
+output and TTS, and LiveKit Agents removal remain separate functional work.
+Execution remains session-scoped; Episodes and Dream scheduling are unchanged.

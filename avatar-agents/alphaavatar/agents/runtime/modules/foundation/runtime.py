@@ -17,21 +17,49 @@ import asyncio
 
 from alphaavatar.core.cleanup import wait_for_cleanup
 
+from .provider import ProviderService
 from .voice import VoiceService
 
 
 class FoundationRuntime:
-    """Own foundation services without importing concrete plugins or configuration."""
+    """Own shared services; consumers must finish before this runtime is closed."""
 
-    def __init__(self, *, voice: VoiceService | None = None) -> None:
+    def __init__(
+        self, *, voice: VoiceService | None = None, provider: ProviderService | None = None
+    ) -> None:
         self._voice = voice if voice is not None else VoiceService()
+        self._provider = provider if provider is not None else ProviderService()
         self._close_task: asyncio.Task[None] | None = None
 
     @property
     def voice(self) -> VoiceService:
         return self._voice
 
+    @property
+    def provider(self) -> ProviderService:
+        return self._provider
+
+    async def _close(self) -> None:
+        async def close(service: ProviderService | VoiceService) -> None:
+            await service.aclose()
+
+        results = await asyncio.gather(
+            close(self._provider), close(self._voice), return_exceptions=True
+        )
+        errors: list[Exception] = []
+        for result in results:
+            if isinstance(result, asyncio.CancelledError):
+                error = RuntimeError("Foundation service cleanup was cancelled")
+                error.__cause__ = result
+                errors.append(error)
+            elif isinstance(result, Exception):
+                errors.append(result)
+            elif isinstance(result, BaseException):
+                raise result
+        if errors:
+            raise ExceptionGroup("Foundation cleanup failed", errors)
+
     async def aclose(self) -> None:
         if self._close_task is None:
-            self._close_task = asyncio.create_task(self._voice.aclose(), name="foundation_close")
+            self._close_task = asyncio.create_task(self._close(), name="foundation_close")
         await wait_for_cleanup(self._close_task)

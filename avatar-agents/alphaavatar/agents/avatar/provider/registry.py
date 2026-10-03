@@ -17,29 +17,25 @@ from .schemas import ProvidersConfig, ProviderTaskConfig
 
 
 class ProviderRegistry:
+    """A private task-config snapshot; returned values cannot mutate active bindings."""
+
     def __init__(self, config: ProvidersConfig | None = None) -> None:
-        self._config = config or ProvidersConfig()
+        self._config = (config or ProvidersConfig()).model_copy(deep=True)
 
     @property
     def config(self) -> ProvidersConfig:
-        return self._config
+        return self._config.model_copy(deep=True)
 
     def get_task_config(self, task_name: str) -> ProviderTaskConfig:
-        task_config = self._config.tasks.get(task_name)
-
-        if task_config is None:
-            raise KeyError(
-                f"Provider task '{task_name}' is not configured. "
-                "Please add it to plugin provider.tasks config."
-            )
-
-        return task_config
+        try:
+            return self._config.tasks[task_name].model_copy(deep=True)
+        except KeyError as exc:
+            raise KeyError(f"Provider task {task_name!r} is not configured") from exc
 
     def has_task(self, task_name: str) -> bool:
         return task_name in self._config.tasks
 
     def validate_tasks(self, task_names: Iterable[str]) -> None:
-        missing_tasks = [task_name for task_name in task_names if not self.has_task(task_name)]
-
-        if missing_tasks:
-            raise KeyError("Missing provider task config: " + ", ".join(missing_tasks))
+        missing = [name for name in task_names if not self.has_task(name)]
+        if missing:
+            raise KeyError("Missing provider task config: " + ", ".join(missing))

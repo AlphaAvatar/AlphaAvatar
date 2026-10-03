@@ -20,11 +20,13 @@ from ..enums import ProviderKind
 
 class ProviderTaskConfig(BaseModel):
     kind: ProviderKind = ProviderKind.LLM
+
     backend: str = Field(default="langchain", min_length=1)
     provider: str = "openai"
     model: str
+
     temperature: float = 0.1
-    timeout: float = 30.0
+    timeout: float = Field(default=30.0, gt=0.0, allow_inf_nan=False)
     prompt_version: str | None = None
     input_adapter: str | None = None
     input_options: dict[str, Any] = Field(default_factory=dict)
@@ -35,6 +37,7 @@ class ProviderTraceConfig(BaseModel):
     enabled: bool = True
     save_prompt: bool = True
     save_raw_response: bool = False
+    max_pending: int = Field(default=256, gt=0)
 
 
 class ProvidersConfig(BaseModel):

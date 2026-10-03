@@ -11,7 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from .provider import ProviderService
 from .runtime import FoundationRuntime
 from .voice import VoiceService
 
-__all__ = ["FoundationRuntime", "VoiceService"]
+__all__ = ["ProviderService", "FoundationRuntime", "VoiceService"]

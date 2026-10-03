@@ -358,6 +358,7 @@ dependencies = [
 
 [package.optional-dependencies]
 langchain = [
+    { name = "httpx" },
     { name = "langchain-anthropic" },
     { name = "langchain-core" },
     { name = "langchain-google-genai" },
@@ -368,10 +369,11 @@ langchain = [
 requires-dist = [
     { name = "alpha-avatar-agents", editable = "avatar-agents" },
     { name = "alpha-avatar-core", editable = "avatar-core" },
-    { name = "langchain-anthropic", marker = "extra == 'langchain'" },
+    { name = "httpx", marker = "extra == 'langchain'", specifier = ">=0.28,<1" },
+    { name = "langchain-anthropic", marker = "extra == 'langchain'", specifier = "==1.4.6" },
     { name = "langchain-core", marker = "extra == 'langchain'" },
-    { name = "langchain-google-genai", marker = "extra == 'langchain'" },
-    { name = "langchain-openai", marker = "extra == 'langchain'" },
+    { name = "langchain-google-genai", marker = "extra == 'langchain'", specifier = "==4.2.5" },
+    { name = "langchain-openai", marker = "extra == 'langchain'", specifier = "==1.0.2" },
     { name = "pydantic", specifier = ">=2,<3" },
 ]
 provides-extras = ["langchain"]

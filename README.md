@@ -172,7 +172,7 @@ Shared components that other plugins use through `FoundationRuntime`.
 | Plugin | Capabilities | Status |
 | :--- | :--- | :---: |
 | [**Voice**][plugin-voice] | Provides voice activity detection, speech recognition, and speech synthesis.<br>Shares reusable voice components with Router and other consumers. | ![Available][status-available] |
-| **Provider** | Provides SDK-independent task contracts and plugin-owned LangChain LLM/embedding implementations.<br>Native streaming execution and shared Foundation service integration remain pending. | ![Available][status-available] |
+| [**Provider**][plugin-provider] | Provides SDK-independent task contracts and plugin-owned LangChain LLM/embedding implementations.<br>Native streaming execution and shared Foundation service integration remain pending. | ![Available][status-available] |
 | **Context** | Will make context construction and composition independently pluggable.<br>Will expose shared context services to other plugins. | ![Planned][status-planned] |
 
 Provider task implementations now live in the Foundation Provider plugin.
@@ -208,6 +208,7 @@ Integrations for research, document access, and external actions.
 See [Plugin Layout and Boundaries](avatar-plugins/README.md) for development details and the [Roadmap](ROADMAP.md) for planned work.
 
 [plugin-voice]: avatar-plugins/foundation/avatar-plugins-voice/README.md
+[plugin-provider]: avatar-plugins/foundation/avatar-plugins-provider/README.md
 [plugin-router]: avatar-plugins/perception/avatar-plugins-router/README.md
 [plugin-memory]: avatar-plugins/perception/avatar-plugins-memory/README.md
 [plugin-persona]: avatar-plugins/perception/avatar-plugins-persona/README.md

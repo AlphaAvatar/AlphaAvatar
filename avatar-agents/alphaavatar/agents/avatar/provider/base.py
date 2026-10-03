@@ -36,6 +36,10 @@ class LLMBase(ABC):
     ) -> ProviderModelResult:
         """Return a validated result without exposing SDK messages or runnable objects."""
 
+    @abstractmethod
+    async def aclose(self) -> None:
+        """Release owned clients after the owner has stopped this model's requests."""
+
 
 class StreamingLLMBase(LLMBase):
     @abstractmethod

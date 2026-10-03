@@ -13,6 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from pydantic import BaseModel
@@ -21,8 +22,10 @@ from alphaavatar.agents.avatar.provider.base import LLMBase
 from alphaavatar.agents.avatar.provider.schemas import ModelInput, ProviderTaskConfig
 from alphaavatar.agents.avatar.provider.schemas.model_result import ProviderModelResult
 from alphaavatar.agents.avatar.provider.trace import to_jsonable
+from alphaavatar.core.cleanup import wait_for_cleanup
 
 from ..adapters import LangChainInputAdapterRegistry
+from ..resources import ModelResources
 from ..usage import normalize_usage
 from .models import create_llm_model
 
@@ -32,19 +35,10 @@ class LangChainLLM(LLMBase):
         self._config = config.model_copy(deep=True)
         self._config.provider = self._config.provider.strip().lower()
         self._adapters = LangChainInputAdapterRegistry()
-
-    def validate_input(self, *, require_input_adapter: bool = False) -> None:
-        config = self._config
-        if require_input_adapter and config.input_adapter is None:
-            raise ValueError("A multimodal task requires an explicit input_adapter")
-        name = config.input_adapter or "langchain_text"
-        if name == "langchain_gemini" and config.provider not in {
-            "google",
-            "gemini",
-            "google_genai",
-        }:
-            raise ValueError("langchain_gemini requires a Google provider")
-        self._adapters.resolve(name)
+        self._resources = ModelResources()
+        self._init_task: asyncio.Task[Any] | None = None
+        self._schema_tasks: dict[type[BaseModel], asyncio.Task[Any]] = {}
+        self._close_task: asyncio.Task[None] | None = None
 
     @staticmethod
     def _generation_id(raw: Any) -> str | None:
@@ -56,6 +50,57 @@ class LangChainLLM(LLMBase):
                         return str(metadata[key])
         return None
 
+    def validate_input(self, *, require_input_adapter: bool = False) -> None:
+        self._ensure_open()
+        config = self._config
+        if config.provider not in {
+            "openai",
+            "openrouter",
+            "google",
+            "gemini",
+            "google_genai",
+            "anthropic",
+            "claude",
+        }:
+            raise ValueError(f"Unsupported LLM provider: {config.provider!r}")
+        if require_input_adapter and config.input_adapter is None:
+            raise ValueError("A multimodal task requires an explicit input_adapter")
+        name = config.input_adapter or "langchain_text"
+        if name == "langchain_gemini" and config.provider not in {
+            "google",
+            "gemini",
+            "google_genai",
+        }:
+            raise ValueError("langchain_gemini requires a Google provider")
+        self._adapters.resolve(name)
+
+    def _ensure_open(self) -> None:
+        if self._close_task is not None:
+            raise RuntimeError("LangChain task model is closing or closed")
+
+    async def _initialize(self) -> Any:
+        try:
+            return await asyncio.to_thread(create_llm_model, self._config, self._resources)
+        except BaseException:
+            await self._resources.aclose()
+            raise
+
+    async def _model(self) -> Any:
+        self._ensure_open()
+        if self._init_task is None:
+            self._init_task = asyncio.create_task(self._initialize(), name="provider_model_init")
+        model = await asyncio.shield(self._init_task)
+        self._ensure_open()
+        return model
+
+    async def _close(self) -> None:
+        # Initialization remains owned even if its first request was cancelled.
+        if self._init_task is not None:
+            await asyncio.gather(self._init_task, return_exceptions=True)
+        await asyncio.gather(*self._schema_tasks.values(), return_exceptions=True)
+        self._schema_tasks.clear()
+        await self._resources.aclose()
+
     async def ainvoke_structured(
         self, model_input: ModelInput, *, output_schema: type[BaseModel], include_raw: bool = False
     ) -> ProviderModelResult:
@@ -66,11 +111,17 @@ class LangChainLLM(LLMBase):
 
         adapter = self._adapters.resolve(self._config.input_adapter or "langchain_text")
         messages = await adapter.adapt(model_input, config=self._config)
+        llm = await self._model()
+        if output_schema not in self._schema_tasks:
+            self._schema_tasks[output_schema] = asyncio.create_task(
+                asyncio.to_thread(llm.with_structured_output, output_schema, include_raw=True),
+                name="provider_structured_schema",
+            )
+        structured = await asyncio.shield(self._schema_tasks[output_schema])
+        self._ensure_open()
+        async with asyncio.timeout(self._config.timeout):
+            result = await structured.ainvoke(messages)
 
-        llm = create_llm_model(self._config)
-        structured = llm.with_structured_output(output_schema, include_raw=True)
-
-        result = await structured.ainvoke(messages)
         if not isinstance(result, dict) or not {"raw", "parsed", "parsing_error"} <= result.keys():
             raise TypeError("Structured backend must return parsed/raw/parsing_error fields")
 
@@ -99,3 +150,8 @@ class LangChainLLM(LLMBase):
             generation_id=self._generation_id(raw),
             raw_response=raw_json,
         )
+
+    async def aclose(self) -> None:
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close(), name="langchain_model_close")
+        await wait_for_cleanup(self._close_task)

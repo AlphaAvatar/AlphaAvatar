@@ -13,27 +13,30 @@
 # limitations under the License.
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Iterable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
 from alphaavatar.agents.utils import sha256_text
 
 from .base import LLMBase
-from .factory import create_llm_model
 from .registry import ProviderRegistry
 from .schemas import ProviderResult, ProvidersConfig, ProviderTraceRecord
 from .schemas.prompt import ModelPrompt
 from .trace import ProviderTracer, safe_json_dumps, to_jsonable
 
+if TYPE_CHECKING:
+    from alphaavatar.agents.runtime.modules.foundation import ProviderService
+
 
 class ProviderGateway:
-    def __init__(self, config: ProvidersConfig | None = None) -> None:
+    def __init__(self, config: ProvidersConfig, *, service: ProviderService) -> None:
         self._registry = ProviderRegistry(config)
-        self._tracer = ProviderTracer(self._registry.config.trace)
-        self._models: dict[str, LLMBase] = {}
+        self._service = service
+        self._tracer = service.tracer(self._registry.config.trace)
 
     @property
     def registry(self) -> ProviderRegistry:
@@ -44,9 +47,7 @@ class ProviderGateway:
         return self._tracer
 
     def _model(self, task_name: str) -> LLMBase:
-        if task_name not in self._models:
-            self._models[task_name] = create_llm_model(self._registry.get_task_config(task_name))
-        return self._models[task_name]
+        return self._service.model(self._registry.get_task_config(task_name))
 
     def validate_tasks(
         self, task_names: Iterable[str], *, require_input_adapter: bool = False
@@ -66,8 +67,31 @@ class ProviderGateway:
         metadata: dict[str, Any] | None = None,
         tracing_payload: bool = True,
     ) -> ProviderResult:
+        return await self._service.run(
+            lambda: self._invoke_structured(
+                task_name=task_name,
+                prompt=prompt,
+                payload=payload,
+                output_schema=output_schema,
+                metadata=metadata,
+                tracing_payload=tracing_payload,
+            )
+        )
+
+    async def _invoke_structured(
+        self,
+        *,
+        task_name: str,
+        prompt: ModelPrompt,
+        payload: dict[str, Any],
+        output_schema: type[BaseModel],
+        metadata: dict[str, Any] | None = None,
+        tracing_payload: bool = True,
+    ) -> ProviderResult:
         if not isinstance(prompt, ModelPrompt):
             raise TypeError("ProviderGateway requires an AlphaAvatar ModelPrompt")
+        if not isinstance(output_schema, type) or not issubclass(output_schema, BaseModel):
+            raise TypeError("output_schema must be a Pydantic model class")
 
         metadata = dict(metadata or {})
         task_name = str(task_name)
@@ -112,7 +136,8 @@ class ProviderGateway:
                 output_schema=output_schema,
                 include_raw=self._tracer.save_raw_response,
             )
-
+            if not isinstance(reply.output, output_schema):
+                raise TypeError("Provider backend returned an unvalidated structured result")
             latency_ms = (time.perf_counter() - started_at) * 1000
 
             result = ProviderResult(
@@ -147,6 +172,15 @@ class ProviderGateway:
             )
 
             return result
+        except asyncio.CancelledError:
+            self._tracer.emit_record(
+                ProviderTraceRecord(
+                    **trace_fields,
+                    status="cancelled",
+                    latency_ms=(time.perf_counter() - started_at) * 1000,
+                )
+            )
+            raise
         except Exception as exc:
             self._tracer.emit_record(
                 ProviderTraceRecord(

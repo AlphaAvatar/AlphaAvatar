@@ -17,10 +17,11 @@ dependencies = [
 
 [project.optional-dependencies]
 langchain = [
+    "httpx>=0.28,<1",
     "langchain-core",
-    "langchain-openai",
-    "langchain-google-genai",
-    "langchain-anthropic",
+    "langchain-openai==1.0.2",
+    "langchain-google-genai==4.2.5",
+    "langchain-anthropic==1.4.6",
 ]
 
 [project.entry-points."alphaavatar.provider"]
