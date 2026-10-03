@@ -24,6 +24,7 @@ from alphaavatar.agents.tools import MCPHostBase
 from alphaavatar.agents.tools.mcp_api import MCPOp, MCPOutputMode
 
 from .log import logger
+from .redact import redact_url
 
 
 class MCPHost(MCPHostBase):
@@ -50,7 +51,7 @@ class MCPHost(MCPHostBase):
     def _build_config_servers_info(self, servers: dict[str, dict]) -> str:
         lines = []
         for name, cfg in servers.items():
-            url = cfg.get("url", "unknown")
+            url = redact_url(cfg.get("url", "unknown"))
             instruction = cfg.get("instruction") or ""
             lines.append(f"- name={name}, url={url}, instruction={instruction}")
         return "MCPHost configured servers:\n" + "\n".join(lines)
