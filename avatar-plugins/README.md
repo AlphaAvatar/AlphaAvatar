@@ -8,6 +8,7 @@ This document describes the plugin workspace and its runtime boundaries. See the
 avatar-plugins/
 ├── README.md
 ├── foundation/
+│   ├── avatar-plugins-provider/
 │   └── avatar-plugins-voice/
 ├── perception/
 │   ├── avatar-plugins-character/

@@ -172,12 +172,12 @@ Shared components that other plugins use through `FoundationRuntime`.
 | Plugin | Capabilities | Status |
 | :--- | :--- | :---: |
 | [**Voice**][plugin-voice] | Provides voice activity detection, speech recognition, and speech synthesis.<br>Shares reusable voice components with Router and other consumers. | ![Available][status-available] |
-| [**Provider**][plugin-provider] | Provides SDK-independent task contracts and plugin-owned LangChain LLM/embedding implementations.<br>Native streaming execution and shared Foundation service integration remain pending. | ![Available][status-available] |
+| [**Provider**][plugin-provider] | Provides runtime-owned structured LLM task execution, client reuse, and managed tracing.<br>VDB workers retain their Embedding ownership; native streaming execution remains pending. | ![Available][status-available] |
 | **Context** | Will make context construction and composition independently pluggable.<br>Will expose shared context services to other plugins. | ![Planned][status-planned] |
 
-Provider task implementations now live in the Foundation Provider plugin.
-Shared Provider service integration and an independently pluggable Context service
-remain pending. Voice is currently the only service attached to FoundationRuntime.
+FoundationRuntime owns VoiceService and ProviderService. Memory and Persona borrow
+structured-task gateways while retaining their processor-owned configuration and
+business prompts. Native model/tool streaming and a pluggable Context service remain pending.
 
 ### 🧠 Perception
 

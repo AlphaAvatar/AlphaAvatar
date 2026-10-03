@@ -18,8 +18,8 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
-from alphaavatar.agents.avatar.provider import ProviderGateway
 from alphaavatar.agents.avatar.provider.schemas import ModelPrompt
+from alphaavatar.agents.runtime.modules.foundation import ProviderService
 
 from ...log import logger
 from ...schemas.patch import MemoryDelta
@@ -38,12 +38,9 @@ TStructuredOutput = TypeVar(
 
 
 class ConversationProvider:
-    def __init__(
-        self,
-        config: ConversationProviderConfig,
-    ) -> None:
+    def __init__(self, config: ConversationProviderConfig, *, service: ProviderService) -> None:
         self._task = config.task
-        self._gateway = ProviderGateway(config.gateway)
+        self._gateway = service.gateway(config.gateway)
         self._gateway.validate_tasks([self._task])
 
     async def _invoke(

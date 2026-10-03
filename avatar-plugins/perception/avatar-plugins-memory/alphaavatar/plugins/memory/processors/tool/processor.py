@@ -63,7 +63,7 @@ class ToolProcessor(MemoryProcessor):
             runtime=runtime,
             memory=memory,
         )
-        self._provider = ToolProvider(config.provider)
+        self._provider = ToolProvider(config.provider, service=runtime.foundation.provider)
         self._locks: dict[str, asyncio.Lock] = {}
 
     @property

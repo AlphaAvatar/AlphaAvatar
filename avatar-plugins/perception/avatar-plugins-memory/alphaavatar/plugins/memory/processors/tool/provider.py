@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from alphaavatar.agents.avatar.provider import ProviderGateway
+from alphaavatar.agents.runtime.modules.foundation import ProviderService
 
 from ...log import logger
 from ...schemas.patch import MemoryDelta
@@ -25,12 +25,9 @@ from .prompt import TOOL_DELTA_PROMPT
 
 
 class ToolProvider:
-    def __init__(
-        self,
-        config: ToolProviderConfig,
-    ) -> None:
+    def __init__(self, config: ToolProviderConfig, *, service: ProviderService) -> None:
         self._task = config.task
-        self._gateway = ProviderGateway(config.gateway)
+        self._gateway = service.gateway(config.gateway)
         self._gateway.validate_tasks([self._task])
 
     async def extract(

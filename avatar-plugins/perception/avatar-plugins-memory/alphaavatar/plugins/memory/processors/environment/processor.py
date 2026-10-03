@@ -67,7 +67,7 @@ class EnvironmentProcessor(MemoryProcessor):
         )
 
         self._config = config
-        self._provider = EnvironmentProvider(config.provider)
+        self._provider = EnvironmentProvider(config.provider, service=runtime.foundation.provider)
         self._scheduler: EnvMemoryScheduler | None = None
 
         self._turn_task: asyncio.Task[None] | None = None

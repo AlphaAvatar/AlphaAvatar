@@ -58,7 +58,7 @@ class ProfilerProcessor(PersonaProcessorBase):
         super().__init__(runtime=runtime, persona=persona)
 
         self._config = config
-        self._provider = ProfilerProvider(config.provider)
+        self._provider = ProfilerProvider(config.provider, service=runtime.foundation.provider)
         self._consumer_task: asyncio.Task[None] | None = None
 
     @property

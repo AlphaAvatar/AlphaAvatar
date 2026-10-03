@@ -65,7 +65,7 @@ class ConversationProcessor(MemoryProcessor):
         )
 
         self._config = config
-        self._provider = ConversationProvider(config.provider)
+        self._provider = ConversationProvider(config.provider, service=runtime.foundation.provider)
         self._locks: dict[str, asyncio.Lock] = {}
 
         self._consolidator = MemoryConsolidator(

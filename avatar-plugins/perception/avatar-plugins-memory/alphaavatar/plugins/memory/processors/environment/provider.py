@@ -17,13 +17,13 @@ import asyncio
 from typing import Any
 from uuid import uuid4
 
-from alphaavatar.agents.avatar.provider import ProviderGateway
 from alphaavatar.agents.avatar.provider.enums import ModelRole
 from alphaavatar.agents.avatar.provider.schemas import (
     ModelInput,
     ModelInputMessage,
     ModelTextPart,
 )
+from alphaavatar.agents.runtime.modules.foundation import ProviderService
 
 from ...log import logger
 from ...schemas.patch import EnvMemoryDelta
@@ -33,15 +33,12 @@ from .prompt import ENV_DELTA_PROMPT
 
 
 class EnvironmentProvider:
-    def __init__(
-        self,
-        config: EnvironmentProviderConfig,
-    ) -> None:
+    def __init__(self, config: EnvironmentProviderConfig, *, service: ProviderService) -> None:
         if not config.task:
             raise ValueError("Environment provider task cannot be empty")
 
         self._task = config.task
-        self._gateway = ProviderGateway(config.gateway)
+        self._gateway = service.gateway(config.gateway)
         self._gateway.validate_tasks([self._task], require_input_adapter=True)
 
     @staticmethod
