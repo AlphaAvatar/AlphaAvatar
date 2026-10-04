@@ -119,7 +119,7 @@
 | 2026-05 | Added runtime-aware session context construction based on room type, session mode, modality availability, user metadata, and time context.                                                      |
 | 2026-05 | Added LiveKit room binding support for runtime components that need direct room-level access, such as status sinks and data channel publishers.                                                 |
 | 2026-06 | Introduced a unified provider layer for task-based LLM and embedding calls, including structured output, usage normalization, provider tracing, and provider-based Memory / Persona extraction. |
-| 2026-06 | Refactored runtime and configuration foundations with `SessionRuntime`, `ContextRuntime`, participant-aware sessions, nested YAML config, and initial plugin lifecycle boundaries.              |
+| 2026-06 | Refactored runtime and configuration foundations with `SessionRuntime`, `StateRuntime`, participant-aware sessions, nested YAML config, and initial plugin lifecycle boundaries.              |
 | 2026-08 | Added explicit separation between participant transport identity, session-scoped participant ID, temporary user identity, and Persona-resolved user identity. |
 | 2026-08 | Added application-, participant-, and runtime-time separation so persistence, user timezone context, and realtime temporal alignment use independent time semantics. |
 | 2026-08 | Added creation-date session storage using `sessions/YYYY-MM-DD/<session_id>/` while keeping the session creation date immutable across long-running sessions. |
@@ -168,7 +168,7 @@
 
 | Date    | Milestone                            | Notes |
 | :------ | :----------------------------------- | :---- |
-| 2026-07 | **AvatarRuntime Composition**        | Added `AvatarRuntime` as the session-scoped composition root for `SessionRuntime`, `ContextRuntime`, `PerceptionRuntime`, and `InferenceExecutor`. |
+| 2026-07 | **AvatarRuntime Composition**        | Added `AvatarRuntime` as the session-scoped composition root for `SessionRuntime`, `StateRuntime`, `PerceptionRuntime`, and `InferenceExecutor`. |
 | 2026-07 | **Simplified Plugin Lifecycle**      | Runtime dependencies are injected during plugin construction, while `on_session_start()` and `on_session_stop()` only manage lifecycle work. |
 | 2026-07 | **Producer / Consumer Orchestration**| Perception consumers start before RTC producers, while producers stop before consumers to preserve clean full-duplex lifecycle boundaries. |
 | 2026-07 | **AlphaAvatar Inference Runtime**    | Added Worker-owned `InferenceRuntime`, session-scoped `InferenceExecutor`, Unix domain socket IPC, and persistent runner processes independent of LiveKit Agent inference internals. |

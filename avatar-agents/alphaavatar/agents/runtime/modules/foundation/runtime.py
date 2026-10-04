@@ -17,6 +17,7 @@ import asyncio
 
 from alphaavatar.core.cleanup import wait_for_cleanup
 
+from .loop import LoopService
 from .provider import ProviderService
 from .voice import VoiceService
 
@@ -25,10 +26,15 @@ class FoundationRuntime:
     """Own shared services; consumers must finish before this runtime is closed."""
 
     def __init__(
-        self, *, voice: VoiceService | None = None, provider: ProviderService | None = None
+        self,
+        *,
+        voice: VoiceService | None = None,
+        provider: ProviderService | None = None,
+        loop: LoopService | None = None,
     ) -> None:
         self._voice = voice if voice is not None else VoiceService()
         self._provider = provider if provider is not None else ProviderService()
+        self._loop = loop if loop is not None else LoopService()
         self._close_task: asyncio.Task[None] | None = None
 
     @property
@@ -38,6 +44,10 @@ class FoundationRuntime:
     @property
     def provider(self) -> ProviderService:
         return self._provider
+
+    @property
+    def loop(self) -> LoopService:
+        return self._loop
 
     async def _close(self) -> None:
         async def close(service: ProviderService | VoiceService) -> None:
@@ -61,5 +71,7 @@ class FoundationRuntime:
 
     async def aclose(self) -> None:
         if self._close_task is None:
+            # Returned Loop instances are consumer-owned, not another parallel close target.
+            self._loop.close()
             self._close_task = asyncio.create_task(self._close(), name="foundation_close")
         await wait_for_cleanup(self._close_task)

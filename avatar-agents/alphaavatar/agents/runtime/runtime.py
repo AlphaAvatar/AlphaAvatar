@@ -31,9 +31,9 @@ from alphaavatar.core.turn import TurnRuntime
 
 from .capability import AvatarCapabilityRegistry
 from .inference import InferenceExecutor
-from .modules.context import ContextRuntime
 from .modules.foundation import FoundationRuntime
 from .modules.session import SessionRuntime
+from .modules.state import StateRuntime
 
 if TYPE_CHECKING:
     from alphaavatar.agents.configs.runtime_config import RuntimeConfig
@@ -58,7 +58,7 @@ class AvatarRuntime:
 
     # agent-level
     session: SessionRuntime
-    context: ContextRuntime
+    state: StateRuntime
 
     # lifecycle-level
     inference: InferenceExecutor
@@ -97,7 +97,7 @@ class AvatarRuntime:
         *,
         workspace: WorkspacePaths,
         session: SessionRuntime,
-        context: ContextRuntime,
+        state: StateRuntime,
         config: RuntimeConfig,
         foundation: FoundationRuntime,
         inference: InferenceExecutor | None = None,
@@ -131,7 +131,7 @@ class AvatarRuntime:
             clock=clock,
             workspace=workspace,
             session=session,
-            context=context,
+            state=state,
             perception=perception,
             turn=turn,
             output=OutputRuntime(session_id=session_id, clock=clock),

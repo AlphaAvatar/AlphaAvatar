@@ -11,9 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .loop import LoopService
-from .provider import ProviderService
-from .runtime import FoundationRuntime
-from .voice import VoiceService
+from enum import StrEnum
 
-__all__ = ["LoopService", "ProviderService", "FoundationRuntime", "VoiceService"]
+
+class LoopEventKind(StrEnum):
+    STATE = "state"
+    WAITING = "waiting"
+
+    TEXT = "text"
+    MESSAGE = "message"
+
+    TOOL_STARTED = "tool_started"
+    TOOL_FINISHED = "tool_finished"
+
+    FINISHED = "finished"

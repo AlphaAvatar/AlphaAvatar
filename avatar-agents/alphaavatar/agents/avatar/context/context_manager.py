@@ -32,7 +32,7 @@ from alphaavatar.core.turn import TurnSnapshot
 
 from .context_builder import ContextBuilder
 from .schema import ContextBuildRequest, ContextBuildResult
-from .template import AvatarSysPromptTemplate, RuntimeContextTemplate
+from .template import AvatarSysPromptTemplate, RuntimeStateTemplate
 
 if TYPE_CHECKING:
     from alphaavatar.agents.memory import MemoryBase
@@ -76,11 +76,11 @@ class AvatarContextManager:
         self._visual_selector = VisualFrameSelector()
         self._system_template = AvatarSysPromptTemplate(
             avatar_config.avatar.introduction,
-            interaction_method=self._runtime.context.interaction_method,
+            interaction_method=self._runtime.state.interaction_method,
             internal_capabilities=self._runtime.capability_registry.capabilities,
-            stable_behavior_rules=self._runtime.context.global_behavior_rules,
+            stable_behavior_rules=self._runtime.state.global_behavior_rules,
         )
-        self._runtime_context_template = RuntimeContextTemplate()
+        self._runtime_state_template = RuntimeStateTemplate()
 
         # context op
         self._context_builder = ContextBuilder()
@@ -109,7 +109,7 @@ class AvatarContextManager:
         )
 
     def _refresh_runtime_context(self) -> None:
-        context = self._runtime.context
+        state = self._runtime.state
 
         participant_time: dict[str, ParticipantTimeContext] = {}
         for participant_id, participant in self._runtime.session.participants.items():
@@ -124,12 +124,12 @@ class AvatarContextManager:
                 user_time=participant.user_time,
             )
 
-        context.participant_time = participant_time
-        context.user_persona = self._persona.persona_content or DEFAULT_SYSTEM_VALUE
-        context.memory_content = self._memory.memory_content or DEFAULT_SYSTEM_VALUE
-        context.plan_content = context.plan_content or DEFAULT_SYSTEM_VALUE
-        context.reflection_content = context.reflection_content or DEFAULT_SYSTEM_VALUE
-        context.turn_behavior_rules = context.turn_behavior_rules or DEFAULT_SYSTEM_VALUE
+        state.participant_time = participant_time
+        state.user_persona = self._persona.persona_content or DEFAULT_SYSTEM_VALUE
+        state.memory_content = self._memory.memory_content or DEFAULT_SYSTEM_VALUE
+        state.plan_content = state.plan_content or DEFAULT_SYSTEM_VALUE
+        state.reflection_content = state.reflection_content or DEFAULT_SYSTEM_VALUE
+        state.turn_behavior_rules = state.turn_behavior_rules or DEFAULT_SYSTEM_VALUE
 
     def build(
         self,
@@ -170,10 +170,10 @@ class AvatarContextManager:
                 model_input_type=(self._avatar_config.vision.input_mode),
             ),
             system_prompt=self._system_template.instructions(
-                stable_persona=(self._runtime.context.user_persona)
+                stable_persona=(self._runtime.state.user_persona)
             ),
-            runtime_context=self._runtime_context_template.render(
-                context_runtime=self._runtime.context,
+            runtime_context=self._runtime_state_template.render(
+                state_runtime=self._runtime.state,
             ),
         )
 

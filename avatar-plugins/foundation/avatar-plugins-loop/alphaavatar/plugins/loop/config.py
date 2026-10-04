@@ -11,9 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .loop import LoopService
-from .provider import ProviderService
-from .runtime import FoundationRuntime
-from .voice import VoiceService
+from pydantic import BaseModel, ConfigDict, Field
 
-__all__ = ["LoopService", "ProviderService", "FoundationRuntime", "VoiceService"]
+from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig, ProviderTraceConfig
+
+
+class RealtimeLoopConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    model: ProviderTaskConfig
+    trace: ProviderTraceConfig = Field(default_factory=ProviderTraceConfig)
+
+    feedback_delay: float = Field(default=1.5, ge=0, allow_inf_nan=False)
+    feedback_timeout: float = Field(default=2.0, gt=0, allow_inf_nan=False)
+    max_retiring_runs: int = Field(default=4, ge=0, le=32)

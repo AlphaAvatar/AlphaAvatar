@@ -11,9 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .loop import LoopService
-from .provider import ProviderService
-from .runtime import FoundationRuntime
-from .voice import VoiceService
+from __future__ import annotations
 
-__all__ = ["LoopService", "ProviderService", "FoundationRuntime", "VoiceService"]
+from dataclasses import dataclass
+
+from alphaavatar.agents.avatar.provider.schemas import ModelInputPart
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityResult:
+    """Model-visible result content; the executor supplies call identity and provenance."""
+
+    parts: tuple[ModelInputPart, ...]
+    is_error: bool = False

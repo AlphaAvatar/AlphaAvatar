@@ -1,0 +1,48 @@
+# Copyright 2026 AlphaAvatar project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+
+from .schemas import LoopIdentity, LoopRequest, LoopResult
+
+
+class LoopHandle(ABC):
+    @property
+    @abstractmethod
+    def identity(self) -> LoopIdentity: ...
+
+    @abstractmethod
+    def cancel(self, *, reason: str = "interrupted") -> None:
+        """Invalidate delivery and request cancellation without waiting for cleanup."""
+
+    @abstractmethod
+    async def wait(self) -> LoopResult:
+        """Await the result; cancelling this waiter does not discard the owned execution."""
+
+    @abstractmethod
+    async def aclose(self) -> None:
+        """Cancel and await owned work, but never close borrowed shared services."""
+
+
+class AvatarLoopBase(ABC):
+    @abstractmethod
+    async def submit(self, request: LoopRequest) -> LoopHandle:
+        """Accept an input quickly; model/tool execution runs in an owned task."""
+
+    @abstractmethod
+    def interrupt(self, *, run_id: str | None = None, reason: str = "interrupted") -> None: ...
+
+    @abstractmethod
+    async def aclose(self) -> None: ...

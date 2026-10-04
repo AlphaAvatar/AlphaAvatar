@@ -23,6 +23,9 @@ class AvatarModule(str, Enum):
     # Engine
     AVATAR_ENGINE = "avatar_engine"
 
+    # Avatar Loop
+    LOOP = "loop"
+
     # Provider
     PROVIDER_LLM = "provider_llm"
     PROVIDER_EMBEDDING = "provider_embedding"

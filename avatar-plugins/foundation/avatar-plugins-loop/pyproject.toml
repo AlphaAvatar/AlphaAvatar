@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "alpha-avatar-plugins-loop"
+dynamic = ["version"]
+description = "Realtime interaction loops for AlphaAvatar."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11,<3.12"
+dependencies = ["alpha-avatar-core", "alpha-avatar-agents", "pydantic>=2,<3"]
+
+[project.entry-points."alphaavatar.loop"]
+realtime = "alphaavatar.plugins.loop"
+
+[tool.hatch.version]
+path = "alphaavatar/plugins/loop/version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["alphaavatar"]
+
+[tool.hatch.build.targets.sdist]
+include = ["alphaavatar", "README.md", "pyproject.toml"]

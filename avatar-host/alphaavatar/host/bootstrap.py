@@ -22,7 +22,7 @@ from alphaavatar.agents.runtime.modules.foundation import FoundationRuntime
 
 if TYPE_CHECKING:
     from alphaavatar.agents.configs import AvatarConfig
-    from alphaavatar.agents.runtime import ContextRuntime, SessionRuntime
+    from alphaavatar.agents.runtime import SessionRuntime, StateRuntime
     from alphaavatar.agents.utils.files.work_dirs import WorkspacePaths
 
 
@@ -31,7 +31,7 @@ async def create_avatar_runtime(
     avatar_config: AvatarConfig,
     workspace: WorkspacePaths,
     session: SessionRuntime,
-    context: ContextRuntime,
+    state: StateRuntime,
 ) -> AvatarRuntime:
     async with AsyncExitStack() as resources:
         inference = InferenceExecutor.from_env()
@@ -44,7 +44,7 @@ async def create_avatar_runtime(
         runtime = AvatarRuntime.create(
             workspace=workspace,
             session=session,
-            context=context,
+            state=state,
             config=avatar_config.runtime,
             inference=inference,
             foundation=foundation,

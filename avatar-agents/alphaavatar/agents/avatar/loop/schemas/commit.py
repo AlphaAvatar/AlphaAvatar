@@ -11,9 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .loop import LoopService
-from .provider import ProviderService
-from .runtime import FoundationRuntime
-from .voice import VoiceService
+from __future__ import annotations
 
-__all__ = ["LoopService", "ProviderService", "FoundationRuntime", "VoiceService"]
+from dataclasses import dataclass
+
+from alphaavatar.agents.avatar.provider.schemas import ModelInputItem
+
+from .identity import LoopIdentity
+
+
+@dataclass(frozen=True, slots=True)
+class LoopCommit:
+    """Internal history transaction. A consumer should deduplicate by commit_id."""
+
+    identity: LoopIdentity
+    commit_id: str
+    items: tuple[ModelInputItem, ...]

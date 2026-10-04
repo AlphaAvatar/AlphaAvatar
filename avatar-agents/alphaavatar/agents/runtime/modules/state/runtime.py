@@ -142,11 +142,11 @@ class InteractionMethod:
 
 
 @dataclass
-class ContextRuntime:
+class StateRuntime:
     """
-    Unified context runtime container.
+    Unified state runtime container.
 
-    This object stores both system-level and turn-level context.
+    This object stores both system-level and turn-level state.
     The template layer decides where each field is injected.
 
     System-level:

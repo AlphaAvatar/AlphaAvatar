@@ -14,6 +14,7 @@
 from .decorator import avatar_capability
 from .enum import AvatarCapabilityName
 from .registry import AvatarCapabilityRegistry
+from .result import CapabilityResult
 from .schema import AvatarCapability
 
 __all__ = [
@@ -21,4 +22,5 @@ __all__ = [
     "AvatarCapabilityName",
     "AvatarCapabilityRegistry",
     "avatar_capability",
+    "CapabilityResult",
 ]

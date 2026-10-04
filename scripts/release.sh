@@ -9,6 +9,7 @@ PACKAGES=(
   "avatar-rtc"
   "avatar-core"
   "avatar-agents"
+  "avatar-plugins/foundation/avatar-plugins-loop"
   "avatar-plugins/foundation/avatar-plugins-provider"
   "avatar-plugins/foundation/avatar-plugins-voice"
   "avatar-plugins/perception/avatar-plugins-character"

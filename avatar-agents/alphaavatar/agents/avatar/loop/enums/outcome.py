@@ -11,9 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .loop import LoopService
-from .provider import ProviderService
-from .runtime import FoundationRuntime
-from .voice import VoiceService
+from enum import StrEnum
 
-__all__ = ["LoopService", "ProviderService", "FoundationRuntime", "VoiceService"]
+
+class ToolOutcome(StrEnum):
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    DENIED = "denied"
+    SKIPPED = "skipped"
+    CANCELLED = "cancelled"
+    UNKNOWN = "unknown"

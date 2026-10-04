@@ -11,9 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .loop import LoopService
-from .provider import ProviderService
-from .runtime import FoundationRuntime
-from .voice import VoiceService
+"""SDK-independent execution contracts; algorithms live in the Loop plugin."""
 
-__all__ = ["LoopService", "ProviderService", "FoundationRuntime", "VoiceService"]
+from .base import AvatarLoopBase, LoopHandle
+from .dependencies import LoopDependencies
+
+__all__ = [
+    "AvatarLoopBase",
+    "LoopHandle",
+    "LoopDependencies",
+]

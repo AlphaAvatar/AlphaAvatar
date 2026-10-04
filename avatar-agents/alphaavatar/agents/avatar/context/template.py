@@ -16,7 +16,7 @@ from __future__ import annotations
 from xml.sax.saxutils import escape
 
 from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
-from alphaavatar.agents.runtime import ContextRuntime, InteractionMethod
+from alphaavatar.agents.runtime import InteractionMethod, StateRuntime
 from alphaavatar.agents.runtime.capability import AvatarCapability
 from alphaavatar.agents.utils.time import ParticipantTimeContext
 
@@ -102,18 +102,18 @@ class AvatarSysPromptTemplate:
         return f"{base_prompt}\n\n{XML_PROTOCOL_PROMPT}"
 
 
-class RuntimeContextTemplate:
-    """Render dynamic current-answer-only runtime context."""
+class RuntimeStateTemplate:
+    """Render dynamic current-answer-only runtime state."""
 
     def render(
         self,
         *,
-        context_runtime: ContextRuntime,
+        state_runtime: StateRuntime,
     ) -> str:
         return RUNTIME_CONTEXT_PROMPT.format(
-            participant_time=_render_participant_time(context_runtime.participant_time),
-            memory_content=_xml_text(context_runtime.memory_content),
-            plan_content=_xml_text(context_runtime.plan_content),
-            reflection_content=_xml_text(context_runtime.reflection_content),
-            behavior_rules=_xml_text(context_runtime.turn_behavior_rules),
+            participant_time=_render_participant_time(state_runtime.participant_time),
+            memory_content=_xml_text(state_runtime.memory_content),
+            plan_content=_xml_text(state_runtime.plan_content),
+            reflection_content=_xml_text(state_runtime.reflection_content),
+            behavior_rules=_xml_text(state_runtime.turn_behavior_rules),
         )

@@ -27,7 +27,7 @@ from alphaavatar.agents.configs import AvatarConfig, get_avatar_args, read_args
 from alphaavatar.agents.constants import DEFAULT_CONTEXT_VALUE
 from alphaavatar.agents.env import init_env
 from alphaavatar.agents.log import logger
-from alphaavatar.agents.runtime import ContextRuntime, InteractionMethod, SessionRuntime
+from alphaavatar.agents.runtime import InteractionMethod, SessionRuntime, StateRuntime
 from alphaavatar.agents.runtime.inference import prepare_inference_runners
 from alphaavatar.agents.utils.files.work_dirs import WorkspacePaths, prepare_user_path
 from alphaavatar.agents.utils.id_utils import get_session_id, get_user_id
@@ -213,7 +213,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
         ],
     )
 
-    context_runtime = ContextRuntime(
+    state_runtime = StateRuntime(
         interaction_method=interaction_method,
         global_behavior_rules=participant_metadata.get(
             "global_behavior_rules",
@@ -231,7 +231,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
         avatar_config=avatar_config,
         workspace=workspace,
         session=session_runtime,
-        context=context_runtime,
+        state=state_runtime,
     )
 
     avatar_engine: LiveKitHostedAgent | None = None
