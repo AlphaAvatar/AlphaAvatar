@@ -17,7 +17,8 @@ import asyncio
 from dataclasses import replace
 from types import MappingProxyType
 
-from alphaavatar.agents.avatar.loop import AvatarLoopBase, LoopDependencies, LoopHandle, LoopRequest
+from alphaavatar.agents.avatar.loop import AvatarLoopBase, LoopDependencies, LoopHandle
+from alphaavatar.agents.avatar.loop.schemas import LoopRequest
 from alphaavatar.core.cleanup import wait_for_cleanup
 
 from .config import RealtimeLoopConfig
