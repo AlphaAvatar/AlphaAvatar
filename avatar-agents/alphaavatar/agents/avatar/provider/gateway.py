@@ -57,27 +57,6 @@ class ProviderGateway:
         for task_name in task_names:
             self._model(task_name).validate_input(require_input_adapter=require_input_adapter)
 
-    async def ainvoke_structured(
-        self,
-        *,
-        task_name: str,
-        prompt: ModelPrompt,
-        payload: dict[str, Any],
-        output_schema: type[BaseModel],
-        metadata: dict[str, Any] | None = None,
-        tracing_payload: bool = True,
-    ) -> ProviderResult:
-        return await self._service.run(
-            lambda: self._invoke_structured(
-                task_name=task_name,
-                prompt=prompt,
-                payload=payload,
-                output_schema=output_schema,
-                metadata=metadata,
-                tracing_payload=tracing_payload,
-            )
-        )
-
     async def _invoke_structured(
         self,
         *,
@@ -191,3 +170,24 @@ class ProviderGateway:
                 )
             )
             raise
+
+    async def ainvoke_structured(
+        self,
+        *,
+        task_name: str,
+        prompt: ModelPrompt,
+        payload: dict[str, Any],
+        output_schema: type[BaseModel],
+        metadata: dict[str, Any] | None = None,
+        tracing_payload: bool = True,
+    ) -> ProviderResult:
+        return await self._service.run(
+            lambda: self._invoke_structured(
+                task_name=task_name,
+                prompt=prompt,
+                payload=payload,
+                output_schema=output_schema,
+                metadata=metadata,
+                tracing_payload=tracing_payload,
+            )
+        )

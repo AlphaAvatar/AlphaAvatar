@@ -23,6 +23,12 @@ langchain = [
     "langchain-google-genai==4.2.5",
     "langchain-anthropic==1.4.6",
 ]
+openai = [
+    "alpha-avatar-core[video]",
+    "openai>=2.0,<3",
+    "httpx>=0.28,<1",
+    "jsonschema>=4.18,<5",
+]
 
 [project.entry-points."alphaavatar.provider"]
 langchain = "alphaavatar.plugins.provider.langchain"

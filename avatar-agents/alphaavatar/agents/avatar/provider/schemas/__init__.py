@@ -30,6 +30,7 @@ from .model_input import (
 )
 from .model_result import ProviderModelResult
 from .prompt import ModelInputSlot, ModelPrompt, ModelPromptMessage
+from .provider_item import ModelProviderItem
 from .provider_result import ProviderResult
 from .request import ModelRequest, ModelToolDefinition
 from .task_config import ProvidersConfig, ProviderTaskConfig, ProviderTraceConfig
@@ -58,6 +59,7 @@ __all__ = [
     "ModelToolDefinition",
     "ProviderModelResult",
     "ProviderResult",
+    "ModelProviderItem",
     "ProvidersConfig",
     "ProviderTaskConfig",
     "ProviderTraceConfig",

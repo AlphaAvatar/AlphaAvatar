@@ -364,19 +364,29 @@ langchain = [
     { name = "langchain-google-genai" },
     { name = "langchain-openai" },
 ]
+openai = [
+    { name = "alpha-avatar-core", extra = ["video"] },
+    { name = "httpx" },
+    { name = "jsonschema" },
+    { name = "openai" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "alpha-avatar-agents", editable = "avatar-agents" },
     { name = "alpha-avatar-core", editable = "avatar-core" },
+    { name = "alpha-avatar-core", extras = ["video"], marker = "extra == 'openai'", editable = "avatar-core" },
     { name = "httpx", marker = "extra == 'langchain'", specifier = ">=0.28,<1" },
+    { name = "httpx", marker = "extra == 'openai'", specifier = ">=0.28,<1" },
+    { name = "jsonschema", marker = "extra == 'openai'", specifier = ">=4.18,<5" },
     { name = "langchain-anthropic", marker = "extra == 'langchain'", specifier = "==1.4.6" },
     { name = "langchain-core", marker = "extra == 'langchain'" },
     { name = "langchain-google-genai", marker = "extra == 'langchain'", specifier = "==4.2.5" },
     { name = "langchain-openai", marker = "extra == 'langchain'", specifier = "==1.0.2" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=2.0,<3" },
     { name = "pydantic", specifier = ">=2,<3" },
 ]
-provides-extras = ["langchain"]
+provides-extras = ["langchain", "openai"]
 
 [[package]]
 name = "alpha-avatar-plugins-rag"

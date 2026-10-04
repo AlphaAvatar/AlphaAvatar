@@ -38,6 +38,26 @@ class AvatarCapabilityRegistry:
     def capabilities(self) -> tuple[AvatarCapability, ...]:
         return tuple(capability for capability, _ in self._bindings.values())
 
+    @staticmethod
+    async def _execute(handler: Handler, request: Any, timeout: float | None) -> Any:
+        if timeout is not None and (not isfinite(timeout) or timeout <= 0):
+            raise ValueError("timeout must be finite and positive")
+        async with asyncio.timeout(timeout):
+            return await handler(request)
+
+    def _prepare(self, name: str, arguments: Arguments) -> tuple[Handler, Any]:
+        if not isinstance(name, str):
+            raise TypeError("Capability id must be a string")
+        capability_id = self._aliases.get(name.strip())
+        if capability_id is None:
+            raise KeyError(f"Unknown capability: {name}")
+        capability, handler = self._bindings[capability_id]
+        if handler is None:
+            raise TypeError(
+                f"Capability is description-only and cannot be invoked: {capability.id}"
+            )
+        return handler, capability.parse(arguments)
+
     def register(self, capability: AvatarCapability, handler: Handler | None = None) -> None:
         if not isinstance(capability, AvatarCapability):
             raise TypeError("Expected AvatarCapability")
@@ -90,26 +110,6 @@ class AvatarCapabilityRegistry:
                     staged.register(capability, handler)
 
         self._bindings, self._aliases = staged._bindings, staged._aliases
-
-    def _prepare(self, name: str, arguments: Arguments) -> tuple[Handler, Any]:
-        if not isinstance(name, str):
-            raise TypeError("Capability id must be a string")
-        capability_id = self._aliases.get(name.strip())
-        if capability_id is None:
-            raise KeyError(f"Unknown capability: {name}")
-        capability, handler = self._bindings[capability_id]
-        if handler is None:
-            raise TypeError(
-                f"Capability is description-only and cannot be invoked: {capability.id}"
-            )
-        return handler, capability.parse(arguments)
-
-    @staticmethod
-    async def _execute(handler: Handler, request: Any, timeout: float | None) -> Any:
-        if timeout is not None and (not isfinite(timeout) or timeout <= 0):
-            raise ValueError("timeout must be finite and positive")
-        async with asyncio.timeout(timeout):
-            return await handler(request)
 
     async def invoke(
         self, name: str, arguments: Arguments = None, *, timeout: float | None = None

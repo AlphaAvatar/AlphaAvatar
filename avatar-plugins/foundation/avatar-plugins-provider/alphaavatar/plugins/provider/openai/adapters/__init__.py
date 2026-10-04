@@ -11,18 +11,4 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .finish_reason import ModelFinishReason
-from .input_type import ModelInputType
-from .media_kind import ModelMediaKind
-from .message_phase import ModelMessagePhase
-from .model_role import ModelRole
-from .provider_kind import ProviderKind
-
-__all__ = [
-    "ProviderKind",
-    "ModelMediaKind",
-    "ModelInputType",
-    "ModelRole",
-    "ModelFinishReason",
-    "ModelMessagePhase",
-]
+"""Provider-specific message and schema encoding."""
