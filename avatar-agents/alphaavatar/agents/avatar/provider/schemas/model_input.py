@@ -22,8 +22,9 @@ from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.perception import AlignedPerception, PerceptionEvent
 from alphaavatar.core.time import RuntimeTimeRange
 
-from ..enums import ModelRole
+from ..enums import ModelMessagePhase, ModelRole
 from .media import ModelMediaPart
+from .provider_item import ModelProviderItem
 
 if TYPE_CHECKING:
     from alphaavatar.agents.avatar.vision import VisualSelection
@@ -35,6 +36,12 @@ def _empty_mapping() -> Mapping[str, Any]:
 
 @dataclass(frozen=True, slots=True)
 class ModelTextPart:
+    text: str
+    annotations: tuple[Mapping[str, Any], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ModelRefusalPart:
     text: str
 
 
@@ -87,6 +94,7 @@ class ModelTemporalPart:
 
 ModelInputPart: TypeAlias = (
     ModelTextPart
+    | ModelRefusalPart
     | ModelReasoningPart
     | ModelImagePart
     | ModelAudioPart
@@ -100,6 +108,7 @@ class ModelInputMessage:
     id: str
     role: ModelRole
     parts: tuple[ModelInputPart, ...]
+    phase: ModelMessagePhase | None = None
     interrupted: bool = False
     transcript_confidence: float | None = None
     created_at: float | None = None
@@ -146,7 +155,11 @@ class ModelControlItem:
 
 
 ModelInputItem: TypeAlias = (
-    ModelInputMessage | ModelFunctionCall | ModelFunctionOutput | ModelControlItem
+    ModelInputMessage
+    | ModelFunctionCall
+    | ModelFunctionOutput
+    | ModelControlItem
+    | ModelProviderItem
 )
 
 

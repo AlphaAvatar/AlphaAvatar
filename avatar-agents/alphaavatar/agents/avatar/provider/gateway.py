@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable
+from contextlib import AbstractAsyncContextManager
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
@@ -24,8 +25,9 @@ from alphaavatar.agents.utils import sha256_text
 
 from .base import LLMBase
 from .registry import ProviderRegistry
-from .schemas import ProviderResult, ProvidersConfig, ProviderTraceRecord
+from .schemas import ModelRequest, ProviderResult, ProvidersConfig, ProviderTraceRecord
 from .schemas.prompt import ModelPrompt
+from .schemas.stream import ModelStreamEvent
 from .trace import ProviderTracer, safe_json_dumps, to_jsonable
 
 if TYPE_CHECKING:
@@ -170,6 +172,16 @@ class ProviderGateway:
                 )
             )
             raise
+
+    def stream(
+        self, *, task_name: str, request: ModelRequest
+    ) -> AbstractAsyncContextManager[AsyncIterator[ModelStreamEvent]]:
+        return self._service.stream(
+            self._registry.get_task_config(task_name),
+            request,
+            trace=self._registry.config.trace,
+            task_name=task_name,
+        )
 
     async def ainvoke_structured(
         self,

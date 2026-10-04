@@ -45,7 +45,7 @@ docs = [
 avatar-agent-all = [
     "alpha-avatar-agents[providers, vdb]",
     "alpha-avatar-host[livekit]",
-    "alpha-avatar-plugins-provider[langchain]",
+    "alpha-avatar-plugins-provider[langchain,openai]",
 ]
 
 [tool.ruff]

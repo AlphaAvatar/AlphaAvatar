@@ -25,7 +25,7 @@ class ProviderTaskConfig(BaseModel):
     provider: str = "openai"
     model: str
 
-    temperature: float = 0.1
+    temperature: float | None = Field(default=0.1, ge=0.0, le=2.0, allow_inf_nan=False)
     timeout: float = Field(default=30.0, gt=0.0, allow_inf_nan=False)
     prompt_version: str | None = None
     input_adapter: str | None = None

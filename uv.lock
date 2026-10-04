@@ -33,7 +33,7 @@ members = [
 avatar-agent-all = [
     { name = "alpha-avatar-agents", extras = ["providers", "vdb"], editable = "avatar-agents" },
     { name = "alpha-avatar-host", extras = ["livekit"], editable = "avatar-host" },
-    { name = "alpha-avatar-plugins-provider", extras = ["langchain"], editable = "avatar-plugins/foundation/avatar-plugins-provider" },
+    { name = "alpha-avatar-plugins-provider", extras = ["langchain", "openai"], editable = "avatar-plugins/foundation/avatar-plugins-provider" },
 ]
 dev = [
     { name = "jiwer", specifier = ">=3.1.0" },

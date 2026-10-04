@@ -45,9 +45,8 @@ class ModelToolDefinition:
 
 @dataclass(frozen=True, slots=True)
 class ModelRequest:
-    request_id: str = field(default_factory=lambda: uuid4().hex)
-
     input: ModelInput
+    request_id: str = field(default_factory=lambda: uuid4().hex)
     tools: tuple[ModelToolDefinition, ...] = ()
 
     output_schema: type[BaseModel] | None = None

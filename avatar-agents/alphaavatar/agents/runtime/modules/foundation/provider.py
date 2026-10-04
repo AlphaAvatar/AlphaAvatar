@@ -16,18 +16,26 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from collections.abc import Awaitable, Callable
+import time
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
-from alphaavatar.agents.avatar.provider.base import LLMBase
+from alphaavatar.agents.avatar.provider.base import LLMBase, StreamingLLMBase
+from alphaavatar.agents.avatar.provider.errors import ModelCapabilityError
 from alphaavatar.agents.avatar.provider.factory import create_llm_model
 from alphaavatar.agents.avatar.provider.schemas import (
+    ModelRequest,
     ProvidersConfig,
     ProviderTaskConfig,
     ProviderTraceConfig,
+    ProviderTraceRecord,
 )
+from alphaavatar.agents.avatar.provider.schemas.stream import ModelResponseCompleted
 from alphaavatar.agents.avatar.provider.trace import ProviderTracer
 from alphaavatar.core.cleanup import wait_for_cleanup
+
+from .stream import ProviderStream
 
 if TYPE_CHECKING:
     from alphaavatar.agents.avatar.provider.gateway import ProviderGateway
@@ -48,10 +56,6 @@ class ProviderService:
         self._requests: set[asyncio.Task[Any]] = set()
         self._close_task: asyncio.Task[None] | None = None
 
-    def _ensure_open(self) -> None:
-        if self._close_task is not None:
-            raise RuntimeError("Provider service is closing or closed")
-
     @staticmethod
     async def _close_resources(resources: tuple[_Closable, ...], *, phase: str) -> list[Exception]:
         async def close(resource: _Closable) -> None:
@@ -70,19 +74,9 @@ class ProviderService:
                 raise result
         return errors
 
-    async def _close(self) -> None:
-        requests = tuple(self._requests)
-        for task in requests:
-            task.cancel()
-        await asyncio.gather(*requests, return_exceptions=True)
-        self._requests.clear()
-
-        errors = await self._close_resources(tuple(self._models.values()), phase="model")
-        self._models.clear()
-        errors.extend(await self._close_resources(tuple(self._tracers.values()), phase="trace"))
-        self._tracers.clear()
-        if errors:
-            raise ExceptionGroup("Provider service cleanup failed", errors)
+    def _ensure_open(self) -> None:
+        if self._close_task is not None:
+            raise RuntimeError("Provider service is closing or closed")
 
     def gateway(self, config: ProvidersConfig) -> ProviderGateway:
         from alphaavatar.agents.avatar.provider.gateway import ProviderGateway
@@ -125,6 +119,72 @@ class ProviderService:
             return await task
         finally:
             self._requests.discard(task)
+
+    @asynccontextmanager
+    async def stream(
+        self,
+        config: ProviderTaskConfig,
+        request: ModelRequest,
+        *,
+        trace: ProviderTraceConfig | None = None,
+        task_name: str = "model.stream",
+    ) -> AsyncIterator[ProviderStream]:
+        self._ensure_open()
+        snapshot = config.model_copy(deep=True)
+        model = self.model(snapshot)
+        if not isinstance(model, StreamingLLMBase):
+            raise ModelCapabilityError("Selected provider does not implement native streaming")
+
+        tracer = self.tracer(trace if trace is not None else ProviderTraceConfig())
+        metadata = {
+            **request.metadata,
+            "request_id": request.request_id,
+            "backend": snapshot.backend,
+        }
+        trace_id = tracer.build_trace_id(task_name=task_name, input_hash=request.request_id)
+        started = time.perf_counter()
+
+        def report(
+            status: str, terminal: ModelResponseCompleted | None, error: BaseException | None
+        ) -> None:
+            tracer.emit_record(
+                ProviderTraceRecord(
+                    trace_id=trace_id,
+                    task_name=task_name,
+                    provider=snapshot.provider,
+                    model=snapshot.model,
+                    status=status,
+                    latency_ms=(time.perf_counter() - started) * 1000,
+                    generation_id=terminal.response_id if terminal else None,
+                    usage=terminal.usage if terminal else None,
+                    error=type(error).__name__ if error is not None else None,
+                    metadata=metadata,
+                )
+            )
+
+        stream = ProviderStream(model, request, report)
+        self._requests.add(stream.task)
+        try:
+            yield stream
+        finally:
+            try:
+                await stream.aclose()
+            finally:
+                self._requests.discard(stream.task)
+
+    async def _close(self) -> None:
+        requests = tuple(self._requests)
+        for task in requests:
+            task.cancel()
+        await asyncio.gather(*requests, return_exceptions=True)
+        self._requests.clear()
+
+        errors = await self._close_resources(tuple(self._models.values()), phase="model")
+        self._models.clear()
+        errors.extend(await self._close_resources(tuple(self._tracers.values()), phase="trace"))
+        self._tracers.clear()
+        if errors:
+            raise ExceptionGroup("Provider service cleanup failed", errors)
 
     async def aclose(self) -> None:
         if asyncio.current_task() in self._requests:

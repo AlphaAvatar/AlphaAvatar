@@ -26,8 +26,17 @@ class ModelMediaPart:
     mime_type: str
     data: bytes | None = None
     uri: str | None = None
+    filename: str | None = None
 
     def __post_init__(self) -> None:
+        if self.filename is not None and (
+            not isinstance(self.filename, str)
+            or not self.filename.strip()
+            or self.filename in {".", ".."}
+            or any(character in self.filename for character in ("/", "\\", "\0"))
+        ):
+            raise ValueError("Media filename must be a nonempty basename")
+
         if not isinstance(self.kind, ModelMediaKind):
             raise TypeError("kind must be a ModelMediaKind")
         if not isinstance(self.mime_type, str) or not self.mime_type.strip():

@@ -23,6 +23,7 @@ from .model_input import (
     ModelInputMessage,
     ModelInputPart,
     ModelReasoningPart,
+    ModelRefusalPart,
     ModelTemporalPart,
     ModelTemporalSlice,
     ModelTextPart,
@@ -32,7 +33,7 @@ from .model_result import ProviderModelResult
 from .prompt import ModelInputSlot, ModelPrompt, ModelPromptMessage
 from .provider_item import ModelProviderItem
 from .provider_result import ProviderResult
-from .request import ModelRequest, ModelToolDefinition
+from .request import ModelGenerationOptions, ModelRequest, ModelToolDefinition
 from .task_config import ProvidersConfig, ProviderTaskConfig, ProviderTraceConfig
 from .trace_record import ProviderTraceRecord
 from .usage import ProviderUsage
@@ -44,6 +45,8 @@ __all__ = [
     "ModelFunctionOutput",
     "ModelImagePart",
     "ModelInput",
+    "ModelGenerationOptions",
+    "ModelRefusalPart",
     "ModelInputItem",
     "ModelInputMessage",
     "ModelInputPart",

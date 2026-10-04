@@ -27,6 +27,7 @@ from alphaavatar.agents.utils.time import application_now
 from alphaavatar.core.cleanup import wait_for_cleanup
 
 from .schemas import ProviderTraceConfig, ProviderTraceRecord
+from .schemas.provider_item import ModelProviderItem
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,8 @@ def safe_task_dir_name(task_name: str) -> str:
 
 
 def to_jsonable(value: Any) -> Any:
+    if isinstance(value, ModelProviderItem):
+        return value.diagnostic()
     if value is None or isinstance(value, str | int | float | bool):
         return value
     if isinstance(value, BaseModel):
