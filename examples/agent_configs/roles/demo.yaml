@@ -211,7 +211,7 @@ memory:
           item_ops:
             - add
           candidate_source: consolidated_lookup
-          similarity_threshold: 0.82
+          similarity_threshold: 0.4
           max_candidates_per_item: 5
           timeout: 30.0
 

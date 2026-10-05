@@ -89,7 +89,16 @@ class MaintenanceConfig(BaseModel):
 
     candidate_source: CandidateSource = CandidateSource.CONSOLIDATED_LOOKUP
 
-    similarity_threshold: float = Field(default=0.82, ge=0.0, le=1.0)
+    similarity_threshold: float = Field(
+        default=0.4,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum cosine similarity between an atomic memory and a consolidated "
+            "memory for the latter to become a candidate. Depends on the embedding "
+            "model: related memories of one user measured 0.49-0.59."
+        ),
+    )
     max_candidates_per_item: int = Field(default=5, ge=1, le=50)
     timeout: float = Field(default=30.0, gt=0.0)
 
