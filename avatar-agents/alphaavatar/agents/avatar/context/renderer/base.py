@@ -13,7 +13,7 @@
 # limitations under the License.
 from typing import Protocol
 
-from alphaavatar.agents.avatar.context.schema import ContextBuildRequest, ContextBuildResult
+from alphaavatar.agents.avatar.context.schemas import ContextBuildRequest, ContextBuildResult
 from alphaavatar.agents.avatar.provider.enums import ModelInputType
 
 

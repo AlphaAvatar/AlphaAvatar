@@ -31,7 +31,7 @@ from alphaavatar.core.time import RuntimeTimeRange
 from alphaavatar.core.turn import TurnSnapshot
 
 from .context_builder import ContextBuilder
-from .schema import ContextBuildRequest, ContextBuildResult
+from .schemas import ContextBuildRequest, ContextBuildResult
 from .template import AvatarSysPromptTemplate, RuntimeStateTemplate
 
 if TYPE_CHECKING:

@@ -17,7 +17,7 @@ from dataclasses import replace
 from textwrap import indent
 from xml.sax.saxutils import escape, quoteattr
 
-from alphaavatar.agents.avatar.context.schema import ContextBuildRequest
+from alphaavatar.agents.avatar.context.schemas import ContextBuildRequest
 from alphaavatar.agents.avatar.provider.enums import (
     ModelInputType,
     ModelRole,

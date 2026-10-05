@@ -36,7 +36,7 @@ from .renderer import (
     TextRenderer,
     VLMRenderer,
 )
-from .schema import ContextBuildRequest, ContextBuildResult
+from .schemas import ContextBuildRequest, ContextBuildResult
 
 
 class ContextBuilder:

@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from alphaavatar.agents.avatar.context.schema import ContextBuildRequest, ContextBuildResult
+from alphaavatar.agents.avatar.context.schemas import ContextBuildRequest, ContextBuildResult
 
 from .op import render_current_input, replace_current
 
