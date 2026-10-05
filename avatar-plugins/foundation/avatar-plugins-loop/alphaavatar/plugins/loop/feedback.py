@@ -18,8 +18,9 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from alphaavatar.agents.avatar.loop.dependencies import EventSink
 from alphaavatar.agents.avatar.loop.enums import LoopEventKind, LoopState
-from alphaavatar.agents.avatar.loop.schemas import EventSink, LoopEvent, LoopIdentity
+from alphaavatar.agents.avatar.loop.schemas import LoopEvent, LoopIdentity
 from alphaavatar.core.cleanup import wait_for_cleanup
 
 logger = logging.getLogger(__name__)

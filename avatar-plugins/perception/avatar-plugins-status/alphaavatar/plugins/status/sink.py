@@ -85,7 +85,7 @@ class StatusVoiceOutput(StatusSinkBase):
         self._turn_id = turn_id
 
     async def emit(self, event: StatusEvent, text: str) -> str | None:
-        interaction = self._runtime.context.interaction_method
+        interaction = self._runtime.state.interaction_method
         if not bool(getattr(interaction, "audio_output", False)):
             return None
 

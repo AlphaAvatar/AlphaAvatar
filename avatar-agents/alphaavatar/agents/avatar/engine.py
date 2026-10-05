@@ -197,7 +197,7 @@ class AvatarEngine(Agent):
         return self._runtime.turn.commit_input(
             input_id=f"system:{uuid4().hex}",
             modality=TurnInputModality.SYSTEM,
-            context_ids=(self._runtime.context.context_id,),
+            context_ids=(self._runtime.state.context_id,),
             metadata={"source": "livekit_llm_node_system_trigger"},
         )
 
