@@ -91,7 +91,9 @@ class ExecutionBudget:
             preferences = ("medium", "high", "low") if careful else ("low", "minimal", "medium")
             if self.request.depth == "quick" or finalizing:
                 preferences = ("low", "minimal", "none", "medium")
+
             effort = next((level for level in preferences if level in supported), None)
+
         limit = self.request.limits
         return ModelGenerationOptions(
             max_output_tokens=limit.final_output_tokens if finalizing else limit.max_output_tokens,
