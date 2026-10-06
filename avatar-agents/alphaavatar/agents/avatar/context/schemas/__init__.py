@@ -11,6 +11,33 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .build import ContextBuildRequest, ContextBuildResult
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
 
-__all__ = ["ContextBuildRequest", "ContextBuildResult"]
+if TYPE_CHECKING:
+    from .build import ContextBuildRequest, ContextBuildResult
+    from .query import ContextContribution, ContextPrepareRequest, PreparedModelContext
+
+_EXPORTS = {
+    "ContextBuildRequest": ".build",
+    "ContextBuildResult": ".build",
+    "ContextContribution": ".query",
+    "ContextPrepareRequest": ".query",
+    "PreparedModelContext": ".query",
+}
+__all__ = [
+    "ContextBuildRequest",
+    "ContextBuildResult",
+    "ContextContribution",
+    "ContextPrepareRequest",
+    "PreparedModelContext",
+]
+
+
+def __getattr__(name: str) -> Any:
+    module = _EXPORTS.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(module, __name__), name)
+    globals()[name] = value
+    return value

@@ -13,10 +13,12 @@
 # limitations under the License.
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import replace
 from types import MappingProxyType
-from uuid import uuid4
+from typing import TYPE_CHECKING
+from xml.sax.saxutils import escape
 
 from alphaavatar.agents.avatar.provider.enums import ModelInputType, ModelRole
 from alphaavatar.agents.avatar.provider.schemas import (
@@ -30,50 +32,34 @@ from alphaavatar.agents.avatar.provider.schemas import (
 )
 from alphaavatar.agents.constants import RUNTIME_CONTEXT_TOOL_NAME
 
-from .renderer import (
-    RealtimeRenderer,
-    RendererRegistry,
-    TextRenderer,
-    VLMRenderer,
-)
-from .schemas import ContextBuildRequest, ContextBuildResult
+from .schemas import ContextBuildResult, ContextContribution, PreparedModelContext
+
+if TYPE_CHECKING:
+    from .renderer import RendererRegistry
+    from .schemas.build import ContextBuildRequest, ContextBuildResult
 
 
 class ContextBuilder:
-    """
-    Build one temporary model-facing input.
-
-    Responsibilities:
-    - remove stale runtime-context items;
-    - compact historical media;
-    - replace the system prompt;
-    - render the current user turn;
-    - inject fresh runtime context as a synthetic function call/output pair.
-
-    Persistent conversation history is never mutated.
-    """
+    """Compose model inputs; synthetic runtime items are projections, not history or tool work."""
 
     SYSTEM_MESSAGE_ID = "alphaavatar.system"
 
-    def __init__(
-        self,
-        registry: RendererRegistry | None = None,
-    ) -> None:
-        self._registry = registry or RendererRegistry()
+    def __init__(self, registry: RendererRegistry | None = None) -> None:
+        self._registry = registry
 
-        if registry is None:
-            self._registry.register(
-                input_type=ModelInputType.TEXT,
-                renderer=TextRenderer(),
-            )
-            self._registry.register(
-                input_type=ModelInputType.VLM,
-                renderer=VLMRenderer(),
-            )
-            self._registry.register(
-                input_type=ModelInputType.REALTIME,
-                renderer=RealtimeRenderer(),
-            )
+    def _renderers(self) -> RendererRegistry:
+        if self._registry is None:
+            from .renderer import RealtimeRenderer, RendererRegistry, TextRenderer, VLMRenderer
+
+            self._registry = RendererRegistry()
+            for kind, renderer in (
+                (ModelInputType.TEXT, TextRenderer()),
+                (ModelInputType.VLM, VLMRenderer()),
+                (ModelInputType.REALTIME, RealtimeRenderer()),
+            ):
+                self._registry.register(input_type=kind, renderer=renderer)
+
+        return self._registry
 
     @staticmethod
     def _is_runtime_context_item(item: object) -> bool:
@@ -83,61 +69,34 @@ class ContextBuilder:
         )
 
     @staticmethod
-    def _historical_media_placeholder(
-        *,
-        image_count: int,
-        audio_count: int,
-    ) -> ModelTextPart:
+    def _historical_media_placeholder(*, image_count: int, audio_count: int) -> ModelTextPart:
         return ModelTextPart(
-            "<historical_media "
-            'omitted="true" '
-            'current="false" '
-            f'image_count="{image_count}" '
-            f'audio_count="{audio_count}">'
+            '<historical_media omitted="true" current="false" '
+            f'image_count="{image_count}" audio_count="{audio_count}">'
             "This media belonged to an earlier message and is not current input."
             "</historical_media>"
         )
 
-    def _compact_historical_message(
-        self,
-        message: ModelInputMessage,
-    ) -> ModelInputMessage:
+    def _compact_historical_message(self, message: ModelInputMessage) -> ModelInputMessage:
         parts = []
-        image_count = 0
-        audio_count = 0
-
+        image_count = audio_count = 0
         for part in message.parts:
             if isinstance(part, ModelImagePart):
                 image_count += 1
-                continue
-
-            if isinstance(part, ModelAudioPart):
+            elif isinstance(part, ModelAudioPart):
                 audio_count += 1
-                continue
-
-            parts.append(part)
-
+            else:
+                parts.append(part)
         if image_count or audio_count:
             parts.append(
-                self._historical_media_placeholder(
-                    image_count=image_count,
-                    audio_count=audio_count,
-                )
+                self._historical_media_placeholder(image_count=image_count, audio_count=audio_count)
             )
 
         return replace(message, parts=tuple(parts))
 
-    def _prepare_base_input(
-        self,
-        model_input: ModelInput,
-        *,
-        current_input_id: str,
-    ) -> ModelInput:
+    def _prepare_base_input(self, model_input: ModelInput, *, current_input_id: str) -> ModelInput:
         items = []
-
         for item in model_input.items:
-            # Runtime context is current-answer-only and must be rebuilt for
-            # every model invocation, including retries and post-tool calls.
             if self._is_runtime_context_item(item):
                 continue
 
@@ -148,28 +107,16 @@ class ContextBuilder:
 
         return replace(model_input, items=tuple(items))
 
-    def _with_system_prompt(
-        self,
-        model_input: ModelInput,
-        *,
-        system_prompt: str,
-    ) -> ModelInput:
+    def _with_system_prompt(self, model_input: ModelInput, *, system_prompt: str) -> ModelInput:
         items = tuple(
             item
             for item in model_input.items
             if not (isinstance(item, ModelInputMessage) and item.role == ModelRole.SYSTEM)
         )
-
-        system_message = ModelInputMessage(
-            id=self.SYSTEM_MESSAGE_ID,
-            role=ModelRole.SYSTEM,
-            parts=(ModelTextPart(system_prompt),),
+        message = ModelInputMessage(
+            id=self.SYSTEM_MESSAGE_ID, role=ModelRole.SYSTEM, parts=(ModelTextPart(system_prompt),)
         )
-
-        return replace(
-            model_input,
-            items=(system_message, *items),
-        )
+        return replace(model_input, items=(message, *items))
 
     def _inject_runtime_context(
         self,
@@ -177,54 +124,73 @@ class ContextBuilder:
         *,
         input_id: str,
         runtime_context: str,
+        contributions: tuple[ContextContribution, ...] = (),
+        query_scope: str = "",
     ) -> ModelInput:
-        runtime_context = runtime_context.strip()
+        names = [item.name for item in contributions]
+        if len(set(names)) != len(names):
+            raise ValueError("Context contribution names must be unique")
 
-        if not runtime_context:
+        sections = [runtime_context.strip()] if runtime_context.strip() else []
+        sections.extend(
+            f"<{item.name}>\n{escape(item.content)}\n</{item.name}>" for item in contributions
+        )
+        if not sections:
             return model_input
 
-        call_id = f"alphaavatar_runtime_{uuid4().hex}"
+        positions = [
+            index
+            for index, item in enumerate(model_input.items)
+            if isinstance(item, ModelInputMessage) and item.id == input_id
+        ]
+        if len(positions) != 1:
+            raise ValueError("Runtime context requires exactly one current input message")
 
-        function_call = ModelFunctionCall(
+        seed = json.dumps([query_scope, input_id], ensure_ascii=False, separators=(",", ":"))
+        call_id = f"alphaavatar_runtime_{hashlib.sha256(seed.encode()).hexdigest()[:32]}"
+        call = ModelFunctionCall(
             id=call_id,
             call_id=call_id,
             name=RUNTIME_CONTEXT_TOOL_NAME,
-            arguments=json.dumps(
-                {
-                    "source": "alphaavatar",
-                    "scope": "current_answer_only",
-                },
-                ensure_ascii=False,
-            ),
-            metadata=MappingProxyType(
-                {
-                    "alphaavatar_runtime_context": True,
-                }
-            ),
+            arguments='{"source":"alphaavatar","scope":"current_query_only"}',
+            metadata=MappingProxyType({"alphaavatar_runtime_context": True}),
         )
-
-        function_output = ModelFunctionOutput(
+        output = ModelFunctionOutput(
             id=f"{call_id}:result",
             call_id=call_id,
             name=RUNTIME_CONTEXT_TOOL_NAME,
-            parts=(ModelTextPart(runtime_context),),
+            parts=(ModelTextPart("\n\n".join(sections)),),
             is_error=False,
         )
+        index = positions[0] + 1
+        return replace(
+            model_input,
+            items=(*model_input.items[:index], call, output, *model_input.items[index:]),
+        )
 
-        items = list(model_input.items)
-        insert_at = len(items)
+    def prepare(
+        self,
+        model_input: ModelInput,
+        *,
+        input_id: str,
+        runtime_context: str,
+        query_scope: str = "",
+        contributions: tuple[ContextContribution, ...] = (),
+        system_prompt: str | None = None,
+    ) -> PreparedModelContext:
+        base = self._prepare_base_input(model_input, current_input_id=input_id)
+        if system_prompt is not None:
+            base = self._with_system_prompt(base, system_prompt=system_prompt)
 
-        for index, item in enumerate(items):
-            if isinstance(item, ModelInputMessage) and item.id == input_id:
-                insert_at = index + 1
-                break
+        model_input = self._inject_runtime_context(
+            base,
+            input_id=input_id,
+            runtime_context=runtime_context,
+            contributions=contributions,
+            query_scope=query_scope,
+        )
 
-        items[insert_at:insert_at] = [
-            function_call,
-            function_output,
-        ]
-
-        return replace(model_input, items=tuple(items))
+        return PreparedModelContext(model_input)
 
     def build(
         self,
@@ -232,28 +198,21 @@ class ContextBuilder:
         request: ContextBuildRequest,
         system_prompt: str,
         runtime_context: str,
+        contributions: tuple[ContextContribution, ...] = (),
+        query_scope: str = "",
     ) -> ContextBuildResult:
-        base_input = self._prepare_base_input(
-            request.base_input,
-            current_input_id=request.input_id,
+        base = self._prepare_base_input(request.base_input, current_input_id=request.input_id)
+        base = self._with_system_prompt(base, system_prompt=system_prompt)
+        rendered = (
+            self._renderers()
+            .resolve(request.model_input_type)
+            .render(replace(request, base_input=base))
         )
-        base_input = self._with_system_prompt(
-            base_input,
-            system_prompt=system_prompt,
+        model_input = self._inject_runtime_context(
+            rendered.model_input,
+            input_id=request.input_id,
+            runtime_context=runtime_context,
+            contributions=contributions,
+            query_scope=query_scope,
         )
-
-        renderer = self._registry.resolve(request.model_input_type)
-        rendered = renderer.render(
-            replace(
-                request,
-                base_input=base_input,
-            )
-        )
-
-        return ContextBuildResult(
-            model_input=self._inject_runtime_context(
-                rendered.model_input,
-                input_id=request.input_id,
-                runtime_context=runtime_context,
-            )
-        )
+        return ContextBuildResult(model_input=model_input)

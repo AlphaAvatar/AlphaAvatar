@@ -13,31 +13,38 @@
 # limitations under the License.
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from alphaavatar.agents.avatar.provider.enums import ModelInputType
 from alphaavatar.agents.avatar.provider.schemas import ModelInput
 from alphaavatar.agents.avatar.vision import VisualFrameSelector
-from alphaavatar.agents.configs import AvatarConfig
 from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
 from alphaavatar.agents.utils.time import ParticipantTimeContext, format_user_time
 from alphaavatar.core.env import ObservationKind
-from alphaavatar.core.perception import (
-    PerceptionTemporalAligner,
-    TemporalAlignmentMode,
-)
+from alphaavatar.core.perception import PerceptionTemporalAligner, TemporalAlignmentMode
 from alphaavatar.core.time import RuntimeTimeRange
 from alphaavatar.core.turn import TurnSnapshot
 
 from .context_builder import ContextBuilder
-from .schemas import ContextBuildRequest, ContextBuildResult
+from .schemas import (
+    ContextBuildRequest,
+    ContextBuildResult,
+    ContextContribution,
+    ContextPrepareRequest,
+    PreparedModelContext,
+)
 from .template import AvatarSysPromptTemplate, RuntimeStateTemplate
 
 if TYPE_CHECKING:
+    from alphaavatar.agents.configs import AvatarConfig
     from alphaavatar.agents.memory import MemoryBase
     from alphaavatar.agents.persona import PersonaBase
     from alphaavatar.agents.runtime import AvatarRuntime
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,25 +83,20 @@ class AvatarContextManager:
         self._visual_selector = VisualFrameSelector()
         self._system_template = AvatarSysPromptTemplate(
             avatar_config.avatar.introduction,
-            interaction_method=self._runtime.state.interaction_method,
-            internal_capabilities=self._runtime.capability_registry.capabilities,
-            stable_behavior_rules=self._runtime.state.global_behavior_rules,
+            interaction_method=runtime.state.interaction_method,
+            internal_capabilities=runtime.capability_registry.capabilities,
+            stable_behavior_rules=runtime.state.global_behavior_rules,
         )
         self._runtime_state_template = RuntimeStateTemplate()
-
-        # context op
         self._context_builder = ContextBuilder()
 
     @property
     def initial_instructions(self) -> str:
         return self._system_template.instructions(
-            stable_persona=(self._persona.persona_content or DEFAULT_SYSTEM_VALUE)
+            stable_persona=self._persona.persona_content or DEFAULT_SYSTEM_VALUE
         )
 
-    def _events_for_model(
-        self,
-        turn_snapshot: TurnSnapshot,
-    ):
+    def _events_for_model(self, turn_snapshot: TurnSnapshot):
         if self._avatar_config.vision.input_mode == ModelInputType.REALTIME:
             return turn_snapshot.perception_events
 
@@ -136,6 +138,8 @@ class AvatarContextManager:
         base_input: ModelInput,
         *,
         turn_snapshot: TurnSnapshot,
+        contributions: tuple[ContextContribution, ...] = (),
+        query_scope: str = "",
     ) -> AvatarContext:
         self._refresh_runtime_context()
 
@@ -167,14 +171,14 @@ class AvatarContextManager:
                 input_id=turn_snapshot.input_id,
                 alignment=alignment,
                 visual_selection=visual_selection,
-                model_input_type=(self._avatar_config.vision.input_mode),
+                model_input_type=self._avatar_config.vision.input_mode,
             ),
             system_prompt=self._system_template.instructions(
-                stable_persona=(self._runtime.state.user_persona)
+                stable_persona=self._runtime.state.user_persona
             ),
-            runtime_context=self._runtime_state_template.render(
-                state_runtime=self._runtime.state,
-            ),
+            runtime_context=self._runtime_state_template.render(state_runtime=self._runtime.state),
+            contributions=contributions,
+            query_scope=query_scope or turn_snapshot.turn_id,
         )
 
         return AvatarContext(
@@ -182,3 +186,27 @@ class AvatarContextManager:
             input_kind=base_input.latest_input_kind,
             turn_snapshot=turn_snapshot,
         )
+
+    async def prepare(self, request: ContextPrepareRequest) -> PreparedModelContext:
+        """Resolve one committed input, capture once, then hand ownership to the execution."""
+        snapshot = self._runtime.turn.get(request.input_id)
+        if snapshot is None or snapshot.turn_id != request.turn_id:
+            raise ValueError("Context input does not identify the requested committed turn")
+
+        if request.context_id not in snapshot.context_ids:
+            raise ValueError("The committed turn does not belong to the requested context")
+
+        ready = await self._runtime.turn.wait_context_ready(snapshot)
+        if not ready:
+            logger.debug("Turn context readiness timed out turn_id=%s", snapshot.turn_id)
+        if request.context_id != self._runtime.state.context_id:
+            raise ValueError("State no longer belongs to the requested context")
+
+        context = self.build(
+            request.input,
+            turn_snapshot=snapshot,
+            contributions=request.contributions,
+            query_scope=f"{request.context_id}:{request.turn_id}",
+        )
+
+        return PreparedModelContext(context.model_input)
