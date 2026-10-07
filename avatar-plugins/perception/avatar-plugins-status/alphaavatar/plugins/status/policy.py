@@ -23,7 +23,6 @@ from alphaavatar.agents.status import (
     StatusPriority,
     StatusType,
 )
-from alphaavatar.agents.tools.deepresearch_api import DeepResearchOp
 
 
 class DefaultStatusPolicy(StatusPolicyBase):
@@ -102,12 +101,7 @@ class DefaultStatusPolicy(StatusPolicyBase):
             return True
 
         if event.source == AvatarModule.DEEPRESEARCH:
-            return event.type == StatusType.TOOL_START and event.stage in {
-                DeepResearchOp.SEARCH,
-                DeepResearchOp.RESEARCH,
-                DeepResearchOp.SCRAPE,
-                DeepResearchOp.DOWNLOAD,
-            }
+            return event.type == StatusType.TOOL_START
 
         if event.source == AvatarModule.MCP and event.stage == "parallel_tools":
             return True

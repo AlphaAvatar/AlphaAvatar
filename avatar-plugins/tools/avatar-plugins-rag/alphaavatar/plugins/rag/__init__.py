@@ -11,44 +11,38 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from alphaavatar.agents.runtime import SessionRuntime
-from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
-from alphaavatar.agents.tools import RAGAPI
+from __future__ import annotations
 
-from .log import logger
-from .rag_anything import RAGAnythingTool
+from typing import TYPE_CHECKING, Any
+
+from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
+
 from .version import __version__
 
-__all__ = [
-    "__version__",
-]
+if TYPE_CHECKING:
+    from alphaavatar.agents.runtime import AvatarRuntime
+    from alphaavatar.agents.status import StatusEmitter
+    from alphaavatar.agents.tools import ToolBase
 
 
-class RAGAnythingPlugin(AvatarModulePlugin):
+class RAGToolPlugin(AvatarModulePlugin):
     def __init__(self) -> None:
-        super().__init__(__name__, __version__, __package__, logger)  # type: ignore
+        super().__init__("RAG", __version__, __name__)
 
     def get_plugin(
         self,
-        session_runtime: SessionRuntime,
-        init_config: dict,
-        *args,
-        **kwargs,
-    ) -> RAGAPI:
-        try:
-            status_emitter = kwargs.pop("status_emitter", None)
+        *,
+        runtime: AvatarRuntime,
+        init_config: dict[str, Any],
+        status_emitter: StatusEmitter | None = None,
+    ) -> ToolBase:
+        from .service import RAGService
 
-            rag_obj = RAGAnythingTool(
-                session_path=session_runtime.session_path, **init_config, **kwargs
-            )
-        except (ImportError, ModuleNotFoundError) as e:
-            raise ImportError(
-                "The 'raganything[default]' RAG plugin is required but is not installed.\n"
-                "Install it via: `pip install alphaavatar-plugins-rag`"
-            ) from e
-
-        return RAGAPI(rag_object=rag_obj, status_emitter=status_emitter)
+        return RAGService(runtime=runtime, init_config=init_config, status_emitter=status_emitter)
 
 
-# plugin init
-AvatarModulePlugin.register(AvatarModule.RAG, "default", RAGAnythingPlugin())
+AvatarModulePlugin.register(
+    AvatarModule.RAG,
+    "default",
+    RAGToolPlugin(),
+)

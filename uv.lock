@@ -321,11 +321,19 @@ requires-dist = [
 name = "alpha-avatar-plugins-deepresearch"
 source = { editable = "avatar-plugins/tools/avatar-plugins-deepresearch" }
 dependencies = [
-    { name = "tavily" },
+    { name = "alpha-avatar-agents" },
+    { name = "alpha-avatar-core" },
+    { name = "httpx" },
+    { name = "pydantic" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "tavily" }]
+requires-dist = [
+    { name = "alpha-avatar-agents", editable = "avatar-agents" },
+    { name = "alpha-avatar-core", editable = "avatar-core" },
+    { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "pydantic", specifier = ">=2,<3" },
+]
 
 [[package]]
 name = "alpha-avatar-plugins-loop"
@@ -347,11 +355,19 @@ requires-dist = [
 name = "alpha-avatar-plugins-mcp"
 source = { editable = "avatar-plugins/tools/avatar-plugins-mcp" }
 dependencies = [
+    { name = "alpha-avatar-agents" },
+    { name = "alpha-avatar-core" },
     { name = "mcp" },
+    { name = "pydantic" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "mcp", specifier = ">=1.24.0,<2" }]
+requires-dist = [
+    { name = "alpha-avatar-agents", editable = "avatar-agents" },
+    { name = "alpha-avatar-core", editable = "avatar-core" },
+    { name = "mcp", specifier = ">=1.24.0,<2" },
+    { name = "pydantic", specifier = ">=2,<3" },
+]
 
 [[package]]
 name = "alpha-avatar-plugins-memory"
@@ -428,13 +444,19 @@ provides-extras = ["langchain", "openai"]
 name = "alpha-avatar-plugins-rag"
 source = { editable = "avatar-plugins/tools/avatar-plugins-rag" }
 dependencies = [
+    { name = "alpha-avatar-agents" },
+    { name = "alpha-avatar-core" },
     { name = "docling" },
+    { name = "pydantic" },
     { name = "raganything", extra = ["all"] },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "alpha-avatar-agents", editable = "avatar-agents" },
+    { name = "alpha-avatar-core", editable = "avatar-core" },
     { name = "docling" },
+    { name = "pydantic", specifier = ">=2,<3" },
     { name = "raganything", extras = ["all"], specifier = "==1.2.8" },
 ]
 
@@ -4508,16 +4530,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/ec/fe/802052aecb21e3797
 wheels = [
     { url = "https://files.pythonhosted.org/packages/40/44/4a5f08c96eb108af5cb50b41f76142f0afa346dfa99d5296fe7202a11854/tabulate-0.9.0-py3-none-any.whl", hash = "sha256:024ca478df22e9340661486f85298cff5f6dcdba14f3813e8830015b9ed1948f", size = 35252, upload-time = "2022-10-06T17:21:44.262Z" },
 ]
-
-[[package]]
-name = "tavily"
-version = "1.1.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "requests" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/63/ba/cd74acdb0537a02fb5657afbd5fd5a27a298c85fc27f544912cc001377bb/tavily-1.1.0.tar.gz", hash = "sha256:7730bf10c925dc0d0d84f27a8979de842ecf88c2882183409addd855e27d8fab", size = 5081, upload-time = "2025-10-31T09:32:40.555Z" }
 
 [[package]]
 name = "tenacity"

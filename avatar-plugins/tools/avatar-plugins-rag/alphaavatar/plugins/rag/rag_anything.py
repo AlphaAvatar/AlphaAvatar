@@ -11,205 +11,129 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import asyncio
-import inspect
 import json
 import os
-import pathlib
-from typing import Any, Literal
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal
 
-from lightrag import LightRAG
-from lightrag.kg.shared_storage import initialize_pipeline_status
-from lightrag.llm.openai import openai_complete_if_cache, openai_embed
-from lightrag.utils import EmbeddingFunc
-from livekit.agents import NOT_GIVEN, NotGivenOr, RunContext
-from raganything import RAGAnything, RAGAnythingConfig
+from alphaavatar.agents.tools.schemas import ToolError
+from alphaavatar.core.cleanup import wait_for_cleanup
 
-from alphaavatar.agents.tools import RAGBase
-from alphaavatar.agents.utils import AsyncLoopThread, gpu_available
-from alphaavatar.agents.utils.files.work_dirs import SessionPath
-
-from .log import logger
-
-RAG_INSTANCE = "rag_anything"
-MAX_WORKERS = 4
-
-DocParserType = Literal["mineru", "docling"]
+if TYPE_CHECKING:
+    from alphaavatar.agents.utils.files.work_dirs import SessionPath
 
 
-async def _maybe_await(v):
-    if inspect.isawaitable(v):
-        return await v
-    return v
+class RAGAnythingTool:
+    """One event-loop owner for initialization, queries, indexing and storage finalization."""
 
-
-class RAGSlot:
-    def __init__(
-        self,
-        *,
-        rag: RAGAnything,
-        user_id: str,
-        working_dir: pathlib.Path,
-        index_dir: pathlib.Path,
-        artifacts_dir: pathlib.Path,
-    ) -> None:
-        self.rag = rag
-        self.user_id = user_id
-        self.working_dir = working_dir
-        self.index_dir = index_dir
-        self.artifacts_dir = artifacts_dir
-
-
-class RAGAnythingTool(RAGBase):
     def __init__(
         self,
         *,
         session_path: SessionPath,
-        doc_parser: DocParserType = "mineru",
-        openai_api_key: NotGivenOr[str] = NOT_GIVEN,
-        openai_base_url: NotGivenOr[str] = NOT_GIVEN,
-        **kwargs,
-    ):
-        super().__init__()
-
+        doc_parser: Literal["mineru", "docling"] = "mineru",
+        openai_api_key: str | None = None,
+        openai_base_url: str | None = None,
+    ) -> None:
+        if doc_parser not in {"mineru", "docling"}:
+            raise ValueError("Unknown document parser")
         self.session_path = session_path
+        self._parser = doc_parser
+        self._key = openai_api_key or os.getenv("OPENAI_API_KEY")
+        self._base_url = openai_base_url or os.getenv("OPENAI_BASE_URL")
+        self._load_task: asyncio.Task[Any] | None = None
+        self._close_task: asyncio.Task[None] | None = None
+        self._lightrag = None
+        self._operation_lock = asyncio.Lock()
 
-        if doc_parser == "mineru":
-            if not gpu_available():
-                logger.warning(
-                    "[RAGAnythingTool] doc_parser='mineru' requested but no GPU detected. "
-                    "Falling back to 'docling'."
-                )
-                self._doc_parser: DocParserType = "docling"
-            else:
-                logger.info("[RAGAnythingTool] Using 'mineru' parser with GPU support.")
-                self._doc_parser = "mineru"
-        else:
-            self._doc_parser = doc_parser
+    @staticmethod
+    def _dependencies():
+        from lightrag import LightRAG
+        from lightrag.kg.shared_storage import initialize_pipeline_status
+        from lightrag.llm.openai import openai_complete_if_cache, openai_embed
+        from lightrag.utils import EmbeddingFunc
+        from raganything import RAGAnything, RAGAnythingConfig
 
-        self._openai_api_key = openai_api_key or (os.getenv("OPENAI_API_KEY") or NOT_GIVEN)
-        self._openai_base_url = openai_base_url or (os.getenv("OPENAI_BASE_URL") or NOT_GIVEN)
-
-        self._rag: RAGAnything | None = None
-        self._previous_rags: list[RAGSlot] = []
-
-        self._load_future = None
-        self._load_error: Exception | None = None
-
-        self._loop_thread = AsyncLoopThread(name="raganything-loop")
-
-        try:
-            self._load_future = self._loop_thread.submit(self._load_instance())
-        except Exception as e:
-            self._load_error = e
-            logger.warning("[RAGAnythingTool] Background load submit failed: %s", e)
-
-    @property
-    def working_dir(self) -> pathlib.Path:
-        working_dir, _, _ = self._current_rag_paths()
-        return working_dir
-
-    @property
-    def working_dir_index(self) -> pathlib.Path:
-        _, index_dir, _ = self._current_rag_paths()
-        return index_dir
-
-    @property
-    def working_dir_artifacts(self) -> pathlib.Path:
-        _, _, artifacts_dir = self._current_rag_paths()
-        return artifacts_dir
-
-    def _current_rag_paths(self) -> tuple[str, pathlib.Path, pathlib.Path, pathlib.Path]:
-        working_dir = self.session_path.artifacts_dir / RAG_INSTANCE
-        index_dir = working_dir / "index"
-        artifacts_dir = working_dir / "artifacts"
-
-        index_dir.mkdir(parents=True, exist_ok=True)
-        artifacts_dir.mkdir(parents=True, exist_ok=True)
-
-        return working_dir, index_dir, artifacts_dir
-
-    async def _load_instance(self) -> RAGAnything:
-        working_dir, index_dir, artifacts_dir = self._current_rag_paths()
-
-        async def llm_model_func(
-            prompt: str,
-            system_prompt: str | None = None,
-            history_messages: list[dict[str, Any]] | None = None,
-            **kwargs,
-        ):
-            return await _maybe_await(
-                openai_complete_if_cache(
-                    "gpt-4o-mini",
-                    prompt,
-                    system_prompt=system_prompt,
-                    history_messages=history_messages or [],
-                    api_key=self._openai_api_key,
-                    base_url=self._openai_base_url,
-                    **kwargs,
-                )
-            )
-
-        async def embedding_func(texts: list[str]):
-            return await _maybe_await(
-                openai_embed(
-                    texts,
-                    model="text-embedding-3-large",
-                    api_key=self._openai_api_key,
-                    base_url=self._openai_base_url,
-                )
-            )
-
-        # Create/load LightRAG instance with your configuration
-        if os.path.exists(index_dir) and os.listdir(index_dir):
-            logger.info("[RAGAnythingTool] ✅ Found existing LightRAG instance, loading...")
-        else:
-            logger.info(
-                "[RAGAnythingTool] ❌ No existing LightRAG instance found, will create new one"
-            )
-
-        lightrag_instance = LightRAG(
-            working_dir=index_dir,
-            llm_model_func=llm_model_func,
-            embedding_func=EmbeddingFunc(
-                embedding_dim=3072,
-                max_token_size=8192,
-                func=embedding_func,
-            ),
+        return (
+            LightRAG,
+            initialize_pipeline_status,
+            openai_complete_if_cache,
+            openai_embed,
+            EmbeddingFunc,
+            RAGAnything,
+            RAGAnythingConfig,
         )
 
-        # Initialize storage (this will load existing data if available)
-        await lightrag_instance.initialize_storages()
-        await initialize_pipeline_status()
+    @staticmethod
+    def _observe(task: asyncio.Task[Any]) -> None:
+        if not task.cancelled():
+            task.exception()
 
-        # Define vision model function for image processing
-        async def vision_model_func(
-            prompt: str,
-            system_prompt: str | None = None,
-            history_messages: list[dict[str, Any]] | None = None,
-            image_data: str | None = None,
-            messages: list[dict[str, Any]] | None = None,
+    @staticmethod
+    def _validate_source(data_source: str) -> None:
+        if data_source != "all":
+            raise ToolError("This RAG backend currently exposes only data_source='all'")
+
+    def _paths(self) -> tuple[Path, Path, Path]:
+        root = self.session_path.artifacts_dir / "rag_anything"
+        index, artifacts = root / "index", root / "artifacts"
+        index.mkdir(parents=True, exist_ok=True)
+        artifacts.mkdir(parents=True, exist_ok=True)
+        return root, index, artifacts
+
+    async def _load(self):
+        (
+            LightRAG,
+            initialize_pipeline_status,
+            complete,
+            embed,
+            EmbeddingFunc,
+            RAGAnything,
+            RAGAnythingConfig,
+        ) = await asyncio.to_thread(self._dependencies)
+        root, index, _ = await asyncio.to_thread(self._paths)
+        parser = self._parser
+        if parser == "mineru":
+            from alphaavatar.agents.utils import gpu_available
+
+            if not await asyncio.to_thread(gpu_available):
+                parser = "docling"
+        options = {}
+        if self._key is not None:
+            options["api_key"] = self._key
+        if self._base_url is not None:
+            options["base_url"] = self._base_url
+
+        async def llm(prompt, system_prompt=None, history_messages=None, **kwargs):
+            return await complete(
+                "gpt-4o-mini",
+                prompt,
+                system_prompt=system_prompt,
+                history_messages=history_messages or [],
+                **options,
+                **kwargs,
+            )
+
+        async def embedding(texts):
+            return await embed(texts, model="text-embedding-3-large", **options)
+
+        async def vision(
+            prompt,
+            system_prompt=None,
+            history_messages=None,
+            image_data=None,
+            messages=None,
             **kwargs,
         ):
-            # If messages format is provided (for multimodal VLM enhanced query), use it directly
             if messages:
-                return await _maybe_await(
-                    openai_complete_if_cache(
-                        "gpt-4o",
-                        "",
-                        messages=messages,
-                        api_key=self._openai_api_key,
-                        base_url=self._openai_base_url,
-                        **kwargs,
-                    )
-                )
-
-            # Traditional single image format
+                return await complete("gpt-4o", "", messages=messages, **options, **kwargs)
             if image_data:
-                mm_messages = []
+                parts = []
                 if system_prompt:
-                    mm_messages.append({"role": "system", "content": system_prompt})
-                mm_messages.append(
+                    parts.append({"role": "system", "content": system_prompt})
+                parts.append(
                     {
                         "role": "user",
                         "content": [
@@ -221,209 +145,77 @@ class RAGAnythingTool(RAGBase):
                         ],
                     }
                 )
-                return await _maybe_await(
-                    openai_complete_if_cache(
-                        "gpt-4o",
-                        "",
-                        messages=mm_messages,
-                        api_key=self._openai_api_key,
-                        base_url=self._openai_base_url,
-                        **kwargs,
-                    )
-                )
+                return await complete("gpt-4o", "", messages=parts, **options, **kwargs)
+            return await llm(prompt, system_prompt, history_messages, **kwargs)
 
-            # Pure text format
-            return await llm_model_func(
-                prompt, system_prompt=system_prompt, history_messages=history_messages
-            )
-
-        # Now use existing LightRAG instance to initialize RAGAnything
-        rag = RAGAnything(
-            config=RAGAnythingConfig(
-                working_dir=working_dir,
-                parser=self._doc_parser,
-            ),
-            lightrag=lightrag_instance,
-            vision_model_func=vision_model_func,
+        # Preserve the existing backend model and index settings; no change to stored embeddings.
+        self._lightrag = LightRAG(
+            working_dir=index,
+            llm_model_func=llm,
+            embedding_func=EmbeddingFunc(embedding_dim=3072, max_token_size=8192, func=embedding),
+        )
+        await self._lightrag.initialize_storages()
+        await initialize_pipeline_status()
+        return RAGAnything(
+            config=RAGAnythingConfig(working_dir=root, parser=parser),
+            lightrag=self._lightrag,
+            vision_model_func=vision,
         )
 
-        self._rag = rag
+    async def _ensure_loaded(self):
+        if self._close_task is not None:
+            raise RuntimeError("RAG service is closed")
+        if self._load_task is None:
+            self._load_task = asyncio.create_task(self._load(), name="rag_load")
+            self._load_task.add_done_callback(self._observe)
+        # A cancelled query does not cancel shared initialization or create a second event loop.
+        result = await asyncio.shield(self._load_task)
+        if self._close_task is not None:
+            raise RuntimeError("RAG service closed during initialization")
+        return result
 
-        logger.info(
-            "[RAGAnythingTool] RAGAnything instance loaded working_dir=%s",
-            working_dir,
-        )
-
-        return rag
-
-    async def _await_thread_future(self, future):
-        if future is None:
-            return None
-
-        if inspect.isawaitable(future):
-            return await future
-
-        return await asyncio.wrap_future(future)
-
-    async def _ensure_loaded(self) -> RAGAnything:
-        """
-        Wait for background initialization if it is still running.
-        If background initialization was not submitted or failed, initialize inline.
-        """
-        if self._rag is not None:
-            return self._rag
-
-        if self._load_future is not None:
-            try:
-                await self._await_thread_future(self._load_future)
-            except Exception as e:
-                self._load_error = e
-                self._load_future = None
-                logger.exception("[RAGAnythingTool] Background RAG load failed")
-                raise RuntimeError(f"RAGAnything instance failed to initialize: {e}") from e
-
-            if self._rag is not None:
-                return self._rag
-
-        try:
-            await self._load_instance()
-        except Exception as e:
-            self._load_error = e
-            logger.exception("[RAGAnythingTool] Failed to initialize RAGAnything instance")
-            raise RuntimeError(f"RAGAnything instance failed to initialize: {e}") from e
-
-        if self._rag is None:
-            raise RuntimeError("RAGAnything instance initialization completed but _rag is None.")
-
-        return self._rag
-
-    async def query(
-        self,
-        *,
-        query: str,
-        ctx: RunContext | None = None,
-        data_source: str = "all",
-    ) -> str:
-        if query is NOT_GIVEN:
-            logger.warning("[RAGAnythingTool] Please provide valid query for [query] op!")
-            return "Empty result because of invalid query."
-
-        logger.info(f"[RAGAnythingTool] query func by query: {query}")
-
-        current_rag = await self._ensure_loaded()
-
-        sections: list[str] = []
-        errors: list[str] = []
-
-        try:
-            current_result = await current_rag.aquery(query, mode="hybrid")
-            if current_result:
-                sections.append(
-                    "## Current user knowledge base\n"
-                    "This result comes from the currently resolved user workspace. "
-                    "Prefer it over temporary session results if there is any conflict.\n\n"
-                    f"{current_result}"
-                )
-        except Exception as e:
-            logger.warning("[RAGAnythingTool] current RAG query failed: %s", e)
-            errors.append(f"- Current user knowledge base query failed: {e}")
-
-        for idx, slot in enumerate(self._previous_rags):
-            try:
-                previous_result = await slot.rag.aquery(query, mode="hybrid")
-                if previous_result:
-                    sections.append(
-                        f"## Temporary session knowledge base {idx + 1}\n"
-                        "This result comes from a temporary workspace created before the "
-                        "user identity was resolved. Treat it as relevant to the current "
-                        "conversation, but lower priority than the current user workspace.\n\n"
-                        f"{previous_result}"
-                    )
-            except Exception as e:
-                logger.warning(
-                    "[RAGAnythingTool] previous RAG query failed user_id=%s error=%s",
-                    slot.user_id,
-                    e,
-                )
-                errors.append(
-                    f"- Temporary session knowledge base query failed for user_id={slot.user_id}: {e}"
-                )
-
-        if not sections and not errors:
-            return (
-                "No relevant result was found in the current user knowledge base "
-                "or temporary session knowledge base."
-            )
-
-        output_parts: list[str] = [
-            "# RAG Query Results",
-            "",
-            f"Query: {query}",
-            "",
-            "Use these results as supporting context. Prefer the current user knowledge base "
-            "when it conflicts with temporary session results.",
-            "",
-        ]
-
-        output_parts.extend(sections)
-
-        if errors:
-            output_parts.append("## Query Errors")
-            output_parts.append("\n".join(errors))
-
-        return "\n\n".join(output_parts)
-
-    async def indexing(
-        self,
-        *,
-        file_paths_or_dir: list[str],
-        ctx: RunContext | None = None,
-        data_source: str = "all",
-    ) -> str:
+    async def query(self, *, query: str, data_source: str = "all") -> str:
+        self._validate_source(data_source)
         rag = await self._ensure_loaded()
+        async with self._operation_lock:
+            result = await rag.aquery(query, mode="hybrid")
+        if not result:
+            return "No relevant result was found in the session knowledge base."
+        return str(result)
 
-        message_logs = {}
-        for file_path_or_dir in file_paths_or_dir:
-            if os.path.isfile(file_path_or_dir):
-                logger.info(
-                    f"[RAGAnythingTool] Indexing func begin to process document [{file_path_or_dir}] ..."
-                )
-                await rag.process_document_complete(
-                    file_path=file_path_or_dir,
-                    output_dir=str(self.working_dir_artifacts),
-                )
-                message_logs[file_path_or_dir] = (
-                    f"Indexed document [{file_path_or_dir}] successfully."
-                )
-            elif os.path.isdir(file_path_or_dir):
-                logger.info(
-                    f"[RAGAnythingTool] Indexing func begin to process folder [{file_path_or_dir}] ..."
-                )
-                await rag.process_folder_complete(
-                    folder_path=file_path_or_dir,
-                    output_dir=str(self.working_dir_artifacts),
-                    file_extensions=[".pdf", ".docx", ".pptx"],
-                    recursive=True,
-                    max_workers=MAX_WORKERS,
-                )
-                message_logs[file_path_or_dir] = (
-                    f"Indexed folder [{file_path_or_dir}] successfully."
-                )
-            else:
-                logger.warning(
-                    f"[RAGAnythingTool] Indexing func found invalid path [{file_path_or_dir}], skipped."
-                )
-                message_logs[file_path_or_dir] = (
-                    f"Indexing func found invalid path [{file_path_or_dir}], skipped."
-                )
+    async def indexing(self, *, file_paths_or_dir: list[str], data_source: str = "all") -> str:
+        self._validate_source(data_source)
+        rag = await self._ensure_loaded()
+        _, _, artifacts = await asyncio.to_thread(self._paths)
+        results = {}
+        async with self._operation_lock:
+            for value in file_paths_or_dir:
+                path = Path(value)
+                is_file, is_dir = await asyncio.to_thread(lambda p=path: (p.is_file(), p.is_dir()))
+                if is_file:
+                    await rag.process_document_complete(file_path=value, output_dir=str(artifacts))
+                    results[value] = "Indexed document successfully."
+                elif is_dir:
+                    await rag.process_folder_complete(
+                        folder_path=value,
+                        output_dir=str(artifacts),
+                        recursive=True,
+                        file_extensions=[".pdf", ".docx", ".pptx"],
+                        max_workers=4,
+                    )
+                    results[value] = "Indexed folder successfully."
+                else:
+                    results[value] = "Skipped: path does not exist."
+        return json.dumps(results, ensure_ascii=False, indent=2)
 
-        return json.dumps(message_logs, ensure_ascii=False, indent=2)
+    async def _close(self) -> None:
+        if self._load_task is not None:
+            await asyncio.gather(self._load_task, return_exceptions=True)
+        if self._lightrag is not None:
+            await self._lightrag.finalize_storages()
+            self._lightrag = None
 
-    def close(self):
-        self._previous_rags.clear()
-        self._rag = None
-
-        try:
-            self._loop_thread.stop()
-        except Exception as e:
-            logger.warning("[RAGAnythingTool] Failed to stop loop thread: %s", e)
+    async def aclose(self) -> None:
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close(), name="rag_close")
+        await wait_for_cleanup(self._close_task)

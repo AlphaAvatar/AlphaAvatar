@@ -5,29 +5,16 @@ build-backend = "hatchling.build"
 [project]
 name = "alpha-avatar-plugins-mcp"
 dynamic = ["version"]
-description = "AlphaAvatar Framework plugin for MCP service"
+description = "AlphaAvatar MCP tool plugin"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11,<3.12"
-keywords = ["llm", "agents", "AI", "real world", "mcp", "tools"]
-classifiers = [
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
-    "Topic :: Multimedia :: Sound/Audio",
-    "Topic :: Multimedia :: Video",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Programming Language :: Python :: 3 :: Only",
-]
 dependencies = [
-  "mcp>=1.24.0,<2",
+    "alpha-avatar-core",
+    "alpha-avatar-agents",
+    "pydantic>=2,<3",
+    "mcp>=1.24.0,<2",
 ]
-
-[project.optional-dependencies]
 
 [project.urls]
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"
@@ -39,4 +26,4 @@ path = "alphaavatar/plugins/mcp/version.py"
 packages = ["alphaavatar"]
 
 [tool.hatch.build.targets.sdist]
-include = ["alphaavatar", "README.md", "LICENSE"]
+include = ["alphaavatar", "README.md", "pyproject.toml"]

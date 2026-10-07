@@ -20,7 +20,6 @@ from typing import Any
 
 from livekit.agents import Agent, llm
 
-from alphaavatar.agents.avatar.context.internal_tools import get_runtime_context_tool
 from alphaavatar.agents.configs import AvatarConfig
 from alphaavatar.agents.entrypoints.livekit import LiveKitTurnResponseSink
 from alphaavatar.agents.log import logger
@@ -28,9 +27,11 @@ from alphaavatar.agents.memory import MemoryBase
 from alphaavatar.agents.persona import PersonaBase
 from alphaavatar.agents.router import InteractionRouterBase
 from alphaavatar.agents.runtime import AvatarRuntime, SessionRuntime
+from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
 from alphaavatar.agents.runtime.lifecycle import LifecyclePhase, RuntimePluginLifecycle
 from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.agents.status import StatusEmitter, StatusEvent, StatusType
+from alphaavatar.agents.tools import ToolBase
 
 from .patches import init_avatar_patches
 from .turn_controller import AvatarTurnController
@@ -43,6 +44,7 @@ class AvatarEngine(Agent):
         *,
         avatar_config: AvatarConfig,
         runtime: AvatarRuntime,
+        tool_adapter: Callable[[AvatarCapabilityRegistry], list[llm.Tool]],
     ) -> None:
         self._avatar_config = avatar_config
         self._runtime = runtime
@@ -50,7 +52,6 @@ class AvatarEngine(Agent):
         foundation = runtime.foundation
         if foundation is None or not foundation.loop.ready:
             raise RuntimeError("AvatarEngine requires an initialized Foundation Loop")
-
         self._loop = foundation.loop
         voice_tts = foundation.voice.tts
         if voice_tts is not None and not isinstance(voice_tts, LiveKitTTSAdapter):
@@ -63,14 +64,13 @@ class AvatarEngine(Agent):
             runtime=runtime, avatar_id=avatar_config.avatar.id
         )
         self._persona: PersonaBase = avatar_config.persona.get_plugin(runtime)
-        self._tools: list[llm.FunctionTool | llm.RawFunctionTool] = avatar_config.tools.get_tools(
+        self._tool_plugins: tuple[ToolBase, ...] = avatar_config.tools.get_tools(
             runtime,
             status_emitter=self._status,
         )
-        self._tools.append(get_runtime_context_tool())
 
         # Step 2: initialize runtime capability.
-        self._runtime.capability_registry.collect(self._memory, self._persona)
+        self._runtime.capability_registry.collect(self._memory, self._persona, *self._tool_plugins)
 
         # Step 3: bind memory and persona to runtime context.
         self._context_manager = foundation.context
@@ -83,7 +83,7 @@ class AvatarEngine(Agent):
             vad=None,
             tts=voice_tts.provider if voice_tts is not None else None,
             allow_interruptions=avatar_config.voice.allow_interruptions,
-            tools=self._tools,
+            tools=tool_adapter(self._runtime.capability_registry),
         )
 
         # Step4: Avatar Turn Controller init
@@ -95,6 +95,10 @@ class AvatarEngine(Agent):
         # Step 5: manage Agent-owned consumers before enabling the Router.
         self._plugin_lifecycle = RuntimePluginLifecycle(
             phases=(
+                LifecyclePhase.create(
+                    "avatar-tools",
+                    self._tool_plugins,
+                ),
                 LifecyclePhase.create(
                     "avatar-plugins-perception",
                     (

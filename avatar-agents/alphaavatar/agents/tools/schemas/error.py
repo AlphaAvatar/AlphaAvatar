@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,8 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tool contracts only. Implementations and capability descriptions belong to plugins."""
+from ..enums import ToolErrorCode
 
-from .base import ToolBase
 
-__all__ = ["ToolBase"]
+class ToolError(RuntimeError):
+    """An intentional, model-safe tool failure; never an SDK exception."""
+
+    def __init__(
+        self, message: str, *, code: ToolErrorCode = ToolErrorCode.EXECUTION_FAILED
+    ) -> None:
+        super().__init__(message)
+        self.code = code

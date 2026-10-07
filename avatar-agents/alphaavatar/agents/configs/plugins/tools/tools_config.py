@@ -18,22 +18,15 @@ import json
 import os
 from typing import TYPE_CHECKING, Any
 
-from livekit.agents import llm
 from pydantic import BaseModel, ConfigDict, Field
 
-from alphaavatar.agents.log import logger
-from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 from alphaavatar.agents.tools import ToolBase
 from alphaavatar.agents.utils import resolve_env_placeholders
 
 if TYPE_CHECKING:
+    from alphaavatar.agents.runtime import AvatarRuntime
     from alphaavatar.agents.status import StatusEmitter
-
-
-importlib.import_module("alphaavatar.plugins.deepresearch")
-importlib.import_module("alphaavatar.plugins.mcp")
-importlib.import_module("alphaavatar.plugins.rag")
 
 
 class ToolPluginConfig(BaseModel):
@@ -90,67 +83,57 @@ class ToolsConfig(BaseModel):
     rag: ToolPluginConfig = Field(default_factory=ToolPluginConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
 
-    def model_post_init(self, __context):
-        if self.mcp.enabled and len(self.mcp.servers) > 0:
+    def model_post_init(self, __context: Any) -> None:
+        # Keep worker configuration available before inference-runner preparation.
+        # This remains the existing single worker-configuration scope, not per-call state.
+        if self.mcp.enabled and self.mcp.plugin is not None and self.mcp.servers:
             os.environ["MCP_VDB_TYPE"] = "lancedb"
             os.environ["MCP_VDB_CONFIG"] = json.dumps(self.mcp.vdb_config)
-
-            mcp_servers = resolve_env_placeholders(self.mcp.servers)
-            os.environ["MCP_SERVERS"] = json.dumps(mcp_servers)
+            os.environ["MCP_SERVERS"] = json.dumps(resolve_env_placeholders(self.mcp.servers))
+            importlib.import_module("alphaavatar.plugins.mcp")
 
     def get_tools(
         self,
         runtime: AvatarRuntime,
         *,
         status_emitter: StatusEmitter | None = None,
-    ) -> list[llm.FunctionTool | llm.RawFunctionTool]:
-        """Returns the available tools based on the configuration."""
-        tools: list[llm.FunctionTool | llm.RawFunctionTool] = []
-
-        # DeepResearch Tool
-        if self.deepresearch.plugin is not None:
-            deepresearch_tool: ToolBase | None = AvatarModulePlugin.create(
-                AvatarModule.DEEPRESEARCH,
-                self.deepresearch.plugin,
-                session_runtime=runtime.session,
-                status_emitter=status_emitter,
-                init_config=self.deepresearch.init_config,
-            )
-            if deepresearch_tool:
-                tools.append(deepresearch_tool.tool)
-
-        # RAG Tool
-        if self.rag.plugin is not None:
-            rag_tool: ToolBase | None = AvatarModulePlugin.create(
-                AvatarModule.RAG,
-                self.rag.plugin,
-                session_runtime=runtime.session,
-                status_emitter=status_emitter,
-                init_config=self.rag.init_config,
-            )
-            if rag_tool:
-                tools.append(rag_tool.tool)
-
-        # MCP Tool
-        if not self.mcp.enabled:
-            return tools
-
-        if len(self.mcp.servers) == 0:
-            logger.warning("No MCP server URLs provided while MCP is enabled.")
-            return tools
-
-        if self.mcp.plugin is None:
-            logger.warning("MCP is enabled but tools.mcp.plugin is null.")
-            return tools
-
-        mcp_tool: ToolBase | None = AvatarModulePlugin.create(
-            AvatarModule.MCP,
-            self.mcp.plugin,
-            runtime=runtime,
-            status_emitter=status_emitter,
-            init_config=self.mcp.init_config,
+    ) -> tuple[ToolBase, ...]:
+        tools = []
+        selections = (
+            (AvatarModule.DEEPRESEARCH, "deepresearch", self.deepresearch),
+            (AvatarModule.RAG, "rag", self.rag),
         )
-        if mcp_tool:
-            tools.append(mcp_tool.tool)
+        for module, package, config in selections:
+            if config.plugin is None:
+                continue
+            importlib.import_module(f"alphaavatar.plugins.{package}")
+            tool = AvatarModulePlugin.create(
+                module,
+                config.plugin,
+                runtime=runtime,
+                init_config=config.init_config,
+                status_emitter=status_emitter,
+            )
+            if not isinstance(tool, ToolBase):
+                raise TypeError(f"Tool plugin {package} must return ToolBase")
 
-        return tools
+            tools.append(tool)
+
+        if self.mcp.enabled and self.mcp.plugin is not None:
+            if not self.mcp.servers:
+                raise ValueError("Enabled MCP requires at least one configured server")
+            importlib.import_module("alphaavatar.plugins.mcp")
+
+            tool = AvatarModulePlugin.create(
+                AvatarModule.MCP,
+                self.mcp.plugin,
+                runtime=runtime,
+                init_config=self.mcp.init_config,
+                servers=resolve_env_placeholders(self.mcp.servers),
+                status_emitter=status_emitter,
+            )
+            if not isinstance(tool, ToolBase):
+                raise TypeError("MCP plugin must return ToolBase")
+            tools.append(tool)
+
+        return tuple(tools)

@@ -28,20 +28,16 @@ from alphaavatar.agents.avatar.provider.factory import create_embedding_model
 from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.runtime.plugin import AvatarModule
-from alphaavatar.agents.tools.mcp_api import (
-    MCP_TOOL_CATEGORIES,
-    MCP_TOP_K_RANGE,
-    MCPOp,
-    MCPOutputMode,
-)
 from alphaavatar.agents.utils.files.work_dirs import WorkspacePaths
 from alphaavatar.agents.utils.loop_thread import AsyncLoopThread
 from alphaavatar.agents.utils.vdb import lancedb
 
 from ..config import DEFAULT_TIMEOUT
+from ..enums import MCPOp, MCPOutputMode
 from ..log import logger
 from ..mcp_server_remote import MCPServerRemote
 from ..mcp_tool import MCPTool
+from ..schemas import MCP_TOOL_CATEGORIES, MCP_TOP_K_RANGE
 
 COMPACT_RESULT_MAX_CHARS = 2000
 
@@ -467,12 +463,14 @@ class LanceDBRunner(InferenceRunner):
             low, high = MCP_TOP_K_RANGE
             if isinstance(top_k, bool) or not isinstance(top_k, int) or not low <= top_k <= high:
                 raise ValueError(f"top_k must be an integer from {low} to {high}")
+
             if server_keys is not None and (
                 not isinstance(server_keys, list)
                 or not server_keys
                 or any(not isinstance(key, str) or not key for key in server_keys)
             ):
                 raise ValueError("server_keys must be a nonempty list of names")
+
             if categories is not None and (
                 not isinstance(categories, list)
                 or not categories

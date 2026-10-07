@@ -11,49 +11,36 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from alphaavatar.agents.runtime import SessionRuntime
-from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
-from alphaavatar.agents.tools import DeepResearchAPI
+from __future__ import annotations
 
-from .deepresearch_tavily import TavilyDeepResearchTool
-from .log import logger
+from typing import TYPE_CHECKING, Any
+
+from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
+
 from .version import __version__
 
-__all__ = [
-    "__version__",
-]
+if TYPE_CHECKING:
+    from alphaavatar.agents.runtime import AvatarRuntime
+    from alphaavatar.agents.status import StatusEmitter
+    from alphaavatar.agents.tools import ToolBase
 
 
-class TavilyPlugin(AvatarModulePlugin):
+class DeepResearchToolPlugin(AvatarModulePlugin):
     def __init__(self) -> None:
-        super().__init__(__name__, __version__, __package__, logger)  # type: ignore
+        super().__init__("DeepResearch", __version__, __name__)
 
     def get_plugin(
         self,
-        session_runtime: SessionRuntime,
-        init_config: dict,
-        *args,
-        **kwargs,
-    ) -> TavilyDeepResearchTool:
-        try:
-            status_emitter = kwargs.pop("status_emitter", None)
+        *,
+        runtime: AvatarRuntime,
+        init_config: dict[str, Any],
+        status_emitter: StatusEmitter | None = None,
+    ) -> ToolBase:
+        from .service import DeepResearchService
 
-            deepresearch_obj = TavilyDeepResearchTool(
-                session_path=session_runtime.session_path,
-                **init_config,
-                **kwargs,
-            )
-            deepresearch_api = DeepResearchAPI(
-                deepresearch_obj,
-                status_emitter=status_emitter,
-            )
-            return deepresearch_api
-        except Exception:
-            raise ImportError(
-                "The 'tavily[default]' DeepResearch plugin is required but is not installed.\n"
-                "To fix this, install the optional dependency: `pip install alphaavatar-plugins-deepresearch`"
-            )
+        return DeepResearchService(
+            runtime=runtime, init_config=init_config, status_emitter=status_emitter
+        )
 
 
-# plugin init
-AvatarModulePlugin.register(AvatarModule.DEEPRESEARCH, "default", TavilyPlugin())
+AvatarModulePlugin.register(AvatarModule.DEEPRESEARCH, "default", DeepResearchToolPlugin())

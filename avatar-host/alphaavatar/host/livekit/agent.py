@@ -32,6 +32,8 @@ from alphaavatar.core.output import OutputLane
 from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
 from alphaavatar.host.lifecycle import HostSessionLifecycle
 
+from .tools import build_function_tools
+
 if TYPE_CHECKING:
     from alphaavatar.agents.configs import AvatarConfig
     from alphaavatar.agents.runtime import AvatarRuntime
@@ -50,7 +52,9 @@ class LiveKitHostedAgent(AvatarEngine):
     ) -> None:
         self._livekit_model_input = LiveKitModelInput(clock=runtime.clock)
         self._livekit_turn_input = LiveKitTurnInput(clock=runtime.clock, runtime=runtime)
-        super().__init__(avatar_config=avatar_config, runtime=runtime)
+        super().__init__(
+            avatar_config=avatar_config, runtime=runtime, tool_adapter=build_function_tools
+        )
         self._host_lifecycle = HostSessionLifecycle(engine=self, inputs=inputs, outputs=outputs)
 
     @property

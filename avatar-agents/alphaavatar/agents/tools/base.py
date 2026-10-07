@@ -11,168 +11,105 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import inspect
-from abc import ABC, abstractmethod
-from enum import StrEnum
-from typing import Any
+from __future__ import annotations
 
-from livekit.agents import RunContext, function_tool, llm
-from livekit.agents.llm import ToolError
+import asyncio
+from abc import abstractmethod
+from typing import TYPE_CHECKING, Any
 
-from alphaavatar.agents.status import (
-    StatusEmitter,
-    StatusEvent,
-    StatusPriority,
-    StatusType,
-)
+from alphaavatar.agents.runtime.capability import AvatarCapability
+from alphaavatar.agents.runtime.plugin import AvatarRuntimePlugin
+from alphaavatar.core.cleanup import wait_for_cleanup
+
+from .enums import ToolErrorCode
+from .schemas import ToolError
+
+if TYPE_CHECKING:
+    from alphaavatar.agents.runtime import AvatarRuntime
+    from alphaavatar.agents.status import StatusEmitter
 
 
-class ToolBase(ABC):
-    """Base class for all tools used by agents in the AlphaAvatar framework."""
+class ToolBase(AvatarRuntimePlugin):
+    """Own invocation tasks and resources, never SDK schemas or business descriptions."""
+
+    capabilities: tuple[AvatarCapability, ...] = ()
 
     def __init__(
         self,
         *,
-        name: str,
-        description: str,
+        runtime: AvatarRuntime,
         status_emitter: StatusEmitter | None = None,
-    ):
-        self._name = name
-        self._description = description
-        self._status_emitter = status_emitter
+    ) -> None:
+        self._runtime = runtime
+        self._status = status_emitter
+        self._ready = False
+        self._calls: set[asyncio.Task[Any]] = set()
+        self._start_task: asyncio.Task[None] | None = None
+        self._close_task: asyncio.Task[None] | None = None
 
-        tool_func = self._build_tool_wrapper()
-        self._tool = function_tool(name=self._name, description=self._description)(tool_func)
+    @staticmethod
+    def _observe(task: asyncio.Task[Any]) -> None:
+        if not task.cancelled():
+            task.exception()
 
-    @property
-    def tool(self) -> llm.FunctionTool | llm.RawFunctionTool:
-        return self._tool
-
-    @property
-    def status_emitter(self) -> StatusEmitter | None:
-        return self._status_emitter
-
-    def set_status_emitter(self, status_emitter: StatusEmitter | None) -> None:
-        self._status_emitter = status_emitter
-
-    async def emit_status(self, event: StatusEvent) -> None:
-        """Awaitable status emit. Use this when ordering matters."""
-        if self._status_emitter is None:
-            return
-
-        await self._status_emitter.emit(event)
-
-    def emit_status_nowait(self, event: StatusEvent):
-        """
-        Fire-and-forget status emit.
-
-        This is preferred before long-running tool calls, so status delivery
-        does not block the actual tool execution.
-        """
-        if self._status_emitter is None:
-            return None
-
-        return self._status_emitter.emit_nowait(event)
-
-    def emit_status_delayed(
-        self,
-        event: StatusEvent,
-        *,
-        delay_sec: float | None = None,
-    ):
-        if self._status_emitter is None:
-            return None
-
-        return self._status_emitter.emit_delayed(event, delay_sec=delay_sec)
-
-    def _build_tool_wrapper(self):
-        """
-        Build an async function with the same signature as self.invoke,
-        so LiveKit can attach metadata and build strict OpenAI schema.
-
-        Also catches runtime errors, emits TOOL_ERROR status, and converts
-        unexpected exceptions into ToolError so the LLM can recover.
-        """
-        invoke = self.invoke
-        sig = inspect.signature(invoke)
-
-        params = list(sig.parameters.values())
-
-        for p in params:
-            if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
-                raise TypeError(
-                    f"{self.__class__.__name__}.invoke must not use *args/**kwargs in strict tool schema mode."
-                )
-
-        ns = {
-            "__invoke": invoke,
-            "__handle_tool_error": self._handle_tool_error,
-            "ToolError": ToolError,
-        }
-
-        param_chunks = []
-        call_chunks = []
-
-        saw_kwonly = False
-        default_i = 0
-
-        for p in params:
-            if p.kind == inspect.Parameter.KEYWORD_ONLY and not saw_kwonly:
-                param_chunks.append("*")
-                saw_kwonly = True
-
-            if p.default is inspect._empty:
-                param_chunks.append(p.name)
-            else:
-                dn = f"__d{default_i}"
-                default_i += 1
-                ns[dn] = p.default
-                param_chunks.append(f"{p.name}={dn}")
-
-            call_chunks.append(p.name)
-
-        params_src = ", ".join(param_chunks)
-        call_src = ", ".join(call_chunks)
-
-        src = f"""
-async def __tool({params_src}):
-    try:
-        return await __invoke({call_src})
-    except ToolError as e:
-        await __handle_tool_error(e)
-        raise
-    except Exception as e:
-        await __handle_tool_error(e)
-        raise ToolError("The tool call failed. Please recover or try another way.")
-"""
-        exec(src, ns, ns)
-        tool_func = ns["__tool"]
-
-        tool_func.__annotations__ = dict(getattr(invoke, "__annotations__", {}))
-
-        return tool_func
-
-    async def _handle_tool_error(self, error: Exception) -> None:
-        self.emit_status_nowait(
-            StatusEvent(
-                type=StatusType.TOOL_ERROR,
-                source=self._status_source(),
-                stage=self._status_stage(),
-                priority=StatusPriority.HIGH,
-                metadata={
-                    "tool_name": self._name,
-                    "tool_class": self.__class__.__name__,
-                    "error_type": error.__class__.__name__,
-                    "error": str(error),
-                },
+    async def on_session_start(self) -> None:
+        if self._close_task is not None:
+            raise RuntimeError("Tool is closing or closed")
+        if self._start_task is None:
+            self._start_task = asyncio.create_task(
+                self._start(), name=f"tool_start:{type(self).__name__}"
             )
-        )
+            self._start_task.add_done_callback(self._observe)
+        try:
+            await asyncio.shield(self._start_task)
+            if self._close_task is not None:
+                raise RuntimeError("Tool closed during startup")
+            self._ready = True
+        except BaseException:
+            await self.on_session_stop()
+            raise
 
-    def _status_source(self) -> str | StrEnum:
-        return self._name
+    async def invoke(self, request: Any) -> Any:
+        if not self._ready or self._close_task is not None:
+            raise ToolError("Tool is not running", code=ToolErrorCode.UNAVAILABLE)
 
-    def _status_stage(self) -> str | StrEnum:
-        return "tool_error"
+        task = asyncio.create_task(self._invoke(request), name=f"tool_call:{type(self).__name__}")
+        self._calls.add(task)
+        task.add_done_callback(self._observe)
+        try:
+            return await task
+        finally:
+            self._calls.discard(task)
+
+    async def _close(self) -> None:
+        self._ready = False
+        start = self._start_task
+        if start is not None:
+            if not start.done():
+                start.cancel()
+            await asyncio.gather(start, return_exceptions=True)
+        tasks = tuple(self._calls)
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._calls.clear()
+        await self._stop()
+
+    async def on_session_stop(self) -> None:
+        if asyncio.current_task() in self._calls:
+            raise RuntimeError("A tool invocation cannot close its owner")
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(
+                self._close(), name=f"tool_close:{type(self).__name__}"
+            )
+        await wait_for_cleanup(self._close_task)
 
     @abstractmethod
-    async def invoke(self, ctx: RunContext, *args, **kwargs) -> Any: ...
+    async def _start(self) -> None: ...
+
+    @abstractmethod
+    async def _invoke(self, request: Any) -> Any: ...
+
+    @abstractmethod
+    async def _stop(self) -> None: ...
