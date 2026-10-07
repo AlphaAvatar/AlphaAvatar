@@ -4,6 +4,7 @@ alpha-avatar-rtc = { workspace = true }
 alpha-avatar-core = { workspace = true }
 alpha-avatar-agents = { workspace = true }
 alpha-avatar-plugins-loop = { workspace = true }
+alpha-avatar-plugins-context = { workspace = true }
 alpha-avatar-plugins-provider = { workspace = true }
 alpha-avatar-plugins-voice = { workspace = true }
 alpha-avatar-plugins-character = { workspace = true }
@@ -48,6 +49,7 @@ avatar-agent-all = [
     "alpha-avatar-host[livekit]",
     "alpha-avatar-plugins-provider[langchain,openai]",
     "alpha-avatar-plugins-loop",
+    "alpha-avatar-plugins-context",
 ]
 
 [tool.ruff]

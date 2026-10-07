@@ -20,19 +20,30 @@ from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 from .version import __version__
 
 if TYPE_CHECKING:
-    from alphaavatar.agents.avatar.loop import Loop
+    from alphaavatar.agents.avatar.context import ContextManager
+    from alphaavatar.agents.configs import AvatarConfig
     from alphaavatar.agents.runtime import AvatarRuntime
 
 
-class RealtimeLoopPlugin(AvatarModulePlugin):
+class ContextPlugin(AvatarModulePlugin):
     def __init__(self) -> None:
-        super().__init__("Realtime interaction loop", __version__, __name__)
+        super().__init__("Query context manager", __version__, __name__)
 
-    def get_plugin(self, *, runtime: AvatarRuntime, init_config: Any) -> Loop:
-        from .config import RealtimeLoopConfig
-        from .loop import AvatarLoop
+    def get_plugin(
+        self, *, runtime: AvatarRuntime, avatar_config: AvatarConfig, init_config: Any
+    ) -> ContextManager:
+        from .config import ContextConfig
+        from .context_manager import AvatarContextManager
 
-        return AvatarLoop(RealtimeLoopConfig.model_validate(init_config), runtime=runtime)
+        return AvatarContextManager(
+            runtime=runtime,
+            avatar_config=avatar_config,
+            config=ContextConfig.model_validate(init_config),
+        )
 
 
-AvatarModulePlugin.register(AvatarModule.LOOP, "realtime", RealtimeLoopPlugin())
+AvatarModulePlugin.register(
+    AvatarModule.CONTEXT,
+    "default",
+    ContextPlugin(),
+)

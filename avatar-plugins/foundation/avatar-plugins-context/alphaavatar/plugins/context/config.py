@@ -11,14 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from __future__ import annotations
+from pydantic import BaseModel, ConfigDict, Field
 
-from typing import Protocol
-
-from .schemas import ContextPrepareRequest, PreparedModelContext
+from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
 
 
-class ModelContextSource(Protocol):
-    async def prepare(self, request: ContextPrepareRequest) -> PreparedModelContext:
-        """Capture one accepted query; no per-model-step refresh or history mutation."""
-        ...
+class ContextConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    behavior_rules: str = DEFAULT_SYSTEM_VALUE
+    max_pending_preparations: int = Field(default=16, ge=1, le=128)

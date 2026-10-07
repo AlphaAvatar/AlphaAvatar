@@ -14,8 +14,13 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 
-from .schemas import LoopIdentity, LoopRequest, LoopResult
+from .schemas import LoopCommit, LoopEvent, LoopIdentity, LoopRequest, LoopResult, ToolCallContext
+
+EventSink = Callable[[LoopEvent], Awaitable[None]]
+CommitSink = Callable[[LoopCommit], Awaitable[None]]
+ToolAuthorizer = Callable[[ToolCallContext], Awaitable[bool]]
 
 
 class LoopHandle(ABC):
@@ -24,22 +29,27 @@ class LoopHandle(ABC):
     def identity(self) -> LoopIdentity: ...
 
     @abstractmethod
-    def cancel(self, *, reason: str = "interrupted") -> None:
-        """Invalidate delivery and request cancellation without waiting for cleanup."""
+    def cancel(self, *, reason: str = "interrupted") -> None: ...
 
     @abstractmethod
     async def wait(self) -> LoopResult:
-        """Await the result; cancelling this waiter does not discard the owned execution."""
+        """Cancelling a waiter does not abandon the owned execution."""
 
     @abstractmethod
-    async def aclose(self) -> None:
-        """Cancel and await owned work, but never close borrowed shared services."""
+    async def aclose(self) -> None: ...
 
 
-class AvatarLoopBase(ABC):
+class Loop(ABC):
     @abstractmethod
-    async def submit(self, request: LoopRequest) -> LoopHandle:
-        """Accept an input quickly; model/tool execution runs in an owned task."""
+    async def submit(
+        self,
+        request: LoopRequest,
+        *,
+        on_event: EventSink | None = None,
+        on_commit: CommitSink | None = None,
+        authorize: ToolAuthorizer | None = None,
+    ) -> LoopHandle:
+        """Accept quickly; owned preparation and execution do not block ingress."""
 
     @abstractmethod
     def interrupt(self, *, run_id: str | None = None, reason: str = "interrupted") -> None: ...

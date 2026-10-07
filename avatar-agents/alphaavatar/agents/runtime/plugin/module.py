@@ -23,8 +23,8 @@ class AvatarModule(str, Enum):
     # Engine
     AVATAR_ENGINE = "avatar_engine"
 
-    # Avatar Loop
     LOOP = "loop"
+    CONTEXT = "context"
 
     # Provider
     PROVIDER_LLM = "provider_llm"

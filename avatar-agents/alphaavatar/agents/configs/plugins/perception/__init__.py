@@ -11,30 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from __future__ import annotations
+from .character_config import VirtualCharacterConfig
+from .memory_config import MemoryConfig
+from .persona_config import PersonaConfig
+from .router_config import RouterConfig
+from .status_config import StatusConfig
 
-from dataclasses import dataclass
-
-from alphaavatar.agents.avatar.provider.schemas import (
-    ModelFunctionCall,
-    ModelFunctionOutput,
-)
-
-from ..enums import ToolOutcome
-from .identity import LoopIdentity
-
-
-@dataclass(frozen=True, slots=True)
-class ToolCallContext:
-    identity: LoopIdentity
-    call: ModelFunctionCall
-    capability_id: str
-
-
-@dataclass(frozen=True, slots=True)
-class ToolRecord:
-    call: ModelFunctionCall
-    output: ModelFunctionOutput
-    outcome: ToolOutcome
-    executed: bool
-    duration_ms: float
+__all__ = [
+    "VirtualCharacterConfig",
+    "MemoryConfig",
+    "PersonaConfig",
+    "RouterConfig",
+    "StatusConfig",
+]

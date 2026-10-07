@@ -62,7 +62,7 @@ class AvatarRuntime:
 
     # lifecycle-level
     inference: InferenceExecutor
-    foundation: FoundationRuntime
+    foundation: FoundationRuntime | None = None
 
     # capability
     capability_registry: AvatarCapabilityRegistry = field(default_factory=AvatarCapabilityRegistry)
@@ -99,8 +99,8 @@ class AvatarRuntime:
         session: SessionRuntime,
         state: StateRuntime,
         config: RuntimeConfig,
-        foundation: FoundationRuntime,
         inference: InferenceExecutor | None = None,
+        foundation: FoundationRuntime | None = None,
     ) -> AvatarRuntime:
         clock = RuntimeClock()
         session_id = session.session_id
@@ -138,6 +138,12 @@ class AvatarRuntime:
             inference=inference if inference is not None else InferenceExecutor.from_env(),
             foundation=foundation,
         )
+
+    def bind_foundation(self, foundation: FoundationRuntime) -> None:
+        if self.foundation is not None:
+            raise RuntimeError("FoundationRuntime is already bound to AvatarRuntime")
+
+        object.__setattr__(self, "foundation", foundation)
 
     async def aclose(self) -> None:
         async with AsyncExitStack() as resources:

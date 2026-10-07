@@ -15,10 +15,13 @@ from __future__ import annotations
 
 from functools import cache
 from importlib.metadata import entry_points
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from alphaavatar.agents.avatar.loop import AvatarLoopBase, LoopDependencies
-from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
+from pydantic import BaseModel, ConfigDict, Field
+
+if TYPE_CHECKING:
+    from alphaavatar.agents.avatar.loop import Loop
+    from alphaavatar.agents.runtime import AvatarRuntime
 
 
 @cache
@@ -29,24 +32,23 @@ def _load_loop(name: str) -> None:
     matches[0].load()
 
 
-class LoopService:
-    """Factory access only. Engines own returned loops and must close them before Foundation."""
+class LoopConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
-    def __init__(self) -> None:
-        self._closed = False
+    plugin: str = Field(default="default", min_length=1)
+    init_config: dict[str, Any] = Field(default_factory=dict)
 
-    def create(
-        self, *, config: Any, dependencies: LoopDependencies, implementation: str = "realtime"
-    ) -> AvatarLoopBase:
-        if self._closed:
-            raise RuntimeError("Loop service is closed")
-        _load_loop(implementation)
+    def get_plugin(self, *, runtime: AvatarRuntime) -> Loop:
+        from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
+
+        _load_loop(self.plugin)
         loop = AvatarModulePlugin.create(
-            AvatarModule.LOOP, implementation, config=config, dependencies=dependencies
+            AvatarModule.LOOP,
+            self.plugin,
+            runtime=runtime,
+            init_config=self.init_config,
         )
-        if not isinstance(loop, AvatarLoopBase):
-            raise TypeError("A Loop plugin must return AvatarLoopBase")
-        return loop
+        if not isinstance(loop, Loop):
+            raise TypeError("A Loop plugin must return Loop")
 
-    def close(self) -> None:
-        self._closed = True
+        return loop

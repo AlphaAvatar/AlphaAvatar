@@ -15,63 +15,71 @@ from __future__ import annotations
 
 import asyncio
 
+from alphaavatar.agents.avatar.context import ContextManager
+from alphaavatar.agents.avatar.loop import Loop
+from alphaavatar.agents.avatar.voice import VoiceBundle
 from alphaavatar.core.cleanup import wait_for_cleanup
 
-from .loop import LoopService
 from .provider import ProviderService
-from .voice import VoiceService
 
 
 class FoundationRuntime:
-    """Own shared services; consumers must finish before this runtime is closed."""
+    """Shared owners; Engine/Loop consumers must stop before Foundation closes."""
 
     def __init__(
         self,
         *,
-        voice: VoiceService | None = None,
+        context: ContextManager,
+        loop: Loop,
+        voice: VoiceBundle | None = None,
         provider: ProviderService | None = None,
-        loop: LoopService | None = None,
     ) -> None:
-        self._voice = voice if voice is not None else VoiceService()
+        self._context = context
+        self._loop = loop
+
+        self._voice = voice if voice is not None else VoiceBundle()
         self._provider = provider if provider is not None else ProviderService()
-        self._loop = loop if loop is not None else LoopService()
+
         self._close_task: asyncio.Task[None] | None = None
 
     @property
-    def voice(self) -> VoiceService:
+    def context(self) -> ContextManager:
+        return self._context
+
+    @property
+    def loop(self) -> Loop:
+        return self._loop
+
+    @property
+    def voice(self) -> VoiceBundle:
         return self._voice
 
     @property
     def provider(self) -> ProviderService:
         return self._provider
 
-    @property
-    def loop(self) -> LoopService:
-        return self._loop
-
     async def _close(self) -> None:
-        async def close(service: ProviderService | VoiceService) -> None:
-            await service.aclose()
-
-        results = await asyncio.gather(
-            close(self._provider), close(self._voice), return_exceptions=True
-        )
         errors: list[Exception] = []
-        for result in results:
-            if isinstance(result, asyncio.CancelledError):
+
+        async def close(service) -> None:
+            try:
+                await service.aclose()
+            except asyncio.CancelledError as exc:
                 error = RuntimeError("Foundation service cleanup was cancelled")
-                error.__cause__ = result
+                error.__cause__ = exc
                 errors.append(error)
-            elif isinstance(result, Exception):
-                errors.append(result)
-            elif isinstance(result, BaseException):
-                raise result
+            except Exception as exc:
+                errors.append(exc)
+
+        if self._context is not None:
+            await close(self._context)
+
+        await asyncio.gather(close(self._provider), close(self._voice))
         if errors:
             raise ExceptionGroup("Foundation cleanup failed", errors)
 
     async def aclose(self) -> None:
         if self._close_task is None:
-            # Returned Loop instances are consumer-owned, not another parallel close target.
-            self._loop.close()
             self._close_task = asyncio.create_task(self._close(), name="foundation_close")
+
         await wait_for_cleanup(self._close_task)

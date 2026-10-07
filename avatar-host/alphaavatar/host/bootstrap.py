@@ -35,19 +35,30 @@ async def create_avatar_runtime(
 ) -> AvatarRuntime:
     async with AsyncExitStack() as resources:
         inference = InferenceExecutor.from_env()
-        resources.push_async_callback(inference.close)
 
-        voice = await avatar_config.voice.create_service(inference_executor=inference)
-        foundation = FoundationRuntime(voice=voice)
-        resources.push_async_callback(foundation.aclose)
-
+        # build avatar runtime
         runtime = AvatarRuntime.create(
             workspace=workspace,
             session=session,
             state=state,
             config=avatar_config.runtime,
             inference=inference,
-            foundation=foundation,
         )
+
+        # build foundation runtime
+        resources.push_async_callback(inference.close)
+        context = await avatar_config.context.get_plugin(
+            runtime=runtime, avatar_config=avatar_config
+        )
+        loop = await avatar_config.loop.get_plugin(runtime=runtime)
+        voice = await avatar_config.voice.get_plugin(inference_executor=inference)
+        foundation = FoundationRuntime(
+            context=context,
+            loop=loop,
+            voice=voice,
+        )
+        resources.push_async_callback(foundation.aclose)
+        runtime.bind_foundation(foundation)
+
         resources.pop_all()
         return runtime

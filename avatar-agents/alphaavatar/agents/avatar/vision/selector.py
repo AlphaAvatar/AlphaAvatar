@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from alphaavatar.agents.avatar.provider.enums import ModelInputType
-from alphaavatar.agents.configs.plugins.vision_config import VisionConfig
+from alphaavatar.agents.configs.plugins.foundation.vision_config import VisionConfig
 from alphaavatar.core.env import (
     EnvObservation,
     ObservationKind,

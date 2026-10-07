@@ -16,7 +16,7 @@ from .event import LoopEvent
 from .identity import LoopIdentity
 from .request import LoopLimits, LoopRequest
 from .result import LoopResult
-from .tool import ToolCallContext, ToolPolicy, ToolRecord
+from .tool import ToolCallContext, ToolRecord
 
 __all__ = [
     "LoopCommit",
@@ -26,6 +26,5 @@ __all__ = [
     "LoopRequest",
     "LoopResult",
     "ToolCallContext",
-    "ToolPolicy",
     "ToolRecord",
 ]

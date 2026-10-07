@@ -48,6 +48,7 @@ class LoopLimits(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class LoopRequest:
+    input_id: str
     turn_id: str
     context_id: str
 
@@ -60,8 +61,11 @@ class LoopRequest:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not self.turn_id or not self.context_id:
-            raise ValueError("Loop requests require turn_id and context_id")
+        if not all(
+            isinstance(value, str) and value
+            for value in (self.turn_id, self.context_id, self.input_id)
+        ):
+            raise ValueError("Loop requests require turn_id, context_id and input_id")
         if self.depth not in {"auto", "quick", "careful"}:
             raise ValueError("Unknown execution depth")
         if len(set(self.allowed_capabilities)) != len(self.allowed_capabilities):

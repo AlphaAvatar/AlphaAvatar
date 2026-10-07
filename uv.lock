@@ -17,6 +17,7 @@ members = [
     "alpha-avatar-core",
     "alpha-avatar-host",
     "alpha-avatar-plugins-character",
+    "alpha-avatar-plugins-context",
     "alpha-avatar-plugins-deepresearch",
     "alpha-avatar-plugins-loop",
     "alpha-avatar-plugins-mcp",
@@ -34,6 +35,7 @@ members = [
 avatar-agent-all = [
     { name = "alpha-avatar-agents", extras = ["providers", "vdb"], editable = "avatar-agents" },
     { name = "alpha-avatar-host", extras = ["livekit"], editable = "avatar-host" },
+    { name = "alpha-avatar-plugins-context", editable = "avatar-plugins/foundation/avatar-plugins-context" },
     { name = "alpha-avatar-plugins-loop", editable = "avatar-plugins/foundation/avatar-plugins-loop" },
     { name = "alpha-avatar-plugins-provider", extras = ["langchain", "openai"], editable = "avatar-plugins/foundation/avatar-plugins-provider" },
 ]
@@ -298,6 +300,22 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "playwright" }]
+
+[[package]]
+name = "alpha-avatar-plugins-context"
+source = { editable = "avatar-plugins/foundation/avatar-plugins-context" }
+dependencies = [
+    { name = "alpha-avatar-agents" },
+    { name = "alpha-avatar-core" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "alpha-avatar-agents", editable = "avatar-agents" },
+    { name = "alpha-avatar-core", editable = "avatar-core" },
+    { name = "pydantic", specifier = ">=2,<3" },
+]
 
 [[package]]
 name = "alpha-avatar-plugins-deepresearch"

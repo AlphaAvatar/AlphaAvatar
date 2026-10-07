@@ -18,11 +18,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from alphaavatar.agents.avatar.voice import STTBase, TTSBase, VADBase
+    from . import STTBase, TTSBase, VADBase
 
 
 @dataclass(frozen=True, slots=True)
-class VoiceService:
+class VoiceBundle:
     """Shared factories; consumers own their individual streams and requests."""
 
     vad: VADBase | None = None

@@ -11,13 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""SDK-independent execution contracts; algorithms live in the Loop plugin."""
+"""Execution contracts; shared services are obtained from AvatarRuntime."""
 
-from .base import AvatarLoopBase, LoopHandle
-from .dependencies import LoopDependencies
+from .base import Loop, LoopHandle
 
-__all__ = [
-    "AvatarLoopBase",
-    "LoopHandle",
-    "LoopDependencies",
-]
+__all__ = ["Loop", "LoopHandle"]

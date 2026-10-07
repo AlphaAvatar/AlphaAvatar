@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from .bundle import VoiceBundle
 from .schema import (
     TranscriptionEvent,
     TranscriptionEventType,
@@ -34,4 +35,5 @@ __all__ = [
     "VADStreamBase",
     "VoiceActivityEvent",
     "VoiceActivityEventType",
+    "VoiceBundle",
 ]

@@ -18,13 +18,14 @@ import hashlib
 import json
 import logging
 import time
-from collections.abc import Awaitable, Callable
-from typing import Any
+from collections.abc import Callable, Mapping
+from math import isfinite
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from pydantic import BaseModel
 
-from alphaavatar.agents.avatar.loop import LoopDependencies
+from alphaavatar.agents.avatar.loop.base import ToolAuthorizer
 from alphaavatar.agents.avatar.loop.enums import LoopEventKind, ToolOutcome
 from alphaavatar.agents.avatar.loop.schemas import (
     LoopIdentity,
@@ -44,6 +45,9 @@ from alphaavatar.core.cleanup import wait_for_cleanup
 
 from .feedback import LoopFeedback
 from .policy import ExecutionBudget
+
+if TYPE_CHECKING:
+    from alphaavatar.agents.runtime import AvatarRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -65,11 +69,20 @@ def _constant(value: str) -> Any:
     raise ToolInputError(f"Non-finite JSON number: {value}")
 
 
+def _number(value: str) -> float:
+    number = float(value)
+    if not isfinite(number):
+        raise ToolInputError("Non-finite JSON number")
+    return number
+
+
 def parse_arguments(value: str, *, max_bytes: int) -> dict[str, Any]:
     if len(value.encode("utf-8")) > max_bytes:
         raise ToolInputError("Tool arguments exceed the execution limit")
     try:
-        result = json.loads(value, object_pairs_hook=_object, parse_constant=_constant)
+        result = json.loads(
+            value, object_pairs_hook=_object, parse_constant=_constant, parse_float=_number
+        )
     except (ValueError, RecursionError) as exc:
         raise ToolInputError("Expected finite JSON arguments with unique keys") from exc
     if not isinstance(result, dict):
@@ -104,24 +117,30 @@ class LoopTools:
     def __init__(
         self,
         identity: LoopIdentity,
-        dependencies: LoopDependencies,
+        runtime: AvatarRuntime,
         budget: ExecutionBudget,
         feedback: LoopFeedback,
         unsafe_lock: asyncio.Lock,
         cancelled: Callable[[], bool],
+        *,
+        policies: Mapping[str, ToolPolicy],
+        authorize: ToolAuthorizer | None,
     ) -> None:
         self._identity = identity
-        self._dependencies = dependencies
+        self._registry = runtime.capability_registry
+        self._authorize = authorize
         self._budget = budget
         self._feedback = feedback
         self._unsafe_lock = unsafe_lock
         self._cancelled = cancelled
+
         allowed = set(budget.request.allowed_capabilities)
-        capabilities = {c.id: c for c in dependencies.capabilities.capabilities if c.callable}
+        capabilities = {c.id: c for c in self._registry.capabilities if c.callable}
+        self._capabilities = {capabilities[name].tool_name: capabilities[name] for name in allowed}
         if unknown := allowed - capabilities.keys():
             raise ValueError(f"Unknown or description-only capabilities: {sorted(unknown)}")
-        self._capabilities = {capabilities[name].tool_name: capabilities[name] for name in allowed}
-        self._policies = dict(dependencies.tool_policies)
+
+        self._policies = dict(policies)
         self._signatures: dict[str, int] = {}
         self._records: dict[str, ToolRecord] = {}
         self.records: list[ToolRecord] = []
@@ -134,6 +153,10 @@ class LoopTools:
             )
             for c in sorted(self._capabilities.values(), key=lambda c: c.id)
         )
+
+    def _stopping(self) -> bool:
+        task = asyncio.current_task()
+        return self._cancelled() or bool(task is not None and task.cancelling())
 
     def _policy(self, call: ModelFunctionCall) -> ToolPolicy:
         capability = self._capabilities.get(call.name)
@@ -177,13 +200,15 @@ class LoopTools:
         executed = False
         policy = self._policy(call)
         try:
-            if self._cancelled():
+            if self._stopping():
                 raise asyncio.CancelledError
+
             capability = self._capabilities.get(call.name)
             if capability is None:
                 return self._record(
                     call, ToolOutcome.DENIED, executed=False, started=started, code="not_allowed"
                 )
+
             payload = parse_arguments(call.arguments, max_bytes=limits.max_arguments_bytes)
 
             # Validate before authorization and before obtaining the side-effect execution slot.
@@ -197,8 +222,7 @@ class LoopTools:
                     call, ToolOutcome.SKIPPED, executed=False, started=started, code="repeat_limit"
                 )
             self._signatures[signature] = count + 1
-            authorizer = self._dependencies.authorize
-
+            authorizer = self._authorize
             if authorizer is not None:
                 approved = await authorizer(ToolCallContext(self._identity, call, capability.id))
                 if not isinstance(approved, bool):
@@ -220,12 +244,12 @@ class LoopTools:
                 await self._feedback.emit(
                     LoopEventKind.TOOL_STARTED, call_id=call.call_id, tool_name=call.name
                 )
-                if self._cancelled():
+                if self._stopping():
                     raise asyncio.CancelledError
                 if asyncio.get_running_loop().time() >= self._budget.exploration_deadline:
                     raise TimeoutError("Tool dispatch deadline expired")
                 executed = True
-                return await self._dependencies.capabilities.invoke(call.name, payload)
+                return await self._registry.invoke(call.name, payload)
 
             remaining = self._budget.exploration_deadline - asyncio.get_running_loop().time()
             async with asyncio.timeout(min(limits.tool_timeout, max(0, remaining))):
@@ -294,21 +318,40 @@ class LoopTools:
             logger.exception("Tool completion feedback failed")
         return record
 
-    async def batch(
-        self,
-        calls: tuple[ModelFunctionCall, ...],
-        commit: Callable[[tuple[ModelFunctionOutput, ...]], Awaitable[None]],
+    def settle(
+        self, calls: tuple[ModelFunctionCall, ...], *, reason: str
     ) -> tuple[ToolRecord, ...]:
-        if any(call.call_id in self._records for call in calls):
+        """Reconcile accepted calls even when execution never entered batch()."""
+        known = {record.call.call_id for record in self.records}
+        ordered = []
+        for call in calls:
+            if call.call_id not in self._records:
+                self._record(
+                    call,
+                    ToolOutcome.SKIPPED,
+                    executed=False,
+                    started=time.perf_counter(),
+                    code=reason,
+                )
+            record = self._records[call.call_id]
+            ordered.append(record)
+            if call.call_id not in known:
+                self.records.append(record)
+                known.add(call.call_id)
+        return tuple(ordered)
+
+    async def batch(self, calls: tuple[ModelFunctionCall, ...]) -> tuple[ToolRecord, ...]:
+        identities = [call.call_id for call in calls]
+        if len(set(identities)) != len(identities) or any(i in self._records for i in identities):
             raise ValueError("Repeated call identity must never execute twice")
+
         tasks: list[asyncio.Task[ToolRecord]] = []
         active: list[asyncio.Task[ToolRecord]] = []
-        pending = list(calls)
-
-        cancelled = False
         try:
-            while pending:
-                call = pending.pop(0)
+            for call in calls:
+                if self._stopping():
+                    raise asyncio.CancelledError
+
                 budget = self._budget
                 if budget.tool_calls >= budget.request.limits.max_tool_calls:
                     self._record(
@@ -319,6 +362,7 @@ class LoopTools:
                         code="tool_call_budget",
                     )
                     continue
+
                 budget.tool_calls += 1
                 policy = self._policy(call)
                 parallel = policy.read_only and policy.parallel_safe
@@ -326,7 +370,8 @@ class LoopTools:
                 if active and (not parallel or at_capacity):
                     await asyncio.shield(asyncio.gather(*active))
                     active.clear()
-
+                if self._stopping():
+                    raise asyncio.CancelledError
                 task = asyncio.create_task(self._run_call(call), name=f"loop_tool:{call.call_id}")
                 tasks.append(task)
                 active.append(task)
@@ -335,8 +380,7 @@ class LoopTools:
                     active.clear()
             if active:
                 await asyncio.shield(asyncio.gather(*active))
-        except asyncio.CancelledError:
-            cancelled = True
+
         finally:
 
             async def finish() -> None:
@@ -344,24 +388,8 @@ class LoopTools:
                     if not task.done():
                         task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
-                for call in calls:
-                    if call.call_id not in self._records:
-                        self._record(
-                            call,
-                            ToolOutcome.SKIPPED,
-                            executed=False,
-                            started=time.perf_counter(),
-                            code="execution_stopped",
-                        )
-                ordered = tuple(self._records[call.call_id] for call in calls)
-                self.records.extend(ordered)
-                # Recorded tool facts must survive interruption; this is not a display callback.
-                await commit(tuple(record.output for record in ordered))
 
-            await wait_for_cleanup(asyncio.create_task(finish(), name="loop_tool_batch_commit"))
+            await wait_for_cleanup(asyncio.create_task(finish(), name="loop_tool_batch_close"))
 
-        if cancelled:
-            raise asyncio.CancelledError
-
-        records = tuple(self._records[call.call_id] for call in calls)
-        return records
+        # The execution owner commits all results, including unstarted/cancelled calls.
+        return self.settle(calls, reason="execution_stopped")

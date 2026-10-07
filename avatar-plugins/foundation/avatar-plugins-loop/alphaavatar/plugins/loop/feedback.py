@@ -18,7 +18,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from alphaavatar.agents.avatar.loop.dependencies import EventSink
+from alphaavatar.agents.avatar.loop.base import EventSink
 from alphaavatar.agents.avatar.loop.enums import LoopEventKind, LoopState
 from alphaavatar.agents.avatar.loop.schemas import LoopEvent, LoopIdentity
 from alphaavatar.core.cleanup import wait_for_cleanup
@@ -26,8 +26,12 @@ from alphaavatar.core.cleanup import wait_for_cleanup
 logger = logging.getLogger(__name__)
 
 
+class LoopDeliveryError(RuntimeError):
+    """Actual message delivery failed; this is not an exploration-budget timeout."""
+
+
 class LoopFeedback:
-    """Direct async delivery: no second token queue, no model used for filler generation."""
+    """Bounded async delivery. Advisory failures do not fail model/tool execution."""
 
     def __init__(
         self,
@@ -53,21 +57,37 @@ class LoopFeedback:
     async def emit(self, kind: LoopEventKind, **fields: Any) -> None:
         if self._sink is None or not self._is_current():
             return
-        async with self._lock:
-            if not self._is_current():
-                return
-            self._sequence += 1
-            event = LoopEvent(
-                identity=self.identity,
-                sequence=self._sequence,
-                kind=kind,
-                state=self.state,
-                model_step=self.model_step,
-                tool_round=self.tool_round,
-                **fields,
-            )
-            async with asyncio.timeout(self._timeout):
+
+        critical = kind in {LoopEventKind.TEXT, LoopEventKind.MESSAGE}
+        try:
+            async with asyncio.timeout(self._timeout), self._lock:
+                if not self._is_current():
+                    return
+                self._sequence += 1
+                event = LoopEvent(
+                    identity=self.identity,
+                    sequence=self._sequence,
+                    kind=kind,
+                    state=self.state,
+                    model_step=self.model_step,
+                    tool_round=self.tool_round,
+                    **fields,
+                )
                 await self._sink(event)
+        except asyncio.CancelledError:
+            # Caller cancellation remains cancellation, even for an advisory event.
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                raise
+            if critical:
+                raise LoopDeliveryError("Message delivery cancelled itself") from None
+            logger.warning("Advisory loop feedback cancelled itself kind=%s", kind)
+        except Exception as exc:
+            if critical:
+                raise LoopDeliveryError("Loop message delivery failed") from exc
+            logger.warning(
+                "Advisory loop feedback failed kind=%s error=%s", kind, type(exc).__name__
+            )
 
     async def visible(self, kind: LoopEventKind, **fields: Any) -> None:
         await self.cancel_notice()

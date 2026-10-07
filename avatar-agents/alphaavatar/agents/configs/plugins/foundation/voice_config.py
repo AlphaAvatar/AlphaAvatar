@@ -18,9 +18,8 @@ from typing import Literal
 from livekit.agents import tts
 from pydantic import BaseModel, ConfigDict, Field
 
-from alphaavatar.agents.avatar.voice import LiveKitTTSAdapter, STTBase, VADBase
+from alphaavatar.agents.avatar.voice import LiveKitTTSAdapter, STTBase, VADBase, VoiceBundle
 from alphaavatar.agents.runtime.inference import InferenceExecutor
-from alphaavatar.agents.runtime.modules.foundation import VoiceService
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 
 # alphaavatar voice plugins
@@ -177,7 +176,7 @@ class VoiceConfig(BaseModel):
         default=True, description="Allow interruptions during speech."
     )
 
-    async def create_service(self, *, inference_executor: InferenceExecutor) -> VoiceService:
+    async def get_plugin(self, *, inference_executor: InferenceExecutor) -> VoiceBundle:
         async with AsyncExitStack() as resources:
             vad = self.vad.get_plugin(inference_executor=inference_executor)
             if vad is not None:
@@ -191,10 +190,10 @@ class VoiceConfig(BaseModel):
             if tts is not None:
                 resources.push_async_callback(tts.aclose)
 
-            service = VoiceService(
+            bundle = VoiceBundle(
                 vad=vad,
                 stt=stt,
                 tts=LiveKitTTSAdapter(tts, owns_provider=True) if tts is not None else None,
             )
             resources.pop_all()
-            return service
+            return bundle

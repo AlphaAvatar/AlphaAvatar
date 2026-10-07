@@ -11,30 +11,4 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from __future__ import annotations
-
-from dataclasses import dataclass
-
-from alphaavatar.agents.avatar.provider.schemas import (
-    ModelFunctionCall,
-    ModelFunctionOutput,
-)
-
-from ..enums import ToolOutcome
-from .identity import LoopIdentity
-
-
-@dataclass(frozen=True, slots=True)
-class ToolCallContext:
-    identity: LoopIdentity
-    call: ModelFunctionCall
-    capability_id: str
-
-
-@dataclass(frozen=True, slots=True)
-class ToolRecord:
-    call: ModelFunctionCall
-    output: ModelFunctionOutput
-    outcome: ToolOutcome
-    executed: bool
-    duration_ms: float
+__version__ = "0.6.7"
