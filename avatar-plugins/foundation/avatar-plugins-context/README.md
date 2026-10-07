@@ -1,15 +1,16 @@
 # AlphaAvatar Context Plugin
 
-The default Context manager is created by Host after AvatarRuntime is assembled
-and is owned by FoundationRuntime. Engine lends Memory/Persona read sources; it
-neither constructs the manager nor assembles native Loop context.
+The default Context manager is created by Host against a partial AvatarRuntime
+and then owned by FoundationRuntime. Engine lends Memory/Persona read sources;
+it neither constructs the manager nor assembles native Loop context.
 
 ## Interface
 
 Use `runtime.foundation.context` through the public ContextManager contract.
 `prepare(ContextPrepareRequest)` returns a captured ModelInput. `build(prefix,
 continuation=...)` appends canonical execution records without refreshing State.
-No query object, parallel context service or provider-specific message API is exposed.
+There is no PreparedModelContext or parallel query management interface.
+ContextContribution and ContextPrepareRequest live in the public schemas/request.py.
 
 Preparation waits for the explicitly identified committed Turn. It then reads
 State and source properties once, captures time and modality information, and
@@ -26,8 +27,8 @@ Application-owned behavior rules may be supplied in configuration:
 
 ```yaml
 context:
-  implementation: default
-  options:
+  plugin: default
+  init_config:
     behavior_rules: "Follow the application's execution and authorization policies."
     max_pending_preparations: 16
 ```
@@ -38,16 +39,17 @@ instructions. Binding state sources does not transfer their ownership.
 
 ## Lifecycle
 
-Host creates the runtime, resolves the installed alphaavatar.context entry point,
-and binds the resulting manager once. Engine then binds its existing processor
-sources. Standalone native callers may populate State directly instead.
+Host resolves the installed alphaavatar.context entry point and creates the
+manager before binding Foundation. It constructs an optional native Loop only
+after that binding. Context does not request Foundation services during creation.
 
-Stop Loop consumers before closing Foundation. Context waits for its remaining
-preparation workers, and Foundation then closes Provider and Voice. There is no
-process-global query cache and no per-step mutation of State.
+Foundation first stops its Loop, then closes Context and its remaining preparation
+workers, and then closes Provider and Voice. Output and Inference remain available
+until Foundation cleanup completes. Applications must stop their ingress and
+other consumers before closing the runtime.
 
-Temporal alignment and visual renderers remain the existing implementations;
-this change moves them rather than adding a second rendering pipeline.
+Temporal alignment and visual renderers remain the existing implementations.
+There is no process-global query cache and no per-step mutation of State.
 
 The temporary LiveKit SDK generation bridge remains in Host until the native
 Engine/Turn/Output cutover. It uses this same ContextManager API. Native Loop

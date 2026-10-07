@@ -24,7 +24,7 @@ from .provider import ProviderService
 
 
 class FoundationRuntime:
-    """Shared owners; Engine/Loop consumers must stop before Foundation closes."""
+    """Own the configured Loop and shared services; close consumers before their dependencies."""
 
     def __init__(
         self,
@@ -34,9 +34,15 @@ class FoundationRuntime:
         voice: VoiceBundle | None = None,
         provider: ProviderService | None = None,
     ) -> None:
+        if not isinstance(context, ContextManager):
+            raise TypeError("Expected ContextManager")
+        if not isinstance(loop, Loop):
+            raise TypeError("Expected Loop")
+        if voice is not None and not isinstance(voice, VoiceBundle):
+            raise TypeError("Expected an awaited VoiceBundle")
+
         self._context = context
         self._loop = loop
-
         self._voice = voice if voice is not None else VoiceBundle()
         self._provider = provider if provider is not None else ProviderService()
 
@@ -61,19 +67,20 @@ class FoundationRuntime:
     async def _close(self) -> None:
         errors: list[Exception] = []
 
-        async def close(service) -> None:
+        async def close(service: ContextManager | Loop | ProviderService | VoiceBundle) -> None:
             try:
                 await service.aclose()
             except asyncio.CancelledError as exc:
-                error = RuntimeError("Foundation service cleanup was cancelled")
+                error = RuntimeError(f"Foundation {type(service).__name__} cleanup was cancelled")
                 error.__cause__ = exc
                 errors.append(error)
             except Exception as exc:
                 errors.append(exc)
 
-        if self._context is not None:
-            await close(self._context)
+        # Loop may still need Context, Provider, Voice and Output while settling owned work.
+        await close(self._loop)
 
+        await close(self._context)
         await asyncio.gather(close(self._provider), close(self._voice))
         if errors:
             raise ExceptionGroup("Foundation cleanup failed", errors)

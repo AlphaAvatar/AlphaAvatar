@@ -16,21 +16,19 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .build import ContextBuildRequest, ContextBuildResult
-    from .query import ContextContribution, ContextPrepareRequest, PreparedModelContext
+    from .request import ContextContribution, ContextPrepareRequest
 
 _EXPORTS = {
     "ContextBuildRequest": ".build",
     "ContextBuildResult": ".build",
-    "ContextContribution": ".query",
-    "ContextPrepareRequest": ".query",
-    "PreparedModelContext": ".query",
+    "ContextContribution": ".request",
+    "ContextPrepareRequest": ".request",
 }
 __all__ = [
     "ContextBuildRequest",
     "ContextBuildResult",
     "ContextContribution",
     "ContextPrepareRequest",
-    "PreparedModelContext",
 ]
 
 

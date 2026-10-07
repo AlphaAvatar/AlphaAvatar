@@ -13,12 +13,14 @@
 # limitations under the License.
 from __future__ import annotations
 
+import asyncio
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING
 
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.inference import InferenceExecutor
 from alphaavatar.agents.runtime.modules.foundation import FoundationRuntime
+from alphaavatar.core.cleanup import wait_for_cleanup
 
 if TYPE_CHECKING:
     from alphaavatar.agents.configs import AvatarConfig
@@ -33,10 +35,12 @@ async def create_avatar_runtime(
     session: SessionRuntime,
     state: StateRuntime,
 ) -> AvatarRuntime:
-    async with AsyncExitStack() as resources:
+    resources = AsyncExitStack()
+    try:
         inference = InferenceExecutor.from_env()
 
         # build avatar runtime
+        resources.push_async_callback(inference.close)
         runtime = AvatarRuntime.create(
             workspace=workspace,
             session=session,
@@ -44,19 +48,32 @@ async def create_avatar_runtime(
             config=avatar_config.runtime,
             inference=inference,
         )
+        # The partial runtime already owns Output and Inference, even before binding Foundation.
+        resources.pop_all()
+        resources.push_async_callback(runtime.aclose)
 
         # build foundation runtime
-        resources.push_async_callback(inference.close)
         context = avatar_config.context.get_plugin(runtime=runtime, avatar_config=avatar_config)
+        resources.push_async_callback(context.aclose)
+        voice = await avatar_config.voice.get_plugin(inference_executor=inference)
+        resources.push_async_callback(voice.aclose)
         loop = avatar_config.loop.get_plugin(runtime=runtime)
-        voice = avatar_config.voice.get_plugin(inference_executor=inference)
+        resources.push_async_callback(loop.aclose)
         foundation = FoundationRuntime(
             context=context,
             loop=loop,
             voice=voice,
         )
         resources.push_async_callback(foundation.aclose)
-        runtime.bind_foundation(foundation)
 
+        runtime.bind_foundation(foundation)
         resources.pop_all()
-        return runtime
+        resources.push_async_callback(runtime.aclose)
+    except BaseException:
+        await wait_for_cleanup(
+            asyncio.create_task(resources.aclose(), name="avatar_bootstrap_rollback")
+        )
+        raise
+
+    resources.pop_all()
+    return runtime

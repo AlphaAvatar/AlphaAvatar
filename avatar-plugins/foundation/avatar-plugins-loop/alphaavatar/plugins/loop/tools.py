@@ -30,7 +30,6 @@ from alphaavatar.agents.avatar.loop.enums import LoopEventKind, ToolOutcome
 from alphaavatar.agents.avatar.loop.schemas import (
     LoopIdentity,
     ToolCallContext,
-    ToolPolicy,
     ToolRecord,
 )
 from alphaavatar.agents.avatar.provider.schemas import (
@@ -43,6 +42,7 @@ from alphaavatar.agents.avatar.provider.schemas import (
 from alphaavatar.agents.runtime.capability.result import CapabilityResult
 from alphaavatar.core.cleanup import wait_for_cleanup
 
+from .config import ToolPolicy
 from .feedback import LoopFeedback
 from .policy import ExecutionBudget
 
@@ -136,9 +136,9 @@ class LoopTools:
 
         allowed = set(budget.request.allowed_capabilities)
         capabilities = {c.id: c for c in self._registry.capabilities if c.callable}
-        self._capabilities = {capabilities[name].tool_name: capabilities[name] for name in allowed}
         if unknown := allowed - capabilities.keys():
             raise ValueError(f"Unknown or description-only capabilities: {sorted(unknown)}")
+        self._capabilities = {capabilities[name].tool_name: capabilities[name] for name in allowed}
 
         self._policies = dict(policies)
         self._signatures: dict[str, int] = {}

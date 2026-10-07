@@ -11,11 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Session-scoped Avatar runtime composition."""
-
 from __future__ import annotations
 
-from contextlib import AsyncExitStack
+import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -24,6 +22,7 @@ from alphaavatar.agents.utils.files.work_dirs import (
     prepare_session_path,
     prepare_workspace,
 )
+from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.output import OutputRuntime
 from alphaavatar.core.perception import PerceptionRuntime
 from alphaavatar.core.time import RuntimeClock
@@ -66,6 +65,10 @@ class AvatarRuntime:
 
     # capability
     capability_registry: AvatarCapabilityRegistry = field(default_factory=AvatarCapabilityRegistry)
+
+    _close_task: asyncio.Task[None] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         session_id = self.session.session_id
@@ -140,13 +143,35 @@ class AvatarRuntime:
         )
 
     def bind_foundation(self, foundation: FoundationRuntime) -> None:
+        if self._close_task is not None:
+            raise RuntimeError("AvatarRuntime is closing or closed")
         if self.foundation is not None:
             raise RuntimeError("FoundationRuntime is already bound to AvatarRuntime")
-
+        if not isinstance(foundation, FoundationRuntime):
+            raise TypeError("Expected FoundationRuntime")
         object.__setattr__(self, "foundation", foundation)
 
+    async def _close(self) -> None:
+        errors: list[Exception] = []
+        steps = [("output", self.output.aclose), ("inference", self.inference.close)]
+        if self.foundation is not None:
+            steps.insert(0, ("foundation", self.foundation.aclose))
+        for name, operation in steps:
+            try:
+                await operation()
+            except asyncio.CancelledError as exc:
+                error = RuntimeError(f"AvatarRuntime {name} cleanup was cancelled")
+                error.__cause__ = exc
+                errors.append(error)
+            except Exception as exc:
+                errors.append(exc)
+        if errors:
+            raise ExceptionGroup("AvatarRuntime cleanup failed", errors)
+
     async def aclose(self) -> None:
-        async with AsyncExitStack() as resources:
-            resources.push_async_callback(self.inference.close)
-            resources.push_async_callback(self.foundation.aclose)
-            resources.push_async_callback(self.output.aclose)
+        if self._close_task is None:
+            object.__setattr__(
+                self, "_close_task", asyncio.create_task(self._close(), name="avatar_runtime_close")
+            )
+
+        await wait_for_cleanup(self._close_task)

@@ -35,10 +35,11 @@ def _load_loop(name: str) -> None:
 class LoopConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    plugin: str = Field(default="default", min_length=1)
+    plugin: str = Field(default="realtime", min_length=1)
     init_config: dict[str, Any] = Field(default_factory=dict)
 
     def get_plugin(self, *, runtime: AvatarRuntime) -> Loop:
+        from alphaavatar.agents.avatar.loop import Loop
         from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 
         _load_loop(self.plugin)
