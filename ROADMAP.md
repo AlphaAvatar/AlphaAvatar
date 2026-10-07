@@ -487,6 +487,10 @@
 | 2026-05 | **MCP Tool Runtime Robustness**       | Adds stable tool IDs, agent-friendly tool usage hints, argument validation, hybrid reranking, and server reconnect.      |
 | 2026-05 | **Status-aware MCP Tool**             | Emits `TOOL_START` status with optional model-generated monologue and supports `TOOL_ERROR` fallback through ToolBase.   |
 | 2026-07 | **MCP VDB Runtime Migration**         | Migrated MCP LanceDB and Qdrant retrieval workloads to dedicated AlphaAvatar inference runner processes. |
+| 2026-10 | **MCP Tool Search Filters**           | `tool_search` supports dynamic `top_k`, server filters, and tool category filters (`read` / `write` / `unknown` from MCP `readOnlyHint`), applied as LanceDB prefilters. |
+| 2026-10 | **MCP Compact/Raw Output Modes**      | `tool_call` supports `output_mode="compact"` (truncated results, no echoed args) and `"raw"` (default) to control long tool results. |
+| 2026-10 | **MCP `refresh_tools`**               | Adds a `refresh_tools` operation that reloads MCP tools and re-syncs the LanceDB index without restarting the worker. |
+| 2026-10 | **MCP Log Redaction**                 | Redacts tokens, API keys, passwords, authorization headers, and URL credentials from MCP logs, including `httpx` / `mcp.client.*` loggers. |
 
 ### 🧭 TODO
 
@@ -495,10 +499,6 @@
 | 🔸       | Integrate Notion MCP.                                                                                                                           | ⏳ In Progress |
 | 🔸       | Add richer `TOOL_PROGRESS` updates during parallel MCP execution, including tool count, completed count, failed count, and slow tool detection. | ⏳ In Progress |
 | 🔹       | Support global MCP + user-level MCP routing for OAuth-based tools such as Gmail, Calendar, Todoist, and Notion.                                 |   🧩 Planned  |
-| 🔹       | Make `search_tools()` support dynamic `top_k`, server filters, and tool category filters.                                                       |   🧩 Planned  |
-| 🔹       | Add compact/raw output modes for `call_tools()` to control long tool results.                                                                   |   🧩 Planned  |
-| 🔹       | Add `refresh_tools` operation to reload MCP tools without restarting the worker.                                                                |   🧩 Planned  |
-| 🔹       | Redact sensitive fields from MCP logs, including tokens, API keys, passwords, and authorization headers.                                        |   🧩 Planned  |
 | 🔹       | Add MCP permission model for user-scoped tools and external account authorization.                                                              |   🧩 Planned  |
 
 ---

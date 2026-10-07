@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field
 
@@ -52,6 +52,7 @@ class ConsolidationResult:
     source_items: list[MemoryItem]
     to_insert: list[MemoryItem]
     to_rewrite: list[MemoryItem]
+    degraded: list[str] = field(default_factory=list)
 
     def all_writes(self) -> list[MemoryItem]:
         return [

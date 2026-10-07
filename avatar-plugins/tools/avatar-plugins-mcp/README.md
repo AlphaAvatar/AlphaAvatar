@@ -59,6 +59,29 @@ AlphaAvatar Agent
 
 The Agent only sees **one tool: `MCP`**.
 
+Sensitive values are redacted from MCP logs: bearer/basic tokens, `Authorization`
+and `Cookie` headers, API keys, secrets and passwords (as `key=value` or in JSON),
+and URL credentials/query values. The filter covers the plugin logger and the
+`httpx` / `mcp.client.*` loggers, which would otherwise print the full server URL
+(including `?api_key=...`). Server URLs shown to the model are redacted the same way.
+
+For `op="tool_search"`, pass `query` and optionally `top_k` (1–50, default 8)
+and `server_keys` (a list of exact names from `mcp_servers`). For example,
+`{"op": "tool_search", "query": "search repository code", "top_k": 5, "server_keys": ["github-copilot"]}`.
+Omit `server_keys` to search all configured servers.
+
+`op="refresh_tools"` reloads the tool list from the configured servers without
+restarting the worker (optionally limited with `server_keys`). It reports the
+tools added, removed, and updated per server, and keeps a server's previous
+tools if refreshing that server fails. Use it only when a server's tool set has
+changed; it is not needed for normal use.
+Use `categories` (`"read"`, `"write"`, `"unknown"`) to restrict candidates by the
+tool's MCP `readOnlyHint` annotation, e.g. `"categories": ["read"]` for read-only tools.
+
+For `op="tool_call"`, `output_mode` controls result size: `"raw"` (default) returns
+full results and echoed arguments; `"compact"` truncates each tool result to 2000
+characters (with a truncation note) and omits the echoed arguments.
+
 Internally, MCPHost:
 
 1. Discovers relevant tools

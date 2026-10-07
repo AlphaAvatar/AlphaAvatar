@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol, TypeVar
 
@@ -58,9 +59,16 @@ def _owner_keys(item: MemoryItem) -> tuple[str, ...]:
     return tuple(sorted(ref.key for ref in item.owner_refs))
 
 
+TOPIC_SEPARATOR = " / "
+MAX_TOPIC_PARTS = 8
+
+
 def _merge_topics(*topics: str | None) -> str | None:
-    values = list(dict.fromkeys(topic.strip() for topic in topics if topic and topic.strip()))
-    return " / ".join(values) if values else None
+    # A stored topic is already a joined list, so split before deduplicating.
+    # Oldest parts are dropped first because the topic is embedded with the value.
+    parts = (part.strip() for topic in topics if topic for part in topic.split(TOPIC_SEPARATOR))
+    values = list(dict.fromkeys(part for part in parts if part))
+    return TOPIC_SEPARATOR.join(values[-MAX_TOPIC_PARTS:]) if values else None
 
 
 def _validate_sources(items: list[MemoryItem]) -> MemoryItem:
@@ -188,6 +196,107 @@ def rewrite_consolidated_memory(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _Routing:
+    grouped: dict[str, list[MemoryItem]]
+    drafts: dict[str, ConsolidatedMemoryDraft]
+    leftovers: list[MemoryItem]
+    degraded: list[str]
+
+
+def _resolve_target(
+    target_id: str,
+    *,
+    drafts: dict[str, ConsolidatedMemoryDraft],
+    existing_ids: set[str],
+) -> tuple[str | None, str | None]:
+    """Return the effective target key and, when degraded, the reason."""
+    draft = drafts.get(target_id)
+
+    if draft is None or not draft.value.strip():
+        return None, f"target {target_id} has no content"
+
+    if target_id.startswith(NEW_CONSOLIDATED_PREFIX) or target_id in existing_ids:
+        return target_id, None
+
+    # Honouring an id that is not a retrieved candidate would let one bad
+    # response overwrite an arbitrary memory, so it becomes a new memory.
+    return f"{NEW_CONSOLIDATED_PREFIX}{target_id}", f"unknown target {target_id} treated as new"
+
+
+def _route(
+    items: list[MemoryItem],
+    candidates: list[MemoryItem],
+    plan: ConsolidationPlan,
+) -> _Routing:
+    incoming = {item.memory_id: item for item in items}
+    existing_ids = {candidate.memory_id for candidate in candidates}
+
+    drafts: dict[str, ConsolidatedMemoryDraft] = {}
+    degraded: list[str] = []
+
+    for draft in plan.memories:
+        if draft.memory_id in drafts:
+            degraded.append(f"duplicate draft {draft.memory_id} ignored")
+            continue
+        drafts[draft.memory_id] = draft
+
+    grouped: dict[str, list[MemoryItem]] = {}
+    target_drafts: dict[str, ConsolidatedMemoryDraft] = {}
+    assigned: dict[str, str] = {}
+
+    for assignment in plan.assignments:
+        source_id = assignment.source_memory_id
+        target_id = assignment.target_memory_id
+
+        if source_id not in incoming:
+            degraded.append(f"unknown source {source_id} ignored")
+            continue
+
+        if source_id in assigned:
+            if assigned[source_id] != target_id:
+                degraded.append(f"source {source_id} kept its first target")
+            continue
+
+        target, reason = _resolve_target(target_id, drafts=drafts, existing_ids=existing_ids)
+        if reason:
+            degraded.append(reason)
+        if target is None:
+            continue
+
+        assigned[source_id] = target_id
+        grouped.setdefault(target, []).append(incoming[source_id])
+        target_drafts.setdefault(target, drafts[target_id])
+
+    leftovers = [item for item in items if item.memory_id not in assigned]
+
+    return _Routing(
+        grouped=grouped,
+        drafts=target_drafts,
+        leftovers=leftovers,
+        degraded=degraded,
+    )
+
+
+def _build_fallback(
+    items: list[MemoryItem],
+    *,
+    resolve_sources: bool,
+    created_at: datetime,
+) -> MemoryItem:
+    # Mechanical concatenation: coarse wording, but no atomic memory is left
+    # outside the consolidated layer.
+    return build_consolidated_memory(
+        draft=ConsolidatedMemoryDraft(
+            memory_id=f"{NEW_CONSOLIDATED_PREFIX}fallback",
+            value="\n".join(item.value for item in items),
+        ),
+        items=items,
+        resolve_sources=resolve_sources,
+        created_at=created_at,
+    )
+
+
 def apply_assignments(
     items: list[MemoryItem],
     candidates: list[MemoryItem],
@@ -196,6 +305,12 @@ def apply_assignments(
     resolve_sources: bool,
     updated_at: datetime,
 ) -> ConsolidationResult:
+    """Map a consolidation plan onto memories to write.
+
+    The plan is untrusted model output. A defect degrades only the memories it
+    touches: those fall back to a concatenated consolidated memory instead of
+    discarding the whole plan, and every incoming memory ends up covered.
+    """
     if not items:
         return ConsolidationResult(
             source_items=[],
@@ -203,45 +318,15 @@ def apply_assignments(
             to_rewrite=[],
         )
 
-    incoming = {item.memory_id: item for item in items}
-    existing = {item.memory_id: item for item in candidates}
-
-    drafts: dict[str, ConsolidatedMemoryDraft] = {}
-    for draft in plan.memories:
-        if draft.memory_id in drafts:
-            raise ValueError(f"Duplicate consolidated memory draft: {draft.memory_id}")
-        drafts[draft.memory_id] = draft
-
-    grouped: dict[str, list[MemoryItem]] = {}
-    assigned: dict[str, str] = {}
-
-    for assignment in plan.assignments:
-        source_id = assignment.source_memory_id
-        target_id = assignment.target_memory_id
-
-        if source_id not in incoming:
-            raise ValueError(f"Unknown consolidation source memory: {source_id}")
-
-        previous = assigned.get(source_id)
-
-        if previous is not None:
-            if previous != target_id:
-                raise ValueError(
-                    f"Memory {source_id} is assigned to multiple consolidation targets"
-                )
-            continue
-
-        assigned[source_id] = target_id
-        grouped.setdefault(target_id, []).append(incoming[source_id])
+    routing = _route(items, candidates, plan)
+    existing = {candidate.memory_id: candidate for candidate in candidates}
+    degraded = list(routing.degraded)
 
     to_insert: list[MemoryItem] = []
     to_rewrite: list[MemoryItem] = []
 
-    for target_id, source_items in grouped.items():
-        draft = drafts.get(target_id)
-
-        if draft is None:
-            raise ValueError(f"Missing consolidated memory draft for target: {target_id}")
+    for target_id, source_items in routing.grouped.items():
+        draft = routing.drafts[target_id]
 
         if target_id.startswith(NEW_CONSOLIDATED_PREFIX):
             to_insert.append(
@@ -254,14 +339,9 @@ def apply_assignments(
             )
             continue
 
-        original = existing.get(target_id)
-
-        if original is None:
-            raise ValueError(f"Unknown consolidated memory target: {target_id}")
-
         to_rewrite.append(
             rewrite_consolidated_memory(
-                original,
+                existing[target_id],
                 draft=draft,
                 added_items=source_items,
                 resolve_sources=resolve_sources,
@@ -269,8 +349,20 @@ def apply_assignments(
             )
         )
 
+    # Also covers an empty plan: then every incoming memory is a leftover.
+    if routing.leftovers:
+        to_insert.append(
+            _build_fallback(
+                routing.leftovers,
+                resolve_sources=resolve_sources,
+                created_at=updated_at,
+            )
+        )
+        degraded.append(f"{len(routing.leftovers)} unassigned memories consolidated as fallback")
+
     return ConsolidationResult(
         source_items=list(items),
         to_insert=to_insert,
         to_rewrite=to_rewrite,
+        degraded=degraded,
     )

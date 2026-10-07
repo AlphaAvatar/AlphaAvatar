@@ -13,4 +13,22 @@
 # limitations under the License.
 import logging
 
+from .redact import RedactingFilter
+
 logger = logging.getLogger("alphaavatar.plugins.mcp")
+
+# Mask tokens, API keys, passwords, and authorization values in everything MCP logs.
+# Third-party loggers that print the full MCP server URL (including its query string,
+# e.g. httpx's "HTTP Request: POST <url>" at INFO) are covered too; a logger's filters
+# do not apply to its children, so each one is listed explicitly.
+_REDACTED_LOGGERS = (
+    logger.name,
+    "httpx",
+    "mcp.client.streamable_http",
+    "mcp.client.sse",
+)
+
+for _name in _REDACTED_LOGGERS:
+    _target = logging.getLogger(_name)
+    if not any(isinstance(f, RedactingFilter) for f in _target.filters):
+        _target.addFilter(RedactingFilter())

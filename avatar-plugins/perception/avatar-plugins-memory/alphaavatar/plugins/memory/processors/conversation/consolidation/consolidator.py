@@ -212,13 +212,22 @@ class MemoryConsolidator:
             )
             return fallback
 
+        if result.degraded:
+            logger.warning(
+                "[Memory] consolidation degraded context=%s: %s",
+                first.context.context_id,
+                "; ".join(result.degraded),
+            )
+
         logger.info(
-            "[Memory] consolidation context=%s items=%d candidates=%d inserted=%d rewritten=%d",
+            "[Memory] consolidation context=%s items=%d candidates=%d inserted=%d rewritten=%d "
+            "degraded=%d",
             first.context.context_id,
             len(items),
             len(candidates),
             len(result.to_insert),
             len(result.to_rewrite),
+            len(result.degraded),
         )
 
         return result

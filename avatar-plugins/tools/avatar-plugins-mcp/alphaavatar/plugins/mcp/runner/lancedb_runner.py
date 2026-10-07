@@ -28,7 +28,12 @@ from alphaavatar.agents.avatar.provider.factory import create_embedding_model
 from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.runtime.plugin import AvatarModule
-from alphaavatar.agents.tools.mcp_api import MCPOp
+from alphaavatar.agents.tools.mcp_api import (
+    MCP_TOOL_CATEGORIES,
+    MCP_TOP_K_RANGE,
+    MCPOp,
+    MCPOutputMode,
+)
 from alphaavatar.agents.utils.files.work_dirs import WorkspacePaths
 from alphaavatar.agents.utils.loop_thread import AsyncLoopThread
 from alphaavatar.agents.utils.vdb import lancedb
@@ -37,6 +42,8 @@ from ..config import DEFAULT_TIMEOUT
 from ..log import logger
 from ..mcp_server_remote import MCPServerRemote
 from ..mcp_tool import MCPTool
+
+COMPACT_RESULT_MAX_CHARS = 2000
 
 
 class LanceDBRunner(InferenceRunner):
@@ -443,13 +450,36 @@ class LanceDBRunner(InferenceRunner):
 
         return sorted(rows, key=rank_key)
 
-    def _search_tools(self, *, query: str, top_k: int = 8) -> dict[str, Any]:
+    def _search_tools(
+        self,
+        *,
+        query: str,
+        top_k: int = 8,
+        server_keys: list[str] | None = None,
+        categories: list[str] | None = None,
+    ) -> dict[str, Any]:
         out = {
             "tools": [],
             "error": None,
         }
 
         try:
+            low, high = MCP_TOP_K_RANGE
+            if isinstance(top_k, bool) or not isinstance(top_k, int) or not low <= top_k <= high:
+                raise ValueError(f"top_k must be an integer from {low} to {high}")
+            if server_keys is not None and (
+                not isinstance(server_keys, list)
+                or not server_keys
+                or any(not isinstance(key, str) or not key for key in server_keys)
+            ):
+                raise ValueError("server_keys must be a nonempty list of names")
+            if categories is not None and (
+                not isinstance(categories, list)
+                or not categories
+                or any(c not in MCP_TOOL_CATEGORIES for c in categories)
+            ):
+                raise ValueError(f"categories must be a nonempty list of {MCP_TOOL_CATEGORIES}")
+
             self._wait_initialized()
 
             if not query:
@@ -461,7 +491,27 @@ class LanceDBRunner(InferenceRunner):
                 return out
 
             fetch_k = min(max(top_k * 6, 32), all_count)
-            rows = self._tool_table.search(query_vec).limit(fetch_k).to_list()
+            search = self._tool_table.search(query_vec)
+            predicates: list[str] = []
+            if server_keys is not None:
+                quoted_keys = ",".join(
+                    f"'{self._quote_sql(key)}'" for key in sorted(set(server_keys))
+                )
+                predicates.append(f"server_key IN ({quoted_keys})")
+            if categories is not None:
+                # Category comes from live MCP annotations, so filter by tool_id
+                # instead of adding a column that would require a table migration.
+                wanted = set(categories)
+                tool_ids = sorted(
+                    t.tool_id for t in self._mcp_tools.values() if t.category in wanted
+                )
+                if not tool_ids:
+                    return out
+                quoted_ids = ",".join(f"'{self._quote_sql(x)}'" for x in tool_ids)
+                predicates.append(f"tool_id IN ({quoted_ids})")
+            if predicates:
+                search = search.where(" AND ".join(predicates), prefilter=True)
+            rows = search.limit(fetch_k).to_list()
             rows = self._rerank_tool_rows(query=query, rows=rows)
 
             seen: set[str] = set()
@@ -614,6 +664,84 @@ class LanceDBRunner(InferenceRunner):
             logger.exception("[MCPRunner] failed to reinitialize server key=%s", server_key)
             return False
 
+    def _tool_texts_for_server(self, server_key: str) -> dict[str, str]:
+        return {
+            tid: self._mcp_tools[tid].to_vdb_text(
+                server_info=self._server_info_by_tool_id.get(tid, {})
+            )
+            for tid, key in self._tool_server_key.items()
+            if key == server_key and tid in self._mcp_tools
+        }
+
+    async def _refresh_one_server(self, server_key: str) -> dict[str, Any]:
+        info: dict[str, Any] = {
+            "added": [],
+            "removed": [],
+            "updated": [],
+            "total": 0,
+            "error": None,
+        }
+
+        if server_key not in self._servers:
+            info["error"] = "server is not configured"
+            return info
+
+        before = self._tool_texts_for_server(server_key)
+        client = self._clients_by_key.get(server_key)
+
+        try:
+            if client is None:
+                # The server never connected (or was dropped): do a full reconnect.
+                if not await self._reinitialize_server(server_key):
+                    raise RuntimeError("failed to connect to MCP server")
+            else:
+                lock = self._server_reconnect_locks.setdefault(server_key, asyncio.Lock())
+                async with lock:
+                    client.invalidate_cache()
+                    tools = await client.list_tools()
+                    server_info = client.info_dict
+
+                    for tid in [t for t, k in self._tool_server_key.items() if k == server_key]:
+                        self._mcp_tools.pop(tid, None)
+                        self._server_info_by_tool_id.pop(tid, None)
+                        self._tool_server_key.pop(tid, None)
+                    for tool in tools:
+                        self._mcp_tools[tool.tool_id] = tool
+                        self._server_info_by_tool_id[tool.tool_id] = server_info
+                        self._tool_server_key[tool.tool_id] = server_key
+        except Exception as e:
+            # Keep the previous tools untouched if listing failed before we mutated state.
+            logger.exception("[MCPRunner] refresh failed key=%s", server_key)
+            info["error"] = str(e)
+            return info
+
+        after = self._tool_texts_for_server(server_key)
+        info["added"] = sorted(after.keys() - before.keys())
+        info["removed"] = sorted(before.keys() - after.keys())
+        info["updated"] = sorted(t for t in after.keys() & before.keys() if after[t] != before[t])
+        info["total"] = len(after)
+        return info
+
+    async def _refresh_servers_async(self, server_keys: list[str] | None) -> dict[str, Any]:
+        targets = list(self._servers) if server_keys is None else sorted(set(server_keys))
+        return {key: await self._refresh_one_server(key) for key in targets}
+
+    def _refresh_tools(self, *, server_keys: list[str] | None = None) -> dict[str, Any]:
+        try:
+            self._wait_initialized()
+            fut = self._loop_thread.submit_future(self._refresh_servers_async(server_keys))
+            servers = fut.result(timeout=DEFAULT_TIMEOUT)
+
+            if any(not info["error"] for info in servers.values()):
+                sync = self._sync_tools_to_vdb()
+                if sync["error"]:
+                    return {"servers": servers, "error": f"VDB sync failed: {sync['error']}"}
+
+            return {"servers": servers, "error": None}
+        except Exception as e:
+            logger.exception("[MCPRunner] refresh_tools failed")
+            return {"servers": {}, "error": str(e)}
+
     async def _call_one(self, tool_id: str, raw_args: Any) -> Any:
         if tool_id not in self._mcp_tools:
             raise ToolError(f"MCP tool not found: {tool_id}")
@@ -665,7 +793,10 @@ class LanceDBRunner(InferenceRunner):
 
             return await refreshed_tool.call(raw_args)
 
-    async def _call_tools_async(self, *, params: dict[str, Any]) -> dict[str, Any]:
+    async def _call_tools_async(
+        self, *, params: dict[str, Any], output_mode: str = MCPOutputMode.RAW
+    ) -> dict[str, Any]:
+        compact = output_mode == MCPOutputMode.COMPACT
         call_start = time.perf_counter()
 
         if not params:
@@ -727,11 +858,12 @@ class LanceDBRunner(InferenceRunner):
         for item in results:
             lines.append(f"#### {item['tool_id']}")
             lines.append("")
-            lines.append("**Args:**")
-            lines.append("```json")
-            lines.append(json.dumps(item["args"], ensure_ascii=False, indent=2))
-            lines.append("```")
-            lines.append("")
+            if not compact:
+                lines.append("**Args:**")
+                lines.append("```json")
+                lines.append(json.dumps(item["args"], ensure_ascii=False, indent=2))
+                lines.append("```")
+                lines.append("")
 
             if not item["ok"]:
                 lines.append("**Status:** ❌ Error")
@@ -744,9 +876,15 @@ class LanceDBRunner(InferenceRunner):
                 lines.append("")
                 lines.append("```text")
                 result = item["result"]
-                lines.append(
-                    result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
-                )
+                text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
+                if compact and len(text) > COMPACT_RESULT_MAX_CHARS:
+                    omitted = len(text) - COMPACT_RESULT_MAX_CHARS
+                    text = (
+                        text[:COMPACT_RESULT_MAX_CHARS]
+                        + f"\n... [truncated {omitted} chars; "
+                        + 'use output_mode="raw" for the full result]'
+                    )
+                lines.append(text)
                 lines.append("```")
 
             lines.append("")
@@ -764,10 +902,14 @@ class LanceDBRunner(InferenceRunner):
             "error": None,
         }
 
-    def _call_tools(self, *, params: dict[str, Any]) -> dict[str, Any]:
+    def _call_tools(
+        self, *, params: dict[str, Any], output_mode: str = MCPOutputMode.RAW
+    ) -> dict[str, Any]:
         try:
             self._wait_initialized()
-            fut = self._loop_thread.submit_future(self._call_tools_async(params=params))
+            fut = self._loop_thread.submit_future(
+                self._call_tools_async(params=params, output_mode=output_mode)
+            )
             return fut.result(timeout=DEFAULT_TIMEOUT)
         except Exception as e:
             logger.exception("[MCPRunner] call_tools failed")
@@ -851,6 +993,9 @@ class LanceDBRunner(InferenceRunner):
                 return json.dumps(result, ensure_ascii=False).encode()
             case MCPOp.TOOL_CALL:
                 result = self._call_tools(**json_data["param"])
+                return json.dumps(result, ensure_ascii=False).encode()
+            case MCPOp.REFRESH_TOOLS:
+                result = self._refresh_tools(**json_data["param"])
                 return json.dumps(result, ensure_ascii=False).encode()
             case _:
                 return None
