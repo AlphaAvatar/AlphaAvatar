@@ -47,11 +47,9 @@ async def create_avatar_runtime(
 
         # build foundation runtime
         resources.push_async_callback(inference.close)
-        context = await avatar_config.context.get_plugin(
-            runtime=runtime, avatar_config=avatar_config
-        )
-        loop = await avatar_config.loop.get_plugin(runtime=runtime)
-        voice = await avatar_config.voice.get_plugin(inference_executor=inference)
+        context = avatar_config.context.get_plugin(runtime=runtime, avatar_config=avatar_config)
+        loop = avatar_config.loop.get_plugin(runtime=runtime)
+        voice = avatar_config.voice.get_plugin(inference_executor=inference)
         foundation = FoundationRuntime(
             context=context,
             loop=loop,
