@@ -47,7 +47,12 @@ class AvatarEngine(Agent):
         self._avatar_config = avatar_config
         self._runtime = runtime
 
-        voice_tts = runtime.foundation.voice.tts
+        foundation = runtime.foundation
+        if foundation is None or not foundation.loop.ready:
+            raise RuntimeError("AvatarEngine requires an initialized Foundation Loop")
+
+        self._loop = foundation.loop
+        voice_tts = foundation.voice.tts
         if voice_tts is not None and not isinstance(voice_tts, LiveKitTTSAdapter):
             raise TypeError("The current LiveKit response path requires LiveKitTTSAdapter")
 
@@ -68,7 +73,7 @@ class AvatarEngine(Agent):
         self._runtime.capability_registry.collect(self._memory, self._persona)
 
         # Step 3: bind memory and persona to runtime context.
-        self._context_manager = runtime.foundation.context
+        self._context_manager = foundation.context
         self._context_manager.bind_sources(memory=self._memory, persona=self._persona)
         super().__init__(
             instructions=self._context_manager.initial_instructions,
@@ -143,11 +148,16 @@ class AvatarEngine(Agent):
         )
 
     async def on_session_start(self) -> None:
+        if not self._loop.ready:
+            raise RuntimeError("AvatarEngine cannot start with an unready Loop")
         init_avatar_patches(self)
         await self._plugin_lifecycle.start()
 
     async def on_session_stop(self) -> None:
         errors: list[Exception] = []
+
+        # Loop consumers may still commit records to Memory during their cleanup.
+        await self._run_shutdown_step("loop shutdown", self._loop.aclose, errors)
         wait_pending = getattr(getattr(self._chat_ctx, "items", None), "wait_pending", None)
 
         if callable(wait_pending):

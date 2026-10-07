@@ -40,6 +40,15 @@ class LoopHandle(ABC):
 
 
 class Loop(ABC):
+    @property
+    @abstractmethod
+    def ready(self) -> bool:
+        """True only after shared-service initialization and before closure."""
+
+    @abstractmethod
+    async def initialize(self) -> None:
+        """Resolve services after Foundation binding, before Engine construction or submission."""
+
     @abstractmethod
     async def submit(
         self,

@@ -34,20 +34,24 @@ def _load_backend(name: str) -> None:
 def create_llm_model(config: ProviderTaskConfig) -> LLMBase:
     if config.kind != ProviderKind.LLM:
         raise ValueError("An LLM requires kind='llm'")
+
     _load_backend(config.backend)
     model = AvatarModulePlugin.create(AvatarModule.PROVIDER_LLM, config.backend, config=config)
     if not isinstance(model, LLMBase):
         raise TypeError("Provider LLM factory must return LLMBase")
+
     return model
 
 
 def create_embedding_model(config: ProviderTaskConfig) -> WorkerEmbeddingBase:
     if config.kind != ProviderKind.EMBEDDING:
         raise ValueError("An embedding model requires kind='embedding'")
+
     _load_backend(config.backend)
     model = AvatarModulePlugin.create(
         AvatarModule.PROVIDER_EMBEDDING, config.backend, config=config
     )
     if not isinstance(model, WorkerEmbeddingBase):
         raise TypeError("Provider embedding factory must return WorkerEmbeddingBase")
+
     return model

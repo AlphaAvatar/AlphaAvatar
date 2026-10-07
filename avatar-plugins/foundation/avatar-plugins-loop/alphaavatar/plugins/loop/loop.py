@@ -28,6 +28,7 @@ from .config import RealtimeLoopConfig
 from .execution import LoopExecution
 
 if TYPE_CHECKING:
+    from alphaavatar.agents.avatar.provider.gateway import ProviderGateway
     from alphaavatar.agents.runtime import AvatarRuntime
 
 
@@ -37,17 +38,33 @@ class AvatarLoop(Loop):
     def __init__(self, config: RealtimeLoopConfig, *, runtime: AvatarRuntime) -> None:
         self._config = config.model_copy(deep=True)
         self._runtime = runtime
-        self._gateway = runtime.foundation.provider.gateway(
-            ProvidersConfig(trace=self._config.trace, tasks={"avatar.loop": self._config.model})
-        )
-
-        # Resolve shared services at construction, not from a separate dependency container.
-        self._context = runtime.foundation.context
-        self._gateway.validate_tasks(("avatar.loop",))
+        # Construction must not dereference the Foundation that will own this Loop.
+        self._gateway: ProviderGateway | None = None
         self._runs: dict[str, LoopExecution] = {}
         self._current: LoopExecution | None = None
         self._unsafe_lock = asyncio.Lock()
         self._close_task: asyncio.Task[None] | None = None
+
+    @property
+    def ready(self) -> bool:
+        return self._gateway is not None and self._close_task is None
+
+    async def initialize(self) -> None:
+        if self._close_task is not None:
+            raise RuntimeError("Avatar loop is closing or closed")
+        if self.ready:
+            return
+
+        foundation = self._runtime.foundation
+        if foundation is None or foundation.loop is not self:
+            raise RuntimeError("Bind this Loop's owning Foundation before initialization")
+
+        gateway = foundation.provider.gateway(
+            ProvidersConfig(trace=self._config.trace, tasks={"avatar.loop": self._config.model})
+        )
+        gateway.validate_tasks(("avatar.loop",), require_streaming=True)
+        # No await occurs during service binding; publish readiness only after validation succeeds.
+        self._gateway = gateway
 
     def interrupt(self, *, run_id: str | None = None, reason: str = "interrupted") -> None:
         execution = self._runs.get(run_id) if run_id is not None else self._current
@@ -64,6 +81,10 @@ class AvatarLoop(Loop):
     ) -> LoopHandle:
         if self._close_task is not None:
             raise RuntimeError("Avatar loop is closing or closed")
+
+        gateway = self._gateway
+        if gateway is None:
+            raise RuntimeError("Avatar loop must be initialized before submission")
 
         if not isinstance(request, LoopRequest):
             raise TypeError("Expected LoopRequest")
@@ -87,7 +108,7 @@ class AvatarLoop(Loop):
             request,
             self._config,
             runtime=self._runtime,
-            gateway=self._gateway,
+            gateway=gateway,
             unsafe_lock=self._unsafe_lock,
             on_event=on_event,
             on_commit=on_commit,

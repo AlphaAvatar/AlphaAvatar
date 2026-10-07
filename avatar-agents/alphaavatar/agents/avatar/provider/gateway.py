@@ -23,7 +23,8 @@ from pydantic import BaseModel
 
 from alphaavatar.agents.utils import sha256_text
 
-from .base import LLMBase
+from .base import LLMBase, StreamingLLMBase
+from .errors import ModelCapabilityError
 from .registry import ProviderRegistry
 from .schemas import ModelRequest, ProviderResult, ProvidersConfig, ProviderTraceRecord
 from .schemas.prompt import ModelPrompt
@@ -52,12 +53,19 @@ class ProviderGateway:
         return self._service.model(self._registry.get_task_config(task_name))
 
     def validate_tasks(
-        self, task_names: Iterable[str], *, require_input_adapter: bool = False
+        self,
+        task_names: Iterable[str],
+        *,
+        require_input_adapter: bool = False,
+        require_streaming: bool = False,
     ) -> None:
         task_names = tuple(task_names)
         self._registry.validate_tasks(task_names)
         for task_name in task_names:
-            self._model(task_name).validate_input(require_input_adapter=require_input_adapter)
+            model = self._model(task_name)
+            if require_streaming and not isinstance(model, StreamingLLMBase):
+                raise ModelCapabilityError(f"Task {task_name!r} requires a streaming model")
+            model.validate_input(require_input_adapter=require_input_adapter)
 
     async def _invoke_structured(
         self,

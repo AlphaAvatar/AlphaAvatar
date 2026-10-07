@@ -64,11 +64,21 @@ async def create_avatar_runtime(
             loop=loop,
             voice=voice,
         )
+        # Transfer component ownership before binding, so a failed bind cannot close them twice.
+        resources.pop_all()
+        resources.push_async_callback(runtime.aclose)
         resources.push_async_callback(foundation.aclose)
 
         runtime.bind_foundation(foundation)
         resources.pop_all()
         resources.push_async_callback(runtime.aclose)
+
+        await loop.initialize()
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            raise asyncio.CancelledError
+        if not loop.ready:
+            raise RuntimeError("Loop initialization finished without becoming ready")
     except BaseException:
         await wait_for_cleanup(
             asyncio.create_task(resources.aclose(), name="avatar_bootstrap_rollback")
