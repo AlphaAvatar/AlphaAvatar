@@ -66,26 +66,6 @@ class LanceDBRunner(InferenceRunner):
         self._embeddings = None
         self._collection_name: str | None = None
 
-    def _should_reconnect(self, error: Exception) -> bool:
-        msg = str(error).lower()
-
-        reconnect_keywords = [
-            "connection",
-            "connect",
-            "closed",
-            "broken pipe",
-            "timeout",
-            "timed out",
-            "eof",
-            "reset by peer",
-            "transport",
-            "session",
-            "disconnected",
-            "network",
-        ]
-
-        return any(keyword in msg for keyword in reconnect_keywords)
-
     def _format_tool_usage(
         self,
         *,
@@ -594,14 +574,6 @@ class LanceDBRunner(InferenceRunner):
             case _:
                 return True
 
-    async def _reconnect_server_for_tool(self, tool_id: str) -> bool:
-        server_key = self._tool_server_key.get(tool_id)
-        if not server_key:
-            logger.warning("[MCPRunner] no server_key found for tool=%s", tool_id)
-            return False
-
-        return await self._reinitialize_server(server_key)
-
     async def _reinitialize_server(self, server_key: str) -> bool:
         lock = self._server_reconnect_locks.setdefault(server_key, asyncio.Lock())
 
@@ -767,29 +739,9 @@ class LanceDBRunner(InferenceRunner):
                 + usage
             )
 
-        try:
-            return await tool.call(raw_args)
-        except Exception as first_error:
-            if not self._should_reconnect(first_error):
-                raise
-
-            logger.warning(
-                "[MCPRunner] tool=%s failed with connection-like error, attempting server reconnect: %s",
-                tool_id,
-                first_error,
-            )
-
-            reconnected = await self._reconnect_server_for_tool(tool_id)
-            if not reconnected:
-                raise
-
-            refreshed_tool = self._mcp_tools.get(tool_id)
-            if refreshed_tool is None:
-                raise ToolError(
-                    f"Tool {tool_id} disappeared after reconnect. Original error: {first_error}"
-                )
-
-            return await refreshed_tool.call(raw_args)
+        # Once dispatched, a connection error cannot tell us whether a remote write committed.
+        # Connection refresh is separate from invocation; never replay this call implicitly.
+        return await tool.call(raw_args)
 
     async def _call_tools_async(
         self, *, params: dict[str, Any], output_mode: str = MCPOutputMode.RAW
