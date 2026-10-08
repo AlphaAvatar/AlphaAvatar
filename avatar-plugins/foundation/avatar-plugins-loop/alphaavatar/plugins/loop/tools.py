@@ -98,6 +98,7 @@ def result_parts(value: Any, *, max_bytes: int) -> tuple[tuple[Any, ...], bool]:
             value = value.model_dump(mode="json", by_alias=True)
         text = value if isinstance(value, str) else json.dumps(value, allow_nan=False)
         parts, is_error = (ModelTextPart(text),), False
+
     size = 0
     for part in parts:
         if isinstance(part, ModelTextPart):

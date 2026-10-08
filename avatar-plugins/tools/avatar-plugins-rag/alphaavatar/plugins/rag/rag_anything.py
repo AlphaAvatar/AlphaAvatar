@@ -19,6 +19,8 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from alphaavatar.agents.avatar.provider.schemas import ModelTextPart
+from alphaavatar.agents.runtime.capability.result import CapabilityResult
 from alphaavatar.agents.tools.schemas import ToolError
 from alphaavatar.core.cleanup import wait_for_cleanup
 
@@ -183,11 +185,16 @@ class RAGAnythingTool:
             return "No relevant result was found in the session knowledge base."
         return str(result)
 
-    async def indexing(self, *, file_paths_or_dir: list[str], data_source: str = "all") -> str:
+    async def indexing(
+        self, *, file_paths_or_dir: list[str], data_source: str = "all"
+    ) -> CapabilityResult:
         self._validate_source(data_source)
+        if not file_paths_or_dir:
+            raise ToolError("RAG indexing requires at least one path")
         rag = await self._ensure_loaded()
         _, _, artifacts = await asyncio.to_thread(self._paths)
         results = {}
+        failed = False
         async with self._operation_lock:
             for value in file_paths_or_dir:
                 path = Path(value)
@@ -205,8 +212,12 @@ class RAGAnythingTool:
                     )
                     results[value] = "Indexed folder successfully."
                 else:
-                    results[value] = "Skipped: path does not exist."
-        return json.dumps(results, ensure_ascii=False, indent=2)
+                    results[value] = "Skipped: path is missing or is not a regular file/directory."
+                    failed = True
+        return CapabilityResult(
+            parts=(ModelTextPart(json.dumps(results, ensure_ascii=False, indent=2)),),
+            is_error=failed,
+        )
 
     async def _close(self) -> None:
         if self._load_task is not None:

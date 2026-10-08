@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from alphaavatar.agents.avatar.provider.schemas import ModelTextPart
+from alphaavatar.agents.runtime.capability.result import CapabilityResult
 from alphaavatar.agents.tools.schemas import ToolError
 from alphaavatar.agents.utils import url_to_filename_id
 from alphaavatar.core.cleanup import wait_for_cleanup
@@ -52,15 +54,15 @@ class TavilyDeepResearchTool:
             timeout=timeout,
             follow_redirects=False,
         )
-        self._workers: set[asyncio.Task[str]] = set()
+        self._workers: set[asyncio.Task[CapabilityResult]] = set()
         self._close_task: asyncio.Task[None] | None = None
 
     @staticmethod
-    def _observe(task: asyncio.Task[str]) -> None:
+    def _observe(task: asyncio.Task[CapabilityResult]) -> None:
         if not task.cancelled():
             task.exception()
 
-    def _save(self, result: TavilyExtractObj) -> str:
+    def _save(self, result: TavilyExtractObj) -> CapabilityResult:
         from alphaavatar.agents.utils.files import save_single_url_content_to_pdf
 
         root = (self.session_path.artifacts_dir / "tavily").resolve()
@@ -87,7 +89,9 @@ class TavilyDeepResearchTool:
         summary = [f"Saved {len(saved)} documents; {len(failures)} failures.", *saved]
         if failures:
             summary.extend(("Failed results:", *failures))
-        return "\n\n".join(summary)
+        return CapabilityResult(
+            parts=(ModelTextPart("\n\n".join(summary)),), is_error=bool(failures) or not saved
+        )
 
     async def _post(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
         if self._close_task is not None:
@@ -122,10 +126,14 @@ class TavilyDeepResearchTool:
         # Preserve the existing deeper-search operation, not an untracked background research job.
         return await self._search(query, depth="advanced")
 
-    async def scrape(self, *, urls: list[str]) -> str:
-        return (await self._extract(urls)).to_markdown()
+    async def scrape(self, *, urls: list[str]) -> CapabilityResult:
+        result = await self._extract(urls)
+        return CapabilityResult(
+            parts=(ModelTextPart(result.to_markdown()),),
+            is_error=bool(result.failed_results) or not result.results,
+        )
 
-    async def download(self, *, urls: list[str]) -> str:
+    async def download(self, *, urls: list[str]) -> CapabilityResult:
         result = await self._extract(urls)
         task = asyncio.create_task(
             asyncio.to_thread(self._save, result), name="tavily_document_save"

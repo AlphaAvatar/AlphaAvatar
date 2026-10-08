@@ -77,6 +77,7 @@ class MCPToolService(ToolBase):
                     metadata={"op": request.op.value, "query": request.query},
                 )
             )
+
         if request.op == MCPOp.TOOL_SEARCH:
             return await self._service.search_tools(
                 query=request.query,
@@ -86,6 +87,7 @@ class MCPToolService(ToolBase):
             )
         if request.op == MCPOp.REFRESH_TOOLS:
             return await self._service.refresh_tools(server_keys=request.server_keys)
+
         return await self._service.call_tools(
             params=parse_params(request.params_json),
             output_mode=request.output_mode,

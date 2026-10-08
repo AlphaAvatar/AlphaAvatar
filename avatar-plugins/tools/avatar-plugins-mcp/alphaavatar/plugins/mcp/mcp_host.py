@@ -18,6 +18,8 @@ import os
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
+from alphaavatar.agents.avatar.provider.schemas import ModelTextPart
+from alphaavatar.agents.runtime.capability.result import CapabilityResult
 from alphaavatar.agents.tools.schemas import ToolError
 
 from .enums import MCPOp, MCPOutputMode
@@ -94,32 +96,83 @@ class MCPHost:
             lines.append("")
         return "\n".join(lines)
 
-    async def refresh_tools(self, *, server_keys: list[str] | None = None) -> str:
+    async def refresh_tools(self, *, server_keys: list[str] | None = None) -> CapabilityResult:
         self._validate_servers(server_keys)
         result = await self._run(MCPOp.REFRESH_TOOLS, {"server_keys": server_keys})
-        lines = ["MCPHost refreshed MCP tools:", ""]
-        for key, info in (result.get("servers") or {}).items():
-            if info.get("error"):
-                lines.append(f"- {key}: FAILED; previous tools kept. See worker diagnostics.")
+        servers = result.get("servers")
+        expected = set(self._servers if server_keys is None else server_keys)
+        valid = isinstance(servers, dict) and bool(expected) and set(servers) == expected
+        failed = not valid
+        lines = ["MCPHost refresh results:", ""]
+
+        if not valid:
+            lines.append("Refresh results are incomplete or invalid; success is not confirmed.")
+
+        for key in sorted(expected):
+            info = servers.get(key) if isinstance(servers, dict) else None
+            if not isinstance(info, dict) or "error" not in info:
+                lines.append(f"- {key}: UNKNOWN; no valid refresh result was returned.")
+                failed = True
+                continue
+            if info["error"] is not None:
+                lines.append(f"- {key}: FAILED; consult the worker diagnostics.")
+                failed = True
+                continue
+            changes = [info.get(label) for label in ("added", "removed", "updated")]
+            if (
+                type(info.get("total")) is not int
+                or info["total"] < 0
+                or any(not isinstance(v, list) for v in changes)
+            ):
+                lines.append(f"- {key}: UNKNOWN; malformed refresh summary.")
+                failed = True
                 continue
             lines.append(
-                f"- {key}: {info['total']} tools (added {len(info['added'])}, "
-                f"removed {len(info['removed'])}, updated {len(info['updated'])})"
+                f"- {key}: {info['total']} tools (added {len(changes[0])}, "
+                f"removed {len(changes[1])}, updated {len(changes[2])})"
             )
-            for label in ("added", "removed", "updated"):
-                lines.extend(f"    {label}: {identity}" for identity in info[label])
-        return "\n".join(lines)
+            for label, values in zip(("added", "removed", "updated"), changes, strict=True):
+                lines.extend(f"    {label}: {identity}" for identity in values)
+        return CapabilityResult(parts=(ModelTextPart("\n".join(lines)),), is_error=failed)
 
     async def call_tools(
         self,
         *,
         params: dict[str, dict[str, Any]],
         output_mode: MCPOutputMode = MCPOutputMode.RAW,
-    ) -> str:
+    ) -> CapabilityResult:
+        if not params:
+            raise ToolError("MCP tool_call requires at least one tool")
+
         result = await self._run(
             MCPOp.TOOL_CALL, {"params": params, "output_mode": output_mode.value}
         )
-        return result.get("markdown") or json.dumps(result, ensure_ascii=False, indent=2)
+        rows = result.get("results")
+        valid = (
+            isinstance(rows, list)
+            and len(rows) == len(params)
+            and all(
+                isinstance(row, dict)
+                and isinstance(row.get("tool_id"), str)
+                and type(row.get("ok")) is bool
+                for row in rows
+            )
+            and {row["tool_id"] for row in rows} == set(params)
+        )
+
+        failed = not valid or any(not row["ok"] or row.get("error") for row in rows)
+        text = result.get("markdown")
+        if not isinstance(text, str) or not text.strip():
+            text = json.dumps(result, ensure_ascii=False, indent=2)
+
+        if failed:
+            text += (
+                "\n\nNot all requested operations have confirmed successful results. "
+                "An error does not prove that a remote action was rolled back. "
+                "Do not repeat state-changing operations without checking their actual state."
+            )
+
+        return CapabilityResult(parts=(ModelTextPart(text),), is_error=bool(failed))
 
     async def aclose(self) -> None:
         # Remote clients and the VDB are owned by the inference worker, not this session facade.
