@@ -11,20 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from ..engine import AvatarEngine
-
 from .worker_patch import AvatarServer
 
 __all__ = ["AvatarServer"]
-
-
-def init_avatar_patches(engine: AvatarEngine) -> None:
-    """Initialize avatar patches."""
-    from .context_op_patch import install_context_op_patch
-
-    install_context_op_patch(engine)

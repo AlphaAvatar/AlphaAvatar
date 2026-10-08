@@ -33,7 +33,6 @@ from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.agents.status import StatusEmitter, StatusEvent, StatusType
 from alphaavatar.agents.tools import ToolBase
 
-from .patches import init_avatar_patches
 from .turn_controller import AvatarTurnController
 from .voice import LiveKitTTSAdapter
 
@@ -154,7 +153,6 @@ class AvatarEngine(Agent):
     async def on_session_start(self) -> None:
         if not self._loop.ready:
             raise RuntimeError("AvatarEngine cannot start with an unready Loop")
-        init_avatar_patches(self)
         await self._plugin_lifecycle.start()
 
     async def on_session_stop(self) -> None:
@@ -162,15 +160,6 @@ class AvatarEngine(Agent):
 
         # Loop consumers may still commit records to Memory during their cleanup.
         await self._run_shutdown_step("loop shutdown", self._loop.aclose, errors)
-        wait_pending = getattr(getattr(self._chat_ctx, "items", None), "wait_pending", None)
-
-        if callable(wait_pending):
-            await self._run_shutdown_step(
-                "chat context pending flush",
-                wait_pending,
-                errors,
-            )
-
         await self._run_shutdown_step(
             "runtime plugin shutdown",
             self._plugin_lifecycle.stop,

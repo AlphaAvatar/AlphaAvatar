@@ -14,13 +14,13 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from alphaavatar.agents.runtime.plugin import AvatarRuntimePlugin
 
 if TYPE_CHECKING:
-    from livekit.agents.llm import ChatItem
-
+    from alphaavatar.agents.avatar.provider.schemas.model_input import ModelInputItem
     from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
 
 
@@ -38,4 +38,9 @@ class MemoryBase(AvatarRuntimePlugin):
     def memory_content(self) -> str: ...
 
     @abstractmethod
-    def add_message(self, *, context_id: str, chat_item: ChatItem) -> None: ...
+    def add_messages(self, *, context_id: str, items: Sequence[ModelInputItem]) -> None:
+        """Accept native assistant/tool records atomically into the extraction buffer.
+
+        This is local acceptance, not a durable write or proof of user delivery.
+        User input is consumed separately from committed TurnSnapshots.
+        """

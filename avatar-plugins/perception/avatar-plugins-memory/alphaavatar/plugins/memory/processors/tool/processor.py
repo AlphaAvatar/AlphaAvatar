@@ -16,25 +16,11 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from livekit.agents.llm import (
-    FunctionCall,
-    FunctionCallOutput,
-)
-
-from alphaavatar.agents.memory.enums import (
-    MemoryCacheType,
-    MemoryType,
-)
-from alphaavatar.agents.memory.schemas import (
-    MemoryOwnerRef,
-    MemoryParticipantRef,
-    MemoryScope,
-)
+from alphaavatar.agents.avatar.provider.schemas import ModelFunctionCall, ModelFunctionOutput
+from alphaavatar.agents.memory.enums import MemoryCacheType, MemoryType
+from alphaavatar.agents.memory.schemas import MemoryOwnerRef, MemoryParticipantRef, MemoryScope
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.capability import (
-    AvatarCapabilityName,
-    avatar_capability,
-)
+from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_capability
 
 from ...state import MemoryContextItem, MemoryContextState
 from ..base import MemoryProcessor
@@ -53,16 +39,9 @@ if TYPE_CHECKING:
 )
 class ToolProcessor(MemoryProcessor):
     def __init__(
-        self,
-        *,
-        runtime: AvatarRuntime,
-        memory: MemoryRuntime,
-        config: ToolConfig,
+        self, *, runtime: AvatarRuntime, memory: MemoryRuntime, config: ToolConfig
     ) -> None:
-        super().__init__(
-            runtime=runtime,
-            memory=memory,
-        )
+        super().__init__(runtime=runtime, memory=memory)
         self._provider = ToolProvider(config.provider, service=runtime.foundation.provider)
         self._locks: dict[str, asyncio.Lock] = {}
 
@@ -71,47 +50,21 @@ class ToolProcessor(MemoryProcessor):
         return "tool"
 
     def _lock(self, context_id: str) -> asyncio.Lock:
-        return self._locks.setdefault(
-            context_id,
-            asyncio.Lock(),
-        )
+        return self._locks.setdefault(context_id, asyncio.Lock())
 
     @staticmethod
     def _has_tool_event(messages: list[MemoryContextItem]) -> bool:
-        return any(
-            isinstance(
-                item,
-                FunctionCall | FunctionCallOutput,
-            )
-            or getattr(item, "tool_calls", None)
-            or getattr(item, "function_call", None)
-            or getattr(item, "type", None)
-            in {
-                "function_call",
-                "function_call_output",
-                "agent_config_update",
-                "agent_handoff",
-            }
-            for item in messages
-        )
+        return any(isinstance(item, ModelFunctionCall | ModelFunctionOutput) for item in messages)
 
     def _participants(
-        self,
-        state: MemoryContextState,
-        messages: list[MemoryContextItem],
+        self, state: MemoryContextState, messages: list[MemoryContextItem]
     ) -> list[MemoryParticipantRef]:
         refs = list(state.participant_refs)
-
         refs.extend(
-            MemoryParticipantRef.tool(tool_id)
+            MemoryParticipantRef.tool(item.name)
             for item in messages
-            if isinstance(
-                item,
-                FunctionCall | FunctionCallOutput,
-            )
-            and (tool_id := str(getattr(item, "name", "") or "").strip())
+            if isinstance(item, ModelFunctionCall | ModelFunctionOutput)
         )
-
         return self.deduplicate_refs(refs)
 
     async def update(self, state: MemoryContextState) -> None:
@@ -123,19 +76,13 @@ class ToolProcessor(MemoryProcessor):
 
         async with self._lock(state.context_id):
             start, end, messages = await self.checkpoint_window(state)
-
             if start == end:
                 return
-
             if not self._has_tool_event(messages):
                 await self.commit_items(state=state, start=start, end=end, items=[])
                 return
 
-            content = self.render_context_content(
-                state,
-                messages,
-            )
-
+            content = self.render_context_content(state, messages)
             delta = await self._provider.extract(
                 context_content=content,
                 metadata=self.trace_metadata(
@@ -145,13 +92,8 @@ class ToolProcessor(MemoryProcessor):
                     memory_type=MemoryType.TOOLS,
                 ),
             )
-
-            participants = self._participants(
-                state,
-                messages,
-            )
+            participants = self._participants(state, messages)
             source_refs = self.source_refs(messages)
-
             avatar_items = self.build_memory_items(
                 state=state,
                 memory_type=MemoryType.Avatar,
@@ -161,7 +103,6 @@ class ToolProcessor(MemoryProcessor):
                 source_refs=source_refs,
                 scope=MemoryScope.owner(),
             )
-
             tool_items = self.build_memory_items(
                 state=state,
                 memory_type=MemoryType.TOOLS,
@@ -171,22 +112,14 @@ class ToolProcessor(MemoryProcessor):
                 source_refs=source_refs,
                 scope=MemoryScope.owner(),
             )
-
             await self.commit_items(
                 state=state,
                 start=start,
                 end=end,
-                items=[
-                    *avatar_items,
-                    *tool_items,
-                ],
+                items=[*avatar_items, *tool_items],
             )
 
-    async def _stop(
-        self,
-        *,
-        finalize: bool,
-    ) -> None:
+    async def _stop(self, *, finalize: bool) -> None:
         if not finalize:
             return
 

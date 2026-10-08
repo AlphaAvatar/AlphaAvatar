@@ -32,6 +32,7 @@ from alphaavatar.core.output import OutputLane
 from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
 from alphaavatar.host.lifecycle import HostSessionLifecycle
 
+from .memory import LiveKitMemoryBridge
 from .tools import build_function_tools
 
 if TYPE_CHECKING:
@@ -54,6 +55,9 @@ class LiveKitHostedAgent(AvatarEngine):
         self._livekit_turn_input = LiveKitTurnInput(clock=runtime.clock, runtime=runtime)
         super().__init__(
             avatar_config=avatar_config, runtime=runtime, tool_adapter=build_function_tools
+        )
+        self._memory_bridge = LiveKitMemoryBridge(
+            memory=self._memory, adapter=self._livekit_model_input
         )
         self._host_lifecycle = HostSessionLifecycle(engine=self, inputs=inputs, outputs=outputs)
 
@@ -139,6 +143,27 @@ class LiveKitHostedAgent(AvatarEngine):
                     await status.close()
 
         return generate()
+
+    async def on_session_start(self) -> None:
+        await super().on_session_start()
+        try:
+            self._memory_bridge.start(self.session)
+        except BaseException:
+            await super().on_session_stop()
+            raise
+
+    async def on_session_stop(self) -> None:
+        errors: list[Exception] = []
+        try:
+            self._memory_bridge.close()
+        except Exception as exc:
+            errors.append(exc)
+        try:
+            await super().on_session_stop()
+        except Exception as exc:
+            errors.append(exc)
+        if errors:
+            raise ExceptionGroup("Hosted Agent cleanup failed", errors)
 
     async def on_enter(self) -> None:
         await self._host_lifecycle.start()
