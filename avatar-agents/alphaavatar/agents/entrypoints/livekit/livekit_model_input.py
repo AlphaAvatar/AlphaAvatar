@@ -29,8 +29,8 @@ from alphaavatar.agents.avatar.provider.schemas import (
     ModelInputMessage,
     ModelTextPart,
 )
-from alphaavatar.core.env import (
-    EnvObservation,
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.schemas import (
     PerceptionSegmentRef,
     PerceptionSourceRef,
 )
@@ -38,10 +38,12 @@ from alphaavatar.core.media import (
     AudioFrame,
     AudioSegmentPayload,
     ImagePayload,
-    PayloadFormat,
     PayloadFormatUnavailable,
-    PayloadView,
     VideoFrame,
+)
+from alphaavatar.core.media.enums import (
+    PayloadFormat,
+    PayloadView,
 )
 from alphaavatar.core.time import RuntimeClock, RuntimeTime, RuntimeTimeRange
 from alphaavatar.rtc.livekit.audio.codec import from_livekit_audio_frame, to_livekit_audio_frame

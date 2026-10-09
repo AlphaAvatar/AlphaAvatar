@@ -19,8 +19,8 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
 
-from alphaavatar.core.env import PerceptionEntityRef
-from alphaavatar.core.perception import PerceptionCutoff, PerceptionEvent
+from alphaavatar.core.env.schemas import PerceptionEntityRef
+from alphaavatar.core.perception.schemas import PerceptionCutoff, PerceptionEvent
 from alphaavatar.core.time import RuntimeTime
 
 

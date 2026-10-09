@@ -11,17 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from enum import StrEnum
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from ..enums import OutputControlType, OutputLane
 
 
-class LoopEventKind(StrEnum):
-    STATE = "state"
-    WAITING = "waiting"
-
-    TEXT = "text"
-    MESSAGE = "message"
-
-    TOOL_STARTED = "tool_started"
-    TOOL_FINISHED = "tool_finished"
-
-    FINISHED = "finished"
+@dataclass(frozen=True, slots=True)
+class OutputControl:
+    type: OutputControlType
+    reason: str
+    target_lane: OutputLane | None = None
+    target_output_id: str | None = None
+    target_turn_id: str | None = None

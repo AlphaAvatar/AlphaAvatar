@@ -17,6 +17,7 @@ import asyncio
 import pathlib
 from collections.abc import Sequence
 
+from alphaavatar.agents.avatar.provider.records import MODEL_RECORD_SCHEMA
 from alphaavatar.agents.avatar.provider.schemas.model_input import ModelInputItem
 from alphaavatar.agents.memory import MemoryBase
 from alphaavatar.agents.memory.enums import MemoryCacheType, MemoryType
@@ -28,6 +29,9 @@ from alphaavatar.agents.memory.schemas import (
 )
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
+from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.output import OutputJournalGap
+from alphaavatar.core.output.schemas import OutputRecordBatch
 from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
 
 from .log import logger
@@ -38,6 +42,7 @@ from .storage import MemoryStore
 
 class MemoryRuntime(MemoryBase):
     TURN_CONSUMER_ID = "memory.runtime.turn"
+    RECORD_CONSUMER_ID = "memory.runtime.output_records"
 
     def __init__(
         self,
@@ -59,6 +64,13 @@ class MemoryRuntime(MemoryBase):
         self._started = False
         self._capability_registry = AvatarCapabilityRegistry()
         self._turn_task: asyncio.Task[None] | None = None
+        self._record_task: asyncio.Task[None] | None = None
+        self._record_error: Exception | None = None
+        self._record_registered = False
+        self._record_stopping = False
+        self._close_task: asyncio.Task[None] | None = None
+        self._start_task: asyncio.Task[None] | None = None
+        self._store_open = False
 
     @property
     def avatar_id(self) -> str:
@@ -88,17 +100,17 @@ class MemoryRuntime(MemoryBase):
 
     @property
     def memory_content(self) -> str:
+        kinds = (MemoryType.Avatar, MemoryType.CONVERSATION, MemoryType.TOOLS, MemoryType.ENV)
         return "\n".join(
             filter(
-                None,
-                (
-                    self._memory_state.render(memory_type=MemoryType.Avatar),
-                    self._memory_state.render(memory_type=MemoryType.CONVERSATION),
-                    self._memory_state.render(memory_type=MemoryType.TOOLS),
-                    self._memory_state.render(memory_type=MemoryType.ENV),
-                ),
+                None, (self._memory_state.render(memory_type=memory_type) for memory_type in kinds)
             )
         )
+
+    @staticmethod
+    def _observe(task: asyncio.Task[None]) -> None:
+        if not task.cancelled():
+            task.exception()
 
     def bind_processors(self, processors: Sequence[MemoryProcessor]) -> None:
         if self._processors_bound:
@@ -140,33 +152,6 @@ class MemoryRuntime(MemoryBase):
         self._memory_contexts[context.context_id] = state
         return state
 
-    def _open_root_context(self) -> None:
-        if self._root_context_id is not None:
-            return
-        user_id = self._runtime.session.primary_user_id
-        session_path = self._runtime.session.session_path
-        state_runtime = self._runtime.state
-        if not user_id:
-            return
-        if session_path is None:
-            raise RuntimeError("SessionRuntime.session_path is not initialized")
-        context = MemoryContextRef(
-            episode_id=state_runtime.episode_id,
-            context_id=state_runtime.context_id,
-            session_id=self._runtime.session.session_id,
-            created_at=self._runtime.session.created_at,
-        )
-        self.open_context(
-            context=context,
-            provider_dir=session_path.provider_dir,
-            owner_refs=[MemoryOwnerRef.user(user_id)],
-            participant_refs=[
-                MemoryParticipantRef.user(user_id),
-                MemoryParticipantRef.avatar(self._avatar_id),
-            ],
-        )
-        self._root_context_id = context.context_id
-
     def close_context(self, context_id: str) -> MemoryContextState:
         state = self.context_state(context_id)
         if any(
@@ -183,10 +168,9 @@ class MemoryRuntime(MemoryBase):
             for state in self._memory_contexts.values():
                 state.replace_user_id(migration.old_user_id, migration.new_user_id)
 
-    def add_messages(self, *, context_id: str, items: Sequence[ModelInputItem]) -> None:
-        if not self._started:
-            raise RuntimeError("Memory must be started before accepting model records")
-
+    def _accept_messages(self, *, context_id: str, items: Sequence[ModelInputItem]) -> None:
+        if not self._record_registered:
+            raise RuntimeError("Memory record consumer is not registered")
         state = self.context_state(context_id)
         self._sync_user_refs()
         state.add_messages(items)
@@ -219,7 +203,6 @@ class MemoryRuntime(MemoryBase):
                 snapshot.context_ids,
             )
             return
-
         self.context_state(context_id).add_turn(snapshot)
         self._sync_user_refs()
 
@@ -233,6 +216,28 @@ class MemoryRuntime(MemoryBase):
                 stream.commit(consumer_id=self.TURN_CONSUMER_ID, cursor_seq=batch.cursor_seq)
             if not batch.items or batch.remaining_count == 0:
                 return
+
+    def _read_records(self) -> int:
+        journal = self._runtime.output.records
+        batch = journal.read_pending(consumer_id=self.RECORD_CONSUMER_ID, limit=32)
+        if batch.has_gap:
+            raise OutputJournalGap("Memory missed canonical output records")
+        # Turns own user input. Ensure already committed users precede dependent model records.
+        if self._turn_task is not None:
+            self._drain_turns()
+        for event in batch.items:
+            record = event.payload
+            if not isinstance(record, OutputRecordBatch):
+                raise TypeError("Output records require a batch envelope")
+            if event.session_id != self._runtime.session.session_id:
+                raise ValueError("Output records belong to another session")
+            if record.schema == MODEL_RECORD_SCHEMA:
+                self._accept_messages(context_id=record.scope.context_id, items=record.items)
+            elif record.schema.startswith("alphaavatar.model.records."):
+                raise ValueError(f"Unsupported Memory record version: {record.schema}")
+            # Unrelated record families have their own consumers; never interpret their payloads.
+            journal.commit(consumer_id=self.RECORD_CONSUMER_ID, cursor_seq=event.sequence)
+        return batch.latest_seq - batch.cursor_seq
 
     async def _consume_turns(self) -> None:
         stream = self._runtime.turn.events
@@ -249,7 +254,79 @@ class MemoryRuntime(MemoryBase):
                 logger.exception("Memory turn consumer failed")
                 await asyncio.sleep(0.05)
 
+    async def _consume_records(self) -> None:
+        journal = self._runtime.output.records
+        try:
+            while await journal.wait_for_pending(consumer_id=self.RECORD_CONSUMER_ID):
+                self._read_records()
+                await asyncio.sleep(0)
+        except asyncio.CancelledError:
+            if not self._record_stopping:
+                error = RuntimeError("Memory record consumer was cancelled unexpectedly")
+                self._record_error = error
+                journal.fail(self.RECORD_CONSUMER_ID, error)
+            raise
+        except Exception as exc:
+            self._record_error = exc
+            journal.fail(self.RECORD_CONSUMER_ID, exc)
+            logger.exception("Memory canonical record consumer failed")
+
     """Runtime operations"""
+
+    def _open_root_context(self) -> None:
+        if self._root_context_id is not None:
+            return
+        user_id = self._runtime.session.primary_user_id
+        session_path = self._runtime.session.session_path
+        state_runtime = self._runtime.state
+        if not user_id:
+            return
+        if session_path is None:
+            raise RuntimeError("SessionRuntime.session_path is not initialized")
+
+        context = MemoryContextRef(
+            episode_id=state_runtime.episode_id,
+            context_id=state_runtime.context_id,
+            session_id=self._runtime.session.session_id,
+            created_at=self._runtime.session.created_at,
+        )
+        self.open_context(
+            context=context,
+            provider_dir=session_path.provider_dir,
+            owner_refs=[MemoryOwnerRef.user(user_id)],
+            participant_refs=[
+                MemoryParticipantRef.user(user_id),
+                MemoryParticipantRef.avatar(self._avatar_id),
+            ],
+        )
+        self._root_context_id = context.context_id
+
+    def _start_record_consumer(self) -> None:
+        journal = self._runtime.output.records
+        journal.register(self.RECORD_CONSUMER_ID, required=True)
+        self._record_registered = True
+        self._record_stopping = False
+        self._record_task = asyncio.create_task(
+            self._consume_records(), name="memory_output_records"
+        )
+
+    async def _stop_record_consumer(self, *, drain: bool) -> None:
+        self._record_stopping = True
+        task, self._record_task = self._record_task, None
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        if not self._record_registered:
+            return
+        try:
+            if self._record_error is not None:
+                raise RuntimeError("Memory output record ingestion failed") from self._record_error
+            if drain:
+                while self._read_records():
+                    await asyncio.sleep(0)
+        finally:
+            self._runtime.output.records.unregister(self.RECORD_CONSUMER_ID)
+            self._record_registered = False
 
     async def _stop_turn_consumer(self, *, drain: bool) -> None:
         self._runtime.turn.unregister_context_consumer(self.TURN_CONSUMER_ID)
@@ -263,50 +340,76 @@ class MemoryRuntime(MemoryBase):
         finally:
             self._runtime.turn.events.clear_consumer(self.TURN_CONSUMER_ID)
 
-    async def on_session_start(self) -> None:
-        if self._started:
-            return
-        if not self._processors_bound:
-            raise RuntimeError("Memory processors have not been bound")
+    async def _start(self) -> None:
+        # The close path owns even a partially initialized store.
+        self._store_open = True
         await self._store.start()
         self._open_root_context()
         self._runtime.turn.register_context_consumer(self.TURN_CONSUMER_ID)
         self._turn_task = asyncio.create_task(self._consume_turns(), name="memory_turn_consumer")
-        try:
-            for processor in self._processors:
-                await processor.start()
-                self._started_processors.append(processor)
-        except BaseException:
-            for processor in reversed(self._started_processors):
-                try:
-                    await processor.stop(finalize=False)
-                except Exception:
-                    logger.exception("Failed to rollback Memory processor name=%s", processor.name)
-            self._started_processors.clear()
-            await self._stop_turn_consumer(drain=False)
-            await self._store.stop()
-            raise
+        self._start_record_consumer()
+        for processor in self._processors:
+            await processor.start()
+            self._started_processors.append(processor)
+            if self._record_error is not None:
+                raise RuntimeError("Memory output ingestion failed during startup")
+        task = asyncio.current_task()
+        if self._close_task is not None or (task is not None and task.cancelling()):
+            raise asyncio.CancelledError
         self._started = True
 
-    async def on_session_stop(self) -> None:
-        if not self._started and not self._started_processors and self._turn_task is None:
-            return
-        # Stop new ingress before final extraction, which can await provider calls.
+    async def _close(self) -> None:
+        start = self._start_task
+        if start is not None:
+            if not start.done():
+                start.cancel()
+            await asyncio.gather(start, return_exceptions=True)
+        finalize = self._started
         self._started = False
         errors: list[Exception] = []
-        try:
-            await self._stop_turn_consumer(drain=True)
-        except Exception as exc:
-            errors.append(exc)
-        for processor in reversed(self._started_processors):
+
+        async def close_step(operation) -> None:
             try:
-                await processor.stop()
+                await operation
+            except asyncio.CancelledError as exc:
+                error = RuntimeError("Memory cleanup operation cancelled itself")
+                error.__cause__ = exc
+                errors.append(error)
             except Exception as exc:
                 errors.append(exc)
+
+        # Drain records before final extraction. One failure must not skip later cleanup.
+        await close_step(self._stop_turn_consumer(drain=finalize))
+        await close_step(self._stop_record_consumer(drain=finalize))
+        for processor in reversed(self._started_processors):
+            await close_step(processor.stop(finalize=finalize))
         self._started_processors.clear()
-        try:
-            await self._store.stop()
-        except Exception as exc:
-            errors.append(exc)
+        if self._store_open:
+            self._store_open = False
+            await close_step(self._store.stop())
         if errors:
             raise ExceptionGroup("Memory shutdown failed", errors)
+
+    async def on_session_start(self) -> None:
+        if self._close_task is not None:
+            raise RuntimeError("Memory runtime is closing or closed")
+        if not self._processors_bound:
+            raise RuntimeError("Memory processors have not been bound")
+        if self._start_task is None:
+            self._start_task = asyncio.create_task(self._start(), name="memory_runtime_start")
+            self._start_task.add_done_callback(self._observe)
+        try:
+            await asyncio.shield(self._start_task)
+            if self._close_task is not None:
+                raise RuntimeError("Memory closed during startup")
+        except BaseException as original:
+            try:
+                await self.on_session_stop()
+            except BaseException as cleanup_error:
+                raise original from cleanup_error
+            raise
+
+    async def on_session_stop(self) -> None:
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close(), name="memory_runtime_close")
+        await wait_for_cleanup(self._close_task)

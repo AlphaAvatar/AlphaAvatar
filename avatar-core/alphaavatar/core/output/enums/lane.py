@@ -11,18 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .event_kind import PerceptionEventKind
-from .media_source import (
-    MediaModality,
-    MediaSourceKind,
-    MediaSourceState,
-)
-from .stream_kind import PerceptionStreamKind
+from enum import StrEnum
 
-__all__ = [
-    "MediaModality",
-    "MediaSourceKind",
-    "MediaSourceState",
-    "PerceptionEventKind",
-    "PerceptionStreamKind",
-]
+
+class OutputLane(StrEnum):
+    ASSISTANT = "assistant"
+    TRANSIENT = "transient"
+    STATUS = "status"
+    CHARACTER = "character"

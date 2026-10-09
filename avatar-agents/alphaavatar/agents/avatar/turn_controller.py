@@ -27,10 +27,11 @@ from alphaavatar.agents.router.schemas import (
 )
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.plugin import AvatarRuntimePlugin
-from alphaavatar.core.env import AnnotationKind, EnvObservation, ObservationKind
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.enums import AnnotationKind, ObservationKind
 from alphaavatar.core.media import TextPayload
-from alphaavatar.core.output import OutputLane
-from alphaavatar.core.perception import PerceptionEvent
+from alphaavatar.core.output.enums import OutputLane
+from alphaavatar.core.perception.schemas import PerceptionEvent
 from alphaavatar.core.turn import TurnEntityRef, TurnInputModality, TurnSnapshot
 
 

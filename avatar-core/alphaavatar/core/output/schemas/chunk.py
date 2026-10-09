@@ -11,22 +11,29 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .audio import AudioFrame, AudioFramePayload, AudioSampleFormat, AudioSegmentPayload
-from .image import ImagePayload
-from .payload import MediaPayload, PayloadFormatUnavailable
-from .text import TextPayload
-from .video import PixelFormat, VideoFrame, VideoFramePayload
+from __future__ import annotations
 
-__all__ = [
-    "AudioFrame",
-    "AudioFramePayload",
-    "AudioSampleFormat",
-    "AudioSegmentPayload",
-    "ImagePayload",
-    "MediaPayload",
-    "PayloadFormatUnavailable",
-    "PixelFormat",
-    "TextPayload",
-    "VideoFrame",
-    "VideoFramePayload",
-]
+from dataclasses import dataclass
+
+from ..enums import OutputTextMode
+
+
+@dataclass(frozen=True, slots=True)
+class OutputTextChunk:
+    text: str
+    chunk_id: str
+    is_first: bool
+    is_final: bool
+    mode: OutputTextMode = OutputTextMode.MIRROR
+
+
+@dataclass(frozen=True, slots=True)
+class OutputTranscriptChunk:
+    text: str
+    chunk_id: str
+    source_chunk_id: str | None
+    start_time_sec: float | None
+    end_time_sec: float | None
+    is_first: bool
+    is_final: bool
+    interrupted: bool = False

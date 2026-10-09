@@ -18,7 +18,7 @@ from uuid import uuid4
 
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.status import StatusEvent, StatusSinkBase
-from alphaavatar.core.output import OutputLane, OutputTextMode
+from alphaavatar.core.output.enums import OutputLane, OutputTextMode
 
 from .log import logger
 

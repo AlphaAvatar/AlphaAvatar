@@ -26,13 +26,10 @@ from alphaavatar.agents.router.schemas import (
     TurnTakingEvidence,
 )
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.core.env import (
-    AnnotationKind,
-    EnvObservation,
-    ObservationKind,
-    PerceptionSegmentRef,
-)
-from alphaavatar.core.perception import PerceptionEvent
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.enums import AnnotationKind, ObservationKind
+from alphaavatar.core.env.schemas import PerceptionSegmentRef
+from alphaavatar.core.perception.schemas import PerceptionEvent
 
 from ...log import logger
 from .evidence import TurnEvidenceBuilder

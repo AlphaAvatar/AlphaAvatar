@@ -21,15 +21,17 @@ from dataclasses import dataclass
 from alphaavatar.agents.avatar.voice import TTSBase
 from alphaavatar.agents.router import RouterProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.core.output import (
-    OutputControl,
+from alphaavatar.core.output import OutputSubscription
+from alphaavatar.core.output.enums import (
     OutputControlType,
-    OutputEvent,
     OutputKind,
     OutputLane,
-    OutputSubscription,
-    OutputTextChunk,
     OutputTextMode,
+)
+from alphaavatar.core.output.schemas import (
+    OutputControl,
+    OutputEvent,
+    OutputTextChunk,
 )
 
 from ..log import logger

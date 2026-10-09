@@ -11,12 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from enum import StrEnum
+from .control import OutputControlType
+from .kind import ExecutionSignalKind, OutputKind
+from .lane import OutputLane
+from .playback import OutputPlaybackType
+from .text_mode import OutputTextMode
 
-
-class AnnotationKind(StrEnum):
-    FACE_DETECTION = "persona.face_detection"
-
-    INTERACTION_ADDRESSING_EVIDENCE = "interaction.addressing_evidence"
-    INTERACTION_ADDRESSING = "interaction.addressing"
-    INTERACTION_TURN = "interaction.turn"
+__all__ = [
+    "ExecutionSignalKind",
+    "OutputControlType",
+    "OutputKind",
+    "OutputLane",
+    "OutputPlaybackType",
+    "OutputTextMode",
+]

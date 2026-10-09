@@ -17,11 +17,9 @@ from collections import defaultdict
 
 from alphaavatar.agents.avatar.provider.enums import ModelInputType
 from alphaavatar.agents.configs.plugins.foundation.vision_config import VisionConfig
-from alphaavatar.core.env import (
-    EnvObservation,
-    ObservationKind,
-    PerceptionSourceRef,
-)
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.enums import ObservationKind
+from alphaavatar.core.env.schemas import PerceptionSourceRef
 from alphaavatar.core.perception import AlignedPerception, TemporalSlice, TemporalSliceKind
 
 from .schemas.visual_selection import SelectedVisualFrame, VisualSelection, VisualSliceSelection

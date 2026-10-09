@@ -16,10 +16,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 
-from .schemas import LoopCommit, LoopEvent, LoopIdentity, LoopRequest, LoopResult, ToolCallContext
+from .schemas import LoopIdentity, LoopRequest, LoopResult, ToolCallContext
 
-EventSink = Callable[[LoopEvent], Awaitable[None]]
-CommitSink = Callable[[LoopCommit], Awaitable[None]]
 ToolAuthorizer = Callable[[ToolCallContext], Awaitable[bool]]
 
 
@@ -42,23 +40,20 @@ class LoopHandle(ABC):
 class Loop(ABC):
     @property
     @abstractmethod
-    def ready(self) -> bool:
-        """True only after shared-service initialization and before closure."""
+    def ready(self) -> bool: ...
 
     @abstractmethod
     async def initialize(self) -> None:
-        """Resolve services after Foundation binding, before Engine construction or submission."""
+        """Resolve shared services after Foundation binding."""
 
     @abstractmethod
     async def submit(
         self,
         request: LoopRequest,
         *,
-        on_event: EventSink | None = None,
-        on_commit: CommitSink | None = None,
         authorize: ToolAuthorizer | None = None,
     ) -> LoopHandle:
-        """Accept quickly; owned preparation and execution do not block ingress."""
+        """Accept quickly; publish execution facts, model records and delivery through Runtime."""
 
     @abstractmethod
     def interrupt(self, *, run_id: str | None = None, reason: str = "interrupted") -> None: ...

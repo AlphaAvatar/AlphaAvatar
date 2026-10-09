@@ -11,22 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .audio import AudioFrame, AudioFramePayload, AudioSampleFormat, AudioSegmentPayload
-from .image import ImagePayload
-from .payload import MediaPayload, PayloadFormatUnavailable
-from .text import TextPayload
-from .video import PixelFormat, VideoFrame, VideoFramePayload
+from enum import StrEnum
 
-__all__ = [
-    "AudioFrame",
-    "AudioFramePayload",
-    "AudioSampleFormat",
-    "AudioSegmentPayload",
-    "ImagePayload",
-    "MediaPayload",
-    "PayloadFormatUnavailable",
-    "PixelFormat",
-    "TextPayload",
-    "VideoFrame",
-    "VideoFramePayload",
-]
+
+class OutputControlType(StrEnum):
+    INTERRUPT = "interrupt"
+    # Source text is finished. TTS may still produce audio using the same output_id.
+    TEXT_COMPLETE = "text_complete"
+    # All source production is finished, but queued transport playout may remain.
+    COMPLETE = "complete"

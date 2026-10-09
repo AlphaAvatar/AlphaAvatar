@@ -21,16 +21,14 @@ import logging
 from livekit import rtc
 
 from alphaavatar.core.media import AudioFrame
-from alphaavatar.core.output import (
-    OutputControl,
+from alphaavatar.core.output import OutputRuntime, OutputSubscription
+from alphaavatar.core.output.enums import (
     OutputControlType,
-    OutputEvent,
     OutputKind,
     OutputLane,
     OutputPlaybackType,
-    OutputRuntime,
-    OutputSubscription,
 )
+from alphaavatar.core.output.schemas import OutputControl, OutputEvent
 
 from .codec import to_livekit_audio_frame
 

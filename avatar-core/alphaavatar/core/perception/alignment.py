@@ -18,14 +18,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 from math import ceil, floor
 
-from alphaavatar.core.env import (
-    EnvObservation,
-    ObservationKind,
-    PerceptionSegmentRef,
-)
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.enums import ObservationKind
+from alphaavatar.core.env.schemas import PerceptionSegmentRef
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
 
-from .schema import MediaSourceSnapshot, PerceptionEvent
+from .schemas import MediaSourceSnapshot, PerceptionEvent
 
 
 class TemporalAlignmentMode(StrEnum):

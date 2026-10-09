@@ -15,106 +15,211 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from alphaavatar.agents.avatar.loop.base import EventSink
-from alphaavatar.agents.avatar.loop.enums import LoopEventKind, LoopState
-from alphaavatar.agents.avatar.loop.schemas import LoopEvent, LoopIdentity
+from alphaavatar.agents.avatar.loop.enums import LoopState
+from alphaavatar.agents.avatar.loop.schemas import LoopIdentity
+from alphaavatar.agents.avatar.provider.enums import ModelMessagePhase
+from alphaavatar.agents.avatar.provider.errors import ModelProtocolError
+from alphaavatar.agents.avatar.provider.schemas import (
+    ModelInputMessage,
+    ModelRefusalPart,
+    ModelTextPart,
+)
+from alphaavatar.agents.avatar.provider.schemas.stream import ModelTextDelta
 from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.output.enums import ExecutionSignalKind, OutputLane, OutputTextMode
+from alphaavatar.core.output.schemas import OutputExecutionSignal, OutputScope
+
+if TYPE_CHECKING:
+    from alphaavatar.agents.runtime import AvatarRuntime
 
 logger = logging.getLogger(__name__)
 
 
 class LoopDeliveryError(RuntimeError):
-    """Actual message delivery failed; this is not an exploration-budget timeout."""
+    pass
+
+
+@dataclass(slots=True)
+class _Message:
+    output_id: str
+    text: str = ""
+    content_index: int = -1
+    completed: bool = False
+    phase: ModelMessagePhase | None = None
 
 
 class LoopFeedback:
-    """Bounded async delivery. Advisory failures do not fail model/tool execution."""
+    """Execution facts are synchronous journal writes; only user content awaits delivery."""
 
-    def __init__(
-        self,
-        identity: LoopIdentity,
-        sink: EventSink | None,
-        is_current: Callable[[], bool],
-        *,
-        delay: float,
-        timeout: float,
-    ) -> None:
+    def __init__(self, identity: LoopIdentity, runtime: AvatarRuntime, *, timeout: float) -> None:
         self.identity = identity
+        self.scope = OutputScope(identity.context_id, identity.turn_id, identity.run_id)
         self.state = LoopState.ACCEPTED
         self.model_step = 0
         self.tool_round = 0
-        self._sink = sink
-        self._is_current = is_current
-        self._delay = delay
+        self._output = runtime.output
+        interaction = runtime.state.interaction_method
+        self._mode = (
+            OutputTextMode.AUDIO_SYNCED
+            if interaction.audio_output
+            else OutputTextMode.IMMEDIATE
+            if interaction.text_output
+            else OutputTextMode.MIRROR
+        )
         self._timeout = timeout
-        self._sequence = 0
-        self._notice: asyncio.Task[None] | None = None
-        self._lock = asyncio.Lock()
+        self._messages: dict[str, _Message] = {}
+        self._commentary: dict[str, None] = {}
+        self._request_id: str | None = None
+        self._close_task: asyncio.Task[None] | None = None
 
-    async def emit(self, kind: LoopEventKind, **fields: Any) -> None:
-        if self._sink is None or not self._is_current():
-            return
+    def output_id(self, item_id: str) -> str:
+        return f"{self.identity.run_id}:{item_id}"
 
-        critical = kind in {LoopEventKind.TEXT, LoopEventKind.MESSAGE}
+    def signal(self, kind: ExecutionSignalKind, **fields) -> None:
+        # No active-run filter: old run outcomes remain useful execution facts.
         try:
-            async with asyncio.timeout(self._timeout), self._lock:
-                if not self._is_current():
-                    return
-                self._sequence += 1
-                event = LoopEvent(
-                    identity=self.identity,
-                    sequence=self._sequence,
+            self._output.publish_execution(
+                OutputExecutionSignal(
+                    scope=self.scope,
                     kind=kind,
-                    state=self.state,
+                    state=self.state.value,
                     model_step=self.model_step,
                     tool_round=self.tool_round,
+                    request_id=self._request_id,
+                    commentary_output_ids=tuple(self._commentary),
                     **fields,
                 )
-                await self._sink(event)
-        except asyncio.CancelledError:
-            # Caller cancellation remains cancellation, even for an advisory event.
-            task = asyncio.current_task()
-            if task is not None and task.cancelling():
-                raise
-            if critical:
-                raise LoopDeliveryError("Message delivery cancelled itself") from None
-            logger.warning("Advisory loop feedback cancelled itself kind=%s", kind)
-        except Exception as exc:
-            if critical:
-                raise LoopDeliveryError("Loop message delivery failed") from exc
-            logger.warning(
-                "Advisory loop feedback failed kind=%s error=%s", kind, type(exc).__name__
             )
+        except Exception:
+            logger.exception("Execution observation publication failed kind=%s", kind)
 
-    async def visible(self, kind: LoopEventKind, **fields: Any) -> None:
-        await self.cancel_notice()
-        await self.emit(kind, **fields)
+    def begin_model(self, request_id: str) -> None:
+        self._request_id = request_id
+        self._commentary.clear()
 
     async def change(self, state: LoopState, *, reason: str | None = None) -> None:
-        await self.cancel_notice()
         self.state = state
-        await self.emit(LoopEventKind.STATE, reason=reason)
-        if state in {LoopState.MODEL, LoopState.TOOLS, LoopState.FINALIZING} and self._sink:
-            self._notice = asyncio.create_task(self._wait_notice(), name="loop_wait_notice")
+        kinds = {
+            LoopState.ACCEPTED: ExecutionSignalKind.ACCEPTED,
+            LoopState.MODEL: ExecutionSignalKind.MODEL_STARTED,
+            LoopState.TOOLS: ExecutionSignalKind.TOOLS_PENDING,
+            LoopState.FINALIZING: ExecutionSignalKind.FINALIZING,
+        }
+        self.signal(kinds[state], reason=reason)
 
-    async def _wait_notice(self) -> None:
+    async def _text(self, message: _Message, text: str, *, content_index: int) -> None:
+        if not text or not self._output.accepts_run(self.identity.run_id):
+            return
+
         try:
-            await asyncio.sleep(self._delay)
-            await self.emit(LoopEventKind.WAITING)
+            async with asyncio.timeout(self._timeout):
+                event = await self._output.publish_text_chunk(
+                    text=text,
+                    output_id=message.output_id,
+                    turn_id=self.identity.turn_id,
+                    lane=OutputLane.ASSISTANT,
+                    mode=self._mode,
+                    replace_lane=False,
+                    run_id=self.identity.run_id,
+                    metadata={
+                        "context_id": self.identity.context_id,
+                        "phase": message.phase.value if message.phase else None,
+                        "content_index": content_index,
+                        "request_id": self._request_id,
+                    },
+                )
+            if event is not None:
+                message.text += text
+                if message.phase == ModelMessagePhase.COMMENTARY:
+                    self._commentary[message.output_id] = None
         except asyncio.CancelledError:
             raise
-        except Exception:
-            logger.exception("Loop wait feedback failed")
+        except Exception as exc:
+            raise LoopDeliveryError("Loop text publication failed") from exc
 
-    async def cancel_notice(self) -> None:
-        task, self._notice = self._notice, None
-        if task is not None:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+    async def text(self, event: ModelTextDelta) -> None:
+        if not self._output.accepts_run(self.identity.run_id):
+            return
 
-    async def aclose(self) -> None:
-        task = asyncio.create_task(self.cancel_notice(), name="loop_feedback_close")
-        await wait_for_cleanup(task)
+        message = self._messages.setdefault(
+            event.item_id,
+            _Message(self.output_id(event.item_id), phase=event.phase),
+        )
+        if message.completed or event.content_index < message.content_index:
+            raise ModelProtocolError("Text delta follows completed or out-of-order content")
+        separator = "\n" if message.text and event.content_index > message.content_index else ""
+        await self._text(message, separator + event.text, content_index=event.content_index)
+        message.content_index = event.content_index
+
+    async def message(self, item: ModelInputMessage) -> None:
+        if not self._output.accepts_run(self.identity.run_id):
+            return
+        text = "\n".join(
+            p.text for p in item.parts if isinstance(p, ModelTextPart | ModelRefusalPart)
+        )
+        if not text:
+            return
+        message = self._messages.setdefault(
+            item.id,
+            _Message(self.output_id(item.id), phase=item.phase),
+        )
+        if message.completed:
+            if message.text != text:
+                raise ModelProtocolError("Completed message changed after delivery")
+            return
+        if not text.startswith(message.text):
+            raise ModelProtocolError("Completed message disagrees with streamed content")
+        message.phase = item.phase
+        await self._text(
+            message, text[len(message.text) :], content_index=max(message.content_index, 0)
+        )
+        try:
+            async with asyncio.timeout(self._timeout):
+                await self._output.finish_text(
+                    output_id=message.output_id,
+                    turn_id=self.identity.turn_id,
+                    run_id=self.identity.run_id,
+                )
+                if self._mode != OutputTextMode.AUDIO_SYNCED:
+                    await self._output.complete(
+                        lane=OutputLane.ASSISTANT,
+                        output_id=message.output_id,
+                        turn_id=self.identity.turn_id,
+                    )
+            message.completed = True
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            raise LoopDeliveryError("Loop text completion failed") from exc
+
+    async def interrupt_incomplete(self, reason: str) -> None:
+        for message in self._messages.values():
+            if message.text and not message.completed:
+                await self._output.interrupt(
+                    output_id=message.output_id,
+                    reason=reason,
+                    metadata={"run_id": self.identity.run_id},
+                )
+
+    async def aclose(self, *, interrupted: bool = False) -> None:
+        if self._close_task is None:
+
+            async def close() -> None:
+                if interrupted:
+                    self._output.revoke_run(self.identity.run_id)
+                    # Target explicit IDs, never a lane that may now contain the next run.
+                    for message in self._messages.values():
+                        if message.text:
+                            await self._output.interrupt(
+                                output_id=message.output_id,
+                                reason="loop_stopped",
+                                metadata={"run_id": self.identity.run_id},
+                            )
+                else:
+                    await self.interrupt_incomplete("source_incomplete")
+
+            self._close_task = asyncio.create_task(close(), name="loop_output_close")
+        await wait_for_cleanup(self._close_task)

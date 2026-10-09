@@ -19,7 +19,8 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 from alphaavatar.core.env import EnvObservation
-from alphaavatar.core.perception import AlignedPerception, PerceptionEvent
+from alphaavatar.core.perception import AlignedPerception
+from alphaavatar.core.perception.schemas import PerceptionEvent
 from alphaavatar.core.time import RuntimeTimeRange
 
 from ..enums import ModelMessagePhase, ModelRole

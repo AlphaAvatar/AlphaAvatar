@@ -17,8 +17,8 @@ import asyncio
 
 from alphaavatar.agents.router import RouterProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.core.env import AnnotationKind
-from alphaavatar.core.perception import PerceptionStreamKind
+from alphaavatar.core.env.enums import AnnotationKind
+from alphaavatar.core.perception.enums import PerceptionStreamKind
 
 from ...log import logger
 from .config import TurnTakingConfig

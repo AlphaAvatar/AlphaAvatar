@@ -24,8 +24,8 @@ from alphaavatar.agents.avatar.voice import (
     VoiceActivityEvent,
     VoiceActivityEventType,
 )
-from alphaavatar.core.env import (
-    EnvObservation,
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.schemas import (
     PerceptionSegmentRef,
     PerceptionSourceRef,
 )

@@ -21,8 +21,8 @@ from alphaavatar.core.media import MediaPayload
 from alphaavatar.core.time import RuntimeTimeRange
 
 from .annotation import EnvAnnotation
-from .enum import ObservationKind
-from .schema import (
+from .enums import ObservationKind
+from .schemas import (
     PerceptionEntityRef,
     PerceptionSegmentRef,
     PerceptionSourceRef,

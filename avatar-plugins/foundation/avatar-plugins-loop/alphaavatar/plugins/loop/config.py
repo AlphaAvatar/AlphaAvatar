@@ -36,6 +36,5 @@ class RealtimeLoopConfig(BaseModel):
 
     # policy configuration
     tool_policies: dict[str, ToolPolicy] = Field(default_factory=dict)
-    feedback_delay: float = Field(default=1.5, ge=0, allow_inf_nan=False)
     feedback_timeout: float = Field(default=2.0, gt=0, allow_inf_nan=False)
     max_retiring_runs: int = Field(default=4, ge=0, le=32)

@@ -16,11 +16,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from alphaavatar.core.env import (
-    AnnotationKind,
-    EnvAnnotation,
-    PerceptionEntityRef,
-)
+from alphaavatar.core.env import EnvAnnotation
+from alphaavatar.core.env.enums import AnnotationKind
+from alphaavatar.core.env.schemas import PerceptionEntityRef
 
 
 @dataclass(frozen=True, slots=True)

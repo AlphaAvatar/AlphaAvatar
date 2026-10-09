@@ -19,7 +19,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from alphaavatar.agents.avatar.loop import Loop, LoopHandle
-from alphaavatar.agents.avatar.loop.base import CommitSink, EventSink, ToolAuthorizer
+from alphaavatar.agents.avatar.loop.base import ToolAuthorizer
 from alphaavatar.agents.avatar.loop.schemas import LoopRequest
 from alphaavatar.agents.avatar.provider.schemas import ProvidersConfig
 from alphaavatar.core.cleanup import wait_for_cleanup
@@ -38,6 +38,7 @@ class AvatarLoop(Loop):
     def __init__(self, config: RealtimeLoopConfig, *, runtime: AvatarRuntime) -> None:
         self._config = config.model_copy(deep=True)
         self._runtime = runtime
+
         # Construction must not dereference the Foundation that will own this Loop.
         self._gateway: ProviderGateway | None = None
         self._runs: dict[str, LoopExecution] = {}
@@ -75,8 +76,6 @@ class AvatarLoop(Loop):
         self,
         request: LoopRequest,
         *,
-        on_event: EventSink | None = None,
-        on_commit: CommitSink | None = None,
         authorize: ToolAuthorizer | None = None,
     ) -> LoopHandle:
         if self._close_task is not None:
@@ -88,9 +87,8 @@ class AvatarLoop(Loop):
 
         if not isinstance(request, LoopRequest):
             raise TypeError("Expected LoopRequest")
-        for hook in (on_event, on_commit, authorize):
-            if hook is not None and not callable(hook):
-                raise TypeError("Loop submission hooks must be callable")
+        if authorize is not None and not callable(authorize):
+            raise TypeError("Tool authorizer must be callable")
         if len(self._runs) >= self._config.max_retiring_runs + 1:
             raise RuntimeError("Previous execution cleanup is still pending")
 
@@ -110,16 +108,13 @@ class AvatarLoop(Loop):
             runtime=self._runtime,
             gateway=gateway,
             unsafe_lock=self._unsafe_lock,
-            on_event=on_event,
-            on_commit=on_commit,
             authorize=authorize,
-            is_current=lambda identity: self._current is not None
-            and self._current.identity.run_id == identity,
         )
 
         if self._current is not None:
             self._current.cancel(reason="superseded")
 
+        self._runtime.output.activate_run(execution.identity.run_id)
         self._current = execution
         self._runs[execution.identity.run_id] = execution
 

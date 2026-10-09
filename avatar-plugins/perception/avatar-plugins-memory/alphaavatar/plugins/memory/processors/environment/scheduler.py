@@ -19,16 +19,16 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from alphaavatar.core.cleanup import wait_for_cleanup
-from alphaavatar.core.env import EnvObservation, ObservationKind
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.enums import ObservationKind
 from alphaavatar.core.perception import (
     AlignedPerception,
-    PerceptionCutoff,
-    PerceptionEvent,
     PerceptionRuntime,
     PerceptionTemporalAligner,
     TemporalAlignmentMode,
     TemporalAlignmentPolicy,
 )
+from alphaavatar.core.perception.schemas import PerceptionCutoff, PerceptionEvent
 from alphaavatar.core.time import RuntimeTimeRange
 
 from ...log import logger

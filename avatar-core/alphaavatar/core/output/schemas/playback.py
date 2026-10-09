@@ -11,10 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from enum import StrEnum
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from ..enums import OutputPlaybackType
 
 
-class PerceptionEventKind(StrEnum):
-    OBSERVATION = "observation"
-    ANNOTATION = "annotation"
-    SOURCE_STATE = "source_state"
+@dataclass(frozen=True, slots=True)
+class OutputPlayback:
+    type: OutputPlaybackType
+    played_duration_sec: float
+    pushed_duration_sec: float
+    queued_duration_sec: float

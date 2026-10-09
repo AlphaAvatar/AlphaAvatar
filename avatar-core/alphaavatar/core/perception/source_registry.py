@@ -16,11 +16,11 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import replace
 
-from alphaavatar.core.env import PerceptionSourceRef
+from alphaavatar.core.env.schemas import PerceptionSourceRef
 from alphaavatar.core.time import RuntimeTime
 
-from .enum import MediaModality, MediaSourceKind
-from .schema import (
+from .enums import MediaModality, MediaSourceKind
+from .schemas import (
     MediaSourceSnapshot,
     MediaSourceStateEvent,
     PerceptionEvent,

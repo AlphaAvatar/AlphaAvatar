@@ -14,43 +14,50 @@
 from __future__ import annotations
 
 import logging
+from hashlib import sha256
 from typing import TYPE_CHECKING
 
 from livekit.agents import AgentSession, ConversationItemAddedEvent, FunctionToolsExecutedEvent, llm
 
+from alphaavatar.agents.avatar.provider.records import model_record_batch
 from alphaavatar.agents.avatar.provider.schemas import (
     ModelFunctionCall,
     ModelFunctionOutput,
     ModelTextPart,
 )
+from alphaavatar.core.output import OutputRuntime
+from alphaavatar.core.output.schemas import OutputScope
 
 if TYPE_CHECKING:
     from alphaavatar.agents.entrypoints.livekit import LiveKitModelInput
-    from alphaavatar.agents.memory import MemoryBase
 
 logger = logging.getLogger(__name__)
 
 
-class LiveKitMemoryBridge:
-    """Temporary SDK event adapter. Memory only sees native records and owns no SDK state."""
+class LiveKitOutputBridge:
+    """Temporary SDK-to-record adapter. It knows OutputRuntime, never a Memory instance."""
 
-    def __init__(self, *, memory: MemoryBase, adapter: LiveKitModelInput) -> None:
-        self._memory = memory
-        self._adapter = adapter
+    def __init__(
+        self,
+        *,
+        output: OutputRuntime,
+        adapter: LiveKitModelInput,
+        context_id: str,
+    ) -> None:
+        self._output, self._adapter = output, adapter
+        # Legacy SDK events do not supply a native run/turn identity. Never guess the latest one.
+        self._scope = OutputScope(context_id)
         self._session: AgentSession | None = None
-        self._context_id: str | None = None
         self._closed = False
         self._error: Exception | None = None
 
     def start(self, session: AgentSession) -> None:
         if self._closed:
-            raise RuntimeError("Memory bridge is closed")
+            raise RuntimeError("Output bridge is closed")
         if self._session is not None:
             if self._session is not session:
-                raise RuntimeError("Memory bridge is already bound to another session")
+                raise RuntimeError("Output bridge is already bound to another session")
             return
-        # Capture ownership once, never attribute a late event using mutable current State.
-        self._context_id = self._memory.root_context_id
         session.on("conversation_item_added", self._on_message)
         try:
             session.on("function_tools_executed", self._on_tools)
@@ -62,7 +69,19 @@ class LiveKitMemoryBridge:
     def _failed(self, event: str, error: Exception) -> None:
         if self._error is None:
             self._error = error
-        logger.error("Memory bridge rejected event=%s error_type=%s", event, type(error).__name__)
+        logger.error("SDK output ingestion rejected event=%s error=%s", event, type(error).__name__)
+
+    def _publish(self, items: tuple) -> None:
+        # IDs are scoped by the immutable context captured at construction.
+        identities = "\0".join((self._scope.context_id, *(item.id for item in items)))
+        batch = model_record_batch(
+            batch_id=f"livekit:{sha256(identities.encode()).hexdigest()}",
+            source="livekit.sdk",
+            scope=self._scope,
+            items=items,
+        )
+        if batch is not None:
+            self._output.publish_records(batch)
 
     def _on_message(self, event: ConversationItemAddedEvent) -> None:
         if self._closed or self._session is None:
@@ -71,9 +90,8 @@ class LiveKitMemoryBridge:
             if not isinstance(event.item, llm.ChatMessage) or event.item.role != "assistant":
                 return
             items = self._adapter.from_chat_context(llm.ChatContext(items=[event.item])).items
-            self._memory.add_messages(context_id=self._context_id, items=items)
+            self._publish(items)
         except Exception as exc:
-            # SDK event callbacks cannot acknowledge async writes. Surface failure again at close.
             self._failed("conversation_item_added", exc)
 
     def _on_tools(self, event: FunctionToolsExecutedEvent) -> None:
@@ -81,7 +99,7 @@ class LiveKitMemoryBridge:
             return
         try:
             items = []
-            for call, output in zip(event.function_calls, event.function_call_outputs, strict=True):
+            for call, result in zip(event.function_calls, event.function_call_outputs, strict=True):
                 items.append(
                     ModelFunctionCall(
                         id=call.id,
@@ -91,22 +109,21 @@ class LiveKitMemoryBridge:
                         created_at=call.created_at,
                     )
                 )
-                # In Agents 1.4, StopResponse/handoff may yield no output. Do not invent success.
-                if output is None:
-                    continue
-                if output.call_id != call.call_id or (output.name and output.name != call.name):
+                if result is None:
+                    continue  # An SDK event with no result is not proof of successful execution.
+                if result.call_id != call.call_id or (result.name and result.name != call.name):
                     raise ValueError("SDK tool result does not match its call")
                 items.append(
                     ModelFunctionOutput(
-                        id=output.id,
+                        id=result.id,
                         call_id=call.call_id,
                         name=call.name,
-                        parts=(ModelTextPart(output.output),),
-                        is_error=output.is_error,
-                        created_at=output.created_at,
+                        parts=(ModelTextPart(result.output),),
+                        is_error=result.is_error,
+                        created_at=result.created_at,
                     )
                 )
-            self._memory.add_messages(context_id=self._context_id, items=items)
+            self._publish(tuple(items))
         except Exception as exc:
             self._failed("function_tools_executed", exc)
 
@@ -123,6 +140,4 @@ class LiveKitMemoryBridge:
                 except Exception as exc:
                     self._failed("unsubscribe", exc)
         if self._error is not None:
-            raise RuntimeError(
-                "SDK Memory ingestion failed; records may be incomplete"
-            ) from self._error
+            raise RuntimeError("SDK output records were not fully accepted") from self._error

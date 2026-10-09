@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from threading import RLock
 from typing import Generic, TypeVar
 
-from .enum import PerceptionStreamKind
+from .enums import PerceptionStreamKind
 
 T = TypeVar("T")
 

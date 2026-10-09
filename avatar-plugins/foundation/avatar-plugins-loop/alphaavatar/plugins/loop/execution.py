@@ -15,23 +15,22 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
 from dataclasses import replace
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from alphaavatar.agents.avatar.context.schemas import ContextPrepareRequest
 from alphaavatar.agents.avatar.loop import LoopHandle
-from alphaavatar.agents.avatar.loop.base import CommitSink, EventSink, ToolAuthorizer
-from alphaavatar.agents.avatar.loop.enums import LoopEventKind, LoopState, ToolOutcome
+from alphaavatar.agents.avatar.loop.base import ToolAuthorizer
+from alphaavatar.agents.avatar.loop.enums import LoopState, ToolOutcome
 from alphaavatar.agents.avatar.loop.schemas import (
-    LoopCommit,
     LoopIdentity,
     LoopRequest,
     LoopResult,
 )
 from alphaavatar.agents.avatar.provider.enums import ModelMessagePhase, ModelRole
 from alphaavatar.agents.avatar.provider.errors import ModelIncompleteError, ModelProtocolError
+from alphaavatar.agents.avatar.provider.records import model_record_batch
 from alphaavatar.agents.avatar.provider.schemas import (
     ModelFunctionCall,
     ModelInput,
@@ -48,6 +47,7 @@ from alphaavatar.agents.avatar.provider.schemas.stream import (
     ModelTextDelta,
 )
 from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.output.enums import ExecutionSignalKind
 
 from .config import RealtimeLoopConfig
 from .feedback import LoopFeedback
@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 
 
 class LoopCommitError(RuntimeError):
-    """History acknowledgement failed; do not continue as if the transaction persisted."""
+    """Output admission failed; never continue as though model records were retained."""
 
 
 class LoopExecution(LoopHandle):
@@ -74,31 +74,28 @@ class LoopExecution(LoopHandle):
         runtime: AvatarRuntime,
         gateway: ProviderGateway,
         unsafe_lock: asyncio.Lock,
-        is_current: Callable[[str], bool],
-        on_event: EventSink | None = None,
-        on_commit: CommitSink | None = None,
         authorize: ToolAuthorizer | None = None,
     ) -> None:
         self._identity = LoopIdentity(uuid4().hex, request.turn_id, request.context_id)
         self._request = request
         self._config = config
-
         self._runtime = runtime
         self._gateway = gateway
         self._context_manager = runtime.foundation.context
-        self._on_commit = on_commit
         self._budget = ExecutionBudget(request, asyncio.get_running_loop().time())
+        self._items: list[ModelInputItem] = list(request.input.items)
+        self._new_items: list[ModelInputItem] = []
+        self._commits = 0
+        self._pending_calls: tuple[ModelFunctionCall, ...] = ()
+        self._context: ModelInput | None = None
         self._generation_options = self._budget.options(
             config.supported_reasoning_efforts, finalizing=False
         )
-
-        self._feedback = LoopFeedback(
-            self.identity,
-            on_event,
-            lambda: self._cancel_reason is None and is_current(self.identity.run_id),
-            delay=config.feedback_delay,
-            timeout=config.feedback_timeout,
-        )
+        self._cancel_reason: str | None = None
+        self._started = False
+        self._settled = False
+        self._close_task: asyncio.Task[None] | None = None
+        self._feedback = LoopFeedback(self.identity, runtime, timeout=config.feedback_timeout)
         self._tools = LoopTools(
             self.identity,
             runtime,
@@ -110,16 +107,6 @@ class LoopExecution(LoopHandle):
             authorize=authorize,
         )
         self._definitions = self._tools.definitions
-        self._items: list[ModelInputItem] = list(request.input.items)
-        self._new_items: list[ModelInputItem] = []
-
-        self._commits = 0
-        self._pending_calls: tuple[ModelFunctionCall, ...] = ()
-        self._context: ModelInput | None = None
-        self._cancel_reason: str | None = None
-        self._started = False
-        self._settled = False
-        self._close_task: asyncio.Task[None] | None = None
         self.task = asyncio.create_task(self._run(), name=f"avatar_loop:{self.identity.run_id}")
         self.task.add_done_callback(self._observe)
 
@@ -156,8 +143,12 @@ class LoopExecution(LoopHandle):
         if self.task.done() or self._settled or self._cancel_reason is not None:
             return
         self._cancel_reason = reason
+        self._runtime.output.revoke_run(self.identity.run_id)
         if self._started:
             self.task.cancel()
+
+    async def wait(self) -> LoopResult:
+        return await asyncio.shield(self.task)
 
     async def _commit(self, items: tuple[ModelInputItem, ...]) -> None:
         if not items:
@@ -175,34 +166,43 @@ class LoopExecution(LoopHandle):
         if calls and self._pending_calls:
             raise ModelProtocolError("Previous tool calls have not been settled")
 
+        # Freeze and admit atomically before changing local history or dispatching tools.
+        records = tuple(
+            replace(
+                item, metadata={**item.metadata, "output_id": self._feedback.output_id(item.id)}
+            )
+            if isinstance(item, ModelInputMessage)
+            else item
+            for item in items
+        )
+        batch = model_record_batch(
+            batch_id=f"loop:{self.identity.run_id}:{self._commits + 1}",
+            source="avatar.loop",
+            scope=self._feedback.scope,
+            items=records,
+        )
+        if batch is not None:
+            try:
+                self._runtime.output.publish_records(batch)
+            except Exception as exc:
+                raise LoopCommitError("Output record batch was not accepted") from exc
+
         self._items.extend(items)
         self._new_items.extend(items)
         if calls:
-            # Validated calls are now accepted; settlement is owned before any await.
             self._pending_calls = calls
 
         self._commits += 1
-        if self._on_commit is not None:
-            transaction = LoopCommit(
-                self.identity, f"{self.identity.run_id}:{self._commits}", items
-            )
-
-            async def persist() -> None:
-                try:
-                    await self._on_commit(transaction)
-                except (Exception, asyncio.CancelledError) as exc:
-                    raise LoopCommitError("Loop history commit was not acknowledged") from exc
-
-            await wait_for_cleanup(asyncio.create_task(persist(), name="loop_history_commit"))
 
     async def _settle_pending(self, *, reason: str) -> None:
         if not self._pending_calls:
             return
 
         async def settle() -> None:
-            calls, self._pending_calls = self._pending_calls, ()
+            calls = self._pending_calls
             records = self._tools.settle(calls, reason=reason)
             await self._commit(tuple(record.output for record in records))
+            self._pending_calls = ()
 
         await wait_for_cleanup(asyncio.create_task(settle(), name="loop_call_settlement"))
 
@@ -244,7 +244,7 @@ class LoopExecution(LoopHandle):
         self._feedback.model_step = budget.model_steps
         self._feedback.tool_round = budget.tool_rounds
         state = LoopState.FINALIZING if finalizing else LoopState.MODEL
-
+        self._feedback.begin_model(request.request_id)
         await self._feedback.change(state, reason=reason)
         terminal = None
         partial: dict[str, tuple[ModelMessagePhase | None, dict[int, list[str]]]] = {}
@@ -255,10 +255,8 @@ class LoopExecution(LoopHandle):
                 async for event in events:
                     if self._cancel_reason is not None:
                         raise asyncio.CancelledError
-
                     if event.request_id != request.request_id:
                         raise ModelProtocolError("Loop received another request's output")
-
                     if terminal is not None:
                         raise ModelProtocolError("Loop received output after completion")
 
@@ -266,13 +264,12 @@ class LoopExecution(LoopHandle):
                         order[event.item_id] = event.output_index
                         entry = partial.setdefault(event.item_id, (event.phase, {}))
                         entry[1].setdefault(event.content_index, []).append(event.text)
-                        await self._feedback.visible(LoopEventKind.TEXT, text=event)
+                        await self._feedback.text(event)
                     elif isinstance(event, ModelRefusalDelta):
                         pass  # Refusal is delivered as a complete typed message.
                     elif isinstance(event, ModelItemCompleted):
                         if not isinstance(event.item, ModelInputMessage):
                             continue
-
                         visible = replace(
                             event.item,
                             parts=tuple(
@@ -284,15 +281,17 @@ class LoopExecution(LoopHandle):
                         if visible.parts:
                             order[visible.id] = event.output_index
                             completed_messages[visible.id] = visible
-                            await self._feedback.visible(LoopEventKind.MESSAGE, message=visible)
+                            await self._feedback.message(visible)
                     elif isinstance(event, ModelResponseCompleted):
                         terminal = event
 
             if terminal is None:
                 raise ModelProtocolError("Loop model stream ended without completion")
+
             calls = tuple(item for item in terminal.items if isinstance(item, ModelFunctionCall))
             if request.tool_choice == "none" and calls:
                 raise ModelProtocolError("Model returned tools when invocation was disabled")
+
             prior_calls = {
                 item.call_id for item in self._items if isinstance(item, ModelFunctionCall)
             }
@@ -319,9 +318,16 @@ class LoopExecution(LoopHandle):
                                 interrupted=True,
                             )
                         )
+
             if visible:
                 await self._commit(tuple(visible))
+
+            await self._feedback.interrupt_incomplete("model_stream_stopped")
             raise
+
+        for item in terminal.items:
+            if isinstance(item, ModelInputMessage):
+                await self._feedback.message(item)
 
         await self._commit(terminal.items)
         if self._cancel_reason is not None:
@@ -390,14 +396,11 @@ class LoopExecution(LoopHandle):
         state = LoopState.FAILED
         answers: tuple[ModelInputMessage, ...] = ()
         reason = error_type = None
-
         try:
             if self._cancel_reason is not None:
                 raise asyncio.CancelledError
 
             await self._feedback.change(LoopState.ACCEPTED)
-
-            # prepare context
             async with asyncio.timeout_at(self._budget.exploration_deadline):
                 preparation = ContextPrepareRequest(
                     input=self._request.input,
@@ -410,13 +413,10 @@ class LoopExecution(LoopHandle):
 
             if not isinstance(self._context, ModelInput):
                 raise TypeError("ContextManager.prepare must return ModelInput")
-
             if self._cancel_reason is not None:
                 raise asyncio.CancelledError
 
-            # run loop
             state, answers, reason = await self._drive()
-
         except asyncio.CancelledError as exc:
             state, reason = LoopState.CANCELLED, self._cancel_reason or "cancelled"
             if exc.__cause__ is not None:
@@ -440,11 +440,22 @@ class LoopExecution(LoopHandle):
             except Exception as exc:
                 state, reason, error_type = LoopState.FAILED, "history_failed", type(exc).__name__
                 answers = ()
+
             try:
-                await self._feedback.aclose()
+                await self._feedback.aclose(
+                    interrupted=state
+                    not in {
+                        LoopState.COMPLETED,
+                        LoopState.PARTIAL,
+                        LoopState.REFUSED,
+                    }
+                )
             except asyncio.CancelledError:
                 state, reason = LoopState.CANCELLED, self._cancel_reason or "cancelled"
-
+            except Exception as exc:
+                state, reason = LoopState.FAILED, "output_cleanup_failed"
+                error_type = type(exc).__name__
+                answers = ()
         if self._cancel_reason is not None:
             state, reason, answers = LoopState.CANCELLED, self._cancel_reason, ()
 
@@ -462,12 +473,8 @@ class LoopExecution(LoopHandle):
             error_type=error_type,
         )
         self._feedback.state = state
-        await self._feedback.emit(LoopEventKind.FINISHED, reason=reason)
-
+        self._feedback.signal(ExecutionSignalKind.FINISHED, reason=reason)
         return result
-
-    async def wait(self) -> LoopResult:
-        return await asyncio.shield(self.task)
 
     async def aclose(self) -> None:
         if self._close_task is None:
@@ -477,5 +484,4 @@ class LoopExecution(LoopHandle):
                 await asyncio.gather(self.task, return_exceptions=False)
 
             self._close_task = asyncio.create_task(close(), name="loop_execution_close")
-
         await wait_for_cleanup(self._close_task)

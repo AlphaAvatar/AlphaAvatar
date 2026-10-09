@@ -11,19 +11,22 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from __future__ import annotations
+from .alignment import OutputTextAudioAlignment
+from .chunk import OutputTextChunk, OutputTranscriptChunk
+from .control import OutputControl
+from .event import OutputEvent, OutputJournalEvent
+from .playback import OutputPlayback
+from .records import OutputExecutionSignal, OutputRecordBatch, OutputScope
 
-from dataclasses import dataclass
-
-from alphaavatar.agents.avatar.provider.schemas import ModelInputItem
-
-from .identity import LoopIdentity
-
-
-@dataclass(frozen=True, slots=True)
-class LoopCommit:
-    """Internal history transaction. A consumer should deduplicate by commit_id."""
-
-    identity: LoopIdentity
-    commit_id: str
-    items: tuple[ModelInputItem, ...]
+__all__ = [
+    "OutputControl",
+    "OutputEvent",
+    "OutputExecutionSignal",
+    "OutputJournalEvent",
+    "OutputPlayback",
+    "OutputRecordBatch",
+    "OutputScope",
+    "OutputTextAudioAlignment",
+    "OutputTextChunk",
+    "OutputTranscriptChunk",
+]

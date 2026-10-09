@@ -24,14 +24,9 @@ from typing import Any
 
 from livekit import rtc
 
-from alphaavatar.core.output import (
-    OutputEvent,
-    OutputKind,
-    OutputLane,
-    OutputRuntime,
-    OutputSubscription,
-    OutputTranscriptChunk,
-)
+from alphaavatar.core.output import OutputRuntime, OutputSubscription
+from alphaavatar.core.output.enums import OutputKind, OutputLane
+from alphaavatar.core.output.schemas import OutputEvent, OutputTranscriptChunk
 
 logger = logging.getLogger(__name__)
 

@@ -18,22 +18,18 @@ from collections.abc import Callable, Sequence
 from threading import RLock
 from typing import Any
 
-from alphaavatar.core.env import (
-    EnvAnnotation,
-    EnvObservation,
-    ObservationKind,
-    PerceptionSegmentRef,
-    PerceptionSourceRef,
-)
+from alphaavatar.core.env import EnvAnnotation, EnvObservation
+from alphaavatar.core.env.enums import ObservationKind
+from alphaavatar.core.env.schemas import PerceptionSegmentRef, PerceptionSourceRef
 from alphaavatar.core.time import RuntimeClock, RuntimeTime, RuntimeTimeRange
 
-from .enum import (
+from .enums import (
     MediaModality,
     MediaSourceKind,
     PerceptionEventKind,
     PerceptionStreamKind,
 )
-from .schema import (
+from .schemas import (
     MediaSourceSnapshot,
     MediaSourceStateEvent,
     PerceptionCutoff,

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, field_validator, model_validator
 
-from alphaavatar.core.env import (
+from alphaavatar.core.env.schemas import (
     PerceptionEntityRef,
     PerceptionSegmentRef,
     PerceptionSourceRef,

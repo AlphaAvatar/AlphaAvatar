@@ -18,14 +18,11 @@ import asyncio
 from alphaavatar.agents.avatar.voice import VADBase
 from alphaavatar.agents.router import RouterProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.core.env import EnvObservation, PerceptionSourceRef
-from alphaavatar.core.media import (
-    AudioFrame,
-    PayloadFormat,
-    PayloadFormatUnavailable,
-    PayloadView,
-)
-from alphaavatar.core.perception import PerceptionStreamKind
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.schemas import PerceptionSourceRef
+from alphaavatar.core.media import AudioFrame, PayloadFormatUnavailable
+from alphaavatar.core.media.enums import PayloadFormat, PayloadView
+from alphaavatar.core.perception.enums import PerceptionStreamKind
 
 from ...log import logger
 from .config import AudioActivityConfig

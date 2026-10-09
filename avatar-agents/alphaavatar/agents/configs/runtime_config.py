@@ -16,11 +16,11 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from alphaavatar.core.perception import (
-    PerceptionRetentionPolicy,
-    PerceptionStreamKind,
     TemporalAlignmentMode,
     TemporalAlignmentPolicy,
 )
+from alphaavatar.core.perception.enums import PerceptionStreamKind
+from alphaavatar.core.perception.schemas import PerceptionRetentionPolicy
 
 
 class TemporalAlignmentConfig(BaseModel):

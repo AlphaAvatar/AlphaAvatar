@@ -26,7 +26,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from alphaavatar.agents.avatar.loop.base import ToolAuthorizer
-from alphaavatar.agents.avatar.loop.enums import LoopEventKind, ToolOutcome
+from alphaavatar.agents.avatar.loop.enums import ToolOutcome
 from alphaavatar.agents.avatar.loop.schemas import (
     LoopIdentity,
     ToolCallContext,
@@ -41,6 +41,7 @@ from alphaavatar.agents.avatar.provider.schemas import (
 )
 from alphaavatar.agents.runtime.capability.result import CapabilityResult
 from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.output.enums import ExecutionSignalKind
 
 from .config import ToolPolicy
 from .feedback import LoopFeedback
@@ -179,6 +180,7 @@ class LoopTools:
             if outcome == ToolOutcome.UNKNOWN:
                 content["warning"] = "The external action may have completed; do not retry blindly."
             parts = (ModelTextPart(json.dumps(content, separators=(",", ":"))),)
+
         record = ToolRecord(
             call=call,
             output=ModelFunctionOutput(
@@ -193,6 +195,14 @@ class LoopTools:
             duration_ms=(time.perf_counter() - started) * 1000,
         )
         self._records[call.call_id] = record
+        self._feedback.signal(
+            ExecutionSignalKind.TOOL_FINISHED,
+            call_id=call.call_id,
+            tool_name=call.name,
+            outcome=outcome.value,
+            executed=executed,
+            reason=code,
+        )
         return record
 
     async def _invoke(self, call: ModelFunctionCall) -> ToolRecord:
@@ -242,13 +252,16 @@ class LoopTools:
 
             async def execute() -> Any:
                 nonlocal executed
-                await self._feedback.emit(
-                    LoopEventKind.TOOL_STARTED, call_id=call.call_id, tool_name=call.name
-                )
                 if self._stopping():
                     raise asyncio.CancelledError
                 if asyncio.get_running_loop().time() >= self._budget.exploration_deadline:
                     raise TimeoutError("Tool dispatch deadline expired")
+                self._feedback.signal(
+                    ExecutionSignalKind.TOOL_STARTED,
+                    call_id=call.call_id,
+                    tool_name=call.name,
+                    executed=True,
+                )
                 executed = True
                 return await self._registry.invoke(call.name, payload)
 
@@ -304,21 +317,6 @@ class LoopTools:
                 code="invalid_arguments" if not executed else type(exc).__name__,
             )
 
-    async def _run_call(self, call: ModelFunctionCall) -> ToolRecord:
-        record = await self._invoke(call)
-        try:
-            await self._feedback.emit(
-                LoopEventKind.TOOL_FINISHED,
-                call_id=call.call_id,
-                tool_name=call.name,
-                outcome=record.outcome,
-            )
-        except asyncio.CancelledError:
-            pass  # The execution owner still commits the already recorded tool fact.
-        except Exception:
-            logger.exception("Tool completion feedback failed")
-        return record
-
     def settle(
         self, calls: tuple[ModelFunctionCall, ...], *, reason: str
     ) -> tuple[ToolRecord, ...]:
@@ -373,7 +371,8 @@ class LoopTools:
                     active.clear()
                 if self._stopping():
                     raise asyncio.CancelledError
-                task = asyncio.create_task(self._run_call(call), name=f"loop_tool:{call.call_id}")
+
+                task = asyncio.create_task(self._invoke(call), name=f"loop_tool:{call.call_id}")
                 tasks.append(task)
                 active.append(task)
                 if not parallel:

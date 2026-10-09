@@ -21,15 +21,11 @@ from alphaavatar.agents.avatar.provider.schemas import (
     ModelTemporalSlice,
 )
 from alphaavatar.agents.constants import VIDEO_MEMORY_INTERVAL_SEC
-from alphaavatar.core.env import (
-    EnvObservation,
-    ObservationKind,
-    PerceptionSourceRef,
-)
-from alphaavatar.core.perception import (
-    AlignedPerception,
-    MediaSourceSnapshot,
-)
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.enums import ObservationKind
+from alphaavatar.core.env.schemas import PerceptionSourceRef
+from alphaavatar.core.perception import AlignedPerception
+from alphaavatar.core.perception.schemas import MediaSourceSnapshot
 
 
 @dataclass(frozen=True, slots=True)

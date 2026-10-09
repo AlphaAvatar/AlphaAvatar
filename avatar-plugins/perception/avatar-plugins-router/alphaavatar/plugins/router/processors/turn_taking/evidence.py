@@ -19,15 +19,18 @@ from alphaavatar.agents.router.schemas import (
     TurnTakingEvidence,
 )
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.core.env import EnvObservation, PerceptionSegmentRef
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.schemas import PerceptionSegmentRef
 from alphaavatar.core.media import (
     AudioSegmentPayload,
-    PayloadFormat,
     PayloadFormatUnavailable,
-    PayloadView,
     TextPayload,
 )
-from alphaavatar.core.perception import MediaModality, MediaSourceKind
+from alphaavatar.core.media.enums import (
+    PayloadFormat,
+    PayloadView,
+)
+from alphaavatar.core.perception.enums import MediaModality, MediaSourceKind
 
 from .schemas.state import TurnCandidate
 

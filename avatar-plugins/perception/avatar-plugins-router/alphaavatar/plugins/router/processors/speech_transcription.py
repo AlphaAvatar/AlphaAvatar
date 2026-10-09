@@ -24,21 +24,20 @@ from alphaavatar.agents.avatar.voice import (
 )
 from alphaavatar.agents.router import RouterProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.core.env import (
-    EnvObservation,
-    ObservationKind,
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.enums import ObservationKind
+from alphaavatar.core.env.schemas import (
     PerceptionEntityRef,
     PerceptionSegmentRef,
     PerceptionSourceRef,
 )
 from alphaavatar.core.media import (
     AudioFrame,
-    PayloadFormat,
     PayloadFormatUnavailable,
-    PayloadView,
     TextPayload,
 )
-from alphaavatar.core.perception import PerceptionStreamKind
+from alphaavatar.core.media.enums import PayloadFormat, PayloadView
+from alphaavatar.core.perception.enums import PerceptionStreamKind
 from alphaavatar.core.time import RuntimeTimeRange
 
 from ..log import logger

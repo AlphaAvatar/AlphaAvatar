@@ -38,21 +38,13 @@ from alphaavatar.agents.runtime.capability import (
 )
 from alphaavatar.agents.utils import NumpyOP
 from alphaavatar.agents.utils.time import application_now
-from alphaavatar.core.env import (
-    AnnotationKind,
-    EnvAnnotation,
-    EnvObservation,
-    ObservationKind,
-    PerceptionSourceRef,
-)
-from alphaavatar.core.media import (
-    PayloadFormat,
-    PayloadFormatUnavailable,
-    PayloadView,
-    VideoFrame,
-)
+from alphaavatar.core.env import EnvAnnotation, EnvObservation
+from alphaavatar.core.env.enums import AnnotationKind, ObservationKind
+from alphaavatar.core.env.schemas import PerceptionSourceRef
+from alphaavatar.core.media import PayloadFormatUnavailable, VideoFrame
 from alphaavatar.core.media.codecs.video import bgr_to_video_frame, video_frame_to_bgr
-from alphaavatar.core.perception import PerceptionStreamKind
+from alphaavatar.core.media.enums import PayloadFormat, PayloadView
+from alphaavatar.core.perception.enums import PerceptionStreamKind
 
 from ...log import logger
 from ...runtime import PersonaRuntime

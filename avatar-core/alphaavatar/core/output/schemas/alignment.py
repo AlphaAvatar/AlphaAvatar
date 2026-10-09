@@ -11,22 +11,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .audio import AudioFrame, AudioFramePayload, AudioSampleFormat, AudioSegmentPayload
-from .image import ImagePayload
-from .payload import MediaPayload, PayloadFormatUnavailable
-from .text import TextPayload
-from .video import PixelFormat, VideoFrame, VideoFramePayload
+from __future__ import annotations
 
-__all__ = [
-    "AudioFrame",
-    "AudioFramePayload",
-    "AudioSampleFormat",
-    "AudioSegmentPayload",
-    "ImagePayload",
-    "MediaPayload",
-    "PayloadFormatUnavailable",
-    "PixelFormat",
-    "TextPayload",
-    "VideoFrame",
-    "VideoFramePayload",
-]
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True, slots=True)
+class OutputTextAudioAlignment:
+    text: str
+    source_chunk_id: str
+    start_time_sec: float
+    end_time_sec: float
+    is_final: bool
+    partial: bool = False
+    timing_source: str = "synthesized_audio"
+
+    @property
+    def duration_sec(self) -> float:
+        return max(self.end_time_sec - self.start_time_sec, 0.0)

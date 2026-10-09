@@ -22,16 +22,17 @@ from typing import Any
 from livekit import rtc
 
 from alphaavatar.core.cleanup import wait_for_cleanup
-from alphaavatar.core.env import EnvObservation, PerceptionSourceRef
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.schemas import PerceptionSourceRef
 from alphaavatar.core.media import VideoFramePayload
 from alphaavatar.core.media.codecs.video import encode_video_frame_to_jpeg
-from alphaavatar.core.perception import (
+from alphaavatar.core.perception import PerceptionRuntime
+from alphaavatar.core.perception.enums import (
     MediaModality,
     MediaSourceKind,
     MediaSourceState,
-    MediaSourceStateEvent,
-    PerceptionRuntime,
 )
+from alphaavatar.core.perception.schemas import MediaSourceStateEvent
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
 from alphaavatar.rtc.livekit.utils.events import RoomEventBindings
 from alphaavatar.rtc.livekit.utils.frame_id import create_frame_id

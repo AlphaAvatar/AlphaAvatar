@@ -28,18 +28,14 @@ from alphaavatar.agents.runtime.capability import (
 )
 from alphaavatar.agents.utils import NumpyOP
 from alphaavatar.agents.utils.time import application_now
-from alphaavatar.core.env import (
-    EnvObservation,
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.schemas import (
     PerceptionSegmentRef,
     PerceptionSourceRef,
 )
-from alphaavatar.core.media import (
-    AudioFrame,
-    PayloadFormat,
-    PayloadFormatUnavailable,
-    PayloadView,
-)
-from alphaavatar.core.perception import PerceptionStreamKind
+from alphaavatar.core.media import AudioFrame, PayloadFormatUnavailable
+from alphaavatar.core.media.enums import PayloadFormat, PayloadView
+from alphaavatar.core.perception.enums import PerceptionStreamKind
 
 from ...log import logger
 from ...runtime import PersonaRuntime

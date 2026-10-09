@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .enum.formats import PayloadFormat, PayloadView
+from .enums import PayloadFormat, PayloadView
 from .payload import MediaPayload
 
 

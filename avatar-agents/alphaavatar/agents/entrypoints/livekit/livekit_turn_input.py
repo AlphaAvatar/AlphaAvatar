@@ -14,7 +14,8 @@
 from __future__ import annotations
 
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.core.env import EnvObservation, PerceptionSourceRef
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.schemas import PerceptionSourceRef
 from alphaavatar.core.media import TextPayload
 from alphaavatar.core.time import RuntimeClock, RuntimeTimeRange
 from alphaavatar.core.turn import TurnEntityRef, TurnInputModality, TurnSnapshot

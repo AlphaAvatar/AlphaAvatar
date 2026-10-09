@@ -16,9 +16,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from alphaavatar.core.env import EnvObservation, ObservationKind
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.enums import ObservationKind
 
-from .enum import PerceptionStreamKind
+from .enums import PerceptionStreamKind
 from .stream import PerceptionStream, StreamRead
 
 

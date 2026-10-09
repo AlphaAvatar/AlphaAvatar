@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
-from alphaavatar.core.output import OutputLane
+from alphaavatar.core.output.enums import OutputLane
 
 from .config import RouterConfig
 from .log import logger

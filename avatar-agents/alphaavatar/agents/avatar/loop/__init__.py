@@ -11,8 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Execution contracts; shared services are obtained from AvatarRuntime."""
+from .base import Loop, LoopHandle, ToolAuthorizer
 
-from .base import Loop, LoopHandle
-
-__all__ = ["Loop", "LoopHandle"]
+__all__ = ["Loop", "LoopHandle", "ToolAuthorizer"]

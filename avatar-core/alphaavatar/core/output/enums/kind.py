@@ -11,22 +11,24 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .audio import AudioFrame, AudioFramePayload, AudioSampleFormat, AudioSegmentPayload
-from .image import ImagePayload
-from .payload import MediaPayload, PayloadFormatUnavailable
-from .text import TextPayload
-from .video import PixelFormat, VideoFrame, VideoFramePayload
+from enum import StrEnum
 
-__all__ = [
-    "AudioFrame",
-    "AudioFramePayload",
-    "AudioSampleFormat",
-    "AudioSegmentPayload",
-    "ImagePayload",
-    "MediaPayload",
-    "PayloadFormatUnavailable",
-    "PixelFormat",
-    "TextPayload",
-    "VideoFrame",
-    "VideoFramePayload",
-]
+
+class OutputKind(StrEnum):
+    STATUS = "status"
+    TEXT_CHUNK = "text_chunk"
+    AUDIO_FRAME = "audio_frame"
+    ALIGNMENT = "alignment"
+    PLAYBACK = "playback"
+    TRANSCRIPT_CHUNK = "transcript_chunk"
+    CONTROL = "control"
+
+
+class ExecutionSignalKind(StrEnum):
+    ACCEPTED = "accepted"
+    MODEL_STARTED = "model_started"
+    TOOLS_PENDING = "tools_pending"
+    TOOL_STARTED = "tool_started"
+    TOOL_FINISHED = "tool_finished"
+    FINALIZING = "finalizing"
+    FINISHED = "finished"

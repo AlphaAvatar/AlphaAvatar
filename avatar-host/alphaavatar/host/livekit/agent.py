@@ -28,11 +28,11 @@ from alphaavatar.agents.avatar.context.context_status import (
 from alphaavatar.agents.avatar.context.schemas import ContextPrepareRequest
 from alphaavatar.agents.entrypoints.livekit import LiveKitModelInput, LiveKitTurnInput
 from alphaavatar.core.lifecycle import SessionLifecycle
-from alphaavatar.core.output import OutputLane
+from alphaavatar.core.output.enums import OutputLane
 from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
 from alphaavatar.host.lifecycle import HostSessionLifecycle
 
-from .memory import LiveKitMemoryBridge
+from .records import LiveKitOutputBridge
 from .tools import build_function_tools
 
 if TYPE_CHECKING:
@@ -56,8 +56,10 @@ class LiveKitHostedAgent(AvatarEngine):
         super().__init__(
             avatar_config=avatar_config, runtime=runtime, tool_adapter=build_function_tools
         )
-        self._memory_bridge = LiveKitMemoryBridge(
-            memory=self._memory, adapter=self._livekit_model_input
+        self._output_bridge = LiveKitOutputBridge(
+            output=runtime.output,
+            adapter=self._livekit_model_input,
+            context_id=runtime.state.context_id,
         )
         self._host_lifecycle = HostSessionLifecycle(engine=self, inputs=inputs, outputs=outputs)
 
@@ -147,7 +149,7 @@ class LiveKitHostedAgent(AvatarEngine):
     async def on_session_start(self) -> None:
         await super().on_session_start()
         try:
-            self._memory_bridge.start(self.session)
+            self._output_bridge.start(self.session)
         except BaseException:
             await super().on_session_stop()
             raise
@@ -155,7 +157,7 @@ class LiveKitHostedAgent(AvatarEngine):
     async def on_session_stop(self) -> None:
         errors: list[Exception] = []
         try:
-            self._memory_bridge.close()
+            self._output_bridge.close()
         except Exception as exc:
             errors.append(exc)
         try:

@@ -17,14 +17,11 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from alphaavatar.core.env import (
-    EnvAnnotation,
-    EnvObservation,
-    PerceptionSourceRef,
-)
+from alphaavatar.core.env import EnvAnnotation, EnvObservation
+from alphaavatar.core.env.schemas import PerceptionSourceRef
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
 
-from ..enum import (
+from ..enums import (
     MediaModality,
     MediaSourceKind,
     MediaSourceState,

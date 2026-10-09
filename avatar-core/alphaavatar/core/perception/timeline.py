@@ -19,7 +19,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from threading import RLock
 
-from alphaavatar.core.env import EnvAnnotation, EnvObservation, ObservationKind
+from alphaavatar.core.env import EnvAnnotation, EnvObservation
+from alphaavatar.core.env.enums import ObservationKind
 
 EnvAnnotationRenderer = Callable[[EnvObservation, EnvAnnotation], None]
 

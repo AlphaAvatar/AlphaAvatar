@@ -23,7 +23,8 @@ from typing import Any
 
 from alphaavatar.core.media import AudioFrame
 
-from .schema import OutputEvent, OutputKind, OutputLane
+from .enums import OutputKind, OutputLane
+from .schemas import OutputEvent
 
 
 class OutputTimeline:

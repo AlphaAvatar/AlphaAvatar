@@ -16,7 +16,7 @@ from __future__ import annotations
 from threading import RLock
 from typing import Any
 
-from .enum.formats import PayloadFormat, PayloadView
+from .enums import PayloadFormat, PayloadView
 
 
 class PayloadFormatUnavailable(LookupError):
