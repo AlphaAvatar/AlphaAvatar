@@ -16,7 +16,12 @@ from enum import StrEnum
 
 class OutputControlType(StrEnum):
     INTERRUPT = "interrupt"
+
     # Source text is finished. TTS may still produce audio using the same output_id.
     TEXT_COMPLETE = "text_complete"
+
+    # Synthesis and alignment production stopped, normally or through cancellation.
+    AUDIO_COMPLETE = "audio_complete"
+
     # All source production is finished, but queued transport playout may remain.
     COMPLETE = "complete"

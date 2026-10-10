@@ -25,6 +25,8 @@ class OutputTextAudioAlignment:
     is_final: bool
     partial: bool = False
     timing_source: str = "synthesized_audio"
+    alignment_id: str | None = None
+    source_chunk_ids: tuple[str, ...] = ()
 
     @property
     def duration_sec(self) -> float:
