@@ -51,6 +51,7 @@ class _SpeechJob:
     cancelled: bool = False
     segments: int = 0
     task: asyncio.Task | None = None
+    running: bool = False
 
     def append(self, chunk: OutputTextChunk) -> None:
         self.pieces.append(_Piece(chunk.chunk_id, chunk.text))
@@ -157,7 +158,9 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
         job.pieces.clear()
         job.pending_chars = 0
         job.changed.set()
-        if job.task is not None:
+        # A task cancelled before its first step never enters its cleanup block.
+        # Mark pending work cancelled; let it enter the coroutine and settle without synthesis.
+        if job.task is not None and job.running and not job.task.cancelling():
             job.task.cancel()
         self._wake.set()
 
@@ -263,6 +266,7 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
         raise asyncio.CancelledError
 
     async def _run_job(self, job: _SpeechJob) -> None:
+        job.running = True
         output, offset, reason = self._runtime.output, 0.0, "synthesis_completed"
         try:
             while not job.cancelled and output.is_active(job.output_id):
@@ -349,9 +353,11 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
                     self._jobs.pop(job.output_id, None)
 
     async def _start(self) -> None:
+        # Do not route our own completion events back into this reliable intake.
         self._subscription = await self._runtime.output.stream.subscribe(
             self.CONSUMER_ID,
             kinds=(OutputKind.TEXT_CHUNK, OutputKind.CONTROL),
+            control_types=(OutputControlType.INTERRUPT, OutputControlType.TEXT_COMPLETE),
             lanes=self._lanes,
             max_pending=128,
             reliable=True,

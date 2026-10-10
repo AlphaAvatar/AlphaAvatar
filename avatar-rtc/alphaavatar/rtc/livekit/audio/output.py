@@ -52,6 +52,7 @@ class _Playout:
     interrupted_played: float | None = None
     interrupted_queued: float = 0.0
     task: asyncio.Task | None = None
+    running: bool = False
 
 
 class LiveKitTransientAudioOutput:
@@ -121,7 +122,8 @@ class LiveKitTransientAudioOutput:
                 job.interrupted_played = min(job.pushed, max(job.played, job.pushed - queued))
                 job.interrupted_queued = queued
             self._source.clear_queue()
-        if job.task is not None:
+        # Pending jobs must enter _play's finally to publish an unplayed terminal receipt.
+        if job.task is not None and job.running and not job.task.cancelling():
             job.task.cancel()
 
     async def _unplayed(self, output_id: str, lane: OutputLane, turn_id: str | None) -> None:
@@ -251,6 +253,7 @@ class LiveKitTransientAudioOutput:
             await asyncio.gather(waiter, return_exceptions=True)
 
     async def _play(self, job: _Playout) -> None:
+        job.running = True
         success = False
         try:
             while True:

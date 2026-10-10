@@ -46,9 +46,15 @@ class OutputSubscription:
         lanes: set[OutputLane] | None,
         max_pending: int,
         reliable: bool,
+        control_types: frozenset[OutputControlType] | None = None,
     ) -> None:
         if not name or max_pending <= 0:
             raise ValueError("Output subscription requires a name and positive capacity")
+        if control_types is not None and any(
+            not isinstance(kind, OutputControlType) for kind in control_types
+        ):
+            raise TypeError("Control filters require OutputControlType values")
+        self._control_types = frozenset(control_types) if control_types is not None else None
         self.name = name
         self._kinds, self._lanes = kinds, lanes
         self._max_pending, self._reliable = max_pending, reliable
@@ -60,6 +66,11 @@ class OutputSubscription:
     def accepts(self, event: OutputEvent) -> bool:
         if self._kinds is not None and event.kind not in self._kinds:
             return False
+        if event.is_control and self._control_types is not None:
+            if not isinstance(event.payload, OutputControl):
+                return False
+            if event.payload.type not in self._control_types:
+                return False
         if event.is_control and isinstance(event.payload, OutputControl):
             target_lane = event.payload.target_lane
             if target_lane is None:
@@ -125,7 +136,11 @@ class OutputSubscription:
 
 
 class OutputStream:
-    """Delivery fan-out. Reliable queues backpressure; unreliable queues drop oldest data."""
+    """Delivery fan-out with optional control filtering before queue admission.
+
+    Reliable queues backpressure; unreliable queues drop oldest data. Consumers that
+    publish completion events can exclude those events from their own intake.
+    """
 
     def __init__(self) -> None:
         self._subscriptions: dict[str, OutputSubscription] = {}
@@ -140,6 +155,7 @@ class OutputStream:
         lanes: Iterable[OutputLane] | None = None,
         max_pending: int = 128,
         reliable: bool = True,
+        control_types: Iterable[OutputControlType] | None = None,
     ) -> OutputSubscription:
         subscription = OutputSubscription(
             name=name,
@@ -147,6 +163,7 @@ class OutputStream:
             lanes=set(lanes) if lanes is not None else None,
             max_pending=max_pending,
             reliable=reliable,
+            control_types=frozenset(control_types) if control_types is not None else None,
         )
         async with self._lock:
             if self._closed:
