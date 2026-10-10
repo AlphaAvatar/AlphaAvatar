@@ -1,607 +1,100 @@
-# 🟢 AlphaAvatar Status Plugin
+# AlphaAvatar Status Plugin
 
-**AlphaAvatar Status Plugin** provides the default runtime implementation for AlphaAvatar's intermediate status system.
+Status is a lifecycle-managed observer, not an execution controller or tool dependency.
+Its processors consume Core data streams and derive presentation decisions. They do
+not register tools, call AvatarLoop, or generate model records for Memory.
 
-It is used to send short, user-facing or UI-facing status updates while the agent is thinking, calling tools, processing tool results, or recovering from tool errors.
-
-The core status protocol lives in:
-
-```text
-alphaavatar.agents.status
-```
-
-This plugin provides replaceable implementations for:
+## Data flow
 
 ```text
-StatusPolicy   -> decides whether / when a status event should be emitted
-StatusRenderer -> converts a StatusEvent into short user-facing text
-StatusSink     -> delivers the event to logs, UI, text channels, or voice
+TurnRuntime events ─┐
+Output.execution ───┼── Activity ── Presentation ── Output STATUS decisions ── RTC
+Assistant text ─────┘                              └── Narration ── TRANSIENT text
 ```
 
----
+`StatusRuntime` owns three processors and their tasks. Each processor has its own
+configuration and lifecycle under `processors/<name>/`.
 
-## Why this plugin exists
+Activity maintains bounded, Run-scoped observations. It drains pending Turn and
+execution facts before interpreting independently scheduled delivery notifications.
+Replacing an individual assistant output is not a Run interruption. Execution-journal
+gaps are diagnostic losses, not permission to invent missing execution facts.
 
-Long-running agent interactions often contain noticeable waiting periods:
+Presentation publishes typed `OutputStatusDecision` objects with source identity,
+execution scope, revision, expiry and audience. Internal decisions remain local.
+Only user decisions are projected by the RTC adapter, using an explicit field allow-list.
+No tool arguments, private reasoning or canonical record payloads are sent as status.
 
-```text
-User input
-  -> LLM prefix caching / first-token wait
-  -> tool-call generation
-  -> tool execution
-  -> tool-output prefix caching
-  -> final answer generation
+Narration consumes user decisions with a narration key. Current English and Chinese
+rules are deterministic and non-recursive. A future model renderer can replace this
+processor's renderer without calling the foreground Loop. Narration is transient:
+it is not an assistant-history commit and never re-enters the execution journal.
+
+## Commentary and interruption
+
+Suppression depends on actual text and same-request commentary references, not a
+provider-name flag. Missing commentary permits a delayed fallback. Tool failure and
+unknown-outcome decisions are separate from routine waiting narration. A pending
+notice is discarded when its observed revision is no longer current.
+
+Generated text is not proof of completed playout. Status observes accepted source
+text and execution facts; transport playback remains authoritative for delivery.
+Narration may be skipped when the response completes quickly or its decision expires.
+It never claims that a cancelled operation was rolled back or should be blindly retried.
+
+The natural-language output uses the TRANSIENT lane. Audio-enabled sessions use
+AUDIO_SYNCED source text; Router owns speech synthesis, alignment and audio completion.
+Text-only sessions publish IMMEDIATE text. User interruption and newer output preempt
+transient speech. The narration worker cancels its own pending work on supersession.
+
+## Configuration
+
+The existing `status: {plugin: default, enabled: true, init_config: {}}` remains valid.
+
+```yaml
+status:
+  plugin: default
+  enabled: true
+  action_topic: agent.status.action
+  init_config:
+    activity:
+      max_pending: 128
+      max_runs: 128
+    presentation:
+      waiting_delay: 1.5
+      min_narration_interval: 4.0
+      max_narrations_per_turn: 3
+      decision_ttl: 5.0
+      publish_timeout: 0.5
+      system_decisions: true
+    narration:
+      enabled: true
+      language: en
+      publish_timeout: 1.0
 ```
 
-Without intermediate feedback, users may feel the assistant is stuck.
-
-This plugin reduces perceived latency by emitting short status updates such as:
-
-```text
-我想一下。
-我查一下。
-我整理一下。
-I’ll check that.
-I’m putting it together.
-```
-
-These statuses can be delivered through:
-
-* Logs
-* LiveKit data channel events
-* UI action events
-* Text status messages
-* Voice status speech
-
----
-
-## Architecture
-
-```text
-StatusEvent
-    ↓
-StatusEmitter
-    ↓
-StatusPolicy
-    ↓
-StatusRenderer
-    ↓
-StatusSink(s)
-        ├── LoggerStatusSink
-        ├── RuntimeStatusSink
-        └── StatusVoiceOutput
-```
-
----
-
-## Main flow
-
-### 1. A component emits a `StatusEvent`
-
-Examples:
-
-```python
-StatusEvent(
-    type=StatusType.THINKING,
-    source=AvatarModule.AVATAR_ENGINE,
-    stage="thinking",
-)
-```
-
-```python
-StatusEvent(
-    type=StatusType.TOOL_START,
-    source=AvatarModule.DEEPRESEARCH,
-    stage=DeepResearchOp.SEARCH,
-    message="我查一下。",
-)
-```
-
----
-
-### 2. `StatusPolicy` decides whether to emit it
-
-The policy controls:
-
-* Delay before emission
-* Per-turn max event count
-* Duplicate event suppression
-* Per-source throttling
-* Immediate events, such as tool start events
-
-This prevents the assistant from speaking or displaying too many status messages.
-
----
-
-### 3. `StatusRenderer` generates short text
-
-If the event already has `message`, the renderer uses it directly.
-
-Otherwise, it loads a template from:
-
-```text
-alphaavatar/plugins/status/templates/
-```
-
-Template files are selected by:
-
-```text
-{status_type}.{source}.{stage}.txt
-```
-
-For example:
-
-```text
-templates/zh/tool_start.deepresearch.search.txt
-templates/en/thinking.avatar_engine.thinking.txt
-```
-
-Each file can contain multiple templates, one per line. The renderer randomly selects one.
-
----
-
-### 4. `StatusSink` delivers the event
-
-The plugin provides semantic status sinks:
-
-```text
-LoggerStatusSink
-    Writes structured status logs.
-
-RuntimeStatusSink
-    Publishes machine-readable status actions into OutputRuntime.
-
-StatusVoiceOutput
-    Publishes transient source text when audio output is enabled.
-    Router performs speech synthesis; RTC adapters handle transport delivery.
-```
-
----
-
-## File structure
-
-```text
-alphaavatar/plugins/status/
-├── __init__.py
-├── policy.py
-├── renderer.py
-├── sink.py
-├── log.py
-├── version.py
-└── templates/
-    ├── en/
-    └── zh/
-```
-
----
-
-## File responsibilities
-
-### `__init__.py`
-
-Registers the default status plugin.
-
-It builds:
-
-```text
-DefaultStatusPolicy
-DefaultStatusRenderer
-CompositeStatusSink
-```
-
-and returns a configured `StatusEmitter`.
-
-This is the main plugin entry point.
-
----
-
-### `policy.py`
-
-Contains `DefaultStatusPolicy`.
-
-Responsibilities:
-
-* Decide whether a status event should be emitted
-* Apply delay rules
-* Avoid duplicate statuses
-* Avoid excessive status messages in one turn
-* Let important tool events pass through without being blocked by generic thinking events
-
-Typical logic:
-
-```text
-avatar_engine.thinking
-    delayed and low-frequency
-
-deepresearch.tool_start
-    immediate and more important
-
-tool_error
-    high priority
-
-memory/persona internal events
-    usually suppressed
-```
-
-Modify this file when you want to tune status frequency or priority.
-
----
-
-### `renderer.py`
-
-Contains `DefaultStatusRenderer`.
-
-Responsibilities:
-
-* Use `event.message` if provided
-* Detect language from event metadata, such as query text
-* Load templates from `templates/`
-* Randomly select one matching template
-* Fall back from specific templates to generic templates
-
-Matching order:
-
-```text
-{type}.{source}.{stage}.txt
-{type}.{source}.default.txt
-{type}.default.default.txt
-```
-
-Example:
-
-```text
-tool_start.deepresearch.search.txt
-tool_start.deepresearch.default.txt
-tool_start.default.default.txt
-```
-
-Modify this file when you want to change template loading behavior.
-
-Modify files under `templates/` when you only want to change copywriting.
-
----
-
-### `sink.py`
-
-Contains delivery implementations.
-
-#### `CompositeStatusSink`
-
-Runs multiple sinks together.
-
-#### `LoggerStatusSink`
-
-Writes status events to logs.
-
-Useful for debugging whether an event was emitted.
-
-#### RuntimeStatusSink
-
-Publishes machine-readable status actions through AlphaAvatar's OutputRuntime.
-
-The RTC status adapter delivers these actions to the native client. The client
-decides how to display activity indicators, animation state, and progress.
-
-Rendered status speech is not embedded in the machine-readable STATUS event.
-
-#### StatusVoiceOutput
-
-Publishes selected user-facing status text into the transient output lane when
-the current interaction supports audio output.
-
-Router handles speech synthesis and transcript synchronization. RTC adapters
-handle audio and transcript delivery.
-
-Text-only sessions do not generate status speech. Native clients may still render
-structured status actions.
-
-Delivery is based on enabled output capabilities, not messaging-platform names.
-
----
-
-### `templates/`
-
-Stores user-facing status copy.
-
-Templates are grouped by language:
-
-```text
-templates/en/
-templates/zh/
-```
-
-Each file can contain multiple candidate lines.
-
-Example:
-
-```text
-templates/zh/tool_start.deepresearch.search.txt
-```
-
-```text
-我查一下。
-我帮你搜一下。
-我先查查相关信息。
-```
-
-Example:
-
-```text
-templates/en/thinking.avatar_engine.thinking.txt
-```
-
-```text
-Let me think.
-Hmm, let me think.
-Give me a second.
-```
-
-Rules:
-
-* One template per line
-* Empty lines are ignored
-* Lines starting with `#` are ignored
-* Keep voice-friendly templates short
-* Avoid hidden reasoning
-* Avoid saying results have been found before the tool finishes
-
----
-
-## Status types
-
-Current status types are defined in the core status protocol:
-
-```python
-class StatusType(StrEnum):
-    READY = "ready"
-
-    THINKING = "thinking"
-
-    TOOL_START = "tool_start"
-    TOOL_PROGRESS = "tool_progress"
-    TOOL_END = "tool_end"
-    TOOL_ERROR = "tool_error"
-
-    FINALIZING = "finalizing"
-```
-
-Suggested usage:
-
-```text
-READY
-    Agent/session is ready.
-
-THINKING
-    User input has been received, but the model has not produced a visible action yet.
-
-TOOL_START
-    A tool starts running.
-
-TOOL_PROGRESS
-    A long-running tool reports intermediate progress.
-
-TOOL_END
-    A tool finishes successfully.
-    Usually useful for UI only, not voice.
-
-TOOL_ERROR
-    A tool fails or receives invalid arguments.
-
-FINALIZING
-    Tool output has returned and the model is organizing the result or deciding the next step.
-```
-
----
-
-## Common event sources
-
-Typical sources are:
-
-```text
-AvatarModule.AVATAR_ENGINE
-AvatarModule.DEEPRESEARCH
-AvatarModule.RAG
-AvatarModule.MCP
-```
-
-The recommended pattern is:
-
-```text
-type   = generic status category
-source = module/plugin that emitted the event
-stage  = operation or lifecycle stage
-```
-
-Example:
-
-```text
-tool_start.deepresearch.search
-tool_start.rag.query
-tool_start.mcp.tool_call
-finalizing.avatar_engine.after_tool
-thinking.avatar_engine.thinking
-ready.avatar_engine.session_ready
-```
-
----
-
-## Adding a new template
-
-To add a new Chinese template for DeepResearch search:
-
-```text
-templates/zh/tool_start.deepresearch.search.txt
-```
-
-Example content:
-
-```text
-我查一下。
-我帮你搜一下。
-我先查查相关信息。
-```
-
-To add an English version:
-
-```text
-templates/en/tool_start.deepresearch.search.txt
-```
-
-Example content:
-
-```text
-I’ll check that.
-I’ll look it up.
-Let me search for that.
-```
-
-No Python code change is needed.
-
----
-
-## Adding status support to a new tool
-
-A tool should emit a `TOOL_START` event before a long-running operation.
-
-Example:
-
-```python
-self.emit_status_nowait(
-    StatusEvent(
-        type=StatusType.TOOL_START,
-        source=AvatarModule.RAG,
-        stage=RAGOp.QUERY,
-        message=monologue,
-        metadata={
-            "op": RAGOp.QUERY.value,
-            "query": query,
-        },
-    )
-)
-```
-
-For user-facing text, prefer passing `monologue` from the model:
-
-```python
-monologue: str | None = None
-```
-
-If `monologue` is not provided, the renderer falls back to a template file.
-
----
-
-## Tool error handling
-
-Tool runtime failures should emit:
-
-```text
-StatusType.TOOL_ERROR
-```
-
-The shared `ToolBase` can catch tool exceptions and emit a fallback error event.
-
-The renderer will select a template such as:
-
-```text
-templates/zh/tool_error.default.default.txt
-templates/en/tool_error.default.default.txt
-```
-
-or a more specific one:
-
-```text
-templates/zh/tool_error.deepresearch.default.txt
-```
-
----
-
-## Recommended extension points
-
-### Change when status events are emitted
-
-Edit:
-
-```text
-policy.py
-```
-
-### Change what status text says
-
-Edit files under:
-
-```text
-templates/
-```
-
-### Change how status events are delivered
-
-Edit:
-
-```text
-sink.py
-```
-
-### Add a new status plugin implementation
-
-Create a new plugin package and register another implementation of:
-
-```text
-StatusPolicyBase
-StatusRendererBase
-StatusSinkBase
-```
-
----
-
-## Design principles
-
-1. Keep `StatusType` small and generic.
-2. Use `source` and `stage` for details.
-3. Keep voice status short.
-4. Do not expose hidden reasoning.
-5. Let tools emit concrete progress.
-6. Let the engine emit generic thinking/finalizing fallback.
-7. Prefer UI action events for frequent or low-level progress.
-8. Prefer voice only for meaningful user-facing moments.
-9. Keep templates outside Python code.
-10. Make status behavior easy to observe and tune.
-
----
-
-## Example timeline
-
-```text
-User asks a question
-    ↓
-AvatarEngine emits THINKING after delay
-    "我想一下。"
-
-Model decides to call DeepResearch
-    ↓
-DeepResearch emits TOOL_START
-    "我查一下。"
-
-Tool returns result
-    ↓
-AvatarEngine emits FINALIZING after delay
-    "我整理一下。"
-
-Model starts final answer
-    ↓
-Delayed FINALIZING is cancelled
-```
-
----
-
-## Packaging note
-
-Template files must be included in the plugin package.
-
-For setuptools, make sure `pyproject.toml` includes:
-
-```toml
-[tool.setuptools.package-data]
-"alphaavatar.plugins.status" = ["templates/**/*.txt"]
-```
-
-Otherwise templates may work in local development but disappear after installation.
+Use `language: zh` for Chinese rule narration. Language is configuration, not a
+hidden classification-model request. `text_topic` is removed: source text and
+synchronized transcripts use the existing Output/RTC text delivery path.
+
+Narration limits count published narration decisions, not proof of heard speech.
+All status paths are bounded, best-effort diagnostics/presentation. Their backpressure
+or failures do not modify actual tool outcomes or block synchronous record admission.
+The canonical record journal and its required consumers are unchanged.
+
+## Ownership and migration state
+
+Engine creates the Status plugin and starts/stops it with the other consumers.
+Engine and Loop publish execution facts; neither injects a StatusEmitter. ToolBase
+and tool plugins accept no Status dependency. Tool request schemas contain no
+`monologue`; the tool performs the operation and returns its outcome.
+
+The current application still uses the temporary SDK response path. Host's
+LiveKitExecutionBridge observes its model/tool operations using the owning
+SpeechHandle, and the raw-schema tool projection still invokes the native registry.
+It owns no presentation policy and does not choose models or execute an extra Loop.
+This bridge is removed with the subsequent native Engine/main-output cutover.
+
+`context_status.py` is removed. `turn_controller.py` remains until that cutover.
+Static query State, synthetic runtime context, loop budgets, model configuration,
+Memory consumption, Provider ownership and tool authorization policy are unchanged.

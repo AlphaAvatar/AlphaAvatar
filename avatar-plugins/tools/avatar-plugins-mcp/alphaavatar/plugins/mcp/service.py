@@ -16,8 +16,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from alphaavatar.agents.runtime.capability import AvatarCapability
-from alphaavatar.agents.runtime.plugin import AvatarModule
-from alphaavatar.agents.status import StatusEvent, StatusType
 from alphaavatar.agents.tools import ToolBase
 
 from .enums import MCPOp
@@ -26,7 +24,6 @@ from .schemas import MCPRequest, parse_params
 
 if TYPE_CHECKING:
     from alphaavatar.agents.runtime import AvatarRuntime
-    from alphaavatar.agents.status import StatusEmitter
 
 
 DESCRIPTION = """Use only tools exposed by the configured MCP servers below.
@@ -39,7 +36,6 @@ top_k is 1-50 (default 8); server_keys restricts exact server names; categories 
 write or unknown. The server's category is descriptive metadata, not permission to execute it.
 Use tool_call with params_json mapping exact tool IDs to argument objects. output_mode is raw
 (default) or compact. Use refresh_tools only after an advertised tool-set change or missing tool.
-monologue is an optional brief user-facing status message, not private reasoning.
 Configured MCP server scopes:
 {servers}
 """.strip()
@@ -51,9 +47,8 @@ class MCPToolService(ToolBase):
         *,
         runtime: AvatarRuntime,
         servers: dict[str, dict[str, Any]],
-        status_emitter: StatusEmitter | None = None,
     ) -> None:
-        super().__init__(runtime=runtime, status_emitter=status_emitter)
+        super().__init__(runtime=runtime)
         self._service = MCPHost(runtime=runtime, servers=servers)
         self.capabilities = (
             AvatarCapability(
@@ -67,17 +62,6 @@ class MCPToolService(ToolBase):
         return
 
     async def _invoke(self, request: MCPRequest) -> Any:
-        if self._status is not None:
-            self._status.emit_nowait(
-                StatusEvent(
-                    type=StatusType.TOOL_START,
-                    source=AvatarModule.MCP,
-                    stage=request.op,
-                    message=request.monologue,
-                    metadata={"op": request.op.value, "query": request.query},
-                )
-            )
-
         if request.op == MCPOp.TOOL_SEARCH:
             return await self._service.search_tools(
                 query=request.query,

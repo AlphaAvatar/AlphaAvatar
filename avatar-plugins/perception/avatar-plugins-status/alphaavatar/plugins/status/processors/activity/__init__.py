@@ -11,10 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from enum import StrEnum
+"""Status processor-owned implementation."""
 
+from .config import ActivityConfig
+from .processor import ActivityProcessor
 
-class StatusPriority(StrEnum):
-    LOW = "low"
-    NORMAL = "normal"
-    HIGH = "high"
+__all__ = ["ActivityConfig", "ActivityProcessor"]

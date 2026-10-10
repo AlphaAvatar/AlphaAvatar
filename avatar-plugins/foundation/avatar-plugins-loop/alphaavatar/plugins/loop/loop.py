@@ -111,10 +111,18 @@ class AvatarLoop(Loop):
             authorize=authorize,
         )
 
+        try:
+            self._runtime.output.activate_run(execution.identity.run_id)
+        except BaseException as original:
+            try:
+                await execution.aclose()
+            except BaseException as cleanup:
+                raise original from cleanup
+            raise
+
         if self._current is not None:
             self._current.cancel(reason="superseded")
 
-        self._runtime.output.activate_run(execution.identity.run_id)
         self._current = execution
         self._runs[execution.identity.run_id] = execution
 

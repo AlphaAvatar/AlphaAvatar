@@ -29,9 +29,10 @@ from alphaavatar.agents.router import InteractionRouterBase
 from alphaavatar.agents.runtime import AvatarRuntime, SessionRuntime
 from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
 from alphaavatar.agents.runtime.lifecycle import LifecyclePhase, RuntimePluginLifecycle
-from alphaavatar.agents.runtime.plugin import AvatarModule
-from alphaavatar.agents.status import StatusEmitter, StatusEvent, StatusType
+from alphaavatar.agents.status import StatusBase
 from alphaavatar.agents.tools import ToolBase
+from alphaavatar.core.output.enums import ExecutionSignalKind
+from alphaavatar.core.output.schemas import OutputExecutionSignal, OutputScope
 
 from .turn_controller import AvatarTurnController
 from .voice import LiveKitTTSAdapter
@@ -57,16 +58,13 @@ class AvatarEngine(Agent):
             raise TypeError("The current LiveKit response path requires LiveKitTTSAdapter")
 
         # Step 1: initialize perception plugins and tools plugins.
-        self._status: StatusEmitter = avatar_config.status.get_plugin(runtime=runtime)
+        self._status: StatusBase = avatar_config.status.get_plugin(runtime=runtime)
         self._router: InteractionRouterBase = avatar_config.router.get_plugin(runtime=runtime)
         self._memory: MemoryBase = avatar_config.memory.get_plugin(
             runtime=runtime, avatar_id=avatar_config.avatar.id
         )
         self._persona: PersonaBase = avatar_config.persona.get_plugin(runtime)
-        self._tool_plugins: tuple[ToolBase, ...] = avatar_config.tools.get_tools(
-            runtime,
-            status_emitter=self._status,
-        )
+        self._tool_plugins: tuple[ToolBase, ...] = avatar_config.tools.get_tools(runtime)
 
         # Step 2: initialize runtime capability.
         self._runtime.capability_registry.collect(self._memory, self._persona, *self._tool_plugins)
@@ -94,6 +92,7 @@ class AvatarEngine(Agent):
         # Step 5: manage Agent-owned consumers before enabling the Router.
         self._plugin_lifecycle = RuntimePluginLifecycle(
             phases=(
+                LifecyclePhase.create("avatar-status", (self._status,)),
                 LifecyclePhase.create(
                     "avatar-tools",
                     self._tool_plugins,
@@ -144,9 +143,11 @@ class AvatarEngine(Agent):
             errors.append(error)
 
     def notify_ready(self) -> None:
-        self._status.emit_nowait(
-            StatusEvent(
-                type=StatusType.READY, source=AvatarModule.AVATAR_ENGINE, stage="session_ready"
+        self._runtime.output.publish_execution(
+            OutputExecutionSignal(
+                scope=OutputScope(self._runtime.state.context_id),
+                kind=ExecutionSignalKind.READY,
+                state="ready",
             )
         )
 

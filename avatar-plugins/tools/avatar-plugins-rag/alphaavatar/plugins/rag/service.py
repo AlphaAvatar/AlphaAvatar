@@ -16,8 +16,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from alphaavatar.agents.runtime.capability import avatar_capability
-from alphaavatar.agents.runtime.plugin import AvatarModule
-from alphaavatar.agents.status import StatusEvent, StatusType
 from alphaavatar.agents.tools import ToolBase
 
 from .enums import RAGOp
@@ -25,30 +23,26 @@ from .schemas import RAGRequest
 
 if TYPE_CHECKING:
     from alphaavatar.agents.runtime import AvatarRuntime
-    from alphaavatar.agents.status import StatusEmitter
 
 
-@avatar_capability(
-    name="RAG",
-    description="""Retrieve and index user-provided or locally stored documents.
+DESCRIPTION = """Retrieve and index user-provided or locally stored documents.
 Use op=query with query to retrieve grounded results from an existing knowledge base.
 Use op=indexing with file_paths_or_dir only when the user has authorized storing those documents.
 Indexing changes the persistent index; a lookup request alone does not authorize indexing.
 The current backend supports data_source=all only; named corpora are not yet implemented.
 Use public-web search for public information not contained in the user's documents.
-monologue is an optional brief user-facing status message, not private reasoning.
-""".strip(),
-    input_schema=RAGRequest,
-)
+""".strip()
+
+
+@avatar_capability(name="RAG", description=DESCRIPTION, input_schema=RAGRequest)
 class RAGService(ToolBase):
     def __init__(
         self,
         *,
         runtime: AvatarRuntime,
         init_config: dict[str, Any],
-        status_emitter: StatusEmitter | None = None,
     ) -> None:
-        super().__init__(runtime=runtime, status_emitter=status_emitter)
+        super().__init__(runtime=runtime)
         self._options = dict(init_config)
         self._service = None
 
@@ -61,20 +55,12 @@ class RAGService(ToolBase):
         self._service = RAGAnythingTool(session_path=path, **self._options)
 
     async def _invoke(self, request: RAGRequest) -> Any:
-        if self._status is not None:
-            self._status.emit_nowait(
-                StatusEvent(
-                    type=StatusType.TOOL_START,
-                    source=AvatarModule.RAG,
-                    stage=request.op,
-                    message=request.monologue,
-                    metadata={"op": request.op.value, "data_source": request.data_source},
-                )
-            )
         if request.op == RAGOp.QUERY:
             return await self._service.query(query=request.query, data_source=request.data_source)
+
         return await self._service.indexing(
-            file_paths_or_dir=request.file_paths_or_dir, data_source=request.data_source
+            file_paths_or_dir=request.file_paths_or_dir,
+            data_source=request.data_source,
         )
 
     async def _stop(self) -> None:

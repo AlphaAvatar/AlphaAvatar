@@ -22,7 +22,6 @@ from .version import __version__
 
 if TYPE_CHECKING:
     from alphaavatar.agents.runtime import AvatarRuntime
-    from alphaavatar.agents.status import StatusEmitter
     from alphaavatar.agents.tools import ToolBase
 
 
@@ -36,13 +35,12 @@ class MCPRemotePlugin(AvatarModulePlugin):
         runtime: AvatarRuntime,
         init_config: dict[str, Any],
         servers: dict[str, dict[str, Any]],
-        status_emitter: StatusEmitter | None = None,
     ) -> ToolBase:
         from .service import MCPToolService
 
         if init_config:
             raise ValueError("The default MCP tool has no init_config options")
-        return MCPToolService(runtime=runtime, servers=servers, status_emitter=status_emitter)
+        return MCPToolService(runtime=runtime, servers=servers)
 
 
 def _configure_runners(config: Any):
@@ -51,9 +49,5 @@ def _configure_runners(config: Any):
     return configure_inference_runners(config)
 
 
-AvatarModulePlugin.register(
-    AvatarModule.MCP,
-    "default",
-    MCPRemotePlugin(),
-)
+AvatarModulePlugin.register(AvatarModule.MCP, "default", MCPRemotePlugin())
 register_inference_runner_bootstrap("alphaavatar.plugins.mcp", _configure_runners)

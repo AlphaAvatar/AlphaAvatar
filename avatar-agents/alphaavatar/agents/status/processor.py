@@ -11,17 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from enum import StrEnum
+from abc import ABC, abstractmethod
 
 
-class StatusType(StrEnum):
-    READY = "ready"
+class StatusProcessorBase(ABC):
+    @abstractmethod
+    async def start(self) -> None: ...
 
-    THINKING = "thinking"
-
-    TOOL_START = "tool_start"
-    TOOL_PROGRESS = "tool_progress"
-    TOOL_END = "tool_end"
-    TOOL_ERROR = "tool_error"
-
-    FINALIZING = "finalizing"
+    @abstractmethod
+    async def stop(self) -> None: ...

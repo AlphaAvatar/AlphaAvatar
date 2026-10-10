@@ -11,11 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from dataclasses import dataclass
+from enum import StrEnum
 
 
-@dataclass(slots=True)
-class StatusPolicyConfig:
-    delay_sec: float = 1.5
-    min_interval_sec: float = 5.0
-    max_events_per_turn: int = 3
+class OutputAudience(StrEnum):
+    USER = "user"
+    SYSTEM = "system"

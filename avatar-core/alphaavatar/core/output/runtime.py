@@ -26,6 +26,7 @@ from alphaavatar.core.media import AudioFrame
 from alphaavatar.core.time import RuntimeClock
 
 from .enums import (
+    OutputAudience,
     OutputControlType,
     OutputKind,
     OutputLane,
@@ -40,6 +41,7 @@ from .schemas import (
     OutputJournalEvent,
     OutputPlayback,
     OutputRecordBatch,
+    OutputStatusDecision,
     OutputTextAudioAlignment,
     OutputTextChunk,
     OutputTranscriptChunk,
@@ -154,14 +156,12 @@ class OutputRuntime:
                 raise RuntimeError("OutputRuntime is closed")
             if not self.accepts_run(run_id):
                 return None, False
-
             record = self._outputs.get(output_id)
             if record is not None:
                 self._validate_output(record, output_id=output_id, lane=lane, turn_id=turn_id)
                 if record.run_id != run_id:
                     raise ValueError("Output execution owner mismatch")
                 return (record if record.active else None), False
-
             record = _OutputRecord(lane, turn_id, origin_kind, run_id=run_id)
             self._outputs[output_id] = record
             return record, True
@@ -310,20 +310,24 @@ class OutputRuntime:
             metadata={"new_turn_id": turn_id},
         )
 
-    async def publish_status(
-        self,
-        *,
-        payload: dict,
-        turn_id: str | None,
-        metadata: dict | None = None,
-    ) -> OutputEvent:
+    async def publish_status(self, *, decision: OutputStatusDecision) -> OutputEvent | None:
+        if not isinstance(decision, OutputStatusDecision):
+            raise TypeError("Status output requires a presentation decision")
+
+        def valid() -> bool:
+            return self.clock.now().monotonic_ns <= decision.expires_at_ns and (
+                decision.audience == OutputAudience.SYSTEM
+                or self.accepts_run(decision.scope.run_id)
+            )
+
         return await self._publish(
             kind=OutputKind.STATUS,
             lane=OutputLane.STATUS,
             output_id=None,
-            turn_id=turn_id,
-            payload=payload,
-            metadata=metadata,
+            turn_id=decision.scope.turn_id,
+            payload=decision,
+            metadata={"origin": "status.presentation", "decision_id": decision.decision_id},
+            guard=valid,
         )
 
     async def publish_text_chunk(

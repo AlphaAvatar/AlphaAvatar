@@ -26,7 +26,6 @@ from alphaavatar.agents.utils import resolve_env_placeholders
 
 if TYPE_CHECKING:
     from alphaavatar.agents.runtime import AvatarRuntime
-    from alphaavatar.agents.status import StatusEmitter
 
 
 class ToolPluginConfig(BaseModel):
@@ -92,13 +91,9 @@ class ToolsConfig(BaseModel):
             os.environ["MCP_SERVERS"] = json.dumps(resolve_env_placeholders(self.mcp.servers))
             importlib.import_module("alphaavatar.plugins.mcp")
 
-    def get_tools(
-        self,
-        runtime: AvatarRuntime,
-        *,
-        status_emitter: StatusEmitter | None = None,
-    ) -> tuple[ToolBase, ...]:
+    def get_tools(self, runtime: AvatarRuntime) -> tuple[ToolBase, ...]:
         tools = []
+
         selections = (
             (AvatarModule.DEEPRESEARCH, "deepresearch", self.deepresearch),
             (AvatarModule.RAG, "rag", self.rag),
@@ -106,13 +101,13 @@ class ToolsConfig(BaseModel):
         for module, package, config in selections:
             if config.plugin is None:
                 continue
+
             importlib.import_module(f"alphaavatar.plugins.{package}")
             tool = AvatarModulePlugin.create(
                 module,
                 config.plugin,
                 runtime=runtime,
                 init_config=config.init_config,
-                status_emitter=status_emitter,
             )
             if not isinstance(tool, ToolBase):
                 raise TypeError(f"Tool plugin {package} must return ToolBase")
@@ -122,15 +117,14 @@ class ToolsConfig(BaseModel):
         if self.mcp.enabled and self.mcp.plugin is not None:
             if not self.mcp.servers:
                 raise ValueError("Enabled MCP requires at least one configured server")
-            importlib.import_module("alphaavatar.plugins.mcp")
 
+            importlib.import_module("alphaavatar.plugins.mcp")
             tool = AvatarModulePlugin.create(
                 AvatarModule.MCP,
                 self.mcp.plugin,
                 runtime=runtime,
                 init_config=self.mcp.init_config,
                 servers=resolve_env_placeholders(self.mcp.servers),
-                status_emitter=status_emitter,
             )
             if not isinstance(tool, ToolBase):
                 raise TypeError("MCP plugin must return ToolBase")

@@ -26,7 +26,6 @@ from .schemas import ToolError
 
 if TYPE_CHECKING:
     from alphaavatar.agents.runtime import AvatarRuntime
-    from alphaavatar.agents.status import StatusEmitter
 
 
 class ToolBase(AvatarRuntimePlugin):
@@ -38,10 +37,8 @@ class ToolBase(AvatarRuntimePlugin):
         self,
         *,
         runtime: AvatarRuntime,
-        status_emitter: StatusEmitter | None = None,
     ) -> None:
         self._runtime = runtime
-        self._status = status_emitter
         self._ready = False
         self._calls: set[asyncio.Task[Any]] = set()
         self._start_task: asyncio.Task[None] | None = None

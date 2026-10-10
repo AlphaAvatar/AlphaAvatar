@@ -11,19 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .audience import OutputAudience
-from .control import OutputControlType
-from .kind import ExecutionSignalKind, OutputKind
-from .lane import OutputLane
-from .playback import OutputPlaybackType
-from .text_mode import OutputTextMode
+"""Status processor-owned implementation."""
+
+from .config import NarrationConfig
+from .processor import NarrationProcessor
 
 __all__ = [
-    "ExecutionSignalKind",
-    "OutputAudience",
-    "OutputControlType",
-    "OutputKind",
-    "OutputLane",
-    "OutputPlaybackType",
-    "OutputTextMode",
+    "NarrationConfig",
+    "NarrationProcessor",
 ]

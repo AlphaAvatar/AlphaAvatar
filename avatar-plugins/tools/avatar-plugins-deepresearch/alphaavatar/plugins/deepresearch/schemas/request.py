@@ -24,7 +24,6 @@ class DeepResearchRequest(BaseModel):
     op: DeepResearchOp = DeepResearchOp.SEARCH
     query: str | None = Field(default=None, min_length=1)
     urls: list[str] | None = Field(default=None, min_length=1, max_length=20)
-    monologue: str | None = Field(default=None, max_length=500)
 
     @model_validator(mode="after")
     def validate_operation(self) -> DeepResearchRequest:

@@ -11,10 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .status_priority import StatusPriority
-from .status_type import StatusType
+from typing import Literal
 
-__all__ = [
-    "StatusType",
-    "StatusPriority",
-]
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class NarrationConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = True
+    language: Literal["en", "zh"] = "en"
+    publish_timeout: float = Field(default=1.0, gt=0, le=5, allow_inf_nan=False)

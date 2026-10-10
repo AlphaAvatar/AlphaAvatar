@@ -225,18 +225,22 @@ class MemoryRuntime(MemoryBase):
         # Turns own user input. Ensure already committed users precede dependent model records.
         if self._turn_task is not None:
             self._drain_turns()
+
         for event in batch.items:
             record = event.payload
             if not isinstance(record, OutputRecordBatch):
                 raise TypeError("Output records require a batch envelope")
             if event.session_id != self._runtime.session.session_id:
                 raise ValueError("Output records belong to another session")
+
             if record.schema == MODEL_RECORD_SCHEMA:
                 self._accept_messages(context_id=record.scope.context_id, items=record.items)
             elif record.schema.startswith("alphaavatar.model.records."):
                 raise ValueError(f"Unsupported Memory record version: {record.schema}")
+
             # Unrelated record families have their own consumers; never interpret their payloads.
             journal.commit(consumer_id=self.RECORD_CONSUMER_ID, cursor_seq=event.sequence)
+
         return batch.latest_seq - batch.cursor_seq
 
     async def _consume_turns(self) -> None:
@@ -265,6 +269,7 @@ class MemoryRuntime(MemoryBase):
                 error = RuntimeError("Memory record consumer was cancelled unexpectedly")
                 self._record_error = error
                 journal.fail(self.RECORD_CONSUMER_ID, error)
+
             raise
         except Exception as exc:
             self._record_error = exc
@@ -383,6 +388,7 @@ class MemoryRuntime(MemoryBase):
         await close_step(self._stop_record_consumer(drain=finalize))
         for processor in reversed(self._started_processors):
             await close_step(processor.stop(finalize=finalize))
+
         self._started_processors.clear()
         if self._store_open:
             self._store_open = False

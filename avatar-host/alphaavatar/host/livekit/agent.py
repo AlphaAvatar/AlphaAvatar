@@ -13,6 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterable, Sequence
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -21,10 +22,6 @@ from livekit.agents import Agent, ModelSettings, llm
 from livekit.agents.types import FlushSentinel
 
 from alphaavatar.agents.avatar import AvatarEngine
-from alphaavatar.agents.avatar.context.context_status import (
-    AvatarContextStatus,
-    extract_answer_text,
-)
 from alphaavatar.agents.avatar.context.schemas import ContextPrepareRequest
 from alphaavatar.agents.entrypoints.livekit import LiveKitModelInput, LiveKitTurnInput
 from alphaavatar.core.lifecycle import SessionLifecycle
@@ -32,6 +29,7 @@ from alphaavatar.core.output.enums import OutputLane
 from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
 from alphaavatar.host.lifecycle import HostSessionLifecycle
 
+from .execution import LiveKitExecutionBridge, extract_answer_text
 from .records import LiveKitOutputBridge
 from .tools import build_function_tools
 
@@ -53,8 +51,13 @@ class LiveKitHostedAgent(AvatarEngine):
     ) -> None:
         self._livekit_model_input = LiveKitModelInput(clock=runtime.clock)
         self._livekit_turn_input = LiveKitTurnInput(clock=runtime.clock, runtime=runtime)
+        self._execution_bridge = LiveKitExecutionBridge(runtime)
         super().__init__(
-            avatar_config=avatar_config, runtime=runtime, tool_adapter=build_function_tools
+            avatar_config=avatar_config,
+            runtime=runtime,
+            tool_adapter=lambda registry: build_function_tools(
+                registry, bridge=self._execution_bridge
+            ),
         )
         self._output_bridge = LiveKitOutputBridge(
             output=runtime.output,
@@ -90,59 +93,60 @@ class LiveKitHostedAgent(AvatarEngine):
     ) -> AsyncIterable[llm.ChatChunk | str | FlushSentinel]:
         async def generate():
             snapshot = self._ensure_turn_snapshot(chat_ctx)
-            base = self._livekit_model_input.from_chat_context(
-                chat_ctx, deferred_message_ids={snapshot.input_id}
+            context_id = self._runtime.state.context_id
+            step = self._execution_bridge.begin(
+                self.session.current_speech, snapshot, context_id=context_id
             )
-            # Legacy SDK calls still use the one Foundation ContextManager interface.
-            model_input = await self._context_manager.prepare(
-                ContextPrepareRequest(
-                    input=base,
-                    input_id=snapshot.input_id,
-                    turn_id=snapshot.turn_id,
-                    context_id=self._runtime.state.context_id,
-                )
-            )
-            transport_input = self._livekit_model_input.to_chat_context(model_input)
-            status = AvatarContextStatus(
-                runtime=self._runtime, emitter=self._status, input_kind=base.latest_input_kind
-            )
-            await status.start()
-            output_id = uuid4().hex
-            text_started = False
-            completed = False
+            output_id, text_started, completed = uuid4().hex, False, False
             try:
+                if step.model_step == 1:
+                    await self._runtime.output.start_turn(turn_id=snapshot.turn_id)
+                base = self._livekit_model_input.from_chat_context(
+                    chat_ctx, deferred_message_ids={snapshot.input_id}
+                )
+                model_input = await self._context_manager.prepare(
+                    ContextPrepareRequest(
+                        input=base,
+                        input_id=snapshot.input_id,
+                        turn_id=snapshot.turn_id,
+                        context_id=context_id,
+                    )
+                )
+                transport_input = self._livekit_model_input.to_chat_context(model_input)
+                self._execution_bridge.model_started(step)
                 async for chunk in Agent.default.llm_node(
                     self, transport_input, tools, model_settings
                 ):
-                    await status.on_chunk(chunk)
                     text = extract_answer_text(chunk)
                     if text is not None:
                         text_started = True
-                        await self._runtime.output.publish_text_chunk(
+                        event = await self._runtime.output.publish_text_chunk(
                             text=text,
                             output_id=output_id,
-                            turn_id=status.turn_id,
+                            turn_id=snapshot.turn_id,
                             lane=OutputLane.ASSISTANT,
+                            run_id=step.scope.run_id,
+                            metadata={"request_id": step.request_id, "context_id": context_id},
                         )
+                        if event is not None:
+                            self._execution_bridge.visible(step, output_id)
                     yield chunk
                 completed = True
+            except BaseException as exc:
+                self._execution_bridge.model_failed(
+                    step, cancelled=isinstance(exc, asyncio.CancelledError | GeneratorExit)
+                )
+                raise
             finally:
-                try:
-                    if text_started:
-                        if completed:
-                            await self._runtime.output.complete(
-                                lane=OutputLane.ASSISTANT,
-                                output_id=output_id,
-                                turn_id=status.turn_id,
-                            )
-                        else:
-                            await self._runtime.output.interrupt(
-                                lane=OutputLane.ASSISTANT,
-                                output_id=output_id,
-                                reason="model_stream_stopped",
-                            )
-                finally:
-                    await status.close()
+                if text_started:
+                    if completed:
+                        await self._runtime.output.complete(
+                            lane=OutputLane.ASSISTANT, output_id=output_id, turn_id=snapshot.turn_id
+                        )
+                    else:
+                        await self._runtime.output.interrupt(
+                            output_id=output_id, reason="model_stream_stopped"
+                        )
 
         return generate()
 
@@ -156,6 +160,10 @@ class LiveKitHostedAgent(AvatarEngine):
 
     async def on_session_stop(self) -> None:
         errors: list[Exception] = []
+        try:
+            await self._execution_bridge.aclose()
+        except Exception as exc:
+            errors.append(exc)
         try:
             self._output_bridge.close()
         except Exception as exc:

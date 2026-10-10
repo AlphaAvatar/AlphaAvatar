@@ -25,6 +25,7 @@ class OutputKind(StrEnum):
 
 
 class ExecutionSignalKind(StrEnum):
+    READY = "ready"
     ACCEPTED = "accepted"
     MODEL_STARTED = "model_started"
     TOOLS_PENDING = "tools_pending"

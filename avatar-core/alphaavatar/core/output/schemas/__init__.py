@@ -14,6 +14,7 @@
 from .alignment import OutputTextAudioAlignment
 from .chunk import OutputTextChunk, OutputTranscriptChunk
 from .control import OutputControl
+from .decision import OutputStatusDecision
 from .event import OutputEvent, OutputJournalEvent
 from .playback import OutputPlayback
 from .records import OutputExecutionSignal, OutputRecordBatch, OutputScope
@@ -26,6 +27,7 @@ __all__ = [
     "OutputPlayback",
     "OutputRecordBatch",
     "OutputScope",
+    "OutputStatusDecision",
     "OutputTextAudioAlignment",
     "OutputTextChunk",
     "OutputTranscriptChunk",

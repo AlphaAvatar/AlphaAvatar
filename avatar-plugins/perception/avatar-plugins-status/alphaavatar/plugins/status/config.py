@@ -11,10 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .status_event import StatusEvent
-from .status_policy import StatusPolicyConfig
+from pydantic import BaseModel, ConfigDict, Field
 
-__all__ = [
-    "StatusEvent",
-    "StatusPolicyConfig",
-]
+from .processors.activity import ActivityConfig
+from .processors.narration import NarrationConfig
+from .processors.presentation import PresentationConfig
+
+
+class StatusRuntimeConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    activity: ActivityConfig = Field(default_factory=ActivityConfig)
+    presentation: PresentationConfig = Field(default_factory=PresentationConfig)
+    narration: NarrationConfig = Field(default_factory=NarrationConfig)

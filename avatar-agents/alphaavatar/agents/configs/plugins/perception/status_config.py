@@ -13,57 +13,49 @@
 # limitations under the License.
 from __future__ import annotations
 
-import importlib
+from importlib import import_module
+from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
-from alphaavatar.agents.status import StatusEmitter
+from alphaavatar.agents.status import StatusBase
 
-importlib.import_module("alphaavatar.plugins.status")
+if TYPE_CHECKING:
+    from alphaavatar.agents.runtime import AvatarRuntime
 
 
 class StatusConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     plugin: str = Field(
         default="default",
         description="Avatar status plugin to use for intermediate status events.",
     )
-
     enabled: bool = Field(
         default=True,
         description="Whether to enable intermediate status events.",
     )
-
     action_topic: str = Field(
         default="agent.status.action",
-        description="LiveKit data topic for structured status action events.",
+        description="Avatar data topic for structured status action events.",
     )
-
-    text_topic: str = Field(
-        default="agent.status.text",
-        description="LiveKit data topic for user-facing status text events.",
-    )
-
     init_config: dict = Field(
         default={},
         description="Custom configuration parameters for the status plugin.",
     )
 
-    def get_plugin(
-        self,
-        *,
-        runtime: AvatarRuntime,
-    ) -> StatusEmitter:
-        status_emitter: StatusEmitter | None = AvatarModulePlugin.create(
+    def get_plugin(self, *, runtime: AvatarRuntime) -> StatusBase:
+        import_module("alphaavatar.plugins.status")
+        plugin = AvatarModulePlugin.create(
             AvatarModule.STATUS,
             self.plugin,
             runtime=runtime,
             enabled=self.enabled,
-            **self.init_config,
+            init_config=self.init_config,
         )
 
-        if status_emitter is None:
-            return StatusEmitter(enabled=False)
+        if not isinstance(plugin, StatusBase):
+            raise TypeError("Status plugins must return StatusBase")
 
-        return status_emitter
+        return plugin

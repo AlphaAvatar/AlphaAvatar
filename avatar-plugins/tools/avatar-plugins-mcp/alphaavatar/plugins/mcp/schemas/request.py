@@ -62,7 +62,6 @@ class MCPRequest(BaseModel):
     op: MCPOp
     query: str | None = Field(default=None, min_length=1)
     params_json: str | None = Field(default=None, min_length=1, max_length=65_536)
-    monologue: str | None = Field(default=None, max_length=500)
     top_k: int = Field(default=8, strict=True, ge=1, le=50)
     server_keys: list[str] | None = Field(default=None, min_length=1)
     categories: list[Literal["read", "write", "unknown"]] | None = Field(default=None, min_length=1)

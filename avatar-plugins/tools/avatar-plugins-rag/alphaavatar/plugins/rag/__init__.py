@@ -21,7 +21,6 @@ from .version import __version__
 
 if TYPE_CHECKING:
     from alphaavatar.agents.runtime import AvatarRuntime
-    from alphaavatar.agents.status import StatusEmitter
     from alphaavatar.agents.tools import ToolBase
 
 
@@ -34,15 +33,10 @@ class RAGToolPlugin(AvatarModulePlugin):
         *,
         runtime: AvatarRuntime,
         init_config: dict[str, Any],
-        status_emitter: StatusEmitter | None = None,
     ) -> ToolBase:
         from .service import RAGService
 
-        return RAGService(runtime=runtime, init_config=init_config, status_emitter=status_emitter)
+        return RAGService(runtime=runtime, init_config=init_config)
 
 
-AvatarModulePlugin.register(
-    AvatarModule.RAG,
-    "default",
-    RAGToolPlugin(),
-)
+AvatarModulePlugin.register(AvatarModule.RAG, "default", RAGToolPlugin())
