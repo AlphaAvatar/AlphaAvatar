@@ -59,17 +59,15 @@ class RouterPlugin(AvatarModulePlugin):
         if voice.stt is not None:
             processors.append(SpeechTranscriptionProcessor(runtime=runtime, stt=voice.stt))
 
-        if voice.tts is not None:
-            processors.extend(
-                (
-                    TranscriptSynchronizationProcessor(
-                        runtime=runtime, lanes=(OutputLane.TRANSIENT,)
-                    ),
-                    SpeechSynthesisProcessor(
-                        runtime=runtime, tts=voice.tts, lanes=(OutputLane.TRANSIENT,)
-                    ),
-                )
+        # Keep the output consumers even without TTS: unsupported AUDIO_SYNCED output
+        # must terminate explicitly, not remain active forever with no consumer.
+        lanes = (OutputLane.TRANSIENT, OutputLane.ASSISTANT)
+        processors.extend(
+            (
+                TranscriptSynchronizationProcessor(runtime=runtime, lanes=lanes),
+                SpeechSynthesisProcessor(runtime=runtime, tts=voice.tts, lanes=lanes),
             )
+        )
 
         if config.addressing.visual.enabled:
             processors.append(

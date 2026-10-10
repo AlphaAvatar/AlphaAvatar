@@ -11,44 +11,45 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""LiveKit transport adapter for synchronized AlphaAvatar transcripts."""
-
 from __future__ import annotations
 
 import asyncio
-import inspect
 import logging
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
+from math import isfinite
 from typing import Any
 
 from livekit import rtc
 
-from alphaavatar.core.output import OutputRuntime, OutputSubscription
-from alphaavatar.core.output.enums import OutputKind, OutputLane
-from alphaavatar.core.output.schemas import OutputEvent, OutputTranscriptChunk
+from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.output import OutputRuntime
+from alphaavatar.core.output.enums import OutputControlType, OutputKind, OutputLane, OutputTextMode
+from alphaavatar.core.output.schemas import (
+    OutputControl,
+    OutputEvent,
+    OutputTextChunk,
+    OutputTranscriptChunk,
+)
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
-class _TranscriptState:
+class _Transcript:
     output_id: str
     turn_id: str | None
     lane: OutputLane
     segment_id: str
+    immediate: bool
     text: str = ""
-    writer: Any | None = None
+    writer: Any = None
+    closing: asyncio.Task | None = None
 
 
 class LiveKitTranscriptOutput:
-    """
-    Publish synchronized transcript increments through LiveKit.
-
-    TRANSCRIPT_CHUNK contains only text confirmed by actual audio playout.
-    The adapter keeps one LiveKit transcription segment per output_id and
-    updates it incrementally until the output finishes or is interrupted.
-    """
+    """Native text delivery: immediate source text or audio-synchronized phrases, never MIRROR."""
 
     TRANSCRIPTION_TOPIC = "lk.transcription"
     ATTR_FINAL = "lk.transcription_final"
@@ -61,124 +62,71 @@ class LiveKitTranscriptOutput:
         room: rtc.Room,
         output_runtime: OutputRuntime,
         track_sid: Callable[[], str | None] | None = None,
-        lanes: tuple[OutputLane, ...] = (OutputLane.TRANSIENT,),
+        lanes: tuple[OutputLane, ...] = (OutputLane.TRANSIENT, OutputLane.ASSISTANT),
         subscription_name: str = "livekit:transcript_output",
         publish_legacy: bool = True,
         publish_text_stream: bool = True,
+        publish_timeout: float = 5.0,
+        max_pending_outputs: int = 32,
     ) -> None:
         if not publish_legacy and not publish_text_stream:
-            raise ValueError("At least one LiveKit transcript protocol must be enabled")
+            raise ValueError("At least one transcript protocol must be enabled")
+        if max_pending_outputs < 1 or not isfinite(publish_timeout) or publish_timeout <= 0:
+            raise ValueError("Transcript limits must be positive")
+        self._room, self._output, self._track_sid = room, output_runtime, track_sid
+        self._lanes, self._name = lanes, subscription_name
+        self._legacy, self._text_stream = publish_legacy, publish_text_stream
+        self._timeout, self._capacity = publish_timeout, max_pending_outputs
+        self._states: dict[str, _Transcript] = {}
+        self._finalized: OrderedDict[str, int] = OrderedDict()
+        self._floor = 0
+        self._subscription = self._task = self._close_task = self._start_task = None
 
-        self._room = room
-        self._output = output_runtime
-        self._track_sid = track_sid
-        self._lanes = lanes
-        self._subscription_name = subscription_name
-        self._publish_legacy_enabled = publish_legacy
-        self._publish_text_stream_enabled = publish_text_stream
-
-        self._subscription: OutputSubscription | None = None
-        self._run_task: asyncio.Task[None] | None = None
-        self._states: dict[str, _TranscriptState] = {}
-        self._finalized_outputs: set[str] = set()
-
-    @staticmethod
-    def _segment_id(lane: OutputLane, output_id: str) -> str:
-        return f"SG_{lane.value}_{output_id}"
-
-    @staticmethod
-    def _language(event: OutputEvent) -> str:
-        language = event.metadata.get("language")
-        return language if isinstance(language, str) else ""
-
-    @staticmethod
-    async def _noop() -> None:
-        return None
-
-    async def _write_text_stream(
-        self,
-        state: _TranscriptState,
-        text: str,
-        event: OutputEvent,
-    ) -> None:
-        try:
-            writer = await self._ensure_writer(state, event)
-            await writer.write(text)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception(
-                "Failed to write LiveKit transcript stream output_id=%s segment_id=%s",
-                state.output_id,
-                state.segment_id,
-            )
-
-    async def _ensure_writer(self, state: _TranscriptState, event: OutputEvent):
-        if state.writer is not None:
-            return state.writer
-
-        participant = self._local_participant()
-        stream_text = getattr(participant, "stream_text", None)
-        if not callable(stream_text):
-            raise RuntimeError("LiveKit local participant has no stream_text method")
-
-        attributes = self._stream_attributes(state, event, final=False, interrupted=False)
-        state.writer = await stream_text(
-            topic=self.TRANSCRIPTION_TOPIC,
-            sender_identity=participant.identity,
-            attributes=attributes,
-        )
-        return state.writer
-
-    async def _close_writer(self, state: _TranscriptState, *, interrupted: bool) -> None:
-        writer = state.writer
-        state.writer = None
-
-        if writer is None:
-            return
-
-        close = getattr(writer, "aclose", None)
-        if not callable(close):
-            return
-
+    def _attributes(self, state: _Transcript, *, final: bool, interrupted: bool) -> dict[str, str]:
         attributes = {
-            self.ATTR_FINAL: "true",
+            self.ATTR_FINAL: str(final).lower(),
             self.ATTR_SEGMENT_ID: state.segment_id,
+            "alphaavatar.type": "output_text" if state.immediate else "output_transcript",
             "alphaavatar.output_id": state.output_id,
             "alphaavatar.turn_id": state.turn_id or "",
             "alphaavatar.lane": state.lane.value,
             "alphaavatar.interrupted": str(interrupted).lower(),
         }
+        if not state.immediate and self._track_sid is not None:
+            if track_id := self._track_sid():
+                attributes[self.ATTR_TRACK_ID] = track_id
+        return attributes
 
-        track_sid = self._resolve_track_sid()
-        if track_sid:
-            attributes[self.ATTR_TRACK_ID] = track_sid
+    async def _write(self, state: _Transcript, text: str) -> None:
+        participant = self._room.local_participant
+        if state.immediate and not self._output.can_deliver(state.output_id):
+            return
+        if self._text_stream:
+            if state.writer is None:
 
-        try:
-            result = close(attributes=attributes)
-            if inspect.isawaitable(result):
-                await result
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception(
-                "Failed to close LiveKit transcript stream output_id=%s segment_id=%s",
-                state.output_id,
-                state.segment_id,
-            )
+                async def open_writer() -> None:
+                    async with asyncio.timeout(self._timeout):
+                        state.writer = await participant.stream_text(
+                            topic=self.TRANSCRIPTION_TOPIC,
+                            sender_identity=participant.identity,
+                            attributes=self._attributes(state, final=False, interrupted=False),
+                        )
 
-    async def _publish_legacy(
-        self,
-        state: _TranscriptState,
-        event: OutputEvent,
-        *,
-        final: bool,
-    ) -> None:
-        try:
-            participant = self._local_participant()
-            transcription = rtc.Transcription(
+                await wait_for_cleanup(asyncio.create_task(open_writer(), name="transcript_open"))
+            if state.immediate and not self._output.can_deliver(state.output_id):
+                return
+            await state.writer.write(text)
+        state.text += text
+        if self._legacy:
+            await self._publish_legacy(state, final=False)
+
+    async def _publish_legacy(self, state: _Transcript, *, final: bool) -> None:
+        participant = self._room.local_participant
+        track_id = self._track_sid() if not state.immediate and self._track_sid is not None else ""
+        await participant.publish_transcription(
+            rtc.Transcription(
                 participant_identity=participant.identity,
-                track_sid=self._resolve_track_sid() or "",
+                track_sid=track_id or "",
                 segments=[
                     rtc.TranscriptionSegment(
                         id=state.segment_id,
@@ -186,196 +134,166 @@ class LiveKitTranscriptOutput:
                         start_time=0,
                         end_time=0,
                         final=final,
-                        language=self._language(event),
+                        language="",
                     )
                 ],
             )
-            await participant.publish_transcription(transcription)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception(
-                "Failed to publish legacy LiveKit transcript output_id=%s segment_id=%s final=%s",
-                state.output_id,
-                state.segment_id,
-                final,
-            )
-
-    def _stream_attributes(
-        self,
-        state: _TranscriptState,
-        event: OutputEvent,
-        *,
-        final: bool,
-        interrupted: bool,
-    ) -> dict[str, str]:
-        attributes = {
-            self.ATTR_FINAL: str(final).lower(),
-            self.ATTR_SEGMENT_ID: state.segment_id,
-            "alphaavatar.type": "output_transcript",
-            "alphaavatar.output_id": state.output_id,
-            "alphaavatar.turn_id": state.turn_id or "",
-            "alphaavatar.lane": state.lane.value,
-            "alphaavatar.event_id": event.event_id,
-            "alphaavatar.sequence": str(event.sequence),
-            "alphaavatar.interrupted": str(interrupted).lower(),
-        }
-
-        track_sid = self._resolve_track_sid()
-        if track_sid:
-            attributes[self.ATTR_TRACK_ID] = track_sid
-
-        return attributes
-
-    def _resolve_track_sid(self) -> str | None:
-        if self._track_sid is None:
-            return None
-
-        try:
-            return self._track_sid()
-        except Exception:
-            logger.exception("Failed to resolve transcript audio track SID")
-            return None
-
-    def _local_participant(self):
-        participant = getattr(self._room, "local_participant", None)
-        if participant is None:
-            raise RuntimeError("LiveKit room has no local participant")
-        return participant
-
-    """Runtime Loop"""
-
-    async def _handle_event(self, event: OutputEvent) -> None:
-        payload = event.payload
-        output_id = event.output_id
-
-        if not isinstance(payload, OutputTranscriptChunk) or not output_id:
-            return
-
-        if output_id in self._finalized_outputs:
-            return
-
-        state = self._states.get(output_id)
-
-        # An output interrupted before any audio text was delivered should not
-        # create an empty message in the frontend.
-        if state is None and payload.is_final and not payload.text:
-            self._finalized_outputs.add(output_id)
-            return
-
-        if state is None:
-            state = _TranscriptState(
-                output_id=output_id,
-                turn_id=event.turn_id,
-                lane=event.lane,
-                segment_id=self._segment_id(event.lane, output_id),
-            )
-            self._states[output_id] = state
-        elif state.turn_id != event.turn_id or state.lane != event.lane:
-            raise ValueError(f"Transcript identity mismatch output_id={output_id!r}")
-
-        if payload.text:
-            state.text += payload.text
-
-            await asyncio.gather(
-                self._write_text_stream(state, payload.text, event)
-                if self._publish_text_stream_enabled
-                else self._noop(),
-                self._publish_legacy(state, event, final=False)
-                if self._publish_legacy_enabled
-                else self._noop(),
-            )
-
-        if not payload.is_final:
-            return
-
-        # Publish the final cumulative legacy segment even when the final
-        # TRANSCRIPT_CHUNK contains no additional text.
-        if self._publish_legacy_enabled:
-            await self._publish_legacy(state, event, final=True)
-
-        if self._publish_text_stream_enabled:
-            await self._close_writer(state, interrupted=payload.interrupted)
-
-        self._states.pop(output_id, None)
-        self._finalized_outputs.add(output_id)
-
-        logger.debug(
-            "Finalized LiveKit transcript output_id=%s segment_id=%s interrupted=%s text=%r",
-            output_id,
-            state.segment_id,
-            payload.interrupted,
-            state.text,
         )
 
+    def _remember(self, output_id: str, sequence: int) -> None:
+        self._finalized[output_id] = sequence
+        while len(self._finalized) > 1024:
+            _, old_sequence = self._finalized.popitem(last=False)
+            self._floor = max(self._floor, old_sequence)
+
+    async def _finish(self, output_id: str, sequence: int, *, interrupted: bool) -> None:
+        state = self._states.get(output_id)
+        self._remember(output_id, sequence)
+        if state is None:
+            return
+        if state.closing is None:
+
+            async def close() -> None:
+                errors = []
+                if self._legacy and state.text:
+                    try:
+                        async with asyncio.timeout(self._timeout):
+                            await self._publish_legacy(state, final=True)
+                    except Exception as exc:
+                        errors.append(exc)
+                if state.writer is not None:
+                    try:
+                        async with asyncio.timeout(self._timeout):
+                            await state.writer.aclose(
+                                attributes=self._attributes(
+                                    state, final=True, interrupted=interrupted
+                                )
+                            )
+                    except Exception as exc:
+                        errors.append(exc)
+                self._states.pop(output_id, None)
+                if errors:
+                    raise ExceptionGroup("Transcript finalization failed", errors)
+
+            state.closing = asyncio.create_task(close(), name="transcript_writer_close")
+        await wait_for_cleanup(state.closing)
+
+    async def _handle(self, event: OutputEvent) -> None:
+        payload, output_id = event.payload, event.output_id
+        if isinstance(payload, OutputControl):
+            if payload.type == OutputControlType.INTERRUPT:
+                for identity in event.metadata.get("interrupted_output_ids", ()):
+                    if self._output.text_mode(identity) == OutputTextMode.IMMEDIATE:
+                        await self._finish(identity, event.sequence, interrupted=True)
+                for identity, state in tuple(self._states.items()):
+                    output_match = payload.target_output_id in {None, identity}
+                    lane_match = payload.target_lane in {None, state.lane}
+                    turn_match = payload.target_turn_id in {None, state.turn_id}
+                    if state.immediate and output_match and lane_match and turn_match:
+                        await self._finish(identity, event.sequence, interrupted=True)
+                return
+            if (
+                output_id
+                and self._output.text_mode(output_id) == OutputTextMode.IMMEDIATE
+                and payload.type in {OutputControlType.TEXT_COMPLETE, OutputControlType.COMPLETE}
+            ):
+                await self._finish(output_id, event.sequence, interrupted=False)
+            return
+        if not output_id or output_id in self._finalized or event.sequence <= self._floor:
+            return
+        immediate = isinstance(payload, OutputTextChunk)
+        if immediate:
+            if payload.mode != OutputTextMode.IMMEDIATE:
+                return
+            if not self._output.can_deliver(output_id):
+                return
+            text, final, interrupted = payload.text, payload.is_final, False
+        elif isinstance(payload, OutputTranscriptChunk):
+            text, final, interrupted = payload.text, payload.is_final, payload.interrupted
+        else:
+            return
+        state = self._states.get(output_id)
+        if state is None and text:
+            if len(self._states) >= self._capacity:
+                raise RuntimeError("Transcript transport capacity exhausted")
+            segment_id = f"SG_{event.lane.value}_{output_id}"
+            state = _Transcript(output_id, event.turn_id, event.lane, segment_id, immediate)
+            self._states[output_id] = state
+        if state is not None:
+            identity = state.turn_id, state.lane, state.immediate
+            if identity != (event.turn_id, event.lane, immediate):
+                raise ValueError("Transcript delivery identity changed")
+            if text:
+                await self._write(state, text)
+        if final:
+            await self._finish(output_id, event.sequence, interrupted=interrupted)
+
     async def _run(self) -> None:
-        subscription = self._subscription
-        if subscription is None:
-            return
+        while True:
+            event = await self._subscription.get()
+            try:
+                async with asyncio.timeout(self._timeout):
+                    await self._handle(event)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Transcript delivery failed output_id=%s", event.output_id)
+                if event.output_id:
+                    try:
+                        async with asyncio.timeout(self._timeout):
+                            await self._finish(event.output_id, event.sequence, interrupted=True)
+                    except Exception:
+                        logger.exception("Transcript cleanup failed output_id=%s", event.output_id)
 
-        try:
-            while True:
-                event = await subscription.get()
-
-                try:
-                    await self._handle_event(event)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logger.exception(
-                        "Failed to publish transcript event_id=%s output_id=%s sequence=%s",
-                        event.event_id,
-                        event.output_id,
-                        event.sequence,
-                    )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("LiveKit transcript output stopped unexpectedly")
-
-    """Runtime operations"""
-
-    async def on_session_start(self) -> None:
-        if self._run_task is not None:
-            return
-
+    async def _start(self) -> None:
         self._subscription = await self._output.stream.subscribe(
-            self._subscription_name,
-            kinds=(OutputKind.TRANSCRIPT_CHUNK,),
+            self._name,
+            kinds=(OutputKind.TEXT_CHUNK, OutputKind.TRANSCRIPT_CHUNK, OutputKind.CONTROL),
             lanes=self._lanes,
             max_pending=256,
             reliable=True,
         )
-        self._run_task = asyncio.create_task(self._run(), name=self._subscription_name)
+        self._task = asyncio.create_task(self._run(), name=self._name)
 
-        logger.info(
-            "LiveKit transcript output started lanes=%s legacy=%s text_stream=%s",
-            [lane.value for lane in self._lanes],
-            self._publish_legacy_enabled,
-            self._publish_text_stream_enabled,
-        )
+    async def on_session_start(self) -> None:
+        if self._close_task is not None:
+            raise RuntimeError("Output consumer is closing or closed")
+        if self._start_task is None:
+            self._start_task = asyncio.create_task(self._start(), name="output_consumer_start")
+        try:
+            await asyncio.shield(self._start_task)
+            if self._close_task is not None:
+                raise RuntimeError("Output consumer closed during startup")
+        except BaseException as original:
+            try:
+                await self.on_session_stop()
+            except BaseException as cleanup:
+                raise original from cleanup
+            raise
+
+    async def _close(self) -> None:
+        if self._start_task is not None:
+            if not self._start_task.done():
+                self._start_task.cancel()
+            await asyncio.gather(self._start_task, return_exceptions=True)
+        if self._task is not None:
+            self._task.cancel()
+        if self._subscription is not None:
+            await self._output.stream.unsubscribe(self._name)
+        if self._task is not None:
+            await asyncio.gather(self._task, return_exceptions=True)
+        errors = []
+        for output_id in tuple(self._states):
+            try:
+                async with asyncio.timeout(self._timeout):
+                    await self._finish(output_id, self._floor, interrupted=True)
+            except Exception as exc:
+                errors.append(exc)
+        self._subscription = self._task = None
+        if errors:
+            raise ExceptionGroup("Transcript transport cleanup failed", errors)
 
     async def on_session_stop(self) -> None:
-        run_task = self._run_task
-        self._run_task = None
-
-        if run_task is not None and not run_task.done():
-            run_task.cancel()
-        if run_task is not None:
-            await asyncio.gather(run_task, return_exceptions=True)
-
-        if self._subscription is not None:
-            await self._output.stream.unsubscribe(self._subscription_name)
-
-        states = tuple(self._states.values())
-        self._states.clear()
-        self._finalized_outputs.clear()
-
-        if states:
-            await asyncio.gather(
-                *(self._close_writer(state, interrupted=True) for state in states),
-                return_exceptions=True,
-            )
-
-        self._subscription = None
-        logger.info("LiveKit transcript output stopped")
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close(), name="transcript_transport_close")
+        await wait_for_cleanup(self._close_task)

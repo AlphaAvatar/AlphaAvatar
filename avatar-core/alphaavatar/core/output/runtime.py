@@ -175,12 +175,14 @@ class OutputRuntime:
                 raise RuntimeError("OutputRuntime is closed")
             if not self._accepts_owner(run_id, status_decision):
                 return None, False
+
             record = self._outputs.get(output_id)
             if record is not None:
                 self._validate_output(record, output_id=output_id, lane=lane, turn_id=turn_id)
                 if record.run_id != run_id or record.status_decision != status_decision:
                     raise ValueError("Output execution owner mismatch")
                 return (record if record.active else None), False
+
             record = _OutputRecord(
                 lane, turn_id, origin_kind, run_id=run_id, status_decision=status_decision
             )
@@ -203,6 +205,7 @@ class OutputRuntime:
         async with self._open_lock:
             if not self._accepts_owner(run_id, status_decision):
                 return None, False
+
             existing = await self._get_output(output_id)
             if not self._accepts_owner(run_id, status_decision):
                 return None, False
@@ -419,8 +422,10 @@ class OutputRuntime:
                 or run_id != status_decision.scope.run_id
             ):
                 raise ValueError("Status narration requires its own transient presentation scope")
+
         if text == "" or not self._accepts_owner(run_id, status_decision):
             return None
+
         record, _ = await self._prepare_output(
             output_id=output_id,
             lane=lane,
@@ -434,6 +439,7 @@ class OutputRuntime:
         )
         if record is None:
             return None
+
         async with self._state_lock:
             if not self._accepts_record(record) or record.text_completed:
                 return None
@@ -442,6 +448,7 @@ class OutputRuntime:
             record.text_mode = mode
             first_chunk = not record.text_started
             record.text_started = True
+
         return await self._publish(
             kind=OutputKind.TEXT_CHUNK,
             lane=lane,
@@ -565,11 +572,13 @@ class OutputRuntime:
             or end_time_sec < start_time_sec
         ):
             raise ValueError("Invalid alignment time range")
+
         async with self._state_lock:
             record = self._outputs.get(output_id)
             if record is None or record.audio_completed:
                 return None
             self._validate_output(record, output_id=output_id, lane=lane, turn_id=turn_id)
+
         event = await self._publish(
             kind=OutputKind.ALIGNMENT,
             lane=lane,

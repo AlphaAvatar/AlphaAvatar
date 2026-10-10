@@ -11,17 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Synchronize user-visible transcript with actual audio playout."""
-
 from __future__ import annotations
 
 import asyncio
-import re
+import logging
 from dataclasses import dataclass, field
 
 from alphaavatar.agents.router import RouterProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.core.output import OutputSubscription
+from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.output.enums import (
     OutputControlType,
     OutputKind,
@@ -34,55 +32,33 @@ from alphaavatar.core.output.schemas import (
     OutputEvent,
     OutputPlayback,
     OutputTextAudioAlignment,
-    OutputTextChunk,
 )
 
-from ..log import logger
-
-_TOKEN_PATTERN = re.compile(
-    r"[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]"
-    r"|[^\W_]+(?:['’\-][^\W_]+)*"
-    r"|[^\w\s]"
-    r"|\s+",
-    re.UNICODE,
-)
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
-class _AlignmentState:
-    value: OutputTextAudioAlignment
-    units: tuple[str, ...]
-    weights: tuple[float, ...]
-    delivered_units: int = 0
-
-    @property
-    def total_weight(self) -> float:
-        return sum(self.weights)
-
-
-@dataclass(slots=True)
-class _TranscriptState:
+class _Transcript:
     output_id: str
     lane: OutputLane
     turn_id: str | None
-    source_chunks: dict[str, OutputTextChunk] = field(default_factory=dict)
-    alignments: dict[str, _AlignmentState] = field(default_factory=dict)
-    alignment_order: list[str] = field(default_factory=list)
-    played_duration_sec: float = 0.0
-    playback_started: bool = False
-    source_complete: bool = False
-    interrupt_requested: bool = False
-    transcript_started: bool = False
-    finalized: bool = False
+    alignments: dict[str, OutputTextAudioAlignment] = field(default_factory=dict)
+    emitted: set[str] = field(default_factory=set)
+    played: float = 0.0
+    started: bool = False
+    interrupted: bool = False
+    audio_complete: bool = False
+    last_audio_sequence: int = 0
+    expected_alignment_sequence: int = 0
+    alignment_sequence: int = 0
+    playback_complete: bool = False
 
 
 class TranscriptSynchronizationProcessor(RouterProcessorBase):
-    """
-    Convert AUDIO_SYNCED source text into delivered transcript chunks.
+    """Release complete aligned phrases using transport progress, not generated text.
 
-    Text is released only according to actual PLAYBACK progress. An interrupt
-    keeps already published transcript and prevents unplayed text from being
-    emitted.
+    Synthesis and playback terminal events are independent. Interruption cannot
+    finalize the transcript before already-produced alignments have been consumed.
     """
 
     CONSUMER_ID = "router.transcript_synchronization"
@@ -91,325 +67,207 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
         self,
         *,
         runtime: AvatarRuntime,
-        lanes: tuple[OutputLane, ...] = (OutputLane.TRANSIENT,),
+        lanes: tuple[OutputLane, ...] = (OutputLane.TRANSIENT, OutputLane.ASSISTANT),
+        max_pending_outputs: int = 256,
     ) -> None:
         super().__init__(runtime=runtime)
-
-        self._lanes = lanes
-        self._subscription: OutputSubscription | None = None
-        self._run_task: asyncio.Task[None] | None = None
-        self._states: dict[str, _TranscriptState] = {}
-        self._started = False
+        if max_pending_outputs < 1:
+            raise ValueError("Transcript capacity must be positive")
+        self._lanes, self._capacity = lanes, max_pending_outputs
+        self._states: dict[str, _Transcript] = {}
+        self._subscription = None
+        self._task: asyncio.Task | None = None
+        self._close_task: asyncio.Task | None = None
+        self._start_task: asyncio.Task | None = None
 
     @property
     def name(self) -> str:
         return "transcript_synchronization"
 
     @staticmethod
-    def _matches_control(state: _TranscriptState, control: OutputControl) -> bool:
-        if control.target_output_id is not None and state.output_id != control.target_output_id:
-            return False
-        if control.target_lane is not None and state.lane != control.target_lane:
-            return False
-        if control.target_turn_id is not None and state.turn_id != control.target_turn_id:
-            return False
-        return True
+    def _observe(task: asyncio.Task) -> None:
+        if not task.cancelled() and task.exception() is not None:
+            logger.error("Transcript consumer failed", exc_info=task.exception())
 
-    @staticmethod
-    def _split_units(text: str) -> tuple[str, ...]:
-        raw_tokens = _TOKEN_PATTERN.findall(text)
-        units: list[str] = []
-        pending_space = ""
+    def _state(self, event: OutputEvent) -> _Transcript | None:
+        output = self._runtime.output
+        output_id = event.output_id
+        if not output_id or output.text_mode(output_id) != OutputTextMode.AUDIO_SYNCED:
+            return None
+        if output.transcript_finalized(output_id):
+            return None
+        identity = output.output_identity(output_id)
+        if identity is None:
+            return None
+        lane, turn_id = identity
+        state = self._states.get(output_id)
+        if state is None:
+            if len(self._states) >= self._capacity:
+                raise RuntimeError("Transcript output capacity exhausted")
+            state = _Transcript(output_id, lane, turn_id)
+            self._states[output_id] = state
+        elif (state.lane, state.turn_id) != identity:
+            raise ValueError("Transcript output identity changed")
+        return state
 
-        for token in raw_tokens:
-            if token.isspace():
-                pending_space += token
-            elif (
-                TranscriptSynchronizationProcessor._is_punctuation(token)
-                and units
-                and not pending_space
-            ):
-                units[-1] += token
-            else:
-                units.append(pending_space + token)
-                pending_space = ""
+    async def _emit(self, state: _Transcript) -> None:
+        # Phrase-level timing is deliberately conservative; no inferred word-level receipt.
+        for alignment_id, value in state.alignments.items():
+            if alignment_id in state.emitted or value.partial:
+                continue
 
-        if pending_space:
-            if units:
-                units[-1] += pending_space
-            else:
-                units.append(pending_space)
-
-        return tuple(units)
-
-    @staticmethod
-    def _is_punctuation(token: str) -> bool:
-        return bool(token) and all(not char.isalnum() and not char.isspace() for char in token)
-
-    @staticmethod
-    def _unit_weight(unit: str) -> float:
-        visible_length = len(unit.strip())
-        return float(max(visible_length, 1))
-
-    @staticmethod
-    def _target_unit_count(alignment: _AlignmentState, ratio: float) -> int:
-        if ratio >= 1.0:
-            return len(alignment.units)
-        if ratio <= 0.0 or alignment.total_weight <= 0:
-            return 0
-
-        threshold = alignment.total_weight * ratio
-        accumulated = 0.0
-        count = 0
-
-        for weight in alignment.weights:
-            if accumulated + weight > threshold:
+            if state.played + 1e-8 < value.end_time_sec:
                 break
-            accumulated += weight
-            count += 1
 
-        return count
-
-    @staticmethod
-    def _weight_ratio(alignment: _AlignmentState, unit_count: int) -> float:
-        if alignment.total_weight <= 0:
-            return 0.0
-        return min(sum(alignment.weights[:unit_count]) / alignment.total_weight, 1.0)
-
-    async def _run(self) -> None:
-        subscription = self._subscription
-        if subscription is None:
-            return
-
-        try:
-            while True:
-                event = await subscription.get()
-
-                try:
-                    if event.kind == OutputKind.TEXT_CHUNK:
-                        await self._handle_text(event)
-                    elif event.kind == OutputKind.ALIGNMENT:
-                        await self._handle_alignment(event)
-                    elif event.kind == OutputKind.PLAYBACK:
-                        await self._handle_playback(event)
-                    elif event.kind == OutputKind.CONTROL:
-                        await self._handle_control(event)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logger.exception(
-                        "Failed to synchronize transcript event_id=%s output_id=%s kind=%s",
-                        event.event_id,
-                        event.output_id,
-                        event.kind,
-                    )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Transcript synchronization processor stopped unexpectedly.")
-
-    async def _handle_text(self, event: OutputEvent) -> None:
-        payload = event.payload
-        if not isinstance(payload, OutputTextChunk):
-            return
-        if payload.mode != OutputTextMode.AUDIO_SYNCED:
-            return
-
-        state = self._state_for(event)
-        state.source_chunks[payload.chunk_id] = payload
-
-    async def _handle_alignment(self, event: OutputEvent) -> None:
-        payload = event.payload
-        if not isinstance(payload, OutputTextAudioAlignment):
-            return
-
-        state = self._state_for(event)
-        units = self._split_units(payload.text)
-        weights = tuple(self._unit_weight(unit) for unit in units)
-
-        if payload.source_chunk_id not in state.alignments:
-            state.alignment_order.append(payload.source_chunk_id)
-
-        state.alignments[payload.source_chunk_id] = _AlignmentState(
-            value=payload,
-            units=units,
-            weights=weights,
-        )
-        await self._emit_due(state)
-
-    async def _handle_playback(self, event: OutputEvent) -> None:
-        payload = event.payload
-        if not isinstance(payload, OutputPlayback):
-            return
-
-        state = self._state_for(event)
-        state.played_duration_sec = max(state.played_duration_sec, payload.played_duration_sec)
-
-        if payload.type == OutputPlaybackType.STARTED:
-            state.playback_started = True
-            await self._emit_due(state)
-        elif payload.type == OutputPlaybackType.PROGRESS:
-            state.playback_started = True
-            await self._emit_due(state)
-        elif payload.type == OutputPlaybackType.FINISHED:
-            state.playback_started = True
-            await self._emit_due(state, force_all=True)
-            await self._finalize(state, interrupted=False)
-        elif payload.type == OutputPlaybackType.INTERRUPTED:
-            await self._emit_due(state)
-            await self._finalize(state, interrupted=True)
-
-    async def _handle_control(self, event: OutputEvent) -> None:
-        control = event.payload
-        if not isinstance(control, OutputControl):
-            return
-
-        states = tuple(
-            state for state in self._states.values() if self._matches_control(state, control)
-        )
-
-        if control.type == OutputControlType.COMPLETE:
-            for state in states:
-                state.source_complete = True
-            return
-
-        if control.type != OutputControlType.INTERRUPT:
-            return
-
-        for state in states:
-            state.interrupt_requested = True
-
-            # No playback means no user-visible text was delivered.
-            if not state.playback_started:
-                await self._finalize(state, interrupted=True)
-
-    async def _emit_due(self, state: _TranscriptState, *, force_all: bool = False) -> None:
-        if state.finalized:
-            return
-
-        for source_chunk_id in state.alignment_order:
-            alignment = state.alignments[source_chunk_id]
-            value = alignment.value
-
-            if not alignment.units:
-                continue
-            if not force_all and state.played_duration_sec <= value.start_time_sec:
-                continue
-
-            duration = max(value.duration_sec, 1e-6)
-            ratio = (
-                1.0
-                if force_all
-                else min(
-                    max((state.played_duration_sec - value.start_time_sec) / duration, 0.0),
-                    1.0,
-                )
-            )
-            target_units = self._target_unit_count(alignment, ratio)
-
-            if target_units <= alignment.delivered_units:
-                continue
-
-            start_unit = alignment.delivered_units
-            text = "".join(alignment.units[start_unit:target_units])
-            start_ratio = self._weight_ratio(alignment, start_unit)
-            end_ratio = self._weight_ratio(alignment, target_units)
-
-            published = await self._runtime.output.publish_transcript_chunk(
-                text=text,
+            event = await self._runtime.output.publish_transcript_chunk(
+                text=value.text,
                 output_id=state.output_id,
                 turn_id=state.turn_id,
                 lane=state.lane,
-                source_chunk_id=source_chunk_id,
-                start_time_sec=value.start_time_sec + duration * start_ratio,
-                end_time_sec=value.start_time_sec + duration * end_ratio,
-                is_first=not state.transcript_started,
-                is_final=False,
-                interrupted=False,
+                source_chunk_id=value.source_chunk_id,
+                start_time_sec=value.start_time_sec,
+                end_time_sec=value.end_time_sec,
+                is_first=not state.started,
                 metadata={
                     "timing_source": value.timing_source,
-                    "partial_alignment": value.partial,
+                    "alignment_id": alignment_id,
+                    "source_chunk_ids": value.source_chunk_ids,
                 },
             )
+            if event is not None:
+                state.started = True
+                state.emitted.add(alignment_id)
 
-            if published is not None:
-                state.transcript_started = True
-                alignment.delivered_units = target_units
-
-    async def _finalize(self, state: _TranscriptState, *, interrupted: bool) -> None:
-        if state.finalized:
+    async def _finish(self, state: _Transcript) -> None:
+        await self._emit(state)
+        if not state.audio_complete:
             return
-
-        state.finalized = True
+        if state.alignment_sequence < state.expected_alignment_sequence:
+            return
+        if state.last_audio_sequence and not state.playback_complete:
+            return
 
         await self._runtime.output.publish_transcript_chunk(
             text="",
             output_id=state.output_id,
             turn_id=state.turn_id,
             lane=state.lane,
-            is_first=not state.transcript_started,
+            is_first=not state.started,
             is_final=True,
-            interrupted=interrupted,
-            end_time_sec=state.played_duration_sec,
-            metadata={
-                "source_complete": state.source_complete,
-                "interrupt_requested": state.interrupt_requested,
-            },
+            interrupted=state.interrupted,
+            end_time_sec=state.played,
+            metadata={"measurement": "local_audio_queue", "timing_granularity": "phrase"},
         )
         self._states.pop(state.output_id, None)
 
-    def _state_for(self, event: OutputEvent) -> _TranscriptState:
-        output_id = event.output_id
-        if not output_id:
-            raise ValueError("Transcript event requires output_id")
+    async def _handle(self, event: OutputEvent) -> None:
+        payload = event.payload
+        if isinstance(payload, OutputControl) and payload.type == OutputControlType.INTERRUPT:
+            for output_id in event.metadata.get("interrupted_output_ids", ()):
+                state = self._states.get(output_id)
+                if state is not None:
+                    state.interrupted = True
 
-        state = self._states.get(output_id)
-        if state is None:
-            state = _TranscriptState(
-                output_id=output_id,
-                lane=event.lane,
-                turn_id=event.turn_id,
-            )
-            self._states[output_id] = state
-        elif state.lane != event.lane or state.turn_id != event.turn_id:
-            raise ValueError(f"Transcript identity mismatch output_id={output_id!r}")
-
-        return state
-
-    async def start(self) -> None:
-        if self._started:
             return
 
+        state = self._state(event)
+        if state is None:
+            return
+
+        if isinstance(payload, OutputTextAudioAlignment):
+            identity = payload.alignment_id or payload.source_chunk_id
+            previous = state.alignments.get(identity)
+            if previous is not None and previous != payload:
+                raise ValueError("Conflicting text/audio alignment replay")
+
+            state.alignments[identity] = payload
+            state.alignment_sequence = max(state.alignment_sequence, event.sequence)
+        elif isinstance(payload, OutputPlayback):
+            state.played = max(state.played, payload.played_duration_sec)
+            if payload.type in {OutputPlaybackType.FINISHED, OutputPlaybackType.INTERRUPTED}:
+                state.playback_complete = True
+                state.interrupted = (
+                    state.interrupted or payload.type == OutputPlaybackType.INTERRUPTED
+                )
+        elif (
+            isinstance(payload, OutputControl) and payload.type == OutputControlType.AUDIO_COMPLETE
+        ):
+            state.audio_complete = True
+            state.last_audio_sequence = event.metadata["last_audio_sequence"]
+            state.expected_alignment_sequence = event.metadata["last_alignment_sequence"]
+            state.interrupted = state.interrupted or payload.reason != "synthesis_completed"
+
+        await self._finish(state)
+
+    async def _run(self) -> None:
+        try:
+            while True:
+                await self._handle(await self._subscription.get())
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Transcript synchronization stopped")
+            raise
+
+    async def _start(self) -> None:
         self._subscription = await self._runtime.output.stream.subscribe(
             self.CONSUMER_ID,
-            kinds=(
-                OutputKind.TEXT_CHUNK,
-                OutputKind.ALIGNMENT,
-                OutputKind.PLAYBACK,
-                OutputKind.CONTROL,
-            ),
+            kinds=(OutputKind.ALIGNMENT, OutputKind.PLAYBACK, OutputKind.CONTROL),
             lanes=self._lanes,
             max_pending=256,
             reliable=True,
         )
-        self._run_task = asyncio.create_task(self._run(), name=self.CONSUMER_ID)
-        self._started = True
+        self._task = asyncio.create_task(self._run(), name=self.CONSUMER_ID)
+        self._task.add_done_callback(self._observe)
 
-    async def stop(self) -> None:
-        if not self._started:
-            return
+    async def start(self) -> None:
+        if self._close_task is not None:
+            raise RuntimeError("Output consumer is closing or closed")
+        if self._start_task is None:
+            self._start_task = asyncio.create_task(self._start(), name="output_consumer_start")
 
-        self._started = False
-        run_task = self._run_task
-        self._run_task = None
+        try:
+            await asyncio.shield(self._start_task)
+            if self._close_task is not None:
+                raise RuntimeError("Output consumer closed during startup")
+        except BaseException as original:
+            try:
+                await self.stop()
+            except BaseException as cleanup:
+                raise original from cleanup
+            raise
 
-        if run_task is not None and not run_task.done():
-            run_task.cancel()
-        if run_task is not None:
-            await asyncio.gather(run_task, return_exceptions=True)
+    async def _close(self) -> None:
+        if self._start_task is not None:
+            if not self._start_task.done():
+                self._start_task.cancel()
+            await asyncio.gather(self._start_task, return_exceptions=True)
 
+        if self._task is not None:
+            self._task.cancel()
         if self._subscription is not None:
             await self._runtime.output.stream.unsubscribe(self.CONSUMER_ID)
+        if self._task is not None:
+            await asyncio.gather(self._task, return_exceptions=True)
 
-        self._subscription = None
+        # No fabricated text during shutdown. Retain only previously confirmed phrase output.
+        for state in tuple(self._states.values()):
+            await self._runtime.output.publish_transcript_chunk(
+                text="",
+                output_id=state.output_id,
+                turn_id=state.turn_id,
+                lane=state.lane,
+                is_first=not state.started,
+                is_final=True,
+                interrupted=True,
+                end_time_sec=state.played,
+                metadata={"reason": "transcript_stopping"},
+            )
+
         self._states.clear()
+        self._subscription = self._task = None
+
+    async def stop(self) -> None:
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close(), name="transcript_close")
+        await wait_for_cleanup(self._close_task)
