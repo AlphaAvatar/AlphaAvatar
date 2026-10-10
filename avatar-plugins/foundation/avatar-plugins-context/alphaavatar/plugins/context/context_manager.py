@@ -28,7 +28,7 @@ from alphaavatar.agents.avatar.vision import VisualFrameSelector
 from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
 from alphaavatar.agents.utils.time import ParticipantTimeContext, format_user_time
 from alphaavatar.core.cleanup import wait_for_cleanup
-from alphaavatar.core.env import ObservationKind
+from alphaavatar.core.env.enums import ObservationKind
 from alphaavatar.core.perception import PerceptionTemporalAligner, TemporalAlignmentMode
 from alphaavatar.core.time import RuntimeTimeRange
 

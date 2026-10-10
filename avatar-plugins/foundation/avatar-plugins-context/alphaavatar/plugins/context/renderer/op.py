@@ -33,19 +33,13 @@ from alphaavatar.agents.avatar.vision import (
     SelectedVisualFrame,
     VisualSelection,
 )
-from alphaavatar.core.env import EnvObservation, ObservationKind
-from alphaavatar.core.media import (
-    PayloadFormat,
-    PayloadFormatUnavailable,
-    PayloadView,
-)
-from alphaavatar.core.perception import (
-    AlignedPerception,
-    MediaSourceKind,
-    MediaSourceSnapshot,
-    PerceptionEvent,
-    TemporalSlice,
-)
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.enums import ObservationKind
+from alphaavatar.core.media import PayloadFormatUnavailable
+from alphaavatar.core.media.enums import PayloadFormat, PayloadView
+from alphaavatar.core.perception import AlignedPerception, TemporalSlice
+from alphaavatar.core.perception.enums import MediaSourceKind
+from alphaavatar.core.perception.schemas import MediaSourceSnapshot, PerceptionEvent
 
 _PAUSE_THRESHOLD_SEC = 0.3
 _VISUAL_OBSERVATION_KINDS = {
