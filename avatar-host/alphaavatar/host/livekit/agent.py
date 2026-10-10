@@ -29,7 +29,7 @@ from alphaavatar.core.output.enums import OutputLane
 from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
 from alphaavatar.host.lifecycle import HostSessionLifecycle
 
-from .execution import LiveKitExecutionBridge, extract_answer_text
+from .execution import LiveKitExecutionBridge, extract_answer_text, owning_speech
 from .records import LiveKitOutputBridge
 from .tools import build_function_tools
 
@@ -91,12 +91,13 @@ class LiveKitHostedAgent(AvatarEngine):
     def llm_node(
         self, chat_ctx: llm.ChatContext, tools: list[llm.Tool], model_settings: ModelSettings
     ) -> AsyncIterable[llm.ChatChunk | str | FlushSentinel]:
+        # Capture while llm_node is called in the SDK generation task's context.
+        speech = owning_speech(self.session)
+
         async def generate():
             snapshot = self._ensure_turn_snapshot(chat_ctx)
             context_id = self._runtime.state.context_id
-            step = self._execution_bridge.begin(
-                self.session.current_speech, snapshot, context_id=context_id
-            )
+            step = self._execution_bridge.begin(speech, snapshot, context_id=context_id)
             output_id, text_started, completed = uuid4().hex, False, False
             try:
                 if step.model_step == 1:

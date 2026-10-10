@@ -41,6 +41,7 @@ from .schemas import (
     OutputJournalEvent,
     OutputPlayback,
     OutputRecordBatch,
+    OutputScope,
     OutputStatusDecision,
     OutputTextAudioAlignment,
     OutputTextChunk,
@@ -60,6 +61,7 @@ class _OutputRecord:
     text_started: bool = False
     text_completed: bool = False
     run_id: str | None = None
+    status_decision: OutputStatusDecision | None = None
 
     @property
     def active(self) -> bool:
@@ -124,6 +126,9 @@ class OutputRuntime:
 
         # A lease, not a cache of every retired run. None means no native foreground owner.
         self._foreground_run: str | None = None
+        self._foreground_turn: str | None = None
+        self._status_scope: OutputScope | None = None
+        self._status_revision = 0
 
     @staticmethod
     def _validate_output(
@@ -138,6 +143,12 @@ class OutputRuntime:
         if record.turn_id != turn_id:
             raise ValueError(f"Output turn mismatch output_id={output_id!r}")
 
+    def _accepts_owner(self, run_id: str | None, decision: OutputStatusDecision | None) -> bool:
+        return self.accepts_status(decision) if decision is not None else self.accepts_run(run_id)
+
+    def _accepts_record(self, record: _OutputRecord) -> bool:
+        return record.active and self._accepts_owner(record.run_id, record.status_decision)
+
     async def _get_output(self, output_id: str) -> _OutputRecord | None:
         async with self._state_lock:
             return self._outputs.get(output_id)
@@ -150,19 +161,22 @@ class OutputRuntime:
         turn_id: str | None,
         origin_kind: OutputKind,
         run_id: str | None = None,
+        status_decision: OutputStatusDecision | None = None,
     ) -> tuple[_OutputRecord | None, bool]:
         async with self._state_lock:
             if self._closed:
                 raise RuntimeError("OutputRuntime is closed")
-            if not self.accepts_run(run_id):
+            if not self._accepts_owner(run_id, status_decision):
                 return None, False
             record = self._outputs.get(output_id)
             if record is not None:
                 self._validate_output(record, output_id=output_id, lane=lane, turn_id=turn_id)
-                if record.run_id != run_id:
+                if record.run_id != run_id or record.status_decision != status_decision:
                     raise ValueError("Output execution owner mismatch")
                 return (record if record.active else None), False
-            record = _OutputRecord(lane, turn_id, origin_kind, run_id=run_id)
+            record = _OutputRecord(
+                lane, turn_id, origin_kind, run_id=run_id, status_decision=status_decision
+            )
             self._outputs[output_id] = record
             return record, True
 
@@ -177,44 +191,40 @@ class OutputRuntime:
         replace_reason: str,
         preempt_transient: bool = False,
         run_id: str | None = None,
+        status_decision: OutputStatusDecision | None = None,
     ) -> tuple[_OutputRecord | None, bool]:
         async with self._open_lock:
-            if not self.accepts_run(run_id):
+            if not self._accepts_owner(run_id, status_decision):
                 return None, False
-
             existing = await self._get_output(output_id)
-            if not self.accepts_run(run_id):
+            if not self._accepts_owner(run_id, status_decision):
                 return None, False
-
             if existing is not None:
                 self._validate_output(existing, output_id=output_id, lane=lane, turn_id=turn_id)
-                if existing.run_id != run_id:
+                if existing.run_id != run_id or existing.status_decision != status_decision:
                     raise ValueError("Output execution owner mismatch")
                 return (existing if existing.active else None), False
-
             if replace_lane:
                 await self.interrupt(
                     lane=lane,
                     reason=replace_reason,
                     metadata={"replacement_output_id": output_id, "replacement_turn_id": turn_id},
                 )
-
-            if not self.accepts_run(run_id):
+            if not self._accepts_owner(run_id, status_decision):
                 return None, False
-
             if preempt_transient and lane != OutputLane.TRANSIENT:
                 await self.interrupt(
                     lane=OutputLane.TRANSIENT,
                     reason="assistant_output_started",
                     metadata={"assistant_output_id": output_id, "turn_id": turn_id},
                 )
-
             return await self._get_or_create_output(
                 output_id=output_id,
                 lane=lane,
                 turn_id=turn_id,
                 origin_kind=origin_kind,
                 run_id=run_id,
+                status_decision=status_decision,
             )
 
     async def _publish(
@@ -270,6 +280,37 @@ class OutputRuntime:
     def accepts_run(self, run_id: str | None) -> bool:
         return not self._closed and (run_id is None or run_id == self._foreground_run)
 
+    def update_status_scope(self, scope: OutputScope | None, revision: int) -> None:
+        """Advance the consumer-owned presentation view without granting model output rights."""
+        if self._closed:
+            raise RuntimeError("OutputRuntime is closed")
+        if scope is not None and not isinstance(scope, OutputScope):
+            raise TypeError("Expected OutputScope or None")
+        if type(revision) is not int or revision < self._status_revision:
+            raise ValueError("Presentation revisions cannot move backwards")
+        if revision == self._status_revision and scope != self._status_scope:
+            raise ValueError("A presentation revision cannot identify two scopes")
+        self._status_scope, self._status_revision = scope, revision
+
+    def accepts_status(self, decision: OutputStatusDecision) -> bool:
+        if self._closed or self.clock.now().monotonic_ns > decision.expires_at_ns:
+            return False
+        if decision.audience == OutputAudience.SYSTEM:
+            return True
+        return (
+            decision.scope == self._status_scope
+            and decision.revision == self._status_revision
+            and (self._foreground_turn is None or decision.scope.turn_id == self._foreground_turn)
+            and (
+                decision.scope.run_id == self._foreground_run
+                or (decision.terminal and self._foreground_run is None)
+            )
+        )
+
+    def is_active(self, output_id: str) -> bool:
+        record = self._outputs.get(output_id)
+        return record is not None and self._accepts_record(record)
+
     def publish_records(self, batch: OutputRecordBatch) -> OutputJournalEvent[OutputRecordBatch]:
         if self._closed:
             raise RuntimeError("OutputRuntime is closed")
@@ -291,6 +332,7 @@ class OutputRuntime:
         if not isinstance(signal, OutputExecutionSignal):
             raise TypeError("Expected OutputExecutionSignal")
         raw = json.dumps(asdict(signal), ensure_ascii=False, sort_keys=True).encode()
+
         return self.execution.append(
             key=uuid4().hex,
             scope=signal.scope,
@@ -299,11 +341,10 @@ class OutputRuntime:
             size_bytes=len(raw),
         )
 
-    def is_active(self, output_id: str) -> bool:
-        record = self._outputs.get(output_id)
-        return record is not None and record.active and self.accepts_run(record.run_id)
-
     async def start_turn(self, *, turn_id: str) -> None:
+        if not isinstance(turn_id, str) or not turn_id:
+            raise ValueError("Turn identity is required")
+        self._foreground_turn = turn_id
         await self.interrupt(
             lane=OutputLane.TRANSIENT,
             reason="new_turn_started",
@@ -315,10 +356,7 @@ class OutputRuntime:
             raise TypeError("Status output requires a presentation decision")
 
         def valid() -> bool:
-            return self.clock.now().monotonic_ns <= decision.expires_at_ns and (
-                decision.audience == OutputAudience.SYSTEM
-                or self.accepts_run(decision.scope.run_id)
-            )
+            return self.accepts_status(decision)
 
         return await self._publish(
             kind=OutputKind.STATUS,
@@ -343,8 +381,20 @@ class OutputRuntime:
         is_final: bool = False,
         metadata: dict | None = None,
         run_id: str | None = None,
+        status_decision: OutputStatusDecision | None = None,
     ) -> OutputEvent | None:
-        if text == "" or not self.accepts_run(run_id):
+        if status_decision is not None:
+            if not isinstance(status_decision, OutputStatusDecision):
+                raise TypeError("Expected OutputStatusDecision")
+            if (
+                lane != OutputLane.TRANSIENT
+                or status_decision.audience != OutputAudience.USER
+                or not status_decision.narration_key
+                or turn_id != status_decision.scope.turn_id
+                or run_id != status_decision.scope.run_id
+            ):
+                raise ValueError("Status narration requires its own transient presentation scope")
+        if text == "" or not self._accepts_owner(run_id, status_decision):
             return None
 
         record, _ = await self._prepare_output(
@@ -356,12 +406,13 @@ class OutputRuntime:
             replace_reason="replaced_by_new_text_output",
             preempt_transient=lane == OutputLane.ASSISTANT,
             run_id=run_id,
+            status_decision=status_decision,
         )
         if record is None:
             return None
 
         async with self._state_lock:
-            if not record.active or record.text_completed or not self.accepts_run(run_id):
+            if not self._accepts_record(record) or record.text_completed:
                 return None
 
             first_chunk = not record.text_started
@@ -374,7 +425,7 @@ class OutputRuntime:
             turn_id=turn_id,
             payload=OutputTextChunk(text, chunk_id or uuid4().hex, first_chunk, is_final, mode),
             metadata={**dict(metadata or {}), **({"run_id": run_id} if run_id else {})},
-            guard=lambda: record.active and self.accepts_run(run_id),
+            guard=lambda: self._accepts_record(record),
         )
 
     async def finish_text(
@@ -391,7 +442,7 @@ class OutputRuntime:
             if record is None or not record.active or record.text_completed:
                 return None
             self._validate_output(record, output_id=output_id, lane=lane, turn_id=turn_id)
-            if record.run_id != run_id or not self.accepts_run(run_id):
+            if record.run_id != run_id or not self._accepts_record(record):
                 return None
             record.text_completed = True
         return await self._publish(
@@ -420,7 +471,7 @@ class OutputRuntime:
     ) -> OutputEvent | None:
         async with self._state_lock:
             record = self._outputs.get(output_id)
-            if record is None or not record.active or not self.accepts_run(record.run_id):
+            if record is None or not self._accepts_record(record):
                 return None
             if record.lane != lane or record.turn_id != turn_id:
                 return None
@@ -431,7 +482,7 @@ class OutputRuntime:
             turn_id=turn_id,
             payload=frame,
             metadata=metadata,
-            guard=lambda: record.active and self.accepts_run(record.run_id),
+            guard=lambda: self._accepts_record(record),
         )
 
     async def publish_alignment(
@@ -608,6 +659,7 @@ class OutputRuntime:
         target_lane = lane
         if target_lane is None and len(inferred_lanes) == 1:
             target_lane = next(iter(inferred_lanes))
+
         return await self._publish(
             kind=OutputKind.CONTROL,
             lane=target_lane or OutputLane.STATUS,
@@ -660,6 +712,7 @@ class OutputRuntime:
                 return
             self._closed = True
             self._foreground_run = None
+            self._status_scope = None
             self._outputs.clear()
             self.records.close()
             self.execution.close()

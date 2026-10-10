@@ -67,17 +67,17 @@ class LiveKitStatusOutput:
             return
         if decision.audience != OutputAudience.USER:
             return
-        if (
-            self._output.clock.now().monotonic_ns > decision.expires_at_ns
-            or not self._output.accepts_run(decision.scope.run_id)
-        ):
+        if not self._output.accepts_status(decision):
             return
+
         # Project an allow-list. Tool arguments, internal metadata and reasoning stay local.
         common = {"source": "status", "stage": decision.action, "status_type": decision.action}
         await self._publish_data(
             {
                 "type": "agent_status_action",
                 "decision_id": decision.decision_id,
+                "revision": decision.revision,
+                "terminal": decision.terminal,
                 "turn_id": decision.scope.turn_id,
                 "run_id": decision.scope.run_id,
                 "event": {"type": decision.action, "source": "status", "stage": decision.action},

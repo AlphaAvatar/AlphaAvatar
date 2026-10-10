@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from alphaavatar.core.output.enums import ExecutionSignalKind
 from alphaavatar.core.output.schemas import OutputExecutionSignal, OutputScope
@@ -31,6 +31,7 @@ class ActivityNotice:
     tool_name: str | None = None
     outcome: str | None = None
     narration_key: str | None = None
+    terminal: bool = False
 
 
 @dataclass(slots=True)
@@ -40,10 +41,12 @@ class RunActivity:
     request_id: str | None = None
     visible: bool = False
     finished: bool = False
+    interrupted: bool = False
+    notice: ActivityNotice | None = None
 
 
 class StatusState:
-    """Processor-local observations, never the execution's source of truth."""
+    """Observed activity and its latest presentation, not model execution ownership."""
 
     def __init__(self, *, max_pending: int, max_runs: int) -> None:
         self.pending: asyncio.Queue[ActivityNotice] = asyncio.Queue(maxsize=max_pending)
@@ -51,10 +54,15 @@ class StatusState:
         self._runs: OrderedDict[str, RunActivity] = OrderedDict()
         self._max_runs = max_runs
         self._revision = 0
+        self._view: ActivityNotice | None = None
         self.current_run: str | None = None
         self.current_turn: str | None = None
         self._turn_time = -1
         self.dropped = 0
+
+    @property
+    def presentation(self) -> tuple[OutputScope | None, int]:
+        return (self._view.scope, self._view.revision) if self._view else (None, self._revision)
 
     def _next(self) -> int:
         self._revision += 1
@@ -62,18 +70,17 @@ class StatusState:
         return self._revision
 
     def current(self, scope: OutputScope, revision: int) -> bool:
-        if scope.run_id is None:
-            return self.current_turn is None and revision == self._revision
-        state = self._runs.get(scope.run_id)
-        return (
-            self.current_run == scope.run_id
-            and self.current_turn == scope.turn_id
-            and state is not None
-            and state.scope == scope
-            and state.revision == revision
-        )
+        return self._view is not None and (scope, revision) == self.presentation
 
-    def offer(self, notice: ActivityNotice) -> None:
+    def invalidate(self) -> None:
+        self._view = None
+        self.current_run = None
+        self._next()
+
+    def offer(self, notice: ActivityNotice, *, present: bool = False) -> None:
+        if present:
+            self._view = notice
+
         if self.pending.full():
             self.pending.get_nowait()
             self.dropped += 1
@@ -81,21 +88,30 @@ class StatusState:
         self.pending.put_nowait(notice)
 
     def turn(self, *, turn_id: str, context_id: str, at_ns: int, event_id: str) -> None:
-        if at_ns < self._turn_time or turn_id == self.current_turn:
+        if at_ns < self._turn_time:
             return
         self._turn_time = at_ns
+        if turn_id == self.current_turn:
+            return
         self.current_turn, self.current_run = turn_id, None
-        revision = self._next()
         self.offer(
             ActivityNotice(
-                event_id, OutputScope(context_id, turn_id), "turn_committed", "committed", revision
-            )
+                event_id,
+                OutputScope(context_id, turn_id),
+                "turn_committed",
+                "committed",
+                self._next(),
+            ),
+            present=True,
         )
 
     def signal(self, event_id: str, signal: OutputExecutionSignal) -> None:
         scope, kind = signal.scope, signal.kind
         if kind == ExecutionSignalKind.READY:
-            self.offer(ActivityNotice(event_id, scope, "ready", signal.state, self._next()))
+            self.offer(
+                ActivityNotice(event_id, scope, "ready", signal.state, self._next()),
+                present=self.current_turn is None,
+            )
             return
         if scope.run_id is None or scope.turn_id is None:
             return
@@ -112,11 +128,15 @@ class StatusState:
             if self.current_turn is None or self.current_turn == scope.turn_id:
                 self.current_turn, self.current_run = scope.turn_id, scope.run_id
         elif state is None:
-            # A journal gap is not permission to attribute an unknown run to the current user.
-            return
+            return  # A gap never authorizes attribution to a different/current Run.
         if state.scope != scope or state.finished:
             return
+        if state.interrupted and kind != ExecutionSignalKind.FINISHED:
+            return
 
+        present = self.current_run == scope.run_id or (
+            self._view is not None and self._view.scope == scope
+        )
         state.revision = self._next()
         action, narration = kind.value, None
         if kind in {ExecutionSignalKind.MODEL_STARTED, ExecutionSignalKind.FINALIZING}:
@@ -136,26 +156,33 @@ class StatusState:
                 narration = "tool_error"
         elif kind == ExecutionSignalKind.FINISHED:
             state.finished = True
-            action = "failed" if signal.state == "failed" else "idle"
-            if signal.state == "failed" and not state.visible:
-                narration = "failed"
+            if state.interrupted or signal.state == "cancelled":
+                action = "interrupted"
+            else:
+                action = "failed" if signal.state == "failed" else "idle"
+                if signal.state == "failed" and not state.visible:
+                    narration = "failed"
+            if self.current_run == scope.run_id:
+                self.current_run = None
 
-        self.offer(
-            ActivityNotice(
-                event_id,
-                scope,
-                action,
-                signal.state,
-                state.revision,
-                signal.tool_name,
-                signal.outcome,
-                narration,
-            )
+        state.notice = ActivityNotice(
+            event_id,
+            scope,
+            action,
+            signal.state,
+            state.revision,
+            signal.tool_name,
+            signal.outcome,
+            narration,
+            terminal=state.finished,
         )
+        self.offer(state.notice, present=present)
 
     def text(self, *, run_id: str, request_id: str | None, event_id: str) -> None:
         state = self._runs.get(run_id)
-        if state is None or state.finished or run_id != self.current_run:
+        if state is None or state.interrupted or self._view is None:
+            return
+        if self._view.scope != state.scope:
             return
         if request_id is not None and request_id != state.request_id:
             return
@@ -164,27 +191,45 @@ class StatusState:
 
         state.visible = True
         state.revision = self._next()
-        self.offer(
-            ActivityNotice(
-                event_id,
-                state.scope,
-                "responding",
-                "responding",
-                state.revision,
+        if state.finished:
+            # Delivery observations can lag FINISHED; suppress filler, never reopen the Run.
+            if state.notice is None:
+                return
+            notice = replace(
+                state.notice, source_event_id=event_id, revision=state.revision, narration_key=None
             )
-        )
+        else:
+            notice = ActivityNotice(
+                event_id, state.scope, "responding", "responding", state.revision
+            )
+        state.notice = notice
+        self.offer(notice, present=True)
 
-    def interrupt(self, *, run_id: str | None, turn_id: str | None, event_id: str) -> None:
-        if run_id is not None and run_id != self.current_run:
+    def interrupt(
+        self,
+        *,
+        run_id: str | None,
+        turn_id: str | None,
+        event_id: str,
+        at_ns: int | None = None,
+    ) -> None:
+        view = self._view
+        if view is None or (at_ns is not None and at_ns < self._turn_time):
             return
-        if turn_id is not None and turn_id != self.current_turn:
+        if run_id is not None and run_id != view.scope.run_id:
             return
-        state = self._runs.get(self.current_run or "")
-        if state is None:
+        if turn_id is not None and turn_id != view.scope.turn_id:
+            return
+        state = self._runs.get(view.scope.run_id or "")
+        if state is None or state.interrupted:
             return
 
+        state.interrupted = True
         state.revision = self._next()
-        self.offer(
-            ActivityNotice(event_id, state.scope, "interrupted", "interrupted", state.revision)
+        state.notice = ActivityNotice(
+            event_id, state.scope, "interrupted", "interrupted", state.revision, terminal=True
         )
         self.current_run = None
+
+        # Cancellation ends production, not the right to present its terminal observation.
+        self.offer(state.notice, present=True)

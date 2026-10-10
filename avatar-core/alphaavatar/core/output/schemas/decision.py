@@ -34,8 +34,11 @@ class OutputStatusDecision:
     narration_key: str | None = None
     tool_name: str | None = None
     outcome: str | None = None
+    terminal: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.terminal) is not bool:
+            raise TypeError("Status terminal must be bool")
         if not isinstance(self.scope, OutputScope) or not isinstance(self.audience, OutputAudience):
             raise TypeError("Status decisions require a typed scope and audience")
         for name in ("decision_id", "source_event_id", "action", "state"):

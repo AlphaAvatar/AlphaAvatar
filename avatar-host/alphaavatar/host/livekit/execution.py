@@ -47,6 +47,20 @@ class _Speech:
     failure: str | None = None
 
 
+def owning_speech(session):
+    # Temporary 1.4.x SDK boundary. Context ownership is not the playout queue's head.
+    from livekit.agents.voice.agent_activity import (
+        _AgentActivityContextVar,
+        _SpeechHandleContextVar,
+    )
+
+    activity = _AgentActivityContextVar.get(None)
+    speech = _SpeechHandleContextVar.get(None)
+    if activity is None or activity.session is not session or speech is None:
+        raise RuntimeError("SDK model request has no session-owned speech context")
+    return speech
+
+
 class LiveKitExecutionBridge:
     """Temporary SDK facts only; no presentation policy, narration, or model/tool executor."""
 
