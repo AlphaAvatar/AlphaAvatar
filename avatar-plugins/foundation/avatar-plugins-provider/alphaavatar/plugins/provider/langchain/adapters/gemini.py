@@ -37,17 +37,11 @@ from alphaavatar.agents.avatar.provider.schemas import (
     ModelTextPart,
     ProviderTaskConfig,
 )
-from alphaavatar.core.env import (
-    EnvObservation,
-    ObservationKind,
-    PerceptionSourceRef,
-)
-from alphaavatar.core.media import (
-    AudioFrame,
-    PayloadFormat,
-    PayloadFormatUnavailable,
-    PayloadView,
-)
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.enums import ObservationKind
+from alphaavatar.core.env.schemas import PerceptionSourceRef
+from alphaavatar.core.media import AudioFrame, PayloadFormatUnavailable
+from alphaavatar.core.media.enums import PayloadFormat, PayloadView
 
 
 @dataclass(frozen=True, slots=True)

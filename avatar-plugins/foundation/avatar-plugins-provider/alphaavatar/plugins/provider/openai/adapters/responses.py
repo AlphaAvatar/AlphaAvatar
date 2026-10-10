@@ -58,7 +58,8 @@ def _url(uri: str, *, image: bool) -> str:
 
 
 def _image_part(part: ModelImagePart, options: ResponsesInputConfig) -> ModelMediaPart:
-    from alphaavatar.core.media import PayloadFormat, PayloadFormatUnavailable, PayloadView
+    from alphaavatar.core.media import PayloadFormatUnavailable
+    from alphaavatar.core.media.enums import PayloadFormat, PayloadView
 
     payload = part.observation.payload
     if payload is None:
