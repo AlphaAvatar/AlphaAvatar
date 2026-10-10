@@ -137,101 +137,6 @@ class OutputRuntime:
         self._status_scope: OutputScope | None = None
         self._status_revision = 0
 
-    def activate_run(self, run_id: str) -> None:
-        if self._closed or not isinstance(run_id, str) or not run_id:
-            raise RuntimeError("Cannot activate this output run")
-        self._foreground_run = run_id
-
-    def revoke_run(self, run_id: str) -> None:
-        if self._foreground_run == run_id:
-            self._foreground_run = None
-
-    def accepts_run(self, run_id: str | None) -> bool:
-        return not self._closed and (run_id is None or run_id == self._foreground_run)
-
-    def update_status_scope(self, scope: OutputScope | None, revision: int) -> None:
-        """Advance the consumer-owned presentation view without granting model output rights."""
-        if self._closed:
-            raise RuntimeError("OutputRuntime is closed")
-        if scope is not None and not isinstance(scope, OutputScope):
-            raise TypeError("Expected OutputScope or None")
-        if type(revision) is not int or revision < self._status_revision:
-            raise ValueError("Presentation revisions cannot move backwards")
-        if revision == self._status_revision and scope != self._status_scope:
-            raise ValueError("A presentation revision cannot identify two scopes")
-        self._status_scope, self._status_revision = scope, revision
-
-    def accepts_status(self, decision: OutputStatusDecision) -> bool:
-        if self._closed or self.clock.now().monotonic_ns > decision.expires_at_ns:
-            return False
-        if decision.audience == OutputAudience.SYSTEM:
-            return True
-        return (
-            decision.scope == self._status_scope
-            and decision.revision == self._status_revision
-            and (self._foreground_turn is None or decision.scope.turn_id == self._foreground_turn)
-            and (
-                decision.scope.run_id == self._foreground_run
-                or (decision.terminal and self._foreground_run is None)
-            )
-        )
-
-    def _accepts_owner(self, run_id: str | None, decision: OutputStatusDecision | None) -> bool:
-        return self.accepts_status(decision) if decision is not None else self.accepts_run(run_id)
-
-    def _accepts_record(self, record: _OutputRecord) -> bool:
-        return record.active and self._accepts_owner(record.run_id, record.status_decision)
-
-    def output_identity(self, output_id: str) -> tuple[OutputLane, str | None] | None:
-        """Stable delivery identity, also available before a transport sees its first frame."""
-        record = self._outputs.get(output_id)
-        return (record.lane, record.turn_id) if record is not None else None
-
-    def can_deliver(self, output_id: str) -> bool:
-        """Produced content can drain after COMPLETE, not after revocation or interruption."""
-        record = self._outputs.get(output_id)
-        return (
-            record is not None
-            and record.interruptible
-            and self._accepts_owner(record.run_id, record.status_decision)
-        )
-
-    def text_mode(self, output_id: str) -> OutputTextMode | None:
-        record = self._outputs.get(output_id)
-        return record.text_mode if record is not None else None
-
-    def transcript_finalized(self, output_id: str) -> bool:
-        record = self._outputs.get(output_id)
-        return record is not None and record.transcript_finalized
-
-    def publish_records(self, batch: OutputRecordBatch) -> OutputJournalEvent[OutputRecordBatch]:
-        if self._closed:
-            raise RuntimeError("OutputRuntime is closed")
-        if not isinstance(batch, OutputRecordBatch):
-            raise TypeError("Expected OutputRecordBatch")
-        # Deliberately no foreground filter: retiring runs must retain their tool facts.
-        return self.records.append(
-            key=batch.batch_id,
-            scope=batch.scope,
-            payload=batch,
-            digest=batch.digest,
-            size_bytes=batch.size_bytes,
-        )
-
-    def publish_execution(self, signal: OutputExecutionSignal) -> OutputJournalEvent:
-        if self._closed:
-            raise RuntimeError("OutputRuntime is closed")
-        if not isinstance(signal, OutputExecutionSignal):
-            raise TypeError("Expected OutputExecutionSignal")
-        raw = json.dumps(asdict(signal), ensure_ascii=False, sort_keys=True).encode()
-        return self.execution.append(
-            key=uuid4().hex,
-            scope=signal.scope,
-            payload=signal,
-            digest=sha256(raw).hexdigest(),
-            size_bytes=len(raw),
-        )
-
     @staticmethod
     def _validate_output(
         record: _OutputRecord,
@@ -244,6 +149,12 @@ class OutputRuntime:
             raise ValueError(f"Output lane mismatch output_id={output_id!r}")
         if record.turn_id != turn_id:
             raise ValueError(f"Output turn mismatch output_id={output_id!r}")
+
+    def _accepts_owner(self, run_id: str | None, decision: OutputStatusDecision | None) -> bool:
+        return self.accepts_status(decision) if decision is not None else self.accepts_run(run_id)
+
+    def _accepts_record(self, record: _OutputRecord) -> bool:
+        return record.active and self._accepts_owner(record.run_id, record.status_decision)
 
     async def _get_output(self, output_id: str) -> _OutputRecord | None:
         async with self._state_lock:
@@ -361,6 +272,95 @@ class OutputRuntime:
             return None
         await self.stream.publish(event, guard=guard)
         return event if guard is None or guard() else None
+
+    def activate_run(self, run_id: str) -> None:
+        if self._closed or not isinstance(run_id, str) or not run_id:
+            raise RuntimeError("Cannot activate this output run")
+        self._foreground_run = run_id
+
+    def revoke_run(self, run_id: str) -> None:
+        if self._foreground_run == run_id:
+            self._foreground_run = None
+
+    def accepts_run(self, run_id: str | None) -> bool:
+        return not self._closed and (run_id is None or run_id == self._foreground_run)
+
+    def update_status_scope(self, scope: OutputScope | None, revision: int) -> None:
+        """Advance the consumer-owned presentation view without granting model output rights."""
+        if self._closed:
+            raise RuntimeError("OutputRuntime is closed")
+        if scope is not None and not isinstance(scope, OutputScope):
+            raise TypeError("Expected OutputScope or None")
+        if type(revision) is not int or revision < self._status_revision:
+            raise ValueError("Presentation revisions cannot move backwards")
+        if revision == self._status_revision and scope != self._status_scope:
+            raise ValueError("A presentation revision cannot identify two scopes")
+        self._status_scope, self._status_revision = scope, revision
+
+    def accepts_status(self, decision: OutputStatusDecision) -> bool:
+        if self._closed or self.clock.now().monotonic_ns > decision.expires_at_ns:
+            return False
+        if decision.audience == OutputAudience.SYSTEM:
+            return True
+        return (
+            decision.scope == self._status_scope
+            and decision.revision == self._status_revision
+            and (self._foreground_turn is None or decision.scope.turn_id == self._foreground_turn)
+            and (
+                decision.scope.run_id == self._foreground_run
+                or (decision.terminal and self._foreground_run is None)
+            )
+        )
+
+    def output_identity(self, output_id: str) -> tuple[OutputLane, str | None] | None:
+        """Stable delivery identity, also available before a transport sees its first frame."""
+        record = self._outputs.get(output_id)
+        return (record.lane, record.turn_id) if record is not None else None
+
+    def can_deliver(self, output_id: str) -> bool:
+        """Produced content can drain after COMPLETE, not after revocation or interruption."""
+        record = self._outputs.get(output_id)
+        return (
+            record is not None
+            and record.interruptible
+            and self._accepts_owner(record.run_id, record.status_decision)
+        )
+
+    def text_mode(self, output_id: str) -> OutputTextMode | None:
+        record = self._outputs.get(output_id)
+        return record.text_mode if record is not None else None
+
+    def transcript_finalized(self, output_id: str) -> bool:
+        record = self._outputs.get(output_id)
+        return record is not None and record.transcript_finalized
+
+    def publish_records(self, batch: OutputRecordBatch) -> OutputJournalEvent[OutputRecordBatch]:
+        if self._closed:
+            raise RuntimeError("OutputRuntime is closed")
+        if not isinstance(batch, OutputRecordBatch):
+            raise TypeError("Expected OutputRecordBatch")
+        # Deliberately no foreground filter: retiring runs must retain their tool facts.
+        return self.records.append(
+            key=batch.batch_id,
+            scope=batch.scope,
+            payload=batch,
+            digest=batch.digest,
+            size_bytes=batch.size_bytes,
+        )
+
+    def publish_execution(self, signal: OutputExecutionSignal) -> OutputJournalEvent:
+        if self._closed:
+            raise RuntimeError("OutputRuntime is closed")
+        if not isinstance(signal, OutputExecutionSignal):
+            raise TypeError("Expected OutputExecutionSignal")
+        raw = json.dumps(asdict(signal), ensure_ascii=False, sort_keys=True).encode()
+        return self.execution.append(
+            key=uuid4().hex,
+            scope=signal.scope,
+            payload=signal,
+            digest=sha256(raw).hexdigest(),
+            size_bytes=len(raw),
+        )
 
     def is_active(self, output_id: str) -> bool:
         record = self._outputs.get(output_id)
