@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from math import isfinite
 from typing import Any
@@ -33,6 +33,7 @@ from alphaavatar.core.output.schemas import (
     OutputTextChunk,
     OutputTranscriptChunk,
 )
+from alphaavatar.core.output.stream import OutputSubscription
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,30 @@ class LiveKitTranscriptOutput:
         self._states: dict[str, _Transcript] = {}
         self._finalized: OrderedDict[str, None] = OrderedDict()
         self._finalization_failure: Exception | None = None
+        self._consumer_failure: Exception | None = None
+        self._consumer_observed = self._consumer_stopping = False
+        self._failure_task: asyncio.Task[None] | None = None
         self._subscription = self._task = self._close_task = self._start_task = None
+
+    @staticmethod
+    async def _settle_step(
+        operation: Awaitable[None], errors: list[Exception], *, label: str
+    ) -> None:
+        try:
+            await operation
+        except asyncio.CancelledError as exc:
+            error = RuntimeError(f"{label} cancelled itself")
+            error.__cause__ = exc
+            errors.append(error)
+        except Exception as exc:
+            errors.append(exc)
+
+    @staticmethod
+    def _observe_retirement(task: asyncio.Task[None]) -> None:
+        if task.cancelled():
+            logger.error("Transcript consumer retirement cancelled itself")
+        elif (error := task.exception()) is not None:
+            logger.error("Transcript consumer retirement failed", exc_info=error)
 
     def _attributes(self, state: _Transcript, *, final: bool, interrupted: bool) -> dict[str, str]:
         identity = state.identity
@@ -301,6 +325,49 @@ class LiveKitTranscriptOutput:
                             "Transcript cleanup failed output_id=%s", event.output.output_id
                         )
 
+    async def _retire_consumer(self, subscription: OutputSubscription, failure: Exception) -> None:
+        errors: list[Exception] = []
+        # Keep the failed subscription registered until owner teardown. Publishers must
+        # receive a failure, not silently deliver into a queue that no longer has a reader.
+        await self._settle_step(
+            subscription.fail(failure), errors, label="Transcript failure admission"
+        )
+        await self._settle_step(
+            self._finish_many(
+                tuple(state.identity for state in self._states.values()), interrupted=True
+            ),
+            errors,
+            label="Transcript failure settlement",
+        )
+        if errors:
+            raise ExceptionGroup("Transcript consumer retirement failed", errors)
+
+    def _observe_consumer(self, task: asyncio.Task[None]) -> None:
+        if self._consumer_observed or not task.done():
+            return
+        self._consumer_observed = True
+        try:
+            task.result()
+        except asyncio.CancelledError as exc:
+            if self._consumer_stopping:
+                return
+            failure = RuntimeError("Transcript consumer cancelled without owner shutdown")
+            failure.__cause__ = exc
+        except Exception as exc:
+            failure = exc
+        else:
+            if self._consumer_stopping:
+                return
+            failure = RuntimeError("Transcript consumer stopped unexpectedly")
+        self._consumer_failure = failure
+        logger.error("Transcript consumer failed", exc_info=failure)
+        # A done callback also observes cancellation before the worker's first execution.
+        self._failure_task = asyncio.create_task(
+            self._retire_consumer(self._subscription, failure),
+            name="transcript_consumer_retirement",
+        )
+        self._failure_task.add_done_callback(self._observe_retirement)
+
     async def _start(self) -> None:
         self._subscription = await self._output.stream.subscribe(
             self._name,
@@ -310,6 +377,7 @@ class LiveKitTranscriptOutput:
             reliable=True,
         )
         self._task = asyncio.create_task(self._run(), name=self._name)
+        self._task.add_done_callback(self._observe_consumer)
 
     async def on_session_start(self) -> None:
         if self._close_task is not None:
@@ -320,6 +388,11 @@ class LiveKitTranscriptOutput:
             await asyncio.shield(self._start_task)
             if self._close_task is not None:
                 raise RuntimeError("Output consumer closed during startup")
+            if self._task.done():
+                self._observe_consumer(self._task)
+                raise RuntimeError(
+                    "Transcript consumer failed during startup"
+                ) from self._consumer_failure
         except BaseException as original:
             try:
                 await self.on_session_stop()
@@ -332,27 +405,47 @@ class LiveKitTranscriptOutput:
             if not self._start_task.done():
                 self._start_task.cancel()
             await asyncio.gather(self._start_task, return_exceptions=True)
+
+        # Observe an already-dead worker before labeling subsequent cancellation as shutdown.
         if self._task is not None:
+            self._observe_consumer(self._task)
+        if self._task is not None and not self._task.done() and not self._task.cancelling():
+            self._consumer_stopping = True
             self._task.cancel()
+
+        errors: list[Exception] = []
+        retirement = self._failure_task
+        if retirement is not None:
+            await self._settle_step(
+                wait_for_cleanup(retirement), errors, label="Transcript consumer retirement"
+            )
         if self._subscription is not None:
-            await self._output.stream.unsubscribe(self._name)
+            await self._settle_step(
+                self._output.stream.unsubscribe(self._name), errors, label="Transcript unsubscribe"
+            )
         if self._task is not None:
             await asyncio.gather(self._task, return_exceptions=True)
-
-        # Completed finalization tasks may already have left _states during intake shutdown.
-        previous_failure = self._finalization_failure
-        errors: list[Exception] = []
-        try:
-            await self._finish_many(
-                tuple(state.identity for state in self._states.values()),
-                interrupted=True,
+            self._observe_consumer(self._task)
+        if self._failure_task is not None and self._failure_task is not retirement:
+            await self._settle_step(
+                wait_for_cleanup(self._failure_task), errors, label="Transcript consumer retirement"
             )
-        except Exception as exc:
-            errors.append(exc)
+
+        # A failed reader's retirement may already have finalized and removed its writers.
+        previous_failure = self._finalization_failure
+        try:
+            await self._settle_step(
+                self._finish_many(
+                    tuple(state.identity for state in self._states.values()), interrupted=True
+                ),
+                errors,
+                label="Transcript shutdown settlement",
+            )
         finally:
             self._subscription = self._task = None
-        if previous_failure is not None:
-            errors.append(previous_failure)
+        for failure in (self._consumer_failure, previous_failure):
+            if failure is not None and all(error is not failure for error in errors):
+                errors.append(failure)
         if errors:
             raise ExceptionGroup("Transcript transport cleanup failed", errors)
 

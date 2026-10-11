@@ -82,6 +82,11 @@ class OutputSubscription:
         self._condition = asyncio.Condition()
         self._data_lock = asyncio.Lock()
         self._closed = False
+        self._failure: Exception | None = None
+
+    def _check_failure(self) -> None:
+        if self._failure is not None:
+            raise RuntimeError(f"Output subscription {self.name!r} failed") from self._failure
 
     def accepts(self, event: OutputEvent) -> bool:
         output = event.output
@@ -105,6 +110,7 @@ class OutputSubscription:
         if _is_priority_control(event):
             # Interrupts must bypass a full ordinary queue and its waiting publishers.
             async with self._condition:
+                self._check_failure()
                 if self._closed or (guard is not None and not guard()):
                     return
                 self._control_events.append(event)
@@ -114,6 +120,7 @@ class OutputSubscription:
         # Condition.wait_for releases its lock; keep the data admission slot until enqueue
         # so a new publisher cannot overtake one already waiting for queue capacity.
         async with self._data_lock, self._condition:
+            self._check_failure()
             if self._closed or (guard is not None and not guard()):
                 return
             if self._reliable:
@@ -122,6 +129,7 @@ class OutputSubscription:
                     or len(self._data_events) < self._max_pending
                     or (guard is not None and not guard())
                 )
+                self._check_failure()
                 if self._closed:
                     return
             if guard is not None and not guard():
@@ -137,6 +145,7 @@ class OutputSubscription:
             await self._condition.wait_for(
                 lambda: self._closed or bool(self._control_events) or bool(self._data_events)
             )
+            self._check_failure()
             if self._control_events:
                 event = self._control_events.popleft()
             elif self._data_events:
@@ -153,6 +162,18 @@ class OutputSubscription:
             self._data_events = retained
             self._condition.notify_all()
             return discarded
+
+    async def fail(self, error: Exception) -> None:
+        """Retire this exact consumer without silently succeeding queued or future delivery."""
+        if not isinstance(error, Exception):
+            raise TypeError("Output subscription failures must be Exceptions")
+        async with self._condition:
+            if self._failure is None:
+                self._failure = error
+            self._closed = True
+            self._control_events.clear()
+            self._data_events.clear()
+            self._condition.notify_all()
 
     async def close(self) -> None:
         async with self._condition:
