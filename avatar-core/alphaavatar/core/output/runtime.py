@@ -116,7 +116,6 @@ class OutputRuntime:
         self.session_id, self.clock = session_id, clock or RuntimeClock()
         self.stream = OutputStream()
         self.timeline = OutputTimeline(max_items=timeline_max_items)
-
         self.records: OutputJournal[OutputRecordBatch] = OutputJournal(
             session_id=session_id,
             clock=self.clock,
@@ -131,7 +130,6 @@ class OutputRuntime:
             max_bytes=8_388_608,
             lossless=False,
         )
-
         self._sequence = 0
         self._sequence_lock, self._state_lock, self._open_lock = (
             asyncio.Lock(),
@@ -139,10 +137,11 @@ class OutputRuntime:
             asyncio.Lock(),
         )
         self._outputs: dict[str, _OutputRecord] = {}
-
         self._closed = False
         self._publications: set[asyncio.Task[OutputEvent | None]] = set()
         self._close_task: asyncio.Task[None] | None = None
+        self._delivery_failure: Exception | None = None
+        self._delivery_close_task: asyncio.Task[None] | None = None
         self._foreground_run: str | None = None
         self._foreground_turn: str | None = None
         self._status_scope: OutputScope | None = None
@@ -187,6 +186,13 @@ class OutputRuntime:
         if self._closed:
             raise RuntimeError("OutputRuntime is closed")
 
+    def _check_delivery(self) -> None:
+        self._check_open()
+        if self._delivery_failure is not None:
+            raise RuntimeError(
+                "Output delivery is unavailable after a terminal publication failure"
+            ) from self._delivery_failure
+
     def _accepts_owner(self, scope: OutputScope, presentation: OutputStatusDecision | None) -> bool:
         return (
             self.accepts_status(presentation)
@@ -205,6 +211,22 @@ class OutputRuntime:
             and self._accepts_owner(record.identity.scope, record.presentation)
         )
 
+    async def _fail_delivery(self, failure: BaseException) -> None:
+        # A partially delivered terminal fact cannot be retried safely or treated as a no-op.
+        # Retire only realtime delivery: tools still own their record/execution cleanup.
+        if self._delivery_failure is None:
+            if isinstance(failure, Exception):
+                self._delivery_failure = failure
+            else:
+                error = RuntimeError("Terminal output publication aborted")
+                error.__cause__ = failure
+                self._delivery_failure = error
+            self._delivery_close_task = asyncio.create_task(
+                self.stream.aclose(), name="output_delivery_failure_close"
+            )
+        if self._delivery_close_task is not None:
+            await wait_for_cleanup(self._delivery_close_task)
+
     async def _dispatch(
         self,
         output: EnvOutput,
@@ -212,49 +234,70 @@ class OutputRuntime:
         guard: Callable[[], bool] | None = None,
         record: _OutputRecord | None = None,
     ) -> OutputEvent | None:
-        if self._closed:
-            return None
-        async with self._sequence_lock:
+        try:
             if self._closed:
                 return None
+            self._check_delivery()
+            async with self._sequence_lock:
+                if self._closed:
+                    return None
+                self._check_delivery()
+                if guard is not None and not guard():
+                    return None
+                now = self.clock.now()
+                event = OutputEvent(
+                    uuid4().hex,
+                    self._sequence + 1,
+                    self.session_id,
+                    now.unix_seconds,
+                    now.monotonic_ns,
+                    output,
+                )
+                await self.timeline.append(event)
+                self._sequence = event.sequence
+                # A frame may reach one subscriber before another suspends in backpressure.
+                # Its terminal barrier must still await a playback receipt after interruption.
+                if record is not None:
+                    if output.kind == OutputKind.AUDIO_FRAME:
+                        record.last_audio_sequence = event.sequence
+                    elif output.kind == OutputKind.ALIGNMENT:
+                        record.last_alignment_sequence = event.sequence
             if guard is not None and not guard():
                 return None
-
-            now = self.clock.now()
-            event = OutputEvent(
-                uuid4().hex,
-                self._sequence + 1,
-                self.session_id,
-                now.unix_seconds,
-                now.monotonic_ns,
-                output,
-            )
-            await self.timeline.append(event)
-            self._sequence = event.sequence
-
-            # A frame may reach one subscriber before another suspends in backpressure.
-            # Its terminal barrier must still await a playback receipt after interruption.
-            if record is not None:
-                if output.kind == OutputKind.AUDIO_FRAME:
-                    record.last_audio_sequence = event.sequence
-                elif output.kind == OutputKind.ALIGNMENT:
-                    record.last_alignment_sequence = event.sequence
-        if guard is not None and not guard():
-            return None
-        try:
-            await self.stream.publish(event, guard=guard)
-        except RuntimeError:
+            try:
+                await self.stream.publish(event, guard=guard)
+            except RuntimeError:
+                if not self._closed:
+                    raise
+                return None
             if not self._closed:
-                raise
-            return None
-        return event if not self._closed and (guard is None or guard()) else None
+                self._check_delivery()
+            return event if not self._closed and (guard is None or guard()) else None
+        except BaseException as failure:
+            terminal = (
+                output.kind == OutputKind.CONTROL
+                or (
+                    isinstance(output.payload, OutputPlayback)
+                    and output.payload.type
+                    in (OutputPlaybackType.FINISHED, OutputPlaybackType.INTERRUPTED)
+                )
+                or (isinstance(output.payload, OutputTranscriptChunk) and output.payload.is_final)
+            )
+            if terminal and not self._closed:
+                try:
+                    await self._fail_delivery(failure)
+                except BaseException as cleanup:
+                    raise failure from cleanup
+            raise
 
     async def _own_publication(
         self, operation: Coroutine[object, object, OutputEvent | None]
     ) -> OutputEvent | None:
-        if self._closed:
+        try:
+            self._check_delivery()
+        except BaseException:
             operation.close()
-            raise RuntimeError("OutputRuntime is closed")
+            raise
         # Register before suspension, including before a terminal task's first execution.
         task = asyncio.create_task(operation, name="output_terminal_publication")
         self._publications.add(task)
@@ -262,7 +305,7 @@ class OutputRuntime:
         return await wait_for_cleanup(task)
 
     def activate_run(self, run_id: str) -> None:
-        self._check_open()
+        self._check_delivery()
         identifier(run_id, "run_id")
         self._foreground_run = run_id
 
@@ -272,7 +315,11 @@ class OutputRuntime:
             self._foreground_run = None
 
     def accepts_run(self, run_id: str | None) -> bool:
-        return not self._closed and (run_id is None or run_id == self._foreground_run)
+        return (
+            not self._closed
+            and self._delivery_failure is None
+            and (run_id is None or run_id == self._foreground_run)
+        )
 
     def update_status_scope(self, scope: OutputScope | None, revision: int) -> None:
         self._check_open()
@@ -287,7 +334,11 @@ class OutputRuntime:
     def accepts_status(self, decision: OutputStatusDecision) -> bool:
         if type(decision) is not OutputStatusDecision:
             raise TypeError("Expected OutputStatusDecision")
-        if self._closed or self.clock.now().monotonic_ns > decision.expires_at_ns:
+        if (
+            self._closed
+            or self._delivery_failure is not None
+            or self.clock.now().monotonic_ns > decision.expires_at_ns
+        ):
             return False
         if decision.audience == OutputAudience.SYSTEM:
             return True
@@ -349,10 +400,8 @@ class OutputRuntime:
             size_bytes=len(raw),
         )
 
-    """Output Event operations"""
-
     async def start_turn(self, *, turn_id: str) -> None:
-        self._check_open()
+        self._check_delivery()
         identifier(turn_id, "turn_id")
         self._foreground_turn = turn_id
         await self._interrupt(
@@ -366,7 +415,7 @@ class OutputRuntime:
 
     async def _prepare_text(self, output: EnvOutput) -> _OutputRecord | None:
         async with self._open_lock:
-            self._check_open()
+            self._check_delivery()
             existing = self._outputs.get(output.output_id)
             if existing is not None:
                 self._validate_identity(existing, output)
@@ -410,7 +459,7 @@ class OutputRuntime:
             raise TypeError("Expected EnvOutput")
         if output.kind == OutputKind.CONTROL:
             raise ValueError("Control facts belong to OutputRuntime control operations")
-        self._check_open()
+        self._check_delivery()
         if output.kind == OutputKind.STATUS:
             return await self._dispatch(output, guard=lambda: self.accepts_status(output.payload))
         if output.kind == OutputKind.TEXT_CHUNK:
@@ -471,7 +520,7 @@ class OutputRuntime:
                 record.media_pending -= 1
                 if record.media_pending == 0:
                     record.media_idle.set()
-            if failure is not None and not self._closed:
+            if failure is not None and not self._closed and self._delivery_failure is None:
                 try:
                     await self.interrupt(
                         output_id=record.identity.output_id, reason="content_publication_failed"
@@ -481,7 +530,7 @@ class OutputRuntime:
 
     async def _feedback(self, output: EnvOutput, record: _OutputRecord) -> OutputEvent | None:
         async with self._state_lock:
-            self._check_open()
+            self._check_delivery()
             self._validate_identity(record, output)
             payload = output.payload
             if isinstance(payload, OutputPlayback):
@@ -528,6 +577,9 @@ class OutputRuntime:
 
         async def finish() -> OutputEvent | None:
             async with self._state_lock:
+                if self._closed:
+                    return None
+                self._check_delivery()
                 record = self._outputs.get(output_id)
                 if record is None:
                     return None
@@ -562,6 +614,9 @@ class OutputRuntime:
 
         async def finish() -> OutputEvent | None:
             async with self._state_lock:
+                if self._closed:
+                    return None
+                self._check_delivery()
                 record = self._outputs.get(output_id)
                 if record is None:
                     return None
@@ -593,6 +648,9 @@ class OutputRuntime:
 
         async def finish() -> OutputEvent | None:
             async with self._state_lock:
+                if self._closed:
+                    return None
+                self._check_delivery()
                 record = self._outputs.get(output_id)
                 if record is None:
                     return None
@@ -625,6 +683,7 @@ class OutputRuntime:
             raise ValueError("Output interrupt requires a target")
         if lane is not None and type(lane) is not OutputLane:
             raise TypeError("Expected OutputLane")
+
         identifier(output_id, "output_id", optional=True)
         identifier(turn_id, "turn_id", optional=True)
         identifier(reason, "reason")
@@ -649,7 +708,7 @@ class OutputRuntime:
         affects_scope: bool,
     ) -> OutputEvent | None:
         async with self._state_lock:
-            self._check_open()
+            self._check_delivery()
             matching = tuple(
                 record
                 for identity, record in self._outputs.items()
@@ -663,6 +722,7 @@ class OutputRuntime:
                 record.terminal = OutputControlType.INTERRUPT
         if not targets:
             return None
+
         ids = frozenset(target.output_id for target in targets)
         lanes = {target.lane for target in targets}
         output = EnvOutput(
@@ -677,10 +737,18 @@ class OutputRuntime:
         )
 
         async def publish() -> OutputEvent | None:
-            await self.stream.discard_pending(
-                lambda event: event.output.kind == OutputKind.AUDIO_FRAME
-                and event.output.output_id in ids
-            )
+            try:
+                await self.stream.discard_pending(
+                    lambda event: event.output.kind == OutputKind.AUDIO_FRAME
+                    and event.output.output_id in ids
+                )
+            except BaseException as failure:
+                if not self._closed:
+                    try:
+                        await self._fail_delivery(failure)
+                    except BaseException as cleanup:
+                        raise failure from cleanup
+                raise
             return await self._dispatch(output)
 
         return await self._own_publication(publish())
@@ -697,6 +765,8 @@ class OutputRuntime:
         try:
             # Release subscribers before joining owned publishers or source-drain barriers.
             await self.stream.aclose()
+            if self._delivery_close_task is not None:
+                await wait_for_cleanup(self._delivery_close_task)
         except asyncio.CancelledError as exc:
             error = RuntimeError("Output stream cleanup cancelled itself")
             error.__cause__ = exc
@@ -718,6 +788,12 @@ class OutputRuntime:
                 raise result
         self._outputs.clear()
         self._publications.clear()
+
+        # Completed publication tasks have left the in-flight set; retain their first failure.
+        if self._delivery_failure is not None and all(
+            error is not self._delivery_failure for error in errors
+        ):
+            errors.append(self._delivery_failure)
         if errors:
             raise ExceptionGroup("Output publication shutdown failed", errors)
 

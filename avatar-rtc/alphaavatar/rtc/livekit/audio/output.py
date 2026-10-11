@@ -132,6 +132,7 @@ class LiveKitTransientAudioOutput:
                 job.interrupted_played = min(job.pushed, max(job.played, job.pushed - queued))
                 job.interrupted_queued = queued
             self._source.clear_queue()
+
         # A not-yet-started task must execute its finally and produce the unplayed receipt.
         if job.task is not None and job.running and not job.task.cancelling():
             job.task.cancel()
@@ -285,6 +286,7 @@ class LiveKitTransientAudioOutput:
             while True:
                 if job.cancelled or not self._output.can_deliver(job.identity.output_id):
                     raise asyncio.CancelledError
+
                 if (
                     job.expected_sequence is not None
                     and job.received_sequence >= job.expected_sequence
@@ -294,6 +296,7 @@ class LiveKitTransientAudioOutput:
                     if job.cancelled or not self._output.can_deliver(job.identity.output_id):
                         raise asyncio.CancelledError
                     job.played = job.pushed
+
                     # Interruption can win admission after the last delivery check.
                     if await self._report(job, OutputPlaybackType.FINISHED) is None:
                         raise asyncio.CancelledError
@@ -321,31 +324,34 @@ class LiveKitTransientAudioOutput:
         except Exception:
             logger.exception("Audio playout failed output_id=%s", job.identity.output_id)
         finally:
-            if not success:
+            try:
+                if not success:
 
-                async def settle() -> None:
-                    queued = self._queued_duration()
-                    if job.interrupted_played is not None:
-                        job.played, queued = job.interrupted_played, job.interrupted_queued
-                    else:
-                        job.played = min(job.pushed, max(job.played, job.pushed - queued))
-                    self._source.clear_queue()
-                    await self._output.interrupt(
-                        output_id=job.identity.output_id, reason="audio_playout_stopped"
-                    )
-                    await self._receipt(
-                        job.identity,
-                        OutputPlaybackType.INTERRUPTED,
-                        played=job.played,
-                        pushed=job.pushed,
-                        queued=queued,
-                        measurement="local_audio_queue",
-                    )
+                    async def settle() -> None:
+                        queued = self._queued_duration()
+                        if job.interrupted_played is not None:
+                            job.played, queued = job.interrupted_played, job.interrupted_queued
+                        else:
+                            job.played = min(job.pushed, max(job.played, job.pushed - queued))
+                        self._source.clear_queue()
+                        await self._output.interrupt(
+                            output_id=job.identity.output_id, reason="audio_playout_stopped"
+                        )
+                        await self._receipt(
+                            job.identity,
+                            OutputPlaybackType.INTERRUPTED,
+                            played=job.played,
+                            pushed=job.pushed,
+                            queued=queued,
+                            measurement="local_audio_queue",
+                        )
 
-                await wait_for_cleanup(asyncio.create_task(settle(), name="audio_settlement"))
-            job.cancelled = True
-            while not job.frames.empty():
-                job.frames.get_nowait()
+                    await wait_for_cleanup(asyncio.create_task(settle(), name="audio_settlement"))
+            finally:
+                # Local buffers must be released even when the failed stream rejects settlement.
+                job.cancelled = True
+                while not job.frames.empty():
+                    job.frames.get_nowait()
 
     async def _playout(self) -> None:
         while True:
@@ -394,6 +400,7 @@ class LiveKitTransientAudioOutput:
             max_pending=64,
             reliable=True,
         )
+
         for name, operation in (
             ("audio_intake", self._audio()),
             ("audio_control", self._controls()),
@@ -430,10 +437,12 @@ class LiveKitTransientAudioOutput:
         for suffix, subscription in (("", self._audio_sub), (":control", self._control_sub)):
             if subscription is not None:
                 await self._output.stream.unsubscribe(self._name + suffix)
+
         await asyncio.gather(*self._tasks, return_exceptions=True)
         await asyncio.gather(
             *(job.task for job in jobs if job.task is not None), return_exceptions=True
         )
+
         errors = []
         for job in jobs:
             if job.task is None:

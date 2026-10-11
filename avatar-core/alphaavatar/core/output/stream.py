@@ -19,6 +19,8 @@ import asyncio
 from collections import deque
 from collections.abc import Callable, Iterable
 
+from alphaavatar.core.cleanup import wait_for_cleanup
+
 from .enums import OutputControlType, OutputKind, OutputLane
 from .schemas import OutputControl, OutputEvent
 
@@ -71,7 +73,6 @@ class OutputSubscription:
             raise TypeError("Kind filters require OutputKind values")
         if lanes is not None and any(type(lane) is not OutputLane for lane in lanes):
             raise TypeError("Lane filters require OutputLane values")
-
         self._control_types = frozenset(control_types) if control_types is not None else None
         self.name, self._kinds, self._lanes = name, kinds, lanes
         self._max_pending, self._reliable = max_pending, reliable
@@ -200,12 +201,47 @@ class OutputStream:
             subscriptions = tuple(self._subscriptions.values())
         if not subscriptions:
             return
-        # Same fan-out scheduling as before this refactor; no new task per audio frame.
-        results = await asyncio.gather(
-            *(subscription.push(event, guard=guard) for subscription in subscriptions),
-            return_exceptions=True,
+
+        # Same one-task-per-subscriber fan-out as gather; only failure cleanup owns an extra task.
+        tasks = tuple(
+            asyncio.create_task(subscription.push(event, guard=guard))
+            for subscription in subscriptions
         )
-        _raise_failures("One or more output subscriptions failed", results)
+        pending = set(tasks)
+        reported: set[asyncio.Task[None]] = set()
+        try:
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                failures = [
+                    asyncio.CancelledError() if task.cancelled() else task.exception()
+                    for task in done
+                ]
+                reported = done
+                _raise_failures("One or more output subscriptions failed", failures)
+        except BaseException as failure:
+            # Do not let a failed/self-cancelled subscriber hide behind another full queue.
+            cancelled = {task for task in tasks if not task.done()}
+            for task in cancelled:
+                task.cancel()
+
+            async def reap() -> None:
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                # Publisher-initiated cancellations are not subscriber faults.
+                _raise_failures(
+                    "Output fan-out cleanup failed",
+                    (
+                        result
+                        for task, result in zip(tasks, results, strict=True)
+                        if task not in reported
+                        and not (task in cancelled and isinstance(result, asyncio.CancelledError))
+                    ),
+                )
+
+            try:
+                await wait_for_cleanup(asyncio.create_task(reap(), name="output_fanout_cleanup"))
+            except BaseException as cleanup:
+                raise failure from cleanup
+            raise
 
     async def discard_pending(self, predicate: OutputPredicate) -> int:
         async with self._lock:

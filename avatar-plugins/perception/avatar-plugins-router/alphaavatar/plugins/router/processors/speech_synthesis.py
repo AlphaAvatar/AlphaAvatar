@@ -430,24 +430,58 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
             await self._runtime.output.stream.unsubscribe(self.CONSUMER_ID)
             self._subscription = None
 
-        await asyncio.gather(*self._tasks, return_exceptions=True)
-        for job in jobs:
-            if job.task is not None:
-                await asyncio.gather(job.task, return_exceptions=True)
-            else:
-                identity = job.identity
+        tasks = tuple(
+            dict.fromkeys((*self._tasks, *(job.task for job in jobs if job.task is not None)))
+        )
+        results = list(await asyncio.gather(*tasks, return_exceptions=True))
+
+        async def settle(job: _SpeechJob) -> None:
+            identity, failures = job.identity, []
+            # Keep interrupt -> synthesis barrier ordering; one failure must not skip the other.
+            try:
                 await self._runtime.output.interrupt(
                     output_id=identity.output_id, reason="speech_synthesis_stopping"
                 )
+            except asyncio.CancelledError as exc:
+                error = RuntimeError("Speech interruption cancelled itself")
+                error.__cause__ = exc
+                failures.append(error)
+            except Exception as exc:
+                failures.append(exc)
+            try:
                 await self._runtime.output.finish_audio(
                     output_id=identity.output_id,
                     lane=identity.lane,
                     turn_id=identity.scope.turn_id,
                     reason="speech_synthesis_stopping",
                 )
+            except asyncio.CancelledError as exc:
+                error = RuntimeError("Speech completion cancelled itself")
+                error.__cause__ = exc
+                failures.append(error)
+            except Exception as exc:
+                failures.append(exc)
+            if failures:
+                raise ExceptionGroup("Unstarted speech settlement failed", failures)
 
-        self._jobs.clear()
-        self._tasks.clear()
+        settlements = tuple(settle(job) for job in jobs if job.task is None)
+        try:
+            results.extend(await asyncio.gather(*settlements, return_exceptions=True))
+        finally:
+            self._jobs.clear()
+            self._tasks.clear()
+
+        # Worker cancellations above are deliberate; accepted terminal failures are not.
+        errors = list(
+            {id(result): result for result in results if isinstance(result, Exception)}.values()
+        )
+        for result in results[len(tasks) :]:
+            if isinstance(result, asyncio.CancelledError):
+                error = RuntimeError("Speech settlement cancelled itself")
+                error.__cause__ = result
+                errors.append(error)
+        if errors:
+            raise ExceptionGroup("Speech synthesis cleanup failed", errors)
 
     async def stop(self) -> None:
         if self._close_task is None:

@@ -120,7 +120,6 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
                 continue
             if state.played + 1e-8 < value.end_time_sec:
                 break
-
             chunk = OutputTranscriptChunk(
                 text=value.text,
                 source_chunk_ids=value.source_chunk_ids,
@@ -260,11 +259,31 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
         if self._task is not None:
             await asyncio.gather(self._task, return_exceptions=True)
 
-        for state in tuple(self._states.values()):
-            await self._final(state, reason="transcript_stopping")
+        try:
+            results = await asyncio.gather(
+                *(
+                    self._final(state, reason="transcript_stopping")
+                    for state in tuple(self._states.values())
+                ),
+                return_exceptions=True,
+            )
+        finally:
+            # Failed final delivery must not strand other outputs or retained alignment buffers.
+            self._states.clear()
+            self._subscription = self._task = None
 
-        self._states.clear()
-        self._subscription = self._task = None
+        errors: list[Exception] = []
+        for result in results:
+            if isinstance(result, asyncio.CancelledError):
+                error = RuntimeError("Transcript settlement cancelled itself")
+                error.__cause__ = result
+                errors.append(error)
+            elif isinstance(result, Exception):
+                errors.append(result)
+            elif isinstance(result, BaseException):
+                raise result
+        if errors:
+            raise ExceptionGroup("Transcript synchronization cleanup failed", errors)
 
     async def stop(self) -> None:
         if self._close_task is None:
