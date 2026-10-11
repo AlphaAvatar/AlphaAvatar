@@ -78,8 +78,8 @@ class LiveKitTranscriptOutput:
         self._legacy, self._text_stream = publish_legacy, publish_text_stream
         self._timeout, self._capacity = publish_timeout, max_pending_outputs
         self._states: dict[str, _Transcript] = {}
-        self._finalized: OrderedDict[str, int] = OrderedDict()
-        self._floor = 0
+        self._finalized: OrderedDict[str, None] = OrderedDict()
+        self._finalization_failure: Exception | None = None
         self._subscription = self._task = self._close_task = self._start_task = None
 
     def _attributes(self, state: _Transcript, *, final: bool, interrupted: bool) -> dict[str, str]:
@@ -142,63 +142,122 @@ class LiveKitTranscriptOutput:
             )
         )
 
-    def _remember(self, output_id: str, sequence: int) -> None:
-        self._finalized[output_id] = sequence
+    def _remember(self, output_id: str) -> None:
+        # A priority interrupt is not a stream cursor for unrelated outputs.
+        self._finalized[output_id] = None
+        self._finalized.move_to_end(output_id)
         while len(self._finalized) > 1024:
-            _, old_sequence = self._finalized.popitem(last=False)
-            self._floor = max(self._floor, old_sequence)
+            self._finalized.popitem(last=False)
 
-    async def _finish(self, output_id: str, sequence: int, *, interrupted: bool) -> None:
+    async def _finish(self, output_id: str, *, interrupted: bool) -> None:
         state = self._states.get(output_id)
-        self._remember(output_id, sequence)
+        self._remember(output_id)
         if state is None:
             return
 
         if state.closing is None:
 
             async def close() -> None:
-                errors = []
-                if self._legacy and state.text:
-                    try:
-                        async with asyncio.timeout(self._timeout):
-                            await self._publish_legacy(state, final=True)
-                    except Exception as exc:
-                        errors.append(exc)
-                if state.writer is not None:
-                    try:
-                        async with asyncio.timeout(self._timeout):
-                            await state.writer.aclose(
-                                attributes=self._attributes(
-                                    state, final=True, interrupted=interrupted
+                errors: list[Exception] = []
+                try:
+                    if self._legacy and state.text:
+                        try:
+                            async with asyncio.timeout(self._timeout):
+                                await self._publish_legacy(state, final=True)
+                        except asyncio.CancelledError as exc:
+                            # Callers do not cancel this owned task; transport aborts are failures.
+                            error = RuntimeError("Legacy transcript finalization cancelled itself")
+                            error.__cause__ = exc
+                            errors.append(error)
+                        except Exception as exc:
+                            errors.append(exc)
+                    if state.writer is not None:
+                        try:
+                            async with asyncio.timeout(self._timeout):
+                                await state.writer.aclose(
+                                    attributes=self._attributes(
+                                        state, final=True, interrupted=interrupted
+                                    )
                                 )
-                            )
-                    except Exception as exc:
-                        errors.append(exc)
-                self._states.pop(output_id, None)
+                        except asyncio.CancelledError as exc:
+                            error = RuntimeError("Transcript writer finalization cancelled itself")
+                            error.__cause__ = exc
+                            errors.append(error)
+                        except Exception as exc:
+                            errors.append(exc)
+                finally:
+                    self._states.pop(output_id, None)
                 if errors:
-                    raise ExceptionGroup("Transcript finalization failed", errors)
+                    failure = ExceptionGroup("Transcript finalization failed", errors)
+                    if self._finalization_failure is None:
+                        self._finalization_failure = failure
+                    raise failure
 
             state.closing = asyncio.create_task(close(), name="transcript_writer_close")
         await wait_for_cleanup(state.closing)
+
+    async def _finish_many(
+        self, identities: tuple[OutputIdentity, ...], *, interrupted: bool
+    ) -> None:
+        if not identities:
+            return
+
+        async def finish(identity: OutputIdentity) -> None:
+            state = self._states.get(identity.output_id)
+            if state is not None and state.identity != identity:
+                raise ValueError("Transcript finalization identity changed")
+            await self._finish(identity.output_id, interrupted=interrupted)
+
+        async def settle() -> None:
+            # Register every live target before suspension; historical identities need no task.
+            pending = []
+            for identity in identities:
+                if identity.output_id in self._states:
+                    pending.append(finish(identity))
+                else:
+                    self._remember(identity.output_id)
+            results = await asyncio.gather(*pending, return_exceptions=True)
+            errors: list[Exception] = []
+            for result in results:
+                if isinstance(result, asyncio.CancelledError):
+                    error = RuntimeError("Transcript target settlement cancelled itself")
+                    error.__cause__ = result
+                    errors.append(error)
+                elif isinstance(result, Exception):
+                    errors.append(result)
+                elif isinstance(result, BaseException):
+                    raise result
+            if errors:
+                failure = ExceptionGroup("Transcript target settlement failed", errors)
+                if self._finalization_failure is None:
+                    self._finalization_failure = failure
+                raise failure
+
+        await wait_for_cleanup(asyncio.create_task(settle(), name="transcript_target_settlement"))
 
     async def _handle(self, event: OutputEvent) -> None:
         output = event.output
         payload, output_id = output.payload, output.output_id
         if isinstance(payload, OutputControl):
             if payload.type == OutputControlType.INTERRUPT:
-                for identity in payload.targets:
-                    if self._output.text_mode(identity.output_id) == OutputTextMode.IMMEDIATE:
-                        await self._finish(identity.output_id, event.sequence, interrupted=True)
+                identities = tuple(
+                    identity
+                    for identity in payload.targets
+                    if self._output.text_mode(identity.output_id) == OutputTextMode.IMMEDIATE
+                )
+                await self._finish_many(identities, interrupted=True)
                 return
             if (
                 output_id
                 and self._output.text_mode(output_id) == OutputTextMode.IMMEDIATE
                 and payload.type in (OutputControlType.TEXT_COMPLETE, OutputControlType.COMPLETE)
             ):
-                await self._finish(output_id, event.sequence, interrupted=False)
+                await self._finish(output_id, interrupted=False)
             return
-        if not output_id or output_id in self._finalized or event.sequence <= self._floor:
+
+        if not output_id or output_id in self._finalized:
             return
+
         immediate = isinstance(payload, OutputTextChunk)
         if immediate:
             if payload.mode != OutputTextMode.IMMEDIATE or not self._output.can_deliver(output_id):
@@ -221,7 +280,7 @@ class LiveKitTranscriptOutput:
             if text:
                 await self._write(state, text)
         if final:
-            await self._finish(output_id, event.sequence, interrupted=interrupted)
+            await self._finish(output_id, interrupted=interrupted)
 
     async def _run(self) -> None:
         while True:
@@ -236,9 +295,7 @@ class LiveKitTranscriptOutput:
                 if event.output.output_id:
                     try:
                         async with asyncio.timeout(self._timeout):
-                            await self._finish(
-                                event.output.output_id, event.sequence, interrupted=True
-                            )
+                            await self._finish(event.output.output_id, interrupted=True)
                     except Exception:
                         logger.exception(
                             "Transcript cleanup failed output_id=%s", event.output.output_id
@@ -281,14 +338,21 @@ class LiveKitTranscriptOutput:
             await self._output.stream.unsubscribe(self._name)
         if self._task is not None:
             await asyncio.gather(self._task, return_exceptions=True)
-        errors = []
-        for output_id in tuple(self._states):
-            try:
-                async with asyncio.timeout(self._timeout):
-                    await self._finish(output_id, self._floor, interrupted=True)
-            except Exception as exc:
-                errors.append(exc)
-        self._subscription = self._task = None
+
+        # Completed finalization tasks may already have left _states during intake shutdown.
+        previous_failure = self._finalization_failure
+        errors: list[Exception] = []
+        try:
+            await self._finish_many(
+                tuple(state.identity for state in self._states.values()),
+                interrupted=True,
+            )
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            self._subscription = self._task = None
+        if previous_failure is not None:
+            errors.append(previous_failure)
         if errors:
             raise ExceptionGroup("Transcript transport cleanup failed", errors)
 
