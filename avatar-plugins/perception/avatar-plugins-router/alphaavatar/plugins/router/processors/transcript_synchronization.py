@@ -78,15 +78,64 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
         self._task: asyncio.Task | None = None
         self._close_task: asyncio.Task | None = None
         self._start_task: asyncio.Task | None = None
+        self._worker_failures: list[Exception] = []
+        self._observed_tasks: set[asyncio.Task] = set()
+        self._stopped_tasks: set[asyncio.Task] = set()
 
     @property
     def name(self) -> str:
         return "transcript_synchronization"
 
     @staticmethod
-    def _observe(task: asyncio.Task) -> None:
-        if not task.cancelled() and task.exception() is not None:
-            logger.error("Transcript consumer failed", exc_info=task.exception())
+    def _observe_close(task: asyncio.Task) -> None:
+        if task.cancelled():
+            logger.error("Output consumer cleanup cancelled itself")
+        elif (error := task.exception()) is not None:
+            logger.error("Output consumer cleanup failed", exc_info=error)
+
+    def _remember_failure(self, error: BaseException, label: str) -> None:
+        if isinstance(error, asyncio.CancelledError):
+            failure = RuntimeError(f"{label} cancelled itself")
+            failure.__cause__ = error
+        elif isinstance(error, Exception):
+            failure = error
+        else:
+            raise error
+        if all(existing is not failure for existing in self._worker_failures):
+            self._worker_failures.append(failure)
+
+    def _observe(self, task: asyncio.Task) -> None:
+        if task in self._observed_tasks:
+            return
+        self._observed_tasks.add(task)
+        if task.cancelled():
+            if task in self._stopped_tasks:
+                return
+            error = asyncio.CancelledError()
+        elif (error := task.exception()) is None:
+            if task in self._stopped_tasks:
+                return
+            error = RuntimeError(f"{self.CONSUMER_ID} worker exited unexpectedly")
+        self._remember_failure(error, task.get_name())
+        self._ensure_close()
+
+    def _stop_worker(self, task: asyncio.Task) -> None:
+        if task.done():
+            self._observe(task)
+        elif not task.cancelling():
+            # Only a cancellation requested here is normal lifecycle shutdown.
+            self._stopped_tasks.add(task)
+            task.cancel()
+
+    async def _retire_subscription(self) -> None:
+        if self._subscription is None:
+            return
+        if self._worker_failures:
+            # Keep a failed subscription registered until OutputRuntime closes. Removing it
+            # would make later publications appear successful with a missing required consumer.
+            await self._subscription.fail(self._worker_failures[0])
+        else:
+            await self._runtime.output.stream.unsubscribe(self.CONSUMER_ID)
 
     def _state(self, event: OutputEvent) -> _Transcript | None:
         output = self._runtime.output
@@ -250,14 +299,21 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
         if self._start_task is not None:
             if not self._start_task.done():
                 self._start_task.cancel()
-            await asyncio.gather(self._start_task, return_exceptions=True)
+            (result,) = await asyncio.gather(self._start_task, return_exceptions=True)
+            if isinstance(result, Exception):
+                self._remember_failure(result, "Transcript startup")
 
-        if self._task is not None:
-            self._task.cancel()
-        if self._subscription is not None:
-            await self._runtime.output.stream.unsubscribe(self.CONSUMER_ID)
-        if self._task is not None:
-            await asyncio.gather(self._task, return_exceptions=True)
+        worker = self._task
+        if worker is not None:
+            self._stop_worker(worker)
+        try:
+            # Wake blocked publishers before joining the worker or publishing final captions.
+            await self._retire_subscription()
+        except BaseException as error:
+            self._remember_failure(error, "Transcript subscription retirement")
+        if worker is not None:
+            await asyncio.gather(worker, return_exceptions=True)
+            self._observe(worker)
 
         try:
             results = await asyncio.gather(
@@ -267,25 +323,20 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
                 ),
                 return_exceptions=True,
             )
+            for result in results:
+                if isinstance(result, BaseException):
+                    self._remember_failure(result, "Transcript settlement")
         finally:
-            # Failed final delivery must not strand other outputs or retained alignment buffers.
             self._states.clear()
             self._subscription = self._task = None
+        if self._worker_failures:
+            raise ExceptionGroup("Transcript synchronization cleanup failed", self._worker_failures)
 
-        errors: list[Exception] = []
-        for result in results:
-            if isinstance(result, asyncio.CancelledError):
-                error = RuntimeError("Transcript settlement cancelled itself")
-                error.__cause__ = result
-                errors.append(error)
-            elif isinstance(result, Exception):
-                errors.append(result)
-            elif isinstance(result, BaseException):
-                raise result
-        if errors:
-            raise ExceptionGroup("Transcript synchronization cleanup failed", errors)
+    def _ensure_close(self) -> asyncio.Task:
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close(), name=f"{self.CONSUMER_ID}:close")
+            self._close_task.add_done_callback(self._observe_close)
+        return self._close_task
 
     async def stop(self) -> None:
-        if self._close_task is None:
-            self._close_task = asyncio.create_task(self._close(), name="transcript_close")
-        await wait_for_cleanup(self._close_task)
+        await wait_for_cleanup(self._ensure_close())
