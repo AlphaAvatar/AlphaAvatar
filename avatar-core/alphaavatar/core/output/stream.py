@@ -73,12 +73,14 @@ class OutputSubscription:
             raise TypeError("Kind filters require OutputKind values")
         if lanes is not None and any(type(lane) is not OutputLane for lane in lanes):
             raise TypeError("Lane filters require OutputLane values")
+
         self._control_types = frozenset(control_types) if control_types is not None else None
         self.name, self._kinds, self._lanes = name, kinds, lanes
         self._max_pending, self._reliable = max_pending, reliable
         self._control_events: deque[OutputEvent] = deque()
         self._data_events: deque[OutputEvent] = deque()
         self._condition = asyncio.Condition()
+        self._data_lock = asyncio.Lock()
         self._closed = False
 
     def accepts(self, event: OutputEvent) -> bool:
@@ -99,16 +101,26 @@ class OutputSubscription:
     async def push(self, event: OutputEvent, *, guard: OutputGuard | None = None) -> None:
         if not self.accepts(event):
             return
-        async with self._condition:
-            if self._closed or (guard is not None and not guard()):
-                return
-            if _is_priority_control(event):
+
+        if _is_priority_control(event):
+            # Interrupts must bypass a full ordinary queue and its waiting publishers.
+            async with self._condition:
+                if self._closed or (guard is not None and not guard()):
+                    return
                 self._control_events.append(event)
                 self._condition.notify_all()
+            return
+
+        # Condition.wait_for releases its lock; keep the data admission slot until enqueue
+        # so a new publisher cannot overtake one already waiting for queue capacity.
+        async with self._data_lock, self._condition:
+            if self._closed or (guard is not None and not guard()):
                 return
             if self._reliable:
                 await self._condition.wait_for(
-                    lambda: self._closed or len(self._data_events) < self._max_pending
+                    lambda: self._closed
+                    or len(self._data_events) < self._max_pending
+                    or (guard is not None and not guard())
                 )
                 if self._closed:
                     return
