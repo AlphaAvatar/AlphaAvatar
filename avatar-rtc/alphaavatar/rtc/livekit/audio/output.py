@@ -145,8 +145,8 @@ class LiveKitTransientAudioOutput:
         pushed: float,
         queued: float,
         measurement: str,
-    ) -> None:
-        await self._output.publish(
+    ) -> OutputEvent | None:
+        return await self._output.publish(
             EnvOutput(
                 kind=OutputKind.PLAYBACK,
                 output_id=identity.output_id,
@@ -252,10 +252,10 @@ class LiveKitTransientAudioOutput:
             raise RuntimeError("Invalid transport queue duration")
         return value
 
-    async def _report(self, job: _Playout, kind: OutputPlaybackType) -> None:
+    async def _report(self, job: _Playout, kind: OutputPlaybackType) -> OutputEvent | None:
         queued = self._queued_duration()
         job.played = min(job.pushed, max(job.played, job.pushed - queued))
-        await self._receipt(
+        return await self._receipt(
             job.identity,
             kind,
             played=job.played,
@@ -294,7 +294,9 @@ class LiveKitTransientAudioOutput:
                     if job.cancelled or not self._output.can_deliver(job.identity.output_id):
                         raise asyncio.CancelledError
                     job.played = job.pushed
-                    await self._report(job, OutputPlaybackType.FINISHED)
+                    # Interruption can win admission after the last delivery check.
+                    if await self._report(job, OutputPlaybackType.FINISHED) is None:
+                        raise asyncio.CancelledError
                     success = True
                     return
                 try:
