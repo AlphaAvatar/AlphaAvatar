@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable, Coroutine, Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from hashlib import sha256
 from uuid import uuid4
 
@@ -501,6 +501,10 @@ class OutputRuntime:
                 if record.transcript_finalized:
                     return None
                 if payload.is_final:
+                    # Priority interruption may precede consumer state or this final's admission.
+                    # Reconcile the exact output's fact without mutating the submitted object.
+                    if record.terminal == OutputControlType.INTERRUPT and not payload.interrupted:
+                        output = replace(output, payload=replace(payload, interrupted=True))
                     record.transcript_finalized = True
             else:
                 raise TypeError("Unsupported output feedback")
