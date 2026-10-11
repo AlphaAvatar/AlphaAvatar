@@ -41,6 +41,10 @@ class ActivityProcessor(StatusProcessorBase):
         self._subscription = None
         self._registered = False
 
+    def _sync_presentation(self) -> None:
+        scope, revision = self._state.presentation
+        self._runtime.output.update_status_scope(scope, revision)
+
     def _drain_turns(self) -> None:
         stream = self._runtime.turn.events
         while True:
@@ -57,7 +61,7 @@ class ActivityProcessor(StatusProcessorBase):
                         at_ns=turn.committed_at.monotonic_ns,
                         event_id=event.event_id,
                     )
-
+            self._sync_presentation()
             stream.commit(consumer_id=self.TURN_ID, cursor_seq=batch.cursor_seq)
             if not batch.items or batch.remaining_count == 0:
                 return
@@ -80,7 +84,7 @@ class ActivityProcessor(StatusProcessorBase):
             for event in batch.items:
                 if isinstance(event.payload, OutputExecutionSignal):
                     self._state.signal(event.event_id, event.payload)
-
+            self._sync_presentation()
             stream.commit(consumer_id=self.EXECUTION_ID, cursor_seq=batch.cursor_seq)
             if not batch.items or batch.cursor_seq >= batch.latest_seq:
                 return
@@ -104,7 +108,6 @@ class ActivityProcessor(StatusProcessorBase):
                         request_id=event.metadata.get("request_id"),
                         event_id=event.event_id,
                     )
-
             elif isinstance(event.payload, OutputControl):
                 control = event.payload
                 if control.type != OutputControlType.INTERRUPT:
@@ -118,12 +121,25 @@ class ActivityProcessor(StatusProcessorBase):
                     or event.metadata.get("assistant_output_id")
                 ):
                     continue
-
-                self._state.interrupt(
-                    run_id=event.metadata.get("run_id"),
-                    turn_id=control.target_turn_id,
-                    event_id=event.event_id,
+                scope, _ = self._state.presentation
+                run_ids = event.metadata.get("interrupted_run_ids", ())
+                turn_ids = event.metadata.get("interrupted_turn_ids", ())
+                if scope is None:
+                    continue
+                targeted = (
+                    scope.run_id in run_ids
+                    if scope.run_id is not None
+                    else scope.turn_id in turn_ids
                 )
+                if not targeted:
+                    continue
+                self._state.interrupt(
+                    run_id=scope.run_id,
+                    turn_id=scope.turn_id,
+                    event_id=event.event_id,
+                    at_ns=event.monotonic_ns,
+                )
+            self._sync_presentation()
 
     async def _observe(self, operation) -> None:
         try:
@@ -167,3 +183,5 @@ class ActivityProcessor(StatusProcessorBase):
             self._runtime.output.execution.unregister(self.EXECUTION_ID)
             self._registered = False
         self._runtime.turn.events.clear_consumer(self.TURN_ID)
+        self._state.invalidate()
+        self._sync_presentation()

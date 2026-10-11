@@ -87,6 +87,7 @@ class PresentationProcessor(StatusProcessorBase):
         await asyncio.sleep(delay)
         if not self._valid(notice) or self._spoken >= self._config.max_narrations_per_turn:
             return
+
         if await self._publish(notice, OutputAudience.USER, narration=notice.narration_key):
             self._spoken += 1
             self._last_narration = asyncio.get_running_loop().time()

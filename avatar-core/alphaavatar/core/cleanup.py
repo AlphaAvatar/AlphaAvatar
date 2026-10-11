@@ -11,11 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import asyncio
+from typing import TypeVar
+
+T = TypeVar("T")
 
 
-async def wait_for_cleanup(task: asyncio.Task[None]) -> None:
-    """Finish owned cleanup before propagating cancellation to its caller."""
+async def wait_for_cleanup(task: asyncio.Task[T]) -> T:
+    """Finish owned work and return its result before propagating caller cancellation."""
     cancelled: asyncio.CancelledError | None = None
     while not task.done():
         try:
@@ -29,4 +34,4 @@ async def wait_for_cleanup(task: asyncio.Task[None]) -> None:
         if not task.cancelled() and (error := task.exception()) is not None:
             raise cancelled from error
         raise cancelled
-    task.result()
+    return task.result()

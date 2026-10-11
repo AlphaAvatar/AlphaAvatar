@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import asdict, dataclass
 from hashlib import sha256
 from math import isfinite
+from typing import Any
 from uuid import uuid4
 
+from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.media import AudioFrame
 from alphaavatar.core.time import RuntimeClock
 
@@ -130,7 +132,8 @@ class OutputRuntime:
         self._state_lock = asyncio.Lock()
         self._open_lock = asyncio.Lock()
         self._closed = False
-
+        self._publications: set[asyncio.Task[OutputEvent | None]] = set()
+        self._close_task: asyncio.Task[None] | None = None
         # A lease, not a cache of every retired run. None means no native foreground owner.
         self._foreground_run: str | None = None
         self._foreground_turn: str | None = None
@@ -182,7 +185,6 @@ class OutputRuntime:
                 if record.run_id != run_id or record.status_decision != status_decision:
                     raise ValueError("Output execution owner mismatch")
                 return (record if record.active else None), False
-
             record = _OutputRecord(
                 lane, turn_id, origin_kind, run_id=run_id, status_decision=status_decision
             )
@@ -250,6 +252,7 @@ class OutputRuntime:
     ) -> OutputEvent | None:
         if self._closed:
             raise RuntimeError("OutputRuntime is closed")
+
         async with self._sequence_lock:
             if self._closed:
                 raise RuntimeError("OutputRuntime is closed")
@@ -273,8 +276,26 @@ class OutputRuntime:
             await self.timeline.append(event)
         if guard is not None and not guard():
             return None
+
         await self.stream.publish(event, guard=guard)
         return event if guard is None or guard() else None
+
+    async def _own_publication(
+        self, operation: Coroutine[Any, Any, OutputEvent | None]
+    ) -> OutputEvent | None:
+        if self._closed:
+            operation.close()
+            raise RuntimeError("OutputRuntime is closed")
+
+        # Register ownership before suspending. Caller cancellation cannot split a terminal
+        # state transition from its delivery, including cancellation before the task starts.
+        task = asyncio.create_task(operation, name="output_terminal_publication")
+        self._publications.add(task)
+        task.add_done_callback(self._publications.discard)
+        return await wait_for_cleanup(task)
+
+    async def _publish_terminal(self, **fields: Any) -> OutputEvent | None:
+        return await self._own_publication(self._publish(**fields))
 
     def activate_run(self, run_id: str) -> None:
         if self._closed or not isinstance(run_id, str) or not run_id:
@@ -372,6 +393,7 @@ class OutputRuntime:
     async def start_turn(self, *, turn_id: str) -> None:
         if not isinstance(turn_id, str) or not turn_id:
             raise ValueError("Turn identity is required")
+
         self._foreground_turn = turn_id
         await self.interrupt(
             lane=OutputLane.TRANSIENT,
@@ -476,7 +498,7 @@ class OutputRuntime:
             if record.run_id != run_id or not self._accepts_record(record):
                 return None
             record.text_completed = True
-        return await self._publish(
+        return await self._publish_terminal(
             kind=OutputKind.CONTROL,
             lane=lane,
             output_id=output_id,
@@ -533,7 +555,8 @@ class OutputRuntime:
                 return None
             self._validate_output(record, output_id=output_id, lane=lane, turn_id=turn_id)
             record.audio_completed = True
-        return await self._publish(
+
+        return await self._publish_terminal(
             kind=OutputKind.CONTROL,
             lane=lane,
             output_id=output_id,
@@ -632,7 +655,9 @@ class OutputRuntime:
                 if record.terminal != OutputControlType.INTERRUPT:
                     return None
             record.playback = playback_type
-        return await self._publish(
+        terminal = playback_type in {OutputPlaybackType.FINISHED, OutputPlaybackType.INTERRUPTED}
+        publish = self._publish_terminal if terminal else self._publish
+        return await publish(
             kind=OutputKind.PLAYBACK,
             lane=lane,
             output_id=output_id,
@@ -674,6 +699,7 @@ class OutputRuntime:
             and end_time_sec < start_time_sec
         ):
             raise ValueError("Transcript end_time_sec cannot precede start_time_sec")
+
         async with self._state_lock:
             record = self._outputs.get(output_id)
             if record is None or record.transcript_finalized:
@@ -681,7 +707,9 @@ class OutputRuntime:
             self._validate_output(record, output_id=output_id, lane=lane, turn_id=turn_id)
             if is_final:
                 record.transcript_finalized = True
-        return await self._publish(
+
+        publish = self._publish_terminal if is_final else self._publish
+        return await publish(
             kind=OutputKind.TRANSCRIPT_CHUNK,
             lane=lane,
             output_id=output_id,
@@ -707,7 +735,7 @@ class OutputRuntime:
         turn_id: str | None = None,
         reason: str,
         metadata: dict | None = None,
-    ) -> OutputEvent:
+    ) -> OutputEvent | None:
         if lane is None and output_id is None and turn_id is None:
             raise ValueError("Output interrupt requires a target")
         async with self._state_lock:
@@ -722,34 +750,37 @@ class OutputRuntime:
             for record in matching_outputs.values():
                 record.terminal = OutputControlType.INTERRUPT
 
-        def matches(event: OutputEvent) -> bool:
-            # Keep semantic text/alignment/playback required for final interrupted transcripts.
-            return (
-                event.kind == OutputKind.AUDIO_FRAME
-                and (lane is None or event.lane == lane)
-                and (output_id is None or event.output_id == output_id)
-                and (turn_id is None or event.turn_id == turn_id)
-            )
-
-        await self.stream.discard_pending(matches)
+        # The target is a snapshot, not an instruction to cancel future messages in this lane.
+        targets = frozenset(matching_outputs)
+        run_ids = tuple(dict.fromkeys(r.run_id for r in matching_outputs.values() if r.run_id))
+        turn_ids = tuple(dict.fromkeys(r.turn_id for r in matching_outputs.values() if r.turn_id))
         inferred_lanes = {record.lane for record in matching_outputs.values()}
         target_lane = lane
         if target_lane is None and len(inferred_lanes) == 1:
             target_lane = next(iter(inferred_lanes))
-        return await self._publish(
-            kind=OutputKind.CONTROL,
-            lane=target_lane or OutputLane.STATUS,
-            output_id=output_id,
-            turn_id=turn_id,
-            payload=OutputControl(
-                OutputControlType.INTERRUPT,
-                reason,
-                target_lane,
-                output_id,
-                turn_id,
-            ),
-            metadata={"interrupted_output_ids": tuple(matching_outputs), **dict(metadata or {})},
-        )
+        fields = {
+            **dict(metadata or {}),
+            "interrupted_output_ids": tuple(matching_outputs),
+            "interrupted_run_ids": run_ids,
+            "interrupted_turn_ids": turn_ids,
+        }
+
+        async def publish() -> OutputEvent | None:
+            await self.stream.discard_pending(
+                lambda event: event.kind == OutputKind.AUDIO_FRAME and event.output_id in targets
+            )
+            return await self._publish(
+                kind=OutputKind.CONTROL,
+                lane=target_lane or OutputLane.STATUS,
+                output_id=output_id,
+                turn_id=turn_id,
+                payload=OutputControl(
+                    OutputControlType.INTERRUPT, reason, target_lane, output_id, turn_id
+                ),
+                metadata=fields,
+            )
+
+        return await self._own_publication(publish())
 
     async def complete(
         self,
@@ -766,7 +797,7 @@ class OutputRuntime:
             if record.lane != lane or record.turn_id != turn_id:
                 return None
             record.terminal = OutputControlType.COMPLETE
-        return await self._publish(
+        return await self._publish_terminal(
             kind=OutputKind.CONTROL,
             lane=lane,
             output_id=output_id,
@@ -785,14 +816,46 @@ class OutputRuntime:
             },
         )
 
-    async def aclose(self) -> None:
+    async def _close(self) -> None:
         async with self._state_lock:
-            if self._closed:
-                return
             self._closed = True
             self._foreground_run = None
             self._status_scope = None
-            self._outputs.clear()
             self.records.close()
             self.execution.close()
-        await self.stream.aclose()
+            publications = tuple(self._publications)
+
+        # Close subscriptions before joining publications so a stopped consumer cannot
+        # keep shutdown waiting on its full queue. This is not a user-delivery receipt.
+        errors: list[Exception] = []
+        try:
+            await self.stream.aclose()
+        except asyncio.CancelledError as exc:
+            error = RuntimeError("Output stream cleanup cancelled itself")
+            error.__cause__ = exc
+            errors.append(error)
+        except Exception as exc:
+            errors.append(exc)
+        if errors:
+            # Failed stream closure cannot leave owned publishers waiting on dead queues.
+            for publication in publications:
+                publication.cancel()
+        results = await asyncio.gather(*publications, return_exceptions=True)
+        for result in results:
+            if isinstance(result, asyncio.CancelledError):
+                error = RuntimeError("Owned output publication cancelled itself")
+                error.__cause__ = result
+                errors.append(error)
+            elif isinstance(result, Exception):
+                errors.append(result)
+            elif isinstance(result, BaseException):
+                raise result
+        self._outputs.clear()
+        self._publications.clear()
+        if errors:
+            raise ExceptionGroup("Output publication shutdown failed", errors)
+
+    async def aclose(self) -> None:
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close(), name="output_runtime_close")
+        await wait_for_cleanup(self._close_task)

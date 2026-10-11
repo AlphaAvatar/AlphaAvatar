@@ -70,6 +70,7 @@ class _SpeechJob:
         text = "".join(parts)
         if not text:
             return "", ()
+
         matches = [m.end() for m in _BOUNDARY.finditer(text) if m.end() >= min_chars]
         if matches:
             end = matches[0]
@@ -125,6 +126,7 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
             isfinite(t) and t > 0 for t in (flush_interval, synthesis_timeout)
         ):
             raise ValueError("Synthesis capacities and timeouts must be positive")
+
         self._tts, self._lanes = tts, lanes
         self._max_outputs, self._max_chars = max_pending_outputs, max_pending_chars
         self._segment_chars, self._min_chars = segment_chars, min_segment_chars
@@ -158,8 +160,6 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
         job.pieces.clear()
         job.pending_chars = 0
         job.changed.set()
-        # A task cancelled before its first step never enters its cleanup block.
-        # Mark pending work cancelled; let it enter the coroutine and settle without synthesis.
         if job.task is not None and job.running and not job.task.cancelling():
             job.task.cancel()
         self._wake.set()
@@ -209,7 +209,10 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
             return
         jobs = tuple(job for job in self._jobs.values() if self._matches(job, control))
         if control.type == OutputControlType.INTERRUPT:
+            targets = frozenset(event.metadata.get("interrupted_output_ids", ()))
             for job in jobs:
+                if job.output_id not in targets:
+                    continue
                 self._cancel(job)
             for output_id in event.metadata.get("interrupted_output_ids", ()):
                 output = self._runtime.output
@@ -275,7 +278,6 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
                     break
                 if not text.strip():
                     continue
-
                 duration = 0.0
                 async with asyncio.timeout(self._timeout):
                     async with aclosing(self._tts.synthesize(text)) as frames:
@@ -289,14 +291,11 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
                             )
                             if event is None:
                                 raise asyncio.CancelledError
-
                             duration += frame.samples_per_channel / frame.sample_rate
-
                 if duration <= 0:
                     raise RuntimeError("TTS returned no audio for nonempty text")
-
-                # Only a fully synthesized phrase receives an alignment. No invented partial text.
                 job.segments += 1
+                # Only a fully synthesized phrase receives an alignment. No invented partial text.
                 await output.publish_alignment(
                     text=text,
                     source_chunk_id=chunks[0],
@@ -353,7 +352,6 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
                     self._jobs.pop(job.output_id, None)
 
     async def _start(self) -> None:
-        # Do not route our own completion events back into this reliable intake.
         self._subscription = await self._runtime.output.stream.subscribe(
             self.CONSUMER_ID,
             kinds=(OutputKind.TEXT_CHUNK, OutputKind.CONTROL),
