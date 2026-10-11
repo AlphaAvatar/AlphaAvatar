@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from alphaavatar.agents.router import RouterProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.env import EnvOutput
 from alphaavatar.core.output.enums import (
     OutputControlType,
     OutputKind,
@@ -30,18 +31,20 @@ from alphaavatar.core.output.enums import (
 from alphaavatar.core.output.schemas import (
     OutputControl,
     OutputEvent,
+    OutputIdentity,
     OutputPlayback,
+    OutputSource,
     OutputTextAudioAlignment,
+    OutputTranscriptChunk,
 )
 
 logger = logging.getLogger(__name__)
+_SOURCE = OutputSource("router.transcript_synchronization")
 
 
 @dataclass(slots=True)
 class _Transcript:
-    output_id: str
-    lane: OutputLane
-    turn_id: str | None
+    identity: OutputIdentity
     alignments: dict[str, OutputTextAudioAlignment] = field(default_factory=dict)
     emitted: set[str] = field(default_factory=set)
     played: float = 0.0
@@ -55,11 +58,7 @@ class _Transcript:
 
 
 class TranscriptSynchronizationProcessor(RouterProcessorBase):
-    """Release complete aligned phrases using transport progress, not generated text.
-
-    Synthesis and playback terminal events are independent. Interruption cannot
-    finalize the transcript before already-produced alignments have been consumed.
-    """
+    """Release confirmed complete phrases; synthesis and playout are independent barriers."""
 
     CONSUMER_ID = "router.transcript_synchronization"
 
@@ -91,83 +90,97 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
 
     def _state(self, event: OutputEvent) -> _Transcript | None:
         output = self._runtime.output
-        output_id = event.output_id
-        if not output_id or output.text_mode(output_id) != OutputTextMode.AUDIO_SYNCED:
-            return None
-        if output.transcript_finalized(output_id):
+        value = event.output
+        output_id = value.output_id
+        if (
+            not output_id
+            or output.text_mode(output_id) != OutputTextMode.AUDIO_SYNCED
+            or output.transcript_finalized(output_id)
+        ):
             return None
         identity = output.output_identity(output_id)
         if identity is None:
             return None
-        lane, turn_id = identity
+        if (value.scope, value.lane) != (identity.scope, identity.lane):
+            raise ValueError("Transcript output identity changed")
         state = self._states.get(output_id)
         if state is None:
             if len(self._states) >= self._capacity:
                 raise RuntimeError("Transcript output capacity exhausted")
-            state = _Transcript(output_id, lane, turn_id)
+            state = _Transcript(identity)
             self._states[output_id] = state
-        elif (state.lane, state.turn_id) != identity:
+        elif state.identity != identity:
             raise ValueError("Transcript output identity changed")
         return state
 
     async def _emit(self, state: _Transcript) -> None:
-        # Phrase-level timing is deliberately conservative; no inferred word-level receipt.
+        identity = state.identity
         for alignment_id, value in state.alignments.items():
             if alignment_id in state.emitted or value.partial:
                 continue
-
             if state.played + 1e-8 < value.end_time_sec:
                 break
 
-            event = await self._runtime.output.publish_transcript_chunk(
+            chunk = OutputTranscriptChunk(
                 text=value.text,
-                output_id=state.output_id,
-                turn_id=state.turn_id,
-                lane=state.lane,
-                source_chunk_id=value.source_chunk_id,
+                source_chunk_ids=value.source_chunk_ids,
+                alignment_id=alignment_id,
                 start_time_sec=value.start_time_sec,
                 end_time_sec=value.end_time_sec,
                 is_first=not state.started,
-                metadata={
-                    "timing_source": value.timing_source,
-                    "alignment_id": alignment_id,
-                    "source_chunk_ids": value.source_chunk_ids,
-                },
+                timing_source=value.timing_source,
+            )
+            event = await self._runtime.output.publish(
+                EnvOutput(
+                    kind=OutputKind.TRANSCRIPT_CHUNK,
+                    output_id=identity.output_id,
+                    lane=identity.lane,
+                    scope=identity.scope,
+                    source=_SOURCE,
+                    payload=chunk,
+                )
             )
             if event is not None:
                 state.started = True
                 state.emitted.add(alignment_id)
 
+    async def _final(self, state: _Transcript, *, reason: str | None = None) -> None:
+        identity = state.identity
+        await self._runtime.output.publish(
+            EnvOutput(
+                kind=OutputKind.TRANSCRIPT_CHUNK,
+                output_id=identity.output_id,
+                lane=identity.lane,
+                scope=identity.scope,
+                source=_SOURCE,
+                payload=OutputTranscriptChunk(
+                    text="",
+                    is_first=not state.started,
+                    is_final=True,
+                    interrupted=state.interrupted or reason is not None,
+                    end_time_sec=state.played,
+                    reason=reason,
+                ),
+                metadata={"measurement": "local_audio_queue", "timing_granularity": "phrase"},
+            )
+        )
+
     async def _finish(self, state: _Transcript) -> None:
         await self._emit(state)
-        if not state.audio_complete:
-            return
-        if state.alignment_sequence < state.expected_alignment_sequence:
+        if not state.audio_complete or state.alignment_sequence < state.expected_alignment_sequence:
             return
         if state.last_audio_sequence and not state.playback_complete:
             return
-
-        await self._runtime.output.publish_transcript_chunk(
-            text="",
-            output_id=state.output_id,
-            turn_id=state.turn_id,
-            lane=state.lane,
-            is_first=not state.started,
-            is_final=True,
-            interrupted=state.interrupted,
-            end_time_sec=state.played,
-            metadata={"measurement": "local_audio_queue", "timing_granularity": "phrase"},
-        )
-        self._states.pop(state.output_id, None)
+        await self._final(state)
+        self._states.pop(state.identity.output_id, None)
 
     async def _handle(self, event: OutputEvent) -> None:
-        payload = event.payload
+        payload = event.output.payload
         if isinstance(payload, OutputControl) and payload.type == OutputControlType.INTERRUPT:
-            for output_id in event.metadata.get("interrupted_output_ids", ()):
-                state = self._states.get(output_id)
-                if state is not None:
+            for identity in payload.targets:
+                state = self._states.get(identity.output_id)
+                if state is not None and state.identity == identity:
                     state.interrupted = True
-
             return
 
         state = self._state(event)
@@ -175,16 +188,14 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
             return
 
         if isinstance(payload, OutputTextAudioAlignment):
-            identity = payload.alignment_id or payload.source_chunk_id
-            previous = state.alignments.get(identity)
+            previous = state.alignments.get(payload.alignment_id)
             if previous is not None and previous != payload:
                 raise ValueError("Conflicting text/audio alignment replay")
-
-            state.alignments[identity] = payload
+            state.alignments[payload.alignment_id] = payload
             state.alignment_sequence = max(state.alignment_sequence, event.sequence)
         elif isinstance(payload, OutputPlayback):
             state.played = max(state.played, payload.played_duration_sec)
-            if payload.type in {OutputPlaybackType.FINISHED, OutputPlaybackType.INTERRUPTED}:
+            if payload.type in (OutputPlaybackType.FINISHED, OutputPlaybackType.INTERRUPTED):
                 state.playback_complete = True
                 state.interrupted = (
                     state.interrupted or payload.type == OutputPlaybackType.INTERRUPTED
@@ -193,10 +204,9 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
             isinstance(payload, OutputControl) and payload.type == OutputControlType.AUDIO_COMPLETE
         ):
             state.audio_complete = True
-            state.last_audio_sequence = event.metadata["last_audio_sequence"]
-            state.expected_alignment_sequence = event.metadata["last_alignment_sequence"]
+            state.last_audio_sequence = payload.barrier.last_audio_sequence
+            state.expected_alignment_sequence = payload.barrier.last_alignment_sequence
             state.interrupted = state.interrupted or payload.reason != "synthesis_completed"
-
         await self._finish(state)
 
     async def _run(self) -> None:
@@ -250,19 +260,8 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
         if self._task is not None:
             await asyncio.gather(self._task, return_exceptions=True)
 
-        # No fabricated text during shutdown. Retain only previously confirmed phrase output.
         for state in tuple(self._states.values()):
-            await self._runtime.output.publish_transcript_chunk(
-                text="",
-                output_id=state.output_id,
-                turn_id=state.turn_id,
-                lane=state.lane,
-                is_first=not state.started,
-                is_final=True,
-                interrupted=True,
-                end_time_sec=state.played,
-                metadata={"reason": "transcript_stopping"},
-            )
+            await self._final(state, reason="transcript_stopping")
 
         self._states.clear()
         self._subscription = self._task = None

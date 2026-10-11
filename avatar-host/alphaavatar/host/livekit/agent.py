@@ -24,8 +24,10 @@ from livekit.agents.types import FlushSentinel
 from alphaavatar.agents.avatar import AvatarEngine
 from alphaavatar.agents.avatar.context.schemas import ContextPrepareRequest
 from alphaavatar.agents.entrypoints.livekit import LiveKitModelInput, LiveKitTurnInput
+from alphaavatar.core.env import EnvOutput
 from alphaavatar.core.lifecycle import SessionLifecycle
-from alphaavatar.core.output.enums import OutputLane
+from alphaavatar.core.output.enums import OutputKind, OutputLane
+from alphaavatar.core.output.schemas import OutputSource, OutputTextChunk
 from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
 from alphaavatar.host.lifecycle import HostSessionLifecycle
 
@@ -91,7 +93,6 @@ class LiveKitHostedAgent(AvatarEngine):
     def llm_node(
         self, chat_ctx: llm.ChatContext, tools: list[llm.Tool], model_settings: ModelSettings
     ) -> AsyncIterable[llm.ChatChunk | str | FlushSentinel]:
-        # Capture while llm_node is called in the SDK generation task's context.
         speech = owning_speech(self.session)
 
         async def generate():
@@ -121,13 +122,15 @@ class LiveKitHostedAgent(AvatarEngine):
                     text = extract_answer_text(chunk)
                     if text is not None:
                         text_started = True
-                        event = await self._runtime.output.publish_text_chunk(
-                            text=text,
-                            output_id=output_id,
-                            turn_id=snapshot.turn_id,
-                            lane=OutputLane.ASSISTANT,
-                            run_id=step.scope.run_id,
-                            metadata={"request_id": step.request_id, "context_id": context_id},
+                        event = await self._runtime.output.publish(
+                            EnvOutput(
+                                kind=OutputKind.TEXT_CHUNK,
+                                lane=OutputLane.ASSISTANT,
+                                scope=step.scope,
+                                output_id=output_id,
+                                source=OutputSource("host.livekit", request_id=step.request_id),
+                                payload=OutputTextChunk(text=text),
+                            )
                         )
                         if event is not None:
                             self._execution_bridge.visible(step, output_id)

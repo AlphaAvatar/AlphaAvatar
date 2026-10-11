@@ -14,13 +14,28 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
 from ..enums import OutputPlaybackType
 
 
 @dataclass(frozen=True, slots=True)
 class OutputPlayback:
+    """Local transport measurements, not proof of remote listening."""
+
     type: OutputPlaybackType
     played_duration_sec: float
     pushed_duration_sec: float
     queued_duration_sec: float
+
+    def __post_init__(self) -> None:
+        if type(self.type) is not OutputPlaybackType:
+            raise TypeError("Expected OutputPlaybackType")
+        values = (self.played_duration_sec, self.pushed_duration_sec, self.queued_duration_sec)
+        if any(
+            type(value) not in (int, float) or not isfinite(value) or value < 0 for value in values
+        ):
+            raise ValueError("Playback durations must be finite and nonnegative")
+        if self.played_duration_sec > self.pushed_duration_sec:
+            raise ValueError("Confirmed played duration cannot exceed confirmed pushed duration")
+        # Queued duration may include an interrupted, unconfirmed in-flight capture.

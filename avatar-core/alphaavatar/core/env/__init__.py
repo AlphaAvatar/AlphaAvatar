@@ -13,8 +13,10 @@
 # limitations under the License.
 from .annotation import EnvAnnotation
 from .observation import EnvObservation
+from .output import EnvOutput
 
 __all__ = [
     "EnvAnnotation",
     "EnvObservation",
+    "EnvOutput",
 ]

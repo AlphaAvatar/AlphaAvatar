@@ -13,20 +13,28 @@
 # limitations under the License.
 from .alignment import OutputTextAudioAlignment
 from .chunk import OutputTextChunk, OutputTranscriptChunk
-from .control import OutputControl
+from .control import OutputCompletionBarrier, OutputControl
 from .decision import OutputStatusDecision
 from .event import OutputEvent, OutputJournalEvent
+from .identity import OutputIdentity
 from .playback import OutputPlayback
 from .records import OutputExecutionSignal, OutputRecordBatch, OutputScope
+from .source import OutputSource
+from .timeline import OutputAudioSummary, OutputTimelineEntry
 
 __all__ = [
+    "OutputAudioSummary",
+    "OutputTimelineEntry",
+    "OutputCompletionBarrier",
     "OutputControl",
     "OutputEvent",
     "OutputExecutionSignal",
+    "OutputIdentity",
     "OutputJournalEvent",
     "OutputPlayback",
     "OutputRecordBatch",
     "OutputScope",
+    "OutputSource",
     "OutputStatusDecision",
     "OutputTextAudioAlignment",
     "OutputTextChunk",

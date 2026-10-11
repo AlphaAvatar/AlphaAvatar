@@ -18,15 +18,24 @@ import logging
 import re
 from collections import OrderedDict, deque
 from contextlib import aclosing
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from math import isfinite
 
 from alphaavatar.agents.avatar.voice import TTSBase
 from alphaavatar.agents.router import RouterProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.env import EnvOutput
+from alphaavatar.core.env.schemas.metadata import OutputMetadata
 from alphaavatar.core.output.enums import OutputControlType, OutputKind, OutputLane, OutputTextMode
-from alphaavatar.core.output.schemas import OutputControl, OutputEvent, OutputTextChunk
+from alphaavatar.core.output.schemas import (
+    OutputControl,
+    OutputEvent,
+    OutputIdentity,
+    OutputSource,
+    OutputTextAudioAlignment,
+    OutputTextChunk,
+)
 
 logger = logging.getLogger(__name__)
 _BOUNDARY = re.compile(r"[.!?。！？；;\n](?:[\"'”’）)]|\s)*")
@@ -40,10 +49,9 @@ class _Piece:
 
 @dataclass(slots=True)
 class _SpeechJob:
-    output_id: str
-    lane: OutputLane
-    turn_id: str | None
-    metadata: dict
+    identity: OutputIdentity
+    source: OutputSource
+    metadata: OutputMetadata
     pieces: deque[_Piece] = field(default_factory=deque)
     changed: asyncio.Event = field(default_factory=asyncio.Event)
     pending_chars: int = 0
@@ -60,7 +68,6 @@ class _SpeechJob:
         self.changed.set()
 
     def take(self, *, max_chars: int, min_chars: int, flush: bool) -> tuple[str, tuple[str, ...]]:
-        # Inspect a bounded prefix. Do not concatenate an entire long answer for each token.
         parts, length = [], 0
         for piece in self.pieces:
             parts.append(piece.text[: max_chars - length])
@@ -70,8 +77,7 @@ class _SpeechJob:
         text = "".join(parts)
         if not text:
             return "", ()
-
-        matches = [m.end() for m in _BOUNDARY.finditer(text) if m.end() >= min_chars]
+        matches = [match.end() for match in _BOUNDARY.finditer(text) if match.end() >= min_chars]
         if matches:
             end = matches[0]
         elif self.pending_chars >= max_chars:
@@ -98,11 +104,7 @@ class _SpeechJob:
 
 
 class SpeechSynthesisProcessor(RouterProcessorBase):
-    """Bounded phrase synthesis; model tokens never become individual TTS requests.
-
-    Intake and interruption are independent of synthesis. A single producer keeps
-    commentary and answer audio ordered; RTC owns actual playout and its receipts.
-    """
+    """Bounded phrase synthesis with independent intake, interruption and transport playout."""
 
     CONSUMER_ID = "router.speech_synthesis"
 
@@ -123,7 +125,7 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
         if not 1 <= min_segment_chars <= segment_chars <= max_pending_chars:
             raise ValueError("Invalid synthesis text limits")
         if max_pending_outputs < 1 or not all(
-            isfinite(t) and t > 0 for t in (flush_interval, synthesis_timeout)
+            isfinite(value) and value > 0 for value in (flush_interval, synthesis_timeout)
         ):
             raise ValueError("Synthesis capacities and timeouts must be positive")
 
@@ -143,14 +145,6 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
         return "speech_synthesis"
 
     @staticmethod
-    def _matches(job: _SpeechJob, control: OutputControl) -> bool:
-        return (
-            (control.target_output_id is None or job.output_id == control.target_output_id)
-            and (control.target_lane is None or job.lane == control.target_lane)
-            and (control.target_turn_id is None or job.turn_id == control.target_turn_id)
-        )
-
-    @staticmethod
     def _observe(task: asyncio.Task) -> None:
         if not task.cancelled() and task.exception() is not None:
             logger.error("Speech task failed", exc_info=task.exception())
@@ -165,70 +159,83 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
         self._wake.set()
 
     async def _reject(self, event: OutputEvent, reason: str) -> None:
-        await self._runtime.output.interrupt(output_id=event.output_id, reason=reason)
-        if event.output_id not in self._jobs:
+        output = event.output
+        await self._runtime.output.interrupt(output_id=output.output_id, reason=reason)
+        if output.output_id not in self._jobs:
             await self._runtime.output.finish_audio(
-                output_id=event.output_id, lane=event.lane, turn_id=event.turn_id, reason=reason
+                output_id=output.output_id,
+                lane=output.lane,
+                turn_id=output.scope.turn_id,
+                reason=reason,
             )
         else:
-            self._cancel(self._jobs[event.output_id])
+            self._cancel(self._jobs[output.output_id])
 
     async def _handle_text(self, event: OutputEvent) -> None:
-        chunk = event.payload
+        output, chunk = event.output, event.output.payload
         if not isinstance(chunk, OutputTextChunk) or chunk.mode != OutputTextMode.AUDIO_SYNCED:
             return
-        if not event.output_id or not self._runtime.output.is_active(event.output_id):
+        if not self._runtime.output.is_active(output.output_id):
             return
         for previous in self._jobs.values():
-            if not self._runtime.output.is_active(previous.output_id):
+            if not self._runtime.output.is_active(previous.identity.output_id):
                 self._cancel(previous)
         if self._tts is None:
             await self._reject(event, "tts_unavailable")
             return
-        job = self._jobs.get(event.output_id)
+
+        job = self._jobs.get(output.output_id)
+        identity = OutputIdentity(output.output_id, output.lane, output.scope)
         if job is None:
             if len(self._jobs) >= self._max_outputs:
                 await self._reject(event, "speech_output_capacity")
                 return
-            job = _SpeechJob(event.output_id, event.lane, event.turn_id, dict(event.metadata))
-            self._jobs[event.output_id] = job
-        if job.lane != event.lane or job.turn_id != event.turn_id:
+            job = _SpeechJob(
+                identity,
+                replace(output.source, producer="router.speech_synthesis"),
+                output.metadata,
+            )
+            self._jobs[output.output_id] = job
+        if job.identity != identity:
             raise ValueError("Speech output identity changed")
         if job.ended:
             raise ValueError("Source text followed its completion")
-        pending = sum(item.pending_chars for item in self._jobs.values())
-        if pending + len(chunk.text) > self._max_chars:
+        if (
+            sum(item.pending_chars for item in self._jobs.values()) + len(chunk.text)
+            > self._max_chars
+        ):
             await self._reject(event, "speech_text_capacity")
             return
+
         job.append(chunk)
         self._wake.set()
 
     async def _handle_control(self, event: OutputEvent) -> None:
-        control = event.payload
+        control = event.output.payload
         if not isinstance(control, OutputControl):
             return
-        jobs = tuple(job for job in self._jobs.values() if self._matches(job, control))
+
         if control.type == OutputControlType.INTERRUPT:
-            targets = frozenset(event.metadata.get("interrupted_output_ids", ()))
-            for job in jobs:
-                if job.output_id not in targets:
-                    continue
-                self._cancel(job)
-            for output_id in event.metadata.get("interrupted_output_ids", ()):
-                output = self._runtime.output
-                if (
-                    output_id in self._jobs
-                    or output.text_mode(output_id) != OutputTextMode.AUDIO_SYNCED
+            for identity in control.targets:
+                job = self._jobs.get(identity.output_id)
+                if job is not None:
+                    if job.identity != identity:
+                        raise ValueError("Interrupt identity changed")
+                    self._cancel(job)
+                elif (
+                    identity.lane in self._lanes
+                    and self._runtime.output.text_mode(identity.output_id)
+                    == OutputTextMode.AUDIO_SYNCED
                 ):
-                    continue
-                identity = output.output_identity(output_id)
-                if identity is not None and identity[0] in self._lanes:
-                    lane, turn_id = identity
-                    await output.finish_audio(
-                        output_id=output_id, lane=lane, turn_id=turn_id, reason=control.reason
+                    await self._runtime.output.finish_audio(
+                        output_id=identity.output_id,
+                        lane=identity.lane,
+                        turn_id=identity.scope.turn_id,
+                        reason=control.reason,
                     )
         elif control.type == OutputControlType.TEXT_COMPLETE:
-            for job in jobs:
+            job = self._jobs.get(event.output.output_id)
+            if job is not None:
                 job.ended = True
                 job.changed.set()
 
@@ -236,20 +243,20 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
         while True:
             event = await self._subscription.get()
             try:
-                if event.kind == OutputKind.TEXT_CHUNK:
+                if event.output.kind == OutputKind.TEXT_CHUNK:
                     await self._handle_text(event)
-                elif event.kind == OutputKind.CONTROL:
+                elif event.output.kind == OutputKind.CONTROL:
                     await self._handle_control(event)
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception("Speech intake failed output_id=%s", event.output_id)
-                if event.output_id:
+                logger.exception("Speech intake failed output_id=%s", event.output.output_id)
+                if event.output.output_id:
                     await self._reject(event, "invalid_speech_input")
 
     async def _next_segment(self, job: _SpeechJob) -> tuple[str, tuple[str, ...]]:
         deadline = None
-        while not job.cancelled and self._runtime.output.is_active(job.output_id):
+        while not job.cancelled and self._runtime.output.is_active(job.identity.output_id):
             job.changed.clear()
             now = asyncio.get_running_loop().time()
             if job.pending_chars and deadline is None:
@@ -265,71 +272,93 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
                 timeout = self._flush_interval if deadline is None else max(0, deadline - now)
                 await asyncio.wait_for(job.changed.wait(), timeout=timeout)
             except TimeoutError:
-                pass  # The original deadline does not slide with every arriving token.
+                pass
         raise asyncio.CancelledError
 
     async def _run_job(self, job: _SpeechJob) -> None:
         job.running = True
-        output, offset, reason = self._runtime.output, 0.0, "synthesis_completed"
+        identity, output, offset, reason = (
+            job.identity,
+            self._runtime.output,
+            0.0,
+            "synthesis_completed",
+        )
         try:
-            while not job.cancelled and output.is_active(job.output_id):
+            while not job.cancelled and output.is_active(identity.output_id):
                 text, chunks = await self._next_segment(job)
                 if not text and job.ended:
                     break
-                if not text.strip():
-                    continue
+
                 duration = 0.0
-                async with asyncio.timeout(self._timeout):
-                    async with aclosing(self._tts.synthesize(text)) as frames:
-                        async for frame in frames:
-                            event = await output.publish_audio_frame(
-                                frame=frame,
-                                lane=job.lane,
-                                output_id=job.output_id,
-                                turn_id=job.turn_id,
-                                metadata=job.metadata,
-                            )
-                            if event is None:
-                                raise asyncio.CancelledError
-                            duration += frame.samples_per_channel / frame.sample_rate
-                if duration <= 0:
-                    raise RuntimeError("TTS returned no audio for nonempty text")
+                if not text.isspace():
+                    async with asyncio.timeout(self._timeout):
+                        async with aclosing(self._tts.synthesize(text)) as frames:
+                            async for frame in frames:
+                                event = await output.publish(
+                                    EnvOutput(
+                                        kind=OutputKind.AUDIO_FRAME,
+                                        output_id=identity.output_id,
+                                        lane=identity.lane,
+                                        scope=identity.scope,
+                                        source=job.source,
+                                        payload=frame,
+                                        metadata=job.metadata,
+                                    )
+                                )
+                                if event is None:
+                                    raise asyncio.CancelledError
+                                duration += frame.samples_per_channel / frame.sample_rate
+                    if duration <= 0:
+                        raise RuntimeError("TTS returned no audio for nonempty text")
                 job.segments += 1
-                # Only a fully synthesized phrase receives an alignment. No invented partial text.
-                await output.publish_alignment(
+                # Whitespace is a text boundary, not synthesized/estimated audible speech.
+                alignment = OutputTextAudioAlignment(
                     text=text,
-                    source_chunk_id=chunks[0],
+                    alignment_id=f"{identity.output_id}:phrase:{job.segments}",
                     source_chunk_ids=chunks,
-                    alignment_id=f"{job.output_id}:phrase:{job.segments}",
-                    output_id=job.output_id,
-                    turn_id=job.turn_id,
-                    lane=job.lane,
                     start_time_sec=offset,
                     end_time_sec=offset + duration,
                     is_final=job.ended and job.pending_chars == 0,
-                    timing_source="estimated_phrase",
-                    metadata=job.metadata,
+                    timing_source="text_boundary" if text.isspace() else "estimated_phrase",
                 )
+                event = await output.publish(
+                    EnvOutput(
+                        kind=OutputKind.ALIGNMENT,
+                        output_id=identity.output_id,
+                        lane=identity.lane,
+                        scope=identity.scope,
+                        source=job.source,
+                        payload=alignment,
+                        metadata=job.metadata,
+                    )
+                )
+                if event is None:
+                    raise asyncio.CancelledError
                 offset += duration
-            if job.cancelled or not output.is_active(job.output_id):
+            if job.cancelled or not output.is_active(identity.output_id):
                 reason = "synthesis_interrupted"
         except asyncio.CancelledError:
             reason = "synthesis_interrupted"
             raise
         except Exception:
             reason = "speech_synthesis_failed"
-            logger.exception("Speech synthesis failed output_id=%s", job.output_id)
+            logger.exception("Speech synthesis failed output_id=%s", identity.output_id)
         finally:
 
             async def settle() -> None:
                 if reason != "synthesis_completed":
-                    await output.interrupt(output_id=job.output_id, reason=reason)
+                    await output.interrupt(output_id=identity.output_id, reason=reason)
                 await output.finish_audio(
-                    output_id=job.output_id, lane=job.lane, turn_id=job.turn_id, reason=reason
+                    output_id=identity.output_id,
+                    lane=identity.lane,
+                    turn_id=identity.scope.turn_id,
+                    reason=reason,
                 )
                 if reason == "synthesis_completed":
                     await output.complete(
-                        lane=job.lane, output_id=job.output_id, turn_id=job.turn_id
+                        lane=identity.lane,
+                        output_id=identity.output_id,
+                        turn_id=identity.scope.turn_id,
                     )
 
             await wait_for_cleanup(asyncio.create_task(settle(), name="speech_settlement"))
@@ -341,7 +370,7 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
                 await self._wake.wait()
                 continue
             job = next(iter(self._jobs.values()))
-            job.task = asyncio.create_task(self._run_job(job), name=f"tts:{job.output_id}")
+            job.task = asyncio.create_task(self._run_job(job), name=f"tts:{job.identity.output_id}")
             try:
                 await asyncio.shield(job.task)
             except asyncio.CancelledError:
@@ -349,7 +378,7 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
                     raise
             finally:
                 if job.task.done():
-                    self._jobs.pop(job.output_id, None)
+                    self._jobs.pop(job.identity.output_id, None)
 
     async def _start(self) -> None:
         self._subscription = await self._runtime.output.stream.subscribe(
@@ -397,24 +426,26 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
         for job in jobs:
             self._cancel(job)
 
-        # Release reliable intake before awaiting terminal publications during cleanup.
         if self._subscription is not None:
             await self._runtime.output.stream.unsubscribe(self.CONSUMER_ID)
             self._subscription = None
+
         await asyncio.gather(*self._tasks, return_exceptions=True)
         for job in jobs:
             if job.task is not None:
                 await asyncio.gather(job.task, return_exceptions=True)
             else:
+                identity = job.identity
                 await self._runtime.output.interrupt(
-                    output_id=job.output_id, reason="speech_synthesis_stopping"
+                    output_id=identity.output_id, reason="speech_synthesis_stopping"
                 )
                 await self._runtime.output.finish_audio(
-                    output_id=job.output_id,
-                    lane=job.lane,
-                    turn_id=job.turn_id,
+                    output_id=identity.output_id,
+                    lane=identity.lane,
+                    turn_id=identity.scope.turn_id,
                     reason="speech_synthesis_stopping",
                 )
+
         self._jobs.clear()
         self._tasks.clear()
 

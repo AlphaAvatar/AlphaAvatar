@@ -17,15 +17,13 @@ import asyncio
 import inspect
 import json
 import logging
-from typing import Any
 
 from livekit import rtc
 
 from alphaavatar.core.output import OutputRuntime, OutputSubscription
 from alphaavatar.core.output.enums import OutputKind, OutputLane
 from alphaavatar.core.output.enums.audience import OutputAudience
-from alphaavatar.core.output.schemas import OutputEvent
-from alphaavatar.core.output.schemas.decision import OutputStatusDecision
+from alphaavatar.core.output.schemas import OutputEvent, OutputStatusDecision
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +49,7 @@ class LiveKitStatusOutput:
         self._subscription: OutputSubscription | None = None
         self._run_task: asyncio.Task | None = None
 
-    async def _publish_data(self, payload: dict[str, Any], *, topic: str) -> None:
+    async def _publish_data(self, payload: dict[str, object], *, topic: str) -> None:
         participant = getattr(self._room, "local_participant", None)
         if participant is None:
             raise RuntimeError("LiveKit room has no local participant")
@@ -62,15 +60,15 @@ class LiveKitStatusOutput:
             await result
 
     async def _handle_event(self, event: OutputEvent) -> None:
-        decision = event.payload
-        if not isinstance(decision, OutputStatusDecision):
-            return
-        if decision.audience != OutputAudience.USER:
+        decision = event.output.payload
+        if (
+            not isinstance(decision, OutputStatusDecision)
+            or decision.audience != OutputAudience.USER
+        ):
             return
         if not self._output.accepts_status(decision):
             return
 
-        # Project an allow-list. Tool arguments, internal metadata and reasoning stay local.
         common = {"source": "status", "stage": decision.action, "status_type": decision.action}
         await self._publish_data(
             {

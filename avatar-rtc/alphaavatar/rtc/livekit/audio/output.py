@@ -21,6 +21,7 @@ from math import isfinite
 from livekit import rtc
 
 from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.env import EnvOutput
 from alphaavatar.core.media import AudioFrame
 from alphaavatar.core.output import OutputRuntime
 from alphaavatar.core.output.enums import (
@@ -29,19 +30,24 @@ from alphaavatar.core.output.enums import (
     OutputLane,
     OutputPlaybackType,
 )
-from alphaavatar.core.output.schemas import OutputControl, OutputEvent
+from alphaavatar.core.output.schemas import (
+    OutputControl,
+    OutputEvent,
+    OutputIdentity,
+    OutputPlayback,
+    OutputSource,
+)
 
 from .codec import to_livekit_audio_frame
 
 logger = logging.getLogger(__name__)
+_SOURCE = OutputSource("rtc.livekit.audio")
 
 
 @dataclass(slots=True)
 class _Playout:
-    output_id: str
-    lane: OutputLane
-    turn_id: str | None
-    frames: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=64))
+    identity: OutputIdentity
+    frames: asyncio.Queue[OutputEvent] = field(default_factory=lambda: asyncio.Queue(maxsize=64))
     received_sequence: int = 0
     expected_sequence: int | None = None
     cancelled: bool = False
@@ -56,11 +62,10 @@ class _Playout:
 
 
 class LiveKitTransientAudioOutput:
-    """Single-track transport for both assistant and transient audio.
+    """Single-track assistant/transient transport; receipts measure the local queue only.
 
-    The name remains the current Host constructor until its native entrypoint is
-    switched. No SDK AgentSession is used here. Receipts describe local transport
-    queue drain, not proof that a remote listener heard a sample.
+    The existing Host constructor name remains until native Engine integration.
+    This adapter does not use an SDK AgentSession.
     """
 
     def __init__(
@@ -80,8 +85,11 @@ class LiveKitTransientAudioOutput:
     ) -> None:
         if min(sample_rate, num_channels, queue_size_ms, max_pending_outputs) <= 0:
             raise ValueError("Audio format and queue limits must be positive")
-        if not all(isfinite(t) and t > 0 for t in (progress_interval_sec, capture_timeout)):
+        if not all(
+            isfinite(value) and value > 0 for value in (progress_interval_sec, capture_timeout)
+        ):
             raise ValueError("Audio timeouts must be positive and finite")
+
         self._room, self._output = room, output_runtime
         self._sample_rate, self._num_channels = sample_rate, num_channels
         self._track_name, self._queue_ms = track_name, queue_size_ms
@@ -101,13 +109,15 @@ class LiveKitTransientAudioOutput:
         return self._publication_sid
 
     def _job(self, event: OutputEvent) -> _Playout:
-        job = self._jobs.get(event.output_id)
+        output = event.output
+        identity = OutputIdentity(output.output_id, output.lane, output.scope)
+        job = self._jobs.get(identity.output_id)
         if job is None:
             if len(self._jobs) >= self._max_outputs:
                 raise RuntimeError("Audio output capacity exhausted")
-            job = _Playout(event.output_id, event.lane, event.turn_id)
-            self._jobs[event.output_id] = job
-        elif (job.lane, job.turn_id) != (event.lane, event.turn_id):
+            job = _Playout(identity)
+            self._jobs[identity.output_id] = job
+        elif job.identity != identity:
             raise ValueError("Audio output identity changed")
         return job
 
@@ -115,42 +125,67 @@ class LiveKitTransientAudioOutput:
         job.cancelled = True
         while not job.frames.empty():
             job.frames.get_nowait()
+
         if job is self._active and self._source is not None:
-            # Intake never waits for capture_frame or the previous utterance's playout.
             if job.interrupted_played is None:
                 queued = self._queued_duration()
                 job.interrupted_played = min(job.pushed, max(job.played, job.pushed - queued))
                 job.interrupted_queued = queued
             self._source.clear_queue()
-        # Pending jobs must enter _play's finally to publish an unplayed terminal receipt.
+        # A not-yet-started task must execute its finally and produce the unplayed receipt.
         if job.task is not None and job.running and not job.task.cancelling():
             job.task.cancel()
 
-    async def _unplayed(self, output_id: str, lane: OutputLane, turn_id: str | None) -> None:
-        await self._output.publish_playback(
-            output_id=output_id,
-            lane=lane,
-            turn_id=turn_id,
-            playback_type=OutputPlaybackType.INTERRUPTED,
-            played_duration_sec=0.0,
-            pushed_duration_sec=0.0,
-            queued_duration_sec=0.0,
-            metadata={"transport": "livekit", "measurement": "not_started"},
+    async def _receipt(
+        self,
+        identity: OutputIdentity,
+        kind: OutputPlaybackType,
+        *,
+        played: float,
+        pushed: float,
+        queued: float,
+        measurement: str,
+    ) -> None:
+        await self._output.publish(
+            EnvOutput(
+                kind=OutputKind.PLAYBACK,
+                output_id=identity.output_id,
+                lane=identity.lane,
+                scope=identity.scope,
+                source=_SOURCE,
+                payload=OutputPlayback(kind, played, pushed, queued),
+                metadata={
+                    "transport": "livekit",
+                    "track_sid": self._publication_sid,
+                    "measurement": measurement,
+                },
+            )
+        )
+
+    async def _unplayed(self, identity: OutputIdentity) -> None:
+        await self._receipt(
+            identity,
+            OutputPlaybackType.INTERRUPTED,
+            played=0.0,
+            pushed=0.0,
+            queued=0.0,
+            measurement="not_started",
         )
 
     async def _reject(self, event: OutputEvent, reason: str) -> None:
-        logger.warning("Audio rejected output_id=%s reason=%s", event.output_id, reason)
-        if event.output_id:
-            await self._output.interrupt(output_id=event.output_id, reason=reason)
-        job = self._jobs.get(event.output_id)
+        output_id = event.output.output_id
+        logger.warning("Audio rejected output_id=%s reason=%s", output_id, reason)
+        if output_id:
+            await self._output.interrupt(output_id=output_id, reason=reason)
+        job = self._jobs.get(output_id)
         if job is not None:
             self._cancel(job)
 
     async def _audio(self) -> None:
         while True:
             event = await self._audio_sub.get()
-            frame = event.payload
-            if not event.output_id or not self._output.can_deliver(event.output_id):
+            output, frame = event.output, event.output.payload
+            if not output.output_id or not self._output.can_deliver(output.output_id):
                 continue
             if not isinstance(frame, AudioFrame):
                 await self._reject(event, "invalid_audio_frame")
@@ -168,9 +203,9 @@ class LiveKitTransientAudioOutput:
                 if not job.queued:
                     self._ready.put_nowait(job)
                     job.queued = True
-                # Backpressure is isolated from the independent control consumer.
+
                 await job.frames.put(event)
-                if job.cancelled or not self._output.can_deliver(job.output_id):
+                if job.cancelled or not self._output.can_deliver(job.identity.output_id):
                     self._cancel(job)
                     continue
                 job.received_sequence = event.sequence
@@ -182,28 +217,26 @@ class LiveKitTransientAudioOutput:
     async def _controls(self) -> None:
         while True:
             event = await self._control_sub.get()
-            control = event.payload
+            control = event.output.payload
             if not isinstance(control, OutputControl):
                 continue
             if control.type == OutputControlType.INTERRUPT:
-                for output_id in event.metadata.get("interrupted_output_ids", ()):
-                    identity = self._output.output_identity(output_id)
-                    if identity is None or identity[0] not in self._lanes:
+                for identity in control.targets:
+                    if identity.lane not in self._lanes:
                         continue
-                    job = self._jobs.get(output_id)
+                    job = self._jobs.get(identity.output_id)
                     if job is not None:
+                        if job.identity != identity:
+                            raise ValueError("Interrupted audio identity changed")
                         self._cancel(job)
                         if job.task is None:
-                            await self._unplayed(job.output_id, job.lane, job.turn_id)
-                            self._jobs.pop(job.output_id, None)
+                            await self._unplayed(identity)
+                            self._jobs.pop(identity.output_id, None)
                     else:
-                        await self._unplayed(output_id, *identity)
-            elif control.type == OutputControlType.COMPLETE and event.output_id:
-                expected = event.metadata.get("last_audio_sequence", 0)
-                if type(expected) is not int or expected < 0:
-                    await self._reject(event, "invalid_audio_barrier")
-                    continue
-                if expected == 0 or not self._output.can_deliver(event.output_id):
+                        await self._unplayed(identity)
+            elif control.type == OutputControlType.COMPLETE and event.output.output_id:
+                expected = control.barrier.last_audio_sequence
+                if expected == 0 or not self._output.can_deliver(event.output.output_id):
                     continue
                 try:
                     job = self._job(event)
@@ -222,26 +255,20 @@ class LiveKitTransientAudioOutput:
     async def _report(self, job: _Playout, kind: OutputPlaybackType) -> None:
         queued = self._queued_duration()
         job.played = min(job.pushed, max(job.played, job.pushed - queued))
-        await self._output.publish_playback(
-            output_id=job.output_id,
-            lane=job.lane,
-            turn_id=job.turn_id,
-            playback_type=kind,
-            played_duration_sec=job.played,
-            pushed_duration_sec=job.pushed,
-            queued_duration_sec=queued,
-            metadata={
-                "transport": "livekit",
-                "track_sid": self._publication_sid,
-                "measurement": "local_audio_queue",
-            },
+        await self._receipt(
+            job.identity,
+            kind,
+            played=job.played,
+            pushed=job.pushed,
+            queued=queued,
+            measurement="local_audio_queue",
         )
 
     async def _drain(self, job: _Playout) -> None:
         waiter = asyncio.create_task(self._source.wait_for_playout(), name="audio_queue_drain")
         try:
             while not waiter.done():
-                if job.cancelled or not self._output.can_deliver(job.output_id):
+                if job.cancelled or not self._output.can_deliver(job.identity.output_id):
                     raise asyncio.CancelledError
                 done, _ = await asyncio.wait((waiter,), timeout=self._interval)
                 if not done:
@@ -253,11 +280,10 @@ class LiveKitTransientAudioOutput:
             await asyncio.gather(waiter, return_exceptions=True)
 
     async def _play(self, job: _Playout) -> None:
-        job.running = True
-        success = False
+        job.running, success = True, False
         try:
             while True:
-                if job.cancelled or not self._output.can_deliver(job.output_id):
+                if job.cancelled or not self._output.can_deliver(job.identity.output_id):
                     raise asyncio.CancelledError
                 if (
                     job.expected_sequence is not None
@@ -265,7 +291,7 @@ class LiveKitTransientAudioOutput:
                     and job.frames.empty()
                 ):
                     await self._drain(job)
-                    if job.cancelled or not self._output.can_deliver(job.output_id):
+                    if job.cancelled or not self._output.can_deliver(job.identity.output_id):
                         raise asyncio.CancelledError
                     job.played = job.pushed
                     await self._report(job, OutputPlaybackType.FINISHED)
@@ -277,12 +303,12 @@ class LiveKitTransientAudioOutput:
                     if job.started:
                         await self._report(job, OutputPlaybackType.PROGRESS)
                     continue
-                if not self._output.can_deliver(job.output_id):
+                if not self._output.can_deliver(job.identity.output_id):
                     raise asyncio.CancelledError
-                frame = event.payload
+                frame = event.output.payload
                 async with asyncio.timeout(self._capture_timeout):
                     await self._source.capture_frame(to_livekit_audio_frame(frame))
-                if job.cancelled or not self._output.can_deliver(job.output_id):
+                if job.cancelled or not self._output.can_deliver(job.identity.output_id):
                     raise asyncio.CancelledError
                 job.pushed += frame.samples_per_channel / frame.sample_rate
                 kind = OutputPlaybackType.PROGRESS if job.started else OutputPlaybackType.STARTED
@@ -291,12 +317,11 @@ class LiveKitTransientAudioOutput:
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("Audio playout failed output_id=%s", job.output_id)
+            logger.exception("Audio playout failed output_id=%s", job.identity.output_id)
         finally:
             if not success:
 
                 async def settle() -> None:
-                    # Report only confirmed captures; an interrupted in-flight frame is uncertain.
                     queued = self._queued_duration()
                     if job.interrupted_played is not None:
                         job.played, queued = job.interrupted_played, job.interrupted_queued
@@ -304,17 +329,15 @@ class LiveKitTransientAudioOutput:
                         job.played = min(job.pushed, max(job.played, job.pushed - queued))
                     self._source.clear_queue()
                     await self._output.interrupt(
-                        output_id=job.output_id, reason="audio_playout_stopped"
+                        output_id=job.identity.output_id, reason="audio_playout_stopped"
                     )
-                    await self._output.publish_playback(
-                        output_id=job.output_id,
-                        lane=job.lane,
-                        turn_id=job.turn_id,
-                        playback_type=OutputPlaybackType.INTERRUPTED,
-                        played_duration_sec=job.played,
-                        pushed_duration_sec=job.pushed,
-                        queued_duration_sec=queued,
-                        metadata={"transport": "livekit", "measurement": "local_audio_queue"},
+                    await self._receipt(
+                        job.identity,
+                        OutputPlaybackType.INTERRUPTED,
+                        played=job.played,
+                        pushed=job.pushed,
+                        queued=queued,
+                        measurement="local_audio_queue",
                     )
 
                 await wait_for_cleanup(asyncio.create_task(settle(), name="audio_settlement"))
@@ -328,7 +351,7 @@ class LiveKitTransientAudioOutput:
             if job.cancelled:
                 continue
             self._active = job
-            job.task = asyncio.create_task(self._play(job), name=f"audio:{job.output_id}")
+            job.task = asyncio.create_task(self._play(job), name=f"audio:{job.identity.output_id}")
             try:
                 await asyncio.shield(job.task)
             except asyncio.CancelledError:
@@ -336,7 +359,7 @@ class LiveKitTransientAudioOutput:
                     raise
             finally:
                 if job.task.done():
-                    self._jobs.pop(job.output_id, None)
+                    self._jobs.pop(job.identity.output_id, None)
                     self._active = None
 
     @staticmethod
@@ -402,20 +425,21 @@ class LiveKitTransientAudioOutput:
         jobs = tuple(self._jobs.values())
         for job in jobs:
             self._cancel(job)
-        # Unsubscribe before cleanup publishes control: no self-backpressure during shutdown.
         for suffix, subscription in (("", self._audio_sub), (":control", self._control_sub)):
             if subscription is not None:
                 await self._output.stream.unsubscribe(self._name + suffix)
         await asyncio.gather(*self._tasks, return_exceptions=True)
-        await asyncio.gather(*(j.task for j in jobs if j.task is not None), return_exceptions=True)
+        await asyncio.gather(
+            *(job.task for job in jobs if job.task is not None), return_exceptions=True
+        )
         errors = []
         for job in jobs:
             if job.task is None:
                 try:
                     await self._output.interrupt(
-                        output_id=job.output_id, reason="audio_output_stopping"
+                        output_id=job.identity.output_id, reason="audio_output_stopping"
                     )
-                    await self._unplayed(job.output_id, job.lane, job.turn_id)
+                    await self._unplayed(job.identity)
                 except Exception as exc:
                     errors.append(exc)
         self._jobs.clear()

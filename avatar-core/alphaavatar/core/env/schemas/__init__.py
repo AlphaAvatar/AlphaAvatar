@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from .metadata import OutputMetadata
 from .reference import (
     PerceptionEntityRef,
     PerceptionSegmentRef,
@@ -18,6 +19,7 @@ from .reference import (
 )
 
 __all__ = [
+    "OutputMetadata",
     "PerceptionEntityRef",
     "PerceptionSegmentRef",
     "PerceptionSourceRef",

@@ -61,6 +61,7 @@ class ActivityProcessor(StatusProcessorBase):
                         at_ns=turn.committed_at.monotonic_ns,
                         event_id=event.event_id,
                     )
+
             self._sync_presentation()
             stream.commit(consumer_id=self.TURN_ID, cursor_seq=batch.cursor_seq)
             if not batch.items or batch.remaining_count == 0:
@@ -84,6 +85,7 @@ class ActivityProcessor(StatusProcessorBase):
             for event in batch.items:
                 if isinstance(event.payload, OutputExecutionSignal):
                     self._state.signal(event.event_id, event.payload)
+
             self._sync_presentation()
             stream.commit(consumer_id=self.EXECUTION_ID, cursor_seq=batch.cursor_seq)
             if not batch.items or batch.cursor_seq >= batch.latest_seq:
@@ -98,47 +100,30 @@ class ActivityProcessor(StatusProcessorBase):
     async def _delivery(self) -> None:
         while True:
             event = await self._subscription.get()
-
-            # Independent subscriptions can be scheduled in either order.
             self._drain_execution()
-            if event.kind == OutputKind.TEXT_CHUNK and isinstance(event.payload, OutputTextChunk):
-                if event.payload.text.strip() and (run_id := event.metadata.get("run_id")):
+            output, payload = event.output, event.output.payload
+            if output.kind == OutputKind.TEXT_CHUNK and isinstance(payload, OutputTextChunk):
+                if payload.text.strip() and output.scope.run_id is not None:
                     self._state.text(
-                        run_id=run_id,
-                        request_id=event.metadata.get("request_id"),
+                        run_id=output.scope.run_id,
+                        request_id=output.source.request_id,
                         event_id=event.event_id,
                     )
-            elif isinstance(event.payload, OutputControl):
-                control = event.payload
-                if control.type != OutputControlType.INTERRUPT:
-                    continue
 
-                # Replacing transient speech or one completed message is not a Run interruption.
-                if (
-                    control.target_lane == OutputLane.TRANSIENT
-                    or control.target_output_id
-                    or event.metadata.get("replacement_output_id")
-                    or event.metadata.get("assistant_output_id")
-                ):
+            elif isinstance(payload, OutputControl):
+                if payload.type != OutputControlType.INTERRUPT or not payload.affects_scope:
                     continue
                 scope, _ = self._state.presentation
-                run_ids = event.metadata.get("interrupted_run_ids", ())
-                turn_ids = event.metadata.get("interrupted_turn_ids", ())
-                if scope is None:
+                if scope is None or not any(target.scope == scope for target in payload.targets):
                     continue
-                targeted = (
-                    scope.run_id in run_ids
-                    if scope.run_id is not None
-                    else scope.turn_id in turn_ids
-                )
-                if not targeted:
-                    continue
+
                 self._state.interrupt(
                     run_id=scope.run_id,
                     turn_id=scope.turn_id,
                     event_id=event.event_id,
                     at_ns=event.monotonic_ns,
                 )
+
             self._sync_presentation()
 
     async def _observe(self, operation) -> None:
@@ -167,8 +152,9 @@ class ActivityProcessor(StatusProcessorBase):
             ("execution", self._execution()),
             ("delivery", self._delivery()),
         ):
-            task = asyncio.create_task(self._observe(operation), name=f"status:{label}")
-            self._tasks.append(task)
+            self._tasks.append(
+                asyncio.create_task(self._observe(operation), name=f"status:{label}")
+            )
 
     async def stop(self) -> None:
         tasks, self._tasks = self._tasks, []

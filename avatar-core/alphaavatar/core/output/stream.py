@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Live asynchronous output stream with control-message priority."""
+"""Live asynchronous delivery with exact interrupt priority and per-consumer backpressure."""
 
 from __future__ import annotations
 
@@ -26,18 +26,31 @@ OutputPredicate = Callable[[OutputEvent], bool]
 OutputGuard = Callable[[], bool]
 
 
+def _raise_failures(message: str, results: Iterable[object]) -> None:
+    errors: list[Exception] = []
+    for result in results:
+        if isinstance(result, asyncio.CancelledError):
+            error = RuntimeError("Output subscription cancelled itself")
+            error.__cause__ = result
+            errors.append(error)
+        elif isinstance(result, Exception):
+            errors.append(result)
+        elif isinstance(result, BaseException):
+            raise result
+    if errors:
+        raise ExceptionGroup(message, errors)
+
+
 def _is_priority_control(event: OutputEvent) -> bool:
-    control = event.payload
+    output = event.output
     return (
-        event.is_control
-        and isinstance(control, OutputControl)
-        and (control.type == OutputControlType.INTERRUPT)
+        output.kind == OutputKind.CONTROL
+        and isinstance(output.payload, OutputControl)
+        and output.payload.type == OutputControlType.INTERRUPT
     )
 
 
 class OutputSubscription:
-    """One live consumer; control interrupts never wait behind a full data queue."""
-
     def __init__(
         self,
         *,
@@ -48,15 +61,19 @@ class OutputSubscription:
         reliable: bool,
         control_types: frozenset[OutputControlType] | None = None,
     ) -> None:
-        if not name or max_pending <= 0:
+        if not name or type(max_pending) is not int or max_pending <= 0:
             raise ValueError("Output subscription requires a name and positive capacity")
         if control_types is not None and any(
-            not isinstance(kind, OutputControlType) for kind in control_types
+            type(kind) is not OutputControlType for kind in control_types
         ):
             raise TypeError("Control filters require OutputControlType values")
+        if kinds is not None and any(type(kind) is not OutputKind for kind in kinds):
+            raise TypeError("Kind filters require OutputKind values")
+        if lanes is not None and any(type(lane) is not OutputLane for lane in lanes):
+            raise TypeError("Lane filters require OutputLane values")
+
         self._control_types = frozenset(control_types) if control_types is not None else None
-        self.name = name
-        self._kinds, self._lanes = kinds, lanes
+        self.name, self._kinds, self._lanes = name, kinds, lanes
         self._max_pending, self._reliable = max_pending, reliable
         self._control_events: deque[OutputEvent] = deque()
         self._data_events: deque[OutputEvent] = deque()
@@ -64,19 +81,19 @@ class OutputSubscription:
         self._closed = False
 
     def accepts(self, event: OutputEvent) -> bool:
-        if self._kinds is not None and event.kind not in self._kinds:
+        output = event.output
+        if self._kinds is not None and output.kind not in self._kinds:
             return False
-        if event.is_control and self._control_types is not None:
-            if not isinstance(event.payload, OutputControl):
+        if output.kind == OutputKind.CONTROL:
+            control = output.payload
+            if self._control_types is not None and control.type not in self._control_types:
                 return False
-            if event.payload.type not in self._control_types:
-                return False
-        if event.is_control and isinstance(event.payload, OutputControl):
-            target_lane = event.payload.target_lane
-            if target_lane is None:
-                return True
-            return self._lanes is None or target_lane in self._lanes
-        return self._lanes is None or event.lane in self._lanes
+            if control.type == OutputControlType.INTERRUPT:
+                # Filter the immutable target set; never interpret a late broad selector.
+                return self._lanes is None or any(
+                    target.lane in self._lanes for target in control.targets
+                )
+        return self._lanes is None or output.lane in self._lanes
 
     async def push(self, event: OutputEvent, *, guard: OutputGuard | None = None) -> None:
         if not self.accepts(event):
@@ -94,7 +111,6 @@ class OutputSubscription:
                 )
                 if self._closed:
                     return
-            # A native execution may have retired while backpressure suspended this publisher.
             if guard is not None and not guard():
                 return
             if not self._reliable:
@@ -136,11 +152,7 @@ class OutputSubscription:
 
 
 class OutputStream:
-    """Delivery fan-out with optional control filtering before queue admission.
-
-    Reliable queues backpressure; unreliable queues drop oldest data. Consumers that
-    publish completion events can exclude those events from their own intake.
-    """
+    """Reliable queues backpressure; unreliable queues drop oldest data, never interrupt facts."""
 
     def __init__(self) -> None:
         self._subscriptions: dict[str, OutputSubscription] = {}
@@ -180,27 +192,31 @@ class OutputStream:
             await subscription.close()
 
     async def publish(self, event: OutputEvent, *, guard: OutputGuard | None = None) -> None:
+        if type(event) is not OutputEvent:
+            raise TypeError("Expected OutputEvent")
         async with self._lock:
             if self._closed:
                 raise RuntimeError("OutputStream is closed")
             subscriptions = tuple(self._subscriptions.values())
         if not subscriptions:
             return
+        # Same fan-out scheduling as before this refactor; no new task per audio frame.
         results = await asyncio.gather(
             *(subscription.push(event, guard=guard) for subscription in subscriptions),
             return_exceptions=True,
         )
-        errors = [result for result in results if isinstance(result, Exception)]
-        if errors:
-            raise ExceptionGroup("One or more output subscriptions failed", errors)
+        _raise_failures("One or more output subscriptions failed", results)
 
     async def discard_pending(self, predicate: OutputPredicate) -> int:
         async with self._lock:
             subscriptions = tuple(self._subscriptions.values())
         if not subscriptions:
             return 0
-        results = await asyncio.gather(*(s.discard_pending(predicate) for s in subscriptions))
-        return sum(results)
+        return sum(
+            await asyncio.gather(
+                *(subscription.discard_pending(predicate) for subscription in subscriptions)
+            )
+        )
 
     async def aclose(self) -> None:
         async with self._lock:
@@ -209,4 +225,7 @@ class OutputStream:
             self._closed = True
             subscriptions = tuple(self._subscriptions.values())
             self._subscriptions.clear()
-        await asyncio.gather(*(s.close() for s in subscriptions), return_exceptions=True)
+        results = await asyncio.gather(
+            *(subscription.close() for subscription in subscriptions), return_exceptions=True
+        )
+        _raise_failures("Output subscription cleanup failed", results)

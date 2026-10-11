@@ -15,19 +15,28 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .validation import boolean, identifier, identities, time_range
+
 
 @dataclass(frozen=True, slots=True)
 class OutputTextAudioAlignment:
     text: str
-    source_chunk_id: str
+    alignment_id: str
+    source_chunk_ids: tuple[str, ...]
     start_time_sec: float
     end_time_sec: float
-    is_final: bool
+    is_final: bool = False
     partial: bool = False
     timing_source: str = "synthesized_audio"
-    alignment_id: str | None = None
-    source_chunk_ids: tuple[str, ...] = ()
 
-    @property
-    def duration_sec(self) -> float:
-        return max(self.end_time_sec - self.start_time_sec, 0.0)
+    def __post_init__(self) -> None:
+        if type(self.text) is not str or not self.text:
+            raise ValueError("Alignment requires verbatim source text")
+        identifier(self.alignment_id, "alignment_id")
+        identifier(self.timing_source, "timing_source")
+        identities(self.source_chunk_ids, "source_chunk_ids", required=True)
+        if self.start_time_sec is None or self.end_time_sec is None:
+            raise ValueError("Alignment requires both time boundaries")
+        time_range(self.start_time_sec, self.end_time_sec)
+        boolean(self.is_final, "is_final")
+        boolean(self.partial, "partial")

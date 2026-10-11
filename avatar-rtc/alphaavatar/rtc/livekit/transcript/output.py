@@ -29,6 +29,7 @@ from alphaavatar.core.output.enums import OutputControlType, OutputKind, OutputL
 from alphaavatar.core.output.schemas import (
     OutputControl,
     OutputEvent,
+    OutputIdentity,
     OutputTextChunk,
     OutputTranscriptChunk,
 )
@@ -38,9 +39,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class _Transcript:
-    output_id: str
-    turn_id: str | None
-    lane: OutputLane
+    identity: OutputIdentity
     segment_id: str
     immediate: bool
     text: str = ""
@@ -49,7 +48,7 @@ class _Transcript:
 
 
 class LiveKitTranscriptOutput:
-    """Native text delivery: immediate source text or audio-synchronized phrases, never MIRROR."""
+    """Deliver immediate source text or audio-synchronized phrases, never MIRROR content."""
 
     TRANSCRIPTION_TOPIC = "lk.transcription"
     ATTR_FINAL = "lk.transcription_final"
@@ -73,6 +72,7 @@ class LiveKitTranscriptOutput:
             raise ValueError("At least one transcript protocol must be enabled")
         if max_pending_outputs < 1 or not isfinite(publish_timeout) or publish_timeout <= 0:
             raise ValueError("Transcript limits must be positive")
+
         self._room, self._output, self._track_sid = room, output_runtime, track_sid
         self._lanes, self._name = lanes, subscription_name
         self._legacy, self._text_stream = publish_legacy, publish_text_stream
@@ -83,13 +83,14 @@ class LiveKitTranscriptOutput:
         self._subscription = self._task = self._close_task = self._start_task = None
 
     def _attributes(self, state: _Transcript, *, final: bool, interrupted: bool) -> dict[str, str]:
+        identity = state.identity
         attributes = {
             self.ATTR_FINAL: str(final).lower(),
             self.ATTR_SEGMENT_ID: state.segment_id,
             "alphaavatar.type": "output_text" if state.immediate else "output_transcript",
-            "alphaavatar.output_id": state.output_id,
-            "alphaavatar.turn_id": state.turn_id or "",
-            "alphaavatar.lane": state.lane.value,
+            "alphaavatar.output_id": identity.output_id,
+            "alphaavatar.turn_id": identity.scope.turn_id or "",
+            "alphaavatar.lane": identity.lane.value,
             "alphaavatar.interrupted": str(interrupted).lower(),
         }
         if not state.immediate and self._track_sid is not None:
@@ -99,8 +100,9 @@ class LiveKitTranscriptOutput:
 
     async def _write(self, state: _Transcript, text: str) -> None:
         participant = self._room.local_participant
-        if state.immediate and not self._output.can_deliver(state.output_id):
+        if state.immediate and not self._output.can_deliver(state.identity.output_id):
             return
+
         if self._text_stream:
             if state.writer is None:
 
@@ -113,7 +115,7 @@ class LiveKitTranscriptOutput:
                         )
 
                 await wait_for_cleanup(asyncio.create_task(open_writer(), name="transcript_open"))
-            if state.immediate and not self._output.can_deliver(state.output_id):
+            if state.immediate and not self._output.can_deliver(state.identity.output_id):
                 return
             await state.writer.write(text)
         state.text += text
@@ -180,18 +182,18 @@ class LiveKitTranscriptOutput:
         await wait_for_cleanup(state.closing)
 
     async def _handle(self, event: OutputEvent) -> None:
-        payload, output_id = event.payload, event.output_id
+        output = event.output
+        payload, output_id = output.payload, output.output_id
         if isinstance(payload, OutputControl):
             if payload.type == OutputControlType.INTERRUPT:
-                for identity in event.metadata.get("interrupted_output_ids", ()):
-                    if self._output.text_mode(identity) == OutputTextMode.IMMEDIATE:
-                        await self._finish(identity, event.sequence, interrupted=True)
-
+                for identity in payload.targets:
+                    if self._output.text_mode(identity.output_id) == OutputTextMode.IMMEDIATE:
+                        await self._finish(identity.output_id, event.sequence, interrupted=True)
                 return
             if (
                 output_id
                 and self._output.text_mode(output_id) == OutputTextMode.IMMEDIATE
-                and payload.type in {OutputControlType.TEXT_COMPLETE, OutputControlType.COMPLETE}
+                and payload.type in (OutputControlType.TEXT_COMPLETE, OutputControlType.COMPLETE)
             ):
                 await self._finish(output_id, event.sequence, interrupted=False)
             return
@@ -199,25 +201,22 @@ class LiveKitTranscriptOutput:
             return
         immediate = isinstance(payload, OutputTextChunk)
         if immediate:
-            if payload.mode != OutputTextMode.IMMEDIATE:
-                return
-            if not self._output.can_deliver(output_id):
+            if payload.mode != OutputTextMode.IMMEDIATE or not self._output.can_deliver(output_id):
                 return
             text, final, interrupted = payload.text, payload.is_final, False
         elif isinstance(payload, OutputTranscriptChunk):
             text, final, interrupted = payload.text, payload.is_final, payload.interrupted
         else:
             return
+        identity = OutputIdentity(output_id, output.lane, output.scope)
         state = self._states.get(output_id)
         if state is None and text:
             if len(self._states) >= self._capacity:
                 raise RuntimeError("Transcript transport capacity exhausted")
-            segment_id = f"SG_{event.lane.value}_{output_id}"
-            state = _Transcript(output_id, event.turn_id, event.lane, segment_id, immediate)
+            state = _Transcript(identity, f"SG_{identity.lane.value}_{output_id}", immediate)
             self._states[output_id] = state
         if state is not None:
-            identity = state.turn_id, state.lane, state.immediate
-            if identity != (event.turn_id, event.lane, immediate):
+            if (state.identity, state.immediate) != (identity, immediate):
                 raise ValueError("Transcript delivery identity changed")
             if text:
                 await self._write(state, text)
@@ -233,13 +232,17 @@ class LiveKitTranscriptOutput:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception("Transcript delivery failed output_id=%s", event.output_id)
-                if event.output_id:
+                logger.exception("Transcript delivery failed output_id=%s", event.output.output_id)
+                if event.output.output_id:
                     try:
                         async with asyncio.timeout(self._timeout):
-                            await self._finish(event.output_id, event.sequence, interrupted=True)
+                            await self._finish(
+                                event.output.output_id, event.sequence, interrupted=True
+                            )
                     except Exception:
-                        logger.exception("Transcript cleanup failed output_id=%s", event.output_id)
+                        logger.exception(
+                            "Transcript cleanup failed output_id=%s", event.output.output_id
+                        )
 
     async def _start(self) -> None:
         self._subscription = await self._output.stream.subscribe(

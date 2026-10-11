@@ -18,9 +18,10 @@ import logging
 from typing import TYPE_CHECKING
 
 from alphaavatar.agents.status import StatusProcessorBase
+from alphaavatar.core.env import EnvOutput
 from alphaavatar.core.output.enums import OutputKind, OutputLane, OutputTextMode
 from alphaavatar.core.output.enums.audience import OutputAudience
-from alphaavatar.core.output.schemas.decision import OutputStatusDecision
+from alphaavatar.core.output.schemas import OutputSource, OutputStatusDecision, OutputTextChunk
 
 from ...state import StatusState
 from ...tasks import spawn
@@ -51,7 +52,7 @@ class NarrationProcessor(StatusProcessorBase):
             decision.audience == OutputAudience.USER
             and self._runtime.clock.now().monotonic_ns <= decision.expires_at_ns
             and self._state.current(decision.scope, decision.revision)
-            and self._runtime.output.accepts_run(decision.scope.run_id)
+            and self._runtime.output.accepts_status(decision)
         )
 
     async def _clear(self) -> None:
@@ -88,28 +89,22 @@ class NarrationProcessor(StatusProcessorBase):
                 )
                 output_id = f"status:{decision.decision_id}"
                 self._output_id = output_id
-                event = await self._runtime.output.publish_text_chunk(
-                    text=text,
-                    output_id=output_id,
-                    turn_id=decision.scope.turn_id,
+                content = EnvOutput(
+                    kind=OutputKind.TEXT_CHUNK,
                     lane=OutputLane.TRANSIENT,
-                    mode=mode,
-                    is_final=True,
-                    run_id=decision.scope.run_id,
-                    metadata={
-                        "origin": "status.narration",
-                        "decision_id": decision.decision_id,
-                        "source_event_id": decision.source_event_id,
-                        "context_id": decision.scope.context_id,
-                    },
+                    scope=decision.scope,
+                    output_id=output_id,
+                    source=OutputSource("status.narration"),
+                    presentation=decision,
+                    payload=OutputTextChunk(text=text, mode=mode, is_final=True),
                 )
+                event = await self._runtime.output.publish(content)
                 if event is not None and not interaction.audio_output:
                     await self._runtime.output.complete(
                         lane=OutputLane.TRANSIENT,
                         output_id=output_id,
                         turn_id=decision.scope.turn_id,
                     )
-                # AUDIO_SYNCED completion belongs to the speech-synthesis producer.
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -118,11 +113,12 @@ class NarrationProcessor(StatusProcessorBase):
     async def _decisions(self) -> None:
         while True:
             event = await self._subscription.get()
-            decision = event.payload
-            if not isinstance(decision, OutputStatusDecision) or not decision.narration_key:
-                continue
-
-            if not self._valid(decision):
+            decision = event.output.payload
+            if (
+                not isinstance(decision, OutputStatusDecision)
+                or not decision.narration_key
+                or not self._valid(decision)
+            ):
                 continue
 
             async with self._lock:
@@ -142,7 +138,6 @@ class NarrationProcessor(StatusProcessorBase):
     async def start(self) -> None:
         if self._tasks or not self._config.enabled:
             return
-
         self._subscription = await self._runtime.output.stream.subscribe(
             self.SUBSCRIPTION,
             kinds=(OutputKind.STATUS,),

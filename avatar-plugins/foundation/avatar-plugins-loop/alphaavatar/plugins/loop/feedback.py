@@ -29,8 +29,20 @@ from alphaavatar.agents.avatar.provider.schemas import (
 )
 from alphaavatar.agents.avatar.provider.schemas.stream import ModelTextDelta
 from alphaavatar.core.cleanup import wait_for_cleanup
-from alphaavatar.core.output.enums import ExecutionSignalKind, OutputLane, OutputTextMode
-from alphaavatar.core.output.schemas import OutputExecutionSignal, OutputScope
+from alphaavatar.core.env import EnvOutput
+from alphaavatar.core.output.enums import (
+    ExecutionSignalKind,
+    OutputKind,
+    OutputLane,
+    OutputTextMode,
+)
+from alphaavatar.core.output.enums.message_phase import OutputMessagePhase
+from alphaavatar.core.output.schemas import (
+    OutputExecutionSignal,
+    OutputScope,
+    OutputSource,
+    OutputTextChunk,
+)
 
 if TYPE_CHECKING:
     from alphaavatar.agents.runtime import AvatarRuntime
@@ -45,6 +57,7 @@ class LoopDeliveryError(RuntimeError):
 @dataclass(slots=True)
 class _Message:
     output_id: str
+    item_id: str
     text: str = ""
     content_index: int = -1
     completed: bool = False
@@ -57,9 +70,7 @@ class LoopFeedback:
     def __init__(self, identity: LoopIdentity, runtime: AvatarRuntime, *, timeout: float) -> None:
         self.identity = identity
         self.scope = OutputScope(identity.context_id, identity.turn_id, identity.run_id)
-        self.state = LoopState.ACCEPTED
-        self.model_step = 0
-        self.tool_round = 0
+        self.state, self.model_step, self.tool_round = LoopState.ACCEPTED, 0, 0
         self._output = runtime.output
         interaction = runtime.state.interaction_method
         self._mode = (
@@ -79,7 +90,6 @@ class LoopFeedback:
         return f"{self.identity.run_id}:{item_id}"
 
     def signal(self, kind: ExecutionSignalKind, **fields) -> None:
-        # No active-run filter: old run outcomes remain useful execution facts.
         try:
             self._output.publish_execution(
                 OutputExecutionSignal(
@@ -113,24 +123,25 @@ class LoopFeedback:
     async def _text(self, message: _Message, text: str, *, content_index: int) -> None:
         if not text or not self._output.accepts_run(self.identity.run_id):
             return
-
         try:
-            async with asyncio.timeout(self._timeout):
-                event = await self._output.publish_text_chunk(
+            content = EnvOutput(
+                kind=OutputKind.TEXT_CHUNK,
+                lane=OutputLane.ASSISTANT,
+                scope=self.scope,
+                output_id=message.output_id,
+                source=OutputSource("avatar.loop", self._request_id, message.item_id),
+                payload=OutputTextChunk(
                     text=text,
-                    output_id=message.output_id,
-                    turn_id=self.identity.turn_id,
-                    lane=OutputLane.ASSISTANT,
                     mode=self._mode,
                     replace_lane=False,
-                    run_id=self.identity.run_id,
-                    metadata={
-                        "context_id": self.identity.context_id,
-                        "phase": message.phase.value if message.phase else None,
-                        "content_index": content_index,
-                        "request_id": self._request_id,
-                    },
-                )
+                    phase=OutputMessagePhase(message.phase.value) if message.phase else None,
+                    content_index=content_index,
+                ),
+            )
+
+            async with asyncio.timeout(self._timeout):
+                event = await self._output.publish(content)
+
             if event is not None:
                 message.text += text
                 if message.phase == ModelMessagePhase.COMMENTARY:
@@ -145,11 +156,12 @@ class LoopFeedback:
             return
 
         message = self._messages.setdefault(
-            event.item_id,
-            _Message(self.output_id(event.item_id), phase=event.phase),
+            event.item_id, _Message(self.output_id(event.item_id), event.item_id, phase=event.phase)
         )
+
         if message.completed or event.content_index < message.content_index:
             raise ModelProtocolError("Text delta follows completed or out-of-order content")
+
         separator = "\n" if message.text and event.content_index > message.content_index else ""
         await self._text(message, separator + event.text, content_index=event.content_index)
         message.content_index = event.content_index
@@ -157,14 +169,15 @@ class LoopFeedback:
     async def message(self, item: ModelInputMessage) -> None:
         if not self._output.accepts_run(self.identity.run_id):
             return
+
         text = "\n".join(
-            p.text for p in item.parts if isinstance(p, ModelTextPart | ModelRefusalPart)
+            part.text for part in item.parts if isinstance(part, ModelTextPart | ModelRefusalPart)
         )
         if not text:
             return
+
         message = self._messages.setdefault(
-            item.id,
-            _Message(self.output_id(item.id), phase=item.phase),
+            item.id, _Message(self.output_id(item.id), item.id, phase=item.phase)
         )
         if message.completed:
             if message.text != text:
@@ -172,6 +185,7 @@ class LoopFeedback:
             return
         if not text.startswith(message.text):
             raise ModelProtocolError("Completed message disagrees with streamed content")
+
         message.phase = item.phase
         await self._text(
             message, text[len(message.text) :], content_index=max(message.content_index, 0)
@@ -189,6 +203,7 @@ class LoopFeedback:
                         output_id=message.output_id,
                         turn_id=self.identity.turn_id,
                     )
+
             message.completed = True
         except asyncio.CancelledError:
             raise
@@ -198,11 +213,7 @@ class LoopFeedback:
     async def interrupt_incomplete(self, reason: str) -> None:
         for message in self._messages.values():
             if message.text and not message.completed:
-                await self._output.interrupt(
-                    output_id=message.output_id,
-                    reason=reason,
-                    metadata={"run_id": self.identity.run_id},
-                )
+                await self._output.interrupt(output_id=message.output_id, reason=reason)
 
     async def aclose(self, *, interrupted: bool = False) -> None:
         if self._close_task is None:
@@ -210,13 +221,10 @@ class LoopFeedback:
             async def close() -> None:
                 if interrupted:
                     self._output.revoke_run(self.identity.run_id)
-                    # Target explicit IDs, never a lane that may now contain the next run.
                     for message in self._messages.values():
                         if message.text:
                             await self._output.interrupt(
-                                output_id=message.output_id,
-                                reason="loop_stopped",
-                                metadata={"run_id": self.identity.run_id},
+                                output_id=message.output_id, reason="loop_stopped"
                             )
                 else:
                     await self.interrupt_incomplete("source_incomplete")

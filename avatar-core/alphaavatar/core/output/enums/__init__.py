@@ -15,6 +15,7 @@ from .audience import OutputAudience
 from .control import OutputControlType
 from .kind import ExecutionSignalKind, OutputKind
 from .lane import OutputLane
+from .message_phase import OutputMessagePhase
 from .playback import OutputPlaybackType
 from .text_mode import OutputTextMode
 
@@ -24,6 +25,7 @@ __all__ = [
     "OutputControlType",
     "OutputKind",
     "OutputLane",
+    "OutputMessagePhase",
     "OutputPlaybackType",
     "OutputTextMode",
 ]

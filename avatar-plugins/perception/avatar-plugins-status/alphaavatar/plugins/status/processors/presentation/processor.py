@@ -19,8 +19,10 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from alphaavatar.agents.status import StatusProcessorBase
+from alphaavatar.core.env import EnvOutput
+from alphaavatar.core.output.enums import OutputKind, OutputLane
 from alphaavatar.core.output.enums.audience import OutputAudience
-from alphaavatar.core.output.schemas.decision import OutputStatusDecision
+from alphaavatar.core.output.schemas import OutputSource, OutputStatusDecision
 
 from ...state import ActivityNotice, StatusState
 from ...tasks import spawn
@@ -40,8 +42,7 @@ class PresentationProcessor(StatusProcessorBase):
         self._task: asyncio.Task | None = None
         self._notice: asyncio.Task | None = None
         self._turn_id: str | None = None
-        self._spoken = 0
-        self._last_narration = 0.0
+        self._spoken, self._last_narration = 0, 0.0
 
     def _valid(self, notice: ActivityNotice) -> bool:
         return self._state.current(notice.scope, notice.revision)
@@ -65,10 +66,18 @@ class PresentationProcessor(StatusProcessorBase):
             narration_key=narration,
             tool_name=notice.tool_name,
             outcome=notice.outcome,
+            terminal=notice.terminal,
         )
         try:
+            content = EnvOutput(
+                kind=OutputKind.STATUS,
+                lane=OutputLane.STATUS,
+                scope=decision.scope,
+                source=OutputSource("status.presentation"),
+                payload=decision,
+            )
             async with asyncio.timeout(self._config.publish_timeout):
-                event = await self._runtime.output.publish_status(decision=decision)
+                event = await self._runtime.output.publish(content)
             return event is not None
         except asyncio.CancelledError:
             raise
