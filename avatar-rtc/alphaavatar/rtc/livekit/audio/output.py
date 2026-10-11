@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from math import isfinite
 
@@ -59,6 +60,7 @@ class _Playout:
     interrupted_queued: float = 0.0
     task: asyncio.Task | None = None
     running: bool = False
+    stop_failure: Exception | None = None
 
 
 class LiveKitTransientAudioOutput:
@@ -103,10 +105,52 @@ class LiveKitTransientAudioOutput:
         self._tasks: list[asyncio.Task] = []
         self._start_task: asyncio.Task | None = None
         self._close_task: asyncio.Task | None = None
+        self._shutdown_task: asyncio.Task | None = None
+        self._retirement_task: asyncio.Task | None = None
+        self._worker_failures: list[Exception] = []
+        self._observed_tasks: set[asyncio.Task] = set()
+        self._stopped_tasks: set[asyncio.Task] = set()
 
     @property
     def track_sid(self) -> str | None:
         return self._publication_sid
+
+    @staticmethod
+    def _append_failure(errors: list[Exception], error: BaseException, label: str) -> None:
+        if isinstance(error, asyncio.CancelledError):
+            failure = RuntimeError(f"{label} cancelled itself")
+            failure.__cause__ = error
+        elif isinstance(error, Exception):
+            failure = error
+        else:
+            raise error
+        if all(existing is not failure for existing in errors):
+            errors.append(failure)
+
+    @classmethod
+    def _sync_step(
+        cls, operation: Callable[[], object], errors: list[Exception], *, label: str
+    ) -> None:
+        try:
+            operation()
+        except BaseException as error:
+            cls._append_failure(errors, error, label)
+
+    @classmethod
+    async def _step(
+        cls, operation: Awaitable[object], errors: list[Exception], *, label: str
+    ) -> None:
+        try:
+            await operation
+        except BaseException as error:
+            cls._append_failure(errors, error, label)
+
+    @staticmethod
+    def _observe_retirement(task: asyncio.Task) -> None:
+        if task.cancelled():
+            logger.error("Audio consumer retirement cancelled itself")
+        elif (error := task.exception()) is not None:
+            logger.error("Audio consumer retirement failed", exc_info=error)
 
     def _job(self, event: OutputEvent) -> _Playout:
         output = event.output
@@ -125,17 +169,28 @@ class LiveKitTransientAudioOutput:
         job.cancelled = True
         while not job.frames.empty():
             job.frames.get_nowait()
+        errors: list[Exception] = []
+        try:
+            if job is self._active and self._source is not None:
+                if job.interrupted_played is None:
 
-        if job is self._active and self._source is not None:
-            if job.interrupted_played is None:
-                queued = self._queued_duration()
-                job.interrupted_played = min(job.pushed, max(job.played, job.pushed - queued))
-                job.interrupted_queued = queued
-            self._source.clear_queue()
+                    def measure() -> None:
+                        queued = self._queued_duration()
+                        job.interrupted_played = min(
+                            job.pushed, max(job.played, job.pushed - queued)
+                        )
+                        job.interrupted_queued = queued
 
-        # A not-yet-started task must execute its finally and produce the unplayed receipt.
-        if job.task is not None and job.running and not job.task.cancelling():
-            job.task.cancel()
+                    self._sync_step(measure, errors, label="Audio interruption measurement")
+                self._sync_step(self._source.clear_queue, errors, label="Audio interruption clear")
+            if errors:
+                failure = ExceptionGroup("Audio interruption failed", errors)
+                job.stop_failure = failure
+                raise failure
+        finally:
+            # Source failures cannot bypass cancellation; an unstarted job must run its finally.
+            if job.task is not None and job.running and not job.task.cancelling():
+                job.task.cancel()
 
     async def _receipt(
         self,
@@ -328,23 +383,47 @@ class LiveKitTransientAudioOutput:
                 if not success:
 
                     async def settle() -> None:
-                        queued = self._queued_duration()
-                        if job.interrupted_played is not None:
-                            job.played, queued = job.interrupted_played, job.interrupted_queued
-                        else:
-                            job.played = min(job.pushed, max(job.played, job.pushed - queued))
-                        self._source.clear_queue()
-                        await self._output.interrupt(
-                            output_id=job.identity.output_id, reason="audio_playout_stopped"
+                        errors: list[Exception] = []
+                        if job.stop_failure is not None:
+                            errors.append(job.stop_failure)
+                        queued = 0.0
+
+                        def measure() -> None:
+                            nonlocal queued
+                            if job.interrupted_played is not None:
+                                job.played, queued = job.interrupted_played, job.interrupted_queued
+                            else:
+                                queued = self._queued_duration()
+                                job.played = min(job.pushed, max(job.played, job.pushed - queued))
+
+                        self._sync_step(measure, errors, label="Audio settlement measurement")
+                        self._sync_step(
+                            self._source.clear_queue, errors, label="Audio settlement clear"
                         )
-                        await self._receipt(
-                            job.identity,
-                            OutputPlaybackType.INTERRUPTED,
-                            played=job.played,
-                            pushed=job.pushed,
-                            queued=queued,
-                            measurement="local_audio_queue",
+                        measured_and_stopped = not errors
+                        await self._step(
+                            self._output.interrupt(
+                                output_id=job.identity.output_id, reason="audio_playout_stopped"
+                            ),
+                            errors,
+                            label="Audio settlement interrupt",
                         )
+                        # A broken queue measurement or failed clear is not a playback receipt.
+                        if measured_and_stopped:
+                            await self._step(
+                                self._receipt(
+                                    job.identity,
+                                    OutputPlaybackType.INTERRUPTED,
+                                    played=job.played,
+                                    pushed=job.pushed,
+                                    queued=queued,
+                                    measurement="local_audio_queue",
+                                ),
+                                errors,
+                                label="Audio settlement receipt",
+                            )
+                        if errors:
+                            raise ExceptionGroup("Audio playout settlement failed", errors)
 
                     await wait_for_cleanup(asyncio.create_task(settle(), name="audio_settlement"))
             finally:
@@ -370,10 +449,53 @@ class LiveKitTransientAudioOutput:
                     self._jobs.pop(job.identity.output_id, None)
                     self._active = None
 
-    @staticmethod
-    def _observe(task: asyncio.Task) -> None:
-        if not task.cancelled() and task.exception() is not None:
-            logger.error("Audio transport task failed", exc_info=task.exception())
+    def _observe(self, task: asyncio.Task) -> None:
+        if not task.done() or task in self._observed_tasks:
+            return
+        self._observed_tasks.add(task)
+        try:
+            task.result()
+        except asyncio.CancelledError as error:
+            if task in self._stopped_tasks:
+                return
+            failure = RuntimeError(
+                f"Audio worker {task.get_name()!r} cancelled without owner shutdown"
+            )
+            failure.__cause__ = error
+        except Exception as error:
+            failure = error
+        else:
+            if task in self._stopped_tasks:
+                return
+            failure = RuntimeError(f"Audio worker {task.get_name()!r} stopped unexpectedly")
+        self._append_failure(self._worker_failures, failure, "Audio worker")
+        logger.error("Audio transport worker failed", exc_info=failure)
+        if self._retirement_task is None and self._close_task is None:
+            self._retirement_task = asyncio.create_task(
+                self._retire(), name="audio_consumer_retirement"
+            )
+            self._retirement_task.add_done_callback(self._observe_retirement)
+
+    async def _retire(self) -> None:
+        errors: list[Exception] = []
+        # Keep these exact failed subscriptions registered until explicit owner teardown.
+        # Removing them here would turn future delivery to a dead transport into success.
+        failure = self._worker_failures[0]
+        for subscription in (self._audio_sub, self._control_sub):
+            if subscription is not None:
+                await self._step(
+                    subscription.fail(failure), errors, label="Audio failure admission"
+                )
+        await self._step(self._join_shutdown(), errors, label="Audio consumer retirement")
+        if errors:
+            raise ExceptionGroup("Audio consumer retirement failed", errors)
+
+    async def _join_shutdown(self) -> None:
+        if self._shutdown_task is None:
+            self._shutdown_task = asyncio.create_task(
+                self._shutdown(), name="audio_transport_shutdown"
+            )
+        await wait_for_cleanup(self._shutdown_task)
 
     async def _start(self) -> None:
         self._source = rtc.AudioSource(
@@ -411,12 +533,21 @@ class LiveKitTransientAudioOutput:
             self._tasks.append(task)
 
     async def on_session_start(self) -> None:
-        if self._close_task is not None:
-            raise RuntimeError("Audio output is closed")
+        if self._close_task is not None or self._shutdown_task is not None:
+            raise RuntimeError("Audio output is closing or closed")
         if self._start_task is None:
             self._start_task = asyncio.create_task(self._start(), name="audio_start")
+
         try:
             await asyncio.shield(self._start_task)
+            for task in self._tasks:
+                self._observe(task)
+            if self._worker_failures:
+                raise RuntimeError(
+                    "Audio consumer failed during startup"
+                ) from self._worker_failures[0]
+            if self._close_task is not None or self._shutdown_task is not None:
+                raise RuntimeError("Audio output closed during startup")
         except BaseException as original:
             try:
                 await self.on_session_stop()
@@ -424,53 +555,89 @@ class LiveKitTransientAudioOutput:
                 raise original from cleanup
             raise
 
-    async def _close(self) -> None:
+    async def _shutdown(self) -> None:
+        errors: list[Exception] = []
         if self._start_task is not None:
             if not self._start_task.done():
                 self._start_task.cancel()
-            await asyncio.gather(self._start_task, return_exceptions=True)
+            result = (await asyncio.gather(self._start_task, return_exceptions=True))[0]
+            if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
+                self._append_failure(errors, result, "Audio startup")
+
         for task in self._tasks:
-            task.cancel()
+            self._observe(task)
+            # A cancellation already requested elsewhere must not be relabeled as owner shutdown.
+            if not task.done() and not task.cancelling():
+                self._stopped_tasks.add(task)
+                task.cancel()
         jobs = tuple(self._jobs.values())
         for job in jobs:
-            self._cancel(job)
-        for suffix, subscription in (("", self._audio_sub), (":control", self._control_sub)):
+            self._sync_step(
+                lambda job=job: self._cancel(job), errors, label="Audio job cancellation"
+            )
+        for subscription in (self._audio_sub, self._control_sub):
             if subscription is not None:
-                await self._output.stream.unsubscribe(self._name + suffix)
+                await self._step(subscription.close(), errors, label="Audio subscription release")
 
         await asyncio.gather(*self._tasks, return_exceptions=True)
-        await asyncio.gather(
+        for task in self._tasks:
+            self._observe(task)
+        results = await asyncio.gather(
             *(job.task for job in jobs if job.task is not None), return_exceptions=True
         )
-
-        errors = []
+        for result in results:
+            if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
+                self._append_failure(errors, result, "Audio job shutdown")
         for job in jobs:
-            if job.task is None:
-                try:
-                    await self._output.interrupt(
+            if job.task is None or not job.running:
+                # Cancellation before first execution cannot rely on the coroutine's finally.
+                await self._step(
+                    self._output.interrupt(
                         output_id=job.identity.output_id, reason="audio_output_stopping"
-                    )
-                    await self._unplayed(job.identity)
-                except Exception as exc:
-                    errors.append(exc)
+                    ),
+                    errors,
+                    label="Unstarted audio interruption",
+                )
+                await self._step(
+                    self._unplayed(job.identity), errors, label="Unstarted audio receipt"
+                )
         self._jobs.clear()
         while not self._ready.empty():
             self._ready.get_nowait()
         self._active = None
-        self._tasks.clear()
         if self._publication_sid is not None:
-            try:
-                await self._room.local_participant.unpublish_track(self._publication_sid)
-            except Exception as exc:
-                errors.append(exc)
+            await self._step(
+                self._room.local_participant.unpublish_track(self._publication_sid),
+                errors,
+                label="Audio track unpublish",
+            )
         if self._source is not None:
-            try:
-                self._source.clear_queue()
-                await self._source.aclose()
-            except Exception as exc:
-                errors.append(exc)
-        self._source = self._track = self._audio_sub = self._control_sub = None
+            self._sync_step(self._source.clear_queue, errors, label="Audio source clear")
+            await self._step(self._source.aclose(), errors, label="Audio source close")
+        self._source = self._track = None
         self._publication_sid = None
+        for failure in self._worker_failures:
+            self._append_failure(errors, failure, "Audio worker")
+        if errors:
+            raise ExceptionGroup("Audio transport shutdown failed", errors)
+
+    async def _close(self) -> None:
+        errors: list[Exception] = []
+        if self._retirement_task is not None:
+            await self._step(
+                wait_for_cleanup(self._retirement_task), errors, label="Audio retirement"
+            )
+        else:
+            await self._step(self._join_shutdown(), errors, label="Audio shutdown")
+        for suffix, subscription in (("", self._audio_sub), (":control", self._control_sub)):
+            if subscription is not None:
+                await self._step(
+                    self._output.stream.unsubscribe(self._name + suffix),
+                    errors,
+                    label="Audio unsubscribe",
+                )
+        self._audio_sub = self._control_sub = None
+        self._tasks.clear()
         if errors:
             raise ExceptionGroup("Audio transport cleanup failed", errors)
 
