@@ -151,6 +151,7 @@ class LiveKitTranscriptOutput:
         self._remember(output_id, sequence)
         if state is None:
             return
+
         if state.closing is None:
 
             async def close() -> None:
@@ -185,12 +186,7 @@ class LiveKitTranscriptOutput:
                 for identity in event.metadata.get("interrupted_output_ids", ()):
                     if self._output.text_mode(identity) == OutputTextMode.IMMEDIATE:
                         await self._finish(identity, event.sequence, interrupted=True)
-                for identity, state in tuple(self._states.items()):
-                    output_match = payload.target_output_id in {None, identity}
-                    lane_match = payload.target_lane in {None, state.lane}
-                    turn_match = payload.target_turn_id in {None, state.turn_id}
-                    if state.immediate and output_match and lane_match and turn_match:
-                        await self._finish(identity, event.sequence, interrupted=True)
+
                 return
             if (
                 output_id
