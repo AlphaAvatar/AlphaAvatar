@@ -143,6 +143,7 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
         self._worker_failures: list[Exception] = []
         self._observed_tasks: set[asyncio.Task] = set()
         self._stopped_tasks: set[asyncio.Task] = set()
+        self._externally_cancelled_tasks: set[asyncio.Task] = set()
 
     @property
     def name(self) -> str:
@@ -171,11 +172,11 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
             return
         self._observed_tasks.add(task)
         if task.cancelled():
-            if task in self._stopped_tasks:
+            if task in self._stopped_tasks or task in self._externally_cancelled_tasks:
                 return
             error = asyncio.CancelledError()
         elif (error := task.exception()) is None:
-            if task in self._stopped_tasks:
+            if task in self._stopped_tasks or task in self._externally_cancelled_tasks:
                 return
             error = RuntimeError(f"{self.CONSUMER_ID} worker exited unexpectedly")
         self._remember_failure(error, task.get_name())
@@ -184,7 +185,15 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
     def _stop_worker(self, task: asyncio.Task) -> None:
         if task.done():
             self._observe(task)
-        elif not task.cancelling():
+        elif task.cancelling():
+            if task not in self._stopped_tasks and task not in self._externally_cancelled_tasks:
+                # The worker may still be awaiting owned cleanup; classify before retirement.
+                self._externally_cancelled_tasks.add(task)
+                self._remember_failure(
+                    RuntimeError(f"{task.get_name()} was cancelling before lifecycle shutdown"),
+                    task.get_name(),
+                )
+        else:
             # Only a cancellation requested here is normal lifecycle shutdown.
             self._stopped_tasks.add(task)
             task.cancel()
