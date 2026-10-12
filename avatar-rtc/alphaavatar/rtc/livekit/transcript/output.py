@@ -316,14 +316,9 @@ class LiveKitTranscriptOutput:
                 raise
             except Exception:
                 logger.exception("Transcript delivery failed output_id=%s", event.output.output_id)
-                if event.output.output_id:
-                    try:
-                        async with asyncio.timeout(self._timeout):
-                            await self._finish(event.output.output_id, interrupted=True)
-                    except Exception:
-                        logger.exception(
-                            "Transcript cleanup failed output_id=%s", event.output.output_id
-                        )
+                # Retirement fails the subscription before settling every live writer.
+                # Continuing here would silently drop later chunks of a locally finalized output.
+                raise
 
     async def _retire_consumer(self, subscription: OutputSubscription, failure: Exception) -> None:
         errors: list[Exception] = []
