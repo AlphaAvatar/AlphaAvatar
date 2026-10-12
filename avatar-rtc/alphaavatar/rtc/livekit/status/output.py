@@ -20,6 +20,7 @@ import logging
 
 from livekit import rtc
 
+from alphaavatar.core.lifecycle import LifecycleComponent
 from alphaavatar.core.output import OutputRuntime, OutputSubscription
 from alphaavatar.core.output.enums import OutputKind, OutputLane
 from alphaavatar.core.output.enums.audience import OutputAudience
@@ -28,7 +29,7 @@ from alphaavatar.core.output.schemas import OutputEvent, OutputStatusDecision
 logger = logging.getLogger(__name__)
 
 
-class LiveKitStatusOutput:
+class LiveKitStatusOutput(LifecycleComponent):
     """Transmit only user presentation decisions, never raw execution or record payloads."""
 
     def __init__(
@@ -94,7 +95,7 @@ class LiveKitStatusOutput:
             except Exception:
                 logger.exception("Status transport failed event_id=%s", event.event_id)
 
-    async def on_session_start(self) -> None:
+    async def on_start(self) -> None:
         if self._run_task is not None:
             return
         self._subscription = await self._output.stream.subscribe(
@@ -106,7 +107,7 @@ class LiveKitStatusOutput:
         )
         self._run_task = asyncio.create_task(self._run(), name=self._subscription_name)
 
-    async def on_session_stop(self) -> None:
+    async def on_stop(self) -> None:
         task, self._run_task = self._run_task, None
         if task is not None:
             task.cancel()

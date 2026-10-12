@@ -16,22 +16,21 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 
-from alphaavatar.agents.runtime.lifecycle import LifecyclePhase, RuntimePluginLifecycle
 from alphaavatar.core.cleanup import wait_for_cleanup
-from alphaavatar.core.lifecycle import SessionLifecycle
+from alphaavatar.core.lifecycle import LifecycleComponent, LifecycleGroup, LifecyclePhase
 
 
-class HostSessionLifecycle:
+class HostExecution:
     """Coordinate the current session-owned execution without closing its shared runtime."""
 
     def __init__(
         self,
         *,
-        engine: SessionLifecycle,
-        inputs: Sequence[SessionLifecycle] = (),
-        outputs: Sequence[SessionLifecycle] = (),
+        engine: LifecycleComponent,
+        inputs: Sequence[LifecycleComponent] = (),
+        outputs: Sequence[LifecycleComponent] = (),
     ) -> None:
-        self._lifecycle = RuntimePluginLifecycle(
+        self._lifecycle = LifecycleGroup(
             phases=(
                 LifecyclePhase.create("rtc-output", outputs),
                 LifecyclePhase.create("avatar-engine", (engine,)),
@@ -67,12 +66,6 @@ class HostSessionLifecycle:
         if self._close_task is not None:
             raise RuntimeError("Host session closed before readiness")
 
-    async def aclose(self) -> None:
-        if self._close_task is None:
-            self._close_task = asyncio.create_task(self._close(), name="host_session_close")
-            self._start_requested.set()
-        await wait_for_cleanup(self._close_task)
-
     async def _close(self) -> None:
         task = self._start_task
         if task is not None:
@@ -80,3 +73,10 @@ class HostSessionLifecycle:
                 task.cancel()
             await asyncio.gather(task, return_exceptions=True)
         await self._lifecycle.stop()
+
+    async def aclose(self) -> None:
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close(), name="host_session_close")
+            self._start_requested.set()
+
+        await wait_for_cleanup(self._close_task)

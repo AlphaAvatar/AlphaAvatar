@@ -21,8 +21,8 @@ and is available through `alpha-avatar-core[video]`.
 Input adapters receive a LiveKit room and the shared `PerceptionRuntime`.
 Output adapters receive a room and the shared `OutputRuntime`.
 
-Adapters expose `on_session_start()` and `on_session_stop()`, structurally
-satisfying `alphaavatar.core.lifecycle.SessionLifecycle`.
+Adapters expose `on_start()` and `on_stop()`, structurally
+satisfying `alphaavatar.core.lifecycle.LifecycleComponent`.
 
 Each adapter owns its subscriptions, callbacks, tasks, and transport resources.
 It must not close the shared room, PerceptionRuntime, or OutputRuntime.

@@ -23,6 +23,7 @@ from livekit import rtc
 
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.env import EnvOutput
+from alphaavatar.core.lifecycle import LifecycleComponent
 from alphaavatar.core.media import AudioFrame
 from alphaavatar.core.output import OutputRuntime
 from alphaavatar.core.output.enums import (
@@ -63,7 +64,7 @@ class _Playout:
     stop_failure: Exception | None = None
 
 
-class LiveKitTransientAudioOutput:
+class LiveKitTransientAudioOutput(LifecycleComponent):
     """Single-track assistant/transient transport; receipts measure the local queue only.
 
     The existing Host constructor name remains until native Engine integration.
@@ -532,7 +533,7 @@ class LiveKitTransientAudioOutput:
             task.add_done_callback(self._observe)
             self._tasks.append(task)
 
-    async def on_session_start(self) -> None:
+    async def on_start(self) -> None:
         if self._close_task is not None or self._shutdown_task is not None:
             raise RuntimeError("Audio output is closing or closed")
         if self._start_task is None:
@@ -550,7 +551,7 @@ class LiveKitTransientAudioOutput:
                 raise RuntimeError("Audio output closed during startup")
         except BaseException as original:
             try:
-                await self.on_session_stop()
+                await self.on_stop()
             except BaseException as cleanup:
                 raise original from cleanup
             raise
@@ -641,7 +642,7 @@ class LiveKitTransientAudioOutput:
         if errors:
             raise ExceptionGroup("Audio transport cleanup failed", errors)
 
-    async def on_session_stop(self) -> None:
+    async def on_stop(self) -> None:
         if self._close_task is None:
             self._close_task = asyncio.create_task(self._close(), name="audio_close")
         await wait_for_cleanup(self._close_task)

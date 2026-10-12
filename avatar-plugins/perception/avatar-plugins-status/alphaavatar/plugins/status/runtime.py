@@ -63,7 +63,7 @@ class StatusRuntime(StatusBase):
         if self._close_task is not None:
             raise asyncio.CancelledError
 
-    async def on_session_start(self) -> None:
+    async def on_start(self) -> None:
         if self._close_task is not None:
             raise RuntimeError("Status runtime is closed")
         if self._start_task is None:
@@ -72,7 +72,7 @@ class StatusRuntime(StatusBase):
             await asyncio.shield(self._start_task)
         except BaseException as original:
             try:
-                await self.on_session_stop()
+                await self.on_stop()
             except BaseException as cleanup:
                 raise original from cleanup
             raise
@@ -96,7 +96,7 @@ class StatusRuntime(StatusBase):
         if errors:
             raise ExceptionGroup("Status cleanup failed", errors)
 
-    async def on_session_stop(self) -> None:
+    async def on_stop(self) -> None:
         if self._close_task is None:
             self._close_task = asyncio.create_task(self._close(), name="status:close")
         await wait_for_cleanup(self._close_task)

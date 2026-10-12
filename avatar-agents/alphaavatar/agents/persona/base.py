@@ -16,14 +16,14 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import TYPE_CHECKING
 
-from alphaavatar.agents.runtime.plugin import AvatarRuntimePlugin
+from alphaavatar.core.lifecycle import LifecycleComponent
 
 if TYPE_CHECKING:
     from alphaavatar.agents.persona.cache import PersonaCache
     from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
 
 
-class PersonaBase(AvatarRuntimePlugin):
+class PersonaBase(LifecycleComponent):
     @property
     @abstractmethod
     def capability_registry(self) -> AvatarCapabilityRegistry: ...

@@ -12,6 +12,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .module import AvatarModule, AvatarModulePlugin
-from .runtime import AvatarRuntimePlugin
 
-__all__ = ["AvatarModule", "AvatarModulePlugin", "AvatarRuntimePlugin"]
+__all__ = ["AvatarModule", "AvatarModulePlugin"]

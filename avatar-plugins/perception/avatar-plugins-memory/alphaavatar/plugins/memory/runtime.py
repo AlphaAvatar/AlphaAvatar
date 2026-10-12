@@ -396,7 +396,7 @@ class MemoryRuntime(MemoryBase):
         if errors:
             raise ExceptionGroup("Memory shutdown failed", errors)
 
-    async def on_session_start(self) -> None:
+    async def on_start(self) -> None:
         if self._close_task is not None:
             raise RuntimeError("Memory runtime is closing or closed")
         if not self._processors_bound:
@@ -410,12 +410,12 @@ class MemoryRuntime(MemoryBase):
                 raise RuntimeError("Memory closed during startup")
         except BaseException as original:
             try:
-                await self.on_session_stop()
+                await self.on_stop()
             except BaseException as cleanup_error:
                 raise original from cleanup_error
             raise
 
-    async def on_session_stop(self) -> None:
+    async def on_stop(self) -> None:
         if self._close_task is None:
             self._close_task = asyncio.create_task(self._close(), name="memory_runtime_close")
         await wait_for_cleanup(self._close_task)

@@ -231,7 +231,7 @@ class PersonaRuntime(PersonaBase):
         if errors:
             raise ExceptionGroup("One or more Persona profiles failed to save", errors)
 
-    async def on_session_start(self) -> None:
+    async def on_start(self) -> None:
         if self._started:
             return
         if not self._processors_bound:
@@ -265,7 +265,7 @@ class PersonaRuntime(PersonaBase):
             [processor.name for processor in self._processors],
         )
 
-    async def on_session_stop(self) -> None:
+    async def on_stop(self) -> None:
         if not self._started and not self._started_processors:
             return
 

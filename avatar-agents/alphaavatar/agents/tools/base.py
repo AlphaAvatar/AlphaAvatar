@@ -18,8 +18,8 @@ from abc import abstractmethod
 from typing import TYPE_CHECKING, Any
 
 from alphaavatar.agents.runtime.capability import AvatarCapability
-from alphaavatar.agents.runtime.plugin import AvatarRuntimePlugin
 from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.lifecycle import LifecycleComponent
 
 from .enums import ToolErrorCode
 from .schemas import ToolError
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from alphaavatar.agents.runtime import AvatarRuntime
 
 
-class ToolBase(AvatarRuntimePlugin):
+class ToolBase(LifecycleComponent):
     """Own invocation tasks and resources, never SDK schemas or business descriptions."""
 
     capabilities: tuple[AvatarCapability, ...] = ()
@@ -49,7 +49,7 @@ class ToolBase(AvatarRuntimePlugin):
         if not task.cancelled():
             task.exception()
 
-    async def on_session_start(self) -> None:
+    async def on_start(self) -> None:
         if self._close_task is not None:
             raise RuntimeError("Tool is closing or closed")
         if self._start_task is None:
@@ -63,7 +63,7 @@ class ToolBase(AvatarRuntimePlugin):
                 raise RuntimeError("Tool closed during startup")
             self._ready = True
         except BaseException:
-            await self.on_session_stop()
+            await self.on_stop()
             raise
 
     async def invoke(self, request: Any) -> Any:
@@ -93,7 +93,7 @@ class ToolBase(AvatarRuntimePlugin):
         self._calls.clear()
         await self._stop()
 
-    async def on_session_stop(self) -> None:
+    async def on_stop(self) -> None:
         if asyncio.current_task() in self._calls:
             raise RuntimeError("A tool invocation cannot close its owner")
         if self._close_task is None:

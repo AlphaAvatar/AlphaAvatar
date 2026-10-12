@@ -33,7 +33,7 @@ from alphaavatar.agents.utils.files.work_dirs import WorkspacePaths, prepare_use
 from alphaavatar.agents.utils.id_utils import get_session_id, get_user_id
 from alphaavatar.agents.utils.time import build_user_time_context
 from alphaavatar.core.cleanup import wait_for_cleanup
-from alphaavatar.core.lifecycle import SessionLifecycle
+from alphaavatar.core.lifecycle import LifecycleComponent
 from alphaavatar.host.bootstrap import create_avatar_runtime
 from alphaavatar.rtc.livekit.audio.input import LiveKitAudioInput
 from alphaavatar.rtc.livekit.audio.output import LiveKitTransientAudioOutput
@@ -244,7 +244,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
                 close_session_execution(
                     session,
                     avatar_runtime,
-                    lifecycle=avatar_engine.host_lifecycle if avatar_engine is not None else None,
+                    lifecycle=avatar_engine.host_execution if avatar_engine is not None else None,
                 ),
                 name="avatar_host_shutdown",
             )
@@ -270,7 +270,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
         track_sid=lambda: transient_audio_output.track_sid,
     )
 
-    rtc_inputs: list[SessionLifecycle] = []
+    rtc_inputs: list[LifecycleComponent] = []
     if session_mode.audio_input_enabled:
         rtc_inputs.append(
             LiveKitAudioInput(
@@ -347,7 +347,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
                 participant_identity=participant.identity,
             ),
         )
-        await avatar_engine.host_lifecycle.wait_ready()
+        await avatar_engine.host_execution.wait_ready()
     except BaseException:
         await _shutdown_avatar_session()
         raise

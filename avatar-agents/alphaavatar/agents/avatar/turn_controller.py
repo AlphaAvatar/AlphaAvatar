@@ -26,9 +26,9 @@ from alphaavatar.agents.router.schemas import (
     TurnTakingDecision,
 )
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.plugin import AvatarRuntimePlugin
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import AnnotationKind, ObservationKind
+from alphaavatar.core.lifecycle import LifecycleComponent
 from alphaavatar.core.media import TextPayload
 from alphaavatar.core.output.enums import OutputLane
 from alphaavatar.core.perception.schemas import PerceptionEvent
@@ -48,7 +48,7 @@ class AvatarTurnSink(Protocol):
     ) -> None: ...
 
 
-class AvatarTurnController(AvatarRuntimePlugin):
+class AvatarTurnController(LifecycleComponent):
     CONSUMER_ID = "avatar.turn_controller"
 
     def __init__(
@@ -290,7 +290,7 @@ class AvatarTurnController(AvatarRuntimePlugin):
                 logger.exception("Avatar Turn Controller failed")
                 await asyncio.sleep(0.05)
 
-    async def on_session_start(self) -> None:
+    async def on_start(self) -> None:
         if self._task is not None:
             return
 
@@ -300,7 +300,7 @@ class AvatarTurnController(AvatarRuntimePlugin):
         )
         logger.info("Avatar Turn Controller started")
 
-    async def on_session_stop(self) -> None:
+    async def on_stop(self) -> None:
         if self._task is None:
             return
 

@@ -25,11 +25,11 @@ from alphaavatar.agents.avatar import AvatarEngine
 from alphaavatar.agents.avatar.context.schemas import ContextPrepareRequest
 from alphaavatar.agents.entrypoints.livekit import LiveKitModelInput, LiveKitTurnInput
 from alphaavatar.core.env import EnvOutput
-from alphaavatar.core.lifecycle import SessionLifecycle
+from alphaavatar.core.lifecycle import LifecycleComponent
 from alphaavatar.core.output.enums import OutputKind, OutputLane
 from alphaavatar.core.output.schemas import OutputSource, OutputTextChunk
 from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
-from alphaavatar.host.lifecycle import HostSessionLifecycle
+from alphaavatar.host.execution import HostExecution
 
 from .execution import LiveKitExecutionBridge, extract_answer_text, owning_speech
 from .records import LiveKitOutputBridge
@@ -48,8 +48,8 @@ class LiveKitHostedAgent(AvatarEngine):
         *,
         avatar_config: AvatarConfig,
         runtime: AvatarRuntime,
-        inputs: Sequence[SessionLifecycle] = (),
-        outputs: Sequence[SessionLifecycle] = (),
+        inputs: Sequence[LifecycleComponent] = (),
+        outputs: Sequence[LifecycleComponent] = (),
     ) -> None:
         self._livekit_model_input = LiveKitModelInput(clock=runtime.clock)
         self._livekit_turn_input = LiveKitTurnInput(clock=runtime.clock, runtime=runtime)
@@ -66,11 +66,11 @@ class LiveKitHostedAgent(AvatarEngine):
             adapter=self._livekit_model_input,
             context_id=runtime.state.context_id,
         )
-        self._host_lifecycle = HostSessionLifecycle(engine=self, inputs=inputs, outputs=outputs)
+        self._host_execution = HostExecution(engine=self, inputs=inputs, outputs=outputs)
 
     @property
-    def host_lifecycle(self) -> HostSessionLifecycle:
-        return self._host_lifecycle
+    def host_execution(self) -> HostExecution:
+        return self._host_execution
 
     def _ensure_turn_snapshot(self, chat_ctx: llm.ChatContext) -> TurnSnapshot:
         message = self._livekit_turn_input.latest_user_message(chat_ctx)
@@ -154,15 +154,15 @@ class LiveKitHostedAgent(AvatarEngine):
 
         return generate()
 
-    async def on_session_start(self) -> None:
-        await super().on_session_start()
+    async def on_start(self) -> None:
+        await super().on_start()
         try:
             self._output_bridge.start(self.session)
         except BaseException:
-            await super().on_session_stop()
+            await super().on_stop()
             raise
 
-    async def on_session_stop(self) -> None:
+    async def on_stop(self) -> None:
         errors: list[Exception] = []
         try:
             await self._execution_bridge.aclose()
@@ -173,14 +173,14 @@ class LiveKitHostedAgent(AvatarEngine):
         except Exception as exc:
             errors.append(exc)
         try:
-            await super().on_session_stop()
+            await super().on_stop()
         except Exception as exc:
             errors.append(exc)
         if errors:
             raise ExceptionGroup("Hosted Agent cleanup failed", errors)
 
     async def on_enter(self) -> None:
-        await self._host_lifecycle.start()
+        await self._host_execution.start()
 
     async def on_exit(self) -> None:
-        await self._host_lifecycle.aclose()
+        await self._host_execution.aclose()

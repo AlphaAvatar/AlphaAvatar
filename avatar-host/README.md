@@ -20,7 +20,7 @@ Applications may use Host interfaces directly without going through CLI parsing.
 
 ## Lifecycle ownership
 
-`HostSessionLifecycle` coordinates:
+`HostExecution` coordinates:
 
 ```text
 RTC outputs -> AvatarEngine -> RTC inputs

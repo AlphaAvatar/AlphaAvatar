@@ -49,7 +49,7 @@ class InteractionRouterRuntime(InteractionRouterBase):
     def processors(self) -> tuple[RouterProcessorBase, ...]:
         return self._processors
 
-    async def on_session_start(self) -> None:
+    async def on_start(self) -> None:
         if self._started:
             return
 
@@ -77,7 +77,7 @@ class InteractionRouterRuntime(InteractionRouterBase):
             [processor.name for processor in self._processors],
         )
 
-    async def on_session_stop(self) -> None:
+    async def on_stop(self) -> None:
         if not self._started and not self._started_processors:
             return
 

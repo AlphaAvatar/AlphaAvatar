@@ -11,8 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from alphaavatar.agents.runtime.plugin import AvatarRuntimePlugin
+from alphaavatar.core.lifecycle import LifecycleComponent
 
 
-class StatusBase(AvatarRuntimePlugin):
+class StatusBase(LifecycleComponent):
     """Lifecycle contract for consumers that derive presentation from runtime facts."""

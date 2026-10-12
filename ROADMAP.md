@@ -169,7 +169,7 @@
 | Date    | Milestone                            | Notes |
 | :------ | :----------------------------------- | :---- |
 | 2026-07 | **AvatarRuntime Composition**        | Added `AvatarRuntime` as the session-scoped composition root for `SessionRuntime`, `StateRuntime`, `PerceptionRuntime`, and `InferenceExecutor`. |
-| 2026-07 | **Simplified Plugin Lifecycle**      | Runtime dependencies are injected during plugin construction, while `on_session_start()` and `on_session_stop()` only manage lifecycle work. |
+| 2026-07 | **Simplified Plugin Lifecycle**      | Runtime dependencies are injected during plugin construction, while `on_start()` and `on_stop()` only manage lifecycle work. |
 | 2026-07 | **Producer / Consumer Orchestration**| Perception consumers start before RTC producers, while producers stop before consumers to preserve clean full-duplex lifecycle boundaries. |
 | 2026-07 | **AlphaAvatar Inference Runtime**    | Added Worker-owned `InferenceRuntime`, session-scoped `InferenceExecutor`, Unix domain socket IPC, and persistent runner processes independent of LiveKit Agent inference internals. |
 | 2026-07 | **Isolated Inference Runners**       | VAD, speaker vector, speaker attributes, face analysis, and all Persona, Memory, and MCP VDB workloads now run in independent persistent processes. |

@@ -28,9 +28,9 @@ from alphaavatar.agents.persona import PersonaBase
 from alphaavatar.agents.router import InteractionRouterBase
 from alphaavatar.agents.runtime import AvatarRuntime, SessionRuntime
 from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
-from alphaavatar.agents.runtime.lifecycle import LifecyclePhase, RuntimePluginLifecycle
 from alphaavatar.agents.status import StatusBase
 from alphaavatar.agents.tools import ToolBase
+from alphaavatar.core.lifecycle import LifecycleGroup, LifecyclePhase
 from alphaavatar.core.output.enums import ExecutionSignalKind
 from alphaavatar.core.output.schemas import OutputExecutionSignal, OutputScope
 
@@ -90,7 +90,7 @@ class AvatarEngine(Agent):
         )
 
         # Step 5: manage Agent-owned consumers before enabling the Router.
-        self._plugin_lifecycle = RuntimePluginLifecycle(
+        self._plugin_lifecycle = LifecycleGroup(
             phases=(
                 LifecyclePhase.create("avatar-status", (self._status,)),
                 LifecyclePhase.create(
@@ -151,12 +151,12 @@ class AvatarEngine(Agent):
             )
         )
 
-    async def on_session_start(self) -> None:
+    async def on_start(self) -> None:
         if not self._loop.ready:
             raise RuntimeError("AvatarEngine cannot start with an unready Loop")
         await self._plugin_lifecycle.start()
 
-    async def on_session_stop(self) -> None:
+    async def on_stop(self) -> None:
         errors: list[Exception] = []
 
         # Loop consumers may still commit records to Memory during their cleanup.

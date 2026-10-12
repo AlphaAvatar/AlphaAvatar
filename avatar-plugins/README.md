@@ -63,7 +63,7 @@ Sandbox is planned. RAG remains the current document-retrieval plugin; a future 
 
 `AvatarModulePlugin` registers module factories independently of LiveKit's plugin registry. Factories create configured instances; the registry does not own session-specific state.
 
-`AvatarRuntimePlugin` defines the session lifecycle contract. Runtime plugins and their processors own their consumer cursors, queues, tasks, and modality-specific state.
+`LifecycleComponent` defines the avatar lifecycle contract. Runtime plugins and their processors own their consumer cursors, queues, tasks, and modality-specific state.
 
 Foundation owns its reusable service components. Consumers own their individual streams, requests, and cancellation state, and must stop before shared services are released. A consuming plugin must not close a borrowed foundation component.
 

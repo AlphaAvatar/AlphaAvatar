@@ -24,6 +24,7 @@ from livekit import rtc
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.schemas import PerceptionSourceRef
+from alphaavatar.core.lifecycle import LifecycleComponent
 from alphaavatar.core.media import VideoFramePayload
 from alphaavatar.core.media.codecs.video import encode_video_frame_to_jpeg
 from alphaavatar.core.perception import PerceptionRuntime
@@ -69,7 +70,7 @@ class _VideoTrackBinding:
         return self.source.source_generation
 
 
-class LiveKitVideoInput:
+class LiveKitVideoInput(LifecycleComponent):
     """Translate LiveKit video tracks into video observations and source-state events."""
 
     def __init__(
@@ -570,7 +571,7 @@ class LiveKitVideoInput:
             raise ExceptionGroup(f"{type(self).__name__} cleanup failed", errors)
         logger.info("%s stopped session_id=%s", type(self).__name__, self._perception.session_id)
 
-    async def on_session_start(self) -> None:
+    async def on_start(self) -> None:
         if self._stop_task is not None:
             raise RuntimeError(f"{type(self).__name__} is closing or closed")
         if self._started:
@@ -581,11 +582,11 @@ class LiveKitVideoInput:
             self._register_listeners()
             self._attach_existing_tracks()
         except BaseException:
-            await self.on_session_stop()
+            await self.on_stop()
             raise
         logger.info("%s started session_id=%s", type(self).__name__, self._perception.session_id)
 
-    async def on_session_stop(self) -> None:
+    async def on_stop(self) -> None:
         if self._stop_task is None:
             self._started = False
             self._stop_task = asyncio.create_task(self._stop(), name=f"{type(self).__name__}:stop")

@@ -22,14 +22,14 @@ if TYPE_CHECKING:
     from livekit.agents import AgentSession
 
     from alphaavatar.agents.runtime import AvatarRuntime
-    from alphaavatar.host.lifecycle import HostSessionLifecycle
+    from alphaavatar.host.execution import HostExecution
 
 
 async def close_session_execution(
     session: AgentSession,
     runtime: AvatarRuntime,
     *,
-    lifecycle: HostSessionLifecycle | None = None,
+    lifecycle: HostExecution | None = None,
 ) -> None:
     """Close SDK activity, Host-owned components, then the session-owned runtime."""
 

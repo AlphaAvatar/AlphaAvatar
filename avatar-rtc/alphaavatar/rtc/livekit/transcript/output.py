@@ -24,6 +24,7 @@ from typing import Any
 from livekit import rtc
 
 from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.lifecycle import LifecycleComponent
 from alphaavatar.core.output import OutputRuntime
 from alphaavatar.core.output.enums import OutputControlType, OutputKind, OutputLane, OutputTextMode
 from alphaavatar.core.output.schemas import (
@@ -48,7 +49,7 @@ class _Transcript:
     closing: asyncio.Task | None = None
 
 
-class LiveKitTranscriptOutput:
+class LiveKitTranscriptOutput(LifecycleComponent):
     """Deliver immediate source text or audio-synchronized phrases, never MIRROR content."""
 
     TRANSCRIPTION_TOPIC = "lk.transcription"
@@ -374,7 +375,7 @@ class LiveKitTranscriptOutput:
         self._task = asyncio.create_task(self._run(), name=self._name)
         self._task.add_done_callback(self._observe_consumer)
 
-    async def on_session_start(self) -> None:
+    async def on_start(self) -> None:
         if self._close_task is not None:
             raise RuntimeError("Output consumer is closing or closed")
         if self._start_task is None:
@@ -390,7 +391,7 @@ class LiveKitTranscriptOutput:
                 ) from self._consumer_failure
         except BaseException as original:
             try:
-                await self.on_session_stop()
+                await self.on_stop()
             except BaseException as cleanup:
                 raise original from cleanup
             raise
@@ -444,7 +445,7 @@ class LiveKitTranscriptOutput:
         if errors:
             raise ExceptionGroup("Transcript transport cleanup failed", errors)
 
-    async def on_session_stop(self) -> None:
+    async def on_stop(self) -> None:
         if self._close_task is None:
             self._close_task = asyncio.create_task(self._close(), name="transcript_transport_close")
         await wait_for_cleanup(self._close_task)
