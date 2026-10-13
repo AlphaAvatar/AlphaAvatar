@@ -36,7 +36,7 @@ from alphaavatar.agents.constants import RUNTIME_CONTEXT_TOOL_NAME
 if TYPE_CHECKING:
     from alphaavatar.agents.avatar.context.schemas import ContextBuildRequest, ContextBuildResult
 
-    from .renderer import RendererRegistry
+    from ..renderer import RendererRegistry
 
 
 class ContextBuilder:
@@ -49,7 +49,7 @@ class ContextBuilder:
 
     def _renderers(self) -> RendererRegistry:
         if self._registry is None:
-            from .renderer import RealtimeRenderer, RendererRegistry, TextRenderer, VLMRenderer
+            from ..renderer import RealtimeRenderer, RendererRegistry, TextRenderer, VLMRenderer
 
             self._registry = RendererRegistry()
             for kind, renderer in (

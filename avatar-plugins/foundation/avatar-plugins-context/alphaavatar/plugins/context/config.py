@@ -21,3 +21,8 @@ class ContextConfig(BaseModel):
 
     behavior_rules: str = DEFAULT_SYSTEM_VALUE
     max_pending_preparations: int = Field(default=16, ge=1, le=128)
+
+    # History Config
+    history_max_turns: int = Field(default=32, ge=1)
+    history_max_items: int = Field(default=4096, ge=1)
+    history_max_bytes: int = Field(default=8 * 1024 * 1024, ge=1)

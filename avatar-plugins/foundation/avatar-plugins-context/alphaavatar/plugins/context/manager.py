@@ -32,8 +32,9 @@ from alphaavatar.core.env.enums import ObservationKind
 from alphaavatar.core.perception import PerceptionTemporalAligner, TemporalAlignmentMode
 from alphaavatar.core.time import RuntimeTimeRange
 
+from .builder import ContextBuilder
 from .config import ContextConfig
-from .context_builder import ContextBuilder
+from .history import ContextHistory
 from .snapshot import snapshot_input
 from .template import AvatarSysPromptTemplate, RuntimeStateTemplate
 
@@ -48,7 +49,7 @@ logger = logging.getLogger(__name__)
 
 
 class AvatarContextManager(ContextManager):
-    """Runtime-owned facade; no run counters, active query handles or SDK state live here."""
+    """Own canonical query history and snapshots, not execution handles or SDK state."""
 
     _OBSERVATION_KINDS = frozenset(
         {
@@ -71,6 +72,7 @@ class AvatarContextManager(ContextManager):
         self._introduction = avatar_config.avatar.introduction
         self._memory: MemoryBase | None = None
         self._persona: PersonaBase | None = None
+        self._history = ContextHistory(output=runtime.output, config=config)
         self._pending = 0
         self._work: set[asyncio.Task[ModelInput]] = set()
         self._close_task: asyncio.Task[None] | None = None
@@ -80,7 +82,7 @@ class AvatarContextManager(ContextManager):
         self._ensure_open()
         persona = self._persona.persona_content if self._persona is not None else None
         return self._system_template(self._runtime.state).instructions(
-            stable_persona=persona or self._runtime.state.user_persona or DEFAULT_SYSTEM_VALUE
+            stable_persona=persona or self._runtime.state.user_persona or DEFAULT_SYSTEM_VALUE,
         )
 
     @staticmethod
@@ -101,6 +103,15 @@ class AvatarContextManager(ContextManager):
             raise RuntimeError("Cannot bind Context sources during preparation")
         self._memory, self._persona = memory, persona
 
+    def accept_turn(self, snapshot: TurnSnapshot) -> ModelInput:
+        self._ensure_open()
+        context_id = self._runtime.state.context_id
+        if self._runtime.turn.get(snapshot.input_id) is not snapshot:
+            raise ValueError("Context can only accept a Turn owned by this runtime")
+        if context_id not in snapshot.context_ids:
+            raise ValueError("Committed input belongs to another context")
+        return self._history.accept_turn(snapshot, context_id)
+
     def _system_template(self, state: StateRuntime) -> AvatarSysPromptTemplate:
         return AvatarSysPromptTemplate(
             self._introduction,
@@ -117,7 +128,9 @@ class AvatarContextManager(ContextManager):
                 participant.user_time.timezone, participant.user_time.timezone_source
             )
             times[identity] = ParticipantTimeContext(
-                participant_id=identity, user_id=participant.effective_user_id, user_time=time
+                participant_id=identity,
+                user_id=participant.effective_user_id,
+                user_time=time,
             )
 
         # Read sources once. Preparing a query must not write to shared State or participants.
@@ -161,11 +174,9 @@ class AvatarContextManager(ContextManager):
             source_states_at_end=snapshot.source_states_at_commit,
             has_event_gap=snapshot.perception_gap,
             missed_event_count=snapshot.missed_perception_events,
-            mode=(
-                TemporalAlignmentMode.FIXED
-                if self._vision.input_mode == ModelInputType.REALTIME
-                else None
-            ),
+            mode=TemporalAlignmentMode.FIXED
+            if self._vision.input_mode == ModelInputType.REALTIME
+            else None,
         )
         selection = VisualFrameSelector().select(alignment=alignment, config=self._vision)
         result = ContextBuilder().build(
@@ -199,9 +210,14 @@ class AvatarContextManager(ContextManager):
             snapshot = self._runtime.turn.get(request.input_id)
             if snapshot is None or snapshot.turn_id != request.turn_id:
                 raise ValueError("Context input does not identify the requested committed turn")
-            if request.context_id not in snapshot.context_ids:
+            if (
+                request.context_id not in snapshot.context_ids
+                or request.context_id != self._runtime.state.context_id
+            ):
                 raise ValueError("Committed turn does not belong to the requested context")
 
+            # Standalone native Loop callers use the same acceptance path as the Engine.
+            self.accept_turn(snapshot)
             ready = await self._runtime.turn.wait_context_ready(snapshot)
             self._ensure_open()
             if request.context_id != self._runtime.state.context_id:
@@ -209,6 +225,9 @@ class AvatarContextManager(ContextManager):
             if not ready:
                 logger.debug("Context readiness timed out turn_id=%s", request.turn_id)
 
+            request = replace(
+                request, input=self._history.capture(snapshot, request.context_id, request.input)
+            )
             state = self._state_snapshot()
             system = self._system_template(state).instructions(stable_persona=state.user_persona)
             text = RuntimeStateTemplate().render(state_runtime=state)
@@ -254,7 +273,10 @@ class AvatarContextManager(ContextManager):
     async def _close(self) -> None:
         await asyncio.gather(*tuple(self._work), return_exceptions=True)
         self._work.clear()
-        self._memory = self._persona = None
+        try:
+            await self._history.aclose()
+        finally:
+            self._memory = self._persona = None
 
     async def aclose(self) -> None:
         if self._close_task is None:

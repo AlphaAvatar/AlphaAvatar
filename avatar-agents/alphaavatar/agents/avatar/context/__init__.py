@@ -13,6 +13,6 @@
 # limitations under the License.
 """Public ContextManager contract; implementations live in the Context plugin."""
 
-from .context_manager import ContextManager
+from .manager_base import ContextManager
 
 __all__ = ["ContextManager"]

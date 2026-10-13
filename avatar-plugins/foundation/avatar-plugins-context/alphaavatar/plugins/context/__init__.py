@@ -33,7 +33,7 @@ class ContextPlugin(AvatarModulePlugin):
         self, *, runtime: AvatarRuntime, avatar_config: AvatarConfig, init_config: Any
     ) -> ContextManager:
         from .config import ContextConfig
-        from .context_manager import AvatarContextManager
+        from .manager import AvatarContextManager
 
         return AvatarContextManager(
             runtime=runtime,

@@ -223,6 +223,7 @@ class LoopExecution(LoopHandle):
             options = options.model_copy(
                 update={"max_output_tokens": self._request.limits.final_output_tokens}
             )
+
         request = ModelRequest(
             input=self._context_manager.build(self._context, continuation=tuple(self._new_items)),
             # Preserve schemas/order even when tool use is disabled for finalization.
