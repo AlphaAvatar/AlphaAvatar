@@ -11,17 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import asyncio
-import contextlib
 import json
 import os
 from functools import partial
 
-from livekit import agents, api
-from livekit.agents import AgentSession, room_io
+from livekit import agents
 from livekit.agents.job import AutoSubscribe
-from livekit.plugins import noise_cancellation
 
+from alphaavatar.agents.avatar import AvatarEngine
 from alphaavatar.agents.avatar.patches import AvatarServer
 from alphaavatar.agents.configs import AvatarConfig, get_avatar_args, read_args
 from alphaavatar.agents.constants import DEFAULT_CONTEXT_VALUE
@@ -38,335 +38,208 @@ from alphaavatar.host.bootstrap import create_avatar_runtime
 from alphaavatar.rtc.livekit.audio.input import LiveKitAudioInput
 from alphaavatar.rtc.livekit.audio.output import LiveKitTransientAudioOutput
 from alphaavatar.rtc.livekit.status.output import LiveKitStatusOutput
+from alphaavatar.rtc.livekit.text import LiveKitTextInput
 from alphaavatar.rtc.livekit.transcript.output import LiveKitTranscriptOutput
 from alphaavatar.rtc.livekit.video.input import LiveKitVideoInput
 
-from .agent import LiveKitHostedAgent
+from .connection import LiveKitConnection
 from .lifecycle import close_session_execution
-from .session import SessionMode, resolve_session_mode, resolve_session_type
+from .session import resolve_session_mode, resolve_session_type
 
 init_env()
 
 
 def get_max_session_seconds() -> int:
-    raw_value = os.getenv("ALPHAAVATAR_MAX_SESSION_SECONDS", "1800")
+    raw = os.getenv("ALPHAAVATAR_MAX_SESSION_SECONDS", "1800")
     try:
-        return int(raw_value)
+        return int(raw)
     except ValueError:
-        logger.warning(
-            "Invalid ALPHAAVATAR_MAX_SESSION_SECONDS=%r, fallback to 1800",
-            raw_value,
-        )
+        logger.warning("Invalid ALPHAAVATAR_MAX_SESSION_SECONDS=%r; using 1800", raw)
         return 1800
-
-
-MAX_SESSION_SECONDS = get_max_session_seconds()
-
-
-async def force_close_room_after_timeout(
-    *,
-    room_name: str,
-    session: AgentSession,
-) -> None:
-    if MAX_SESSION_SECONDS <= 0:
-        logger.info("Max session duration watchdog disabled for room=%s", room_name)
-        return
-
-    try:
-        await asyncio.sleep(MAX_SESSION_SECONDS)
-
-        logger.warning(
-            "Max session duration reached. Closing room=%s after %s seconds",
-            room_name,
-            MAX_SESSION_SECONDS,
-        )
-
-        # Close the AgentSession first.
-        session.shutdown(drain=True)
-
-        # Then force-delete the room so all participants are disconnected.
-        lkapi = api.LiveKitAPI()
-        try:
-            await lkapi.room.delete_room(
-                api.DeleteRoomRequest(room=room_name),
-            )
-            logger.warning("Deleted room after max duration: %s", room_name)
-        finally:
-            await lkapi.aclose()
-
-    except asyncio.CancelledError:
-        logger.info("Max session duration watchdog cancelled for room=%s", room_name)
-        raise
-    except Exception:
-        logger.exception("Failed to force close room=%s", room_name)
-
-
-def log_background_task_result(task: asyncio.Task) -> None:
-    with contextlib.suppress(asyncio.CancelledError):
-        exc = task.exception()
-        if exc:
-            logger.error(
-                "Background task failed",
-                exc_info=(type(exc), exc, exc.__traceback__),
-            )
 
 
 def worker_load(worker) -> float:
     return min(len(worker.active_jobs) / 5.0, 1.0)
 
 
-def build_room_options(
-    session_mode: SessionMode,
-    participant_identity: str | None = None,
-) -> room_io.RoomOptions:
-    kwargs = {
-        # RoomOptions-supported inputs.
-        "text_input": session_mode.text_input_enabled,
-        "video_input": session_mode.video_input_enabled,
-        # RoomOptions-supported outputs.
-        "text_output": session_mode.text_output_enabled,
-        "audio_output": session_mode.audio_output_enabled,
-        # Important lifecycle controls.
-        # Close AgentSession when the linked user disconnects.
-        "close_on_disconnect": True,
-        # Delete the LiveKit room when AgentSession is closed.
-        # Otherwise the room may remain active until all participants leave.
-        "delete_room_on_close": True,
-    }
-
-    if session_mode.audio_input_enabled:
-        if session_mode.enable_noise_cancellation:
-            kwargs["audio_input"] = room_io.AudioInputOptions(
-                noise_cancellation=noise_cancellation.BVC(),
-            )
-        else:
-            kwargs["audio_input"] = True
-    else:
-        kwargs["audio_input"] = False
-
-    if participant_identity:
-        kwargs["participant_identity"] = participant_identity
-
-    return room_io.RoomOptions(**kwargs)
-
-
-async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext):
-    # Wait connecting...
-
-    # Important:
-    # auto_subscribe controls whether the worker receives remote media tracks at the
-    # LiveKit transport layer. AgentSession room_options only controls which
-    # modalities are consumed by the agent pipeline.
-    #
-    # Do not use SUBSCRIBE_NONE for voice/video rooms, otherwise microphone tracks
-    # will never reach STT/VAD even if room_options.audio_input=True.
+async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext) -> None:
+    # Character providers still require an SDK AgentSession. Never create a hidden
+    # second generator or silently disable an explicitly configured character.
+    if avatar_config.character.plugin is not None:
+        raise ValueError(
+            "Native Engine currently requires character.plugin=null; migrate the character transport first"
+        )
     await ctx.connect(auto_subscribe=AutoSubscribe.SUBSCRIBE_ALL)
 
     # Get metadata.
     agent_identity = ctx.token_claims().identity
     participant = await ctx.wait_for_participant()
-    participant_metadata = json.loads(participant.metadata) if participant.metadata else {}
-    if not isinstance(participant_metadata, dict):
+    metadata = json.loads(participant.metadata) if participant.metadata else {}
+    if not isinstance(metadata, dict):
         raise ValueError("Participant metadata must be a JSON object")
 
     # Native-client context label, not a channel dispatch key.
     room_type = "alphaavatar_app"
-    session_type = resolve_session_type(participant_metadata)
-    session_mode = resolve_session_mode(session_type)
+    session_type = resolve_session_type(metadata)
+    mode = resolve_session_mode(session_type)
 
-    user_id = participant_metadata.get("user_id", get_user_id())
-    session_id = participant_metadata.get("session_id", get_session_id())
-    user_time = build_user_time_context(participant_metadata)
+    user_id = metadata.get("user_id", get_user_id())
+    session_id = metadata.get("session_id", get_session_id())
+    user_time = build_user_time_context(metadata)
 
     # Build Runtime Components
     workspace = WorkspacePaths.from_env()
     user_path = workspace.users.get(user_id)
     prepare_user_path(user_path)
 
-    session_runtime = SessionRuntime(
+    session = SessionRuntime(
         session_id=session_id,
     )
-    session_runtime.add_participant(
+    session.add_participant(
         participant_identity=participant.identity,
         user_id=user_id,
         room_id=ctx.room.name,
         room_type=room_type,
         user_time=user_time,
         user_path=user_path,
-        metadata=participant_metadata,
+        metadata=metadata,
         primary=True,
     )
 
-    visual_input_enabled = session_mode.video_input_enabled and avatar_config.vision.enabled
-
-    interaction_method = InteractionMethod(
-        room_type=room_type,
-        session_type=session_type.value,
-        text_input=session_mode.text_input_enabled,
-        audio_input=session_mode.audio_input_enabled,
-        video_input=visual_input_enabled,
-        audio_output=session_mode.audio_output_enabled,
-        text_output=session_mode.text_output_enabled,
-        notes=[
-            "Adapt response style to the active room/session modality.",
-            "If visual input is enabled but no visual frame is available in the current turn, do not invent visual details.",
-        ],
-    )
-
-    state_runtime = StateRuntime(
-        interaction_method=interaction_method,
-        global_behavior_rules=participant_metadata.get(
-            "global_behavior_rules",
-            DEFAULT_CONTEXT_VALUE,
+    visual = mode.video_input_enabled and avatar_config.vision.enabled
+    state = StateRuntime(
+        interaction_method=InteractionMethod(
+            room_type=room_type,
+            session_type=session_type.value,
+            text_input=mode.text_input_enabled,
+            audio_input=mode.audio_input_enabled,
+            video_input=visual,
+            audio_output=mode.audio_output_enabled,
+            text_output=mode.text_output_enabled,
+            notes=[
+                "Adapt response style to the active room/session modality.",
+                "Do not invent visual details when current visual evidence is unavailable.",
+            ],
         ),
+        global_behavior_rules=metadata.get("global_behavior_rules", DEFAULT_CONTEXT_VALUE),
         extra_context={
             "room_name": ctx.room.name,
             "agent_identity": agent_identity,
             "session_id": session_id,
         },
     )
-
-    session = AgentSession()
-    avatar_runtime = await create_avatar_runtime(
-        avatar_config=avatar_config,
-        workspace=workspace,
-        session=session_runtime,
-        state=state_runtime,
+    runtime = await create_avatar_runtime(
+        avatar_config=avatar_config, workspace=workspace, session=session, state=state
     )
+    engine: AvatarEngine | None = None
+    connection: LiveKitConnection | None = None
+    orphan_close: asyncio.Task[None] | None = None
 
-    avatar_engine: LiveKitHostedAgent | None = None
-    shutdown_task: asyncio.Task[None] | None = None
+    async def shutdown() -> None:
+        nonlocal orphan_close
+        if connection is not None:
+            await connection.aclose()
+        else:
+            if orphan_close is None:
+                orphan_close = asyncio.create_task(
+                    close_session_execution(runtime, engine=engine),
+                    name="avatar_unbound_runtime_close",
+                )
+            await wait_for_cleanup(orphan_close)
 
-    async def _shutdown_avatar_session() -> None:
-        nonlocal shutdown_task
-        if shutdown_task is None:
-            shutdown_task = asyncio.create_task(
-                close_session_execution(
-                    session,
-                    avatar_runtime,
-                    lifecycle=avatar_engine.host_execution if avatar_engine is not None else None,
-                ),
-                name="avatar_host_shutdown",
-            )
-        await wait_for_cleanup(shutdown_task)
-
-    ctx.add_shutdown_callback(_shutdown_avatar_session)
-
-    # Build RTC Plugins
-    transient_audio_output = LiveKitTransientAudioOutput(
-        room=ctx.room,
-        output_runtime=avatar_runtime.output,
-        sample_rate=24_000,
-        num_channels=1,
-    )
-    status_output = LiveKitStatusOutput(
-        room=ctx.room,
-        output_runtime=avatar_runtime.output,
-        action_topic=avatar_config.status.action_topic,
-    )
-    transcript_output = LiveKitTranscriptOutput(
-        room=ctx.room,
-        output_runtime=avatar_runtime.output,
-        track_sid=lambda: transient_audio_output.track_sid,
-    )
-
-    rtc_inputs: list[LifecycleComponent] = []
-    if session_mode.audio_input_enabled:
-        rtc_inputs.append(
-            LiveKitAudioInput(
-                room=ctx.room,
-                perception=avatar_runtime.perception,
-                sample_rate=16_000,
-                num_channels=1,
-                frame_size_ms=avatar_config.runtime.perception.audio_frame_size_ms,
-            )
-        )
-    if visual_input_enabled:
-        rtc_inputs.append(
-            LiveKitVideoInput(
-                room=ctx.room,
-                perception=avatar_runtime.perception,
-                publish_interval_sec=avatar_config.runtime.perception.video_publish_interval_sec,
-            )
-        )
-
-    # Build Avatar Engine
-    avatar_engine = LiveKitHostedAgent(
-        avatar_config=avatar_config,
-        runtime=avatar_runtime,
-        outputs=(transient_audio_output, status_output, transcript_output),
-        inputs=tuple(rtc_inputs),
-    )
-
-    # logging
-    logger.info(
-        "Connected to room agent_identity=%s room=%s room_type=%s session_id=%s session_type=%s",
-        agent_identity,
-        ctx.room.name,
-        room_type,
-        session_id,
-        session_type,
-    )
-
-    # Build Agent & Virtual Character Session
-
-    @ctx.room.on("participant_connected")
-    def on_participant_connected(connected_participant):
-        logger.info(
-            "Participant connected room=%s identity=%s",
-            ctx.room.name,
-            connected_participant.identity,
-        )
-
-    @ctx.room.on("participant_disconnected")
-    def on_participant_disconnected(disconnected_participant):
-        logger.info(
-            "Participant disconnected room=%s identity=%s linked_identity=%s",
-            ctx.room.name,
-            disconnected_participant.identity,
-            participant.identity,
-        )
-
-        if disconnected_participant.identity == participant.identity:
-            logger.info(
-                "Linked participant disconnected. AgentSession should close via close_on_disconnect. room=%s",
-                ctx.room.name,
-            )
-
-    # Start character & Start Agent Session
+    ctx.add_shutdown_callback(shutdown)
     try:
-        avatar_character = avatar_config.character.get_plugin(runtime=avatar_runtime)
-        if avatar_character:
-            await avatar_character.start(agent_identity, session, room=ctx.room)
+        if mode.audio_output_enabled and runtime.foundation.voice.tts is None:
+            raise ValueError("The selected session requires audio output but no TTS is configured")
+        engine = AvatarEngine(avatar_config=avatar_config, runtime=runtime)
+        outputs: list[LifecycleComponent] = [
+            LiveKitStatusOutput(
+                room=ctx.room,
+                output_runtime=runtime.output,
+                action_topic=avatar_config.status.action_topic,
+            )
+        ]
 
-        await session.start(
-            room=ctx.room,
-            agent=avatar_engine,
-            room_options=build_room_options(
-                session_mode,
-                participant_identity=participant.identity,
-            ),
+        audio_output = None
+        if mode.audio_output_enabled:
+            audio_output = LiveKitTransientAudioOutput(
+                room=ctx.room,
+                output_runtime=runtime.output,
+                sample_rate=runtime.foundation.voice.tts.sample_rate,
+                num_channels=runtime.foundation.voice.tts.num_channels,
+            )
+            outputs.append(audio_output)
+        if mode.text_output_enabled:
+            outputs.append(
+                LiveKitTranscriptOutput(
+                    room=ctx.room,
+                    output_runtime=runtime.output,
+                    track_sid=(lambda: audio_output.track_sid)
+                    if audio_output is not None
+                    else None,
+                )
+            )
+
+        inputs: list[LifecycleComponent] = []
+        if mode.audio_input_enabled:
+            inputs.append(
+                LiveKitAudioInput(
+                    room=ctx.room,
+                    perception=runtime.perception,
+                    sample_rate=16000,
+                    num_channels=1,
+                    frame_size_ms=avatar_config.runtime.perception.audio_frame_size_ms,
+                )
+            )
+        if visual:
+            inputs.append(
+                LiveKitVideoInput(
+                    room=ctx.room,
+                    perception=runtime.perception,
+                    publish_interval_sec=avatar_config.runtime.perception.video_publish_interval_sec,
+                )
+            )
+
+        text_input = None
+        if mode.text_input_enabled:
+            text_input = LiveKitTextInput(
+                room=ctx.room,
+                clock=runtime.perception.clock,
+                session_id=session_id,
+                participant_identities=frozenset((participant.identity,)),
+                submit=engine.submit_input,
+                max_streams=avatar_config.runtime.engine.max_pending_admissions,
+                max_bytes=avatar_config.runtime.engine.max_input_bytes,
+            )
+            inputs.append(text_input)
+
+        connection = LiveKitConnection(
+            ctx=ctx,
+            runtime=runtime,
+            engine=engine,
+            participant_identity=participant.identity,
+            inputs=inputs,
+            outputs=outputs,
+            text_input=text_input,
+            max_duration=get_max_session_seconds(),
         )
-        await avatar_engine.host_execution.wait_ready()
-    except BaseException:
-        await _shutdown_avatar_session()
+        await connection.start()
+        logger.info(
+            "Native Avatar connected room=%s session_id=%s session_type=%s",
+            ctx.room.name,
+            session_id,
+            session_type.value,
+        )
+    except BaseException as original:
+        try:
+            await shutdown()
+        except BaseException as cleanup:
+            raise original from cleanup
         raise
-
-    avatar_engine.notify_ready()
-
-    # Session watchdog.
-    _max_duration_task = asyncio.create_task(
-        force_close_room_after_timeout(
-            room_name=ctx.room.name,
-            session=session,
-        )
-    )
-    _max_duration_task.add_done_callback(log_background_task_result)
 
 
 def main() -> None:
-    args = read_args()
-    avatar_config: AvatarConfig = get_avatar_args(args)
+    avatar_config = get_avatar_args(read_args())
     prepare_inference_runners(avatar_config)
 
     opts = agents.worker.ServerOptions(
@@ -380,8 +253,8 @@ def main() -> None:
         initialize_process_timeout=60,
         shutdown_process_timeout=180,
     )
-    server = AvatarServer.from_server_options(opts)
-    agents.cli.run_app(server)
+    # Job/process hosting remains SDK-backed; no SDK Agent, AgentSession or generation nodes remain here.
+    agents.cli.run_app(AvatarServer.from_server_options(opts))
 
 
 if __name__ == "__main__":

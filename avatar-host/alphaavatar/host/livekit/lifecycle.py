@@ -19,28 +19,38 @@ from typing import TYPE_CHECKING
 from alphaavatar.core.cleanup import wait_for_cleanup
 
 if TYPE_CHECKING:
-    from livekit.agents import AgentSession
-
     from alphaavatar.agents.runtime import AvatarRuntime
+    from alphaavatar.core.lifecycle import LifecycleComponent
     from alphaavatar.host.execution import HostExecution
 
 
 async def close_session_execution(
-    session: AgentSession,
     runtime: AvatarRuntime,
     *,
-    lifecycle: HostExecution | None = None,
+    exection: HostExecution | None = None,
+    engine: LifecycleComponent | None = None,
 ) -> None:
-    """Close SDK activity, Host-owned components, then the session-owned runtime."""
+    """Stop Host consumers, then release the runtime, even if either step fails."""
 
     async def close() -> None:
-        try:
-            await session.aclose()
-        finally:
+        errors: list[Exception] = []
+        operations = (
+            (exection.aclose,)
+            if exection is not None
+            else (engine.on_stop,)
+            if engine is not None
+            else ()
+        )
+        for operation in (*operations, runtime.aclose):
             try:
-                if lifecycle is not None:
-                    await lifecycle.aclose()
-            finally:
-                await runtime.aclose()
+                await operation()
+            except asyncio.CancelledError as error:
+                failure = RuntimeError("Session cleanup cancelled itself")
+                failure.__cause__ = error
+                errors.append(failure)
+            except Exception as error:
+                errors.append(error)
+        if errors:
+            raise ExceptionGroup("Native session execution cleanup failed", errors)
 
     await wait_for_cleanup(asyncio.create_task(close(), name="avatar_session_close"))
