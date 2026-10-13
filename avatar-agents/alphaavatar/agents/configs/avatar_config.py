@@ -11,12 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 from pydantic import BaseModel, Field
 
 from alphaavatar.agents.configs.runtime_config import RuntimeConfig
 
 from .avatar_info_config import AvatarInfoConfig
-from .plugins.foundation import ContextConfig, LLMConfig, LoopConfig, VisionConfig, VoiceConfig
+from .plugins.foundation import ContextConfig, LoopConfig, VisionConfig, VoiceConfig
 from .plugins.perception import (
     MemoryConfig,
     PersonaConfig,
@@ -39,7 +40,6 @@ class AvatarConfig(BaseModel):
     # Foundation plugins configuration
     context: ContextConfig = Field(default_factory=ContextConfig)
     loop: LoopConfig = Field(default_factory=LoopConfig)
-    llm: LLMConfig = Field(default_factory=LLMConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     vision: VisionConfig = Field(default_factory=VisionConfig)
 

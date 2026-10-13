@@ -24,10 +24,11 @@ from .schemas import ContextPrepareRequest
 if TYPE_CHECKING:
     from alphaavatar.agents.memory import MemoryBase
     from alphaavatar.agents.persona import PersonaBase
+    from alphaavatar.core.turn import TurnSnapshot
 
 
 class ContextManager(ABC):
-    """One public context API. Captured inputs are execution-owned immutable values."""
+    """One public context API; query prefixes are execution-owned snapshots."""
 
     @property
     @abstractmethod
@@ -35,18 +36,22 @@ class ContextManager(ABC):
 
     @abstractmethod
     def bind_sources(self, *, memory: MemoryBase, persona: PersonaBase) -> None:
-        """Borrow the Engine's state sources; do not own or stop those processors."""
+        """Borrow state sources without owning their processor lifetimes."""
+
+    @abstractmethod
+    def accept_turn(self, snapshot: TurnSnapshot) -> ModelInput:
+        """Retain a committed input and return its seed, without capturing query state."""
 
     @abstractmethod
     async def prepare(self, request: ContextPrepareRequest) -> ModelInput:
-        """Wait for the committed turn, then capture state and query-static contributions once."""
+        """Capture canonical history, state and query-static contributions once."""
 
     @abstractmethod
     def build(
         self, prefix: ModelInput, *, continuation: tuple[ModelInputItem, ...] = ()
     ) -> ModelInput:
-        """Compose a request from a captured prefix and canonical execution records only."""
+        """Extend a captured prefix with native execution records, never refreshed state."""
 
     @abstractmethod
     async def aclose(self) -> None:
-        """Close after consumers stop; never close the borrowed AvatarRuntime."""
+        """Close after execution producers stop; never close the borrowed AvatarRuntime."""

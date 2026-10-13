@@ -67,7 +67,7 @@ class AvatarContextManager(ContextManager):
         self._runtime = runtime
         self._config = config
         self._vision = avatar_config.vision.model_copy(deep=True)
-        self._alignment_policy = avatar_config.runtime.temporal_alignment.build_policy()
+        self._alignment_policy = avatar_config.runtime.perception.temporal_alignment.build_policy()
         self._introduction = avatar_config.avatar.introduction
         self._memory: MemoryBase | None = None
         self._persona: PersonaBase | None = None

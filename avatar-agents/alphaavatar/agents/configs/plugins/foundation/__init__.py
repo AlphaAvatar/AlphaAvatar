@@ -12,14 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .context_config import ContextConfig
-from .llm_config import LLMConfig
 from .loop_config import LoopConfig
 from .vision_config import VisionConfig
 from .voice_config import VoiceConfig
 
 __all__ = [
     "ContextConfig",
-    "LLMConfig",
     "LoopConfig",
     "VisionConfig",
     "VoiceConfig",
