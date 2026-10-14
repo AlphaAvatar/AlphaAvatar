@@ -255,7 +255,7 @@ class _PCMStream(TTSStreamBase):
             raise RuntimeError("A TTS stream permits only one concurrent reader")
         if self._exhausted:
             raise StopAsyncIteration
-        if self._close_task is not None:
+        if self._close_task is not None or self._provider._close_task is not None:
             raise RuntimeError("TTS stream closed before complete consumption")
 
         self._reading = True
@@ -266,9 +266,14 @@ class _PCMStream(TTSStreamBase):
                 )
                 self._task.add_done_callback(self._completed)
 
-            while not self._frames:
-                if self._close_task is not None:
+            while True:
+                # Recheck after every wakeup, even when audio and closure arrive together.
+                if self._close_task is not None or self._provider._close_task is not None:
                     raise RuntimeError("TTS stream closed before complete consumption")
+                if self._frames:
+                    frame = self._frames.popleft()
+                    self._space.set()
+                    return frame
 
                 if self._done:
                     error = self._error
@@ -280,10 +285,6 @@ class _PCMStream(TTSStreamBase):
                     raise StopAsyncIteration
                 self._changed.clear()
                 await self._changed.wait()
-
-            frame = self._frames.popleft()
-            self._space.set()
-            return frame
 
         except asyncio.CancelledError as original:
             try:

@@ -19,11 +19,10 @@ from .schema import (
     VoiceActivityEventType,
 )
 from .stt import STTBase, STTCapabilities, STTInputMode, STTStreamBase
-from .tts import LiveKitTTSAdapter, TTSBase
+from .tts import TTSBase, TTSStreamBase
 from .vad import VADBase, VADStreamBase
 
 __all__ = [
-    "LiveKitTTSAdapter",
     "STTInputMode",
     "STTCapabilities",
     "STTBase",
@@ -31,6 +30,7 @@ __all__ = [
     "TranscriptionEvent",
     "TranscriptionEventType",
     "TTSBase",
+    "TTSStreamBase",
     "VADBase",
     "VADStreamBase",
     "VoiceActivityEvent",

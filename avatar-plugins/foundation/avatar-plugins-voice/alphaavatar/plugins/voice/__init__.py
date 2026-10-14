@@ -15,9 +15,8 @@ from alphaavatar.agents.runtime.inference import register_inference_runner_boots
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 
 from .inference import configure_inference_runners
-from .log import logger
 from .stt import OpenAIRealtimeSTTPlugin, OpenAISegmentSTTPlugin
-from .tts import VoiceAITTSPlugin
+from .tts import OpenAITTSPlugin, VoiceAITTSPlugin
 from .vad import SileroVADPlugin
 from .version import __version__
 
@@ -41,8 +40,13 @@ AvatarModulePlugin.register(
 )
 AvatarModulePlugin.register(
     AvatarModule.VOICE_TTS,
+    "openai",
+    OpenAITTSPlugin(),
+)
+AvatarModulePlugin.register(
+    AvatarModule.VOICE_TTS,
     "voiceai",
-    VoiceAITTSPlugin(__version__, logger),
+    VoiceAITTSPlugin(),
 )
 
 # Inference Runners
