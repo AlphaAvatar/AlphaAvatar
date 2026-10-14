@@ -26,6 +26,8 @@ class ConversationProviderConfig(BaseModel):
 
 
 class ExtractionConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     session_gate: bool = Field(
         default=False,
         description=(
@@ -55,6 +57,8 @@ class ExtractionConfig(BaseModel):
 
 
 class ConversationPipelineConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     extraction: ExtractionConfig = Field(default_factory=ExtractionConfig)
     consolidation: ConsolidationConfig = Field(default_factory=ConsolidationConfig)
 

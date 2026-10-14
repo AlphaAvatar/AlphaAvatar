@@ -14,86 +14,31 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable
-
-from livekit.agents import tts as livekit_tts
+from collections.abc import AsyncIterator
 
 from alphaavatar.core.media import AudioFrame
 
 
+class TTSStreamBase(AsyncIterator[AudioFrame], ABC):
+    """One synthesis request. Consumers must close it, including on early exit."""
+
+    @abstractmethod
+    async def aclose(self) -> None: ...
+
+
 class TTSBase(ABC):
-    """Transport-independent TTS with an immutable output PCM format per instance."""
+    """Reusable synthesis factory with an immutable PCM format per instance."""
 
     @property
     @abstractmethod
-    def sample_rate(self) -> int:
-        """Positive sample rate of every emitted AudioFrame."""
-        raise NotImplementedError
+    def sample_rate(self) -> int: ...
 
     @property
     @abstractmethod
-    def num_channels(self) -> int:
-        """Positive channel count of every emitted AudioFrame."""
-        raise NotImplementedError
+    def num_channels(self) -> int: ...
 
     @abstractmethod
-    def synthesize(self, text: str) -> AsyncIterable[AudioFrame]:
-        raise NotImplementedError
+    def synthesize(self, text: str) -> TTSStreamBase: ...
 
-    async def aclose(self) -> None:
-        return None
-
-
-class LiveKitTTSAdapter(TTSBase):
-    """Adapt an SDK voice vendor, not an SDK Agent or generation session."""
-
-    def __init__(self, provider: livekit_tts.TTS, *, owns_provider: bool = False) -> None:
-        self._provider, self._owns_provider = provider, owns_provider
-        self._sample_rate, self._num_channels = provider.sample_rate, provider.num_channels
-        if any(
-            type(value) is not int or value <= 0
-            for value in (self._sample_rate, self._num_channels)
-        ):
-            raise ValueError("TTS providers must declare a positive integer PCM format")
-
-    @property
-    def sample_rate(self) -> int:
-        return self._sample_rate
-
-    @property
-    def num_channels(self) -> int:
-        return self._num_channels
-
-    @property
-    def provider(self) -> livekit_tts.TTS:
-        return self._provider
-
-    def synthesize(self, text: str) -> AsyncIterable[AudioFrame]:
-        text = text.strip()
-
-        async def generate() -> AsyncIterable[AudioFrame]:
-            if not text:
-                return
-
-            async with self._provider.synthesize(text) as stream:
-                async for event in stream:
-                    frame = event.frame
-                    if (frame.sample_rate, frame.num_channels) != (
-                        self._sample_rate,
-                        self._num_channels,
-                    ):
-                        raise ValueError("TTS provider changed its declared PCM format")
-                    yield AudioFrame(
-                        sample_rate=frame.sample_rate,
-                        num_channels=frame.num_channels,
-                        samples_per_channel=frame.samples_per_channel,
-                        data=bytes(frame.data),
-                    )
-
-        return generate()
-
-    async def aclose(self) -> None:
-        if self._owns_provider:
-            aclose = getattr(self._provider, "aclose", None)
-            if callable(aclose):
-                await aclose()
+    @abstractmethod
+    async def aclose(self) -> None: ...

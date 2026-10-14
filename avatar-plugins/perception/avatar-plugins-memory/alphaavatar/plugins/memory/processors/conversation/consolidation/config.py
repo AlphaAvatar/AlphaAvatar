@@ -13,7 +13,7 @@
 # limitations under the License.
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ConsolidationMode(StrEnum):
@@ -33,6 +33,8 @@ class CandidateSource(StrEnum):
 
 
 class ConsolidationConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     mode: ConsolidationMode = ConsolidationMode.SESSION_MERGE
 
     resolve_superseded_items: bool | None = Field(
@@ -48,6 +50,7 @@ class ConsolidationConfig(BaseModel):
         default=0.4,
         ge=0.0,
         le=1.0,
+        allow_inf_nan=False,
         description=(
             "Minimum cosine similarity between an atomic memory and a consolidated "
             "memory for the latter to become a candidate. Depends on the embedding "
@@ -55,12 +58,12 @@ class ConsolidationConfig(BaseModel):
         ),
     )
     max_candidates_per_item: int = Field(default=5, ge=1, le=50)
-    timeout: float = Field(default=30.0, gt=0.0)
+    timeout: float = Field(default=30.0, gt=0.0, allow_inf_nan=False)
 
     @model_validator(mode="after")
     def _check_item_ops(self) -> "ConsolidationConfig":
         if ItemOp.ADD not in self.item_ops:
-            raise ValueError("maintenance.item_ops must contain 'add'")
+            raise ValueError("consolidation.item_ops must contain 'add'")
 
         return self
 

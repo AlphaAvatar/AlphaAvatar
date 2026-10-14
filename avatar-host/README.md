@@ -6,7 +6,7 @@ implement model generation, prompt construction, media processing or Memory stor
 ## Entrypoint
 
 `alphaavatar.host.livekit.entrypoint:main` provides the current `alphaavatar` command.
-CLI organization remains a separate v0.6.8 task. Applications can assemble a
+Installer, configuration UI/TUI and doctor commands are planned for v0.6.9. Applications can assemble a
 `HostExecution` directly without importing LiveKit.
 
 ## Lifecycle and ownership
@@ -35,8 +35,8 @@ shutdown to HostExecution. There is no `livekit.lifecycle` cleanup bridge.
 ## Boundaries and remaining work
 
 Engine uses the native Loop/Provider/Output contracts. The old SDK AgentSession
-generation, tool and record bridges are removed. JobContext/worker hosting and
-vendor TTS adapters still use LiveKit Agents APIs. Native Character transport is
+generation, tool and record bridges are removed. OpenAI/Voice.ai TTS now use native async PCM providers. JobContext/worker hosting
+still uses LiveKit Agents APIs and remains part of the v0.6.8 SDK-removal work. Native Character transport is
 not yet implemented; enabled SDK-dependent Character configurations are rejected.
 
 Agent and RTC libraries do not import Host. Shared Foundation services remain

@@ -29,7 +29,7 @@ The package root does not import a backend. RTC adapters must not depend on `alp
 
 `LiveKitTextInput` consumes the `lk.chat` text stream, checks the transport-supplied sender identity and bounded complete content, then invokes the injected submit callback. It does not pre-publish a second perception copy. Attached byte streams are not implemented by this text adapter.
 
-Despite its retained class name, `LiveKitTransientAudioOutput` serves both ASSISTANT and TRANSIENT output on one audio track. It does not own a model or a second TTS pipeline. Host supplies the audio format declared by the selected TTS adapter.
+Despite its retained class name, `LiveKitTransientAudioOutput` serves both ASSISTANT and TRANSIENT output on one audio track. It does not own a model or a second TTS pipeline. Host supplies the audio format declared by the selected TTS provider.
 
 Consumers read `event.output` and its typed scope, source and payload. Interruptions use Runtime-fixed exact targets, not a new broad match against a later output. Playback feedback and final transcript delivery remain distinct from generation completion. Internal status decisions and canonical records are not projected as client status content.
 
@@ -37,4 +37,4 @@ Consumers read `event.output` and its typed scope, source and payload. Interrupt
 
 Codecs, media/text inputs and audio/status/transcript outputs live here. Application assembly lives in Host. Engine/Loop own native generation; Router owns synthesis and transcript synchronization. The obsolete SDK model/turn/response and record bridges are removed, not alternative supported paths.
 
-SDK worker hosting and vendor TTS adapters elsewhere in the workspace remain. SDK-dependent Character transport is not enabled by the native Host. This migration does not yet provide connection-independent execution or persistent task recovery.
+Voice provides native async PCM synthesis; RTC only converts/delivers the resulting Core frames. SDK worker hosting elsewhere in the workspace remains. SDK-dependent Character transport is not enabled by the native Host. This migration does not yet provide connection-independent execution or persistent task recovery.

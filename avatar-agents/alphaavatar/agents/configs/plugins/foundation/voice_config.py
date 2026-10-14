@@ -15,10 +15,9 @@ import importlib
 from contextlib import AsyncExitStack
 from typing import Literal
 
-from livekit.agents import tts
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from alphaavatar.agents.avatar.voice import LiveKitTTSAdapter, STTBase, VADBase, VoiceBundle
+from alphaavatar.agents.avatar.voice import STTBase, TTSBase, VADBase, VoiceBundle
 from alphaavatar.agents.runtime.inference import InferenceExecutor
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 
@@ -85,35 +84,48 @@ class TTSConfig(BaseModel):
         description="Instructions for the TTS model.",
     )
 
-    def get_plugin(self) -> tts.TTS | None:
-        match self.plugin:
-            case "openai":
-                try:
-                    from livekit.plugins import openai
-                except ImportError as error:
-                    raise ImportError(
-                        "The 'openai.TTS' plugin is required for livekit.plugins.openai "
-                        "but is not installed.\n"
-                        "Install it with: `pip install livekit-plugins-openai`"
-                    ) from error
-                if self.model is None:
-                    raise ValueError("voice.tts.model is required when voice.tts.plugin='openai'")
+    base_url: str | None = None
+    timeout: float = Field(default=30.0, gt=0, le=3600, allow_inf_nan=False)
+    frame_size_ms: int = Field(default=20, ge=1, le=100, strict=True)
+    queue_frames: int = Field(default=8, ge=1, le=128, strict=True)
+    max_streams: int = Field(default=4, ge=1, le=32, strict=True)
+    max_audio_seconds: float = Field(default=120.0, gt=0, le=3600, allow_inf_nan=False)
 
-                if self.speaker is None:
-                    raise ValueError("voice.tts.speaker is required when voice.tts.plugin='openai'")
+    @model_validator(mode="after")
+    def validate_provider(self) -> "TTSConfig":
+        if self.plugin is None:
+            return self
+        if not self.model or not self.model.strip():
+            raise ValueError("voice.tts.model is required for an enabled TTS plugin")
+        if self.plugin == "openai" and (not self.speaker or not self.speaker.strip()):
+            raise ValueError("voice.tts.speaker is required for OpenAI TTS")
+        if self.speaker is not None and not self.speaker.strip():
+            raise ValueError("voice.tts.speaker cannot be blank")
+        if self.plugin == "voiceai" and self.instructions is not None:
+            raise ValueError("Voice.ai TTS does not support instructions")
+        if self.instructions is not None and len(self.instructions) > 4096:
+            raise ValueError("TTS instructions exceed 4096 characters")
+        if self.instructions is not None and self.model in ("tts-1", "tts-1-hd"):
+            raise ValueError("The selected TTS model does not support instructions")
+        return self
 
-                return openai.TTS(
-                    model=self.model, voice=self.speaker, instructions=self.instructions
-                )
+    def get_plugin(self) -> TTSBase | None:
+        if self.plugin is None:
+            return None
 
-            case _:
-                return AvatarModulePlugin.create(
-                    AvatarModule.VOICE_TTS,
-                    self.plugin,
-                    model=self.model,
-                    speaker=self.speaker,
-                    instructions=self.instructions,
-                )
+        return AvatarModulePlugin.create(
+            AvatarModule.VOICE_TTS,
+            self.plugin,
+            model=self.model,
+            speaker=self.speaker,
+            instructions=self.instructions,
+            base_url=self.base_url,
+            timeout=self.timeout,
+            frame_size_ms=self.frame_size_ms,
+            queue_frames=self.queue_frames,
+            max_streams=self.max_streams,
+            max_audio_seconds=self.max_audio_seconds,
+        )
 
 
 class VADConfig(BaseModel):
@@ -173,7 +185,7 @@ class VoiceConfig(BaseModel):
             bundle = VoiceBundle(
                 vad=vad,
                 stt=stt,
-                tts=LiveKitTTSAdapter(tts, owns_provider=True) if tts is not None else None,
+                tts=tts,
             )
             resources.pop_all()
             return bundle

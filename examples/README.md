@@ -62,5 +62,7 @@ Enabled providers, embeddings, MCP servers and inference runners need their
 corresponding dependencies, credentials, network access and model assets.
 The multimodal/demo configurations also retain Google environment extraction and
 Tavily research; the voice-minimal example does not require those two services.
-SDK vendor TTS adapters and SDK worker hosting are still present. These files are
-not a claim that all LiveKit Agents dependencies have been removed.
+The existing OpenAI and Voice.ai TTS selections now use native async HTTP/PCM
+providers; their YAML fields and fixed sample rates are unchanged. SDK worker hosting
+and SDK-dependent Character code remain. These examples do not imply complete
+LiveKit Agents dependency removal.
