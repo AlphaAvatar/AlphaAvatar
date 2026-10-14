@@ -13,7 +13,6 @@
 # limitations under the License.
 from __future__ import annotations
 
-from abc import ABC
 from typing import TYPE_CHECKING
 
 from alphaavatar.core.lifecycle import LifecycleComponent
@@ -23,7 +22,7 @@ if TYPE_CHECKING:
     from alphaavatar.core.perception import PerceptionRuntime
 
 
-class InteractionRouterBase(LifecycleComponent, ABC):
+class InteractionRouterBase(LifecycleComponent):
     """Session-scoped interaction routing plugin."""
 
     def __init__(self, *, runtime: AvatarRuntime) -> None:

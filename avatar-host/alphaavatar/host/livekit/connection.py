@@ -15,46 +15,43 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Coroutine
 from typing import TYPE_CHECKING
 
 from livekit import api
 
 from alphaavatar.core.cleanup import wait_for_cleanup
-from alphaavatar.core.lifecycle import LifecycleComponent
 from alphaavatar.host.execution import HostExecution
 from alphaavatar.rtc.livekit.utils.events import RoomEventBindings
-
-from .lifecycle import close_session_execution
 
 if TYPE_CHECKING:
     from livekit.agents import JobContext
 
     from alphaavatar.agents.avatar import AvatarEngine
-    from alphaavatar.agents.runtime import AvatarRuntime
     from alphaavatar.rtc.livekit.text import LiveKitTextInput
 
 logger = logging.getLogger(__name__)
 
 
 class LiveKitConnection:
-    """Own the current session connection; SDK job hosting does not own generation."""
+    """Own transport events and monitors, delegating execution resources to HostExecution."""
 
     def __init__(
         self,
         *,
         ctx: JobContext,
-        runtime: AvatarRuntime,
+        execution: HostExecution,
         engine: AvatarEngine,
         participant_identity: str,
-        inputs: Sequence[LifecycleComponent],
-        outputs: Sequence[LifecycleComponent],
         text_input: LiveKitTextInput | None = None,
         max_duration: int = 1800,
     ) -> None:
-        self._ctx, self._runtime, self._engine = ctx, runtime, engine
+        if type(max_duration) is not int or max_duration < 0:
+            raise ValueError("max_duration must be a nonnegative integer")
+
+        self._ctx, self._execution, self._engine = ctx, execution, engine
         self._participant, self._text = participant_identity, text_input
-        self._lifecycle = HostExecution(engine=engine, inputs=inputs, outputs=outputs)
+
         self._events = RoomEventBindings(ctx.room)
         self._max_duration = max_duration
         self._tasks: set[asyncio.Task[None]] = set()
@@ -64,7 +61,23 @@ class LiveKitConnection:
         self._failure: Exception | None = None
         self._ingress_failure = False
 
-    def _spawn(self, operation: Awaitable[None], name: str) -> None:
+    @staticmethod
+    async def _step(operation: Awaitable[None], errors: list[Exception], label: str) -> None:
+        try:
+            await operation
+        except asyncio.CancelledError as error:
+            failure = RuntimeError(f"{label} cancelled itself")
+            failure.__cause__ = error
+            errors.append(failure)
+        except Exception as error:
+            errors.append(error)
+
+    @staticmethod
+    def _observe_close(task: asyncio.Task[None]) -> None:
+        if not task.cancelled() and (error := task.exception()) is not None:
+            logger.error("Native Host cleanup failed", exc_info=error)
+
+    def _spawn(self, operation: Coroutine[None, None, None], name: str) -> None:
         task = asyncio.create_task(operation, name=name)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
@@ -73,7 +86,7 @@ class LiveKitConnection:
     def _observe(self, task: asyncio.Task[None]) -> None:
         if task.cancelled():
             if self._close_task is None:
-                self._failure = RuntimeError(
+                self._failure = self._failure or RuntimeError(
                     f"Host monitor cancelled unexpectedly: {task.get_name()}"
                 )
                 self._ensure_close("host_monitor_cancelled")
@@ -91,7 +104,9 @@ class LiveKitConnection:
             self._ingress_failure = self._ingress_failure or ingress
             self._ensure_close("native_input_failed" if ingress else "native_execution_failed")
         else:
-            self._failure = RuntimeError("Failure monitor returned without a failure")
+            self._failure = self._failure or RuntimeError(
+                "Failure monitor returned without a failure"
+            )
             self._ensure_close("invalid_failure_monitor")
 
     async def _watchdog(self) -> None:
@@ -111,9 +126,11 @@ class LiveKitConnection:
         self._spawn(self._monitor(self._engine.wait_failed), "avatar_engine_monitor")
         if self._text is not None:
             self._spawn(self._monitor(self._text.wait_failed, ingress=True), "avatar_text_monitor")
-        await self._lifecycle.start()
+
+        await self._execution.start()
         if self._close_task is not None:
             raise RuntimeError("Connection closed during startup")
+
         self._engine.notify_ready()
         if self._max_duration > 0:
             self._spawn(self._watchdog(), "avatar_session_watchdog")
@@ -133,17 +150,6 @@ class LiveKitConnection:
             except BaseException as cleanup:
                 raise original from cleanup
             raise
-
-    @staticmethod
-    async def _step(operation: Awaitable[None], errors: list[Exception], label: str) -> None:
-        try:
-            await operation
-        except asyncio.CancelledError as error:
-            failure = RuntimeError(f"{label} cancelled itself")
-            failure.__cause__ = error
-            errors.append(failure)
-        except Exception as error:
-            errors.append(error)
 
     async def _disconnect(self) -> None:
         async with asyncio.timeout(5.0):
@@ -171,17 +177,15 @@ class LiveKitConnection:
             if not task.done():
                 task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
-        # Old RTC SDKs cannot abort one incoming text reader. Disconnect before
-        # awaiting execution settlement when ingress has failed, so queues cannot grow.
+
+        # Abort bounded ingress readers before waiting for execution settlement.
         if self._ingress_failure or (self._text is not None and self._text.has_pending_streams):
             await self._step(self._disconnect(), errors, "Ingress disconnection")
-        await self._step(
-            close_session_execution(self._runtime, lifecycle=self._lifecycle),
-            errors,
-            "Execution shutdown",
-        )
+
+        await self._step(self._execution.aclose(), errors, "Execution shutdown")
         await self._step(self._delete_room(), errors, "Room deletion")
         await self._step(self._disconnect(), errors, "Room disconnection")
+
         try:
             self._ctx.shutdown(reason=self._reason)
         except Exception as error:
@@ -189,12 +193,7 @@ class LiveKitConnection:
         if self._failure is not None:
             errors.insert(0, self._failure)
         if errors:
-            raise ExceptionGroup("LiveKit native Host session cleanup failed", errors)
-
-    @staticmethod
-    def _observe_close(task: asyncio.Task[None]) -> None:
-        if not task.cancelled() and (error := task.exception()) is not None:
-            logger.error("Native Host cleanup failed", exc_info=error)
+            raise ExceptionGroup("LiveKit connection cleanup failed", errors)
 
     def _ensure_close(self, reason: str) -> asyncio.Task[None]:
         if self._close_task is None:

@@ -21,10 +21,7 @@ from .config import (
     CandidateSource,
     ConsolidationConfig,
     ConsolidationMode,
-    ExtractionConfig,
     ItemOp,
-    MaintenanceConfig,
-    MemoryPipelineConfig,
 )
 from .consolidation_op import (
     apply_assignments,
@@ -54,12 +51,9 @@ __all__ = [
     "ConsolidationMode",
     "ConsolidationPlan",
     "ConsolidationResult",
-    "ExtractionConfig",
     "ItemOp",
-    "MaintenanceConfig",
     "MemoryAssignment",
     "MemoryConsolidator",
-    "MemoryPipelineConfig",
     "RecalledCandidateCache",
     "apply_assignments",
     "build_consolidated_memory",

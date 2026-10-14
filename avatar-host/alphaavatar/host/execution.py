@@ -15,21 +15,27 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.lifecycle import LifecycleComponent, LifecycleGroup, LifecyclePhase
 
+if TYPE_CHECKING:
+    from alphaavatar.agents.runtime import AvatarRuntime
+
 
 class HostExecution:
-    """Coordinate the current session-owned execution without closing its shared runtime."""
+    """Own an execution and its runtime; transport disconnection is the Host's policy."""
 
     def __init__(
         self,
         *,
+        runtime: AvatarRuntime,
         engine: LifecycleComponent,
         inputs: Sequence[LifecycleComponent] = (),
         outputs: Sequence[LifecycleComponent] = (),
     ) -> None:
+        self._runtime = runtime
         self._lifecycle = LifecycleGroup(
             phases=(
                 LifecyclePhase.create("rtc-output", outputs),
@@ -37,46 +43,50 @@ class HostExecution:
                 LifecyclePhase.create("rtc-input", inputs),
             )
         )
-        self._start_requested = asyncio.Event()
-        self._start_task: asyncio.Task[None] | None = None
         self._close_task: asyncio.Task[None] | None = None
+
+    @staticmethod
+    def _observe(task: asyncio.Task[None]) -> None:
+        if not task.cancelled():
+            task.exception()
 
     async def start(self) -> None:
         if self._close_task is not None:
-            raise RuntimeError("Host session is closing or closed")
-        if self._start_task is None:
-            self._start_task = asyncio.create_task(
-                self._lifecycle.start(), name="host_session_start"
-            )
-            self._start_requested.set()
+            raise RuntimeError("Host execution is closing or closed")
         try:
-            await self.wait_ready()
-        except asyncio.CancelledError:
-            await self.aclose()
+            await self._lifecycle.start()
+            if self._close_task is not None:
+                raise RuntimeError("Host execution closed before readiness")
+        except BaseException as original:
+            try:
+                await self.aclose()
+            except BaseException as cleanup:
+                raise original from cleanup
             raise
 
     async def wait_ready(self) -> None:
-        await self._start_requested.wait()
         if self._close_task is not None:
-            raise RuntimeError("Host session closed before readiness")
-        task = self._start_task
-        if task is None:
-            raise RuntimeError("Host session startup was not scheduled")
-        await asyncio.shield(task)
+            raise RuntimeError("Host execution is closing or closed")
+        await self._lifecycle.wait_ready()
         if self._close_task is not None:
-            raise RuntimeError("Host session closed before readiness")
+            raise RuntimeError("Host execution closed before readiness")
 
     async def _close(self) -> None:
-        task = self._start_task
-        if task is not None:
-            if not task.done():
-                task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-        await self._lifecycle.stop()
+        errors: list[Exception] = []
+        for operation in (self._lifecycle.stop, self._runtime.aclose):
+            try:
+                await operation()
+            except asyncio.CancelledError as error:
+                failure = RuntimeError("Host execution cleanup cancelled itself")
+                failure.__cause__ = error
+                errors.append(failure)
+            except Exception as error:
+                errors.append(error)
+        if errors:
+            raise ExceptionGroup("Host execution cleanup failed", errors)
 
     async def aclose(self) -> None:
         if self._close_task is None:
-            self._close_task = asyncio.create_task(self._close(), name="host_session_close")
-            self._start_requested.set()
-
+            self._close_task = asyncio.create_task(self._close(), name="host_execution_close")
+            self._close_task.add_done_callback(self._observe)
         await wait_for_cleanup(self._close_task)

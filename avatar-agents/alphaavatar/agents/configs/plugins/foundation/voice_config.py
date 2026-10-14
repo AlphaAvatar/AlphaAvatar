@@ -22,7 +22,7 @@ from alphaavatar.agents.avatar.voice import LiveKitTTSAdapter, STTBase, VADBase,
 from alphaavatar.agents.runtime.inference import InferenceExecutor
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 
-# alphaavatar voice plugins
+# AlphaAvatar voice factories; turn interruption policy belongs to Router.
 importlib.import_module("alphaavatar.plugins.voice")
 
 
@@ -54,21 +54,13 @@ class STTConfig(BaseModel):
         if self.model is None:
             raise ValueError(f"voice.stt.model is required when voice.stt.plugin={self.plugin!r}")
 
-        kwargs = {
-            "model": self.model,
-        }
-
+        kwargs = {"model": self.model}
         if self.plugin == "openai_realtime":
             kwargs["delay"] = self.delay
 
         if self.base_url is not None:
             kwargs["base_url"] = self.base_url
-
-        return AvatarModulePlugin.create(
-            AvatarModule.VOICE_STT,
-            self.plugin,
-            **kwargs,
-        )
+        return AvatarModulePlugin.create(AvatarModule.VOICE_STT, self.plugin, **kwargs)
 
 
 class TTSConfig(BaseModel):
@@ -86,7 +78,7 @@ class TTSConfig(BaseModel):
     )
     speaker: str | None = Field(
         default=None,
-        description="Speaker to use for text-to-speech. For voice.ai, this corresponds to voice_id.",
+        description="Speaker to use for text-to-speech; voice.ai uses voice_id.",
     )
     instructions: str | None = Field(
         default=None,
@@ -98,13 +90,12 @@ class TTSConfig(BaseModel):
             case "openai":
                 try:
                     from livekit.plugins import openai
-                except ImportError as e:
+                except ImportError as error:
                     raise ImportError(
                         "The 'openai.TTS' plugin is required for livekit.plugins.openai "
                         "but is not installed.\n"
                         "Install it with: `pip install livekit-plugins-openai`"
-                    ) from e
-
+                    ) from error
                 if self.model is None:
                     raise ValueError("voice.tts.model is required when voice.tts.plugin='openai'")
 
@@ -112,9 +103,7 @@ class TTSConfig(BaseModel):
                     raise ValueError("voice.tts.speaker is required when voice.tts.plugin='openai'")
 
                 return openai.TTS(
-                    model=self.model,
-                    voice=self.speaker,
-                    instructions=self.instructions,
+                    model=self.model, voice=self.speaker, instructions=self.instructions
                 )
 
             case _:
@@ -133,8 +122,7 @@ class VADConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     plugin: Literal["silero"] | None = Field(
-        default=None,
-        description="VAD plugin used by Interaction Router.",
+        default=None, description="VAD plugin used by Interaction Router."
     )
     min_speech_duration: float = Field(default=0.05, ge=0.0)
     min_silence_duration: float = Field(default=0.55, ge=0.0)
@@ -144,11 +132,7 @@ class VADConfig(BaseModel):
     queue_size: int = Field(default=256, gt=0)
     inference_timeout_sec: float = Field(default=0.5, gt=0.0)
 
-    def get_plugin(
-        self,
-        *,
-        inference_executor: InferenceExecutor,
-    ) -> VADBase | None:
+    def get_plugin(self, *, inference_executor: InferenceExecutor) -> VADBase | None:
         return AvatarModulePlugin.create(
             AvatarModule.VOICE_VAD,
             self.plugin,
@@ -164,17 +148,13 @@ class VADConfig(BaseModel):
 
 
 class VoiceConfig(BaseModel):
-    """Configuration for AlphaAvatar voice plugins used in the agent."""
+    """Shared voice factories; interruption is configured under router.init_config."""
 
     model_config = ConfigDict(extra="forbid")
 
     stt: STTConfig = Field(default_factory=STTConfig)
     tts: TTSConfig = Field(default_factory=TTSConfig)
     vad: VADConfig = Field(default_factory=VADConfig)
-
-    allow_interruptions: bool = Field(
-        default=True, description="Allow interruptions during speech."
-    )
 
     async def get_plugin(self, *, inference_executor: InferenceExecutor) -> VoiceBundle:
         async with AsyncExitStack() as resources:

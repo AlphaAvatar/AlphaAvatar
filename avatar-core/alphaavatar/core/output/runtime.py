@@ -391,6 +391,7 @@ class OutputRuntime:
         self._check_open()
         if not isinstance(signal, OutputExecutionSignal):
             raise TypeError("Expected OutputExecutionSignal")
+
         raw = json.dumps(asdict(signal), ensure_ascii=False, sort_keys=True).encode()
         return self.execution.append(
             key=uuid4().hex,

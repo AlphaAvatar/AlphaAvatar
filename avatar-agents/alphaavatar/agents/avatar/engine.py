@@ -508,6 +508,7 @@ class AvatarEngine(LifecycleComponent):
     def notify_ready(self) -> None:
         if not self.ready:
             raise RuntimeError("Cannot announce an unready AvatarEngine")
+
         self._runtime.output.publish_execution(
             OutputExecutionSignal(
                 scope=OutputScope(self._runtime.state.context_id),

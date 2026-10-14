@@ -1,9 +1,6 @@
-# ============================================================
-# AlphaAvatar Multimodal Tools Pipeline
+# AlphaAvatar native multimodal tools pipeline.
 # File: examples/agent_configs/mm/pipeline_openai_tools.yaml
-# ============================================================
-
-
+# Native generation: Loop -> ProviderService -> OutputRuntime; no SDK llm section.
 # ============================================================
 # 1. Avatar Identity & Workspace
 # ============================================================
@@ -27,26 +24,61 @@ avatar:
 # ============================================================
 
 runtime:
-  temporal_alignment:
-    mode: auto
-
   perception:
     retention_sec: 60
 
-
-# ============================================================
-# 3. Core Language Model
-# ============================================================
-
-llm:
-  plugin: openai
-  model: gpt-5.6-luna
+    temporal_alignment:
+      mode: auto
 
 
 # ============================================================
-# 4. Shared Provider Defaults
-#
-# YAML anchors reused by Memory, Persona, and MCP.
+# 3. Foundation Plugins
+# ============================================================
+
+loop:
+  plugin: realtime
+  init_config:
+    model:
+      backend: openai
+      provider: openai
+      model: gpt-5.6-luna
+      temperature: null
+    # Keep the configured model identifier; availability/credentials are deployment-specific.
+    # Configure named tool_policies and/or an Engine authorizer for approved tools.
+    # The default approval requirement is NOT bypassed by the native Host.
+    tool_policies: {}
+    # No wildcard approval bypass. Configure exact capability policies after auditing each tool.
+
+context:
+  plugin: default
+  init_config:
+    history_max_turns: 32
+    history_max_items: 4096
+    history_max_bytes: 8388608
+
+voice:
+  vad:
+    plugin: silero
+
+  stt:
+    plugin: openai_segment
+    model: gpt-4o-transcribe
+
+  tts:
+    plugin: openai
+    model: gpt-4o-mini-tts
+    speaker: ash
+    instructions: Speak in a friendly and conversational tone.
+
+vision:
+  enabled: true
+  input_mode: vlm
+  sample_interval_sec: 1.0
+  max_frames: 6
+
+
+# ============================================================
+# 4. Perception Plugins
 # ============================================================
 
 defaults:
@@ -57,16 +89,6 @@ defaults:
   openai_embedding: &openai_embedding
     provider: openai
     model: text-embedding-3-small
-
-
-# ============================================================
-# 5. Realtime Runtime Plugins
-# ============================================================
-
-
-# ------------------------------------------------------------
-# Interaction Router
-# ------------------------------------------------------------
 
 router:
   plugin: default
@@ -80,9 +102,7 @@ router:
     addressing:
       semantic:
         enabled: true
-        avatar_identities:
-          - AlphaAvatar
-          - Alpha
+        avatar_identities: [AlphaAvatar, Alpha]
         history_turns: 2
         model:
           name: qwen3_0_6b_q8_0
@@ -111,66 +131,14 @@ router:
         enabled: true
         audio_only_speech_start: true
 
-
-# ------------------------------------------------------------
-# Intermediate Status
-# ------------------------------------------------------------
-
 status:
   plugin: default
   enabled: true
   init_config: {}
 
-
-# ------------------------------------------------------------
-# Voice
-# ------------------------------------------------------------
-
-voice:
-  vad:
-    plugin: silero
-
-  stt:
-    plugin: openai_segment
-    model: gpt-4o-transcribe
-
-  tts:
-    plugin: openai
-    model: gpt-4o-mini-tts
-    speaker: ash
-    instructions: Speak in a friendly and conversational tone.
-
-  allow_interruptions: true
-
-
-# ------------------------------------------------------------
-# Vision
-# ------------------------------------------------------------
-
-vision:
-  enabled: true
-  input_mode: vlm
-  sample_interval_sec: 1.0
-  max_frames: 6
-
-
-# ------------------------------------------------------------
-# Virtual Character
-# ------------------------------------------------------------
-
 character:
   plugin: null
   init_config: {}
-
-
-# ============================================================
-# 6. Stateful Intelligence Plugins
-# ============================================================
-
-
-# ------------------------------------------------------------
-# Memory
-# ------------------------------------------------------------
 
 memory:
   plugin: default
@@ -208,11 +176,8 @@ memory:
         consolidation:
           mode: session_merge
           resolve_superseded_items: null
-
-        maintenance:
-          item_ops:
-            - add
-          candidate_source: consolidated_lookup
+          item_ops: [add]
+          candidate_source: union
           similarity_threshold: 0.4
           max_candidates_per_item: 5
           timeout: 30.0
@@ -245,11 +210,6 @@ memory:
               temperature: 0.1
               input_adapter: langchain_gemini
 
-
-# ------------------------------------------------------------
-# Persona
-# ------------------------------------------------------------
-
 persona:
   plugin: default
 
@@ -264,10 +224,8 @@ persona:
       enabled: true
       provider:
         profile_delta_task: persona.profile_delta
-
         gateway:
           trace: *provider_trace
-
           tasks:
             persona.profile_delta:
               provider: openai
@@ -283,34 +241,18 @@ persona:
 
 
 # ============================================================
-# 7. Tool Plugins
+# 5. Tools Plugins
 # ============================================================
 
 tools:
-
-  # ----------------------------------------------------------
-  # Deep Research
-  # ----------------------------------------------------------
-
   deepresearch:
     plugin: default
     init_config: {}
 
-
-  # ----------------------------------------------------------
-  # Retrieval-Augmented Generation
-  # ----------------------------------------------------------
-
   rag:
     plugin: default
-
     init_config:
       doc_parser: docling
-
-
-  # ----------------------------------------------------------
-  # Model Context Protocol
-  # ----------------------------------------------------------
 
   mcp:
     plugin: default
@@ -324,7 +266,6 @@ tools:
     servers:
       livekit-docs:
         url: https://docs.livekit.io/mcp/
-
         instruction: >
           LiveKit Docs MCP Server provides unified access to the LiveKit
           ecosystem, allowing you to search documentation, explore GitHub code

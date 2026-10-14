@@ -69,7 +69,7 @@ class ConversationProcessor(MemoryProcessor):
         self._locks: dict[str, asyncio.Lock] = {}
 
         self._consolidator = MemoryConsolidator(
-            config.pipeline,
+            config.pipeline.consolidation,
             candidate_search=self._candidate_search,
             plan=self._provider.plan_consolidation,
         )
@@ -102,7 +102,7 @@ class ConversationProcessor(MemoryProcessor):
                 context=context,
                 memory_type=MemoryType.CONVERSATION,
                 kind=MemoryKind.CONSOLIDATED,
-                top_k=(self._config.pipeline.maintenance.max_candidates_per_item),
+                top_k=(self._config.pipeline.consolidation.max_candidates_per_item),
                 timeout=timeout,
             )
 

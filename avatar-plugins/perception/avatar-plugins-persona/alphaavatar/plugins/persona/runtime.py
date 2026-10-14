@@ -29,6 +29,7 @@ from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
 from alphaavatar.agents.runtime.modules.session.runtime import ParticipantInfo
 from alphaavatar.agents.utils import NumpyOP
 from alphaavatar.agents.utils.files.work_dirs import prepare_user_path
+from alphaavatar.core.cleanup import wait_for_cleanup
 
 from .cache import DefaultPersonaCache
 from .storage import PersonaStore
@@ -47,10 +48,12 @@ class PersonaRuntime(PersonaBase):
 
         self._persona_cache: dict[str, PersonaCache] = {}
         self._processors: tuple[PersonaProcessorBase, ...] = ()
-        self._started_processors: list[PersonaProcessorBase] = []
+        self._entered_processors: list[PersonaProcessorBase] = []
 
         self._processors_bound = False
         self._started = False
+        self._start_task: asyncio.Task[None] | None = None
+        self._close_task: asyncio.Task[None] | None = None
 
         self._capability_registry = AvatarCapabilityRegistry()
 
@@ -118,6 +121,11 @@ class PersonaRuntime(PersonaBase):
 
         return loaded_profile
 
+    @staticmethod
+    def _observe(task: asyncio.Task[None]) -> None:
+        if not task.cancelled():
+            task.exception()
+
     def _ensure_runtime_state(self, profile: UserProfile) -> UserRuntimeState:
         if profile.runtime_state is None:
             profile.runtime_state = UserRuntimeState()
@@ -153,8 +161,8 @@ class PersonaRuntime(PersonaBase):
     def bind_processors(self, processors: Sequence[PersonaProcessorBase]) -> None:
         if self._processors_bound:
             raise RuntimeError("Persona processors have already been bound.")
-        if self._started:
-            raise RuntimeError("Persona processors cannot be bound after runtime start.")
+        if self._start_task is not None or self._close_task is not None:
+            raise RuntimeError("Persona processors cannot be bound after runtime start or stop")
 
         names = [processor.name for processor in processors]
         if len(names) != len(set(names)):
@@ -227,65 +235,90 @@ class PersonaRuntime(PersonaBase):
             return_exceptions=True,
         )
 
-        errors = [result for result in results if isinstance(result, Exception)]
+        errors: list[Exception] = []
+        for result in results:
+            if isinstance(result, asyncio.CancelledError):
+                failure = RuntimeError("Persona profile save cancelled itself")
+                failure.__cause__ = result
+                errors.append(failure)
+            elif isinstance(result, Exception):
+                errors.append(result)
+            elif isinstance(result, BaseException):
+                raise result
         if errors:
             raise ExceptionGroup("One or more Persona profiles failed to save", errors)
 
-    async def on_start(self) -> None:
-        if self._started:
-            return
-        if not self._processors_bound:
-            raise RuntimeError("Persona processors have not been bound.")
-
+    async def _start(self) -> None:
         primary_user_id = self._runtime.session.primary_user_id
         if primary_user_id:
             await self.load_profile(uid=primary_user_id)
 
-        try:
-            for processor in self._processors:
-                await processor.start()
-                self._started_processors.append(processor)
-        except BaseException:
-            for processor in reversed(self._started_processors):
-                try:
-                    await processor.stop(finalize=False)
-                except Exception:
-                    logger.exception(
-                        "Failed to rollback Persona processor name=%s",
-                        processor.name,
-                    )
+        for processor in self._processors:
+            # A failing start may already own subscriptions or provider resources.
+            self._entered_processors.append(processor)
+            await processor.start()
 
-            self._started_processors.clear()
-            raise
+        task = asyncio.current_task()
+        if self._close_task is not None or (task is not None and task.cancelling()):
+            raise asyncio.CancelledError
 
         self._started = True
+        logger.info("Persona started processors=%s", [p.name for p in self._processors])
 
-        logger.info(
-            "Persona started processors=%s",
-            [processor.name for processor in self._processors],
-        )
+    async def _close(self) -> None:
+        start = self._start_task
+        if start is not None:
+            if not start.done() and not start.cancelling():
+                start.cancel()
+            await asyncio.gather(start, return_exceptions=True)
 
-    async def on_stop(self) -> None:
-        if not self._started and not self._started_processors:
-            return
-
+        finalize = self._started
+        self._started = False
         errors: list[Exception] = []
 
-        for processor in reversed(self._started_processors):
+        async def close_step(operation) -> None:
             try:
-                await processor.stop()
-            except Exception as exc:
-                errors.append(exc)
+                await operation
+            except asyncio.CancelledError as error:
+                failure = RuntimeError("Persona cleanup operation cancelled itself")
+                failure.__cause__ = error
+                errors.append(failure)
+            except Exception as error:
+                errors.append(error)
 
-        self._started_processors.clear()
-        self._started = False
+        for processor in reversed(self._entered_processors):
+            await close_step(processor.stop(finalize=finalize))
+        self._entered_processors.clear()
 
-        try:
-            await self.save()
-        except Exception as exc:
-            errors.append(exc)
-
+        # Rollback must not finalize or persist an incompletely started session.
+        if finalize:
+            await close_step(self.save())
         if errors:
             raise ExceptionGroup("Persona shutdown failed", errors)
 
         logger.info("Persona stopped")
+
+    async def on_start(self) -> None:
+        if self._close_task is not None:
+            raise RuntimeError("Persona runtime is closing or closed")
+        if not self._processors_bound:
+            raise RuntimeError("Persona processors have not been bound")
+        if self._start_task is None:
+            self._start_task = asyncio.create_task(self._start(), name="persona_runtime_start")
+            self._start_task.add_done_callback(self._observe)
+        try:
+            await asyncio.shield(self._start_task)
+            if self._close_task is not None:
+                raise RuntimeError("Persona closed during startup")
+        except BaseException as original:
+            try:
+                await self.on_stop()
+            except BaseException as cleanup:
+                raise original from cleanup
+            raise
+
+    async def on_stop(self) -> None:
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close(), name="persona_runtime_close")
+            self._close_task.add_done_callback(self._observe)
+        await wait_for_cleanup(self._close_task)

@@ -11,11 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from alphaavatar.agents.avatar.provider.schemas import ProvidersConfig
 
-from .consolidation import MemoryPipelineConfig
+from .consolidation import ConsolidationConfig
 
 
 class ConversationProviderConfig(BaseModel):
@@ -25,9 +25,43 @@ class ConversationProviderConfig(BaseModel):
     gateway: ProvidersConfig = Field(default_factory=ProvidersConfig)
 
 
+class ExtractionConfig(BaseModel):
+    session_gate: bool = Field(
+        default=False,
+        description=(
+            "Tell the model to emit nothing when the current input contains "
+            "no durable memory value."
+        ),
+    )
+
+    relations: bool = Field(
+        default=False,
+        description=(
+            "Extract semantic relations between entities already mentioned by "
+            "a memory. Not implemented yet."
+        ),
+    )
+
+    @field_validator("relations")
+    @classmethod
+    def _check_relations(cls, value: bool) -> bool:
+        if value:
+            raise ValueError(
+                "extraction.relations=True is not implemented. "
+                "Entity mentions already become graph nodes."
+            )
+
+        return value
+
+
+class ConversationPipelineConfig(BaseModel):
+    extraction: ExtractionConfig = Field(default_factory=ExtractionConfig)
+    consolidation: ConsolidationConfig = Field(default_factory=ConsolidationConfig)
+
+
 class ConversationConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
     provider: ConversationProviderConfig = Field(default_factory=ConversationProviderConfig)
-    pipeline: MemoryPipelineConfig = Field(default_factory=MemoryPipelineConfig)
+    pipeline: ConversationPipelineConfig = Field(default_factory=ConversationPipelineConfig)

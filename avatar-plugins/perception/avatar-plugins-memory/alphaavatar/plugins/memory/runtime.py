@@ -59,7 +59,7 @@ class MemoryRuntime(MemoryBase):
         self._memory_state = MemoryState(maximum_memory_num=maximum_memory_num)
         self._root_context_id: str | None = None
         self._processors: tuple[MemoryProcessor, ...] = ()
-        self._started_processors: list[MemoryProcessor] = []
+        self._entered_processors: list[MemoryProcessor] = []
         self._processors_bound = False
         self._started = False
         self._capability_registry = AvatarCapabilityRegistry()
@@ -115,11 +115,13 @@ class MemoryRuntime(MemoryBase):
     def bind_processors(self, processors: Sequence[MemoryProcessor]) -> None:
         if self._processors_bound:
             raise RuntimeError("Memory processors have already been bound")
-        if self._started:
-            raise RuntimeError("Memory processors cannot be bound after runtime start")
+        if self._start_task is not None or self._close_task is not None:
+            raise RuntimeError("Memory processors cannot be bound after runtime start or stop")
+
         names = [processor.name for processor in processors]
         if len(names) != len(set(names)):
             raise ValueError(f"Memory processor names must be unique: {names}")
+
         registry = AvatarCapabilityRegistry(*processors)
         self._processors = tuple(processors)
         self._capability_registry = registry
@@ -354,10 +356,12 @@ class MemoryRuntime(MemoryBase):
         self._turn_task = asyncio.create_task(self._consume_turns(), name="memory_turn_consumer")
         self._start_record_consumer()
         for processor in self._processors:
+            # Own partial initialization before the processor can suspend or fail.
+            self._entered_processors.append(processor)
             await processor.start()
-            self._started_processors.append(processor)
             if self._record_error is not None:
                 raise RuntimeError("Memory output ingestion failed during startup")
+
         task = asyncio.current_task()
         if self._close_task is not None or (task is not None and task.cancelling()):
             raise asyncio.CancelledError
@@ -386,10 +390,10 @@ class MemoryRuntime(MemoryBase):
         # Drain records before final extraction. One failure must not skip later cleanup.
         await close_step(self._stop_turn_consumer(drain=finalize))
         await close_step(self._stop_record_consumer(drain=finalize))
-        for processor in reversed(self._started_processors):
+        for processor in reversed(self._entered_processors):
             await close_step(processor.stop(finalize=finalize))
 
-        self._started_processors.clear()
+        self._entered_processors.clear()
         if self._store_open:
             self._store_open = False
             await close_step(self._store.stop())
@@ -418,4 +422,5 @@ class MemoryRuntime(MemoryBase):
     async def on_stop(self) -> None:
         if self._close_task is None:
             self._close_task = asyncio.create_task(self._close(), name="memory_runtime_close")
+            self._close_task.add_done_callback(self._observe)
         await wait_for_cleanup(self._close_task)

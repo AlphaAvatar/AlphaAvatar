@@ -11,8 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from collections.abc import Mapping
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from alphaavatar.agents.configs.runtime_config import RuntimeConfig
 
@@ -29,26 +31,38 @@ from .plugins.tools import ToolsConfig
 
 
 class AvatarConfig(BaseModel):
-    """Runtime settings and configurable Avatar plugins."""
+    """Runtime settings and configurable Avatar plugins, not SDK generation settings."""
 
-    # Avatar information
+    model_config = ConfigDict(extra="forbid")
+
+    # Avatar information and runtime configuration.
     avatar: AvatarInfoConfig = Field(default_factory=AvatarInfoConfig)
-
-    # Runtime configuration
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
 
-    # Foundation plugins configuration
+    # Foundation plugins.
     context: ContextConfig = Field(default_factory=ContextConfig)
     loop: LoopConfig = Field(default_factory=LoopConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     vision: VisionConfig = Field(default_factory=VisionConfig)
 
-    # Avatar plugins configuration
+    # Agent-owned plugins.
     status: StatusConfig = Field(default_factory=StatusConfig)
     router: RouterConfig = Field(default_factory=RouterConfig)
     character: VirtualCharacterConfig = Field(default_factory=VirtualCharacterConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     persona: PersonaConfig = Field(default_factory=PersonaConfig)
-
-    # Tools configuration
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_sections(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        if "llm" in value:
+            raise ValueError("llm was removed; configure loop.init_config.model instead")
+        if "defaults" not in value:
+            return value
+        if not isinstance(value["defaults"], Mapping):
+            raise ValueError("defaults must be a mapping of YAML anchor definitions")
+        # YAML aliases are already expanded. This is authoring data, not a runtime section.
+        return {key: item for key, item in value.items() if key != "defaults"}

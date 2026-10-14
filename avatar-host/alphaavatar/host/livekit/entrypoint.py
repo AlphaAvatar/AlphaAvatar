@@ -16,7 +16,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from contextlib import AsyncExitStack
 from functools import partial
+from typing import TypeVar
 
 from livekit import agents
 from livekit.agents.job import AutoSubscribe
@@ -35,6 +37,7 @@ from alphaavatar.agents.utils.time import build_user_time_context
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.lifecycle import LifecycleComponent
 from alphaavatar.host.bootstrap import create_avatar_runtime
+from alphaavatar.host.execution import HostExecution
 from alphaavatar.rtc.livekit.audio.input import LiveKitAudioInput
 from alphaavatar.rtc.livekit.audio.output import LiveKitTransientAudioOutput
 from alphaavatar.rtc.livekit.status.output import LiveKitStatusOutput
@@ -43,16 +46,19 @@ from alphaavatar.rtc.livekit.transcript.output import LiveKitTranscriptOutput
 from alphaavatar.rtc.livekit.video.input import LiveKitVideoInput
 
 from .connection import LiveKitConnection
-from .lifecycle import close_session_execution
 from .session import resolve_session_mode, resolve_session_type
 
 init_env()
+_ComponentT = TypeVar("_ComponentT", bound=LifecycleComponent)
 
 
 def get_max_session_seconds() -> int:
     raw = os.getenv("ALPHAAVATAR_MAX_SESSION_SECONDS", "1800")
     try:
-        return int(raw)
+        value = int(raw)
+        if value < 0:
+            raise ValueError("Session duration cannot be negative")
+        return value
     except ValueError:
         logger.warning("Invalid ALPHAAVATAR_MAX_SESSION_SECONDS=%r; using 1800", raw)
         return 1800
@@ -63,11 +69,9 @@ def worker_load(worker) -> float:
 
 
 async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext) -> None:
-    # Character providers still require an SDK AgentSession. Never create a hidden
-    # second generator or silently disable an explicitly configured character.
     if avatar_config.character.plugin is not None:
         raise ValueError(
-            "Native Engine currently requires character.plugin=null; migrate the character transport first"
+            "Native Engine requires character.plugin=null; migrate the character transport first"
         )
     await ctx.connect(auto_subscribe=AutoSubscribe.SUBSCRIBE_ALL)
 
@@ -91,10 +95,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext) -> Non
     workspace = WorkspacePaths.from_env()
     user_path = workspace.users.get(user_id)
     prepare_user_path(user_path)
-
-    session = SessionRuntime(
-        session_id=session_id,
-    )
+    session = SessionRuntime(session_id=session_id)
     session.add_participant(
         participant_identity=participant.identity,
         user_id=user_id,
@@ -131,95 +132,116 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext) -> Non
     runtime = await create_avatar_runtime(
         avatar_config=avatar_config, workspace=workspace, session=session, state=state
     )
-    engine: AvatarEngine | None = None
+
+    # Bootstrap owns constructed resources until HostExecution accepts the whole assembly.
+    resources = AsyncExitStack()
+    resources.push_async_callback(runtime.aclose)
+    execution: HostExecution | None = None
     connection: LiveKitConnection | None = None
     orphan_close: asyncio.Task[None] | None = None
+
+    def own(component: _ComponentT) -> _ComponentT:
+        resources.push_async_callback(component.on_stop)
+        return component
 
     async def shutdown() -> None:
         nonlocal orphan_close
         if connection is not None:
             await connection.aclose()
+        elif execution is not None:
+            await execution.aclose()
         else:
             if orphan_close is None:
                 orphan_close = asyncio.create_task(
-                    close_session_execution(runtime, engine=engine),
-                    name="avatar_unbound_runtime_close",
+                    resources.aclose(), name="avatar_unbound_runtime_close"
                 )
             await wait_for_cleanup(orphan_close)
 
-    ctx.add_shutdown_callback(shutdown)
     try:
+        ctx.add_shutdown_callback(shutdown)
         if mode.audio_output_enabled and runtime.foundation.voice.tts is None:
             raise ValueError("The selected session requires audio output but no TTS is configured")
-        engine = AvatarEngine(avatar_config=avatar_config, runtime=runtime)
+        engine = own(AvatarEngine(avatar_config=avatar_config, runtime=runtime))
         outputs: list[LifecycleComponent] = [
-            LiveKitStatusOutput(
-                room=ctx.room,
-                output_runtime=runtime.output,
-                action_topic=avatar_config.status.action_topic,
+            own(
+                LiveKitStatusOutput(
+                    room=ctx.room,
+                    output_runtime=runtime.output,
+                    action_topic=avatar_config.status.action_topic,
+                )
             )
         ]
 
         audio_output = None
         if mode.audio_output_enabled:
-            audio_output = LiveKitTransientAudioOutput(
-                room=ctx.room,
-                output_runtime=runtime.output,
-                sample_rate=runtime.foundation.voice.tts.sample_rate,
-                num_channels=runtime.foundation.voice.tts.num_channels,
+            audio_output = own(
+                LiveKitTransientAudioOutput(
+                    room=ctx.room,
+                    output_runtime=runtime.output,
+                    sample_rate=runtime.foundation.voice.tts.sample_rate,
+                    num_channels=runtime.foundation.voice.tts.num_channels,
+                )
             )
             outputs.append(audio_output)
         if mode.text_output_enabled:
             outputs.append(
-                LiveKitTranscriptOutput(
-                    room=ctx.room,
-                    output_runtime=runtime.output,
-                    track_sid=(lambda: audio_output.track_sid)
-                    if audio_output is not None
-                    else None,
+                own(
+                    LiveKitTranscriptOutput(
+                        room=ctx.room,
+                        output_runtime=runtime.output,
+                        track_sid=(lambda: audio_output.track_sid)
+                        if audio_output is not None
+                        else None,
+                    )
                 )
             )
 
         inputs: list[LifecycleComponent] = []
         if mode.audio_input_enabled:
             inputs.append(
-                LiveKitAudioInput(
-                    room=ctx.room,
-                    perception=runtime.perception,
-                    sample_rate=16000,
-                    num_channels=1,
-                    frame_size_ms=avatar_config.runtime.perception.audio_frame_size_ms,
+                own(
+                    LiveKitAudioInput(
+                        room=ctx.room,
+                        perception=runtime.perception,
+                        sample_rate=16000,
+                        num_channels=1,
+                        frame_size_ms=avatar_config.runtime.perception.audio_frame_size_ms,
+                    )
                 )
             )
         if visual:
             inputs.append(
-                LiveKitVideoInput(
-                    room=ctx.room,
-                    perception=runtime.perception,
-                    publish_interval_sec=avatar_config.runtime.perception.video_publish_interval_sec,
+                own(
+                    LiveKitVideoInput(
+                        room=ctx.room,
+                        perception=runtime.perception,
+                        publish_interval_sec=avatar_config.runtime.perception.video_publish_interval_sec,
+                    )
                 )
             )
 
         text_input = None
         if mode.text_input_enabled:
-            text_input = LiveKitTextInput(
-                room=ctx.room,
-                clock=runtime.perception.clock,
-                session_id=session_id,
-                participant_identities=frozenset((participant.identity,)),
-                submit=engine.submit_input,
-                max_streams=avatar_config.runtime.engine.max_pending_admissions,
-                max_bytes=avatar_config.runtime.engine.max_input_bytes,
+            text_input = own(
+                LiveKitTextInput(
+                    room=ctx.room,
+                    clock=runtime.perception.clock,
+                    session_id=session_id,
+                    participant_identities=frozenset((participant.identity,)),
+                    submit=engine.submit_input,
+                    max_streams=avatar_config.runtime.engine.max_pending_admissions,
+                    max_bytes=avatar_config.runtime.engine.max_input_bytes,
+                )
             )
             inputs.append(text_input)
 
+        execution = HostExecution(runtime=runtime, engine=engine, inputs=inputs, outputs=outputs)
+        resources.pop_all()
         connection = LiveKitConnection(
             ctx=ctx,
-            runtime=runtime,
+            execution=execution,
             engine=engine,
             participant_identity=participant.identity,
-            inputs=inputs,
-            outputs=outputs,
             text_input=text_input,
             max_duration=get_max_session_seconds(),
         )
@@ -253,7 +275,7 @@ def main() -> None:
         initialize_process_timeout=60,
         shutdown_process_timeout=180,
     )
-    # Job/process hosting remains SDK-backed; no SDK Agent, AgentSession or generation nodes remain here.
+    # Worker/process hosting is still SDK-backed, not the native generation chain.
     agents.cli.run_app(AvatarServer.from_server_options(opts))
 
 

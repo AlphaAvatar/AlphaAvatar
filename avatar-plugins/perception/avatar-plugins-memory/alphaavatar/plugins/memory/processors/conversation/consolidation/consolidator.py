@@ -31,7 +31,7 @@ from .candidates import (
     consolidated_from_hits,
     merge_candidates,
 )
-from .config import CandidateSource, ConsolidationMode, MemoryPipelineConfig
+from .config import CandidateSource, ConsolidationConfig, ConsolidationMode
 from .consolidation_op import apply_assignments
 from .prompts import render_candidates, render_incoming
 from .schema import ConsolidationPlan, ConsolidationResult
@@ -123,7 +123,7 @@ def _log_hit_scores(
 class MemoryConsolidator:
     def __init__(
         self,
-        config: MemoryPipelineConfig,
+        config: ConsolidationConfig,
         *,
         candidate_search: CandidateSearch,
         plan: PlanConsolidation,
@@ -135,11 +135,11 @@ class MemoryConsolidator:
 
     @property
     def enabled(self) -> bool:
-        return self._config.consolidation.enabled
+        return self._config.enabled
 
     @property
     def resolve_sources(self) -> bool:
-        return self._config.consolidation.mode is ConsolidationMode.SESSION_MERGE
+        return self._config.mode is ConsolidationMode.SESSION_MERGE
 
     def record_recall(self, records: Iterable[MemoryItem]) -> None:
         self._recalled_candidates.record(records)
@@ -238,11 +238,10 @@ class MemoryConsolidator:
     ) -> list[MemoryItem]:
         first = _validate_batch(items)
 
-        if self._config.consolidation.mode is ConsolidationMode.SESSION_SUMMARY:
+        if self._config.mode is ConsolidationMode.SESSION_SUMMARY:
             return []
 
-        maintenance = self._config.maintenance
-        source = maintenance.candidate_source
+        source = self._config.candidate_source
         from_recall: list[MemoryItem] = []
 
         if source in (
@@ -266,13 +265,13 @@ class MemoryConsolidator:
             _log_hit_scores(
                 items,
                 hits,
-                threshold=maintenance.similarity_threshold,
+                threshold=self._config.similarity_threshold,
             )
 
             from_lookup = consolidated_from_hits(
                 hits,
-                threshold=maintenance.similarity_threshold,
-                limit=maintenance.max_candidates_per_item,
+                threshold=self._config.similarity_threshold,
+                limit=self._config.max_candidates_per_item,
             )
 
         return _compatible_candidates(
@@ -291,7 +290,7 @@ class MemoryConsolidator:
         session_content: str,
         trace_metadata: dict[str, Any],
     ) -> ConsolidationPlan:
-        session_summary = self._config.consolidation.mode is ConsolidationMode.SESSION_SUMMARY
+        session_summary = self._config.mode is ConsolidationMode.SESSION_SUMMARY
 
         payload: dict[str, Any] = {
             "session_content": session_content,
@@ -308,5 +307,5 @@ class MemoryConsolidator:
                 **trace_metadata,
                 "operation": "memory_consolidation",
             },
-            timeout=self._config.maintenance.timeout,
+            timeout=self._config.timeout,
         )
