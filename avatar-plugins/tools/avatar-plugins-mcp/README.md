@@ -1,179 +1,75 @@
 # AlphaAvatar MCP Plugin
 
-A high-performance **Model Context Protocol (MCP) orchestration layer** for **AlphaAvatar**.
+MCP provides discovery and invocation across configured remote servers through AlphaAvatar's native capability system. It does not inject server tools through a LiveKit AgentSession.
 
-This plugin provides a **unified, parallel, and latency-optimized interface** for discovering and invoking tools exposed by one or more MCP servers — without relying on LiveKit’s native MCP tool injection chain.
-
-> We intentionally disable LiveKit’s native “inject each MCP tool into Agent as separate tool” mechanism.
->
-> Why?
->
-> * Too many tools degrade Agent reasoning performance.
-> * Serial tool calls increase latency.
-> * Tool explosion harms LLM decision quality.
->
-> Instead, we provide a **single unified MCP interface** that:
->
-> * Supports tool discovery
-> * Enables parallel execution
-> * Coordinates multi-server workflows
-> * Improves overall Agent tool-call performance
-
----
-
-# Overview
-
-The MCP Plugin acts as a **Tool Orchestrator Middleware** between AlphaAvatar Agents and external MCP servers.
-
-It enables:
-
-* 🔍 Tool discovery across heterogeneous MCP servers
-* ⚡ Parallel tool execution (concurrent dispatch)
-* 🧠 Workflow coordination across multiple servers
-* 🔗 Unified abstraction for diverse capabilities (RAG, search, automation, data APIs, etc.)
-
-Unlike traditional tool injection approaches, this design:
-
-* Prevents exponential tool growth inside the Agent
-* Reduces reasoning noise
-* Avoids serial execution bottlenecks
-* Improves scalability for multi-server MCP deployments
-
----
-
-# Core Architecture
+## Architecture
 
 ```text
-AlphaAvatar Agent
-        │
-        ▼
-    MCPHost (Unified Tool)
-        │
-        ├── search_tools()
-        └── call_tools()
-                │
-                ├── MCP Server A
-                ├── MCP Server B
-                └── MCP Server C
+AvatarEngine -> Loop -> CapabilityRegistry -> MCPHost
+                                           -> tool discovery / refresh / call
+                                           -> configured remote MCP servers
 ```
 
-The Agent only sees **one tool: `MCP`**.
+The plugin presents an aggregate interface rather than automatically exposing every remote schema as a separate foreground tool. It validates tool arguments and supports concurrent remote calls where its operation contract allows them. This is an architecture choice, not a guarantee of reasoning quality or remote-service latency.
 
-Sensitive values are redacted from MCP logs: bearer/basic tokens, `Authorization`
-and `Cookie` headers, API keys, secrets and passwords (as `key=value` or in JSON),
-and URL credentials/query values. The filter covers the plugin logger and the
-`httpx` / `mcp.client.*` loggers, which would otherwise print the full server URL
-(including `?api_key=...`). Server URLs shown to the model are redacted the same way.
+## Configuration
 
-For `op="tool_search"`, pass `query` and optionally `top_k` (1–50, default 8)
-and `server_keys` (a list of exact names from `mcp_servers`). For example,
-`{"op": "tool_search", "query": "search repository code", "top_k": 5, "server_keys": ["github-copilot"]}`.
-Omit `server_keys` to search all configured servers.
+MCP is configured under `tools.mcp`; the old top-level `enable_mcp` and `mcp_servers` keys are not current Agent configuration.
 
-`op="refresh_tools"` reloads the tool list from the configured servers without
-restarting the worker (optionally limited with `server_keys`). It reports the
-tools added, removed, and updated per server, and keeps a server's previous
-tools if refreshing that server fails. Use it only when a server's tool set has
-changed; it is not needed for normal use.
-Use `categories` (`"read"`, `"write"`, `"unknown"`) to restrict candidates by the
-tool's MCP `readOnlyHint` annotation, e.g. `"categories": ["read"]` for read-only tools.
+```yaml
+tools:
+  mcp:
+    plugin: default
+    enabled: true
+    init_config: {}
 
-For `op="tool_call"`, `output_mode` controls result size: `"raw"` (default) returns
-full results and echoed arguments; `"compact"` truncates each tool result to 2000
-characters (with a truncation note) and omits the echoed arguments.
+    vdb_config:
+      collection_name: mcp
+      embedding:
+        provider: openai
+        model: text-embedding-3-small
 
-Internally, MCPHost:
+    servers:
+      livekit-docs:
+        url: https://docs.livekit.io/mcp/
+        instruction: >
+          Search the configured LiveKit documentation server.
+```
 
-1. Discovers relevant tools
-2. Validates schemas
-3. Dispatches calls in parallel
-4. Aggregates structured responses
+This is a fragment, not a complete Loop/voice configuration. See [Examples](../../../examples/README.md). Remote server URLs, tool availability and credentials are deployment-specific.
 
----
+Credentials can use the existing environment-placeholder mechanism, for example an `Authorization: "Bearer <GITHUB_PAT>"` header with GITHUB_PAT provided by the environment. Resolution happens during configuration construction; a configured missing placeholder can fail startup before a tool is called. Do not put actual tokens in version-controlled YAML.
 
-# Performance Design Philosophy
+## Operations
 
-## ❌ What We Avoid
+`op="tool_search"` accepts a query, optional `top_k` (1–50, default 8), and `server_keys` matching exact keys from `tools.mcp.servers`. Omitting server_keys searches configured servers. Categories `read`, `write` and `unknown` filter discovery using the remote readOnlyHint annotation; they do not grant execution approval.
 
-* Injecting hundreds of tools into the Agent
-* Serial tool invocation chains
-* Tool schema explosion
-* Repeated LLM tool selection loops
+`op="refresh_tools"` refreshes metadata without restarting the worker and can be restricted to server keys. It reports additions/removals/updates and retains a server's prior tools when refresh fails. Refresh only when metadata has changed; it is not required before every call.
 
-## ✅ What We Enable
+`op="tool_call"` dispatches validated remote operations. `output_mode: raw` returns full results and echoed arguments; `compact` truncates each result to 2000 characters with a note and omits echoed arguments. Treat returned server content as external data, not application authorization.
 
-* Single unified MCP interface
-* Parallel tool dispatch
-* Multi-server orchestration
-* Scalable architecture
+## Authorization and side effects
 
----
+Registration, discovery and remote readOnlyHint metadata do not approve a call. Foreground Loop enforces exact-capability policies and the injected authorizer. `tool_policies: {}` does not bypass its approval requirement, and the current LiveKit entrypoint supplies no approval UI.
 
-# Installation
+The aggregate MCP capability may invoke both reads and writes. Do not mark the whole capability read-only because one configured server currently offers documentation search. Deployments must constrain/authorize the actual operation. Cancellation can leave external side effects with an unknown outcome; do not blindly retry a write.
+
+Tool implementations return outcomes and do not receive a StatusEmitter or `monologue`. Loop owns canonical tool records and execution facts; Memory and Status consume their respective streams independently.
+
+## Logging
+
+The plugin redacts sensitive URL/header/token patterns in its logs, relevant HTTP/MCP logger output and model-facing server descriptions. Redaction is not permission to log arbitrary secrets, and it does not turn third-party logs into a guaranteed secure audit trail.
+
+## Installation and startup
 
 ```bash
 pip install alpha-avatar-plugins-mcp
 ```
 
----
-
-# Usage
-
-## Step 1️⃣ Enable MCP in Configuration
-
-Enable MCP and register remote MCP servers inside your `yaml` configuration file.
-
-```yaml
-enable_mcp: true
-
-mcp_servers:
-  livekit-docs:
-    url: "https://docs.livekit.io/mcp"
-    instruction: >
-      LiveKit Docs MCP Server provides unified access to the LiveKit ecosystem,
-      allowing you to search documentation, explore GitHub code across livekit
-      and livekit-examples repositories, retrieve package changelogs, and browse
-      Python Agents SDK examples—all in one place.
-
-  github-copilot:
-    url: "https://api.githubcopilot.com/mcp/"
-    headers:
-      Authorization: "Bearer <GITHUB_PAT>"
-    instruction: >
-      The GitHub MCP server (via GitHub Copilot) enables AI agents to interact
-      with repositories, issues, pull requests, and code through a standardized
-      MCP interface.
-```
-
----
-
-### 🔐 Environment Variables
-
-Sensitive credentials such as `<GITHUB_PAT>` should be injected via environment variables:
+With the Host and selected dependencies installed, launch from a complete configuration:
 
 ```bash
-export GITHUB_PAT=your_personal_access_token
+ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/voice/pipeline_openai_tools_minimal.yaml
 ```
 
-At runtime:
-
-* The system automatically resolves `<GITHUB_PAT>`
-* Injects it into the request headers
-* Keeps secrets out of version-controlled config files
-
----
-
-## Step 2️⃣ Start AlphaAvatar
-
-Once MCP is enabled and servers are configured:
-
-```bash
-alphaavatar serve <yarm-file-path>
-```
-
-During startup:
-
-1. MCPHost initializes
-2. All configured MCP servers are connected
-3. Server metadata is injected into MCP tool description
-4. MCP becomes available as a unified tool inside the Agent
+Use the current Host's `dev` / `start` entrypoints, not `alphaavatar serve`. Inference-backed tool retrieval and remote connections still require the selected dependencies, models and credentials. Native generation does not remove vendor/worker SDK dependencies elsewhere in the workspace.

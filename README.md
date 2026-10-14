@@ -63,7 +63,7 @@ It is built around a **plugin-based real-time Agent architecture**, combining:
 - 🧰 **Tools** through MCP, RAG, DeepResearch, and external integrations
 - 😊 **Virtual Character** for real-time voice/avatar interaction
 
-✨ **Fully self-hostable and privacy-first** — AlphaAvatar can run locally or on your own infrastructure, giving you control over your data, memory, tools, and behavior.
+✨ **Self-hostable and privacy-first** — AlphaAvatar can run on your own infrastructure, giving you control over runtime configuration, memory and tools. Selected cloud model, embedding and remote-tool providers still require their own network access and credentials; self-hosting the framework does not make those providers local.
 
 ---
 
@@ -79,11 +79,19 @@ AlphaAvatar follows a layered realtime multimodal architecture:
 - **🏠 Application Host**: assembles Agent execution and RTC adapters, coordinates their lifecycle, and hosts the application entrypoint.
 - **🔌 RTC Adapter**: connects LiveKit and other realtime communication backends.
 - **👁️ Core Perception**: normalizes typed multimodal observations, source and segment lineage, ordered perception events, annotations, timelines, and historical snapshots.
-- **⚙️ Agent & Runtime**: manages sessions, context, semantic addressing, conversation focus, multimodal turn taking, shared inference access, and runtime lifecycle.
+- **⚙️ Agent & Runtime**: owns Turn admission, native Loop execution, shared state, capability invocation and precise interruption. Router separately owns addressing and turn-taking decisions.
 - **🧩 Plugin Ecosystem**: adds Memory, Persona, RAG, MCP, Character, and other capabilities.
-- **🧠 Provider & Infrastructure**: connects models, embeddings, routing, tracing, and structured output.
+- **🧠 Foundation & Infrastructure**: exposes ContextManager, Loop, ProviderService and VoiceBundle; structured extraction and native foreground streaming retain separate backend capabilities.
 - **💾 Storage & Data**: stores identity, memory, vectors, traces, artifacts, and media.
-- **📤 Assistant Outputs**: delivers voice, text, avatar responses, tool actions, and status updates.
+- **📤 Assistant Outputs**: publishes validated EnvOutput content through OutputRuntime, with separate canonical-record and execution-observation streams. Router coordinates synthesis/transcripts; RTC owns delivery and playback feedback.
+
+```text
+HostExecution: RTC outputs -> AvatarEngine -> RTC inputs
+AvatarEngine -> Loop -> ContextManager / ProviderService / CapabilityRegistry
+                    -> OutputRuntime -> Router synthesis / RTC delivery
+```
+
+HostExecution owns the execution and AvatarRuntime; LiveKitConnection owns connection policy. Core LifecycleGroup provides reusable component orchestration. The obsolete TurnController and SDK model/tool/record bridges are removed. The architecture illustration is a high-level overview; the [Core](avatar-core/README.md), [Agents](avatar-agents/README.md), [Host](avatar-host/README.md) and [RTC](avatar-rtc/README.md) READMEs describe the current ownership boundaries.
 
 ---
 
@@ -172,12 +180,11 @@ Shared components that other plugins use through `FoundationRuntime`.
 | Plugin | Capabilities | Status |
 | :--- | :--- | :---: |
 | [**Voice**][plugin-voice] | Provides voice activity detection, speech recognition, and speech synthesis.<br>Shares reusable voice components with Router and other consumers. | ![Available][status-available] |
-| [**Provider**][plugin-provider] | Provides runtime-owned structured LLM task execution, client reuse, and managed tracing.<br>VDB workers retain their Embedding ownership; native streaming execution remains pending. | ![Available][status-available] |
-| **Context** | Will make context construction and composition independently pluggable.<br>Will expose shared context services to other plugins. | ![Planned][status-planned] |
+| [**Provider**][plugin-provider] | Provides runtime-owned clients, structured task execution, native OpenAI Responses streaming and managed tracing.<br>VDB workers retain their Embedding ownership. | ![Available][status-available] |
+| [**Context**][plugin-context] | Owns native history and captured query preparation.<br>Composes State, perception, Memory and Persona without per-step prefix rewrites. | ![Available][status-available] |
+| [**Loop**][plugin-loop] | Runs native model/tool execution with bounded limits, explicit authorization and canonical record publication.<br>Required by AvatarEngine. | ![Available][status-available] |
 
-FoundationRuntime owns VoiceService and ProviderService. Memory and Persona borrow
-structured-task gateways while retaining their processor-owned configuration and
-business prompts. Native model/tool streaming and a pluggable Context service remain pending.
+FoundationRuntime owns ContextManager, Loop, ProviderService and VoiceBundle. Memory and Persona borrow structured-task gateways while retaining processor-owned configuration and business prompts. The foreground Loop explicitly selects a streaming backend; the LangChain task backend is not made stream-capable by sharing the service.
 
 ### 🧠 Perception
 
@@ -188,7 +195,7 @@ Capabilities for understanding users, maintaining memory, and coordinating inter
 | [**Router**][plugin-router] | Coordinates multimodal routing, addressing, turn taking, and interruption.<br>Combines speech, transcripts, and attention evidence for realtime interaction decisions. | ![Available][status-available] |
 | [**Memory**][plugin-memory] | Stores durable memories from conversations, tools, and environment observations.<br>Retrieves relevant information to maintain continuity across interactions. | ![Available][status-available] |
 | [**Persona**][plugin-persona] | Builds user profiles and recognizes speakers and faces.<br>Maintains identity continuity and supplies context for personalization. | ![Available][status-available] |
-| [**Character**][plugin-character] | Connects AlphaAvatar to realtime virtual-character interfaces.<br>Synchronizes character presentation with voice-based interaction. | ![Available][status-available] |
+| [**Character**][plugin-character] | Retains renderer integrations and the AIRI submodule.<br>SDK-dependent Character adapters are not supported by the native Host; use `character.plugin: null`. | Native integration pending |
 | [**Status**][plugin-status] | Publishes progress feedback while AlphaAvatar thinks or uses tools.<br>Keeps intermediate activity visible during longer-running workflows. | ![Available][status-available] |
 | **Reflection** | Will review memories, behavior, and interaction history.<br>Will derive insights to support ongoing adaptation and improvement. | ![Planned][status-planned] |
 | **Planning** | Will turn goals into coordinated, multi-step plans.<br>Will track task progress and support longer-horizon execution. | ![Planned][status-planned] |
@@ -209,6 +216,8 @@ See [Plugin Layout and Boundaries](avatar-plugins/README.md) for development det
 
 [plugin-voice]: avatar-plugins/foundation/avatar-plugins-voice/README.md
 [plugin-provider]: avatar-plugins/foundation/avatar-plugins-provider/README.md
+[plugin-context]: avatar-plugins/foundation/avatar-plugins-context/README.md
+[plugin-loop]: avatar-plugins/foundation/avatar-plugins-loop/README.md
 [plugin-router]: avatar-plugins/perception/avatar-plugins-router/README.md
 [plugin-memory]: avatar-plugins/perception/avatar-plugins-memory/README.md
 [plugin-persona]: avatar-plugins/perception/avatar-plugins-persona/README.md
@@ -273,15 +282,9 @@ See [Plugin Layout and Boundaries](avatar-plugins/README.md) for development det
 
 <h2>Installation ⚙️</h2>
 
-Install **stable** AlphaAvatar version from PyPI:
+Use a source checkout for the v0.6.8 development interfaces documented here. Released PyPI versions can have different APIs; follow the README at the corresponding release tag rather than combining an older package with these examples.
 
-```bash
-uv venv .my-env --python 3.11
-source .my-env/bin/activate
-pip install alpha-avatar-agents
-```
-
-Install **latest** AlphaAvatar version from GitHub:
+The `alphaavatar` CLI is registered by **alpha-avatar-host**, not by the Agents library. Install the selected workspace packages and dependencies together:
 
 ```bash
 git clone --recurse-submodules https://github.com/AlphaAvatar/AlphaAvatar.git
@@ -294,7 +297,7 @@ uv sync --all-packages
 
 <h2>Quick Start ⚡️</h2>
 
-Start your agent in dev mode to connect it to LiveKit and make it available from anywhere on the internet.
+Start the native Host in dev mode against your configured LiveKit deployment. The current worker/process host remains SDK-backed; foreground generation belongs to AvatarEngine and Loop.
 
 ---
 
@@ -307,7 +310,7 @@ cd AlphaAvatar
 cp .env.template .env.dev
 ```
 
-Edit .env.dev and set required environment variables.
+Edit .env.dev and provide credentials for the selected RTC, model, embedding and tool services. Example model/voice identifiers are deployment choices, not guarantees of account access.
 
 ✅ Step 2. Run the Agent
 
@@ -321,15 +324,13 @@ ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/voice/pipeline_openai_t
 ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/mm/pipeline_openai_tools.yaml
 ```
 
-To see more supported modes, please refer to the [LiveKit doc](https://docs.livekit.io/agents/start/voice-ai/).
-
-To see more examples, please refer to the [Examples README](https://github.com/AlphaAvatar/AlphaAvatar/blob/main/examples/README.md)
+See the [Host README](avatar-host/README.md) for startup/lifecycle boundaries and [Examples README](examples/README.md) for complete configurations and their service requirements.
 
 ---
 
 <h2>Usage 🚀</h2>
 
-AlphaAvatar focuses on first-party realtime interaction. The Web Demo and Developer Playground are available today; dedicated App and OS experiences remain planned.
+AlphaAvatar focuses on first-party realtime interaction. The browser demo and Developer Playground provide client surfaces; dedicated App and OS experiences remain planned.
 
 External messaging bridges are not included in the current development scope. This does not remove native text chat or tool-based integrations with external services.
 
@@ -343,21 +344,21 @@ AlphaAvatar now provides a browser-based realtime demo interface built on **Live
 
 👉 Try the Web Demo: https://www.alphaavatar.ai/demo
 
-The Web Demo supports:
+The browser client surfaces include (availability depends on the deployed version and configuration):
 
 - 🎙️ Real-time voice interaction
 - 💬 Text chat with the Avatar
 - 📷 Camera preview and video-ready interaction
 - 🔊 Agent audio playback
-- 😊 Virtual character / avatar stage
-- 🧠 Full plugin support, including Memory, Persona, RAG, MCP, and DeepResearch
+- 😊 An avatar stage; the SDK-dependent Character integration is not enabled by the native Host in this source tree
+- 🧠 Configurable Memory, Persona, RAG, MCP and DeepResearch, subject to enabled services and execution policy
 - 🌍 Browser timezone metadata, enabling AlphaAvatar to understand local login time
 
 <p align="center">
   <img src=".github/assets/web-demo-screenshot.png" alt="AlphaAvatar Web Demo Screenshot" width="100%" />
 </p>
 
-> The Web Demo is the recommended way to try AlphaAvatar with a full realtime multimodal experience.
+> Screenshots and hosted deployments may reflect another revision. In the current native examples, AIRI-named configurations retain a voice persona, not animated Character transport.
 
 ---
 
@@ -384,7 +385,7 @@ Developers can immediately access AlphaAvatar via the **LiveKit Playground**.
 After starting your AlphaAvatar server:
 
 1. Connect to your LiveKit instance
-2. Configure the Agent name in the Playground (must match `avatar_name`, default: `Assistant`) to enable Explicit Dispatch.
+2. Configure the Agent name to match `avatar.name` in the selected YAML (the supplied examples use `AlphaAvatar`) for Explicit Dispatch.
 3. Connect to the agent room
 4. Start testing real-time interaction
 
@@ -394,7 +395,7 @@ Supported capabilities:
 - 🧠 Memory extraction
 - 🔍 RAG retrieval
 - 🧰 MCP tool invocation
-- 😊 Virtual character display
+- 😊 Character presentation depends on a separately migrated integration; it is not enabled by these native configurations
 
 ![playground airi screenshot](.github/assets/playground-airi-screenshot.png)
 

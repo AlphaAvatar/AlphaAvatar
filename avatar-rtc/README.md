@@ -1,58 +1,40 @@
 # AlphaAvatar RTC
 
-`alpha-avatar-rtc` owns transport-specific adapters. Its base package depends only
-on `alpha-avatar-core`; the `livekit` extra enables LiveKit codecs and adapters.
+`alpha-avatar-rtc` owns transport-specific adapters. Its base package depends only on `alpha-avatar-core`; the `livekit` extra enables LiveKit codecs and adapters.
 
 ```python
 from alphaavatar.rtc.livekit.audio.codec import from_livekit_audio_frame, to_livekit_audio_frame
 from alphaavatar.rtc.livekit.audio.input import LiveKitAudioInput
 from alphaavatar.rtc.livekit.audio.output import LiveKitTransientAudioOutput
 from alphaavatar.rtc.livekit.status.output import LiveKitStatusOutput
+from alphaavatar.rtc.livekit.text import LiveKitTextInput
 from alphaavatar.rtc.livekit.transcript.output import LiveKitTranscriptOutput
 from alphaavatar.rtc.livekit.video.codec import from_livekit_video_frame, to_livekit_video_frame
 from alphaavatar.rtc.livekit.video.input import LiveKitVideoInput
 ```
 
-Transport-neutral image conversion lives in `alphaavatar.core.media.codecs.video`
-and is available through `alpha-avatar-core[video]`.
+Transport-neutral image conversion lives in `alphaavatar.core.media.codecs.video` and is available through `alpha-avatar-core[video]`.
 
 ## Lifecycle and ownership
 
-Input adapters receive a LiveKit room and the shared `PerceptionRuntime`.
-Output adapters receive a room and the shared `OutputRuntime`.
+Media inputs receive a LiveKit room and shared PerceptionRuntime. Text input receives an injected submit callback; Host binds it to Engine admission without introducing an RTC-to-Agents dependency. Output adapters receive a room and shared OutputRuntime.
 
-Adapters expose `on_start()` and `on_stop()`, structurally
-satisfying `alphaavatar.core.lifecycle.LifecycleComponent`.
+Adapters expose `on_start()` and `on_stop()` for Core lifecycle coordination. Each owns its subscriptions, callbacks, tasks and transport resources. It must not close the shared room, PerceptionRuntime or OutputRuntime. HostExecution owns component ordering and runtime release; LiveKitConnection owns room-disconnection policy.
 
-Each adapter owns its subscriptions, callbacks, tasks, and transport resources.
-It must not close the shared room, PerceptionRuntime, or OutputRuntime.
+Partial startup triggers owned cleanup. Concurrent shutdown callers share cleanup, and caller cancellation is propagated after it settles. Closed input adapters are not restarted. Video conversion remains off the event-loop thread, with source-generation checks before publication.
 
-Input adapters unregister only their own room callbacks. Partial startup failures
-trigger owned cleanup. Concurrent shutdown requests share one cleanup task, and
-caller cancellation is propagated after that cleanup finishes.
+The package root does not import a backend. RTC adapters must not depend on `alphaavatar.agents`, concrete perception plugins or `livekit.agents`.
 
-An input adapter instance is not restarted after shutdown. Create a new instance
-for a new attachment.
+## Native input and output
 
-Frame identity and source-generation semantics are preserved. Video conversion
-remains off the event-loop thread, with binding and source-state checks before
-publishing the result.
+`LiveKitTextInput` consumes the `lk.chat` text stream, checks the transport-supplied sender identity and bounded complete content, then invokes the injected submit callback. It does not pre-publish a second perception copy. Attached byte streams are not implemented by this text adapter.
 
-The package root does not import a backend. RTC adapters must not depend on
-`alphaavatar.agents`, perception plugins, or `livekit.agents`.
+Despite its retained class name, `LiveKitTransientAudioOutput` serves both ASSISTANT and TRANSIENT output on one audio track. It does not own a model or a second TTS pipeline. Host supplies the audio format declared by the selected TTS adapter.
+
+Consumers read `event.output` and its typed scope, source and payload. Interruptions use Runtime-fixed exact targets, not a new broad match against a later output. Playback feedback and final transcript delivery remain distinct from generation completion. Internal status decisions and canonical records are not projected as client status content.
 
 ## Migration status
 
-Audio/video frame codecs, media inputs, and audio/status/transcript outputs live
-in this package. Application assembly and lifecycle coordination live in Host.
+Codecs, media/text inputs and audio/status/transcript outputs live here. Application assembly lives in Host. Engine/Loop own native generation; Router owns synthesis and transcript synchronization. The obsolete SDK model/turn/response and record bridges are removed, not alternative supported paths.
 
-The audio output adapter still handles only `OutputLane.TRANSIENT`. Assistant
-response generation and final TTS remain on the temporary Agents path.
-
-The temporary Agents model/turn/response bridges remain in `avatar-agents` for
-removal in item 12. SDK execution ownership is still being migrated.
-
-External messaging bridges are not part of this package or the current Host
-entrypoint. Native text interaction and RTC data-channel transport remain in scope.
-
-This migration does not change the current session-scoped execution semantics.
+SDK worker hosting and vendor TTS adapters elsewhere in the workspace remain. SDK-dependent Character transport is not enabled by the native Host. This migration does not yet provide connection-independent execution or persistent task recovery.

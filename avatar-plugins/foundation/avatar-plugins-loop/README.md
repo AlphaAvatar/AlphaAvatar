@@ -1,9 +1,6 @@
 # AlphaAvatar Loop Plugin
 
-Loop is a required Foundation component initialized after Foundation is bound to
-AvatarRuntime. Construction stores configuration; initialize() resolves shared
-Provider services and validates streaming support without making model requests.
-Engine and submission require an initialized, non-closed Loop.
+Loop is a required Foundation component. Host constructs it with AvatarRuntime, binds Foundation, then calls `initialize()`. Initialization resolves shared services and checks streaming support without making a foreground model request. Engine submission requires an initialized, non-closed Loop.
 
 ## Configuration and ownership
 
@@ -16,11 +13,10 @@ loop:
       provider: openai
       model: YOUR_MODEL_ID
       temperature: null
+    tool_policies: {}
 ```
 
-The model identifier is supplied by the deployment, never inferred from the old
-SDK llm configuration. AvatarConfig retains its default LoopConfig; absent model
-settings fail when the selected Loop plugin validates its configuration.
+The deployment supplies the model identifier. The old top-level `llm` section is rejected, not interpreted as Loop settings. Loop cannot be disabled with `null`; a missing required model is rejected when its concrete configuration is validated.
 
 ```python
 loop = runtime.foundation.loop
@@ -28,59 +24,32 @@ handle = await loop.submit(request, authorize=authorize)
 result = await handle.wait()
 ```
 
-There are no on_event/on_commit parameters or LoopDependencies container. Shared
-Provider, ContextManager, capabilities and output are obtained from AvatarRuntime.
-Tool authorization is a separate decision and remains explicit. Without an
-authorizer, only capabilities explicitly configured read-only with no approval
-requirement may run. A model-generated tool call does not grant permission.
+Provider, ContextManager, capabilities and Output are obtained from AvatarRuntime. There are no `LoopDependencies`, `on_event` or `on_commit` parameters. Engine owns admission and foreground interruption; Loop owns execution, accepted calls, records and terminal execution facts.
+
+Tool registration is not permission. Without an authorizer, only capabilities explicitly configured read-only with no approval requirement may execute. Use exact capability policies; do not grant an aggregate MCP or RAG capability read-only status based on a single harmless operation.
 
 ## Submission and static query context
 
-submit() validates a committed input and schedules an owned execution. The owned
-task prepares Context through the single ContextManager interface. Engine does
-not prebuild it or wait for the model/tool loop. Retiring executions retain their
-cleanup ownership; their text lease is revoked before the replacement begins.
+`submit()` validates committed input and schedules owned execution. The task prepares Context through ContextManager; Engine does not prebuild prompts or wait for the whole model/tool loop. Retiring executions retain cleanup ownership after their user-facing output lease is revoked.
 
-State and static loop_budget are captured once via synthetic runtime tool context.
-Subsequent requests append canonical model/tool items, preserving that prefix,
-tool definitions/order and the selected reasoning profile. No middle developer
-policy or per-step State rewrite is introduced. Counters still enforce execution
-limits and appear only in the observation stream, not changing prompt content.
+State and static `loop_budget` are captured once via synthetic runtime tool context. Later requests append model/tool continuation while preserving the fixed prefix, tool definitions/order and selected reasoning profile. Counters enforce limits and feed execution observations without rewriting prompt content between steps.
 
 ## Output and records
 
-Visible text goes directly to runtime.output with stable run/message-derived
-output_id. Completed messages finish the text source; audio-enabled outputs are
-not marked completely finished before TTS produces its remaining audio.
+Visible content is constructed as EnvOutput and submitted through `runtime.output.publish(...)`, with stable output identities and typed scope/source association. Text completion seals the source, not the remaining TTS or playback. Router synthesizes ASSISTANT/TRANSIENT text; RTC reports transport playback and delivers synchronized transcripts.
 
-Complete assistant/tool batches go to runtime.output.records. They carry immutable
-context/turn/run provenance and are admitted atomically before new tools execute.
-Memory independently consumes that stream; Loop never calls a Memory plugin.
-Admission is local memory acceptance, not durable persistence or proof of playback.
-Private reasoning/continuation remains in the Loop's own working history and is
-excluded from the record projection, just like synthetic State/budget context.
+Complete assistant/tool batches use `runtime.output.records`. They carry context/Turn/Run provenance and are admitted atomically before further dependent execution proceeds. Memory and Context consume records independently; Loop calls neither a Memory persistence API nor a transport adapter.
 
-Runtime.output.execution receives request, tool and run observations. Commentary
-references describe nonempty text actually admitted for this model request, not
-whether a vendor advertises commentary support. References reset each request.
-Status consumers may derive presentation and narration without recursive Loop use.
-Loop has no waiting/narration timer; remove a previously explicit feedback_delay
-setting. feedback_timeout still limits asynchronous user-content publication.
+Admission is local acceptance, not durable persistence or proof of playback. Private reasoning/provider continuation and synthetic State/budget material are excluded from the canonical record projection.
 
-If a required record consumer fails or retained capacity is full, the execution
-fails explicitly rather than dispatching further tools as though admission
-succeeded. Tool results that cannot be admitted still remain in the returned
-LoopResult tools collection; no persistence guarantee is made for failed admission.
-Cancelled executions settle already accepted calls, never replay writes implicitly,
-and publish observed results even when their user-facing output is no longer active.
+`runtime.output.execution` carries request, tool and Run observations. Same-request commentary references identify text actually admitted, not a vendor capability flag. Status derives presentation and non-recursive narration from facts; Loop has no waiting/narration timer. `feedback_timeout` still limits asynchronous user-content publication.
+
+A required record-consumer failure or exhausted retained capacity fails execution explicitly. Tool outcomes that cannot be admitted remain available through the returned result where supported; failed admission is not claimed as persistence. Cancellation settles accepted calls, never blindly replays writes, and preserves observed results even after visible output permission is lost.
 
 ## Lifecycle and migration status
 
-Stop new execution, close Loop and finish call settlement before draining Memory's
-record consumer and final extraction. Foundation then closes Context and shared
-Provider/Voice; the Output runtime and other low-level resources close last.
+Engine stops admission and settles Loop while Memory, Status and Output consumers remain alive. It then closes Router and plugins; Host closes RTC outputs and releases AvatarRuntime. Foundation closes Loop idempotently as its resource owner before releasing Context, Provider and Voice.
 
-The current Host SDK bridge also publishes native records to the same journal;
-it no longer calls Memory. Its old model-generation route is not switched by this
-change. The StatusRuntime processor refactor, tool monologue/status cleanup and
-Engine/Turn/final TTS/RTC cutover are separate subsequent functional blocks.
+The native Engine/Loop path is active in this source tree. The old TurnController and Host SDK model/tool/record bridges are removed. SDK worker hosting, vendor voice adapters and Character migration remain separate boundaries; their presence does not make the main generation path SDK-owned.
+
+Execution still belongs to the current Host execution. Connection-independent Episodes, recovery, sleep/wake and Dream scheduling are not provided by this plugin migration.

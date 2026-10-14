@@ -18,6 +18,22 @@ than silently ignored. Native history is bounded by `context.init_config.history
 Interruption is configured through `router.init_config.turn_taking.interruption`;
 the unused SDK-era `voice.allow_interruptions` setting is removed and rejected.
 
+## Configuration layout
+
+The checked-in multimodal example is the formatting reference. All configurations use the same five sections in order:
+
+1. Avatar Identity & Workspace
+2. Runtime
+3. Foundation Plugins (`loop`, `context`, `voice`, `vision`)
+4. Perception Plugins (`defaults` anchors, `router`, `status`, `character`, `memory`, `persona`)
+5. Tools Plugins (`tools`)
+
+Keep two-space indentation, section separators and purposeful blank lines. Preserve folded introduction/voice instructions and YAML anchors; do not replace them with serialized one-line strings.
+
+Temporal alignment is `runtime.perception.temporal_alignment`, not a sibling of perception. Conversation pipeline configuration contains extraction and consolidation only. `item_ops`, `candidate_source`, `similarity_threshold`, `max_candidates_per_item` and `timeout` now belong inside `pipeline.consolidation`; a `pipeline.maintenance` mapping is rejected.
+
+The multimodal reference retains `candidate_source: union`. Demo and voice-minimal preserve their explicit `consolidated_lookup` setting; the Hiyori examples retain the processor defaults. This formatting migration does not force one candidate policy on every scenario.
+
 ## Scope
 
 | Configuration | Scope |

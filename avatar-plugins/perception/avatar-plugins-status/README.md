@@ -1,55 +1,32 @@
 # AlphaAvatar Status Plugin
 
-Status is a lifecycle-managed observer, not an execution controller or tool dependency.
-Its processors consume Core data streams and derive presentation decisions. They do
-not register tools, call AvatarLoop, or generate model records for Memory.
+Status is a lifecycle-managed observer, not an execution controller or tool dependency. Its processors consume Core streams and derive presentation; they do not register tools, call the foreground Loop or publish canonical Memory records.
 
 ## Data flow
 
 ```text
-TurnRuntime events ─┐
-Output.execution ───┼── Activity ── Presentation ── Output STATUS decisions ── RTC
-Assistant text ─────┘                              └── Narration ── TRANSIENT text
+TurnRuntime events + Output.execution + assistant text
+    -> Activity -> Presentation -> typed STATUS decisions -> RTC
+                               -> Narration -> TRANSIENT text -> Router / RTC
 ```
 
-`StatusRuntime` owns three processors and their tasks. Each processor has its own
-configuration and lifecycle under `processors/<name>/`.
+StatusRuntime owns activity, presentation and narration processors. Each owns its configuration and lifecycle under `processors/<name>/`.
 
-Activity maintains bounded, Run-scoped observations. It drains pending Turn and
-execution facts before interpreting independently scheduled delivery notifications.
-Replacing an individual assistant output is not a Run interruption. Execution-journal
-gaps are diagnostic losses, not permission to invent missing execution facts.
+Activity retains bounded Run-scoped observations and interprets independently scheduled notifications against pending Turn/execution facts. Replacing one output is not a Run interruption. Journal gaps are diagnostic losses, not permission to invent missing facts.
 
-Presentation publishes typed `OutputStatusDecision` objects with source identity,
-execution scope, revision, expiry and audience. Internal decisions remain local.
-Only user decisions are projected by the RTC adapter, using an explicit field allow-list.
-No tool arguments, private reasoning or canonical record payloads are sent as status.
+Presentation publishes OutputStatusDecision with identity, scope, revision, expiry and audience, carried through EnvOutput. Internal decisions remain local. RTC projects only allowed user-facing fields, not tool arguments, private reasoning or canonical records.
 
-Narration consumes user decisions with a narration key. Current English and Chinese
-rules are deterministic and non-recursive. A future model renderer can replace this
-processor's renderer without calling the foreground Loop. Narration is transient:
-it is not an assistant-history commit and never re-enters the execution journal.
+Narration consumes eligible user decisions and uses deterministic English/Chinese rules. A future model renderer must remain independent of the foreground Loop. Narration is transient, not an assistant-history commit, and does not re-enter the execution journal.
 
-## Commentary and interruption
+## Commentary, interruption and terminal status
 
-Suppression depends on actual text and same-request commentary references, not a
-provider-name flag. Missing commentary permits a delayed fallback. Tool failure and
-unknown-outcome decisions are separate from routine waiting narration. A pending
-notice is discarded when its observed revision is no longer current.
+Suppression depends on actual admitted text and same-request commentary references, not provider-name flags. Missing commentary can allow delayed fallback; failures and unknown tool outcomes have distinct decisions. Superseded revisions and expired decisions cannot narrate later as though still current.
 
-Generated text is not proof of completed playout. Status observes accepted source
-text and execution facts; transport playback remains authoritative for delivery.
-Narration may be skipped when the response completes quickly or its decision expires.
-It never claims that a cancelled operation was rolled back or should be blindly retried.
+Generated text is not proof of playback. Audio-enabled narration uses AUDIO_SYNCED text, and Router owns TTS/alignment; text-only sessions use IMMEDIATE output. User interruption and newer output can preempt transient speech.
 
-The natural-language output uses the TRANSIENT lane. Audio-enabled sessions use
-AUDIO_SYNCED source text; Router owns speech synthesis, alignment and audio completion.
-Text-only sessions publish IMMEDIATE text. User interruption and newer output preempt
-transient speech. The narration worker cancels its own pending work on supersession.
+Terminal presentation permission is distinct from model-generation permission. A terminal decision can remain displayable without reactivating a retired Run. Narration is bound to its decision and still checks scope, revision and validity. It must never claim that cancellation rolled back an external side effect.
 
 ## Configuration
-
-The existing `status: {plugin: default, enabled: true, init_config: {}}` remains valid.
 
 ```yaml
 status:
@@ -73,28 +50,12 @@ status:
       publish_timeout: 1.0
 ```
 
-Use `language: zh` for Chinese rule narration. Language is configuration, not a
-hidden classification-model request. `text_topic` is removed: source text and
-synchronized transcripts use the existing Output/RTC text delivery path.
+`init_config: {}` remains valid. Use `language: zh` for Chinese rule narration. `text_topic` is removed; text and synchronized transcripts use the shared Output/RTC path. Limits count published narration decisions, not proof of heard speech.
 
-Narration limits count published narration decisions, not proof of heard speech.
-All status paths are bounded, best-effort diagnostics/presentation. Their backpressure
-or failures do not modify actual tool outcomes or block synchronous record admission.
-The canonical record journal and its required consumers are unchanged.
+Status is bounded, best-effort observation/presentation. Its failure cannot change a real tool outcome or imply canonical record persistence.
 
 ## Ownership and migration state
 
-Engine creates the Status plugin and starts/stops it with the other consumers.
-Engine and Loop publish execution facts; neither injects a StatusEmitter. ToolBase
-and tool plugins accept no Status dependency. Tool request schemas contain no
-`monologue`; the tool performs the operation and returns its outcome.
+Engine creates/starts Status as a consumer and settles Loop before closing consumers. Engine and Loop publish facts; tools take no StatusEmitter dependency and no `monologue` request field.
 
-The current application still uses the temporary SDK response path. Host's
-LiveKitExecutionBridge observes its model/tool operations using the owning
-SpeechHandle, and the raw-schema tool projection still invokes the native registry.
-It owns no presentation policy and does not choose models or execute an extra Loop.
-This bridge is removed with the subsequent native Engine/main-output cutover.
-
-`context_status.py` is removed. `turn_controller.py` remains until that cutover.
-Static query State, synthetic runtime context, loop budgets, model configuration,
-Memory consumption, Provider ownership and tool authorization policy are unchanged.
+The SDK execution bridge, raw-schema SDK tool projection and TurnController are removed. Status observes the native main path, not a temporary SDK response path. Context capture, model selection, budgets, canonical records and tool authorization remain owned by their corresponding components.
