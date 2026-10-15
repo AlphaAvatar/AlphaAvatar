@@ -11,40 +11,50 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import importlib
-import os
+from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from alphaavatar.agents.character import VirtualCharacterSession
-from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
-
-importlib.import_module("alphaavatar.plugins.character")
+if TYPE_CHECKING:
+    from alphaavatar.agents.character import CharacterTransport, VirtualCharacterSession
+    from alphaavatar.agents.runtime import AvatarRuntime
 
 
 class VirtualCharacterConfig(BaseModel):
-    """Configuration for the Virtual Character plugin used in the agent."""
+    model_config = ConfigDict(extra="forbid")
 
-    # Character plugin config
     plugin: str | None = Field(
         default=None,
         description="Avatar Virtual Character plugin to use for agent visually represents.",
     )
-    init_config: dict = Field(
+    init_config: dict[str, Any] = Field(
         default={},
         description="Custom configuration parameters for the Virtual Character plugin.",
     )
 
-    def model_post_init(self, __context):
-        if self.plugin is not None:
-            os.environ["ALPHAAVATAR_CHARACTER_NAME"] = self.plugin
+    def get_plugin(
+        self, runtime: AvatarRuntime, *, transport: CharacterTransport
+    ) -> VirtualCharacterSession | None:
+        if self.plugin is None:
+            return None
 
-    def get_plugin(self, runtime: AvatarRuntime) -> VirtualCharacterSession | None:
-        """Returns the Character plugin instance based on the configuration."""
-        return AvatarModulePlugin.create(
+        from alphaavatar.agents.character import VirtualCharacterSession
+        from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
+
+        importlib.import_module("alphaavatar.plugins.character")
+
+        session = AvatarModulePlugin.create(
             AvatarModule.CHARACTER,
             self.plugin,
             runtime=runtime,
+            transport=transport,
             init_config=self.init_config,
         )
+
+        if not isinstance(session, VirtualCharacterSession):
+            raise TypeError("Character factories must return VirtualCharacterSession")
+
+        return session

@@ -36,6 +36,6 @@ The `alphaavatar` command belongs to `alpha-avatar-host`. Agents is usable as a 
 
 ## Current boundary
 
-The obsolete TurnController and SDK model/turn/response bridges have been removed. OpenAI and Voice.ai TTS now use native async PCM providers behind TTSBase/TTSStreamBase. SDK worker hosting and SDK-dependent Character integrations still remain in the workspace. The native Host rejects enabled Character plugins until their transport is migrated.
+The obsolete TurnController and SDK model/turn/response bridges have been removed. OpenAI and Voice.ai TTS now use native async PCM providers behind TTSBase/TTSStreamBase. Agents Character contracts are transport-neutral; Host supplies the scoped RTC connection and the Character plugin owns browser presentation. No AgentSession is passed to Character. SDK worker hosting remains in the workspace; renderer/RTC integration still requires end-to-end validation.
 
 Execution is still scoped to the current Host execution. Connection-independent Episodes, persistent execution recovery, sleep/wake and Dream scheduling remain separate work.

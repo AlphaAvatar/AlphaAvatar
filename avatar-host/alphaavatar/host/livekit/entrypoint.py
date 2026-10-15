@@ -45,6 +45,7 @@ from alphaavatar.rtc.livekit.text import LiveKitTextInput
 from alphaavatar.rtc.livekit.transcript.output import LiveKitTranscriptOutput
 from alphaavatar.rtc.livekit.video.input import LiveKitVideoInput
 
+from .character import LiveKitCharacterTransport
 from .connection import LiveKitConnection
 from .session import resolve_session_mode, resolve_session_type
 
@@ -69,10 +70,6 @@ def worker_load(worker) -> float:
 
 
 async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext) -> None:
-    if avatar_config.character.plugin is not None:
-        raise ValueError(
-            "Native Engine requires character.plugin=null; migrate the character transport first"
-        )
     await ctx.connect(auto_subscribe=AutoSubscribe.SUBSCRIBE_ALL)
 
     # Get metadata.
@@ -161,6 +158,18 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext) -> Non
         ctx.add_shutdown_callback(shutdown)
         if mode.audio_output_enabled and runtime.foundation.voice.tts is None:
             raise ValueError("The selected session requires audio output but no TTS is configured")
+
+        character = None
+        excluded_participants: frozenset[str] = frozenset()
+        if avatar_config.character.plugin is not None:
+            transport = LiveKitCharacterTransport(room=ctx.room, agent_identity=agent_identity)
+            character = avatar_config.character.get_plugin(runtime, transport=transport)
+            if character is None:
+                raise RuntimeError("Enabled Character factory returned no session")
+
+            own(character)
+            excluded_participants = frozenset((transport.participant_identity,))
+
         engine = own(AvatarEngine(avatar_config=avatar_config, runtime=runtime))
         outputs: list[LifecycleComponent] = [
             own(
@@ -206,6 +215,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext) -> Non
                         sample_rate=16000,
                         num_channels=1,
                         frame_size_ms=avatar_config.runtime.perception.audio_frame_size_ms,
+                        excluded_participant_identities=excluded_participants,
                     )
                 )
             )
@@ -215,7 +225,10 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext) -> Non
                     LiveKitVideoInput(
                         room=ctx.room,
                         perception=runtime.perception,
-                        publish_interval_sec=avatar_config.runtime.perception.video_publish_interval_sec,
+                        publish_interval_sec=(
+                            avatar_config.runtime.perception.video_publish_interval_sec
+                        ),
+                        excluded_participant_identities=excluded_participants,
                     )
                 )
             )
@@ -235,7 +248,13 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext) -> Non
             )
             inputs.append(text_input)
 
-        execution = HostExecution(runtime=runtime, engine=engine, inputs=inputs, outputs=outputs)
+        execution = HostExecution(
+            runtime=runtime,
+            engine=engine,
+            inputs=inputs,
+            outputs=outputs,
+            presentations=(character,) if character is not None else (),
+        )
         resources.pop_all()
         connection = LiveKitConnection(
             ctx=ctx,
@@ -243,6 +262,7 @@ async def entrypoint(avatar_config: AvatarConfig, ctx: agents.JobContext) -> Non
             engine=engine,
             participant_identity=participant.identity,
             text_input=text_input,
+            character=character,
             max_duration=get_max_session_seconds(),
         )
         await connection.start()

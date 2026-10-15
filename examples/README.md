@@ -46,7 +46,9 @@ The multimodal reference retains `candidate_source: union`. Demo and voice-minim
 
 AIRI-style examples explicitly set `character.plugin: null`. Their names describe
 the retained persona, not support for the old animated AIRI/AgentSession transport.
-Native Host continues to reject enabled SDK-dependent Character plugins.
+Native Host now supports the native Character lifecycle when explicitly configured.
+These examples do not enable it automatically. A trusted frontend must be served
+separately; follow [Character setup](../avatar-plugins/perception/avatar-plugins-character/README.md).
 
 ## Tool authorization and external services
 
@@ -64,5 +66,5 @@ The multimodal/demo configurations also retain Google environment extraction and
 Tavily research; the voice-minimal example does not require those two services.
 The existing OpenAI and Voice.ai TTS selections now use native async HTTP/PCM
 providers; their YAML fields and fixed sample rates are unchanged. SDK worker hosting
-and SDK-dependent Character code remain. These examples do not imply complete
-LiveKit Agents dependency removal.
+remains. Character has a native lifecycle, but real renderer/RTC validation is
+still required. These examples do not imply complete LiveKit Agents dependency removal.

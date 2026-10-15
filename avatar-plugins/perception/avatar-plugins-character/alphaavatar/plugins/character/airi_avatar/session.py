@@ -15,115 +15,259 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
-from livekit import api, rtc
-from livekit.agents import (
-    NOT_GIVEN,
-    AgentSession,
-    NotGivenOr,
-)
-from livekit.agents.types import ATTRIBUTE_PUBLISH_ON_BEHALF
+from alphaavatar.agents.character import CharacterTransport, VirtualCharacterSession
+from alphaavatar.core.cleanup import wait_for_cleanup
 
-from alphaavatar.agents.character import VirtualCharacterSession
-from alphaavatar.agents.runtime import AvatarRuntime
-
-from ..log import logger
-from ..runner_op import RunnerOP
 from .config import AiriConfig
-from .runner import AiriRunner
 
-_AVATAR_IDENTITY = "airi-avatar-worker"
+if TYPE_CHECKING:
+    from playwright.async_api import (
+        Browser,
+        BrowserContext,
+        Page,
+        Playwright,
+        PlaywrightContextManager,
+    )
 
 
 class AiriCharacterSession(VirtualCharacterSession):
-    def __init__(self, *, runtime: AvatarRuntime, avatar_config: AiriConfig):
-        super().__init__(
-            runtime=runtime,
+    """Own a browser and scoped transport, never an inference worker or a second audio path."""
+
+    def __init__(self, *, transport: CharacterTransport, config: AiriConfig) -> None:
+        self._transport = transport
+        self._config = config
+
+        self._driver: PlaywrightContextManager | None = None
+        self._driver_start: asyncio.Task[Playwright] | None = None
+        self._browser: Browser | None = None
+        self._browser_start: asyncio.Task[None] | None = None
+        self._context: BrowserContext | None = None
+        self._page: Page | None = None
+        self._start_task: asyncio.Task[None] | None = None
+        self._close_task: asyncio.Task[None] | None = None
+        self._monitor: asyncio.Task[None] | None = None
+        self._failure: RuntimeError | None = None
+        self._failed = asyncio.Event()
+        self._stage = "created"
+
+    @staticmethod
+    def _observe(task: asyncio.Future[object]) -> None:
+        if not task.cancelled():
+            task.exception()
+
+    def _fail(self, reason: str) -> None:
+        if self._close_task is None and self._failure is None:
+            self._failure = RuntimeError(reason)
+            self._failed.set()
+
+    def _browser_lost(self, *_) -> None:
+        self._fail("Character browser disconnected unexpectedly")
+
+    def _page_lost(self, *_) -> None:
+        self._fail("Character page closed or crashed unexpectedly")
+
+    async def _monitor_transport(self) -> None:
+        try:
+            await self._transport.wait_failed()
+        except asyncio.CancelledError:
+            if self._close_task is None:
+                self._fail("Character transport monitor cancelled unexpectedly")
+            raise
+        except Exception:
+            self._fail("Character transport failed")
+        else:
+            self._fail("Character transport failure monitor exited unexpectedly")
+
+    def _check_open(self) -> None:
+        if self._close_task is not None:
+            raise RuntimeError("Character session is closing or closed")
+        if self._failure is not None:
+            raise self._failure
+
+    async def _wait_ready(self) -> None:
+        ready = asyncio.create_task(self._transport.wait_ready(), name="character_ready")
+        failed = asyncio.create_task(self._failed.wait(), name="character_start_failure")
+        try:
+            await asyncio.wait((ready, failed), return_when=asyncio.FIRST_COMPLETED)
+            self._check_open()
+            await ready
+        finally:
+            for task in (ready, failed):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(ready, failed, return_exceptions=True)
+
+    async def _launch_browser(self, playwright: Playwright) -> None:
+        self._browser = await playwright.chromium.launch(
+            headless=True,
+            chromium_sandbox=self._config.chromium_sandbox,
+            executable_path=self._config.executable_path,
+            timeout=self._config.startup_timeout * 1000,
+            args=["--autoplay-policy=no-user-gesture-required", "--mute-audio"],
         )
 
-        self._avatar_config = avatar_config
-        self._avatar_participant_identity = _AVATAR_IDENTITY
+    async def _start(self) -> None:
+        self._check_open()
 
-    async def _wait_avatar_ready(self, room: rtc.Room) -> None:
-        loop = asyncio.get_running_loop()
-        fut: asyncio.Future[None] = loop.create_future()
+        # Importing or selecting a disabled Character must not initialize Playwright.
+        from playwright.async_api import async_playwright
 
-        def _on_data(data_packet: rtc.room.DataPacket):
-            if fut.done():
-                return
+        async with asyncio.timeout(self._config.startup_timeout):
+            self._stage = "transport"
+            await self._transport.on_start()
 
-            if data_packet.topic != "avatar_status":
-                return
+            self._check_open()
+            connection = self._transport.connection
+            if connection.transport != "livekit":
+                raise ValueError("AIRI currently requires the LiveKit Character transport")
 
-            try:
-                msg = json.loads(data_packet.data.decode("utf-8"))
-            except Exception:
-                return
+            self._monitor = asyncio.create_task(
+                self._monitor_transport(), name="character_transport_monitor"
+            )
+            self._monitor.add_done_callback(self._observe)
 
-            if msg.get("type") == "avatar_ready":
-                logger.info(
-                    "avatar_ready received from %s",
-                    data_packet.participant.identity if data_packet.participant else "<server>",
-                )
-                fut.set_result(None)
+            # Driver creation may spawn a subprocess before returning its handle. Keep
+            # acquisition owned and settle it before teardown, even if startup is cancelled.
+            self._stage = "driver"
+            self._driver = async_playwright()
+            self._driver_start = asyncio.create_task(self._driver.start(), name="character_driver")
+            self._driver_start.add_done_callback(self._observe)
+            playwright = await asyncio.shield(self._driver_start)
+            self._check_open()
+            self._stage = "browser"
+            self._browser_start = asyncio.create_task(
+                self._launch_browser(playwright), name="character_browser"
+            )
+            self._browser_start.add_done_callback(self._observe)
+            await asyncio.shield(self._browser_start)
+            self._check_open()
+            self._browser.on("disconnected", self._browser_lost)
+            self._stage = "context"
+            self._context = await self._browser.new_context(
+                viewport={"width": self._config.video_width, "height": self._config.video_height},
+                service_workers="block",
+                accept_downloads=False,
+                extra_http_headers={"Referer": self._config.frontend_url},
+            )
+            self._check_open()
+            parsed = urlsplit(self._config.frontend_url)
+            launch = {
+                "origin": f"{parsed.scheme}://{parsed.netloc}",
+                "path": parsed.path or "/",
+                "query": {
+                    "livekitUrl": connection.url,
+                    "livekitToken": connection.token,
+                    "agentIdentity": connection.agent_identity,
+                },
+            }
+            # The pinned frontend reads route.query. Populate browser-local history before
+            # Vue starts; never put the credential in the HTTP navigation URL or Referer.
+            await self._context.add_init_script(
+                "(() => { const c = " + json.dumps(launch) + "; "
+                "if (location.origin === c.origin && location.pathname === c.path) { "
+                "history.replaceState(null, '', c.path + '?' + new URLSearchParams(c.query)); "
+                "} })();"
+            )
+            self._check_open()
+            self._page = await self._context.new_page()
+            self._check_open()
+            self._page.on("close", self._page_lost)
+            self._page.on("crash", self._page_lost)
 
-        room.on("data_received", _on_data)
+            # Browser console/page errors can contain credentials. Do not forward them.
+            self._stage = "navigation"
+            response = await self._page.goto(
+                self._config.frontend_url,
+                wait_until="domcontentloaded",
+                timeout=self._config.startup_timeout * 1000,
+            )
+            if response is None or not response.ok:
+                raise RuntimeError("Character frontend navigation failed")
+
+            landed = urlsplit(self._page.url)
+            if (landed.scheme, landed.netloc, landed.path or "/") != (
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path or "/",
+            ):
+                raise RuntimeError("Character frontend redirected away from its configured route")
+
+            self._stage = "readiness"
+            await self._wait_ready()
+            await self._page.evaluate("history.replaceState(null, '', location.pathname)")
+            self._check_open()
+
+    async def on_start(self) -> None:
+        self._check_open()
+        if self._start_task is None:
+            self._start_task = asyncio.create_task(self._start(), name="character_start")
+            self._start_task.add_done_callback(self._observe)
 
         try:
-            await asyncio.wait_for(fut, timeout=60.0)
-        except TimeoutError:
-            logger.warning("wait_avatar_ready timeout, continue anyway")
+            await asyncio.shield(self._start_task)
+            self._check_open()
+        except BaseException as original:
+            try:
+                await self.on_stop()
+            except BaseException as cleanup:
+                if not isinstance(original, Exception):
+                    raise original from cleanup
+                raise RuntimeError("Character startup and cleanup failed") from cleanup
+            if not isinstance(original, Exception):
+                raise
+            # Playwright error details may include a credential-bearing browser URL.
+            raise RuntimeError(
+                f"Character startup failed at {self._stage} ({type(original).__name__})"
+            ) from None
 
-    async def start(
-        self,
-        agent_identity: str,
-        agent_session: AgentSession,
-        room: rtc.Room,
-        *,
-        livekit_url: NotGivenOr[str] = NOT_GIVEN,
-        livekit_api_key: NotGivenOr[str] = NOT_GIVEN,
-        livekit_api_secret: NotGivenOr[str] = NOT_GIVEN,
+    async def wait_failed(self) -> None:
+        await self._failed.wait()
+        raise RuntimeError("Character presentation failed") from self._failure
+
+    async def _close_step(
+        self, operation: Callable[[], Awaitable[object]], label: str, errors: list[Exception]
     ) -> None:
-        livekit_url = livekit_url or (os.getenv("LIVEKIT_URL") or NOT_GIVEN)
-        livekit_api_key = livekit_api_key or (os.getenv("LIVEKIT_API_KEY") or NOT_GIVEN)
-        livekit_api_secret = livekit_api_secret or (os.getenv("LIVEKIT_API_SECRET") or NOT_GIVEN)
-        if not livekit_url or not livekit_api_key or not livekit_api_secret:
-            raise ValueError(
-                "LIVEKIT_URL, LIVEKIT_API_KEY, and LIVEKIT_API_SECRET must be set "
-                "by arguments or environment variables"
-            )
+        try:
+            async with asyncio.timeout(self._config.close_timeout):
+                await operation()
+        except (Exception, asyncio.CancelledError) as error:
+            message = f"Character {label} cleanup failed ({type(error).__name__})"
+            errors.append(RuntimeError(message))
 
-        # Prepare attributes for JWT token
-        attributes: dict[str, str] = {
-            ATTRIBUTE_PUBLISH_ON_BEHALF: agent_identity,
-        }
-
-        livekit_token = (
-            api.AccessToken(api_key=livekit_api_key, api_secret=livekit_api_secret)
-            .with_kind("agent")
-            .with_identity(self._avatar_participant_identity)
-            .with_grants(api.VideoGrants(room_join=True, room=room.name))
-            # allow the avatar agent to publish audio and video on behalf of your local agent
-            .with_attributes(attributes)
-            .to_jwt()
+    async def _close(self) -> None:
+        for task in (self._start_task, self._monitor):
+            if task is not None and not task.done() and not task.cancelling():
+                task.cancel()
+        await asyncio.gather(
+            *(t for t in (self._start_task, self._monitor) if t is not None),
+            return_exceptions=True,
         )
 
-        logger.debug("starting avatar session")
-        json_data = {
-            "op": RunnerOP.run,
-            "param": {
-                "livekit_url": livekit_url,
-                "livekit_token": livekit_token,
-                "agent_identity": agent_identity,
-            },
-        }
-        json_data = json.dumps(json_data).encode()
-        await asyncio.wait_for(
-            self.inference_executor.do_inference(AiriRunner.INFERENCE_METHOD, json_data),
-            timeout=30.0,
-        )
+        # Cancelling Playwright during subprocess acquisition can lose the pipe owner.
+        # This local acquisition is joined, not abandoned at the presentation deadline.
+        for task in (self._driver_start, self._browser_start):
+            if task is not None:
+                await asyncio.gather(task, return_exceptions=True)
 
-        logger.info("waiting for avatar_ready...")
-        await self._wait_avatar_ready(room)
-        logger.info("avatar_ready, AiriCharacterSession.start() will now return")
+        errors: list[Exception] = []
+        if self._context is not None:
+            await self._close_step(self._context.close, "context", errors)
+        if self._browser is not None:
+            await self._close_step(self._browser.close, "browser", errors)
+        if self._driver is not None:
+            await self._close_step(self._driver.__aexit__, "driver", errors)
+
+        await self._close_step(self._transport.on_stop, "transport", errors)
+        self._context = self._browser = self._page = self._driver = None
+        if errors:
+            raise ExceptionGroup("Character shutdown failed", errors)
+
+    async def on_stop(self) -> None:
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close(), name="character_close")
+            self._close_task.add_done_callback(self._observe)
+        await wait_for_cleanup(self._close_task)

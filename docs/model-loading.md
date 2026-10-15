@@ -30,8 +30,8 @@ inside inference initialization processes, not the realtime event loop.
 - Selected Memory and Persona runtimes keep their storage runner. Storage remains
   a runtime dependency even when individual extraction processors are disabled.
 - MCP requires `enabled`, a selected default plugin, and nonempty server settings.
-- Character selection uses the current configuration, not a stale character
-  environment variable.
+- Character is not an inference runner. Host selects its native presentation from
+  the current configuration; no character environment flag contributes a runner.
 
 ## Cache layout
 
@@ -87,5 +87,6 @@ duplicate or symbolic-link members before installation. The cache must be writab
 for lock files and manifests, including during offline initialization.
 
 There is no required `download-files` step. Browser/frontend installation for
-Character remains a separate dependency-installation concern; importing its runner
-must not run the browser installer.
+Character is an explicit setup operation, not plugin import or inference warmup.
+The native AIRI session owns a browser and uses a separately served trusted frontend;
+see [Character setup](../avatar-plugins/perception/avatar-plugins-character/README.md).

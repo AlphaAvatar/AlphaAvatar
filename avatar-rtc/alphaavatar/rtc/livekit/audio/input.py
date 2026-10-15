@@ -78,6 +78,7 @@ class LiveKitAudioInput(LifecycleComponent):
         frame_size_ms: int,
         sample_rate: int = 48_000,
         num_channels: int = 1,
+        excluded_participant_identities: frozenset[str] = frozenset(),
     ) -> None:
         if sample_rate <= 0:
             raise ValueError("sample_rate must be positive")
@@ -91,6 +92,11 @@ class LiveKitAudioInput(LifecycleComponent):
         self._sample_rate = sample_rate
         self._num_channels = num_channels
         self._frame_size_ms = frame_size_ms
+        if isinstance(excluded_participant_identities, str):
+            raise TypeError("Excluded participants must be a collection, not a string")
+        self._excluded_participants = frozenset(excluded_participant_identities)
+        if any(not isinstance(value, str) or not value for value in self._excluded_participants):
+            raise ValueError("Excluded participant identities must be nonempty strings")
 
         self._bindings: dict[str, _AudioTrackBinding] = {}
         self._tasks: set[asyncio.Task[None]] = set()
@@ -315,8 +321,9 @@ class LiveKitAudioInput(LifecycleComponent):
         publication: rtc.RemoteTrackPublication,
         transport_participant_id: str,
     ) -> None:
-        if not self._started:
+        if not self._started or transport_participant_id in self._excluded_participants:
             return
+
         existing = self._bindings.get(publication.sid)
         if existing is not None:
             if existing.publication is publication:

@@ -34,10 +34,12 @@ class HostExecution:
         engine: LifecycleComponent,
         inputs: Sequence[LifecycleComponent] = (),
         outputs: Sequence[LifecycleComponent] = (),
+        presentations: Sequence[LifecycleComponent] = (),
     ) -> None:
         self._runtime = runtime
         self._lifecycle = LifecycleGroup(
             phases=(
+                LifecyclePhase.create("presentation", presentations),
                 LifecyclePhase.create("rtc-output", outputs),
                 LifecyclePhase.create("avatar-engine", (engine,)),
                 LifecyclePhase.create("rtc-input", inputs),

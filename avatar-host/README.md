@@ -11,15 +11,15 @@ Installer, configuration UI/TUI and doctor commands are planned for v0.6.9. Appl
 
 ## Lifecycle and ownership
 
-`HostExecution(runtime=..., engine=..., inputs=..., outputs=...)` takes ownership
+`HostExecution(runtime=..., engine=..., inputs=..., outputs=..., presentations=...)` takes ownership
 of the constructed components and the Runtime. Its startup order is:
 
 ```text
-RTC outputs -> AvatarEngine -> RTC inputs
+Optional Character readiness -> RTC outputs -> AvatarEngine -> RTC inputs
 ```
 
 Shutdown stops inputs, settles Engine execution and plugin consumers, closes
-outputs, then releases Runtime. Runtime is still closed when component cleanup
+outputs and Character presentation, then releases Runtime. Runtime is still closed when component cleanup
 fails; failures are aggregated, not silently treated as successful cleanup.
 `LifecycleGroup` owns concurrent startup within each phase and ordered shutdown
 across phases. `LifecycleComponent.on_stop()` must tolerate partial and unstarted
@@ -30,14 +30,21 @@ The entrypoint uses an `AsyncExitStack` before ownership transfers to HostExecut
 This covers construction failures and shutdown callback registration failure.
 After transfer, only HostExecution releases its Runtime. `LiveKitConnection`
 owns room events, monitors, disconnection and room cleanup; it delegates execution
-shutdown to HostExecution. There is no `livekit.lifecycle` cleanup bridge.
+shutdown to HostExecution. It also monitors the optional Character session.
+There is no `livekit.lifecycle` cleanup bridge.
+
+Host supplies a LiveKit Character transport for scoped credentials and authenticated
+READY/video checks. The Character plugin owns the browser; the shared frontend is
+served separately. Exact renderer identities are excluded from audio/video input.
+See [Character setup](../avatar-plugins/perception/avatar-plugins-character/README.md).
 
 ## Boundaries and remaining work
 
 Engine uses the native Loop/Provider/Output contracts. The old SDK AgentSession
-generation, tool and record bridges are removed. OpenAI/Voice.ai TTS now use native async PCM providers. JobContext/worker hosting
-still uses LiveKit Agents APIs and remains part of the v0.6.8 SDK-removal work. Native Character transport is
-not yet implemented; enabled SDK-dependent Character configurations are rejected.
+generation, tool and record bridges are removed. OpenAI/Voice.ai TTS uses native
+async PCM providers. JobContext/worker hosting still uses LiveKit Agents APIs.
+AIRI Character uses native lifecycle/transport contracts, with no AgentSession.
+Renderer/RTC end-to-end validation remains required; examples keep Character disabled.
 
 Agent and RTC libraries do not import Host. Shared Foundation services remain
 owned through AvatarRuntime. Connection-independent Episodes, Context recovery,

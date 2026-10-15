@@ -104,8 +104,8 @@ rather than ignoring it. User-facing applications must disclose AI-generated spe
 
 Router still owns phrase segmentation, output identity, interruption, alignment and
 completion barriers. TTS transport closure is not proof of playout or a new source
-of OutputRuntime control events. SDK worker hosting and Character integration remain
-separate SDK-removal work; this block does not remove every workspace dependency.
+of OutputRuntime control events. SDK worker hosting remains separate v0.6.8 work. Native Character presentation
+consumes the existing RTC audio, without another TTS provider or playback track.
 
 ## Wire references
 

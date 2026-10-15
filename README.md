@@ -86,7 +86,7 @@ AlphaAvatar follows a layered realtime multimodal architecture:
 - **📤 Assistant Outputs**: publishes validated EnvOutput content through OutputRuntime, with separate canonical-record and execution-observation streams. Router coordinates synthesis/transcripts; RTC owns delivery and playback feedback.
 
 ```text
-HostExecution: RTC outputs -> AvatarEngine -> RTC inputs
+HostExecution: optional Character readiness -> RTC outputs -> AvatarEngine -> RTC inputs
 AvatarEngine -> Loop -> ContextManager / ProviderService / CapabilityRegistry
                     -> OutputRuntime -> Router synthesis / RTC delivery
 ```
@@ -195,7 +195,7 @@ Capabilities for understanding users, maintaining memory, and coordinating inter
 | [**Router**][plugin-router] | Coordinates multimodal routing, addressing, turn taking, and interruption.<br>Combines speech, transcripts, and attention evidence for realtime interaction decisions. | ![Available][status-available] |
 | [**Memory**][plugin-memory] | Stores durable memories from conversations, tools, and environment observations.<br>Retrieves relevant information to maintain continuity across interactions. | ![Available][status-available] |
 | [**Persona**][plugin-persona] | Builds user profiles and recognizes speakers and faces.<br>Maintains identity continuity and supplies context for personalization. | ![Available][status-available] |
-| [**Character**][plugin-character] | Retains renderer integrations and the AIRI submodule.<br>SDK-dependent Character adapters are not supported by the native Host; use `character.plugin: null`. | Native integration pending |
+| [**Character**][plugin-character] | Native AIRI browser lifecycle with scoped transport readiness and separate frontend hosting.<br>Consumes existing Agent audio; examples keep it disabled. | Renderer/RTC validation pending |
 | [**Status**][plugin-status] | Publishes progress feedback while AlphaAvatar thinks or uses tools.<br>Keeps intermediate activity visible during longer-running workflows. | ![Available][status-available] |
 | **Reflection** | Will review memories, behavior, and interaction history.<br>Will derive insights to support ongoing adaptation and improvement. | ![Planned][status-planned] |
 | **Planning** | Will turn goals into coordinated, multi-step plans.<br>Will track task progress and support longer-horizon execution. | ![Planned][status-planned] |
@@ -350,7 +350,7 @@ The browser client surfaces include (availability depends on the deployed versio
 - 💬 Text chat with the Avatar
 - 📷 Camera preview and video-ready interaction
 - 🔊 Agent audio playback
-- 😊 An avatar stage; the SDK-dependent Character integration is not enabled by the native Host in this source tree
+- 😊 Optional native AIRI presentation with a separately hosted frontend; renderer/RTC integration must be validated for the deployment
 - 🧠 Configurable Memory, Persona, RAG, MCP and DeepResearch, subject to enabled services and execution policy
 - 🌍 Browser timezone metadata, enabling AlphaAvatar to understand local login time
 
@@ -395,7 +395,7 @@ Supported capabilities:
 - 🧠 Memory extraction
 - 🔍 RAG retrieval
 - 🧰 MCP tool invocation
-- 😊 Character presentation depends on a separately migrated integration; it is not enabled by these native configurations
+- 😊 Character presentation is opt-in and requires the separate frontend setup; it is not enabled by the supplied configurations
 
 ![playground airi screenshot](.github/assets/playground-airi-screenshot.png)
 

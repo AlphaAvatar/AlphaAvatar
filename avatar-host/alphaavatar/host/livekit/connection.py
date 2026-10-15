@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from livekit.agents import JobContext
 
     from alphaavatar.agents.avatar import AvatarEngine
+    from alphaavatar.agents.character import VirtualCharacterSession
     from alphaavatar.rtc.livekit.text import LiveKitTextInput
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,7 @@ class LiveKitConnection:
         engine: AvatarEngine,
         participant_identity: str,
         text_input: LiveKitTextInput | None = None,
+        character: VirtualCharacterSession | None = None,
         max_duration: int = 1800,
     ) -> None:
         if type(max_duration) is not int or max_duration < 0:
@@ -51,6 +53,7 @@ class LiveKitConnection:
 
         self._ctx, self._execution, self._engine = ctx, execution, engine
         self._participant, self._text = participant_identity, text_input
+        self._character = character
 
         self._events = RoomEventBindings(ctx.room)
         self._max_duration = max_duration
@@ -126,6 +129,9 @@ class LiveKitConnection:
         self._spawn(self._monitor(self._engine.wait_failed), "avatar_engine_monitor")
         if self._text is not None:
             self._spawn(self._monitor(self._text.wait_failed, ingress=True), "avatar_text_monitor")
+
+        if self._character is not None:
+            self._spawn(self._monitor(self._character.wait_failed), "avatar_character_monitor")
 
         await self._execution.start()
         if self._close_task is not None:

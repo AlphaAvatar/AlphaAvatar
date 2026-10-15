@@ -60,6 +60,6 @@ Tracing is best-effort diagnostics, not a lossless audit log. Saturation increme
 
 ## Current boundary
 
-Native Engine/Loop generation, typed Output publication and Router/RTC delivery are implemented. Obsolete SDK model/tool/record bridges are removed. Voice owns native OpenAI and Voice.ai HTTP/PCM synthesis; it does not borrow ProviderService LLM bindings. SDK worker hosting and SDK-dependent Character integrations remain elsewhere in the workspace.
+Native Engine/Loop generation, typed Output publication and Router/RTC delivery are implemented. Obsolete SDK model/tool/record bridges are removed. Voice owns native OpenAI and Voice.ai HTTP/PCM synthesis; it does not borrow ProviderService LLM bindings. Character uses native browser/transport lifecycle without borrowing ProviderService. SDK worker hosting remains elsewhere in the workspace; real renderer/RTC validation remains a separate requirement.
 
 VDB worker processes still own their Embedding instances; no SDK client is passed across process boundaries. Execution remains Host-scoped, without new persistent recovery or Dream scheduling.

@@ -58,7 +58,7 @@ Perception-layer plugins provide persistent memory, identity, interaction coordi
 
 Router receives `runtime` and borrows `runtime.foundation.voice`. Its factory passes required components to processors. Memory consumes committed Turns and canonical Output records independently. Persona owns identity/profile processing. Status consumes execution facts and produces typed presentation decisions and non-recursive narration.
 
-The Character package remains in the workspace, but its SDK-dependent adapters are not connected to the native Host. Current native configurations use `character.plugin: null`. Reflection, Planning and Behavior remain planned capabilities, not implemented standalone packages.
+The Character package provides native AIRI browser lifecycle through an injected CharacterTransport. Host owns room credentials and readiness callbacks; the plugin owns its browser. The shared trusted frontend is deployed separately, and no Character inference runner is registered. Current examples keep `character.plugin: null`; enabling it requires the Character deployment steps. Reflection, Planning and Behavior remain planned capabilities, not implemented standalone packages.
 
 ### Tools
 
@@ -92,7 +92,7 @@ Plugin configuration stays with its owning plugin or processor. The main model i
 
 Place new packages under the appropriate layer and keep their public namespace independent of the physical directory. Update workspace sources, release package lists, dependencies and lockfiles when changing package layout.
 
-Preserve package-relative resources and update repository-relative paths, editable sources and documentation links. AIRI remains a Character submodule; its checkout is not evidence that native Character integration is complete.
+Preserve package-relative resources and update repository-relative paths, editable sources and documentation links. AIRI remains a Character submodule. Preserve its pinned revision; source-level lifecycle integration is not evidence of a successful real renderer/RTC validation.
 
 ```bash
 uv lock --check

@@ -80,6 +80,7 @@ class LiveKitVideoInput(LifecycleComponent):
         perception: PerceptionRuntime,
         publish_interval_sec: float,
         jpeg_quality: int = 85,
+        excluded_participant_identities: frozenset[str] = frozenset(),
     ) -> None:
         if publish_interval_sec <= 0:
             raise ValueError("publish_interval_sec must be positive")
@@ -88,6 +89,11 @@ class LiveKitVideoInput(LifecycleComponent):
         self._perception = perception
         self._publish_interval_sec = publish_interval_sec
         self._jpeg_quality = jpeg_quality
+        if isinstance(excluded_participant_identities, str):
+            raise TypeError("Excluded participants must be a collection, not a string")
+        self._excluded_participants = frozenset(excluded_participant_identities)
+        if any(not isinstance(value, str) or not value for value in self._excluded_participants):
+            raise ValueError("Excluded participant identities must be nonempty strings")
 
         self._bindings: dict[str, _VideoTrackBinding] = {}
         self._tasks: set[asyncio.Task[None]] = set()
@@ -367,7 +373,7 @@ class LiveKitVideoInput(LifecycleComponent):
         publication: rtc.RemoteTrackPublication,
         transport_participant_id: str,
     ) -> None:
-        if not self._started:
+        if not self._started or transport_participant_id in self._excluded_participants:
             return
 
         existing = self._bindings.get(publication.sid)

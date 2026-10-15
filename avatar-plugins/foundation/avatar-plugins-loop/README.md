@@ -50,6 +50,6 @@ A required record-consumer failure or exhausted retained capacity fails executio
 
 Engine stops admission and settles Loop while Memory, Status and Output consumers remain alive. It then closes Router and plugins; Host closes RTC outputs and releases AvatarRuntime. Foundation closes Loop idempotently as its resource owner before releasing Context, Provider and Voice.
 
-The native Engine/Loop path is active in this source tree. The old TurnController and Host SDK model/tool/record bridges are removed. SDK worker hosting, vendor voice adapters and Character migration remain separate boundaries; their presence does not make the main generation path SDK-owned.
+The native Engine/Loop path is active in this source tree. The old TurnController and Host SDK model/tool/record bridges are removed. Voice now implements native async PCM synthesis. Character has a separate native presentation lifecycle and does not submit another Loop. SDK worker hosting remains a separate boundary; it does not own the main generation path.
 
 Execution still belongs to the current Host execution. Connection-independent Episodes, recovery, sleep/wake and Dream scheduling are not provided by this plugin migration.
