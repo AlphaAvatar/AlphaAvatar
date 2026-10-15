@@ -26,6 +26,18 @@ Public provider schemas, enums and abstractions are in `alphaavatar.agents.avata
 
 Engine starts its consumers before Router enables decisions. During shutdown it stops admission and settles Loop execution while Memory, Status and Output consumers still exist. Plugin-specific finalization remains in each plugin. Host then closes RTC outputs and the AvatarRuntime it owns.
 
+## Inference process ownership
+
+`InferenceRuntime` owns a bounded local endpoint and independent serial runner processes;
+`InferenceExecutor` only owns its client connections. Dispatched request readers remain
+owned after caller cancellation, preventing an old response from being attributed to the
+next request. Shutdown closes partial initialization, reports cleanup failures and reaps
+processes without blocking the event loop on process joins.
+
+See [Inference process ownership](../docs/inference-runtime.md) for cancellation/outcome
+semantics, limits and shutdown behavior. This prepares worker migration; the SDK dispatch
+and JobContext boundary has not been replaced by this subsystem change.
+
 ## Configuration
 
 Agent configuration selects plugins and passes processor-owned settings through `init_config`. Complete configurations and the five-section layout are documented in [Examples](../examples/README.md).
