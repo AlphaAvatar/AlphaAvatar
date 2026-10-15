@@ -24,7 +24,6 @@ from livekit import agents
 from livekit.agents.job import AutoSubscribe
 
 from alphaavatar.agents.avatar import AvatarEngine
-from alphaavatar.agents.avatar.patches import AvatarServer
 from alphaavatar.agents.configs import AvatarConfig, get_avatar_args, read_args
 from alphaavatar.agents.constants import DEFAULT_CONTEXT_VALUE
 from alphaavatar.agents.env import init_env
@@ -48,6 +47,7 @@ from alphaavatar.rtc.livekit.video.input import LiveKitVideoInput
 from .character import LiveKitCharacterTransport
 from .connection import LiveKitConnection
 from .session import resolve_session_mode, resolve_session_type
+from .worker import LiveKitWorker
 
 init_env()
 _ComponentT = TypeVar("_ComponentT", bound=LifecycleComponent)
@@ -65,7 +65,9 @@ def get_max_session_seconds() -> int:
         return 1800
 
 
-def worker_load(worker) -> float:
+def worker_load(worker: LiveKitWorker) -> float:
+    if not worker.inference_ready:
+        return 1.0
     return min(len(worker.active_jobs) / 5.0, 1.0)
 
 
@@ -294,9 +296,10 @@ def main() -> None:
         load_threshold=0.9,
         initialize_process_timeout=60,
         shutdown_process_timeout=180,
+        multiprocessing_context="spawn",
     )
     # Worker/process hosting is still SDK-backed, not the native generation chain.
-    agents.cli.run_app(AvatarServer.from_server_options(opts))
+    agents.cli.run_app(LiveKitWorker.from_server_options(opts))
 
 
 if __name__ == "__main__":

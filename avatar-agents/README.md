@@ -35,8 +35,9 @@ next request. Shutdown closes partial initialization, reports cleanup failures a
 processes without blocking the event loop on process joins.
 
 See [Inference process ownership](../docs/inference-runtime.md) for cancellation/outcome
-semantics, limits and shutdown behavior. This prepares worker migration; the SDK dispatch
-and JobContext boundary has not been replaced by this subsystem change.
+semantics, limits and shutdown behavior. Host now owns inference startup and supervision
+through its LiveKitWorker adapter; Agents no longer carries a copied SDK worker.run.
+SDK dispatch and JobContext remain behind that Host boundary.
 
 ## Configuration
 
