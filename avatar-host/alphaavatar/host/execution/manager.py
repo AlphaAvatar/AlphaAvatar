@@ -14,8 +14,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from uuid import uuid4
 
@@ -28,6 +29,8 @@ from alphaavatar.host.sessions.schemas import SessionRequest
 from .policy import ExecutionPolicy
 from .schemas import TERMINAL_STATES, ExecutionReservation, ExecutionState, ExecutionView
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(slots=True)
 class _Execution:
@@ -36,6 +39,7 @@ class _Execution:
 
     state: ExecutionState = "reserved"
     reason: str = ""
+    stop_reason: str = ""
     process: ExecutionProcess | None = None
     pid: int | None = None
     task: asyncio.Task[None] | None = None
@@ -96,6 +100,7 @@ class ExecutionManager:
                     execution_id=record.reservation.execution_id,
                     outcome="failed",
                     reason=reason,
+                    stop_reason=record.stop_reason,
                 )
             )
 
@@ -197,29 +202,85 @@ class ExecutionManager:
                 self._failure = RuntimeError("Execution process could not be reaped")
                 self._failure.__cause__ = error
                 result = None
+
             if result is None:
                 result = ProcessResult(
                     execution_id=record.reservation.execution_id,
                     outcome="unknown",
                     reason="execution_outcome_unknown",
                 )
+
+            result = result.model_copy(
+                update={"stop_reason": record.stop_reason or result.stop_reason}
+            )
+            record.stop_reason = result.stop_reason
             record.pid = process.pid
             if process.reaped:
                 record.process = None
             self._set_state(record, result.outcome, result.reason)
+            logger.info(
+                "Execution settled execution_id=%s outcome=%s reason=%s stop_reason=%s",
+                result.execution_id,
+                result.outcome,
+                result.reason,
+                result.stop_reason,
+            )
             if not record.done.done():
                 record.done.set_result(result)
 
-    def request_stop(self, *, backend: str, source_id: str, reason: str) -> None:
+    def request_stop(
+        self,
+        *,
+        backend: str,
+        source_id: str,
+        reason: str,
+        reservation: ExecutionReservation | None = None,
+    ) -> None:
         record = self._records.get((backend, source_id))
-        if record is None or record.state in TERMINAL_STATES:
+        if (
+            record is None
+            or record.state in TERMINAL_STATES
+            or (reservation is not None and record.reservation != reservation)
+            or record.state == "stopping"
+        ):
             return
+
+        record.stop_reason = reason
         if record.state == "reserved":
             self._cancel_reservation(record, reason)
             return
         self._set_state(record, "stopping", reason)
         assert record.process is not None
         record.process.request_stop(reason)
+
+    async def control_lost(
+        self,
+        reservations: Sequence[ExecutionReservation],
+        *,
+        reason: str,
+    ) -> None:
+        if self._policy.on_control_loss != "finish_execution":
+            raise RuntimeError("Unsupported control-loss policy")
+
+        pending = []
+        for reservation in reservations:
+            record = self._records.get((reservation.backend, reservation.source_id))
+            if record is None or record.reservation != reservation:
+                continue
+            self.request_stop(
+                backend=reservation.backend,
+                source_id=reservation.source_id,
+                reason=reason,
+                reservation=reservation,
+            )
+            pending.append(record.done)
+
+        async def settle() -> None:
+            await asyncio.gather(*pending)
+            if not self.healthy:
+                raise RuntimeError("Control-loss executions could not be reaped") from self._failure
+
+        await wait_for_cleanup(asyncio.create_task(settle(), name="control_loss_settlement"))
 
     async def wait(self, reservation: ExecutionReservation) -> ProcessResult:
         record = self._records[(reservation.backend, reservation.source_id)]
@@ -237,6 +298,7 @@ class ExecutionManager:
                 state=record.state,
                 reason=record.reason,
                 pid=record.process.pid if record.process is not None else record.pid,
+                stop_reason=record.stop_reason,
             )
             for record in self._records.values()
         )

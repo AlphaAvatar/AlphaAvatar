@@ -59,7 +59,7 @@ def _fingerprint(job: agent.Job) -> tuple:
 
 
 class LiveKitDispatch:
-    """Native worker control protocol. Admission and process ownership stay in the Host."""
+    """Native control adapter; a new registration never claims ownership of old jobs."""
 
     def __init__(
         self,
@@ -80,7 +80,7 @@ class LiveKitDispatch:
         self._closed = asyncio.Event()
         self._send_lock, self._status_lock = asyncio.Lock(), asyncio.Lock()
         self._last_sent: dict[str, tuple[int, str]] = {}
-        self._assigned_jobs: set[str] = set()
+        self._assigned_jobs: dict[str, ExecutionReservation] = {}
         self._last_pong = 0.0
         self._run_task: asyncio.Task[None] | None = None
         self._close_task: asyncio.Task[None] | None = None
@@ -117,10 +117,13 @@ class LiveKitDispatch:
     async def _availability(
         self, ws: aiohttp.ClientWebSocketResponse, request: agent.AvailabilityRequest, epoch: int
     ) -> None:
+        if epoch != self._epoch or ws is not self._ws:
+            return
         job = request.job
         offer = self._offers.get(job.id)
         allowed = (
             self.ready
+            and ws is self._ws
             and epoch == self._epoch
             and not request.resuming
             and job.type == agent.JobType.JT_ROOM
@@ -159,7 +162,7 @@ class LiveKitDispatch:
         await self._send(ws, agent.WorkerMessage(availability=response))
 
     def _assignment(self, assignment: agent.JobAssignment, epoch: int) -> None:
-        if epoch != self._epoch:
+        if epoch != self._epoch or not self._registered:
             return
         offer = self._offers.pop(assignment.job.id, None)
         if offer is None:
@@ -173,8 +176,8 @@ class LiveKitDispatch:
         ):
             self._manager.cancel_reservation(offer.reservation, "assignment_identity_mismatch")
             return
-        # Only assignments, not availability reservations, have a reportable job lifecycle.
-        self._assigned_jobs.add(assignment.job.id)
+        # Wire ownership belongs to this registration only, not the Host's full ledger.
+        self._assigned_jobs[assignment.job.id] = offer.reservation
         try:
             url = websocket_url(assignment.url or self._credentials.url)
             request = SessionRequest(
@@ -192,30 +195,46 @@ class LiveKitDispatch:
         except ValueError:
             self._manager.cancel_reservation(offer.reservation, "invalid_assignment")
             return
-
         if not self._manager.assign(offer.reservation, request):
             self._manager.cancel_reservation(offer.reservation, "assignment_not_admitted")
 
+    def _termination(self, job_id: str, epoch: int) -> None:
+        if epoch != self._epoch or not self._registered:
+            return
+        offer = self._offers.pop(job_id, None)
+        reservation = offer.reservation if offer is not None else self._assigned_jobs.get(job_id)
+        if reservation is not None:
+            self._manager.request_stop(
+                backend=reservation.backend,
+                source_id=reservation.source_id,
+                reason="dispatch_termination",
+                reservation=reservation,
+            )
+
     async def _sync_status(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         async with self._status_lock:
-            views = self._manager.snapshot()
+            if not self._registered or ws is not self._ws:
+                return
+            views = tuple(
+                view
+                for view in self._manager.snapshot()
+                if view.backend == "livekit"
+                and (reservation := self._assigned_jobs.get(view.source_id)) is not None
+                and view.execution_id == reservation.execution_id
+            )
             for view in views:
-                if view.backend != "livekit" or view.source_id not in self._assigned_jobs:
-                    continue
                 status = self._status(view)
                 if self._last_sent.get(view.source_id) != status:
                     await self._send(
                         ws,
                         agent.WorkerMessage(
                             update_job=agent.UpdateJobStatus(
-                                job_id=view.source_id,
-                                status=status[0],
-                                error=status[1],
+                                job_id=view.source_id, status=status[0], error=status[1]
                             )
                         ),
                     )
                     self._last_sent[view.source_id] = status
-            available = self._accepting and self._manager.available
+            available = self.ready and self._manager.available
             await self._send(
                 ws,
                 agent.WorkerMessage(
@@ -223,14 +242,13 @@ class LiveKitDispatch:
                         status=agent.WorkerStatus.WS_AVAILABLE
                         if available
                         else agent.WorkerStatus.WS_FULL,
-                        load=self._manager.load if self._accepting else 1.0,
+                        load=self._manager.load if self.ready else 1.0,
                         job_count=sum(
                             view.state in ("starting", "running", "stopping") for view in views
                         ),
                     )
                 ),
             )
-            # Expired leases keep their Host tombstone but no longer need a wire offer.
             now = time.monotonic()
             for job_id, offer in tuple(self._offers.items()):
                 if offer.reservation.expires_at <= now:
@@ -241,6 +259,8 @@ class LiveKitDispatch:
             frame = await ws.receive()
             if frame.type != aiohttp.WSMsgType.BINARY:
                 raise ConnectionError("LiveKit control channel did not return a binary message")
+            if epoch != self._epoch or ws is not self._ws:
+                return
 
             message = agent.ServerMessage()
             message.ParseFromString(frame.data)
@@ -250,20 +270,13 @@ class LiveKitDispatch:
             elif which == "assignment":
                 self._assignment(message.assignment, epoch)
             elif which == "termination":
-                if epoch == self._epoch:
-                    self._offers.pop(message.termination.job_id, None)
-                    self._manager.request_stop(
-                        backend="livekit",
-                        source_id=message.termination.job_id,
-                        reason="dispatch_termination",
-                    )
+                self._termination(message.termination.job_id, epoch)
             elif which == "pong":
                 self._last_pong = time.monotonic()
             elif which == "go_away":
                 raise ConnectionError("LiveKit requested control reconnection")
             elif which == "register":
                 raise ValueError("Unexpected duplicate LiveKit registration")
-            # Unknown optional protocol extensions do not trigger a second execution.
 
     async def _report(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         while not self._closed.is_set():
@@ -300,10 +313,33 @@ class LiveKitDispatch:
             if not self._closed.is_set():
                 raise ConnectionError("LiveKit control task ended unexpectedly")
         finally:
+            # Fence readiness before awaiting task cancellation or execution cleanup.
+            self._registered = False
             for task in tasks:
                 if not task.done():
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _retire_control(self) -> None:
+        self._registered = False
+        self._release_offers("control_connection_changed")
+        assigned = tuple(self._assigned_jobs.values())
+        self._assigned_jobs.clear()
+        self._last_sent.clear()
+        ws, self._ws = self._ws, None
+        if assigned and not self._closed.is_set():
+            logger.warning(
+                "LiveKit control retired epoch=%d assigned_jobs=%d policy=finish_execution",
+                self._epoch,
+                len(assigned),
+            )
+        try:
+            # The Host owns stopping and reaping. No migration acknowledgement is assumed.
+            await self._manager.control_lost(assigned, reason="dispatch_control_lost")
+        finally:
+            if ws is not None:
+                async with asyncio.timeout(self._config.registration_timeout):
+                    await ws.close()
 
     async def _run(self) -> None:
         retries = 0
@@ -348,7 +384,6 @@ class LiveKitDispatch:
 
                     self.worker_id = first.register.worker_id
                     self._registered = True
-                    self._last_sent.clear()
                     stable_since = self._last_pong = time.monotonic()
                     logger.info(
                         "LiveKit control registered worker_id=%s epoch=%d", self.worker_id, epoch
@@ -374,11 +409,9 @@ class LiveKitDispatch:
                     )
                 finally:
                     self._registered = False
-                    self._release_offers("control_connection_changed")
-                    if self._ws is not None:
-                        await self._ws.close()
-                    self._ws = None
-
+                    await wait_for_cleanup(
+                        asyncio.create_task(self._retire_control(), name="livekit_control_retire")
+                    )
                 try:
                     async with asyncio.timeout(min(2 ** min(retries - 1, 4), 10)):
                         await self._closed.wait()

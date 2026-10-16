@@ -271,3 +271,20 @@ tools:
           ecosystem, allowing you to search documentation, explore GitHub code
           across livekit and livekit-examples repositories, retrieve package
           changelogs, and browse Python Agents SDK examples—all in one place.
+
+
+# ============================================================
+# 6. Host & RTC Access
+# ============================================================
+
+host:
+  rtc:
+    backend: livekit
+    init_config:
+      connection_mode: dispatch
+      # Dispatch uses avatar.name; the assignment supplies the room and token.
+
+  execution:
+    on_session_end: finish_execution
+    # Finish affected executions before reconnecting for new dispatch jobs.
+    on_control_loss: finish_execution

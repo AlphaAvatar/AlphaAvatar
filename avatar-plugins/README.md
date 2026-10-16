@@ -2,7 +2,7 @@
 
 This document describes the plugin workspace and its runtime boundaries. See the [plugin catalog](../README.md#alphaavatar-plugins) for capabilities and implementation status.
 
-## Workspace layout
+## 📦 Package structure
 
 ```text
 avatar-plugins/
@@ -74,13 +74,13 @@ A registered capability is not automatically approved. Aggregate MCP or RAG capa
 
 Processor interfaces can retain their own `start()` / `stop()` methods and meaningful finalization arguments. Memory and Persona keep their business-specific record draining and persistence in their runtimes; those responsibilities do not belong in Core.
 
-`HostExecution` owns the application execution and its AvatarRuntime. It starts RTC outputs, Engine, then RTC inputs. Shutdown stops ingress and execution producers before draining consumers, then releases RTC outputs and the runtime's Foundation/Core resources. `LiveKitConnection` owns connection events and transport shutdown policy, not model generation.
+`HostExecution` owns Engine and AvatarRuntime inside an execution child. SessionManager orders attachment outputs, Engine and then inputs. On termination, attachment cleanup releases ingress, presentation, subscriptions and the connection before HostExecution settles Engine and Runtime. Engine keeps its internal record consumers alive while accepted tool work settles. `LiveKitConnection` only reports connection events and releases transport resources; it neither destroys executions nor deletes rooms.
 
 A consuming plugin must not close borrowed Foundation services. Keep Core independent of Agents, concrete plugins, Provider SDKs and LiveKit. Do not introduce transport adapters into Engine to share a lifecycle implementation.
 
 ## Configuration and model initialization
 
-Examples use five sections: Avatar Identity & Workspace, Runtime, Foundation Plugins, Perception Plugins, and Tools Plugins. These headings organize authoring; the actual keys remain `avatar`, `runtime`, `loop`, `context`, `voice`, `vision`, `router`, `status`, `character`, `memory`, `persona`, and `tools`. `defaults` contains YAML anchors, not runtime configuration.
+Examples use five sections: Avatar Identity & Workspace, Runtime, Foundation Plugins, Perception Plugins, and Tools Plugins. These headings organize authoring; the actual keys remain `avatar`, `runtime`, `loop`, `context`, `voice`, `vision`, `router`, `status`, `character`, `memory`, `persona`, and `tools`. `defaults` contains YAML anchors, not runtime configuration. An optional top-level `host` section configures application hosting and RTC; Host removes it before strict AvatarConfig validation.
 
 Plugin configuration stays with its owning plugin or processor. The main model is configured under `loop.init_config.model`; temporal alignment belongs to `runtime.perception.temporal_alignment`. Conversation extraction and consolidation belong to `memory.init_config.conversation.pipeline`.
 
@@ -99,4 +99,4 @@ uv lock --check
 uv sync --all-packages --locked
 ```
 
-Add one catalog row per plugin, not per processor or backend. Keep planned and unsupported integrations explicit. See [Contributing](../CONTRIBUTING.md) and the [v0.6.8 development release notes](../docs/releases/v0.6.8.md); native generation does not mean all SDK dependencies have been removed.
+Add one catalog row per plugin, not per processor or backend. Keep planned and unsupported integrations explicit. See [Contributing](../CONTRIBUTING.md) and the [v0.6.8 development release notes](../docs/releases/v0.6.8.md); native Host replaces Agents SDK worker hosting, but clean-install and real RTC/renderer validation remain separate requirements.

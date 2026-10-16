@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.host.execution.execution import HostExecution
+from alphaavatar.host.execution.stop import ExecutionStop
 from alphaavatar.host.sessions.factory import create_session_backend
 from alphaavatar.host.sessions.manager import SessionManager
 from alphaavatar.host.sessions.mode import resolve_session_mode, resolve_session_type
@@ -193,7 +194,7 @@ async def run_execution(
     config: ApplicationConfig,
     request: SessionRequest,
     *,
-    stop: asyncio.Event,
+    stop: ExecutionStop,
     ready: Callable[[], Awaitable[None]],
 ) -> str:
     if request.backend != config.host.rtc.backend:
@@ -256,10 +257,10 @@ async def run_execution(
             assert connection_end is not None
             return connection_end.reason
         else:
-            return "host_shutdown"
+            return stop.reason
 
         if stop.is_set():
-            return "host_shutdown"
+            return stop.reason
         if connection_end is not None:
             return connection_end.reason
 
@@ -285,11 +286,15 @@ async def run_execution(
                 raise RuntimeError("Session end belongs to another attachment")
             if end.failed:
                 raise RuntimeError(f"Session failed: {end.reason}")
+            if stop.is_set():
+                return stop.reason
             if not config.host.execution.ends_execution():
                 raise RuntimeError("Unsupported execution retention policy")
             return end.reason
 
-        return "max_session_duration" if timer in done else "host_shutdown"
+        if stop.is_set():
+            return stop.reason
+        return "max_session_duration" if timer in done else stop.reason
 
     async def cleanup() -> None:
         # Cancel assembly first; it can still be transferring resource ownership.

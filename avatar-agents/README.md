@@ -6,6 +6,25 @@ application hosting and transport assembly belong to Host and RTC.
 
 ## 📦 Package structure
 
+```text
+alphaavatar/agents/
+├── avatar/               # Engine, Loop, Context and Provider contracts.
+├── runtime/              # Runtime composition, capability registry and inference.
+├── configs/              # Strict Avatar and plugin-selection configuration.
+├── character/            # Presentation and transport contracts.
+├── memory/               # Memory interfaces and public schemas.
+├── persona/              # Persona interfaces and public schemas.
+├── router/               # Interaction processor contracts.
+├── status/               # Status contracts.
+├── tools/                # Tool abstractions and operation contracts.
+├── reflection/           # Reflection contracts; not a completed feature.
+├── utils/                # Workspace, identity, time and shared utilities.
+├── env.py                # Environment initialization.
+├── log.py                # Agent logging configuration.
+└── version.py            # Package version.
+```
+
+Selected files and feature directories are shown; ordinary package initializers are omitted.
 
 ## Native execution
 

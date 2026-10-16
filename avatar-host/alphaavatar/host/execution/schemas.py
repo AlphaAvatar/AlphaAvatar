@@ -40,3 +40,4 @@ class ExecutionView:
     state: ExecutionState
     reason: str
     pid: int | None
+    stop_reason: str = ""

@@ -20,6 +20,7 @@ import sys
 
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.host.application.signals import shutdown_signals
+from alphaavatar.host.execution.stop import ExecutionStop
 
 from .channel import receive, send
 from .schemas import MAX_LAUNCH_BYTES, MAX_MESSAGE_BYTES, ProcessLaunch, ProcessMessage
@@ -28,14 +29,16 @@ logger = logging.getLogger(__name__)
 
 
 async def _run(launch: ProcessLaunch) -> int:
-    stop = asyncio.Event()
+    stop = ExecutionStop()
     reader, writer = await asyncio.open_connection(
         "127.0.0.1", launch.port, limit=MAX_MESSAGE_BYTES
     )
     lock = asyncio.Lock()
     ready_sent = False
 
-    async def publish(kind: str, *, outcome: str = "", reason: str = "") -> None:
+    async def publish(
+        kind: str, *, outcome: str = "", reason: str = "", stop_reason: str = ""
+    ) -> None:
         async with lock:
             await send(
                 writer,
@@ -44,6 +47,7 @@ async def _run(launch: ProcessLaunch) -> int:
                     kind=kind,
                     outcome=outcome,
                     reason=reason,
+                    stop_reason=stop_reason,
                 ),
                 launch.ipc_timeout,
             )
@@ -65,12 +69,15 @@ async def _run(launch: ProcessLaunch) -> int:
                     or message.ticket
                     or message.pid
                     or message.outcome
+                    or message.stop_reason
+                    or not message.reason
                 ):
                     raise ValueError("Invalid execution stop message")
-                stop.set()
-        except (EOFError, ValueError, OSError):
-            # Parent death or a broken channel is not permission to keep running unowned.
-            stop.set()
+                stop.request(message.reason)
+        except (EOFError, OSError):
+            stop.request("parent_control_lost")
+        except ValueError:
+            stop.request("parent_control_invalid")
 
     async def execute() -> str:
         from alphaavatar.host.application.bootstrap import run_execution
@@ -94,14 +101,20 @@ async def _run(launch: ProcessLaunch) -> int:
         )
 
         launch.ticket = ""
-        with shutdown_signals(stop):
+        with shutdown_signals(lambda: stop.request("process_signal")):
             control = asyncio.create_task(controls(), name="execution_parent_control")
             work = asyncio.create_task(execute(), name="execution_runtime")
             try:
                 reason = await work
                 outcome = "success" if ready_sent else "failed"
+                if stop.reason in (
+                    "parent_control_lost",
+                    "parent_control_invalid",
+                    "dispatch_control_lost",
+                ):
+                    outcome = "failed"
             except asyncio.CancelledError:
-                stop.set()
+                stop.request("execution_cancelled")
                 outcome, reason = "unknown", "execution_cancelled"
             except Exception as error:
                 # Do not echo launch payloads, credentials, participant metadata, or tool arguments.
@@ -113,14 +126,15 @@ async def _run(launch: ProcessLaunch) -> int:
                 outcome, reason = "failed", "execution_failed"
 
         # run_execution returns only after adapters, Engine and Runtime have settled.
-        await publish("result", outcome=outcome, reason=reason)
+        await publish("result", outcome=outcome, reason=reason, stop_reason=stop.reason)
         return 0 if outcome == "success" else 1
     finally:
-        stop.set()
+        stop.request("child_cleanup")
         tasks = [task for task in (control, work) if task is not None]
         for task in tasks:
             if not task.done():
                 task.cancel()
+
         if tasks:
 
             async def settle() -> None:

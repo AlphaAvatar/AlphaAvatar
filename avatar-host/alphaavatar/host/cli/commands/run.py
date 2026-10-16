@@ -41,7 +41,8 @@ def run(path: str, overrides: Sequence[str], *, devmode: bool) -> int:
             print(f"Invalid application configuration at: {locations}", file=sys.stderr)
         else:
             print(
-                f"Cannot load application configuration ({type(error).__name__}): check the file, overrides, environment and installed extras",
+                f"Cannot load application configuration ({type(error).__name__}): "
+                "check the file, overrides, environment and installed extras",
                 file=sys.stderr,
             )
         return 2
@@ -51,7 +52,7 @@ def run(path: str, overrides: Sequence[str], *, devmode: bool) -> int:
         from alphaavatar.host.application.signals import shutdown_signals
 
         host = AvatarHost(config, devmode=devmode)
-        with shutdown_signals(host.stop_event):
+        with shutdown_signals(host.stop_event.set):
             await host.run()
 
     try:
@@ -60,7 +61,8 @@ def run(path: str, overrides: Sequence[str], *, devmode: bool) -> int:
         return 130
     except Exception as error:
         print(
-            f"AlphaAvatar Host stopped ({type(error).__name__}); inspect service and execution status",
+            f"AlphaAvatar Host stopped ({type(error).__name__}); "
+            "inspect service and execution status",
             file=sys.stderr,
         )
         return 1

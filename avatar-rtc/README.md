@@ -15,11 +15,25 @@ from alphaavatar.rtc.livekit.video.input import LiveKitVideoInput
 
 Transport-neutral image conversion lives in `alphaavatar.core.media.codecs.video` and is available through `alpha-avatar-core[video]`.
 
+## 📦 Package structure
+
+```text
+alphaavatar/rtc/livekit/
+├── audio/                # PCM codecs, audio ingress and output transport.
+├── video/                # Video codecs and video ingress.
+├── text/                 # Bounded text-stream ingress.
+├── transcript/           # Transcript delivery.
+├── status/               # User-facing status delivery.
+└── utils/                # LiveKit event-binding helpers.
+```
+
+Selected files and feature directories are shown; ordinary package initializers are omitted.
+
 ## Lifecycle and ownership
 
 Media inputs receive a LiveKit room and shared PerceptionRuntime. Text input receives an injected submit callback; Host binds it to Engine admission without introducing an RTC-to-Agents dependency. Output adapters receive a room and shared OutputRuntime.
 
-Adapters expose `on_start()` and `on_stop()` for Core lifecycle coordination. Each owns its subscriptions, callbacks, tasks and transport resources. It must not close the shared room, PerceptionRuntime or OutputRuntime. HostExecution owns component ordering and runtime release; LiveKitConnection owns room-disconnection policy.
+Adapters expose `on_start()` and `on_stop()` for Core lifecycle coordination. Each owns its subscriptions, callbacks, tasks and transport resources. It must not close the shared room, PerceptionRuntime or OutputRuntime. Host SessionManager orders attachment outputs, Engine and inputs in the execution child. SessionAttachment releases adapters and its connection; HostExecution separately settles Engine and AvatarRuntime. LiveKitConnection reports transport events and never closes an execution or deletes a room.
 
 Partial startup triggers owned cleanup. Concurrent shutdown callers share cleanup, and caller cancellation is propagated after it settles. Closed input adapters are not restarted. Video conversion remains off the event-loop thread, with source-generation checks before publication.
 
@@ -37,4 +51,4 @@ Consumers read `event.output` and its typed scope, source and payload. Interrupt
 
 Codecs, media/text inputs and audio/status/transcript outputs live here. Application assembly lives in Host. Engine/Loop own native generation; Router owns synthesis and transcript synchronization. The obsolete SDK model/turn/response and record bridges are removed, not alternative supported paths.
 
-Voice provides native async PCM synthesis; RTC only converts/delivers the resulting Core frames. SDK worker hosting elsewhere in the workspace remains. Native Character presentation is assembled by Host. Audio/video input adapters accept an immutable snapshot of `excluded_participant_identities`; filtering happens before creating a source generation or stream reader, for both existing and newly subscribed tracks. Host excludes only the exact renderer identity, without feeding Character output back into perception. This migration does not yet provide connection-independent execution or persistent task recovery.
+Voice provides native async PCM synthesis; RTC only converts/delivers the resulting Core frames. Native Host owns application and execution-process hosting; it does not use the Agents SDK worker. Native Character presentation is assembled by Host. Audio/video input adapters accept an immutable snapshot of `excluded_participant_identities`; filtering happens before creating a source generation or stream reader, for both existing and newly subscribed tracks. Host excludes only the exact renderer identity, without feeding Character output back into perception. This migration does not yet provide connection-independent execution or persistent task recovery.

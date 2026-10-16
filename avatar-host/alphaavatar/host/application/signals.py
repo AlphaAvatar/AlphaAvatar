@@ -15,21 +15,21 @@ from __future__ import annotations
 
 import asyncio
 import signal
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
 
 @contextmanager
-def shutdown_signals(stop: asyncio.Event) -> Iterator[None]:
+def shutdown_signals(request_stop: Callable[[], None]) -> Iterator[None]:
     loop = asyncio.get_running_loop()
     installed = []
     try:
         for signum in (signal.SIGINT, signal.SIGTERM):
             previous = signal.getsignal(signum)
             try:
-                loop.add_signal_handler(signum, stop.set)
+                loop.add_signal_handler(signum, request_stop)
             except NotImplementedError:
-                signal.signal(signum, lambda *_: loop.call_soon_threadsafe(stop.set))
+                signal.signal(signum, lambda *_: loop.call_soon_threadsafe(request_stop))
             installed.append((signum, previous))
         yield
     finally:

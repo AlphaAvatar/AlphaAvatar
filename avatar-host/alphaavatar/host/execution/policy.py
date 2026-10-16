@@ -22,6 +22,7 @@ class ExecutionPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     on_session_end: Literal["finish_execution"] = "finish_execution"
+    on_control_loss: Literal["finish_execution"] = "finish_execution"
     max_session_seconds: int = Field(default=1800, strict=True, ge=0)
     reservation_timeout: float = Field(default=15.0, strict=True, gt=0)
     ledger_capacity: int = Field(default=10000, strict=True, ge=1)

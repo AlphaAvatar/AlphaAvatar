@@ -2,106 +2,139 @@
 
 `alpha-avatar-host` owns application startup, shared inference and hosted execution.
 `sessions/` owns interaction attachments; `sessions/livekit/` implements the LiveKit backend.
-Core, Agents and RTC do not depend on Host.
+Core, Agents and RTC do not depend on Host. App is not required to run the command.
 
 ## 📦 Package structure
 
-```
-avatar-host/alphaavatar/host/
-├── main.py                         # 唯一公开命令入口
-├── version.py
-│
+<p align="center">
+  <img src="../.github/assets/avatar-host/relationships.png" alt="Package relationships" width="100%" />
+</p>
+
+```text
+alphaavatar/host/
+├── main.py                         # Public command entrypoint.
+├── version.py                      # Package version.
 ├── cli/
-│   ├── app.py                      # 命令路由、帮助、退出码
-│   └── commands/
-│       └── run.py                  # v0.6.8 的最小 dev/start 命令
-│
+│   ├── app.py                      # Arguments, help, version and command routing.
+│   └── commands/run.py             # Native dev/start commands.
 ├── configs/
-│   ├── application.py              # HostConfig 与 AvatarConfig 的组合
-│   └── loader.py                   # 配置文件读取、分流和整体校验
-│
+│   ├── application.py              # Combined Host/Avatar configuration.
+│   └── loader.py                   # Strict loading and resolved child snapshots.
 ├── application/
-│   ├── application.py              # AvatarHost：应用级协调
-│   ├── bootstrap.py                # 组件构造与所有权移交
-│   ├── config.py                   # 应用级运行设置
-│   ├── health.py                   # 存活、就绪与依赖健康状态
-│   └── signals.py                  # 进程信号到应用关闭请求的转换
-│
+│   ├── application.py              # AvatarHost and shared-service ownership.
+│   ├── bootstrap.py                # Child-side Runtime/Engine/session assembly.
+│   ├── config.py                   # Host settings and health configuration.
+│   ├── health.py                   # Liveness, readiness and bounded status.
+│   └── signals.py                  # Process signals to an owned stop request.
 ├── execution/
-│   ├── execution.py                # HostExecution：一个托管执行实例
-│   ├── manager.py                  # 执行实例的接纳、查找与释放
-│   ├── policy.py                   # 执行保留、结束与接入变化策略
-│   └── schemas/                    # 执行管理所需的数据契约
-│
+│   ├── execution.py                # Child-local HostExecution: Engine + Runtime.
+│   ├── manager.py                  # Parent-side admission and execution handles.
+│   ├── policy.py                   # Session-end and control-loss policies.
+│   ├── schemas.py                  # Reservations, states and execution views.
+│   └── stop.py                     # Stop notification with a first-request reason.
 ├── processes/
-│   ├── supervisor.py               # 托管执行进程的启动、监控与回收
-│   ├── process.py                  # 单个子进程的资源所有权
-│   ├── config.py                   # 容量、启动和关闭限制
-│   └── schemas/                    # 进程启动参数、状态与结果
-│
+│   ├── supervisor.py               # Execution subprocess supervision.
+│   ├── process.py                  # One child, authenticated IPC and reaping.
+│   ├── entrypoint.py               # Internal child entrypoint; not a public CLI.
+│   ├── channel.py                  # Bounded IPC framing.
+│   ├── config.py                   # Capacity and process timeouts.
+│   └── schemas.py                  # Versioned launch, control and result messages.
 └── sessions/
-    ├── base.py                     # 接入后端的中立契约
-    ├── factory.py                  # 按配置选择后端，集中进行惰性加载
-    ├── manager.py                  # 接入登记、绑定与解绑
-    ├── attachment.py               # 一次接入及其适配器资源
-    ├── mode.py                     # 文字、语音、视频等交互模式
-    ├── config.py                   # RTC 后端选择和通用接入配置
-    ├── schemas/                    # 接入请求、身份关联和结束原因
-    │
+    ├── base.py                     # Backend and connection contracts.
+    ├── factory.py                  # Configuration validation and lazy selection.
+    ├── manager.py                  # Child-local execution/attachment binding.
+    ├── attachment.py               # Transport, adapters and presentation ownership.
+    ├── mode.py                     # Text, audio and video interaction modes.
+    ├── config.py                   # Backend selection settings.
+    ├── schemas.py                  # Requests, participant context and end events.
     └── livekit/
-        ├── backend.py              # LiveKit 接入实现与适配器组装
-        ├── config.py               # LiveKit 专属配置
-        ├── dispatch.py             # 原生注册、派工与状态上报
-        ├── connection.py           # RTC 房间连接及连接事件
-        └── character.py            # Character 凭证与就绪检查
+        ├── backend.py              # Dispatch/direct access and adapter assembly.
+        ├── config.py               # LiveKit settings and credential validation.
+        ├── dispatch.py             # Native control protocol; no SDK worker pool.
+        ├── connection.py           # One RTC connection and its events.
+        └── character.py            # Scoped renderer credentials and readiness.
 ```
+
+Ordinary package initializers are omitted. `execution/schemas.py`,
+`processes/schemas.py` and `sessions/schemas.py` are files, not directories.
 
 ## Run
 
-The public entrypoint is `alphaavatar.host.main:main`:
+The sole public entrypoint is `alphaavatar.host.main:main`:
 
 ```bash
 alphaavatar --help
-
 alphaavatar --version
-
 ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/mm/pipeline_openai_tools.yaml
-
 alphaavatar start examples/agent_configs/mm/pipeline_openai_tools.yaml
 ```
 
-`dev` enables debug logging and an ephemeral health port by default; it does not watch
-files or restart executions. `start` uses INFO logging and health port 8081 by default.
-Help and version do not initialize models, inference or RTC. Configuration overrides
-remain `key=value` arguments after the filename. App, installer, TUI and Doctor are
-not required to use this command.
+`dev` enables DEBUG logging and an ephemeral health port by default; it does not
+watch files or restart executions. `start` defaults to INFO and health port 8081.
+Help and version do not initialize models, inference, RTC or credentials. Overrides
+remain `key=value` arguments after the filename. Installer, TUI and Doctor are not
+implemented by these commands.
 
-## Ownership
+## Connection modes
 
-`application/` coordinates services. `execution/` owns admission and Engine/Runtime
-lifetimes; a parent process holds execution handles, not the child's Engine objects.
-`processes/` owns real execution subprocesses and their authenticated local IPC.
-InferenceRuntime remains the sole owner of its own serial runner processes.
+| Mode | Room source | Host lifetime |
+| --- | --- | --- |
+| `dispatch` (default) | Named LiveKit dispatch assignment. | Continues accepting new jobs after individual executions end. |
+| `direct` | Explicit `room_name` in Host configuration. | Runs one execution, then exits and releases shared services. |
 
-Session startup orders Character readiness, outputs, Engine and inputs. A
-SessionAttachment releases its adapters, subscriptions and connection; it does not
-close HostExecution. The explicit `finish_execution` Host policy then settles Engine
-and Runtime. Shared inference is released after execution processes are reaped.
-Core LifecycleGroup and managed cleanup remain the underlying lifecycle mechanisms.
+Both modes use the same execution supervisor and child-side assembly. `direct`
+still connects to LiveKit; it is neither peer-to-peer nor offline operation.
+Connection mode is independent of `dev/start` and participant `session_type`.
 
-The current policy supports one attachment per execution. Detachment does not imply
-room deletion. Execution persistence, reattachment, Episode recovery, sleep/wake and
-Dream scheduling are not implemented here. Force-killed or unconfirmed processes are
-reported with an unknown outcome, never automatically retried.
+See [Host operation](../docs/worker-hosting.md) for credentials, complete mode
+examples, participant selection, timeouts, health endpoints and rollout instructions.
 
-## LiveKit
+## Ownership and diagrams
 
-The `livekit` extra selects RTC/API/protocol libraries, not the Agents SDK. Native
-control dispatch handles registration, capacity reservation, assignment, termination,
-status and reconnection. Reconnection republishes execution status, not tool calls.
-Direct room access is an explicitly configured alternative, not a dispatch substitute.
+<p align="center">
+  <img src="../.github/assets/avatar-host/start-up-flow.png" alt="Startup flow" width="100%" />
+</p>
 
-For credentials, configuration, health endpoints and limitations, see
-[Host operation](../docs/worker-hosting.md). Optional Character presentation uses the
-existing [Character setup](../avatar-plugins/perception/avatar-plugins-character/README.md).
-A real RTC/renderer integration check is still required before deployment.
+The English diagrams are maintained as Mermaid source with explicit process
+boundaries. Earlier PNG concept sketches in the same asset directory are not the
+current lifecycle specification.
+
+AvatarHost owns shared inference and parent-side ExecutionManager/ProcessSupervisor.
+The parent holds execution handles, not child Engine objects. Each execution child
+creates HostExecution, SessionManager and its single SessionAttachment.
+
+SessionManager starts Character readiness, outputs, Engine and inputs in that order.
+Detachment releases the attachment's adapters, subscriptions, presentation and
+connection; it does not close HostExecution. The Host's `finish_execution` policy
+then settles Engine and Runtime. Shared inference closes only when the entire Host
+shuts down, after execution children are reaped. InferenceRuntime remains the sole
+owner of its own serial runner processes. Core lifecycle and managed cleanup are reused.
+
+## Control loss and result semantics
+
+`host.execution.on_control_loss: finish_execution` is the only supported control-loss
+policy. Losing a registered LiveKit control connection makes the backend unready,
+cancels its outstanding reservations and asks Host to stop and reap the exact
+assigned executions. Only then may a fresh registration accept new jobs. Shared
+inference remains alive unless the whole Host must stop.
+
+A new worker registration does not restore old job ownership. Old jobs are not
+replayed, resumed or reported as belonging to the new registration. There is no
+unverified migration/resume switch. This deliberately ends affected conversations
+even when their RTC media connection is still alive.
+
+`stop_reason` retains the first accepted stop request independently of final
+`outcome` and `reason`. A cleanup error or forced kill cannot turn an unknown tool
+result into success; process `success` means orderly lifecycle completion, not proof
+that every tool succeeded or that the user heard every response. Bounded recent
+execution views are available at `/status`; protect the health service from public access.
+
+## Current limits
+
+One attachment per execution is supported; reattachment, persistent Episodes,
+restart recovery, sleep/wake and Dream scheduling are not. Detachment never implies
+room deletion. Dedupe is bounded and process-local, not durable exactly-once execution.
+
+The `livekit` extra installs RTC/API/protocol libraries, not the Agents SDK.
+Real LiveKit/server/client/provider validation is still required before deployment.
+Optional presentation follows [Character setup](../avatar-plugins/perception/avatar-plugins-character/README.md).

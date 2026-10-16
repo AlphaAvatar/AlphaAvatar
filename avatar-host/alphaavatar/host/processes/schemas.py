@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from alphaavatar.host.sessions.schemas import SessionRequest
 
-IPC_VERSION = 1
+IPC_VERSION = 2
 MAX_LAUNCH_BYTES = 4194304
 MAX_MESSAGE_BYTES = 16384
 
@@ -27,7 +27,7 @@ MAX_MESSAGE_BYTES = 16384
 class ProcessLaunch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    version: Literal[1] = IPC_VERSION
+    version: Literal[2] = IPC_VERSION
     execution_id: str = Field(min_length=1, max_length=256)
     port: int = Field(strict=True, ge=1, le=65535)
     ticket: str = Field(min_length=32, max_length=256, repr=False)
@@ -40,13 +40,14 @@ class ProcessLaunch(BaseModel):
 class ProcessMessage(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    version: Literal[1] = IPC_VERSION
+    version: Literal[2] = IPC_VERSION
     execution_id: str = Field(min_length=1, max_length=256)
     kind: Literal["hello", "ready", "stop", "result"]
     ticket: str = Field(default="", max_length=256, repr=False)
     pid: int = Field(default=0, strict=True, ge=0)
     outcome: Literal["", "success", "failed", "unknown"] = ""
     reason: str = Field(default="", max_length=128, pattern=r"^[a-zA-Z0-9_:.-]*$")
+    stop_reason: str = Field(default="", max_length=128, pattern=r"^[a-zA-Z0-9_:.-]*$")
 
 
 class ProcessResult(BaseModel):
@@ -56,3 +57,4 @@ class ProcessResult(BaseModel):
     outcome: Literal["success", "failed", "unknown"]
     reason: str
     exit_code: int | None = None
+    stop_reason: str = ""

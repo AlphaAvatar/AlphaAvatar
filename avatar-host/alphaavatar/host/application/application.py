@@ -17,6 +17,7 @@ import asyncio
 import logging
 import multiprocessing as mp
 from collections.abc import Awaitable, Callable
+from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 from alphaavatar.core.cleanup import wait_for_cleanup
@@ -87,7 +88,8 @@ class AvatarHost:
             "inference_ready": self._inference_ready(),
             "session_backend_ready": self._backend.ready,
             "active_executions": self._manager.active_count,
-            "admission_available": self._manager.available,
+            "admission_available": self._backend.ready and self._manager.available,
+            "recent_executions": [asdict(view) for view in self._manager.snapshot()[-16:]],
             "inference_methods": list(self._inference.methods)
             if self._inference is not None
             else [],

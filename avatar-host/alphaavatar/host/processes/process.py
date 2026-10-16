@@ -67,7 +67,7 @@ class ExecutionProcess(LifecycleComponent):
         )
         self._terminal: ProcessMessage | None = None
         self._protocol_failed = self._forced = False
-        self._reason = "host_shutdown"
+        self._reason = ""
 
     @property
     def pid(self) -> int | None:
@@ -114,6 +114,9 @@ class ExecutionProcess(LifecycleComponent):
                     or hello.kind != "hello"
                     or hello.execution_id != self.execution_id
                     or hello.pid != self.pid
+                    or hello.outcome
+                    or hello.reason
+                    or hello.stop_reason
                     or not secrets.compare_digest(hello.ticket, self._ticket)
                 ):
                     return
@@ -138,7 +141,14 @@ class ExecutionProcess(LifecycleComponent):
                 message = await receive(self._reader)
                 if message.execution_id != self.execution_id or message.ticket or message.pid:
                     raise ValueError("Execution control identity changed")
-                if message.kind == "ready" and not self._ready.is_set() and not message.outcome:
+
+                if (
+                    message.kind == "ready"
+                    and not self._ready.is_set()
+                    and not message.outcome
+                    and not message.reason
+                    and not message.stop_reason
+                ):
                     self._ready.set()
                 elif message.kind == "result" and message.outcome:
                     if message.outcome == "success" and not self._ready.is_set():
@@ -211,6 +221,7 @@ class ExecutionProcess(LifecycleComponent):
                     if not task.done():
                         task.cancel()
                 await asyncio.gather(connected, exited, return_exceptions=True)
+
             # wait_closed also waits for accepted transports on supported Python versions.
             # Stop accepting now; the live IPC connection is closed during owner shutdown.
             self._server.close()
@@ -248,6 +259,7 @@ class ExecutionProcess(LifecycleComponent):
             )
             if self._read_task in done and not exited.done():
                 if self._terminal is None:
+                    self.request_stop("execution_control_lost")
                     await self.on_stop()
                 else:
                     try:
@@ -273,6 +285,7 @@ class ExecutionProcess(LifecycleComponent):
                 outcome=outcome,
                 reason=reason,
                 exit_code=self._process.returncode,
+                stop_reason=self._reason or (terminal.stop_reason if terminal is not None else ""),
             )
         finally:
             if not exited.done():
@@ -290,6 +303,7 @@ class ExecutionProcess(LifecycleComponent):
             if self._process is not None
             else "process_not_started",
             exit_code=self._process.returncode if self._process is not None else None,
+            stop_reason=self._reason,
         )
 
     def request_stop(self, reason: str) -> None:
@@ -347,6 +361,7 @@ class ExecutionProcess(LifecycleComponent):
                     except ProcessLookupError:
                         pass
                     await process.wait()
+
         # The child is reaped before the socket and pending authentication tasks are released.
         if self._writer is not None:
             self._writer.close()
