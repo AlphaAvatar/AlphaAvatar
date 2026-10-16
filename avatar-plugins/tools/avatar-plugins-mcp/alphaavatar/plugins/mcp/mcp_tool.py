@@ -11,48 +11,41 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import asyncio
+from __future__ import annotations
+
 import json
 import re
-from datetime import timedelta
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
-from livekit.agents.llm.tool_context import ToolError
+from alphaavatar.agents.tools.schemas import ToolError
 
-from mcp import ClientSession
-
-from .config import DEFAULT_TIMEOUT
+if TYPE_CHECKING:
+    from mcp.types import CallToolResult
 
 
 class MCPTool:
+    """Borrow a bounded invocation callback; never own or reopen an MCP connection."""
+
     def __init__(
         self,
-        client: ClientSession,
+        invoke: Callable[[str, dict[str, Any]], Awaitable[CallToolResult]],
         client_name: str | None,
         name: str,
         description: str | None,
         input_schema: dict[str, Any],
         meta: dict[str, Any] | None,
-        server_loop: asyncio.AbstractEventLoop | None = None,
         server_key: str | None = None,
         annotations: dict[str, Any] | None = None,
     ) -> None:
-        self._client = client
-        self._client_name = client_name
-        self._server_key = server_key
-
-        self._name = name
-        self._description = description
-        self._input_schema = input_schema
-        self._meta = meta
+        self._invoke = invoke
+        self._client_name, self._server_key = client_name, server_key
+        self._name, self._description = name, description
+        self._input_schema, self._meta = input_schema, meta
         self._annotations = annotations or {}
 
-        # Stable tool id:
-        # Prefer config key, not remote serverInfo.name.
         prefix = server_key or client_name
         self._tool_id = f"{prefix}.{name}" if prefix else name
-
-        self._server_loop = server_loop
 
     @property
     def tool_id(self) -> str:
@@ -72,7 +65,6 @@ class MCPTool:
 
     @property
     def category(self) -> str:
-        """Coarse category derived from the MCP ``readOnlyHint`` annotation."""
         read_only = self._annotations.get("readOnlyHint")
         if read_only is True:
             return "read"
@@ -101,49 +93,31 @@ class MCPTool:
         return re.sub(r"\s+", " ", description).strip()
 
     def to_vdb_text(self, *, server_info: dict[str, Any] | None = None) -> str:
-        payload = {
-            "tool_id": self._tool_id,
-            "server_key": self._server_key,
-            "server_name": self._client_name,
-            "name": self._name,
-            "description": self._description,
-            "input_schema": self._input_schema,
-            "meta": self._meta,
-            "server_info": server_info or {},
-        }
-        return json.dumps(payload, ensure_ascii=False, sort_keys=True)
-
-    async def call(self, raw_arguments: dict[str, Any]) -> Any:
-        if self._client is None:
-            raise ToolError(
-                "Tool invocation failed: internal service is unavailable. "
-                "Please check that the MCPServer is still running."
-            )
-
-        async def _do_call():
-            return await self._client.call_tool(
-                self._name,
-                arguments=raw_arguments,
-                read_timeout_seconds=timedelta(seconds=DEFAULT_TIMEOUT),
-            )
-
-        cur_loop = asyncio.get_running_loop()
-        if self._server_loop is not None and cur_loop is not self._server_loop:
-            cfut = asyncio.run_coroutine_threadsafe(_do_call(), self._server_loop)
-            tool_result = await asyncio.wrap_future(cfut)
-        else:
-            tool_result = await _do_call()
-
-        if tool_result.isError:
-            error_str = "\n".join(str(part) for part in tool_result.content)
-            raise ToolError(error_str)
-
-        if len(tool_result.content) == 1:
-            return tool_result.content[0].model_dump_json()
-        elif len(tool_result.content) > 1:
-            return json.dumps([item.model_dump() for item in tool_result.content])
-
-        raise ToolError(
-            f"Tool '{self._name}' completed without producing a result. "
-            "This might indicate an issue with internal processing."
+        return json.dumps(
+            {
+                "tool_id": self._tool_id,
+                "server_key": self._server_key,
+                "server_name": self._client_name,
+                "name": self._name,
+                "description": self._description,
+                "input_schema": self._input_schema,
+                "meta": self._meta,
+                "server_info": server_info or {},
+            },
+            ensure_ascii=False,
+            sort_keys=True,
         )
+
+    async def call(self, raw_arguments: dict[str, Any]) -> str:
+        # Dispatch exactly once. Transport failure cannot prove that a remote write was undone.
+        result = await self._invoke(self._name, raw_arguments)
+        if result.isError:
+            raise ToolError("MCP tool reported failure; remote side effects may already exist")
+        content = [part.model_dump(mode="json") for part in result.content]
+        if result.structuredContent is not None:
+            return json.dumps(
+                {"content": content, "structuredContent": result.structuredContent},
+                ensure_ascii=False,
+            )
+        # Empty content is a valid successful MCP response, not evidence of execution failure.
+        return json.dumps(content[0] if len(content) == 1 else content, ensure_ascii=False)

@@ -1,92 +1,145 @@
-# Model loading and inference selection
+# Downloaded models and cache folders
 
-## Startup contract
+AlphaAvatar downloads the local models needed by your selected configuration during
+startup. A first launch may therefore take longer than later launches. Models are separate
+from your [Avatar workspace](avatar-workspace-layout.md): removing a model cache is not the
+same as removing memories, profiles or conversation data.
 
-The CLI validates the agent configuration, then calls `prepare_inference_runners()`.
-Each plugin contributes its own required runner classes. The resulting
-`ALPHAAVATAR_INFERENCE_PLAN` contains only method identifiers and import paths,
-not configuration values or credentials.
+## Find or choose the cache location
 
-The worker reconstructs exactly that plan. A missing plan is an error; an empty
-plan is valid. `InferenceRuntime` requires an explicit runner mapping and does
-not fall back to `InferenceRunner.registered_runners`.
+The default location is:
 
-Plan preparation must precede worker/forkserver creation. This is a startup
-snapshot, not live reconfiguration of an already-running worker or forkserver.
-Stop and relaunch the CLI after changing the enabled model configuration.
+```text
+~/.cache/alphaavatar/models/
+```
 
-Selected runners initialize before the worker accepts realtime sessions. This
-warms configured capabilities before the first turn; it is not a first-request
-lazy initialization mechanism. File resolution, downloads and model loading run
-inside inference initialization processes, not the realtime event loop.
+`~` refers to the home directory of the account running AlphaAvatar. A container or service
+account can use a different location from your interactive terminal.
 
-## Selection rules
+Set `ALPHAAVATAR_MODEL_CACHE` in your launch environment to choose another directory:
 
-- Persona speaker and face runners follow their own processor `enabled` fields.
-- Router semantic addressing requires both its enabled processor and configured STT.
-  Turn taking follows its own enabled flag and selected model.
-- Silero follows `voice.vad.plugin`. Disabling a Router consumer alone does not
-  disable an explicitly configured, reusable Foundation VAD service.
-- Selected Memory and Persona runtimes keep their storage runner. Storage remains
-  a runtime dependency even when individual extraction processors are disabled.
-- MCP requires `enabled`, a selected default plugin, and nonempty server settings.
-- Character is not an inference runner. Host selects its native presentation from
-  the current configuration; no character environment flag contributes a runner.
+```dotenv
+ALPHAAVATAR_MODEL_CACHE=/srv/alphaavatar-models
+```
 
-## Cache layout
+Use an absolute path and give the service account read/write permission. The setting
+selects the model-cache root itself; AlphaAvatar creates the feature subdirectories below
+it. It does not move an existing cache automatically.
 
-The root is `ALPHAAVATAR_MODEL_CACHE`, defaulting to
-`~/.cache/alphaavatar/models`. Paths are resolved during initialization, not when
-model metadata modules are imported.
+## Understand the layout
+
+Only the models required by enabled local features are downloaded. Your cache may contain
+just part of this layout:
 
 ```text
 models/
-├── voice/vad/silero/v6.2.1/
-├── router/addressing/semantic/hub/
-├── router/turn_taking/smart_turn/v3.2-cpu/hub/
+├── voice/
+│   └── vad/silero/v6.2.1/
+├── router/
+│   ├── addressing/semantic/hub/
+│   └── turn_taking/smart_turn/v3.2-cpu/hub/
 └── persona/
-    ├── speaker/vector/hub/
-    ├── speaker/attribute/hub/
+    ├── speaker/
+    │   ├── vector/hub/
+    │   └── attribute/hub/
     └── face/buffalo_l/v0.7/
         ├── archives/
         └── models/buffalo_l/
 ```
 
-Hugging Face manages revision snapshots and blob deduplication under each `hub/`.
-Old cache layouts are not automatically migrated. Initial startup with the new
-layout can download the same pinned weights again.
+`hub/` directories can contain Hugging Face blobs, snapshots and references. Several
+snapshots may share the same underlying file. Leave their internal names and links intact;
+renaming a snapshot or copying only an individual weight file can make the cache unusable.
+Integrity manifests and lock files are part of cache management and should not be edited
+by hand.
 
-## Offline startup and integrity
+Hosted language models, remote speech services, embedding APIs and MCP servers are not
+turned into local models by this cache setting. Browser installation and frontend files
+for optional Character presentation are also separate; see
+[Character setup](../avatar-plugins/perception/avatar-plugins-character/README.md).
 
-Set `ALPHAAVATAR_MODEL_OFFLINE=1` or `HF_HUB_OFFLINE=1` to prevent model downloads.
-Populate this cache with the intended configuration on a connected machine first,
-then copy the complete cache including manifests. Missing or invalid files fail
-initialization. Offline mode covers these local model resolvers, not remote STT,
-LLM, embedding, MCP or other network services.
+## Move or reuse a cache
 
-Semantic addressing, Smart Turn and Silero retain their configured SHA256 values.
-Speaker weights retain their exact Hugging Face commit revisions. When available,
-the Hugging Face LFS blob filename supplies a content digest; otherwise a local
-manifest records the first accepted file's digest.
+Stop the Host and its model processes before moving files. Copy the entire model-cache
+root, preserving subdirectories, hidden files, manifests and symbolic links. Update
+`ALPHAAVATAR_MODEL_CACHE` to the new root, keep the original copy initially, then restart
+with the intended configuration to verify that the required models load.
 
-The upstream `buffalo_l.zip` release has no published SHA256 in its asset metadata.
-Its resolver uses the existing v0.7 URL, declared 288621354-byte archive size,
-ZIP validation, selected filenames and locally recorded SHA256 values. These
-locally recorded hashes detect subsequent corruption; they are trust on first use,
-not an independently authenticated upstream digest. Only detection, recognition
-and gender/age model files are extracted for the existing allowed modules.
+Changing the cache setting does not migrate an older layout. A missing file at the new
+location may be downloaded again when network access is allowed. Model compatibility also
+depends on the selected configuration and package revision; a directory named after the
+right feature does not guarantee that it contains the right model revision.
 
-Explicit `SMART_TURN_MODEL_PATH` and `SILERO_VAD_MODEL_PATH` files remain user-owned
-overrides. They must be nonempty regular files but are not forced to match the
-bundled model digest.
+For containers, keep the cache on a persistent, writable mounted directory when you want
+downloads to survive container replacement. Do not make the cache read-only: startup may
+need to create lock files or integrity manifests even when model downloads are disabled.
 
-Per-artifact file locks coordinate concurrent initialization. URL downloads use
-unique temporary files, validate before replacement and remove temporary files
-on failure. Archive extraction uses a staging directory and rejects unsafe,
-duplicate or symbolic-link members before installation. The cache must be writable
-for lock files and manifests, including during offline initialization.
+## Start without downloading models
 
-There is no required `download-files` step. Browser/frontend installation for
-Character is an explicit setup operation, not plugin import or inference warmup.
-The native AIRI session owns a browser and uses a separately served trusted frontend;
-see [Character setup](../avatar-plugins/perception/avatar-plugins-character/README.md).
+First run the intended configuration with network access so its required local models are
+present and validated. Stop the service and copy the complete cache when moving it to
+another machine. Then enable offline model loading in the launch environment:
+
+```dotenv
+ALPHAAVATAR_MODEL_OFFLINE=1
+```
+
+`HF_HUB_OFFLINE=1` also disables the supported model-resolver downloads. Missing or invalid
+files then cause startup to fail instead of downloading replacements.
+
+This is **offline model loading**, not a fully offline assistant. A configuration using
+remote LLM, STT, TTS, embedding or tool services still needs those services. Successful
+model warmup alone does not establish that every enabled feature can work without a
+network connection.
+
+There is no separate required `download-files` command in the native Host. Models are
+prepared by starting the selected configuration.
+
+## Use your own supported model file
+
+The supported local-file overrides include:
+
+```dotenv
+SMART_TURN_MODEL_PATH=/srv/custom-models/smart-turn.onnx
+SILERO_VAD_MODEL_PATH=/srv/custom-models/silero.onnx
+```
+
+Provide the file expected by the corresponding implementation, not a directory or an
+arbitrary model with a similar name. These files remain user-owned and are not moved into
+the default cache. A nonempty file is not proof of model compatibility.
+
+The bundled model checksum is not imposed on an explicit override, so you are responsible
+for its origin and suitability. Keep a copy of your override and its version information
+when backing up a deployment.
+
+## Clear or repair downloaded files
+
+Stop the service before removing cache files. When network access is available, a missing
+required default model can be downloaded again on the next startup. In offline mode it
+will instead fail to load. Keep a known-good copy before clearing a cache on an offline
+machine.
+
+Prefer removing the affected feature/version cache as a unit after making a backup rather
+than deleting shared Hugging Face blobs or editing manifests. Do not delete your Avatar
+workspace while trying to repair a model download.
+
+Where the configuration supplies a published checksum, AlphaAvatar verifies it. Some
+sources instead use a locally recorded first-use checksum. That detects later corruption;
+it is not an independent guarantee that the original download was trustworthy. Explicit
+local model overrides follow the separate rule described above.
+
+## Common problems
+
+**The same model downloads again.** Check the service account, cache-root setting,
+configuration/model revision, persistent container mount and write permissions.
+
+**Offline startup fails.** Confirm that the complete cache belongs to the intended
+configuration. Copying only one snapshot file or enabling a new local feature can leave
+required files missing.
+
+**A cached file is reported as invalid.** Keep the failure details, restore a known-good
+copy or allow the affected model to be downloaded again. Do not bypass validation or edit
+an integrity manifest to make an unverified file appear valid.
+
+**The assistant still contacts an external service.** Review the selected cloud providers
+and tools. Model-cache offline settings do not replace or disable those integrations.

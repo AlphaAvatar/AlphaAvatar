@@ -11,66 +11,58 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import atexit
+from __future__ import annotations
+
 import math
 import os
-from contextlib import ExitStack
 
 import numpy as np
-from livekit.agents.utils import hw
 
 from alphaavatar.agents.runtime.inference import InferenceRunner
+from alphaavatar.agents.runtime.inference.cpu import available_cpu_count
 
 from ...log import logger
 from .fbank import FBank
 from .model_files import SpeakerModelType, resolve_speaker_model_path
-
-_resource_files = ExitStack()
-atexit.register(_resource_files.close)
 
 
 class SpeakerVectorRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.persona.speaker.vector"
     MODEL_TYPE: SpeakerModelType = "eres2netv2"
 
-    def __init__(self):
-        super().__init__()
-
     def initialize(self) -> None:
-        """Initialize the ONNX Runtime session with dynamic provider selection."""
         import onnxruntime as ort
 
-        local_path_onnx = resolve_speaker_model_path(self.MODEL_TYPE)
-        opts = ort.SessionOptions()
-        opts.intra_op_num_threads = max(1, min(math.ceil(hw.get_cpu_monitor().cpu_count()) // 2, 4))
-        opts.inter_op_num_threads = 1
-        opts.add_session_config_entry("session.dynamic_block_base", "4")
-
+        path = resolve_speaker_model_path(self.MODEL_TYPE)
+        options = ort.SessionOptions()
+        options.intra_op_num_threads = max(1, min(math.ceil(available_cpu_count()) // 2, 4))
+        options.inter_op_num_threads = 1
+        options.add_session_config_entry("session.dynamic_block_base", "4")
         available = ort.get_available_providers()
-        if os.getenv("FORCE_CPU", "0") == "1" and "CPUExecutionProvider" in available:
-            logger.info("[SpeakerVectorRunner] Running on CPU")
-            self._session = ort.InferenceSession(
-                local_path_onnx, providers=["CPUExecutionProvider"], sess_options=opts
-            )
+        if os.getenv("FORCE_CPU", "0") == "1":
+            if "CPUExecutionProvider" not in available:
+                raise RuntimeError("FORCE_CPU requires the ONNX CPU execution provider")
+            providers = ["CPUExecutionProvider"]
         elif "CUDAExecutionProvider" in available:
-            logger.info("[SpeakerVectorRunner] Running on GPU (CUDA)")
-            self._session = ort.InferenceSession(
-                local_path_onnx, providers=["CUDAExecutionProvider"], sess_options=opts
-            )
+            providers = ["CUDAExecutionProvider"]
         else:
-            logger.info("[SpeakerVectorRunner] Fallback: default provider")
-            self._session = ort.InferenceSession(local_path_onnx, sess_options=opts)
+            providers = available
 
+        self._session = ort.InferenceSession(path, providers=providers, sess_options=options)
+        self._input_names = [item.name for item in self._session.get_inputs()]
+        self._output_names = [item.name for item in self._session.get_outputs()]
+        logger.info(
+            "%s ready providers=%s threads=%d",
+            type(self).__name__,
+            providers,
+            options.intra_op_num_threads,
+        )
         self._feature_extractor = FBank(80, sample_rate=16000, mean_nor=True)
 
-        # Cache input/output names
-        self._input_names = [i.name for i in self._session.get_inputs()]
-        self._output_names = [o.name for o in self._session.get_outputs()]
-        logger.info(f"[SpeakerVectorRunner] Inputs: {self._input_names}")
-        logger.info(f"[SpeakerVectorRunner] Outputs: {self._output_names}")
-
     def run(self, data: bytes) -> bytes:
-        wav_data = np.frombuffer(data, dtype=np.float32)
-        ort_inputs = {"feature": self._feature_extractor(wav_data)}
-        embedding: np.ndarray = self._session.run(None, ort_inputs)[0]  # type: ignore
+        waveform = np.frombuffer(data, dtype=np.float32)
+        if not waveform.size or not np.isfinite(waveform).all():
+            raise ValueError("Speaker waveform must contain finite float32 samples")
+        inputs = {"feature": self._feature_extractor(waveform)}
+        embedding = self._session.run(None, inputs)[0]
         return embedding.tobytes()

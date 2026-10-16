@@ -77,21 +77,13 @@ AlphaAvatar follows a layered realtime multimodal architecture:
 
 - **🎙️ Native Client Inputs**: realtime text, voice, camera, and screen observations from first-party clients.
 - **🏠 Application Host**: assembles Agent execution and RTC adapters, coordinates their lifecycle, and hosts the application entrypoint.
-- **🔌 RTC Adapter**: connects LiveKit and other realtime communication backends.
+- **🔌 RTC Adapter**: provides LiveKit transport while keeping the application boundary replaceable; other backends are not yet implemented.
 - **👁️ Core Perception**: normalizes typed multimodal observations, source and segment lineage, ordered perception events, annotations, timelines, and historical snapshots.
 - **⚙️ Agent & Runtime**: owns Turn admission, native Loop execution, shared state, capability invocation and precise interruption. Router separately owns addressing and turn-taking decisions.
 - **🧩 Plugin Ecosystem**: adds Memory, Persona, RAG, MCP, Character, and other capabilities.
 - **🧠 Foundation & Infrastructure**: exposes ContextManager, Loop, ProviderService and VoiceBundle; structured extraction and native foreground streaming retain separate backend capabilities.
 - **💾 Storage & Data**: stores identity, memory, vectors, traces, artifacts, and media.
 - **📤 Assistant Outputs**: publishes validated EnvOutput content through OutputRuntime, with separate canonical-record and execution-observation streams. Router coordinates synthesis/transcripts; RTC owns delivery and playback feedback.
-
-```text
-HostExecution: optional Character readiness -> RTC outputs -> AvatarEngine -> RTC inputs
-AvatarEngine -> Loop -> ContextManager / ProviderService / CapabilityRegistry
-                    -> OutputRuntime -> Router synthesis / RTC delivery
-```
-
-HostExecution owns the execution and AvatarRuntime; LiveKitConnection owns connection policy. Core LifecycleGroup provides reusable component orchestration. The obsolete TurnController and SDK model/tool/record bridges are removed. The architecture illustration is a high-level overview; the [Core](avatar-core/README.md), [Agents](avatar-agents/README.md), [Host](avatar-host/README.md) and [RTC](avatar-rtc/README.md) READMEs describe the current ownership boundaries.
 
 ---
 
@@ -297,7 +289,7 @@ uv sync --all-packages
 
 <h2>Quick Start ⚡️</h2>
 
-Start the native Host in dev mode against your configured LiveKit deployment. The current worker/process host remains SDK-backed; foreground generation belongs to AvatarEngine and Loop.
+Start the native Host in dev mode against your configured LiveKit deployment. Application and execution-process hosting belong to the native AvatarHost; foreground generation belongs to AvatarEngine and Loop.
 
 ---
 
@@ -316,7 +308,7 @@ Edit .env.dev and provide credentials for the selected RTC, model, embedding and
 
 Enabled inference runners resolve their model files during initialization. Missing files are downloaded automatically; no separate download command is required.
 
-Set `ALPHAAVATAR_MODEL_CACHE` to choose the model cache directory. Set `ALPHAAVATAR_MODEL_OFFLINE=1` to require locally cached, validated files. See [Model Loading](docs/model-loading.md) for cache and integrity details.
+Set `ALPHAAVATAR_MODEL_CACHE` to choose the model cache directory. Set `ALPHAAVATAR_MODEL_OFFLINE=1` to require locally cached, validated files. See [Model cache](docs/models-cache-layout.md) for downloads and offline use, and [Avatar workspace](docs/avatar-workspace-layout.md) for personal data, backups and cleanup.
 
 ```bash
 ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/voice/pipeline_openai_tools_minimal.yaml

@@ -150,7 +150,7 @@ class RAGAnythingTool:
                 return await complete("gpt-4o", "", messages=parts, **options, **kwargs)
             return await llm(prompt, system_prompt, history_messages, **kwargs)
 
-        # Preserve the existing backend model and index settings; no change to stored embeddings.
+        # Keep the existing model and index settings; this is not an embedding migration.
         self._lightrag = LightRAG(
             working_dir=index,
             llm_model_func=llm,
@@ -170,16 +170,21 @@ class RAGAnythingTool:
         if self._load_task is None:
             self._load_task = asyncio.create_task(self._load(), name="rag_load")
             self._load_task.add_done_callback(self._observe)
-        # A cancelled query does not cancel shared initialization or create a second event loop.
+
         result = await asyncio.shield(self._load_task)
         if self._close_task is not None:
             raise RuntimeError("RAG service closed during initialization")
         return result
 
+    def _check_open(self) -> None:
+        if self._close_task is not None:
+            raise RuntimeError("RAG service is closing or closed")
+
     async def query(self, *, query: str, data_source: str = "all") -> str:
         self._validate_source(data_source)
         rag = await self._ensure_loaded()
         async with self._operation_lock:
+            self._check_open()  # A waiter may have been admitted before shutdown began.
             result = await rag.aquery(query, mode="hybrid")
         if not result:
             return "No relevant result was found in the session knowledge base."
@@ -191,11 +196,12 @@ class RAGAnythingTool:
         self._validate_source(data_source)
         if not file_paths_or_dir:
             raise ToolError("RAG indexing requires at least one path")
+
         rag = await self._ensure_loaded()
-        _, _, artifacts = await asyncio.to_thread(self._paths)
-        results = {}
-        failed = False
+        results, failed = {}, False
         async with self._operation_lock:
+            self._check_open()
+            _, _, artifacts = await asyncio.to_thread(self._paths)
             for value in file_paths_or_dir:
                 path = Path(value)
                 is_file, is_dir = await asyncio.to_thread(lambda p=path: (p.is_file(), p.is_dir()))
@@ -222,11 +228,14 @@ class RAGAnythingTool:
     async def _close(self) -> None:
         if self._load_task is not None:
             await asyncio.gather(self._load_task, return_exceptions=True)
-        if self._lightrag is not None:
-            await self._lightrag.finalize_storages()
-            self._lightrag = None
+        # Storage finalization cannot overlap an accepted query or indexing operation.
+        async with self._operation_lock:
+            if self._lightrag is not None:
+                await self._lightrag.finalize_storages()
+                self._lightrag = None
 
     async def aclose(self) -> None:
         if self._close_task is None:
             self._close_task = asyncio.create_task(self._close(), name="rag_close")
+            self._close_task.add_done_callback(self._observe)
         await wait_for_cleanup(self._close_task)

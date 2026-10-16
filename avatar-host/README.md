@@ -7,7 +7,7 @@ Core, Agents and RTC do not depend on Host. App is not required to run the comma
 ## 📦 Package structure
 
 <p align="center">
-  <img src="../.github/assets/avatar-host/relationships.png" alt="Package relationships" width="100%" />
+  <img src="../.github/assets/avatar-host/relationships.png" alt="Package relationships overview" width="100%" />
 </p>
 
 ```text
@@ -55,8 +55,9 @@ alphaavatar/host/
         └── character.py            # Scoped renderer credentials and readiness.
 ```
 
-Ordinary package initializers are omitted. `execution/schemas.py`,
-`processes/schemas.py` and `sessions/schemas.py` are files, not directories.
+Ordinary package initializers are omitted. The three `schemas.py` entries are files,
+not directories. The PNGs are conceptual overviews; process placement and lifecycle
+ownership are defined by the descriptions below, not by every arrow in those sketches.
 
 ## Run
 
@@ -75,6 +76,15 @@ Help and version do not initialize models, inference, RTC or credentials. Overri
 remain `key=value` arguments after the filename. Installer, TUI and Doctor are not
 implemented by these commands.
 
+Both LiveKit modes require `LIVEKIT_URL`, `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET`
+in the environment or the selected environment file. Remote LiveKit URLs require
+TLS; loopback development can use an unencrypted local endpoint. Model, embedding
+and tool providers require their own configured credentials. Do not commit secrets.
+
+For files stored on your machine, see [Avatar workspace](../docs/avatar-workspace-layout.md)
+and [Model cache](../docs/models-cache-layout.md). These are user-facing storage,
+backup and cleanup guides, not implementation reports.
+
 ## Connection modes
 
 | Mode | Room source | Host lifetime |
@@ -86,33 +96,79 @@ Both modes use the same execution supervisor and child-side assembly. `direct`
 still connects to LiveKit; it is neither peer-to-peer nor offline operation.
 Connection mode is independent of `dev/start` and participant `session_type`.
 
-See [Host operation](../docs/worker-hosting.md) for credentials, complete mode
-examples, participant selection, timeouts, health endpoints and rollout instructions.
+Add this Host section alongside the existing Avatar configuration:
 
-## Ownership and diagrams
+```yaml
+host:
+  rtc:
+    backend: livekit
+    init_config:
+      connection_mode: dispatch
+
+  execution:
+    on_session_end: finish_execution
+    on_control_loss: finish_execution
+```
+
+Dispatch registers using `avatar.name`; the sender must request that agent name.
+The assignment supplies the room and token, so do not configure `room_name` in
+this mode. Starting Host alone does not create a participant interaction.
+
+For one fixed room, change the connection settings to:
+
+```yaml
+host:
+  rtc:
+    backend: livekit
+    init_config:
+      connection_mode: direct
+      room_name: host-review-room
+      # Optional remote user identity, not the Avatar name:
+      # participant_identity: demo-user
+```
+
+The same setting can be overridden without copying a complete configuration:
+
+```bash
+ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/mm/pipeline_openai_tools.yaml \
+  host.rtc.init_config.connection_mode=direct \
+  host.rtc.init_config.room_name=host-review-room
+```
+
+An explicit `participant_identity` selects the remote user. Without it, the
+connection selects the first eligible standard/SIP participant. The selected
+participant leaving ends that attachment; this is not a multi-user room service.
+Participant readiness defaults to 60 seconds and also falls within the execution
+process's total startup deadline.
+
+Interaction mode comes from participant metadata, not dispatch-job metadata:
+`chat` and `agent` are text modes, `audio` enables audio, and `video` also enables
+configured visual input. The default is `video`. Direct mode does not disable TTS;
+use participant metadata such as `{"session_type": "chat"}` for text-only testing.
+
+## Ownership and startup
 
 <p align="center">
-  <img src="../.github/assets/avatar-host/start-up-flow.png" alt="Startup flow" width="100%" />
+  <img src="../.github/assets/avatar-host/start-up-flow.png" alt="Startup flow overview" width="100%" />
 </p>
 
-The English diagrams are maintained as Mermaid source with explicit process
-boundaries. Earlier PNG concept sketches in the same asset directory are not the
-current lifecycle specification.
-
 AvatarHost owns shared inference and parent-side ExecutionManager/ProcessSupervisor.
-The parent holds execution handles, not child Engine objects. Each execution child
-creates HostExecution, SessionManager and its single SessionAttachment.
+The parent starts a child process and holds its execution handle, not its Engine.
+Only then does child-side bootstrap create HostExecution, SessionManager and the
+single SessionAttachment. Bootstrap does not construct child Engine objects in
+advance in the parent process.
 
 SessionManager starts Character readiness, outputs, Engine and inputs in that order.
 Detachment releases the attachment's adapters, subscriptions, presentation and
 connection; it does not close HostExecution. The Host's `finish_execution` policy
 then settles Engine and Runtime. Shared inference closes only when the entire Host
-shuts down, after execution children are reaped. InferenceRuntime remains the sole
-owner of its own serial runner processes. Core lifecycle and managed cleanup are reused.
+shuts down, after execution children are reaped—not after each dispatch session.
+InferenceRuntime remains the sole owner of its own serial runner processes.
+Core lifecycle and managed cleanup are reused.
 
 ## Control loss and result semantics
 
-`host.execution.on_control_loss: finish_execution` is the only supported control-loss
+`host.execution.on_control_loss: finish_execution` is the supported control-loss
 policy. Losing a registered LiveKit control connection makes the backend unready,
 cancels its outstanding reservations and asks Host to stop and reap the exact
 assigned executions. Only then may a fresh registration accept new jobs. Shared
@@ -125,16 +181,20 @@ even when their RTC media connection is still alive.
 
 `stop_reason` retains the first accepted stop request independently of final
 `outcome` and `reason`. A cleanup error or forced kill cannot turn an unknown tool
-result into success; process `success` means orderly lifecycle completion, not proof
-that every tool succeeded or that the user heard every response. Bounded recent
-execution views are available at `/status`; protect the health service from public access.
+result into success. Process `success` means orderly lifecycle completion, not proof
+that every tool succeeded or that the user heard every response.
 
-## Current limits
+## Health and current limits
+
+The health service exposes `/live`, `/ready` and `/status`. Its listening port is
+reported during startup; `dev` normally selects an available port. `/status`
+contains bounded recent execution summaries, not an authenticated administration API.
+Restrict access through deployment networking and do not expose it publicly.
 
 One attachment per execution is supported; reattachment, persistent Episodes,
 restart recovery, sleep/wake and Dream scheduling are not. Detachment never implies
 room deletion. Dedupe is bounded and process-local, not durable exactly-once execution.
 
-The `livekit` extra installs RTC/API/protocol libraries, not the Agents SDK.
-Real LiveKit/server/client/provider validation is still required before deployment.
+The `livekit` extra selects RTC/API/protocol libraries, not the Agents SDK.
+Real LiveKit/server/client/provider validation remains a separate deployment gate.
 Optional presentation follows [Character setup](../avatar-plugins/perception/avatar-plugins-character/README.md).

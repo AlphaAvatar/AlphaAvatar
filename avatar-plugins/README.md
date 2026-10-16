@@ -28,6 +28,8 @@ Each `avatar-plugins-*` directory is an independently packaged workspace member.
 
 Python namespaces remain `alphaavatar.plugins.<plugin>`, and distribution names remain `alpha-avatar-plugins-<plugin>`. Layer names are not added to imports, entry points, YAML plugin selections, or model cache namespaces.
 
+This aggregate README contains the plugin package tree. Individual plugin READMEs describe their configuration, behavior and limits without repeating a Package structure section.
+
 ## Layer responsibilities
 
 ### Foundation
@@ -66,6 +68,8 @@ DeepResearch, MCP and RAG own their operation schemas, implementations and confi
 
 A registered capability is not automatically approved. Aggregate MCP or RAG capabilities must not be labelled read-only merely because one of their operations is read-only. Sandbox remains planned.
 
+MCP owns native MCP client sessions in its isolated runner. One async task enters and exits each connection's transport/session scopes; the runner closes those owners before joining its loop thread. Network deadlines settle local work instead of abandoning a future and implicitly allowing a duplicate call. RAG storage finalization is serialized with its accepted operations.
+
 ## Registration and lifecycle
 
 `AvatarModulePlugin` registers module factories independently of LiveKit's plugin registry. Factories create configured instances; the registry does not own execution-specific state.
@@ -86,7 +90,7 @@ Plugin configuration stays with its owning plugin or processor. The main model i
 
 `prepare_inference_runners()` passes the validated AvatarConfig to plugin-owned selectors. Workers reconstruct the selected plan; selected runners resolve and load models during initialization, before serving realtime requests. Imports and factory registration must not download or load models. Changing enabled components requires restarting the application.
 
-`InferenceRunner` is an execution contract, not a global runner registry. See [Model Loading](../docs/model-loading.md) for cache paths, integrity checks, offline behavior, and local overrides, and [Examples](../examples/README.md) for complete configurations.
+`InferenceRunner` is an execution contract, not a global runner registry. See [Model cache](../docs/models-cache-layout.md) for downloads, offline use and cleanup, [Avatar workspace](../docs/avatar-workspace-layout.md) for stored personal data and backups, and [Examples](../examples/README.md) for complete configurations.
 
 ## Workspace maintenance
 

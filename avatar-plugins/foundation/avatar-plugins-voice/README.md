@@ -30,7 +30,7 @@ This is a configuration fragment; full examples also select Loop and Context. Mo
 
 Interruption policy belongs to `router.init_config.turn_taking.interruption`. The unused `voice.allow_interruptions` field is removed and rejected; it is not a second interruption switch.
 
-Selecting Silero selects its inference runner. Models are resolved during runner initialization, not plugin import. See [Model Loading](../../../docs/model-loading.md) and [Plugin Layout and Boundaries](../../README.md).
+Selecting Silero selects its inference runner. Models are resolved during runner initialization, not plugin import. See [Model cache](../../../docs/models-cache-layout.md) and [Plugin Layout and Boundaries](../../README.md).
 
 ## Native TTS and media contract
 
@@ -104,8 +104,9 @@ rather than ignoring it. User-facing applications must disclose AI-generated spe
 
 Router still owns phrase segmentation, output identity, interruption, alignment and
 completion barriers. TTS transport closure is not proof of playout or a new source
-of OutputRuntime control events. SDK worker hosting remains separate v0.6.8 work. Native Character presentation
-consumes the existing RTC audio, without another TTS provider or playback track.
+of OutputRuntime control events. Native Host owns application and execution-process
+hosting. Native Character presentation consumes the existing RTC audio, without
+another TTS provider or playback track.
 
 ## Wire references
 
