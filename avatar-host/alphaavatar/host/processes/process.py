@@ -47,7 +47,8 @@ class ExecutionProcess(LifecycleComponent):
     ) -> None:
         self.execution_id, self._application = execution_id, application
         self._request: SessionRequest | None = request.model_copy(deep=True)
-        self._config, self._devmode = config, devmode
+        self._config = config
+        self._devmode = devmode
 
         self._ticket = secrets.token_hex(32)
         self._server: asyncio.Server | None = None
