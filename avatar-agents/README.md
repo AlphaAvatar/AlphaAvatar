@@ -4,6 +4,9 @@
 Concrete model backends and feature implementations live in plugin packages;
 application hosting and transport assembly belong to Host and RTC.
 
+## 📦 Package structure
+
+
 ## Native execution
 
 ```text

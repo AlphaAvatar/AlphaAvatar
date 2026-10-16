@@ -1,80 +1,107 @@
 # AlphaAvatar Host
 
-`alpha-avatar-host` assembles Agent execution and transport adapters. It does not
-implement model generation, prompt construction, media processing or Memory storage.
+`alpha-avatar-host` owns application startup, shared inference and hosted execution.
+`sessions/` owns interaction attachments; `sessions/livekit/` implements the LiveKit backend.
+Core, Agents and RTC do not depend on Host.
 
-## Entrypoint
+## 📦 Package structure
 
-`alphaavatar.host.livekit.entrypoint:main` provides the current `alphaavatar` command.
-Installer, configuration UI/TUI and doctor commands are planned for v0.6.9. Applications can assemble a
-`HostExecution` directly without importing LiveKit.
-
-## Lifecycle and ownership
-
-`HostExecution(runtime=..., engine=..., inputs=..., outputs=..., presentations=...)` takes ownership
-of the constructed components and the Runtime. Its startup order is:
-
-```text
-Optional Character readiness -> RTC outputs -> AvatarEngine -> RTC inputs
+```
+avatar-host/alphaavatar/host/
+├── main.py                         # 唯一公开命令入口
+├── version.py
+│
+├── cli/
+│   ├── app.py                      # 命令路由、帮助、退出码
+│   └── commands/
+│       └── run.py                  # v0.6.8 的最小 dev/start 命令
+│
+├── configs/
+│   ├── application.py              # HostConfig 与 AvatarConfig 的组合
+│   └── loader.py                   # 配置文件读取、分流和整体校验
+│
+├── application/
+│   ├── application.py              # AvatarHost：应用级协调
+│   ├── bootstrap.py                # 组件构造与所有权移交
+│   ├── config.py                   # 应用级运行设置
+│   ├── health.py                   # 存活、就绪与依赖健康状态
+│   └── signals.py                  # 进程信号到应用关闭请求的转换
+│
+├── execution/
+│   ├── execution.py                # HostExecution：一个托管执行实例
+│   ├── manager.py                  # 执行实例的接纳、查找与释放
+│   ├── policy.py                   # 执行保留、结束与接入变化策略
+│   └── schemas/                    # 执行管理所需的数据契约
+│
+├── processes/
+│   ├── supervisor.py               # 托管执行进程的启动、监控与回收
+│   ├── process.py                  # 单个子进程的资源所有权
+│   ├── config.py                   # 容量、启动和关闭限制
+│   └── schemas/                    # 进程启动参数、状态与结果
+│
+└── sessions/
+    ├── base.py                     # 接入后端的中立契约
+    ├── factory.py                  # 按配置选择后端，集中进行惰性加载
+    ├── manager.py                  # 接入登记、绑定与解绑
+    ├── attachment.py               # 一次接入及其适配器资源
+    ├── mode.py                     # 文字、语音、视频等交互模式
+    ├── config.py                   # RTC 后端选择和通用接入配置
+    ├── schemas/                    # 接入请求、身份关联和结束原因
+    │
+    └── livekit/
+        ├── backend.py              # LiveKit 接入实现与适配器组装
+        ├── config.py               # LiveKit 专属配置
+        ├── dispatch.py             # 原生注册、派工与状态上报
+        ├── connection.py           # RTC 房间连接及连接事件
+        └── character.py            # Character 凭证与就绪检查
 ```
 
-Shutdown stops inputs, settles Engine execution and plugin consumers, closes
-outputs and Character presentation, then releases Runtime. Runtime is still closed when component cleanup
-fails; failures are aggregated, not silently treated as successful cleanup.
-`LifecycleGroup` owns concurrent startup within each phase and ordered shutdown
-across phases. `LifecycleComponent.on_stop()` must tolerate partial and unstarted
-initialization. Startup failure rolls back owned components, and repeated close
-or caller cancellation cannot abandon accepted cleanup. Instances are single-use.
+## Run
 
-The entrypoint uses an `AsyncExitStack` before ownership transfers to HostExecution.
-This covers construction failures and shutdown callback registration failure.
-After transfer, only HostExecution releases its Runtime. `LiveKitConnection`
-owns room events, monitors, disconnection and room cleanup; it delegates execution
-shutdown to HostExecution. It also monitors the optional Character session.
-There is no `livekit.lifecycle` cleanup bridge.
+The public entrypoint is `alphaavatar.host.main:main`:
 
-Host supplies a LiveKit Character transport for scoped credentials and authenticated
-READY/video checks. The Character plugin owns the browser; the shared frontend is
-served separately. Exact renderer identities are excluded from audio/video input.
-See [Character setup](../avatar-plugins/perception/avatar-plugins-character/README.md).
+```bash
+alphaavatar --help
 
-## Worker supervision
+alphaavatar --version
 
-`alphaavatar.host.livekit.worker.LiveKitWorker` is the SDK dispatch adapter. It uses
-public SDK run/close APIs rather than copying AgentServer.run or importing SDK IPC
-internals. The old Agents `avatar/patches` package is removed.
+ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/mm/pipeline_openai_tools.yaml
 
-Host starts the selected InferenceRuntime before the SDK can create job processes.
-The entrypoint uses `spawn` for both inference and job processes, so each child gets
-this worker's final endpoint. Four warm job processes and the existing load/close
-settings are retained. This does not create four copies of each inference model.
+alphaavatar start examples/agent_configs/mm/pipeline_openai_tools.yaml
+```
 
-Host owns the exposed HTTP health endpoint. `/` returns 503 while warming, closing,
-or when inference is unhealthy, and 200 after the SDK worker has started and the
-inference service is alive. It is not a probe of cloud model providers or a guarantee
-that dispatch is currently registered. `/worker` exposes readiness, active job count
-and inference method identifiers only. Its JSON is no longer the private SDK copy's
-schema. The SDK keeps an internal loopback/ephemeral health listener for now.
+`dev` enables debug logging and an ephemeral health port by default; it does not watch
+files or restart executions. `start` uses INFO logging and health port 8081 by default.
+Help and version do not initialize models, inference or RTC. Configuration overrides
+remain `key=value` arguments after the filename. App, installer, TUI and Doctor are
+not required to use this command.
 
-Inference failure is checked every 0.5 seconds by default. It makes readiness fail
-immediately when probed, causes the load callback to refuse capacity, and initiates
-worker shutdown on detection. SDK job cleanup precedes inference cleanup; the health
-endpoint keeps returning 503 while jobs settle. Neither jobs nor state-changing
-requests are replayed automatically.
+## Ownership
 
-See [Worker hosting](../docs/worker-hosting.md) for cancellation and validation limits.
-This is a reduction of the SDK boundary, not completion of SDK removal: dispatch,
-JobContext, the job pool and the existing dev/start command runner remain SDK-backed.
+`application/` coordinates services. `execution/` owns admission and Engine/Runtime
+lifetimes; a parent process holds execution handles, not the child's Engine objects.
+`processes/` owns real execution subprocesses and their authenticated local IPC.
+InferenceRuntime remains the sole owner of its own serial runner processes.
 
-## Boundaries and remaining work
+Session startup orders Character readiness, outputs, Engine and inputs. A
+SessionAttachment releases its adapters, subscriptions and connection; it does not
+close HostExecution. The explicit `finish_execution` Host policy then settles Engine
+and Runtime. Shared inference is released after execution processes are reaped.
+Core LifecycleGroup and managed cleanup remain the underlying lifecycle mechanisms.
 
-Engine uses the native Loop/Provider/Output contracts. The old SDK AgentSession
-generation, tool and record bridges are removed. OpenAI/Voice.ai TTS uses native
-async PCM providers. JobContext/worker hosting still uses LiveKit Agents APIs.
-AIRI Character uses native lifecycle/transport contracts, with no AgentSession.
-Renderer/RTC end-to-end validation remains required; examples keep Character disabled.
+The current policy supports one attachment per execution. Detachment does not imply
+room deletion. Execution persistence, reattachment, Episode recovery, sleep/wake and
+Dream scheduling are not implemented here. Force-killed or unconfirmed processes are
+reported with an unknown outcome, never automatically retried.
 
-Agent and RTC libraries do not import Host. Shared Foundation services remain
-owned through AvatarRuntime. Connection-independent Episodes, Context recovery,
-sleep/wake and Dream scheduling are not implemented by this migration.
-Session mode resolution stays in `alphaavatar.host.livekit.session`.
+## LiveKit
+
+The `livekit` extra selects RTC/API/protocol libraries, not the Agents SDK. Native
+control dispatch handles registration, capacity reservation, assignment, termination,
+status and reconnection. Reconnection republishes execution status, not tool calls.
+Direct room access is an explicitly configured alternative, not a dispatch substitute.
+
+For credentials, configuration, health endpoints and limitations, see
+[Host operation](../docs/worker-hosting.md). Optional Character presentation uses the
+existing [Character setup](../avatar-plugins/perception/avatar-plugins-character/README.md).
+A real RTC/renderer integration check is still required before deployment.

@@ -11,8 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Application assembly and execution hosting for AlphaAvatar."""
-
 from .version import __version__
 
 __all__ = ["__version__"]

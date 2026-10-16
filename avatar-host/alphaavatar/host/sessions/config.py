@@ -11,4 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""LiveKit-specific application assembly; import entrypoints explicitly."""
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class SessionConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    backend: str = Field(default="livekit", min_length=1)
+    init_config: dict[str, Any] = Field(default_factory=dict, repr=False)

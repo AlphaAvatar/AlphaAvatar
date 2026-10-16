@@ -45,7 +45,6 @@ class LiveKitCharacterTransport(CharacterTransport):
             api_secret if api_secret is not None else os.getenv("LIVEKIT_API_SECRET", "")
         )
         parsed = urlsplit(self._url)
-
         if (
             parsed.scheme not in ("ws", "wss", "http", "https")
             or not parsed.hostname
@@ -61,7 +60,6 @@ class LiveKitCharacterTransport(CharacterTransport):
             _ = parsed.port
         except ValueError:
             raise ValueError("Character LiveKit URL has an invalid port") from None
-
         if parsed.scheme in ("http", "ws") and parsed.hostname not in (
             "localhost",
             "127.0.0.1",
@@ -107,12 +105,10 @@ class LiveKitCharacterTransport(CharacterTransport):
             or len(packet.data) > 1024
         ):
             return
-
         try:
             message = json.loads(packet.data)
         except (ValueError, UnicodeError, TypeError):
             return
-
         if isinstance(message, dict) and message.get("type") == "avatar_ready":
             self._ready_seen = True
             self._changed.set()
@@ -147,12 +143,10 @@ class LiveKitCharacterTransport(CharacterTransport):
         participant = self._room.remote_participants.get(self._identity)
         if participant is None:
             return False
-
         publications = tuple(participant.track_publications.values())
         if any(p.kind == rtc.TrackKind.KIND_AUDIO for p in publications):
             self._fail("Character attempted to publish a second audio track")
             return False
-
         return any(p.kind == rtc.TrackKind.KIND_VIDEO for p in publications)
 
     async def on_start(self) -> None:
@@ -162,8 +156,6 @@ class LiveKitCharacterTransport(CharacterTransport):
             return
         if not self._room.isconnected():
             raise RuntimeError("Character requires a connected room")
-
-        # Register before launching the renderer; a fast READY cannot be lost.
         for event, callback in (
             ("data_received", self._on_data),
             ("track_published", self._on_track),
@@ -174,7 +166,6 @@ class LiveKitCharacterTransport(CharacterTransport):
         ):
             self._room.on(event, callback)
             self._callbacks.append((event, callback))
-
         token = (
             api.AccessToken(self._api_key, self._api_secret)
             .with_kind("agent")
@@ -193,7 +184,6 @@ class LiveKitCharacterTransport(CharacterTransport):
             .with_attributes({"lk.publish_on_behalf": self._agent_identity})
             .to_jwt()
         )
-
         self._connection = CharacterConnection(
             transport="livekit",
             url=self._url,
@@ -224,7 +214,6 @@ class LiveKitCharacterTransport(CharacterTransport):
     async def on_stop(self) -> None:
         if self._closed:
             return
-
         self._closed = True
         self._connection = None
         self._api_key = self._api_secret = ""
@@ -234,7 +223,6 @@ class LiveKitCharacterTransport(CharacterTransport):
                 self._room.off(event, callback)
             except Exception:
                 errors.append(RuntimeError(f"Character callback removal failed: {event}"))
-
         self._callbacks.clear()
         self._changed.set()
         if errors:
