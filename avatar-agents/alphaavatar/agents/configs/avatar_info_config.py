@@ -14,6 +14,7 @@
 import os
 import pathlib
 import uuid
+from collections.abc import Mapping
 
 from pydantic import BaseModel, Field
 
@@ -25,7 +26,7 @@ from alphaavatar.agents.utils.files.work_dirs import (
 
 
 class AvatarInfoConfig(BaseModel):
-    """Configuration for the prompt used in the agent, , which will creat when server load."""
+    """Avatar identity and workspace, with explicit restoration of a resolved configuration."""
 
     id: str = Field(
         default=uuid.uuid4().hex,
@@ -54,13 +55,15 @@ class AvatarInfoConfig(BaseModel):
     )
 
     def model_post_init(self, __context):
-        # Get Global environment variables
-        # BUG: The first time, you might get:
-        # BUG: data/avatar-id
-        # BUG: If `AvatarInfoConfig` is instantiated again within the same process, the environment variable is already:
-        # BUG: /data/avatar-id
-        # BUG: It might then be concatenated again to form:
-        # BUG: /data/avatar-id/avatar-id
+        if isinstance(__context, Mapping) and __context.get("resolved_workspace") is True:
+            # Host IPC restores the validated identity and absolute workspace, not a new base path.
+            # This context is supplied by the config loader, never by a user YAML field.
+            if not pathlib.Path(self.work_dir).is_absolute():
+                raise ValueError("A restored Avatar workspace must be absolute")
+            os.environ["AVATAR_WORK_DIR"] = self.work_dir
+            if self.timezone:
+                os.environ["AVATAR_TIMEZONE"] = self.timezone
+            return
 
         self.name = os.getenv("AVATAR_NAME") or self.name
         self.timezone = os.getenv("AVATAR_TIMEZONE") or self.timezone

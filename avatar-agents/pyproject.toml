@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "alpha-avatar-agents"
 dynamic = ["version"]
-description = "A real-time interactive Omni Avatar Agent built on LiveKit."
+description = "Transport-neutral Agent contracts and runtime composition for AlphaAvatar."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11,<3.12"
@@ -24,7 +24,6 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
 ]
 dependencies = [
-    "alpha-avatar-rtc[livekit]",
     "alpha-avatar-core",
     "python-dotenv",
     "filelock>=3.12",
@@ -34,12 +33,7 @@ dependencies = [
     "markdown",
     "weasyprint",
     "python-slugify",
-    "livekit>=1.0.12,<2",
-    "livekit-api>=1.0.4,<2",
-    "livekit-protocol~=1.0",
     "livekit-blingfire~=1.0",
-    "livekit-agents~=1.4",
-    "livekit-plugins-noise-cancellation~=0.2",
     "langchain-core",
     "langchain-community",
     "pydantic>=2,<3",
@@ -48,9 +42,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-providers = [
-    "livekit-plugins-openai~=1.4",
-]
 vdb = [
     "langchain-qdrant",
     "qdrant-client",

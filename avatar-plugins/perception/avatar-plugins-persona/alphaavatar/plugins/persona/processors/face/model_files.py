@@ -14,7 +14,7 @@
 from dataclasses import dataclass
 from typing import Literal
 
-from alphaavatar.agents.utils.files.model_files import resolve_zip_directory
+from alphaavatar.agents.utils.files.model import resolve_zip_directory
 
 FaceModelType = Literal["buffalo_l"]
 

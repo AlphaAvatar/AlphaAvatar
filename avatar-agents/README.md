@@ -1,6 +1,8 @@
 # AlphaAvatar Agents
 
-`alpha-avatar-agents` defines Agent execution contracts and runtime composition. Concrete model backends and feature implementations live in plugin packages; application/transport assembly lives in Host and RTC.
+`alpha-avatar-agents` defines Agent execution contracts and runtime composition.
+Concrete model backends and feature implementations live in plugin packages;
+application hosting and transport assembly belong to Host and RTC.
 
 ## Native execution
 
@@ -12,43 +14,51 @@ Router turn decision / direct input
     -> OutputRuntime
 ```
 
-AvatarEngine owns bounded Turn admission, duplicate/stale-input isolation, submission and precise interruption. It does not inherit the LiveKit Agent, hold an SDK ChatContext, construct model prompts, register SDK tools, or write directly to Memory.
+AvatarEngine owns bounded Turn admission, duplicate/stale-input isolation, submission
+and precise interruption. It does not inherit a LiveKit Agent, construct model prompts,
+register SDK tools or write directly to Memory.
 
-Loop owns model/tool execution and canonical record publication. ContextManager owns bounded native history and captured query preparation. Provider owns model clients and tracing. Static State and loop budgets are captured once per query, not rewritten between model steps.
+Loop owns model/tool execution and canonical record publication. ContextManager owns
+bounded history and query preparation. Provider owns model clients and tracing. State
+and static loop budgets are captured once per query, not rewritten between model steps.
+Generation completion remains distinct from playback completion and interruption.
 
-Generation completion is not playback completion. Successful generation does not revoke remaining audio delivery; interruption and output completion retain their separate Runtime semantics.
+## Ownership
 
-## Contracts and ownership
+Provider schemas, enums and abstractions are in `alphaavatar.agents.avatar.provider`.
+Plugin implementations must not introduce SDK types into Core or public output data.
+Runtime components use Core LifecycleComponent and LifecycleGroup where appropriate.
+AvatarRuntime composes Session, State, Core runtimes, Foundation, capabilities and its
+inference client; it is not the plugin lifecycle manager.
 
-Public provider schemas, enums and abstractions are in `alphaavatar.agents.avatar.provider`. Plugin implementations must not introduce SDK types into Core or the public output data contract.
+Engine starts its consumers before Router enables decisions. It stops admission and
+settles Loop execution while its canonical record consumers still exist. Plugin
+finalization remains in each plugin. Host owns the surrounding execution lifecycle;
+transport detachment releases RTC subscriptions independently of Engine destruction.
 
-`AvatarModulePlugin` registers factories. Runtime components implement Core's `LifecycleComponent` (`on_start` / `on_stop`), and use `LifecycleGroup` where phase orchestration is appropriate. AvatarRuntime remains the shared composition of Session, State, Core runtimes, Foundation, capabilities and inference resources; it is not the plugin lifecycle manager.
-
-Engine starts its consumers before Router enables decisions. During shutdown it stops admission and settles Loop execution while Memory, Status and Output consumers still exist. Plugin-specific finalization remains in each plugin. Host then closes RTC outputs and the AvatarRuntime it owns.
-
-## Inference process ownership
-
-`InferenceRuntime` owns a bounded local endpoint and independent serial runner processes;
-`InferenceExecutor` only owns its client connections. Dispatched request readers remain
-owned after caller cancellation, preventing an old response from being attributed to the
-next request. Shutdown closes partial initialization, reports cleanup failures and reaps
-processes without blocking the event loop on process joins.
-
-See [Inference process ownership](../docs/inference-runtime.md) for cancellation/outcome
-semantics, limits and shutdown behavior. Host now owns inference startup and supervision
-through its LiveKitWorker adapter; Agents no longer carries a copied SDK worker.run.
-SDK dispatch and JobContext remain behind that Host boundary.
+InferenceRuntime owns the shared endpoint and serial runner processes. InferenceExecutor
+owns only client connections. Host supervises the service but does not create a second
+owner for runner processes. Neither failed jobs nor state-changing requests are
+replayed automatically by the Host.
 
 ## Configuration
 
-Agent configuration selects plugins and passes processor-owned settings through `init_config`. Complete configurations and the five-section layout are documented in [Examples](../examples/README.md).
+Agent configuration selects plugins and processor-owned `init_config` settings. The
+main model is `loop.init_config.model`; there is no SDK `llm` section. Tool registration
+does not grant approval: exact capability policy or an Engine authorizer is required.
+The native provider extras are selected on `alpha-avatar-plugins-provider`, not on an
+Agents SDK `providers` extra.
 
-The main model is `loop.init_config.model`; there is no SDK `llm` section. Loop cannot be disabled with `null`. Tool registration does not grant approval: execution requires a suitable exact-capability policy or an injected asynchronous Engine authorizer.
+Host loads the shared application file and removes `host` before strictly validating
+AvatarConfig. Execution children restore a validated snapshot, retaining the original
+Avatar identity and resolved workspace rather than appending the Avatar ID again.
+The `alphaavatar` command and its argument parser belong exclusively to Host.
 
-The `alphaavatar` command belongs to `alpha-avatar-host`. Agents is usable as a library without the Host CLI.
+## Boundaries
 
-## Current boundary
+Native TTS and Character use AlphaAvatar contracts, not AgentSession. Host supplies
+Character's scoped RTC transport, and the Character plugin owns browser presentation.
+Real renderer, RTC and provider integration still require end-to-end validation.
 
-The obsolete TurnController and SDK model/turn/response bridges have been removed. OpenAI and Voice.ai TTS now use native async PCM providers behind TTSBase/TTSStreamBase. Agents Character contracts are transport-neutral; Host supplies the scoped RTC connection and the Character plugin owns browser presentation. No AgentSession is passed to Character. SDK worker hosting remains in the workspace; renderer/RTC integration still requires end-to-end validation.
-
-Execution is still scoped to the current Host execution. Connection-independent Episodes, persistent execution recovery, sleep/wake and Dream scheduling remain separate work.
+Session-scoped Perception/Output consistency checks remain unchanged. Persistent
+Episodes, cross-attachment recovery, sleep/wake and Dream scheduling are separate work.

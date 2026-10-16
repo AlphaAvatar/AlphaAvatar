@@ -15,7 +15,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from alphaavatar.agents.utils.files.model_files import resolve_url_file
+from alphaavatar.agents.utils.files.model import resolve_url_file
 
 
 @dataclass(frozen=True, slots=True)

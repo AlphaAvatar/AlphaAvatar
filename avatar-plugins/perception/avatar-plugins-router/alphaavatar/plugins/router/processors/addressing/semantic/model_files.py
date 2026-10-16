@@ -13,7 +13,7 @@
 # limitations under the License.
 from dataclasses import dataclass
 
-from alphaavatar.agents.utils.files.model_files import resolve_hf_file
+from alphaavatar.agents.utils.files.model import resolve_hf_file
 
 
 @dataclass(frozen=True, slots=True)

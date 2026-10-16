@@ -14,7 +14,7 @@
 from dataclasses import dataclass
 from typing import Literal
 
-from alphaavatar.agents.utils.files.model_files import resolve_hf_file
+from alphaavatar.agents.utils.files.model import resolve_hf_file
 
 SpeakerModelType = Literal["eres2netv2", "w2v2l6"]
 
