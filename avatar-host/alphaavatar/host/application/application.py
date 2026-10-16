@@ -63,11 +63,6 @@ class AvatarHost:
         self._run_task: asyncio.Task[None] | None = None
         self._close_task: asyncio.Task[None] | None = None
 
-    def _inference_ready(self) -> bool:
-        return bool(
-            self._close_task is None and self._inference is not None and self._inference.is_alive
-        )
-
     @property
     def ready(self) -> bool:
         return self._inference_ready() and self._backend.ready and self._manager.healthy
@@ -75,6 +70,16 @@ class AvatarHost:
     @property
     def stop_event(self) -> asyncio.Event:
         return self._stop
+
+    @staticmethod
+    def _observe(task: asyncio.Future[Any]) -> None:
+        if not task.cancelled():
+            task.exception()
+
+    def _inference_ready(self) -> bool:
+        return bool(
+            self._close_task is None and self._inference is not None and self._inference.is_alive
+        )
 
     def status(self) -> dict[str, Any]:
         return {
@@ -87,11 +92,6 @@ class AvatarHost:
             if self._inference is not None
             else [],
         }
-
-    @staticmethod
-    def _observe(task: asyncio.Future[Any]) -> None:
-        if not task.cancelled():
-            task.exception()
 
     async def _monitor(self) -> None:
         while True:

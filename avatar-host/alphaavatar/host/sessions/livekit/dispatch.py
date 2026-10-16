@@ -90,6 +90,16 @@ class LiveKitDispatch:
     def ready(self) -> bool:
         return self._registered and self._accepting and not self._closed.is_set()
 
+    @staticmethod
+    def _status(view: ExecutionView) -> tuple[int, str]:
+        if view.state in ("reserved", "starting"):
+            return agent.JobStatus.JS_PENDING, ""
+        if view.state in ("running", "stopping"):
+            return agent.JobStatus.JS_RUNNING, ""
+        if view.state == "success":
+            return agent.JobStatus.JS_SUCCESS, ""
+        return agent.JobStatus.JS_FAILED, view.reason or "execution_failed"
+
     async def _send(
         self, ws: aiohttp.ClientWebSocketResponse, message: agent.WorkerMessage
     ) -> None:
@@ -182,18 +192,9 @@ class LiveKitDispatch:
         except ValueError:
             self._manager.cancel_reservation(offer.reservation, "invalid_assignment")
             return
+
         if not self._manager.assign(offer.reservation, request):
             self._manager.cancel_reservation(offer.reservation, "assignment_not_admitted")
-
-    @staticmethod
-    def _status(view: ExecutionView) -> tuple[int, str]:
-        if view.state in ("reserved", "starting"):
-            return agent.JobStatus.JS_PENDING, ""
-        if view.state in ("running", "stopping"):
-            return agent.JobStatus.JS_RUNNING, ""
-        if view.state == "success":
-            return agent.JobStatus.JS_SUCCESS, ""
-        return agent.JobStatus.JS_FAILED, view.reason or "execution_failed"
 
     async def _sync_status(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         async with self._status_lock:
@@ -240,6 +241,7 @@ class LiveKitDispatch:
             frame = await ws.receive()
             if frame.type != aiohttp.WSMsgType.BINARY:
                 raise ConnectionError("LiveKit control channel did not return a binary message")
+
             message = agent.ServerMessage()
             message.ParseFromString(frame.data)
             which = message.WhichOneof("message")
@@ -294,6 +296,7 @@ class LiveKitDispatch:
                 if task.cancelled():
                     raise RuntimeError("LiveKit control task cancelled unexpectedly")
                 await task
+
             if not self._closed.is_set():
                 raise ConnectionError("LiveKit control task ended unexpectedly")
         finally:
@@ -342,6 +345,7 @@ class LiveKitDispatch:
                             or not first.register.worker_id
                         ):
                             raise ValueError("LiveKit did not acknowledge worker registration")
+
                     self.worker_id = first.register.worker_id
                     self._registered = True
                     self._last_sent.clear()
@@ -374,6 +378,7 @@ class LiveKitDispatch:
                     if self._ws is not None:
                         await self._ws.close()
                     self._ws = None
+
                 try:
                     async with asyncio.timeout(min(2 ** min(retries - 1, 4), 10)):
                         await self._closed.wait()
@@ -383,6 +388,7 @@ class LiveKitDispatch:
     async def run(self) -> None:
         if self._run_task is not None or self._close_task is not None:
             raise RuntimeError("LiveKit dispatch can only run once")
+
         self._run_task = asyncio.create_task(self._run(), name="livekit_dispatch")
         self._run_task.add_done_callback(
             lambda task: None if task.cancelled() else task.exception()

@@ -75,7 +75,10 @@ class LiveKitBackend(SessionBackend):
             from .dispatch import LiveKitDispatch
 
             self._dispatch = LiveKitDispatch(
-                self._config, credentials, manager, agent_name=agent_name
+                self._config,
+                credentials,
+                manager,
+                agent_name=agent_name,
             )
             await self._dispatch.run()
             return

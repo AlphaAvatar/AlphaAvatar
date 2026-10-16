@@ -166,7 +166,8 @@ class ExecutionManager:
 
         self._set_state(record, "starting")
         record.task = asyncio.create_task(
-            self._launch(record), name=f"host_execution:{reservation.execution_id}"
+            self._launch(record),
+            name=f"host_execution:{reservation.execution_id}",
         )
         record.task.add_done_callback(lambda task: None if task.cancelled() else task.exception())
         return True
@@ -251,6 +252,7 @@ class ExecutionManager:
         self.stop_accepting()
         for backend, source_id in self._records:
             self.request_stop(backend=backend, source_id=source_id, reason="host_shutdown")
+
         tasks = tuple(record.task for record in self._records.values() if record.task is not None)
         await asyncio.gather(*tasks, return_exceptions=True)
         if self._failure is not None:
