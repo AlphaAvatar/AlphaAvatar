@@ -70,6 +70,17 @@ def _message(record: logging.LogRecord) -> str:
     return text
 
 
+def _source(record: logging.LogRecord) -> str:
+    path = record.pathname.replace("\\", "/")
+    if "/alphaavatar/" in path:
+        return path.split("/alphaavatar/", 1)[1]
+    for prefix in ("/site-packages/", "/dist-packages/"):
+        if prefix in path:
+            return path.split(prefix, 1)[1]
+    # Non-package paths retain their filename without inventing a module's location.
+    return record.filename
+
+
 class LogClient(logging.Handler):
     """Atomic, nonblocking datagrams; no disk, terminal writes or pickle on producer loops."""
 
@@ -105,24 +116,22 @@ class LogClient(logging.Handler):
         if self._ended:
             return
         threshold = (
-            self._threshold if record.name.startswith("alphaavatar") else self._third_party_level
+            self._threshold
+            if record.name == "alphaavatar" or record.name.startswith("alphaavatar.")
+            else self._third_party_level
         )
         if record.levelno < threshold:
             return
         try:
-            path = record.pathname.replace("\\", "/")
-            source = (
-                path.split("/alphaavatar/", 1)[-1] if "/alphaavatar/" in path else record.filename
-            )
             entry = LogEntry(
                 created=record.created,
                 level=record.levelno,
                 logger=clean(record.name, 240).replace("\n", "?"),
-                source=clean(source, 240).replace("\n", "?"),
+                source=clean(_source(record), 240).replace("\n", "?"),
                 line=record.lineno,
                 pid=os.getpid(),
                 process=clean(record.processName, 110).replace("\n", "?"),
-                text=self._redact(_message(record)),
+                text=self._redact(_message(record), logger=record.name),
                 dropped=self.dropped,
             )
             self._socket.sendto(entry.encode(self._token), self._path)

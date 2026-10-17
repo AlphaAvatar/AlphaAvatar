@@ -171,12 +171,22 @@ class HostLog:
             if config.banner:
                 encoding = getattr(self._stream, "encoding", "utf-8") or "utf-8"
                 try:
-                    "α".encode(encoding)
+                    "█".encode(encoding)
                     unicode = True
                 except (LookupError, UnicodeError):
                     unicode = False
+                columns = 0
+                if getattr(self._stream, "isatty", lambda: False)():
+                    try:
+                        columns = os.get_terminal_size(self._stream.fileno()).columns
+                    except (AttributeError, OSError, ValueError):
+                        columns = 100
                 banner = render_banner(
-                    __version__, devmode=self._devmode, color=self._color, unicode=unicode
+                    __version__,
+                    devmode=self._devmode,
+                    color=self._color,
+                    unicode=unicode,
+                    columns=columns,
                 )
                 self._stream.write(banner)
                 self._stream.flush()
@@ -204,7 +214,7 @@ class HostLog:
         )
 
     def _write(self, entry: LogEntry) -> None:
-        entry = replace(entry, text=self._redact(entry.text))
+        entry = replace(entry, text=self._redact(entry.text, logger=entry.logger))
         try:
             self._stream.write(console_lines(entry, color=self._color))
             self._stream.flush()

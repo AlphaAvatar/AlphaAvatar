@@ -34,7 +34,16 @@ _SECRET_PAIR = re.compile(
     r"[\"']?\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|(?:Bearer|Basic)\s+[^\s,;]+|[^\s,;&]+)"
 )
 _AUTH = re.compile(r"(?i)\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+")
-_URL = re.compile(r"(?:https?|wss?)://[^\s'\"<>]+")
+_URL = re.compile(r"(?i)(?:https?|wss?)://[^\s'\"<>]+")
+_COOKIE = re.compile(r"(?i)((?<![\w-])(?:set-)?cookie[\"']?[ \t]*[:=][ \t]*)[^\r\n]*")
+_MCP_SESSION = re.compile(
+    r"(?i)((?<![\w-])mcp[-_ ]session[-_ ]id[\"']?[ \t]*[:=][ \t]*)"
+    r"(?:\[redacted\]|\"[^\"\r\n]*\"?|'[^'\r\n]*'?|[^\s,;]+)"
+)
+_SESSION = re.compile(
+    r"(?i)((?<![\w-])session[-_ ]?id[\"']?[ \t]*[:=][ \t]*)"
+    r"(?:\[redacted\]|\"[^\"\r\n]*\"?|'[^'\r\n]*'?|[^\s,;]+)"
+)
 
 
 def clean(value: str, limit: int = MAX_TEXT_CHARS) -> str:
@@ -65,7 +74,7 @@ class Redactor:
         }
         self._secrets = tuple(sorted(values, key=len, reverse=True))
 
-    def __call__(self, text: str) -> str:
+    def __call__(self, text: str, *, logger: str = "") -> str:
         # Bound work before regex processing, retaining enough input to mask boundary values.
         truncated = len(text) > MAX_TEXT_CHARS * 2
         text = text[: MAX_TEXT_CHARS * 2]
@@ -74,6 +83,13 @@ class Redactor:
         text = _URL.sub(_redact_url, text)
         text = _SECRET_PAIR.sub(lambda match: match[1] + "[redacted]", text)
         text = _AUTH.sub("[redacted authorization]", text)
+        text = _COOKIE.sub(lambda match: match[1] + "[redacted]", text)
+        text = _MCP_SESSION.sub(lambda match: match[1] + "[redacted]", text)
+        origin = logger.removeprefix("alphaavatar.inference.capture.")
+        if origin in ("mcp", "alphaavatar.plugins.mcp") or origin.startswith(
+            ("mcp.", "alphaavatar.plugins.mcp.")
+        ):
+            text = _SESSION.sub(lambda match: match[1] + "[redacted]", text)
         return clean(text + (" [truncated]" if truncated else ""))
 
 

@@ -276,15 +276,20 @@ writes directly to OS file descriptors or arbitrary output after initialization.
 
 ## Logging
 
-`log/` owns console presentation and the single application log writer. The banner uses
-AlphaAvatar's mixed-case wordmark, blue alpha mark and cyan signal accent. A terminal
-uses its configured font; it does not load the Figma font or reproduce vector artwork.
+`log/` owns console presentation and the single application log writer. Terminals show
+an ALPHAAVATAR pixel banner in the existing brand blue/cyan palette, with the exact
+`AlphaAvatar` name, current package version and mode beneath it. The seven-row wordmark
+uses double-width pixels when space permits, single-width pixels on ordinary terminals,
+and compact text on narrow terminals or redirected output. ASCII-only terminals use `#`
+instead of block characters. No font, image library or additional dependency is loaded.
 Only the main Host prints the banner, before its buffered startup records.
 
 Console records show a millisecond timestamp with timezone, colored severity, source
-file and line, PID, then content. Multiline messages receive a prefix on every line.
-Color is automatic for a terminal; redirected output, `NO_COLOR` and `TERM=dumb` stay
-plain. File output is JSONL without color or banners. Third-party DEBUG is suppressed
+file and line, PID, then content. Installed third-party files retain their package path,
+for example `httpx/_client.py`, rather than an ambiguous basename. Multiline messages
+receive a prefix on every line.
+With `color: auto`, terminals use color and redirected output stays plain. `NO_COLOR`
+and `TERM=dumb` disable color even when `color: always` is selected. File output is JSONL without color or banners. Third-party DEBUG is suppressed
 by default, independently of the application's `dev` level.
 
 Settings are optional and go beside `rtc`, `processes` and `execution`:
@@ -307,7 +312,8 @@ The file name is `alphaavatar-<UTC timestamp>-<pid>.jsonl`, unique to an invocat
 The current file and up to three rotated files are retained by default. Earlier
 invocations are not automatically deleted; manage retention separately. Files are
 created with mode 0600. Do not share logs without reviewing them for personal data.
-See [Logging and stopping](../docs/logging.md) for everyday use.
+See [Avatar workspace](../docs/avatar-workspace-layout.md#find-your-logs-and-temporary-files)
+for finding logs, backups and cleanup.
 
 Host is the only disk/terminal writer. Parent, execution children and inference workers
 submit bounded JSON datagrams through a private local socket. Formatting and rotation
@@ -322,8 +328,14 @@ Imports do not install handlers. The owning entrypoint installs and later restor
 logging explicitly. Existing non-propagating third-party handlers and native fd output
 are outside this collection path; no global monkey patch replaces `print()`.
 
-Credential-key patterns, URL credentials/query strings, known secret environment values
-and terminal controls are filtered. Exception messages, source lines and locals are
+Credential-key patterns, Cookie headers, explicit MCP session headers, known secret
+environment values and terminal controls are filtered. MCP transport logger messages also
+mask session identifiers, including `Received session ID`, without hiding AlphaAvatar's
+own session/turn/run correlation fields. Producers filter before submission; the Host
+filters again before terminal/file output. Importing the MCP plugin does not install
+filters on HTTPX or other global loggers. The log formatter never calls arbitrary SDK
+objects' `__str__`; such values remain type placeholders, for example `<URL>`. String URLs
+retain only their public endpoint form, without credentials, query strings or fragments. Exception messages, source lines and locals are
 not rendered by diagnostic exception formatting. This is best effort, not permission
 to log raw audio, user text, credentials or arbitrary SDK objects. Record payloads,
 partial captured lines and startup buffering are bounded. A blocked or failed sink can
