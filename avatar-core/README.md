@@ -16,6 +16,7 @@ OutputRuntime        output content, canonical records and execution observation
 alphaavatar/core/
 ├── cleanup.py           # Cancellation-safe waiting for owned cleanup.
 ├── lifecycle.py         # LifecycleComponent, LifecyclePhase, LifecycleGroup, LifecycleError.
+├── log/                 # Explicit diagnostic clients, records and bounded error formatting.
 ├── env/
 │   ├── observation.py   # EnvObservation: input evidence.
 │   ├── annotation.py    # Typed input annotations.
@@ -105,3 +106,15 @@ Start/stop operations have shared task ownership, failed startup is rolled back,
 ## 🔌 Transport independence
 
 RTC owns codecs, rooms, tracks and frontend projection. Router owns synthesis and transcript coordination. Model/tool execution belongs to Agents and Foundation plugins. Core owns the data and lifecycle contracts that connect them, not a second generic event bus or plugin schema registry.
+
+## Diagnostic logging
+
+`log/` provides explicitly configured, nonblocking local diagnostic producers, a bounded
+JSON record contract, exception metadata formatting and scoped Python-stream capture.
+It does not install handlers at import time, depend on Host, configure a model, or
+write the application's log files. Host owns console branding, collection, rotation
+and final diagnostic draining. Normal application loggers continue using `logging`.
+
+Diagnostic records may be dropped under load and are not canonical output records,
+Memory persistence or a replacement for execution outcome tracking. See
+[Logging and stopping](../docs/logging.md) for application settings and saved logs.

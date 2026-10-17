@@ -14,13 +14,18 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
+import logging
 import multiprocessing as mp
 import socket
-import traceback
+import sys
+from contextlib import nullcontext
 from dataclasses import dataclass
 from multiprocessing.context import BaseContext
 
 from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.log import configure_from_env, format_error
+from alphaavatar.core.log.capture import capture_initialization_output
 
 from .protocol import (
     CLOSE,
@@ -41,18 +46,43 @@ from .protocol import (
     write_frame,
 )
 from .runner import InferenceRunner
+from .signals import configure_runner_signals, start_runner_process
+
+logger = logging.getLogger(__name__)
 
 
 def _error() -> bytes:
-    # Keep diagnostic frames bounded; request/media payloads are never interpolated here.
-    return traceback.format_exc().encode("utf-8", errors="replace")[-16384:]
+    error = sys.exception()
+    diagnostic = format_error(error, details=True) if error else "runner_error"
+    logger.error("Inference runner failed\n%s", diagnostic)
+    return diagnostic.encode("utf-8")[:16384]
 
 
-def _runner_main(runner_cls: type[InferenceRunner], sock: socket.socket) -> None:
+def _runner_main(runner_spec: tuple[str, str], sock: socket.socket) -> None:
+    configure_runner_signals()
+    client = None
+    try:
+        client = configure_from_env()
+        _serve_runner(runner_spec, sock, capture=client is not None)
+    finally:
+        sock.close()
+        if client is not None:
+            client.close()
+
+
+def _serve_runner(runner_spec: tuple[str, str], sock: socket.socket, *, capture: bool) -> None:
     runner = None
     try:
-        runner = runner_cls()
-        runner.initialize()
+        # Resolve model/plugin imports only after installing the signal and logging policy.
+        with capture_initialization_output() if capture else nullcontext():
+            runner_cls = importlib.import_module(runner_spec[0])
+            for part in runner_spec[1].split("."):
+                runner_cls = getattr(runner_cls, part)
+            if not isinstance(runner_cls, type) or not issubclass(runner_cls, InferenceRunner):
+                raise TypeError("Inference target must be an InferenceRunner class")
+            runner = runner_cls()
+            runner.initialize()
+            configure_runner_signals()  # Model initialization does not own terminal shutdown.
     except BaseException:
         error = _error()
         if runner is not None:
@@ -157,11 +187,15 @@ class RunnerProcess:
         parent, child = self._sockets = socket.socketpair()
         parent.setblocking(False)
         self._process = self._mp_ctx.Process(
-            target=_runner_main, args=(self._runner_cls, child), name=f"inference:{self.method}"
+            target=_runner_main,
+            args=((self._runner_cls.__module__, self._runner_cls.__qualname__), child),
+            name=f"inference:{self.method}",
         )
 
         # Spawn/forkserver launch and joins can block. Own them before moving off-loop.
-        self._launch_task = asyncio.create_task(asyncio.to_thread(self._process.start))
+        self._launch_task = asyncio.create_task(
+            asyncio.to_thread(start_runner_process, self._process)
+        )
         self._launch_task.add_done_callback(self._observe)
         async with asyncio.timeout(self._initialize_timeout):
             await asyncio.shield(self._launch_task)

@@ -14,10 +14,14 @@ Core, Agents and RTC do not depend on Host. App is not required to run the comma
 alphaavatar/host/
 ├── main.py                         # Public command entrypoint.
 ├── version.py                      # Package version.
-├── diagnostics.py                  # Shared bounded CLI and child error diagnostics.
 ├── cli/
 │   ├── app.py                      # Arguments, help, version and command routing.
 │   └── commands/run.py             # Native dev/start commands.
+├── log/
+│   ├── config.py                   # Levels, color, banner and rotating file settings.
+│   ├── runtime.py                  # One Host-owned collector and writer.
+│   ├── format.py                   # Timestamp, level, source and message formatting.
+│   └── banner.py                   # Terminal adaptation of the AlphaAvatar wordmark.
 ├── configs/
 │   ├── application.py              # Combined Host/Avatar configuration.
 │   └── loader.py                   # Strict loading and resolved child snapshots.
@@ -232,7 +236,7 @@ Host's inherited process group or use global browser-process name matching.
 Containers must also provide an init/reaper for orphaned processes. Unreaped zombie
 members are treated conservatively as an unconfirmed group, not silently ignored.
 
-CLI and execution-child failures use `alphaavatar.host.diagnostics.format_error`.
+CLI, execution-child and inference failures share `alphaavatar.core.log.diagnostics.format_error`.
 Child diagnostics identify import, configuration restoration, assembly and execution
 stages. `dev` includes bounded module/function/line traces and exception-group causes;
 normal mode retains the nearest location. Diagnostics do not render exception message
@@ -265,9 +269,86 @@ also include rollback before it returns. It is not model inference latency.
 Snapshots are immutable values. Reading status does not issue inference requests,
 load models, inspect request payloads, or change admission. Lifecycle logs are emitted
 only at startup and shutdown transitions, not for each audio frame, token or inference
-request. Existing logging handlers are unchanged; this is not an asynchronous log-sink
-implementation or a latency guarantee for arbitrary third-party handlers. Third-party
-model output, such as InsightFace console messages, is not redirected or reformatted.
+request. Host explicitly configures the diagnostic logger described below. Python
+stdout/stderr emitted during isolated runner initialization, including InsightFace's
+model-discovery prints, use the same formatter. This does not intercept native C/C++
+writes directly to OS file descriptors or arbitrary output after initialization.
+
+## Logging
+
+`log/` owns console presentation and the single application log writer. The banner uses
+AlphaAvatar's mixed-case wordmark, blue alpha mark and cyan signal accent. A terminal
+uses its configured font; it does not load the Figma font or reproduce vector artwork.
+Only the main Host prints the banner, before its buffered startup records.
+
+Console records show a millisecond timestamp with timezone, colored severity, source
+file and line, PID, then content. Multiline messages receive a prefix on every line.
+Color is automatic for a terminal; redirected output, `NO_COLOR` and `TERM=dumb` stay
+plain. File output is JSONL without color or banners. Third-party DEBUG is suppressed
+by default, independently of the application's `dev` level.
+
+Settings are optional and go beside `rtc`, `processes` and `execution`:
+
+```yaml
+host:
+  log:
+    level: null                  # dev: DEBUG; start: INFO.
+    third_party_level: INFO
+    color: auto                  # auto, always, never; NO_COLOR still takes precedence.
+    banner: true
+    file: true
+    directory: null              # Resolved Avatar workspace/.logs/host.
+    rotate_bytes: 10485760
+    backup_count: 3
+    shutdown_timeout: 3.0
+```
+
+The file name is `alphaavatar-<UTC timestamp>-<pid>.jsonl`, unique to an invocation.
+The current file and up to three rotated files are retained by default. Earlier
+invocations are not automatically deleted; manage retention separately. Files are
+created with mode 0600. Do not share logs without reviewing them for personal data.
+See [Logging and stopping](../docs/logging.md) for everyday use.
+
+Host is the only disk/terminal writer. Parent, execution children and inference workers
+submit bounded JSON datagrams through a private local socket. Formatting and rotation
+run on a dedicated writer thread, not on the media event loop. Producers never wait
+for disk or terminal I/O: a full socket queue drops diagnostic records, and a later
+accepted record reports their count. A final loss report is best effort. Logs are not
+canonical tool records, a lossless audit journal, or proof of successful execution.
+
+Core's `log/` contains the reusable producer, bounded record contract, safe exception
+diagnostics and scoped Python-stream capture; it imports neither Host nor model SDKs.
+Imports do not install handlers. The owning entrypoint installs and later restores
+logging explicitly. Existing non-propagating third-party handlers and native fd output
+are outside this collection path; no global monkey patch replaces `print()`.
+
+Credential-key patterns, URL credentials/query strings, known secret environment values
+and terminal controls are filtered. Exception messages, source lines and locals are
+not rendered by diagnostic exception formatting. This is best effort, not permission
+to log raw audio, user text, credentials or arbitrary SDK objects. Record payloads,
+partial captured lines and startup buffering are bounded. A blocked or failed sink can
+cause loss and a failed diagnostic drain; it does not acquire execution ownership.
+
+## Terminal interruption
+
+Host handles SIGINT/SIGTERM as an idempotent shutdown request. Repeated Ctrl+C does
+not cancel the owned resource-cleanup sequence. Execution subprocesses retain their
+separate process groups and cooperative stop protocol.
+
+Inference workers remain exclusively owned by InferenceRuntime. Their launching
+thread masks SIGINT over spawn bootstrap and then restores its own prior mask. The
+child installs SIGINT-ignore before loading its selected runner. Host remains
+interruptible throughout. Workers stop through the existing CLOSE/CLOSED protocol;
+SIGTERM remains available for forced reclamation. Model code is imported by its
+registered module/class identity after the child signal and logging policy is installed.
+No extra runner pool, concurrent inference replicas or second process owner is added.
+
+Actual runner cleanup errors, dead workers and failed shutdown acknowledgements still
+fail visibly. They are not downgraded to success because Ctrl+C was pressed. The
+logger drains only after application cleanup has returned and the async loop has
+settled; a diagnostic writer timeout is also reported rather than called a successful
+flush. Abrupt Host termination, detached browser containment and uncooperative native
+code remain subject to the process boundaries documented above.
 
 ## Health and current limits
 

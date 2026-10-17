@@ -19,8 +19,8 @@ import os
 import sys
 
 from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.log import configure_from_env, format_error
 from alphaavatar.host.application.signals import shutdown_signals
-from alphaavatar.host.diagnostics import format_error
 from alphaavatar.host.execution.stop import ExecutionStop
 
 from .channel import receive, send
@@ -164,8 +164,11 @@ async def _run(launch: ProcessLaunch) -> int:
 
 def main() -> int:
     launch = None
-    stage = "read execution launch"
+    client = None
+    stage = "configure execution logging"
     try:
+        client = configure_from_env()
+        stage = "read execution launch"
         data = sys.stdin.buffer.readline(MAX_LAUNCH_BYTES + 1)
         if len(data) > MAX_LAUNCH_BYTES or not data.endswith(b"\n"):
             raise ValueError("Invalid execution launch frame")
@@ -173,10 +176,8 @@ def main() -> int:
         launch = ProcessLaunch.model_validate_json(data)
 
         del data
-        logging.basicConfig(
-            level=launch.log_level,
-            format="%(asctime)s %(levelname)s %(name)s %(message)s",
-        )
+        if client is None:
+            logging.basicConfig(level=launch.log_level)
         stage = "run execution child"
         return asyncio.run(_run(launch))
     except (Exception, KeyboardInterrupt) as error:
@@ -186,6 +187,9 @@ def main() -> int:
             format_error(error, details=launch is not None and launch.log_level == "DEBUG"),
         )
         return 1
+    finally:
+        if client is not None:
+            client.close()
 
 
 if __name__ == "__main__":

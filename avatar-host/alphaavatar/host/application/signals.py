@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import signal
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -23,13 +24,24 @@ from contextlib import contextmanager
 def shutdown_signals(request_stop: Callable[[], None]) -> Iterator[None]:
     loop = asyncio.get_running_loop()
     installed = []
+    requested = False
+
+    def stop(signum: int) -> None:
+        nonlocal requested
+        if not requested:
+            requested = True
+            logging.getLogger(__name__).info(
+                "Shutdown requested signal=%s", signal.Signals(signum).name
+            )
+            request_stop()
+
     try:
         for signum in (signal.SIGINT, signal.SIGTERM):
             previous = signal.getsignal(signum)
             try:
-                loop.add_signal_handler(signum, request_stop)
+                loop.add_signal_handler(signum, stop, signum)
             except NotImplementedError:
-                signal.signal(signum, lambda *_: loop.call_soon_threadsafe(request_stop))
+                signal.signal(signum, lambda received, _: loop.call_soon_threadsafe(stop, received))
             installed.append((signum, previous))
         yield
     finally:
