@@ -23,4 +23,5 @@ class ProcessConfig(BaseModel):
     startup_timeout: float = Field(default=120.0, strict=True, gt=0)
     shutdown_timeout: float = Field(default=180.0, strict=True, gt=0)
     terminate_timeout: float = Field(default=5.0, strict=True, gt=0)
+    kill_timeout: float = Field(default=5.0, strict=True, gt=0)
     ipc_timeout: float = Field(default=5.0, strict=True, gt=0)

@@ -20,6 +20,7 @@ import sys
 
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.host.application.signals import shutdown_signals
+from alphaavatar.host.diagnostics import format_error
 from alphaavatar.host.execution.stop import ExecutionStop
 
 from .channel import receive, send
@@ -30,11 +31,13 @@ logger = logging.getLogger(__name__)
 
 async def _run(launch: ProcessLaunch) -> int:
     stop = ExecutionStop()
-    reader, writer = await asyncio.open_connection(
-        "127.0.0.1", launch.port, limit=MAX_MESSAGE_BYTES
-    )
+    async with asyncio.timeout(launch.ipc_timeout):
+        reader, writer = await asyncio.open_connection(
+            "127.0.0.1", launch.port, limit=MAX_MESSAGE_BYTES
+        )
     lock = asyncio.Lock()
     ready_sent = False
+    stage = "authenticate execution control"
 
     async def publish(
         kind: str, *, outcome: str = "", reason: str = "", stop_reason: str = ""
@@ -53,11 +56,12 @@ async def _run(launch: ProcessLaunch) -> int:
             )
 
     async def ready() -> None:
-        nonlocal ready_sent
+        nonlocal ready_sent, stage
         if stop.is_set():
             raise RuntimeError("Execution stopped during startup")
         await publish("ready")
         ready_sent = True
+        stage = "run execution and settle resources"
 
     async def controls() -> None:
         try:
@@ -76,14 +80,23 @@ async def _run(launch: ProcessLaunch) -> int:
                 stop.request(message.reason)
         except (EOFError, OSError):
             stop.request("parent_control_lost")
-        except ValueError:
+        except ValueError as error:
+            logger.error(
+                "Invalid execution control execution_id=%s\n%s",
+                launch.execution_id,
+                format_error(error, details=launch.log_level == "DEBUG"),
+            )
             stop.request("parent_control_invalid")
 
     async def execute() -> str:
+        nonlocal stage
+        stage = "import execution bootstrap"
         from alphaavatar.host.application.bootstrap import run_execution
         from alphaavatar.host.configs.loader import restore_application
 
+        stage = "restore application configuration"
         config = restore_application(launch.application)
+        stage = "assemble execution and start adapters"
         return await run_execution(config, launch.request, stop=stop, ready=ready)
 
     control = work = None
@@ -117,11 +130,11 @@ async def _run(launch: ProcessLaunch) -> int:
                 stop.request("execution_cancelled")
                 outcome, reason = "unknown", "execution_cancelled"
             except Exception as error:
-                # Do not echo launch payloads, credentials, participant metadata, or tool arguments.
                 logger.error(
-                    "Execution failed execution_id=%s error_type=%s",
+                    "Execution failed execution_id=%s stage=%s\n%s",
                     launch.execution_id,
-                    type(error).__name__,
+                    stage,
+                    format_error(error, details=launch.log_level == "DEBUG"),
                 )
                 outcome, reason = "failed", "execution_failed"
 
@@ -150,11 +163,13 @@ async def _run(launch: ProcessLaunch) -> int:
 
 
 def main() -> int:
+    launch = None
+    stage = "read execution launch"
     try:
         data = sys.stdin.buffer.readline(MAX_LAUNCH_BYTES + 1)
         if len(data) > MAX_LAUNCH_BYTES or not data.endswith(b"\n"):
             raise ValueError("Invalid execution launch frame")
-
+        stage = "validate execution launch"
         launch = ProcessLaunch.model_validate_json(data)
 
         del data
@@ -162,9 +177,14 @@ def main() -> int:
             level=launch.log_level,
             format="%(asctime)s %(levelname)s %(name)s %(message)s",
         )
+        stage = "run execution child"
         return asyncio.run(_run(launch))
     except (Exception, KeyboardInterrupt) as error:
-        logger.error("Execution child stopped error_type=%s", type(error).__name__)
+        logger.error(
+            "Execution child stopped stage=%s\n%s",
+            stage,
+            format_error(error, details=launch is not None and launch.log_level == "DEBUG"),
+        )
         return 1
 
 

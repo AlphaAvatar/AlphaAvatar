@@ -19,6 +19,7 @@ from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.host.sessions.schemas import SessionRequest
 
 from .config import ProcessConfig
+from .group import ProcessGroup
 from .process import ExecutionProcess
 
 
@@ -26,6 +27,7 @@ class ProcessSupervisor:
     """Execution children only; InferenceRuntime remains the sole owner of runner processes."""
 
     def __init__(self, config: ProcessConfig, *, application: str, devmode: bool = False) -> None:
+        ProcessGroup.require_supported()
         self._config, self._application, self._devmode = config, application, devmode
 
         self._processes: dict[str, ExecutionProcess] = {}

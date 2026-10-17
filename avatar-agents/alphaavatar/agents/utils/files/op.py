@@ -15,16 +15,18 @@ from __future__ import annotations
 
 import pathlib
 import shutil
+import tempfile
 
 
 def _can_write_dir(path: pathlib.Path) -> bool:
     try:
         path.mkdir(parents=True, exist_ok=True)
-        test = path / ".write_test"
-        test.write_text("ok", encoding="utf-8")
-        test.unlink(missing_ok=True)
+        # The probe owns only its exclusive temporary file, never a shared fixed pathname.
+        with tempfile.TemporaryFile(dir=path, prefix=".alphaavatar-write-") as probe:
+            probe.write(b"\0")
+            probe.flush()
         return True
-    except Exception:
+    except OSError:
         return False
 
 

@@ -14,6 +14,7 @@ Core, Agents and RTC do not depend on Host. App is not required to run the comma
 alphaavatar/host/
 ├── main.py                         # Public command entrypoint.
 ├── version.py                      # Package version.
+├── diagnostics.py                  # Shared bounded CLI and child error diagnostics.
 ├── cli/
 │   ├── app.py                      # Arguments, help, version and command routing.
 │   └── commands/run.py             # Native dev/start commands.
@@ -34,7 +35,8 @@ alphaavatar/host/
 │   └── stop.py                     # Stop notification with a first-request reason.
 ├── processes/
 │   ├── supervisor.py               # Execution subprocess supervision.
-│   ├── process.py                  # One child, authenticated IPC and reaping.
+│   ├── process.py                  # Execution ownership, authenticated IPC and reaping.
+│   ├── group.py                    # Dedicated POSIX process-group boundary.
 │   ├── entrypoint.py               # Internal child entrypoint; not a public CLI.
 │   ├── channel.py                  # Bounded IPC framing.
 │   ├── config.py                   # Capacity and process timeouts.
@@ -183,6 +185,59 @@ even when their RTC media connection is still alive.
 `outcome` and `reason`. A cleanup error or forced kill cannot turn an unknown tool
 result into success. Process `success` means orderly lifecycle completion, not proof
 that every tool succeeded or that the user heard every response.
+
+## Process shutdown and diagnostics
+
+Hosted execution subprocesses currently require POSIX process groups. Each child
+starts a new OS session, separate from Host and shared inference. Platforms without
+this implementation are rejected when constructing the supervisor; there is no unverified Windows
+process-tree fallback.
+
+Closing first requests orderly execution shutdown over IPC. When that deadline
+expires, Host sends SIGTERM to the execution group, then SIGKILL if necessary.
+Both escalation waits have finite deadlines. Even when the main child has already
+exited, remaining processes in its original group must disappear before that scope
+is considered reaped. Forced cleanup changes the execution outcome to `unknown`,
+even if the child previously reported success. No model or tool work is replayed.
+
+These optional settings belong in the existing top-level Host section:
+
+```yaml
+host:
+  processes:
+    startup_timeout: 120.0
+    shutdown_timeout: 180.0
+    terminate_timeout: 5.0
+    kill_timeout: 5.0
+    ipc_timeout: 5.0
+```
+
+`kill_timeout` bounds the final exit-confirmation wait after SIGKILL. If exit cannot
+be confirmed, cleanup raises, the supervisor retains the unresolved handle and
+admission becomes unhealthy rather than treating that execution as safely reclaimed.
+Shared inference is not explicitly closed while owned execution scopes remain.
+These are phase deadlines, not a total wall-clock shutdown guarantee: OS process
+creation is shielded and joined before releasing ownership, so a late acquisition
+cannot be abandoned merely because its caller was cancelled. Abruptly killing Host
+itself is outside this in-process cleanup guarantee.
+
+**A process group is not a complete descendant container or a security sandbox.**
+A child can create another session/group and leave this boundary. Playwright's
+browser launcher does this on POSIX; therefore group reclamation is not proof that
+every AIRI browser process has ended after a crash. Normal Character shutdown still
+owns browser/driver cleanup. Deployments requiring forced cleanup across detached
+browser processes need an independently managed containment boundary, such as an
+execution-scoped cgroup/container; this package does not create one. Do not kill the
+Host's inherited process group or use global browser-process name matching.
+Containers must also provide an init/reaper for orphaned processes. Unreaped zombie
+members are treated conservatively as an unconfirmed group, not silently ignored.
+
+CLI and execution-child failures use `alphaavatar.host.diagnostics.format_error`.
+Child diagnostics identify import, configuration restoration, assembly and execution
+stages. `dev` includes bounded module/function/line traces and exception-group causes;
+normal mode retains the nearest location. Diagnostics do not render exception message
+bodies, source lines, locals or configuration input values. This is not a guarantee
+that every third-party library log is redacted.
 
 ## Health and current limits
 

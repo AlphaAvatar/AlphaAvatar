@@ -18,7 +18,7 @@ import logging
 import sys
 from collections.abc import Sequence
 
-from ..errors import format_error
+from alphaavatar.host.diagnostics import format_error
 
 
 def run(path: str, overrides: Sequence[str], *, devmode: bool) -> int:
