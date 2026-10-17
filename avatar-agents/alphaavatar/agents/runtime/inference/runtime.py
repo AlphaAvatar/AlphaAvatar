@@ -14,10 +14,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import multiprocessing as mp
 import os
 import shutil
 import tempfile
+import time
+from dataclasses import replace
 from multiprocessing.context import BaseContext
 
 from alphaavatar.core.cleanup import wait_for_cleanup
@@ -40,6 +43,9 @@ from .protocol import (
     write_frame,
 )
 from .runner import InferenceRunner
+from .schemas import InferenceRunnerStatus
+
+logger = logging.getLogger(__name__)
 
 
 class InferenceRuntime:
@@ -76,6 +82,10 @@ class InferenceRuntime:
         self._max_clients = positive_limit(max_clients, "max_clients")
         self._max_pending = positive_limit(max_pending_per_runner, "max_pending_per_runner")
         self._runners: dict[str, RunnerProcess] = {}
+        self._startup = {
+            method: InferenceRunnerStatus(method=method) for method in self._runner_classes
+        }
+        self._startup_started: dict[str, float] = {}
         self._server: asyncio.Server | None = None
         self._endpoint: str | None = None
         self._socket_dir: str | None = None
@@ -108,6 +118,78 @@ class InferenceRuntime:
             and all(runner.is_alive for runner in self._runners.values())
         )
 
+    def snapshot(self) -> tuple[InferenceRunnerStatus, ...]:
+        """Read startup facts and current readiness without inspecting model or request data."""
+        now = time.monotonic()
+        views = []
+        for method, status in self._startup.items():
+            runner = self._runners.get(method)
+            ready = self._close_task is None and runner is not None and runner.is_alive
+            elapsed = status.startup_elapsed_seconds
+            if status.startup_state == "initializing":
+                elapsed = max(0.0, now - self._startup_started[method])
+            views.append(replace(status, ready=ready, startup_elapsed_seconds=elapsed))
+        return tuple(views)
+
+    async def _initialize_runner(self, method: str, runner: RunnerProcess, index: int) -> None:
+        started = self._startup_started[method] = time.monotonic()
+        self._startup[method] = InferenceRunnerStatus(method=method, startup_state="initializing")
+        logger.info(
+            "Inference runner initializing method=%r progress=%d/%d",
+            method,
+            index,
+            len(self._runner_classes),
+        )
+        try:
+            await runner.start()
+        except BaseException as error:
+            cancelled = isinstance(error, asyncio.CancelledError)
+            elapsed = time.monotonic() - started
+            self._startup[method] = InferenceRunnerStatus(
+                method=method,
+                startup_state="cancelled" if cancelled else "failed",
+                startup_elapsed_seconds=elapsed,
+                error_type=type(error).__name__,
+            )
+            logger.log(
+                logging.INFO if cancelled else logging.ERROR,
+                "Inference runner startup state=%s method=%r elapsed=%.3fs error_type=%s",
+                self._startup[method].startup_state,
+                method,
+                elapsed,
+                type(error).__name__,
+            )
+            raise
+        self._startup[method] = InferenceRunnerStatus(
+            method=method,
+            startup_state="ready",
+            startup_elapsed_seconds=time.monotonic() - started,
+        )
+        logger.info(
+            "Inference runner ready method=%r elapsed=%.3fs progress=%d/%d",
+            method,
+            self._startup[method].startup_elapsed_seconds,
+            index,
+            len(self._runner_classes),
+        )
+
+    async def _close_runner(self, method: str, runner: RunnerProcess) -> None:
+        started = time.monotonic()
+        logger.info("Inference runner closing method=%r", method)
+        try:
+            await runner.close()
+        except BaseException as error:
+            logger.error(
+                "Inference runner close failed method=%r elapsed=%.3fs error_type=%s",
+                method,
+                time.monotonic() - started,
+                type(error).__name__,
+            )
+            raise
+        logger.info(
+            "Inference runner closed method=%r elapsed=%.3fs", method, time.monotonic() - started
+        )
+
     @staticmethod
     def _observe(task: asyncio.Future) -> None:
         if not task.cancelled():
@@ -137,7 +219,7 @@ class InferenceRuntime:
             raise RuntimeError("Another inference runtime acquired the process endpoint")
 
         os.environ[INFERENCE_ENDPOINT_ENV] = self._endpoint
-        for method, runner_cls in self._runner_classes.items():
+        for index, (method, runner_cls) in enumerate(self._runner_classes.items(), start=1):
             runner = RunnerProcess(
                 runner_cls,
                 mp_ctx=self._mp_ctx,
@@ -147,7 +229,7 @@ class InferenceRuntime:
                 max_pending=self._max_pending,
             )
             self._runners[method] = runner  # Own partial initialization before the first await.
-            await runner.start()
+            await self._initialize_runner(method, runner, index)
 
         if self._close_task is not None:
             raise RuntimeError("Inference runtime closed during initialization")
@@ -266,7 +348,7 @@ class InferenceRuntime:
         errors.extend(result for result in results if isinstance(result, Exception))
         runners = tuple(reversed(tuple(self._runners.items())))
         results = await asyncio.gather(
-            *(runner.close() for _, runner in runners),
+            *(self._close_runner(method, runner) for method, runner in runners),
             return_exceptions=True,
         )
         for (method, _), result in zip(runners, results, strict=True):

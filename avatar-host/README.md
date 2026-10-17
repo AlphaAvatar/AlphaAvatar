@@ -239,6 +239,36 @@ normal mode retains the nearest location. Diagnostics do not render exception me
 bodies, source lines, locals or configuration input values. This is not a guarantee
 that every third-party library log is redacted.
 
+## Inference startup progress
+
+Host reports the health port before inference warmup begins. Each configured runner
+then produces lifecycle logs with its method name, startup progress and elapsed time.
+Initialization and request execution remain serial within the existing runner design;
+these logs do not enable additional runner replicas or replay failed work.
+
+`/status` includes an `inference_runners` array in configuration order:
+
+| Field | Meaning |
+| --- | --- |
+| `method` | The configured inference method, not a model Run ID. |
+| `startup_state` | `pending`, `initializing`, `ready`, `failed` or `cancelled`. |
+| `ready` | Whether the runner is currently ready and the inference service is not closing. |
+| `startup_elapsed_seconds` | Monotonic elapsed time; live during startup, fixed afterward, and null before an attempt. |
+| `error_type` | The parent-observed exception class for failed or cancelled startup; no exception message. |
+
+Startup history and current readiness are separate. A runner which initialized and
+later exited retains `startup_state: ready` but has `ready: false`. A runner which was
+never attempted remains `pending`, including when an earlier runner failed. Elapsed
+time covers process acquisition and initialization; a failed or cancelled start can
+also include rollback before it returns. It is not model inference latency.
+
+Snapshots are immutable values. Reading status does not issue inference requests,
+load models, inspect request payloads, or change admission. Lifecycle logs are emitted
+only at startup and shutdown transitions, not for each audio frame, token or inference
+request. Existing logging handlers are unchanged; this is not an asynchronous log-sink
+implementation or a latency guarantee for arbitrary third-party handlers. Third-party
+model output, such as InsightFace console messages, is not redirected or reformatted.
+
 ## Health and current limits
 
 The health service exposes `/live`, `/ready` and `/status`. Its listening port is

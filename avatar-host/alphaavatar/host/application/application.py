@@ -90,6 +90,9 @@ class AvatarHost:
             "active_executions": self._manager.active_count,
             "admission_available": self._backend.ready and self._manager.available,
             "recent_executions": [asdict(view) for view in self._manager.snapshot()[-16:]],
+            "inference_runners": [asdict(view) for view in self._inference.snapshot()]
+            if self._inference is not None
+            else [],
             "inference_methods": list(self._inference.methods)
             if self._inference is not None
             else [],
@@ -114,6 +117,7 @@ class AvatarHost:
         self._health_start = asyncio.create_task(self._health.on_start(), name="host_health_start")
         self._health_start.add_done_callback(self._observe)
         await asyncio.shield(self._health_start)
+        logger.info("Host health started port=%d", self._health.port)
 
         # Inference
         prepare_inference_runners(self.config.avatar)

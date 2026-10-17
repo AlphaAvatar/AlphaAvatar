@@ -34,6 +34,7 @@ class HealthServer(LifecycleComponent):
     ) -> None:
         self._config = config
         self._devmode = devmode
+        self._ready = ready
         self._status = status
 
         self._runner: web.AppRunner | None = None
