@@ -17,6 +17,17 @@ import pathlib
 import shutil
 
 
+def _can_write_dir(path: pathlib.Path) -> bool:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        test = path / ".write_test"
+        test.write_text("ok", encoding="utf-8")
+        test.unlink(missing_ok=True)
+        return True
+    except Exception:
+        return False
+
+
 def _merge_dirs(src: pathlib.Path, dst: pathlib.Path) -> None:
     """
     Merge src directory into dst directory.
