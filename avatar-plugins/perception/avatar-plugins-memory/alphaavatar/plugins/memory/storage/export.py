@@ -17,6 +17,7 @@ import asyncio
 import pathlib
 
 from alphaavatar.agents.memory.schemas import MemoryItem
+from alphaavatar.core.cleanup import wait_for_cleanup
 
 from .graph import export_memory_graph
 from .markdown import export_memory_items
@@ -31,11 +32,18 @@ class MemoryExportSink:
         if not items:
             return
 
-        results = await asyncio.gather(
-            asyncio.to_thread(export_memory_items, self._export_dir, items),
-            asyncio.to_thread(export_memory_graph, self._graph_dir, items),
-            return_exceptions=True,
-        )
-        errors = [result for result in results if isinstance(result, Exception)]
-        if errors:
-            raise ExceptionGroup("Memory export failed", errors)
+        async def export() -> None:
+            results = await asyncio.gather(
+                asyncio.to_thread(export_memory_items, self._export_dir, items),
+                asyncio.to_thread(export_memory_graph, self._graph_dir, items),
+                return_exceptions=True,
+            )
+            errors = [result for result in results if isinstance(result, Exception)]
+            if errors:
+                raise ExceptionGroup("Memory export failed", errors)
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
+
+        # Cancelling a waiter must not leave filesystem writes running without their owner.
+        await wait_for_cleanup(asyncio.create_task(export(), name="memory_export"))

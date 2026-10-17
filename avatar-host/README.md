@@ -278,9 +278,9 @@ writes directly to OS file descriptors or arbitrary output after initialization.
 
 `log/` owns console presentation and the single application log writer. Terminals show
 an ALPHAAVATAR pixel banner in the existing brand blue/cyan palette, with the exact
-`AlphaAvatar` name, current package version and mode beneath it. The seven-row wordmark
-uses double-width pixels when space permits, single-width pixels on ordinary terminals,
-and compact text on narrow terminals or redirected output. ASCII-only terminals use `#`
+`AlphaAvatar` name, current package version and mode beneath it. The wordmark is fixed
+at 56 columns by five rows; wide terminals do not enlarge it. Narrow terminals and
+redirected output use compact text. ASCII-only terminals use `#`
 instead of block characters. No font, image library or additional dependency is loaded.
 Only the main Host prints the banner, before its buffered startup records.
 

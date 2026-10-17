@@ -15,48 +15,46 @@ from __future__ import annotations
 
 from .format import BOLD, BRAND_BLUE, DIM, RESET, SIGNAL_CYAN
 
-# Five-by-seven pixels; only the letters in the wordmark are needed, not a font dependency.
+# Fixed-size pixel lettering: 56 columns by five rows, never doubled on wide terminals.
 _GLYPHS = {
-    "A": ("01110", "10001", "10001", "11111", "10001", "10001", "10001"),
-    "L": ("10000", "10000", "10000", "10000", "10000", "10000", "11111"),
-    "P": ("11110", "10001", "10001", "11110", "10000", "10000", "10000"),
-    "H": ("10001", "10001", "10001", "11111", "10001", "10001", "10001"),
-    "V": ("10001", "10001", "10001", "10001", "10001", "01010", "00100"),
-    "T": ("11111", "00100", "00100", "00100", "00100", "00100", "00100"),
-    "R": ("11110", "10001", "10001", "11110", "10100", "10010", "10001"),
+    "A": ("0110", "1001", "1111", "1001", "1001"),
+    "L": ("1000", "1000", "1000", "1000", "1111"),
+    "P": ("1110", "1001", "1110", "1000", "1000"),
+    "H": ("1001", "1001", "1111", "1001", "1001"),
+    "V": ("10001", "10001", "10001", "01010", "00100"),
+    "T": ("11111", "00100", "00100", "00100", "00100"),
+    "R": ("1110", "1001", "1110", "1010", "1001"),
 }
 _WORDMARK = "ALPHAAVATAR"
 _TAGLINE = "Your real-time AI assistant. Owned by you."
 
 
-def _pixels(word: str, row: int, *, scale: int, unicode: bool) -> str:
+def _pixels(word: str, row: int, *, unicode: bool) -> str:
     fill = "█" if unicode else "#"
     pixels = "0".join(_GLYPHS[letter][row] for letter in word)
-    return "".join((fill if pixel == "1" else " ") * scale for pixel in pixels)
+    return "".join(fill if pixel == "1" else " " for pixel in pixels)
 
 
 def render_banner(
     version: str, *, devmode: bool, color: bool, unicode: bool = True, columns: int = 100
 ) -> str:
-    """Render once before logs; columns=0 selects compact redirected output."""
+    """Render fixed-size pixels, or compact text for narrow/redirected output."""
     mode = "dev" if devmode else "start"
     detail = f"AlphaAvatar  v{version}  /  {mode}"
-    width = len(_WORDMARK) * 6 - 1
+    width = sum(len(_GLYPHS[c][0]) for c in _WORDMARK) + len(_WORDMARK) - 1
     lines = []
     if columns >= width + 4:
-        scale = 2 if columns >= width * 2 + 4 else 1
-        for row in range(7):
-            left = _pixels("ALPHA", row, scale=scale, unicode=unicode)
-            right = _pixels("AVATAR", row, scale=scale, unicode=unicode)
+        for row in range(5):
+            left = _pixels("ALPHA", row, unicode=unicode)
+            right = _pixels("AVATAR", row, unicode=unicode)
             if color:
                 left = f"{BOLD}{BRAND_BLUE}{left}{RESET}"
                 right = f"{BOLD}{SIGNAL_CYAN}{right}{RESET}"
-            lines.append(f"  {left}{' ' * scale}{right}")
+            lines.append(f"  {left} {right}")
         lines.append("")
     if color:
         detail = f"{DIM}{detail}{RESET}" if lines else f"{BOLD}{BRAND_BLUE}{detail}{RESET}"
     lines.append(f"  {detail}")
     if columns == 0 or columns >= len(_TAGLINE) + 4:
-        tagline = f"{DIM}{_TAGLINE}{RESET}" if color else _TAGLINE
-        lines.append(f"  {tagline}")
+        lines.append(f"  {DIM}{_TAGLINE}{RESET}" if color else f"  {_TAGLINE}")
     return "\n" + "\n".join(lines) + "\n\n"

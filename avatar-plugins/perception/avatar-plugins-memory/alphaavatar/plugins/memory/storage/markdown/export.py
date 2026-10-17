@@ -13,27 +13,28 @@
 # limitations under the License.
 from __future__ import annotations
 
+import hashlib
 import json
 import pathlib
+import re
 from typing import Any
 
 from alphaavatar.agents.memory.enums import MemoryScopeKind
 from alphaavatar.agents.memory.schemas import MemoryItem
+from alphaavatar.agents.utils.files.atomic import locked_directory, write_text_atomic
 
 
 def _safe_name(value: str) -> str:
-    return "".join(char if char.isalnum() or char in "-_." else "_" for char in str(value))
-
-
-def _write_atomic(path: pathlib.Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix(path.suffix + ".tmp")
-    temp.write_text(text, encoding="utf-8")
-    temp.replace(path)
+    value = str(value)
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,159}", value):
+        return value
+    # Preserve ordinary UUIDs/keys; unsafe or long IDs use a separate, bounded filename domain.
+    return "~" + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def _wrap_text(text: str) -> list[str]:
-    fence = "````" if "```" in text else "```"
+    width = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    fence = "`" * max(3, width + 1)
     return [f"{fence}text", text or "_empty_", fence]
 
 
@@ -129,15 +130,18 @@ def _export_paths(export_dir: pathlib.Path, item: MemoryItem) -> list[pathlib.Pa
 
 
 def export_memory_items(export_dir: pathlib.Path, items: list[MemoryItem]) -> list[pathlib.Path]:
-    written: list[pathlib.Path] = []
+    if not items:
+        return []
+    with locked_directory(export_dir):
+        written: list[pathlib.Path] = []
 
-    for item in items:
-        text = _render_document(item)
+        for item in items:
+            text = _render_document(item)
 
-        for path in _export_paths(export_dir, item):
-            if item.revision < _read_revision(path):
-                continue
-            _write_atomic(path, text)
-            written.append(path)
+            for path in _export_paths(export_dir, item):
+                if item.revision < _read_revision(path):
+                    continue
+                write_text_atomic(path, text)
+                written.append(path)
 
-    return list(dict.fromkeys(written))
+        return list(dict.fromkeys(written))
