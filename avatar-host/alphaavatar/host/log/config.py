@@ -34,6 +34,7 @@ class LogConfig(BaseModel):
     third_party_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     color: Literal["auto", "always", "never"] = "auto"
     banner: bool = True
+    events: bool = False
     conversation: ConversationLogConfig = Field(default_factory=ConversationLogConfig)
     file: bool = True
     directory: str | None = Field(default=None, min_length=1)

@@ -35,13 +35,23 @@ LABELS = {
     "tool.started": "TOOL START",
     "tool.finished": "TOOL END",
     "run.finished": "RUN END",
+    "text.started": "TEXT SENT",
+    "text.finished": "TEXT CLOSED",
 }
+TRACE_EVENTS = frozenset(("core.event", "core.gap"))
+LABELS.update({"core.event": "CORE EVENT", "core.gap": "CORE GAP"})
 _FIELDS = frozenset(
     (
         "session_id context_id turn_id input_id run_id request_id response_id item_id output_id "
         "call_id model backend provider modality state phase reason outcome error_type model_step "
         "tool_round tool_name executed interrupted elapsed_ms model_steps tool_rounds stage "
-        "refusal text_chars parts_truncated content_index output_items input_tokens output_tokens"
+        "refusal text_chars parts_truncated content_index output_items input_tokens output_tokens "
+        "stream event_id sequence event_time_ns observed_time_ns event_kind observation_id "
+        "annotation_id source_id source_generation source_kind producer lane control_type "
+        "playback_type played_seconds pushed_seconds queued_seconds alignment_id target_count "
+        "item_count batch_id schema missed_count first_sequence cutoff_sequence delivery "
+        "measurement "
+        "start_seconds end_seconds timing_source chunk_id source_chunk_id source_chunk_count"
     ).split()
 )
 MAX_FIELDS = 24
@@ -124,6 +134,9 @@ def log_event(
     try:
         if name not in LABELS:
             raise ValueError("Unknown conversation diagnostic event")
+        if name in TRACE_EVENTS:
+            # Runtime tracing never accepts payload bodies, even with conversation content enabled.
+            text, text_parts = None, ()
         parts = (text,) if text is not None else tuple(islice(text_parts, 65))
         if any(type(part) is not str for part in parts):
             raise TypeError("Conversation previews must contain text only")

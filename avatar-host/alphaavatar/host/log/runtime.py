@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import TextIO
 
 from alphaavatar.core.log.client import LogClient
-from alphaavatar.core.log.events import LABELS, safe_fields
+from alphaavatar.core.log.events import LABELS, TRACE_EVENTS, safe_fields
 from alphaavatar.core.log.records import LOG_ENDPOINT_ENV, MAX_PACKET_BYTES, LogEntry, Redactor
 from alphaavatar.host.version import __version__
 
@@ -234,7 +234,11 @@ class HostLog:
 
     def _write(self, entry: LogEntry) -> None:
         content, truncated = entry.content, entry.content_truncated
-        if entry.event is not None:
+        if entry.event in TRACE_EVENTS:
+            if not self._config.events:
+                return
+            content, truncated = None, False
+        elif entry.event is not None:
             policy = self._conversation()
             if not policy["enabled"]:
                 return

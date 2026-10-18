@@ -204,18 +204,18 @@ class LiveKitBackend(SessionBackend):
                 )
                 outputs.append(audio_output)
 
+            text_output = None
             if mode.text_output_enabled:
-                outputs.append(
-                    own(
-                        LiveKitTranscriptOutput(
-                            room=room,
-                            output_runtime=runtime.output,
-                            track_sid=(lambda: audio_output.track_sid)
-                            if audio_output is not None
-                            else None,
-                        )
+                text_output = own(
+                    LiveKitTranscriptOutput(
+                        room=room,
+                        output_runtime=runtime.output,
+                        track_sid=(lambda: audio_output.track_sid)
+                        if audio_output is not None
+                        else None,
                     )
                 )
+                outputs.append(text_output)
 
             inputs = []
             if mode.audio_input_enabled:
@@ -237,7 +237,9 @@ class LiveKitBackend(SessionBackend):
                         LiveKitVideoInput(
                             room=room,
                             perception=runtime.perception,
-                            publish_interval_sec=avatar.runtime.perception.video_publish_interval_sec,
+                            publish_interval_sec=(
+                                avatar.runtime.perception.video_publish_interval_sec
+                            ),
                             excluded_participant_identities=excluded,
                         )
                     )
@@ -263,6 +265,8 @@ class LiveKitBackend(SessionBackend):
                     await connection.disconnect()
 
             monitors = []
+            if text_output is not None:
+                monitors.append(text_output.wait_failed)
             if text_input is not None:
                 monitors.append(text_input.wait_failed)
             if character is not None:

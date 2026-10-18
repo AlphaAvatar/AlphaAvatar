@@ -17,7 +17,7 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from alphaavatar.core.cleanup import wait_for_cleanup
-from alphaavatar.core.lifecycle import LifecycleGroup, LifecyclePhase
+from alphaavatar.core.lifecycle import LifecycleComponent, LifecycleGroup, LifecyclePhase
 
 if TYPE_CHECKING:
     from alphaavatar.agents.avatar import AvatarEngine
@@ -27,10 +27,21 @@ if TYPE_CHECKING:
 class HostExecution:
     """Own the local Engine and Runtime, never a transport or shared inference process."""
 
-    def __init__(self, *, runtime: AvatarRuntime, engine: AvatarEngine) -> None:
+    def __init__(
+        self,
+        *,
+        runtime: AvatarRuntime,
+        engine: AvatarEngine,
+        diagnostics: LifecycleComponent | None = None,
+    ) -> None:
         self.runtime, self.engine = runtime, engine
 
-        self._lifecycle = LifecycleGroup((LifecyclePhase.create("avatar-engine", (engine,)),))
+        phases = []
+        if diagnostics is not None:
+            phases.append(LifecyclePhase.create("execution-diagnostics", (diagnostics,)))
+
+        phases.append(LifecyclePhase.create("avatar-engine", (engine,)))
+        self._lifecycle = LifecycleGroup(tuple(phases))
         self._close_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:

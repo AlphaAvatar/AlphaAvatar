@@ -168,7 +168,13 @@ async def create_execution(config: ApplicationConfig, access: SessionContext) ->
     try:
         engine = AvatarEngine(avatar_config=avatar, runtime=runtime)
         resources.push_async_callback(engine.on_stop)
-        execution = HostExecution(runtime=runtime, engine=engine)
+        diagnostics = None
+        if config.host.log.events:
+            from alphaavatar.host.log.timeline import CoreEventTrace
+
+            diagnostics = CoreEventTrace(runtime)
+            resources.push_async_callback(diagnostics.on_stop)
+        execution = HostExecution(runtime=runtime, engine=engine, diagnostics=diagnostics)
         resources.pop_all()
         return execution
     except BaseException as original:

@@ -450,3 +450,40 @@ room deletion. Dedupe is bounded and process-local, not durable exactly-once exe
 The `livekit` extra selects RTC/API/protocol libraries, not the Agents SDK.
 Real LiveKit/server/client/provider validation remains a separate deployment gate.
 Optional presentation follows [Character setup](../avatar-plugins/perception/avatar-plugins-character/README.md).
+
+## Optional Core event diagnostics
+
+Conversation diagnostics summarize inputs, model runs and recorded answers. To inspect
+Core flow metadata as well, enable the optional observer:
+
+```yaml
+host:
+  log:
+    events: true
+    level: DEBUG
+```
+
+The default is `events: false` in both commands. `dev` already defaults to DEBUG.
+`CORE EVENT` and `CORE GAP` use the existing timestamp/severity/source/PID layout and
+structured JSONL fields; they are not a second event bus or canonical persistence.
+
+The observer reads independent Perception/Turn cursors, non-required record/execution
+journal cursors and an unreliable bounded output subscription. It never acknowledges
+Memory's records, applies backpressure to media, or takes ownership of execution.
+Source changes, selected observations/annotations, committed Turns, record-batch
+metadata, execution transitions, first text, alignments, sampled playback, caption
+chunks, exact interrupt targets and terminal controls can be correlated. It skips raw
+media frames and transcript deltas; no body, PCM, prompt, reasoning or tool payload is
+included, even when conversation content logging is enabled. Detected retention gaps,
+observer-queue drops and observer failures are reported; transport loss is still possible.
+
+Use `(PID, session_id, stream, sequence)` for source-stream identity. Each Core stream
+has its own sequence domain; there is no invented sequence shared across all streams
+or processes. `event_time_ns` comes from the source event; `observed_time_ns` is when the
+observer projected it. JSONL arrival order is collection order, not a distributed causal
+order. Compare monotonic times only within a known clock domain. Priority interrupts
+and batching can legitimately change the order in which diagnostic records are seen.
+
+`TEXT SENT` / `TEXT CLOSED` denote local RTC text send/close operations, not a browser
+render acknowledgement. Core logs remain lossy diagnostics and cannot replay tools or
+restore an execution. The Host observer is stopped before its borrowed Runtime closes.

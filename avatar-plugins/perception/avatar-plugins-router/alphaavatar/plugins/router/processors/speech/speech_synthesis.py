@@ -15,9 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from collections import OrderedDict, deque
-from collections.abc import Awaitable
 from contextlib import aclosing
 from dataclasses import dataclass, field, replace
 from math import isfinite
@@ -28,6 +26,7 @@ from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.env import EnvOutput
 from alphaavatar.core.env.schemas.metadata import OutputMetadata
+from alphaavatar.core.media import AudioFrame
 from alphaavatar.core.output.enums import OutputControlType, OutputKind, OutputLane, OutputTextMode
 from alphaavatar.core.output.schemas import (
     OutputControl,
@@ -38,14 +37,25 @@ from alphaavatar.core.output.schemas import (
     OutputTextChunk,
 )
 
+from .speech_text import chunk_end
+
 logger = logging.getLogger(__name__)
-_BOUNDARY = re.compile(r"[.!?。！？；;\n](?:[\"'”’）)]|\s)*")
 
 
 @dataclass(slots=True)
 class _Piece:
     chunk_id: str
     text: str
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedSpeech:
+    text: str
+    source_chunk_ids: tuple[str, ...]
+    frames: tuple[AudioFrame, ...]
+    duration: float
+    index: int
+    final: bool
 
 
 @dataclass(slots=True)
@@ -63,49 +73,45 @@ class _SpeechJob:
     running: bool = False
 
     def append(self, chunk: OutputTextChunk) -> None:
-        self.pieces.append(_Piece(chunk.chunk_id, chunk.text))
-        self.pending_chars += len(chunk.text)
+        if chunk.text:
+            self.pieces.append(_Piece(chunk.chunk_id, chunk.text))
+            self.pending_chars += len(chunk.text)
         self.ended = self.ended or chunk.is_final
         self.changed.set()
 
     def take(self, *, max_chars: int, min_chars: int, flush: bool) -> tuple[str, tuple[str, ...]]:
+        # Small lookahead distinguishes a decimal/abbreviation from a sentence boundary.
         parts, length = [], 0
         for piece in self.pieces:
-            parts.append(piece.text[: max_chars - length])
-            length += len(parts[-1])
-            if length >= max_chars:
+            part = piece.text[: max_chars + 32 - length]
+            parts.append(part)
+            length += len(part)
+            if length >= max_chars + 32:
                 break
+
         text = "".join(parts)
-        if not text:
+        end = chunk_end(
+            text, minimum=min_chars, maximum=max_chars, flush=flush or self.ended, final=self.ended
+        )
+        if not end:
             return "", ()
-        matches = [match.end() for match in _BOUNDARY.finditer(text) if match.end() >= min_chars]
-        if matches:
-            end = matches[0]
-        elif self.pending_chars >= max_chars:
-            boundary = text.rfind(" ", min_chars)
-            end = boundary + 1 if boundary >= min_chars else len(text)
-        elif flush or self.ended:
-            end = len(text)
-        else:
-            return "", ()
+
         remaining, chunks = end, []
         while remaining:
             piece = self.pieces[0]
             used = min(remaining, len(piece.text))
-            if used == 0:
-                self.pieces.popleft()
-                continue
             chunks.append(piece.chunk_id)
             piece.text = piece.text[used:]
             remaining -= used
             if not piece.text:
                 self.pieces.popleft()
+
         self.pending_chars -= end
         return text[:end], tuple(dict.fromkeys(chunks))
 
 
 class SpeechSynthesisProcessor(RouterProcessorBase):
-    """Bounded phrase synthesis with independent intake, interruption and transport playout."""
+    """Short, measured chunks with one owned lookahead; caption delivery never drives synthesis."""
 
     CONSUMER_ID = "router.speech_synthesis"
 
@@ -117,16 +123,23 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
         lanes: tuple[OutputLane, ...] = (OutputLane.TRANSIENT, OutputLane.ASSISTANT),
         max_pending_outputs: int = 16,
         max_pending_chars: int = 65_536,
-        segment_chars: int = 240,
-        min_segment_chars: int = 24,
-        flush_interval: float = 0.35,
+        segment_chars: int = 72,
+        min_segment_chars: int = 16,
+        flush_interval: float = 0.25,
         synthesis_timeout: float = 20.0,
+        max_segment_audio_seconds: float = 12.0,
+        max_segment_audio_bytes: int = 2_097_152,
     ) -> None:
         super().__init__(runtime=runtime)
-        if not 1 <= min_segment_chars <= segment_chars <= max_pending_chars:
+        if not 1 <= min_segment_chars <= segment_chars <= min(max_pending_chars, 4096):
             raise ValueError("Invalid synthesis text limits")
-        if max_pending_outputs < 1 or not all(
-            isfinite(value) and value > 0 for value in (flush_interval, synthesis_timeout)
+        if (
+            max_pending_outputs < 1
+            or max_segment_audio_bytes < 1
+            or not all(
+                isfinite(v) and v > 0
+                for v in (flush_interval, synthesis_timeout, max_segment_audio_seconds)
+            )
         ):
             raise ValueError("Synthesis capacities and timeouts must be positive")
 
@@ -134,6 +147,7 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
         self._max_outputs, self._max_chars = max_pending_outputs, max_pending_chars
         self._segment_chars, self._min_chars = segment_chars, min_segment_chars
         self._flush_interval, self._timeout = flush_interval, synthesis_timeout
+        self._audio_seconds, self._audio_bytes = max_segment_audio_seconds, max_segment_audio_bytes
         self._jobs: OrderedDict[str, _SpeechJob] = OrderedDict()
         self._wake = asyncio.Event()
         self._subscription = None
@@ -187,14 +201,12 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
             self._observe(task)
         elif task.cancelling():
             if task not in self._stopped_tasks and task not in self._externally_cancelled_tasks:
-                # The worker may still be awaiting owned cleanup; classify before retirement.
                 self._externally_cancelled_tasks.add(task)
                 self._remember_failure(
                     RuntimeError(f"{task.get_name()} was cancelling before lifecycle shutdown"),
                     task.get_name(),
                 )
         else:
-            # Only a cancellation requested here is normal lifecycle shutdown.
             self._stopped_tasks.add(task)
             task.cancel()
 
@@ -202,8 +214,6 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
         if self._subscription is None:
             return
         if self._worker_failures:
-            # Keep a failed subscription registered until OutputRuntime closes. Removing it
-            # would make later publications appear successful with a missing required consumer.
             await self._subscription.fail(self._worker_failures[0])
         else:
             await self._runtime.output.stream.unsubscribe(self.CONSUMER_ID)
@@ -220,7 +230,7 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
     async def _settle(self, identity: OutputIdentity, reason: str) -> None:
         output, errors = self._runtime.output, []
 
-        async def step(operation: Awaitable[object], label: str) -> None:
+        async def step(operation, label: str) -> None:
             try:
                 await operation
             except asyncio.CancelledError as error:
@@ -234,7 +244,6 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
             await step(
                 output.interrupt(output_id=identity.output_id, reason=reason), "Speech interruption"
             )
-        # A failed interrupt must not suppress the synthesis barrier for this exact output.
         await step(
             output.finish_audio(
                 output_id=identity.output_id,
@@ -255,16 +264,16 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
             raise ExceptionGroup("Speech settlement failed", errors)
 
     async def _reject(self, event: OutputEvent, reason: str) -> None:
-        output = event.output
-        job = self._jobs.get(output.output_id)
+        value = event.output
+        job = self._jobs.get(value.output_id)
         if job is None:
-            identity = OutputIdentity(output.output_id, output.lane, output.scope)
+            identity = OutputIdentity(value.output_id, value.lane, value.scope)
             await wait_for_cleanup(
                 asyncio.create_task(self._settle(identity, reason), name="speech_rejection")
             )
         else:
             try:
-                await self._runtime.output.interrupt(output_id=output.output_id, reason=reason)
+                await self._runtime.output.interrupt(output_id=value.output_id, reason=reason)
             finally:
                 self._cancel(job)
 
@@ -287,12 +296,14 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
             if len(self._jobs) >= self._max_outputs:
                 await self._reject(event, "speech_output_capacity")
                 return
+
             job = _SpeechJob(
                 identity,
                 replace(output.source, producer="router.speech_synthesis"),
                 output.metadata,
             )
             self._jobs[output.output_id] = job
+
         if job.identity != identity:
             raise ValueError("Speech output identity changed")
         if job.ended:
@@ -311,7 +322,6 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
         control = event.output.payload
         if not isinstance(control, OutputControl):
             return
-
         if control.type == OutputControlType.INTERRUPT:
             for identity in control.targets:
                 job = self._jobs.get(identity.output_id)
@@ -331,8 +341,7 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
                         reason=control.reason,
                     )
         elif control.type == OutputControlType.TEXT_COMPLETE:
-            job = self._jobs.get(event.output.output_id)
-            if job is not None:
+            if (job := self._jobs.get(event.output.output_id)) is not None:
                 job.ended = True
                 job.changed.set()
 
@@ -362,13 +371,18 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
             now = asyncio.get_running_loop().time()
             if job.pending_chars and deadline is None:
                 deadline = now + self._flush_interval
+
             text, chunks = job.take(
-                max_chars=self._segment_chars,
-                min_chars=self._min_chars,
+                max_chars=min(self._segment_chars, 40)
+                if job.segments == 0
+                else self._segment_chars,
+                min_chars=min(self._min_chars, 8) if job.segments == 0 else self._min_chars,
                 flush=deadline is not None and now >= deadline,
             )
             if text or job.ended:
                 return text, chunks
+            if deadline is not None and now >= deadline:
+                deadline = now + self._flush_interval
             try:
                 timeout = self._flush_interval if deadline is None else max(0, deadline - now)
                 await asyncio.wait_for(job.changed.wait(), timeout=timeout)
@@ -376,68 +390,131 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
                 pass
         raise asyncio.CancelledError
 
+    async def _prepare(self, job: _SpeechJob) -> _PreparedSpeech | None:
+        text, chunks = await self._next_segment(job)
+        if not text:
+            return None
+
+        frames, samples, size = [], 0, 0
+        if not text.isspace():
+            assert self._tts is not None
+            async with asyncio.timeout(self._timeout):
+                async with aclosing(self._tts.synthesize(text)) as stream:
+                    async for frame in stream:
+                        if job.cancelled or not self._runtime.output.is_active(
+                            job.identity.output_id
+                        ):
+                            raise asyncio.CancelledError
+                        if not isinstance(frame, AudioFrame) or (
+                            frame.sample_rate,
+                            frame.num_channels,
+                        ) != (self._tts.sample_rate, self._tts.num_channels):
+                            raise ValueError("TTS audio format changed")
+                        if not 0 < frame.samples_per_channel <= frame.sample_rate:
+                            raise ValueError("Invalid TTS audio frame duration")
+                        samples += frame.samples_per_channel
+                        size += len(frame.data)
+                        if (
+                            samples > self._audio_seconds * frame.sample_rate
+                            or size > self._audio_bytes
+                            or len(frames) >= 4096
+                        ):
+                            raise RuntimeError(
+                                "Synthesized chunk exceeds its bounded audio capacity"
+                            )
+                        frames.append(frame)
+            if not samples:
+                raise RuntimeError("TTS returned no audio for nonempty text")
+        job.segments += 1
+        duration = samples / self._tts.sample_rate if samples else 0.0
+        return _PreparedSpeech(
+            text,
+            chunks,
+            tuple(frames),
+            duration,
+            job.segments,
+            job.ended and job.pending_chars == 0,
+        )
+
     async def _run_job(self, job: _SpeechJob) -> None:
         job.running = True
-        identity, output, offset, reason = (
-            job.identity,
-            self._runtime.output,
-            0.0,
-            "synthesis_completed",
-        )
+        identity, output, offset = job.identity, self._runtime.output, 0.0
+        reason = "synthesis_completed"
+        preparing: asyncio.Task | None = None
         try:
-            while not job.cancelled and output.is_active(identity.output_id):
-                text, chunks = await self._next_segment(job)
-                if not text and job.ended:
+            preparing = asyncio.create_task(self._prepare(job), name="speech_chunk_prepare")
+            while True:
+                current = preparing
+                try:
+                    segment = await asyncio.shield(current)
+                except asyncio.CancelledError as error:
+                    if (
+                        not asyncio.current_task().cancelling()
+                        and not job.cancelled
+                        and output.is_active(identity.output_id)
+                    ):
+                        raise RuntimeError("TTS chunk preparation cancelled itself") from error
+                    raise
+                finally:
+                    if current.done():
+                        preparing = None
+                if segment is None:
                     break
-
-                duration = 0.0
-                if not text.isspace():
-                    async with asyncio.timeout(self._timeout):
-                        async with aclosing(self._tts.synthesize(text)) as frames:
-                            async for frame in frames:
-                                event = await output.publish(
-                                    EnvOutput(
-                                        kind=OutputKind.AUDIO_FRAME,
-                                        output_id=identity.output_id,
-                                        lane=identity.lane,
-                                        scope=identity.scope,
-                                        source=job.source,
-                                        payload=frame,
-                                        metadata=job.metadata,
-                                    )
-                                )
-                                if event is None:
-                                    raise asyncio.CancelledError
-                                duration += frame.samples_per_channel / frame.sample_rate
-                    if duration <= 0:
-                        raise RuntimeError("TTS returned no audio for nonempty text")
-                job.segments += 1
-                # Whitespace is a text boundary, not synthesized/estimated audible speech.
-                alignment = OutputTextAudioAlignment(
-                    text=text,
-                    alignment_id=f"{identity.output_id}:phrase:{job.segments}",
-                    source_chunk_ids=chunks,
-                    start_time_sec=offset,
-                    end_time_sec=offset + duration,
-                    is_final=job.ended and job.pending_chars == 0,
-                    timing_source="text_boundary" if text.isspace() else "estimated_phrase",
-                )
-                event = await output.publish(
-                    EnvOutput(
-                        kind=OutputKind.ALIGNMENT,
-                        output_id=identity.output_id,
-                        lane=identity.lane,
-                        scope=identity.scope,
-                        source=job.source,
-                        payload=alignment,
-                        metadata=job.metadata,
-                    )
-                )
-                if event is None:
+                if job.cancelled or not output.is_active(identity.output_id):
                     raise asyncio.CancelledError
-                offset += duration
-            if job.cancelled or not output.is_active(identity.output_id):
-                reason = "synthesis_interrupted"
+
+                # Own at most one next chunk while this chunk is transported/played.
+                if not segment.final:
+                    preparing = asyncio.create_task(self._prepare(job), name="speech_chunk_prepare")
+
+                alignment = OutputTextAudioAlignment(
+                    text=segment.text,
+                    alignment_id=f"{identity.output_id}:speech:{segment.index}",
+                    source_chunk_ids=segment.source_chunk_ids,
+                    start_time_sec=offset,
+                    end_time_sec=offset + segment.duration,
+                    is_final=segment.final,
+                    timing_source="text_boundary" if not segment.frames else "measured_chunk",
+                )
+
+                # Publish measured timing BEFORE its audio. Never wait for playout to align text.
+                if (
+                    await output.publish(
+                        EnvOutput(
+                            kind=OutputKind.ALIGNMENT,
+                            output_id=identity.output_id,
+                            lane=identity.lane,
+                            scope=identity.scope,
+                            source=job.source,
+                            payload=alignment,
+                            metadata=job.metadata,
+                        )
+                    )
+                    is None
+                ):
+                    raise asyncio.CancelledError
+
+                for frame in segment.frames:
+                    if job.cancelled or not output.is_active(identity.output_id):
+                        raise asyncio.CancelledError
+                    if (
+                        await output.publish(
+                            EnvOutput(
+                                kind=OutputKind.AUDIO_FRAME,
+                                output_id=identity.output_id,
+                                lane=identity.lane,
+                                scope=identity.scope,
+                                source=job.source,
+                                payload=frame,
+                                metadata=job.metadata,
+                            )
+                        )
+                        is None
+                    ):
+                        raise asyncio.CancelledError
+                offset += segment.duration
+                if segment.final:
+                    break
         except asyncio.CancelledError:
             reason = "synthesis_interrupted"
             raise
@@ -445,9 +522,23 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
             reason = "speech_synthesis_failed"
             logger.exception("Speech synthesis failed output_id=%s", identity.output_id)
         finally:
-            await wait_for_cleanup(
-                asyncio.create_task(self._settle(identity, reason), name="speech_settlement")
-            )
+
+            async def settle() -> None:
+                errors = []
+                if preparing is not None:
+                    if not preparing.done():
+                        preparing.cancel()
+                    (result,) = await asyncio.gather(preparing, return_exceptions=True)
+                    if isinstance(result, Exception):
+                        errors.append(result)
+                try:
+                    await self._settle(identity, reason)
+                except Exception as error:
+                    errors.append(error)
+                if errors:
+                    raise ExceptionGroup("Speech chunk cleanup failed", errors)
+
+            await wait_for_cleanup(asyncio.create_task(settle(), name="speech_settlement"))
 
     async def _synthesize(self) -> None:
         while True:
@@ -455,6 +546,7 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
             if not self._jobs:
                 await self._wake.wait()
                 continue
+
             job = next(iter(self._jobs.values()))
             job.task = asyncio.create_task(self._run_job(job), name=f"tts:{job.identity.output_id}")
             try:
@@ -516,10 +608,7 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
             await self._retire_subscription()
         except BaseException as error:
             self._remember_failure(error, "Speech subscription retirement")
-
-        tasks = tuple(
-            dict.fromkeys((*workers, *(job.task for job in jobs if job.task is not None)))
-        )
+        tasks = tuple(dict.fromkeys((*workers, *(j.task for j in jobs if j.task is not None))))
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for task in workers:
             self._observe(task)

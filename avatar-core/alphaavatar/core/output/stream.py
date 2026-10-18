@@ -11,8 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Live asynchronous delivery with exact interrupt priority and per-consumer backpressure."""
-
 from __future__ import annotations
 
 import asyncio
@@ -62,6 +60,7 @@ class OutputSubscription:
         max_pending: int,
         reliable: bool,
         control_types: frozenset[OutputControlType] | None = None,
+        fail_on_overflow: bool = False,
     ) -> None:
         if not name or type(max_pending) is not int or max_pending <= 0:
             raise ValueError("Output subscription requires a name and positive capacity")
@@ -74,6 +73,9 @@ class OutputSubscription:
         if lanes is not None and any(type(lane) is not OutputLane for lane in lanes):
             raise TypeError("Lane filters require OutputLane values")
 
+        if type(fail_on_overflow) is not bool or (fail_on_overflow and not reliable):
+            raise ValueError("Fail-fast overflow requires a reliable subscription")
+
         self._control_types = frozenset(control_types) if control_types is not None else None
         self.name, self._kinds, self._lanes = name, kinds, lanes
         self._max_pending, self._reliable = max_pending, reliable
@@ -82,6 +84,8 @@ class OutputSubscription:
         self._condition = asyncio.Condition()
         self._data_lock = asyncio.Lock()
         self._closed = False
+        self._fail_on_overflow = fail_on_overflow
+        self.dropped_count = 0
         self._failure: Exception | None = None
 
     def _check_failure(self) -> None:
@@ -123,6 +127,18 @@ class OutputSubscription:
             self._check_failure()
             if self._closed or (guard is not None and not guard()):
                 return
+            if (
+                self._reliable
+                and self._fail_on_overflow
+                and len(self._data_events) >= self._max_pending
+            ):
+                # Fail explicitly instead of coupling a slow presentation path to media pacing.
+                self._failure = RuntimeError(f"Output subscription {self.name!r} overflowed")
+                self._closed = True
+                self._data_events.clear()
+                self._control_events.clear()
+                self._condition.notify_all()
+                self._check_failure()
             if self._reliable:
                 await self._condition.wait_for(
                     lambda: self._closed
@@ -137,6 +153,7 @@ class OutputSubscription:
             if not self._reliable:
                 while len(self._data_events) >= self._max_pending:
                     self._data_events.popleft()
+                    self.dropped_count += 1
             self._data_events.append(event)
             self._condition.notify_all()
 
@@ -202,6 +219,7 @@ class OutputStream:
         max_pending: int = 128,
         reliable: bool = True,
         control_types: Iterable[OutputControlType] | None = None,
+        fail_on_overflow: bool = False,
     ) -> OutputSubscription:
         subscription = OutputSubscription(
             name=name,
@@ -210,6 +228,7 @@ class OutputStream:
             max_pending=max_pending,
             reliable=reliable,
             control_types=frozenset(control_types) if control_types is not None else None,
+            fail_on_overflow=fail_on_overflow,
         )
         async with self._lock:
             if self._closed:

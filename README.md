@@ -187,7 +187,7 @@ Capabilities for understanding users, maintaining memory, and coordinating inter
 | [**Router**][plugin-router] | Coordinates multimodal routing, addressing, turn taking, and interruption.<br>Combines speech, transcripts, and attention evidence for realtime interaction decisions. | ![Available][status-available] |
 | [**Memory**][plugin-memory] | Stores durable memories from conversations, tools, and environment observations.<br>Retrieves relevant information to maintain continuity across interactions. | ![Available][status-available] |
 | [**Persona**][plugin-persona] | Builds user profiles and recognizes speakers and faces.<br>Maintains identity continuity and supplies context for personalization. | ![Available][status-available] |
-| [**Character**][plugin-character] | Native AIRI browser lifecycle with scoped transport readiness and separate frontend hosting.<br>Consumes existing Agent audio; examples keep it disabled. | Renderer/RTC validation pending |
+| [**Character**][plugin-character] | Native AIRI browser lifecycle with scoped transport readiness and separate frontend hosting.<br>Consumes existing Agent audio; examples keep it disabled. Renderer/RTC validation is pending. | ![Pending][status-pending] |
 | [**Status**][plugin-status] | Publishes progress feedback while AlphaAvatar thinks or uses tools.<br>Keeps intermediate activity visible during longer-running workflows. | ![Available][status-available] |
 | **Reflection** | Will review memories, behavior, and interaction history.<br>Will derive insights to support ongoing adaptation and improvement. | ![Planned][status-planned] |
 | **Planning** | Will turn goals into coordinated, multi-step plans.<br>Will track task progress and support longer-horizon execution. | ![Planned][status-planned] |
@@ -220,6 +220,7 @@ See [Plugin Layout and Boundaries](avatar-plugins/README.md) for development det
 [plugin-rag]: avatar-plugins/tools/avatar-plugins-rag/README.md
 [status-available]: https://img.shields.io/badge/Available-28a745?style=flat
 [status-planned]: https://img.shields.io/badge/Planned-6c757d?style=flat
+[status-pending]: https://img.shields.io/badge/Pending-d29922?style=flat
 
 ---
 

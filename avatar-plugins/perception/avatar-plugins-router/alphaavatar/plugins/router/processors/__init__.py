@@ -13,9 +13,11 @@
 # limitations under the License.
 from .addressing import SemanticAddressingProcessor, VisualAddressingProcessor
 from .audio_activity import AudioActivityProcessor
-from .speech_synthesis import SpeechSynthesisProcessor
-from .speech_transcription import SpeechTranscriptionProcessor
-from .transcript_synchronization import TranscriptSynchronizationProcessor
+from .speech import (
+    SpeechSynthesisProcessor,
+    SpeechTranscriptionProcessor,
+    TranscriptSynchronizationProcessor,
+)
 from .turn_taking import MultimodalTurnTakingProcessor
 
 __all__ = [

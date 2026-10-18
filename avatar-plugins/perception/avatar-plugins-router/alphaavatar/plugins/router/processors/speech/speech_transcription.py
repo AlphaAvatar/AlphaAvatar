@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 
 from alphaavatar.agents.avatar.voice import (
@@ -36,7 +37,7 @@ from alphaavatar.core.media.enums import PayloadFormat, PayloadView
 from alphaavatar.core.perception.enums import PerceptionStreamKind
 from alphaavatar.core.time import RuntimeTimeRange
 
-from ..log import logger
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)

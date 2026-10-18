@@ -23,7 +23,7 @@ from itertools import islice
 from typing import Any
 
 from .diagnostics import format_error
-from .events import LABELS, MAX_CONTENT_CHARS, ConversationEvent, safe_fields
+from .events import LABELS, MAX_CONTENT_CHARS, TRACE_EVENTS, ConversationEvent, safe_fields
 from .records import LOG_ENDPOINT_ENV, MAX_TEXT_CHARS, LogEntry, Redactor, clean
 
 # Diagnostic formatting must not allocate an arbitrarily padded field on a producer loop.
@@ -154,10 +154,11 @@ class LogClient(logging.Handler):
             return
         try:
             event = record.msg if isinstance(record.msg, ConversationEvent) else None
-            if event is not None and not self._conversation["enabled"]:
+            conversation = event is not None and event.name not in TRACE_EVENTS
+            if conversation and not self._conversation["enabled"]:
                 return
             content, truncated = None, False
-            if event is not None and self._conversation["content"]:
+            if conversation and self._conversation["content"]:
                 content, truncated = event.preview(
                     self._redact, limit=self._conversation["max_chars"]
                 )

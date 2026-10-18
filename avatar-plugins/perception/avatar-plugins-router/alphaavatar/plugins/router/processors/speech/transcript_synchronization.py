@@ -38,15 +38,23 @@ from alphaavatar.core.output.schemas import (
     OutputTranscriptChunk,
 )
 
+from .speech_text import SpeechTiming
+
 logger = logging.getLogger(__name__)
 _SOURCE = OutputSource("router.transcript_synchronization")
 
 
 @dataclass(slots=True)
+class _Alignment:
+    value: OutputTextAudioAlignment
+    timing: SpeechTiming
+    emitted: int = 0
+
+
+@dataclass(slots=True)
 class _Transcript:
     identity: OutputIdentity
-    alignments: dict[str, OutputTextAudioAlignment] = field(default_factory=dict)
-    emitted: set[str] = field(default_factory=set)
+    alignments: dict[str, _Alignment] = field(default_factory=dict)
     played: float = 0.0
     started: bool = False
     interrupted: bool = False
@@ -58,7 +66,7 @@ class _Transcript:
 
 
 class TranscriptSynchronizationProcessor(RouterProcessorBase):
-    """Release confirmed complete phrases; synthesis and playout are independent barriers."""
+    """Emit measured-chunk word/CJK progress, not whole phrases or unsynchronized source text."""
 
     CONSUMER_ID = "router.transcript_synchronization"
 
@@ -68,11 +76,14 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
         runtime: AvatarRuntime,
         lanes: tuple[OutputLane, ...] = (OutputLane.TRANSIENT, OutputLane.ASSISTANT),
         max_pending_outputs: int = 256,
+        max_alignments_per_output: int = 2048,
     ) -> None:
         super().__init__(runtime=runtime)
-        if max_pending_outputs < 1:
-            raise ValueError("Transcript capacity must be positive")
+        if min(max_pending_outputs, max_alignments_per_output) < 1:
+            raise ValueError("Transcript capacities must be positive")
+
         self._lanes, self._capacity = lanes, max_pending_outputs
+        self._alignment_capacity = max_alignments_per_output
         self._states: dict[str, _Transcript] = {}
         self._subscription = None
         self._task: asyncio.Task | None = None
@@ -125,14 +136,12 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
             self._observe(task)
         elif task.cancelling():
             if task not in self._stopped_tasks and task not in self._externally_cancelled_tasks:
-                # The worker may still be awaiting owned cleanup; classify before retirement.
                 self._externally_cancelled_tasks.add(task)
                 self._remember_failure(
                     RuntimeError(f"{task.get_name()} was cancelling before lifecycle shutdown"),
                     task.get_name(),
                 )
         else:
-            # Only a cancellation requested here is normal lifecycle shutdown.
             self._stopped_tasks.add(task)
             task.cancel()
 
@@ -140,15 +149,12 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
         if self._subscription is None:
             return
         if self._worker_failures:
-            # Keep a failed subscription registered until OutputRuntime closes. Removing it
-            # would make later publications appear successful with a missing required consumer.
             await self._subscription.fail(self._worker_failures[0])
         else:
             await self._runtime.output.stream.unsubscribe(self.CONSUMER_ID)
 
     def _state(self, event: OutputEvent) -> _Transcript | None:
-        output = self._runtime.output
-        value = event.output
+        output, value = self._runtime.output, event.output
         output_id = value.output_id
         if (
             not output_id
@@ -173,33 +179,45 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
 
     async def _emit(self, state: _Transcript) -> None:
         identity = state.identity
-        for alignment_id, value in state.alignments.items():
-            if alignment_id in state.emitted or value.partial:
-                continue
-            if state.played + 1e-8 < value.end_time_sec:
+        for alignment_id, alignment in state.alignments.items():
+            value, timing = alignment.value, alignment.timing
+            if value.partial:
+                # Incomplete synthesis cannot imply that its whole source text was spoken.
                 break
-            chunk = OutputTranscriptChunk(
-                text=value.text,
-                source_chunk_ids=value.source_chunk_ids,
-                alignment_id=alignment_id,
-                start_time_sec=value.start_time_sec,
-                end_time_sec=value.end_time_sec,
-                is_first=not state.started,
-                timing_source=value.timing_source,
+            duration = value.end_time_sec - value.start_time_sec
+            ratio = (
+                min(1.0, max(0.0, (state.played - value.start_time_sec) / duration))
+                if duration > 0
+                else float(state.played >= value.end_time_sec)
             )
-            event = await self._runtime.output.publish(
-                EnvOutput(
-                    kind=OutputKind.TRANSCRIPT_CHUNK,
-                    output_id=identity.output_id,
-                    lane=identity.lane,
-                    scope=identity.scope,
-                    source=_SOURCE,
-                    payload=chunk,
+            target = timing.count(ratio)
+            if target > alignment.emitted:
+                previous = alignment.emitted
+                chunk = OutputTranscriptChunk(
+                    text="".join(timing.units[previous:target]),
+                    source_chunk_ids=value.source_chunk_ids,
+                    alignment_id=alignment_id,
+                    start_time_sec=value.start_time_sec + duration * timing.ratio(previous),
+                    end_time_sec=value.start_time_sec + duration * timing.ratio(target),
+                    is_first=not state.started,
+                    timing_source="text_boundary" if not duration else "estimated_chunk_units",
                 )
-            )
-            if event is not None:
-                state.started = True
-                state.emitted.add(alignment_id)
+                event = await self._runtime.output.publish(
+                    EnvOutput(
+                        kind=OutputKind.TRANSCRIPT_CHUNK,
+                        output_id=identity.output_id,
+                        lane=identity.lane,
+                        scope=identity.scope,
+                        source=_SOURCE,
+                        payload=chunk,
+                        metadata={"measurement": "local_audio_queue", "timing_granularity": "unit"},
+                    )
+                )
+                if event is not None:
+                    state.started = True
+                    alignment.emitted = target
+            if target < len(timing.units):
+                break
 
     async def _final(self, state: _Transcript, *, reason: str | None = None) -> None:
         identity = state.identity
@@ -218,7 +236,7 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
                     end_time_sec=state.played,
                     reason=reason,
                 ),
-                metadata={"measurement": "local_audio_queue", "timing_granularity": "phrase"},
+                metadata={"measurement": "local_audio_queue", "timing_granularity": "unit"},
             )
         )
 
@@ -246,9 +264,19 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
 
         if isinstance(payload, OutputTextAudioAlignment):
             previous = state.alignments.get(payload.alignment_id)
-            if previous is not None and previous != payload:
-                raise ValueError("Conflicting text/audio alignment replay")
-            state.alignments[payload.alignment_id] = payload
+            if previous is not None:
+                if previous.value != payload:
+                    raise ValueError("Conflicting text/audio alignment replay")
+            else:
+                if len(state.alignments) >= self._alignment_capacity:
+                    raise RuntimeError("Transcript alignment capacity exhausted")
+                if state.alignments:
+                    last = next(reversed(state.alignments.values())).value
+                    if payload.start_time_sec + 1e-8 < last.end_time_sec:
+                        raise ValueError("Speech alignments overlap or arrived out of order")
+                state.alignments[payload.alignment_id] = _Alignment(
+                    payload, SpeechTiming.create(payload.text)
+                )
             state.alignment_sequence = max(state.alignment_sequence, event.sequence)
         elif isinstance(payload, OutputPlayback):
             state.played = max(state.played, payload.played_duration_sec)
@@ -316,7 +344,6 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
         if worker is not None:
             self._stop_worker(worker)
         try:
-            # Wake blocked publishers before joining the worker or publishing final captions.
             await self._retire_subscription()
         except BaseException as error:
             self._remember_failure(error, "Transcript subscription retirement")
