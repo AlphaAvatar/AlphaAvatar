@@ -26,13 +26,14 @@ from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import ObservationKind
 from alphaavatar.core.env.schemas import PerceptionSourceRef
+from alphaavatar.core.lifecycle import LifecycleComponent
 from alphaavatar.core.media import TextPayload
 from alphaavatar.core.time import RuntimeClock, RuntimeTimeRange
 
 logger = logging.getLogger(__name__)
 
 
-class LiveKitTextInput:
+class LiveKitTextInput(LifecycleComponent):
     """Accept complete authenticated lk.chat streams without an AgentSession.
 
     RTC readers in the supported SDK have no public abort API. Read failures are
@@ -166,7 +167,7 @@ class LiveKitTextInput:
         await self._failed.wait()
         raise RuntimeError("Native RTC text input failed") from self._failure
 
-    async def on_session_start(self) -> None:
+    async def on_start(self) -> None:
         if self._close_task is not None or self._failure is not None:
             raise RuntimeError("Text input is closing or failed")
         if not self._registered:
@@ -193,7 +194,7 @@ class LiveKitTextInput:
         if errors:
             raise ExceptionGroup("RTC text input shutdown failed", errors)
 
-    async def on_session_stop(self) -> None:
+    async def on_stop(self) -> None:
         if self._close_task is None:
             self._close_task = asyncio.create_task(self._close(), name="livekit_text_close")
         await wait_for_cleanup(self._close_task)

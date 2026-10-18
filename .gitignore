@@ -130,6 +130,7 @@ celerybeat.pid
 .env.personal
 .env.prod
 .venv
+.venv*/
 venv/
 ENV/
 env.bak/

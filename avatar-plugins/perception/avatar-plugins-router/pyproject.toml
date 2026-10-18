@@ -35,7 +35,10 @@ dependencies = [
     "alpha-avatar-agents",
     "alpha-avatar-core",
     "llama-cpp-python==0.3.35",
+    "numpy==2.2.6",
+    "onnxruntime==1.23.1",
     "pydantic>=2,<3",
+    "transformers==4.57.1",
 ]
 
 [project.urls]
