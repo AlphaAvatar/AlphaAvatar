@@ -23,6 +23,7 @@ from itertools import islice
 from typing import Any
 
 from .diagnostics import format_error
+from .events import LABELS, MAX_CONTENT_CHARS, ConversationEvent, safe_fields
 from .records import LOG_ENDPOINT_ENV, MAX_TEXT_CHARS, LogEntry, Redactor, clean
 
 # Diagnostic formatting must not allocate an arbitrarily padded field on a producer loop.
@@ -81,10 +82,31 @@ def _source(record: logging.LogRecord) -> str:
     return record.filename
 
 
+def _conversation_policy(value: object) -> dict:
+    if value is None:
+        return {"enabled": True, "content": False, "max_chars": 2048}
+    if type(value) is not dict or set(value) != {"enabled", "content", "max_chars"}:
+        raise ValueError("Invalid conversation logging policy")
+    if type(value["enabled"]) is not bool or type(value["content"]) is not bool:
+        raise ValueError("Conversation logging switches must be booleans")
+    if type(value["max_chars"]) is not int or not 128 <= value["max_chars"] <= MAX_CONTENT_CHARS:
+        raise ValueError("Invalid conversation preview limit")
+    return dict(value)
+
+
 class LogClient(logging.Handler):
     """Atomic, nonblocking datagrams; no disk, terminal writes or pickle on producer loops."""
 
-    def __init__(self, path: str, token: str, *, level: int, third_party_level: int) -> None:
+    def __init__(
+        self,
+        path: str,
+        token: str,
+        *,
+        level: int,
+        third_party_level: int,
+        conversation: dict | None = None,
+    ) -> None:
+        self._conversation = _conversation_policy(conversation)
         self._ended = True
         super().__init__()
         self._socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
@@ -103,7 +125,15 @@ class LogClient(logging.Handler):
         logging.root.setLevel(min(level, third_party_level))
         self._avatar_logger.setLevel(level)
 
-    def refresh(self, *, level: int | None = None, third_party_level: int | None = None) -> None:
+    def refresh(
+        self,
+        *,
+        level: int | None = None,
+        third_party_level: int | None = None,
+        conversation: dict | None = None,
+    ) -> None:
+        if conversation is not None:
+            self._conversation = _conversation_policy(conversation)
         self._redact.refresh()
         if level is not None:
             self._threshold = level
@@ -123,6 +153,14 @@ class LogClient(logging.Handler):
         if record.levelno < threshold:
             return
         try:
+            event = record.msg if isinstance(record.msg, ConversationEvent) else None
+            if event is not None and not self._conversation["enabled"]:
+                return
+            content, truncated = None, False
+            if event is not None and self._conversation["content"]:
+                content, truncated = event.preview(
+                    self._redact, limit=self._conversation["max_chars"]
+                )
             entry = LogEntry(
                 created=record.created,
                 level=record.levelno,
@@ -131,8 +169,14 @@ class LogClient(logging.Handler):
                 line=record.lineno,
                 pid=os.getpid(),
                 process=clean(record.processName, 110).replace("\n", "?"),
-                text=self._redact(_message(record), logger=record.name),
+                text=LABELS[event.name]
+                if event
+                else self._redact(_message(record), logger=record.name),
                 dropped=self.dropped,
+                event=event.name if event else None,
+                fields=safe_fields(event.fields, self._redact) if event else {},
+                content=content,
+                content_truncated=truncated,
             )
             self._socket.sendto(entry.encode(self._token), self._path)
             self.dropped = 0
@@ -171,7 +215,13 @@ def configure_from_env() -> LogClient | None:
     if len(raw) > 4096:
         raise ValueError("Invalid logging endpoint configuration")
     data = json.loads(raw)
-    if not isinstance(data, dict) or set(data) != {"path", "token", "level", "third_party_level"}:
+    if not isinstance(data, dict) or set(data) != {
+        "path",
+        "token",
+        "level",
+        "third_party_level",
+        "conversation",
+    }:
         raise ValueError("Invalid logging endpoint fields")
     if not isinstance(data["path"], str) or not os.path.isabs(data["path"]):
         raise ValueError("Logging endpoint must be absolute")

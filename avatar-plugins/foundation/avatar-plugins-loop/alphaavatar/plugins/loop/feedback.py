@@ -30,6 +30,7 @@ from alphaavatar.agents.avatar.provider.schemas import (
 from alphaavatar.agents.avatar.provider.schemas.stream import ModelTextDelta
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.env import EnvOutput
+from alphaavatar.core.log.events import log_event
 from alphaavatar.core.output.enums import (
     ExecutionSignalKind,
     OutputKind,
@@ -72,6 +73,7 @@ class LoopFeedback:
         self.scope = OutputScope(identity.context_id, identity.turn_id, identity.run_id)
         self.state, self.model_step, self.tool_round = LoopState.ACCEPTED, 0, 0
         self._output = runtime.output
+        self._session_id = runtime.session.session_id
         interaction = runtime.state.interaction_method
         self._mode = (
             OutputTextMode.AUDIO_SYNCED
@@ -105,6 +107,22 @@ class LoopFeedback:
             )
         except Exception:
             logger.exception("Execution observation publication failed kind=%s", kind)
+        else:
+            if kind in {ExecutionSignalKind.TOOL_STARTED, ExecutionSignalKind.TOOL_FINISHED}:
+                log_event(
+                    logger,
+                    "tool.started" if kind == ExecutionSignalKind.TOOL_STARTED else "tool.finished",
+                    session_id=self._session_id,
+                    context_id=self.scope.context_id,
+                    turn_id=self.scope.turn_id,
+                    run_id=self.scope.run_id,
+                    request_id=self._request_id,
+                    call_id=fields.get("call_id"),
+                    tool_name=fields.get("tool_name"),
+                    outcome=fields.get("outcome"),
+                    executed=fields.get("executed"),
+                    reason=fields.get("reason"),
+                )
 
     def begin_model(self, request_id: str) -> None:
         self._request_id = request_id

@@ -26,6 +26,7 @@ from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import AnnotationKind, ObservationKind
 from alphaavatar.core.lifecycle import LifecycleComponent, LifecycleGroup, LifecyclePhase
+from alphaavatar.core.log.events import log_event
 from alphaavatar.core.media import TextPayload
 from alphaavatar.core.output.enums import ExecutionSignalKind
 from alphaavatar.core.output.schemas import OutputExecutionSignal, OutputScope
@@ -287,6 +288,17 @@ class AvatarEngine(LifecycleComponent):
     """Turn Action - Commit or Direct Input"""
 
     async def _submit(self, snapshot: TurnSnapshot) -> None:
+        # Observe only committed input. No Run exists yet, and no prompt/history is logged.
+        log_event(
+            logger,
+            "input.committed",
+            text=snapshot.text,
+            session_id=self._runtime.session.session_id,
+            context_id=self._runtime.state.context_id,
+            turn_id=snapshot.turn_id,
+            input_id=snapshot.input_id,
+            modality=snapshot.modality.value,
+        )
         model_input = self._context_manager.accept_turn(snapshot)
         context_id = self._runtime.state.context_id
         previous, foreground = (
@@ -510,6 +522,14 @@ class AvatarEngine(LifecycleComponent):
                 kind=ExecutionSignalKind.READY,
                 state="ready",
             )
+        )
+
+        log_event(
+            logger,
+            "engine.ready",
+            session_id=self._runtime.session.session_id,
+            context_id=self._runtime.state.context_id,
+            state="ready",
         )
 
     async def wait_failed(self) -> None:

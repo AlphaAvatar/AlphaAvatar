@@ -18,6 +18,7 @@ import os
 from datetime import datetime
 from typing import TextIO
 
+from alphaavatar.core.log.events import render_event
 from alphaavatar.core.log.records import LogEntry, clean
 
 BRAND_BLUE = "\033[38;2;96;165;250m"  # Figma --color-logo-accent-primary, #60a5fa.
@@ -56,7 +57,12 @@ def console_lines(entry: LogEntry, *, color: bool) -> str:
             f"{DIM}{stamp}{RESET} {_LEVEL_COLORS.get(entry.level, RESET)}{level:<8}{RESET} "
             f"{DIM}{origin} [{entry.pid}]{RESET}"
         )
-    lines = clean(entry.text).split("\n")
+    text = (
+        render_event(entry.event, entry.fields, entry.content, entry.content_truncated)
+        if entry.event is not None
+        else entry.text
+    )
+    lines = clean(text).split("\n")
     if len(lines) > 24:
         lines = [*lines[:23], "[additional log lines omitted]"]
     return "".join(f"{prefix}  {line}\n" for line in lines)

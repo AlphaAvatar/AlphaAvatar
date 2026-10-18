@@ -18,7 +18,7 @@ alphaavatar/host/
 │   ├── app.py                      # Arguments, help, version and command routing.
 │   └── commands/run.py             # Native dev/start commands.
 ├── log/
-│   ├── config.py                   # Levels, color, banner and rotating file settings.
+│   ├── config.py                   # Levels, conversation previews and rotating file settings.
 │   ├── runtime.py                  # One Host-owned collector and writer.
 │   ├── format.py                   # Timestamp, level, source and message formatting.
 │   └── banner.py                   # Terminal adaptation of the AlphaAvatar wordmark.
@@ -306,6 +306,11 @@ host:
     rotate_bytes: 10485760
     backup_count: 3
     shutdown_timeout: 3.0
+    conversation:
+      enabled: true
+      content: dev              # off, dev or all: controls content, not severity.
+      max_chars: 2048           # Bounded preview per message; 128..4096.
+      file_content: false       # Explicit opt-in for content in the Host JSONL file.
 ```
 
 The file name is `alphaavatar-<UTC timestamp>-<pid>.jsonl`, unique to an invocation.
@@ -337,9 +342,78 @@ filters on HTTPX or other global loggers. The log formatter never calls arbitrar
 objects' `__str__`; such values remain type placeholders, for example `<URL>`. String URLs
 retain only their public endpoint form, without credentials, query strings or fragments. Exception messages, source lines and locals are
 not rendered by diagnostic exception formatting. This is best effort, not permission
-to log raw audio, user text, credentials or arbitrary SDK objects. Record payloads,
+to log raw audio, credentials or arbitrary SDK objects. Conversation text follows the
+separate policy below; filtering is not comprehensive removal of personal information. Record payloads,
 partial captured lines and startup buffering are bounded. A blocked or failed sink can
 cause loss and a failed diagnostic drain; it does not acquire execution ownership.
+
+## Conversation diagnostics
+
+The default `dev` console shows committed user text and recorded assistant text,
+alongside session, context, Turn and Run identifiers. `start` shows the same lifecycle
+metadata without message bodies. This is local diagnostics, not a new telemetry service.
+
+| `host.log.conversation.content` | `dev` console | `start` console |
+| --- | --- | --- |
+| `off` | Metadata only | Metadata only |
+| `dev` (default) | Bounded text previews | Metadata only |
+| `all` | Bounded text previews | Bounded text previews |
+
+`all` means both launch modes, not unbounded output or full model prompts. Log severity
+still applies: these events normally use INFO; failed Run summaries use WARNING.
+Setting `host.log.level=DEBUG` does not override the content policy. Set `enabled: false`
+to disable these conversation events without disabling existing application diagnostics.
+
+For a one-off run, keep the existing configuration and add an override:
+
+```bash
+ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/mm/pipeline_openai_tools.yaml \
+  host.log.conversation.content=dev
+```
+
+For content in both launch modes use `host.log.conversation.content=all`. To save those
+previews in the Host JSONL file as well, explicitly set
+`host.log.conversation.file_content=true`. The content mode must also allow capture;
+`file_content` never overrides `off` or makes `start` capture a `dev`-only preview.
+
+| Console label | Meaning |
+| --- | --- |
+| `READY` | Engine readiness was announced; this does not create a welcome message or TTS. |
+| `USER INPUT` | A committed Turn's text, including committed final speech transcripts; not provisional STT or a raw media frame. |
+| `RUN START` / `RUN END` | A model/tool Run was accepted or settled, with its real state and elapsed time. |
+| `MODEL START` / `FIRST TEXT` / `MODEL COMPLETE` | One model step, its first nonempty visible text delta, and validated completion. |
+| `ASSISTANT OUTPUT` | A visible assistant message admitted to the canonical record stream; `interrupted` and `phase` remain explicit. |
+| `TOOL START` / `TOOL END` | An observed call's name, identity, outcome and execution flag, without arguments or result bodies. |
+
+Input events carry no fabricated `run_id`: a Turn can be committed before a Run exists.
+Use `turn_id` and `context_id` to connect that event to the subsequent Run. A replayed
+input rejected by the existing admission dedupe does not create another input event.
+Assistant records are logged once at record admission, not once per token and again at
+Run completion. Commentary and refusals stay distinct from a final answer. An incomplete
+visible message can be logged with `interrupted=true` and followed by a failed Run.
+
+**Generated or recorded text is not a delivery acknowledgement.** These events do not
+prove that a client received text or played audio. No TTS, playback or SDK Session event
+is synthesized to make a log look successful. `FIRST TEXT` measures elapsed time from
+local model-step start to receipt of its first text delta; it includes local preparation
+and stream scheduling, not only remote model latency. `MODEL COMPLETE` includes local
+stream consumption and record admission. A clean HostExecution disconnect does not
+turn a failed model Run into success.
+
+Message previews are filtered, clipped and JSON-escaped; embedded newlines cannot forge
+unprefixed log lines. They exclude model prompts/history, reasoning items (including
+opaque continuation), raw media, tool arguments and tool result bodies. Up to 64 visible
+text parts are considered per message; omitted parts and character truncation are marked.
+JSONL records keep structured `event` and `fields`, with the preview in `content` only
+when file capture is enabled. Conversation file capture is off by default even in `dev`.
+
+**Console text is still sensitive.** A terminal recorder, redirected stderr, container
+logger or systemd journal may save console previews even with `file_content: false`.
+This setting controls these new conversation events in the Host file only; it does not
+change existing Provider trace settings or arbitrary third-party logs. Before sharing,
+review all logs for personal data. Known-secret filtering is not a privacy guarantee.
+All events use the existing bounded, nonblocking diagnostic transport and may be dropped
+under overload; they never replace canonical records or govern execution success.
 
 ## Terminal interruption
 

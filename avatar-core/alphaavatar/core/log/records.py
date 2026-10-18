@@ -17,8 +17,10 @@ import json
 import math
 import os
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from urllib.parse import urlsplit, urlunsplit
+
+from .events import LABELS, MAX_CONTENT_CHARS, validate_fields
 
 MAX_PACKET_BYTES = 60_000
 MAX_TEXT_CHARS = 8192
@@ -61,7 +63,7 @@ def _redact_url(match: re.Match[str]) -> str:
 
 
 class Redactor:
-    """Best-effort credential filtering; logs must still avoid user content and secrets."""
+    """Best-effort credential filtering, not a guarantee that opted-in text is free of PII."""
 
     def __init__(self) -> None:
         self.refresh()
@@ -104,6 +106,10 @@ class LogEntry:
     process: str
     text: str
     dropped: int = 0
+    event: str | None = None
+    fields: dict = field(default_factory=dict)
+    content: str | None = None
+    content_truncated: bool = False
 
     def encode(self, token: str) -> bytes:
         payload = json.dumps(
@@ -149,4 +155,15 @@ class LogEntry:
         ):
             if not isinstance(value, str) or len(value) > maximum:
                 raise ValueError("Invalid log text")
+        validate_fields(entry.fields)
+        if entry.event is not None and entry.event not in LABELS:
+            raise ValueError("Invalid conversation event")
+        if entry.event is None and (entry.fields or entry.content is not None):
+            raise ValueError("Conversation data requires an event")
+        if entry.content is not None and (
+            type(entry.content) is not str or len(entry.content) > MAX_CONTENT_CHARS
+        ):
+            raise ValueError("Invalid conversation content")
+        if type(entry.content_truncated) is not bool:
+            raise ValueError("Invalid conversation truncation flag")
         return entry

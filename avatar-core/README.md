@@ -111,10 +111,18 @@ RTC owns codecs, rooms, tracks and frontend projection. Router owns synthesis an
 
 `log/` provides explicitly configured, nonblocking local diagnostic producers, a bounded
 JSON record contract, exception metadata formatting and scoped Python-stream capture.
+`log/events.py` adds bounded conversation observations using existing session/Turn/Run
+identities. Producers submit immutable text fragments only at committed-input and
+recorded-output boundaries; Host policy decides whether previews can be serialized.
+No provisional input, opaque reasoning, tool arguments or media data is collected by
+these events.
 It does not install handlers at import time, depend on Host, configure a model, or
 write the application's log files. Host owns console branding, collection, rotation
 and final diagnostic draining. Normal application loggers continue using `logging`.
 
 Diagnostic records may be dropped under load and are not canonical output records,
 Memory persistence or a replacement for execution outcome tracking. See
-[Logging and stopping](../docs/logging.md) for application settings and saved logs.
+[Conversation diagnostics](../avatar-host/README.md#conversation-diagnostics) for capture
+settings and [Avatar workspace](../docs/avatar-workspace-layout.md) for finding saved logs.
+Preview capture is not a delivery acknowledgement. Console-only previews may still be
+saved by a terminal, service manager or output redirection.

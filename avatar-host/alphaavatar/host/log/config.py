@@ -18,6 +18,15 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class ConversationLogConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    content: Literal["off", "dev", "all"] = "dev"
+    max_chars: int = Field(default=2048, strict=True, ge=128, le=4096)
+    file_content: bool = False
+
+
 class LogConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
@@ -25,6 +34,7 @@ class LogConfig(BaseModel):
     third_party_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     color: Literal["auto", "always", "never"] = "auto"
     banner: bool = True
+    conversation: ConversationLogConfig = Field(default_factory=ConversationLogConfig)
     file: bool = True
     directory: str | None = Field(default=None, min_length=1)
     rotate_bytes: int = Field(default=10_485_760, strict=True, ge=1024)

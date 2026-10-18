@@ -44,6 +44,7 @@ from alphaavatar.agents.avatar.provider.schemas.stream import (
 )
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.log.diagnostics import format_error
+from alphaavatar.core.log.events import log_event
 from alphaavatar.core.output.enums import ExecutionSignalKind
 
 from .config import RealtimeLoopConfig
@@ -190,6 +191,28 @@ class LoopExecution(LoopHandle):
             self._pending_calls = calls
 
         self._commits += 1
+        for item in items:
+            if (
+                batch is not None
+                and isinstance(item, ModelInputMessage)
+                and item.role == ModelRole.ASSISTANT
+                and any(isinstance(part, ModelTextPart | ModelRefusalPart) for part in item.parts)
+            ):
+                self._log(
+                    "assistant.message",
+                    item_id=item.id,
+                    output_id=self._feedback.output_id(item.id),
+                    stage="recorded",
+                    model_step=self._budget.model_steps,
+                    phase=item.phase.value if item.phase is not None else "unspecified",
+                    interrupted=item.interrupted,
+                    refusal=any(isinstance(part, ModelRefusalPart) for part in item.parts),
+                    text_parts=(
+                        part.text
+                        for part in item.parts
+                        if isinstance(part, ModelTextPart | ModelRefusalPart)
+                    ),
+                )
 
     async def _settle_pending(self, *, reason: str) -> None:
         if not self._pending_calls:
@@ -244,6 +267,17 @@ class LoopExecution(LoopHandle):
         state = LoopState.FINALIZING if finalizing else LoopState.MODEL
         self._feedback.begin_model(request.request_id)
         await self._feedback.change(state, reason=reason)
+        started_at = asyncio.get_running_loop().time()
+        first_text = False
+        self._log(
+            "model.started",
+            request_id=request.request_id,
+            backend=self._config.model.backend,
+            provider=self._config.model.provider,
+            model=self._config.model.model,
+            model_step=budget.model_steps,
+            state=state.value,
+        )
         terminal = None
         partial: dict[str, tuple[ModelMessagePhase | None, dict[int, list[str]]]] = {}
         completed_messages: dict[str, ModelInputMessage] = {}
@@ -259,6 +293,14 @@ class LoopExecution(LoopHandle):
                         raise ModelProtocolError("Loop received output after completion")
 
                     if isinstance(event, ModelTextDelta):
+                        if not first_text and event.text:
+                            first_text = True
+                            self._log(
+                                "model.first_text",
+                                request_id=request.request_id,
+                                response_id=event.response_id,
+                                elapsed_ms=(asyncio.get_running_loop().time() - started_at) * 1000,
+                            )
                         order[event.item_id] = event.output_index
                         entry = partial.setdefault(event.item_id, (event.phase, {}))
                         entry[1].setdefault(event.content_index, []).append(event.text)
@@ -331,6 +373,14 @@ class LoopExecution(LoopHandle):
         if self._cancel_reason is not None:
             raise asyncio.CancelledError
 
+        self._log(
+            "model.completed",
+            request_id=request.request_id,
+            response_id=terminal.response_id,
+            model_step=budget.model_steps,
+            output_items=len(terminal.items),
+            elapsed_ms=(asyncio.get_running_loop().time() - started_at) * 1000,
+        )
         return terminal
 
     async def _drive(self) -> tuple[LoopState, tuple[ModelInputMessage, ...], str | None]:
@@ -389,6 +439,17 @@ class LoopExecution(LoopHandle):
         refused = any(isinstance(p, ModelRefusalPart) for a in answers for p in a.parts)
         return LoopState.REFUSED if refused else LoopState.PARTIAL, answers, reason
 
+    def _log(self, name: str, **fields) -> None:
+        log_event(
+            logger,
+            name,
+            session_id=self._runtime.session.session_id,
+            context_id=self.identity.context_id,
+            turn_id=self.identity.turn_id,
+            run_id=self.identity.run_id,
+            **fields,
+        )
+
     def _diagnose(self, error: BaseException, *, stage: str) -> None:
         # Keep exception chains and code locations, never prompts, payloads or tool arguments.
         logger.warning(
@@ -409,6 +470,7 @@ class LoopExecution(LoopHandle):
                 raise asyncio.CancelledError
 
             await self._feedback.change(LoopState.ACCEPTED)
+            self._log("run.started", input_id=self._request.input_id, state="accepted")
             async with asyncio.timeout_at(self._budget.exploration_deadline):
                 preparation = ContextPrepareRequest(
                     input=self._request.input,
@@ -481,6 +543,16 @@ class LoopExecution(LoopHandle):
         )
         self._feedback.state = state
         self._feedback.signal(ExecutionSignalKind.FINISHED, reason=reason)
+        self._log(
+            "run.finished",
+            state=state.value,
+            reason=reason,
+            error_type=error_type,
+            model_steps=result.model_steps,
+            tool_rounds=result.tool_rounds,
+            elapsed_ms=result.elapsed_ms,
+            level=logging.WARNING if error_type is not None else logging.INFO,
+        )
         return result
 
     async def aclose(self) -> None:

@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import TextIO
 
 from alphaavatar.core.log.client import LogClient
+from alphaavatar.core.log.events import LABELS, safe_fields
 from alphaavatar.core.log.records import LOG_ENDPOINT_ENV, MAX_PACKET_BYTES, LogEntry, Redactor
 from alphaavatar.host.version import __version__
 
@@ -114,6 +115,14 @@ class HostLog:
     def active(self) -> bool:
         return self._active
 
+    def _conversation(self) -> dict:
+        config = self._config.conversation
+        return {
+            "enabled": config.enabled,
+            "content": config.content == "all" or (config.content == "dev" and self._devmode),
+            "max_chars": config.max_chars,
+        }
+
     def _export(self) -> None:
         level = self._config.level or ("DEBUG" if self._devmode else "INFO")
         self._endpoint = json.dumps(
@@ -122,6 +131,7 @@ class HostLog:
                 "token": self._token,
                 "level": getattr(logging, level),
                 "third_party_level": getattr(logging, self._config.third_party_level),
+                "conversation": self._conversation(),
             },
             separators=(",", ":"),
         )
@@ -167,6 +177,7 @@ class HostLog:
             self._client.refresh(
                 level=getattr(logging, config.level or ("DEBUG" if self._devmode else "INFO")),
                 third_party_level=getattr(logging, config.third_party_level),
+                conversation=self._conversation(),
             )
             if config.banner:
                 encoding = getattr(self._stream, "encoding", "utf-8") or "utf-8"
@@ -199,6 +210,14 @@ class HostLog:
             self._early.clear()
         if self.file_path is not None:
             logging.getLogger(__name__).info("Diagnostic log file=%s", str(self.file_path))
+        if config.conversation.enabled:
+            logging.getLogger(__name__).info(
+                "Conversation diagnostics enabled text=%s file_content=%s max_chars=%d; "
+                "generated text is not a delivery receipt",
+                self._conversation()["content"],
+                config.conversation.file_content,
+                config.conversation.max_chars,
+            )
 
     @staticmethod
     def _notice(text: str) -> LogEntry:
@@ -214,14 +233,38 @@ class HostLog:
         )
 
     def _write(self, entry: LogEntry) -> None:
-        entry = replace(entry, text=self._redact(entry.text, logger=entry.logger))
+        content, truncated = entry.content, entry.content_truncated
+        if entry.event is not None:
+            policy = self._conversation()
+            if not policy["enabled"]:
+                return
+            if not policy["content"]:
+                content, truncated = None, False
+            elif content is not None:
+                content = self._redact(content)
+                truncated = truncated or len(content) > policy["max_chars"]
+                content = content[: policy["max_chars"]]
+        entry = replace(
+            entry,
+            text=LABELS[entry.event]
+            if entry.event
+            else self._redact(entry.text, logger=entry.logger),
+            fields=safe_fields(entry.fields, self._redact),
+            content=content,
+            content_truncated=truncated,
+        )
         try:
             self._stream.write(console_lines(entry, color=self._color))
             self._stream.flush()
         except (OSError, ValueError, UnicodeError):
             self._sink_failures += 1
         if self._file is not None:
-            payload = json.dumps(asdict(entry), ensure_ascii=False, allow_nan=False)
+            saved = (
+                entry
+                if self._config.conversation.file_content
+                else replace(entry, content=None, content_truncated=False)
+            )
+            payload = json.dumps(asdict(saved), ensure_ascii=False, allow_nan=False)
             record = logging.LogRecord("alphaavatar.log", entry.level, "", 0, payload, (), None)
             self._file.handle(record)
 

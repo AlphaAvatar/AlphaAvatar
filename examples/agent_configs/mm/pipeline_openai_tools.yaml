@@ -288,3 +288,10 @@ host:
     on_session_end: finish_execution
     # Finish affected executions before reconnecting for new dispatch jobs.
     on_control_loss: finish_execution
+
+  log:
+    conversation:
+      enabled: true
+      content: dev
+      max_chars: 2048
+      file_content: false

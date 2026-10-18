@@ -14,7 +14,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+import logging
+from dataclasses import dataclass, field, fields
 from typing import Any
 
 from alphaavatar.agents.avatar.provider.enums import ModelFinishReason, ModelMessagePhase, ModelRole
@@ -46,6 +47,8 @@ from alphaavatar.agents.avatar.provider.schemas.stream import (
 from ..adapters.responses import BACKEND
 from ..usage import normalize_usage
 from .config import ResponsesInputConfig
+
+logger = logging.getLogger(__name__)
 
 
 def _require(condition: bool, message: str) -> None:
@@ -110,6 +113,12 @@ def decode_item(raw: dict[str, Any], *, scope: str) -> ModelOutputItem:
     if kind == "reasoning":
         # Stateless continuation must not substitute a visible summary for the opaque state.
         _text(raw.get("encrypted_content"), empty=False)
+        summary = raw.get("summary", [])
+        _require(isinstance(summary, list), "Invalid reasoning summary")
+        for part in summary:
+            _require(isinstance(part, dict), "Invalid reasoning summary part")
+            _require(part.get("type") == "summary_text", "Invalid reasoning summary type")
+            _text(part.get("text"))
         return ModelProviderItem(
             id=identity,
             backend=BACKEND,
@@ -219,6 +228,71 @@ class ResponsesDecoder:
         item.complete = decode_item(raw, scope=self._scope)
         return ModelItemCompleted(**self._identity(), output_index=index, item=item.complete)
 
+    @staticmethod
+    def _reasoning_value(raw: dict[str, Any]) -> dict[str, Any]:
+        # Ciphertext is continuation data, not a semantic fingerprint. Both events were
+        # independently validated; retain the completed item verbatim for later requests.
+        value = {
+            key: item
+            for key, item in raw.items()
+            if key not in {"encrypted_content", "status", "content"}
+        }
+        value.setdefault("summary", [])
+        value["content"] = [] if raw.get("content") is None else raw["content"]
+        return value
+
+    def _terminal_item(self, index: int, raw: dict[str, Any]) -> ModelOutputItem:
+        previous = self._items[index].complete
+        _require(previous is not None, "Terminal contains an unfinished output item")
+        value = decode_item(raw, scope=self._scope)
+        if previous == value:
+            return previous
+
+        changed = []
+        if isinstance(previous, ModelProviderItem) and isinstance(value, ModelProviderItem):
+            before = json.loads(previous.payload_json)
+            # Log schema field names only, never opaque values or arbitrary extra keys.
+            known = {"id", "type", "status", "summary", "content", "encrypted_content"}
+            changed = [key for key in sorted(known) if before.get(key) != raw.get(key)]
+            if any(before.get(key) != raw.get(key) for key in (before.keys() | raw.keys()) - known):
+                changed.append("provider_extra")
+            if (
+                previous.id == value.id
+                and previous.backend == value.backend
+                and previous.scope == value.scope
+                and self._reasoning_value(before) == self._reasoning_value(raw)
+            ):
+                logger.debug(
+                    "Responses reasoning terminal reconciled request_id=%s response_id=%s "
+                    "output_index=%d fields=%s continuation=output_item.done",
+                    self.request_id,
+                    self.response_id,
+                    index,
+                    ",".join(changed) or "optional_fields",
+                )
+                return previous
+        elif type(previous) is type(value):
+            changed = [
+                item.name
+                for item in fields(previous)
+                if getattr(previous, item.name) != getattr(value, item.name)
+            ]
+        else:
+            changed = ["type"]
+
+        logger.warning(
+            "Responses terminal mismatch request_id=%s response_id=%s output_index=%d "
+            "item_type=%s fields=%s",
+            self.request_id,
+            self.response_id,
+            index,
+            raw["type"]
+            if raw.get("type") in {"message", "function_call", "reasoning"}
+            else "unknown",
+            ",".join(changed) or "optional_fields",
+        )
+        raise ModelProtocolError("Terminal output differs from completed items")
+
     def feed(self, event: dict[str, Any]) -> tuple[ModelStreamEvent, ...]:
         _require(self.completed is None, "Event arrived after terminal response")
         seq = _index(event.get("sequence_number"))
@@ -302,14 +376,17 @@ class ResponsesDecoder:
             _require(response.get("id") == self.response_id, "Final response identity mismatch")
             _require(response.get("status") == "completed", "Invalid successful terminal status")
             raw_items = response.get("output", [])
+            _require(isinstance(raw_items, list), "Final output must be an array")
             _require(
                 set(self._items) == set(range(len(raw_items))), "Output item indices have gaps"
             )
-            items = tuple(decode_item(raw, scope=self._scope) for raw in raw_items)
-            for i, value in enumerate(items):
+            size = 0
+            for raw in raw_items:
+                size += len(json.dumps(raw, ensure_ascii=False))
                 _require(
-                    self._items[i].complete == value, "Terminal output differs from completed items"
+                    size <= self._options.max_output_chars, "Final output snapshot is too large"
                 )
+            items = tuple(self._terminal_item(i, raw) for i, raw in enumerate(raw_items))
             calls = [item.call_id for item in items if isinstance(item, ModelFunctionCall)]
             _require(len(calls) == len(set(calls)), "Duplicate function call identities")
             self.raw_response = response
