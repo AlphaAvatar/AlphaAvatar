@@ -33,11 +33,7 @@ class ToolBase(LifecycleComponent):
 
     capabilities: tuple[AvatarCapability, ...] = ()
 
-    def __init__(
-        self,
-        *,
-        runtime: AvatarRuntime,
-    ) -> None:
+    def __init__(self, *, runtime: AvatarRuntime) -> None:
         self._runtime = runtime
         self._ready = False
         self._calls: set[asyncio.Task[Any]] = set()

@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .kind import PerceptionEventKind, PerceptionStreamKind
-from .media_source import (
-    MediaModality,
-    MediaSourceKind,
-    MediaSourceState,
-)
+from .media_source import MediaModality, MediaSourceKind, MediaSourceState
 
 __all__ = [
     "MediaModality",

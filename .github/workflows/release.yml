@@ -37,6 +37,10 @@ jobs:
         run: |
           uv lock --check
           uv sync --locked --only-group build --no-install-workspace
+          constraints="$RUNNER_TEMP/alphaavatar-build-constraints.txt"
+          uv export --locked --only-group build --no-emit-workspace --no-hashes \
+            --output-file "$constraints" > /dev/null
+          echo "UV_BUILD_CONSTRAINT=$constraints" >> "$GITHUB_ENV"
 
       - name: Determine repository (PyPI/TestPyPI) and version
         id: meta

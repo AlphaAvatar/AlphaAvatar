@@ -499,8 +499,5 @@ If no item passes these checks, output empty env_memory_entries.
 
 
 ENV_DELTA_PROMPT = ModelPrompt.from_messages(
-    [
-        ("system", ENV_MEMORY_EXTRACT_PROMPT),
-        ModelInputSlot(variable_name="env_messages"),
-    ]
+    [("system", ENV_MEMORY_EXTRACT_PROMPT), ModelInputSlot(variable_name="env_messages")]
 )

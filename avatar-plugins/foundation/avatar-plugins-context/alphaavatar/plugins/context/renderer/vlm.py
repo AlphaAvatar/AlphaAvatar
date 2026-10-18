@@ -22,9 +22,6 @@ class VLMRenderer:
             model_input=replace_current(
                 request.base_input,
                 request.input_id,
-                render_current_input(
-                    request,
-                    include_images=True,
-                ),
+                render_current_input(request, include_images=True),
             )
         )

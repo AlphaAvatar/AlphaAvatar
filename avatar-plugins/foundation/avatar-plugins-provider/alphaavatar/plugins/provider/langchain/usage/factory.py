@@ -39,14 +39,8 @@ def get_usage_normalizer(provider: str) -> UsageNormalizer:
 
 
 def normalize_usage(
-    *,
-    provider: str,
-    raw_response=None,
-    raw_usage: dict | None = None,
+    *, provider: str, raw_response=None, raw_usage: dict | None = None
 ) -> ProviderUsage:
     normalizer = get_usage_normalizer(provider)
 
-    return normalizer.normalize(
-        raw_response=raw_response,
-        raw_usage=raw_usage,
-    )
+    return normalizer.normalize(raw_response=raw_response, raw_usage=raw_usage)

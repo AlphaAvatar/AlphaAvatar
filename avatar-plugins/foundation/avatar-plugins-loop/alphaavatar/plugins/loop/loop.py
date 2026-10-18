@@ -73,10 +73,7 @@ class AvatarLoop(Loop):
             execution.cancel(reason=reason)
 
     async def submit(
-        self,
-        request: LoopRequest,
-        *,
-        authorize: ToolAuthorizer | None = None,
+        self, request: LoopRequest, *, authorize: ToolAuthorizer | None = None
     ) -> LoopHandle:
         if self._close_task is not None:
             raise RuntimeError("Avatar loop is closing or closed")

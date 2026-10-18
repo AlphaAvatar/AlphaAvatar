@@ -37,8 +37,5 @@ class RouterConfig(BaseModel):
 
     def get_plugin(self, *, runtime: AvatarRuntime) -> InteractionRouterBase:
         return AvatarModulePlugin.create(
-            AvatarModule.ROUTER,
-            self.plugin,
-            runtime=runtime,
-            init_config=self.init_config,
+            AvatarModule.ROUTER, self.plugin, runtime=runtime, init_config=self.init_config
         )

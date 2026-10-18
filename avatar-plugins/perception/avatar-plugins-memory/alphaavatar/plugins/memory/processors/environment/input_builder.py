@@ -16,10 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from alphaavatar.agents.avatar.provider.schemas import (
-    ModelTemporalPart,
-    ModelTemporalSlice,
-)
+from alphaavatar.agents.avatar.provider.schemas import ModelTemporalPart, ModelTemporalSlice
 from alphaavatar.agents.constants import VIDEO_MEMORY_INTERVAL_SEC
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import ObservationKind
@@ -56,15 +53,9 @@ class EnvMemoryInputBuilder:
     Provider adapters decide how to package or encode it.
     """
 
-    _VISUAL_KINDS = {
-        ObservationKind.VIDEO_FRAME,
-        ObservationKind.SCREEN_FRAME,
-    }
+    _VISUAL_KINDS = {ObservationKind.VIDEO_FRAME, ObservationKind.SCREEN_FRAME}
 
-    _AUDIO_KINDS = {
-        ObservationKind.AUDIO_FRAME,
-        ObservationKind.AUDIO_SEGMENT,
-    }
+    _AUDIO_KINDS = {ObservationKind.AUDIO_FRAME, ObservationKind.AUDIO_SEGMENT}
 
     def __init__(self, *, include_audio: bool = True) -> None:
         self._video_interval_ns = round(VIDEO_MEMORY_INTERVAL_SEC * 1_000_000_000)
@@ -83,15 +74,11 @@ class EnvMemoryInputBuilder:
         return observation.metadata.get("input_origin") == "direct_upload"
 
     @staticmethod
-    def _state_map(
-        states: tuple[MediaSourceSnapshot, ...],
-    ) -> dict[PerceptionSourceRef, str]:
+    def _state_map(states: tuple[MediaSourceSnapshot, ...]) -> dict[PerceptionSourceRef, str]:
         return {state.source: state.state.value for state in states}
 
     @staticmethod
-    def _source_state_evidence(
-        state: MediaSourceSnapshot,
-    ) -> dict[str, Any]:
+    def _source_state_evidence(state: MediaSourceSnapshot) -> dict[str, Any]:
         data: dict[str, Any] = {
             "source": state.source.to_dict(),
             "modality": state.modality.value,
@@ -106,9 +93,7 @@ class EnvMemoryInputBuilder:
 
     @classmethod
     def _boundary_evidence(
-        cls,
-        boundary: str,
-        states: tuple[MediaSourceSnapshot, ...],
+        cls, boundary: str, states: tuple[MediaSourceSnapshot, ...]
     ) -> dict[str, Any]:
         return {
             "kind": "source_state_boundary",
@@ -117,10 +102,7 @@ class EnvMemoryInputBuilder:
         }
 
     @classmethod
-    def _build_evidence(
-        cls,
-        temporal: ModelTemporalPart,
-    ) -> tuple[dict[str, Any], ...]:
+    def _build_evidence(cls, temporal: ModelTemporalPart) -> tuple[dict[str, Any], ...]:
         evidence = [
             observation.to_evidence_dict()
             for temporal_slice in temporal.slices
@@ -153,36 +135,21 @@ class EnvMemoryInputBuilder:
 
         evidence.extend(
             (
-                cls._boundary_evidence(
-                    "start",
-                    alignment.source_states_at_start,
-                ),
-                cls._boundary_evidence(
-                    "end",
-                    alignment.source_states_at_end,
-                ),
+                cls._boundary_evidence("start", alignment.source_states_at_start),
+                cls._boundary_evidence("end", alignment.source_states_at_end),
             )
         )
 
         if alignment.has_event_gap:
             evidence.append(
-                {
-                    "kind": "perception_event_gap",
-                    "missed_event_count": alignment.missed_event_count,
-                }
+                {"kind": "perception_event_gap", "missed_event_count": alignment.missed_event_count}
             )
 
         return tuple(evidence)
 
-    def _selected_visual_ids(
-        self,
-        alignment: AlignedPerception,
-    ) -> set[str]:
+    def _selected_visual_ids(self, alignment: AlignedPerception) -> set[str]:
         origin_ns = alignment.time_range.start.monotonic_ns
-        buckets: dict[
-            tuple[PerceptionSourceRef, int],
-            EnvObservation,
-        ] = {}
+        buckets: dict[tuple[PerceptionSourceRef, int], EnvObservation] = {}
 
         observations = {
             observation.observation_id: observation
@@ -191,25 +158,16 @@ class EnvMemoryInputBuilder:
             if observation.kind in self._VISUAL_KINDS and not self._is_direct_upload(observation)
         }
 
-        for observation in sorted(
-            observations.values(),
-            key=self._observation_key,
-        ):
+        for observation in sorted(observations.values(), key=self._observation_key):
             bucket = (
-                max(
-                    0,
-                    observation.time_range.end.monotonic_ns - origin_ns,
-                )
+                max(0, observation.time_range.end.monotonic_ns - origin_ns)
                 // self._video_interval_ns
             )
             buckets[observation.source, bucket] = observation
 
         return {observation.observation_id for observation in buckets.values()}
 
-    def _build_slices(
-        self,
-        alignment: AlignedPerception,
-    ) -> tuple[ModelTemporalSlice, ...]:
+    def _build_slices(self, alignment: AlignedPerception) -> tuple[ModelTemporalSlice, ...]:
         selected_visual_ids = self._selected_visual_ids(alignment)
 
         raw_audio_sources = {
@@ -252,26 +210,15 @@ class EnvMemoryInputBuilder:
                     ModelTemporalSlice(
                         index=temporal_slice.index,
                         time_range=temporal_slice.time_range,
-                        observations=tuple(
-                            sorted(
-                                selected.values(),
-                                key=self._observation_key,
-                            )
-                        ),
+                        observations=tuple(sorted(selected.values(), key=self._observation_key)),
                         source_events=temporal_slice.source_events,
                     )
                 )
 
         return tuple(slices)
 
-    def build(
-        self,
-        alignment: AlignedPerception,
-    ) -> EnvMemoryInput:
-        temporal = ModelTemporalPart(
-            alignment=alignment,
-            slices=self._build_slices(alignment),
-        )
+    def build(self, alignment: AlignedPerception) -> EnvMemoryInput:
+        temporal = ModelTemporalPart(alignment=alignment, slices=self._build_slices(alignment))
 
         has_media = bool(temporal.observations)
         has_state_events = any(temporal_slice.source_events for temporal_slice in temporal.slices)

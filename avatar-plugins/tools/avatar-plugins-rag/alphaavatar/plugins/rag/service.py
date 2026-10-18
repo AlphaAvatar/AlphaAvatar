@@ -36,12 +36,7 @@ Use public-web search for public information not contained in the user's documen
 
 @avatar_capability(name="RAG", description=DESCRIPTION, input_schema=RAGRequest)
 class RAGService(ToolBase):
-    def __init__(
-        self,
-        *,
-        runtime: AvatarRuntime,
-        init_config: dict[str, Any],
-    ) -> None:
+    def __init__(self, *, runtime: AvatarRuntime, init_config: dict[str, Any]) -> None:
         super().__init__(runtime=runtime)
         self._options = dict(init_config)
         self._service = None
@@ -59,8 +54,7 @@ class RAGService(ToolBase):
             return await self._service.query(query=request.query, data_source=request.data_source)
 
         return await self._service.indexing(
-            file_paths_or_dir=request.file_paths_or_dir,
-            data_source=request.data_source,
+            file_paths_or_dir=request.file_paths_or_dir, data_source=request.data_source
         )
 
     async def _stop(self) -> None:

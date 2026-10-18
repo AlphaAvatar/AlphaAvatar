@@ -267,10 +267,7 @@ If a tool helped answer the user:
 
 TOOL_DELTA_PROMPT = ModelPrompt.from_messages(
     [
-        (
-            "system",
-            TOOL_MEMORY_EXTRACT_PROMPT,
-        ),
+        ("system", TOOL_MEMORY_EXTRACT_PROMPT),
         (
             "user",
             "SESSION CONTENT:\n"

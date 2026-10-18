@@ -16,9 +16,4 @@ from .config import SpeakerConfig
 from .processor import SpeakerProcessor
 from .vector_runner import SpeakerVectorRunner
 
-__all__ = [
-    "SpeakerAttributeRunner",
-    "SpeakerConfig",
-    "SpeakerProcessor",
-    "SpeakerVectorRunner",
-]
+__all__ = ["SpeakerAttributeRunner", "SpeakerConfig", "SpeakerProcessor", "SpeakerVectorRunner"]

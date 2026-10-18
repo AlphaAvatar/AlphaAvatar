@@ -41,10 +41,7 @@ class VisualFrameSelector:
 
     @staticmethod
     def _sample(
-        observations: list[EnvObservation],
-        *,
-        start_ns: int,
-        interval_sec: float,
+        observations: list[EnvObservation], *, start_ns: int, interval_sec: float
     ) -> list[EnvObservation]:
         interval_ns = max(1, round(interval_sec * 1_000_000_000))
         buckets: dict[tuple[PerceptionSourceRef, int], EnvObservation] = {}

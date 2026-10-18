@@ -29,20 +29,15 @@ class StatusConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     plugin: str = Field(
-        default="default",
-        description="Avatar status plugin to use for intermediate status events.",
+        default="default", description="Avatar status plugin to use for intermediate status events."
     )
-    enabled: bool = Field(
-        default=True,
-        description="Whether to enable intermediate status events.",
-    )
+    enabled: bool = Field(default=True, description="Whether to enable intermediate status events.")
     action_topic: str = Field(
         default="agent.status.action",
         description="Avatar data topic for structured status action events.",
     )
     init_config: dict = Field(
-        default={},
-        description="Custom configuration parameters for the status plugin.",
+        default={}, description="Custom configuration parameters for the status plugin."
     )
 
     def get_plugin(self, *, runtime: AvatarRuntime) -> StatusBase:

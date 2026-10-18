@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import replace
 from types import MappingProxyType
-from typing import Any, TypeAlias
+from typing import Any
 
 from alphaavatar.agents.avatar.provider.enums import ModelMessagePhase, ModelRole
 from alphaavatar.agents.avatar.provider.schemas.model_input import (
@@ -36,7 +36,7 @@ from alphaavatar.agents.avatar.provider.schemas.model_input import (
 )
 from alphaavatar.agents.constants import RUNTIME_CONTEXT_TOOL_NAME
 
-MemoryMessage: TypeAlias = ModelInputMessage | ModelFunctionCall | ModelFunctionOutput
+type MemoryMessage = ModelInputMessage | ModelFunctionCall | ModelFunctionOutput
 
 
 def _freeze(value: Any) -> Any:

@@ -31,15 +31,10 @@ if TYPE_CHECKING:
 
 class StatusRuntime(StatusBase):
     def __init__(
-        self,
-        *,
-        runtime: AvatarRuntime,
-        config: StatusRuntimeConfig,
-        enabled: bool = True,
+        self, *, runtime: AvatarRuntime, config: StatusRuntimeConfig, enabled: bool = True
     ) -> None:
         state = StatusState(
-            max_pending=config.activity.max_pending,
-            max_runs=config.activity.max_runs,
+            max_pending=config.activity.max_pending, max_runs=config.activity.max_runs
         )
         self._processors: tuple[StatusProcessorBase, ...] = (
             (

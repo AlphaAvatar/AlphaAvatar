@@ -31,8 +31,7 @@ class VirtualCharacterConfig(BaseModel):
         description="Avatar Virtual Character plugin to use for agent visually represents.",
     )
     init_config: dict[str, Any] = Field(
-        default={},
-        description="Custom configuration parameters for the Virtual Character plugin.",
+        default={}, description="Custom configuration parameters for the Virtual Character plugin."
     )
 
     def get_plugin(

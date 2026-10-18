@@ -44,10 +44,7 @@ class LoopConfig(BaseModel):
 
         _load_loop(self.plugin)
         loop = AvatarModulePlugin.create(
-            AvatarModule.LOOP,
-            self.plugin,
-            runtime=runtime,
-            init_config=self.init_config,
+            AvatarModule.LOOP, self.plugin, runtime=runtime, init_config=self.init_config
         )
         if not isinstance(loop, Loop):
             raise TypeError("A Loop plugin must return Loop")

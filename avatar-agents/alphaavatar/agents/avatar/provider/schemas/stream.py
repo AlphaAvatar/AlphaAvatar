@@ -14,14 +14,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import Literal
 
 from ..enums import ModelFinishReason, ModelMessagePhase
 from .model_input import ModelFunctionCall, ModelInputMessage
 from .provider_item import ModelProviderItem
 from .usage import ProviderUsage
 
-ModelOutputItem: TypeAlias = ModelInputMessage | ModelFunctionCall | ModelProviderItem
+type ModelOutputItem = ModelInputMessage | ModelFunctionCall | ModelProviderItem
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -89,7 +89,7 @@ class ModelResponseCompleted(_ResponseEvent):
     usage: ProviderUsage | None = None
 
 
-ModelStreamEvent: TypeAlias = (
+type ModelStreamEvent = (
     ModelResponseStarted
     | ModelItemStarted
     | ModelTextDelta

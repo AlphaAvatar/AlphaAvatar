@@ -14,8 +14,4 @@
 from .base import UsageNormalizer
 from .factory import get_usage_normalizer, normalize_usage
 
-__all__ = [
-    "UsageNormalizer",
-    "get_usage_normalizer",
-    "normalize_usage",
-]
+__all__ = ["UsageNormalizer", "get_usage_normalizer", "normalize_usage"]

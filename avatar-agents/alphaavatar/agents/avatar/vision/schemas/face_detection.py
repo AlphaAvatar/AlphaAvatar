@@ -44,8 +44,7 @@ class FaceKeypoints5:
 
     @classmethod
     def from_sequence(
-        cls,
-        points: list[list[float]] | tuple[tuple[float, float], ...],
+        cls, points: list[list[float]] | tuple[tuple[float, float], ...]
     ) -> FaceKeypoints5:
         if len(points) != 5 or any(len(point) != 2 for point in points):
             raise ValueError("FaceKeypoints5 requires exactly five 2D points")
@@ -162,12 +161,7 @@ class FaceDetectionResult:
 
         return cls.from_dict(annotation.data)
 
-    def to_annotation(
-        self,
-        *,
-        source: str,
-        observation_id: str,
-    ) -> EnvAnnotation:
+    def to_annotation(self, *, source: str, observation_id: str) -> EnvAnnotation:
         return EnvAnnotation(
             source=source,
             kind=AnnotationKind.FACE_DETECTION,

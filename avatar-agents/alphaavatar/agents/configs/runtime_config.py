@@ -65,10 +65,7 @@ class PerceptionConfig(BaseModel):
     temporal_alignment: TemporalAlignmentConfig = Field(default_factory=TemporalAlignmentConfig)
 
     def build_stream_maxlens(self) -> dict[PerceptionStreamKind, int]:
-        policy = PerceptionRetentionPolicy(
-            retention_sec=self.retention_sec,
-            headroom=self.headroom,
-        )
+        policy = PerceptionRetentionPolicy(retention_sec=self.retention_sec, headroom=self.headroom)
         audio_interval_sec = self.audio_frame_size_ms / 1000
 
         return {

@@ -50,9 +50,7 @@ def resolve_session_type(participant_metadata: Mapping[str, object]) -> SessionT
 def resolve_session_mode(session_type: SessionType) -> SessionMode:
     if session_type in (SessionType.CHAT, SessionType.TOOL):
         return SessionMode(
-            audio_input_enabled=False,
-            audio_output_enabled=False,
-            enable_noise_cancellation=False,
+            audio_input_enabled=False, audio_output_enabled=False, enable_noise_cancellation=False
         )
     if session_type == SessionType.AUDIO:
         return SessionMode()

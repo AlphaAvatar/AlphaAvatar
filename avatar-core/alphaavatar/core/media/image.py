@@ -22,10 +22,7 @@ from .video import VideoFrame
 
 class ImagePayload(MediaPayload):
     def __init__(
-        self,
-        *,
-        image_id: str | None = None,
-        metadata: dict[str, Any] | None = None,
+        self, *, image_id: str | None = None, metadata: dict[str, Any] | None = None
     ) -> None:
         super().__init__(modality="image", metadata=metadata)
         self.image_id = image_id

@@ -77,10 +77,7 @@ class PersonaProcessorBase(ABC):
                 except asyncio.CancelledError:
                     raise
                 except Exception:
-                    logger.exception(
-                        "Failed to rollback Persona processor name=%s",
-                        self.name,
-                    )
+                    logger.exception("Failed to rollback Persona processor name=%s", self.name)
                 raise
 
             self._started = True

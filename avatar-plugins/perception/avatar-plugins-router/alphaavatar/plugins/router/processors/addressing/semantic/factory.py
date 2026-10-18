@@ -18,9 +18,7 @@ from .model import Qwen3SemanticAddressingModel
 
 
 def create_semantic_addressing_model(
-    name: str,
-    *,
-    inference_executor: InferenceExecutor,
+    name: str, *, inference_executor: InferenceExecutor
 ) -> SemanticAddressingModelBase:
     if name == "qwen3_0_6b_q8_0":
         return Qwen3SemanticAddressingModel(inference_executor=inference_executor)

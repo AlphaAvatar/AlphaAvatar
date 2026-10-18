@@ -40,17 +40,12 @@ class SileroVADRunner(InferenceRunner):
 
         if providers:
             self._session = ort.InferenceSession(
-                model_path,
-                providers=providers,
-                sess_options=options,
+                model_path, providers=providers, sess_options=options
             )
         else:
             self._session = ort.InferenceSession(model_path, sess_options=options)
 
-        self._sample_rate = np.array(
-            SILERO_MODEL_CONFIG.sample_rate,
-            dtype=np.int64,
-        )
+        self._sample_rate = np.array(SILERO_MODEL_CONFIG.sample_rate, dtype=np.int64)
 
     def run(self, data: bytes) -> bytes:
         config = SILERO_MODEL_CONFIG
@@ -72,12 +67,7 @@ class SileroVADRunner(InferenceRunner):
 
         model_input = np.concatenate((context, audio)).reshape(1, -1)
         probability, next_state = self._session.run(
-            None,
-            {
-                "input": model_input,
-                "state": state,
-                "sr": self._sample_rate,
-            },
+            None, {"input": model_input, "state": state, "sr": self._sample_rate}
         )
 
         response = np.empty(1 + config.state_size, dtype=np.float32)

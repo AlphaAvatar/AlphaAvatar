@@ -18,11 +18,7 @@ from typing import Any
 from uuid import uuid4
 
 from alphaavatar.agents.avatar.provider.enums import ModelRole
-from alphaavatar.agents.avatar.provider.schemas import (
-    ModelInput,
-    ModelInputMessage,
-    ModelTextPart,
-)
+from alphaavatar.agents.avatar.provider.schemas import ModelInput, ModelInputMessage, ModelTextPart
 from alphaavatar.agents.runtime.modules.foundation import ProviderService
 
 from ...log import logger
@@ -75,10 +71,7 @@ class EnvironmentProvider:
                 ModelInputMessage(
                     id=f"memory.env:{uuid4().hex}",
                     role=ModelRole.USER,
-                    parts=(
-                        ModelTextPart(instructions),
-                        memory_input.temporal,
-                    ),
+                    parts=(ModelTextPart(instructions), memory_input.temporal),
                 ),
             )
         )
@@ -124,8 +117,5 @@ class EnvironmentProvider:
             raise
 
         except Exception:
-            logger.exception(
-                "[Memory] environment provider failed task=%s",
-                self._task,
-            )
+            logger.exception("[Memory] environment provider failed task=%s", self._task)
             raise

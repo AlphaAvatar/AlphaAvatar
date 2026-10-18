@@ -267,11 +267,7 @@ class LanceDBRunner(InferenceRunner):
         return rows
 
     def _query_candidates(
-        self,
-        vector: list[float],
-        *,
-        where: str,
-        limit: int,
+        self, vector: list[float], *, where: str, limit: int
     ) -> list[dict[str, Any]]:
         if limit <= 0:
             return []
@@ -322,14 +318,10 @@ class LanceDBRunner(InferenceRunner):
                 "memory_type": memory_type,
             }
             memories = self._query_candidates(
-                vector,
-                where=self._where(doc_kind="memory_item", **common),
-                limit=top_k,
+                vector, where=self._where(doc_kind="memory_item", **common), limit=top_k
             )
             graph = self._query_candidates(
-                vector,
-                where=self._where(doc_kind="graph_node", **common),
-                limit=top_k,
+                vector, where=self._where(doc_kind="graph_node", **common), limit=top_k
             )
             out["candidates"] = self._merge_candidates(memories, graph, limit=top_k)
         except Exception as exc:
@@ -481,10 +473,7 @@ class LanceDBRunner(InferenceRunner):
 
         return create_embedding_model(
             ProviderTaskConfig(
-                kind=ProviderKind.EMBEDDING,
-                provider=provider,
-                model=model,
-                extra=extra,
+                kind=ProviderKind.EMBEDDING, provider=provider, model=model, extra=extra
             )
         )
 

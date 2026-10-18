@@ -48,10 +48,7 @@ class Loop(ABC):
 
     @abstractmethod
     async def submit(
-        self,
-        request: LoopRequest,
-        *,
-        authorize: ToolAuthorizer | None = None,
+        self, request: LoopRequest, *, authorize: ToolAuthorizer | None = None
     ) -> LoopHandle:
         """Accept quickly; publish execution facts, model records and delivery through Runtime."""
 

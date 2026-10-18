@@ -49,11 +49,7 @@ class MemoryScope(BaseModel):
 
     @staticmethod
     def applicable_keys(context: MemoryContextRef) -> tuple[str, str, str]:
-        return (
-            "owner:*",
-            f"episode:{context.episode_id}",
-            f"context:{context.context_id}",
-        )
+        return ("owner:*", f"episode:{context.episode_id}", f"context:{context.context_id}")
 
     @classmethod
     def owner(cls) -> MemoryScope:

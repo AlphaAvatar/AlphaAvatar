@@ -32,10 +32,7 @@ from .base import (
 
 class OpenAIUsageNormalizer(UsageNormalizer):
     def normalize(
-        self,
-        *,
-        raw_response: Any = None,
-        raw_usage: dict[str, Any] | None = None,
+        self, *, raw_response: Any = None, raw_usage: dict[str, Any] | None = None
     ) -> ProviderUsage:
         usage_metadata = extract_langchain_usage_metadata(raw_response)
         response_metadata = extract_langchain_response_metadata(raw_response)
@@ -79,8 +76,7 @@ class OpenAIUsageNormalizer(UsageNormalizer):
         )
 
         uncached_input_tokens = calculate_uncached_input_tokens(
-            input_tokens=input_tokens,
-            cached_input_tokens=cached_input_tokens,
+            input_tokens=input_tokens, cached_input_tokens=cached_input_tokens
         )
 
         reasoning_output_tokens = to_int(output_token_details.get("reasoning")) or to_int(
@@ -99,9 +95,7 @@ class OpenAIUsageNormalizer(UsageNormalizer):
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             total_tokens=calculate_total_tokens(
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                total_tokens=total_tokens,
+                input_tokens=input_tokens, output_tokens=output_tokens, total_tokens=total_tokens
             ),
             cache_read_input_tokens=cache_read_input_tokens,
             cache_write_input_tokens=cache_write_input_tokens,

@@ -27,11 +27,7 @@ from pydantic import BaseModel
 
 from alphaavatar.agents.avatar.loop.base import ToolAuthorizer
 from alphaavatar.agents.avatar.loop.enums import ToolOutcome
-from alphaavatar.agents.avatar.loop.schemas import (
-    LoopIdentity,
-    ToolCallContext,
-    ToolRecord,
-)
+from alphaavatar.agents.avatar.loop.schemas import LoopIdentity, ToolCallContext, ToolRecord
 from alphaavatar.agents.avatar.provider.schemas import (
     ModelFunctionCall,
     ModelFunctionOutput,

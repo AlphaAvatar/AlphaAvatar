@@ -16,11 +16,7 @@ import json
 
 
 def create_frame_id(
-    session_id: str,
-    track_sid: str,
-    source_generation: int,
-    frame_index: int,
-    unix_ns: int,
+    session_id: str, track_sid: str, source_generation: int, frame_index: int, unix_ns: int
 ) -> str:
     parts = [session_id, track_sid, str(source_generation), str(frame_index), str(unix_ns)]
     payload = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))

@@ -28,12 +28,7 @@ from alphaavatar.core.turn import TurnSnapshot
 
 
 class DefaultPersonaCache(PersonaCache):
-    def __init__(
-        self,
-        *,
-        participant: ParticipantInfo,
-        user_profile: UserProfile,
-    ):
+    def __init__(self, *, participant: ParticipantInfo, user_profile: UserProfile):
         self._participant = participant
         self._user_profile = user_profile
 

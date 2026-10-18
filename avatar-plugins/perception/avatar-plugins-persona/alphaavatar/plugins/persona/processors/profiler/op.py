@@ -104,11 +104,7 @@ def write_set(
     if not isinstance(parent, dict):
         raise TypeError(f"Cannot set at non-dict parent for key '{key}'")
 
-    parent[key] = {
-        "value": value,
-        "source": source,
-        "updated_at": updated_at,
-    }
+    parent[key] = {"value": value, "source": source, "updated_at": updated_at}
 
 
 def clear_path(container: dict[str, Any], tokens: list[str]) -> None:
@@ -132,13 +128,7 @@ def append_string(
     lst: list[dict] = _ensure_list(container, tokens)
 
     if _norm_token(value) not in {_norm_token(x["value"]) for x in lst}:
-        lst.append(
-            {
-                "value": value,
-                "source": source,
-                "updated_at": updated_at,
-            }
-        )
+        lst.append({"value": value, "source": source, "updated_at": updated_at})
 
 
 def append_text(
@@ -158,22 +148,12 @@ def append_text(
     cur = parent.get(key)
 
     if cur is None:
-        parent[key] = {
-            "value": value,
-            "source": source,
-            "updated_at": updated_at,
-        }
+        parent[key] = {"value": value, "source": source, "updated_at": updated_at}
         return
 
     if isinstance(cur, list):
         if _norm_token(value) not in {_norm_token(x["value"]) for x in cur}:
-            cur.append(
-                {
-                    "value": value,
-                    "source": source,
-                    "updated_at": updated_at,
-                }
-            )
+            cur.append({"value": value, "source": source, "updated_at": updated_at})
         return
 
     if not isinstance(cur, dict):

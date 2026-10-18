@@ -43,10 +43,7 @@ class RecalledCandidateCache:
 
 
 def filter_hits(
-    hits: list[MemorySearchHit],
-    *,
-    threshold: float,
-    limit: int,
+    hits: list[MemorySearchHit], *, threshold: float, limit: int
 ) -> list[MemorySearchHit]:
     if limit <= 0:
         return []
@@ -55,26 +52,17 @@ def filter_hits(
 
 
 def consolidated_from_hits(
-    all_hits: list[list[MemorySearchHit]],
-    *,
-    threshold: float,
-    limit: int,
+    all_hits: list[list[MemorySearchHit]], *, threshold: float, limit: int
 ) -> list[MemoryItem]:
     return merge_candidates(
         hit.memory
         for hits in all_hits
-        for hit in filter_hits(
-            hits,
-            threshold=threshold,
-            limit=limit,
-        )
+        for hit in filter_hits(hits, threshold=threshold, limit=limit)
         if hit.memory.kind is MemoryKind.CONSOLIDATED
     )
 
 
-def merge_candidates(
-    *groups: Iterable[MemoryItem],
-) -> list[MemoryItem]:
+def merge_candidates(*groups: Iterable[MemoryItem]) -> list[MemoryItem]:
     merged: dict[str, MemoryItem] = {}
 
     for group in groups:

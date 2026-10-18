@@ -44,8 +44,7 @@ class MultimodalTurnTakingProcessor(RouterProcessorBase):
         self._config = config
 
         self._model = create_turn_taking_model(
-            config.model.name,
-            inference_executor=runtime.inference,
+            config.model.name, inference_executor=runtime.inference
         )
         self._coordinator = TurnTakingCoordinator(
             runtime=runtime,
@@ -72,26 +71,20 @@ class MultimodalTurnTakingProcessor(RouterProcessorBase):
         return "turn_taking"
 
     async def _consume_observations(self) -> None:
-        streams = {
-            PerceptionStreamKind.SPEECH,
-            PerceptionStreamKind.TEXT,
-        }
+        streams = {PerceptionStreamKind.SPEECH, PerceptionStreamKind.TEXT}
 
         while True:
             try:
                 await self._runtime.perception.wait_for_pending_observations(
-                    consumer_id=self.OBSERVATION_CONSUMER_ID,
-                    streams=streams,
+                    consumer_id=self.OBSERVATION_CONSUMER_ID, streams=streams
                 )
                 window = self._runtime.perception.take_pending_observations(
-                    consumer_id=self.OBSERVATION_CONSUMER_ID,
-                    streams=streams,
+                    consumer_id=self.OBSERVATION_CONSUMER_ID, streams=streams
                 )
 
                 if window.has_gap:
                     logger.warning(
-                        "Turn Taking observed perception gap missed=%s",
-                        window.missed_count,
+                        "Turn Taking observed perception gap missed=%s", window.missed_count
                     )
                     await self._coordinator.reset()
 
@@ -117,7 +110,7 @@ class MultimodalTurnTakingProcessor(RouterProcessorBase):
         while True:
             try:
                 await self._runtime.perception.wait_for_pending_annotations(
-                    consumer_id=self.ANNOTATION_CONSUMER_ID,
+                    consumer_id=self.ANNOTATION_CONSUMER_ID
                 )
                 batch = self._runtime.perception.take_pending_annotations(
                     consumer_id=self.ANNOTATION_CONSUMER_ID,
@@ -129,8 +122,7 @@ class MultimodalTurnTakingProcessor(RouterProcessorBase):
 
                 if batch.has_gap:
                     logger.warning(
-                        "Turn Taking missed addressing annotations missed=%s",
-                        batch.missed_count,
+                        "Turn Taking missed addressing annotations missed=%s", batch.missed_count
                     )
                     self._coordinator.handle_annotation_gap()
 
@@ -139,13 +131,11 @@ class MultimodalTurnTakingProcessor(RouterProcessorBase):
                         self._coordinator.handle_annotation(event)
                     except Exception:
                         logger.exception(
-                            "Turn Taking failed addressing event_id=%s",
-                            event.event_id,
+                            "Turn Taking failed addressing event_id=%s", event.event_id
                         )
 
                 self._runtime.perception.commit_annotations(
-                    consumer_id=self.ANNOTATION_CONSUMER_ID,
-                    cursor_seq=batch.cursor_seq,
+                    consumer_id=self.ANNOTATION_CONSUMER_ID, cursor_seq=batch.cursor_seq
                 )
 
             except asyncio.CancelledError:
@@ -161,19 +151,12 @@ class MultimodalTurnTakingProcessor(RouterProcessorBase):
         self._started = True
         self._tasks = (
             asyncio.create_task(
-                self._consume_observations(),
-                name="router_turn_taking_observations",
+                self._consume_observations(), name="router_turn_taking_observations"
             ),
-            asyncio.create_task(
-                self._consume_annotations(),
-                name="router_turn_taking_annotations",
-            ),
+            asyncio.create_task(self._consume_annotations(), name="router_turn_taking_annotations"),
         )
 
-        logger.info(
-            "Multimodal Turn Taking started model=%s",
-            self._model.name,
-        )
+        logger.info("Multimodal Turn Taking started model=%s", self._model.name)
 
     async def stop(self) -> None:
         if not self._started:
@@ -192,10 +175,7 @@ class MultimodalTurnTakingProcessor(RouterProcessorBase):
 
         self._runtime.perception.clear_observation_consumer(
             self.OBSERVATION_CONSUMER_ID,
-            streams={
-                PerceptionStreamKind.SPEECH,
-                PerceptionStreamKind.TEXT,
-            },
+            streams={PerceptionStreamKind.SPEECH, PerceptionStreamKind.TEXT},
         )
         self._runtime.perception.clear_annotation_consumer(self.ANNOTATION_CONSUMER_ID)
 

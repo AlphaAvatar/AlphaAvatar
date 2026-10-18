@@ -12,15 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .metadata import OutputMetadata
-from .reference import (
-    PerceptionEntityRef,
-    PerceptionSegmentRef,
-    PerceptionSourceRef,
-)
+from .reference import PerceptionEntityRef, PerceptionSegmentRef, PerceptionSourceRef
 
-__all__ = [
-    "OutputMetadata",
-    "PerceptionEntityRef",
-    "PerceptionSegmentRef",
-    "PerceptionSourceRef",
-]
+__all__ = ["OutputMetadata", "PerceptionEntityRef", "PerceptionSegmentRef", "PerceptionSourceRef"]

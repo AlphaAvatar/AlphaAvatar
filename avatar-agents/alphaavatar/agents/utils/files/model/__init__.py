@@ -13,8 +13,4 @@
 # limitations under the License.
 from .model_files import resolve_hf_file, resolve_url_file, resolve_zip_directory
 
-__all__ = [
-    "resolve_zip_directory",
-    "resolve_url_file",
-    "resolve_hf_file",
-]
+__all__ = ["resolve_zip_directory", "resolve_url_file", "resolve_hf_file"]

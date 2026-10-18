@@ -17,19 +17,10 @@ import pathlib
 import sqlite3
 
 from alphaavatar.agents.memory import MemoryStoreConflict
-from alphaavatar.agents.memory.schemas import (
-    MemoryContextRef,
-    MemoryItem,
-    MemoryOwnerRef,
-)
+from alphaavatar.agents.memory.schemas import MemoryContextRef, MemoryItem, MemoryOwnerRef
 
 from .database import connect
-from .query import (
-    fetch_visible,
-    normalize_memory_ids,
-    placeholders,
-    visibility_clause,
-)
+from .query import fetch_visible, normalize_memory_ids, placeholders, visibility_clause
 
 
 def _latest_superseders(
@@ -43,11 +34,7 @@ def _latest_superseders(
     if not memory_ids or not owner_refs:
         return {}
 
-    visibility, params = visibility_clause(
-        "r",
-        owner_refs,
-        context,
-    )
+    visibility, params = visibility_clause("r", owner_refs, context)
 
     rows = connection.execute(
         f"""
@@ -100,12 +87,7 @@ def resolve_current_sync(
         # snapshot without blocking concurrent writers.
         connection.execute("BEGIN")
 
-        base = fetch_visible(
-            connection,
-            memory_ids,
-            owner_refs,
-            context,
-        )
+        base = fetch_visible(connection, memory_ids, owner_refs, context)
 
         current = {item.memory_id: item for item in base}
 

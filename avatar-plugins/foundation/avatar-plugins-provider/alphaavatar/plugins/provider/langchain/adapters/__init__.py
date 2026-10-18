@@ -13,6 +13,4 @@
 # limitations under the License.
 from .base import LangChainInputAdapterRegistry
 
-__all__ = [
-    "LangChainInputAdapterRegistry",
-]
+__all__ = ["LangChainInputAdapterRegistry"]

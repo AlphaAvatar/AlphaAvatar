@@ -113,10 +113,7 @@ class ToolProcessor(MemoryProcessor):
                 scope=MemoryScope.owner(),
             )
             await self.commit_items(
-                state=state,
-                start=start,
-                end=end,
-                items=[*avatar_items, *tool_items],
+                state=state, start=start, end=end, items=[*avatar_items, *tool_items]
             )
 
     async def _stop(self, *, finalize: bool) -> None:
@@ -128,9 +125,6 @@ class ToolProcessor(MemoryProcessor):
                 self.update(state)
                 for state in self.memory_runtime.memory_contexts.values()
                 if state.cache_type
-                in {
-                    MemoryCacheType.SESSION_INTERACTION,
-                    MemoryCacheType.AGENT_TOOL_INTERACTION,
-                }
+                in {MemoryCacheType.SESSION_INTERACTION, MemoryCacheType.AGENT_TOOL_INTERACTION}
             )
         )

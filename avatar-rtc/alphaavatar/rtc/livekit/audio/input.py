@@ -27,11 +27,7 @@ from alphaavatar.core.env.schemas import PerceptionSourceRef
 from alphaavatar.core.lifecycle import LifecycleComponent
 from alphaavatar.core.media import AudioFramePayload
 from alphaavatar.core.perception import PerceptionRuntime
-from alphaavatar.core.perception.enums import (
-    MediaModality,
-    MediaSourceKind,
-    MediaSourceState,
-)
+from alphaavatar.core.perception.enums import MediaModality, MediaSourceKind, MediaSourceState
 from alphaavatar.core.perception.schemas import MediaSourceStateEvent
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
 from alphaavatar.rtc.livekit.utils.events import RoomEventBindings
@@ -107,11 +103,7 @@ class LiveKitAudioInput(LifecycleComponent):
         self._started = False
 
     @staticmethod
-    def _source_id(
-        participant_identity: str,
-        track_sid: str,
-        track_source: int,
-    ) -> str:
+    def _source_id(participant_identity: str, track_sid: str, track_source: int) -> str:
         owner = participant_identity or "anonymous"
         discriminator = f"source:{track_source}" if track_source else f"track:{track_sid}"
         return f"env:audio:{owner}:{discriminator}"
@@ -142,11 +134,7 @@ class LiveKitAudioInput(LifecycleComponent):
         return task
 
     def _publish_source_state(
-        self,
-        binding: _AudioTrackBinding,
-        state: MediaSourceState,
-        *,
-        reason: str,
+        self, binding: _AudioTrackBinding, state: MediaSourceState, *, reason: str
     ) -> None:
         if binding.state == state:
             return
@@ -182,11 +170,7 @@ class LiveKitAudioInput(LifecycleComponent):
         return binding if binding is not None and binding.publication is publication else None
 
     def _detach_binding(
-        self,
-        binding: _AudioTrackBinding,
-        *,
-        state: MediaSourceState,
-        reason: str,
+        self, binding: _AudioTrackBinding, *, state: MediaSourceState, reason: str
     ) -> bool:
         if self._bindings.get(binding.track_sid) is not binding:
             return False
@@ -195,11 +179,7 @@ class LiveKitAudioInput(LifecycleComponent):
         return True
 
     def _detach_publication(
-        self,
-        publication: rtc.RemoteTrackPublication,
-        *,
-        state: MediaSourceState,
-        reason: str,
+        self, publication: rtc.RemoteTrackPublication, *, state: MediaSourceState, reason: str
     ) -> _AudioTrackBinding | None:
         binding = self._binding_for_publication(publication)
         return (
@@ -225,8 +205,7 @@ class LiveKitAudioInput(LifecycleComponent):
     ) -> EnvObservation:
         audio_frame = from_livekit_audio_frame(frame)
         time_range = RuntimeTimeRange(
-            start=ended_at.shifted(-audio_frame.duration_sec),
-            end=ended_at,
+            start=ended_at.shifted(-audio_frame.duration_sec), end=ended_at
         )
         frame_id = create_frame_id(
             self._perception.session_id,
@@ -236,10 +215,7 @@ class LiveKitAudioInput(LifecycleComponent):
             ended_at.unix_ns,
         )
 
-        payload = AudioFramePayload.create(
-            frame=audio_frame,
-            frame_id=frame_id,
-        )
+        payload = AudioFramePayload.create(frame=audio_frame, frame_id=frame_id)
         return EnvObservation.audio_frame(
             time_range=time_range,
             source=binding.source,
@@ -334,9 +310,7 @@ class LiveKitAudioInput(LifecycleComponent):
                 self._schedule_close(existing)
 
         source_id = self._source_id(
-            transport_participant_id,
-            publication.sid,
-            int(publication.source),
+            transport_participant_id, publication.sid, int(publication.source)
         )
         binding = _AudioTrackBinding(
             track_sid=publication.sid,
@@ -408,10 +382,7 @@ class LiveKitAudioInput(LifecycleComponent):
                 )
 
         @self._events.on("track_muted")
-        def on_track_muted(
-            participant: rtc.Participant,
-            publication: rtc.TrackPublication,
-        ) -> None:
+        def on_track_muted(participant: rtc.Participant, publication: rtc.TrackPublication) -> None:
             if not self._started or publication.kind != rtc.TrackKind.KIND_AUDIO:
                 return
             if binding := self._binding_for_publication(publication):
@@ -419,8 +390,7 @@ class LiveKitAudioInput(LifecycleComponent):
 
         @self._events.on("track_unmuted")
         def on_track_unmuted(
-            participant: rtc.Participant,
-            publication: rtc.TrackPublication,
+            participant: rtc.Participant, publication: rtc.TrackPublication
         ) -> None:
             if not self._started or publication.kind != rtc.TrackKind.KIND_AUDIO:
                 return
@@ -438,23 +408,18 @@ class LiveKitAudioInput(LifecycleComponent):
             if track.kind == rtc.TrackKind.KIND_AUDIO:
                 self._schedule_close(
                     self._detach_publication(
-                        publication,
-                        state=MediaSourceState.ENDED,
-                        reason="track_unsubscribed",
+                        publication, state=MediaSourceState.ENDED, reason="track_unsubscribed"
                     )
                 )
 
         @self._events.on("track_unpublished")
         def on_track_unpublished(
-            publication: rtc.RemoteTrackPublication,
-            participant: rtc.RemoteParticipant,
+            publication: rtc.RemoteTrackPublication, participant: rtc.RemoteParticipant
         ) -> None:
             if publication.kind == rtc.TrackKind.KIND_AUDIO:
                 self._schedule_close(
                     self._detach_publication(
-                        publication,
-                        state=MediaSourceState.ENDED,
-                        reason="track_unpublished",
+                        publication, state=MediaSourceState.ENDED, reason="track_unpublished"
                     )
                 )
 
@@ -467,9 +432,7 @@ class LiveKitAudioInput(LifecycleComponent):
             ]
             for binding in bindings:
                 if self._detach_binding(
-                    binding,
-                    state=MediaSourceState.ENDED,
-                    reason="participant_disconnected",
+                    binding, state=MediaSourceState.ENDED, reason="participant_disconnected"
                 ):
                     self._schedule_close(binding)
 

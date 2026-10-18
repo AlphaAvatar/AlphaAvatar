@@ -45,10 +45,7 @@ from .sqlite import SQLiteMemoryStore
 
 class MemoryStore:
     def __init__(
-        self,
-        *,
-        runtime: AvatarRuntime,
-        backend: MemoryStoreBackend | None = None,
+        self, *, runtime: AvatarRuntime, backend: MemoryStoreBackend | None = None
     ) -> None:
         memory_paths = runtime.workspace.data.memory
         graph_paths = runtime.workspace.graph.namespace(AvatarModule.MEMORY.value)
@@ -57,20 +54,15 @@ class MemoryStore:
         self._backend = backend or SQLiteMemoryStore(memory_paths.records_file)
 
         export_sink = MemoryExportSink(
-            export_dir=memory_paths.exports.root,
-            graph_dir=graph_paths.root,
+            export_dir=memory_paths.exports.root, graph_dir=graph_paths.root
         )
 
         self._outbox_workers = (
             MemoryOutboxWorker(
-                backend=self._backend,
-                target=MemoryOutboxTarget.INDEX,
-                handler=self._index_items,
+                backend=self._backend, target=MemoryOutboxTarget.INDEX, handler=self._index_items
             ),
             MemoryOutboxWorker(
-                backend=self._backend,
-                target=MemoryOutboxTarget.EXPORT,
-                handler=export_sink,
+                backend=self._backend, target=MemoryOutboxTarget.EXPORT, handler=export_sink
             ),
         )
         self._started = False
@@ -83,21 +75,11 @@ class MemoryStore:
         return method
 
     async def _infer(
-        self,
-        *,
-        op: VectorRunnerOP,
-        param: dict[str, Any],
-        timeout: float,
+        self, *, op: VectorRunnerOP, param: dict[str, Any], timeout: float
     ) -> dict[str, Any]:
         result = await asyncio.wait_for(
             self._runtime.inference.do_inference(
-                self.vdb_inference_method,
-                json.dumps(
-                    {
-                        "op": op,
-                        "param": param,
-                    }
-                ).encode(),
+                self.vdb_inference_method, json.dumps({"op": op, "param": param}).encode()
             ),
             timeout=timeout,
         )
@@ -121,9 +103,7 @@ class MemoryStore:
         return list(MemoryScope.applicable_keys(context))
 
     @staticmethod
-    def _candidate_ids(
-        candidates: list[dict[str, Any]],
-    ) -> list[str]:
+    def _candidate_ids(candidates: list[dict[str, Any]]) -> list[str]:
         return list(
             dict.fromkeys(
                 memory_id
@@ -171,9 +151,7 @@ class MemoryStore:
             return []
 
         memories = await self._backend.resolve_current(
-            memory_ids,
-            owner_refs=owner_refs,
-            context=context,
+            memory_ids, owner_refs=owner_refs, context=context
         )
 
         return memories[:top_k]
@@ -213,9 +191,7 @@ class MemoryStore:
             return []
 
         memories = await self._backend.resolve_current(
-            memory_ids,
-            owner_refs=owner_refs,
-            context=context,
+            memory_ids, owner_refs=owner_refs, context=context
         )
 
         return memories[:top_k]
@@ -262,20 +238,13 @@ class MemoryStore:
         if not all_ids:
             return [[] for _ in texts]
 
-        visible = await self._backend.get_visible(
-            all_ids,
-            owner_refs=owner_refs,
-            context=context,
-        )
+        visible = await self._backend.get_visible(all_ids, owner_refs=owner_refs, context=context)
 
         by_id = {memory.memory_id: memory for memory in visible}
 
         return [
             [
-                MemorySearchHit(
-                    memory=by_id[memory_id],
-                    score=float(candidate.get("score") or 0.0),
-                )
+                MemorySearchHit(memory=by_id[memory_id], score=float(candidate.get("score") or 0.0))
                 for candidate in hits
                 if (memory_id := str(candidate.get("memory_id") or "").strip()) in by_id
             ]
@@ -305,36 +274,19 @@ class MemoryStore:
 
         return result
 
-    async def get_many(
-        self,
-        memory_ids: list[str],
-    ) -> list[MemoryItem]:
+    async def get_many(self, memory_ids: list[str]) -> list[MemoryItem]:
         return await self._backend.get_many(memory_ids)
 
     async def get_visible(
-        self,
-        memory_ids: list[str],
-        *,
-        owner_refs: list[MemoryOwnerRef],
-        context: MemoryContextRef,
+        self, memory_ids: list[str], *, owner_refs: list[MemoryOwnerRef], context: MemoryContextRef
     ) -> list[MemoryItem]:
-        return await self._backend.get_visible(
-            memory_ids,
-            owner_refs=owner_refs,
-            context=context,
-        )
+        return await self._backend.get_visible(memory_ids, owner_refs=owner_refs, context=context)
 
     async def resolve_current(
-        self,
-        memory_ids: list[str],
-        *,
-        owner_refs: list[MemoryOwnerRef],
-        context: MemoryContextRef,
+        self, memory_ids: list[str], *, owner_refs: list[MemoryOwnerRef], context: MemoryContextRef
     ) -> list[MemoryItem]:
         return await self._backend.resolve_current(
-            memory_ids,
-            owner_refs=owner_refs,
-            context=context,
+            memory_ids, owner_refs=owner_refs, context=context
         )
 
     async def query_visible(
@@ -347,23 +299,11 @@ class MemoryStore:
         limit: int = 100,
     ) -> list[MemoryItem]:
         return await self._backend.query_visible(
-            owner_refs=owner_refs,
-            context=context,
-            memory_type=memory_type,
-            kind=kind,
-            limit=limit,
+            owner_refs=owner_refs, context=context, memory_type=memory_type, kind=kind, limit=limit
         )
 
-    async def get_checkpoint(
-        self,
-        *,
-        context_id: str,
-        processor: str,
-    ) -> int:
-        return await self._backend.get_checkpoint(
-            context_id=context_id,
-            processor=processor,
-        )
+    async def get_checkpoint(self, *, context_id: str, processor: str) -> int:
+        return await self._backend.get_checkpoint(context_id=context_id, processor=processor)
 
     async def start(self) -> None:
         if self._started:

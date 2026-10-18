@@ -13,6 +13,4 @@
 # limitations under the License.
 from .error import ToolErrorCode
 
-__all__ = [
-    "ToolErrorCode",
-]
+__all__ = ["ToolErrorCode"]

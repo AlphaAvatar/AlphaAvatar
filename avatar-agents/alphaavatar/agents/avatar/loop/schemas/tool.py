@@ -15,10 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from alphaavatar.agents.avatar.provider.schemas import (
-    ModelFunctionCall,
-    ModelFunctionOutput,
-)
+from alphaavatar.agents.avatar.provider.schemas import ModelFunctionCall, ModelFunctionOutput
 
 from ..enums import ToolOutcome
 from .identity import LoopIdentity

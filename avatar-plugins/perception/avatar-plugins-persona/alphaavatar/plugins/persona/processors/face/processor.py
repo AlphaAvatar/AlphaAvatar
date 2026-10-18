@@ -20,11 +20,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from alphaavatar.agents.avatar.vision import (
-    FaceDetection,
-    FaceDetectionResult,
-    FaceKeypoints5,
-)
+from alphaavatar.agents.avatar.vision import FaceDetection, FaceDetectionResult, FaceKeypoints5
 from alphaavatar.agents.constants import (
     FACE_INFERENCE_THRESHOLD,
     FACE_MATCH_THRESHOLD,
@@ -32,10 +28,7 @@ from alphaavatar.agents.constants import (
 )
 from alphaavatar.agents.persona import PersonaProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.capability import (
-    AvatarCapabilityName,
-    avatar_capability,
-)
+from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_capability
 from alphaavatar.agents.utils import NumpyOP
 from alphaavatar.agents.utils.time import application_now
 from alphaavatar.core.env import EnvAnnotation, EnvObservation
@@ -71,11 +64,7 @@ class FaceProcessor(PersonaProcessorBase):
     SOURCE = "persona.face_stream"
 
     def __init__(
-        self,
-        *,
-        runtime: AvatarRuntime,
-        persona: PersonaRuntime,
-        config: FaceConfig,
+        self, *, runtime: AvatarRuntime, persona: PersonaRuntime, config: FaceConfig
     ) -> None:
         super().__init__(runtime=runtime, persona=persona)
 
@@ -122,9 +111,7 @@ class FaceProcessor(PersonaProcessorBase):
 
         payload = observation.payload
         if payload is None or not payload.has(
-            PayloadFormat.IMAGE_JPEG_BYTES,
-            view=PayloadView.RAW,
-            fallback_to_raw=False,
+            PayloadFormat.IMAGE_JPEG_BYTES, view=PayloadView.RAW, fallback_to_raw=False
         ):
             return
 
@@ -147,13 +134,7 @@ class FaceProcessor(PersonaProcessorBase):
         self._last_sample_ts[source] = timestamp
 
     def _select_best_face(self, faces: list[dict[str, Any]]) -> dict[str, Any] | None:
-        candidates: list[
-            tuple[
-                float,
-                float,
-                dict[str, Any],
-            ]
-        ] = []
+        candidates: list[tuple[float, float, dict[str, Any]]] = []
 
         for face in faces:
             bbox = face.get("bbox")
@@ -226,9 +207,7 @@ class FaceProcessor(PersonaProcessorBase):
         image_height: int,
     ) -> None:
         safe_faces, selected_index = self._safe_face_annotations(
-            faces,
-            selected_face=selected_face,
-            observation=job.observation,
+            faces, selected_face=selected_face, observation=job.observation
         )
 
         if not safe_faces:
@@ -242,16 +221,11 @@ class FaceProcessor(PersonaProcessorBase):
         )
 
         self.perception_runtime.publish_annotation(
-            result.to_annotation(
-                source=self.SOURCE,
-                observation_id=job.observation.observation_id,
-            )
+            result.to_annotation(source=self.SOURCE, observation_id=job.observation.observation_id)
         )
 
     def _render_face_annotation(
-        self,
-        observation: EnvObservation,
-        annotation: EnvAnnotation,
+        self, observation: EnvObservation, annotation: EnvAnnotation
     ) -> None:
         if annotation.kind != AnnotationKind.FACE_DETECTION:
             return
@@ -264,9 +238,7 @@ class FaceProcessor(PersonaProcessorBase):
             # Prefer an already annotated frame so different renderers can
             # compose overlays instead of overwriting one another.
             source_frame = payload.get(
-                PayloadFormat.VIDEO_FRAME,
-                view=PayloadView.ANNOTATED,
-                fallback_to_raw=True,
+                PayloadFormat.VIDEO_FRAME, view=PayloadView.ANNOTATED, fallback_to_raw=True
             )
         except PayloadFormatUnavailable:
             logger.debug(
@@ -320,11 +292,7 @@ class FaceProcessor(PersonaProcessorBase):
             )
             return
 
-        ok, encoded = cv2.imencode(
-            ".jpg",
-            bgr,
-            [int(cv2.IMWRITE_JPEG_QUALITY), self._jpeg_quality],
-        )
+        ok, encoded = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), self._jpeg_quality])
         if not ok:
             logger.warning(
                 "Failed to encode annotated face frame observation_id=%s",
@@ -332,31 +300,17 @@ class FaceProcessor(PersonaProcessorBase):
             )
             return
 
-        payload.put(
-            PayloadFormat.VIDEO_FRAME,
-            annotated_frame,
-            view=PayloadView.ANNOTATED,
-        )
-        payload.put(
-            PayloadFormat.IMAGE_JPEG_BYTES,
-            encoded.tobytes(),
-            view=PayloadView.ANNOTATED,
-        )
+        payload.put(PayloadFormat.VIDEO_FRAME, annotated_frame, view=PayloadView.ANNOTATED)
+        payload.put(PayloadFormat.IMAGE_JPEG_BYTES, encoded.tobytes(), view=PayloadView.ANNOTATED)
 
-        rendered_annotations = observation.metadata.setdefault(
-            "rendered_annotations",
-            [],
-        )
+        rendered_annotations = observation.metadata.setdefault("rendered_annotations", [])
         if annotation.annotation_id not in rendered_annotations:
             rendered_annotations.append(annotation.annotation_id)
 
     """Inference worker"""
 
     async def _resolve_face_vector(
-        self,
-        face_vector: np.ndarray,
-        *,
-        timeout: float | None = None,
+        self, face_vector: np.ndarray, *, timeout: float | None = None
     ) -> str | None:
         vector = NumpyOP.l2_normalize(NumpyOP.to_np(face_vector))
 
@@ -372,9 +326,7 @@ class FaceProcessor(PersonaProcessorBase):
 
         if uid is None:
             uid = await self.persona.store.search_face_vector(
-                face_vector=vector,
-                threshold=FACE_MATCH_THRESHOLD,
-                timeout=timeout,
+                face_vector=vector, threshold=FACE_MATCH_THRESHOLD, timeout=timeout
             )
             if uid is not None:
                 await self.persona.load_profile(uid=uid)
@@ -400,9 +352,7 @@ class FaceProcessor(PersonaProcessorBase):
 
         try:
             image_bytes = payload.get(
-                PayloadFormat.IMAGE_JPEG_BYTES,
-                view=PayloadView.RAW,
-                fallback_to_raw=False,
+                PayloadFormat.IMAGE_JPEG_BYTES, view=PayloadView.RAW, fallback_to_raw=False
             )
         except PayloadFormatUnavailable:
             logger.debug(
@@ -422,8 +372,7 @@ class FaceProcessor(PersonaProcessorBase):
             return
 
         results = await self.inference_executor.do_inference(
-            FaceAnalysisRunner.INFERENCE_METHOD,
-            image_bytes,
+            FaceAnalysisRunner.INFERENCE_METHOD, image_bytes
         )
 
         data: dict[str, Any] = json.loads(results.decode())
@@ -464,8 +413,7 @@ class FaceProcessor(PersonaProcessorBase):
         #  Match & Retrieve & Update Face
         face_vector = np.asarray(embedding, dtype=np.float32)
         uid = await self._resolve_face_vector(
-            face_vector,
-            timeout=self._face_config.inference_timeout_sec,
+            face_vector, timeout=self._face_config.inference_timeout_sec
         )
 
         face_attribute = {
@@ -484,9 +432,7 @@ class FaceProcessor(PersonaProcessorBase):
             if persona_cache is not None:
                 profile_cache = self._profile_caches.setdefault(uid, FaceCache())
                 persona_cache.profile_details = profile_cache.update_profile_detail(
-                    persona_cache.profile_details,
-                    face_attribute,
-                    updated_at=application_now(),
+                    persona_cache.profile_details, face_attribute, updated_at=application_now()
                 )
 
         self._publish_face_annotation(
@@ -536,8 +482,7 @@ class FaceProcessor(PersonaProcessorBase):
                 try:
                     if window.has_gap:
                         logger.warning(
-                            "Face stream observed visual gap missed=%s",
-                            window.missed_count,
+                            "Face stream observed visual gap missed=%s", window.missed_count
                         )
 
                     for observation in window.observations:
@@ -567,18 +512,11 @@ class FaceProcessor(PersonaProcessorBase):
             self._renderer_registered = True
 
         self._worker_task = asyncio.create_task(
-            self._inference_loop(),
-            name="persona_face_inference",
+            self._inference_loop(), name="persona_face_inference"
         )
-        self._poll_task = asyncio.create_task(
-            self._consume_loop(),
-            name="persona_face_consumer",
-        )
+        self._poll_task = asyncio.create_task(self._consume_loop(), name="persona_face_consumer")
 
-        logger.info(
-            "Persona Face started consumer_id=%s",
-            self.CONSUMER_ID,
-        )
+        logger.info("Persona Face started consumer_id=%s", self.CONSUMER_ID)
 
     async def _stop(self, *, finalize: bool) -> None:
         if self._poll_task is not None:
@@ -602,17 +540,10 @@ class FaceProcessor(PersonaProcessorBase):
                 break
 
         self.perception_runtime.clear_observation_consumer(
-            self.CONSUMER_ID,
-            streams={
-                PerceptionStreamKind.VIDEO,
-                PerceptionStreamKind.SCREEN,
-            },
+            self.CONSUMER_ID, streams={PerceptionStreamKind.VIDEO, PerceptionStreamKind.SCREEN}
         )
 
         self._last_sample_ts.clear()
         self._profile_caches.clear()
 
-        logger.info(
-            "Persona Face stopped consumer_id=%s",
-            self.CONSUMER_ID,
-        )
+        logger.info("Persona Face stopped consumer_id=%s", self.CONSUMER_ID)

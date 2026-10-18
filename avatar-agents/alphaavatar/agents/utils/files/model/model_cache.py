@@ -25,10 +25,7 @@ def model_cache_root() -> Path:
     return Path(value).expanduser() if value else _DEFAULT_MODEL_CACHE_ROOT.expanduser()
 
 
-def build_model_cache_dir(
-    *parts: str,
-    create: bool = False,
-) -> Path:
+def build_model_cache_dir(*parts: str, create: bool = False) -> Path:
     path = model_cache_root()
 
     for part in parts:

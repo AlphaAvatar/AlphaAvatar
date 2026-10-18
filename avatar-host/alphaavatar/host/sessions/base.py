@@ -56,9 +56,5 @@ class SessionBackend(ABC):
 
     @abstractmethod
     async def attachment(
-        self,
-        *,
-        connection: SessionConnection,
-        execution: HostExecution,
-        config: ApplicationConfig,
+        self, *, connection: SessionConnection, execution: HostExecution, config: ApplicationConfig
     ) -> SessionAttachment: ...

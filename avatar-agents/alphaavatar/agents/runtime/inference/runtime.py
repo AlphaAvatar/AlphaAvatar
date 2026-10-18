@@ -161,9 +161,7 @@ class InferenceRuntime:
             )
             raise
         self._startup[method] = InferenceRunnerStatus(
-            method=method,
-            startup_state="ready",
-            startup_elapsed_seconds=time.monotonic() - started,
+            method=method, startup_state="ready", startup_elapsed_seconds=time.monotonic() - started
         )
         logger.info(
             "Inference runner ready method=%r elapsed=%.3fs progress=%d/%d",

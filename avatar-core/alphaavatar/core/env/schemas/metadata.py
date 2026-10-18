@@ -17,10 +17,9 @@ import json
 from collections.abc import Iterator, Mapping
 from math import isfinite
 from types import MappingProxyType
-from typing import TypeAlias
 
-JSONScalar: TypeAlias = str | int | float | bool | None
-JSONValue: TypeAlias = JSONScalar | tuple["JSONValue", ...] | Mapping[str, "JSONValue"]
+type JSONScalar = str | int | float | bool | None
+type JSONValue = JSONScalar | tuple[JSONValue, ...] | Mapping[str, JSONValue]
 
 # Identity/control fields are never an extension mechanism, even inside nested maps.
 _RESERVED = frozenset(

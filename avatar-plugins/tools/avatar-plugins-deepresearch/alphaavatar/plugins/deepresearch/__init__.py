@@ -28,12 +28,7 @@ class DeepResearchToolPlugin(AvatarModulePlugin):
     def __init__(self) -> None:
         super().__init__("DeepResearch", __version__, __name__)
 
-    def get_plugin(
-        self,
-        *,
-        runtime: AvatarRuntime,
-        init_config: dict[str, Any],
-    ) -> ToolBase:
+    def get_plugin(self, *, runtime: AvatarRuntime, init_config: dict[str, Any]) -> ToolBase:
         from .service import DeepResearchService
 
         return DeepResearchService(runtime=runtime, init_config=init_config)

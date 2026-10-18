@@ -16,7 +16,4 @@
 from .config import PresentationConfig
 from .processor import PresentationProcessor
 
-__all__ = [
-    "PresentationConfig",
-    "PresentationProcessor",
-]
+__all__ = ["PresentationConfig", "PresentationProcessor"]

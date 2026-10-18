@@ -34,12 +34,10 @@ class ToolPluginConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     plugin: str | None = Field(
-        default="default",
-        description="Tool plugin name. Set to null to disable this tool.",
+        default="default", description="Tool plugin name. Set to null to disable this tool."
     )
     init_config: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Custom initialization parameters for this tool plugin.",
+        default_factory=dict, description="Custom initialization parameters for this tool plugin."
     )
 
 
@@ -48,17 +46,13 @@ class MCPConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = Field(
-        default=False,
-        description="Whether to enable the MCP plugin.",
-    )
+    enabled: bool = Field(default=False, description="Whether to enable the MCP plugin.")
     plugin: str | None = Field(
         default="default",
         description="MCP tool plugin name. Set to null to disable MCP tool creation.",
     )
     init_config: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Custom initialization parameters for the MCP plugin.",
+        default_factory=dict, description="Custom initialization parameters for the MCP plugin."
     )
     vdb_config: dict[str, Any] = Field(
         default_factory=dict,
@@ -104,10 +98,7 @@ class ToolsConfig(BaseModel):
 
             importlib.import_module(f"alphaavatar.plugins.{package}")
             tool = AvatarModulePlugin.create(
-                module,
-                config.plugin,
-                runtime=runtime,
-                init_config=config.init_config,
+                module, config.plugin, runtime=runtime, init_config=config.init_config
             )
             if not isinstance(tool, ToolBase):
                 raise TypeError(f"Tool plugin {package} must return ToolBase")

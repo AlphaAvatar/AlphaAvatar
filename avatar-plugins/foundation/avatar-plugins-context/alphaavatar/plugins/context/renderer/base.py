@@ -25,12 +25,7 @@ class RendererRegistry:
     def __init__(self) -> None:
         self._renderers: dict[ModelInputType, PromptRenderer] = {}
 
-    def register(
-        self,
-        *,
-        input_type: ModelInputType,
-        renderer: PromptRenderer,
-    ) -> None:
+    def register(self, *, input_type: ModelInputType, renderer: PromptRenderer) -> None:
         self._renderers[input_type] = renderer
 
     def resolve(self, input_type: ModelInputType) -> PromptRenderer:

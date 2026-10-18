@@ -21,21 +21,14 @@ from .payload import MediaPayload
 
 class TextPayload(MediaPayload):
     def __init__(
-        self,
-        *,
-        language: str | None = None,
-        metadata: dict[str, Any] | None = None,
+        self, *, language: str | None = None, metadata: dict[str, Any] | None = None
     ) -> None:
         super().__init__(modality="text", metadata=metadata)
         self.language = language
 
     @classmethod
     def create(
-        cls,
-        *,
-        text: str,
-        language: str | None = None,
-        metadata: dict[str, Any] | None = None,
+        cls, *, text: str, language: str | None = None, metadata: dict[str, Any] | None = None
     ) -> TextPayload:
         normalized = text.strip()
         if not normalized:

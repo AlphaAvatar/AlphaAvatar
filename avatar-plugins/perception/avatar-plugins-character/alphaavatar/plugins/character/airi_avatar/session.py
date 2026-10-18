@@ -243,8 +243,7 @@ class AiriCharacterSession(VirtualCharacterSession):
             if task is not None and not task.done() and not task.cancelling():
                 task.cancel()
         await asyncio.gather(
-            *(t for t in (self._start_task, self._monitor) if t is not None),
-            return_exceptions=True,
+            *(t for t in (self._start_task, self._monitor) if t is not None), return_exceptions=True
         )
 
         # Cancelling Playwright during subprocess acquisition can lose the pipe owner.

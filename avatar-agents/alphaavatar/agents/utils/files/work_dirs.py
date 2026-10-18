@@ -194,11 +194,7 @@ class IndexNamespacePath:
 
     def backend(self, name: str) -> IndexBackendPath:
         backend = _namespace(name)
-        return IndexBackendPath(
-            namespace=self.name,
-            backend=backend,
-            root=self.root / backend,
-        )
+        return IndexBackendPath(namespace=self.name, backend=backend, root=self.root / backend)
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,10 +326,7 @@ def prepare_user_path(path: UserPath) -> None:
 
 
 def migrate_user_path(
-    *,
-    old_user_path: UserPath,
-    new_user_path: UserPath,
-    remove_old: bool = False,
+    *, old_user_path: UserPath, new_user_path: UserPath, remove_old: bool = False
 ) -> None:
     if old_user_path.root.resolve() == new_user_path.root.resolve():
         return

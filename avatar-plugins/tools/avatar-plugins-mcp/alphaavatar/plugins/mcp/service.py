@@ -42,12 +42,7 @@ Configured MCP server scopes:
 
 
 class MCPToolService(ToolBase):
-    def __init__(
-        self,
-        *,
-        runtime: AvatarRuntime,
-        servers: dict[str, dict[str, Any]],
-    ) -> None:
+    def __init__(self, *, runtime: AvatarRuntime, servers: dict[str, dict[str, Any]]) -> None:
         super().__init__(runtime=runtime)
         self._service = MCPHost(runtime=runtime, servers=servers)
         self.capabilities = (
@@ -73,8 +68,7 @@ class MCPToolService(ToolBase):
             return await self._service.refresh_tools(server_keys=request.server_keys)
 
         return await self._service.call_tools(
-            params=parse_params(request.params_json),
-            output_mode=request.output_mode,
+            params=parse_params(request.params_json), output_mode=request.output_mode
         )
 
     async def _stop(self) -> None:

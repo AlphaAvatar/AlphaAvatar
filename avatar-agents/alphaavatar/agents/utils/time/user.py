@@ -72,10 +72,7 @@ def _user_now(timezone: str | None) -> datetime:
         raise ValueError(f"Unknown user timezone: {timezone}") from None
 
 
-def format_user_time(
-    timezone: str | None,
-    timezone_source: str,
-) -> UserTimeContext:
+def format_user_time(timezone: str | None, timezone_source: str) -> UserTimeContext:
     dt = _user_now(timezone)
 
     weekday = calendar.day_name[dt.weekday()]

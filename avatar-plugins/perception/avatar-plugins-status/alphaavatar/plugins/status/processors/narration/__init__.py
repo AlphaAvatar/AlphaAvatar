@@ -16,7 +16,4 @@
 from .config import NarrationConfig
 from .processor import NarrationProcessor
 
-__all__ = [
-    "NarrationConfig",
-    "NarrationProcessor",
-]
+__all__ = ["NarrationConfig", "NarrationProcessor"]

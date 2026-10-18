@@ -29,20 +29,17 @@ class MemoryConfig(BaseModel):
     """Configuration for the Memory plugin used in the agent."""
 
     plugin: str = Field(
-        default="default",
-        description="Avatar Memory plugin to use for memory management.",
+        default="default", description="Avatar Memory plugin to use for memory management."
     )
 
     # Memory Metadata
     maximum_memory_num: int = Field(
-        default=10,
-        description="The maximum number of memory items to use",
+        default=10, description="The maximum number of memory items to use"
     )
 
     # Memory init config
     init_config: dict = Field(
-        default_factory=dict,
-        description="Custom configuration parameters for the memory plugin.",
+        default_factory=dict, description="Custom configuration parameters for the memory plugin."
     )
 
     # Memory VDB Config

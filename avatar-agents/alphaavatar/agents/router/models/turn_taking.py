@@ -41,10 +41,7 @@ class TurnTakingModelBase(ABC):
     def capabilities(self) -> TurnTakingModelCapabilities: ...
 
     @abstractmethod
-    async def assess(
-        self,
-        evidence: TurnTakingEvidence,
-    ) -> TurnTakingAssessment:
+    async def assess(self, evidence: TurnTakingEvidence) -> TurnTakingAssessment:
         """
         Assess one immutable candidate revision.
 

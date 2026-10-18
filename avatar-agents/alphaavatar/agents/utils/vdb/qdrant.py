@@ -50,11 +50,7 @@ def get_client(
 
     # init client
     if could_client:
-        client = QdrantClient(
-            api_key=api_key,
-            url=url,
-            prefer_grpc=prefer_grpc,
-        )
+        client = QdrantClient(api_key=api_key, url=url, prefer_grpc=prefer_grpc)
     elif local_client:
         client = QdrantClient(
             url=url if url else None,

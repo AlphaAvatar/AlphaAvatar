@@ -44,13 +44,7 @@ class LangChainEmbeddingPlugin(AvatarModulePlugin):
         return LangChainEmbedding(config)
 
 
+AvatarModulePlugin.register(AvatarModule.PROVIDER_LLM, "langchain", LangChainLLMPlugin())
 AvatarModulePlugin.register(
-    AvatarModule.PROVIDER_LLM,
-    "langchain",
-    LangChainLLMPlugin(),
-)
-AvatarModulePlugin.register(
-    AvatarModule.PROVIDER_EMBEDDING,
-    "langchain",
-    LangChainEmbeddingPlugin(),
+    AvatarModule.PROVIDER_EMBEDDING, "langchain", LangChainEmbeddingPlugin()
 )

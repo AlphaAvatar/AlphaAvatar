@@ -18,10 +18,7 @@ from textwrap import indent
 from xml.sax.saxutils import escape, quoteattr
 
 from alphaavatar.agents.avatar.context.schemas import ContextBuildRequest
-from alphaavatar.agents.avatar.provider.enums import (
-    ModelInputType,
-    ModelRole,
-)
+from alphaavatar.agents.avatar.provider.enums import ModelInputType, ModelRole
 from alphaavatar.agents.avatar.provider.schemas import (
     ModelImagePart,
     ModelInput,
@@ -29,10 +26,7 @@ from alphaavatar.agents.avatar.provider.schemas import (
     ModelInputPart,
     ModelTextPart,
 )
-from alphaavatar.agents.avatar.vision import (
-    SelectedVisualFrame,
-    VisualSelection,
-)
+from alphaavatar.agents.avatar.vision import SelectedVisualFrame, VisualSelection
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import ObservationKind
 from alphaavatar.core.media import PayloadFormatUnavailable
@@ -42,10 +36,7 @@ from alphaavatar.core.perception.enums import MediaSourceKind
 from alphaavatar.core.perception.schemas import MediaSourceSnapshot, PerceptionEvent
 
 _PAUSE_THRESHOLD_SEC = 0.3
-_VISUAL_OBSERVATION_KINDS = {
-    ObservationKind.VIDEO_FRAME,
-    ObservationKind.SCREEN_FRAME,
-}
+_VISUAL_OBSERVATION_KINDS = {ObservationKind.VIDEO_FRAME, ObservationKind.SCREEN_FRAME}
 
 
 def _xml_attr(value: object) -> str:
@@ -65,13 +56,7 @@ def _indent_xml(value: str, spaces: int) -> str:
 
 
 def _relative_sec(alignment: AlignedPerception, monotonic_ns: int) -> float:
-    return (
-        max(
-            0,
-            monotonic_ns - alignment.time_range.start.monotonic_ns,
-        )
-        / 1_000_000_000
-    )
+    return max(0, monotonic_ns - alignment.time_range.start.monotonic_ns) / 1_000_000_000
 
 
 def _relative_label(alignment: AlignedPerception, monotonic_ns: int) -> str:
@@ -91,9 +76,7 @@ def _text(observation: EnvObservation | None) -> str | None:
 
     try:
         value = observation.payload.get(
-            PayloadFormat.TEXT,
-            view=PayloadView.RAW,
-            fallback_to_raw=False,
+            PayloadFormat.TEXT, view=PayloadView.RAW, fallback_to_raw=False
         )
     except PayloadFormatUnavailable:
         return None
@@ -101,13 +84,8 @@ def _text(observation: EnvObservation | None) -> str | None:
     return str(value).strip() or None
 
 
-def _effective_states(
-    states: tuple[MediaSourceSnapshot, ...],
-) -> tuple[MediaSourceSnapshot, ...]:
-    latest: dict[
-        tuple[str, MediaSourceKind],
-        MediaSourceSnapshot,
-    ] = {}
+def _effective_states(states: tuple[MediaSourceSnapshot, ...]) -> tuple[MediaSourceSnapshot, ...]:
+    latest: dict[tuple[str, MediaSourceKind], MediaSourceSnapshot] = {}
 
     for state in states:
         key = state.source.source_id, state.source_kind
@@ -118,28 +96,18 @@ def _effective_states(
 
     return tuple(
         sorted(
-            latest.values(),
-            key=lambda item: (
-                _enum_value(item.source_kind),
-                item.source.source_id,
-            ),
+            latest.values(), key=lambda item: (_enum_value(item.source_kind), item.source.source_id)
         )
     )
 
 
-def _source_states_xml(
-    states: tuple[MediaSourceSnapshot, ...],
-    *,
-    phase: str,
-) -> str:
+def _source_states_xml(states: tuple[MediaSourceSnapshot, ...], *, phase: str) -> str:
     effective = _effective_states(states)
 
     if not effective:
         return f"<source_states phase={_xml_attr(phase)} />"
 
-    lines = [
-        f"<source_states phase={_xml_attr(phase)}>",
-    ]
+    lines = [f"<source_states phase={_xml_attr(phase)}>"]
 
     for state in effective:
         attributes = [
@@ -179,10 +147,7 @@ def _perception_integrity_xml(alignment: AlignedPerception) -> str:
 
 
 def _speech_xml(
-    temporal_slice: TemporalSlice,
-    alignment: AlignedPerception,
-    *,
-    include_final_gap_after: bool,
+    temporal_slice: TemporalSlice, alignment: AlignedPerception, *, include_final_gap_after: bool
 ) -> str | None:
     speech = temporal_slice.speech
 
@@ -223,10 +188,7 @@ def _speech_xml(
     return "\n".join(lines)
 
 
-def _source_event_xml(
-    event: PerceptionEvent,
-    alignment: AlignedPerception,
-) -> str:
+def _source_event_xml(event: PerceptionEvent, alignment: AlignedPerception) -> str:
     state = event.source_state
 
     if state is None:
@@ -261,11 +223,7 @@ def _visual_availability_xml(
     visual_states = [
         state
         for state in states
-        if state.source_kind
-        in {
-            MediaSourceKind.CAMERA,
-            MediaSourceKind.SCREEN,
-        }
+        if state.source_kind in {MediaSourceKind.CAMERA, MediaSourceKind.SCREEN}
     ]
 
     active_states = [state for state in visual_states if state.available]
@@ -351,10 +309,7 @@ def _last_speech_slice_index(alignment: AlignedPerception) -> int | None:
 
 
 def _slice_open_xml(
-    temporal_slice: TemporalSlice,
-    alignment: AlignedPerception,
-    *,
-    include_final_gap_after: bool,
+    temporal_slice: TemporalSlice, alignment: AlignedPerception, *, include_final_gap_after: bool
 ) -> str:
     lines = [
         "    <slice "
@@ -364,9 +319,7 @@ def _slice_open_xml(
     ]
 
     speech_xml = _speech_xml(
-        temporal_slice,
-        alignment,
-        include_final_gap_after=include_final_gap_after,
+        temporal_slice, alignment, include_final_gap_after=include_final_gap_after
     )
 
     if speech_xml:
@@ -388,11 +341,7 @@ def _ordered_slice_parts(
 
         if event_xml:
             entries.append(
-                (
-                    event.time_range.end.monotonic_ns,
-                    0,
-                    (ModelTextPart(_indent_xml(event_xml, 6)),),
-                )
+                (event.time_range.end.monotonic_ns, 0, (ModelTextPart(_indent_xml(event_xml, 6)),))
             )
 
     for frame in frames:
@@ -416,12 +365,7 @@ def _ordered_slice_parts(
                 observation.time_range.end.monotonic_ns,
                 1,
                 (
-                    ModelTextPart(
-                        _indent_xml(
-                            f"<visual_evidence {' '.join(attributes)}>",
-                            6,
-                        )
-                    ),
+                    ModelTextPart(_indent_xml(f"<visual_evidence {' '.join(attributes)}>", 6)),
                     ModelImagePart(observation),
                     ModelTextPart(_indent_xml("</visual_evidence>", 6)),
                 ),
@@ -430,29 +374,19 @@ def _ordered_slice_parts(
 
     parts: list[ModelInputPart] = []
 
-    for _, _, entry_parts in sorted(
-        entries,
-        key=lambda entry: (
-            entry[0],
-            entry[1],
-        ),
-    ):
+    for _, _, entry_parts in sorted(entries, key=lambda entry: (entry[0], entry[1])):
         parts.extend(entry_parts)
 
     return tuple(parts)
 
 
 def _direct_input_parts(
-    alignment: AlignedPerception,
-    *,
-    include_images: bool,
+    alignment: AlignedPerception, *, include_images: bool
 ) -> tuple[ModelInputPart, ...]:
     if not alignment.direct_inputs:
         return (ModelTextPart("  <direct_inputs />"),)
 
-    parts: list[ModelInputPart] = [
-        ModelTextPart("  <direct_inputs>"),
-    ]
+    parts: list[ModelInputPart] = [ModelTextPart("  <direct_inputs>")]
 
     for index, observation in enumerate(alignment.direct_inputs):
         attributes = [
@@ -508,40 +442,21 @@ def _direct_input_parts(
 
 
 def replace_current(
-    base_input: ModelInput,
-    input_id: str,
-    parts: tuple[ModelInputPart, ...],
+    base_input: ModelInput, input_id: str, parts: tuple[ModelInputPart, ...]
 ) -> ModelInput:
     current = base_input.get(input_id)
 
     if isinstance(current, ModelInputMessage):
-        return base_input.replace(
-            input_id,
-            replace(
-                current,
-                parts=parts,
-            ),
-        )
+        return base_input.replace(input_id, replace(current, parts=parts))
 
-    return base_input.append(
-        ModelInputMessage(
-            id=input_id,
-            role=ModelRole.USER,
-            parts=parts,
-        )
-    )
+    return base_input.append(ModelInputMessage(id=input_id, role=ModelRole.USER, parts=parts))
 
 
 def render_current_input(
-    request: ContextBuildRequest,
-    *,
-    include_images: bool,
+    request: ContextBuildRequest, *, include_images: bool
 ) -> tuple[ModelInputPart, ...]:
     alignment = request.alignment
-    duration_label = _relative_label(
-        alignment,
-        alignment.time_range.end.monotonic_ns,
-    )
+    duration_label = _relative_label(alignment, alignment.time_range.end.monotonic_ns)
 
     parts: list[ModelInputPart] = [
         ModelTextPart(
@@ -551,20 +466,9 @@ def render_current_input(
             'start="+0.00s" '
             f"end={_xml_attr(duration_label)}>"
         ),
+        ModelTextPart(_indent_xml(_perception_integrity_xml(alignment), 2)),
         ModelTextPart(
-            _indent_xml(
-                _perception_integrity_xml(alignment),
-                2,
-            )
-        ),
-        ModelTextPart(
-            _indent_xml(
-                _source_states_xml(
-                    alignment.source_states_at_start,
-                    phase="start",
-                ),
-                2,
-            )
+            _indent_xml(_source_states_xml(alignment.source_states_at_start, phase="start"), 2)
         ),
         ModelTextPart("  <timeline>"),
     ]
@@ -596,17 +500,12 @@ def render_current_input(
         if include_images:
             parts.extend(
                 _ordered_slice_parts(
-                    temporal_slice=temporal_slice,
-                    alignment=alignment,
-                    frames=frames,
+                    temporal_slice=temporal_slice, alignment=alignment, frames=frames
                 )
             )
         else:
             for event in temporal_slice.source_events:
-                event_xml = _source_event_xml(
-                    event,
-                    alignment,
-                )
+                event_xml = _source_event_xml(event, alignment)
 
                 if event_xml:
                     parts.append(ModelTextPart(_indent_xml(event_xml, 6)))
@@ -627,13 +526,7 @@ def render_current_input(
         (
             ModelTextPart("  </timeline>"),
             ModelTextPart(
-                _indent_xml(
-                    _source_states_xml(
-                        alignment.source_states_at_end,
-                        phase="end",
-                    ),
-                    2,
-                )
+                _indent_xml(_source_states_xml(alignment.source_states_at_end, phase="end"), 2)
             ),
             ModelTextPart(
                 _indent_xml(
@@ -648,12 +541,7 @@ def render_current_input(
         )
     )
 
-    parts.extend(
-        _direct_input_parts(
-            alignment,
-            include_images=include_images,
-        )
-    )
+    parts.extend(_direct_input_parts(alignment, include_images=include_images))
     parts.append(ModelTextPart("</turn_input>"))
 
     return tuple(parts)

@@ -17,10 +17,7 @@ import asyncio
 import json
 
 from alphaavatar.agents.router.models import SemanticAddressingModelBase
-from alphaavatar.agents.router.schemas import (
-    SemanticAddressingRequest,
-    SemanticAddressingResult,
-)
+from alphaavatar.agents.router.schemas import SemanticAddressingRequest, SemanticAddressingResult
 from alphaavatar.agents.runtime.inference import InferenceExecutor
 
 from .runner import SemanticAddressingQwen3Runner

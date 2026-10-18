@@ -17,10 +17,7 @@ import numpy as np
 
 from alphaavatar.agents.runtime.inference import InferenceRunner
 
-from ..models.model_files import (
-    SMART_TURN_V3_CONFIG,
-    resolve_smart_turn_model_path,
-)
+from ..models.model_files import SMART_TURN_V3_CONFIG, resolve_smart_turn_model_path
 
 
 class SmartTurnV3Runner(InferenceRunner):
@@ -43,15 +40,10 @@ class SmartTurnV3Runner(InferenceRunner):
 
         if providers:
             self._session = ort.InferenceSession(
-                model_path,
-                providers=providers,
-                sess_options=options,
+                model_path, providers=providers, sess_options=options
             )
         else:
-            self._session = ort.InferenceSession(
-                model_path,
-                sess_options=options,
-            )
+            self._session = ort.InferenceSession(model_path, sess_options=options)
 
         self._feature_extractor = WhisperFeatureExtractor(
             chunk_length=int(SMART_TURN_V3_CONFIG.max_audio_sec)
@@ -81,23 +73,11 @@ class SmartTurnV3Runner(InferenceRunner):
             do_normalize=True,
         )
 
-        features = inputs.input_features.squeeze(0).astype(
-            np.float32,
-            copy=False,
-        )
+        features = inputs.input_features.squeeze(0).astype(np.float32, copy=False)
         features = np.expand_dims(features, axis=0)
 
-        outputs = self._session.run(
-            None,
-            {"input_features": features},
-        )
+        outputs = self._session.run(None, {"input_features": features})
 
-        probability = float(
-            np.clip(
-                np.asarray(outputs[0]).reshape(-1)[0],
-                0.0,
-                1.0,
-            )
-        )
+        probability = float(np.clip(np.asarray(outputs[0]).reshape(-1)[0], 0.0, 1.0))
 
         return np.asarray([probability], dtype=np.float32).tobytes()

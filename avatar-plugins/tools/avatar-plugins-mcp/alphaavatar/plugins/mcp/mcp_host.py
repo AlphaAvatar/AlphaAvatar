@@ -136,10 +136,7 @@ class MCPHost:
         return CapabilityResult(parts=(ModelTextPart("\n".join(lines)),), is_error=failed)
 
     async def call_tools(
-        self,
-        *,
-        params: dict[str, dict[str, Any]],
-        output_mode: MCPOutputMode = MCPOutputMode.RAW,
+        self, *, params: dict[str, dict[str, Any]], output_mode: MCPOutputMode = MCPOutputMode.RAW
     ) -> CapabilityResult:
         if not params:
             raise ToolError("MCP tool_call requires at least one tool")

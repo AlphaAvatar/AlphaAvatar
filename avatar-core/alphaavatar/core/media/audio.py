@@ -33,9 +33,7 @@ class AudioSampleFormat(StrEnum):
     PCM_S16LE = "pcm_s16le"
 
 
-_SAMPLE_WIDTH_BYTES: dict[AudioSampleFormat, int] = {
-    AudioSampleFormat.PCM_S16LE: 2,
-}
+_SAMPLE_WIDTH_BYTES: dict[AudioSampleFormat, int] = {AudioSampleFormat.PCM_S16LE: 2}
 
 
 @dataclass(slots=True, frozen=True)
@@ -130,10 +128,7 @@ class AudioFramePayload(MediaPayload):
         samples_per_channel: int,
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        super().__init__(
-            modality="audio_frame",
-            metadata=metadata,
-        )
+        super().__init__(modality="audio_frame", metadata=metadata)
 
         self.frame_id = frame_id
         self.sample_rate = sample_rate
@@ -146,11 +141,7 @@ class AudioFramePayload(MediaPayload):
 
     @classmethod
     def create(
-        cls,
-        *,
-        frame: AudioFrame,
-        frame_id: str | None,
-        metadata: dict[str, Any] | None = None,
+        cls, *, frame: AudioFrame, frame_id: str | None, metadata: dict[str, Any] | None = None
     ) -> AudioFramePayload:
         payload = cls(
             frame_id=frame_id,
@@ -160,11 +151,7 @@ class AudioFramePayload(MediaPayload):
             metadata=metadata,
         )
 
-        payload.put(
-            PayloadFormat.AUDIO_FRAME,
-            frame,
-            view=PayloadView.RAW,
-        )
+        payload.put(PayloadFormat.AUDIO_FRAME, frame, view=PayloadView.RAW)
 
         return payload
 
@@ -190,10 +177,7 @@ class AudioSegmentPayload(MediaPayload):
         source_observation_ids: Sequence[str],
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        super().__init__(
-            modality="audio_segment",
-            metadata=metadata,
-        )
+        super().__init__(modality="audio_segment", metadata=metadata)
 
         self.segment_id = segment_id
         self.sample_rate = sample_rate
@@ -254,11 +238,7 @@ class AudioSegmentPayload(MediaPayload):
             metadata=metadata,
         )
 
-        payload.put(
-            PayloadFormat.AUDIO_PCM16_BYTES,
-            pcm16_bytes,
-            view=PayloadView.RAW,
-        )
+        payload.put(PayloadFormat.AUDIO_PCM16_BYTES, pcm16_bytes, view=PayloadView.RAW)
 
         return payload
 

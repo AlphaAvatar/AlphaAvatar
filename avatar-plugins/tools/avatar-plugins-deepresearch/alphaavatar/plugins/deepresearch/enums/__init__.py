@@ -13,6 +13,4 @@
 # limitations under the License.
 from .op import DeepResearchOp
 
-__all__ = [
-    "DeepResearchOp",
-]
+__all__ = ["DeepResearchOp"]

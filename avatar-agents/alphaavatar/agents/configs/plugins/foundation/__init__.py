@@ -16,9 +16,4 @@ from .loop_config import LoopConfig
 from .vision_config import VisionConfig
 from .voice_config import VoiceConfig
 
-__all__ = [
-    "ContextConfig",
-    "LoopConfig",
-    "VisionConfig",
-    "VoiceConfig",
-]
+__all__ = ["ContextConfig", "LoopConfig", "VisionConfig", "VoiceConfig"]

@@ -73,10 +73,7 @@ class AvatarSysPromptTemplate:
         self._stable_behavior_rules = stable_behavior_rules
 
     def instructions(
-        self,
-        *,
-        stable_persona: str | None = None,
-        stable_behavior_rules: str | None = None,
+        self, *, stable_persona: str | None = None, stable_behavior_rules: str | None = None
     ) -> str:
         persona = (
             self._stable_persona
@@ -105,11 +102,7 @@ class AvatarSysPromptTemplate:
 class RuntimeStateTemplate:
     """Render dynamic current-answer-only runtime state."""
 
-    def render(
-        self,
-        *,
-        state_runtime: StateRuntime,
-    ) -> str:
+    def render(self, *, state_runtime: StateRuntime) -> str:
         return RUNTIME_CONTEXT_PROMPT.format(
             participant_time=_render_participant_time(state_runtime.participant_time),
             memory_content=_xml_text(state_runtime.memory_content),

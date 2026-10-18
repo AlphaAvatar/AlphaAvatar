@@ -159,25 +159,16 @@ async def create_execution(config: ApplicationConfig, access: SessionContext) ->
         },
     )
     runtime = await create_avatar_runtime(
-        avatar_config=avatar,
-        workspace=workspace,
-        session=session,
-        state=state,
+        avatar_config=avatar, workspace=workspace, session=session, state=state
     )
 
     # Engine
     resources = AsyncExitStack()
     resources.push_async_callback(runtime.aclose)
     try:
-        engine = AvatarEngine(
-            avatar_config=avatar,
-            runtime=runtime,
-        )
+        engine = AvatarEngine(avatar_config=avatar, runtime=runtime)
         resources.push_async_callback(engine.on_stop)
-        execution = HostExecution(
-            runtime=runtime,
-            engine=engine,
-        )
+        execution = HostExecution(runtime=runtime, engine=engine)
         resources.pop_all()
         return execution
     except BaseException as original:

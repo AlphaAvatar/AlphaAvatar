@@ -31,10 +31,7 @@ def validate_handler(handler: Any, *, bound: bool = True) -> None:
 
 
 def avatar_capability(
-    *,
-    name: str,
-    description: str,
-    input_schema: type[BaseModel] | dict[str, Any] | None = None,
+    *, name: str, description: str, input_schema: type[BaseModel] | dict[str, Any] | None = None
 ):
     capability = AvatarCapability(name, description, input_schema)
 

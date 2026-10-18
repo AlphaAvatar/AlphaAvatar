@@ -16,9 +16,4 @@ from .graph_builder import build_graph_from_mentions
 from .graph_lookup import GraphLookup
 from .graph_store import export_memory_graph
 
-__all__ = [
-    "save_graph_aliases",
-    "build_graph_from_mentions",
-    "GraphLookup",
-    "export_memory_graph",
-]
+__all__ = ["save_graph_aliases", "build_graph_from_mentions", "GraphLookup", "export_memory_graph"]

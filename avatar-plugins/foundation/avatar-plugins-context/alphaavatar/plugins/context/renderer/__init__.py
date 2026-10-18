@@ -16,9 +16,4 @@ from .realtime import RealtimeRenderer
 from .text import TextRenderer
 from .vlm import VLMRenderer
 
-__all__ = [
-    "RendererRegistry",
-    "TextRenderer",
-    "VLMRenderer",
-    "RealtimeRenderer",
-]
+__all__ = ["RendererRegistry", "TextRenderer", "VLMRenderer", "RealtimeRenderer"]

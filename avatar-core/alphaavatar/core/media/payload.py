@@ -37,19 +37,11 @@ class MediaPayload:
     Consumers explicitly request the representation they need.
     """
 
-    def __init__(
-        self,
-        *,
-        modality: str,
-        metadata: dict[str, Any] | None = None,
-    ) -> None:
+    def __init__(self, *, modality: str, metadata: dict[str, Any] | None = None) -> None:
         self.modality = modality
         self.metadata = metadata or {}
 
-        self._representations: dict[
-            tuple[PayloadView, PayloadFormat],
-            Any,
-        ] = {}
+        self._representations: dict[tuple[PayloadView, PayloadFormat], Any] = {}
 
         self._lock = RLock()
         self._revision = 0
@@ -64,13 +56,7 @@ class MediaPayload:
         with self._lock:
             return bool(self._representations)
 
-    def put(
-        self,
-        fmt: PayloadFormat,
-        value: Any,
-        *,
-        view: PayloadView = PayloadView.RAW,
-    ) -> None:
+    def put(self, fmt: PayloadFormat, value: Any, *, view: PayloadView = PayloadView.RAW) -> None:
         if value is None:
             raise ValueError(f"Cannot store None payload representation: view={view}, format={fmt}")
 
@@ -119,12 +105,7 @@ class MediaPayload:
             f"format={fmt.value!r}"
         )
 
-    def remove(
-        self,
-        fmt: PayloadFormat,
-        *,
-        view: PayloadView,
-    ) -> None:
+    def remove(self, fmt: PayloadFormat, *, view: PayloadView) -> None:
         with self._lock:
             removed = self._representations.pop((view, fmt), None)
             if removed is not None:
@@ -135,8 +116,6 @@ class MediaPayload:
             self._representations.clear()
             self._revision += 1
 
-    def available_representations(
-        self,
-    ) -> tuple[tuple[PayloadView, PayloadFormat], ...]:
+    def available_representations(self) -> tuple[tuple[PayloadView, PayloadFormat], ...]:
         with self._lock:
             return tuple(self._representations.keys())

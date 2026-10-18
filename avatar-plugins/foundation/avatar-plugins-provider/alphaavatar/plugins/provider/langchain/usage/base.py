@@ -101,10 +101,7 @@ def sum_optional(*values: int | None) -> int | None:
 
 
 def calculate_total_tokens(
-    *,
-    input_tokens: int | None,
-    output_tokens: int | None,
-    total_tokens: int | None = None,
+    *, input_tokens: int | None, output_tokens: int | None, total_tokens: int | None = None
 ) -> int | None:
     if total_tokens is not None:
         return total_tokens
@@ -169,8 +166,5 @@ def extract_langchain_response_metadata(raw_response: Any) -> dict[str, Any]:
 class UsageNormalizer(ABC):
     @abstractmethod
     def normalize(
-        self,
-        *,
-        raw_response: Any = None,
-        raw_usage: dict[str, Any] | None = None,
+        self, *, raw_response: Any = None, raw_usage: dict[str, Any] | None = None
     ) -> ProviderUsage: ...

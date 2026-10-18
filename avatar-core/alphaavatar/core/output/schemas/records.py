@@ -14,11 +14,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Generic, TypeVar
 
 from ..enums import ExecutionSignalKind
-
-T = TypeVar("T")
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,7 +34,7 @@ class OutputScope:
 
 
 @dataclass(frozen=True, slots=True)
-class OutputRecordBatch(Generic[T]):
+class OutputRecordBatch[T]:
     """Immutable producer-owned records, not user delivery or durable persistence.
 
     digest identifies the frozen content; size_bytes accounts for retained payload.

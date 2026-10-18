@@ -150,14 +150,11 @@ class PerceptionWindowBuilder:
         )
 
         return PerceptionWindow(
-            consumer_id=consumer_id,
-            observations=observations,
-            stream_reads=reads,
+            consumer_id=consumer_id, observations=observations, stream_reads=reads
         )
 
     def commit(self, window: PerceptionWindow) -> None:
         for stream_name, result in window.stream_reads.items():
             self._get_stream(stream_name).commit(
-                consumer_id=window.consumer_id,
-                cursor_seq=result.cursor_seq,
+                consumer_id=window.consumer_id, cursor_seq=result.cursor_seq
             )

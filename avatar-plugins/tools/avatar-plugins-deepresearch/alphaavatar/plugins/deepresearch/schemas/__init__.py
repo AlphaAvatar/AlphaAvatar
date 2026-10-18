@@ -14,8 +14,4 @@
 from .request import DeepResearchRequest
 from .tavily_obj import TavilyExtractObj, TavilySearchObj
 
-__all__ = [
-    "DeepResearchRequest",
-    "TavilyExtractObj",
-    "TavilySearchObj",
-]
+__all__ = ["DeepResearchRequest", "TavilyExtractObj", "TavilySearchObj"]

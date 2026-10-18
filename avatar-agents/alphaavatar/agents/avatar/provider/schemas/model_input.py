@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any
 
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.perception import AlignedPerception
@@ -93,7 +93,7 @@ class ModelTemporalPart:
         )
 
 
-ModelInputPart: TypeAlias = (
+type ModelInputPart = (
     ModelTextPart
     | ModelRefusalPart
     | ModelReasoningPart
@@ -155,7 +155,7 @@ class ModelControlItem:
     created_at: float | None = None
 
 
-ModelInputItem: TypeAlias = (
+type ModelInputItem = (
     ModelInputMessage
     | ModelFunctionCall
     | ModelFunctionOutput
@@ -181,8 +181,7 @@ class ModelInput:
 
     def replace(self, item_id: str, replacement: ModelInputItem) -> ModelInput:
         return replace(
-            self,
-            items=tuple(replacement if item.id == item_id else item for item in self.items),
+            self, items=tuple(replacement if item.id == item_id else item for item in self.items)
         )
 
     def remove(self, item_id: str) -> ModelInput:

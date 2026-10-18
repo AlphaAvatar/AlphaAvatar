@@ -13,6 +13,4 @@
 # limitations under the License.
 from .context_builder import ContextBuilder
 
-__all__ = [
-    "ContextBuilder",
-]
+__all__ = ["ContextBuilder"]

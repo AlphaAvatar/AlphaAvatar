@@ -14,8 +14,4 @@
 from .semantic_addressing import SemanticAddressingModelBase
 from .turn_taking import TurnTakingModelBase, TurnTakingModelCapabilities
 
-__all__ = [
-    "SemanticAddressingModelBase",
-    "TurnTakingModelBase",
-    "TurnTakingModelCapabilities",
-]
+__all__ = ["SemanticAddressingModelBase", "TurnTakingModelBase", "TurnTakingModelCapabilities"]

@@ -33,12 +33,10 @@ class PersonaConfig(BaseModel):
 
     plugin: str = Field(default="default", description="Persona runtime plugin name.")
     vdb_config: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Persona VDB initialization parameters.",
+        default_factory=dict, description="Persona VDB initialization parameters."
     )
     init_config: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Persona plugin-owned configuration.",
+        default_factory=dict, description="Persona plugin-owned configuration."
     )
 
     def model_post_init(self, __context: Any) -> None:
@@ -57,10 +55,7 @@ class PersonaConfig(BaseModel):
 
     def get_plugin(self, runtime: AvatarRuntime) -> PersonaBase:
         persona = AvatarModulePlugin.create(
-            AvatarModule.PERSONA,
-            self.plugin,
-            runtime=runtime,
-            init_config=self.init_config,
+            AvatarModule.PERSONA, self.plugin, runtime=runtime, init_config=self.init_config
         )
         if persona is None:
             raise ValueError(f"Persona plugin '{self.plugin}' is not registered or returned None.")

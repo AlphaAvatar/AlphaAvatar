@@ -13,6 +13,4 @@
 # limitations under the License.
 from .request import RAGRequest
 
-__all__ = [
-    "RAGRequest",
-]
+__all__ = ["RAGRequest"]

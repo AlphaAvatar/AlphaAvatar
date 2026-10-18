@@ -13,6 +13,4 @@
 # limitations under the License.
 from .tools_config import ToolsConfig
 
-__all__ = [
-    "ToolsConfig",
-]
+__all__ = ["ToolsConfig"]

@@ -20,26 +20,16 @@ from datetime import datetime
 from typing import Any
 
 from alphaavatar.agents.memory.enums import MemoryKind
-from alphaavatar.agents.memory.schemas import (
-    MemoryItem,
-    MemorySearchHit,
-)
+from alphaavatar.agents.memory.schemas import MemoryItem, MemorySearchHit
 
 from ....log import logger
-from .candidates import (
-    RecalledCandidateCache,
-    consolidated_from_hits,
-    merge_candidates,
-)
+from .candidates import RecalledCandidateCache, consolidated_from_hits, merge_candidates
 from .config import CandidateSource, ConsolidationConfig, ConsolidationMode
 from .consolidation_op import apply_assignments
 from .prompts import render_candidates, render_incoming
 from .schema import ConsolidationPlan, ConsolidationResult
 
-CandidateSearch = Callable[
-    ...,
-    Awaitable[list[list[MemorySearchHit]]],
-]
+CandidateSearch = Callable[..., Awaitable[list[list[MemorySearchHit]]]]
 PlanConsolidation = Callable[..., Awaitable[ConsolidationPlan]]
 
 
@@ -71,8 +61,7 @@ def _validate_batch(items: list[MemoryItem]) -> MemoryItem:
 
 
 def _compatible_candidates(
-    items: list[MemoryItem],
-    candidates: Iterable[MemoryItem],
+    items: list[MemoryItem], candidates: Iterable[MemoryItem]
 ) -> list[MemoryItem]:
     first = _validate_batch(items)
     owners = _owner_keys(first)
@@ -88,29 +77,17 @@ def _compatible_candidates(
 
 
 def _log_hit_scores(
-    items: list[MemoryItem],
-    hits: list[list[MemorySearchHit]],
-    *,
-    threshold: float,
+    items: list[MemoryItem], hits: list[list[MemorySearchHit]], *, threshold: float
 ) -> None:
     if not logger.isEnabledFor(logging.DEBUG):
         return
 
     for item, item_hits in zip(items, hits, strict=False):
         if not item_hits:
-            logger.debug(
-                "[Memory] consolidation candidates memory=%s none",
-                item.memory_id[:8],
-            )
+            logger.debug("[Memory] consolidation candidates memory=%s none", item.memory_id[:8])
             continue
 
-        ranked = sorted(
-            (
-                hit.score,
-                hit.memory.memory_id[:8],
-            )
-            for hit in item_hits
-        )
+        ranked = sorted((hit.score, hit.memory.memory_id[:8]) for hit in item_hits)
 
         logger.debug(
             "[Memory] consolidation candidates memory=%s threshold=%.2f -> %s",
@@ -170,18 +147,10 @@ class MemoryConsolidator:
         trace_metadata: dict[str, Any],
     ) -> ConsolidationResult:
         if not items:
-            return ConsolidationResult(
-                source_items=[],
-                to_insert=[],
-                to_rewrite=[],
-            )
+            return ConsolidationResult(source_items=[], to_insert=[], to_rewrite=[])
 
         first = _validate_batch(items)
-        fallback = ConsolidationResult(
-            source_items=list(items),
-            to_insert=[],
-            to_rewrite=[],
-        )
+        fallback = ConsolidationResult(source_items=list(items), to_insert=[], to_rewrite=[])
 
         if not self.enabled:
             return fallback
@@ -197,11 +166,7 @@ class MemoryConsolidator:
             )
 
             result = apply_assignments(
-                items,
-                candidates,
-                plan,
-                resolve_sources=self.resolve_sources,
-                updated_at=updated_at,
+                items, candidates, plan, resolve_sources=self.resolve_sources, updated_at=updated_at
             )
         except asyncio.CancelledError:
             raise
@@ -232,10 +197,7 @@ class MemoryConsolidator:
 
         return result
 
-    async def _collect_candidates(
-        self,
-        items: list[MemoryItem],
-    ) -> list[MemoryItem]:
+    async def _collect_candidates(self, items: list[MemoryItem]) -> list[MemoryItem]:
         first = _validate_batch(items)
 
         if self._config.mode is ConsolidationMode.SESSION_SUMMARY:
@@ -244,29 +206,19 @@ class MemoryConsolidator:
         source = self._config.candidate_source
         from_recall: list[MemoryItem] = []
 
-        if source in (
-            CandidateSource.QUERY_RECALL,
-            CandidateSource.UNION,
-        ):
+        if source in (CandidateSource.QUERY_RECALL, CandidateSource.UNION):
             from_recall = self._recalled_candidates.candidates()
 
         from_lookup: list[MemoryItem] = []
 
-        if source in (
-            CandidateSource.CONSOLIDATED_LOOKUP,
-            CandidateSource.UNION,
-        ):
+        if source in (CandidateSource.CONSOLIDATED_LOOKUP, CandidateSource.UNION):
             hits = await self._candidate_search(
                 [item.embedding_text() for item in items],
                 owner_refs=first.owner_refs,
                 context=first.context,
             )
 
-            _log_hit_scores(
-                items,
-                hits,
-                threshold=self._config.similarity_threshold,
-            )
+            _log_hit_scores(items, hits, threshold=self._config.similarity_threshold)
 
             from_lookup = consolidated_from_hits(
                 hits,
@@ -274,13 +226,7 @@ class MemoryConsolidator:
                 limit=self._config.max_candidates_per_item,
             )
 
-        return _compatible_candidates(
-            items,
-            merge_candidates(
-                from_lookup,
-                from_recall,
-            ),
-        )
+        return _compatible_candidates(items, merge_candidates(from_lookup, from_recall))
 
     async def _invoke(
         self,
@@ -303,9 +249,6 @@ class MemoryConsolidator:
         return await self._plan(
             payload=payload,
             session_summary=session_summary,
-            metadata={
-                **trace_metadata,
-                "operation": "memory_consolidation",
-            },
+            metadata={**trace_metadata, "operation": "memory_consolidation"},
             timeout=self._config.timeout,
         )

@@ -49,7 +49,7 @@ FACE_MODEL_CONFIG: dict[FaceModelType, RunnerFaceModelConfig] = {
         jpeg_quality=85,
         embedding_dim=512,
         inference_timeout_sec=2.0,
-    ),
+    )
 }
 
 

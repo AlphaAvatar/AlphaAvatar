@@ -206,12 +206,7 @@ class StatusState:
         self.offer(notice, present=True)
 
     def interrupt(
-        self,
-        *,
-        run_id: str | None,
-        turn_id: str | None,
-        event_id: str,
-        at_ns: int | None = None,
+        self, *, run_id: str | None, turn_id: str | None, event_id: str, at_ns: int | None = None
     ) -> None:
         view = self._view
         if view is None or (at_ns is not None and at_ns < self._turn_time):

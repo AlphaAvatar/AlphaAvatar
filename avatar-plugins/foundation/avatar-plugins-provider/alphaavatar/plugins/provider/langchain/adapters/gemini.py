@@ -21,11 +21,7 @@ from dataclasses import dataclass
 from typing import Any
 from xml.sax.saxutils import quoteattr
 
-from langchain_core.messages import (
-    AIMessage,
-    HumanMessage,
-    SystemMessage,
-)
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from alphaavatar.agents.avatar.provider.enums import ModelRole
 from alphaavatar.agents.avatar.provider.schemas import (
@@ -68,46 +64,24 @@ class LangChainGeminiInputAdapter:
     not one independent audio block per fixed slice.
     """
 
-    _VISUAL_KINDS = {
-        ObservationKind.VIDEO_FRAME,
-        ObservationKind.SCREEN_FRAME,
-    }
+    _VISUAL_KINDS = {ObservationKind.VIDEO_FRAME, ObservationKind.SCREEN_FRAME}
 
-    _AUDIO_KINDS = {
-        ObservationKind.AUDIO_FRAME,
-        ObservationKind.AUDIO_SEGMENT,
-    }
+    _AUDIO_KINDS = {ObservationKind.AUDIO_FRAME, ObservationKind.AUDIO_SEGMENT}
 
-    async def adapt(
-        self,
-        model_input: ModelInput,
-        *,
-        config: ProviderTaskConfig,
-    ) -> list[Any]:
-        return await asyncio.to_thread(
-            self._adapt_sync,
-            model_input,
-            config,
-        )
+    async def adapt(self, model_input: ModelInput, *, config: ProviderTaskConfig) -> list[Any]:
+        return await asyncio.to_thread(self._adapt_sync, model_input, config)
 
     @staticmethod
     def _attr(value: object) -> str:
         return quoteattr(str(value))
 
     @staticmethod
-    def _relative_sec(
-        temporal: ModelTemporalPart,
-        monotonic_ns: int,
-    ) -> float:
+    def _relative_sec(temporal: ModelTemporalPart, monotonic_ns: int) -> float:
         start_ns = temporal.alignment.time_range.start.monotonic_ns
         return max(0, monotonic_ns - start_ns) / 1_000_000_000
 
     @classmethod
-    def _relative_label(
-        cls,
-        temporal: ModelTemporalPart,
-        monotonic_ns: int,
-    ) -> str:
+    def _relative_label(cls, temporal: ModelTemporalPart, monotonic_ns: int) -> str:
         return f"+{cls._relative_sec(temporal, monotonic_ns):.2f}s"
 
     @staticmethod
@@ -120,9 +94,7 @@ class LangChainGeminiInputAdapter:
         if observation.kind == ObservationKind.AUDIO_FRAME:
             try:
                 frame = payload.get(
-                    PayloadFormat.AUDIO_FRAME,
-                    view=PayloadView.RAW,
-                    fallback_to_raw=False,
+                    PayloadFormat.AUDIO_FRAME, view=PayloadView.RAW, fallback_to_raw=False
                 )
             except PayloadFormatUnavailable:
                 return None
@@ -142,9 +114,7 @@ class LangChainGeminiInputAdapter:
 
         try:
             data = payload.get(
-                PayloadFormat.AUDIO_PCM16_BYTES,
-                view=PayloadView.RAW,
-                fallback_to_raw=False,
+                PayloadFormat.AUDIO_PCM16_BYTES, view=PayloadView.RAW, fallback_to_raw=False
             )
         except PayloadFormatUnavailable:
             return None
@@ -160,19 +130,11 @@ class LangChainGeminiInputAdapter:
             return None
 
         return _AudioPiece(
-            observation=observation,
-            sample_rate=sample_rate,
-            num_channels=num_channels,
-            data=data,
+            observation=observation, sample_rate=sample_rate, num_channels=num_channels, data=data
         )
 
     @staticmethod
-    def _wav(
-        pcm: bytes,
-        *,
-        sample_rate: int,
-        num_channels: int,
-    ) -> bytes:
+    def _wav(pcm: bytes, *, sample_rate: int, num_channels: int) -> bytes:
         output = io.BytesIO()
 
         with wave.open(output, "wb") as wav:
@@ -184,9 +146,7 @@ class LangChainGeminiInputAdapter:
         return output.getvalue()
 
     def _build_audio_track(
-        self,
-        source: PerceptionSourceRef,
-        pieces: list[_AudioPiece],
+        self, source: PerceptionSourceRef, pieces: list[_AudioPiece]
     ) -> _AudioTrack:
         pieces.sort(
             key=lambda item: (
@@ -210,10 +170,7 @@ class LangChainGeminiInputAdapter:
 
         start_ns = min(item.observation.time_range.start.monotonic_ns for item in pieces)
         end_ns = max(item.observation.time_range.end.monotonic_ns for item in pieces)
-        total_samples = max(
-            1,
-            round((end_ns - start_ns) * sample_rate / 1_000_000_000),
-        )
+        total_samples = max(1, round((end_ns - start_ns) * sample_rate / 1_000_000_000))
         pcm = bytearray(total_samples * frame_width)
 
         for item in pieces:
@@ -226,10 +183,7 @@ class LangChainGeminiInputAdapter:
 
             source_start = max(0, -offset_samples)
             target_start = max(0, offset_samples)
-            copy_samples = min(
-                source_samples - source_start,
-                total_samples - target_start,
-            )
+            copy_samples = min(source_samples - source_start, total_samples - target_start)
 
             if copy_samples <= 0:
                 continue
@@ -244,17 +198,10 @@ class LangChainGeminiInputAdapter:
             source=source,
             start_ns=start_ns,
             end_ns=end_ns,
-            wav_bytes=self._wav(
-                bytes(pcm),
-                sample_rate=sample_rate,
-                num_channels=num_channels,
-            ),
+            wav_bytes=self._wav(bytes(pcm), sample_rate=sample_rate, num_channels=num_channels),
         )
 
-    def _audio_tracks(
-        self,
-        temporal: ModelTemporalPart,
-    ) -> tuple[_AudioTrack, ...]:
+    def _audio_tracks(self, temporal: ModelTemporalPart) -> tuple[_AudioTrack, ...]:
         observations = [
             observation
             for observation in temporal.observations
@@ -280,11 +227,7 @@ class LangChainGeminiInputAdapter:
                 groups.setdefault(source, []).append(piece)
 
         ordered_sources = sorted(
-            groups,
-            key=lambda source: (
-                source.source_id,
-                source.source_generation,
-            ),
+            groups, key=lambda source: (source.source_id, source.source_generation)
         )
 
         return tuple(
@@ -302,9 +245,7 @@ class LangChainGeminiInputAdapter:
 
         try:
             image = payload.get(
-                PayloadFormat.IMAGE_JPEG_BYTES,
-                view=PayloadView.ANNOTATED,
-                fallback_to_raw=True,
+                PayloadFormat.IMAGE_JPEG_BYTES, view=PayloadView.ANNOTATED, fallback_to_raw=True
             )
         except PayloadFormatUnavailable:
             return None
@@ -319,21 +260,13 @@ class LangChainGeminiInputAdapter:
         }
 
     @staticmethod
-    def _append_text(
-        content: list[dict[str, Any]],
-        text: str,
-    ) -> None:
+    def _append_text(content: list[dict[str, Any]], text: str) -> None:
         if content and content[-1].get("type") == "text":
             content[-1]["text"] += f"\n{text}"
         else:
             content.append({"type": "text", "text": text})
 
-    def _states_xml(
-        self,
-        temporal: ModelTemporalPart,
-        *,
-        boundary: str,
-    ) -> str:
+    def _states_xml(self, temporal: ModelTemporalPart, *, boundary: str) -> str:
         states = (
             temporal.alignment.source_states_at_start
             if boundary == "start"
@@ -360,10 +293,7 @@ class LangChainGeminiInputAdapter:
         return "\n".join(lines)
 
     def _temporal_blocks(
-        self,
-        temporal: ModelTemporalPart,
-        *,
-        config: ProviderTaskConfig,
+        self, temporal: ModelTemporalPart, *, config: ProviderTaskConfig
     ) -> list[dict[str, Any]]:
         content: list[dict[str, Any]] = []
         tracks = self._audio_tracks(temporal)
@@ -378,10 +308,7 @@ class LangChainGeminiInputAdapter:
             )
 
         alignment = temporal.alignment
-        end = self._relative_label(
-            temporal,
-            alignment.time_range.end.monotonic_ns,
-        )
+        end = self._relative_label(temporal, alignment.time_range.end.monotonic_ns)
 
         self._append_text(
             content,
@@ -389,11 +316,7 @@ class LangChainGeminiInputAdapter:
                 (
                     f"<temporal_input mode={self._attr(alignment.mode.value)} "
                     f'start="+0.00s" end={self._attr(end)}>',
-                    "  "
-                    + self._states_xml(
-                        temporal,
-                        boundary="start",
-                    ).replace("\n", "\n  "),
+                    "  " + self._states_xml(temporal, boundary="start").replace("\n", "\n  "),
                 )
             ),
         )
@@ -417,14 +340,8 @@ class LangChainGeminiInputAdapter:
             self._append_text(content, "  </audio_track>")
 
         for item in temporal.slices:
-            start = self._relative_label(
-                temporal,
-                item.time_range.start.monotonic_ns,
-            )
-            end = self._relative_label(
-                temporal,
-                item.time_range.end.monotonic_ns,
-            )
+            start = self._relative_label(temporal, item.time_range.start.monotonic_ns)
+            end = self._relative_label(temporal, item.time_range.end.monotonic_ns)
 
             self._append_text(
                 content,
@@ -445,10 +362,7 @@ class LangChainGeminiInputAdapter:
                 if state is None:
                     continue
 
-                at = self._relative_label(
-                    temporal,
-                    event.time_range.end.monotonic_ns,
-                )
+                at = self._relative_label(temporal, event.time_range.end.monotonic_ns)
                 reason = "" if not state.reason else f" reason={self._attr(state.reason)}"
 
                 self._append_text(
@@ -473,8 +387,7 @@ class LangChainGeminiInputAdapter:
                     continue
 
                 captured_at = self._relative_label(
-                    temporal,
-                    observation.time_range.end.monotonic_ns,
+                    temporal, observation.time_range.end.monotonic_ns
                 )
 
                 self._append_text(
@@ -491,22 +404,14 @@ class LangChainGeminiInputAdapter:
             self._append_text(content, "  </slice>")
 
         self._append_text(
-            content,
-            "  "
-            + self._states_xml(
-                temporal,
-                boundary="end",
-            ).replace("\n", "\n  "),
+            content, "  " + self._states_xml(temporal, boundary="end").replace("\n", "\n  ")
         )
         self._append_text(content, "</temporal_input>")
 
         return content
 
     def _message_content(
-        self,
-        message: ModelInputMessage,
-        *,
-        config: ProviderTaskConfig,
+        self, message: ModelInputMessage, *, config: ProviderTaskConfig
     ) -> list[dict[str, Any]]:
         content: list[dict[str, Any]] = []
 
@@ -523,22 +428,13 @@ class LangChainGeminiInputAdapter:
                 raise NotImplementedError("Direct ModelAudioPart is not used by ENV Memory")
 
             elif isinstance(part, ModelTemporalPart):
-                content.extend(
-                    self._temporal_blocks(
-                        part,
-                        config=config,
-                    )
-                )
+                content.extend(self._temporal_blocks(part, config=config))
             else:
                 raise TypeError(f"LangChain Gemini adapter cannot encode {type(part).__name__}")
 
         return content
 
-    def _adapt_sync(
-        self,
-        model_input: ModelInput,
-        config: ProviderTaskConfig,
-    ) -> list[Any]:
+    def _adapt_sync(self, model_input: ModelInput, config: ProviderTaskConfig) -> list[Any]:
         if model_input.realtime is not None:
             raise ValueError("Gemini task adapter cannot consume native realtime snapshots")
 

@@ -15,11 +15,7 @@ from .cache_type import MemoryCacheType
 from .memory_kind import MemoryKind
 from .memory_type import MemoryType
 from .outbox import MemoryOutboxTarget
-from .reference import (
-    MemoryOwnerKind,
-    MemoryParticipantKind,
-    MemorySourceKind,
-)
+from .reference import MemoryOwnerKind, MemoryParticipantKind, MemorySourceKind
 from .runner_op import VectorRunnerOP
 from .scope import MemoryScopeKind
 

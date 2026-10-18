@@ -47,11 +47,7 @@ def get_md5_id(items: Sequence[str]) -> str:
     Order-sensitive:
     ["a", "b"] and ["b", "a"] will produce different ids.
     """
-    payload = json.dumps(
-        list(items),
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
+    payload = json.dumps(list(items), ensure_ascii=False, separators=(",", ":"))
     return hashlib.md5(payload.encode("utf-8")).hexdigest()
 
 
@@ -67,10 +63,7 @@ def normalize_url(url: str) -> str:
     # Sort query parameters to make URL order-insensitive
     query = urlencode(sorted(parse_qsl(parsed.query)))
 
-    return parsed._replace(
-        fragment="",
-        query=query,
-    ).geturl()
+    return parsed._replace(fragment="", query=query).geturl()
 
 
 def url_to_filename_id(url: str, hash_len: int = 6) -> str:
@@ -89,11 +82,7 @@ def url_to_filename_id(url: str, hash_len: int = 6) -> str:
     # Build readable part: domain + path
     readable_part = f"{parsed.netloc}{parsed.path}"
 
-    slug = slugify(
-        readable_part,
-        lowercase=True,
-        separator="-",
-    )
+    slug = slugify(readable_part, lowercase=True, separator="-")
 
     # Short hash for uniqueness
     hash_id = hashlib.sha1(normalized_url.encode("utf-8")).hexdigest()[:hash_len]

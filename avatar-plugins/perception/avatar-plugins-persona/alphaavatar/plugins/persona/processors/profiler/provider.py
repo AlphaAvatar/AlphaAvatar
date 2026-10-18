@@ -28,11 +28,7 @@ class ProfilerProvider:
         self._gateway.validate_tasks([self._task])
 
     async def extract(
-        self,
-        *,
-        profile_details_dump: dict[str, Any],
-        new_turn: str,
-        metadata: dict[str, Any],
+        self, *, profile_details_dump: dict[str, Any], new_turn: str, metadata: dict[str, Any]
     ) -> ProfileDelta:
         result = await self._gateway.ainvoke_structured(
             task_name=self._task,

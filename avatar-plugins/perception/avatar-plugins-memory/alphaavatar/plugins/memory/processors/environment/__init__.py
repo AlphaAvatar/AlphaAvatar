@@ -14,7 +14,4 @@
 from .config import EnvironmentConfig
 from .processor import EnvironmentProcessor
 
-__all__ = [
-    "EnvironmentConfig",
-    "EnvironmentProcessor",
-]
+__all__ = ["EnvironmentConfig", "EnvironmentProcessor"]

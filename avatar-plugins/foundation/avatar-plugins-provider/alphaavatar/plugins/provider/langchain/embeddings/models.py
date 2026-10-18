@@ -25,10 +25,7 @@ def _create_openai_embedding(config: ProviderTaskConfig):
 
     kwargs = dict(config.extra or {})
 
-    return OpenAIEmbeddings(
-        model=config.model,
-        **kwargs,
-    )
+    return OpenAIEmbeddings(model=config.model, **kwargs)
 
 
 def _create_google_embedding(config: ProviderTaskConfig):
@@ -42,10 +39,7 @@ def _create_google_embedding(config: ProviderTaskConfig):
 
     kwargs = dict(config.extra or {})
 
-    return GoogleGenerativeAIEmbeddings(
-        model=config.model,
-        **kwargs,
-    )
+    return GoogleGenerativeAIEmbeddings(model=config.model, **kwargs)
 
 
 def create_embedding_model(config: ProviderTaskConfig):

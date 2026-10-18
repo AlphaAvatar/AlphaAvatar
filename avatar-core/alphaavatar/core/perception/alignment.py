@@ -152,10 +152,7 @@ class PerceptionTemporalAligner:
     decide which observations should be supplied.
     """
 
-    _DIRECT_INPUT_KINDS = {
-        ObservationKind.TEXT_INPUT,
-        ObservationKind.IMAGE_INPUT,
-    }
+    _DIRECT_INPUT_KINDS = {ObservationKind.TEXT_INPUT, ObservationKind.IMAGE_INPUT}
 
     def __init__(self, policy: TemporalAlignmentPolicy | None = None) -> None:
         self.policy = policy or TemporalAlignmentPolicy()
@@ -182,49 +179,31 @@ class PerceptionTemporalAligner:
         modality = getattr(state.modality, "value", state.modality)
         source_kind = getattr(state.source_kind, "value", state.source_kind)
 
-        return (
-            str(modality),
-            str(source_kind),
-            state.source_id,
-            state.source_generation,
-        )
+        return (str(modality), str(source_kind), state.source_id, state.source_generation)
 
     """Time operations"""
 
     @staticmethod
     def _time_at(start: RuntimeTime, offset_ns: int) -> RuntimeTime:
         return RuntimeTime(
-            unix_ns=start.unix_ns + offset_ns,
-            monotonic_ns=start.monotonic_ns + offset_ns,
+            unix_ns=start.unix_ns + offset_ns, monotonic_ns=start.monotonic_ns + offset_ns
         )
 
     @staticmethod
     def _duration(start: RuntimeTime, end: RuntimeTime) -> float:
-        return (
-            max(
-                0,
-                end.monotonic_ns - start.monotonic_ns,
-            )
-            / 1_000_000_000
-        )
+        return max(0, end.monotonic_ns - start.monotonic_ns) / 1_000_000_000
 
     @staticmethod
-    def _boundary(
-        left: RuntimeTime,
-        right: RuntimeTime,
-    ) -> RuntimeTime:
+    def _boundary(left: RuntimeTime, right: RuntimeTime) -> RuntimeTime:
         if right.monotonic_ns <= left.monotonic_ns:
             return right
 
         return PerceptionTemporalAligner._time_at(
-            left,
-            (right.monotonic_ns - left.monotonic_ns) // 2,
+            left, (right.monotonic_ns - left.monotonic_ns) // 2
         )
 
     @staticmethod
-    def _midpoint_ns(
-        time_range: RuntimeTimeRange,
-    ) -> int:
+    def _midpoint_ns(time_range: RuntimeTimeRange) -> int:
         return (time_range.start.monotonic_ns + time_range.end.monotonic_ns) // 2
 
     @staticmethod
@@ -233,10 +212,7 @@ class PerceptionTemporalAligner:
 
     @staticmethod
     def _contains_point(
-        time_range: RuntimeTimeRange,
-        at_ns: int,
-        *,
-        include_end: bool = False,
+        time_range: RuntimeTimeRange, at_ns: int, *, include_end: bool = False
     ) -> bool:
         start = time_range.start.monotonic_ns
         end = time_range.end.monotonic_ns
@@ -247,11 +223,7 @@ class PerceptionTemporalAligner:
         return start <= at_ns < end
 
     @classmethod
-    def _overlaps(
-        cls,
-        left: RuntimeTimeRange,
-        right: RuntimeTimeRange,
-    ) -> bool:
+    def _overlaps(cls, left: RuntimeTimeRange, right: RuntimeTimeRange) -> bool:
         """
         Test temporal overlap using half-open interval semantics.
 
@@ -261,18 +233,10 @@ class PerceptionTemporalAligner:
         Point ranges are matched explicitly and may match the final boundary.
         """
         if cls._is_point(left):
-            return cls._contains_point(
-                right,
-                left.start.monotonic_ns,
-                include_end=True,
-            )
+            return cls._contains_point(right, left.start.monotonic_ns, include_end=True)
 
         if cls._is_point(right):
-            return cls._contains_point(
-                left,
-                right.start.monotonic_ns,
-                include_end=True,
-            )
+            return cls._contains_point(left, right.start.monotonic_ns, include_end=True)
 
         return (
             left.start.monotonic_ns < right.end.monotonic_ns
@@ -292,32 +256,21 @@ class PerceptionTemporalAligner:
     """Input normalization"""
 
     def _normalize(
-        self,
-        observations: Sequence[EnvObservation],
-        events: Sequence[PerceptionEvent],
+        self, observations: Sequence[EnvObservation], events: Sequence[PerceptionEvent]
     ) -> tuple[list[EnvObservation], list[PerceptionEvent]]:
         by_id = {item.observation_id: item for item in observations}
         source_events: list[PerceptionEvent] = []
 
         for event in events:
             if event.observation is not None:
-                by_id.setdefault(
-                    event.observation.observation_id,
-                    event.observation,
-                )
+                by_id.setdefault(event.observation.observation_id, event.observation)
 
             elif event.source_state is not None:
                 source_events.append(event)
 
         return (
-            sorted(
-                by_id.values(),
-                key=self._observation_key,
-            ),
-            sorted(
-                source_events,
-                key=self._event_key,
-            ),
+            sorted(by_id.values(), key=self._observation_key),
+            sorted(source_events, key=self._event_key),
         )
 
     @staticmethod
@@ -336,22 +289,13 @@ class PerceptionTemporalAligner:
             raise ValueError("time_range is required when no temporal evidence exists")
 
         return RuntimeTimeRange(
-            start=min(
-                ranges,
-                key=lambda item: item.start.monotonic_ns,
-            ).start,
-            end=max(
-                ranges,
-                key=lambda item: item.end.monotonic_ns,
-            ).end,
+            start=min(ranges, key=lambda item: item.start.monotonic_ns).start,
+            end=max(ranges, key=lambda item: item.end.monotonic_ns).end,
         )
 
     """Fixed alignment"""
 
-    def _partition(
-        self,
-        time_range: RuntimeTimeRange,
-    ) -> tuple[RuntimeTimeRange, ...]:
+    def _partition(self, time_range: RuntimeTimeRange) -> tuple[RuntimeTimeRange, ...]:
         duration_ns = time_range.end.monotonic_ns - time_range.start.monotonic_ns
 
         if duration_ns <= 0:
@@ -359,50 +303,29 @@ class PerceptionTemporalAligner:
 
         duration_sec = duration_ns / 1_000_000_000
 
-        target_count = max(
-            1,
-            ceil(duration_sec / self.policy.interval_sec),
-        )
-        minimum_count = max(
-            1,
-            ceil(duration_sec / self.policy.max_interval_sec),
-        )
-        maximum_count = max(
-            1,
-            floor(duration_sec / self.policy.min_interval_sec),
-        )
+        target_count = max(1, ceil(duration_sec / self.policy.interval_sec))
+        minimum_count = max(1, ceil(duration_sec / self.policy.max_interval_sec))
+        maximum_count = max(1, floor(duration_sec / self.policy.min_interval_sec))
 
         count = max(target_count, minimum_count)
 
         if maximum_count >= minimum_count:
-            count = min(
-                count,
-                maximum_count,
-            )
+            count = min(count, maximum_count)
 
         return tuple(
             RuntimeTimeRange(
-                start=self._time_at(
-                    time_range.start,
-                    duration_ns * index // count,
-                ),
+                start=self._time_at(time_range.start, duration_ns * index // count),
                 end=(
                     time_range.end
                     if index == count - 1
-                    else self._time_at(
-                        time_range.start,
-                        duration_ns * (index + 1) // count,
-                    )
+                    else self._time_at(time_range.start, duration_ns * (index + 1) // count)
                 ),
             )
             for index in range(count)
         )
 
     @staticmethod
-    def _point_slice_index(
-        ranges: Sequence[RuntimeTimeRange],
-        at_ns: int,
-    ) -> int:
+    def _point_slice_index(ranges: Sequence[RuntimeTimeRange], at_ns: int) -> int:
         """
         Assign a point to one fixed slice.
 
@@ -416,36 +339,21 @@ class PerceptionTemporalAligner:
         return len(ranges) - 1
 
     def _observation_slice_indices(
-        self,
-        ranges: Sequence[RuntimeTimeRange],
-        observation: EnvObservation,
+        self, ranges: Sequence[RuntimeTimeRange], observation: EnvObservation
     ) -> tuple[int, ...]:
         if self._is_point(observation.time_range):
-            return (
-                self._point_slice_index(
-                    ranges,
-                    observation.time_range.end.monotonic_ns,
-                ),
-            )
+            return (self._point_slice_index(ranges, observation.time_range.end.monotonic_ns),)
 
         indices = tuple(
             index
             for index, time_range in enumerate(ranges)
-            if self._overlaps(
-                observation.time_range,
-                time_range,
-            )
+            if self._overlaps(observation.time_range, time_range)
         )
 
         if indices:
             return indices
 
-        return (
-            self._point_slice_index(
-                ranges,
-                self._midpoint_ns(observation.time_range),
-            ),
-        )
+        return (self._point_slice_index(ranges, self._midpoint_ns(observation.time_range)),)
 
     def _fixed_drafts(
         self,
@@ -461,17 +369,11 @@ class PerceptionTemporalAligner:
         event_groups: list[list[PerceptionEvent]] = [[] for _ in ranges]
 
         for observation in observations:
-            for index in self._observation_slice_indices(
-                ranges,
-                observation,
-            ):
+            for index in self._observation_slice_indices(ranges, observation):
                 observation_groups[index].append(observation)
 
         for event in source_events:
-            index = self._point_slice_index(
-                ranges,
-                event.time_range.end.monotonic_ns,
-            )
+            index = self._point_slice_index(ranges, event.time_range.end.monotonic_ns)
             event_groups[index].append(event)
 
         return [
@@ -488,8 +390,7 @@ class PerceptionTemporalAligner:
     """Speech alignment"""
 
     def _speech_segments(
-        self,
-        observations: Sequence[EnvObservation],
+        self, observations: Sequence[EnvObservation]
     ) -> tuple[AlignedSpeechSegment, ...]:
         groups: dict[PerceptionSegmentRef, _SpeechGroup] = {}
 
@@ -504,10 +405,7 @@ class PerceptionTemporalAligner:
             if segment is None:
                 continue
 
-            group = groups.setdefault(
-                segment,
-                _SpeechGroup(segment=segment),
-            )
+            group = groups.setdefault(segment, _SpeechGroup(segment=segment))
 
             if observation.kind == ObservationKind.SPEECH_SEGMENT:
                 group.speech = observation
@@ -545,9 +443,7 @@ class PerceptionTemporalAligner:
         )
 
     def _speech_windows(
-        self,
-        segments: Sequence[AlignedSpeechSegment],
-        time_range: RuntimeTimeRange,
+        self, segments: Sequence[AlignedSpeechSegment], time_range: RuntimeTimeRange
     ) -> tuple[RuntimeTimeRange, ...]:
         windows: list[RuntimeTimeRange] = []
         context_sec = self.policy.speech_context_sec
@@ -557,20 +453,14 @@ class PerceptionTemporalAligner:
             following = segments[index + 1] if index + 1 < len(segments) else None
 
             left_limit = (
-                self._boundary(
-                    previous.time_range.end,
-                    segment.time_range.start,
-                )
+                self._boundary(previous.time_range.end, segment.time_range.start)
                 if previous is not None
                 and previous.time_range.end.monotonic_ns < segment.time_range.start.monotonic_ns
                 else segment.time_range.start
             )
 
             right_limit = (
-                self._boundary(
-                    segment.time_range.end,
-                    following.time_range.start,
-                )
+                self._boundary(segment.time_range.end, following.time_range.start)
                 if following is not None
                 and segment.time_range.end.monotonic_ns < following.time_range.start.monotonic_ns
                 else segment.time_range.end
@@ -586,40 +476,24 @@ class PerceptionTemporalAligner:
             requested_end = segment.time_range.end.shifted(context_sec)
 
             start = max(
-                time_range.start,
-                left_limit,
-                requested_start,
-                key=lambda item: item.monotonic_ns,
+                time_range.start, left_limit, requested_start, key=lambda item: item.monotonic_ns
             )
             end = min(
-                time_range.end,
-                right_limit,
-                requested_end,
-                key=lambda item: item.monotonic_ns,
+                time_range.end, right_limit, requested_end, key=lambda item: item.monotonic_ns
             )
 
             if end.monotonic_ns < start.monotonic_ns:
                 end = start
 
-            windows.append(
-                RuntimeTimeRange(
-                    start=start,
-                    end=end,
-                )
-            )
+            windows.append(RuntimeTimeRange(start=start, end=end))
 
         return tuple(windows)
 
     @staticmethod
-    def _merged_windows(
-        windows: Sequence[RuntimeTimeRange],
-    ) -> tuple[RuntimeTimeRange, ...]:
+    def _merged_windows(windows: Sequence[RuntimeTimeRange]) -> tuple[RuntimeTimeRange, ...]:
         merged: list[RuntimeTimeRange] = []
 
-        for window in sorted(
-            windows,
-            key=lambda item: item.start.monotonic_ns,
-        ):
+        for window in sorted(windows, key=lambda item: item.start.monotonic_ns):
             if not merged or window.start.monotonic_ns > merged[-1].end.monotonic_ns:
                 merged.append(window)
                 continue
@@ -630,40 +504,25 @@ class PerceptionTemporalAligner:
                 window.end if window.end.monotonic_ns > previous.end.monotonic_ns else previous.end
             )
 
-            merged[-1] = RuntimeTimeRange(
-                start=previous.start,
-                end=end,
-            )
+            merged[-1] = RuntimeTimeRange(start=previous.start, end=end)
 
         return tuple(merged)
 
     def _gap_ranges(
-        self,
-        time_range: RuntimeTimeRange,
-        windows: Sequence[RuntimeTimeRange],
+        self, time_range: RuntimeTimeRange, windows: Sequence[RuntimeTimeRange]
     ) -> tuple[RuntimeTimeRange, ...]:
         cursor = time_range.start
         gaps: list[RuntimeTimeRange] = []
 
         for window in self._merged_windows(windows):
             if window.start.monotonic_ns > cursor.monotonic_ns:
-                gaps.append(
-                    RuntimeTimeRange(
-                        start=cursor,
-                        end=window.start,
-                    )
-                )
+                gaps.append(RuntimeTimeRange(start=cursor, end=window.start))
 
             if window.end.monotonic_ns > cursor.monotonic_ns:
                 cursor = window.end
 
         if cursor.monotonic_ns < time_range.end.monotonic_ns:
-            gaps.append(
-                RuntimeTimeRange(
-                    start=cursor,
-                    end=time_range.end,
-                )
-            )
+            gaps.append(RuntimeTimeRange(start=cursor, end=time_range.end))
 
         return tuple(gaps)
 
@@ -675,11 +534,7 @@ class PerceptionTemporalAligner:
         return draft.time_range
 
     def _point_draft_index(
-        self,
-        drafts: Sequence[_SliceDraft],
-        at_ns: int,
-        *,
-        overall_end_ns: int,
+        self, drafts: Sequence[_SliceDraft], at_ns: int, *, overall_end_ns: int
     ) -> int | None:
         matches = [
             index
@@ -695,10 +550,7 @@ class PerceptionTemporalAligner:
             return min(
                 matches,
                 key=lambda index: (
-                    self._distance(
-                        at_ns,
-                        self._draft_anchor(drafts[index]),
-                    ),
+                    self._distance(at_ns, self._draft_anchor(drafts[index])),
                     (0 if drafts[index].kind == TemporalSliceKind.SPEECH else 1),
                     index,
                 ),
@@ -709,27 +561,15 @@ class PerceptionTemporalAligner:
 
         return min(
             range(len(drafts)),
-            key=lambda index: (
-                self._distance(
-                    at_ns,
-                    self._draft_anchor(drafts[index]),
-                ),
-                index,
-            ),
+            key=lambda index: (self._distance(at_ns, self._draft_anchor(drafts[index])), index),
         )
 
     def _observation_draft_indices(
-        self,
-        drafts: Sequence[_SliceDraft],
-        observation: EnvObservation,
-        *,
-        overall_end_ns: int,
+        self, drafts: Sequence[_SliceDraft], observation: EnvObservation, *, overall_end_ns: int
     ) -> tuple[int, ...]:
         if self._is_point(observation.time_range):
             index = self._point_draft_index(
-                drafts,
-                observation.time_range.end.monotonic_ns,
-                overall_end_ns=overall_end_ns,
+                drafts, observation.time_range.end.monotonic_ns, overall_end_ns=overall_end_ns
             )
 
             return () if index is None else (index,)
@@ -737,19 +577,14 @@ class PerceptionTemporalAligner:
         indices = tuple(
             index
             for index, draft in enumerate(drafts)
-            if self._overlaps(
-                observation.time_range,
-                draft.time_range,
-            )
+            if self._overlaps(observation.time_range, draft.time_range)
         )
 
         if indices:
             return indices
 
         index = self._point_draft_index(
-            drafts,
-            self._midpoint_ns(observation.time_range),
-            overall_end_ns=overall_end_ns,
+            drafts, self._midpoint_ns(observation.time_range), overall_end_ns=overall_end_ns
         )
 
         return () if index is None else (index,)
@@ -817,9 +652,7 @@ class PerceptionTemporalAligner:
                 continue
 
             indices = self._observation_draft_indices(
-                drafts,
-                observation,
-                overall_end_ns=time_range.end.monotonic_ns,
+                drafts, observation, overall_end_ns=time_range.end.monotonic_ns
             )
 
             for index in indices:
@@ -858,18 +691,8 @@ class PerceptionTemporalAligner:
                 index=index,
                 kind=draft.kind,
                 time_range=draft.time_range,
-                observations=tuple(
-                    sorted(
-                        draft.observations,
-                        key=self._observation_key,
-                    )
-                ),
-                source_events=tuple(
-                    sorted(
-                        draft.source_events,
-                        key=self._event_key,
-                    )
-                ),
+                observations=tuple(sorted(draft.observations, key=self._observation_key)),
+                source_events=tuple(sorted(draft.source_events, key=self._event_key)),
                 speech=draft.speech,
                 gap_before_sec=draft.gap_before_sec,
                 gap_after_sec=draft.gap_after_sec,
@@ -894,35 +717,21 @@ class PerceptionTemporalAligner:
         if missed_event_count < 0:
             raise ValueError("missed_event_count cannot be negative")
 
-        normalized, source_events = self._normalize(
-            observations,
-            events,
-        )
+        normalized, source_events = self._normalize(observations, events)
 
-        resolved_range = self._resolve_range(
-            time_range,
-            normalized,
-            source_events,
-        )
+        resolved_range = self._resolve_range(time_range, normalized, source_events)
 
         # Ignore evidence outside the requested alignment window instead of
         # forcing it into the first or final slice.
         normalized = [
-            item
-            for item in normalized
-            if self._overlaps(
-                item.time_range,
-                resolved_range,
-            )
+            item for item in normalized if self._overlaps(item.time_range, resolved_range)
         ]
 
         source_events = [
             item
             for item in source_events
             if self._contains_point(
-                resolved_range,
-                item.time_range.end.monotonic_ns,
-                include_end=True,
+                resolved_range, item.time_range.end.monotonic_ns, include_end=True
             )
         ]
 
@@ -965,24 +774,11 @@ class PerceptionTemporalAligner:
             mode=resolved_mode,
             time_range=resolved_range,
             slices=self._finalize(drafts),
-            direct_inputs=tuple(
-                sorted(
-                    direct_inputs,
-                    key=self._observation_key,
-                )
-            ),
+            direct_inputs=tuple(sorted(direct_inputs, key=self._observation_key)),
             source_states_at_start=tuple(
-                sorted(
-                    source_states_at_start,
-                    key=self._source_state_key,
-                )
+                sorted(source_states_at_start, key=self._source_state_key)
             ),
-            source_states_at_end=tuple(
-                sorted(
-                    source_states_at_end,
-                    key=self._source_state_key,
-                )
-            ),
+            source_states_at_end=tuple(sorted(source_states_at_end, key=self._source_state_key)),
             has_event_gap=(has_event_gap or missed_event_count > 0),
             missed_event_count=missed_event_count,
         )

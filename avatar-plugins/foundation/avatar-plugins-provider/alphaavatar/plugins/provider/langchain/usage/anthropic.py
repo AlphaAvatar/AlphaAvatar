@@ -32,10 +32,7 @@ from .base import (
 
 class AnthropicUsageNormalizer(UsageNormalizer):
     def normalize(
-        self,
-        *,
-        raw_response: Any = None,
-        raw_usage: dict[str, Any] | None = None,
+        self, *, raw_response: Any = None, raw_usage: dict[str, Any] | None = None
     ) -> ProviderUsage:
         usage_metadata = extract_langchain_usage_metadata(raw_response)
         response_metadata = extract_langchain_response_metadata(raw_response)
@@ -77,8 +74,7 @@ class AnthropicUsageNormalizer(UsageNormalizer):
         input_tokens = lc_input_tokens or native_total_input_tokens
         output_tokens = lc_output_tokens or native_output_tokens
         total_tokens = lc_total_tokens or calculate_total_tokens(
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
+            input_tokens=input_tokens, output_tokens=output_tokens
         )
 
         cached_input_tokens = calculate_cached_input_tokens(

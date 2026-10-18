@@ -11,17 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .face_detection import (
-    FaceDetection,
-    FaceDetectionResult,
-    FaceKeypoints5,
-    ImagePoint2D,
-)
-from .visual_selection import (
-    SelectedVisualFrame,
-    VisualSelection,
-    VisualSliceSelection,
-)
+from .face_detection import FaceDetection, FaceDetectionResult, FaceKeypoints5, ImagePoint2D
+from .visual_selection import SelectedVisualFrame, VisualSelection, VisualSliceSelection
 
 __all__ = [
     "FaceDetection",

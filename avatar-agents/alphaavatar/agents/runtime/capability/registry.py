@@ -91,11 +91,7 @@ class AvatarCapabilityRegistry:
             registry = (
                 source
                 if isinstance(source, AvatarCapabilityRegistry)
-                else getattr(
-                    source,
-                    "capability_registry",
-                    None,
-                )
+                else getattr(source, "capability_registry", None)
             )
             if registry is not None:
                 if not isinstance(registry, AvatarCapabilityRegistry):

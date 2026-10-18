@@ -14,12 +14,9 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TypeVar
-
-T = TypeVar("T")
 
 
-async def wait_for_cleanup(task: asyncio.Task[T]) -> T:
+async def wait_for_cleanup[T](task: asyncio.Task[T]) -> T:
     """Finish owned work and return its result before propagating caller cancellation."""
     cancelled: asyncio.CancelledError | None = None
     while not task.done():

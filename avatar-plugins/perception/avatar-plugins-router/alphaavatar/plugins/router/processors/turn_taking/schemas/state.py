@@ -23,10 +23,7 @@ from alphaavatar.agents.router.schemas import (
     TurnTakingAudioEvidence,
 )
 from alphaavatar.core.env import EnvObservation
-from alphaavatar.core.env.schemas import (
-    PerceptionSegmentRef,
-    PerceptionSourceRef,
-)
+from alphaavatar.core.env.schemas import PerceptionSegmentRef, PerceptionSourceRef
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
 
 
@@ -110,11 +107,7 @@ class TurnCandidate:
         self.updated_at = at
         self.revision += 1
 
-    def start_segment(
-        self,
-        segment: PerceptionSegmentRef,
-        observation: EnvObservation,
-    ) -> bool:
+    def start_segment(self, segment: PerceptionSegmentRef, observation: EnvObservation) -> bool:
         is_new = segment not in self.segments
         was_active = segment in self.active_segments
 
@@ -129,11 +122,7 @@ class TurnCandidate:
 
         return is_new
 
-    def close_segment(
-        self,
-        segment: PerceptionSegmentRef,
-        observation: EnvObservation,
-    ) -> None:
+    def close_segment(self, segment: PerceptionSegmentRef, observation: EnvObservation) -> None:
         is_new = segment not in self.segments
         was_closed = segment in self.closed_segments
 
@@ -160,10 +149,7 @@ class TurnCandidate:
         return True
 
     def add_transcript(
-        self,
-        segment: PerceptionSegmentRef,
-        observation: EnvObservation,
-        text: str,
+        self, segment: PerceptionSegmentRef, observation: EnvObservation, text: str
     ) -> bool:
         if self.transcripts.get(segment) == text:
             return False

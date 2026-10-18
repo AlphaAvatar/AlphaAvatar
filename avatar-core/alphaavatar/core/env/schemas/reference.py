@@ -33,16 +33,12 @@ class PerceptionSourceRef:
             raise ValueError("source_generation must be positive")
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "source_id": self.source_id,
-            "source_generation": self.source_generation,
-        }
+        return {"source_id": self.source_id, "source_generation": self.source_generation}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PerceptionSourceRef:
         return cls(
-            source_id=str(data["source_id"]),
-            source_generation=int(data["source_generation"]),
+            source_id=str(data["source_id"]), source_generation=int(data["source_generation"])
         )
 
 
@@ -55,16 +51,12 @@ class PerceptionSegmentRef:
         _validate_id("segment_id", self.segment_id)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "source": self.source.to_dict(),
-            "segment_id": self.segment_id,
-        }
+        return {"source": self.source.to_dict(), "segment_id": self.segment_id}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PerceptionSegmentRef:
         return cls(
-            source=PerceptionSourceRef.from_dict(data["source"]),
-            segment_id=str(data["segment_id"]),
+            source=PerceptionSourceRef.from_dict(data["source"]), segment_id=str(data["segment_id"])
         )
 
 

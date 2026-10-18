@@ -17,16 +17,9 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from alphaavatar.agents.memory.enums import MemoryType
-from alphaavatar.agents.memory.schemas import (
-    MemoryCheckpointAdvance,
-    MemoryScope,
-    MemorySourceRef,
-)
+from alphaavatar.agents.memory.schemas import MemoryCheckpointAdvance, MemoryScope, MemorySourceRef
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.capability import (
-    AvatarCapabilityName,
-    avatar_capability,
-)
+from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_capability
 from alphaavatar.core.turn import TurnInputModality
 
 from ...log import logger
@@ -34,10 +27,7 @@ from ...template import MemoryPluginsTemplate
 from ..base import MemoryProcessor
 from .config import EnvironmentConfig
 from .provider import EnvironmentProvider
-from .scheduler import (
-    EnvMemoryBatch,
-    EnvMemoryScheduler,
-)
+from .scheduler import EnvMemoryBatch, EnvMemoryScheduler
 
 if TYPE_CHECKING:
     from ...runtime import MemoryRuntime
@@ -55,16 +45,9 @@ class EnvironmentProcessor(MemoryProcessor):
     TURN_CONSUMER_ID = "memory.environment.turn"
 
     def __init__(
-        self,
-        *,
-        runtime: AvatarRuntime,
-        memory: MemoryRuntime,
-        config: EnvironmentConfig,
+        self, *, runtime: AvatarRuntime, memory: MemoryRuntime, config: EnvironmentConfig
     ) -> None:
-        super().__init__(
-            runtime=runtime,
-            memory=memory,
-        )
+        super().__init__(runtime=runtime, memory=memory)
 
         self._config = config
         self._provider = EnvironmentProvider(config.provider, service=runtime.foundation.provider)
@@ -76,16 +59,11 @@ class EnvironmentProcessor(MemoryProcessor):
     def name(self) -> str:
         return "environment"
 
-    async def _process_batch(
-        self,
-        batch: EnvMemoryBatch,
-        timeout: float,
-    ):
+    async def _process_batch(self, batch: EnvMemoryBatch, timeout: float):
         state = self.memory_runtime.context_state(batch.context_id)
 
         previous = self.memory_runtime.memory_state.render(
-            memory_type=MemoryType.ENV,
-            context_id=state.context_id,
+            memory_type=MemoryType.ENV, context_id=state.context_id
         )
 
         delta = await self._provider.extract(
@@ -125,10 +103,7 @@ class EnvironmentProcessor(MemoryProcessor):
         )
 
         await self.commit_items(
-            state=state,
-            start=batch.from_sequence,
-            end=batch.to_sequence,
-            items=items,
+            state=state, start=batch.from_sequence, end=batch.to_sequence, items=items
         )
 
         return items
@@ -150,10 +125,7 @@ class EnvironmentProcessor(MemoryProcessor):
                     ):
                         self._scheduler.request("turn_committed")
 
-                stream.commit(
-                    consumer_id=self.TURN_CONSUMER_ID,
-                    cursor_seq=batch.cursor_seq,
-                )
+                stream.commit(consumer_id=self.TURN_CONSUMER_ID, cursor_seq=batch.cursor_seq)
 
             except asyncio.CancelledError:
                 raise
@@ -172,8 +144,7 @@ class EnvironmentProcessor(MemoryProcessor):
         initial_cutoff = self.perception_runtime.capture_cutoff()
 
         checkpoint = await self.store.get_checkpoint(
-            context_id=state.context_id,
-            processor=self.name,
+            context_id=state.context_id, processor=self.name
         )
 
         if checkpoint > initial_cutoff.sequence:
@@ -193,8 +164,7 @@ class EnvironmentProcessor(MemoryProcessor):
                     f"{state.context_id}:{self.name}:{checkpoint}:{initial_cutoff.sequence}"
                 ),
                 checkpoint=MemoryCheckpointAdvance(
-                    from_sequence=checkpoint,
-                    to_sequence=initial_cutoff.sequence,
+                    from_sequence=checkpoint, to_sequence=initial_cutoff.sequence
                 ),
             )
 
@@ -204,10 +174,7 @@ class EnvironmentProcessor(MemoryProcessor):
             initial_cutoff=initial_cutoff,
             process=self._process_batch,
             render_messages=lambda messages: (
-                MemoryPluginsTemplate.apply_update_template(
-                    messages,
-                    state.cache_type,
-                )
+                MemoryPluginsTemplate.apply_update_template(messages, state.cache_type)
             ),
             include_audio=self._config.include_audio,
         )
@@ -215,15 +182,10 @@ class EnvironmentProcessor(MemoryProcessor):
         await self._scheduler.start()
 
         self._turn_task = asyncio.create_task(
-            self._consume_turns(),
-            name="memory_environment_turn_consumer",
+            self._consume_turns(), name="memory_environment_turn_consumer"
         )
 
-    async def _stop(
-        self,
-        *,
-        finalize: bool,
-    ) -> None:
+    async def _stop(self, *, finalize: bool) -> None:
         if self._turn_task is not None:
             self._turn_task.cancel()
             await asyncio.gather(self._turn_task, return_exceptions=True)

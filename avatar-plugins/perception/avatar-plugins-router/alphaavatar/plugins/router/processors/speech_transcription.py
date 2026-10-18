@@ -31,11 +31,7 @@ from alphaavatar.core.env.schemas import (
     PerceptionSegmentRef,
     PerceptionSourceRef,
 )
-from alphaavatar.core.media import (
-    AudioFrame,
-    PayloadFormatUnavailable,
-    TextPayload,
-)
+from alphaavatar.core.media import AudioFrame, PayloadFormatUnavailable, TextPayload
 from alphaavatar.core.media.enums import PayloadFormat, PayloadView
 from alphaavatar.core.perception.enums import PerceptionStreamKind
 from alphaavatar.core.time import RuntimeTimeRange
@@ -74,11 +70,7 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
     CONSUMER_ID = "router.speech_transcription"
 
     def __init__(
-        self,
-        *,
-        runtime: AvatarRuntime,
-        stt: STTBase,
-        close_timeout_sec: float = 6.0,
+        self, *, runtime: AvatarRuntime, stt: STTBase, close_timeout_sec: float = 6.0
     ) -> None:
         super().__init__(runtime=runtime)
 
@@ -104,8 +96,7 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
 
     @staticmethod
     def _merge_time_range(
-        current: RuntimeTimeRange,
-        incoming: RuntimeTimeRange,
+        current: RuntimeTimeRange, incoming: RuntimeTimeRange
     ) -> RuntimeTimeRange:
         start = (
             current.start
@@ -122,9 +113,7 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
 
         try:
             frame = observation.payload.get(
-                PayloadFormat.AUDIO_FRAME,
-                view=PayloadView.RAW,
-                fallback_to_raw=False,
+                PayloadFormat.AUDIO_FRAME, view=PayloadView.RAW, fallback_to_raw=False
             )
         except PayloadFormatUnavailable:
             return None
@@ -158,8 +147,7 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
         return source
 
     def _update_segment(
-        self,
-        observation: EnvObservation,
+        self, observation: EnvObservation
     ) -> tuple[PerceptionSegmentRef, _SegmentState] | None:
         segment = observation.segment
         if segment is None:
@@ -206,10 +194,7 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
 
         if graceful and source.stream.end_input() and task is not None:
             try:
-                await asyncio.wait_for(
-                    asyncio.shield(task),
-                    timeout=self._close_timeout_sec,
-                )
+                await asyncio.wait_for(asyncio.shield(task), timeout=self._close_timeout_sec)
             except TimeoutError:
                 logger.warning(
                     "Speech transcription source drain timed out source=%s generation=%s",
@@ -272,11 +257,7 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
             "provider": event.provider,
             "model": event.model,
         }
-        payload = TextPayload.create(
-            text=text,
-            language=event.language,
-            metadata=dict(metadata),
-        )
+        payload = TextPayload.create(text=text, language=event.language, metadata=dict(metadata))
 
         factory = (
             EnvObservation.transcript_segment
@@ -296,15 +277,8 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
             )
         )
 
-    async def _dispatch_event(
-        self,
-        source: _STTSource,
-        event: TranscriptionEvent,
-    ) -> None:
-        segment = PerceptionSegmentRef(
-            source=source.source,
-            segment_id=event.segment_id,
-        )
+    async def _dispatch_event(self, source: _STTSource, event: TranscriptionEvent) -> None:
+        segment = PerceptionSegmentRef(source=source.source, segment_id=event.segment_id)
         state = self._segments.get(segment)
 
         if event.type in {
@@ -322,16 +296,10 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
                 )
             elif not state.discarded:
                 self._publish_transcription_observation(
-                    source=source,
-                    segment=segment,
-                    state=state,
-                    event=event,
+                    source=source, segment=segment, state=state, event=event
                 )
 
-        if event.type in {
-            TranscriptionEventType.FINAL_TRANSCRIPT,
-            TranscriptionEventType.ERROR,
-        }:
+        if event.type in {TranscriptionEventType.FINAL_TRANSCRIPT, TranscriptionEventType.ERROR}:
             self._segments.pop(segment, None)
 
     async def _event_loop(self, source: _STTSource) -> None:
@@ -349,11 +317,7 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
             )
 
     async def _consume_frame(
-        self,
-        observation: EnvObservation,
-        *,
-        segment: PerceptionSegmentRef,
-        state: _SegmentState,
+        self, observation: EnvObservation, *, segment: PerceptionSegmentRef, state: _SegmentState
     ) -> None:
         if state.discarded:
             return
@@ -383,11 +347,7 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
             segment.segment_id,
         )
 
-    async def _commit_segment(
-        self,
-        segment: PerceptionSegmentRef,
-        state: _SegmentState,
-    ) -> None:
+    async def _commit_segment(self, segment: PerceptionSegmentRef, state: _SegmentState) -> None:
         if state.discarded:
             self._segments.pop(segment, None)
             return
@@ -424,11 +384,7 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
         segment, state = current
 
         if observation.kind == ObservationKind.SPEECH_FRAME:
-            await self._consume_frame(
-                observation,
-                segment=segment,
-                state=state,
-            )
+            await self._consume_frame(observation, segment=segment, state=state)
             return
 
         if observation.kind == ObservationKind.SPEECH_SEGMENT:
@@ -440,8 +396,7 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
         while True:
             try:
                 await self._runtime.perception.wait_for_pending_observations(
-                    consumer_id=self.CONSUMER_ID,
-                    streams={PerceptionStreamKind.SPEECH},
+                    consumer_id=self.CONSUMER_ID, streams={PerceptionStreamKind.SPEECH}
                 )
 
                 window = self._runtime.perception.take_pending_observations(
@@ -452,8 +407,7 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
 
                 if window.has_gap:
                     logger.warning(
-                        "Speech transcription observed input gap missed=%s",
-                        window.missed_count,
+                        "Speech transcription observed input gap missed=%s", window.missed_count
                     )
                     await self._close_sources(graceful=False)
                     self._segments.clear()
@@ -485,8 +439,7 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
 
         self._started = True
         self._consume_task = asyncio.create_task(
-            self._consume_loop(),
-            name="router_speech_transcription",
+            self._consume_loop(), name="router_speech_transcription"
         )
 
         logger.info(
@@ -511,8 +464,7 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
         self._segments.clear()
 
         self._runtime.perception.clear_observation_consumer(
-            self.CONSUMER_ID,
-            streams={PerceptionStreamKind.SPEECH},
+            self.CONSUMER_ID, streams={PerceptionStreamKind.SPEECH}
         )
 
         logger.info("Speech transcription stopped")

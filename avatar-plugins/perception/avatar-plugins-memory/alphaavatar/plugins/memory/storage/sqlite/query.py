@@ -43,9 +43,7 @@ def owner_keys(owner_refs: list[MemoryOwnerRef]) -> list[str]:
 
 
 def visibility_clause(
-    alias: str,
-    owner_refs: list[MemoryOwnerRef],
-    context: MemoryContextRef,
+    alias: str, owner_refs: list[MemoryOwnerRef], context: MemoryContextRef
 ) -> tuple[str, list[Any]]:
     owners = owner_keys(owner_refs)
 
@@ -67,10 +65,7 @@ def visibility_clause(
     return sql, [*owners, *scopes]
 
 
-def fetch_many(
-    connection: sqlite3.Connection,
-    memory_ids: list[str],
-) -> list[MemoryItem]:
+def fetch_many(connection: sqlite3.Connection, memory_ids: list[str]) -> list[MemoryItem]:
     memory_ids = normalize_memory_ids(memory_ids)
 
     if not memory_ids:
@@ -103,11 +98,7 @@ def fetch_visible(
     if not memory_ids or not owner_refs:
         return []
 
-    visibility, params = visibility_clause(
-        "r",
-        owner_refs,
-        context,
-    )
+    visibility, params = visibility_clause("r", owner_refs, context)
 
     rows = connection.execute(
         f"""
@@ -126,10 +117,7 @@ def fetch_visible(
     return [by_id[memory_id] for memory_id in memory_ids if memory_id in by_id]
 
 
-def get_many_sync(
-    path: pathlib.Path,
-    memory_ids: list[str],
-) -> list[MemoryItem]:
+def get_many_sync(path: pathlib.Path, memory_ids: list[str]) -> list[MemoryItem]:
     connection = connect(path)
 
     try:
@@ -147,12 +135,7 @@ def get_visible_sync(
     connection = connect(path)
 
     try:
-        return fetch_visible(
-            connection,
-            memory_ids,
-            owner_refs,
-            context,
-        )
+        return fetch_visible(connection, memory_ids, owner_refs, context)
     finally:
         connection.close()
 
@@ -168,11 +151,7 @@ def query_visible_sync(
     if limit <= 0 or not owner_refs:
         return []
 
-    visibility, params = visibility_clause(
-        "r",
-        owner_refs,
-        context,
-    )
+    visibility, params = visibility_clause("r", owner_refs, context)
 
     clauses = [visibility]
 
@@ -206,11 +185,7 @@ def query_visible_sync(
         connection.close()
 
 
-def get_checkpoint_sync(
-    path: pathlib.Path,
-    context_id: str,
-    processor: str,
-) -> int:
+def get_checkpoint_sync(path: pathlib.Path, context_id: str, processor: str) -> int:
     connection = connect(path)
 
     try:

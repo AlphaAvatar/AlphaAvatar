@@ -34,8 +34,4 @@ class OpenAIResponsesPlugin(AvatarModulePlugin):
         return OpenAIResponsesLLM(config)
 
 
-AvatarModulePlugin.register(
-    AvatarModule.PROVIDER_LLM,
-    "openai",
-    OpenAIResponsesPlugin(),
-)
+AvatarModulePlugin.register(AvatarModule.PROVIDER_LLM, "openai", OpenAIResponsesPlugin())

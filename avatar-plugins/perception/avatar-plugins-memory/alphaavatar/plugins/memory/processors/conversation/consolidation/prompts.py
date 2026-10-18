@@ -78,10 +78,7 @@ Every target id must appear in memories with a non-empty value.
 
 
 CONSOLIDATION_PROMPT = ModelPrompt.from_messages(
-    [
-        ("system", _CONSOLIDATION_SYSTEM),
-        ("user", _CONSOLIDATION_HUMAN),
-    ]
+    [("system", _CONSOLIDATION_SYSTEM), ("user", _CONSOLIDATION_HUMAN)]
 )
 
 

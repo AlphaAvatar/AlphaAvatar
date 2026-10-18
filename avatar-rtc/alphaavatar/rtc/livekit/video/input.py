@@ -28,11 +28,7 @@ from alphaavatar.core.lifecycle import LifecycleComponent
 from alphaavatar.core.media import VideoFramePayload
 from alphaavatar.core.media.codecs.video import encode_video_frame_to_jpeg
 from alphaavatar.core.perception import PerceptionRuntime
-from alphaavatar.core.perception.enums import (
-    MediaModality,
-    MediaSourceKind,
-    MediaSourceState,
-)
+from alphaavatar.core.perception.enums import MediaModality, MediaSourceKind, MediaSourceState
 from alphaavatar.core.perception.schemas import MediaSourceStateEvent
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
 from alphaavatar.rtc.livekit.utils.events import RoomEventBindings
@@ -156,11 +152,7 @@ class LiveKitVideoInput(LifecycleComponent):
         return f"env:{source_kind.value}:{owner}:track:{publication.sid}"
 
     def _publish_source_state(
-        self,
-        binding: _VideoTrackBinding,
-        state: MediaSourceState,
-        *,
-        reason: str,
+        self, binding: _VideoTrackBinding, state: MediaSourceState, *, reason: str
     ) -> None:
         if binding.state == state:
             return
@@ -198,11 +190,7 @@ class LiveKitVideoInput(LifecycleComponent):
         return binding if binding is not None and binding.publication is publication else None
 
     def _detach_binding(
-        self,
-        binding: _VideoTrackBinding,
-        *,
-        state: MediaSourceState,
-        reason: str,
+        self, binding: _VideoTrackBinding, *, state: MediaSourceState, reason: str
     ) -> bool:
         if self._bindings.get(binding.track_sid) is not binding:
             return False
@@ -212,11 +200,7 @@ class LiveKitVideoInput(LifecycleComponent):
         return True
 
     def _detach_publication(
-        self,
-        publication: rtc.RemoteTrackPublication,
-        *,
-        state: MediaSourceState,
-        reason: str,
+        self, publication: rtc.RemoteTrackPublication, *, state: MediaSourceState, reason: str
     ) -> _VideoTrackBinding | None:
         binding = self._binding_for_publication(publication)
         return (
@@ -260,10 +244,7 @@ class LiveKitVideoInput(LifecycleComponent):
         payload = VideoFramePayload.create(
             frame=generic_frame,
             frame_id=frame_id,
-            jpeg_bytes=encode_video_frame_to_jpeg(
-                generic_frame,
-                jpeg_quality=self._jpeg_quality,
-            ),
+            jpeg_bytes=encode_video_frame_to_jpeg(generic_frame, jpeg_quality=self._jpeg_quality),
             metadata=dict(metadata),
         )
 
@@ -340,9 +321,7 @@ class LiveKitVideoInput(LifecycleComponent):
                     continue
 
                 self._publish_source_state(
-                    binding,
-                    MediaSourceState.ACTIVE,
-                    reason="frame_received",
+                    binding, MediaSourceState.ACTIVE, reason="frame_received"
                 )
                 self._perception.publish_observation(observation)
 
@@ -359,11 +338,7 @@ class LiveKitVideoInput(LifecycleComponent):
                 binding.source_generation,
             )
         finally:
-            if self._detach_binding(
-                binding,
-                state=terminal_state,
-                reason=terminal_reason,
-            ):
+            if self._detach_binding(binding, state=terminal_state, reason=terminal_reason):
                 await self._close_stream(binding)
 
     def _create_stream(
@@ -381,18 +356,12 @@ class LiveKitVideoInput(LifecycleComponent):
             if existing.publication is publication:
                 return
             if self._detach_binding(
-                existing,
-                state=MediaSourceState.ENDED,
-                reason="track_replaced",
+                existing, state=MediaSourceState.ENDED, reason="track_replaced"
             ):
                 self._schedule_close(existing)
 
         source_kind = self._source_kind(publication)
-        source_id = self._source_id(
-            transport_participant_id,
-            source_kind,
-            publication,
-        )
+        source_id = self._source_id(transport_participant_id, source_kind, publication)
 
         binding = _VideoTrackBinding(
             track_sid=publication.sid,
@@ -463,10 +432,7 @@ class LiveKitVideoInput(LifecycleComponent):
                 )
 
         @self._events.on("track_muted")
-        def on_track_muted(
-            participant: rtc.Participant,
-            publication: rtc.TrackPublication,
-        ) -> None:
+        def on_track_muted(participant: rtc.Participant, publication: rtc.TrackPublication) -> None:
             if not self._started or publication.kind != rtc.TrackKind.KIND_VIDEO:
                 return
             if binding := self._binding_for_publication(publication):
@@ -474,8 +440,7 @@ class LiveKitVideoInput(LifecycleComponent):
 
         @self._events.on("track_unmuted")
         def on_track_unmuted(
-            participant: rtc.Participant,
-            publication: rtc.TrackPublication,
+            participant: rtc.Participant, publication: rtc.TrackPublication
         ) -> None:
             if not self._started or publication.kind != rtc.TrackKind.KIND_VIDEO:
                 return
@@ -493,23 +458,18 @@ class LiveKitVideoInput(LifecycleComponent):
             if track.kind == rtc.TrackKind.KIND_VIDEO:
                 self._schedule_close(
                     self._detach_publication(
-                        publication,
-                        state=MediaSourceState.ENDED,
-                        reason="track_unsubscribed",
+                        publication, state=MediaSourceState.ENDED, reason="track_unsubscribed"
                     )
                 )
 
         @self._events.on("track_unpublished")
         def on_track_unpublished(
-            publication: rtc.RemoteTrackPublication,
-            participant: rtc.RemoteParticipant,
+            publication: rtc.RemoteTrackPublication, participant: rtc.RemoteParticipant
         ) -> None:
             if publication.kind == rtc.TrackKind.KIND_VIDEO:
                 self._schedule_close(
                     self._detach_publication(
-                        publication,
-                        state=MediaSourceState.ENDED,
-                        reason="track_unpublished",
+                        publication, state=MediaSourceState.ENDED, reason="track_unpublished"
                     )
                 )
 
@@ -523,9 +483,7 @@ class LiveKitVideoInput(LifecycleComponent):
 
             for binding in bindings:
                 if self._detach_binding(
-                    binding,
-                    state=MediaSourceState.ENDED,
-                    reason="participant_disconnected",
+                    binding, state=MediaSourceState.ENDED, reason="participant_disconnected"
                 ):
                     self._schedule_close(binding)
 

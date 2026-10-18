@@ -98,11 +98,7 @@ class LanceDBRunner(InferenceRunner):
     def _speaker_to_row(
         self, *, user_id: str, vector: list[float], row_id: str | None = None
     ) -> dict:
-        return {
-            "id": str(row_id or uuid4()),
-            "user_id": str(user_id),
-            "vector": vector,
-        }
+        return {"id": str(row_id or uuid4()), "user_id": str(user_id), "vector": vector}
 
     def _speaker_row_to_result(self, row: dict) -> dict:
         distance = float(row.get("_distance", float("inf")))
@@ -125,11 +121,7 @@ class LanceDBRunner(InferenceRunner):
     #
 
     def _face_to_row(self, *, user_id: str, vector: list[float], row_id: str | None = None) -> dict:
-        return {
-            "id": str(row_id or uuid4()),
-            "user_id": str(user_id),
-            "vector": vector,
-        }
+        return {"id": str(row_id or uuid4()), "user_id": str(user_id), "vector": vector}
 
     def _face_row_to_result(self, row: dict) -> dict:
         distance = float(row.get("_distance", float("inf")))
@@ -450,10 +442,7 @@ class LanceDBRunner(InferenceRunner):
             raise ValueError("`embedding.model` is required in PERSONA_VDB_CONFIG")
 
         task_config = ProviderTaskConfig(
-            kind=ProviderKind.EMBEDDING,
-            provider=provider,
-            model=model,
-            extra=extra,
+            kind=ProviderKind.EMBEDDING, provider=provider, model=model, extra=extra
         )
 
         return create_embedding_model(task_config)
@@ -508,25 +497,13 @@ class LanceDBRunner(InferenceRunner):
 
         # init speaker table
         speaker_dim = SPEAKER_MODEL_CONFIG[SpeakerVectorRunner.MODEL_TYPE].embedding_dim
-        speaker_seed = [
-            {
-                "id": "__init__",
-                "user_id": "",
-                "vector": [0.0] * speaker_dim,
-            }
-        ]
+        speaker_seed = [{"id": "__init__", "user_id": "", "vector": [0.0] * speaker_dim}]
         self._ensure_table(self._speaker_collection_name, speaker_seed)
         self._speaker_table = self._client.open_table(self._speaker_collection_name)
 
         # init face table
         face_dim = FACE_MODEL_CONFIG[FaceAnalysisRunner.MODEL_TYPE].embedding_dim
-        face_seed = [
-            {
-                "id": "__init__",
-                "user_id": "",
-                "vector": [0.0] * face_dim,
-            }
-        ]
+        face_seed = [{"id": "__init__", "user_id": "", "vector": [0.0] * face_dim}]
         self._ensure_table(self._face_collection_name, face_seed)
         self._face_table = self._client.open_table(self._face_collection_name)
 

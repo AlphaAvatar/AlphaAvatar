@@ -11,18 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .patch import (
-    EnvMemoryDelta,
-    MemoryDelta,
-    PatchOp,
-    norm_token,
-    norm_topic,
-)
+from .patch import EnvMemoryDelta, MemoryDelta, PatchOp, norm_token, norm_topic
 
-__all__ = [
-    "EnvMemoryDelta",
-    "MemoryDelta",
-    "PatchOp",
-    "norm_token",
-    "norm_topic",
-]
+__all__ = ["EnvMemoryDelta", "MemoryDelta", "PatchOp", "norm_token", "norm_topic"]

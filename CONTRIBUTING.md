@@ -80,15 +80,60 @@ with the runtime environment when present; pytest exit code 5 means no tests wer
 not a passing regression run. The quality workflow runs installation/import/build checks
 but does not claim an absent committed test suite passed.
 
+### Install local commit and push hooks
+
+A committed `.pre-commit-config.yaml` does not install Git hooks. In each checkout, run:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync pre-commit install \
+  --hook-type pre-commit --hook-type pre-push
+```
+
+Commit hooks fix/check staged files. The read-only push hooks run Ruff lint and formatting
+against the complete workspace, including when only configuration files changed. They do
+not build distributions or call model services. CI remains authoritative: local hooks can
+be bypassed and do not accompany commits to another machine.
+
+After changing lint policy or Python syntax targets, align the complete baseline once:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync ruff check --fix .
+UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync ruff format .
+UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync ruff check .
+UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync ruff format --check .
+git diff --check
+git diff
+```
+
+Review PEP 695 type aliases and generic declarations explicitly; do not add `--unsafe-fixes`
+to the hook. An unchanged file can pass unnoticed by a staged-file commit check while
+failing the whole-tree CI check. When diagnosing hook installation, inspect
+`git config --show-origin --get core.hooksPath` and the hook files in the effective hook
+directory; no configured `core.hooksPath` is itself not an error.
+
 ### Build every distribution
 
 Build tooling is separate from the runtime and lint environments:
 
 ```bash
 UV_PROJECT_ENVIRONMENT=.venv-build uv sync --locked --only-group build --no-install-workspace
-uv build --all-packages --no-sources
-UV_PROJECT_ENVIRONMENT=.venv-build uv run --no-sync twine check dist/*
+(
+  set -e
+  constraints="$(mktemp)"
+  trap 'rm -f "$constraints"' EXIT
+  uv export --locked --only-group build --no-emit-workspace --no-hashes \
+    --output-file "$constraints" > /dev/null
+  uv build --all-packages --no-sources --build-constraints "$constraints"
+  UV_PROJECT_ENVIRONMENT=.venv-build uv run --no-sync twine check dist/*
+)
 ```
+
+The build group's Twine 7 and packaging 26.1-or-newer readers support Core Metadata 2.5.
+Keep the metadata writer and readers compatible in the committed lock. Isolated builds
+use constraints exported from that lock; installing a pinned Hatchling in `.venv-build`
+alone does not constrain an isolated PEP 517 build. A successful wheel build does not
+substitute for `twine check`. Do not edit artifact metadata or skip validation to make a
+release pass.
 
 Each distribution includes its own copy of the root Apache-2.0 `LICENSE`, README,
 `pyproject.toml`, namespace source and existing package resources. License copies are

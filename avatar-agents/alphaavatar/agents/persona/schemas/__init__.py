@@ -11,18 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .user_profile import (
-    DetailsBase,
-    ProfileItemSource,
-    ProfileItemView,
-    UserProfile,
-)
+from .user_profile import DetailsBase, ProfileItemSource, ProfileItemView, UserProfile
 from .user_state import UserRuntimeState
 
-__all__ = [
-    "DetailsBase",
-    "ProfileItemSource",
-    "ProfileItemView",
-    "UserProfile",
-    "UserRuntimeState",
-]
+__all__ = ["DetailsBase", "ProfileItemSource", "ProfileItemView", "UserProfile", "UserRuntimeState"]

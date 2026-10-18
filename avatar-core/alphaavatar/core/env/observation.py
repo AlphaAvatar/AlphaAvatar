@@ -22,11 +22,7 @@ from alphaavatar.core.time import RuntimeTimeRange
 
 from .annotation import EnvAnnotation
 from .enums import ObservationKind
-from .schemas import (
-    PerceptionEntityRef,
-    PerceptionSegmentRef,
-    PerceptionSourceRef,
-)
+from .schemas import PerceptionEntityRef, PerceptionSegmentRef, PerceptionSourceRef
 
 _SEGMENT_REQUIRED_KINDS = {
     ObservationKind.AUDIO_SEGMENT,
@@ -36,10 +32,7 @@ _SEGMENT_REQUIRED_KINDS = {
     ObservationKind.TRANSCRIPT_SEGMENT,
 }
 
-_SPEECH_KINDS = {
-    ObservationKind.SPEECH_FRAME,
-    ObservationKind.SPEECH_SEGMENT,
-}
+_SPEECH_KINDS = {ObservationKind.SPEECH_FRAME, ObservationKind.SPEECH_SEGMENT}
 
 
 _RESERVED_METADATA_KEYS = frozenset(

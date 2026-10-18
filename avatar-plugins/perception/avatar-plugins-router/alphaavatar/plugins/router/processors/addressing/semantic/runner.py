@@ -20,10 +20,7 @@ import os
 import llama_cpp
 
 from alphaavatar.agents.router.enums import SemanticAddressingLabel
-from alphaavatar.agents.router.schemas import (
-    SemanticAddressingRequest,
-    SemanticAddressingResult,
-)
+from alphaavatar.agents.router.schemas import SemanticAddressingRequest, SemanticAddressingResult
 from alphaavatar.agents.runtime.inference import InferenceRunner
 
 from .model_files import SEMANTIC_ADDRESSING_CONFIG, resolve_semantic_addressing_files
@@ -113,10 +110,7 @@ class SemanticAddressingQwen3Runner(InferenceRunner):
 
         return json.dumps(
             SemanticAddressingResult(
-                label=label,
-                label_0_logit=logit_0,
-                label_1_logit=logit_1,
-                p_avatar=p_avatar,
+                label=label, label_0_logit=logit_0, label_1_logit=logit_1, p_avatar=p_avatar
             ).to_dict(),
             separators=(",", ":"),
         ).encode()

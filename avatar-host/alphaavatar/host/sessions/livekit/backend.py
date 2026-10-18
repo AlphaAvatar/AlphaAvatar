@@ -75,10 +75,7 @@ class LiveKitBackend(SessionBackend):
             from .dispatch import LiveKitDispatch
 
             self._dispatch = LiveKitDispatch(
-                self._config,
-                credentials,
-                manager,
-                agent_name=agent_name,
+                self._config, credentials, manager, agent_name=agent_name
             )
             await self._dispatch.run()
             return
@@ -129,11 +126,7 @@ class LiveKitBackend(SessionBackend):
             await self._dispatch.aclose()
 
     async def attachment(
-        self,
-        *,
-        connection: SessionConnection,
-        execution: HostExecution,
-        config: ApplicationConfig,
+        self, *, connection: SessionConnection, execution: HostExecution, config: ApplicationConfig
     ) -> SessionAttachment:
         if self._closed:
             raise RuntimeError("LiveKit backend is closing or closed")
@@ -170,9 +163,7 @@ class LiveKitBackend(SessionBackend):
             excluded: frozenset[str] = frozenset()
             if avatar.character.plugin is not None:
                 transport = LiveKitCharacterTransport(
-                    room=room,
-                    agent_identity=access.agent_identity,
-                    livekit_url=connection.url,
+                    room=room, agent_identity=access.agent_identity, livekit_url=connection.url
                 )
 
                 # Until the Character factory accepts the transport, this local stack owns it.

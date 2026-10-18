@@ -232,8 +232,7 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
 
         if reason != "synthesis_completed":
             await step(
-                output.interrupt(output_id=identity.output_id, reason=reason),
-                "Speech interruption",
+                output.interrupt(output_id=identity.output_id, reason=reason), "Speech interruption"
             )
         # A failed interrupt must not suppress the synthesis barrier for this exact output.
         await step(
@@ -248,9 +247,7 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
         if reason == "synthesis_completed" and not errors:
             await step(
                 output.complete(
-                    lane=identity.lane,
-                    output_id=identity.output_id,
-                    turn_id=identity.scope.turn_id,
+                    lane=identity.lane, output_id=identity.output_id, turn_id=identity.scope.turn_id
                 ),
                 "Speech source completion",
             )

@@ -16,7 +16,6 @@ from __future__ import annotations
 import pathlib
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import TypeAlias
 
 from alphaavatar.agents.avatar.provider.errors import ModelProtocolError
 from alphaavatar.agents.avatar.provider.schemas.model_input import (
@@ -40,7 +39,7 @@ from alphaavatar.core.turn import TurnSnapshot
 
 from .messages import MemoryMessage, memory_message, same_message
 
-MemoryContextItem: TypeAlias = MemoryMessage | TurnSnapshot
+type MemoryContextItem = MemoryMessage | TurnSnapshot
 
 
 def _deduplicate_keep_latest(items: list[MemoryItem]) -> list[MemoryItem]:

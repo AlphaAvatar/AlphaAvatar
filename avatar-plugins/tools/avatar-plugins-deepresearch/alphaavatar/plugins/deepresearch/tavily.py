@@ -35,11 +35,7 @@ class TavilyDeepResearchTool:
     """Async HTTP requests; unavoidable document conversion stays in owned worker tasks."""
 
     def __init__(
-        self,
-        *,
-        session_path: SessionPath,
-        tavily_api_key: str | None = None,
-        timeout: float = 30.0,
+        self, *, session_path: SessionPath, tavily_api_key: str | None = None, timeout: float = 30.0
     ) -> None:
         key = tavily_api_key or os.getenv("TAVILY_API_KEY")
         if not key:

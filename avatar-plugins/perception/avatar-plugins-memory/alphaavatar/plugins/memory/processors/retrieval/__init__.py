@@ -14,7 +14,4 @@
 from .config import RetrievalConfig
 from .processor import RetrievalProcessor
 
-__all__ = [
-    "RetrievalConfig",
-    "RetrievalProcessor",
-]
+__all__ = ["RetrievalConfig", "RetrievalProcessor"]

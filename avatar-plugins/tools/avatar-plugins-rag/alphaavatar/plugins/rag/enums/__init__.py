@@ -13,6 +13,4 @@
 # limitations under the License.
 from .op import RAGOp
 
-__all__ = [
-    "RAGOp",
-]
+__all__ = ["RAGOp"]

@@ -117,11 +117,7 @@ def _parts(parts: tuple) -> tuple[tuple, list[dict], int]:
 
 
 def model_record_batch(
-    *,
-    batch_id: str,
-    source: str,
-    scope: OutputScope,
-    items: Sequence[ModelInputItem],
+    *, batch_id: str, source: str, scope: OutputScope, items: Sequence[ModelInputItem]
 ) -> OutputRecordBatch[ModelInputItem] | None:
     """Project immutable evidence; never publish private continuation, policy or user input.
 

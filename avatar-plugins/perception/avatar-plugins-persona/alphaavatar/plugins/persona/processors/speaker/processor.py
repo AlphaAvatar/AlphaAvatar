@@ -22,17 +22,11 @@ import numpy as np
 from alphaavatar.agents.constants import SPEAKER_MATCH_THRESHOLD
 from alphaavatar.agents.persona import PersonaProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.capability import (
-    AvatarCapabilityName,
-    avatar_capability,
-)
+from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_capability
 from alphaavatar.agents.utils import NumpyOP
 from alphaavatar.agents.utils.time import application_now
 from alphaavatar.core.env import EnvObservation
-from alphaavatar.core.env.schemas import (
-    PerceptionSegmentRef,
-    PerceptionSourceRef,
-)
+from alphaavatar.core.env.schemas import PerceptionSegmentRef, PerceptionSourceRef
 from alphaavatar.core.media import AudioFrame, PayloadFormatUnavailable
 from alphaavatar.core.media.enums import PayloadFormat, PayloadView
 from alphaavatar.core.perception.enums import PerceptionStreamKind
@@ -79,11 +73,7 @@ class SpeakerProcessor(PersonaProcessorBase):
     ATTRIBUTE_INTERVAL_SEC = 5.0
 
     def __init__(
-        self,
-        *,
-        runtime: AvatarRuntime,
-        persona: PersonaRuntime,
-        config: SpeakerConfig,
+        self, *, runtime: AvatarRuntime, persona: PersonaRuntime, config: SpeakerConfig
     ) -> None:
         super().__init__(runtime=runtime, persona=persona)
 
@@ -123,20 +113,14 @@ class SpeakerProcessor(PersonaProcessorBase):
 
         try:
             frame = observation.payload.get(
-                PayloadFormat.AUDIO_FRAME,
-                view=PayloadView.RAW,
-                fallback_to_raw=False,
+                PayloadFormat.AUDIO_FRAME, view=PayloadView.RAW, fallback_to_raw=False
             )
         except PayloadFormatUnavailable:
             return None
 
         return frame if isinstance(frame, AudioFrame) else None
 
-    def _remember_observation(
-        self,
-        state: SpeakerSourceState,
-        observation_id: str,
-    ) -> bool:
+    def _remember_observation(self, state: SpeakerSourceState, observation_id: str) -> bool:
         if observation_id in state.seen_observation_ids:
             return False
 
@@ -187,9 +171,7 @@ class SpeakerProcessor(PersonaProcessorBase):
         state = self._sources.get(source)
         if state is None:
             state = SpeakerSourceState(
-                source=source,
-                sample_rate=frame.sample_rate,
-                num_channels=frame.num_channels,
+                source=source, sample_rate=frame.sample_rate, num_channels=frame.num_channels
             )
             self._sources[source] = state
 
@@ -224,10 +206,7 @@ class SpeakerProcessor(PersonaProcessorBase):
     """Inference worker"""
 
     async def _resolve_speaker_vector(
-        self,
-        speaker_vector: np.ndarray,
-        *,
-        timeout: float | None = None,
+        self, speaker_vector: np.ndarray, *, timeout: float | None = None
     ) -> str | None:
         vector = NumpyOP.l2_normalize(NumpyOP.to_np(speaker_vector))
 
@@ -243,9 +222,7 @@ class SpeakerProcessor(PersonaProcessorBase):
 
         if uid is None:
             uid = await self.persona.store.search_speaker_vector(
-                speaker_vector=vector,
-                threshold=SPEAKER_MATCH_THRESHOLD,
-                timeout=timeout,
+                speaker_vector=vector, threshold=SPEAKER_MATCH_THRESHOLD, timeout=timeout
             )
             if uid is not None:
                 await self.persona.load_profile(uid=uid)
@@ -265,8 +242,7 @@ class SpeakerProcessor(PersonaProcessorBase):
     async def _resolve_speaker(self, window: SpeakerWindow) -> str | None:
         result = await asyncio.wait_for(
             self.inference_executor.do_inference(
-                SpeakerVectorRunner.INFERENCE_METHOD,
-                window.audio_f32,
+                SpeakerVectorRunner.INFERENCE_METHOD, window.audio_f32
             ),
             timeout=self._vector_config.inference_timeout_sec,
         )
@@ -278,15 +254,10 @@ class SpeakerProcessor(PersonaProcessorBase):
             timeout=self._vector_config.inference_timeout_sec,
         )
 
-    async def _infer_attribute(
-        self,
-        window: SpeakerWindow,
-        uid: str,
-    ) -> None:
+    async def _infer_attribute(self, window: SpeakerWindow, uid: str) -> None:
         result = await asyncio.wait_for(
             self.inference_executor.do_inference(
-                SpeakerAttributeRunner.INFERENCE_METHOD,
-                window.audio_f32,
+                SpeakerAttributeRunner.INFERENCE_METHOD, window.audio_f32
             ),
             timeout=self._attribute_config.inference_timeout_sec,
         )
@@ -301,9 +272,7 @@ class SpeakerProcessor(PersonaProcessorBase):
 
         profile_cache = self._profile_caches.setdefault(uid, SpeakerCache())
         persona_cache.profile_details = profile_cache.update_profile_detail(
-            persona_cache.profile_details,
-            speaker_attribute,
-            updated_at=application_now(),
+            persona_cache.profile_details, speaker_attribute, updated_at=application_now()
         )
 
     """Processor Loop"""
@@ -353,8 +322,7 @@ class SpeakerProcessor(PersonaProcessorBase):
         while True:
             try:
                 await self.perception_runtime.wait_for_pending_observations(
-                    consumer_id=self.CONSUMER_ID,
-                    streams={PerceptionStreamKind.SPEECH},
+                    consumer_id=self.CONSUMER_ID, streams={PerceptionStreamKind.SPEECH}
                 )
                 window = self.perception_runtime.take_pending_observations(
                     consumer_id=self.CONSUMER_ID,
@@ -364,8 +332,7 @@ class SpeakerProcessor(PersonaProcessorBase):
 
                 if window.has_gap:
                     logger.warning(
-                        "Persona Speaker observed speech gap missed=%s",
-                        window.missed_count,
+                        "Persona Speaker observed speech gap missed=%s", window.missed_count
                     )
                     self._sources.clear()
 
@@ -386,12 +353,10 @@ class SpeakerProcessor(PersonaProcessorBase):
 
     async def _start(self) -> None:
         self._inference_task = asyncio.create_task(
-            self._inference_loop(),
-            name="persona_speaker_inference",
+            self._inference_loop(), name="persona_speaker_inference"
         )
         self._consume_task = asyncio.create_task(
-            self._consume_loop(),
-            name="persona_speaker_consumer",
+            self._consume_loop(), name="persona_speaker_consumer"
         )
 
         logger.info(
@@ -427,8 +392,7 @@ class SpeakerProcessor(PersonaProcessorBase):
         self._profile_caches.clear()
 
         self.perception_runtime.clear_observation_consumer(
-            self.CONSUMER_ID,
-            streams={PerceptionStreamKind.SPEECH},
+            self.CONSUMER_ID, streams={PerceptionStreamKind.SPEECH}
         )
 
         logger.info("Persona Speaker stopped")

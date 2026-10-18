@@ -15,15 +15,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import isfinite
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import TYPE_CHECKING
 
 from .records import OutputScope
 from .validation import counter, identifier
 
 if TYPE_CHECKING:
     from alphaavatar.core.env.output import EnvOutput
-
-T = TypeVar("T")
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +62,7 @@ class OutputEvent:
 
 
 @dataclass(frozen=True, slots=True)
-class OutputJournalEvent(Generic[T]):
+class OutputJournalEvent[T]:
     event_id: str
     sequence: int
     session_id: str

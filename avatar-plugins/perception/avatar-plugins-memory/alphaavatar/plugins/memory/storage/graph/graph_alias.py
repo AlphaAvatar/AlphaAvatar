@@ -59,10 +59,7 @@ def _write_aliases(path: pathlib.Path, aliases: dict[str, dict[str, Any]]) -> No
 
     rows = sorted(
         aliases.values(),
-        key=lambda x: (
-            str(x.get("canonical_key", "")),
-            str(x.get("alias_key", "")),
-        ),
+        key=lambda x: (str(x.get("canonical_key", "")), str(x.get("alias_key", ""))),
     )
 
     text = "\n".join(_json_dumps(row) for row in rows)
@@ -70,9 +67,7 @@ def _write_aliases(path: pathlib.Path, aliases: dict[str, dict[str, Any]]) -> No
 
 
 def save_graph_aliases(
-    *,
-    graph_path: str | pathlib.Path,
-    aliases: list[dict[str, Any]],
+    *, graph_path: str | pathlib.Path, aliases: list[dict[str, Any]]
 ) -> dict[str, Any]:
     graph_path = pathlib.Path(graph_path)
     aliases_path = graph_path / "aliases.jsonl"

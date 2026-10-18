@@ -18,11 +18,7 @@ from collections.abc import Sequence
 
 from alphaavatar.agents.constants import FACE_MATCH_THRESHOLD, SPEAKER_MATCH_THRESHOLD
 from alphaavatar.agents.log import logger
-from alphaavatar.agents.persona import (
-    PersonaBase,
-    PersonaCache,
-    PersonaProcessorBase,
-)
+from alphaavatar.agents.persona import PersonaBase, PersonaCache, PersonaProcessorBase
 from alphaavatar.agents.persona.schemas import UserProfile, UserRuntimeState
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
@@ -37,12 +33,7 @@ from .template import PersonaPluginsTemplate
 
 
 class PersonaRuntime(PersonaBase):
-    def __init__(
-        self,
-        *,
-        runtime: AvatarRuntime,
-        store: PersonaStore,
-    ) -> None:
+    def __init__(self, *, runtime: AvatarRuntime, store: PersonaStore) -> None:
         self._runtime = runtime
         self._store = store
 
@@ -80,8 +71,7 @@ class PersonaRuntime(PersonaBase):
 
     @staticmethod
     def _can_merge_profiles(
-        session_profile: UserProfile | None,
-        loaded_profile: UserProfile,
+        session_profile: UserProfile | None, loaded_profile: UserProfile
     ) -> bool:
         if session_profile is None:
             return True
@@ -106,8 +96,7 @@ class PersonaRuntime(PersonaBase):
 
     @staticmethod
     def _merge_profiles(
-        loaded_profile: UserProfile,
-        session_profile: UserProfile | None,
+        loaded_profile: UserProfile, session_profile: UserProfile | None
     ) -> UserProfile:
         if session_profile is None:
             return loaded_profile
@@ -131,12 +120,7 @@ class PersonaRuntime(PersonaBase):
             profile.runtime_state = UserRuntimeState()
         return profile.runtime_state
 
-    def _update_runtime_state(
-        self,
-        *,
-        participant: ParticipantInfo,
-        profile: UserProfile,
-    ) -> None:
+    def _update_runtime_state(self, *, participant: ParticipantInfo, profile: UserProfile) -> None:
         state = self._ensure_runtime_state(profile)
         session_id = self._runtime.session.session_id
 
@@ -188,8 +172,7 @@ class PersonaRuntime(PersonaBase):
         if participant is not None:
             self._update_runtime_state(participant=participant, profile=profile)
             self._persona_cache[uid] = DefaultPersonaCache(
-                participant=participant,
-                user_profile=profile,
+                participant=participant, user_profile=profile
             )
             return
 
@@ -203,15 +186,10 @@ class PersonaRuntime(PersonaBase):
             prepare_user_path(user_path)
 
             self._runtime.session.resolve_participant_user(
-                participant_id=cache.participant.participant_id,
-                user_id=uid,
-                user_path=user_path,
+                participant_id=cache.participant.participant_id, user_id=uid, user_path=user_path
             )
 
-            self._update_runtime_state(
-                participant=cache.participant,
-                profile=profile,
-            )
+            self._update_runtime_state(participant=cache.participant, profile=profile)
 
             cache.profile = self._merge_profiles(profile, cache.profile)
 

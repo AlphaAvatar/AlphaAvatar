@@ -16,14 +16,11 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from dataclasses import dataclass
-from typing import Generic, TypeVar
 from uuid import uuid4
 
 from alphaavatar.core.time import RuntimeClock
 
 from .schemas import OutputJournalEvent, OutputScope
-
-T = TypeVar("T")
 
 
 class OutputJournalFull(RuntimeError):
@@ -39,7 +36,7 @@ class OutputConsumerFailed(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
-class OutputJournalRead(Generic[T]):
+class OutputJournalRead[T]:
     items: tuple[OutputJournalEvent[T], ...]
     cursor_seq: int
     committed_cursor_seq: int
@@ -59,7 +56,7 @@ class _Consumer:
     error: Exception | None = None
 
 
-class OutputJournal(Generic[T]):
+class OutputJournal[T]:
     """Single-event-loop journal; synchronous admission never executes consumer code.
 
     Lossless journals evict only records acknowledged by every required consumer.
@@ -156,13 +153,7 @@ class OutputJournal(Generic[T]):
         self._wake()
 
     def append(
-        self,
-        *,
-        key: str,
-        scope: OutputScope,
-        payload: T,
-        digest: str,
-        size_bytes: int,
+        self, *, key: str, scope: OutputScope, payload: T, digest: str, size_bytes: int
     ) -> OutputJournalEvent[T]:
         self._owner()
         if self._closed:

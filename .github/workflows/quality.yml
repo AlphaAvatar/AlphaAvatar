@@ -28,16 +28,21 @@ jobs:
       - name: Check lock freshness
         run: uv lock --check
       - name: Install only quality tools
+        id: quality_tools
         run: uv sync --locked --only-group lint --no-install-workspace
       - name: Check workspace and hooks
         run: |
           uv run --no-sync python scripts/check_workspace.py
           uv run --no-sync pre-commit validate-config
-      - name: Ruff lint and formatting
-        run: |
-          uv run --no-sync ruff check .
-          uv run --no-sync ruff format --check .
-          git diff --exit-code
+      - name: Ruff lint
+        if: ${{ !cancelled() && steps.quality_tools.outcome == 'success' }}
+        run: uv run --no-sync ruff check .
+      - name: Ruff formatting
+        if: ${{ !cancelled() && steps.quality_tools.outcome == 'success' }}
+        run: uv run --no-sync ruff format --check .
+      - name: Verify checks left the checkout unchanged
+        if: ${{ !cancelled() && steps.quality_tools.outcome == 'success' }}
+        run: git diff --exit-code
 
   build:
     runs-on: ubuntu-latest
@@ -51,9 +56,20 @@ jobs:
         run: python -m pip install uv==0.10.0
       - name: Install build tools from the lock
         run: uv sync --locked --only-group build --no-install-workspace
+      - name: Report build and metadata readers
+        run: |
+          uv run --no-sync python - <<'PY'
+          from importlib.metadata import version
+
+          for name in ("build", "hatchling", "twine", "packaging"):
+              print(f"{name}=={version(name)}")
+          PY
       - name: Build and validate all distributions
         run: |
-          uv build --all-packages --no-sources
+          constraints="$RUNNER_TEMP/alphaavatar-build-constraints.txt"
+          uv export --locked --only-group build --no-emit-workspace --no-hashes \
+            --output-file "$constraints" > /dev/null
+          uv build --all-packages --no-sources --build-constraints "$constraints"
           uv run --no-sync twine check dist/*
           git diff --exit-code
 

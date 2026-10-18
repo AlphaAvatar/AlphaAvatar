@@ -25,10 +25,7 @@ from alphaavatar.agents.avatar.voice import (
     VoiceActivityEventType,
 )
 from alphaavatar.core.env import EnvObservation
-from alphaavatar.core.env.schemas import (
-    PerceptionSegmentRef,
-    PerceptionSourceRef,
-)
+from alphaavatar.core.env.schemas import PerceptionSegmentRef, PerceptionSourceRef
 from alphaavatar.core.media import AudioFrame, AudioSegmentPayload
 from alphaavatar.core.perception import PerceptionRuntime
 from alphaavatar.core.time import RuntimeTimeRange
@@ -99,11 +96,7 @@ class AudioActivitySource:
     def matches(self, frame: AudioFrame) -> bool:
         return frame.sample_rate == self.sample_rate and frame.num_channels == self.num_channels
 
-    def _append_frame(
-        self,
-        observation: EnvObservation,
-        frame: AudioFrame,
-    ) -> AudioFrameRef:
+    def _append_frame(self, observation: EnvObservation, frame: AudioFrame) -> AudioFrameRef:
         frame_ref = AudioFrameRef(
             observation=observation,
             frame=frame,
@@ -121,11 +114,7 @@ class AudioActivitySource:
 
         return frame_ref
 
-    def push(
-        self,
-        observation: EnvObservation,
-        frame: AudioFrame,
-    ) -> bool:
+    def push(self, observation: EnvObservation, frame: AudioFrame) -> bool:
         if self._closed or observation.source != self.input_source:
             return False
 
@@ -142,10 +131,7 @@ class AudioActivitySource:
         return True
 
     def _publish_speech_frame(
-        self,
-        frame_ref: AudioFrameRef,
-        *,
-        speech_start: bool = False,
+        self, frame_ref: AudioFrameRef, *, speech_start: bool = False
     ) -> EnvObservation | None:
         segment = self._segment
 
@@ -188,10 +174,7 @@ class AudioActivitySource:
         self._speech_start_sample = max(0, event.samples_index - accumulated)
         self._route_start_sample = max(0, self._speech_start_sample - self._pre_roll_samples)
 
-        self._segment = PerceptionSegmentRef(
-            source=self.speech_source,
-            segment_id=uuid.uuid4().hex,
-        )
+        self._segment = PerceptionSegmentRef(source=self.speech_source, segment_id=uuid.uuid4().hex)
         self._segment_frames.clear()
         self._route_index = 0
 
@@ -201,19 +184,12 @@ class AudioActivitySource:
             if frame_ref.end_sample <= self._route_start_sample:
                 continue
 
-            routed = self._publish_speech_frame(
-                frame_ref,
-                speech_start=first,
-            )
+            routed = self._publish_speech_frame(frame_ref, speech_start=first)
 
             if routed is not None:
                 first = False
 
-    def _time_at_sample(
-        self,
-        frames: list[AudioFrameRef],
-        sample: int,
-    ):
+    def _time_at_sample(self, frames: list[AudioFrameRef], sample: int):
         for frame_ref in frames:
             if frame_ref.start_sample <= sample <= frame_ref.end_sample:
                 offset_sec = (sample - frame_ref.start_sample) / self.sample_rate
@@ -227,24 +203,15 @@ class AudioActivitySource:
             return
 
         trailing_silence = int(event.raw_accumulated_silence * self.sample_rate)
-        speech_end = max(
-            self._speech_start_sample,
-            event.samples_index - trailing_silence,
-        )
+        speech_end = max(self._speech_start_sample, event.samples_index - trailing_silence)
 
         frames = [
             frame_ref for frame_ref in self._segment_frames if frame_ref.start_sample < speech_end
         ]
 
         if frames:
-            segment_start = self._time_at_sample(
-                frames,
-                self._speech_start_sample,
-            )
-            segment_end = self._time_at_sample(
-                frames,
-                speech_end,
-            )
+            segment_start = self._time_at_sample(frames, self._speech_start_sample)
+            segment_end = self._time_at_sample(frames, speech_end)
 
             if segment_start is None or segment_end is None:
                 segment_range = RuntimeTimeRange(
@@ -252,10 +219,7 @@ class AudioActivitySource:
                     end=frames[-1].observation.time_range.end,
                 )
             else:
-                segment_range = RuntimeTimeRange(
-                    start=segment_start,
-                    end=segment_end,
-                )
+                segment_range = RuntimeTimeRange(start=segment_start, end=segment_end)
 
             source_observation_ids = [frame_ref.observation.observation_id for frame_ref in frames]
 
@@ -310,10 +274,7 @@ class AudioActivitySource:
             raise
         except Exception:
             self.failed = True
-            logger.exception(
-                "Audio Activity VAD failed source=%s",
-                self.input_source,
-            )
+            logger.exception("Audio Activity VAD failed source=%s", self.input_source)
 
     async def close(self, *, graceful: bool) -> None:
         if self._closed:
@@ -323,10 +284,7 @@ class AudioActivitySource:
 
         if graceful and self._vad_stream.end_input():
             try:
-                await asyncio.wait_for(
-                    asyncio.shield(self._event_task),
-                    timeout=1.0,
-                )
+                await asyncio.wait_for(asyncio.shield(self._event_task), timeout=1.0)
             except TimeoutError:
                 pass
 

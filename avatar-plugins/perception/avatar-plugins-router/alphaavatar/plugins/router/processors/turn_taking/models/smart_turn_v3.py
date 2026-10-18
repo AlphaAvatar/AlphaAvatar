@@ -17,18 +17,9 @@ import asyncio
 
 import numpy as np
 
-from alphaavatar.agents.router.enums import (
-    AddressingMode,
-    TurnTakingMode,
-)
-from alphaavatar.agents.router.models import (
-    TurnTakingModelBase,
-    TurnTakingModelCapabilities,
-)
-from alphaavatar.agents.router.schemas import (
-    TurnTakingAssessment,
-    TurnTakingEvidence,
-)
+from alphaavatar.agents.router.enums import AddressingMode, TurnTakingMode
+from alphaavatar.agents.router.models import TurnTakingModelBase, TurnTakingModelCapabilities
+from alphaavatar.agents.router.schemas import TurnTakingAssessment, TurnTakingEvidence
 from alphaavatar.agents.runtime.inference import InferenceExecutor
 
 from ..runner import SmartTurnV3Runner
@@ -47,12 +38,7 @@ class SmartTurnV3Model(TurnTakingModelBase):
     @property
     def capabilities(self) -> TurnTakingModelCapabilities:
         return TurnTakingModelCapabilities(
-            modes=frozenset(
-                {
-                    TurnTakingMode.AUDIO_ONLY,
-                    TurnTakingMode.AUDIO_VISUAL,
-                }
-            ),
+            modes=frozenset({TurnTakingMode.AUDIO_ONLY, TurnTakingMode.AUDIO_VISUAL}),
             uses_audio=True,
             uses_transcript=False,
             uses_annotations=False,
@@ -61,10 +47,7 @@ class SmartTurnV3Model(TurnTakingModelBase):
     @staticmethod
     def _build_pcm(evidence: TurnTakingEvidence) -> bytes:
         config = SMART_TURN_V3_CONFIG
-        audio = sorted(
-            evidence.audio,
-            key=lambda item: item.time_range.start.monotonic_ns,
-        )
+        audio = sorted(evidence.audio, key=lambda item: item.time_range.start.monotonic_ns)
         if not audio:
             return b""
 
@@ -89,10 +72,7 @@ class SmartTurnV3Model(TurnTakingModelBase):
                     parts.append(bytes(gap_samples * 2))
 
             parts.append(item.pcm16_bytes)
-            previous_end_ns = max(
-                previous_end_ns or 0,
-                item.time_range.end.monotonic_ns,
-            )
+            previous_end_ns = max(previous_end_ns or 0, item.time_range.end.monotonic_ns)
 
         return b"".join(parts)[-(config.max_samples * 2) :]
 
@@ -113,10 +93,7 @@ class SmartTurnV3Model(TurnTakingModelBase):
 
     async def _infer(self, pcm16_bytes: bytes) -> bytes | None:
         task = asyncio.create_task(
-            self._executor.do_inference(
-                SmartTurnV3Runner.INFERENCE_METHOD,
-                pcm16_bytes,
-            ),
+            self._executor.do_inference(SmartTurnV3Runner.INFERENCE_METHOD, pcm16_bytes),
             name="smart_turn_v3_inference",
         )
         self._track_inference(task)

@@ -227,10 +227,7 @@ If a fact is repeated with no new detail, do not write a duplicate.
 
 CONVERSATION_DELTA_PROMPT = ModelPrompt.from_messages(
     [
-        (
-            "system",
-            CONVERSATION_MEMORY_EXTRACT_PROMPT,
-        ),
+        ("system", CONVERSATION_MEMORY_EXTRACT_PROMPT),
         (
             "user",
             "SESSION CONTENT:\n"

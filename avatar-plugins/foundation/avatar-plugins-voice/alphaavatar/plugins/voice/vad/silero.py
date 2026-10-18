@@ -107,19 +107,11 @@ class SileroVAD(VADBase):
         return SILERO_MODEL_CONFIG.update_interval
 
     def stream(self) -> VADStreamBase:
-        return SileroVADStream(
-            options=self._options,
-            inference_executor=self._inference_executor,
-        )
+        return SileroVADStream(options=self._options, inference_executor=self._inference_executor)
 
 
 class SileroVADStream(VADStreamBase):
-    def __init__(
-        self,
-        *,
-        options: SileroVADOptions,
-        inference_executor: InferenceExecutor,
-    ) -> None:
+    def __init__(self, *, options: SileroVADOptions, inference_executor: InferenceExecutor) -> None:
         self._options = options
         self._executor = inference_executor
 
@@ -129,14 +121,8 @@ class SileroVADStream(VADStreamBase):
         self._event_q: asyncio.Queue[VoiceActivityEvent | object] = asyncio.Queue()
 
         self._pcm_buffer = bytearray()
-        self._context = np.zeros(
-            SILERO_MODEL_CONFIG.context_size_samples,
-            dtype=np.float32,
-        )
-        self._state = np.zeros(
-            SILERO_MODEL_CONFIG.state_shape,
-            dtype=np.float32,
-        )
+        self._context = np.zeros(SILERO_MODEL_CONFIG.context_size_samples, dtype=np.float32)
+        self._state = np.zeros(SILERO_MODEL_CONFIG.state_shape, dtype=np.float32)
 
         self._samples_index = 0
         self._speaking = False
@@ -150,10 +136,7 @@ class SileroVADStream(VADStreamBase):
         self._closed = False
         self._error: BaseException | None = None
 
-        self._worker_task = asyncio.create_task(
-            self._run(),
-            name="silero_vad_stream",
-        )
+        self._worker_task = asyncio.create_task(self._run(), name="silero_vad_stream")
 
     def _put_input(self, item: AudioFrame | object) -> bool:
         if self._closed:
@@ -245,10 +228,7 @@ class SileroVADStream(VADStreamBase):
 
         started = time.perf_counter()
         result = await asyncio.wait_for(
-            self._executor.do_inference(
-                SileroVADRunner.INFERENCE_METHOD,
-                request,
-            ),
+            self._executor.do_inference(SileroVADRunner.INFERENCE_METHOD, request),
             timeout=self._options.inference_timeout_sec,
         )
         inference_duration = time.perf_counter() - started
@@ -345,10 +325,7 @@ class SileroVADStream(VADStreamBase):
             self._raw_speech_duration = 0.0
 
             if self._speaking and self._raw_silence_duration >= self._options.min_silence_duration:
-                final_speech_duration = max(
-                    0.0,
-                    self._speech_duration - self._raw_silence_duration,
-                )
+                final_speech_duration = max(0.0, self._speech_duration - self._raw_silence_duration)
                 self._speaking = False
                 self._silence_duration = self._raw_silence_duration
                 end_speech = True
@@ -388,10 +365,7 @@ class SileroVADStream(VADStreamBase):
         if not self._speaking:
             return
 
-        final_duration = max(
-            0.0,
-            self._speech_duration - self._raw_silence_duration,
-        )
+        final_duration = max(0.0, self._speech_duration - self._raw_silence_duration)
         self._speaking = False
 
         await self._emit(

@@ -13,6 +13,4 @@
 # limitations under the License.
 from .context_history import ContextHistory
 
-__all__ = [
-    "ContextHistory",
-]
+__all__ = ["ContextHistory"]

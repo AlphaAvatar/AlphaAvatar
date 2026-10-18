@@ -35,7 +35,4 @@ class OpenAISegmentSTTPlugin(AvatarModulePlugin):
         return OpenAISegmentSTT(*args, **kwargs)
 
 
-__all__ = [
-    "OpenAIRealtimeSTTPlugin",
-    "OpenAISegmentSTTPlugin",
-]
+__all__ = ["OpenAIRealtimeSTTPlugin", "OpenAISegmentSTTPlugin"]

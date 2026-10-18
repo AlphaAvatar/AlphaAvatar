@@ -23,11 +23,7 @@ from alphaavatar.agents.avatar.context.schemas import ContextPrepareRequest
 from alphaavatar.agents.avatar.loop import LoopHandle
 from alphaavatar.agents.avatar.loop.base import ToolAuthorizer
 from alphaavatar.agents.avatar.loop.enums import LoopState, ToolOutcome
-from alphaavatar.agents.avatar.loop.schemas import (
-    LoopIdentity,
-    LoopRequest,
-    LoopResult,
-)
+from alphaavatar.agents.avatar.loop.schemas import LoopIdentity, LoopRequest, LoopResult
 from alphaavatar.agents.avatar.provider.enums import ModelMessagePhase, ModelRole
 from alphaavatar.agents.avatar.provider.errors import ModelIncompleteError, ModelProtocolError
 from alphaavatar.agents.avatar.provider.records import model_record_batch
@@ -47,6 +43,7 @@ from alphaavatar.agents.avatar.provider.schemas.stream import (
     ModelTextDelta,
 )
 from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.log.diagnostics import format_error
 from alphaavatar.core.output.enums import ExecutionSignalKind
 
 from .config import RealtimeLoopConfig
@@ -392,11 +389,21 @@ class LoopExecution(LoopHandle):
         refused = any(isinstance(p, ModelRefusalPart) for a in answers for p in a.parts)
         return LoopState.REFUSED if refused else LoopState.PARTIAL, answers, reason
 
+    def _diagnose(self, error: BaseException, *, stage: str) -> None:
+        # Keep exception chains and code locations, never prompts, payloads or tool arguments.
+        logger.warning(
+            "Avatar loop failed run_id=%s stage=%s\n%s",
+            self.identity.run_id,
+            stage,
+            format_error(error, details=True),
+        )
+
     async def _run(self) -> LoopResult:
         self._started = True
         state = LoopState.FAILED
         answers: tuple[ModelInputMessage, ...] = ()
         reason = error_type = None
+        stage = "prepare_context"
         try:
             if self._cancel_reason is not None:
                 raise asyncio.CancelledError
@@ -417,17 +424,17 @@ class LoopExecution(LoopHandle):
             if self._cancel_reason is not None:
                 raise asyncio.CancelledError
 
+            stage = "model_and_tools"
             state, answers, reason = await self._drive()
         except asyncio.CancelledError as exc:
             state, reason = LoopState.CANCELLED, self._cancel_reason or "cancelled"
             if exc.__cause__ is not None:
                 error_type = type(exc.__cause__).__name__
+                self._diagnose(exc, stage=stage)
         except Exception as exc:
             error_type = type(exc).__name__
             reason = "timeout" if isinstance(exc, TimeoutError) else "execution_failed"
-            logger.warning(
-                "Avatar loop failed run_id=%s error=%s", self.identity.run_id, error_type
-            )
+            self._diagnose(exc, stage=stage)
 
         finally:
             try:
@@ -438,18 +445,16 @@ class LoopExecution(LoopHandle):
                 state, reason = LoopState.CANCELLED, self._cancel_reason or "cancelled"
                 if exc.__cause__ is not None:
                     error_type = type(exc.__cause__).__name__
+                    self._diagnose(exc, stage="record_settlement")
             except Exception as exc:
                 state, reason, error_type = LoopState.FAILED, "history_failed", type(exc).__name__
                 answers = ()
+                self._diagnose(exc, stage="record_settlement")
 
             try:
                 await self._feedback.aclose(
                     interrupted=state
-                    not in {
-                        LoopState.COMPLETED,
-                        LoopState.PARTIAL,
-                        LoopState.REFUSED,
-                    }
+                    not in {LoopState.COMPLETED, LoopState.PARTIAL, LoopState.REFUSED}
                 )
             except asyncio.CancelledError:
                 state, reason = LoopState.CANCELLED, self._cancel_reason or "cancelled"
@@ -457,6 +462,7 @@ class LoopExecution(LoopHandle):
                 state, reason = LoopState.FAILED, "output_cleanup_failed"
                 error_type = type(exc).__name__
                 answers = ()
+                self._diagnose(exc, stage="output_cleanup")
         if self._cancel_reason is not None:
             state, reason, answers = LoopState.CANCELLED, self._cancel_reason, ()
 

@@ -42,8 +42,4 @@ class ContextPlugin(AvatarModulePlugin):
         )
 
 
-AvatarModulePlugin.register(
-    AvatarModule.CONTEXT,
-    "default",
-    ContextPlugin(),
-)
+AvatarModulePlugin.register(AvatarModule.CONTEXT, "default", ContextPlugin())

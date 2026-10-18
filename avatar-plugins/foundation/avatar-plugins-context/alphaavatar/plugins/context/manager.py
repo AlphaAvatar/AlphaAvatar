@@ -82,7 +82,7 @@ class AvatarContextManager(ContextManager):
         self._ensure_open()
         persona = self._persona.persona_content if self._persona is not None else None
         return self._system_template(self._runtime.state).instructions(
-            stable_persona=persona or self._runtime.state.user_persona or DEFAULT_SYSTEM_VALUE,
+            stable_persona=persona or self._runtime.state.user_persona or DEFAULT_SYSTEM_VALUE
         )
 
     @staticmethod
@@ -128,9 +128,7 @@ class AvatarContextManager(ContextManager):
                 participant.user_time.timezone, participant.user_time.timezone_source
             )
             times[identity] = ParticipantTimeContext(
-                participant_id=identity,
-                user_id=participant.effective_user_id,
-                user_time=time,
+                participant_id=identity, user_id=participant.effective_user_id, user_time=time
             )
 
         # Read sources once. Preparing a query must not write to shared State or participants.

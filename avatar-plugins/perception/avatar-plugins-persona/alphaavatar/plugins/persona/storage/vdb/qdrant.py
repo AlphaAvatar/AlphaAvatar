@@ -109,9 +109,7 @@ class QdrantRunner(InferenceRunner):
                 points.append(PointStruct(id=vid, vector=vec, payload=payload))
 
             self._client.upsert(
-                collection_name=self._speaker_collection_name,
-                points=points,
-                wait=True,
+                collection_name=self._speaker_collection_name, points=points, wait=True
             )
             result["inserted"] = len(points)
         except Exception as e:
@@ -129,9 +127,7 @@ class QdrantRunner(InferenceRunner):
                 points.append(PointStruct(id=vid, vector=vec, payload=payload))
 
             self._client.upsert(
-                collection_name=self._face_collection_name,
-                points=points,
-                wait=True,
+                collection_name=self._face_collection_name, points=points, wait=True
             )
             result["inserted"] = len(points)
         except Exception as e:
@@ -153,11 +149,7 @@ class QdrantRunner(InferenceRunner):
 
         # 2) Load speaker vector from speaker collection
         speaker_vector = None
-        spk_filter = Filter(
-            should=[
-                FieldCondition(key="user_id", match=MatchValue(value=user_id)),
-            ]
-        )
+        spk_filter = Filter(should=[FieldCondition(key="user_id", match=MatchValue(value=user_id))])
         spk_points = self._scroll_all(spk_filter, self._speaker_collection_name, with_vectors=True)
         if spk_points:
             # take the most recent / first found
@@ -172,9 +164,7 @@ class QdrantRunner(InferenceRunner):
         # 3) Load face vector from face collection
         face_vector = None
         face_filter = Filter(
-            should=[
-                FieldCondition(key="user_id", match=MatchValue(value=user_id)),
-            ]
+            should=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]
         )
         face_points = self._scroll_all(face_filter, self._face_collection_name, with_vectors=True)
         if face_points:
@@ -297,9 +287,7 @@ class QdrantRunner(InferenceRunner):
         q_filter = None
         if user_id:
             q_filter = Filter(
-                should=[
-                    FieldCondition(key="user_id", match=MatchValue(value=user_id)),
-                ]
+                should=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]
             )
 
         hits = self._client.search(
@@ -330,12 +318,7 @@ class QdrantRunner(InferenceRunner):
                 vec = hv
 
             results.append(
-                {
-                    "user_id": uid,
-                    "vector": vec,
-                    "id": str(h.id),
-                    "score": float(h.score),
-                }
+                {"user_id": uid, "vector": vec, "id": str(h.id), "score": float(h.score)}
             )
 
         return results[0] if results else None
@@ -351,9 +334,7 @@ class QdrantRunner(InferenceRunner):
         q_filter = None
         if user_id:
             q_filter = Filter(
-                should=[
-                    FieldCondition(key="user_id", match=MatchValue(value=user_id)),
-                ]
+                should=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]
             )
 
         hits = self._client.search(
@@ -384,12 +365,7 @@ class QdrantRunner(InferenceRunner):
                 vec = hv
 
             results.append(
-                {
-                    "user_id": uid,
-                    "vector": vec,
-                    "id": str(h.id),
-                    "score": float(h.score),
-                }
+                {"user_id": uid, "vector": vec, "id": str(h.id), "score": float(h.score)}
             )
 
         return results[0] if results else None
@@ -419,10 +395,7 @@ class QdrantRunner(InferenceRunner):
             raise ValueError("`embedding.model` is required in PERSONA_VDB_CONFIG")
 
         task_config = ProviderTaskConfig(
-            kind=ProviderKind.EMBEDDING,
-            provider=provider,
-            model=model,
-            extra=extra,
+            kind=ProviderKind.EMBEDDING, provider=provider, model=model, extra=extra
         )
 
         return create_embedding_model(task_config)

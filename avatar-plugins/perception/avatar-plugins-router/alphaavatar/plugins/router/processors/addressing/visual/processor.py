@@ -16,27 +16,18 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
-from alphaavatar.agents.avatar.vision import (
-    FaceDetection,
-    FaceDetectionResult,
-)
+from alphaavatar.agents.avatar.vision import FaceDetection, FaceDetectionResult
 from alphaavatar.agents.router import RouterProcessorBase
 from alphaavatar.agents.router.enums import (
     AddressingEvidenceKind,
     AddressingMode,
     InteractionEntityKind,
 )
-from alphaavatar.agents.router.schemas import (
-    InteractionAddressingEvidence,
-    InteractionEntityRef,
-)
+from alphaavatar.agents.router.schemas import InteractionAddressingEvidence, InteractionEntityRef
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import AnnotationKind
-from alphaavatar.core.env.schemas import (
-    PerceptionEntityRef,
-    PerceptionSourceRef,
-)
+from alphaavatar.core.env.schemas import PerceptionEntityRef, PerceptionSourceRef
 from alphaavatar.core.perception.schemas import PerceptionEvent
 
 from ....log import logger
@@ -63,12 +54,7 @@ class VisualAddressingProcessor(RouterProcessorBase):
     CONSUMER_ID = "router.addressing.visual"
     SOURCE = "router.addressing.visual"
 
-    def __init__(
-        self,
-        *,
-        runtime: AvatarRuntime,
-        config: VisualAddressingConfig,
-    ) -> None:
+    def __init__(self, *, runtime: AvatarRuntime, config: VisualAddressingConfig) -> None:
         super().__init__(runtime=runtime)
 
         self._estimator = FaceOrientationEstimator(
@@ -92,16 +78,12 @@ class VisualAddressingProcessor(RouterProcessorBase):
         return "visual_addressing"
 
     @staticmethod
-    def _entity(
-        observation: EnvObservation,
-        face: FaceDetection,
-    ) -> PerceptionEntityRef | None:
+    def _entity(observation: EnvObservation, face: FaceDetection) -> PerceptionEntityRef | None:
         return face.entity or observation.entity
 
     @staticmethod
     def _subject_key(
-        observation: EnvObservation,
-        entity: PerceptionEntityRef | None,
+        observation: EnvObservation, entity: PerceptionEntityRef | None
     ) -> VisualSubjectKey:
         return VisualSubjectKey(
             source=observation.source,
@@ -110,10 +92,7 @@ class VisualAddressingProcessor(RouterProcessorBase):
         )
 
     def _select_face(
-        self,
-        *,
-        observation: EnvObservation,
-        result: FaceDetectionResult,
+        self, *, observation: EnvObservation, result: FaceDetectionResult
     ) -> FaceDetection | None:
         if not result.faces:
             return None
@@ -161,12 +140,7 @@ class VisualAddressingProcessor(RouterProcessorBase):
         return None
 
     def _publish(
-        self,
-        *,
-        observation: EnvObservation,
-        face: FaceDetection,
-        score: float,
-        target: str,
+        self, *, observation: EnvObservation, face: FaceDetection, score: float, target: str
     ) -> None:
         entity = self._entity(observation, face)
 
@@ -199,10 +173,7 @@ class VisualAddressingProcessor(RouterProcessorBase):
         )
 
         self._runtime.perception.publish_annotation(
-            evidence.to_annotation(
-                source=self.SOURCE,
-                observation_id=observation.observation_id,
-            )
+            evidence.to_annotation(source=self.SOURCE, observation_id=observation.observation_id)
         )
 
     def _handle(self, event: PerceptionEvent) -> None:
@@ -222,26 +193,17 @@ class VisualAddressingProcessor(RouterProcessorBase):
             return
 
         result = FaceDetectionResult.from_annotation(annotation)
-        face = self._select_face(
-            observation=observation,
-            result=result,
-        )
+        face = self._select_face(observation=observation, result=result)
         if face is None:
             return
 
-        estimate = self._estimator.estimate(
-            face=face,
-            result=result,
-        )
+        estimate = self._estimator.estimate(face=face, result=result)
         if estimate is None:
             return
 
         entity = self._entity(observation, face)
         key = self._subject_key(observation, entity)
-        state = self._states.setdefault(
-            key,
-            VisualOrientationState(),
-        )
+        state = self._states.setdefault(key, VisualOrientationState())
 
         state.score = (
             estimate.frontal_score
@@ -264,12 +226,7 @@ class VisualAddressingProcessor(RouterProcessorBase):
         if repeated_too_soon:
             return
 
-        self._publish(
-            observation=observation,
-            face=face,
-            score=state.score,
-            target=target,
-        )
+        self._publish(observation=observation, face=face, score=state.score, target=target)
 
         state.last_target = target
         state.last_published_ns = published_at_ns
@@ -289,7 +246,7 @@ class VisualAddressingProcessor(RouterProcessorBase):
         while True:
             try:
                 await self._runtime.perception.wait_for_pending_annotations(
-                    consumer_id=self.CONSUMER_ID,
+                    consumer_id=self.CONSUMER_ID
                 )
 
                 batch = self._runtime.perception.take_pending_annotations(
@@ -300,8 +257,7 @@ class VisualAddressingProcessor(RouterProcessorBase):
 
                 if batch.has_gap:
                     logger.warning(
-                        "Visual addressing missed face annotations missed=%s",
-                        batch.missed_count,
+                        "Visual addressing missed face annotations missed=%s", batch.missed_count
                     )
                     self._states.clear()
 
@@ -309,14 +265,10 @@ class VisualAddressingProcessor(RouterProcessorBase):
                     try:
                         self._handle(event)
                     except Exception:
-                        logger.exception(
-                            "Visual addressing failed event_id=%s",
-                            event.event_id,
-                        )
+                        logger.exception("Visual addressing failed event_id=%s", event.event_id)
 
                 self._runtime.perception.commit_annotations(
-                    consumer_id=self.CONSUMER_ID,
-                    cursor_seq=batch.cursor_seq,
+                    consumer_id=self.CONSUMER_ID, cursor_seq=batch.cursor_seq
                 )
 
             except asyncio.CancelledError:
@@ -329,10 +281,7 @@ class VisualAddressingProcessor(RouterProcessorBase):
         if self._task is not None:
             return
 
-        self._task = asyncio.create_task(
-            self._consume_loop(),
-            name="router_visual_addressing",
-        )
+        self._task = asyncio.create_task(self._consume_loop(), name="router_visual_addressing")
 
         logger.info("Visual Addressing started")
 
@@ -341,10 +290,7 @@ class VisualAddressingProcessor(RouterProcessorBase):
             return
 
         self._task.cancel()
-        await asyncio.gather(
-            self._task,
-            return_exceptions=True,
-        )
+        await asyncio.gather(self._task, return_exceptions=True)
         self._task = None
 
         self._states.clear()

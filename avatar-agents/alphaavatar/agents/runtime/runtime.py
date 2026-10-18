@@ -110,10 +110,7 @@ class AvatarRuntime:
 
         prepare_workspace(workspace)
 
-        session_path = workspace.data.sessions.get(
-            session.session_id,
-            session.created_at.date(),
-        )
+        session_path = workspace.data.sessions.get(session.session_id, session.created_at.date())
         prepare_session_path(session_path)
         session.bind_path(session_path)
 

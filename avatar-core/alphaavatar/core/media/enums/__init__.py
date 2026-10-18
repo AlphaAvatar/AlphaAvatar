@@ -13,7 +13,4 @@
 # limitations under the License.
 from .formats import PayloadFormat, PayloadView
 
-__all__ = [
-    "PayloadFormat",
-    "PayloadView",
-]
+__all__ = ["PayloadFormat", "PayloadView"]

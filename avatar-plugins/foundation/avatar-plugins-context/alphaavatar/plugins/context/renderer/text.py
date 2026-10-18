@@ -22,9 +22,6 @@ class TextRenderer:
             model_input=replace_current(
                 request.base_input,
                 request.input_id,
-                render_current_input(
-                    request,
-                    include_images=False,
-                ),
+                render_current_input(request, include_images=False),
             )
         )

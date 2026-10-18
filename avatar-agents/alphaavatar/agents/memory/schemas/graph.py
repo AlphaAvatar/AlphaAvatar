@@ -33,10 +33,7 @@ class GraphNodeMention(BaseModel):
         default=None,
         description="Optional node type hint, such as text, image, audio, face, voice, object, tool.",
     )
-    content: str = Field(
-        default="",
-        description="Searchable node content or description.",
-    )
+    content: str = Field(default="", description="Searchable node content or description.")
     weight: float = Field(default=1.0)
 
 

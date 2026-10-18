@@ -31,21 +31,15 @@ class STTConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     plugin: Literal["openai_realtime", "openai_segment"] | None = Field(
-        default=None,
-        description="STT provider implementation used by Interaction Router.",
+        default=None, description="STT provider implementation used by Interaction Router."
     )
     model: str | None = Field(
-        default=None,
-        description="Model used by the AlphaAvatar STT provider.",
+        default=None, description="Model used by the AlphaAvatar STT provider."
     )
     delay: Literal["minimal", "low", "medium", "high", "xhigh"] = Field(
-        default="low",
-        description="Realtime transcription latency/quality preference.",
+        default="low", description="Realtime transcription latency/quality preference."
     )
-    base_url: str | None = Field(
-        default=None,
-        description="Optional provider API base URL.",
-    )
+    base_url: str | None = Field(default=None, description="Optional provider API base URL.")
 
     def get_plugin(self) -> STTBase | None:
         if self.plugin is None:
@@ -68,21 +62,13 @@ class TTSConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     plugin: Literal["openai", "voiceai"] | None = Field(
-        default=None,
-        description="TTS plugin to use for text-to-speech.",
+        default=None, description="TTS plugin to use for text-to-speech."
     )
-    model: str | None = Field(
-        default=None,
-        description="Model to use for text-to-speech.",
-    )
+    model: str | None = Field(default=None, description="Model to use for text-to-speech.")
     speaker: str | None = Field(
-        default=None,
-        description="Speaker to use for text-to-speech; voice.ai uses voice_id.",
+        default=None, description="Speaker to use for text-to-speech; voice.ai uses voice_id."
     )
-    instructions: str | None = Field(
-        default=None,
-        description="Instructions for the TTS model.",
-    )
+    instructions: str | None = Field(default=None, description="Instructions for the TTS model.")
 
     base_url: str | None = None
     timeout: float = Field(default=30.0, gt=0, le=3600, allow_inf_nan=False)
@@ -182,10 +168,6 @@ class VoiceConfig(BaseModel):
             if tts is not None:
                 resources.push_async_callback(tts.aclose)
 
-            bundle = VoiceBundle(
-                vad=vad,
-                stt=stt,
-                tts=tts,
-            )
+            bundle = VoiceBundle(vad=vad, stt=stt, tts=tts)
             resources.pop_all()
             return bundle

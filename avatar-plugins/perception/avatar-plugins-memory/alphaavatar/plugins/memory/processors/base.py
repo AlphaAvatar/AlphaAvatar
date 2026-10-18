@@ -111,8 +111,7 @@ class MemoryProcessor(MemoryProcessorBase):
                 extra_data=dict(extra_data or {}),
             )
             item.graph_nodes, item.graph_links = build_graph_from_mentions(
-                item=item,
-                mentions=patch.node_mentions,
+                item=item, mentions=patch.node_mentions
             )
             items.append(item)
         return items
@@ -147,8 +146,7 @@ class MemoryProcessor(MemoryProcessorBase):
     ) -> str:
         content = MemoryPluginsTemplate.apply_update_template(messages, state.cache_type)
         env_memory = self.memory_runtime.memory_state.render(
-            memory_type=MemoryType.ENV,
-            context_id=state.context_id,
+            memory_type=MemoryType.ENV, context_id=state.context_id
         )
         if not env_memory:
             return content
@@ -174,12 +172,7 @@ class MemoryProcessor(MemoryProcessorBase):
         return start, end, state.messages_between(start, end)
 
     async def commit_items(
-        self,
-        *,
-        state: MemoryContextState,
-        start: int,
-        end: int,
-        items: list[MemoryItem],
+        self, *, state: MemoryContextState, start: int, end: int, items: list[MemoryItem]
     ) -> None:
         await self.store.commit(
             items,

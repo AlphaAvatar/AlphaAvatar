@@ -23,34 +23,11 @@ from .version import __version__
 __all__ = ["__version__"]
 
 # Plugin register
-AvatarModulePlugin.register(
-    AvatarModule.VOICE_VAD,
-    "silero",
-    SileroVADPlugin(),
-)
-AvatarModulePlugin.register(
-    AvatarModule.VOICE_STT,
-    "openai_realtime",
-    OpenAIRealtimeSTTPlugin(),
-)
-AvatarModulePlugin.register(
-    AvatarModule.VOICE_STT,
-    "openai_segment",
-    OpenAISegmentSTTPlugin(),
-)
-AvatarModulePlugin.register(
-    AvatarModule.VOICE_TTS,
-    "openai",
-    OpenAITTSPlugin(),
-)
-AvatarModulePlugin.register(
-    AvatarModule.VOICE_TTS,
-    "voiceai",
-    VoiceAITTSPlugin(),
-)
+AvatarModulePlugin.register(AvatarModule.VOICE_VAD, "silero", SileroVADPlugin())
+AvatarModulePlugin.register(AvatarModule.VOICE_STT, "openai_realtime", OpenAIRealtimeSTTPlugin())
+AvatarModulePlugin.register(AvatarModule.VOICE_STT, "openai_segment", OpenAISegmentSTTPlugin())
+AvatarModulePlugin.register(AvatarModule.VOICE_TTS, "openai", OpenAITTSPlugin())
+AvatarModulePlugin.register(AvatarModule.VOICE_TTS, "voiceai", VoiceAITTSPlugin())
 
 # Inference Runners
-register_inference_runner_bootstrap(
-    "alphaavatar.plugins.voice",
-    configure_inference_runners,
-)
+register_inference_runner_bootstrap("alphaavatar.plugins.voice", configure_inference_runners)

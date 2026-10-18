@@ -34,9 +34,4 @@ def to_livekit_video_frame(frame: VideoFrame) -> rtc.VideoFrame:
     if frame.pixel_format != PixelFormat.RGBA:
         bgr = video_frame_to_bgr(frame)
         frame = bgr_to_video_frame(bgr)
-    return rtc.VideoFrame(
-        frame.width,
-        frame.height,
-        rtc.VideoBufferType.RGBA,
-        frame.packed_data(),
-    )
+    return rtc.VideoFrame(frame.width, frame.height, rtc.VideoBufferType.RGBA, frame.packed_data())

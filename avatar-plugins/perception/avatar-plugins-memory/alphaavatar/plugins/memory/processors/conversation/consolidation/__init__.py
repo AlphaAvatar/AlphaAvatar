@@ -17,22 +17,14 @@ from .candidates import (
     filter_hits,
     merge_candidates,
 )
-from .config import (
-    CandidateSource,
-    ConsolidationConfig,
-    ConsolidationMode,
-    ItemOp,
-)
+from .config import CandidateSource, ConsolidationConfig, ConsolidationMode, ItemOp
 from .consolidation_op import (
     apply_assignments,
     build_consolidated_memory,
     rewrite_consolidated_memory,
 )
 from .consolidator import MemoryConsolidator
-from .prompts import (
-    CONSOLIDATION_PROMPT,
-    SESSION_SUMMARY_PROMPT,
-)
+from .prompts import CONSOLIDATION_PROMPT, SESSION_SUMMARY_PROMPT
 from .schema import (
     NEW_CONSOLIDATED_PREFIX,
     ConsolidatedMemoryDraft,

@@ -21,12 +21,7 @@ from alphaavatar.core.env import EnvAnnotation, EnvObservation
 from alphaavatar.core.env.schemas import PerceptionSourceRef
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
 
-from ..enums import (
-    MediaModality,
-    MediaSourceKind,
-    MediaSourceState,
-    PerceptionEventKind,
-)
+from ..enums import MediaModality, MediaSourceKind, MediaSourceState, PerceptionEventKind
 
 
 @dataclass(frozen=True, slots=True)

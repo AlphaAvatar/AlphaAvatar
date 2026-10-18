@@ -171,8 +171,7 @@ class ExecutionManager:
 
         self._set_state(record, "starting")
         record.task = asyncio.create_task(
-            self._launch(record),
-            name=f"host_execution:{reservation.execution_id}",
+            self._launch(record), name=f"host_execution:{reservation.execution_id}"
         )
         record.task.add_done_callback(lambda task: None if task.cancelled() else task.exception())
         return True
@@ -254,10 +253,7 @@ class ExecutionManager:
         record.process.request_stop(reason)
 
     async def control_lost(
-        self,
-        reservations: Sequence[ExecutionReservation],
-        *,
-        reason: str,
+        self, reservations: Sequence[ExecutionReservation], *, reason: str
     ) -> None:
         if self._policy.on_control_loss != "finish_execution":
             raise RuntimeError("Unsupported control-loss policy")

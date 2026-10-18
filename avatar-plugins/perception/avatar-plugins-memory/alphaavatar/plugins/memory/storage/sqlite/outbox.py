@@ -29,11 +29,7 @@ def _event_ids(values: list[int]) -> list[int]:
 
 
 def claim_outbox_sync(
-    path: pathlib.Path,
-    target: MemoryOutboxTarget,
-    worker_id: str,
-    limit: int,
-    lease_seconds: float,
+    path: pathlib.Path, target: MemoryOutboxTarget, worker_id: str, limit: int, lease_seconds: float
 ) -> list[MemoryOutboxEvent]:
     connection = connect(path)
 
@@ -60,12 +56,7 @@ def claim_outbox_sync(
             ORDER BY event_id
             LIMIT ?
             """,
-            (
-                target.value,
-                now,
-                now,
-                limit,
-            ),
+            (target.value, now, now, limit),
         ).fetchall()
 
         event_ids = [int(row["event_id"]) for row in rows]
@@ -86,14 +77,7 @@ def claim_outbox_sync(
                 lease_until=?
             WHERE event_id=?
             """,
-            [
-                (
-                    worker_id,
-                    lease_until,
-                    event_id,
-                )
-                for event_id in event_ids
-            ],
+            [(worker_id, lease_until, event_id) for event_id in event_ids],
         )
 
         rows = connection.execute(
@@ -126,11 +110,7 @@ def claim_outbox_sync(
         connection.close()
 
 
-def complete_outbox_sync(
-    path: pathlib.Path,
-    event_ids: list[int],
-    worker_id: str,
-) -> None:
+def complete_outbox_sync(path: pathlib.Path, event_ids: list[int], worker_id: str) -> None:
     event_ids = _event_ids(event_ids)
 
     if not event_ids:
@@ -164,11 +144,7 @@ def complete_outbox_sync(
 
 
 def retry_outbox_sync(
-    path: pathlib.Path,
-    event_id: int,
-    worker_id: str,
-    error: str,
-    delay_seconds: float,
+    path: pathlib.Path, event_id: int, worker_id: str, error: str, delay_seconds: float
 ) -> None:
     connection = connect(path)
 
@@ -188,12 +164,7 @@ def retry_outbox_sync(
               AND state='processing'
               AND lease_owner=?
             """,
-            (
-                time.time() + delay_seconds,
-                error,
-                event_id,
-                worker_id,
-            ),
+            (time.time() + delay_seconds, error, event_id, worker_id),
         )
 
         if cursor.rowcount != 1:

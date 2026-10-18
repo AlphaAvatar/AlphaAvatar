@@ -20,10 +20,8 @@ class RetrievalConfig(BaseModel):
     enabled: bool = True
 
     search_context: int = Field(
-        default=3,
-        description="The number of contexts used for memory searches.",
+        default=3, description="The number of contexts used for memory searches."
     )
     recall_num: int = Field(
-        default=10,
-        description="The number of items to recall from the memory vector database.",
+        default=10, description="The number of items to recall from the memory vector database."
     )

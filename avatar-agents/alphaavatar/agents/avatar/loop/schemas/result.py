@@ -15,10 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from alphaavatar.agents.avatar.provider.schemas import (
-    ModelInputItem,
-    ModelInputMessage,
-)
+from alphaavatar.agents.avatar.provider.schemas import ModelInputItem, ModelInputMessage
 
 from ..enums import LoopState
 from .identity import LoopIdentity

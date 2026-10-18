@@ -42,10 +42,7 @@ class RouterPlugin(AvatarModulePlugin):
         super().__init__(__name__, __version__, __package__, logger)
 
     def get_plugin(
-        self,
-        *,
-        runtime: AvatarRuntime,
-        init_config: dict[str, Any] | None = None,
+        self, *, runtime: AvatarRuntime, init_config: dict[str, Any] | None = None
     ) -> InteractionRouterRuntime:
         config = RouterConfig.model_validate(init_config or {})
         voice = runtime.foundation.voice

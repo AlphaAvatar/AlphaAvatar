@@ -16,10 +16,7 @@ from __future__ import annotations
 from importlib import import_module
 from typing import Any, Protocol
 
-from alphaavatar.agents.avatar.provider.schemas import (
-    ModelInput,
-    ProviderTaskConfig,
-)
+from alphaavatar.agents.avatar.provider.schemas import ModelInput, ProviderTaskConfig
 
 _ADAPTERS = {
     "langchain_text": (".text", "LangChainTextInputAdapter"),
@@ -28,12 +25,7 @@ _ADAPTERS = {
 
 
 class InputAdapter(Protocol):
-    async def adapt(
-        self,
-        model_input: ModelInput,
-        *,
-        config: ProviderTaskConfig,
-    ) -> Any: ...
+    async def adapt(self, model_input: ModelInput, *, config: ProviderTaskConfig) -> Any: ...
 
 
 class LangChainInputAdapterRegistry:
