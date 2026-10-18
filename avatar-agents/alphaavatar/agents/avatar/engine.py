@@ -35,8 +35,6 @@ from .loop.schemas import LoopRequest
 
 if TYPE_CHECKING:
     from alphaavatar.agents.configs import AvatarConfig
-    from alphaavatar.agents.memory import MemoryBase
-    from alphaavatar.agents.persona import PersonaBase
     from alphaavatar.agents.router.schemas import InteractionEntityRef
     from alphaavatar.agents.runtime import AvatarRuntime, SessionRuntime
     from alphaavatar.core.perception.schemas import PerceptionEvent
@@ -129,14 +127,6 @@ class AvatarEngine(LifecycleComponent):
         return self._runtime.session
 
     @property
-    def memory(self) -> MemoryBase:
-        return self._memory
-
-    @property
-    def persona(self) -> PersonaBase:
-        return self._persona
-
-    @property
     def ready(self) -> bool:
         return self._ready and self._close_task is None and self._failure is None
 
@@ -210,6 +200,7 @@ class AvatarEngine(LifecycleComponent):
     def _candidate(self, input_id: str) -> set[TurnTakingAction]:
         if not isinstance(input_id, str) or not input_id.strip() or len(input_id) > 512:
             raise ValueError("Turn input identity must contain 1..512 characters")
+
         flags = self._candidates.get(input_id)
         if flags is None:
             if len(self._candidates) >= self._config.max_turn_candidates:
@@ -236,6 +227,7 @@ class AvatarEngine(LifecycleComponent):
     def _cancel_foreground(self, foreground: _Foreground | None, reason: str) -> None:
         if foreground is None:
             return
+
         foreground.interrupted = True
         if foreground.handle is not None:
             run_id = foreground.handle.identity.run_id
@@ -442,11 +434,13 @@ class AvatarEngine(LifecycleComponent):
         self._ensure_open()
         if not self.ready:
             raise RuntimeError("AvatarEngine is not ready for direct inputs")
+
         if type(observation) is not EnvObservation or observation.kind not in (
             ObservationKind.TEXT_INPUT,
             ObservationKind.IMAGE_INPUT,
         ):
             raise TypeError("Direct input requires TEXT_INPUT or IMAGE_INPUT")
+
         if observation.kind == ObservationKind.TEXT_INPUT:
             if (
                 not isinstance(observation.payload, TextPayload)
@@ -460,6 +454,7 @@ class AvatarEngine(LifecycleComponent):
             if not observation.has_payload:
                 raise ValueError("Direct image input requires media evidence")
             payload = observation.payload
+
         # Copy text and the outer metadata mapping; media keeps Core evidence ownership.
         observation = replace(
             observation,
