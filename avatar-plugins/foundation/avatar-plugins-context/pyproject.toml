@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
 [project]
@@ -8,14 +8,22 @@ dynamic = ["version"]
 description = "Runtime context management for AlphaAvatar."
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.11,<3.12"
-dependencies = ["alpha-avatar-core", "alpha-avatar-agents", "pydantic>=2,<3"]
+license-files = ["LICENSE"]
+requires-python = ">=3.13,<3.14"
+classifiers = [
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3 :: Only",
+]
+dependencies = ["alpha-avatar-agents", "alpha-avatar-core", "pydantic>=2,<3"]
 
 [project.entry-points."alphaavatar.context"]
 default = "alphaavatar.plugins.context"
 
 [project.urls]
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"
+Issues = "https://github.com/AlphaAvatar/AlphaAvatar/issues"
 
 [tool.hatch.version]
 path = "alphaavatar/plugins/context/version.py"
@@ -24,4 +32,4 @@ path = "alphaavatar/plugins/context/version.py"
 packages = ["alphaavatar"]
 
 [tool.hatch.build.targets.sdist]
-include = ["alphaavatar", "README.md", "pyproject.toml"]
+include = ["alphaavatar", "README.md", "pyproject.toml", "LICENSE"]

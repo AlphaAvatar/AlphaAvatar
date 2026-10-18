@@ -282,10 +282,13 @@ The `alphaavatar` CLI is registered by **alpha-avatar-host**, not by the Agents 
 git clone --recurse-submodules https://github.com/AlphaAvatar/AlphaAvatar.git
 cd AlphaAvatar
 
-uv venv .venv --python 3.11
+uv python install 3.13
+uv venv .venv --python 3.13
 source .venv/bin/activate
-uv sync --all-packages
+uv sync --all-packages --locked
 ```
+
+This development line targets standard **CPython 3.13**. When moving from Python 3.11, use a new environment and complete the [migration and verification steps](CONTRIBUTING.md#python-313-development-environment) before changing a running deployment. A Python 3.11 lockfile is not valid for this migration. Native model backends may also require platform-specific build tools.
 
 <h2>Quick Start ⚡️</h2>
 

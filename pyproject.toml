@@ -1,10 +1,26 @@
+# Workspace policy and development tools live here; runtime metadata stays in each package.
+[tool.uv]
+required-version = ">=0.10.0"
+default-groups = ["dev", "avatar-agent-all"]
+
+[tool.uv.workspace]
+members = [
+    "avatar-core",
+    "avatar-agents",
+    "avatar-rtc",
+    "avatar-host",
+    "avatar-plugins/foundation/*",
+    "avatar-plugins/perception/*",
+    "avatar-plugins/tools/*",
+]
+
 [tool.uv.sources]
-alpha-avatar-host = { workspace = true }
-alpha-avatar-rtc = { workspace = true }
 alpha-avatar-core = { workspace = true }
 alpha-avatar-agents = { workspace = true }
-alpha-avatar-plugins-loop = { workspace = true }
+alpha-avatar-rtc = { workspace = true }
+alpha-avatar-host = { workspace = true }
 alpha-avatar-plugins-context = { workspace = true }
+alpha-avatar-plugins-loop = { workspace = true }
 alpha-avatar-plugins-provider = { workspace = true }
 alpha-avatar-plugins-voice = { workspace = true }
 alpha-avatar-plugins-character = { workspace = true }
@@ -12,80 +28,67 @@ alpha-avatar-plugins-memory = { workspace = true }
 alpha-avatar-plugins-persona = { workspace = true }
 alpha-avatar-plugins-router = { workspace = true }
 alpha-avatar-plugins-status = { workspace = true }
-alpha-avatar-plugins-rag = { workspace = true }
 alpha-avatar-plugins-deepresearch = { workspace = true }
 alpha-avatar-plugins-mcp = { workspace = true }
-
-[tool.uv.workspace]
-members = [
-    "avatar-host",
-    "avatar-rtc",
-    "avatar-core",
-    "avatar-agents",
-    "avatar-plugins/foundation/*",
-    "avatar-plugins/perception/*",
-    "avatar-plugins/tools/*",
-]
-exclude = []
+alpha-avatar-plugins-rag = { workspace = true }
 
 [dependency-groups]
-dev = [
-    "pre-commit",
-    "python-dotenv>=1.0.1",
-    "mypy",
-    "pytest",
-    "ruff",
-    "pytest-asyncio>=0.25.3",
+lint = ["packaging>=25,<26", "pre-commit>=4.3,<5", "ruff==0.12.9"]
+test = [
+    "pytest>=8.3,<10",
+    "pytest-asyncio>=0.25.3,<2",
     "jiwer>=3.1.0",
     "scipy>=1.13.1",
     "tiktoken>=0.9.0",
 ]
-docs = [
-    "pdoc3",
-    "setuptools",
-]
+typing = ["mypy>=1.14,<2"]
+build = ["build>=1.2,<2", "hatchling>=1.27,<2", "twine>=6.1,<7"]
+dev = [{ include-group = "lint" }, { include-group = "test" }, { include-group = "typing" }]
+docs = ["pdoc3", "setuptools"]
 avatar-agent-all = [
     "alpha-avatar-agents[vdb]",
     "alpha-avatar-host[livekit]",
-    "alpha-avatar-plugins-provider[langchain,openai]",
-    "alpha-avatar-plugins-loop",
     "alpha-avatar-plugins-context",
+    "alpha-avatar-plugins-loop",
+    "alpha-avatar-plugins-provider[langchain,openai]",
 ]
 
 [tool.ruff]
-target-version = "py311"
+required-version = "==0.12.9"
+target-version = "py313"
 line-length = 100
-exclude = [".github"]
+indent-width = 4
+preview = false
+unsafe-fixes = false
+force-exclude = true
+# Extend, rather than replace, Ruff's exclusions for VCS, builds and environments.
+extend-exclude = ["**/third_party/**", ".alphaavatar_workspace", ".venv*"]
 
 [tool.ruff.lint]
-select = [
-    "E",  # pycodestyle errors
-    "W",  # pycodestyle warnings
-    "F",  # pyflakes
-    "I",  # isort
-    "B",  # flake8-bugbear
-    "C4", # flake8-comprehensions
-    "UP", # pyupgrade
-]
+select = ["E", "W", "F", "I", "B", "C4", "UP", "TID251"]
+# Long prompts/URLs may exceed the formatter width; retain the existing exception-chain policy.
 ignore = ["E501", "B904"]
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
 known-first-party = ["alphaavatar"]
+split-on-trailing-comma = false
 
-[tool.ruff.lint.pydocstyle]
-convention = "google"
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"livekit.agents" = { msg = "Use native AlphaAvatar ownership; LiveKit RTC/API/protocol are separate." }
 
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+skip-magic-trailing-comma = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = ["--import-mode=importlib", "--ignore=examples"]
 
-
 [tool.mypy]
+python_version = "3.13"
 strict = true
 disallow_any_generics = false
-
-[tool.uv]
-default-groups = ["dev", "avatar-agent-all"]

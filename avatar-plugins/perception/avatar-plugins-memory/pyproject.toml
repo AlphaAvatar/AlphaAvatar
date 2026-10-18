@@ -1,36 +1,30 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
 [project]
 name = "alpha-avatar-plugins-memory"
 dynamic = ["version"]
-description = "AlphaAvatar Framework plugin for memory service"
+description = "Durable memory storage and retrieval for AlphaAvatar."
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.11,<3.12"
+license-files = ["LICENSE"]
+requires-python = ">=3.13,<3.14"
 keywords = ["llm", "agents", "AI", "memory", "langchain"]
 classifiers = [
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3 :: Only",
     "Topic :: Multimedia :: Sound/Audio",
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Programming Language :: Python :: 3 :: Only",
 ]
-dependencies = [
-    "torchaudio>=0.10.1"
-]
-
-[project.optional-dependencies]
+dependencies = ["alpha-avatar-agents", "alpha-avatar-core", "pydantic>=2,<3", "torchaudio>=0.10.1"]
 
 [project.urls]
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"
+Issues = "https://github.com/AlphaAvatar/AlphaAvatar/issues"
 
 [tool.hatch.version]
 path = "alphaavatar/plugins/memory/version.py"
@@ -39,4 +33,4 @@ path = "alphaavatar/plugins/memory/version.py"
 packages = ["alphaavatar"]
 
 [tool.hatch.build.targets.sdist]
-include = ["alphaavatar", "README.md", "LICENSE"]
+include = ["alphaavatar", "README.md", "pyproject.toml", "LICENSE"]

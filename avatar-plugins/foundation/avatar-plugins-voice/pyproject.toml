@@ -1,40 +1,38 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
 [project]
 name = "alpha-avatar-plugins-voice"
 dynamic = ["version"]
-description = "AlphaAvatar Framework plugin for voice service"
+description = "Voice activity detection, speech recognition and synthesis for AlphaAvatar."
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.11,<3.12"
-keywords = ["llm", "agents", "AI", "tts", "stt", "relatime"]
+license-files = ["LICENSE"]
+requires-python = ">=3.13,<3.14"
+keywords = ["llm", "agents", "AI", "tts", "stt", "realtime"]
 classifiers = [
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3 :: Only",
     "Topic :: Multimedia :: Sound/Audio",
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Programming Language :: Python :: 3 :: Only",
 ]
 dependencies = [
+    "alpha-avatar-agents",
+    "alpha-avatar-core",
+    "aiohttp>=3.10",
     "numpy==2.2.6",
     "onnxruntime==1.23.1",
+    "pydantic>=2,<3",
     "soxr>=0.5",
-    "aiohttp>=3.10",
 ]
-
-
-[project.optional-dependencies]
 
 [project.urls]
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"
+Issues = "https://github.com/AlphaAvatar/AlphaAvatar/issues"
 
 [tool.hatch.version]
 path = "alphaavatar/plugins/voice/version.py"
@@ -43,4 +41,4 @@ path = "alphaavatar/plugins/voice/version.py"
 packages = ["alphaavatar"]
 
 [tool.hatch.build.targets.sdist]
-include = ["alphaavatar", "README.md", "LICENSE"]
+include = ["alphaavatar", "README.md", "pyproject.toml", "LICENSE"]
