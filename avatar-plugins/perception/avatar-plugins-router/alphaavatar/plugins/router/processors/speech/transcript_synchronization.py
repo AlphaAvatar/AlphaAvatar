@@ -49,6 +49,7 @@ class _Alignment:
     value: OutputTextAudioAlignment
     timing: SpeechTiming
     emitted: int = 0
+    emitted_until: float = 0.0
 
 
 @dataclass(slots=True)
@@ -66,7 +67,7 @@ class _Transcript:
 
 
 class TranscriptSynchronizationProcessor(RouterProcessorBase):
-    """Emit measured-chunk word/CJK progress, not whole phrases or unsynchronized source text."""
+    """Follow audio-queue progress; never schedule or pace audio to match text."""
 
     CONSUMER_ID = "router.transcript_synchronization"
 
@@ -191,16 +192,33 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
                 else float(state.played >= value.end_time_sec)
             )
             target = timing.count(ratio)
+            if not value.duration_final:
+                # Keep the tail pending until PCM duration is known. Estimates never end speech.
+                target = min(target, max(0, len(timing.units) - 1))
             if target > alignment.emitted:
                 previous = alignment.emitted
+                start = min(
+                    state.played,
+                    max(
+                        alignment.emitted_until,
+                        value.start_time_sec + duration * timing.ratio(previous),
+                    ),
+                )
+                end = max(
+                    start, min(state.played, value.start_time_sec + duration * timing.ratio(target))
+                )
                 chunk = OutputTranscriptChunk(
                     text="".join(timing.units[previous:target]),
                     source_chunk_ids=value.source_chunk_ids,
                     alignment_id=alignment_id,
-                    start_time_sec=value.start_time_sec + duration * timing.ratio(previous),
-                    end_time_sec=value.start_time_sec + duration * timing.ratio(target),
+                    start_time_sec=start,
+                    end_time_sec=end,
                     is_first=not state.started,
-                    timing_source="text_boundary" if not duration else "estimated_chunk_units",
+                    timing_source="text_boundary"
+                    if not duration
+                    else "estimated_chunk_units"
+                    if value.duration_final
+                    else "estimated_speech_rate_units",
                 )
                 event = await self._runtime.output.publish(
                     EnvOutput(
@@ -210,12 +228,18 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
                         scope=identity.scope,
                         source=_SOURCE,
                         payload=chunk,
-                        metadata={"measurement": "local_audio_queue", "timing_granularity": "unit"},
+                        metadata={
+                            "measurement": "local_audio_queue",
+                            "timing_granularity": "unit",
+                            "alignment_revision": value.revision,
+                            "duration_final": value.duration_final,
+                        },
                     )
                 )
                 if event is not None:
                     state.started = True
                     alignment.emitted = target
+                    alignment.emitted_until = end
             if target < len(timing.units):
                 break
 
@@ -265,13 +289,24 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
         if isinstance(payload, OutputTextAudioAlignment):
             previous = state.alignments.get(payload.alignment_id)
             if previous is not None:
-                if previous.value != payload:
-                    raise ValueError("Conflicting text/audio alignment replay")
+                before = previous.value
+                if before != payload:
+                    stable = ("text", "source_chunk_ids", "start_time_sec", "is_final")
+                    if (
+                        before.duration_final
+                        or not payload.duration_final
+                        or payload.revision != before.revision + 1
+                        or any(getattr(before, key) != getattr(payload, key) for key in stable)
+                    ):
+                        raise ValueError("Conflicting text/audio alignment revision")
+                    previous.value = payload
             else:
                 if len(state.alignments) >= self._alignment_capacity:
                     raise RuntimeError("Transcript alignment capacity exhausted")
                 if state.alignments:
                     last = next(reversed(state.alignments.values())).value
+                    if not last.duration_final:
+                        raise ValueError("Previous speech timing is not finalized")
                     if payload.start_time_sec + 1e-8 < last.end_time_sec:
                         raise ValueError("Speech alignments overlap or arrived out of order")
                 state.alignments[payload.alignment_id] = _Alignment(

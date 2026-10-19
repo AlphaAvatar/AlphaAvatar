@@ -65,11 +65,7 @@ class _Playout:
 
 
 class LiveKitTransientAudioOutput(LifecycleComponent):
-    """Single-track assistant/transient transport; receipts measure the local queue only.
-
-    The existing Host constructor name remains until native Engine integration.
-    This adapter does not use an SDK AgentSession.
-    """
+    """One audio track; independent progress reporting never paces frame capture."""
 
     def __init__(
         self,
@@ -327,9 +323,7 @@ class LiveKitTransientAudioOutput(LifecycleComponent):
             while not waiter.done():
                 if job.cancelled or not self._output.can_deliver(job.identity.output_id):
                     raise asyncio.CancelledError
-                done, _ = await asyncio.wait((waiter,), timeout=self._interval)
-                if not done:
-                    await self._report(job, OutputPlaybackType.PROGRESS)
+                await asyncio.wait((waiter,), timeout=self._interval)
             await waiter
         finally:
             if not waiter.done():
@@ -338,6 +332,43 @@ class LiveKitTransientAudioOutput(LifecycleComponent):
 
     async def _play(self, job: _Playout) -> None:
         job.running, success = True, False
+        started = asyncio.Event()
+        reporter_stopping = False
+
+        async def progress() -> None:
+            await started.wait()
+            kind = OutputPlaybackType.STARTED
+            while not job.cancelled and self._output.can_deliver(job.identity.output_id):
+                # This deadline belongs to feedback, not to the audio source's frame loop.
+                async with asyncio.timeout(self._capture_timeout):
+                    await self._report(job, kind)
+                kind = OutputPlaybackType.PROGRESS
+                await asyncio.sleep(self._interval)
+
+        def observe_progress(task: asyncio.Task) -> None:
+            if task.cancelled():
+                if reporter_stopping:
+                    return
+                failure = RuntimeError("Audio progress cancelled without owner shutdown")
+            elif (failure := task.exception()) is None:
+                return
+            job.stop_failure = failure
+            self._append_failure(self._worker_failures, failure, "Audio progress")
+            try:
+                self._cancel(job)
+            except Exception as error:
+                self._append_failure(self._worker_failures, error, "Audio progress cancellation")
+
+        reporter = asyncio.create_task(progress(), name="audio_progress")
+        reporter.add_done_callback(observe_progress)
+
+        async def stop_progress() -> None:
+            nonlocal reporter_stopping
+            if not reporter.done() and not reporter.cancelling():
+                reporter_stopping = True
+                reporter.cancel()
+            await asyncio.gather(reporter, return_exceptions=True)
+
         try:
             while True:
                 if job.cancelled or not self._output.can_deliver(job.identity.output_id):
@@ -351,6 +382,9 @@ class LiveKitTransientAudioOutput(LifecycleComponent):
                     await self._drain(job)
                     if job.cancelled or not self._output.can_deliver(job.identity.output_id):
                         raise asyncio.CancelledError
+                    await stop_progress()
+                    if job.stop_failure is not None:
+                        raise job.stop_failure
                     job.played = job.pushed
 
                     # Interruption can win admission after the last delivery check.
@@ -361,74 +395,79 @@ class LiveKitTransientAudioOutput(LifecycleComponent):
                 try:
                     event = await asyncio.wait_for(job.frames.get(), timeout=self._interval)
                 except TimeoutError:
-                    if job.started:
-                        await self._report(job, OutputPlaybackType.PROGRESS)
                     continue
+
                 if not self._output.can_deliver(job.identity.output_id):
                     raise asyncio.CancelledError
+
                 frame = event.output.payload
                 async with asyncio.timeout(self._capture_timeout):
                     await self._source.capture_frame(to_livekit_audio_frame(frame))
+
                 if job.cancelled or not self._output.can_deliver(job.identity.output_id):
                     raise asyncio.CancelledError
+
                 job.pushed += frame.samples_per_channel / frame.sample_rate
-                kind = OutputPlaybackType.PROGRESS if job.started else OutputPlaybackType.STARTED
                 job.started = True
-                await self._report(job, kind)
+                started.set()
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("Audio playout failed output_id=%s", job.identity.output_id)
         finally:
-            try:
+
+            async def settle() -> None:
+                errors: list[Exception] = []
+                await self._step(stop_progress(), errors, label="Audio progress cleanup")
                 if not success:
+                    if job.stop_failure is not None:
+                        errors.append(job.stop_failure)
+                    queued = 0.0
 
-                    async def settle() -> None:
-                        errors: list[Exception] = []
-                        if job.stop_failure is not None:
-                            errors.append(job.stop_failure)
-                        queued = 0.0
+                    def measure() -> None:
+                        nonlocal queued
+                        if job.interrupted_played is not None:
+                            job.played, queued = job.interrupted_played, job.interrupted_queued
+                        else:
+                            queued = self._queued_duration()
+                            job.played = min(job.pushed, max(job.played, job.pushed - queued))
 
-                        def measure() -> None:
-                            nonlocal queued
-                            if job.interrupted_played is not None:
-                                job.played, queued = job.interrupted_played, job.interrupted_queued
-                            else:
-                                queued = self._queued_duration()
-                                job.played = min(job.pushed, max(job.played, job.pushed - queued))
+                    self._sync_step(measure, errors, label="Audio settlement measurement")
+                    self._sync_step(
+                        self._source.clear_queue, errors, label="Audio settlement clear"
+                    )
+                    measured_and_stopped = not errors
+                    await self._step(
+                        self._output.interrupt(
+                            output_id=job.identity.output_id, reason="audio_playout_stopped"
+                        ),
+                        errors,
+                        label="Audio settlement interrupt",
+                    )
 
-                        self._sync_step(measure, errors, label="Audio settlement measurement")
-                        self._sync_step(
-                            self._source.clear_queue, errors, label="Audio settlement clear"
-                        )
-                        measured_and_stopped = not errors
+                    # A broken queue measurement or failed clear is not a playback receipt.
+                    if measured_and_stopped:
                         await self._step(
-                            self._output.interrupt(
-                                output_id=job.identity.output_id, reason="audio_playout_stopped"
+                            self._receipt(
+                                job.identity,
+                                OutputPlaybackType.INTERRUPTED,
+                                played=job.played,
+                                pushed=job.pushed,
+                                queued=queued,
+                                measurement="local_audio_queue",
                             ),
                             errors,
-                            label="Audio settlement interrupt",
+                            label="Audio settlement receipt",
                         )
-                        # A broken queue measurement or failed clear is not a playback receipt.
-                        if measured_and_stopped:
-                            await self._step(
-                                self._receipt(
-                                    job.identity,
-                                    OutputPlaybackType.INTERRUPTED,
-                                    played=job.played,
-                                    pushed=job.pushed,
-                                    queued=queued,
-                                    measurement="local_audio_queue",
-                                ),
-                                errors,
-                                label="Audio settlement receipt",
-                            )
-                        if errors:
-                            raise ExceptionGroup("Audio playout settlement failed", errors)
+                    if errors:
+                        raise ExceptionGroup("Audio playout settlement failed", errors)
+                elif errors:
+                    raise ExceptionGroup("Audio progress cleanup failed", errors)
 
-                    await wait_for_cleanup(asyncio.create_task(settle(), name="audio_settlement"))
+            try:
+                # Repeated caller cancellation cannot skip queue clearing or the final receipt.
+                await wait_for_cleanup(asyncio.create_task(settle(), name="audio_settlement"))
             finally:
-                # Local buffers must be released even when the failed stream rejects settlement.
                 job.cancelled = True
                 while not job.frames.empty():
                     job.frames.get_nowait()

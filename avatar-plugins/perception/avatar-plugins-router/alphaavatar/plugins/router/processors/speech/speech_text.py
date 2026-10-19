@@ -120,20 +120,9 @@ def chunk_end(text: str, *, minimum: int, maximum: int, flush: bool, final: bool
         end = index + 1
         while end < limit and (text[end] in _CLOSERS or text[end].isspace()):
             end += 1
-
-        if text[:end].strip():
+        if text[:end].strip() and end >= minimum:
             sentence = end
             break
-
-    for index, char in enumerate(text[: sentence or limit]):
-        if index + 1 < minimum or char not in _CLAUSE:
-            continue
-        if char in ",:" and index and index + 1 < len(text):
-            if text[index - 1].isdigit() and text[index + 1].isdigit():
-                continue
-            if char == ":" and text[index + 1] == "/":
-                continue
-        return index + 1
 
     if sentence:
         return sentence
@@ -141,10 +130,23 @@ def chunk_end(text: str, *, minimum: int, maximum: int, flush: bool, final: bool
         return 0
     if flush and len(text) <= maximum:
         if not final and text[-1].isalnum() and not _CJK.match(text[-1]):
-            # A stalled model delta can end inside a word. Keep that suffix for lookahead.
             match = re.search(r"\S+$", text)
             return match.start() if match is not None else 0
         return len(text)
+
+    # Prefer a natural clause near the budget, not every early comma.
+    clause = 0
+    for index, char in enumerate(text[:limit]):
+        if index + 1 < minimum or char not in _CLAUSE:
+            continue
+        if char in ",:" and index and index + 1 < len(text):
+            if text[index - 1].isdigit() and text[index + 1].isdigit():
+                continue
+            if char == ":" and text[index + 1] == "/":
+                continue
+        clause = index + 1
+    if clause:
+        return clause
 
     end = 0
     for unit in speech_units(text):
