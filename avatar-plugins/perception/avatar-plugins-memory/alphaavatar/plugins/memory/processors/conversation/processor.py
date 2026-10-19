@@ -81,7 +81,7 @@ class ConversationProcessor(MemoryProcessor):
             )
 
         except Exception:
-            logger.exception("[Memory] conversation consolidation candidate search failed")
+            logger.exception("Conversation consolidation candidate search failed")
             return [[] for _ in texts]
 
     async def update(self, state: MemoryContextState) -> None:

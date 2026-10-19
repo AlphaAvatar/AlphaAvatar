@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Hashable
 from dataclasses import replace
 from typing import TypeVar
@@ -31,11 +32,12 @@ from alphaavatar.core.env.enums import AnnotationKind, ObservationKind
 from alphaavatar.core.env.schemas import PerceptionSegmentRef
 from alphaavatar.core.perception.schemas import PerceptionEvent
 
-from ...log import logger
 from .evidence import TurnEvidenceBuilder
 from .fusion import AddressingFusion
 from .policy import TurnTakingPolicy, TurnTakingPolicyResult
 from .schemas.state import AddressingEvidenceRecord, SpeakerKey, TurnCandidate
+
+logger = logging.getLogger(__name__)
 
 _Key = TypeVar("_Key", bound=Hashable)
 

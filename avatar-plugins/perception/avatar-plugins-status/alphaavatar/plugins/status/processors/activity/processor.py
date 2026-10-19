@@ -168,6 +168,7 @@ class ActivityProcessor(StatusProcessorBase):
         if self._registered:
             self._runtime.output.execution.unregister(self.EXECUTION_ID)
             self._registered = False
+
         self._runtime.turn.events.clear_consumer(self.TURN_ID)
         self._state.invalidate()
         self._sync_presentation()

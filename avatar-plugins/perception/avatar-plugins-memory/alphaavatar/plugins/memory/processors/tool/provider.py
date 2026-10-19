@@ -52,12 +52,12 @@ class ToolProvider:
             )
 
         except TimeoutError:
-            logger.warning("[Memory] tool provider timeout task=%s timeout=%s", self._task, timeout)
+            logger.warning("Tool provider timeout task=%s timeout=%s", self._task, timeout)
             return MemoryDelta()
 
         except asyncio.CancelledError:
             raise
 
         except Exception:
-            logger.exception("[Memory] tool provider failed task=%s", self._task)
+            logger.exception("Tool provider failed task=%s", self._task)
             return MemoryDelta()

@@ -249,7 +249,7 @@ class EnvMemoryScheduler:
             triggers.add("speech_boundary")
 
             logger.debug(
-                "[Memory] ENV capture deferred to speech boundary sid=%s deferred=%.2fs",
+                "ENV capture deferred to speech boundary sid=%s deferred=%.2fs",
                 self.context_id,
                 deferred_sec,
             )
@@ -258,7 +258,7 @@ class EnvMemoryScheduler:
         triggers.add("speech_defer_timeout")
 
         logger.warning(
-            "[Memory] ENV speech-boundary wait timed out sid=%s timeout=%ss active_segments=%s",
+            "ENV speech-boundary wait timed out sid=%s timeout=%ss active_segments=%s",
             self.context_id,
             DEFAULT_MAX_SPEECH_DEFER_SEC,
             self._perception_runtime.active_speech_segments,
@@ -284,7 +284,7 @@ class EnvMemoryScheduler:
 
         if has_gap:
             logger.warning(
-                "[Memory] ENV event gap sid=%s triggers=%s missed=%s range=%s..%s",
+                "ENV event gap sid=%s triggers=%s missed=%s range=%s..%s",
                 self.context_id,
                 sorted(triggers),
                 missed_count,
@@ -375,7 +375,7 @@ class EnvMemoryScheduler:
 
         except Exception:
             logger.exception(
-                "[Memory] ENV capture failed cid=%s triggers=%s", self.context_id, sorted(triggers)
+                "ENV capture failed cid=%s triggers=%s", self.context_id, sorted(triggers)
             )
             return False
 
@@ -405,7 +405,7 @@ class EnvMemoryScheduler:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception("[Memory] ENV scheduler failed cid=%s", self.context_id)
+                logger.exception("ENV scheduler failed cid=%s", self.context_id)
                 await asyncio.sleep(0.05)
 
     async def _processor_loop(self) -> None:
@@ -429,8 +429,7 @@ class EnvMemoryScheduler:
 
                         if self._stopping or batch.attempts >= DEFAULT_MAX_ATTEMPTS:
                             logger.exception(
-                                "[Memory] ENV batch retained context=%s attempts=%s "
-                                "triggers=%s events=%s",
+                                "ENV batch retained context=%s attempts=%s triggers=%s events=%s",
                                 batch.context_id,
                                 batch.attempts,
                                 sorted(batch.triggers),
@@ -440,7 +439,7 @@ class EnvMemoryScheduler:
                             return
 
                         logger.warning(
-                            "[Memory] ENV processing failed; retrying context=%s attempt=%s",
+                            "ENV processing failed; retrying context=%s attempt=%s",
                             batch.context_id,
                             batch.attempts,
                             exc_info=True,
@@ -527,14 +526,14 @@ class EnvMemoryScheduler:
             if self._pending_batch is not None:
                 batch = self._pending_batch
                 logger.warning(
-                    "[Memory] ENV stopped with uncommitted batch context=%s range=%s..%s; "
+                    "ENV stopped with uncommitted batch context=%s range=%s..%s; "
                     "batch is only retained in memory",
                     self.context_id,
                     batch.from_sequence,
                     batch.to_sequence,
                 )
             else:
-                logger.info("[Memory] ENV scheduler stopped context=%s", self.context_id)
+                logger.info("ENV scheduler stopped context=%s", self.context_id)
 
     async def stop(self, *, finalize: bool = True) -> None:
         if self._stop_task is None:

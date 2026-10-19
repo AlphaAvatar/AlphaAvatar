@@ -13,13 +13,13 @@
 # limitations under the License.
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
 from alphaavatar.core.output.enums import OutputLane
 
 from .config import RouterConfig
-from .log import logger
 from .processors import (
     AudioActivityProcessor,
     MultimodalTurnTakingProcessor,
@@ -35,6 +35,8 @@ from .version import __version__
 if TYPE_CHECKING:
     from alphaavatar.agents.router import RouterProcessorBase
     from alphaavatar.agents.runtime import AvatarRuntime
+
+logger = logging.getLogger(__name__)
 
 
 class RouterPlugin(AvatarModulePlugin):

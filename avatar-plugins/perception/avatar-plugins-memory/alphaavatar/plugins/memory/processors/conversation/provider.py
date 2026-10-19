@@ -65,16 +65,14 @@ class ConversationProvider:
             )
 
         except TimeoutError:
-            logger.warning(
-                "[Memory] conversation provider timeout task=%s timeout=%s", self._task, timeout
-            )
+            logger.warning("Conversation provider timeout task=%s timeout=%s", self._task, timeout)
             return fallback
 
         except asyncio.CancelledError:
             raise
 
         except Exception:
-            logger.exception("[Memory] conversation provider failed task=%s", self._task)
+            logger.exception("Conversation provider failed task=%s", self._task)
             return fallback
 
     async def extract(

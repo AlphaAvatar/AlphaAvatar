@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from collections import deque
 from dataclasses import dataclass
@@ -30,7 +31,7 @@ from alphaavatar.core.media import AudioFrame, AudioSegmentPayload
 from alphaavatar.core.perception import PerceptionRuntime
 from alphaavatar.core.time import RuntimeTimeRange
 
-from ...log import logger
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 
@@ -41,9 +42,10 @@ from alphaavatar.core.media import TextPayload
 from alphaavatar.core.perception.enums import PerceptionStreamKind
 from alphaavatar.core.perception.schemas import PerceptionEvent
 
-from ....log import logger
 from .config import SemanticAddressingConfig
 from .factory import create_semantic_addressing_model
+
+logger = logging.getLogger(__name__)
 
 SpeakerKey = tuple[str, str]
 

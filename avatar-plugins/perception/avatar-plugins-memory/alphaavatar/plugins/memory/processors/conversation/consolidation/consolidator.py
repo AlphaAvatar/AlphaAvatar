@@ -84,13 +84,13 @@ def _log_hit_scores(
 
     for item, item_hits in zip(items, hits, strict=False):
         if not item_hits:
-            logger.debug("[Memory] consolidation candidates memory=%s none", item.memory_id[:8])
+            logger.debug("Consolidation candidates memory=%s none", item.memory_id[:8])
             continue
 
         ranked = sorted((hit.score, hit.memory.memory_id[:8]) for hit in item_hits)
 
         logger.debug(
-            "[Memory] consolidation candidates memory=%s threshold=%.2f -> %s",
+            "Consolidation candidates memory=%s threshold=%.2f -> %s",
             item.memory_id[:8],
             threshold,
             ", ".join(f"{memory_id}:{score:.4f}" for score, memory_id in reversed(ranked)),
@@ -172,21 +172,20 @@ class MemoryConsolidator:
             raise
         except Exception:
             logger.exception(
-                "[Memory] consolidation failed context=%s; persisting atomic memories",
+                "Consolidation failed context=%s; persisting atomic memories",
                 first.context.context_id,
             )
             return fallback
 
         if result.degraded:
             logger.warning(
-                "[Memory] consolidation degraded context=%s: %s",
+                "Consolidation degraded context=%s: %s",
                 first.context.context_id,
                 "; ".join(result.degraded),
             )
 
         logger.info(
-            "[Memory] consolidation context=%s items=%d candidates=%d inserted=%d rewritten=%d "
-            "degraded=%d",
+            "Consolidation context=%s items=%d candidates=%d inserted=%d rewritten=%d degraded=%d",
             first.context.context_id,
             len(items),
             len(candidates),

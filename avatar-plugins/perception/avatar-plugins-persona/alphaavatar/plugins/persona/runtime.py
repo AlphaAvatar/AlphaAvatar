@@ -14,10 +14,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Sequence
 
 from alphaavatar.agents.constants import FACE_MATCH_THRESHOLD, SPEAKER_MATCH_THRESHOLD
-from alphaavatar.agents.log import logger
 from alphaavatar.agents.persona import PersonaBase, PersonaCache, PersonaProcessorBase
 from alphaavatar.agents.persona.schemas import UserProfile, UserRuntimeState
 from alphaavatar.agents.runtime import AvatarRuntime
@@ -30,6 +30,8 @@ from alphaavatar.core.cleanup import wait_for_cleanup
 from .cache import DefaultPersonaCache
 from .storage import PersonaStore
 from .template import PersonaPluginsTemplate
+
+logger = logging.getLogger(__name__)
 
 
 class PersonaRuntime(PersonaBase):

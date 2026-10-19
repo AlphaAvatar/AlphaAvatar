@@ -117,5 +117,5 @@ class EnvironmentProvider:
             raise
 
         except Exception:
-            logger.exception("[Memory] environment provider failed task=%s", self._task)
+            logger.exception("Environment provider failed task=%s", self._task)
             raise

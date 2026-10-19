@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from alphaavatar.agents.avatar.voice import VADBase
 from alphaavatar.agents.router import RouterProcessorBase
@@ -24,9 +25,10 @@ from alphaavatar.core.media import AudioFrame, PayloadFormatUnavailable
 from alphaavatar.core.media.enums import PayloadFormat, PayloadView
 from alphaavatar.core.perception.enums import PerceptionStreamKind
 
-from ...log import logger
 from .config import AudioActivityConfig
 from .source import AudioActivitySource
+
+logger = logging.getLogger(__name__)
 
 
 class AudioActivityProcessor(RouterProcessorBase):

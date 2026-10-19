@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 
 from alphaavatar.agents.avatar.vision import FaceDetection, FaceDetectionResult
@@ -30,9 +31,10 @@ from alphaavatar.core.env.enums import AnnotationKind
 from alphaavatar.core.env.schemas import PerceptionEntityRef, PerceptionSourceRef
 from alphaavatar.core.perception.schemas import PerceptionEvent
 
-from ....log import logger
 from .config import VisualAddressingConfig
 from .orientation import FaceOrientationEstimator
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)

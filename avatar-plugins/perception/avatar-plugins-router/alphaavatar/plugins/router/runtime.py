@@ -13,6 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -20,7 +21,7 @@ from alphaavatar.agents.router import InteractionRouterBase, RouterProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.core.lifecycle import LifecycleComponent, LifecycleGroup, LifecyclePhase
 
-from .log import logger
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)

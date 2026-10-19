@@ -60,6 +60,7 @@ class NarrationProcessor(StatusProcessorBase):
         if task is not None:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
         output_id, self._output_id = self._output_id, None
         self._decision = None
         if output_id is not None:

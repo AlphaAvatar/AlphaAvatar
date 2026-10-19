@@ -19,6 +19,8 @@ from abc import abstractmethod
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from functools import partial
 from math import isfinite
 from urllib.parse import urlsplit
@@ -37,10 +39,10 @@ logger = logging.getLogger(__name__)
 class PCMSettings:
     # Bound HTTP waits and retry backoff; local consumer waits do not use this budget.
     timeout: float = 30.0
-    first_audio_timeout: float = 10.0
+    first_audio_timeout: float = 2.5
     read_timeout: float = 10.0
     max_retries: int = 1
-    retry_interval: float = 0.25
+    retry_interval: float = 0.1
     frame_size_ms: int = 20
     queue_frames: int = 8
     max_streams: int = 4
@@ -68,8 +70,8 @@ class PCMSettings:
 class TTSHTTPError(RuntimeError):
     """Remote status without credentials, input text, URLs or response bodies."""
 
-    def __init__(self, provider: str, status: int) -> None:
-        self.provider, self.status = provider, status
+    def __init__(self, provider: str, status: int, *, retry_after: float | None = None) -> None:
+        self.provider, self.status, self.retry_after = provider, status, retry_after
         super().__init__(f"{provider} TTS request failed with HTTP {status}")
 
 
@@ -165,11 +167,29 @@ class PCMHTTPProvider(TTSBase):
             # The resident stream limit also bounds concurrent connections to this endpoint.
             self._client = aiohttp.ClientSession(
                 # Explicit read deadlines below pause while the bounded PCM queue is full.
-                timeout=aiohttp.ClientTimeout(total=None, sock_connect=10.0, sock_read=None),
+                timeout=aiohttp.ClientTimeout(
+                    total=None, sock_connect=self._settings.first_audio_timeout, sock_read=None
+                ),
                 auto_decompress=False,
                 read_bufsize=max(4096, self._frame_bytes * self._settings.queue_frames),
             )
         return self._client
+
+    @staticmethod
+    def _retry_after(value: str | None) -> float | None:
+        """Respect a bounded, parsed server hint; never log its untrusted raw value."""
+        if value is None or len(value) > 128:
+            return None
+        value = value.strip()
+        if value.isascii() and value.isdecimal():
+            return float(value)
+        try:
+            instant = parsedate_to_datetime(value)
+            if instant.tzinfo is None:
+                return None
+            return max(0.0, (instant - datetime.now(UTC)).total_seconds())
+        except (TypeError, ValueError, OverflowError):
+            return None
 
     async def _produce(
         self,
@@ -182,6 +202,7 @@ class PCMHTTPProvider(TTSBase):
         remaining = settings.timeout
         emitted = received = 0
         blocked = http_wait = retry_wait = 0.0
+        read_gaps = 0
         started = clock()
 
         async def network[T](
@@ -206,12 +227,14 @@ class PCMHTTPProvider(TTSBase):
 
         for attempt in range(1, settings.max_retries + 2):
             phase, response = "response_headers", None
-            first_deadline = clock() + min(remaining, settings.first_audio_timeout)
+            attempt_started = clock()
+            first_deadline = attempt_started + min(remaining, settings.first_audio_timeout)
             logger.debug(
-                "TTS REQUEST provider=%s request_id=%s attempt=%d",
+                "TTS REQUEST provider=%s request_id=%s attempt=%d first_audio_timeout_ms=%.1f",
                 self._provider,
                 request_id,
                 attempt,
+                (first_deadline - attempt_started) * 1000,
             )
             try:
                 response = await network(
@@ -230,7 +253,11 @@ class PCMHTTPProvider(TTSBase):
                 )
                 phase = "response_validation"
                 if response.status != 200:
-                    raise TTSHTTPError(self._provider, response.status)
+                    raise TTSHTTPError(
+                        self._provider,
+                        response.status,
+                        retry_after=self._retry_after(response.headers.get("Retry-After")),
+                    )
 
                 logger.debug(
                     "TTS HEADERS provider=%s request_id=%s attempt=%d status=%d",
@@ -249,6 +276,7 @@ class PCMHTTPProvider(TTSBase):
                 total = 0
                 while True:
                     phase, last = "first_audio" if not emitted else "audio_read", False
+                    read_started = clock()
                     try:
                         data = await network(
                             partial(response.content.readexactly, self._frame_bytes),
@@ -258,6 +286,20 @@ class PCMHTTPProvider(TTSBase):
                     except asyncio.IncompleteReadError as error:
                         data, last = error.partial, True
 
+                    read_wait = clock() - read_started
+                    if data and emitted and read_wait >= 0.05:
+                        read_gaps += 1
+                        if read_gaps <= 3:
+                            logger.debug(
+                                "TTS PCM GAP provider=%s request_id=%s attempt=%d "
+                                "read_wait_ms=%.1f pcm_seconds_before=%.3f "
+                                "measurement=provider_read_wait",
+                                self._provider,
+                                request_id,
+                                attempt,
+                                read_wait * 1000,
+                                total / (2 * self.sample_rate),
+                            )
                     if data:
                         phase = "pcm_validation"
                         if len(data) % 2:
@@ -280,15 +322,18 @@ class PCMHTTPProvider(TTSBase):
                         if emitted == 1:
                             logger.debug(
                                 "TTS FIRST PCM provider=%s request_id=%s "
-                                "attempt=%d elapsed_ms=%.1f",
+                                "attempt=%d elapsed_ms=%.1f attempt_elapsed_ms=%.1f",
                                 self._provider,
                                 request_id,
                                 attempt,
                                 (clock() - started) * 1000,
+                                (clock() - attempt_started) * 1000,
                             )
                         before = clock()
-                        await emit(frame)
-                        blocked += clock() - before
+                        try:
+                            await emit(frame)
+                        finally:
+                            blocked += clock() - before
                     if last:
                         break
 
@@ -325,15 +370,19 @@ class PCMHTTPProvider(TTSBase):
                     and isinstance(error, (TimeoutError | aiohttp.ClientError))
                     and not isinstance(error, (aiohttp.ClientSSLError | aiohttp.InvalidURL))
                 ) or status in (408, 429, 500, 502, 503, 504)
+                delay = settings.retry_interval * attempt
+                if isinstance(error, TTSHTTPError) and error.retry_after is not None:
+                    delay = max(delay, error.retry_after)
                 retry = (
                     transient
                     and not emitted
                     and attempt <= settings.max_retries
-                    and remaining > settings.retry_interval
+                    and remaining > delay
                 )
                 logger.warning(
                     "TTS REQUEST FAILED provider=%s request_id=%s attempt=%d phase=%s "
-                    "error_type=%s status=%s frames=%d received_bytes=%d retry=%s",
+                    "error_type=%s status=%s frames=%d received_bytes=%d retry=%s "
+                    "attempt_elapsed_ms=%.1f retry_delay_ms=%.1f",
                     self._provider,
                     request_id,
                     attempt,
@@ -343,6 +392,8 @@ class PCMHTTPProvider(TTSBase):
                     emitted,
                     received,
                     retry,
+                    (clock() - attempt_started) * 1000,
+                    delay * 1000 if retry else 0.0,
                 )
                 if not retry:
                     if isinstance(error, aiohttp.ClientError):
@@ -354,7 +405,7 @@ class PCMHTTPProvider(TTSBase):
                 if response is not None:
                     # Incomplete bodies must not return a dirty connection to the shared pool.
                     response.close()
-            delay = min(settings.retry_interval * attempt, remaining)
+
             before = clock()
             try:
                 await asyncio.sleep(delay)

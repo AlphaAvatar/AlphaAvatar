@@ -14,18 +14,20 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from alphaavatar.agents.router import RouterProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.core.env.enums import AnnotationKind
 from alphaavatar.core.perception.enums import PerceptionStreamKind
 
-from ...log import logger
 from .config import TurnTakingConfig
 from .coordinator import TurnTakingCoordinator
 from .fusion import AddressingFusion
 from .models import create_turn_taking_model
 from .policy import TurnTakingPolicy
+
+logger = logging.getLogger(__name__)
 
 
 class MultimodalTurnTakingProcessor(RouterProcessorBase):
