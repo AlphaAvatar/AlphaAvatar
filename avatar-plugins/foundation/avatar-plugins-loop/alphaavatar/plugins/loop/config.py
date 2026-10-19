@@ -17,13 +17,14 @@ from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig, Provi
 
 
 class ToolPolicy(BaseModel):
-    """Host-supplied execution facts, never inferred from a model's tool arguments."""
+    """Deployment policy for capabilities already granted to the Run, not model authority."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    enabled: bool = True
     read_only: bool = False
     parallel_safe: bool = False
-    approval_required: bool = True
+    approval_required: bool = False
 
 
 class RealtimeLoopConfig(BaseModel):

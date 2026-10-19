@@ -138,6 +138,8 @@ class LoopTools:
             raise ValueError(f"Unknown or description-only capabilities: {sorted(unknown)}")
         self._capabilities = {capabilities[name].tool_name: capabilities[name] for name in allowed}
 
+        if unknown := set(policies) - capabilities.keys():
+            raise ValueError(f"Tool policies require registered capability IDs: {sorted(unknown)}")
         self._policies = dict(policies)
         self._signatures: dict[str, int] = {}
         self._records: dict[str, ToolRecord] = {}
@@ -150,6 +152,8 @@ class LoopTools:
                 name=c.tool_name, description=c.description, parameters=c.parameters
             )
             for c in sorted(self._capabilities.values(), key=lambda c: c.id)
+            if (policy := self._policies.get(c.id, ToolPolicy())).enabled
+            and (not policy.approval_required or self._authorize is not None)
         )
 
     def _stopping(self) -> bool:
@@ -206,6 +210,10 @@ class LoopTools:
         limits = self._budget.request.limits
         executed = False
         policy = self._policy(call)
+        deadline = min(
+            self._budget.exploration_deadline,
+            asyncio.get_running_loop().time() + limits.tool_timeout,
+        )
         try:
             if self._stopping():
                 raise asyncio.CancelledError
@@ -214,6 +222,11 @@ class LoopTools:
             if capability is None:
                 return self._record(
                     call, ToolOutcome.DENIED, executed=False, started=started, code="not_allowed"
+                )
+
+            if not policy.enabled:
+                return self._record(
+                    call, ToolOutcome.DENIED, executed=False, started=started, code="policy_denied"
                 )
 
             payload = parse_arguments(call.arguments, max_bytes=limits.max_arguments_bytes)
@@ -229,28 +242,50 @@ class LoopTools:
                     call, ToolOutcome.SKIPPED, executed=False, started=started, code="repeat_limit"
                 )
             self._signatures[signature] = count + 1
+            # The deployment-selected registry and Run scope grant access. Read-only is an
+            # execution/concurrency fact, not a second permission gate. Explicit policy wins.
             authorizer = self._authorize
-            if authorizer is not None:
-                approved = await authorizer(ToolCallContext(self._identity, call, capability.id))
-                if not isinstance(approved, bool):
-                    raise TypeError("Tool authorizers must return bool")
-            else:
-                approved = policy.read_only and not policy.approval_required
-
-            if not approved:
+            if authorizer is None and policy.approval_required:
                 return self._record(
                     call,
                     ToolOutcome.DENIED,
                     executed=False,
                     started=started,
-                    code="approval_required",
+                    code="approval_unavailable",
                 )
+            if authorizer is not None:
+                remaining = deadline - asyncio.get_running_loop().time()
+                try:
+                    async with asyncio.timeout(min(limits.tool_timeout, max(0, remaining))):
+                        approved = await authorizer(
+                            ToolCallContext(self._identity, call, capability.id)
+                        )
+                    if type(approved) is not bool:
+                        raise TypeError("Tool authorizers must return bool")
+                except (asyncio.CancelledError, TimeoutError):
+                    raise
+                except Exception:
+                    return self._record(
+                        call,
+                        ToolOutcome.DENIED,
+                        executed=False,
+                        started=started,
+                        code="authorization_failed",
+                    )
+                if not approved:
+                    return self._record(
+                        call,
+                        ToolOutcome.DENIED,
+                        executed=False,
+                        started=started,
+                        code="authorization_denied",
+                    )
 
             async def execute() -> Any:
                 nonlocal executed
                 if self._stopping():
                     raise asyncio.CancelledError
-                if asyncio.get_running_loop().time() >= self._budget.exploration_deadline:
+                if asyncio.get_running_loop().time() >= deadline:
                     raise TimeoutError("Tool dispatch deadline expired")
                 self._feedback.signal(
                     ExecutionSignalKind.TOOL_STARTED,
@@ -261,7 +296,7 @@ class LoopTools:
                 executed = True
                 return await self._registry.invoke(call.name, payload)
 
-            remaining = self._budget.exploration_deadline - asyncio.get_running_loop().time()
+            remaining = deadline - asyncio.get_running_loop().time()
             async with asyncio.timeout(min(limits.tool_timeout, max(0, remaining))):
                 if policy.read_only:
                     raw = await execute()

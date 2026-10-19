@@ -26,7 +26,9 @@ result = await handle.wait()
 
 Provider, ContextManager, capabilities and Output are obtained from AvatarRuntime. There are no `LoopDependencies`, `on_event` or `on_commit` parameters. Engine owns admission and foreground interruption; Loop owns execution, accepted calls, records and terminal execution facts.
 
-Tool registration is not permission. Without an authorizer, only capabilities explicitly configured read-only with no approval requirement may execute. Use exact capability policies; do not grant an aggregate MCP or RAG capability read-only status based on a single harmless operation.
+The deployment selects trusted plugins; each Run further restricts their callable capabilities through `allowed_capabilities`. Those granted capabilities run without a second approval by default. Exact `tool_policies` can deny a capability with `enabled: false` or require `approval_required: true`. Required approval without an authorizer stays unavailable and is not advertised as a usable tool. A supplied authorizer remains a per-call gate. Model text and tool results cannot grant access.
+
+`read_only` and `parallel_safe` default to false: they control scheduling and uncertain-result handling, not authorization. Do not classify an aggregate MCP, RAG or DeepResearch tool as read-only just to allow it. Enabling a plugin grants its exposed operations and can spend provider credits or change data; configure only trusted tools. This is not a sandbox or multi-tenant authorization system.
 
 ## Submission and static query context
 
@@ -50,6 +52,6 @@ A required record-consumer failure or exhausted retained capacity fails executio
 
 Engine stops admission and settles Loop while Memory, Status and Output consumers remain alive. It then closes Router and plugins; Host closes RTC outputs and releases AvatarRuntime. Foundation closes Loop idempotently as its resource owner before releasing Context, Provider and Voice.
 
-The native Engine/Loop path is active in this source tree. The old TurnController and Host SDK model/tool/record bridges are removed. Voice now implements native async PCM synthesis. Character has a separate native presentation lifecycle and does not submit another Loop. SDK worker hosting remains a separate boundary; it does not own the main generation path.
+The native Engine/Loop path is active in this source tree. The old TurnController and Host SDK model/tool/record bridges are removed. Voice now implements native async PCM synthesis. Character has a separate native presentation lifecycle and does not submit another Loop. Native Host process supervision remains separate from the main generation path.
 
 Execution still belongs to the current Host execution. Connection-independent Episodes, recovery, sleep/wake and Dream scheduling are not provided by this plugin migration.

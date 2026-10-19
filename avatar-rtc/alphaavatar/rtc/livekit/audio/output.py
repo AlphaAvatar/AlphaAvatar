@@ -334,6 +334,8 @@ class LiveKitTransientAudioOutput(LifecycleComponent):
         job.running, success = True, False
         started = asyncio.Event()
         reporter_stopping = False
+        clock = asyncio.get_running_loop().time
+        first_capture_at: float | None = None
 
         async def progress() -> None:
             await started.wait()
@@ -382,6 +384,18 @@ class LiveKitTransientAudioOutput(LifecycleComponent):
                     await self._drain(job)
                     if job.cancelled or not self._output.can_deliver(job.identity.output_id):
                         raise asyncio.CancelledError
+                    # Measure before final feedback/text cleanup: this is the local audio
+                    # queue's duration, not a remote-speaker or caption-delivery receipt.
+                    elapsed = clock() - first_capture_at if first_capture_at is not None else 0.0
+                    logger.debug(
+                        "AUDIO QUEUE DRAINED output_id=%s pcm_seconds=%.3f "
+                        "local_elapsed_seconds=%.3f local_excess_seconds=%.3f "
+                        "measurement=local_audio_queue",
+                        job.identity.output_id,
+                        job.pushed,
+                        elapsed,
+                        max(0.0, elapsed - job.pushed),
+                    )
                     await stop_progress()
                     if job.stop_failure is not None:
                         raise job.stop_failure
@@ -401,8 +415,17 @@ class LiveKitTransientAudioOutput(LifecycleComponent):
                     raise asyncio.CancelledError
 
                 frame = event.output.payload
+                capture_at = clock()
                 async with asyncio.timeout(self._capture_timeout):
                     await self._source.capture_frame(to_livekit_audio_frame(frame))
+                if first_capture_at is None:
+                    first_capture_at = capture_at
+                    logger.debug(
+                        "AUDIO QUEUE STARTED output_id=%s sample_rate=%s channels=%s",
+                        job.identity.output_id,
+                        self._sample_rate,
+                        self._num_channels,
+                    )
 
                 if job.cancelled or not self._output.can_deliver(job.identity.output_id):
                     raise asyncio.CancelledError

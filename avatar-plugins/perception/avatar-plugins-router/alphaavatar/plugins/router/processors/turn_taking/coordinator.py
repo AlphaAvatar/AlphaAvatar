@@ -653,7 +653,8 @@ class TurnTakingCoordinator:
         self._segment_owners[segment] = key
 
         if is_new_segment:
-            candidate.add_input_observation(observation.observation_id)
+            # SPEECH_FRAME is ephemeral. close_segment/add_transcript attach retained evidence;
+            # the frame may still anchor immediate interruption, never a committed Turn.
             self._cancel_assessment(key)
 
         self._attach_segment_addressing(key, candidate, segment)

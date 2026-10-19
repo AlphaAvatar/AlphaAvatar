@@ -44,10 +44,10 @@ loop:
       model: gpt-5.6-luna
       temperature: null
     # Keep the configured model identifier; availability/credentials are deployment-specific.
-    # Configure named tool_policies and/or an Engine authorizer for approved tools.
-    # The default approval requirement is NOT bypassed by the native Host.
+    # Enabled plugins grant their capabilities to this deployment's Runs.
+    # Per-capability enabled: false denies access; approval_required: true needs an authorizer.
+    # read_only/parallel_safe describe execution safety, not permission to call a tool.
     tool_policies: {}
-    # No wildcard approval bypass. Configure exact capability policies after auditing each tool.
 
 context:
   plugin: default

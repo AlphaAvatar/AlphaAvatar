@@ -351,7 +351,7 @@ class AvatarEngine(LifecycleComponent):
                 raise TurnAdmissionRejected("Engine closed before Turn admission")
 
             flags = self._candidate(decision.turn_candidate_id)
-            if TurnTakingAction.COMMIT in flags:
+            if flags.intersection((TurnTakingAction.COMMIT, TurnTakingAction.CANCEL)):
                 return
 
             latest = self._runtime.turn.latest
@@ -367,7 +367,18 @@ class AvatarEngine(LifecycleComponent):
                 for value in dict.fromkeys(decision.input_observation_ids)
             )
             if not observations or any(value is None for value in observations):
-                raise RuntimeError("Committed turn evidence is unavailable")
+                # This is a proposed Turn, not an admitted one. Reject the entire candidate;
+                # never substitute newer evidence or kill a healthy session after retention loss.
+                flags.add(TurnTakingAction.CANCEL)
+                logger.warning(
+                    "Turn admission rejected input_id=%s reason=evidence_unavailable "
+                    "decision_sequence=%s evidence_count=%s missing_count=%s",
+                    decision.turn_candidate_id,
+                    event.sequence,
+                    len(observations),
+                    sum(value is None for value in observations),
+                )
+                return
 
             text = self._text(observations)
             if text is None and not any(
@@ -379,7 +390,12 @@ class AvatarEngine(LifecycleComponent):
                 )
                 for value in observations
             ):
-                raise ValueError("Committed turn has no usable text or visual evidence")
+                flags.add(TurnTakingAction.CANCEL)
+                logger.info(
+                    "Turn admission rejected input_id=%s reason=no_usable_input",
+                    decision.turn_candidate_id,
+                )
+                return
 
             mode = decision.turn_mode
             modality = (

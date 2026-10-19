@@ -101,6 +101,10 @@ def chunk_end(text: str, *, minimum: int, maximum: int, flush: bool, final: bool
         used += cost
 
     minimum = min(minimum, maximum)
+    if final and len(text) <= maximum:
+        # Once all text is present, keep a short answer together. Subtitle units must not
+        # restart TTS or turn each short sentence into another request and prosodic reset.
+        return len(text)
     limit = min(len(text), maximum)
     sentence = 0
     for index, char in enumerate(text[:limit]):
@@ -122,7 +126,6 @@ def chunk_end(text: str, *, minimum: int, maximum: int, flush: bool, final: bool
             end += 1
         if text[:end].strip() and end >= minimum:
             sentence = end
-            break
 
     if sentence:
         return sentence
