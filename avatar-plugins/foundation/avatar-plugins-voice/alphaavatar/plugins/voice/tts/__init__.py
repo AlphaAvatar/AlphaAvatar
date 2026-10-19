@@ -36,6 +36,10 @@ class OpenAITTSPlugin(AvatarModulePlugin):
         instructions: str | None = None,
         base_url: str | None = None,
         timeout: float = 30.0,
+        first_audio_timeout: float = 10.0,
+        read_timeout: float = 10.0,
+        max_retries: int = 1,
+        retry_interval: float = 0.25,
         frame_size_ms: int = 20,
         queue_frames: int = 8,
         max_streams: int = 4,
@@ -53,7 +57,15 @@ class OpenAITTSPlugin(AvatarModulePlugin):
             instructions=instructions,
             base_url=base_url,
             settings=PCMSettings(
-                timeout, frame_size_ms, queue_frames, max_streams, max_audio_seconds
+                timeout=timeout,
+                first_audio_timeout=first_audio_timeout,
+                read_timeout=read_timeout,
+                max_retries=max_retries,
+                retry_interval=retry_interval,
+                frame_size_ms=frame_size_ms,
+                queue_frames=queue_frames,
+                max_streams=max_streams,
+                max_audio_seconds=max_audio_seconds,
             ),
         )
 
@@ -70,6 +82,10 @@ class VoiceAITTSPlugin(AvatarModulePlugin):
         instructions: str | None = None,
         base_url: str | None = None,
         timeout: float = 30.0,
+        first_audio_timeout: float = 10.0,
+        read_timeout: float = 10.0,
+        max_retries: int = 1,
+        retry_interval: float = 0.25,
         frame_size_ms: int = 20,
         queue_frames: int = 8,
         max_streams: int = 4,
@@ -86,6 +102,14 @@ class VoiceAITTSPlugin(AvatarModulePlugin):
             speaker=speaker,
             base_url=base_url,
             settings=PCMSettings(
-                timeout, frame_size_ms, queue_frames, max_streams, max_audio_seconds
+                timeout=timeout,
+                first_audio_timeout=first_audio_timeout,
+                read_timeout=read_timeout,
+                max_retries=max_retries,
+                retry_interval=retry_interval,
+                frame_size_ms=frame_size_ms,
+                queue_frames=queue_frames,
+                max_streams=max_streams,
+                max_audio_seconds=max_audio_seconds,
             ),
         )

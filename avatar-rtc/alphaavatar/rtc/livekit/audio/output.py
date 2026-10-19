@@ -50,6 +50,8 @@ _SOURCE = OutputSource("rtc.livekit.audio")
 class _Playout:
     identity: OutputIdentity
     frames: asyncio.Queue[OutputEvent] = field(default_factory=lambda: asyncio.Queue(maxsize=64))
+    changed: asyncio.Event = field(default_factory=asyncio.Event)
+    buffered_samples: int = 0
     received_sequence: int = 0
     expected_sequence: int | None = None
     cancelled: bool = False
@@ -76,6 +78,8 @@ class LiveKitTransientAudioOutput(LifecycleComponent):
         num_channels: int,
         track_name: str = "alphaavatar_transient_audio",
         queue_size_ms: int = 100,
+        startup_buffer_ms: int = 120,
+        startup_wait_ms: int = 200,
         progress_interval_sec: float = 0.1,
         subscription_name: str = "livekit:transient_audio",
         lanes: tuple[OutputLane, ...] = (OutputLane.TRANSIENT, OutputLane.ASSISTANT),
@@ -88,6 +92,17 @@ class LiveKitTransientAudioOutput(LifecycleComponent):
             isfinite(value) and value > 0 for value in (progress_interval_sec, capture_timeout)
         ):
             raise ValueError("Audio timeouts must be positive and finite")
+
+        for name, value in (
+            ("startup_buffer_ms", startup_buffer_ms),
+            ("startup_wait_ms", startup_wait_ms),
+        ):
+            if type(value) is not int or not 0 <= value <= 1000:
+                raise ValueError(f"{name} must be an integer in 0..1000")
+        if startup_buffer_ms and not startup_wait_ms:
+            raise ValueError("Startup buffering requires a finite wait")
+        self._startup_samples = sample_rate * startup_buffer_ms // 1000
+        self._startup_wait = startup_wait_ms / 1000
 
         self._room, self._output = room, output_runtime
         self._sample_rate, self._num_channels = sample_rate, num_channels
@@ -166,6 +181,8 @@ class LiveKitTransientAudioOutput(LifecycleComponent):
         job.cancelled = True
         while not job.frames.empty():
             job.frames.get_nowait()
+        job.buffered_samples = 0
+        job.changed.set()
         errors: list[Exception] = []
         try:
             if job is self._active and self._source is not None:
@@ -262,6 +279,8 @@ class LiveKitTransientAudioOutput(LifecycleComponent):
                     self._cancel(job)
                     continue
                 job.received_sequence = event.sequence
+                job.buffered_samples += frame.samples_per_channel
+                job.changed.set()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -294,6 +313,7 @@ class LiveKitTransientAudioOutput(LifecycleComponent):
                 try:
                     job = self._job(event)
                     job.expected_sequence = expected
+                    job.changed.set()
                 except Exception:
                     await self._reject(event, "audio_output_capacity")
 
@@ -330,12 +350,50 @@ class LiveKitTransientAudioOutput(LifecycleComponent):
                 waiter.cancel()
             await asyncio.gather(waiter, return_exceptions=True)
 
+    async def _prime(self, job: _Playout) -> tuple[float, float]:
+        """One bounded startup cushion. No subtitle state or full-utterance buffering."""
+        if not self._startup_samples:
+            return 0.0, job.buffered_samples / self._sample_rate
+        clock = asyncio.get_running_loop().time
+        started = deadline = None
+        while True:
+            job.changed.clear()
+            if job.cancelled or not self._output.can_deliver(job.identity.output_id):
+                raise asyncio.CancelledError
+            if started is None and job.buffered_samples:
+                started = clock()
+                deadline = started + self._startup_wait
+            ended = (
+                job.expected_sequence is not None and job.received_sequence >= job.expected_sequence
+            )
+            if (
+                job.buffered_samples >= self._startup_samples
+                or ended
+                or job.frames.full()
+                or (deadline is not None and clock() >= deadline)
+            ):
+                return (
+                    clock() - started if started is not None else 0.0,
+                    job.buffered_samples / self._sample_rate,
+                )
+            if deadline is None:
+                await job.changed.wait()
+            else:
+                try:
+                    async with asyncio.timeout(max(0.0, deadline - clock())):
+                        await job.changed.wait()
+                except TimeoutError:
+                    pass
+
     async def _play(self, job: _Playout) -> None:
         job.running, success = True, False
         started = asyncio.Event()
         reporter_stopping = False
         clock = asyncio.get_running_loop().time
         first_capture_at: float | None = None
+        expected_tail_at: float | None = None
+        underruns, starvation = 0, 0.0
+        prime_wait = prime_audio = 0.0
 
         async def progress() -> None:
             await started.wait()
@@ -372,6 +430,7 @@ class LiveKitTransientAudioOutput(LifecycleComponent):
             await asyncio.gather(reporter, return_exceptions=True)
 
         try:
+            prime_wait, prime_audio = await self._prime(job)
             while True:
                 if job.cancelled or not self._output.can_deliver(job.identity.output_id):
                     raise asyncio.CancelledError
@@ -390,11 +449,13 @@ class LiveKitTransientAudioOutput(LifecycleComponent):
                     logger.debug(
                         "AUDIO QUEUE DRAINED output_id=%s pcm_seconds=%.3f "
                         "local_elapsed_seconds=%.3f local_excess_seconds=%.3f "
-                        "measurement=local_audio_queue",
+                        "underruns=%d starvation_seconds=%.3f measurement=local_audio_queue",
                         job.identity.output_id,
                         job.pushed,
                         elapsed,
                         max(0.0, elapsed - job.pushed),
+                        underruns,
+                        starvation,
                     )
                     await stop_progress()
                     if job.stop_failure is not None:
@@ -415,21 +476,39 @@ class LiveKitTransientAudioOutput(LifecycleComponent):
                     raise asyncio.CancelledError
 
                 frame = event.output.payload
+                job.buffered_samples -= frame.samples_per_channel
                 capture_at = clock()
+                if expected_tail_at is not None and self._queued_duration() <= 1e-6:
+                    gap = max(0.0, capture_at - expected_tail_at)
+                    if gap >= 0.02:
+                        underruns += 1
+                        starvation += gap
+                        if underruns <= 3:
+                            logger.debug(
+                                "AUDIO SUPPLY GAP output_id=%s gap_ms=%.1f count=%d "
+                                "measurement=local_audio_queue",
+                                job.identity.output_id,
+                                gap * 1000,
+                                underruns,
+                            )
                 async with asyncio.timeout(self._capture_timeout):
                     await self._source.capture_frame(to_livekit_audio_frame(frame))
                 if first_capture_at is None:
                     first_capture_at = capture_at
                     logger.debug(
-                        "AUDIO QUEUE STARTED output_id=%s sample_rate=%s channels=%s",
+                        "AUDIO QUEUE STARTED output_id=%s sample_rate=%s channels=%s "
+                        "startup_wait_ms=%.1f startup_audio_ms=%.1f",
                         job.identity.output_id,
                         self._sample_rate,
                         self._num_channels,
+                        prime_wait * 1000,
+                        prime_audio * 1000,
                     )
 
                 if job.cancelled or not self._output.can_deliver(job.identity.output_id):
                     raise asyncio.CancelledError
 
+                expected_tail_at = clock() + self._queued_duration()
                 job.pushed += frame.samples_per_channel / frame.sample_rate
                 job.started = True
                 started.set()
@@ -494,6 +573,8 @@ class LiveKitTransientAudioOutput(LifecycleComponent):
                 job.cancelled = True
                 while not job.frames.empty():
                     job.frames.get_nowait()
+                job.buffered_samples = 0
+                job.changed.set()
 
     async def _playout(self) -> None:
         while True:

@@ -20,7 +20,13 @@ from alphaavatar.core.media import AudioFrame
 
 
 class TTSStreamBase(AsyncIterator[AudioFrame], ABC):
-    """One synthesis request. Consumers must close it, including on early exit."""
+    """One synthesis request; consumers close it, including on early exit.
+
+    Implementations bound provider inactivity inside each read, independently of time
+    held by a prefetched stream or a slow local consumer. They never replay emitted PCM.
+    """
+
+    request_id: str | None = None
 
     @abstractmethod
     async def aclose(self) -> None: ...

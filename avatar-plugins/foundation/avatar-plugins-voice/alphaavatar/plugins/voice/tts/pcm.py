@@ -14,12 +14,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from abc import abstractmethod
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from functools import partial
 from math import isfinite
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 import aiohttp
 
@@ -27,10 +30,17 @@ from alphaavatar.agents.avatar.voice import TTSBase, TTSStreamBase
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.media import AudioFrame
 
+logger = logging.getLogger(__name__)
 
-@dataclass(frozen=True, slots=True)
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class PCMSettings:
+    # Bound HTTP waits and retry backoff; local consumer waits do not use this budget.
     timeout: float = 30.0
+    first_audio_timeout: float = 10.0
+    read_timeout: float = 10.0
+    max_retries: int = 1
+    retry_interval: float = 0.25
     frame_size_ms: int = 20
     queue_frames: int = 8
     max_streams: int = 4
@@ -41,7 +51,15 @@ class PCMSettings:
             value = getattr(self, name)
             if type(value) is not int or not 1 <= value <= maximum:
                 raise ValueError(f"{name} must be an integer in 1..{maximum}")
-        for name in ("timeout", "max_audio_seconds"):
+        if type(self.max_retries) is not int or not 0 <= self.max_retries <= 3:
+            raise ValueError("max_retries must be an integer in 0..3")
+        for name in (
+            "timeout",
+            "first_audio_timeout",
+            "read_timeout",
+            "retry_interval",
+            "max_audio_seconds",
+        ):
             value = getattr(self, name)
             if type(value) not in (int, float) or not isfinite(value) or not 0 < value <= 3600:
                 raise ValueError(f"{name} must be finite and in (0, 3600]")
@@ -53,6 +71,18 @@ class TTSHTTPError(RuntimeError):
     def __init__(self, provider: str, status: int) -> None:
         self.provider, self.status = provider, status
         super().__init__(f"{provider} TTS request failed with HTTP {status}")
+
+
+class TTSTimeoutError(TimeoutError):
+    def __init__(self, provider: str, phase: str) -> None:
+        self.provider, self.phase = provider, phase
+        super().__init__(f"{provider} TTS timed out during {phase}")
+
+
+class TTSTransportError(RuntimeError):
+    def __init__(self, provider: str, phase: str, error_type: str) -> None:
+        self.provider, self.phase, self.error_type = provider, phase, error_type
+        super().__init__(f"{provider} TTS transport failed during {phase}: {error_type}")
 
 
 class PCMHTTPProvider(TTSBase):
@@ -134,63 +164,204 @@ class PCMHTTPProvider(TTSBase):
         if self._client is None:
             # The resident stream limit also bounds concurrent connections to this endpoint.
             self._client = aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=None, sock_connect=10.0),
+                # Explicit read deadlines below pause while the bounded PCM queue is full.
+                timeout=aiohttp.ClientTimeout(total=None, sock_connect=10.0, sock_read=None),
                 auto_decompress=False,
                 read_bufsize=max(4096, self._frame_bytes * self._settings.queue_frames),
             )
         return self._client
 
     async def _produce(
-        self, payload: dict[str, str], emit: Callable[[AudioFrame], Awaitable[None]]
+        self,
+        payload: dict[str, str],
+        emit: Callable[[AudioFrame], Awaitable[None]],
+        *,
+        request_id: str,
     ) -> None:
-        # The absolute deadline includes HTTP and bounded local backpressure. No auto replay.
-        async with asyncio.timeout(self._settings.timeout):
+        settings, clock = self._settings, asyncio.get_running_loop().time
+        remaining = settings.timeout
+        emitted = received = 0
+        blocked = http_wait = retry_wait = 0.0
+        started = clock()
+
+        async def network[T](
+            operation: Callable[[], Awaitable[T]], phase: str, first_deadline: float
+        ) -> T:
+            nonlocal remaining, http_wait
+            limit = min(
+                remaining, first_deadline - clock() if not emitted else settings.read_timeout
+            )
+            if limit <= 0:
+                raise TTSTimeoutError(self._provider, phase)
+            before = clock()
             try:
-                async with self._get_client().post(
-                    self._url,
-                    json=payload,
-                    headers={
-                        "Authorization": f"Bearer {self._api_key}",
-                        "Accept-Encoding": "identity",
-                    },
-                    allow_redirects=False,
-                ) as response:
-                    if response.status != 200:
-                        raise TTSHTTPError(self._provider, response.status)
+                async with asyncio.timeout(limit):
+                    return await operation()
+            except TimeoutError:
+                raise TTSTimeoutError(self._provider, phase) from None
+            finally:
+                waited = clock() - before
+                http_wait += waited
+                remaining = max(0.0, remaining - waited)
 
-                    content_type = response.headers.get("Content-Type", "")
-                    content_type = content_type.split(";", 1)[0].strip().lower()
-                    if content_type not in ("audio/pcm", "audio/x-pcm", "application/octet-stream"):
-                        raise RuntimeError(f"{self._provider} TTS did not return raw PCM")
-                    if response.headers.get("Content-Encoding", "identity").lower() != "identity":
-                        raise RuntimeError(f"{self._provider} TTS returned encoded PCM")
+        for attempt in range(1, settings.max_retries + 2):
+            phase, response = "response_headers", None
+            first_deadline = clock() + min(remaining, settings.first_audio_timeout)
+            logger.debug(
+                "TTS REQUEST provider=%s request_id=%s attempt=%d",
+                self._provider,
+                request_id,
+                attempt,
+            )
+            try:
+                response = await network(
+                    partial(
+                        self._get_client().post,
+                        self._url,
+                        json=payload,
+                        allow_redirects=False,
+                        headers={
+                            "Authorization": f"Bearer {self._api_key}",
+                            "Accept-Encoding": "identity",
+                        },
+                    ),
+                    phase,
+                    first_deadline,
+                )
+                phase = "response_validation"
+                if response.status != 200:
+                    raise TTSHTTPError(self._provider, response.status)
 
-                    total = 0
-                    while True:
-                        last = False
-                        try:
-                            data = await response.content.readexactly(self._frame_bytes)
-                        except asyncio.IncompleteReadError as error:
-                            data, last = error.partial, True
-                        if data:
-                            if len(data) % 2:
-                                raise RuntimeError("TTS returned an incomplete PCM sample")
-                            if total == 0 and (
-                                (data.startswith(b"RIFF") and data[8:12] == b"WAVE")
-                                or data.startswith((b"ID3", b"OggS", b"fLaC"))
-                            ):
-                                raise RuntimeError("TTS returned an audio container instead of PCM")
-                            total += len(data)
-                            if total > self._max_audio_bytes:
-                                raise RuntimeError("TTS audio duration exceeds its limit")
-                            await emit(AudioFrame(self.sample_rate, 1, len(data) // 2, data))
-                        if last:
-                            break
-                    if not total:
-                        raise RuntimeError(f"{self._provider} TTS returned no audio")
-            except aiohttp.ClientError:
-                # SDK exception reprs can contain request details; expose a safe transport failure.
-                raise RuntimeError(f"{self._provider} TTS transport failed") from None
+                logger.debug(
+                    "TTS HEADERS provider=%s request_id=%s attempt=%d status=%d",
+                    self._provider,
+                    request_id,
+                    attempt,
+                    response.status,
+                )
+                content_type = response.headers.get("Content-Type", "")
+                content_type = content_type.split(";", 1)[0].strip().lower()
+                if content_type not in ("audio/pcm", "audio/x-pcm", "application/octet-stream"):
+                    raise RuntimeError(f"{self._provider} TTS did not return raw PCM")
+                if response.headers.get("Content-Encoding", "identity").lower() != "identity":
+                    raise RuntimeError(f"{self._provider} TTS returned encoded PCM")
+
+                total = 0
+                while True:
+                    phase, last = "first_audio" if not emitted else "audio_read", False
+                    try:
+                        data = await network(
+                            partial(response.content.readexactly, self._frame_bytes),
+                            phase,
+                            first_deadline,
+                        )
+                    except asyncio.IncompleteReadError as error:
+                        data, last = error.partial, True
+
+                    if data:
+                        phase = "pcm_validation"
+                        if len(data) % 2:
+                            raise RuntimeError("TTS returned an incomplete PCM sample")
+                        if total == 0 and (
+                            (data.startswith(b"RIFF") and data[8:12] == b"WAVE")
+                            or data.startswith((b"ID3", b"OggS", b"fLaC"))
+                        ):
+                            raise RuntimeError("TTS returned an audio container instead of PCM")
+                        total += len(data)
+                        received += len(data)
+                        if total > self._max_audio_bytes:
+                            raise RuntimeError("TTS audio duration exceeds its limit")
+
+                        frame = AudioFrame(self.sample_rate, 1, len(data) // 2, data)
+                        phase = "consumer_backpressure"
+
+                        # Mark before await: once emission is attempted, never replay this request.
+                        emitted += 1
+                        if emitted == 1:
+                            logger.debug(
+                                "TTS FIRST PCM provider=%s request_id=%s "
+                                "attempt=%d elapsed_ms=%.1f",
+                                self._provider,
+                                request_id,
+                                attempt,
+                                (clock() - started) * 1000,
+                            )
+                        before = clock()
+                        await emit(frame)
+                        blocked += clock() - before
+                    if last:
+                        break
+
+                if not total:
+                    raise RuntimeError(f"{self._provider} TTS returned no audio")
+
+                logger.debug(
+                    "TTS COMPLETE provider=%s request_id=%s attempt=%d pcm_seconds=%.3f "
+                    "http_wait_seconds=%.3f retry_wait_seconds=%.3f consumer_wait_seconds=%.3f",
+                    self._provider,
+                    request_id,
+                    attempt,
+                    total / (2 * self.sample_rate),
+                    http_wait,
+                    retry_wait,
+                    blocked,
+                )
+                return
+            except asyncio.CancelledError:
+                logger.debug(
+                    "TTS CANCELLED provider=%s request_id=%s attempt=%d phase=%s frames=%d",
+                    self._provider,
+                    request_id,
+                    attempt,
+                    phase,
+                    emitted,
+                )
+                raise
+            except Exception as error:
+                status = error.status if isinstance(error, TTSHTTPError) else None
+                network_failure = phase in ("response_headers", "first_audio", "audio_read")
+                transient = (
+                    network_failure
+                    and isinstance(error, (TimeoutError | aiohttp.ClientError))
+                    and not isinstance(error, (aiohttp.ClientSSLError | aiohttp.InvalidURL))
+                ) or status in (408, 429, 500, 502, 503, 504)
+                retry = (
+                    transient
+                    and not emitted
+                    and attempt <= settings.max_retries
+                    and remaining > settings.retry_interval
+                )
+                logger.warning(
+                    "TTS REQUEST FAILED provider=%s request_id=%s attempt=%d phase=%s "
+                    "error_type=%s status=%s frames=%d received_bytes=%d retry=%s",
+                    self._provider,
+                    request_id,
+                    attempt,
+                    phase,
+                    type(error).__name__,
+                    status,
+                    emitted,
+                    received,
+                    retry,
+                )
+                if not retry:
+                    if isinstance(error, aiohttp.ClientError):
+                        raise TTSTransportError(
+                            self._provider, phase, type(error).__name__
+                        ) from None
+                    raise
+            finally:
+                if response is not None:
+                    # Incomplete bodies must not return a dirty connection to the shared pool.
+                    response.close()
+            delay = min(settings.retry_interval * attempt, remaining)
+            before = clock()
+            try:
+                await asyncio.sleep(delay)
+            finally:
+                waited = clock() - before
+                retry_wait += waited
+                remaining = max(0.0, remaining - waited)
 
     async def _close(self) -> None:
         results = await asyncio.gather(
@@ -223,6 +394,7 @@ class PCMHTTPProvider(TTSBase):
 class _PCMStream(TTSStreamBase):
     def __init__(self, provider: PCMHTTPProvider, payload: dict[str, str]) -> None:
         self._provider, self._payload = provider, payload
+        self.request_id = uuid4().hex
 
         self._frames: deque[AudioFrame] = deque()
         self._changed, self._space = asyncio.Event(), asyncio.Event()
@@ -262,7 +434,8 @@ class _PCMStream(TTSStreamBase):
         try:
             if self._task is None:
                 self._task = asyncio.create_task(
-                    self._provider._produce(self._payload, self._emit), name="tts_pcm_request"
+                    self._provider._produce(self._payload, self._emit, request_id=self.request_id),
+                    name="tts_pcm_request",
                 )
                 self._task.add_done_callback(self._completed)
 
