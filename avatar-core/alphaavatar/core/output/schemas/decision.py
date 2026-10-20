@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 from ..enums.audience import OutputAudience
 from .records import OutputScope
+from .validation import identifier
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +36,8 @@ class OutputStatusDecision:
     tool_name: str | None = None
     outcome: str | None = None
     terminal: bool = False
+    output_id: str | None = None
+    reason: str | None = None
 
     def __post_init__(self) -> None:
         if type(self.terminal) is not bool:
@@ -48,6 +51,12 @@ class OutputStatusDecision:
         for value in (self.narration_key, self.tool_name, self.outcome):
             if value is not None and (not isinstance(value, str) or len(value) > 2048):
                 raise ValueError("Status decision fields must be bounded strings")
+        for name in ("output_id", "reason"):
+            identifier(getattr(self, name), name, optional=True)
+        if self.output_id is not None and self.scope.turn_id is None:
+            raise ValueError("Delivery status requires a turn-scoped output")
+        if self.reason is not None and self.output_id is None:
+            raise ValueError("A delivery reason requires an exact output identity")
         if type(self.revision) is not int or self.revision < 0:
             raise ValueError("Status revision must be a nonnegative integer")
         if type(self.expires_at_ns) is not int or self.expires_at_ns < 0:

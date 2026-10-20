@@ -152,6 +152,8 @@ class LiveKitTranscriptOutput(LifecycleComponent):
             "alphaavatar.lane": identity.lane.value,
             "alphaavatar.interrupted": str(state.interrupted or state.terminal_interrupted).lower(),
         }
+        if reason := self._output.terminal_reason(identity.output_id):
+            attributes["alphaavatar.terminal_reason"] = reason
         # Generated text is not a transcript of a played track and must not be gated by that track.
         if not state.source_text and self._track_sid is not None:
             if track_id := self._track_sid():
@@ -194,6 +196,7 @@ class LiveKitTranscriptOutput(LifecycleComponent):
             text_chars=len(state.text),
             interrupted=state.interrupted or state.terminal_interrupted,
             stage="local_transport",
+            reason=self._output.terminal_reason(identity.output_id),
         )
 
     async def _write(self, state: _Transcript, text: str) -> None:

@@ -17,8 +17,8 @@ import asyncio
 from collections import OrderedDict
 from dataclasses import dataclass, replace
 
-from alphaavatar.core.output.enums import ExecutionSignalKind
-from alphaavatar.core.output.schemas import OutputExecutionSignal, OutputScope
+from alphaavatar.core.output.enums import ExecutionSignalKind, OutputLane
+from alphaavatar.core.output.schemas import OutputExecutionSignal, OutputIdentity, OutputScope
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +32,8 @@ class ActivityNotice:
     outcome: str | None = None
     narration_key: str | None = None
     terminal: bool = False
+    output_id: str | None = None
+    reason: str | None = None
 
 
 @dataclass(slots=True)
@@ -43,6 +45,8 @@ class RunActivity:
     finished: bool = False
     interrupted: bool = False
     notice: ActivityNotice | None = None
+    output_id: str | None = None
+    delivery_failure: ActivityNotice | None = None
 
 
 class StatusState:
@@ -176,9 +180,46 @@ class StatusState:
             narration,
             terminal=state.finished,
         )
-        self.offer(state.notice, present=present)
+        # Generation can finish before playout. Its success cannot erase a delivery failure.
+        notice = state.notice
+        if state.delivery_failure is not None:
+            notice = replace(state.delivery_failure, revision=state.revision)
+        self.offer(notice, present=present)
 
-    def text(self, *, run_id: str, request_id: str | None, event_id: str) -> None:
+    def delivery_failed(self, identity: OutputIdentity, *, reason: str, event_id: str) -> None:
+        view = self._view
+        state = self._runs.get(identity.scope.run_id or "")
+        if (
+            identity.lane != OutputLane.ASSISTANT
+            or reason != "speech_synthesis_failed"
+            or view is None
+            or view.scope != identity.scope
+            or state is None
+            or state.interrupted
+            or state.scope != identity.scope
+            or (state.output_id is not None and state.output_id != identity.output_id)
+        ):
+            return
+        if state.delivery_failure is not None:
+            return
+
+        state.output_id = identity.output_id
+        state.revision = self._next()
+        # This describes one output, not the model/tool result; never narrate a TTS error via TTS.
+        state.delivery_failure = ActivityNotice(
+            event_id,
+            identity.scope,
+            "speech_failed",
+            "delivery_failed",
+            state.revision,
+            outcome="failed",
+            terminal=True,
+            output_id=identity.output_id,
+            reason=reason,
+        )
+        self.offer(state.delivery_failure, present=True)
+
+    def text(self, *, run_id: str, request_id: str | None, event_id: str, output_id: str) -> None:
         state = self._runs.get(run_id)
         if state is None or state.interrupted or self._view is None:
             return
@@ -186,9 +227,13 @@ class StatusState:
             return
         if request_id is not None and request_id != state.request_id:
             return
-        if state.visible:
+        if state.delivery_failure is not None and state.delivery_failure.output_id == output_id:
+            return  # Priority failure can arrive before this output's queued text observation.
+        if state.visible and state.output_id == output_id:
             return
 
+        state.output_id = output_id
+        state.delivery_failure = None
         state.visible = True
         state.revision = self._next()
         if state.finished:
@@ -220,6 +265,7 @@ class StatusState:
             return
 
         state.interrupted = True
+        state.delivery_failure = None
         state.revision = self._next()
         state.notice = ActivityNotice(
             event_id, state.scope, "interrupted", "interrupted", state.revision, terminal=True

@@ -20,7 +20,11 @@ from alphaavatar.agents.runtime import InteractionMethod, StateRuntime
 from alphaavatar.agents.runtime.capability import AvatarCapability
 from alphaavatar.agents.utils.time import ParticipantTimeContext
 
-from .prompts.avatar_system_prompts import AVATAR_SYSTEM_PROMPT
+from .prompts.avatar_system_prompts import (
+    AVATAR_SYSTEM_PROMPT,
+    SPOKEN_RESPONSE_STYLE,
+    TEXT_RESPONSE_STYLE,
+)
 from .prompts.runtime_context_prompts import RUNTIME_CONTEXT_PROMPT
 from .prompts.xlm_protocol_prompts import XML_PROTOCOL_PROMPT
 
@@ -90,6 +94,9 @@ class AvatarSysPromptTemplate:
             # static
             avatar_introduction=self._avatar_introduction,
             interaction_method=self._interaction_method.render(),
+            response_style=SPOKEN_RESPONSE_STYLE
+            if self._interaction_method.audio_output
+            else TEXT_RESPONSE_STYLE,
             internal_capabilities=self._internal_capabilities,
             # half-dynamic
             stable_persona=persona,

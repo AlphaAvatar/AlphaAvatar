@@ -67,6 +67,8 @@ class PresentationProcessor(StatusProcessorBase):
             tool_name=notice.tool_name,
             outcome=notice.outcome,
             terminal=notice.terminal,
+            output_id=notice.output_id,
+            reason=notice.reason,
         )
         try:
             content = EnvOutput(

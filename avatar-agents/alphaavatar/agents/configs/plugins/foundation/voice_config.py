@@ -73,8 +73,11 @@ class TTSConfig(BaseModel):
     base_url: str | None = None
     # HTTP waits and retry backoff; queued audio and local playout do not use this budget.
     timeout: float = Field(default=30.0, gt=0, le=3600, allow_inf_nan=False)
-    first_audio_timeout: float = Field(default=2.5, gt=0, le=3600, allow_inf_nan=False)
-    read_timeout: float = Field(default=10.0, gt=0, le=3600, allow_inf_nan=False)
+    first_audio_timeout: float = Field(default=5.0, gt=0, le=3600, allow_inf_nan=False)
+    read_timeout: float = Field(default=15.0, gt=0, le=3600, allow_inf_nan=False)
+    # Slow-response diagnostics are independent of hard deadlines.
+    slow_response_after: float = Field(default=2.5, gt=0, le=3600, allow_inf_nan=False)
+    trust_env: bool = Field(default=False, strict=True)
     max_retries: int = Field(default=1, ge=0, le=3, strict=True)
     retry_interval: float = Field(default=0.1, gt=0, le=3600, allow_inf_nan=False)
     frame_size_ms: int = Field(default=20, ge=1, le=100, strict=True)
@@ -114,6 +117,8 @@ class TTSConfig(BaseModel):
             timeout=self.timeout,
             first_audio_timeout=self.first_audio_timeout,
             read_timeout=self.read_timeout,
+            slow_response_after=self.slow_response_after,
+            trust_env=self.trust_env,
             max_retries=self.max_retries,
             retry_interval=self.retry_interval,
             frame_size_ms=self.frame_size_ms,

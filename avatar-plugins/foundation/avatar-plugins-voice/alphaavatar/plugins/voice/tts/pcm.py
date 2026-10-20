@@ -39,8 +39,11 @@ logger = logging.getLogger(__name__)
 class PCMSettings:
     # Bound HTTP waits and retry backoff; local consumer waits do not use this budget.
     timeout: float = 30.0
-    first_audio_timeout: float = 2.5
-    read_timeout: float = 10.0
+    first_audio_timeout: float = 5.0
+    read_timeout: float = 15.0
+    # Observation only: a warning never restarts or cancels an attempt.
+    slow_response_after: float = 2.5
+    trust_env: bool = False
     max_retries: int = 1
     retry_interval: float = 0.1
     frame_size_ms: int = 20
@@ -54,12 +57,15 @@ class PCMSettings:
             value = getattr(self, name)
             if type(value) is not int or not 1 <= value <= maximum:
                 raise ValueError(f"{name} must be an integer in 1..{maximum}")
+        if type(self.trust_env) is not bool:
+            raise ValueError("trust_env must be bool")
         if type(self.max_retries) is not int or not 0 <= self.max_retries <= 3:
             raise ValueError("max_retries must be an integer in 0..3")
         for name in (
             "timeout",
             "first_audio_timeout",
             "read_timeout",
+            "slow_response_after",
             "retry_interval",
             "max_audio_seconds",
         ):
@@ -172,6 +178,7 @@ class PCMHTTPProvider(TTSBase):
                     total=None, sock_connect=self._settings.first_audio_timeout, sock_read=None
                 ),
                 auto_decompress=False,
+                trust_env=self._settings.trust_env,
                 read_bufsize=max(4096, self._frame_bytes * self._settings.queue_frames),
             )
         return self._client
@@ -203,7 +210,7 @@ class PCMHTTPProvider(TTSBase):
         remaining = settings.timeout
         emitted = received = 0
         blocked = http_wait = retry_wait = 0.0
-        read_gaps = 0
+        read_gaps = slow_reports = 0
         started = clock()
 
         async def network[T](
@@ -216,12 +223,35 @@ class PCMHTTPProvider(TTSBase):
             if limit <= 0:
                 raise TTSTimeoutError(self._provider, phase)
             before = clock()
+
+            def report_slow() -> None:
+                nonlocal slow_reports
+                slow_reports += 1
+                logger.warning(
+                    "TTS SLOW RESPONSE provider=%s request_id=%s attempt=%d phase=%s "
+                    "wait_ms=%.1f frames=%d action=continue_waiting",
+                    self._provider,
+                    request_id,
+                    attempt,
+                    phase,
+                    (clock() - before) * 1000,
+                    emitted,
+                )
+
+            # A slow observation does not cancel or replay a still-progressing request.
+            warning = None
+            if slow_reports < 3 and settings.slow_response_after < limit:
+                warning = asyncio.get_running_loop().call_later(
+                    settings.slow_response_after, report_slow
+                )
             try:
                 async with asyncio.timeout(limit):
                     return await operation()
             except TimeoutError:
                 raise TTSTimeoutError(self._provider, phase) from None
             finally:
+                if warning is not None:
+                    warning.cancel()
                 waited = clock() - before
                 http_wait += waited
                 remaining = max(0.0, remaining - waited)
@@ -275,18 +305,17 @@ class PCMHTTPProvider(TTSBase):
                     raise RuntimeError(f"{self._provider} TTS returned encoded PCM")
 
                 total = 0
+                pending = bytearray()
                 while True:
-                    phase, last = "first_audio" if not emitted else "audio_read", False
+                    phase = "first_audio" if not emitted else "audio_read"
                     read_started = clock()
-                    try:
-                        data = await network(
-                            partial(response.content.readexactly, self._frame_bytes),
-                            phase,
-                            first_deadline,
-                        )
-                    except asyncio.IncompleteReadError as error:
-                        data, last = error.partial, True
-
+                    # A network fragment is not an audio frame. Reset the idle deadline
+                    # on byte progress; retain the first-audio and aggregate hard limits.
+                    data = await network(
+                        partial(response.content.read, self._frame_bytes - len(pending)),
+                        phase,
+                        first_deadline,
+                    )
                     read_wait = clock() - read_started
                     if data and emitted and read_wait >= 0.05:
                         read_gaps += 1
@@ -294,31 +323,37 @@ class PCMHTTPProvider(TTSBase):
                             logger.debug(
                                 "TTS PCM GAP provider=%s request_id=%s attempt=%d "
                                 "read_wait_ms=%.1f pcm_seconds_before=%.3f "
-                                "measurement=provider_read_wait",
+                                "measurement=body_read_wait",
                                 self._provider,
                                 request_id,
                                 attempt,
                                 read_wait * 1000,
                                 total / (2 * self.sample_rate),
                             )
+                    last = not data
                     if data:
+                        pending.extend(data)
+                        received += len(data)
+                        if total + len(pending) > self._max_audio_bytes:
+                            raise RuntimeError("TTS audio duration exceeds its limit")
+                    if len(pending) < self._frame_bytes and not last:
+                        continue
+                    if pending:
                         phase = "pcm_validation"
-                        if len(data) % 2:
+                        if len(pending) % 2:
                             raise RuntimeError("TTS returned an incomplete PCM sample")
                         if total == 0 and (
-                            (data.startswith(b"RIFF") and data[8:12] == b"WAVE")
-                            or data.startswith((b"ID3", b"OggS", b"fLaC"))
+                            (pending.startswith(b"RIFF") and pending[8:12] == b"WAVE")
+                            or pending.startswith((b"ID3", b"OggS", b"fLaC"))
                         ):
                             raise RuntimeError("TTS returned an audio container instead of PCM")
-                        total += len(data)
-                        received += len(data)
-                        if total > self._max_audio_bytes:
-                            raise RuntimeError("TTS audio duration exceeds its limit")
-
-                        frame = AudioFrame(self.sample_rate, 1, len(data) // 2, data)
+                        frame = AudioFrame(self.sample_rate, 1, len(pending) // 2, bytes(pending))
+                        total += len(pending)
+                        pending.clear()
                         phase = "consumer_backpressure"
 
-                        # Mark before await: once emission is attempted, never replay this request.
+                        # An attempted emission forbids transparent retries, even if the
+                        # downstream consumer is cancelled before returning a receipt.
                         emitted += 1
                         if emitted == 1:
                             logger.debug(
@@ -364,7 +399,9 @@ class PCMHTTPProvider(TTSBase):
                 )
                 raise
             except Exception as error:
-                status = error.status if isinstance(error, TTSHTTPError) else None
+                status = response.status if response is not None else None
+                if isinstance(error, TTSHTTPError):
+                    status = error.status
                 network_failure = phase in ("response_headers", "first_audio", "audio_read")
                 transient = (
                     network_failure

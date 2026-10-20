@@ -108,10 +108,20 @@ class ActivityProcessor(StatusProcessorBase):
                         run_id=output.scope.run_id,
                         request_id=output.source.request_id,
                         event_id=event.event_id,
+                        output_id=output.output_id,
                     )
 
             elif isinstance(payload, OutputControl):
-                if payload.type != OutputControlType.INTERRUPT or not payload.affects_scope:
+                if payload.type != OutputControlType.INTERRUPT:
+                    continue
+                if payload.reason == "speech_synthesis_failed":
+                    for target in payload.targets:
+                        self._state.delivery_failed(
+                            target, reason=payload.reason, event_id=event.event_id
+                        )
+                    self._sync_presentation()
+                    continue
+                if not payload.affects_scope:
                     continue
                 scope, _ = self._state.presentation
                 if scope is None or not any(target.scope == scope for target in payload.targets):

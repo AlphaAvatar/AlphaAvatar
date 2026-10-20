@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections import OrderedDict
 from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import asdict, dataclass, field, replace
 from hashlib import sha256
@@ -68,6 +69,7 @@ class _OutputRecord:
     presentation: OutputStatusDecision | None
     text_mode: OutputTextMode
     terminal: OutputControlType | None = None
+    terminal_reason: str | None = None
     playback: OutputPlaybackType | None = None
     text_sealed: bool = False
     text_completed: bool = False
@@ -111,8 +113,17 @@ class OutputRuntime:
         record_max_batches: int = 1024,
         record_max_bytes: int = 67_108_864,
         execution_max_events: int = 2048,
+        output_max_records: int = 4096,
+        output_retired_records: int = 1024,
     ) -> None:
         identifier(session_id, "session_id")
+        if any(
+            type(value) is not int or value < 1
+            for value in (output_max_records, output_retired_records)
+        ):
+            raise ValueError("Output record capacities must be positive integers")
+        self._record_limit, self._retired_limit = output_max_records, output_retired_records
+        self._retired: OrderedDict[str, tuple[OutputIdentity, str | None]] = OrderedDict()
         self.session_id, self.clock = session_id, clock or RuntimeClock()
         self.stream = OutputStream()
         self.timeline = OutputTimeline(max_items=timeline_max_items)
@@ -308,6 +319,7 @@ class OutputRuntime:
         self._check_delivery()
         identifier(run_id, "run_id")
         self._foreground_run = run_id
+        self._compact_outputs()
 
     def revoke_run(self, run_id: str) -> None:
         identifier(run_id, "run_id")
@@ -351,6 +363,41 @@ class OutputRuntime:
                 or (decision.terminal and self._foreground_run is None)
             )
         )
+
+    def _compact_outputs(self) -> None:
+        # Never evict an in-flight terminal fact, or infer a playback receipt from generation.
+        if self._publications:
+            return
+        for output_id, record in tuple(self._outputs.items()):
+            if (
+                record.terminal is None
+                or record.text_pending
+                or record.media_pending
+                or self._accepts_owner(record.identity.scope, record.presentation)
+            ):
+                continue
+            if record.text_mode == OutputTextMode.AUDIO_SYNCED and (
+                not record.audio_completed or not record.transcript_finalized
+            ):
+                continue
+            if record.last_audio_sequence and record.playback not in (
+                OutputPlaybackType.FINISHED,
+                OutputPlaybackType.INTERRUPTED,
+            ):
+                continue
+            if record.last_alignment_sequence and not record.transcript_finalized:
+                continue
+            self._retired[output_id] = (record.identity, record.terminal_reason)
+            self._outputs.pop(output_id)
+        while len(self._retired) > self._retired_limit:
+            self._retired.popitem(last=False)
+
+    def terminal_reason(self, output_id: str) -> str | None:
+        record = self._outputs.get(output_id)
+        if record is not None:
+            return record.terminal_reason
+        terminal = self._retired.get(output_id)
+        return terminal[1] if terminal is not None else None
 
     def output_identity(self, output_id: str) -> OutputIdentity | None:
         record = self._outputs.get(output_id)
@@ -417,6 +464,8 @@ class OutputRuntime:
     async def _prepare_text(self, output: EnvOutput) -> _OutputRecord | None:
         async with self._open_lock:
             self._check_delivery()
+            if output.output_id in self._retired:
+                return None
             existing = self._outputs.get(output.output_id)
             if existing is not None:
                 self._validate_identity(existing, output)
@@ -445,6 +494,10 @@ class OutputRuntime:
                 )
             if not self._accepts_owner(output.scope, output.presentation):
                 return None
+            if len(self._outputs) >= self._record_limit:
+                self._compact_outputs()
+                if len(self._outputs) >= self._record_limit:
+                    raise RuntimeError("Output state capacity exhausted before settlement")
             record = _OutputRecord(
                 OutputIdentity(output.output_id, output.lane, output.scope),
                 output.source,
@@ -665,6 +718,7 @@ class OutputRuntime:
                 if record.terminal is not None or record.failed:
                     return None
                 record.terminal = OutputControlType.COMPLETE
+                record.terminal_reason = "output_completed"
             return await self._dispatch(
                 self._control(record, OutputControlType.COMPLETE, "output_completed", fields)
             )
@@ -721,6 +775,7 @@ class OutputRuntime:
             targets = tuple(record.identity for record in matching)
             for record in matching:
                 record.terminal = OutputControlType.INTERRUPT
+                record.terminal_reason = reason
         if not targets:
             return None
 
@@ -788,6 +843,7 @@ class OutputRuntime:
             elif isinstance(result, BaseException):
                 raise result
         self._outputs.clear()
+        self._retired.clear()
         self._publications.clear()
 
         # Completed publication tasks have left the in-flight set; retain their first failure.
