@@ -95,7 +95,7 @@ def text_weight(text: str) -> int:
 
 
 def segment_target(index: int, maximum: int) -> int:
-    """Reset per output: 56, 95, 162, 275, 320 weighted characters by default."""
+    """Reset per output: 56, 95, 162, then the configured ceiling (240 by default)."""
     if index < 0 or maximum < 1:
         raise ValueError("Invalid speech segment budget")
     return min(maximum, round(56 * 1.7 ** min(index, 16)))
@@ -270,6 +270,10 @@ def chunk_end(
         usable = [point for point in usable if eager and point.rank == 0]
     if not flush and total < maximum:
         usable = [point for point in usable if point.rank < 2]
+    if flush and not final and total < target:
+        natural = [point for point in candidates if point.rank < 2 and point.weight <= upper]
+        if natural:
+            return min(natural, key=lambda point: (point.rank, abs(point.weight - target))).end
     if usable:
         selected = min(usable, key=lambda point: (point.rank, abs(point.weight - target)))
         # Avoid manufacturing a small final tail when it can be kept with this segment.

@@ -78,7 +78,7 @@ class TTSConfig(BaseModel):
     max_retries: int = Field(default=1, ge=0, le=3, strict=True)
     retry_interval: float = Field(default=0.1, gt=0, le=3600, allow_inf_nan=False)
     frame_size_ms: int = Field(default=20, ge=1, le=100, strict=True)
-    queue_frames: int = Field(default=8, ge=1, le=128, strict=True)
+    queue_frames: int = Field(default=64, ge=1, le=128, strict=True)
     max_streams: int = Field(default=4, ge=1, le=32, strict=True)
     max_audio_seconds: float = Field(default=120.0, gt=0, le=3600, allow_inf_nan=False)
 

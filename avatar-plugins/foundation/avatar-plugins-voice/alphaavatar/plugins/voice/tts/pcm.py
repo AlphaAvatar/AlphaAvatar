@@ -44,7 +44,8 @@ class PCMSettings:
     max_retries: int = 1
     retry_interval: float = 0.1
     frame_size_ms: int = 20
-    queue_frames: int = 8
+    # Read ahead while the preceding segment plays; this is a cap, never a fill gate.
+    queue_frames: int = 64
     max_streams: int = 4
     max_audio_seconds: float = 120.0
 

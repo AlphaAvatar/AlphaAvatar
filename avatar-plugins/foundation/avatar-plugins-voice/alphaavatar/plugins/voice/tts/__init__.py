@@ -41,7 +41,7 @@ class OpenAITTSPlugin(AvatarModulePlugin):
         max_retries: int = 1,
         retry_interval: float = 0.1,
         frame_size_ms: int = 20,
-        queue_frames: int = 8,
+        queue_frames: int = 64,
         max_streams: int = 4,
         max_audio_seconds: float = 120.0,
     ) -> TTSBase:
@@ -87,7 +87,7 @@ class VoiceAITTSPlugin(AvatarModulePlugin):
         max_retries: int = 1,
         retry_interval: float = 0.1,
         frame_size_ms: int = 20,
-        queue_frames: int = 8,
+        queue_frames: int = 64,
         max_streams: int = 4,
         max_audio_seconds: float = 120.0,
     ) -> TTSBase:

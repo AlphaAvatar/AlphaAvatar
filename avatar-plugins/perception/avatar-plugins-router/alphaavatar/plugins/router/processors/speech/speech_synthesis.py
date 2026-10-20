@@ -17,7 +17,7 @@ import asyncio
 import logging
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field, replace
-from math import isfinite
+from math import ceil, isfinite
 
 from alphaavatar.agents.avatar.voice import TTSBase, TTSStreamBase
 from alphaavatar.agents.router import RouterProcessorBase
@@ -123,7 +123,7 @@ class _SpeechJob:
         eager: bool = True,
     ) -> tuple[str, tuple[str, ...]]:
         # Lookahead confirms a decimal/abbreviation without joining the entire answer.
-        text = self.peek(max_chars + 64)
+        text = self.peek(2 * max_chars + 64)
         end = chunk_end(
             text,
             minimum=min_chars,
@@ -163,7 +163,7 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
         lanes: tuple[OutputLane, ...] = (OutputLane.TRANSIENT, OutputLane.ASSISTANT),
         max_pending_outputs: int = 16,
         max_pending_chars: int = 65_536,
-        segment_chars: int = 320,
+        segment_chars: int = 240,
         min_segment_chars: int = 24,
         flush_interval: float = 0.35,
         delivery_timeout: float = 20.0,
@@ -464,6 +464,15 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
             if first:
                 maximum = min(maximum, 112)
             target = segment_target(job.segments, maximum)
+            # Once the answer is complete, balance its remaining phrases instead of
+            # manufacturing a tiny second segment followed by an oversized final one.
+            if job.ended and not first:
+                preview = job.peek(2 * maximum + 64)
+                if len(preview) == job.pending_chars and preview:
+                    units = text_weight(preview)
+                    target = min(maximum, ceil(units / ceil(units / maximum)))
+                else:
+                    target = maximum
             minimum = min(self._min_chars, target)
             job.changed.clear()
             if not job.pending_chars:
@@ -478,7 +487,10 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
             if job.cancelled or not self._runtime.output.is_active(job.identity.output_id):
                 raise asyncio.CancelledError
             if first:
-                wait = min(self._flush_interval, 0.18)
+                # Stable sentence boundaries can still release immediately. A short,
+                # unfinished phrase gets the original collection window, not a forced
+                # word cut at 180 ms that leaves a one-word TTS request behind.
+                wait = self._flush_interval
             elif margin is None:
                 wait = min(self._flush_interval, 0.15)
             else:
