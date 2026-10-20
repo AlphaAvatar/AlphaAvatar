@@ -188,7 +188,7 @@ Capabilities for understanding users, maintaining memory, and coordinating inter
 | [**Memory**][plugin-memory] | Stores durable memories from conversations, tools, and environment observations.<br>Retrieves relevant information to maintain continuity across interactions. | ![Available][status-available] |
 | [**Persona**][plugin-persona] | Builds user profiles and recognizes speakers and faces.<br>Maintains identity continuity and supplies context for personalization. | ![Available][status-available] |
 | [**Character**][plugin-character] | Native AIRI browser lifecycle with scoped transport readiness and separate frontend hosting.<br>Consumes existing Agent audio; examples keep it disabled. Renderer/RTC validation is pending. | ![Pending][status-pending] |
-| [**Status**][plugin-status] | Publishes progress feedback while AlphaAvatar thinks or uses tools.<br>Keeps intermediate activity visible during longer-running workflows. | ![Available][status-available] |
+| [**Status**][plugin-status] | Publishes readiness, model/tool activity, and delivery outcomes.<br>Supports optional narration without forcing generic spoken waiting messages. | ![Available][status-available] |
 | **Reflection** | Will review memories, behavior, and interaction history.<br>Will derive insights to support ongoing adaptation and improvement. | ![Planned][status-planned] |
 | **Planning** | Will turn goals into coordinated, multi-step plans.<br>Will track task progress and support longer-horizon execution. | ![Planned][status-planned] |
 | **Behavior** | Will manage response style, workflow policies, and proactive behavior.<br>Will adapt interaction strategies to user preferences and context. | ![Planned][status-planned] |
@@ -226,6 +226,7 @@ See [Plugin Layout and Boundaries](avatar-plugins/README.md) for development det
 
 <h2>Latest News 🔥</h2>
 
+- [2026/10] Released AlphaAvatar **[version 0.6.8](docs/releases/v0.6.8.md)**: Completed the AlphaAvatar-owned native Host and streaming Agent runtime, removed the LiveKit Agents SDK, separated RTC access from execution ownership, introduced processor-owned Persona and Memory, runtime capabilities and committed-turn consumers, synchronized PCM speech and captions, structured diagnostics, and the Python 3.13 toolchain.
 - [2026/09] Released AlphaAvatar **version 0.6.7**: Added AlphaAvatar-owned multimodal turn taking, local Semantic Addressing with per-speaker conversation focus, typed addressing evidence and fusion, exact annotation-driven turn snapshots, full-duplex interruption, and removed LiveKit text turn detection and the legacy acoustic invocation path.
 - [2026/08] Released AlphaAvatar **version 0.6.6**: Added a unified time-aligned multimodal runtime, adaptive audiovisual ENV Memory, provider-neutral model input, runtime capability awareness, time-based perception retention, participant-scoped timezone context, and date-grouped session storage.
 - [2026/07] Released AlphaAvatar **version 0.6.4**: Added a transport-agnostic perception runtime with typed multimodal streams, shared timelines, annotated payload views, and online ENV memory extraction from live visual observations.
@@ -275,21 +276,20 @@ See [Plugin Layout and Boundaries](avatar-plugins/README.md) for development det
 
 <h2>Installation ⚙️</h2>
 
-Use a source checkout for the v0.6.8 development interfaces documented here. Released PyPI versions can have different APIs; follow the README at the corresponding release tag rather than combining an older package with these examples.
-
-The `alphaavatar` CLI is registered by **alpha-avatar-host**, not by the Agents library. Install the selected workspace packages and dependencies together:
+AlphaAvatar v0.6.8 uses an AlphaAvatar-owned native Host and targets standard **CPython 3.13**. Install from the matching release tag and its lockfile; older released packages may have different APIs.
 
 ```bash
-git clone --recurse-submodules https://github.com/AlphaAvatar/AlphaAvatar.git
+git clone --branch v0.6.8 --recurse-submodules https://github.com/AlphaAvatar/AlphaAvatar.git
 cd AlphaAvatar
 
 uv python install 3.13
-uv venv .venv --python 3.13
-source .venv/bin/activate
 uv sync --all-packages --locked
+source .venv/bin/activate
 ```
 
-This development line targets standard **CPython 3.13**. When moving from Python 3.11, use a new environment and complete the [migration and verification steps](CONTRIBUTING.md#python-313-development-environment) before changing a running deployment. A Python 3.11 lockfile is not valid for this migration. Native model backends may also require platform-specific build tools.
+The `alphaavatar` command is provided by **alpha-avatar-host**. No LiveKit Agents installation or separate model-download command is required. Enabled model runners resolve their files during initialization. Native model backends may require additional platform-specific build tools.
+
+When upgrading a previous Python 3.11 checkout, create a new environment and follow the [development environment migration guidance](CONTRIBUTING.md#python-313-development-environment).
 
 <h2>Quick Start ⚡️</h2>
 
