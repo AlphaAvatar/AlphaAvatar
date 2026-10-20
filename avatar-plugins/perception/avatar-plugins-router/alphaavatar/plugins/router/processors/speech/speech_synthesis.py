@@ -26,17 +26,24 @@ from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.env import EnvOutput
 from alphaavatar.core.env.schemas.metadata import OutputMetadata
 from alphaavatar.core.media import AudioFrame
-from alphaavatar.core.output.enums import OutputControlType, OutputKind, OutputLane, OutputTextMode
+from alphaavatar.core.output.enums import (
+    OutputControlType,
+    OutputKind,
+    OutputLane,
+    OutputPlaybackType,
+    OutputTextMode,
+)
 from alphaavatar.core.output.schemas import (
     OutputControl,
     OutputEvent,
     OutputIdentity,
+    OutputPlayback,
     OutputSource,
     OutputTextAudioAlignment,
     OutputTextChunk,
 )
 
-from .speech_text import SpeechTiming, chunk_end
+from .speech_text import SpeechTiming, chunk_end, segment_target, text_weight
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +85,14 @@ class _SpeechJob:
     ended: bool = False
     cancelled: bool = False
     segments: int = 0
+    published_audio_seconds: float = 0.0
+    first_audio_seconds: float = 0.8
+    budget_rate: float = 14.0
+    playback_sequence: int = 0
+    playback_ns: int = 0
+    playback_checked_ns: int = 0
+    played_seconds: float = 0.0
+    playback_valid: bool = False
     task: asyncio.Task | None = None
     running: bool = False
 
@@ -88,19 +103,35 @@ class _SpeechJob:
         self.ended = self.ended or chunk.is_final
         self.changed.set()
 
-    def take(self, *, max_chars: int, min_chars: int, flush: bool) -> tuple[str, tuple[str, ...]]:
-        # Small lookahead distinguishes a decimal/abbreviation from a sentence boundary.
+    def peek(self, limit: int) -> str:
         parts, length = [], 0
         for piece in self.pieces:
-            part = piece.text[: max_chars + 32 - length]
+            part = piece.text[: limit - length]
             parts.append(part)
             length += len(part)
-            if length >= max_chars + 32:
+            if length >= limit:
                 break
+        return "".join(parts)
 
-        text = "".join(parts)
+    def take(
+        self,
+        *,
+        max_chars: int,
+        min_chars: int,
+        flush: bool,
+        target_chars: int | None = None,
+        eager: bool = True,
+    ) -> tuple[str, tuple[str, ...]]:
+        # Lookahead confirms a decimal/abbreviation without joining the entire answer.
+        text = self.peek(max_chars + 64)
         end = chunk_end(
-            text, minimum=min_chars, maximum=max_chars, flush=flush or self.ended, final=self.ended
+            text,
+            minimum=min_chars,
+            maximum=max_chars,
+            target=target_chars,
+            flush=flush or self.ended,
+            final=self.ended and len(text) == self.pending_chars,
+            eager=eager,
         )
         if not end:
             return "", ()
@@ -132,7 +163,7 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
         lanes: tuple[OutputLane, ...] = (OutputLane.TRANSIENT, OutputLane.ASSISTANT),
         max_pending_outputs: int = 16,
         max_pending_chars: int = 65_536,
-        segment_chars: int = 240,
+        segment_chars: int = 320,
         min_segment_chars: int = 24,
         flush_interval: float = 0.35,
         delivery_timeout: float = 20.0,
@@ -374,30 +405,125 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
                 except BaseException as cleanup:
                     raise original from cleanup
 
-    async def _next_segment(self, job: _SpeechJob) -> tuple[str, tuple[str, ...]]:
-        deadline = None
-        while not job.cancelled and self._runtime.output.is_active(job.identity.output_id):
-            job.changed.clear()
-            now = asyncio.get_running_loop().time()
-            if job.pending_chars and deadline is None:
-                deadline = now + self._flush_interval
-
-            text, chunks = job.take(
-                max_chars=min(self._segment_chars, 120)
-                if job.segments == 0
-                else self._segment_chars,
-                min_chars=self._min_chars,
-                flush=deadline is not None and now >= deadline,
+    async def _audio_margin(self, job: _SpeechJob) -> float | None:
+        # Optional pacing hint only. A lost/stale timeline entry must make preparation
+        # more eager, never prevent speech or create another reliable media subscriber.
+        output = self._runtime.output
+        now_ns = output.clock.now().monotonic_ns
+        entries = ()
+        if not job.playback_checked_ns or now_ns - job.playback_checked_ns >= 50_000_000:
+            job.playback_checked_ns = now_ns
+            entries = await output.timeline.snapshot(
+                after_sequence=job.playback_sequence,
+                kinds=(OutputKind.PLAYBACK,),
+                lanes=(job.identity.lane,),
             )
-            if text or job.ended:
-                return text, chunks
-            if deadline is not None and now >= deadline:
-                deadline = now + self._flush_interval
-            try:
-                timeout = self._flush_interval if deadline is None else max(0, deadline - now)
-                await asyncio.wait_for(job.changed.wait(), timeout=timeout)
-            except TimeoutError:
-                pass
+        for entry in entries:
+            value = entry.content
+            if (
+                entry.session_id != output.session_id
+                or value.output_id != job.identity.output_id
+                or value.scope != job.identity.scope
+                or value.metadata.get("measurement") != "local_audio_queue"
+                or not isinstance(value.payload, OutputPlayback)
+                or entry.sequence <= job.playback_sequence
+            ):
+                continue
+            job.playback_sequence = entry.sequence
+            if entry.monotonic_ns < job.playback_ns:
+                continue
+            job.playback_ns = entry.monotonic_ns
+            job.played_seconds = max(job.played_seconds, value.payload.played_duration_sec)
+            job.playback_valid = value.payload.type in (
+                OutputPlaybackType.STARTED,
+                OutputPlaybackType.PROGRESS,
+            )
+        if not job.playback_sequence:
+            return None
+        age = (output.clock.now().monotonic_ns - job.playback_ns) / 1_000_000_000
+        if not job.playback_valid or not 0 <= age <= 0.5:
+            return 0.0
+        # Count only admitted PCM, never an estimated future phrase. Subtract elapsed
+        # time even if playback might have stalled: overestimating slack is worse.
+        return max(0.0, job.published_audio_seconds - job.played_seconds - age)
+
+    async def _next_segment(self, job: _SpeechJob) -> tuple[str, tuple[str, ...]]:
+        clock, started = asyncio.get_running_loop().time, None
+        first = job.segments == 0
+        # A planning estimate stays below the existing duration/byte safety checks;
+        # the actual PCM checks remain authoritative and are never relaxed here.
+        audio_limit = self._audio_seconds
+        if self._tts is not None:
+            audio_limit = min(
+                audio_limit,
+                self._audio_bytes / (2 * self._tts.sample_rate * self._tts.num_channels),
+            )
+
+        while not job.cancelled and self._runtime.output.is_active(job.identity.output_id):
+            maximum = min(self._segment_chars, max(1, int(audio_limit * job.budget_rate * 0.8)))
+            if first:
+                maximum = min(maximum, 112)
+            target = segment_target(job.segments, maximum)
+            minimum = min(self._min_chars, target)
+            job.changed.clear()
+            if not job.pending_chars:
+                if job.ended:
+                    return "", ()
+                await job.changed.wait()
+                continue
+
+            if started is None:
+                started = clock()
+            margin = await self._audio_margin(job) if not first else None
+            if job.cancelled or not self._runtime.output.is_active(job.identity.output_id):
+                raise asyncio.CancelledError
+            if first:
+                wait = min(self._flush_interval, 0.18)
+            elif margin is None:
+                wait = min(self._flush_interval, 0.15)
+            else:
+                wait = min(0.75, max(0.0, margin - job.first_audio_seconds - 0.25))
+
+            now = clock()
+            expired = now >= started + wait
+            # Later text collects while the CURRENT PCM task continues. An ended source,
+            # low audio reserve or a full planning window releases it without extra delay.
+            full = text_weight(job.peek(maximum)) >= maximum
+            if first or job.ended or expired or full:
+                text, chunks = job.take(
+                    max_chars=maximum,
+                    min_chars=minimum,
+                    target_chars=target,
+                    flush=expired,
+                    eager=first,
+                )
+                if text:
+                    logger.debug(
+                        "SPEECH SEGMENT output_id=%s segment=%d target_units=%d "
+                        "max_units=%d units=%d chars=%d pending_chars=%d "
+                        "source_ended=%s collect_ms=%.1f audio_margin_ms=%s",
+                        job.identity.output_id,
+                        job.segments + 1,
+                        target,
+                        maximum,
+                        text_weight(text),
+                        len(text),
+                        job.pending_chars,
+                        job.ended,
+                        (clock() - started) * 1000,
+                        round(margin * 1000, 1) if margin is not None else None,
+                    )
+                    return text, chunks
+            if expired:
+                # No safe prefix yet (e.g. "$213."). A timer cannot resolve that
+                # ambiguity. Wait for actual lookahead/finality, not a busy polling loop.
+                await job.changed.wait()
+            else:
+                try:
+                    async with asyncio.timeout(min(0.05, max(0.0, started + wait - clock()))):
+                        await job.changed.wait()
+                except TimeoutError:
+                    pass
         raise asyncio.CancelledError
 
     async def _prepare(self, job: _SpeechJob) -> _PreparedSpeech | None:
@@ -435,6 +561,9 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
                     raise original from cleanup
             raise
 
+        elapsed = asyncio.get_running_loop().time() - started
+        if stream is not None:
+            job.first_audio_seconds = min(2.5, max(0.2, elapsed, job.first_audio_seconds * 0.75))
         job.segments += 1
         return _PreparedSpeech(
             text,
@@ -443,7 +572,7 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
             first,
             job.segments,
             job.ended and job.pending_chars == 0,
-            (asyncio.get_running_loop().time() - started) * 1000,
+            elapsed * 1000,
         )
 
     def _validate_frame(self, frame: AudioFrame) -> None:
@@ -578,6 +707,7 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
                                 raise asyncio.CancelledError
 
                             samples += frame.samples_per_channel
+                            job.published_audio_seconds += frame.duration_sec
                             if frames == 1:
                                 current.first = None
                                 logger.debug(
@@ -599,6 +729,8 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
 
                 await current.aclose()
                 if duration and complete:
+                    # Per-output estimate: transient status cannot change an answer's budget.
+                    job.budget_rate = min(60.0, max(1.0, text_weight(current.text) / duration))
                     rate = timing.cumulative[-1] / duration
                     self._speech_rate = min(30.0, max(6.0, 0.5 * self._speech_rate + 0.5 * rate))
                     logger.debug(
