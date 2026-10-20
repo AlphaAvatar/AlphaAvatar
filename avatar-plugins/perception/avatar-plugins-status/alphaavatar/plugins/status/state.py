@@ -151,7 +151,8 @@ class StatusState:
             narration = action if not state.visible else None
         elif kind == ExecutionSignalKind.TOOL_STARTED:
             action = "tool_start"
-            narration = None if signal.commentary_output_ids else "tool_start"
+            # Providers without a phase field may still emit user-visible pre-tool text.
+            narration = None if signal.commentary_output_ids or state.visible else "tool_start"
         elif kind == ExecutionSignalKind.TOOL_FINISHED:
             action = "tool_success" if signal.outcome == "succeeded" else "tool_error"
             if signal.outcome == "unknown":

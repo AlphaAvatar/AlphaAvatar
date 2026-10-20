@@ -139,6 +139,7 @@ class NarrationProcessor(StatusProcessorBase):
     async def start(self) -> None:
         if self._tasks or not self._config.enabled:
             return
+
         self._subscription = await self._runtime.output.stream.subscribe(
             self.SUBSCRIPTION,
             kinds=(OutputKind.STATUS,),

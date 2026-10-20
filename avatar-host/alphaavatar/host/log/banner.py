@@ -26,7 +26,7 @@ _GLYPHS = {
     "R": ("1110", "1001", "1110", "1010", "1001"),
 }
 _WORDMARK = "ALPHAAVATAR"
-_TAGLINE = "Your real-time AI assistant. Owned by you."
+_TAGLINE = "Your Omni real-time assistant. Owned by you."
 
 
 def _pixels(word: str, row: int, *, unicode: bool) -> str:

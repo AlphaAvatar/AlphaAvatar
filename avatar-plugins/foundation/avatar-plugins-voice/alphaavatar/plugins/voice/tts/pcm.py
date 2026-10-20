@@ -37,13 +37,15 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PCMSettings:
-    # Bound HTTP waits and retry backoff; local consumer waits do not use this budget.
+    # Logical HTTP/retry waiting budget; overlapping attempts count once, not local playout.
     timeout: float = 30.0
     first_audio_timeout: float = 5.0
     read_timeout: float = 15.0
     # Observation only: a warning never restarts or cancels an attempt.
     slow_response_after: float = 2.5
     trust_env: bool = False
+    # Opt in to one speculative attempt; it spends retry quota and can be billed.
+    first_audio_hedge_after: float | None = None
     max_retries: int = 1
     retry_interval: float = 0.1
     frame_size_ms: int = 20
@@ -73,6 +75,16 @@ class PCMSettings:
             if type(value) not in (int, float) or not isfinite(value) or not 0 < value <= 3600:
                 raise ValueError(f"{name} must be finite and in (0, 3600]")
 
+        if self.first_audio_hedge_after is not None:
+            delay = self.first_audio_hedge_after
+            if (
+                type(delay) not in (int, float)
+                or not isfinite(delay)
+                or not 0 < delay < min(self.first_audio_timeout, self.timeout)
+                or self.max_retries < 1
+            ):
+                raise ValueError("First-audio hedging requires retry quota and a shorter deadline")
+
 
 class TTSHTTPError(RuntimeError):
     """Remote status without credentials, input text, URLs or response bodies."""
@@ -92,6 +104,38 @@ class TTSTransportError(RuntimeError):
     def __init__(self, provider: str, phase: str, error_type: str) -> None:
         self.provider, self.phase, self.error_type = provider, phase, error_type
         super().__init__(f"{provider} TTS transport failed during {phase}: {error_type}")
+
+
+class _RequestBudget:
+    def __init__(self, settings: PCMSettings) -> None:
+        self.clock = asyncio.get_running_loop().time
+        self.started = self._updated = self.clock()
+        self._remaining, self._waiting = settings.timeout, 0
+        self.attempts, self.limit = 0, settings.max_retries + 1
+        self.hedge_allowed = True
+        self.emitted = False
+        self.retry_not_before = 0.0
+
+    def available(self) -> float:
+        now = self.clock()
+        if self._waiting:
+            self._remaining = max(0.0, self._remaining - (now - self._updated))
+        self._updated = now
+        return self._remaining
+
+    def enter(self) -> None:
+        self.available()
+        self._waiting += 1
+
+    def leave(self) -> None:
+        self.available()
+        self._waiting -= 1
+
+    def claim(self) -> int | None:
+        if self.attempts >= self.limit or self.emitted:
+            return None
+        self.attempts += 1
+        return self.attempts
 
 
 class PCMHTTPProvider(TTSBase):
@@ -124,6 +168,7 @@ class PCMHTTPProvider(TTSBase):
         self._frame_bytes = sample_rate * settings.frame_size_ms // 1000 * 2
         self._max_audio_bytes = int(sample_rate * settings.max_audio_seconds) * 2
 
+        self._hedge_busy = False
         self._streams: set[_PCMStream] = set()
         self._client: aiohttp.ClientSession | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -171,8 +216,12 @@ class PCMHTTPProvider(TTSBase):
             raise RuntimeError("TTS provider is closing or closed")
 
         if self._client is None:
-            # The resident stream limit also bounds concurrent connections to this endpoint.
+            # Resident streams plus one optional hedge bound connection ownership.
             self._client = aiohttp.ClientSession(
+                connector=aiohttp.TCPConnector(
+                    limit=self._settings.max_streams
+                    + int(self._settings.first_audio_hedge_after is not None)
+                ),
                 # Explicit read deadlines below pause while the bounded PCM queue is full.
                 timeout=aiohttp.ClientTimeout(
                     total=None, sock_connect=self._settings.first_audio_timeout, sock_read=None
@@ -206,23 +255,138 @@ class PCMHTTPProvider(TTSBase):
         *,
         request_id: str,
     ) -> None:
+        budget = _RequestBudget(self._settings)
+        delay = self._settings.first_audio_hedge_after
+        if delay is None:
+            await self._produce_serial(payload, emit, request_id=request_id, budget=budget)
+            return
+
+        workers: list[asyncio.Task[None]] = []
+        changed = asyncio.Event()
+        winner: asyncio.Task[None] | None = None
+        timer: asyncio.Task[None] | None = None
+        owns_slot = False
+
+        def settled(_: asyncio.Task) -> None:
+            nonlocal owns_slot
+            if owns_slot and sum(not task.done() for task in workers) < 2:
+                owns_slot, self._hedge_busy = False, False
+            changed.set()
+
+        async def select(frame: AudioFrame) -> None:
+            nonlocal winner
+            current = asyncio.current_task()
+            if winner is None:
+                # Selection and cancellation contain no await: exactly one PCM source wins.
+                winner = current
+                budget.emitted = True
+                for task in workers:
+                    if task is not current and not task.done():
+                        task.cancel()
+                if timer is not None and not timer.done():
+                    timer.cancel()
+                logger.debug(
+                    "TTS FIRST AUDIO SELECTED provider=%s request_id=%s "
+                    "attempts=%d elapsed_ms=%.1f",
+                    self._provider,
+                    request_id,
+                    budget.attempts,
+                    (budget.clock() - budget.started) * 1000,
+                )
+                changed.set()
+            if current is not winner:
+                raise asyncio.CancelledError
+            await emit(frame)
+
+        def launch() -> None:
+            task = asyncio.create_task(
+                self._produce_serial(payload, select, request_id=request_id, budget=budget),
+                name=f"tts_attempt:{request_id}",
+            )
+            workers.append(task)
+            task.add_done_callback(settled)
+
+        async def hedge() -> None:
+            nonlocal owns_slot
+            await asyncio.sleep(delay)
+            if (
+                winner is not None
+                or not budget.hedge_allowed
+                or budget.attempts != 1
+                or budget.available() <= 0
+                or self._hedge_busy
+                or all(task.done() for task in workers)
+            ):
+                return
+            # One extra connection for this provider, not one extra for every resident stream.
+            owns_slot, self._hedge_busy = True, True
+            logger.debug(
+                "TTS HEDGE START provider=%s request_id=%s after_ms=%.1f quota=%d",
+                self._provider,
+                request_id,
+                (budget.clock() - budget.started) * 1000,
+                budget.limit,
+            )
+            launch()
+
+        launch()
+        timer = asyncio.create_task(hedge(), name=f"tts_first_audio_timer:{request_id}")
+        timer.add_done_callback(settled)
+        try:
+            while True:
+                changed.clear()
+                if timer.done() and not timer.cancelled():
+                    timer.result()
+                if winner is not None:
+                    await winner
+                    return
+                if all(task.done() for task in workers):
+                    # A failed speculative attempt must not cancel a still-viable primary.
+                    for task in reversed(workers):
+                        if not task.cancelled() and task.exception() is not None:
+                            raise task.exception()
+                    raise RuntimeError("TTS attempts ended without audio")
+                await changed.wait()
+        finally:
+
+            async def reap() -> None:
+                nonlocal owns_slot
+                tasks = (*workers, timer)
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                if owns_slot:
+                    owns_slot, self._hedge_busy = False, False
+
+            await wait_for_cleanup(asyncio.create_task(reap(), name="tts_attempt_cleanup"))
+
+    async def _produce_serial(
+        self,
+        payload: dict[str, str],
+        emit: Callable[[AudioFrame], Awaitable[None]],
+        *,
+        request_id: str,
+        budget: _RequestBudget,
+    ) -> None:
         settings, clock = self._settings, asyncio.get_running_loop().time
-        remaining = settings.timeout
         emitted = received = 0
         blocked = http_wait = retry_wait = 0.0
         read_gaps = slow_reports = 0
-        started = clock()
+        started = budget.started
 
         async def network[T](
             operation: Callable[[], Awaitable[T]], phase: str, first_deadline: float
         ) -> T:
-            nonlocal remaining, http_wait
+            nonlocal http_wait
             limit = min(
-                remaining, first_deadline - clock() if not emitted else settings.read_timeout
+                budget.available(),
+                first_deadline - clock() if not emitted else settings.read_timeout,
             )
             if limit <= 0:
                 raise TTSTimeoutError(self._provider, phase)
             before = clock()
+            budget.enter()
 
             def report_slow() -> None:
                 nonlocal slow_reports
@@ -254,12 +418,18 @@ class PCMHTTPProvider(TTSBase):
                     warning.cancel()
                 waited = clock() - before
                 http_wait += waited
-                remaining = max(0.0, remaining - waited)
+                budget.leave()
 
-        for attempt in range(1, settings.max_retries + 2):
+        last_error: Exception | None = None
+        while True:
+            attempt = budget.claim()
+            if attempt is None:
+                if last_error is not None:
+                    raise last_error
+                raise RuntimeError("TTS attempt quota exhausted")
             phase, response = "response_headers", None
             attempt_started = clock()
-            first_deadline = attempt_started + min(remaining, settings.first_audio_timeout)
+            first_deadline = attempt_started + min(budget.available(), settings.first_audio_timeout)
             logger.debug(
                 "TTS REQUEST provider=%s request_id=%s attempt=%d first_audio_timeout_ms=%.1f",
                 self._provider,
@@ -399,6 +569,12 @@ class PCMHTTPProvider(TTSBase):
                 )
                 raise
             except Exception as error:
+                budget.hedge_allowed = False
+                last_error = (
+                    TTSTransportError(self._provider, phase, type(error).__name__)
+                    if isinstance(error, aiohttp.ClientError)
+                    else error
+                )
                 status = response.status if response is not None else None
                 if isinstance(error, TTSHTTPError):
                     status = error.status
@@ -411,11 +587,14 @@ class PCMHTTPProvider(TTSBase):
                 delay = settings.retry_interval * attempt
                 if isinstance(error, TTSHTTPError) and error.retry_after is not None:
                     delay = max(delay, error.retry_after)
+                    budget.retry_not_before = max(budget.retry_not_before, clock() + delay)
+                delay = max(delay, budget.retry_not_before - clock())
                 retry = (
                     transient
                     and not emitted
-                    and attempt <= settings.max_retries
-                    and remaining > delay
+                    and not budget.emitted
+                    and budget.attempts < budget.limit
+                    and budget.available() > delay
                 )
                 logger.warning(
                     "TTS REQUEST FAILED provider=%s request_id=%s attempt=%d phase=%s "
@@ -445,12 +624,17 @@ class PCMHTTPProvider(TTSBase):
                     response.close()
 
             before = clock()
+            budget.enter()
             try:
-                await asyncio.sleep(delay)
+                while delay > 0:
+                    if delay >= budget.available():
+                        raise last_error
+                    await asyncio.sleep(delay)
+                    delay = max(0.0, budget.retry_not_before - clock())
             finally:
                 waited = clock() - before
                 retry_wait += waited
-                remaining = max(0.0, remaining - waited)
+                budget.leave()
 
     async def _close(self) -> None:
         results = await asyncio.gather(

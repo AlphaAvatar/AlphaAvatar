@@ -169,6 +169,15 @@ class LoopFeedback:
         except Exception as exc:
             raise LoopDeliveryError("Loop text publication failed") from exc
 
+    def _phase(self, message: _Message, phase: ModelMessagePhase | None) -> None:
+        if phase is not None:
+            if message.phase is not None and message.phase != phase:
+                raise ModelProtocolError("Assistant message phase changed")
+
+            message.phase = phase
+        if message.text and message.phase == ModelMessagePhase.COMMENTARY:
+            self._commentary[message.output_id] = None
+
     async def text(self, event: ModelTextDelta) -> None:
         if not self._output.accepts_run(self.identity.run_id):
             return
@@ -177,6 +186,7 @@ class LoopFeedback:
             event.item_id, _Message(self.output_id(event.item_id), event.item_id, phase=event.phase)
         )
 
+        self._phase(message, event.phase)
         if message.completed or event.content_index < message.content_index:
             raise ModelProtocolError("Text delta follows completed or out-of-order content")
 
@@ -197,6 +207,7 @@ class LoopFeedback:
         message = self._messages.setdefault(
             item.id, _Message(self.output_id(item.id), item.id, phase=item.phase)
         )
+        self._phase(message, item.phase)
         if message.completed:
             if message.text != text:
                 raise ModelProtocolError("Completed message changed after delivery")
@@ -204,7 +215,6 @@ class LoopFeedback:
         if not text.startswith(message.text):
             raise ModelProtocolError("Completed message disagrees with streamed content")
 
-        message.phase = item.phase
         await self._text(
             message, text[len(message.text) :], content_index=max(message.content_index, 0)
         )

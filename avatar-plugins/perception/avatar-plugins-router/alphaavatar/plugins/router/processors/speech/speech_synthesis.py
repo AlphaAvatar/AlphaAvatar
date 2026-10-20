@@ -33,6 +33,7 @@ from alphaavatar.core.output.enums import (
     OutputPlaybackType,
     OutputTextMode,
 )
+from alphaavatar.core.output.enums.message_phase import OutputMessagePhase
 from alphaavatar.core.output.schemas import (
     OutputControl,
     OutputEvent,
@@ -84,6 +85,9 @@ class _SpeechJob:
     pending_chars: int = 0
     ended: bool = False
     cancelled: bool = False
+    cancel_reason: str | None = None
+    phase: OutputMessagePhase | None = None
+    audio_attempted: bool = False
     segments: int = 0
     published_audio_seconds: float = 0.0
     first_audio_seconds: float = 0.8
@@ -259,7 +263,9 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
         else:
             await self._runtime.output.stream.unsubscribe(self.CONSUMER_ID)
 
-    def _cancel(self, job: _SpeechJob) -> None:
+    def _cancel(self, job: _SpeechJob, *, reason: str | None = None) -> None:
+        if reason is not None and not job.cancelled:
+            job.cancel_reason = reason
         job.cancelled = True
         job.pieces.clear()
         job.pending_chars = 0
@@ -327,6 +333,24 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
         for previous in self._jobs.values():
             if not self._runtime.output.is_active(previous.identity.output_id):
                 self._cancel(previous)
+            elif (
+                output.lane == OutputLane.ASSISTANT
+                and previous.identity.lane == OutputLane.ASSISTANT
+                and chunk.phase == OutputMessagePhase.FINAL_ANSWER
+                and previous.phase == OutputMessagePhase.COMMENTARY
+                and previous.identity.scope == output.scope
+                and previous.identity.output_id != output.output_id
+                and not previous.audio_attempted
+                and not previous.cancelled
+            ):
+                # A ready answer need not wait behind a preamble that has not sent any PCM.
+                # Attempted publication, not its returned receipt, is the conservative cutoff.
+                self._cancel(previous, reason="commentary_superseded")
+                logger.debug(
+                    "Speech commentary superseded output_id=%s by_output_id=%s",
+                    previous.identity.output_id,
+                    output.output_id,
+                )
         if self._tts is None:
             await self._reject(event, "tts_unavailable")
             return
@@ -342,6 +366,7 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
                 identity,
                 replace(output.source, producer="router.speech_synthesis"),
                 output.metadata,
+                phase=chunk.phase,
             )
             self._jobs[output.output_id] = job
 
@@ -356,6 +381,8 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
             await self._reject(event, "speech_text_capacity")
             return
 
+        if chunk.phase is not None:
+            job.phase = chunk.phase
         job.append(chunk)
         self._wake.set()
 
@@ -703,6 +730,7 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
 
                             # No alignment, subtitle network or typing timer is awaited here.
                             stage = "audio_delivery"
+                            job.audio_attempted = True
                             async with asyncio.timeout(self._timeout):
                                 event = await output.publish(
                                     EnvOutput(
@@ -759,7 +787,7 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
                 if last:
                     break
         except asyncio.CancelledError:
-            reason = "synthesis_interrupted"
+            reason = job.cancel_reason or "synthesis_interrupted"
             raise
         except Exception:
             reason = "speech_synthesis_failed"

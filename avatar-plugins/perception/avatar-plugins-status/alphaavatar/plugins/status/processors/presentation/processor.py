@@ -126,6 +126,12 @@ class PresentationProcessor(StatusProcessorBase):
             if notice.action not in {"turn_committed", "tools_pending"}:
                 await self._publish(notice, OutputAudience.USER)
 
+            if (
+                notice.narration_key in {"thinking", "finalizing"}
+                and not self._config.narrate_model_wait
+            ):
+                continue
+
             if notice.narration_key and self._spoken < self._config.max_narrations_per_turn:
                 self._notice = spawn(self._later(notice), name="status:narration_delay")
 

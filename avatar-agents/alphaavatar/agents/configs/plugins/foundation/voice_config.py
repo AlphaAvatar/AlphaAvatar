@@ -78,6 +78,10 @@ class TTSConfig(BaseModel):
     # Slow-response diagnostics are independent of hard deadlines.
     slow_response_after: float = Field(default=2.5, gt=0, le=3600, allow_inf_nan=False)
     trust_env: bool = Field(default=False, strict=True)
+    # Optional speculation spends retry quota and may incur a second synthesis charge.
+    first_audio_hedge_after: float | None = Field(
+        default=None, gt=0, le=3600, allow_inf_nan=False, strict=True
+    )
     max_retries: int = Field(default=1, ge=0, le=3, strict=True)
     retry_interval: float = Field(default=0.1, gt=0, le=3600, allow_inf_nan=False)
     frame_size_ms: int = Field(default=20, ge=1, le=100, strict=True)
@@ -87,6 +91,11 @@ class TTSConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_provider(self) -> "TTSConfig":
+        if self.first_audio_hedge_after is not None and (
+            self.first_audio_hedge_after >= min(self.first_audio_timeout, self.timeout)
+            or self.max_retries < 1
+        ):
+            raise ValueError("First-audio hedging requires retry quota and a shorter deadline")
         if self.plugin is None:
             return self
         if not self.model or not self.model.strip():
@@ -119,6 +128,7 @@ class TTSConfig(BaseModel):
             read_timeout=self.read_timeout,
             slow_response_after=self.slow_response_after,
             trust_env=self.trust_env,
+            first_audio_hedge_after=self.first_audio_hedge_after,
             max_retries=self.max_retries,
             retry_interval=self.retry_interval,
             frame_size_ms=self.frame_size_ms,
