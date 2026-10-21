@@ -20,6 +20,7 @@ import os
 import shutil
 import tempfile
 import time
+from collections import deque
 from dataclasses import replace
 from multiprocessing.context import BaseContext
 
@@ -62,6 +63,8 @@ class InferenceRuntime:
         max_clients: int = 256,
         max_pending_per_runner: int = 64,
         handshake_timeout: float = 10,
+        restart_limit: int = 2,
+        restart_window_seconds: float = 300,
     ) -> None:
         self._runner_classes = dict(runners)
         for method, runner in self._runner_classes.items():
@@ -81,6 +84,12 @@ class InferenceRuntime:
         self._handshake_timeout = positive_timeout(handshake_timeout, "handshake_timeout")
         self._max_clients = positive_limit(max_clients, "max_clients")
         self._max_pending = positive_limit(max_pending_per_runner, "max_pending_per_runner")
+        self._restart_limit = positive_limit(restart_limit, "restart_limit")
+        self._restart_window = positive_timeout(restart_window_seconds, "restart_window_seconds")
+        self._restart_history: dict[str, deque[float]] = {
+            method: deque() for method in self._runner_classes
+        }
+        self._recovery_lock = asyncio.Lock()
         self._runners: dict[str, RunnerProcess] = {}
         self._startup = {
             method: InferenceRunnerStatus(method=method) for method in self._runner_classes
@@ -283,8 +292,7 @@ class InferenceRuntime:
                     raise ValueError("Invalid inference handshake")
                 method = message[1:].decode("utf-8")
                 validate_method(method)
-                runner = self._runners.get(method)
-                if runner is None:
+                if method not in self._runner_classes:
                     await write_frame(writer, RUN_ERROR + b"Inference method is not registered")
                     return
                 await write_frame(writer, READY)
@@ -295,6 +303,11 @@ class InferenceRuntime:
                 if message[:1] != REQUEST:
                     raise ValueError("Invalid inference request")
                 try:
+                    # Resolve on every request. A session connection may survive
+                    # a failed runner and must never keep the retired process.
+                    runner = self._runners.get(method)
+                    if runner is None or not runner.is_alive:
+                        raise RuntimeError("Inference runner temporarily unavailable")
                     result = await runner.run(message[1:])
                     response = RESULT_NONE if result is None else RESULT + result
                 except asyncio.CancelledError:
@@ -321,6 +334,65 @@ class InferenceRuntime:
         if runner is None:
             raise ValueError(f"Inference runner {method!r} is not registered")
         return await runner.run(data, timeout=timeout)
+
+    async def recover_failed_runners(self) -> bool:
+        """Rebuild isolated failed processes; never replay an attempted request.
+
+        A caller owns the policy for failing the Host if safe reclamation or
+        a bounded restart is unsuccessful. Only ready replacements are exposed.
+        """
+        async with self._recovery_lock:
+            if self._close_task is not None or not self._started:
+                return False
+            for index, (method, runner_cls) in enumerate(self._runner_classes.items(), start=1):
+                previous = self._runners.get(method)
+                if previous is not None and previous.is_alive:
+                    continue
+                now = time.monotonic()
+                history = self._restart_history[method]
+                while history and now - history[0] >= self._restart_window:
+                    history.popleft()
+                if len(history) >= self._restart_limit:
+                    logger.error(
+                        "Inference runner restart limit reached method=%s attempts=%d "
+                        "window_seconds=%.1f",
+                        method,
+                        len(history),
+                        self._restart_window,
+                    )
+                    return False
+
+                logger.warning(
+                    "Inference runner recovery starting method=%s pid=%s exitcode=%s attempt=%d/%d",
+                    method,
+                    previous.pid if previous is not None else None,
+                    previous.exitcode if previous is not None else None,
+                    len(history) + 1,
+                    self._restart_limit,
+                )
+                try:
+                    if previous is not None:
+                        # Never start a duplicate while the old process may survive.
+                        await self._close_runner(method, previous)
+                        self._runners.pop(method, None)
+                    history.append(now)
+                    replacement = RunnerProcess(
+                        runner_cls,
+                        mp_ctx=self._mp_ctx,
+                        initialize_timeout=self._initialize_timeout,
+                        request_timeout=self._request_timeout,
+                        close_timeout=self._close_timeout,
+                        max_pending=self._max_pending,
+                    )
+                    self._runners[method] = replacement
+                    await self._initialize_runner(method, replacement, index)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception("Inference runner recovery failed method=%s", method)
+                    return False
+                logger.info("Inference runner recovered method=%s", method)
+            return self.is_alive
 
     async def _close(self) -> None:
         self._started = False

@@ -19,6 +19,7 @@ import logging
 import multiprocessing as mp
 import socket
 import sys
+import time
 from contextlib import nullcontext
 from dataclasses import dataclass
 from multiprocessing.context import BaseContext
@@ -175,6 +176,14 @@ class RunnerProcess:
             and self._process.is_alive()
         )
 
+    @property
+    def pid(self) -> int | None:
+        return self._process.pid if self._process is not None else None
+
+    @property
+    def exitcode(self) -> int | None:
+        return self._process.exitcode if self._process is not None else None
+
     @staticmethod
     def _observe(task: asyncio.Future) -> None:
         if not task.cancelled():
@@ -230,27 +239,75 @@ class RunnerProcess:
             raise
 
     async def _exchange(self, request: _Request, data: bytes, timeout: float) -> bytes | None:
+        # Queue admission and a dispatched exchange have separate deadlines. Waiting
+        # behind another request must not consume this request's execution budget.
+        clock = time.monotonic
+        queued_at = clock()
+        acquired = False
+        success = False
+        stage = "queue"
+        execute_at: float | None = None
         try:
-            async with asyncio.timeout(timeout), self._lock:
+            async with asyncio.timeout(timeout):
+                await self._lock.acquire()
+            acquired = True
+            execute_at = clock()
+            stage = "execution"
+            async with asyncio.timeout(timeout):
                 if not self.is_alive:
                     raise RuntimeError(f"Inference process {self.method!r} is unavailable")
                 request.dispatched = True
                 await write_frame(self._writer, REQUEST + data)
                 response = await read_frame(self._reader)
                 if response[:1] == RESULT:
+                    success = True
                     return response[1:]
                 if response == RESULT_NONE:
+                    success = True
                     return None
                 if response[:1] == RUN_ERROR:
                     # A fully consumed error response does not desynchronize the channel.
                     request.dispatched = False
                     raise RuntimeError(response[1:].decode(errors="replace"))
                 raise RuntimeError(f"Invalid response from {self.method!r}")
-        except BaseException:
+        except BaseException as error:
+            logger.log(
+                logging.DEBUG if isinstance(error, asyncio.CancelledError) else logging.WARNING,
+                "Inference exchange failed method=%s pid=%s exitcode=%s stage=%s "
+                "queued_seconds=%.3f execution_seconds=%.3f dispatched=%s error_type=%s",
+                self.method,
+                self.pid,
+                self.exitcode,
+                stage,
+                (execute_at or clock()) - queued_at,
+                clock() - execute_at if execute_at is not None else 0.0,
+                request.dispatched,
+                type(error).__name__,
+            )
             if request.dispatched:
+                # A dispatched timeout leaves the runner's response ownership
+                # unknowable. Retire that process; never reuse or replay its result.
                 self._broken = True
                 await wait_for_cleanup(self._retire(force=True))
             raise
+        finally:
+            if success and execute_at is not None:
+                logger.debug(
+                    "Inference exchange complete method=%s pid=%s "
+                    "queued_seconds=%.3f execution_seconds=%.3f",
+                    self.method,
+                    self.pid,
+                    execute_at - queued_at,
+                    clock() - execute_at,
+                )
+            if acquired:
+                self._lock.release()
+            elif not request.dispatched:
+                logger.debug(
+                    "Inference queued request not dispatched method=%s wait_seconds=%.3f",
+                    self.method,
+                    clock() - queued_at,
+                )
 
     async def run(self, data: bytes, *, timeout: float | None = None) -> bytes | None:
         validate_data(data)
@@ -291,6 +348,7 @@ class RunnerProcess:
 
         process = self._process
         if process is not None:
+            old_pid, old_exitcode = process.pid, process.exitcode
             if process.pid is not None:
                 if force and process.is_alive():
                     process.terminate()
@@ -304,11 +362,20 @@ class RunnerProcess:
                 if process.is_alive():
                     errors.append(RuntimeError(f"Could not reap inference process {self.method!r}"))
                 else:
+                    old_exitcode = process.exitcode
                     process.close()
                     self._process = None
             else:
                 process.close()
                 self._process = None
+            logger.info(
+                "Inference process settled method=%s pid=%s exitcode=%s forced=%s reaped=%s",
+                self.method,
+                old_pid,
+                old_exitcode,
+                force,
+                self._process is None,
+            )
         if errors:
             raise ExceptionGroup("Inference process reclamation failed", errors)
 
@@ -332,11 +399,24 @@ class RunnerProcess:
             if task is not None:
                 await asyncio.gather(task, return_exceptions=True)
 
+        # If the child exited before its reader noticed EOF, close the socket
+        # first and let the in-flight request observe failure. Do not cancel the
+        # server's IPC handler as if it were an ordinary caller interruption.
+        if self._process is not None and not self._process.is_alive():
+            self._broken = True
         requests = tuple(self._requests)
-        for task in requests:
-            task.cancel()
-
-        await asyncio.gather(*requests, return_exceptions=True)
+        if self._broken:
+            try:
+                await wait_for_cleanup(self._retire(force=True))
+            except Exception as error:
+                errors.append(error)
+                for task in requests:
+                    task.cancel()
+            await asyncio.gather(*requests, return_exceptions=True)
+        else:
+            for task in requests:
+                task.cancel()
+            await asyncio.gather(*requests, return_exceptions=True)
         if self._ready and not self._broken and self._writer is not None:
             try:
                 async with asyncio.timeout(self._close_timeout):

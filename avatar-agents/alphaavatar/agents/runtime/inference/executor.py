@@ -92,13 +92,18 @@ class _InferenceConnection:
             raise RuntimeError(f"Inference handshake rejected for {self._method!r}")
 
     async def _run(self, data: bytes) -> bytes | None:
-        async with asyncio.timeout(self._request_timeout), self._lock:
+        # Local connection serialization must not consume this call's network
+        # timeout. Remote service queueing retains its own bounded deadlines.
+        async with asyncio.timeout(self._request_timeout):
+            await self._lock.acquire()
+        try:
             if self._close_task is not None:
                 raise RuntimeError("Inference connection is closed")
             try:
-                await self._connect()
-                await write_frame(self._writer, REQUEST + data)
-                response = await read_frame(self._reader)
+                async with asyncio.timeout(self._request_timeout):
+                    await self._connect()
+                    await write_frame(self._writer, REQUEST + data)
+                    response = await read_frame(self._reader)
             except BaseException:
                 self._drop()
                 raise
@@ -110,6 +115,8 @@ class _InferenceConnection:
                 raise RuntimeError(response[1:].decode(errors="replace"))
             self._drop()
             raise RuntimeError(f"Invalid inference response for {self._method!r}")
+        finally:
+            self._lock.release()
 
     async def run(self, data: bytes) -> bytes | None:
         if self._close_task is not None:

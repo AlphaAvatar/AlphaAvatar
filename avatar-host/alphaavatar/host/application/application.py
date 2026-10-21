@@ -100,10 +100,14 @@ class AvatarHost:
 
     async def _monitor(self) -> None:
         while True:
-            if not self._inference_ready():
-                raise RuntimeError("Shared inference service failed")
             if not self._manager.healthy:
                 raise RuntimeError("Execution process supervision failed")
+
+            if not self._inference_ready():
+                # Rebuild a failed process without replaying its in-flight work.
+                # If reaping or restart fails, fail closed as before.
+                if self._inference is None or not await self._inference.recover_failed_runners():
+                    raise RuntimeError("Shared inference service failed")
             await asyncio.sleep(self.config.host.inference_check_interval)
 
     async def _serve(self) -> None:
