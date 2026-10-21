@@ -165,6 +165,10 @@ class RunnerProcess:
         self._requests: dict[asyncio.Task[bytes | None], _Request] = {}
         self._lock = asyncio.Lock()
         self._ready = self._broken = False
+        self._stats_since = time.monotonic()
+        self._stats_count = 0
+        self._stats_queue = self._stats_execute = 0.0
+        self._stats_max_queue = self._stats_max_execute = 0.0
 
     @property
     def is_alive(self) -> bool:
@@ -238,6 +242,27 @@ class RunnerProcess:
                 raise original from cleanup
             raise
 
+    def _log_summary(self, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if not self._stats_count or (not force and now - self._stats_since < 10.0):
+            return
+
+        logger.debug(
+            "INFERENCE SUMMARY method=%s pid=%s calls=%d window_seconds=%.3f "
+            "queue_avg_ms=%.3f queue_max_ms=%.3f execution_avg_ms=%.3f execution_max_ms=%.3f",
+            self.method,
+            self.pid,
+            self._stats_count,
+            now - self._stats_since,
+            1000 * self._stats_queue / self._stats_count,
+            1000 * self._stats_max_queue,
+            1000 * self._stats_execute / self._stats_count,
+            1000 * self._stats_max_execute,
+        )
+        self._stats_since, self._stats_count = now, 0
+        self._stats_queue = self._stats_execute = 0.0
+        self._stats_max_queue = self._stats_max_execute = 0.0
+
     async def _exchange(self, request: _Request, data: bytes, timeout: float) -> bytes | None:
         # Queue admission and a dispatched exchange have separate deadlines. Waiting
         # behind another request must not consume this request's execution budget.
@@ -292,14 +317,13 @@ class RunnerProcess:
             raise
         finally:
             if success and execute_at is not None:
-                logger.debug(
-                    "Inference exchange complete method=%s pid=%s "
-                    "queued_seconds=%.3f execution_seconds=%.3f",
-                    self.method,
-                    self.pid,
-                    execute_at - queued_at,
-                    clock() - execute_at,
-                )
+                queued, executed = execute_at - queued_at, clock() - execute_at
+                self._stats_count += 1
+                self._stats_queue += queued
+                self._stats_execute += executed
+                self._stats_max_queue = max(self._stats_max_queue, queued)
+                self._stats_max_execute = max(self._stats_max_execute, executed)
+                self._log_summary()
             if acquired:
                 self._lock.release()
             elif not request.dispatched:
@@ -417,6 +441,8 @@ class RunnerProcess:
             for task in requests:
                 task.cancel()
             await asyncio.gather(*requests, return_exceptions=True)
+
+        self._log_summary(force=True)
         if self._ready and not self._broken and self._writer is not None:
             try:
                 async with asyncio.timeout(self._close_timeout):

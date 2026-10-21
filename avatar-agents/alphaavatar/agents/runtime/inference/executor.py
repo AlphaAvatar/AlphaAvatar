@@ -21,7 +21,6 @@ from alphaavatar.core.cleanup import wait_for_cleanup
 from .protocol import (
     CONNECT,
     INFERENCE_ENDPOINT_ENV,
-    READY,
     REQUEST,
     RESULT,
     RESULT_NONE,
@@ -30,6 +29,7 @@ from .protocol import (
     positive_limit,
     positive_timeout,
     read_frame,
+    service_budget,
     validate_data,
     validate_method,
     write_frame,
@@ -52,6 +52,7 @@ class _InferenceConnection:
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._lock = asyncio.Lock()
+        self._service_budget = 0.0
         self._requests: set[asyncio.Task[bytes | None]] = set()
         self._retiring: set[asyncio.Task[None]] = set()
         self._close_task: asyncio.Task[None] | None = None
@@ -65,6 +66,7 @@ class _InferenceConnection:
     def _drop(self) -> None:
         writer = self._writer
         self._reader = self._writer = None
+        self._service_budget = 0.0
         if writer is None:
             return
         writer.close()
@@ -88,8 +90,7 @@ class _InferenceConnection:
         self._reader, self._writer = await asyncio.open_unix_connection(self._endpoint)
         await write_frame(self._writer, CONNECT + self._method.encode("utf-8"))
         response = await read_frame(self._reader)
-        if response != READY:
-            raise RuntimeError(f"Inference handshake rejected for {self._method!r}")
+        self._service_budget = service_budget(response)
 
     async def _run(self, data: bytes) -> bytes | None:
         # Local connection serialization must not consume this call's network
@@ -103,6 +104,8 @@ class _InferenceConnection:
                 async with asyncio.timeout(self._request_timeout):
                     await self._connect()
                     await write_frame(self._writer, REQUEST + data)
+                # Transport timeout cannot silently undercut the service's valid queue/execution.
+                async with asyncio.timeout(self._service_budget + self._close_timeout):
                     response = await read_frame(self._reader)
             except BaseException:
                 self._drop()

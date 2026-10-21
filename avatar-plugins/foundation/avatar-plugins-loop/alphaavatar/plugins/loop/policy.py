@@ -20,6 +20,8 @@ from alphaavatar.agents.avatar.context.schemas import ContextContribution
 from alphaavatar.agents.avatar.loop.schemas import LoopRequest
 from alphaavatar.agents.avatar.provider.schemas import ModelGenerationOptions
 
+from .config import ReasoningConfig
+
 
 @dataclass(slots=True)
 class ExecutionBudget:
@@ -75,19 +77,11 @@ class ExecutionBudget:
         )
         return ContextContribution(name="loop_budget", content=text)
 
-    def options(self, supported: tuple[str, ...], *, finalizing: bool) -> ModelGenerationOptions:
-        # Select from an explicit model profile once per query, not from a changing step counter.
-        effort = None
-        if supported:
-            preferences = (
-                ("medium", "high", "low")
-                if self.request.depth == "careful"
-                else ("low", "minimal", "none", "medium")
-                if self.request.depth == "quick"
-                else ("low", "minimal", "medium")
-            )
-            effort = next((level for level in preferences if level in supported), None)
-
+    def options(self, policy: ReasoningConfig, *, finalizing: bool) -> ModelGenerationOptions:
+        # Resolve once per admitted query. Depth controls answer intent, not hidden inference.
+        effort = policy.resolve(
+            difficulty=self.request.query_difficulty, effort=self.request.reasoning_effort
+        )
         limits = self.request.limits
         return ModelGenerationOptions(
             max_output_tokens=(

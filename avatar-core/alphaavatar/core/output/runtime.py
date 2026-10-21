@@ -513,18 +513,22 @@ class OutputRuntime:
             raise TypeError("Expected EnvOutput")
         if output.kind == OutputKind.CONTROL:
             raise ValueError("Control facts belong to OutputRuntime control operations")
+
         self._check_delivery()
         if output.kind == OutputKind.STATUS:
             return await self._dispatch(output, guard=lambda: self.accepts_status(output.payload))
         if output.kind == OutputKind.TEXT_CHUNK:
             record = await self._prepare_text(output)
             return None if record is None else await self._content(output, record)
+
         record = self._outputs.get(output.output_id)
         if record is None:
             return None
+
         self._validate_identity(record, output)
         if output.kind in (OutputKind.AUDIO_FRAME, OutputKind.ALIGNMENT):
             return await self._content(output, record)
+
         terminal = (
             isinstance(output.payload, OutputPlayback)
             and output.payload.type in (OutputPlaybackType.FINISHED, OutputPlaybackType.INTERRUPTED)

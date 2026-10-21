@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 
 from alphaavatar.agents.avatar.vision import FaceDetection, FaceDetectionResult
@@ -50,6 +51,8 @@ class VisualOrientationState:
     samples: int = 0
     last_target: str | None = None
     last_published_ns: int = 0
+    last_logged_at: float = 0.0
+    suppressed_logs: int = 0
 
 
 class VisualAddressingProcessor(RouterProcessorBase):
@@ -230,19 +233,29 @@ class VisualAddressingProcessor(RouterProcessorBase):
 
         self._publish(observation=observation, face=face, score=state.score, target=target)
 
+        changed = target != state.last_target
         state.last_target = target
         state.last_published_ns = published_at_ns
 
+        # Evidence freshness is unchanged; only diagnostics are rate-limited.
+        now = time.monotonic()
+        if not changed and now - state.last_logged_at < 10.0:
+            state.suppressed_logs += 1
+            return
+
+        state.last_logged_at = now
         logger.debug(
             "Visual addressing evidence target=%s score=%.3f "
-            "yaw=%.3f pitch=%.3f roll=%.2f observation_id=%s",
+            "yaw=%.3f pitch=%.3f roll=%.2f observation_id=%s suppressed=%d",
             target,
             state.score,
             estimate.yaw_proxy,
             estimate.pitch_proxy,
             estimate.roll_deg,
             observation.observation_id,
+            state.suppressed_logs,
         )
+        state.suppressed_logs = 0
 
     async def _consume_loop(self) -> None:
         while True:

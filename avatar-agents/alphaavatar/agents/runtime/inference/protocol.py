@@ -21,6 +21,7 @@ from math import isfinite
 INFERENCE_ENDPOINT_ENV = "ALPHAAVATAR_INFERENCE_ENDPOINT"
 MAX_FRAME_BYTES = 64 * 1024 * 1024
 HEADER = struct.Struct("!I")
+_READY_BUDGETS = struct.Struct("!ddd")
 
 REQUEST, CLOSE, CONNECT = b"\x01", b"\x02", b"\x03"
 READY, INIT_ERROR, RESULT = b"\x10", b"\x11", b"\x12"
@@ -31,6 +32,24 @@ def positive_timeout(value: float, name: str) -> float:
     if type(value) not in (int, float) or not isfinite(value) or value <= 0:
         raise ValueError(f"{name} must be positive and finite")
     return float(value)
+
+
+def service_ready(*, queue: float, execution: float, settlement: float) -> bytes:
+    values = tuple(
+        positive_timeout(value, "service budget") for value in (queue, execution, settlement)
+    )
+    positive_timeout(sum(values), "combined service budget")
+    return READY + _READY_BUDGETS.pack(*values)
+
+
+def service_budget(message: bytes) -> float:
+    if message[:1] != READY or len(message) != 1 + _READY_BUDGETS.size:
+        raise ValueError("Inference handshake is missing its service budgets")
+    values = _READY_BUDGETS.unpack(message[1:])
+    return positive_timeout(
+        sum(positive_timeout(value, "service budget") for value in values),
+        "combined service budget",
+    )
 
 
 def positive_limit(value: int, name: str) -> int:

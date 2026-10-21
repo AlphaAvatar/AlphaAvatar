@@ -21,6 +21,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from alphaavatar.agents.avatar.provider.schemas import ModelInput
 
+type QueryDifficulty = Literal["simple", "moderate", "complex"]
+
 
 class LoopLimits(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -58,6 +60,9 @@ class LoopRequest:
     limits: LoopLimits = field(default_factory=LoopLimits)
     depth: Literal["auto", "quick", "careful"] = "auto"
 
+    # Set by a trusted caller/router before admission, never inferred by the Loop.
+    query_difficulty: QueryDifficulty | None = None
+    reasoning_effort: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -68,6 +73,14 @@ class LoopRequest:
             raise ValueError("Loop requests require turn_id, context_id and input_id")
         if self.depth not in {"auto", "quick", "careful"}:
             raise ValueError("Unknown execution depth")
+        if self.query_difficulty not in {None, "simple", "moderate", "complex"}:
+            raise ValueError("Unknown query difficulty")
+        if self.reasoning_effort is not None and (
+            not isinstance(self.reasoning_effort, str)
+            or not self.reasoning_effort
+            or len(self.reasoning_effort) > 32
+        ):
+            raise ValueError("Reasoning effort must be a bounded nonempty string")
         if len(set(self.allowed_capabilities)) != len(self.allowed_capabilities):
             raise ValueError("Allowed capability identities must be unique")
         if len({item.id for item in self.input.items}) != len(self.input.items):

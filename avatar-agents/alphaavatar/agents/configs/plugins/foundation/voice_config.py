@@ -71,16 +71,19 @@ class TTSConfig(BaseModel):
     instructions: str | None = Field(default=None, description="Instructions for the TTS model.")
 
     base_url: str | None = None
+
     # HTTP waits and retry backoff; queued audio and local playout do not use this budget.
     timeout: float = Field(default=30.0, gt=0, le=3600, allow_inf_nan=False)
     first_audio_timeout: float = Field(default=5.0, gt=0, le=3600, allow_inf_nan=False)
     read_timeout: float = Field(default=15.0, gt=0, le=3600, allow_inf_nan=False)
+
     # Slow-response diagnostics are independent of hard deadlines.
     slow_response_after: float = Field(default=2.5, gt=0, le=3600, allow_inf_nan=False)
     trust_env: bool = Field(default=False, strict=True)
+
     # Optional speculation spends retry quota and may incur a second synthesis charge.
     first_audio_hedge_after: float | None = Field(
-        default=None, gt=0, le=3600, allow_inf_nan=False, strict=True
+        default=2.5, gt=0, le=3600, allow_inf_nan=False, strict=True
     )
     max_retries: int = Field(default=1, ge=0, le=3, strict=True)
     retry_interval: float = Field(default=0.1, gt=0, le=3600, allow_inf_nan=False)

@@ -13,16 +13,20 @@
 # limitations under the License.
 MESSAGES = {
     "en": {
-        "thinking": "I'm checking that.",
-        "finalizing": "I'm putting the results together.",
+        "reasoning": "Let me think that through.",
+        "reasoning_simple": "Let me check that carefully.",
+        "reasoning_moderate": "I'll weigh the main points before answering.",
+        "reasoning_complex": "I'll work through the details before giving you a conclusion.",
         "tool_start": "I'm working on that operation.",
         "tool_error": "That operation did not return a confirmed result.",
         "tool_unknown": "I could not confirm whether that operation completed.",
         "failed": "I couldn't complete this request with the available results.",
     },
     "zh": {
-        "thinking": "我正在检查这个问题。",
-        "finalizing": "我正在整理已有结果。",
+        "reasoning": "我想一想再回答。",
+        "reasoning_simple": "我仔细核对一下。",
+        "reasoning_moderate": "我权衡一下几个关键点，再回答你。",
+        "reasoning_complex": "我先把细节梳理清楚，再给你结论。",
         "tool_start": "我正在处理这一步操作。",
         "tool_error": "这次操作没有返回确认成功的结果。",
         "tool_unknown": "我还无法确认这次操作是否已经完成。",

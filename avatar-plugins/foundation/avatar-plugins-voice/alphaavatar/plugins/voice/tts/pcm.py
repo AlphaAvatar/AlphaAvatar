@@ -44,8 +44,8 @@ class PCMSettings:
     # Observation only: a warning never restarts or cancels an attempt.
     slow_response_after: float = 2.5
     trust_env: bool = False
-    # Opt in to one speculative attempt; it spends retry quota and can be billed.
-    first_audio_hedge_after: float | None = None
+    # One speculative first-audio attempt by default; None disables it. It can be billed.
+    first_audio_hedge_after: float | None = 2.5
     max_retries: int = 1
     retry_interval: float = 0.1
     frame_size_ms: int = 20

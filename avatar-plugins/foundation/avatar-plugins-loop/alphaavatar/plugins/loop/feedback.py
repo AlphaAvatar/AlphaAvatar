@@ -68,7 +68,15 @@ class _Message:
 class LoopFeedback:
     """Execution facts are synchronous journal writes; only user content awaits delivery."""
 
-    def __init__(self, identity: LoopIdentity, runtime: AvatarRuntime, *, timeout: float) -> None:
+    def __init__(
+        self,
+        identity: LoopIdentity,
+        runtime: AvatarRuntime,
+        *,
+        timeout: float,
+        reasoning_effort: str | None = None,
+        query_difficulty: str | None = None,
+    ) -> None:
         self.identity = identity
         self.scope = OutputScope(identity.context_id, identity.turn_id, identity.run_id)
         self.state, self.model_step, self.tool_round = LoopState.ACCEPTED, 0, 0
@@ -83,6 +91,7 @@ class LoopFeedback:
             else OutputTextMode.MIRROR
         )
         self._timeout = timeout
+        self._reasoning_effort, self._query_difficulty = reasoning_effort, query_difficulty
         self._messages: dict[str, _Message] = {}
         self._commentary: dict[str, None] = {}
         self._request_id: str | None = None
@@ -102,6 +111,8 @@ class LoopFeedback:
                     tool_round=self.tool_round,
                     request_id=self._request_id,
                     commentary_output_ids=tuple(self._commentary),
+                    reasoning_effort=self._reasoning_effort,
+                    query_difficulty=self._query_difficulty,
                     **fields,
                 )
             )

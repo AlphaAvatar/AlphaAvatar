@@ -127,8 +127,9 @@ class PresentationProcessor(StatusProcessorBase):
                 await self._publish(notice, OutputAudience.USER)
 
             if (
-                notice.narration_key in {"thinking", "finalizing"}
-                and not self._config.narrate_model_wait
+                notice.narration_key is not None
+                and notice.narration_key.startswith("reasoning")
+                and not self._config.narrate_reasoning
             ):
                 continue
 

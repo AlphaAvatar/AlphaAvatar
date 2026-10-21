@@ -47,6 +47,10 @@ class RunActivity:
     notice: ActivityNotice | None = None
     output_id: str | None = None
     delivery_failure: ActivityNotice | None = None
+    reasoning_effort: str | None = None
+    query_difficulty: str | None = None
+    reasoning_noticed: bool = False
+    had_visible_output: bool = False
 
 
 class StatusState:
@@ -97,6 +101,7 @@ class StatusState:
         self._turn_time = at_ns
         if turn_id == self.current_turn:
             return
+
         self.current_turn, self.current_run = turn_id, None
         self.offer(
             ActivityNotice(
@@ -125,7 +130,11 @@ class StatusState:
             if state is not None:
                 return
 
-            state = RunActivity(scope)
+            state = RunActivity(
+                scope,
+                reasoning_effort=signal.reasoning_effort,
+                query_difficulty=signal.query_difficulty,
+            )
             self._runs[scope.run_id] = state
             while len(self._runs) > self._max_runs:
                 self._runs.popitem(last=False)
@@ -147,8 +156,21 @@ class StatusState:
             if signal.request_id != state.request_id:
                 state.visible = False
                 state.request_id = signal.request_id
+
             action = "finalizing" if kind == ExecutionSignalKind.FINALIZING else "thinking"
-            narration = action if not state.visible else None
+            if (
+                kind == ExecutionSignalKind.MODEL_STARTED
+                and state.reasoning_effort not in {None, "none"}
+                and not state.reasoning_noticed
+                and not state.had_visible_output
+            ):
+                difficulty = state.query_difficulty
+                narration = (
+                    f"reasoning_{difficulty}"
+                    if difficulty in {"simple", "moderate", "complex"}
+                    else "reasoning"
+                )
+                state.reasoning_noticed = True
         elif kind == ExecutionSignalKind.TOOL_STARTED:
             action = "tool_start"
             # Providers without a phase field may still emit user-visible pre-tool text.
@@ -236,11 +258,13 @@ class StatusState:
         state.output_id = output_id
         state.delivery_failure = None
         state.visible = True
+        state.had_visible_output = True
         state.revision = self._next()
         if state.finished:
             # Delivery observations can lag FINISHED; suppress filler, never reopen the Run.
             if state.notice is None:
                 return
+
             notice = replace(
                 state.notice, source_event_id=event_id, revision=state.revision, narration_key=None
             )

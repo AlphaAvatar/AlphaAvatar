@@ -22,6 +22,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .model_input import ModelInput
 
+type ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+
 
 class ModelGenerationOptions(BaseModel):
     """Per-request generation choices; they never change the shared client's identity."""
@@ -30,7 +32,7 @@ class ModelGenerationOptions(BaseModel):
 
     temperature: float | None = Field(default=None, ge=0.0, le=2.0, allow_inf_nan=False)
     max_output_tokens: int | None = Field(default=None, gt=0)
-    reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None = None
+    reasoning_effort: ReasoningEffort | None = None
 
 
 @dataclass(frozen=True, slots=True)

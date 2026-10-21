@@ -86,14 +86,18 @@ class LoopExecution(LoopHandle):
         self._commits = 0
         self._pending_calls: tuple[ModelFunctionCall, ...] = ()
         self._context: ModelInput | None = None
-        self._generation_options = self._budget.options(
-            config.supported_reasoning_efforts, finalizing=False
-        )
+        self._generation_options = self._budget.options(config.reasoning, finalizing=False)
         self._cancel_reason: str | None = None
         self._started = False
         self._settled = False
         self._close_task: asyncio.Task[None] | None = None
-        self._feedback = LoopFeedback(self.identity, runtime, timeout=config.feedback_timeout)
+        self._feedback = LoopFeedback(
+            self.identity,
+            runtime,
+            timeout=config.feedback_timeout,
+            reasoning_effort=self._generation_options.reasoning_effort,
+            query_difficulty=request.query_difficulty,
+        )
         self._tools = LoopTools(
             self.identity,
             runtime,
@@ -268,6 +272,8 @@ class LoopExecution(LoopHandle):
         self._feedback.begin_model(request.request_id)
         await self._feedback.change(state, reason=reason)
         started_at = asyncio.get_running_loop().time()
+        first_event_ms: float | None = None
+        first_text_ms: float | None = None
         first_text = False
         self._log(
             "model.started",
@@ -275,6 +281,8 @@ class LoopExecution(LoopHandle):
             backend=self._config.model.backend,
             provider=self._config.model.provider,
             model=self._config.model.model,
+            requested_reasoning_effort=options.reasoning_effort,
+            query_difficulty=self._request.query_difficulty,
             model_step=budget.model_steps,
             state=state.value,
         )
@@ -292,14 +300,24 @@ class LoopExecution(LoopHandle):
                     if terminal is not None:
                         raise ModelProtocolError("Loop received output after completion")
 
+                    if first_event_ms is None:
+                        first_event_ms = (asyncio.get_running_loop().time() - started_at) * 1000
+                        self._log(
+                            "model.first_event",
+                            request_id=request.request_id,
+                            event_kind=type(event).__name__,
+                            elapsed_ms=first_event_ms,
+                        )
+
                     if isinstance(event, ModelTextDelta):
                         if not first_text and event.text:
                             first_text = True
+                            first_text_ms = (asyncio.get_running_loop().time() - started_at) * 1000
                             self._log(
                                 "model.first_text",
                                 request_id=request.request_id,
                                 response_id=event.response_id,
-                                elapsed_ms=(asyncio.get_running_loop().time() - started_at) * 1000,
+                                elapsed_ms=first_text_ms,
                             )
                         order[event.item_id] = event.output_index
                         entry = partial.setdefault(event.item_id, (event.phase, {}))
@@ -379,6 +397,16 @@ class LoopExecution(LoopHandle):
             response_id=terminal.response_id,
             model_step=budget.model_steps,
             output_items=len(terminal.items),
+            requested_reasoning_effort=options.reasoning_effort,
+            query_difficulty=self._request.query_difficulty,
+            first_event_ms=first_event_ms,
+            first_visible_text_ms=first_text_ms,
+            input_tokens=terminal.usage.input_tokens if terminal.usage else None,
+            output_tokens=terminal.usage.output_tokens if terminal.usage else None,
+            reasoning_output_tokens=terminal.usage.reasoning_output_tokens
+            if terminal.usage
+            else None,
+            cached_input_tokens=terminal.usage.cached_input_tokens if terminal.usage else None,
             elapsed_ms=(asyncio.get_running_loop().time() - started_at) * 1000,
         )
         return terminal

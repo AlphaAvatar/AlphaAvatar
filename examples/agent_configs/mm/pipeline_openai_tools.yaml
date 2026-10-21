@@ -43,6 +43,14 @@ loop:
       provider: openai
       model: gpt-5.6-luna
       temperature: null
+    reasoning:
+      default_effort: none
+      supported_efforts: [none, low, medium, high, xhigh, max]
+      # Used only when a trusted caller supplies query_difficulty; no classifier is installed.
+      difficulty_efforts:
+        simple: none
+        moderate: low
+        complex: medium
     # Keep the configured model identifier; availability/credentials are deployment-specific.
     # Enabled plugins grant their capabilities to this deployment's Runs.
     # Per-capability enabled: false denies access; approval_required: true needs an authorizer.

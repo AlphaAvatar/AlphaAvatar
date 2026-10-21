@@ -30,6 +30,7 @@ LABELS = {
     "run.started": "RUN START",
     "model.started": "MODEL START",
     "model.first_text": "FIRST TEXT",
+    "model.first_event": "FIRST MODEL EVENT",
     "model.completed": "MODEL COMPLETE",
     "assistant.message": "ASSISTANT OUTPUT",
     "tool.started": "TOOL START",
@@ -50,7 +51,8 @@ _FIELDS = frozenset(
         "annotation_id source_id source_generation source_kind producer lane control_type "
         "playback_type played_seconds pushed_seconds queued_seconds alignment_id target_count "
         "item_count batch_id schema missed_count first_sequence cutoff_sequence delivery "
-        "measurement "
+        "measurement requested_reasoning_effort query_difficulty reasoning_output_tokens "
+        "cached_input_tokens first_event_ms first_visible_text_ms "
         "start_seconds end_seconds timing_source chunk_id source_chunk_id source_chunk_count"
     ).split()
 )

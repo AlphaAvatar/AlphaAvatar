@@ -31,7 +31,6 @@ from .protocol import (
     CLOSE,
     CONNECT,
     INFERENCE_ENDPOINT_ENV,
-    READY,
     REQUEST,
     RESULT,
     RESULT_NONE,
@@ -40,6 +39,7 @@ from .protocol import (
     positive_limit,
     positive_timeout,
     read_frame,
+    service_ready,
     validate_method,
     write_frame,
 )
@@ -295,7 +295,15 @@ class InferenceRuntime:
                 if method not in self._runner_classes:
                     await write_frame(writer, RUN_ERROR + b"Inference method is not registered")
                     return
-                await write_frame(writer, READY)
+                await write_frame(
+                    writer,
+                    service_ready(
+                        queue=self._request_timeout,
+                        execution=self._request_timeout,
+                        # Socket close, up to three joins, then the bounded response write.
+                        settlement=4 * self._close_timeout + self._request_timeout,
+                    ),
+                )
             while self._close_task is None:
                 message = await read_frame(reader)
                 if message == CLOSE:

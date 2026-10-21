@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class PresentationConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    narrate_model_wait: bool = Field(default=False, strict=True)
+    narrate_reasoning: bool = Field(default=True, strict=True)
     waiting_delay: float = Field(default=1.5, ge=0, le=30, allow_inf_nan=False)
     min_narration_interval: float = Field(default=4.0, ge=0, le=120, allow_inf_nan=False)
     max_narrations_per_turn: int = Field(default=3, ge=0, le=20)

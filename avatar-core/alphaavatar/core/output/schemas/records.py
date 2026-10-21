@@ -83,6 +83,8 @@ class OutputExecutionSignal:
     executed: bool | None = None
     reason: str | None = None
     commentary_output_ids: tuple[str, ...] = ()
+    reasoning_effort: str | None = None
+    query_difficulty: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.scope, OutputScope) or not isinstance(
@@ -108,5 +110,10 @@ class OutputExecutionSignal:
         )
         if any(v is not None and (not isinstance(v, str) or len(v) > 2048) for v in strings):
             raise ValueError("Execution signal fields must be bounded strings")
+        for value in (self.reasoning_effort, self.query_difficulty):
+            if value is not None and (
+                not isinstance(value, str) or not value.strip() or len(value) > 32
+            ):
+                raise ValueError("Reasoning observations require bounded nonempty names")
         if len(self.commentary_output_ids) > 64:
             raise ValueError("Too many commentary references")
