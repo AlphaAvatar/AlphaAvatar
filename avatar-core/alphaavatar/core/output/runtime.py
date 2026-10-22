@@ -316,6 +316,7 @@ class OutputRuntime:
         except BaseException:
             operation.close()
             raise
+
         # Register before suspension, including before a terminal task's first execution.
         task = asyncio.create_task(operation, name="output_terminal_publication")
         self._publications.add(task)
@@ -486,8 +487,10 @@ class OutputRuntime:
                         raise ValueError("Source text phase changed")
                     existing.phase = phase
                 return existing
+
             if not self._accepts_owner(output.scope, output.presentation):
                 return None
+
             if output.payload.replace_lane:
                 await self._interrupt(
                     lane=output.lane,
