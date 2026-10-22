@@ -99,6 +99,10 @@ class _SpeechJob:
     playback_valid: bool = False
     task: asyncio.Task | None = None
     running: bool = False
+    handoff: asyncio.Task[None] | None = None
+    prefetched: _PreparedSpeech | None = None
+    owns_handoff_slot: bool = False
+    preparation_error: Exception | None = None
 
     def append(self, chunk: OutputTextChunk) -> None:
         if chunk.text:
@@ -188,12 +192,18 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
             raise ValueError("Synthesis capacities and timeouts must be positive")
 
         self._tts, self._lanes = tts, lanes
+        self._tts_capacity = tts.max_concurrent_streams if tts is not None else 1
+        if type(self._tts_capacity) is not int or self._tts_capacity < 1:
+            raise ValueError("TTS stream capacity must be a positive integer")
+        self._handoff_slot = asyncio.Lock()
         self._max_outputs, self._max_chars = max_pending_outputs, max_pending_chars
         self._segment_chars, self._min_chars = segment_chars, min_segment_chars
         self._flush_interval, self._timeout = flush_interval, delivery_timeout
         self._audio_seconds, self._audio_bytes = max_segment_audio_seconds, max_segment_audio_bytes
         self._speech_rate = 15.0  # Initial caption estimate only; never a TTS speed setting.
         self._jobs: OrderedDict[str, _SpeechJob] = OrderedDict()
+        # Synthesis can finish long before playback. Retain exact identities, not job handles.
+        self._commentaries: dict[str, OutputIdentity] = {}
         self._wake = asyncio.Event()
         self._subscription = None
         self._tasks: list[asyncio.Task] = []
@@ -272,6 +282,8 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
         job.changed.set()
         if job.task is not None and job.running and not job.task.cancelling():
             job.task.cancel()
+        if job.handoff is not None and not job.handoff.done() and not job.handoff.cancelling():
+            job.handoff.cancel()
         self._wake.set()
 
     async def _settle(self, identity: OutputIdentity, reason: str) -> None:
@@ -333,24 +345,6 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
         for previous in self._jobs.values():
             if not self._runtime.output.is_active(previous.identity.output_id):
                 self._cancel(previous)
-            elif (
-                output.lane == OutputLane.ASSISTANT
-                and previous.identity.lane == OutputLane.ASSISTANT
-                and chunk.phase == OutputMessagePhase.FINAL_ANSWER
-                and previous.phase == OutputMessagePhase.COMMENTARY
-                and previous.identity.scope == output.scope
-                and previous.identity.output_id != output.output_id
-                and not previous.audio_attempted
-                and not previous.cancelled
-            ):
-                # A ready answer need not wait behind a preamble that has not sent any PCM.
-                # Attempted publication, not its returned receipt, is the conservative cutoff.
-                self._cancel(previous, reason="commentary_superseded")
-                logger.debug(
-                    "Speech commentary superseded output_id=%s by_output_id=%s",
-                    previous.identity.output_id,
-                    output.output_id,
-                )
         if self._tts is None:
             await self._reject(event, "tts_unavailable")
             return
@@ -384,7 +378,165 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
         if chunk.phase is not None:
             job.phase = chunk.phase
         job.append(chunk)
+        self._plan_handoff(job)
         self._wake.set()
+
+    def _commentary_targets(self, job: _SpeechJob) -> tuple[OutputIdentity, ...]:
+        output = self._runtime.output
+        for output_id, identity in tuple(self._commentaries.items()):
+            if output.output_identity(output_id) != identity or not output.can_deliver(output_id):
+                self._commentaries.pop(output_id, None)
+
+        return tuple(
+            identity
+            for identity in self._commentaries.values()
+            if identity.scope == job.identity.scope and identity.output_id != job.identity.output_id
+        )
+
+    def _plan_handoff(self, job: _SpeechJob) -> None:
+        if job.identity.lane != OutputLane.ASSISTANT or job.cancelled:
+            return
+
+        targets = self._commentary_targets(job)
+        if job.phase == OutputMessagePhase.COMMENTARY:
+            if (
+                job.identity.output_id not in self._commentaries
+                and len(self._commentaries) >= self._max_outputs
+            ):
+                raise RuntimeError("Commentary delivery capacity exhausted")
+            self._commentaries[job.identity.output_id] = job.identity
+            return
+        if job.phase != OutputMessagePhase.FINAL_ANSWER or not targets or job.handoff is not None:
+            return
+        if job.running and not job.audio_attempted:
+            return  # Its normal first-frame path will perform the switch.
+        if not job.running and not job.peek(4096).strip():
+            return
+
+        operation = self._supersede_commentaries(job) if job.audio_attempted else self._handoff(job)
+        job.handoff = asyncio.create_task(operation, name="speech_answer_handoff")
+
+        # Observe now, but propagate the result through this job's owned settlement.
+        job.handoff.add_done_callback(self._observe_preparation)
+
+    @staticmethod
+    def _observe_preparation(task: asyncio.Task) -> None:
+        if not task.cancelled():
+            task.exception()
+
+    async def _supersede_commentaries(self, job: _SpeechJob, *, unstarted: bool = False) -> None:
+        output = self._runtime.output
+        for identity in self._commentary_targets(job):
+            if job.cancelled or not output.can_deliver(job.identity.output_id):
+                return
+
+            previous = self._jobs.get(identity.output_id)
+            if unstarted and (previous is None or previous.audio_attempted):
+                continue
+
+            if previous is not None:
+                self._cancel(previous, reason="commentary_superseded")
+
+            # Never revoke the Run: its final answer and real tool results are still valid.
+            async with asyncio.timeout(self._timeout):
+                await output.interrupt(
+                    output_id=identity.output_id,
+                    turn_id=identity.scope.turn_id,
+                    reason="commentary_superseded",
+                )
+            self._commentaries.pop(identity.output_id, None)
+            logger.debug(
+                "Speech commentary superseded output_id=%s by_output_id=%s",
+                identity.output_id,
+                job.identity.output_id,
+            )
+
+    def _release_handoff(self, job: _SpeechJob) -> None:
+        if job.owns_handoff_slot:
+            job.owns_handoff_slot = False
+            self._handoff_slot.release()
+
+    async def _handoff(self, job: _SpeechJob) -> None:
+        await self._handoff_slot.acquire()
+        job.owns_handoff_slot = True
+        try:
+            if job.cancelled or not self._runtime.output.can_deliver(job.identity.output_id):
+                raise asyncio.CancelledError
+            if self._tts_capacity < 3:
+                # With no extra preparation slot, stop only the old commentary and await
+                # its owned stream reclamation before requesting the answer's first frame.
+                tasks = tuple(
+                    previous.task
+                    for identity in self._commentary_targets(job)
+                    if (previous := self._jobs.get(identity.output_id)) is not None
+                    and previous.task is not None
+                )
+                await self._supersede_commentaries(job)
+                async with asyncio.timeout(self._timeout):
+                    results = await asyncio.gather(
+                        *(asyncio.shield(task) for task in tasks), return_exceptions=True
+                    )
+                for result in results:
+                    if isinstance(result, Exception):
+                        raise result
+            else:
+                await self._supersede_commentaries(job, unstarted=True)
+            try:
+                prepared = await self._prepare(job)
+            except Exception as error:
+                # A failed future answer is an output failure, not a consumer shutdown failure.
+                job.preparation_error = error
+                logger.warning(
+                    "Answer preparation failed output_id=%s error_type=%s",
+                    job.identity.output_id,
+                    type(error).__name__,
+                )
+                self._release_handoff(job)
+                prepared = None
+            # Transfer stream ownership before suspension, including during interruption.
+            job.prefetched = prepared
+            if prepared is not None and prepared.first is not None:
+                await self._supersede_commentaries(job)
+            if not job.cancelled and self._jobs.get(job.identity.output_id) is job:
+                self._jobs.move_to_end(job.identity.output_id, last=False)
+            self._wake.set()
+        except BaseException:
+            prepared, job.prefetched = job.prefetched, None
+            try:
+                if prepared is not None:
+                    await wait_for_cleanup(asyncio.create_task(prepared.aclose()))
+            finally:
+                self._release_handoff(job)
+            raise
+
+    async def _first_segment(self, job: _SpeechJob) -> _PreparedSpeech | None:
+        if job.handoff is None:
+            return await self._prepare(job)
+        await asyncio.shield(job.handoff)
+        job.handoff = None
+        if job.preparation_error is not None:
+            raise job.preparation_error
+        prepared, job.prefetched = job.prefetched, None
+        self._release_handoff(job)
+        return prepared
+
+    async def _reap_handoff(self, job: _SpeechJob, *, cancel: bool = True) -> None:
+        task, job.handoff = job.handoff, None
+        error = None
+        if task is not None:
+            if cancel and not task.done():
+                task.cancel()
+            (result,) = await asyncio.gather(task, return_exceptions=True)
+            if isinstance(result, Exception):
+                error = result
+        prepared, job.prefetched = job.prefetched, None
+        try:
+            if prepared is not None:
+                await prepared.aclose()
+        finally:
+            self._release_handoff(job)
+            if error is not None:
+                raise error
 
     async def _handle_control(self, event: OutputEvent) -> None:
         control = event.output.payload
@@ -396,7 +548,7 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
                 if job is not None:
                     if job.identity != identity:
                         raise ValueError("Interrupt identity changed")
-                    self._cancel(job)
+                    self._cancel(job, reason=control.reason)
                 elif (
                     identity.lane in self._lanes
                     and self._runtime.output.text_mode(identity.output_id)
@@ -410,8 +562,14 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
                     )
         elif control.type == OutputControlType.TEXT_COMPLETE:
             if (job := self._jobs.get(event.output.output_id)) is not None:
+                phase = control.phase
+                if phase is not None:
+                    if job.phase is not None and job.phase != phase:
+                        raise ValueError("Speech message phase changed")
+                    job.phase = phase
                 job.ended = True
                 job.changed.set()
+                self._plan_handoff(job)
 
     async def _intake(self) -> None:
         while True:
@@ -645,7 +803,7 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
                             metadata=job.metadata,
                         )
                     )
-                if event is None:
+                if event is None and not job.cancelled and output.is_active(identity.output_id):
                     raise RuntimeError("Speech alignment was not admitted")
 
         publisher = asyncio.create_task(publish_alignments(), name="speech_alignments")
@@ -681,7 +839,7 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
             )
 
         try:
-            preparing = asyncio.create_task(self._prepare(job), name="speech_prepare")
+            preparing = asyncio.create_task(self._first_segment(job), name="speech_prepare")
             while True:
                 stage = "prepare"
                 try:
@@ -694,6 +852,8 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
                     raise
                 except Exception:
                     preparing = None  # A failed prepare has already closed its acquired stream.
+                    if job.handoff is not None and job.handoff.done():
+                        job.handoff = None
                     raise
 
                 preparing = None  # The returned stream is now explicitly owned by current.
@@ -701,7 +861,9 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
                     break
                 if job.cancelled or not output.is_active(identity.output_id):
                     raise asyncio.CancelledError
-                if not current.final:
+                if current.first is not None and job.phase == OutputMessagePhase.FINAL_ANSWER:
+                    await self._supersede_commentaries(job)
+                if not current.final and self._tts_capacity > 1:
                     preparing = asyncio.create_task(self._prepare(job), name="speech_prepare")
 
                 timing = SpeechTiming.create(current.text)
@@ -786,6 +948,8 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
                 current = None
                 if last:
                     break
+                if preparing is None:
+                    preparing = asyncio.create_task(self._prepare(job), name="speech_prepare")
         except asyncio.CancelledError:
             reason = job.cancel_reason or "synthesis_interrupted"
             raise
@@ -799,6 +963,10 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
             async def settle() -> None:
                 errors: list[Exception] = []
                 abandoned = current
+                try:
+                    await self._reap_handoff(job, cancel=reason != "synthesis_completed")
+                except Exception as error:
+                    errors.append(error)
                 if preparing is not None:
                     if not preparing.done():
                         preparing.cancel()
@@ -808,7 +976,7 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
                             await result.aclose()
                         except Exception as error:
                             errors.append(error)
-                    elif isinstance(result, Exception):
+                    elif isinstance(result, Exception) and result is not job.preparation_error:
                         errors.append(result)
                 if abandoned is not None:
                     try:
@@ -861,6 +1029,9 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
                     self._jobs.pop(job.identity.output_id, None)
 
     async def _start(self) -> None:
+        if self._tts is not None:
+            self._tts.prewarm()
+
         self._subscription = await self._runtime.output.stream.subscribe(
             self.CONSUMER_ID,
             kinds=(OutputKind.TEXT_CHUNK, OutputKind.CONTROL),
@@ -920,20 +1091,27 @@ class SpeechSynthesisProcessor(RouterProcessorBase):
             if task not in workers and isinstance(result, Exception):
                 self._remember_failure(result, "Speech job")
 
+        async def settle_unstarted(job: _SpeechJob) -> None:
+            try:
+                await self._reap_handoff(job)
+            finally:
+                reason = (
+                    "speech_synthesis_failed"
+                    if job.preparation_error is not None
+                    else "speech_synthesis_stopping"
+                )
+                await self._settle(job.identity, reason)
+
         try:
             results = await asyncio.gather(
-                *(
-                    self._settle(job.identity, "speech_synthesis_stopping")
-                    for job in jobs
-                    if job.task is None
-                ),
-                return_exceptions=True,
+                *(settle_unstarted(job) for job in jobs if job.task is None), return_exceptions=True
             )
             for result in results:
                 if isinstance(result, BaseException):
                     self._remember_failure(result, "Unstarted speech settlement")
         finally:
             self._jobs.clear()
+            self._commentaries.clear()
             self._tasks.clear()
             self._subscription = None
         if self._worker_failures:
