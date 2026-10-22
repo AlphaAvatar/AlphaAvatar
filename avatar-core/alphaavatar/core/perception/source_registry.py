@@ -16,15 +16,11 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import replace
 
-from alphaavatar.core.env import PerceptionSourceRef
+from alphaavatar.core.env.schemas import PerceptionSourceRef
 from alphaavatar.core.time import RuntimeTime
 
-from .enum import MediaModality, MediaSourceKind
-from .schema import (
-    MediaSourceSnapshot,
-    MediaSourceStateEvent,
-    PerceptionEvent,
-)
+from .enums import MediaModality, MediaSourceKind
+from .schemas import MediaSourceSnapshot, MediaSourceStateEvent, PerceptionEvent
 
 
 class MediaSourceRegistry:
@@ -34,10 +30,7 @@ class MediaSourceRegistry:
 
     @classmethod
     def project_snapshot(
-        cls,
-        *,
-        initial_sources: Iterable[MediaSourceSnapshot],
-        events: Iterable[PerceptionEvent],
+        cls, *, initial_sources: Iterable[MediaSourceSnapshot], events: Iterable[PerceptionEvent]
     ) -> tuple[MediaSourceSnapshot, ...]:
         registry = cls()
         registry._sources = {snapshot.source: snapshot for snapshot in initial_sources}
@@ -48,11 +41,7 @@ class MediaSourceRegistry:
         return registry.snapshot()
 
     def _apply(
-        self,
-        event: MediaSourceStateEvent,
-        *,
-        sequence: int,
-        at: RuntimeTime,
+        self, event: MediaSourceStateEvent, *, sequence: int, at: RuntimeTime
     ) -> MediaSourceSnapshot:
         previous = self._sources.get(event.source)
         metadata = dict(previous.metadata) if previous else {}
@@ -76,51 +65,31 @@ class MediaSourceRegistry:
         return snapshot
 
     def _observe(
-        self,
-        *,
-        source: PerceptionSourceRef,
-        sequence: int,
-        at: RuntimeTime,
+        self, *, source: PerceptionSourceRef, sequence: int, at: RuntimeTime
     ) -> MediaSourceSnapshot | None:
         snapshot = self._sources.get(source)
         if snapshot is None:
             return None
 
-        snapshot = replace(
-            snapshot,
-            latest_observation_at=at,
-            latest_observation_sequence=sequence,
-        )
+        snapshot = replace(snapshot, latest_observation_at=at, latest_observation_sequence=sequence)
         self._sources[source] = snapshot
         return snapshot
 
-    def apply_event(
-        self,
-        event: PerceptionEvent,
-    ) -> MediaSourceSnapshot | None:
+    def apply_event(self, event: PerceptionEvent) -> MediaSourceSnapshot | None:
         source_state = event.source_state
         if source_state is not None:
-            return self._apply(
-                source_state,
-                sequence=event.sequence,
-                at=event.time_range.end,
-            )
+            return self._apply(source_state, sequence=event.sequence, at=event.time_range.end)
 
         observation = event.observation
         if observation is not None:
             return self._observe(
-                source=observation.source,
-                sequence=event.sequence,
-                at=observation.time_range.end,
+                source=observation.source, sequence=event.sequence, at=observation.time_range.end
             )
 
         return None
 
     def snapshot(
-        self,
-        *,
-        modality: MediaModality | None = None,
-        source_kind: MediaSourceKind | None = None,
+        self, *, modality: MediaModality | None = None, source_kind: MediaSourceKind | None = None
     ) -> tuple[MediaSourceSnapshot, ...]:
         states = (
             source
@@ -137,42 +106,24 @@ class MediaSourceRegistry:
         generation = self._generation_by_source.get(source_id, 0) + 1
         self._generation_by_source[source_id] = generation
 
-        return PerceptionSourceRef(
-            source_id=source_id,
-            source_generation=generation,
-        )
+        return PerceptionSourceRef(source_id=source_id, source_generation=generation)
 
     def clear(self) -> None:
         self._sources.clear()
 
 
-def _source_sort_key(
-    state: MediaSourceSnapshot,
-) -> tuple[str, str, str, int]:
-    return (
-        state.modality.value,
-        state.source_kind.value,
-        state.source_id,
-        state.source_generation,
-    )
+def _source_sort_key(state: MediaSourceSnapshot) -> tuple[str, str, str, int]:
+    return (state.modality.value, state.source_kind.value, state.source_id, state.source_generation)
 
 
-def _effective_sources(
-    states: Iterable[MediaSourceSnapshot],
-) -> tuple[MediaSourceSnapshot, ...]:
-    latest: dict[
-        tuple[MediaModality, MediaSourceKind, str],
-        MediaSourceSnapshot,
-    ] = {}
+def _effective_sources(states: Iterable[MediaSourceSnapshot]) -> tuple[MediaSourceSnapshot, ...]:
+    latest: dict[tuple[MediaModality, MediaSourceKind, str], MediaSourceSnapshot] = {}
 
     for state in states:
         key = state.modality, state.source_kind, state.source_id
         current = latest.get(key)
 
-        if current is None or (
-            state.source_generation,
-            state.changed_sequence,
-        ) > (
+        if current is None or (state.source_generation, state.changed_sequence) > (
             current.source_generation,
             current.changed_sequence,
         ):

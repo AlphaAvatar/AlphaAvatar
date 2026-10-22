@@ -19,22 +19,19 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from threading import RLock
-from typing import Generic, TypeVar
 
-from .enum import PerceptionStreamKind
-
-T = TypeVar("T")
+from .enums import PerceptionStreamKind
 
 
 @dataclass(frozen=True, slots=True)
-class StreamRecord(Generic[T]):
+class StreamRecord[T]:
     seq: int
     item: T
     published_monotonic: float
 
 
 @dataclass(frozen=True, slots=True)
-class StreamRead(Generic[T]):
+class StreamRead[T]:
     items: list[T]
     cursor_seq: int
     committed_cursor_seq: int
@@ -56,7 +53,7 @@ class StreamRead(Generic[T]):
 
 
 @dataclass(frozen=True, slots=True)
-class StreamSlice(Generic[T]):
+class StreamSlice[T]:
     items: tuple[T, ...]
     after_seq: int
     until_seq: int
@@ -69,7 +66,7 @@ class StreamSlice(Generic[T]):
         return self.missed_count > 0
 
 
-class PerceptionStream(Generic[T]):
+class PerceptionStream[T]:
     def __init__(self, *, name: PerceptionStreamKind, maxlen: int) -> None:
         if not name:
             raise ValueError("PerceptionStream name cannot be empty")
@@ -128,11 +125,7 @@ class PerceptionStream(Generic[T]):
         return sequence
 
     async def wait_for_pending(
-        self,
-        *,
-        consumer_id: str,
-        timeout: float | None = None,
-        min_age_sec: float = 0.0,
+        self, *, consumer_id: str, timeout: float | None = None, min_age_sec: float = 0.0
     ) -> bool:
         self._validate_consumer_id(consumer_id)
         if timeout is not None and timeout < 0:

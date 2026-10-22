@@ -16,9 +16,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from alphaavatar.core.env import EnvObservation, ObservationKind
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.enums import ObservationKind
 
-from .enum import PerceptionStreamKind
+from .enums import PerceptionStreamKind
 from .stream import PerceptionStream, StreamRead
 
 
@@ -149,14 +150,11 @@ class PerceptionWindowBuilder:
         )
 
         return PerceptionWindow(
-            consumer_id=consumer_id,
-            observations=observations,
-            stream_reads=reads,
+            consumer_id=consumer_id, observations=observations, stream_reads=reads
         )
 
     def commit(self, window: PerceptionWindow) -> None:
         for stream_name, result in window.stream_reads.items():
             self._get_stream(stream_name).commit(
-                consumer_id=window.consumer_id,
-                cursor_seq=result.cursor_seq,
+                consumer_id=window.consumer_id, cursor_seq=result.cursor_seq
             )

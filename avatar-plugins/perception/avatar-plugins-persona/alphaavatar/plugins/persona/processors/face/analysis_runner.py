@@ -72,13 +72,7 @@ class FaceAnalysisRunner(InferenceRunner):
         arr = np.frombuffer(data, dtype=np.uint8)
         image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
         if image is None:
-            return json.dumps(
-                {
-                    "image_width": 0,
-                    "image_height": 0,
-                    "faces": [],
-                }
-            ).encode()
+            return json.dumps({"image_width": 0, "image_height": 0, "faces": []}).encode()
 
         image_height, image_width = image.shape[:2]
         faces = self._app.get(image)
@@ -120,9 +114,5 @@ class FaceAnalysisRunner(InferenceRunner):
             output.append(result)
 
         return json.dumps(
-            {
-                "image_width": image_width,
-                "image_height": image_height,
-                "faces": output,
-            }
+            {"image_width": image_width, "image_height": image_height, "faces": output}
         ).encode()

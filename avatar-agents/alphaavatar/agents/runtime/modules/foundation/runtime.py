@@ -15,22 +15,78 @@ from __future__ import annotations
 
 import asyncio
 
-from ...cleanup import wait_for_cleanup
-from .voice import VoiceService
+from alphaavatar.agents.avatar.context import ContextManager
+from alphaavatar.agents.avatar.loop import Loop
+from alphaavatar.agents.avatar.voice import VoiceBundle
+from alphaavatar.core.cleanup import wait_for_cleanup
+
+from .provider import ProviderService
 
 
 class FoundationRuntime:
-    """Own foundation services without importing concrete plugins or configuration."""
+    """Own the configured Loop and shared services; close consumers before their dependencies."""
 
-    def __init__(self, *, voice: VoiceService | None = None) -> None:
-        self._voice = voice if voice is not None else VoiceService()
+    def __init__(
+        self,
+        *,
+        context: ContextManager,
+        loop: Loop,
+        voice: VoiceBundle | None = None,
+        provider: ProviderService | None = None,
+    ) -> None:
+        if not isinstance(context, ContextManager):
+            raise TypeError("Expected ContextManager")
+        if not isinstance(loop, Loop):
+            raise TypeError("Expected Loop")
+        if voice is not None and not isinstance(voice, VoiceBundle):
+            raise TypeError("Expected an awaited VoiceBundle")
+
+        self._context = context
+        self._loop = loop
+        self._voice = voice if voice is not None else VoiceBundle()
+        self._provider = provider if provider is not None else ProviderService()
+
         self._close_task: asyncio.Task[None] | None = None
 
     @property
-    def voice(self) -> VoiceService:
+    def context(self) -> ContextManager:
+        return self._context
+
+    @property
+    def loop(self) -> Loop:
+        return self._loop
+
+    @property
+    def voice(self) -> VoiceBundle:
         return self._voice
+
+    @property
+    def provider(self) -> ProviderService:
+        return self._provider
+
+    async def _close(self) -> None:
+        errors: list[Exception] = []
+
+        async def close(service: ContextManager | Loop | ProviderService | VoiceBundle) -> None:
+            try:
+                await service.aclose()
+            except asyncio.CancelledError as exc:
+                error = RuntimeError(f"Foundation {type(service).__name__} cleanup was cancelled")
+                error.__cause__ = exc
+                errors.append(error)
+            except Exception as exc:
+                errors.append(exc)
+
+        # Loop may still need Context, Provider, Voice and Output while settling owned work.
+        await close(self._loop)
+
+        await close(self._context)
+        await asyncio.gather(close(self._provider), close(self._voice))
+        if errors:
+            raise ExceptionGroup("Foundation cleanup failed", errors)
 
     async def aclose(self) -> None:
         if self._close_task is None:
-            self._close_task = asyncio.create_task(self._voice.aclose(), name="foundation_close")
+            self._close_task = asyncio.create_task(self._close(), name="foundation_close")
+
         await wait_for_cleanup(self._close_task)

@@ -16,11 +16,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from alphaavatar.agents.avatar.vision import (
-    FaceDetection,
-    FaceDetectionResult,
-    ImagePoint2D,
-)
+from alphaavatar.agents.avatar.vision import FaceDetection, FaceDetectionResult, ImagePoint2D
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,22 +28,14 @@ class FaceOrientationEstimate:
     face_area_ratio: float
 
 
-def _rotate(
-    point: ImagePoint2D,
-    *,
-    center: ImagePoint2D,
-    angle: float,
-) -> ImagePoint2D:
+def _rotate(point: ImagePoint2D, *, center: ImagePoint2D, angle: float) -> ImagePoint2D:
     cosine = math.cos(angle)
     sine = math.sin(angle)
 
     x = point.x - center.x
     y = point.y - center.y
 
-    return ImagePoint2D(
-        x=x * cosine - y * sine + center.x,
-        y=x * sine + y * cosine + center.y,
-    )
+    return ImagePoint2D(x=x * cosine - y * sine + center.x, y=x * sine + y * cosine + center.y)
 
 
 def _asymmetry(left: float, right: float) -> float:
@@ -79,10 +67,7 @@ class FaceOrientationEstimator:
         self._min_face_area_ratio = min_face_area_ratio
 
     def estimate(
-        self,
-        *,
-        face: FaceDetection,
-        result: FaceDetectionResult,
+        self, *, face: FaceDetection, result: FaceDetectionResult
     ) -> FaceOrientationEstimate | None:
         keypoints = face.keypoints
         if keypoints is None:
@@ -92,21 +77,13 @@ class FaceOrientationEstimator:
         right_eye = keypoints.right_eye
 
         eye_center = ImagePoint2D(
-            x=(left_eye.x + right_eye.x) / 2,
-            y=(left_eye.y + right_eye.y) / 2,
+            x=(left_eye.x + right_eye.x) / 2, y=(left_eye.y + right_eye.y) / 2
         )
 
-        roll = math.atan2(
-            right_eye.y - left_eye.y,
-            right_eye.x - left_eye.x,
-        )
+        roll = math.atan2(right_eye.y - left_eye.y, right_eye.x - left_eye.x)
 
         leveled = tuple(
-            _rotate(
-                point,
-                center=eye_center,
-                angle=-roll,
-            )
+            _rotate(point, center=eye_center, angle=-roll)
             for point in (
                 keypoints.left_eye,
                 keypoints.right_eye,
@@ -116,13 +93,7 @@ class FaceOrientationEstimator:
             )
         )
 
-        (
-            left_eye,
-            right_eye,
-            nose,
-            left_mouth,
-            right_mouth,
-        ) = leveled
+        (left_eye, right_eye, nose, left_mouth, right_mouth) = leveled
 
         eye_left_span = nose.x - left_eye.x
         eye_right_span = right_eye.x - nose.x
@@ -152,22 +123,13 @@ class FaceOrientationEstimator:
         pose_score = math.exp(-0.5 * pose_distance)
 
         if self._min_face_area_ratio:
-            size_score = min(
-                1.0,
-                face_area_ratio / self._min_face_area_ratio,
-            )
+            size_score = min(1.0, face_area_ratio / self._min_face_area_ratio)
         else:
             size_score = 1.0
 
         detection_score = 0.5 + 0.5 * face.detection_confidence
 
-        frontal_score = max(
-            0.0,
-            min(
-                1.0,
-                pose_score * size_score * detection_score,
-            ),
-        )
+        frontal_score = max(0.0, min(1.0, pose_score * size_score * detection_score))
 
         return FaceOrientationEstimate(
             frontal_score=frontal_score,

@@ -49,12 +49,7 @@ def build_request_hash(
         ],
     }
 
-    raw = json.dumps(
-        payload,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode()
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
 
     return hashlib.sha256(raw).hexdigest()
 
@@ -68,10 +63,7 @@ def commit_sync(
     checkpoint: MemoryCheckpointAdvance | None,
 ) -> MemoryCommitResult:
     request_hash = build_request_hash(
-        items,
-        context_id=context_id,
-        processor=processor,
-        checkpoint=checkpoint,
+        items, context_id=context_id, processor=processor, checkpoint=checkpoint
     )
 
     connection = connect(path)
@@ -102,12 +94,7 @@ def commit_sync(
 
             connection.commit()
 
-            return MemoryCommitResult.model_validate(
-                {
-                    **result.model_dump(),
-                    "duplicate": True,
-                }
-            )
+            return MemoryCommitResult.model_validate({**result.model_dump(), "duplicate": True})
 
         if checkpoint is not None:
             row = connection.execute(
@@ -220,37 +207,19 @@ def commit_sync(
         now = time.time()
 
         for item in items:
-            connection.execute(
-                "DELETE FROM memory_refs WHERE memory_id=?",
-                (item.memory_id,),
-            )
+            connection.execute("DELETE FROM memory_refs WHERE memory_id=?", (item.memory_id,))
 
             refs = [
                 *[
-                    (
-                        item.memory_id,
-                        "owner",
-                        ref.key,
-                        ref.model_dump_json(),
-                    )
+                    (item.memory_id, "owner", ref.key, ref.model_dump_json())
                     for ref in item.owner_refs
                 ],
                 *[
-                    (
-                        item.memory_id,
-                        "participant",
-                        ref.key,
-                        ref.model_dump_json(),
-                    )
+                    (item.memory_id, "participant", ref.key, ref.model_dump_json())
                     for ref in item.participant_refs
                 ],
                 *[
-                    (
-                        item.memory_id,
-                        "source",
-                        ref.key,
-                        ref.model_dump_json(),
-                    )
+                    (item.memory_id, "source", ref.key, ref.model_dump_json())
                     for ref in item.source_refs
                 ],
             ]
@@ -269,26 +238,12 @@ def commit_sync(
                     refs,
                 )
 
-            connection.execute(
-                "DELETE FROM memory_relations WHERE memory_id=?",
-                (item.memory_id,),
-            )
+            connection.execute("DELETE FROM memory_relations WHERE memory_id=?", (item.memory_id,))
 
             relations = [
+                *[(item.memory_id, "source", source_id) for source_id in item.source_memory_ids],
                 *[
-                    (
-                        item.memory_id,
-                        "source",
-                        source_id,
-                    )
-                    for source_id in item.source_memory_ids
-                ],
-                *[
-                    (
-                        item.memory_id,
-                        "supersedes",
-                        source_id,
-                    )
+                    (item.memory_id, "supersedes", source_id)
                     for source_id in item.supersedes_memory_ids
                 ],
             ]
@@ -345,12 +300,7 @@ def commit_sync(
                     sequence=excluded.sequence,
                     updated_at=excluded.updated_at
                 """,
-                (
-                    context_id,
-                    processor,
-                    checkpoint.to_sequence,
-                    now,
-                ),
+                (context_id, processor, checkpoint.to_sequence, now),
             )
 
         result = MemoryCommitResult(
@@ -372,14 +322,7 @@ def commit_sync(
             )
             VALUES(?,?,?,?,?,?)
             """,
-            (
-                idempotency_key,
-                request_hash,
-                context_id,
-                processor,
-                result.model_dump_json(),
-                now,
-            ),
+            (idempotency_key, request_hash, context_id, processor, result.model_dump_json(), now),
         )
 
         connection.commit()

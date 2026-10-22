@@ -192,10 +192,7 @@ class OpenAISegmentSTTStream(STTStreamBase):
         self._closed = False
         self._error: BaseException | None = None
 
-        self._worker_task = asyncio.create_task(
-            self._run(),
-            name=f"openai_segment_stt:{source_id}",
-        )
+        self._worker_task = asyncio.create_task(self._run(), name=f"openai_segment_stt:{source_id}")
 
     def _put_input(self, item: _FrameCommand | _CommitCommand | object) -> bool:
         if not self._accepting_input or self._closed:
@@ -217,22 +214,13 @@ class OpenAISegmentSTTStream(STTStreamBase):
         if frame.num_channels != 1:
             raise ValueError(f"OpenAI STT requires mono audio, got {frame.num_channels} channels")
 
-        return self._put_input(
-            _FrameCommand(
-                frame=frame,
-                segment_id=segment_id,
-            )
-        )
+        return self._put_input(_FrameCommand(frame=frame, segment_id=segment_id))
 
     def commit_segment(self, segment_id: str) -> bool:
         if not segment_id:
             raise ValueError("commit_segment requires a segment_id")
 
-        return self._put_input(
-            _CommitCommand(
-                segment_id=segment_id,
-            )
-        )
+        return self._put_input(_CommitCommand(segment_id=segment_id))
 
     def flush(self) -> bool:
         return self._put_input(_FLUSH)
@@ -276,12 +264,7 @@ class OpenAISegmentSTTStream(STTStreamBase):
         )
 
     def _emit_transcript(
-        self,
-        *,
-        event_type: TranscriptionEventType,
-        segment_id: str,
-        text: str,
-        duration_sec: float,
+        self, *, event_type: TranscriptionEventType, segment_id: str, text: str, duration_sec: float
     ) -> None:
         self._event_q.put_nowait(
             TranscriptionEvent(
@@ -311,18 +294,13 @@ class OpenAISegmentSTTStream(STTStreamBase):
                 return
 
             job = _SegmentJob(
-                segment_id=segment_id,
-                pcm=bytes(state.pcm),
-                sample_rate=state.sample_rate,
+                segment_id=segment_id, pcm=bytes(state.pcm), sample_rate=state.sample_rate
             )
 
             try:
                 self._job_q.put_nowait(job)
             except asyncio.QueueFull:
-                self._emit_error(
-                    segment_id,
-                    "OpenAI STT request queue is full; segment discarded",
-                )
+                self._emit_error(segment_id, "OpenAI STT request queue is full; segment discarded")
 
         while True:
             command = await self._input_q.get()
@@ -374,11 +352,7 @@ class OpenAISegmentSTTStream(STTStreamBase):
 
     def _request_kwargs(self, job: _SegmentJob) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
-            "file": (
-                "segment.wav",
-                self._wav_bytes(job),
-                "audio/wav",
-            ),
+            "file": ("segment.wav", self._wav_bytes(job), "audio/wav"),
             "model": self._model,
             "response_format": "json",
             "stream": True,
@@ -480,10 +454,7 @@ class OpenAISegmentSTTStream(STTStreamBase):
 
             except Exception as error:
                 reason = self._api_error_reason(error)
-                self._emit_error(
-                    item.segment_id,
-                    reason,
-                )
+                self._emit_error(item.segment_id, reason)
 
                 if isinstance(
                     error,
@@ -508,18 +479,13 @@ class OpenAISegmentSTTStream(STTStreamBase):
 
         try:
             ingest_task = asyncio.create_task(
-                self._ingest_loop(),
-                name=f"openai_segment_ingest:{self._source_id}",
+                self._ingest_loop(), name=f"openai_segment_ingest:{self._source_id}"
             )
             request_task = asyncio.create_task(
-                self._request_loop(),
-                name=f"openai_segment_requests:{self._source_id}",
+                self._request_loop(), name=f"openai_segment_requests:{self._source_id}"
             )
 
-            await asyncio.gather(
-                ingest_task,
-                request_task,
-            )
+            await asyncio.gather(ingest_task, request_task)
 
         except asyncio.CancelledError:
             raise
@@ -527,15 +493,9 @@ class OpenAISegmentSTTStream(STTStreamBase):
         except Exception as error:
             self._error = error
 
-            logger.exception(
-                "OpenAI segment STT stream failed source_id=%s",
-                self._source_id,
-            )
+            logger.exception("OpenAI segment STT stream failed source_id=%s", self._source_id)
 
-            self._emit_error(
-                "unknown",
-                str(error),
-            )
+            self._emit_error("unknown", str(error))
 
         finally:
             for task in (ingest_task, request_task):
@@ -563,9 +523,6 @@ class OpenAISegmentSTTStream(STTStreamBase):
         if not self._worker_task.done():
             self._worker_task.cancel()
 
-        await asyncio.gather(
-            self._worker_task,
-            return_exceptions=True,
-        )
+        await asyncio.gather(self._worker_task, return_exceptions=True)
 
         self._closed = True

@@ -18,37 +18,28 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
-from alphaavatar.agents.providers import ProviderGateway
+from alphaavatar.agents.avatar.provider.schemas import ModelPrompt
+from alphaavatar.agents.runtime.modules.foundation import ProviderService
 
 from ...log import logger
 from ...schemas.patch import MemoryDelta
 from .config import ConversationProviderConfig
-from .consolidation import (
-    CONSOLIDATION_PROMPT,
-    SESSION_SUMMARY_PROMPT,
-    ConsolidationPlan,
-)
+from .consolidation import CONSOLIDATION_PROMPT, SESSION_SUMMARY_PROMPT, ConsolidationPlan
 from .prompt import build_conversation_delta_prompt
 
-TStructuredOutput = TypeVar(
-    "TStructuredOutput",
-    bound=BaseModel,
-)
+TStructuredOutput = TypeVar("TStructuredOutput", bound=BaseModel)
 
 
 class ConversationProvider:
-    def __init__(
-        self,
-        config: ConversationProviderConfig,
-    ) -> None:
+    def __init__(self, config: ConversationProviderConfig, *, service: ProviderService) -> None:
         self._task = config.task
-        self._gateway = ProviderGateway(config.gateway)
+        self._gateway = service.gateway(config.gateway)
         self._gateway.validate_tasks([self._task])
 
     async def _invoke(
         self,
         *,
-        prompt: Any,
+        prompt: ModelPrompt,
         payload: dict[str, Any],
         output_schema: type[TStructuredOutput],
         fallback: TStructuredOutput,
@@ -74,21 +65,14 @@ class ConversationProvider:
             )
 
         except TimeoutError:
-            logger.warning(
-                "[Memory] conversation provider timeout task=%s timeout=%s",
-                self._task,
-                timeout,
-            )
+            logger.warning("Conversation provider timeout task=%s timeout=%s", self._task, timeout)
             return fallback
 
         except asyncio.CancelledError:
             raise
 
         except Exception:
-            logger.exception(
-                "[Memory] conversation provider failed task=%s",
-                self._task,
-            )
+            logger.exception("Conversation provider failed task=%s", self._task)
             return fallback
 
     async def extract(
@@ -100,9 +84,7 @@ class ConversationProvider:
         timeout: float = 30.0,
     ) -> MemoryDelta:
         return await self._invoke(
-            prompt=build_conversation_delta_prompt(
-                session_gate=session_gate,
-            ),
+            prompt=build_conversation_delta_prompt(session_gate=session_gate),
             payload={"session_content": context_content},
             output_schema=MemoryDelta,
             fallback=MemoryDelta(),

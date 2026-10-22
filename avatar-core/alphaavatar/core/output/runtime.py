@@ -11,67 +11,99 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Session-scoped, time-aligned output runtime."""
+"""Session-scoped delivery, independently admitted records and execution observations."""
 
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+import json
+from collections import OrderedDict
+from collections.abc import Callable, Coroutine, Mapping
+from dataclasses import asdict, dataclass, field, replace
+from hashlib import sha256
 from uuid import uuid4
 
-from alphaavatar.core.media import AudioFrame
+from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.env.output import EnvOutput
+from alphaavatar.core.env.schemas.metadata import EMPTY_METADATA, OutputMetadata, freeze_metadata
 from alphaavatar.core.time import RuntimeClock
 
-from .schema import (
-    OutputControl,
+from .enums import (
+    OutputAudience,
     OutputControlType,
-    OutputEvent,
     OutputKind,
     OutputLane,
-    OutputPlayback,
     OutputPlaybackType,
-    OutputTextAudioAlignment,
-    OutputTextChunk,
     OutputTextMode,
+)
+from .enums.message_phase import OutputMessagePhase
+from .journal import OutputJournal
+from .schemas import (
+    OutputCompletionBarrier,
+    OutputControl,
+    OutputEvent,
+    OutputExecutionSignal,
+    OutputIdentity,
+    OutputJournalEvent,
+    OutputPlayback,
+    OutputRecordBatch,
+    OutputScope,
+    OutputSource,
+    OutputStatusDecision,
     OutputTranscriptChunk,
 )
+from .schemas.validation import identifier
 from .stream import OutputStream
 from .timeline import OutputTimeline
 
 
+def _idle() -> asyncio.Event:
+    event = asyncio.Event()
+    event.set()
+    return event
+
+
 @dataclass(slots=True)
 class _OutputRecord:
-    lane: OutputLane
-    turn_id: str | None
-    origin_kind: OutputKind
+    identity: OutputIdentity
+    source: OutputSource
+    presentation: OutputStatusDecision | None
+    text_mode: OutputTextMode
+    phase: OutputMessagePhase | None = None
     terminal: OutputControlType | None = None
+    terminal_reason: str | None = None
     playback: OutputPlaybackType | None = None
-    text_started: bool = False
+    text_sealed: bool = False
+    text_completed: bool = False
+    audio_completed: bool = False
+    source_sealed: bool = False
+    transcript_finalized: bool = False
+    failed: bool = False
+    last_audio_sequence: int = 0
+    last_alignment_sequence: int = 0
+    text_pending: int = 0
+    media_pending: int = 0
+    text_idle: asyncio.Event = field(default_factory=_idle)
+    media_idle: asyncio.Event = field(default_factory=_idle)
 
     @property
     def active(self) -> bool:
-        """Whether the source may still produce new text or audio."""
-        return self.terminal is None
+        return self.terminal is None and not self.source_sealed and not self.failed
 
     @property
     def interruptible(self) -> bool:
-        """Whether queued or playing output can still be interrupted."""
-        return self.terminal != OutputControlType.INTERRUPT and self.playback not in {
+        return self.terminal != OutputControlType.INTERRUPT and self.playback not in (
             OutputPlaybackType.FINISHED,
             OutputPlaybackType.INTERRUPTED,
-        }
+        )
 
 
 class OutputRuntime:
-    """
-    Session output composition root.
+    """Own output admission and lifecycle; never Agent, provider or transport implementations.
 
-    output_id identifies one complete logical message.
-    turn_id groups outputs belonging to the same interaction turn.
-
-    A new output_id may replace another active output in the same lane.
-    Additional chunks using the same output_id append to the existing output.
-    Interrupted or completed output IDs can never be reopened.
+    TEXT_COMPLETE seals text, AUDIO_COMPLETE seals synthesis and alignment, COMPLETE
+    ends source production, and PLAYBACK reports local transport progress. Neither
+    record admission nor source completion is a persistence or remote-delivery receipt.
     """
 
     def __init__(
@@ -80,450 +112,650 @@ class OutputRuntime:
         session_id: str,
         clock: RuntimeClock | None = None,
         timeline_max_items: int = 4096,
+        record_max_batches: int = 1024,
+        record_max_bytes: int = 67_108_864,
+        execution_max_events: int = 2048,
+        output_max_records: int = 4096,
+        output_retired_records: int = 1024,
     ) -> None:
-        if not session_id:
-            raise ValueError("OutputRuntime requires a non-empty session_id")
-
-        self.session_id = session_id
-        self.clock = clock or RuntimeClock()
-
+        identifier(session_id, "session_id")
+        if any(
+            type(value) is not int or value < 1
+            for value in (output_max_records, output_retired_records)
+        ):
+            raise ValueError("Output record capacities must be positive integers")
+        self._record_limit, self._retired_limit = output_max_records, output_retired_records
+        self._retired: OrderedDict[str, tuple[OutputIdentity, str | None]] = OrderedDict()
+        self.session_id, self.clock = session_id, clock or RuntimeClock()
         self.stream = OutputStream()
         self.timeline = OutputTimeline(max_items=timeline_max_items)
-
+        self.records: OutputJournal[OutputRecordBatch] = OutputJournal(
+            session_id=session_id,
+            clock=self.clock,
+            max_items=record_max_batches,
+            max_bytes=record_max_bytes,
+            lossless=True,
+        )
+        self.execution: OutputJournal[OutputExecutionSignal] = OutputJournal(
+            session_id=session_id,
+            clock=self.clock,
+            max_items=execution_max_events,
+            max_bytes=8_388_608,
+            lossless=False,
+        )
         self._sequence = 0
-        self._sequence_lock = asyncio.Lock()
-
+        self._sequence_lock, self._state_lock, self._open_lock = (
+            asyncio.Lock(),
+            asyncio.Lock(),
+            asyncio.Lock(),
+        )
         self._outputs: dict[str, _OutputRecord] = {}
-        self._state_lock = asyncio.Lock()
-
-        # Serializes logical output creation and lane replacement. It does not
-        # block the event loop; competing publishers await asynchronously.
-        self._open_lock = asyncio.Lock()
         self._closed = False
+        self._publications: set[asyncio.Task[OutputEvent | None]] = set()
+        self._close_task: asyncio.Task[None] | None = None
+        self._delivery_failure: Exception | None = None
+        self._delivery_close_task: asyncio.Task[None] | None = None
+        self._foreground_run: str | None = None
+        self._foreground_turn: str | None = None
+        self._status_scope: OutputScope | None = None
+        self._status_revision = 0
 
     @staticmethod
-    def _validate_output(
-        record: _OutputRecord,
-        *,
-        output_id: str,
-        lane: OutputLane,
-        turn_id: str | None,
-    ) -> None:
-        if record.lane != lane:
-            raise ValueError(
-                f"Output lane mismatch output_id={output_id!r}: "
-                f"existing={record.lane!r}, requested={lane!r}"
-            )
+    def _validate_identity(record: _OutputRecord, output: EnvOutput) -> None:
+        identity = record.identity
+        if (output.output_id, output.lane, output.scope) != (
+            identity.output_id,
+            identity.lane,
+            identity.scope,
+        ):
+            raise ValueError("Output identity/ownership changed")
 
-        if record.turn_id != turn_id:
-            raise ValueError(
-                f"Output turn mismatch output_id={output_id!r}: "
-                f"existing={record.turn_id!r}, requested={turn_id!r}"
-            )
+    @staticmethod
+    def _validate_target(record: _OutputRecord, lane: OutputLane, turn_id: str | None) -> None:
+        if (record.identity.lane, record.identity.scope.turn_id) != (lane, turn_id):
+            raise ValueError("Output control identity mismatch")
 
-    async def _get_output(self, output_id: str) -> _OutputRecord | None:
-        async with self._state_lock:
-            return self._outputs.get(output_id)
+    @staticmethod
+    def _control(
+        record: _OutputRecord, kind: OutputControlType, reason: str, metadata: OutputMetadata
+    ) -> EnvOutput:
+        identity = record.identity
+        barrier = (
+            OutputCompletionBarrier(record.last_audio_sequence, record.last_alignment_sequence)
+            if kind in (OutputControlType.AUDIO_COMPLETE, OutputControlType.COMPLETE)
+            else None
+        )
+        return EnvOutput(
+            kind=OutputKind.CONTROL,
+            lane=identity.lane,
+            scope=identity.scope,
+            output_id=identity.output_id,
+            source=OutputSource("output.runtime"),
+            payload=OutputControl(
+                kind,
+                reason,
+                barrier=barrier,
+                phase=record.phase if kind == OutputControlType.TEXT_COMPLETE else None,
+            ),
+            metadata=metadata,
+        )
 
-    async def _get_or_create_output(
-        self,
-        *,
-        output_id: str,
-        lane: OutputLane,
-        turn_id: str | None,
-        origin_kind: OutputKind,
-    ) -> tuple[_OutputRecord | None, bool]:
-        async with self._state_lock:
-            if self._closed:
-                raise RuntimeError("OutputRuntime is closed")
-
-            record = self._outputs.get(output_id)
-            if record is not None:
-                self._validate_output(record, output_id=output_id, lane=lane, turn_id=turn_id)
-                return (record if record.active else None), False
-
-            record = _OutputRecord(lane=lane, turn_id=turn_id, origin_kind=origin_kind)
-            self._outputs[output_id] = record
-            return record, True
-
-    async def _prepare_output(
-        self,
-        *,
-        output_id: str,
-        lane: OutputLane,
-        turn_id: str | None,
-        origin_kind: OutputKind,
-        replace_lane: bool,
-        replace_reason: str,
-        preempt_transient: bool = False,
-    ) -> tuple[_OutputRecord | None, bool]:
-        """
-        Resolve one logical output.
-
-        Existing active output_id:
-            append to it without interruption.
-
-        Existing terminal output_id:
-            reject it; output IDs cannot be reopened.
-
-        New output_id:
-            optionally interrupt active output in the same lane before opening.
-        """
-        async with self._open_lock:
-            existing = await self._get_output(output_id)
-            if existing is not None:
-                self._validate_output(
-                    existing,
-                    output_id=output_id,
-                    lane=lane,
-                    turn_id=turn_id,
-                )
-                return (existing if existing.active else None), False
-
-            if replace_lane:
-                await self.interrupt(
-                    lane=lane,
-                    reason=replace_reason,
-                    metadata={
-                        "replacement_output_id": output_id,
-                        "replacement_turn_id": turn_id,
-                    },
-                )
-
-            # A formal assistant message also replaces transient filler/status
-            # speech, independently of whether another assistant output exists.
-            if preempt_transient and lane != OutputLane.TRANSIENT:
-                await self.interrupt(
-                    lane=OutputLane.TRANSIENT,
-                    reason="assistant_output_started",
-                    metadata={
-                        "assistant_output_id": output_id,
-                        "turn_id": turn_id,
-                    },
-                )
-
-            return await self._get_or_create_output(
-                output_id=output_id,
-                lane=lane,
-                turn_id=turn_id,
-                origin_kind=origin_kind,
-            )
-
-    async def _publish(
-        self,
-        *,
-        kind: OutputKind,
-        lane: OutputLane,
-        output_id: str | None,
-        turn_id: str | None,
-        payload,
-        metadata: dict | None,
-    ) -> OutputEvent:
+    def _check_open(self) -> None:
         if self._closed:
             raise RuntimeError("OutputRuntime is closed")
 
-        async with self._sequence_lock:
-            self._sequence += 1
-            now = self.clock.now()
-            event = OutputEvent(
-                event_id=uuid4().hex,
-                sequence=self._sequence,
-                session_id=self.session_id,
-                created_at=now.unix_seconds,
-                monotonic_ns=now.monotonic_ns,
-                kind=kind,
-                lane=lane,
-                output_id=output_id,
-                turn_id=turn_id,
-                payload=payload,
-                metadata=dict(metadata or {}),
-            )
-            await self.timeline.append(event)
+    def _check_delivery(self) -> None:
+        self._check_open()
+        if self._delivery_failure is not None:
+            raise RuntimeError(
+                "Output delivery is unavailable after a terminal publication failure"
+            ) from self._delivery_failure
 
-        await self.stream.publish(event)
-        return event
+    def _accepts_owner(self, scope: OutputScope, presentation: OutputStatusDecision | None) -> bool:
+        return (
+            self.accepts_status(presentation)
+            if presentation is not None
+            else self.accepts_run(scope.run_id)
+        )
+
+    def _accepts_record(self, record: _OutputRecord) -> bool:
+        return record.active and self._accepts_owner(record.identity.scope, record.presentation)
+
+    def _delivery_guard(self, record: _OutputRecord) -> bool:
+        # Sealing new intake must not discard content already admitted before its barrier.
+        return (
+            not record.failed
+            and record.terminal != OutputControlType.INTERRUPT
+            and self._accepts_owner(record.identity.scope, record.presentation)
+        )
+
+    async def _fail_delivery(self, failure: BaseException) -> None:
+        # A partially delivered terminal fact cannot be retried safely or treated as a no-op.
+        # Retire only realtime delivery: tools still own their record/execution cleanup.
+        if self._delivery_failure is None:
+            if isinstance(failure, Exception):
+                self._delivery_failure = failure
+            else:
+                error = RuntimeError("Terminal output publication aborted")
+                error.__cause__ = failure
+                self._delivery_failure = error
+            self._delivery_close_task = asyncio.create_task(
+                self.stream.aclose(), name="output_delivery_failure_close"
+            )
+        if self._delivery_close_task is not None:
+            await wait_for_cleanup(self._delivery_close_task)
+
+    async def _dispatch(
+        self,
+        output: EnvOutput,
+        *,
+        guard: Callable[[], bool] | None = None,
+        record: _OutputRecord | None = None,
+    ) -> OutputEvent | None:
+        try:
+            if self._closed:
+                return None
+            self._check_delivery()
+            async with self._sequence_lock:
+                if self._closed:
+                    return None
+                self._check_delivery()
+                if guard is not None and not guard():
+                    return None
+                now = self.clock.now()
+                event = OutputEvent(
+                    uuid4().hex,
+                    self._sequence + 1,
+                    self.session_id,
+                    now.unix_seconds,
+                    now.monotonic_ns,
+                    output,
+                )
+                await self.timeline.append(event)
+                self._sequence = event.sequence
+                # A frame may reach one subscriber before another suspends in backpressure.
+                # Its terminal barrier must still await a playback receipt after interruption.
+                if record is not None:
+                    if output.kind == OutputKind.AUDIO_FRAME:
+                        record.last_audio_sequence = event.sequence
+                    elif output.kind == OutputKind.ALIGNMENT:
+                        record.last_alignment_sequence = event.sequence
+            if guard is not None and not guard():
+                return None
+            try:
+                await self.stream.publish(event, guard=guard)
+            except RuntimeError:
+                if not self._closed:
+                    raise
+                return None
+            if not self._closed:
+                self._check_delivery()
+            return event if not self._closed and (guard is None or guard()) else None
+        except BaseException as failure:
+            terminal = (
+                output.kind == OutputKind.CONTROL
+                or (
+                    isinstance(output.payload, OutputPlayback)
+                    and output.payload.type
+                    in (OutputPlaybackType.FINISHED, OutputPlaybackType.INTERRUPTED)
+                )
+                or (isinstance(output.payload, OutputTranscriptChunk) and output.payload.is_final)
+            )
+            if terminal and not self._closed:
+                try:
+                    await self._fail_delivery(failure)
+                except BaseException as cleanup:
+                    raise failure from cleanup
+            raise
+
+    async def _own_publication(
+        self, operation: Coroutine[object, object, OutputEvent | None]
+    ) -> OutputEvent | None:
+        try:
+            self._check_delivery()
+        except BaseException:
+            operation.close()
+            raise
+
+        # Register before suspension, including before a terminal task's first execution.
+        task = asyncio.create_task(operation, name="output_terminal_publication")
+        self._publications.add(task)
+        task.add_done_callback(self._publications.discard)
+        return await wait_for_cleanup(task)
+
+    def activate_run(self, run_id: str) -> None:
+        self._check_delivery()
+        identifier(run_id, "run_id")
+        self._foreground_run = run_id
+        self._compact_outputs()
+
+    def revoke_run(self, run_id: str) -> None:
+        identifier(run_id, "run_id")
+        if self._foreground_run == run_id:
+            self._foreground_run = None
+
+    def accepts_run(self, run_id: str | None) -> bool:
+        return (
+            not self._closed
+            and self._delivery_failure is None
+            and (run_id is None or run_id == self._foreground_run)
+        )
+
+    def update_status_scope(self, scope: OutputScope | None, revision: int) -> None:
+        self._check_open()
+        if scope is not None and type(scope) is not OutputScope:
+            raise TypeError("Expected OutputScope or None")
+        if type(revision) is not int or revision < self._status_revision:
+            raise ValueError("Presentation revisions cannot move backwards")
+        if revision == self._status_revision and scope != self._status_scope:
+            raise ValueError("A presentation revision cannot identify two scopes")
+        self._status_scope, self._status_revision = scope, revision
+
+    def accepts_status(self, decision: OutputStatusDecision) -> bool:
+        if type(decision) is not OutputStatusDecision:
+            raise TypeError("Expected OutputStatusDecision")
+        if (
+            self._closed
+            or self._delivery_failure is not None
+            or self.clock.now().monotonic_ns > decision.expires_at_ns
+        ):
+            return False
+        if decision.audience == OutputAudience.SYSTEM:
+            return True
+        return (
+            decision.scope == self._status_scope
+            and decision.revision == self._status_revision
+            and (self._foreground_turn is None or decision.scope.turn_id == self._foreground_turn)
+            and (
+                decision.scope.run_id == self._foreground_run
+                or (decision.terminal and self._foreground_run is None)
+            )
+        )
+
+    def _compact_outputs(self) -> None:
+        # Never evict an in-flight terminal fact, or infer a playback receipt from generation.
+        if self._publications:
+            return
+        for output_id, record in tuple(self._outputs.items()):
+            if (
+                record.terminal is None
+                or record.text_pending
+                or record.media_pending
+                or self._accepts_owner(record.identity.scope, record.presentation)
+            ):
+                continue
+            if record.text_mode == OutputTextMode.AUDIO_SYNCED and (
+                not record.audio_completed or not record.transcript_finalized
+            ):
+                continue
+            if record.last_audio_sequence and record.playback not in (
+                OutputPlaybackType.FINISHED,
+                OutputPlaybackType.INTERRUPTED,
+            ):
+                continue
+            if record.last_alignment_sequence and not record.transcript_finalized:
+                continue
+            self._retired[output_id] = (record.identity, record.terminal_reason)
+            self._outputs.pop(output_id)
+        while len(self._retired) > self._retired_limit:
+            self._retired.popitem(last=False)
+
+    def terminal_reason(self, output_id: str) -> str | None:
+        record = self._outputs.get(output_id)
+        if record is not None:
+            return record.terminal_reason
+        terminal = self._retired.get(output_id)
+        return terminal[1] if terminal is not None else None
+
+    def output_identity(self, output_id: str) -> OutputIdentity | None:
+        record = self._outputs.get(output_id)
+        return record.identity if record is not None else None
+
+    def can_deliver(self, output_id: str) -> bool:
+        record = self._outputs.get(output_id)
+        return record is not None and record.interruptible and self._delivery_guard(record)
 
     def is_active(self, output_id: str) -> bool:
         record = self._outputs.get(output_id)
-        return record is not None and record.active
+        return record is not None and self._accepts_record(record)
+
+    def text_mode(self, output_id: str) -> OutputTextMode | None:
+        record = self._outputs.get(output_id)
+        return record.text_mode if record is not None else None
+
+    def transcript_finalized(self, output_id: str) -> bool:
+        record = self._outputs.get(output_id)
+        return record is not None and record.transcript_finalized
+
+    def publish_records(self, batch: OutputRecordBatch) -> OutputJournalEvent[OutputRecordBatch]:
+        self._check_open()
+        if not isinstance(batch, OutputRecordBatch):
+            raise TypeError("Expected OutputRecordBatch")
+        # Retiring runs still own their real tool results; no foreground filtering here.
+        return self.records.append(
+            key=batch.batch_id,
+            scope=batch.scope,
+            payload=batch,
+            digest=batch.digest,
+            size_bytes=batch.size_bytes,
+        )
+
+    def publish_execution(
+        self, signal: OutputExecutionSignal
+    ) -> OutputJournalEvent[OutputExecutionSignal]:
+        self._check_open()
+        if not isinstance(signal, OutputExecutionSignal):
+            raise TypeError("Expected OutputExecutionSignal")
+
+        raw = json.dumps(asdict(signal), ensure_ascii=False, sort_keys=True).encode()
+        return self.execution.append(
+            key=uuid4().hex,
+            scope=signal.scope,
+            payload=signal,
+            digest=sha256(raw).hexdigest(),
+            size_bytes=len(raw),
+        )
 
     async def start_turn(self, *, turn_id: str) -> None:
-        """Stop transient output left by the preceding interaction state."""
-        await self.interrupt(
+        self._check_delivery()
+        identifier(turn_id, "turn_id")
+        self._foreground_turn = turn_id
+        await self._interrupt(
             lane=OutputLane.TRANSIENT,
-            reason="new_turn_started",
-            metadata={"new_turn_id": turn_id},
-        )
-
-    async def publish_status(
-        self,
-        *,
-        payload: dict,
-        turn_id: str | None,
-        metadata: dict | None = None,
-    ) -> OutputEvent:
-        return await self._publish(
-            kind=OutputKind.STATUS,
-            lane=OutputLane.STATUS,
             output_id=None,
-            turn_id=turn_id,
-            payload=payload,
-            metadata=metadata,
+            turn_id=None,
+            reason="new_turn_started",
+            metadata=EMPTY_METADATA,
+            affects_scope=False,
         )
 
-    async def publish_text_chunk(
-        self,
-        *,
-        text: str,
-        output_id: str,
-        turn_id: str | None,
-        lane: OutputLane = OutputLane.ASSISTANT,
-        chunk_id: str | None = None,
-        mode: OutputTextMode = OutputTextMode.MIRROR,
-        replace_lane: bool = True,
-        is_final: bool = False,
-        metadata: dict | None = None,
-    ) -> OutputEvent | None:
-        """
-        Publish one source-text chunk.
+    async def _prepare_text(self, output: EnvOutput) -> _OutputRecord | None:
+        async with self._open_lock:
+            self._check_delivery()
+            if output.output_id in self._retired:
+                return None
+            existing = self._outputs.get(output.output_id)
+            if existing is not None:
+                self._validate_identity(existing, output)
+                if existing.source != output.source or existing.presentation != output.presentation:
+                    raise ValueError("Source text provenance changed")
+                if not self._accepts_record(existing):
+                    return None
+                phase = output.payload.phase
+                if phase is not None:
+                    if existing.phase is not None and existing.phase != phase:
+                        raise ValueError("Source text phase changed")
+                    existing.phase = phase
+                return existing
 
-        Same output_id:
-            append to the existing logical message.
+            if not self._accepts_owner(output.scope, output.presentation):
+                return None
 
-        New output_id:
-            replace the current output in the same lane when replace_lane=True.
+            if output.payload.replace_lane:
+                await self._interrupt(
+                    lane=output.lane,
+                    output_id=None,
+                    turn_id=None,
+                    reason="replaced_by_new_text_output",
+                    metadata=EMPTY_METADATA,
+                    affects_scope=False,
+                )
+            if output.lane == OutputLane.ASSISTANT:
+                await self._interrupt(
+                    lane=OutputLane.TRANSIENT,
+                    output_id=None,
+                    turn_id=None,
+                    reason="assistant_output_started",
+                    metadata=EMPTY_METADATA,
+                    affects_scope=False,
+                )
 
-        New assistant output:
-            also interrupt active transient output before publication.
-        """
-        if text == "":
-            return None
+            if not self._accepts_owner(output.scope, output.presentation):
+                return None
+            if len(self._outputs) >= self._record_limit:
+                self._compact_outputs()
+                if len(self._outputs) >= self._record_limit:
+                    raise RuntimeError("Output state capacity exhausted before settlement")
 
-        record, created = await self._prepare_output(
-            output_id=output_id,
-            lane=lane,
-            turn_id=turn_id,
-            origin_kind=OutputKind.TEXT_CHUNK,
-            replace_lane=replace_lane,
-            replace_reason="replaced_by_new_text_output",
-            preempt_transient=lane == OutputLane.ASSISTANT,
-        )
+            record = _OutputRecord(
+                OutputIdentity(output.output_id, output.lane, output.scope),
+                output.source,
+                output.presentation,
+                output.payload.mode,
+                phase=output.payload.phase,
+            )
+            self._outputs[output.output_id] = record
+            return record
+
+    async def publish(self, output: EnvOutput) -> OutputEvent | None:
+        """Admit a validated content object; control facts cannot be supplied by producers."""
+        if type(output) is not EnvOutput:
+            raise TypeError("Expected EnvOutput")
+        if output.kind == OutputKind.CONTROL:
+            raise ValueError("Control facts belong to OutputRuntime control operations")
+
+        self._check_delivery()
+        if output.kind == OutputKind.STATUS:
+            return await self._dispatch(output, guard=lambda: self.accepts_status(output.payload))
+        if output.kind == OutputKind.TEXT_CHUNK:
+            record = await self._prepare_text(output)
+            return None if record is None else await self._content(output, record)
+
+        record = self._outputs.get(output.output_id)
         if record is None:
             return None
 
+        self._validate_identity(record, output)
+        if output.kind in (OutputKind.AUDIO_FRAME, OutputKind.ALIGNMENT):
+            return await self._content(output, record)
+
+        terminal = (
+            isinstance(output.payload, OutputPlayback)
+            and output.payload.type in (OutputPlaybackType.FINISHED, OutputPlaybackType.INTERRUPTED)
+        ) or (isinstance(output.payload, OutputTranscriptChunk) and output.payload.is_final)
+        operation = self._feedback(output, record)
+        return await self._own_publication(operation) if terminal else await operation
+
+    async def _content(self, output: EnvOutput, record: _OutputRecord) -> OutputEvent | None:
+        text = output.kind == OutputKind.TEXT_CHUNK
+        alignment = output.kind == OutputKind.ALIGNMENT
         async with self._state_lock:
-            if not record.active:
+            self._validate_identity(record, output)
+            # Alignments report already-synthesized phrases, not new generation authority.
+            # Preserve exact old-output facts until synthesis seals them, including interruption.
+            if self._closed or (not alignment and not self._accepts_record(record)):
                 return None
+            if text:
+                if record.text_sealed:
+                    return None
+                if output.payload.mode != record.text_mode:
+                    raise ValueError("Output text mode cannot change")
+                record.text_sealed = output.payload.is_final
+                record.text_pending += 1
+                record.text_idle.clear()
+            else:
+                if record.audio_completed:
+                    return None
+                record.media_pending += 1
+                record.media_idle.clear()
+        failure: BaseException | None = None
+        try:
+            return await self._dispatch(
+                output,
+                record=record,
+                guard=None if alignment else lambda: self._delivery_guard(record),
+            )
+        except BaseException as exc:
+            record.failed = True
+            failure = exc
+            raise
+        finally:
+            if text:
+                record.text_pending -= 1
+                if record.text_pending == 0:
+                    record.text_idle.set()
+            else:
+                record.media_pending -= 1
+                if record.media_pending == 0:
+                    record.media_idle.set()
+            if failure is not None and not self._closed and self._delivery_failure is None:
+                try:
+                    await self.interrupt(
+                        output_id=record.identity.output_id, reason="content_publication_failed"
+                    )
+                except BaseException as cleanup:
+                    raise failure from cleanup
 
-            first_chunk = not record.text_started
-            if first_chunk:
-                record.text_started = True
-
-        return await self._publish(
-            kind=OutputKind.TEXT_CHUNK,
-            lane=lane,
-            output_id=output_id,
-            turn_id=turn_id,
-            payload=OutputTextChunk(
-                text=text,
-                chunk_id=chunk_id or uuid4().hex,
-                is_first=first_chunk,
-                is_final=is_final,
-                mode=mode,
-            ),
-            metadata=metadata,
-        )
-
-    async def publish_audio_frame(
-        self,
-        *,
-        frame: AudioFrame,
-        lane: OutputLane,
-        output_id: str,
-        turn_id: str | None,
-        metadata: dict | None = None,
-    ) -> OutputEvent | None:
+    async def _feedback(self, output: EnvOutput, record: _OutputRecord) -> OutputEvent | None:
         async with self._state_lock:
-            record = self._outputs.get(output_id)
-            if record is None or not record.active:
-                return None
-            if record.lane != lane or record.turn_id != turn_id:
-                return None
+            self._check_delivery()
+            self._validate_identity(record, output)
+            payload = output.payload
+            if isinstance(payload, OutputPlayback):
+                if record.playback in (OutputPlaybackType.FINISHED, OutputPlaybackType.INTERRUPTED):
+                    return None
+                if payload.type in (OutputPlaybackType.STARTED, OutputPlaybackType.PROGRESS):
+                    if not self.can_deliver(record.identity.output_id):
+                        return None
+                elif payload.type == OutputPlaybackType.FINISHED:
+                    if record.terminal != OutputControlType.COMPLETE:
+                        return None
+                elif payload.type == OutputPlaybackType.INTERRUPTED:
+                    if record.terminal != OutputControlType.INTERRUPT:
+                        return None
+                record.playback = payload.type
+            elif isinstance(payload, OutputTranscriptChunk):
+                if record.transcript_finalized:
+                    return None
+                if payload.is_final:
+                    # Priority interruption may precede consumer state or this final's admission.
+                    # Reconcile the exact output's fact without mutating the submitted object.
+                    if record.terminal == OutputControlType.INTERRUPT and not payload.interrupted:
+                        output = replace(output, payload=replace(payload, interrupted=True))
+                    record.transcript_finalized = True
+            else:
+                raise TypeError("Unsupported output feedback")
+        return await self._dispatch(output)
 
-        return await self._publish(
-            kind=OutputKind.AUDIO_FRAME,
-            lane=lane,
-            output_id=output_id,
-            turn_id=turn_id,
-            payload=frame,
-            metadata=metadata,
-        )
-
-    async def publish_alignment(
-        self,
-        *,
-        text: str,
-        source_chunk_id: str,
-        output_id: str,
-        turn_id: str | None,
-        lane: OutputLane,
-        start_time_sec: float,
-        end_time_sec: float,
-        is_final: bool,
-        partial: bool = False,
-        timing_source: str = "synthesized_audio",
-        metadata: dict | None = None,
-    ) -> OutputEvent | None:
-        if not source_chunk_id:
-            raise ValueError("Alignment requires source_chunk_id")
-        if start_time_sec < 0:
-            raise ValueError("Alignment start_time_sec cannot be negative")
-        if end_time_sec < start_time_sec:
-            raise ValueError("Alignment end_time_sec cannot precede start_time_sec")
-
-        async with self._state_lock:
-            record = self._outputs.get(output_id)
-            if record is None:
-                return None
-
-            self._validate_output(record, output_id=output_id, lane=lane, turn_id=turn_id)
-
-        return await self._publish(
-            kind=OutputKind.ALIGNMENT,
-            lane=lane,
-            output_id=output_id,
-            turn_id=turn_id,
-            payload=OutputTextAudioAlignment(
-                text=text,
-                source_chunk_id=source_chunk_id,
-                start_time_sec=start_time_sec,
-                end_time_sec=end_time_sec,
-                is_final=is_final,
-                partial=partial,
-                timing_source=timing_source,
-            ),
-            metadata=metadata,
-        )
-
-    async def publish_playback(
+    async def finish_text(
         self,
         *,
         output_id: str,
-        lane: OutputLane,
-        turn_id: str | None,
-        playback_type: OutputPlaybackType,
-        played_duration_sec: float,
-        pushed_duration_sec: float,
-        queued_duration_sec: float,
-        metadata: dict | None = None,
+        turn_id: str,
+        run_id: str,
+        lane: OutputLane = OutputLane.ASSISTANT,
+        phase: OutputMessagePhase | None = None,
+        metadata: Mapping[str, object] | None = None,
     ) -> OutputEvent | None:
-        if min(played_duration_sec, pushed_duration_sec, queued_duration_sec) < 0:
-            raise ValueError("Playback durations cannot be negative")
+        identifier(output_id, "output_id")
+        identifier(turn_id, "turn_id")
+        identifier(run_id, "run_id")
+        if type(lane) is not OutputLane:
+            raise TypeError("Expected OutputLane")
+        if phase is not None and type(phase) is not OutputMessagePhase:
+            raise TypeError("Expected OutputMessagePhase or None")
+        fields = freeze_metadata(metadata)
 
-        async with self._state_lock:
-            record = self._outputs.get(output_id)
-            if record is None:
-                return None
+        async def finish() -> OutputEvent | None:
+            async with self._state_lock:
+                if self._closed:
+                    return None
+                self._check_delivery()
+                record = self._outputs.get(output_id)
+                if record is None:
+                    return None
+                self._validate_target(record, lane, turn_id)
+                if record.identity.scope.run_id != run_id:
+                    raise ValueError("Text completion run mismatch")
+                if phase is not None and record.phase is not None and record.phase != phase:
+                    raise ValueError("Text completion phase disagrees with source text")
+                if record.text_completed or not self._accepts_record(record):
+                    return None
+                if phase is not None:
+                    record.phase = phase
+                record.text_sealed = record.text_completed = True
 
-            self._validate_output(record, output_id=output_id, lane=lane, turn_id=turn_id)
+            await record.text_idle.wait()
+            return await self._dispatch(
+                self._control(
+                    record, OutputControlType.TEXT_COMPLETE, "source_text_completed", fields
+                )
+            )
 
-            if record.playback in {
-                OutputPlaybackType.FINISHED,
-                OutputPlaybackType.INTERRUPTED,
-            }:
-                return None
+        return await self._own_publication(finish())
 
-            if (
-                playback_type
-                in {
-                    OutputPlaybackType.STARTED,
-                    OutputPlaybackType.PROGRESS,
-                }
-                and record.terminal == OutputControlType.INTERRUPT
-            ):
-                return None
-
-            if (
-                playback_type == OutputPlaybackType.FINISHED
-                and record.terminal != OutputControlType.COMPLETE
-            ):
-                return None
-
-            if (
-                playback_type == OutputPlaybackType.INTERRUPTED
-                and record.terminal != OutputControlType.INTERRUPT
-            ):
-                return None
-
-            record.playback = playback_type
-
-        return await self._publish(
-            kind=OutputKind.PLAYBACK,
-            lane=lane,
-            output_id=output_id,
-            turn_id=turn_id,
-            payload=OutputPlayback(
-                type=playback_type,
-                played_duration_sec=played_duration_sec,
-                pushed_duration_sec=pushed_duration_sec,
-                queued_duration_sec=queued_duration_sec,
-            ),
-            metadata=metadata,
-        )
-
-    async def publish_transcript_chunk(
+    async def finish_audio(
         self,
         *,
-        text: str,
         output_id: str,
-        turn_id: str | None,
         lane: OutputLane,
-        chunk_id: str | None = None,
-        source_chunk_id: str | None = None,
-        start_time_sec: float | None = None,
-        end_time_sec: float | None = None,
-        is_first: bool = False,
-        is_final: bool = False,
-        interrupted: bool = False,
-        metadata: dict | None = None,
+        turn_id: str | None,
+        reason: str = "synthesis_completed",
     ) -> OutputEvent | None:
-        if text == "" and not is_final:
-            return None
-        if start_time_sec is not None and start_time_sec < 0:
-            raise ValueError("Transcript start_time_sec cannot be negative")
-        if end_time_sec is not None and end_time_sec < 0:
-            raise ValueError("Transcript end_time_sec cannot be negative")
-        if (
-            start_time_sec is not None
-            and end_time_sec is not None
-            and end_time_sec < start_time_sec
-        ):
-            raise ValueError("Transcript end_time_sec cannot precede start_time_sec")
+        identifier(output_id, "output_id")
+        identifier(reason, "reason")
+        identifier(turn_id, "turn_id", optional=True)
+        if type(lane) is not OutputLane:
+            raise TypeError("Expected OutputLane")
 
-        async with self._state_lock:
-            record = self._outputs.get(output_id)
-            if record is None:
-                return None
+        async def finish() -> OutputEvent | None:
+            async with self._state_lock:
+                if self._closed:
+                    return None
+                self._check_delivery()
+                record = self._outputs.get(output_id)
+                if record is None:
+                    return None
+                self._validate_target(record, lane, turn_id)
+                if record.audio_completed:
+                    return None
+                record.audio_completed = True
+            # An admitted frame/alignment may still be in a reliable subscriber's backpressure.
+            await record.media_idle.wait()
+            return await self._dispatch(
+                self._control(record, OutputControlType.AUDIO_COMPLETE, reason, EMPTY_METADATA)
+            )
 
-            self._validate_output(record, output_id=output_id, lane=lane, turn_id=turn_id)
+        return await self._own_publication(finish())
 
-        return await self._publish(
-            kind=OutputKind.TRANSCRIPT_CHUNK,
-            lane=lane,
-            output_id=output_id,
-            turn_id=turn_id,
-            payload=OutputTranscriptChunk(
-                text=text,
-                chunk_id=chunk_id or uuid4().hex,
-                source_chunk_id=source_chunk_id,
-                start_time_sec=start_time_sec,
-                end_time_sec=end_time_sec,
-                is_first=is_first,
-                is_final=is_final,
-                interrupted=interrupted,
-            ),
-            metadata=metadata,
-        )
+    async def complete(
+        self,
+        *,
+        lane: OutputLane,
+        output_id: str,
+        turn_id: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> OutputEvent | None:
+        identifier(output_id, "output_id")
+        identifier(turn_id, "turn_id", optional=True)
+        if type(lane) is not OutputLane:
+            raise TypeError("Expected OutputLane")
+        fields = freeze_metadata(metadata)
+
+        async def finish() -> OutputEvent | None:
+            async with self._state_lock:
+                if self._closed:
+                    return None
+                self._check_delivery()
+                record = self._outputs.get(output_id)
+                if record is None:
+                    return None
+                self._validate_target(record, lane, turn_id)
+                if not record.active:
+                    return None
+                record.source_sealed = True
+            await record.text_idle.wait()
+            await record.media_idle.wait()
+            async with self._state_lock:
+                if record.terminal is not None or record.failed:
+                    return None
+                record.terminal = OutputControlType.COMPLETE
+                record.terminal_reason = "output_completed"
+            return await self._dispatch(
+                self._control(record, OutputControlType.COMPLETE, "output_completed", fields)
+            )
+
+        return await self._own_publication(finish())
 
     async def interrupt(
         self,
@@ -532,101 +764,129 @@ class OutputRuntime:
         output_id: str | None = None,
         turn_id: str | None = None,
         reason: str,
-        metadata: dict | None = None,
-    ) -> OutputEvent:
+        metadata: Mapping[str, object] | None = None,
+    ) -> OutputEvent | None:
         if lane is None and output_id is None and turn_id is None:
             raise ValueError("Output interrupt requires a target")
+        if lane is not None and type(lane) is not OutputLane:
+            raise TypeError("Expected OutputLane")
 
-        async with self._state_lock:
-            matching_outputs = {
-                active_output_id: record
-                for active_output_id, record in self._outputs.items()
-                if record.interruptible
-                and (lane is None or record.lane == lane)
-                and (output_id is None or active_output_id == output_id)
-                and (turn_id is None or record.turn_id == turn_id)
-            }
-
-            for record in matching_outputs.values():
-                record.terminal = OutputControlType.INTERRUPT
-
-        def _matches_event(event: OutputEvent) -> bool:
-            # Only raw audio frames should be discarded globally. Semantic source
-            # text, alignment and playback events are still required to calculate the
-            # final delivered transcript after interruption.
-            if event.kind != OutputKind.AUDIO_FRAME:
-                return False
-            if lane is not None and event.lane != lane:
-                return False
-            if output_id is not None and event.output_id != output_id:
-                return False
-            if turn_id is not None and event.turn_id != turn_id:
-                return False
-            return True
-
-        await self.stream.discard_pending(_matches_event)
-
-        inferred_lanes = {record.lane for record in matching_outputs.values()}
-        effective_target_lane = lane
-        if effective_target_lane is None and len(inferred_lanes) == 1:
-            effective_target_lane = next(iter(inferred_lanes))
-
-        return await self._publish(
-            kind=OutputKind.CONTROL,
-            lane=effective_target_lane or OutputLane.STATUS,
-            output_id=output_id,
-            turn_id=turn_id,
-            payload=OutputControl(
-                type=OutputControlType.INTERRUPT,
-                reason=reason,
-                target_lane=effective_target_lane,
-                target_output_id=output_id,
-                target_turn_id=turn_id,
-            ),
-            metadata={
-                "interrupted_output_ids": tuple(matching_outputs),
-                **dict(metadata or {}),
-            },
-        )
-
-    async def complete(
-        self,
-        *,
-        lane: OutputLane,
-        output_id: str,
-        turn_id: str | None = None,
-        metadata: dict | None = None,
-    ) -> OutputEvent | None:
-        async with self._state_lock:
-            record = self._outputs.get(output_id)
-            if record is None or not record.active:
-                return None
-            if record.lane != lane or record.turn_id != turn_id:
-                return None
-
-            record.terminal = OutputControlType.COMPLETE
-
-        return await self._publish(
-            kind=OutputKind.CONTROL,
+        identifier(output_id, "output_id", optional=True)
+        identifier(turn_id, "turn_id", optional=True)
+        identifier(reason, "reason")
+        fields = freeze_metadata(metadata)
+        return await self._interrupt(
             lane=lane,
             output_id=output_id,
             turn_id=turn_id,
+            reason=reason,
+            metadata=fields,
+            affects_scope=output_id is None and lane != OutputLane.TRANSIENT,
+        )
+
+    async def _interrupt(
+        self,
+        *,
+        lane: OutputLane | None,
+        output_id: str | None,
+        turn_id: str | None,
+        reason: str,
+        metadata: OutputMetadata,
+        affects_scope: bool,
+    ) -> OutputEvent | None:
+        async with self._state_lock:
+            self._check_delivery()
+            matching = tuple(
+                record
+                for identity, record in self._outputs.items()
+                if record.interruptible
+                and (lane is None or record.identity.lane == lane)
+                and (output_id is None or identity == output_id)
+                and (turn_id is None or record.identity.scope.turn_id == turn_id)
+            )
+            targets = tuple(record.identity for record in matching)
+            for record in matching:
+                record.terminal = OutputControlType.INTERRUPT
+                record.terminal_reason = reason
+        if not targets:
+            return None
+
+        ids = frozenset(target.output_id for target in targets)
+        lanes = {target.lane for target in targets}
+        output = EnvOutput(
+            kind=OutputKind.CONTROL,
+            lane=next(iter(lanes)) if len(lanes) == 1 else OutputLane.STATUS,
+            scope=None,
+            source=OutputSource("output.runtime"),
             payload=OutputControl(
-                type=OutputControlType.COMPLETE,
-                reason="output_completed",
-                target_lane=lane,
-                target_output_id=output_id,
-                target_turn_id=turn_id,
+                OutputControlType.INTERRUPT, reason, targets, affects_scope=affects_scope
             ),
             metadata=metadata,
         )
 
-    async def aclose(self) -> None:
+        async def publish() -> OutputEvent | None:
+            try:
+                await self.stream.discard_pending(
+                    lambda event: event.output.kind == OutputKind.AUDIO_FRAME
+                    and event.output.output_id in ids
+                )
+            except BaseException as failure:
+                if not self._closed:
+                    try:
+                        await self._fail_delivery(failure)
+                    except BaseException as cleanup:
+                        raise failure from cleanup
+                raise
+            return await self._dispatch(output)
+
+        return await self._own_publication(publish())
+
+    async def _close(self) -> None:
         async with self._state_lock:
-            if self._closed:
-                return
-
             self._closed = True
-            self._outputs.clear()
+            self._foreground_run = None
+            self._status_scope = None
+            self.records.close()
+            self.execution.close()
+            publications = tuple(self._publications)
+        errors: list[Exception] = []
+        try:
+            # Release subscribers before joining owned publishers or source-drain barriers.
+            await self.stream.aclose()
+            if self._delivery_close_task is not None:
+                await wait_for_cleanup(self._delivery_close_task)
+        except asyncio.CancelledError as exc:
+            error = RuntimeError("Output stream cleanup cancelled itself")
+            error.__cause__ = exc
+            errors.append(error)
+        except Exception as exc:
+            errors.append(exc)
+        if errors:
+            for publication in publications:
+                publication.cancel()
+        results = await asyncio.gather(*publications, return_exceptions=True)
+        for result in results:
+            if isinstance(result, asyncio.CancelledError):
+                error = RuntimeError("Owned output publication cancelled itself")
+                error.__cause__ = result
+                errors.append(error)
+            elif isinstance(result, Exception):
+                errors.append(result)
+            elif isinstance(result, BaseException):
+                raise result
+        self._outputs.clear()
+        self._retired.clear()
+        self._publications.clear()
 
-        await self.stream.aclose()
+        # Completed publication tasks have left the in-flight set; retain their first failure.
+        if self._delivery_failure is not None and all(
+            error is not self._delivery_failure for error in errors
+        ):
+            errors.append(self._delivery_failure)
+        if errors:
+            raise ExceptionGroup("Output publication shutdown failed", errors)
+
+    async def aclose(self) -> None:
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close(), name="output_runtime_close")
+        await wait_for_cleanup(self._close_task)

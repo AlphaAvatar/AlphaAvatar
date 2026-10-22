@@ -15,13 +15,13 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .modules.context.runtime import ContextRuntime, InteractionMethod
     from .modules.session.runtime import ParticipantInfo, SessionRuntime
+    from .modules.state.runtime import InteractionMethod, StateRuntime
     from .runtime import AvatarRuntime
 
 __all__ = [
     "AvatarRuntime",
-    "ContextRuntime",
+    "StateRuntime",
     "InteractionMethod",
     "ParticipantInfo",
     "SessionRuntime",
@@ -29,8 +29,8 @@ __all__ = [
 
 _EXPORTS = {
     "AvatarRuntime": ".runtime",
-    "ContextRuntime": ".modules.context.runtime",
-    "InteractionMethod": ".modules.context.runtime",
+    "StateRuntime": ".modules.state.runtime",
+    "InteractionMethod": ".modules.state.runtime",
     "ParticipantInfo": ".modules.session.runtime",
     "SessionRuntime": ".modules.session.runtime",
 }

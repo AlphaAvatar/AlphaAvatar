@@ -15,22 +15,13 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from collections.abc import (
-    Callable,
-    Iterable,
-)
+from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING
 
 from alphaavatar.agents.memory.enums import MemoryType
-from alphaavatar.agents.memory.schemas import (
-    MemoryItem,
-    MemoryOwnerRef,
-)
+from alphaavatar.agents.memory.schemas import MemoryItem, MemoryOwnerRef
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.capability import (
-    AvatarCapabilityName,
-    avatar_capability,
-)
+from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_capability
 from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
 
@@ -43,10 +34,7 @@ from .schema import RetrievalCapabilityInput, RetrievalOp
 if TYPE_CHECKING:
     from ...runtime import MemoryRuntime
 
-RecallObserver = Callable[
-    [Iterable[MemoryItem]],
-    None,
-]
+RecallObserver = Callable[[Iterable[MemoryItem]], None]
 
 
 @avatar_capability(
@@ -69,10 +57,7 @@ class RetrievalProcessor(MemoryProcessor):
         runtime: AvatarRuntime,
         memory: MemoryRuntime,
         config: RetrievalConfig,
-        recall_observers: tuple[
-            RecallObserver,
-            ...,
-        ] = (),
+        recall_observers: tuple[RecallObserver, ...] = (),
     ) -> None:
         super().__init__(runtime=runtime, memory=memory)
 
@@ -91,11 +76,7 @@ class RetrievalProcessor(MemoryProcessor):
     def _graph_lookup(self) -> GraphLookup:
         return GraphLookup(self.runtime.workspace.graph.namespace(AvatarModule.MEMORY.value).root)
 
-    def _resolve_graph_keys(
-        self,
-        node_key: str,
-        max_hops: int,
-    ) -> list[str]:
+    def _resolve_graph_keys(self, node_key: str, max_hops: int) -> list[str]:
         lookup = self._graph_lookup()
         resolved = lookup.resolve_keys(node_key)
 
@@ -103,10 +84,7 @@ class RetrievalProcessor(MemoryProcessor):
             return resolved
 
         return lookup.expand_node_keys(
-            node_keys=resolved,
-            max_hops=max_hops,
-            max_neighbors_per_node=16,
-            min_weight=0.0,
+            node_keys=resolved, max_hops=max_hops, max_neighbors_per_node=16, min_weight=0.0
         )
 
     def _notify_passive_recall(self, items: list[MemoryItem]) -> None:
@@ -145,11 +123,7 @@ class RetrievalProcessor(MemoryProcessor):
             )
 
         except Exception as exc:
-            logger.warning(
-                "Memory text recall failed context=%s: %s",
-                state.context_id,
-                exc,
-            )
+            logger.warning("Memory text recall failed context=%s: %s", state.context_id, exc)
             return []
 
     async def _search_graph(
@@ -171,11 +145,7 @@ class RetrievalProcessor(MemoryProcessor):
         node_keys: list[str] = []
 
         if node_key:
-            node_keys = await asyncio.to_thread(
-                self._resolve_graph_keys,
-                node_key,
-                max_hops,
-            )
+            node_keys = await asyncio.to_thread(self._resolve_graph_keys, node_key, max_hops)
 
         try:
             return await self.store.recall_by_graph_node(
@@ -190,11 +160,7 @@ class RetrievalProcessor(MemoryProcessor):
             )
 
         except Exception as exc:
-            logger.warning(
-                "Memory graph recall failed context=%s: %s",
-                state.context_id,
-                exc,
-            )
+            logger.warning("Memory graph recall failed context=%s: %s", state.context_id, exc)
             return []
 
     """Processor invoke"""
@@ -224,8 +190,7 @@ class RetrievalProcessor(MemoryProcessor):
             return ""
 
         history = self._query_history.setdefault(
-            context_id,
-            deque(maxlen=max(1, self._search_context)),
+            context_id, deque(maxlen=max(1, self._search_context))
         )
         history.append(text)
         return "\n\n".join(f"### user:\n{item}" for item in history)
@@ -247,11 +212,7 @@ class RetrievalProcessor(MemoryProcessor):
         if not query:
             return
 
-        items = await self._search_text(
-            query,
-            context_id=context_id,
-            top_k=self._recall_num,
-        )
+        items = await self._search_text(query, context_id=context_id, top_k=self._recall_num)
 
         self._notify_passive_recall(items)
         self.memory_runtime.apply_items(items)
@@ -266,8 +227,7 @@ class RetrievalProcessor(MemoryProcessor):
 
                 if batch.has_gap:
                     logger.warning(
-                        "Memory retrieval missed committed turns missed=%s",
-                        batch.missed_count,
+                        "Memory retrieval missed committed turns missed=%s", batch.missed_count
                     )
 
                 if not batch.items:
@@ -288,8 +248,7 @@ class RetrievalProcessor(MemoryProcessor):
     async def _start(self) -> None:
         self.runtime.turn.register_context_consumer(self.TURN_CONSUMER_ID)
         self._consumer_task = asyncio.create_task(
-            self._consume_loop(),
-            name="memory_retrieval_turn_consumer",
+            self._consume_loop(), name="memory_retrieval_turn_consumer"
         )
 
     async def _stop(self, *, finalize: bool) -> None:

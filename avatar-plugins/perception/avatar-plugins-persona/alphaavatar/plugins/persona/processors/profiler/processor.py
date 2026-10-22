@@ -49,16 +49,12 @@ class ProfilerProcessor(PersonaProcessorBase):
     CONSUMER_ID = "persona.profiler.turn"
 
     def __init__(
-        self,
-        *,
-        runtime: AvatarRuntime,
-        persona: PersonaBase,
-        config: ProfilerConfig,
+        self, *, runtime: AvatarRuntime, persona: PersonaBase, config: ProfilerConfig
     ) -> None:
         super().__init__(runtime=runtime, persona=persona)
 
         self._config = config
-        self._provider = ProfilerProvider(config.provider)
+        self._provider = ProfilerProvider(config.provider, service=runtime.foundation.provider)
         self._consumer_task: asyncio.Task[None] | None = None
 
     @property
@@ -66,11 +62,7 @@ class ProfilerProcessor(PersonaProcessorBase):
         return "profiler"
 
     async def _aextract_delta(
-        self,
-        *,
-        uid: str,
-        profile_details_dump: dict[str, Any],
-        new_turn: str,
+        self, *, uid: str, profile_details_dump: dict[str, Any], new_turn: str
     ) -> ProfileDelta:
         return await self._provider.extract(
             profile_details_dump=profile_details_dump,
@@ -86,10 +78,7 @@ class ProfilerProcessor(PersonaProcessorBase):
         )
 
     def _apply_delta(
-        self,
-        updated_at: datetime,
-        profile_details_dump: dict,
-        delta: ProfileDelta,
+        self, updated_at: datetime, profile_details_dump: dict, delta: ProfileDelta
     ) -> tuple[bool, dict[str, Any]]:
         data = deepcopy(profile_details_dump)
         updated = False
@@ -115,9 +104,7 @@ class ProfilerProcessor(PersonaProcessorBase):
                 updated = True
             except Exception:
                 logger.exception(
-                    "Failed to apply profile delta uid operation=%s path=%s",
-                    patch.op,
-                    patch.path,
+                    "Failed to apply profile delta uid operation=%s path=%s", patch.op, patch.path
                 )
 
         return updated, data
@@ -187,17 +174,13 @@ class ProfilerProcessor(PersonaProcessorBase):
 
                 if batch.has_gap:
                     logger.warning(
-                        "Persona profiler missed committed turns missed=%s",
-                        batch.missed_count,
+                        "Persona profiler missed committed turns missed=%s", batch.missed_count
                     )
 
                 for event in batch.items:
                     await self._record_turn(event.snapshot)
 
-                stream.commit(
-                    consumer_id=self.CONSUMER_ID,
-                    cursor_seq=batch.cursor_seq,
-                )
+                stream.commit(consumer_id=self.CONSUMER_ID, cursor_seq=batch.cursor_seq)
 
             except asyncio.CancelledError:
                 raise
@@ -213,18 +196,14 @@ class ProfilerProcessor(PersonaProcessorBase):
 
             if batch.has_gap:
                 logger.warning(
-                    "Persona profiler missed committed turns missed=%s",
-                    batch.missed_count,
+                    "Persona profiler missed committed turns missed=%s", batch.missed_count
                 )
 
             for event in batch.items:
                 await self._record_turn(event.snapshot)
 
             if batch.cursor_seq > batch.committed_cursor_seq:
-                stream.commit(
-                    consumer_id=self.CONSUMER_ID,
-                    cursor_seq=batch.cursor_seq,
-                )
+                stream.commit(consumer_id=self.CONSUMER_ID, cursor_seq=batch.cursor_seq)
 
             if not batch.items or batch.remaining_count == 0:
                 return
@@ -233,8 +212,7 @@ class ProfilerProcessor(PersonaProcessorBase):
 
     async def _start(self) -> None:
         self._consumer_task = asyncio.create_task(
-            self._consume_turns(),
-            name="persona_profiler_turn_consumer",
+            self._consume_turns(), name="persona_profiler_turn_consumer"
         )
         logger.info("Persona Profiler started")
 
@@ -272,9 +250,6 @@ class ProfilerProcessor(PersonaProcessorBase):
                 raise result
 
         if errors:
-            raise ExceptionGroup(
-                "One or more Persona profiles failed to update",
-                errors,
-            )
+            raise ExceptionGroup("One or more Persona profiles failed to update", errors)
 
         logger.info("Persona Profiler stopped")

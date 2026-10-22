@@ -133,9 +133,7 @@ def save_single_url_content_to_pdf(
 
     # 4) markdown -> html
     html_content = markdown(
-        merged_md,
-        extensions=["extra", "codehilite", "toc"],
-        output_format="html5",
+        merged_md, extensions=["extra", "codehilite", "toc"], output_format="html5"
     )
 
     css = CSS(
@@ -150,6 +148,5 @@ def save_single_url_content_to_pdf(
 
     # 5) html -> pdf (base_url is crucial: it allows relative image paths to be loaded)
     HTML(string=html_content, base_url=str(assets_dir.resolve())).write_pdf(
-        output_pdf_path,
-        stylesheets=[css],
+        output_pdf_path, stylesheets=[css]
     )

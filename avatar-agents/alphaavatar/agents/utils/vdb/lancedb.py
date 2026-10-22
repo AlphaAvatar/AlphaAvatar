@@ -51,11 +51,7 @@ class LanceDBClient:
         return self._db.create_table(table_name, data=data)
 
 
-def get_client(
-    *,
-    client_path: str | pathlib.Path,
-    **kwargs,
-) -> LanceDBClient:
+def get_client(*, client_path: str | pathlib.Path, **kwargs) -> LanceDBClient:
     if not str(client_path).strip():
         raise ValueError("LanceDB client_path cannot be empty")
     return LanceDBClient(path=client_path)

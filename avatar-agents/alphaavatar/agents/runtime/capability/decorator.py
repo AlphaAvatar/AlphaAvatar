@@ -31,10 +31,7 @@ def validate_handler(handler: Any, *, bound: bool = True) -> None:
 
 
 def avatar_capability(
-    *,
-    name: str,
-    description: str,
-    input_schema: type[BaseModel] | dict[str, Any] | None = None,
+    *, name: str, description: str, input_schema: type[BaseModel] | dict[str, Any] | None = None
 ):
     capability = AvatarCapability(name, description, input_schema)
 
@@ -48,6 +45,7 @@ def avatar_capability(
         declared = cls.__dict__.get("capabilities", ())
         if any(item.id == capability.id for item in declared):
             raise ValueError(f"Capability already declared on {cls.__name__}: {capability.id}")
+
         cls.capabilities = (*[item for item in inherited if item.id != capability.id], capability)
         return cls
 

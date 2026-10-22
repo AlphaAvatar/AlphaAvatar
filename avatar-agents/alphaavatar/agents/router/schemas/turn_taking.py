@@ -16,12 +16,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from alphaavatar.core.env import (
-    AnnotationKind,
-    EnvAnnotation,
-    PerceptionEntityRef,
-    PerceptionSegmentRef,
-)
+from alphaavatar.core.env import EnvAnnotation
+from alphaavatar.core.env.enums import AnnotationKind
+from alphaavatar.core.env.schemas import PerceptionEntityRef, PerceptionSegmentRef
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
 
 from ..enums import (
@@ -33,11 +30,7 @@ from ..enums import (
 )
 
 
-def _validate_candidate(
-    turn_candidate_id: str,
-    candidate_revision: int,
-    confidence: float,
-) -> None:
+def _validate_candidate(turn_candidate_id: str, candidate_revision: int, confidence: float) -> None:
     if not turn_candidate_id:
         raise ValueError("turn_candidate_id cannot be empty")
     if candidate_revision <= 0:
@@ -58,11 +51,7 @@ def _annotation(
         raise ValueError("Exactly one annotation target is required")
 
     return EnvAnnotation(
-        source=source,
-        kind=kind,
-        observation_id=observation_id,
-        frame_id=frame_id,
-        data=data,
+        source=source, kind=kind, observation_id=observation_id, frame_id=frame_id, data=data
     )
 
 
@@ -118,11 +107,7 @@ class InteractionAddressingEvidence:
             raise ValueError("raw_score must be between 0 and 1")
 
         if (
-            self.addressing_mode
-            in {
-                AddressingMode.DIRECT,
-                AddressingMode.GROUP,
-            }
+            self.addressing_mode in {AddressingMode.DIRECT, AddressingMode.GROUP}
             and not self.addressees
         ):
             raise ValueError(f"{self.addressing_mode.value} addressing requires addressees")
@@ -150,10 +135,7 @@ class InteractionAddressingEvidence:
         return data
 
     @classmethod
-    def from_dict(
-        cls,
-        data: dict[str, Any],
-    ) -> InteractionAddressingEvidence:
+    def from_dict(cls, data: dict[str, Any]) -> InteractionAddressingEvidence:
         return cls(
             evidence_kind=AddressingEvidenceKind(data["evidence_kind"]),
             speaker=InteractionEntityRef.from_dict(data["speaker"]),
@@ -169,10 +151,7 @@ class InteractionAddressingEvidence:
         )
 
     @classmethod
-    def from_annotation(
-        cls,
-        annotation: EnvAnnotation,
-    ) -> InteractionAddressingEvidence:
+    def from_annotation(cls, annotation: EnvAnnotation) -> InteractionAddressingEvidence:
         if annotation.kind != AnnotationKind.INTERACTION_ADDRESSING_EVIDENCE:
             raise ValueError(
                 f"Expected "
@@ -182,12 +161,7 @@ class InteractionAddressingEvidence:
 
         return cls.from_dict(annotation.data)
 
-    def to_annotation(
-        self,
-        *,
-        source: str,
-        observation_id: str,
-    ) -> EnvAnnotation:
+    def to_annotation(self, *, source: str, observation_id: str) -> EnvAnnotation:
         if not observation_id:
             raise ValueError("observation_id cannot be empty")
 
@@ -210,11 +184,7 @@ class InteractionAddressing:
     evidence_observation_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        _validate_candidate(
-            self.turn_candidate_id,
-            self.candidate_revision,
-            self.confidence,
-        )
+        _validate_candidate(self.turn_candidate_id, self.candidate_revision, self.confidence)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -251,11 +221,7 @@ class InteractionAddressing:
         return cls.from_dict(annotation.data)
 
     def to_annotation(
-        self,
-        *,
-        source: str,
-        observation_id: str | None = None,
-        frame_id: str | None = None,
+        self, *, source: str, observation_id: str | None = None, frame_id: str | None = None
     ) -> EnvAnnotation:
         return _annotation(
             kind=AnnotationKind.INTERACTION_ADDRESSING,
@@ -280,11 +246,7 @@ class TurnTakingDecision:
     reason: str | None = None
 
     def __post_init__(self) -> None:
-        _validate_candidate(
-            self.turn_candidate_id,
-            self.candidate_revision,
-            self.confidence,
-        )
+        _validate_candidate(self.turn_candidate_id, self.candidate_revision, self.confidence)
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -331,11 +293,7 @@ class TurnTakingDecision:
         return cls.from_dict(annotation.data)
 
     def to_annotation(
-        self,
-        *,
-        source: str,
-        observation_id: str | None = None,
-        frame_id: str | None = None,
+        self, *, source: str, observation_id: str | None = None, frame_id: str | None = None
     ) -> EnvAnnotation:
         return _annotation(
             kind=AnnotationKind.INTERACTION_TURN,

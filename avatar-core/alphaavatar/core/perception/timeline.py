@@ -19,7 +19,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from threading import RLock
 
-from alphaavatar.core.env import EnvAnnotation, EnvObservation, ObservationKind
+from alphaavatar.core.env import EnvAnnotation, EnvObservation
+from alphaavatar.core.env.enums import ObservationKind
 
 EnvAnnotationRenderer = Callable[[EnvObservation, EnvAnnotation], None]
 
@@ -185,10 +186,7 @@ class PerceptionTimeline:
 
         return None
 
-    def attach_annotation(
-        self,
-        annotation: EnvAnnotation,
-    ) -> tuple[EnvObservation | None, bool]:
+    def attach_annotation(self, annotation: EnvAnnotation) -> tuple[EnvObservation | None, bool]:
         with self._lock:
             observation = self._find_observation_locked(annotation)
 
@@ -197,11 +195,7 @@ class PerceptionTimeline:
 
             return observation, observation.add_annotation(annotation)
 
-    def render_annotation(
-        self,
-        observation: EnvObservation,
-        annotation: EnvAnnotation,
-    ) -> None:
+    def render_annotation(self, observation: EnvObservation, annotation: EnvAnnotation) -> None:
         with self._lock:
             renderers = tuple(self._renderers)
 
@@ -272,10 +266,7 @@ class PerceptionTimeline:
                 self._renderers.append(renderer)
 
     def get_observation(
-        self,
-        *,
-        observation_id: str | None = None,
-        frame_id: str | None = None,
+        self, *, observation_id: str | None = None, frame_id: str | None = None
     ) -> EnvObservation | None:
         with self._lock:
             if observation_id:

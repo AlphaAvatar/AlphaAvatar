@@ -18,6 +18,7 @@ import pathlib
 from typing import Any
 
 from alphaavatar.agents.memory.schemas import MemoryItem
+from alphaavatar.agents.utils.files.atomic import locked_directory, write_text_atomic
 
 
 def _json_dumps(value: Any) -> str:
@@ -49,11 +50,8 @@ def _read_jsonl_map(path: pathlib.Path, key: str) -> dict[str, dict[str, Any]]:
 
 
 def _write_jsonl(path: pathlib.Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix(path.suffix + ".tmp")
     text = "\n".join(_json_dumps(row) for row in rows)
-    temp.write_text(text + ("\n" if text else ""), encoding="utf-8")
-    temp.replace(path)
+    write_text_atomic(path, text + ("\n" if text else ""))
 
 
 def _as_list(value: Any) -> list[Any]:
@@ -67,7 +65,7 @@ def _is_memory_item_key(key: str) -> bool:
 
 
 def _link_key(left: str, right: str) -> str:
-    return "__".join(sorted((left, right)))
+    return json.dumps(sorted((left, right)), ensure_ascii=False, separators=(",", ":"))
 
 
 def _memory_record(item: MemoryItem) -> dict[str, Any]:
@@ -179,18 +177,20 @@ def _aggregate(
 
 
 def export_memory_graph(graph_dir: pathlib.Path, items: list[MemoryItem]) -> None:
-    graph_dir.mkdir(parents=True, exist_ok=True)
-    records_path = graph_dir / "memories.jsonl"
-    records = _read_jsonl_map(records_path, "memory_id")
+    if not items:
+        return
+    with locked_directory(graph_dir):
+        records_path = graph_dir / "memories.jsonl"
+        records = _read_jsonl_map(records_path, "memory_id")
 
-    for item in items:
-        current = records.get(item.memory_id)
-        if current is None or item.revision >= int(current.get("revision") or 0):
-            records[item.memory_id] = _memory_record(item)
+        for item in items:
+            current = records.get(item.memory_id)
+            if current is None or item.revision >= int(current.get("revision") or 0):
+                records[item.memory_id] = _memory_record(item)
 
-    ordered_records = sorted(records.values(), key=lambda row: row["memory_id"])
-    nodes, links = _aggregate(records)
+        ordered_records = sorted(records.values(), key=lambda row: row["memory_id"])
+        nodes, links = _aggregate(records)
 
-    _write_jsonl(records_path, ordered_records)
-    _write_jsonl(graph_dir / "nodes.jsonl", nodes)
-    _write_jsonl(graph_dir / "links.jsonl", links)
+        _write_jsonl(records_path, ordered_records)
+        _write_jsonl(graph_dir / "nodes.jsonl", nodes)
+        _write_jsonl(graph_dir / "links.jsonl", links)

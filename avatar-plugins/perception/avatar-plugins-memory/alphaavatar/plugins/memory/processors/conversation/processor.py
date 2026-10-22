@@ -17,21 +17,10 @@ import asyncio
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
-from alphaavatar.agents.memory.enums import (
-    MemoryCacheType,
-    MemoryKind,
-    MemoryType,
-)
-from alphaavatar.agents.memory.schemas import (
-    MemoryItem,
-    MemoryOwnerRef,
-    MemoryScope,
-)
+from alphaavatar.agents.memory.enums import MemoryCacheType, MemoryKind, MemoryType
+from alphaavatar.agents.memory.schemas import MemoryItem, MemoryOwnerRef, MemoryScope
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.capability import (
-    AvatarCapabilityName,
-    avatar_capability,
-)
+from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_capability
 from alphaavatar.agents.utils.time import application_now
 
 from ...log import logger
@@ -53,23 +42,16 @@ if TYPE_CHECKING:
 )
 class ConversationProcessor(MemoryProcessor):
     def __init__(
-        self,
-        *,
-        runtime: AvatarRuntime,
-        memory: MemoryRuntime,
-        config: ConversationConfig,
+        self, *, runtime: AvatarRuntime, memory: MemoryRuntime, config: ConversationConfig
     ) -> None:
-        super().__init__(
-            runtime=runtime,
-            memory=memory,
-        )
+        super().__init__(runtime=runtime, memory=memory)
 
         self._config = config
-        self._provider = ConversationProvider(config.provider)
+        self._provider = ConversationProvider(config.provider, service=runtime.foundation.provider)
         self._locks: dict[str, asyncio.Lock] = {}
 
         self._consolidator = MemoryConsolidator(
-            config.pipeline,
+            config.pipeline.consolidation,
             candidate_search=self._candidate_search,
             plan=self._provider.plan_consolidation,
         )
@@ -79,21 +61,13 @@ class ConversationProcessor(MemoryProcessor):
         return "conversation"
 
     def _lock(self, context_id: str) -> asyncio.Lock:
-        return self._locks.setdefault(
-            context_id,
-            asyncio.Lock(),
-        )
+        return self._locks.setdefault(context_id, asyncio.Lock())
 
     def record_recall(self, records: Iterable[MemoryItem]) -> None:
         self._consolidator.record_recall(records)
 
     async def _candidate_search(
-        self,
-        texts: list[str],
-        *,
-        owner_refs,
-        context,
-        timeout: float = 5.0,
+        self, texts: list[str], *, owner_refs, context, timeout: float = 5.0
     ):
         try:
             return await self.store.search_similar_batch(
@@ -102,12 +76,12 @@ class ConversationProcessor(MemoryProcessor):
                 context=context,
                 memory_type=MemoryType.CONVERSATION,
                 kind=MemoryKind.CONSOLIDATED,
-                top_k=(self._config.pipeline.maintenance.max_candidates_per_item),
+                top_k=(self._config.pipeline.consolidation.max_candidates_per_item),
                 timeout=timeout,
             )
 
         except Exception:
-            logger.exception("[Memory] conversation consolidation candidate search failed")
+            logger.exception("Conversation consolidation candidate search failed")
             return [[] for _ in texts]
 
     async def update(self, state: MemoryContextState) -> None:
@@ -120,10 +94,7 @@ class ConversationProcessor(MemoryProcessor):
             if start == end:
                 return
 
-            content = self.render_context_content(
-                state,
-                messages,
-            )
+            content = self.render_context_content(state, messages)
 
             delta = await self._provider.extract(
                 context_content=content,
@@ -173,20 +144,10 @@ class ConversationProcessor(MemoryProcessor):
             )
 
             await self.commit_items(
-                state=state,
-                start=start,
-                end=end,
-                items=[
-                    *avatar_items,
-                    *conversation_items,
-                ],
+                state=state, start=start, end=end, items=[*avatar_items, *conversation_items]
             )
 
-    async def _stop(
-        self,
-        *,
-        finalize: bool,
-    ) -> None:
+    async def _stop(self, *, finalize: bool) -> None:
         if not finalize:
             return
 

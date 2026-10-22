@@ -68,10 +68,7 @@ class PersonaPluginsTemplate:
         return lines
 
     @classmethod
-    def _render_runtime_state(
-        cls,
-        state: UserRuntimeState,
-    ) -> list[str]:
+    def _render_runtime_state(cls, state: UserRuntimeState) -> list[str]:
         data = state.model_dump()
 
         current_login_at = data.pop("current_login_at", None)
@@ -82,19 +79,13 @@ class PersonaPluginsTemplate:
         if current_login_at is not None:
             lines.append(
                 "- current_login_at: "
-                + format_datetime_for_timezone(
-                    current_login_at,
-                    state.current_timezone,
-                )
+                + format_datetime_for_timezone(current_login_at, state.current_timezone)
             )
 
         if last_login_at is not None:
             lines.append(
                 "- last_login_at: "
-                + format_datetime_for_timezone(
-                    last_login_at,
-                    state.last_timezone,
-                )
+                + format_datetime_for_timezone(last_login_at, state.last_timezone)
             )
 
         return lines

@@ -11,41 +11,47 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 from abc import abstractmethod
+from dataclasses import dataclass, field
 
-from livekit import rtc
-from livekit.agents import (
-    NOT_GIVEN,
-    AgentSession,
-    NotGivenOr,
-)
-
-from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.inference import InferenceExecutor
+from alphaavatar.core.lifecycle import LifecycleComponent
 
 
-class VirtualCharacterSession:
-    """A Virtial Character session"""
+@dataclass(frozen=True, slots=True)
+class CharacterConnection:
+    """A short-lived, scoped renderer attachment, not application credentials."""
 
-    def __init__(
-        self,
-        *,
-        runtime: AvatarRuntime,
-    ) -> None:
-        self.runtime = runtime
+    transport: str
+    url: str
+    agent_identity: str
+    participant_identity: str
+    token: str = field(repr=False)
+
+    def __post_init__(self) -> None:
+        for name in ("transport", "url", "agent_identity", "participant_identity", "token"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"Character connection requires {name}")
+
+
+class CharacterTransport(LifecycleComponent):
+    """Host-supplied attachment; the renderer owns its lifecycle, never the shared room."""
 
     @property
-    def inference_executor(self) -> InferenceExecutor:
-        return self.runtime.inference
+    @abstractmethod
+    def connection(self) -> CharacterConnection: ...
 
     @abstractmethod
-    async def start(
-        self,
-        agent_identity: str,
-        agent_session: AgentSession,
-        room: rtc.Room,
-        *,
-        livekit_url: NotGivenOr[str] = NOT_GIVEN,
-        livekit_api_key: NotGivenOr[str] = NOT_GIVEN,
-        livekit_api_secret: NotGivenOr[str] = NOT_GIVEN,
-    ) -> None: ...
+    async def wait_ready(self) -> None: ...
+
+    @abstractmethod
+    async def wait_failed(self) -> None: ...
+
+
+class VirtualCharacterSession(LifecycleComponent):
+    """One presentation attachment. The renderer never owns model or audio generation."""
+
+    @abstractmethod
+    async def wait_failed(self) -> None: ...

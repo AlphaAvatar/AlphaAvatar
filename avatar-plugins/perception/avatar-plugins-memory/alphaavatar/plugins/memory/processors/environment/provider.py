@@ -17,13 +17,9 @@ import asyncio
 from typing import Any
 from uuid import uuid4
 
-from alphaavatar.agents.providers import ProviderGateway
-from alphaavatar.agents.providers.schema import (
-    ModelInput,
-    ModelInputMessage,
-    ModelRole,
-    ModelTextPart,
-)
+from alphaavatar.agents.avatar.provider.enums import ModelRole
+from alphaavatar.agents.avatar.provider.schemas import ModelInput, ModelInputMessage, ModelTextPart
+from alphaavatar.agents.runtime.modules.foundation import ProviderService
 
 from ...log import logger
 from ...schemas.patch import EnvMemoryDelta
@@ -33,15 +29,12 @@ from .prompt import ENV_DELTA_PROMPT
 
 
 class EnvironmentProvider:
-    def __init__(
-        self,
-        config: EnvironmentProviderConfig,
-    ) -> None:
+    def __init__(self, config: EnvironmentProviderConfig, *, service: ProviderService) -> None:
         if not config.task:
             raise ValueError("Environment provider task cannot be empty")
 
         self._task = config.task
-        self._gateway = ProviderGateway(config.gateway)
+        self._gateway = service.gateway(config.gateway)
         self._gateway.validate_tasks([self._task], require_input_adapter=True)
 
     @staticmethod
@@ -78,10 +71,7 @@ class EnvironmentProvider:
                 ModelInputMessage(
                     id=f"memory.env:{uuid4().hex}",
                     role=ModelRole.USER,
-                    parts=(
-                        ModelTextPart(instructions),
-                        memory_input.temporal,
-                    ),
+                    parts=(ModelTextPart(instructions), memory_input.temporal),
                 ),
             )
         )
@@ -127,8 +117,5 @@ class EnvironmentProvider:
             raise
 
         except Exception:
-            logger.exception(
-                "[Memory] environment provider failed task=%s",
-                self._task,
-            )
+            logger.exception("Environment provider failed task=%s", self._task)
             raise

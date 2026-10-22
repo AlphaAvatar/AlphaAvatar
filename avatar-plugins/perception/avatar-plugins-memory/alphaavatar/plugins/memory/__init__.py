@@ -21,14 +21,7 @@ from .version import __version__
 __all__ = ["__version__"]
 
 # Plugin register
-AvatarModulePlugin.register(
-    AvatarModule.MEMORY,
-    "default",
-    MemoryPlugin(),
-)
+AvatarModulePlugin.register(AvatarModule.MEMORY, "default", MemoryPlugin())
 
 # Inference Runners
-register_inference_runner_bootstrap(
-    "alphaavatar.plugins.memory",
-    configure_inference_runners,
-)
+register_inference_runner_bootstrap("alphaavatar.plugins.memory", configure_inference_runners)

@@ -1,179 +1,141 @@
 # AlphaAvatar MCP Plugin
 
-A high-performance **Model Context Protocol (MCP) orchestration layer** for **AlphaAvatar**.
+MCP provides discovery and invocation across configured remote servers through
+AlphaAvatar's native capability system. Transport and ClientSession ownership use
+the MCP Python client directly; no LiveKit AgentSession or Agents SDK MCP base class
+is involved.
 
-This plugin provides a **unified, parallel, and latency-optimized interface** for discovering and invoking tools exposed by one or more MCP servers — without relying on LiveKit’s native MCP tool injection chain.
-
-> We intentionally disable LiveKit’s native “inject each MCP tool into Agent as separate tool” mechanism.
->
-> Why?
->
-> * Too many tools degrade Agent reasoning performance.
-> * Serial tool calls increase latency.
-> * Tool explosion harms LLM decision quality.
->
-> Instead, we provide a **single unified MCP interface** that:
->
-> * Supports tool discovery
-> * Enables parallel execution
-> * Coordinates multi-server workflows
-> * Improves overall Agent tool-call performance
-
----
-
-# Overview
-
-The MCP Plugin acts as a **Tool Orchestrator Middleware** between AlphaAvatar Agents and external MCP servers.
-
-It enables:
-
-* 🔍 Tool discovery across heterogeneous MCP servers
-* ⚡ Parallel tool execution (concurrent dispatch)
-* 🧠 Workflow coordination across multiple servers
-* 🔗 Unified abstraction for diverse capabilities (RAG, search, automation, data APIs, etc.)
-
-Unlike traditional tool injection approaches, this design:
-
-* Prevents exponential tool growth inside the Agent
-* Reduces reasoning noise
-* Avoids serial execution bottlenecks
-* Improves scalability for multi-server MCP deployments
-
----
-
-# Core Architecture
+## Architecture
 
 ```text
-AlphaAvatar Agent
-        │
-        ▼
-    MCPHost (Unified Tool)
-        │
-        ├── search_tools()
-        └── call_tools()
-                │
-                ├── MCP Server A
-                ├── MCP Server B
-                └── MCP Server C
+AvatarEngine -> Loop -> CapabilityRegistry -> MCPHost
+    -> shared inference client -> isolated MCP runner
+    -> native MCP clients -> configured remote servers
 ```
 
-The Agent only sees **one tool: `MCP`**.
+The foreground facade never blocks on database calls or a thread future. The
+existing serial inference runner owns synchronous embeddings and LanceDB work;
+its separate owned event loop performs asynchronous MCP networking. This does
+not make a single runner process handle independent inference requests in parallel.
+Within one admitted tool batch, remote calls may run concurrently.
 
-Sensitive values are redacted from MCP logs: bearer/basic tokens, `Authorization`
-and `Cookie` headers, API keys, secrets and passwords (as `key=value` or in JSON),
-and URL credentials/query values. The filter covers the plugin logger and the
-`httpx` / `mcp.client.*` loggers, which would otherwise print the full server URL
-(including `?api_key=...`). Server URLs shown to the model are redacted the same way.
+The plugin presents an aggregate capability rather than exposing every remote
+schema as a separate foreground tool. Discovery annotations do not grant permission.
 
-For `op="tool_search"`, pass `query` and optionally `top_k` (1–50, default 8)
-and `server_keys` (a list of exact names from `mcp_servers`). For example,
-`{"op": "tool_search", "query": "search repository code", "top_k": 5, "server_keys": ["github-copilot"]}`.
-Omit `server_keys` to search all configured servers.
+## Configuration
 
-`op="refresh_tools"` reloads the tool list from the configured servers without
-restarting the worker (optionally limited with `server_keys`). It reports the
-tools added, removed, and updated per server, and keeps a server's previous
-tools if refreshing that server fails. Use it only when a server's tool set has
-changed; it is not needed for normal use.
-Use `categories` (`"read"`, `"write"`, `"unknown"`) to restrict candidates by the
-tool's MCP `readOnlyHint` annotation, e.g. `"categories": ["read"]` for read-only tools.
-
-For `op="tool_call"`, `output_mode` controls result size: `"raw"` (default) returns
-full results and echoed arguments; `"compact"` truncates each tool result to 2000
-characters (with a truncation note) and omits the echoed arguments.
-
-Internally, MCPHost:
-
-1. Discovers relevant tools
-2. Validates schemas
-3. Dispatches calls in parallel
-4. Aggregates structured responses
-
----
-
-# Performance Design Philosophy
-
-## ❌ What We Avoid
-
-* Injecting hundreds of tools into the Agent
-* Serial tool invocation chains
-* Tool schema explosion
-* Repeated LLM tool selection loops
-
-## ✅ What We Enable
-
-* Single unified MCP interface
-* Parallel tool dispatch
-* Multi-server orchestration
-* Scalable architecture
-
----
-
-# Installation
-
-```bash
-pip install alpha-avatar-plugins-mcp
-```
-
----
-
-# Usage
-
-## Step 1️⃣ Enable MCP in Configuration
-
-Enable MCP and register remote MCP servers inside your `yaml` configuration file.
+MCP is configured under `tools.mcp` in a complete Avatar configuration:
 
 ```yaml
-enable_mcp: true
+tools:
+  mcp:
+    plugin: default
+    enabled: true
+    init_config: {}
 
-mcp_servers:
-  livekit-docs:
-    url: "https://docs.livekit.io/mcp"
-    instruction: >
-      LiveKit Docs MCP Server provides unified access to the LiveKit ecosystem,
-      allowing you to search documentation, explore GitHub code across livekit
-      and livekit-examples repositories, retrieve package changelogs, and browse
-      Python Agents SDK examples—all in one place.
+    vdb_config:
+      collection_name: mcp
+      embedding:
+        provider: openai
+        model: text-embedding-3-small
 
-  github-copilot:
-    url: "https://api.githubcopilot.com/mcp/"
-    headers:
-      Authorization: "Bearer <GITHUB_PAT>"
-    instruction: >
-      The GitHub MCP server (via GitHub Copilot) enables AI agents to interact
-      with repositories, issues, pull requests, and code through a standardized
-      MCP interface.
+    servers:
+      livekit-docs:
+        url: https://docs.livekit.io/mcp/
+        transport: streamable_http
+        client_session_timeout_seconds: 60.0
+        close_timeout: 10.0
+        max_in_flight: 32
+        max_tools: 4096
+        max_pages: 64
+        instruction: >
+          Search the configured LiveKit documentation server.
 ```
 
----
+Server settings are strictly validated. `streamable_http` is the default;
+select `transport: sse` explicitly for an SSE endpoint. There is no automatic
+transport fallback, reconnect-and-replay, or hidden SDK compatibility path.
+Remote endpoints require HTTPS; loopback HTTP is supported for local development.
+Embedded URL credentials and fragments are rejected. Endpoints and returned tool
+content remain deployment-specific external services.
 
-### 🔐 Environment Variables
+Credentials can use the existing environment-placeholder mechanism, for example:
 
-Sensitive credentials such as `<GITHUB_PAT>` should be injected via environment variables:
+```yaml
+headers:
+  Authorization: "Bearer <GITHUB_PAT>"
+```
+
+Provide `GITHUB_PAT` through the environment, never as a committed token. The
+configuration above is a fragment; see [complete examples](../../../examples/README.md).
+Restart Host after changing configured servers, transport settings or credentials.
+
+## Discovery and refresh
+
+`op="tool_search"` accepts a query, `top_k` (1–50, default 8), optional exact
+`server_keys`, and categories `read`, `write` or `unknown`. Categories use the
+server's `readOnlyHint`; they do not authorize invocation.
+
+Tool listing handles pagination with configured page/tool limits. Duplicate names,
+repeated cursors and excessive results fail the listing instead of publishing a
+partial catalog as complete. Tool identities remain `<server_key>.<tool_name>`.
+
+`op="refresh_tools"` explicitly refreshes selected catalogs and reports added,
+removed and updated identities. A failed listing preserves the previous catalog,
+but old entries are not evidence that the disconnected service remains callable.
+A later explicit refresh can open a new client only after the previous client was
+cleanly released. Invocation itself never reconnects and retries a tool call.
+
+LanceDB replacements are embedded before they are upserted. An embedding failure
+must not delete existing entries. Stale rows are pruned only for servers whose full
+catalog was listed successfully, not for servers that were temporarily unavailable.
+The index is discovery data, not an execution log or authorization database.
+
+## Calls, results and cancellation
+
+`op="tool_call"` accepts between one and 64 named operations. Per-server
+`max_in_flight` bounds admitted requests; excess requests fail without dispatch.
+Each dispatched request owns its timeout and cleanup. A timeout or caller
+cancellation is not proof that a remote write did not commit.
+
+`output_mode: raw` preserves complete result content and echoed arguments.
+`compact` omits echoed arguments and truncates individual result text to 2000
+characters with a note. Structured MCP result content is preserved. A successful
+empty result is represented as an empty list, not misclassified as a tool failure.
+Server-reported errors remain errors. Peer successes are not discarded merely
+because another operation in the same batch failed.
+
+Only one task enters and exits each native MCP transport and ClientSession.
+Shutdown rejects new work, permits admitted work to settle within its grace period,
+then cancels remaining local requests and waits for their cleanup before releasing
+the connection. The isolated runner closes its clients and joins its loop thread.
+A close failure remains a failure; it does not imply successful remote rollback.
+
+## Authorization and privacy
+
+Registration, discovery and remote annotations do not approve a call. Foreground
+Loop enforces exact-capability policies and its authorizer. `tool_policies: {}`
+does not bypass approval, and the native Host does not supply an approval UI.
+Do not mark the whole MCP capability read-only because one configured tool is read-only.
+
+Tool implementations return outcomes; they receive neither StatusEmitter nor
+`monologue`. Loop owns canonical tool records. Memory and Status consume their
+respective streams independently. Returned server content is data, not permission
+to change application policy.
+
+Connection errors expose safe stage/type information rather than raw headers,
+credentials or response bodies. Existing log redaction remains defense in depth,
+not permission to log arbitrary secrets or proof that third-party logs are safe.
+
+## Installation and startup
+
+Install the workspace's Host, MCP, embedding and database dependencies together,
+then use a complete configuration:
 
 ```bash
-export GITHUB_PAT=your_personal_access_token
+ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/voice/pipeline_openai_tools_minimal.yaml
 ```
 
-At runtime:
-
-* The system automatically resolves `<GITHUB_PAT>`
-* Injects it into the request headers
-* Keeps secrets out of version-controlled config files
-
----
-
-## Step 2️⃣ Start AlphaAvatar
-
-Once MCP is enabled and servers are configured:
-
-```bash
-alphaavatar serve <yarm-file-path>
-```
-
-During startup:
-
-1. MCPHost initializes
-2. All configured MCP servers are connected
-3. Server metadata is injected into MCP tool description
-4. MCP becomes available as a unified tool inside the Agent
+Use the Host's `dev` / `start` commands, not `alphaavatar serve`. Model and remote
+service credentials are still required. Native transport/lifecycle implementation
+does not substitute for an integration check against your configured MCP servers.

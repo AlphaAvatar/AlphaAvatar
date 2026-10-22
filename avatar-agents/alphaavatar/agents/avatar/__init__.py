@@ -11,6 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .engine import AvatarEngine
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .engine import AvatarEngine
 
 __all__ = ["AvatarEngine"]
+
+
+def __getattr__(name: str) -> Any:
+    if name != "AvatarEngine":
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from .engine import AvatarEngine
+
+    globals()[name] = AvatarEngine
+    return AvatarEngine

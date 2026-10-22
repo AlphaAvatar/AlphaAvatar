@@ -76,12 +76,7 @@ class RuntimeStateStore:
         path = self._path(user_path)
         return await self._run_io(path, partial(self._load, path))
 
-    async def save(
-        self,
-        *,
-        user_path: UserPath,
-        runtime_state: UserRuntimeState,
-    ) -> Path:
+    async def save(self, *, user_path: UserPath, runtime_state: UserRuntimeState) -> Path:
         path = self._path(user_path)
         snapshot = runtime_state.model_copy(deep=True)
         return await self._run_io(path, partial(self._save, path, snapshot))

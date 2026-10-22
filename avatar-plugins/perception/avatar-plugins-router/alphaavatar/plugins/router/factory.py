@@ -13,13 +13,13 @@
 # limitations under the License.
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
-from alphaavatar.core.output import OutputLane
+from alphaavatar.core.output.enums import OutputLane
 
 from .config import RouterConfig
-from .log import logger
 from .processors import (
     AudioActivityProcessor,
     MultimodalTurnTakingProcessor,
@@ -36,16 +36,15 @@ if TYPE_CHECKING:
     from alphaavatar.agents.router import RouterProcessorBase
     from alphaavatar.agents.runtime import AvatarRuntime
 
+logger = logging.getLogger(__name__)
+
 
 class RouterPlugin(AvatarModulePlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)
 
     def get_plugin(
-        self,
-        *,
-        runtime: AvatarRuntime,
-        init_config: dict[str, Any] | None = None,
+        self, *, runtime: AvatarRuntime, init_config: dict[str, Any] | None = None
     ) -> InteractionRouterRuntime:
         config = RouterConfig.model_validate(init_config or {})
         voice = runtime.foundation.voice
@@ -59,17 +58,15 @@ class RouterPlugin(AvatarModulePlugin):
         if voice.stt is not None:
             processors.append(SpeechTranscriptionProcessor(runtime=runtime, stt=voice.stt))
 
-        if voice.tts is not None:
-            processors.extend(
-                (
-                    TranscriptSynchronizationProcessor(
-                        runtime=runtime, lanes=(OutputLane.TRANSIENT,)
-                    ),
-                    SpeechSynthesisProcessor(
-                        runtime=runtime, tts=voice.tts, lanes=(OutputLane.TRANSIENT,)
-                    ),
-                )
+        # Keep the output consumers even without TTS: unsupported AUDIO_SYNCED output
+        # must terminate explicitly, not remain active forever with no consumer.
+        lanes = (OutputLane.TRANSIENT, OutputLane.ASSISTANT)
+        processors.extend(
+            (
+                TranscriptSynchronizationProcessor(runtime=runtime, lanes=lanes),
+                SpeechSynthesisProcessor(runtime=runtime, tts=voice.tts, lanes=lanes),
             )
+        )
 
         if config.addressing.visual.enabled:
             processors.append(

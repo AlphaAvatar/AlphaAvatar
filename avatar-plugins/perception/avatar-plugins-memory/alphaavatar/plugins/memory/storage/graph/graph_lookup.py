@@ -89,15 +89,7 @@ class GraphLookup:
             return []
 
         canonical = self._aliases.get(node_key, node_key)
-        return list(
-            dict.fromkeys(
-                [
-                    canonical,
-                    node_key,
-                    *self._reverse_aliases.get(canonical, []),
-                ]
-            )
-        )
+        return list(dict.fromkeys([canonical, node_key, *self._reverse_aliases.get(canonical, [])]))
 
     def expand_node_keys(
         self,
@@ -123,11 +115,7 @@ class GraphLookup:
             if hop >= max_hops:
                 continue
 
-            neighbors = sorted(
-                self._neighbors.get(key, []),
-                key=lambda item: item[1],
-                reverse=True,
-            )
+            neighbors = sorted(self._neighbors.get(key, []), key=lambda item: item[1], reverse=True)
             for neighbor, weight in neighbors[:max_neighbors_per_node]:
                 if weight >= min_weight and neighbor not in visited:
                     queue.append((neighbor, hop + 1))

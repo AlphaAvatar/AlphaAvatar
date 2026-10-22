@@ -30,9 +30,7 @@ class NumpyOP:
 
     @staticmethod
     def best_cosine_match(
-        vector: np.ndarray,
-        gallery: Mapping[T, np.ndarray],
-        threshold: float,
+        vector: np.ndarray, gallery: Mapping[T, np.ndarray], threshold: float
     ) -> T | None:
         if not gallery:
             return None

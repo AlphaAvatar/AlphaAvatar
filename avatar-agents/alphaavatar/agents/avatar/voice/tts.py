@@ -11,87 +11,49 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Transport-independent text-to-speech interface."""
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable
-
-from livekit.agents import tts as livekit_tts
+from collections.abc import AsyncIterator
 
 from alphaavatar.core.media import AudioFrame
 
 
-class TTSBase(ABC):
-    """
-    Transport-independent text-to-speech capability.
+class TTSStreamBase(AsyncIterator[AudioFrame], ABC):
+    """One synthesis request; consumers close it, including on early exit.
 
-    Implementations convert text into AlphaAvatar audio frames. They must not
-    publish frames to LiveKit, OutputRuntime, or another transport directly.
+    Implementations bound provider inactivity inside each read, independently of time
+    held by a prefetched stream or a slow local consumer. They never replay emitted PCM.
     """
+
+    request_id: str | None = None
 
     @abstractmethod
-    def synthesize(
-        self,
-        text: str,
-    ) -> AsyncIterable[AudioFrame]:
-        """Generate normalized AlphaAvatar audio frames."""
-        raise NotImplementedError
-
-    async def aclose(self) -> None:
-        """Release provider resources when owned by this instance."""
-        return None
+    async def aclose(self) -> None: ...
 
 
-class LiveKitTTSAdapter(TTSBase):
-    """
-    Temporary compatibility adapter for LiveKit Agents TTS providers.
-
-    This adapter can be removed after all TTS implementations directly expose
-    the AlphaAvatar TTSBase contract.
-    """
-
-    def __init__(
-        self,
-        provider: livekit_tts.TTS,
-        *,
-        owns_provider: bool = False,
-    ) -> None:
-        self._provider = provider
-        self._owns_provider = owns_provider
+class TTSBase(ABC):
+    """Reusable synthesis factory with an immutable PCM format per instance."""
 
     @property
-    def provider(self) -> livekit_tts.TTS:
-        return self._provider
+    @abstractmethod
+    def sample_rate(self) -> int: ...
 
-    def synthesize(
-        self,
-        text: str,
-    ) -> AsyncIterable[AudioFrame]:
-        text = text.strip()
+    @property
+    @abstractmethod
+    def num_channels(self) -> int: ...
 
-        async def _generate() -> AsyncIterable[AudioFrame]:
-            if not text:
-                return
+    @property
+    def max_concurrent_streams(self) -> int:
+        """Maximum owned synthesis streams, including prepared but unplayed audio."""
+        return 1
 
-            async with self._provider.synthesize(text) as stream:
-                async for event in stream:
-                    frame = event.frame
+    def prewarm(self) -> None:
+        """Optionally start owned, best-effort connection setup without waiting for it."""
+        return None
 
-                    yield AudioFrame(
-                        sample_rate=frame.sample_rate,
-                        num_channels=frame.num_channels,
-                        samples_per_channel=(frame.samples_per_channel),
-                        data=bytes(frame.data),
-                    )
+    @abstractmethod
+    def synthesize(self, text: str) -> TTSStreamBase: ...
 
-        return _generate()
-
-    async def aclose(self) -> None:
-        if not self._owns_provider:
-            return
-
-        aclose = getattr(self._provider, "aclose", None)
-        if callable(aclose):
-            await aclose()
+    @abstractmethod
+    async def aclose(self) -> None: ...

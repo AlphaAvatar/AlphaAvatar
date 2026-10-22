@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol, TypeVar
+from typing import Protocol
 
 from alphaavatar.agents.memory.enums import MemoryKind
 from alphaavatar.agents.memory.schemas import MemoryItem
@@ -34,10 +34,7 @@ class _KeyedRef(Protocol):
     def key(self) -> str: ...
 
 
-TRef = TypeVar("TRef", bound=_KeyedRef)
-
-
-def _merge_refs(groups: Iterable[Iterable[TRef]]) -> list[TRef]:
+def _merge_refs[TRef: _KeyedRef](groups: Iterable[Iterable[TRef]]) -> list[TRef]:
     out: list[TRef] = []
     seen: set[str] = set()
 
@@ -158,10 +155,7 @@ def rewrite_consolidated_memory(
 
     value = draft.value.strip() or original.value
 
-    source_ids = _merge_ids(
-        original.source_memory_ids,
-        (item.memory_id for item in added_items),
-    )
+    source_ids = _merge_ids(original.source_memory_ids, (item.memory_id for item in added_items))
 
     supersedes = _merge_ids(
         original.supersedes_memory_ids,
@@ -172,23 +166,14 @@ def rewrite_consolidated_memory(
         {
             **original.model_dump(),
             "value": value,
-            "topic": _merge_topics(
-                original.topic,
-                *(item.topic for item in added_items),
-            ),
+            "topic": _merge_topics(original.topic, *(item.topic for item in added_items)),
             "updated_at": updated_at,
             "revision": original.revision + 1,
             "participant_refs": _merge_refs(
-                [
-                    original.participant_refs,
-                    *(item.participant_refs for item in added_items),
-                ]
+                [original.participant_refs, *(item.participant_refs for item in added_items)]
             ),
             "source_refs": _merge_refs(
-                [
-                    original.source_refs,
-                    *(item.source_refs for item in added_items),
-                ]
+                [original.source_refs, *(item.source_refs for item in added_items)]
             ),
             "source_memory_ids": source_ids,
             "supersedes_memory_ids": supersedes,
@@ -205,10 +190,7 @@ class _Routing:
 
 
 def _resolve_target(
-    target_id: str,
-    *,
-    drafts: dict[str, ConsolidatedMemoryDraft],
-    existing_ids: set[str],
+    target_id: str, *, drafts: dict[str, ConsolidatedMemoryDraft], existing_ids: set[str]
 ) -> tuple[str | None, str | None]:
     """Return the effective target key and, when degraded, the reason."""
     draft = drafts.get(target_id)
@@ -225,9 +207,7 @@ def _resolve_target(
 
 
 def _route(
-    items: list[MemoryItem],
-    candidates: list[MemoryItem],
-    plan: ConsolidationPlan,
+    items: list[MemoryItem], candidates: list[MemoryItem], plan: ConsolidationPlan
 ) -> _Routing:
     incoming = {item.memory_id: item for item in items}
     existing_ids = {candidate.memory_id for candidate in candidates}
@@ -270,19 +250,11 @@ def _route(
 
     leftovers = [item for item in items if item.memory_id not in assigned]
 
-    return _Routing(
-        grouped=grouped,
-        drafts=target_drafts,
-        leftovers=leftovers,
-        degraded=degraded,
-    )
+    return _Routing(grouped=grouped, drafts=target_drafts, leftovers=leftovers, degraded=degraded)
 
 
 def _build_fallback(
-    items: list[MemoryItem],
-    *,
-    resolve_sources: bool,
-    created_at: datetime,
+    items: list[MemoryItem], *, resolve_sources: bool, created_at: datetime
 ) -> MemoryItem:
     # Mechanical concatenation: coarse wording, but no atomic memory is left
     # outside the consolidated layer.
@@ -312,11 +284,7 @@ def apply_assignments(
     discarding the whole plan, and every incoming memory ends up covered.
     """
     if not items:
-        return ConsolidationResult(
-            source_items=[],
-            to_insert=[],
-            to_rewrite=[],
-        )
+        return ConsolidationResult(source_items=[], to_insert=[], to_rewrite=[])
 
     routing = _route(items, candidates, plan)
     existing = {candidate.memory_id: candidate for candidate in candidates}
@@ -353,16 +321,11 @@ def apply_assignments(
     if routing.leftovers:
         to_insert.append(
             _build_fallback(
-                routing.leftovers,
-                resolve_sources=resolve_sources,
-                created_at=updated_at,
+                routing.leftovers, resolve_sources=resolve_sources, created_at=updated_at
             )
         )
         degraded.append(f"{len(routing.leftovers)} unassigned memories consolidated as fallback")
 
     return ConsolidationResult(
-        source_items=list(items),
-        to_insert=to_insert,
-        to_rewrite=to_rewrite,
-        degraded=degraded,
+        source_items=list(items), to_insert=to_insert, to_rewrite=to_rewrite, degraded=degraded
     )

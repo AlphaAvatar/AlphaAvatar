@@ -14,7 +14,4 @@
 from .config import ConversationConfig
 from .processor import ConversationProcessor
 
-__all__ = [
-    "ConversationConfig",
-    "ConversationProcessor",
-]
+__all__ = ["ConversationConfig", "ConversationProcessor"]

@@ -13,84 +13,55 @@
 # limitations under the License.
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from alphaavatar.agents.router import InteractionRouterBase, RouterProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.core.lifecycle import LifecycleComponent, LifecycleGroup, LifecyclePhase
 
-from .log import logger
+logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class _ProcessorLifecycle(LifecycleComponent):
+    processor: RouterProcessorBase
+
+    async def on_start(self) -> None:
+        await self.processor.start()
+
+    async def on_stop(self) -> None:
+        await self.processor.stop()
 
 
 class InteractionRouterRuntime(InteractionRouterBase):
-    """
-    Interaction Router processor runtime.
-
-    Concrete audio, video, multimodal and decision capabilities are implemented
-    by independently managed RouterProcessorBase instances.
-    """
+    """Manage Router processors in declaration order, without duplicating lifecycle mechanics."""
 
     def __init__(
-        self,
-        *,
-        runtime: AvatarRuntime,
-        processors: Sequence[RouterProcessorBase],
+        self, *, runtime: AvatarRuntime, processors: Sequence[RouterProcessorBase]
     ) -> None:
         super().__init__(runtime=runtime)
-
-        names = [processor.name for processor in processors]
+        self._processors = tuple(processors)
+        names = [processor.name for processor in self._processors]
         if len(names) != len(set(names)):
             raise ValueError(f"Router processor names must be unique: {names}")
 
-        self._processors = tuple(processors)
-        self._started_processors: list[RouterProcessorBase] = []
-        self._started = False
+        self._lifecycle = LifecycleGroup(
+            phases=tuple(
+                LifecyclePhase.create(processor.name, (_ProcessorLifecycle(processor),))
+                for processor in self._processors
+            )
+        )
 
     @property
     def processors(self) -> tuple[RouterProcessorBase, ...]:
         return self._processors
 
-    async def on_session_start(self) -> None:
-        if self._started:
-            return
+    async def on_start(self) -> None:
+        await self._lifecycle.start()
+        logger.info("Interaction Router started processors=%s", [p.name for p in self._processors])
 
-        try:
-            for processor in self._processors:
-                await processor.start()
-                self._started_processors.append(processor)
-        except Exception:
-            for processor in reversed(self._started_processors):
-                try:
-                    await processor.stop()
-                except Exception:
-                    logger.exception(
-                        "Failed to rollback Router processor name=%s",
-                        processor.name,
-                    )
-
-            self._started_processors.clear()
-            raise
-
-        self._started = True
-
-        logger.info(
-            "Interaction Router started processors=%s",
-            [processor.name for processor in self._processors],
-        )
-
-    async def on_session_stop(self) -> None:
-        if not self._started and not self._started_processors:
-            return
-
-        for processor in reversed(self._started_processors):
-            try:
-                await processor.stop()
-            except Exception:
-                logger.exception(
-                    "Failed to stop Router processor name=%s",
-                    processor.name,
-                )
-
-        self._started_processors.clear()
-        self._started = False
-
+    async def on_stop(self) -> None:
+        await self._lifecycle.stop()
         logger.info("Interaction Router stopped")

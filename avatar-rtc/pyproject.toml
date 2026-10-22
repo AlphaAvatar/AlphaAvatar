@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "alpha-avatar-rtc"
+dynamic = ["version"]
+description = "RTC transport adapters for AlphaAvatar."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.13,<3.14"
+classifiers = [
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3 :: Only",
+]
+dependencies = ["alpha-avatar-core"]
+
+[project.optional-dependencies]
+livekit = ["alpha-avatar-core[video]", "livekit>=1.0.12,<2"]
+
+[project.urls]
+Source = "https://github.com/AlphaAvatar/AlphaAvatar"
+Issues = "https://github.com/AlphaAvatar/AlphaAvatar/issues"
+
+[tool.hatch.version]
+path = "alphaavatar/rtc/version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["alphaavatar"]
+
+[tool.hatch.build.targets.sdist]
+include = ["alphaavatar", "README.md", "pyproject.toml", "LICENSE"]

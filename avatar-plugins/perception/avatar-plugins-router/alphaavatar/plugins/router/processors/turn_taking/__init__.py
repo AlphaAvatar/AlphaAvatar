@@ -15,8 +15,4 @@ from .config import TurnTakingConfig
 from .processor import MultimodalTurnTakingProcessor
 from .runner import SmartTurnV3Runner
 
-__all__ = [
-    "TurnTakingConfig",
-    "SmartTurnV3Runner",
-    "MultimodalTurnTakingProcessor",
-]
+__all__ = ["TurnTakingConfig", "SmartTurnV3Runner", "MultimodalTurnTakingProcessor"]

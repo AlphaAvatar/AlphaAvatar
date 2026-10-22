@@ -15,16 +15,14 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from alphaavatar.agents.configs.plugins.vision_config import VisionConfig
-from alphaavatar.agents.providers.schema import ModelInputType
-from alphaavatar.core.env import (
-    EnvObservation,
-    ObservationKind,
-    PerceptionSourceRef,
-)
+from alphaavatar.agents.avatar.provider.enums import ModelInputType
+from alphaavatar.agents.configs.plugins.foundation.vision_config import VisionConfig
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.enums import ObservationKind
+from alphaavatar.core.env.schemas import PerceptionSourceRef
 from alphaavatar.core.perception import AlignedPerception, TemporalSlice, TemporalSliceKind
 
-from .schema.visual_selection import SelectedVisualFrame, VisualSelection, VisualSliceSelection
+from .schemas.visual_selection import SelectedVisualFrame, VisualSelection, VisualSliceSelection
 
 
 class VisualFrameSelector:
@@ -43,10 +41,7 @@ class VisualFrameSelector:
 
     @staticmethod
     def _sample(
-        observations: list[EnvObservation],
-        *,
-        start_ns: int,
-        interval_sec: float,
+        observations: list[EnvObservation], *, start_ns: int, interval_sec: float
     ) -> list[EnvObservation]:
         interval_ns = max(1, round(interval_sec * 1_000_000_000))
         buckets: dict[tuple[PerceptionSourceRef, int], EnvObservation] = {}

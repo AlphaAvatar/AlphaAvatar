@@ -97,12 +97,7 @@ class TurnStream:
         self._wake(waiters)
         return event
 
-    async def wait_for_pending(
-        self,
-        *,
-        consumer_id: str,
-        timeout: float | None = None,
-    ) -> bool:
+    async def wait_for_pending(self, *, consumer_id: str, timeout: float | None = None) -> bool:
         self._validate_consumer_id(consumer_id)
         if timeout is not None and timeout < 0:
             raise ValueError("timeout cannot be negative")
@@ -136,12 +131,7 @@ class TurnStream:
                 with self._lock:
                     self._publish_waiters.discard(waiter)
 
-    def read_pending(
-        self,
-        *,
-        consumer_id: str,
-        limit: int | None = None,
-    ) -> TurnStreamRead:
+    def read_pending(self, *, consumer_id: str, limit: int | None = None) -> TurnStreamRead:
         self._validate_consumer_id(consumer_id)
         if limit is not None and limit <= 0:
             raise ValueError("limit must be positive")

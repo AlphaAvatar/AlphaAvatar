@@ -1,443 +1,110 @@
 # 🎯 AlphaAvatar Interaction Router Plugin
 
-The Interaction Router coordinates real-time multimodal interaction inside AlphaAvatar.
+Router coordinates realtime perception, addressing, turn-taking, synthesis and transcript synchronization through independent processors. It borrows model/voice abstractions and does not publish directly to LiveKit or a frontend.
 
-It connects shared perception, voice, addressing, turn-taking, and output streams through independently managed processors while keeping model providers and transport implementations outside the routing layer.
+## ⚙️ Runtime and processors
 
-## 🧭 Module Overview
+InteractionRouterRuntime implements `on_start()` / `on_stop()` and delegates ordered processor lifecycle to Core LifecycleGroup through a local adapter. RouterProcessorBase retains its `name`, `start()` and `stop()` interface.
 
-The Router consumes shared runtime streams and dispatches them through modular processors.
+The factory orders consumers according to their dependencies. A processor is an independently owned lifecycle component, not a new task-specific runtime. Startup rollback/closure also covers partial initialization; shutdown failures propagate after ordinary peer cleanup rather than only being logged.
 
-Its responsibilities include:
+| Processor | Main input | Output |
+| --- | --- | --- |
+| AudioActivityProcessor | Perception audio | Speech frames and segments with VAD state and pre-roll. |
+| SpeechTranscriptionProcessor | Routed speech | Transcript observations with segment provenance. |
+| SemanticAddressingProcessor | Transcripts and conversation focus | Typed semantic addressing evidence. |
+| VisualAddressingProcessor | Face annotations | Face-orientation addressing evidence. |
+| MultimodalTurnTakingProcessor | Speech, transcripts and addressing evidence | Turn decisions. |
+| SpeechSynthesisProcessor | AUDIO_SYNCED source text | AudioFrame and text/audio alignment. |
+| TranscriptSynchronizationProcessor | Source text, alignment, playback and control | Playback-derived transcript chunks. |
 
-* consuming raw and derived perception streams;
-* detecting speech activity and constructing speech segments;
-* routing accepted speech into transcription;
-* determining whether speech is addressed to the Avatar;
-* maintaining conversation focus across turns;
-* coordinating multimodal turn-taking decisions;
-* handling interruption, hold, commit, and passive interaction states;
-* coordinating text-to-speech synthesis and transcript synchronization;
-* exposing interfaces for future visual addressing and multimodal evidence;
-* keeping model, provider, and transport implementations separate from routing logic.
-
-Voice capabilities such as VAD, STT, and TTS are defined by AlphaAvatar voice abstractions and implemented by voice plugins.
-
-Semantic addressing and turn-taking models are also exposed through AlphaAvatar Router contracts. Concrete models may be replaced without changing processor or transport logic.
-
-The Router does not publish directly to LiveKit, a frontend, or another transport.
-
-## ⚙️ Runtime and Processors
-
-`InteractionRouterRuntime` manages the lifecycle of multiple `RouterProcessorBase` implementations.
+## 🎙️ Audio and transcription
 
 ```text
-InteractionRouterRuntime
-├── AudioActivityProcessor
-├── SpeechTranscriptionProcessor
-├── SemanticAddressingProcessor
-├── VisualAddressingProcessor
-├── MultimodalTurnTakingProcessor
-├── SpeechSynthesisProcessor
-└── TranscriptSynchronizationProcessor
+RTC -> PerceptionRuntime.audio -> AudioActivityProcessor
+    -> SPEECH_FRAME / SPEECH_SEGMENT -> SpeechTranscriptionProcessor
+    -> TRANSCRIPT_SEGMENT
 ```
 
-The runtime is responsible for:
+Each source owns independent VAD/segmentation state. Pre-roll and bounded queues keep ingestion separate from transcription and model latency. Voice factories come from `runtime.foundation.voice` (VoiceBundle); Router owns borrowed streams/requests, not the factory lifecycle.
 
-* starting processors in registration order;
-* stopping processors in reverse order;
-* rolling back already-started processors when startup fails;
-* ensuring processor names are unique.
+## 🎯 Addressing and conversation focus
 
-Each processor owns one independent routing capability:
+Semantic Addressing uses configured Avatar aliases, accumulated transcript context and per-speaker focus to classify AVATAR, NON_AVATAR or UNKNOWN. UNKNOWN is abstention, not evidence of another addressee.
 
-```python
-class RouterProcessorBase:
-    @property
-    def name(self) -> str: ...
+Explicit AVATAR/NON_AVATAR evidence updates the speaker's focus; UNKNOWN preserves it. Audio-only interaction can start with an Avatar-directed conversational prior, which explicit non-Avatar evidence overrides. Model implementation stays behind the SemanticAddressingModelBase contract.
 
-    async def start(self) -> None: ...
+VisualAddressingProcessor consumes FACE_DETECTION annotations, smooths orientation scores and publishes subject-scoped evidence. Ambiguous multi-face observations are skipped when the subject cannot be resolved. Face orientation is a heuristic, not a measurement of eye gaze. Gaze, gesture and other future evidence producers can use the same annotation contract.
 
-    async def stop(self) -> None: ...
-```
+Addressing fusion preserves provenance, detects conflicting targets and prioritizes explicit current evidence over focus fallback. Provider-specific thresholds stay with the owning model/processor.
 
-Processors may consume perception streams, publish derived observations and annotations, call injected capabilities, coordinate asynchronous inference, consume output streams, publish output events, or produce interaction decisions.
+## 🔀 Turn decisions and Engine admission
 
-## 🎙️ Audio and Transcription Flow
-
-The default audio input flow is:
+MultimodalTurnTakingProcessor coordinates candidate state, transcript/addressing readiness, asynchronous assessments, stale-result rejection and bounded evidence waits. It publishes COMMIT, HOLD, PASSIVE, INTERRUPT or CANCEL decisions according to its policy.
 
 ```text
-PerceptionRuntime.audio
-        ↓
-AudioActivityProcessor
-        ↓
-SPEECH_FRAME / SPEECH_SEGMENT
-        ↓
-SpeechTranscriptionProcessor
-        ↓
-TRANSCRIPT_SEGMENT
+Speech + transcripts + addressing
+    -> TurnTakingCoordinator / policy
+    -> perception turn-decision annotation
+    -> AvatarEngine
+    -> committed Turn and Loop submission / precise interruption
 ```
 
-### AudioActivityProcessor
+Engine now owns admission and native execution scheduling. There is no separate TurnController or SDK response sink. The Router's decision is not itself a model request or a persistence acknowledgement.
 
-Consumes normalized audio frames and uses the injected VAD capability to:
+AUDIO_ONLY and AUDIO_VISUAL combine the available evidence. VISUAL_ONLY remains an extension point for proactive behavior; its enum or an enabled visual consumer does not imply that proactive visual turns are fully implemented.
 
-* detect speech activity;
-* maintain independent state for each audio source;
-* preserve configurable pre-roll audio;
-* publish routed speech frames;
-* publish completed speech segments;
-* isolate VAD providers from RTC input adapters.
+## ⚡ Full-duplex interaction
 
-Each audio source owns an independent VAD stream and segmentation state, allowing multiple realtime sources to progress without blocking each other.
+Input, transcription, addressing, model execution, synthesis and playback progress independently. Speech-start interruption need not wait for a final transcript or semantic assessment. After interruption, STT and addressing can continue to determine whether a new committed answer is appropriate.
 
-### SpeechTranscriptionProcessor
+An old decision cannot gain authority over a newer execution merely by using the same lane. Runtime fixes interruption targets at acceptance; consumers use those exact output/lane/scope identities.
 
-Consumes routed speech and uses the injected STT capability to:
+## 🔊 Native output
 
-* process speech independently from raw audio consumption;
-* publish transcript observations aligned with speech segments;
-* keep provider-specific STT behavior outside the Router;
-* provide transcript segments to addressing and turn-taking processors.
-
-## 🎯 Semantic Addressing
-
-Semantic Addressing determines whether the current speech is directed at the Avatar.
+ASSISTANT and TRANSIENT use the same native output contracts:
 
 ```text
-TRANSCRIPT_SEGMENT
-        ↓
-SemanticAddressingProcessor
-        ↓
-SemanticAddressingModelBase
-        ↓
-AVATAR / NON_AVATAR / UNKNOWN
-        ↓
-INTERACTION_ADDRESSING_EVIDENCE
+EnvOutput(TEXT_CHUNK, AUDIO_SYNCED)
+    -> OutputRuntime.publish(...)
+    -> SpeechSynthesisProcessor
+    -> EnvOutput(AudioFrame / alignment)
+    -> RTC audio adapter
+    -> playback feedback
+    -> TranscriptSynchronizationProcessor
+    -> RTC transcript adapter
 ```
 
-The model receives contextual information including:
+Consumers read `event.output`. Formal scope, model/item provenance, content phase and completion barriers are typed fields rather than execution-significant metadata keys.
 
-* configured Avatar identities and aliases;
-* conversation focus at the beginning of the current turn;
-* recent configurable conversation history;
-* transcript segments accumulated for the current turn.
+One logical output owns its synthesis job. Source chunks are kept in order; replacement or interruption cannot reopen a retired output. Output text preserves whitespace and code indentation. Media publication reuses validated Core audio frames; runtime publication does not re-encode PCM.
 
-One assessment is performed for each completed speech segment.
+TEXT_COMPLETE seals text, AUDIO_COMPLETE seals audio/alignment production, COMPLETE is the Runtime output terminal state, and PLAYBACK is transport delivery evidence. Synthesis, playback and transcript finalization are not collapsed into one generic completion broadcast.
 
-The processor does not depend on a specific model repository or inference backend. Concrete Semantic Addressing models are isolated behind `SemanticAddressingModelBase` and may use local CPU inference, remote inference, or future model implementations.
+The synchronizer releases text according to played audio. Already delivered transcript remains after interruption; unplayed source text is not reported as heard. Fallback alignment estimates timing from synthesized duration; native provider alignment can improve precision without changing RTC's contract.
 
-### Addressing Labels
+IMMEDIATE text does not wait for audio. MIRROR remains observational text for a separately owned delivery path, not a duplicate visible answer. Consumers for unsupported AUDIO_SYNCED output remain present so missing TTS produces an explicit terminal outcome rather than leaving an active output forever.
 
-Semantic Addressing uses three runtime outcomes:
+## ⚙️ Configuration ownership
 
 ```text
-AVATAR
-    explicit evidence that speech is directed at the Avatar
-
-NON_AVATAR
-    explicit evidence that speech is directed elsewhere
-
-UNKNOWN
-    insufficient evidence; abstain from changing the current focus
+router.init_config.audio_activity       -> AudioActivityConfig
+router.init_config.addressing.semantic  -> SemanticAddressingConfig
+router.init_config.addressing.visual    -> VisualAddressingConfig
+router.init_config.turn_taking          -> TurnTakingConfig
 ```
 
-`UNKNOWN` is not treated as evidence that the user is speaking to another person.
+Addressing owns observation/model settings. Turn Taking owns evidence fusion, coordination, interruption and deadlines. `addressing_wait_sec`, `transcript_wait_sec`, `unsegmented_alignment_sec`, `max_hold_sec` and `fusion` belong directly to turn_taking, not its policy subtree.
 
-### Conversation Focus
+`interruption.enabled` controls supported Turn interruption; `interruption.audio_only_speech_start` additionally selects immediate audio-only speech-start interruption. There is no parallel `voice.allow_interruptions` switch.
 
-Semantic Addressing maintains conversation focus independently for each speaker.
+See [Examples](../../../examples/README.md) for full configurations. Disabled optional processors are not constructed; output consumers still honor their explicit unsupported-output handling. Runner selection and model initialization remain separate from processor startup.
 
-```text
-AVATAR
-    → focus becomes AVATAR
+## 🔌 Boundaries
 
-NON_AVATAR
-    → focus becomes NON_AVATAR
+Core owns data, timing, state-transition and lifecycle contracts. Router owns interaction processors. Voice owns factories. Persona owns identity processing. Engine owns admission and execution; Host owns assembly; RTC owns codecs, room/track resources and delivery projection.
 
-UNKNOWN
-    → existing focus is preserved
-```
-
-This allows interactions such as:
-
-```text
-User talks to Avatar
-        ↓
-focus = AVATAR
-
-User clearly turns to another person
-        ↓
-focus = NON_AVATAR
-
-Ambiguous follow-up speech
-        ↓
-focus remains NON_AVATAR
-
-User explicitly addresses Avatar again
-        ↓
-focus = AVATAR
-```
-
-For audio-only interaction, the initial conversational prior is that the user is addressing the Avatar. Explicit `NON_AVATAR` evidence can override that prior, while `UNKNOWN` does not.
-
-## 👁️ Visual Addressing
-
-`VisualAddressingProcessor` consumes `FACE_DETECTION` annotations and uses `FaceOrientationEstimator` to produce visual addressing evidence.
-
-The processor maintains independent state for each visual subject, smooths orientation scores, applies configurable thresholds, and limits repeated evidence publication. Ambiguous multi-face observations are skipped when the active subject cannot be identified reliably.
-
-Face orientation provides heuristic addressing evidence; it is not a direct measurement of eye gaze.
-
-Gaze direction, body orientation, gestures, scene events, and other visual attention signals remain extension points. Additional producers can publish the same addressing annotation contract without changing the Turn Taking processor.
-
-## 🔀 Addressing Fusion
-
-Addressing producers publish independent `INTERACTION_ADDRESSING_EVIDENCE` annotations.
-
-```text
-Semantic Addressing ─────┐
-Conversation Focus ──────┤
-Visual Addressing ───────┤
-Explicit Evidence ───────┤
-                         ↓
-                Addressing Fusion
-                         ↓
-              resolved addressee
-```
-
-The fusion layer:
-
-* ignores abstaining `UNKNOWN` evidence;
-* keeps evidence providers independent;
-* resolves compatible evidence;
-* detects conflicting targets;
-* preserves evidence provenance;
-* allows current explicit evidence to take priority over conversation-focus fallback.
-
-Model-specific thresholds remain inside the model or processor that owns them rather than inside the generic fusion layer.
-
-## 🔄 Multimodal Turn Taking
-
-`MultimodalTurnTakingProcessor` combines speech state, transcripts, addressing evidence, and turn-taking model assessments into interaction decisions.
-
-```text
-Speech / Transcript
-        │
-        ├───────────────→ Turn Taking Model
-        │
-Addressing Evidence
-        │
-        └───────────────→ Addressing Fusion
-                                │
-                                ↓
-                     TurnTakingCoordinator
-                                │
-                                ↓
-                      TurnTakingPolicy
-                                │
-              ┌─────────────────┼─────────────────┐
-              ↓                 ↓                 ↓
-           COMMIT              HOLD            PASSIVE
-              │                                   │
-              └──────── INTERRUPT / CANCEL ───────┘
-```
-
-The coordinator manages:
-
-* turn candidates;
-* speech segment lifecycle;
-* transcript readiness;
-* addressing readiness;
-* asynchronous model assessments;
-* stale-result rejection;
-* interruption handling;
-* timeout resolution;
-* evidence alignment;
-* terminal turn decisions.
-
-Semantic Addressing and Turn Taking inference may execute independently and asynchronously. The coordinator waits only for required evidence within configured latency bounds.
-
-### Turn Modes
-
-The Router supports:
-
-```text
-AUDIO_ONLY
-AUDIO_VISUAL
-VISUAL_ONLY
-```
-
-`AUDIO_ONLY` assumes the Avatar as the initial conversational target when no explicit addressing evidence exists.
-
-Explicit `NON_AVATAR` evidence may suppress a response, while ambiguous or missing evidence can fall back to the audio-only conversational prior.
-
-`AUDIO_VISUAL` can combine semantic, conversational, and face-orientation evidence.
-
-`VISUAL_ONLY` is reserved for future proactive and observation-driven interaction behavior.
-
-## ⚡ Full-Duplex Interaction
-
-The Router is designed for low-latency, asynchronous, full-duplex operation.
-
-Independent processors allow perception, transcription, semantic addressing, turn-taking inference, synthesis, and playback feedback to progress concurrently.
-
-For example:
-
-```text
-Avatar speaking
-      │
-      ├──────── User speech begins
-      │              ↓
-      │       speech-start detection
-      │              ↓
-      └────────── INTERRUPT
-                     ↓
-                 Avatar stops
-                     ↓
-              STT continues
-                     ↓
-        Semantic Addressing resolves
-                     ↓
-             COMMIT / PASSIVE
-```
-
-Interruption does not require waiting for a completed semantic assessment. The Avatar can stop output immediately when new speech begins and determine the actual addressee asynchronously afterward.
-
-## 🔊 Output Flow
-
-The default transient output flow is:
-
-```text
-AUDIO_SYNCED OutputTextChunk
-        ↓
-SpeechSynthesisProcessor
-        ↓
-OutputRuntime AudioFrame + Alignment
-        ↓
-Transport audio adapter
-        ↓
-OutputRuntime Playback feedback
-        ↓
-TranscriptSynchronizationProcessor
-        ↓
-OutputRuntime TranscriptChunk
-        ↓
-Transport transcript adapter
-```
-
-### SpeechSynthesisProcessor
-
-Consumes `AUDIO_SYNCED` source text and uses the injected TTS capability to publish normalized AlphaAvatar audio frames.
-
-One `output_id` owns one long-lived synthesis job. Multiple source-text chunks with the same `output_id` are synthesized sequentially.
-
-A different `output_id` in the same output lane can replace the current output. Interruption cancels the entire synthesis job, removes pending segments, and prevents later chunks from reopening the interrupted output.
-
-The processor also publishes text-audio alignment events associating source-text chunks with generated audio intervals.
-
-### TranscriptSynchronizationProcessor
-
-Consumes:
-
-* `TEXT_CHUNK`;
-* text-audio `ALIGNMENT`;
-* transport `PLAYBACK`;
-* `CONTROL` events.
-
-It publishes incremental `TRANSCRIPT_CHUNK` events representing only text confirmed as delivered through audio playout.
-
-This separates:
-
-```text
-generated source text
-    what AlphaAvatar intended to say
-
-delivered transcript
-    what the user actually heard
-```
-
-When audio is interrupted:
-
-* already delivered transcript remains visible;
-* unplayed text is not emitted;
-* the transcript is finalized with `interrupted=True`;
-* the original generated text remains available on the output timeline.
-
-The current fallback synchronizer estimates word or character timing from synthesized audio duration. TTS providers with native word timing can replace this approximation without changing the transport interface.
-
-## 🧩 Supported Processors
-
-| Processor                            | Input                                         | Output                                    | Function                                                                                             |
-| ------------------------------------ | --------------------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `AudioActivityProcessor`             | Perception `audio`                            | `SPEECH_FRAME`, `SPEECH_SEGMENT`          | Applies VAD, maintains per-source speech state, preserves pre-roll, and publishes segmented speech.  |
-| `SpeechTranscriptionProcessor`       | Routed speech                                 | `TRANSCRIPT_SEGMENT`                      | Calls injected STT and publishes transcript observations without blocking audio processing.          |
-| `SemanticAddressingProcessor`        | Transcript segments                           | `INTERACTION_ADDRESSING_EVIDENCE`         | Determines whether speech is directed at the Avatar and maintains per-speaker conversation focus.    |
-| `VisualAddressingProcessor`          | `FACE_DETECTION` annotations                  | `INTERACTION_ADDRESSING_EVIDENCE`         | Estimates face orientation, smooths per-subject scores, and publishes visual addressing evidence.    |
-| `MultimodalTurnTakingProcessor`      | Speech, transcript, and addressing evidence   | Turn decisions and addressing annotations | Coordinates turn state, evidence fusion, interruption, commit, hold, and passive behavior.           |
-| `SpeechSynthesisProcessor`           | Output `AUDIO_SYNCED TEXT_CHUNK`              | `AUDIO_FRAME`, `ALIGNMENT`                | Maintains synthesis jobs and converts text into transport-independent audio.                         |
-| `TranscriptSynchronizationProcessor` | Output text, alignment, playback, and control | `TRANSCRIPT_CHUNK`                        | Releases visible transcript according to actual audio playout.                                       |
-
-## ⚙️ Configuration Ownership
-
-The top-level `RouterConfig` composes processor-owned configurations. `RouterPlugin` validates the configuration, selects enabled processors, and passes only the corresponding configuration subtree to each processor.
-
-```text
-router.init_config.audio_activity
-    → AudioActivityConfig
-
-router.init_config.addressing.semantic
-    → SemanticAddressingConfig
-
-router.init_config.addressing.visual
-    → VisualAddressingConfig
-
-router.init_config.turn_taking
-    → TurnTakingConfig
-```
-
-Addressing producers own their observation and model settings. Turn Taking owns evidence coordination, fusion, interruption policy, and timeout settings.
-
-`addressing_wait_sec`, `transcript_wait_sec`, `unsegmented_alignment_sec`, `max_hold_sec`, and `fusion` belong directly to `turn_taking`. The `policy` section contains decision-policy settings such as `commit_threshold` and `respond_to_group`.
-
-`interruption.enabled` controls interruption across supported turn modes. `interruption.audio_only_speech_start` additionally controls immediate speech-start interruption in audio-only mode.
-
-Disabled processors are not constructed by `RouterPlugin`. Inference runner registration and model initialization are managed separately.
-
-## 🔌 Architectural Boundary
-
-The Router owns realtime interaction routing and coordination.
-
-It does not own:
-
-* LiveKit rooms or tracks;
-* WebRTC publication;
-* frontend rendering;
-* model provider implementations;
-* persistent memory;
-* transport-specific text or audio formats.
-
-The surrounding architecture is:
-
-```text
-avatar-core
-    perception and output streams, timing, annotations, lifecycle, and control semantics
-
-Router
-    realtime perception routing, addressing, turn taking, and output coordination
-
-Voice
-    VAD, STT, and TTS capability implementations
-
-Persona
-    identity, speaker, face, and user-context processing
-
-Entrypoints
-    LiveKit and channel transport adapters
-```
-
-This boundary supports low-latency, asynchronous, modular, full-duplex interaction while allowing perception models, voice providers, semantic addressing models, turn-taking models, and transports to evolve independently.
+Router does not own database persistence, transport-specific types, Provider client implementations or another generic event bus. It does not directly consume canonical records as a replacement for Memory/Context consumers.
 
 ## 📦 Installation
 
@@ -445,4 +112,4 @@ This boundary supports low-latency, asynchronous, modular, full-duplex interacti
 pip install alpha-avatar-plugins-router
 ```
 
-The plugin is loaded through the AlphaAvatar configuration.
+The plugin is selected through Agent configuration. SDK worker/vendor adapters still present elsewhere are not alternative Router generation paths.

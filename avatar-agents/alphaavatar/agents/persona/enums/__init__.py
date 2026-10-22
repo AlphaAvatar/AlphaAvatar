@@ -14,7 +14,4 @@
 from .profile_source import ProfileItemSource
 from .runner_op import VectorRunnerOP
 
-__all__ = [
-    "ProfileItemSource",
-    "VectorRunnerOP",
-]
+__all__ = ["ProfileItemSource", "VectorRunnerOP"]

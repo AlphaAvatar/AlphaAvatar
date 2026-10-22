@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from .enum.formats import PayloadFormat, PayloadView
+from .enums import PayloadFormat, PayloadView
 from .payload import MediaPayload
 
 
@@ -107,10 +107,7 @@ class VideoFramePayload(MediaPayload):
         height: int,
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        super().__init__(
-            modality="video_frame",
-            metadata=metadata,
-        )
+        super().__init__(modality="video_frame", metadata=metadata)
 
         self.frame_id = frame_id
         self.width = width
@@ -125,24 +122,11 @@ class VideoFramePayload(MediaPayload):
         jpeg_bytes: bytes | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> VideoFramePayload:
-        payload = cls(
-            frame_id=frame_id,
-            width=frame.width,
-            height=frame.height,
-            metadata=metadata,
-        )
+        payload = cls(frame_id=frame_id, width=frame.width, height=frame.height, metadata=metadata)
 
-        payload.put(
-            PayloadFormat.VIDEO_FRAME,
-            frame,
-            view=PayloadView.RAW,
-        )
+        payload.put(PayloadFormat.VIDEO_FRAME, frame, view=PayloadView.RAW)
 
         if jpeg_bytes is not None:
-            payload.put(
-                PayloadFormat.IMAGE_JPEG_BYTES,
-                jpeg_bytes,
-                view=PayloadView.RAW,
-            )
+            payload.put(PayloadFormat.IMAGE_JPEG_BYTES, jpeg_bytes, view=PayloadView.RAW)
 
         return payload

@@ -28,9 +28,10 @@ from qdrant_client.models import (
     VectorParams,
 )
 
+from alphaavatar.agents.avatar.provider.enums import ProviderKind
+from alphaavatar.agents.avatar.provider.factory import create_embedding_model
+from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
 from alphaavatar.agents.memory.enums import VectorRunnerOP
-from alphaavatar.agents.providers import ProviderKind, ProviderTaskConfig
-from alphaavatar.agents.providers.embedding import create_embedding_model
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import qdrant
 
@@ -173,9 +174,7 @@ class QdrantRunner(InferenceRunner):
         }
 
     def _to_graph_node_payloads(
-        self,
-        item: dict,
-        vectors: list[list[float]],
+        self, item: dict, vectors: list[list[float]]
     ) -> list[tuple[dict[str, Any], list[float]]]:
         metadata = item.get("metadata", {}) or {}
         memory_id = str(item["id"])
@@ -206,11 +205,7 @@ class QdrantRunner(InferenceRunner):
         return rows
 
     def _query_candidates(
-        self,
-        vector: list[float],
-        *,
-        query_filter: Filter | None,
-        limit: int,
+        self, vector: list[float], *, query_filter: Filter | None, limit: int
     ) -> list[dict[str, Any]]:
         if limit <= 0:
             return []
@@ -230,10 +225,7 @@ class QdrantRunner(InferenceRunner):
         ]
 
     def _scroll_candidates(
-        self,
-        *,
-        scroll_filter: Filter | None,
-        limit: int,
+        self, *, scroll_filter: Filter | None, limit: int
     ) -> list[dict[str, Any]]:
         if limit <= 0:
             return []
@@ -323,8 +315,7 @@ class QdrantRunner(InferenceRunner):
             }
             exact = (
                 self._scroll_candidates(
-                    scroll_filter=self._build_filter(node_keys=node_keys, **common),
-                    limit=top_k,
+                    scroll_filter=self._build_filter(node_keys=node_keys, **common), limit=top_k
                 )
                 if self._as_str_list(node_keys)
                 else []
@@ -434,18 +425,12 @@ class QdrantRunner(InferenceRunner):
                 for payload, node_vector in self._to_graph_node_payloads(item_copy, [vector]):
                     points.append(
                         PointStruct(
-                            id=self._point_id(payload["id"]),
-                            vector=node_vector,
-                            payload=payload,
+                            id=self._point_id(payload["id"]), vector=node_vector, payload=payload
                         )
                     )
 
             if points:
-                self._client.upsert(
-                    collection_name=self._collection_name,
-                    points=points,
-                    wait=True,
-                )
+                self._client.upsert(collection_name=self._collection_name, points=points, wait=True)
 
             result["inserted"] = len(points)
         except Exception as exc:
@@ -496,10 +481,7 @@ class QdrantRunner(InferenceRunner):
 
         return create_embedding_model(
             ProviderTaskConfig(
-                kind=ProviderKind.EMBEDDING,
-                provider=provider,
-                model=model,
-                extra=extra,
+                kind=ProviderKind.EMBEDDING, provider=provider, model=model, extra=extra
             )
         )
 

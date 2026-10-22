@@ -14,33 +14,28 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from alphaavatar.agents.avatar.voice import VADBase
 from alphaavatar.agents.router import RouterProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.core.env import EnvObservation, PerceptionSourceRef
-from alphaavatar.core.media import (
-    AudioFrame,
-    PayloadFormat,
-    PayloadFormatUnavailable,
-    PayloadView,
-)
-from alphaavatar.core.perception import PerceptionStreamKind
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.schemas import PerceptionSourceRef
+from alphaavatar.core.media import AudioFrame, PayloadFormatUnavailable
+from alphaavatar.core.media.enums import PayloadFormat, PayloadView
+from alphaavatar.core.perception.enums import PerceptionStreamKind
 
-from ...log import logger
 from .config import AudioActivityConfig
 from .source import AudioActivitySource
+
+logger = logging.getLogger(__name__)
 
 
 class AudioActivityProcessor(RouterProcessorBase):
     CONSUMER_ID = "router.audio_activity"
 
     def __init__(
-        self,
-        *,
-        runtime: AvatarRuntime,
-        vad: VADBase,
-        config: AudioActivityConfig,
+        self, *, runtime: AvatarRuntime, vad: VADBase, config: AudioActivityConfig
     ) -> None:
         super().__init__(runtime=runtime)
 
@@ -66,20 +61,14 @@ class AudioActivityProcessor(RouterProcessorBase):
 
         try:
             frame = observation.payload.get(
-                PayloadFormat.AUDIO_FRAME,
-                view=PayloadView.RAW,
-                fallback_to_raw=False,
+                PayloadFormat.AUDIO_FRAME, view=PayloadView.RAW, fallback_to_raw=False
             )
         except PayloadFormatUnavailable:
             return None
 
         return frame if isinstance(frame, AudioFrame) else None
 
-    def _create_source(
-        self,
-        observation: EnvObservation,
-        frame: AudioFrame,
-    ) -> AudioActivitySource:
+    def _create_source(self, observation: EnvObservation, frame: AudioFrame) -> AudioActivitySource:
         source = AudioActivitySource(
             perception_runtime=self._runtime.perception,
             input_source=observation.source,
@@ -93,9 +82,7 @@ class AudioActivityProcessor(RouterProcessorBase):
         return source
 
     async def _replace_source(
-        self,
-        observation: EnvObservation,
-        frame: AudioFrame,
+        self, observation: EnvObservation, frame: AudioFrame
     ) -> AudioActivitySource:
         previous = self._sources.pop(observation.source, None)
         if previous is not None:
@@ -150,8 +137,7 @@ class AudioActivityProcessor(RouterProcessorBase):
         while True:
             try:
                 await self._runtime.perception.wait_for_pending_observations(
-                    consumer_id=self.CONSUMER_ID,
-                    streams={PerceptionStreamKind.AUDIO},
+                    consumer_id=self.CONSUMER_ID, streams={PerceptionStreamKind.AUDIO}
                 )
 
                 window = self._runtime.perception.take_pending_observations(
@@ -161,10 +147,7 @@ class AudioActivityProcessor(RouterProcessorBase):
                 )
 
                 if window.has_gap:
-                    logger.warning(
-                        "Audio Activity input gap missed=%s",
-                        window.missed_count,
-                    )
+                    logger.warning("Audio Activity input gap missed=%s", window.missed_count)
                     await self._close_sources(graceful=False)
 
                 for observation in window.audio_frames:
@@ -183,10 +166,7 @@ class AudioActivityProcessor(RouterProcessorBase):
             return
 
         self._started = True
-        self._task = asyncio.create_task(
-            self._consume_loop(),
-            name="router_audio_activity",
-        )
+        self._task = asyncio.create_task(self._consume_loop(), name="router_audio_activity")
 
     async def stop(self) -> None:
         if not self._started:
@@ -201,6 +181,5 @@ class AudioActivityProcessor(RouterProcessorBase):
 
         await self._close_sources(graceful=True)
         self._runtime.perception.clear_observation_consumer(
-            self.CONSUMER_ID,
-            streams={PerceptionStreamKind.AUDIO},
+            self.CONSUMER_ID, streams={PerceptionStreamKind.AUDIO}
         )

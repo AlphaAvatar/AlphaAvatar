@@ -11,58 +11,58 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from pydantic import BaseModel, Field
+from collections.abc import Mapping
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from alphaavatar.agents.configs.runtime_config import RuntimeConfig
 
 from .avatar_info_config import AvatarInfoConfig
-from .plugins.character_config import VirtualCharacterConfig
-from .plugins.llm_config import LLMConfig
-from .plugins.memory_config import MemoryConfig
-from .plugins.persona_config import PersonaConfig
-from .plugins.router_config import RouterConfig
-from .plugins.status_config import StatusConfig
-from .plugins.tools_config import ToolsConfig
-from .plugins.vision_config import VisionConfig
-from .plugins.voice_config import VoiceConfig
+from .plugins.foundation import ContextConfig, LoopConfig, VisionConfig, VoiceConfig
+from .plugins.perception import (
+    MemoryConfig,
+    PersonaConfig,
+    RouterConfig,
+    StatusConfig,
+    VirtualCharacterConfig,
+)
+from .plugins.tools import ToolsConfig
 
 
 class AvatarConfig(BaseModel):
-    """
-    Top-level Avatar configuration.
+    """Runtime settings and configurable Avatar plugins, not SDK generation settings."""
 
-    Contains runtime settings and all configurable Avatar plugins.
-    """
+    model_config = ConfigDict(extra="forbid")
 
+    # Avatar information and runtime configuration.
     avatar: AvatarInfoConfig = Field(default_factory=AvatarInfoConfig)
-    """Avatar information configuration."""
-
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
-    """Runtime configuration, which will creat for each session."""
 
-    status: StatusConfig = Field(default_factory=StatusConfig)
-    """Intermediate status plugin configuration."""
-
-    llm: LLMConfig = Field(default_factory=LLMConfig)
-    """LLM plugin configuration."""
-
+    # Foundation plugins.
+    context: ContextConfig = Field(default_factory=ContextConfig)
+    loop: LoopConfig = Field(default_factory=LoopConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
-    """Voice plugin configuration."""
-
     vision: VisionConfig = Field(default_factory=VisionConfig)
-    """Vision plugin configuration."""
 
+    # Agent-owned plugins.
+    status: StatusConfig = Field(default_factory=StatusConfig)
     router: RouterConfig = Field(default_factory=RouterConfig)
-    """Interaction Router plugin configuration."""
-
     character: VirtualCharacterConfig = Field(default_factory=VirtualCharacterConfig)
-    """Virtual character plugin configuration."""
-
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
-    """Memory plugin configuration."""
-
     persona: PersonaConfig = Field(default_factory=PersonaConfig)
-    """Persona plugin configuration."""
-
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
-    """Tool plugin configuration."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_sections(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        if "llm" in value:
+            raise ValueError("llm was removed; configure loop.init_config.model instead")
+        if "defaults" not in value:
+            return value
+        if not isinstance(value["defaults"], Mapping):
+            raise ValueError("defaults must be a mapping of YAML anchor definitions")
+        # YAML aliases are already expanded. This is authoring data, not a runtime section.
+        return {key: item for key, item in value.items() if key != "defaults"}

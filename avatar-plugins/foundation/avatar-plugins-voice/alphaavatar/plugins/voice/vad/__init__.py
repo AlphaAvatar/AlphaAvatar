@@ -27,8 +27,4 @@ class SileroVADPlugin(AvatarModulePlugin):
         return SileroVAD(**kwargs)
 
 
-__all__ = [
-    "SileroVAD",
-    "SileroVADPlugin",
-    "SileroVADRunner",
-]
+__all__ = ["SileroVAD", "SileroVADPlugin", "SileroVADRunner"]

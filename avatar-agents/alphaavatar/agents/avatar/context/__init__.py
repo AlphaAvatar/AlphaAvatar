@@ -11,12 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .context_manager import AvatarContext, AvatarContextManager
-from .context_status import AvatarContextStatus, extract_answer_text
+"""Public ContextManager contract; implementations live in the Context plugin."""
 
-__all__ = [
-    "AvatarContext",
-    "AvatarContextManager",
-    "AvatarContextStatus",
-    "extract_answer_text",
-]
+from .manager_base import ContextManager
+
+__all__ = ["ContextManager"]

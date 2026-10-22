@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "alpha-avatar-plugins-provider"
+dynamic = ["version"]
+description = "Provider backends for AlphaAvatar model and embedding contracts."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.13,<3.14"
+classifiers = [
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3 :: Only",
+]
+dependencies = ["alpha-avatar-agents", "alpha-avatar-core", "pydantic>=2,<3"]
+
+[project.optional-dependencies]
+langchain = [
+    "httpx>=0.28,<1",
+    "langchain-anthropic==1.4.6",
+    "langchain-core",
+    "langchain-google-genai==4.2.5",
+    "langchain-openai==1.0.2",
+]
+openai = ["alpha-avatar-core[video]", "httpx>=0.28,<1", "jsonschema>=4.18,<5", "openai>=2.0,<3"]
+
+[project.entry-points."alphaavatar.provider"]
+openai = "alphaavatar.plugins.provider.openai"
+langchain = "alphaavatar.plugins.provider.langchain"
+
+[project.urls]
+Source = "https://github.com/AlphaAvatar/AlphaAvatar"
+Issues = "https://github.com/AlphaAvatar/AlphaAvatar/issues"
+
+[tool.hatch.version]
+path = "alphaavatar/plugins/provider/version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["alphaavatar"]
+
+[tool.hatch.build.targets.sdist]
+include = ["alphaavatar", "README.md", "pyproject.toml", "LICENSE"]

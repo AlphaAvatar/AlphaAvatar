@@ -16,10 +16,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import replace
 
-from alphaavatar.agents.router.enums import (
-    AddressingEvidenceKind,
-    AddressingMode,
-)
+from alphaavatar.agents.router.enums import AddressingEvidenceKind, AddressingMode
 from alphaavatar.agents.router.schemas import (
     InteractionAddressingEvidence,
     InteractionEntityRef,
@@ -57,16 +54,14 @@ class AddressingFusion:
 
     @staticmethod
     def same_target(
-        left: InteractionAddressingEvidence | None,
-        right: InteractionAddressingEvidence | None,
+        left: InteractionAddressingEvidence | None, right: InteractionAddressingEvidence | None
     ) -> bool:
         if left is None or right is None:
             return left is right
         return _target_key(left) == _target_key(right)
 
     def resolve(
-        self,
-        records: Iterable[AddressingEvidenceRecord],
+        self, records: Iterable[AddressingEvidenceRecord]
     ) -> InteractionAddressingEvidence | None:
         active = [record for record in records if not record.evidence.abstains]
         primary = [
@@ -80,8 +75,7 @@ class AddressingFusion:
             return None
 
         candidates.sort(
-            key=lambda record: (record.evidence.confidence, record.sequence),
-            reverse=True,
+            key=lambda record: (record.evidence.confidence, record.sequence), reverse=True
         )
 
         best = candidates[0]
@@ -111,10 +105,7 @@ class AddressingFusion:
         )
 
     def apply(
-        self,
-        *,
-        assessment: TurnTakingAssessment,
-        records: Iterable[AddressingEvidenceRecord],
+        self, *, assessment: TurnTakingAssessment, records: Iterable[AddressingEvidenceRecord]
     ) -> TurnTakingAssessment:
         evidence = self.resolve(records)
         if evidence is None:

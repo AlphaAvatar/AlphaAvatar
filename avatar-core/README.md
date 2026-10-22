@@ -1,191 +1,71 @@
 # AlphaAvatar Core
 
-## 🧩 Introduction
+`avatar-core` provides transport-independent media, event and lifecycle contracts.
+It does not depend on Agents, concrete plugins, model SDKs or LiveKit.
 
-`avatar-core` provides the transport-agnostic runtime primitives shared across AlphaAvatar.
-
-It defines how multimodal observations and outputs are represented, published through typed streams, aligned on shared timelines, and consumed independently by runtime modules and transport adapters.
-
-The package intentionally remains independent from LiveKit Agents, model providers, plugin implementations, and frontend protocols. RTC adapters, Persona, Memory, Vision, Router processors, output transports, and future multimodal components can therefore evolve without coupling the core runtime to a specific backend.
-
-The two primary runtime planes are:
+## 📦 Package structure
 
 ```text
-PerceptionRuntime
-    normalized input observations and annotations
-
-OutputRuntime
-    time-aligned status, text, audio, playback, transcript, and control events
+alphaavatar/core/
+├── cleanup.py          # Cancellation-safe waiting for owned cleanup.
+├── lifecycle.py        # Components, phases and ordered lifecycle groups.
+├── log/                # Diagnostic records, producers and error formatting.
+├── env/                # Input observations, annotations and output envelopes.
+├── media/              # AlphaAvatar-owned audio, image, video and text payloads.
+├── perception/         # Source lineage, event streams, windows and timelines.
+├── turn/               # Committed input snapshots and independent consumers.
+└── output/             # Delivery, canonical records, control and playback facts.
+    ├── enums/
+    ├── schemas/
+    ├── runtime.py
+    ├── stream.py
+    ├── journal.py
+    └── timeline.py
 ```
 
-## 📦 Package Structure
+## Runtime contracts
 
-```text
-avatar-core/
-├── README.md
-├── alphaavatar/
-│   └── core/
-│       ├── __init__.py
-│       ├── env/                         # Environment observation envelopes and annotations.
-│       │   ├── __init__.py
-│       │   ├── annotation.py           # Structured metadata attached to an observation.
-│       │   └── observation.py          # Runtime observation envelope for video, audio, screen, and events.
-│       ├── media/                       # Backend-independent multimodal payload representations.
-│       │   ├── __init__.py
-│       │   ├── audio.py                # Generic audio frame representation.
-│       │   ├── formats.py              # Payload formats and views such as raw, annotated, and derived.
-│       │   ├── payload.py              # Thread-safe multi-representation MediaPayload container.
-│       │   └── video.py                # Generic video frame buffers and video payload helpers.
-│       ├── output/                      # Time-aligned, transport-independent output runtime.
-│       │   ├── __init__.py
-│       │   ├── runtime.py              # Output lifecycle, interruption, replacement, and publication.
-│       │   ├── schema.py               # Status, text, audio, alignment, playback, transcript, and control events.
-│       │   ├── stream.py               # Multi-consumer live output streams with priority interruption.
-│       │   └── timeline.py             # Lightweight output history and audio evidence receipts.
-│       ├── perception/                  # Full-duplex perception transport, alignment, and windowing.
-│       │   ├── __init__.py
-│       │   ├── runtime.py              # PerceptionRuntime entry point and typed stream orchestration.
-│       │   ├── stream.py               # Multi-consumer streams with independent cursors and backpressure.
-│       │   ├── timeline.py             # Observation–annotation alignment and renderer coordination.
-│       │   └── window.py               # Ordered multimodal windows for Memory, Persona, Vision, and routers.
-│       └── version.py                  # Package version metadata.
-└── pyproject.toml
-```
+| Runtime | Responsibility |
+| --- | --- |
+| `PerceptionRuntime` | Normalized input evidence, source generations, annotations and time-aligned snapshots. |
+| `TurnRuntime` | Committed input snapshots captured against a perception cutoff, with independent consumer cursors. |
+| `OutputRuntime` | Validated output admission, exact interruption, completion and independent record/execution streams. |
 
-## 🔄 Perception Workflow
+Adapters normalize external data into `EnvObservation`. Producers submit `EnvOutput` to
+OutputRuntime; the resulting `OutputEvent` adds runtime publication identity and timing.
+Inputs and outputs are distinct contracts. Text output preserves whitespace; media reuses
+validated frames rather than encoding them again for each consumer.
 
-External RTC or device adapters normalize incoming media into AlphaAvatar-owned payloads.
+Identity belongs to typed scope/source fields. Context, Turn, Run, output and chunk IDs
+are not interchangeable. Metadata is a bounded immutable extension, not a place for SDK
+clients, tensors, media bytes or conflicting identity fields.
 
-`EnvObservation` wraps each payload with identity, source, timestamp, and metadata before publishing it to `PerceptionRuntime`. Persona and other perception modules can attach annotations and produce annotated payload views without overwriting the raw representation.
+## Delivery and completion
 
-Consumer-specific windows then provide ordered observations to modules such as ENV Memory, Sampled Frame Vision, the Interaction Router, and future audio or event processors.
+Realtime `stream` subscriptions carry media and presentation. `records` admits canonical
+batches for independent consumers such as Memory. `execution` carries bounded execution
+observations for Status and diagnostics. Record admission is not database persistence,
+client delivery or proof that a tool succeeded.
 
-```text
-RTC / Device input
-        ↓
-AlphaAvatar media payload
-        ↓
-EnvObservation
-        ↓
-PerceptionRuntime stream and timeline
-        ↓
-Persona / Memory / Vision / Router consumers
-```
+`TEXT_COMPLETE` seals source text; `AUDIO_COMPLETE` seals synthesis and alignment;
+`COMPLETE` ends source production; `PLAYBACK` reports the transport's measured progress.
+Interrupts resolve exact output identities when admitted and bypass ordinary queue
+backpressure. Late callbacks cannot reinterpret an interrupt against a newer Run.
 
-## 📤 Output Workflow
+`IMMEDIATE` text does not require audio. `AUDIO_SYNCED` text is synthesized by Router and
+released as captions according to playback progress. `MIRROR` is observational, not a
+second user-visible response. Estimated timing is distinguished from measured duration;
+finalization does not retract an already emitted caption prefix or change audio speed.
 
-`OutputRuntime` provides the shared output plane for semantic and media output.
+## Lifecycle and diagnostics
 
-It can carry:
+`LifecycleComponent` defines asynchronous `on_start()` / `on_stop()`. `LifecycleGroup`
+starts phases in order and stops them in reverse; components within a phase run concurrently.
+Cleanup owns partial initialization too. Cancellation does not silently abandon already
+admitted work, and failed cleanup remains visible.
 
-- status actions;
-- source text chunks;
-- compatibility speech requests;
-- normalized audio frames;
-- text-audio alignment events;
-- transport playout feedback;
-- delivered transcript chunks;
-- interruption and completion controls.
-
-```text
-LLM / Status / Tool / Character
-        ↓
-Source output events
-        ↓
-OutputRuntime stream and timeline
-        ↓
-Router processors
-        ↓
-Audio / transcript / status transport adapters
-```
-
-### Output identity
-
-The runtime distinguishes three identifiers:
-
-```text
-turn_id
-    groups outputs belonging to one interaction turn
-
-output_id
-    identifies one complete logical message or utterance
-
-chunk_id
-    identifies one source-text, alignment, or transcript segment
-```
-
-Multiple outputs may belong to one turn. A new `output_id` may replace another output in the same lane, while additional chunks using the same `output_id` append to the existing logical output.
-
-An interrupted or completed output ID cannot be reopened.
-
-### Output lanes
-
-Output lanes describe semantic purpose rather than transport:
-
-- `ASSISTANT`
-- `TRANSIENT`
-- `STATUS`
-- `CHARACTER`
-
-### Text delivery modes
-
-Source text declares how it participates in delivery:
-
-- `MIRROR`: retained for observability while another system owns user-visible delivery;
-- `IMMEDIATE`: may be delivered without waiting for audio;
-- `AUDIO_SYNCED`: becomes visible only through transcript events aligned with actual audio playout.
-
-### Interruption semantics
-
-`INTERRUPT` is a priority control event.
-
-On interruption, the runtime:
-
-1. marks the logical output terminal;
-2. rejects later source chunks and audio frames for the same `output_id`;
-3. discards queued raw audio frames;
-4. retains semantic text, alignment, playback, and transcript facts;
-5. notifies independent consumers so synthesis, transport queues, UI, and other outputs can stop immediately.
-
-`COMPLETE` remains ordered after produced data because source production finishing does not necessarily mean transport playout has finished.
-
-## ⏱️ Playback and Transcript Alignment
-
-Generated source text and delivered transcript are intentionally separate:
-
-```text
-OutputTextChunk
-    what AlphaAvatar intended to say
-
-OutputTranscriptChunk
-    what the user actually heard
-```
-
-Audio transports publish playback feedback such as:
-
-- started;
-- progress;
-- finished;
-- interrupted.
-
-Transcript synchronization processors combine source text, text-audio alignment, and actual played duration to release user-visible transcript incrementally.
-
-When audio is interrupted:
-
-- previously delivered transcript remains;
-- unplayed text is not published;
-- the source text remains available on the output timeline.
-
-## 🔌 Transport Independence
-
-`avatar-core` does not know about:
-
-- LiveKit rooms or tracks;
-- WebRTC APIs;
-- TTS, STT, VAD, or LLM providers;
-- frontend rendering protocols;
-- channel-specific message formats.
-
-Transport adapters subscribe to the core streams and convert AlphaAvatar events into LiveKit, channel, local-device, or future transport output.
-
-This boundary allows AlphaAvatar to remove `livekit.agents` incrementally while retaining LiveKit RTC, or replace LiveKit transport entirely without redesigning the core runtime.
+Core logging installs no handlers at import time. Modules use standard `logging`; Host
+owns collection, formatting and file rotation. Optional Core event diagnostics are sampled,
+may be dropped, and do not replace canonical records or execution outcomes. See
+[Host settings](../avatar-host/README.md) and the user-facing
+[workspace guide](../docs/avatar-workspace-layout.md) for saved logs and backups.

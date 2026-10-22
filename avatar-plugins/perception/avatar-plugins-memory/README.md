@@ -1,133 +1,95 @@
 # 🧠 AlphaAvatar Memory Plugin
 
-The Memory Plugin provides persistent conversation, tool, and environment memory for AlphaAvatar.
+Memory provides persistent conversation, tool and environment memory through independently configured processors. Agent code exposes contracts; extraction prompts, storage, retrieval and finalization remain in this plugin.
 
-## 🧩 Module Overview
-
-The plugin is responsible for:
-
-* extracting durable memories from conversations and tool results;
-* building ENV memory from live perception observations;
-* attaching identity, session, evidence, and graph metadata;
-* storing memory records in local or remote vector databases;
-* retrieving relevant memories for future interactions.
-
-Memory extraction is divided into independent paths:
+## 🧩 Runtime and processors
 
 ```text
-Conversation
-    └── → Conversation Memory
-
-Tool / RAG / DeepResearch Result
-    └── → Tool Memory
-
-Visual or Audio Observation
-    └── → ENV Memory
+MemoryRuntime
+├── retrieval       Passive Turn retrieval and callable retrieval capabilities.
+├── conversation    Durable conversation extraction and consolidation.
+├── tool            Useful tool-result memory.
+├── environment     Perception-driven environment extraction.
+└── MemoryStore     Vector/graph storage and persistence.
 ```
 
-Supported memory types include:
+Each processor owns its configuration, provider gateway, prompts and lifecycle. MemoryRuntime owns contexts, consumer cursors and store orchestration. It does not require Engine to inject assistant messages directly.
 
-| Memory Type    | Description                                                         |
-| -------------- | ------------------------------------------------------------------- |
-| `Avatar`       | Stable information about the avatar itself                          |
-| `Conversation` | User information, preferences, decisions, and interaction history   |
-| `Tools`        | Useful results produced by tools, RAG, MCP, or research             |
-| `ENV`          | Information extracted from visual or audio environment observations |
-
-## 🌍 ENV Memory
-
-ENV Memory consumes observation windows from `PerceptionRuntime`.
+## Canonical input
 
 ```text
-Video / Screen / Audio Observation
-                ↓
-        PerceptionRuntime
-                ↓
-       EnvMemoryScheduler
-                ↓
-   Multimodal ENV Extraction
-                ↓
-         MemoryType.ENV
+TurnRuntime.events                -> committed user input / Turn context
+OutputRuntime.records             -> canonical assistant and tool records
+PerceptionRuntime                 -> environment observations
 ```
 
-`EnvMemoryScheduler` manages:
+Memory is an independent required consumer of canonical records. It acknowledges locally accepted content; that acknowledgement is not proof that extraction or database persistence has finished. A failed required consumer is reported to the journal rather than silently permitting indefinite record loss.
 
-* periodic ENV memory updates;
-* updates triggered by user turns;
-* resetting the periodic interval after a successful triggered capture;
-* fast perception cursor commits;
-* serialized model inference;
-* pending batch merging and retry handling.
+Loop owns canonical assistant/tool publication. Memory does not consume raw provider streams, RTC transcript messages or private reasoning as a substitute for canonical records. Old-Run tool outcomes retain their original scope even after visible output permission has been revoked.
 
-ENV memory is only updated when visual or audio observations are available.
+## Conversation configuration
 
-User text does not independently create ENV memory. It is attached only as additional context when real environment observations are present.
+This fragment belongs under `memory.init_config.conversation` in a complete Agent configuration:
 
-```text
-Visual / Audio Observation + User Text
-                    ↓
-             ENV Memory Update
+```yaml
+memory:
+  plugin: default
+  init_config:
+    conversation:
+      enabled: true
+      pipeline:
+        extraction:
+          session_gate: false
+          relations: false
 
-User Text Only
-      ↓
-No ENV Memory Update
+        consolidation:
+          mode: session_merge
+          resolve_superseded_items: null
+          item_ops: [add]
+          candidate_source: union
+          similarity_threshold: 0.4
+          max_candidates_per_item: 5
+          timeout: 30.0
 ```
 
-Visual observations are sampled before extraction to avoid repeatedly processing similar frames. Raw audio frames are ignored; future audio support should use audio segments or semantic audio events.
+ConversationPipelineConfig now contains only extraction and consolidation. Maintenance settings belong directly to consolidation; an old `pipeline.maintenance` mapping or an unknown nested key is rejected, not ignored or translated through a compatibility path.
 
-Heavy runtime payloads such as video frames and audio buffers are not stored directly as memory records. ENV memory stores extracted text, evidence references, and metadata.
+`session_gate` asks extraction to skip content without durable value. Semantic relation extraction is not implemented and `relations: true` is rejected. Entity mentions and graph nodes do not imply full relation extraction.
 
-## 🕸️ Storage and Retrieval
+| Consolidation mode | Behavior |
+| --- | --- |
+| `off` | Retain extracted atomic memory without consolidation. |
+| `session_summary` | Consolidate the incoming session batch without historical candidates. |
+| `session_merge` | Look for compatible existing consolidated memory and merge/insert as planned. |
 
-Memory records may contain:
+Candidate source is independently selectable: `consolidated_lookup` searches storage, `query_recall` uses previously recalled candidates, and `union` combines them. Candidates remain isolated by memory type, scope and owner domain. Changing example formatting does not require every example to use the same candidate source.
 
-* memory text;
-* memory type;
-* object ownership;
-* session and timestamp metadata;
-* observation evidence;
-* graph nodes and links;
-* provider-specific metadata.
+Only the `add` item operation is supported and the list must contain it. Timeout must be finite and positive. The configured timeout is passed to the consolidation-plan request; it is not a guarantee for the duration of the entire storage/extraction workflow. Ordinary planning failures fall back to atomic memories; cancellation remains cancellation.
 
-Supported storage backends include:
+`resolve_superseded_items` controls prompt-time resolution; its null default follows the consolidation mode. It is not a tool-execution permission or a cross-owner merge switch.
 
-| Backend   | Usage                                |
-| --------- | ------------------------------------ |
-| `LanceDB` | Local vector storage and retrieval   |
-| `Qdrant`  | Remote or self-hosted vector storage |
+## 🌍 Environment memory
 
-Memory retrieval supports:
+The environment processor consumes bounded perception windows and associates extracted facts with evidence. Periodic and Turn-triggered work is separate from realtime media ingestion; heavy media payloads are not persisted as ordinary memory text.
 
-* semantic context search;
-* filtering by memory type, session, or object ID;
-* graph-node lookup;
-* graph-neighbor expansion;
-* identity alias resolution.
+Text alone does not establish environment evidence. Enabled audio support uses suitable audio observations/segments within the processor's capture contract, not arbitrary raw buffers placed in record metadata. Visual sampling, audiovisual alignment and provider input adaptation remain separate from conversation consolidation.
 
-Graph metadata improves retrieval across related users, speakers, faces, objects, tools, sessions, and events, while memory text remains the primary stored information.
+## 🕸️ Storage and retrieval
 
-## 🔗 Module Relationships
+Memory records retain text, kind, ownership, scope, context, provenance and graph-related metadata. Supported memory types include Avatar, Conversation, Tools and ENV. Raw SDK objects and media clients are not stored as memory records.
 
-```text
-PerceptionRuntime
-    └── → ENV Memory observations
+LanceDB and Qdrant adapters provide vector storage. Retrieval owns text/graph lookup and identity-related resolution rather than adding concrete search methods to MemoryBase. Avatar-owned memory and user-owned memory remain separate ownership domains, even when they can be recalled across episodes.
 
-Persona Plugin
-    └── → user, face, and speaker identity aliases
+## Lifecycle
 
-RAG / DeepResearch / MCP
-    └── → Tool Memory
+MemoryRuntime exposes `on_start()` / `on_stop()`. Store and processor initialization are owned before awaiting them so partial startup can be cleaned up. Processor `stop(finalize=...)` retains its business meaning; it is not replaced by a generic Core finalizer.
 
-Memory Plugin
-    ├── → Dynamic runtime context
-    ├── → Semantic retrieval
-    └── → Graph-aware retrieval
-```
+During normal shutdown, Engine settles Loop producers before Memory drains committed Turns and canonical records, finalizes processors and closes the store. Startup rollback uses non-finalizing cleanup. Closing is managed and idempotent; failures do not silently skip ordinary remaining cleanup.
 
-## 📦 Installation
+## Installation and examples
 
 ```bash
 pip install alpha-avatar-plugins-memory
 ```
 
-The plugin is loaded through the AlphaAvatar configuration.
+Select the plugin and configure provider gateways in [complete examples](../../../examples/README.md). Memory/Persona structured gateways borrow the runtime's ProviderService; they do not have to use the same backend/model as the foreground Loop.

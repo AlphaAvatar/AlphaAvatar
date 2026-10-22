@@ -13,11 +13,7 @@
 # limitations under the License.
 from .face import FaceAnalysisRunner, FaceProcessor
 from .profiler import ProfilerProcessor
-from .speaker import (
-    SpeakerAttributeRunner,
-    SpeakerProcessor,
-    SpeakerVectorRunner,
-)
+from .speaker import SpeakerAttributeRunner, SpeakerProcessor, SpeakerVectorRunner
 
 __all__ = [
     "FaceAnalysisRunner",

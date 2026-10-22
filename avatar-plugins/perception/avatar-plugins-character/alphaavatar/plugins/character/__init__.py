@@ -11,13 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.inference import register_inference_runner_bootstrap
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 
-from .inference import configure_inference_runners
 from .log import logger
 from .version import __version__
+
+if TYPE_CHECKING:
+    from alphaavatar.agents.character import CharacterTransport, VirtualCharacterSession
+    from alphaavatar.agents.runtime import AvatarRuntime
 
 __all__ = ["__version__"]
 
@@ -26,29 +31,17 @@ class AiriCharacterPlugin(AvatarModulePlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)
 
-    def get_plugin(self, *, runtime: AvatarRuntime, init_config: dict, **kwargs):
+    def get_plugin(
+        self,
+        *,
+        runtime: AvatarRuntime,
+        transport: CharacterTransport,
+        init_config: dict[str, Any] | None = None,
+    ) -> VirtualCharacterSession:
         from .airi_avatar import AiriCharacterSession, AiriConfig
 
-        try:
-            avatar_config = AiriConfig(**init_config)
-            return AiriCharacterSession(runtime=runtime, avatar_config=avatar_config)
-        except Exception as exc:
-            raise ImportError(
-                "The 'Airi' Character plugin failed to initialize. "
-                "Install the optional dependency: `pip install alphaavatar-plugins-character`. "
-                f"Original error: {exc}"
-            ) from exc
+        config = AiriConfig.model_validate(init_config or {})
+        return AiriCharacterSession(transport=transport, config=config)
 
 
-# Plugin register
-AvatarModulePlugin.register(
-    AvatarModule.CHARACTER,
-    "airi",
-    AiriCharacterPlugin(),
-)
-
-# Inference Runners
-register_inference_runner_bootstrap(
-    "alphaavatar.plugins.character",
-    configure_inference_runners,
-)
+AvatarModulePlugin.register(AvatarModule.CHARACTER, "airi", AiriCharacterPlugin())

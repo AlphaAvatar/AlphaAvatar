@@ -11,11 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import os
 import pathlib
 import uuid
+from collections.abc import Mapping
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from alphaavatar.agents.utils.files.work_dirs import (
     WorkspacePaths,
@@ -25,59 +28,49 @@ from alphaavatar.agents.utils.files.work_dirs import (
 
 
 class AvatarInfoConfig(BaseModel):
-    """Configuration for the prompt used in the agent, , which will creat when server load."""
+    """Resolve an Avatar workspace once; child snapshots retain the absolute directory."""
 
-    id: str = Field(
-        default=uuid.uuid4().hex,
-        description="Unique identifier for the avatar.",
-    )
-    name: str = Field(
-        default="Assistant",
-        description="Name of the avatar.",
-    )
-    introduction: str = Field(
-        default="You are a helpful voice AI assistant.",
-        description="Introduction of the avatar.",
-    )
-    timezone: str | None = Field(
-        default=None,
-        description="The time zone where the Avatar is deployed is used to align with the user's time zone for related task execution",
-    )
+    model_config = ConfigDict(extra="forbid")
 
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex, min_length=1, max_length=256)
+    name: str = Field(default="Assistant", min_length=1)
+    introduction: str = "You are a helpful voice AI assistant."
+    timezone: str | None = None
     work_dir: str = Field(
-        default="",
-        description=(
-            "Base work directory for this service. "
-            "If empty, defaults to /var/lib/avatar_id (or ~/.local/share/avatar_id fallback). "
-            "Will create subdirs: <work_dir>/.cache and <work_dir>/data."
-        ),
+        default="", description="Workspace base directory; the Avatar ID is appended once."
     )
 
-    def model_post_init(self, __context):
-        # Get Global environment variables
-        # BUG: The first time, you might get:
-        # BUG: data/avatar-id
-        # BUG: If `AvatarInfoConfig` is instantiated again within the same process, the environment variable is already:
-        # BUG: /data/avatar-id
-        # BUG: It might then be concatenated again to form:
-        # BUG: /data/avatar-id/avatar-id
+    @field_validator("id")
+    @classmethod
+    def check_id(cls, value: str) -> str:
+        if (
+            value in (".", "..")
+            or value != value.strip()
+            or any(char in value for char in "/\\\x00")
+            or pathlib.PureWindowsPath(value).drive
+        ):
+            raise ValueError("Avatar ID must be a single nonempty directory name")
+        return value
+
+    def model_post_init(self, context) -> None:
+        if isinstance(context, Mapping) and context.get("resolved_workspace") is True:
+            if not pathlib.Path(self.work_dir).is_absolute():
+                raise ValueError("A restored Avatar workspace must be absolute")
+            os.environ["AVATAR_WORK_DIR"] = self.work_dir
+            if self.timezone:
+                os.environ["AVATAR_TIMEZONE"] = self.timezone
+            return
 
         self.name = os.getenv("AVATAR_NAME") or self.name
         self.timezone = os.getenv("AVATAR_TIMEZONE") or self.timezone
-        self.work_dir = os.getenv("AVATAR_WORK_DIR") or self.work_dir
-
-        # Set environment variables based on the configuration
-        if self.timezone:
-            os.environ["AVATAR_TIMEZONE"] = self.timezone
-
+        base = os.getenv("AVATAR_WORK_DIR") or self.work_dir
         root = (
-            pathlib.Path(self.work_dir).expanduser() / self.id
-            if self.work_dir.strip()
-            else default_work_dir(self.id)
+            pathlib.Path(base).expanduser() / self.id if base.strip() else default_work_dir(self.id)
         )
-
-        workspace = WorkspacePaths.from_root(root)
+        workspace = WorkspacePaths.from_root(root.resolve())
         prepare_workspace(workspace)
 
         self.work_dir = str(workspace.root)
         os.environ["AVATAR_WORK_DIR"] = self.work_dir
+        if self.timezone:
+            os.environ["AVATAR_TIMEZONE"] = self.timezone

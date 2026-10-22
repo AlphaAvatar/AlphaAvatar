@@ -27,18 +27,14 @@ class MemoryAssignment(BaseModel):
         description=("Existing consolidated memory id or 'new:<k>' for a new consolidated memory.")
     )
 
-    reason: str = Field(
-        default="",
-        description="Short explanation for the assignment.",
-    )
+    reason: str = Field(default="", description="Short explanation for the assignment.")
 
 
 class ConsolidatedMemoryDraft(BaseModel):
     memory_id: str = Field(description="Existing consolidated memory id or 'new:<k>'.")
 
     value: str = Field(
-        default="",
-        description=("Updated consolidated memory content in natural prose."),
+        default="", description=("Updated consolidated memory content in natural prose.")
     )
 
 
@@ -55,8 +51,4 @@ class ConsolidationResult:
     degraded: list[str] = field(default_factory=list)
 
     def all_writes(self) -> list[MemoryItem]:
-        return [
-            *self.source_items,
-            *self.to_insert,
-            *self.to_rewrite,
-        ]
+        return [*self.source_items, *self.to_insert, *self.to_rewrite]

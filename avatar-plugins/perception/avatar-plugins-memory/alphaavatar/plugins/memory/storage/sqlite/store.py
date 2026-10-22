@@ -19,11 +19,7 @@ from collections.abc import Callable
 from typing import Any, TypeVar
 
 from alphaavatar.agents.memory import MemoryStoreBackend
-from alphaavatar.agents.memory.enums import (
-    MemoryKind,
-    MemoryOutboxTarget,
-    MemoryType,
-)
+from alphaavatar.agents.memory.enums import MemoryKind, MemoryOutboxTarget, MemoryType
 from alphaavatar.agents.memory.schemas import (
     MemoryCheckpointAdvance,
     MemoryCommitResult,
@@ -35,17 +31,8 @@ from alphaavatar.agents.memory.schemas import (
 
 from .commit import commit_sync
 from .database import initialize_database
-from .outbox import (
-    claim_outbox_sync,
-    complete_outbox_sync,
-    retry_outbox_sync,
-)
-from .query import (
-    get_checkpoint_sync,
-    get_many_sync,
-    get_visible_sync,
-    query_visible_sync,
-)
+from .outbox import claim_outbox_sync, complete_outbox_sync, retry_outbox_sync
+from .query import get_checkpoint_sync, get_many_sync, get_visible_sync, query_visible_sync
 from .resolution import resolve_current_sync
 
 T = TypeVar("T")
@@ -57,18 +44,10 @@ class SQLiteMemoryStore(MemoryStoreBackend):
         self._write_lock = asyncio.Lock()
         self._initialized = False
 
-    async def _run_read(
-        self,
-        fn: Callable[..., T],
-        *args: Any,
-    ) -> T:
+    async def _run_read(self, fn: Callable[..., T], *args: Any) -> T:
         return await asyncio.to_thread(fn, *args)
 
-    async def _run_write(
-        self,
-        fn: Callable[..., T],
-        *args: Any,
-    ) -> T:
+    async def _run_write(self, fn: Callable[..., T], *args: Any) -> T:
         async with self._write_lock:
             task = asyncio.create_task(asyncio.to_thread(fn, *args))
 
@@ -90,10 +69,7 @@ class SQLiteMemoryStore(MemoryStoreBackend):
         if self._initialized:
             return
 
-        await self._run_write(
-            initialize_database,
-            self._path,
-        )
+        await self._run_write(initialize_database, self._path)
 
         self._initialized = True
 
@@ -116,59 +92,28 @@ class SQLiteMemoryStore(MemoryStoreBackend):
             raise ValueError("context_id, processor and idempotency_key cannot be empty")
 
         return await self._run_write(
-            commit_sync,
-            self._path,
-            items,
-            context_id,
-            processor,
-            idempotency_key,
-            checkpoint,
+            commit_sync, self._path, items, context_id, processor, idempotency_key, checkpoint
         )
 
-    async def get_many(
-        self,
-        memory_ids: list[str],
-    ) -> list[MemoryItem]:
+    async def get_many(self, memory_ids: list[str]) -> list[MemoryItem]:
         self._require_initialized()
 
-        return await self._run_read(
-            get_many_sync,
-            self._path,
-            memory_ids,
-        )
+        return await self._run_read(get_many_sync, self._path, memory_ids)
 
     async def get_visible(
-        self,
-        memory_ids: list[str],
-        *,
-        owner_refs: list[MemoryOwnerRef],
-        context: MemoryContextRef,
+        self, memory_ids: list[str], *, owner_refs: list[MemoryOwnerRef], context: MemoryContextRef
     ) -> list[MemoryItem]:
         self._require_initialized()
 
-        return await self._run_read(
-            get_visible_sync,
-            self._path,
-            memory_ids,
-            owner_refs,
-            context,
-        )
+        return await self._run_read(get_visible_sync, self._path, memory_ids, owner_refs, context)
 
     async def resolve_current(
-        self,
-        memory_ids: list[str],
-        *,
-        owner_refs: list[MemoryOwnerRef],
-        context: MemoryContextRef,
+        self, memory_ids: list[str], *, owner_refs: list[MemoryOwnerRef], context: MemoryContextRef
     ) -> list[MemoryItem]:
         self._require_initialized()
 
         return await self._run_read(
-            resolve_current_sync,
-            self._path,
-            memory_ids,
-            owner_refs,
-            context,
+            resolve_current_sync, self._path, memory_ids, owner_refs, context
         )
 
     async def query_visible(
@@ -183,21 +128,10 @@ class SQLiteMemoryStore(MemoryStoreBackend):
         self._require_initialized()
 
         return await self._run_read(
-            query_visible_sync,
-            self._path,
-            owner_refs,
-            context,
-            memory_type,
-            kind,
-            limit,
+            query_visible_sync, self._path, owner_refs, context, memory_type, kind, limit
         )
 
-    async def get_checkpoint(
-        self,
-        *,
-        context_id: str,
-        processor: str,
-    ) -> int:
+    async def get_checkpoint(self, *, context_id: str, processor: str) -> int:
         self._require_initialized()
 
         context_id = context_id.strip()
@@ -206,12 +140,7 @@ class SQLiteMemoryStore(MemoryStoreBackend):
         if not context_id or not processor:
             raise ValueError("context_id and processor cannot be empty")
 
-        return await self._run_read(
-            get_checkpoint_sync,
-            self._path,
-            context_id,
-            processor,
-        )
+        return await self._run_read(get_checkpoint_sync, self._path, context_id, processor)
 
     async def claim_outbox(
         self,
@@ -235,20 +164,10 @@ class SQLiteMemoryStore(MemoryStoreBackend):
             raise ValueError("lease_seconds must be positive")
 
         return await self._run_write(
-            claim_outbox_sync,
-            self._path,
-            target,
-            worker_id,
-            limit,
-            lease_seconds,
+            claim_outbox_sync, self._path, target, worker_id, limit, lease_seconds
         )
 
-    async def complete_outbox(
-        self,
-        event_ids: list[int],
-        *,
-        worker_id: str,
-    ) -> None:
+    async def complete_outbox(self, event_ids: list[int], *, worker_id: str) -> None:
         self._require_initialized()
 
         if not event_ids:
@@ -259,20 +178,10 @@ class SQLiteMemoryStore(MemoryStoreBackend):
         if not worker_id:
             raise ValueError("worker_id cannot be empty")
 
-        await self._run_write(
-            complete_outbox_sync,
-            self._path,
-            event_ids,
-            worker_id,
-        )
+        await self._run_write(complete_outbox_sync, self._path, event_ids, worker_id)
 
     async def retry_outbox(
-        self,
-        event_id: int,
-        *,
-        worker_id: str,
-        error: str,
-        delay_seconds: float,
+        self, event_id: int, *, worker_id: str, error: str, delay_seconds: float
     ) -> None:
         self._require_initialized()
 
@@ -285,10 +194,5 @@ class SQLiteMemoryStore(MemoryStoreBackend):
             raise ValueError("delay_seconds cannot be negative")
 
         await self._run_write(
-            retry_outbox_sync,
-            self._path,
-            int(event_id),
-            worker_id,
-            error,
-            delay_seconds,
+            retry_outbox_sync, self._path, int(event_id), worker_id, error, delay_seconds
         )

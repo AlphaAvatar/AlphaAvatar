@@ -15,207 +15,162 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any
+from copy import deepcopy
+from typing import TYPE_CHECKING, Any
 
-from livekit.agents import RunContext
+from alphaavatar.agents.avatar.provider.schemas import ModelTextPart
+from alphaavatar.agents.runtime.capability.result import CapabilityResult
+from alphaavatar.agents.tools.schemas import ToolError
 
-from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.tools import MCPHostBase
-from alphaavatar.agents.tools.mcp_api import MCPOp, MCPOutputMode
+from .enums import MCPOp, MCPOutputMode
+from .log import redact_url
 
-from .log import logger
-from .redact import redact_url
+if TYPE_CHECKING:
+    from alphaavatar.agents.runtime import AvatarRuntime
 
 
-class MCPHost(MCPHostBase):
-    def __init__(self, *, runtime: AvatarRuntime, servers: dict[str, dict], **kwargs) -> None:
-        super().__init__(
-            runtime=runtime, servers_info=self._build_config_servers_info(servers), **kwargs
-        )
-        self._servers = servers
+class MCPHost:
+    def __init__(self, *, runtime: AvatarRuntime, servers: dict[str, dict[str, Any]]) -> None:
+        self._runtime = runtime
+        self._servers = deepcopy(servers)
 
     @property
-    def vdb_inference_method(self) -> str:
+    def servers_info(self) -> str:
+        return "\n".join(
+            f"- name={name}, url={redact_url(config.get('url', 'unknown'))}, "
+            f"instruction={config.get('instruction') or ''}"
+            for name, config in self._servers.items()
+        )
+
+    def _validate_servers(self, keys: list[str] | None) -> None:
+        if keys is not None and (unknown := set(keys) - self._servers.keys()):
+            raise ToolError(f"Unknown MCP server keys: {', '.join(sorted(unknown))}")
+
+    async def _run(self, op: MCPOp, params: dict[str, Any]) -> dict[str, Any]:
         method = os.getenv("MCP_VDB_INFERENCE_METHOD")
         if not method:
-            raise RuntimeError(
-                "MCP_VDB_INFERENCE_METHOD is not configured. "
-                "Make sure the MCP VDB runner is registered before "
-                "MCPHost starts."
-            )
-        return method
-
-    def _op(self, op: Any) -> Any:
-        return getattr(op, "value", op)
-
-    def _build_config_servers_info(self, servers: dict[str, dict]) -> str:
-        lines = []
-        for name, cfg in servers.items():
-            url = redact_url(cfg.get("url", "unknown"))
-            instruction = cfg.get("instruction") or ""
-            lines.append(f"- name={name}, url={url}, instruction={instruction}")
-        return "MCPHost configured servers:\n" + "\n".join(lines)
-
-    async def _run_mcp_inference(self, *, op: Any, param: dict[str, Any]) -> dict[str, Any]:
-        if self.vdb_inference_method is None:
-            raise RuntimeError(
-                "env MCP_VDB_INFERENCE_METHOD is not configured. "
-                "Set MCP_VDB_TYPE=lancedb and register LanceDBRunner."
-            )
-
-        payload = json.dumps(
-            {
-                "op": self._op(op),
-                "param": param,
-            },
-            ensure_ascii=False,
-        ).encode()
-
-        raw = await self.inference_executor.do_inference(self.vdb_inference_method, payload)
-
+            raise ToolError("MCP inference runner is not configured")
+        payload = json.dumps({"op": op.value, "param": params}, ensure_ascii=False).encode()
+        raw = await self._runtime.inference.do_inference(method, payload)
         if raw is None:
-            return {"error": "MCP inference runner returned None"}
-
-        return json.loads(raw.decode())
+            raise ToolError("MCP inference runner returned no response")
+        result = json.loads(raw.decode())
+        if not isinstance(result, dict):
+            raise ToolError("MCP inference runner returned an invalid response")
+        if result.get("error"):
+            # Do not promote service errors to successful text or expose credentials in errors.
+            raise ToolError(f"MCP {op.value} failed; consult the worker diagnostic log")
+        return result
 
     async def search_tools(
         self,
         *,
         query: str,
-        ctx: RunContext,
         top_k: int = 8,
         server_keys: list[str] | None = None,
         categories: list[str] | None = None,
     ) -> str:
-        logger.info(
-            "[MCPHost] search_tools query=%s top_k=%d servers=%s categories=%s",
-            query,
-            top_k,
-            server_keys,
-            categories,
+        self._validate_servers(server_keys)
+        result = await self._run(
+            MCPOp.TOOL_SEARCH,
+            {"query": query, "top_k": top_k, "server_keys": server_keys, "categories": categories},
         )
-
-        if server_keys is not None:
-            unknown = sorted(set(server_keys) - self._servers.keys())
-            if unknown:
-                return f"MCPHost TOOL_SEARCH error: Unknown server keys: {', '.join(unknown)}"
-
-        try:
-            result = await self._run_mcp_inference(
-                op=MCPOp.TOOL_SEARCH,
-                param={
-                    "query": query,
-                    "top_k": top_k,
-                    "server_keys": server_keys,
-                    "categories": categories,
-                },
-            )
-        except Exception as e:
-            logger.exception("[MCPHost] search_tools failed")
-            return f"MCPHost TOOL_SEARCH failed: {e}"
-
-        if result.get("error"):
-            return f"MCPHost TOOL_SEARCH error: {result['error']}"
-
-        tools = result.get("tools", []) or []
+        tools = result.get("tools") or []
         if not tools:
             return f"MCPHost found no tools for query: {query}"
-
-        lines: list[str] = []
-        lines.append(f"MCPHost found the following relevant tools for query: {query}")
-        lines.append("")
-        lines.append(
-            "Use the exact Tool ID when calling call_tools. "
-            'The call_tools params format is: {"tool_id": {"arg": "value"}}.'
-        )
-        lines.append("")
-
-        for idx, tool in enumerate(tools, start=1):
-            usage = tool.get("usage")
-            if usage:
-                lines.append(f"### Tool {idx}")
-                lines.append(usage)
-            else:
-                tool_id = tool.get("tool_id", "")
-                desc = tool.get("description", "")
-                lines.append(f"### Tool {idx}")
-                lines.append(f"Tool ID: {tool_id}")
-                lines.append(f"When to use: {desc}")
-
+        lines = [
+            f"MCPHost found the following relevant tools for query: {query}",
+            "",
+            'Use exact Tool IDs in params_json: {"tool_id": {"arg": "value"}}.',
+            "",
+        ]
+        for index, tool in enumerate(tools, start=1):
+            lines.append(f"### Tool {index}")
+            lines.append(
+                tool.get("usage")
+                or (
+                    f"Tool ID: {tool.get('tool_id', '')}\n"
+                    f"When to use: {tool.get('description', '')}"
+                )
+            )
             lines.append("")
-
         return "\n".join(lines)
 
-    async def refresh_tools(
-        self,
-        *,
-        ctx: RunContext,
-        server_keys: list[str] | None = None,
-    ) -> str:
-        logger.info("[MCPHost] refresh_tools servers=%s", server_keys)
+    async def refresh_tools(self, *, server_keys: list[str] | None = None) -> CapabilityResult:
+        self._validate_servers(server_keys)
+        result = await self._run(MCPOp.REFRESH_TOOLS, {"server_keys": server_keys})
+        servers = result.get("servers")
+        expected = set(self._servers if server_keys is None else server_keys)
+        valid = isinstance(servers, dict) and bool(expected) and set(servers) == expected
+        failed = not valid
+        lines = ["MCPHost refresh results:", ""]
 
-        if server_keys is not None:
-            unknown = sorted(set(server_keys) - self._servers.keys())
-            if unknown:
-                return f"MCPHost REFRESH_TOOLS error: Unknown server keys: {', '.join(unknown)}"
+        if not valid:
+            lines.append("Refresh results are incomplete or invalid; success is not confirmed.")
 
-        try:
-            result = await self._run_mcp_inference(
-                op=MCPOp.REFRESH_TOOLS,
-                param={"server_keys": server_keys},
-            )
-        except Exception as e:
-            logger.exception("[MCPHost] refresh_tools failed")
-            return f"MCPHost REFRESH_TOOLS failed: {e}"
-
-        if result.get("error"):
-            return f"MCPHost REFRESH_TOOLS error: {result['error']}"
-
-        lines = ["MCPHost refreshed MCP tools:", ""]
-        for key, info in (result.get("servers") or {}).items():
-            if info.get("error"):
-                lines.append(f"- {key}: FAILED ({info['error']}); previous tools kept")
+        for key in sorted(expected):
+            info = servers.get(key) if isinstance(servers, dict) else None
+            if not isinstance(info, dict) or "error" not in info:
+                lines.append(f"- {key}: UNKNOWN; no valid refresh result was returned.")
+                failed = True
+                continue
+            if info["error"] is not None:
+                lines.append(f"- {key}: FAILED; consult the worker diagnostics.")
+                failed = True
+                continue
+            changes = [info.get(label) for label in ("added", "removed", "updated")]
+            if (
+                type(info.get("total")) is not int
+                or info["total"] < 0
+                or any(not isinstance(v, list) for v in changes)
+            ):
+                lines.append(f"- {key}: UNKNOWN; malformed refresh summary.")
+                failed = True
                 continue
             lines.append(
-                f"- {key}: {info['total']} tools "
-                f"(added {len(info['added'])}, removed {len(info['removed'])}, "
-                f"updated {len(info['updated'])})"
+                f"- {key}: {info['total']} tools (added {len(changes[0])}, "
+                f"removed {len(changes[1])}, updated {len(changes[2])})"
             )
-            for label in ("added", "removed", "updated"):
-                for tool_id in info[label]:
-                    lines.append(f"    {label}: {tool_id}")
-        return "\n".join(lines)
+            for label, values in zip(("added", "removed", "updated"), changes, strict=True):
+                lines.extend(f"    {label}: {identity}" for identity in values)
+        return CapabilityResult(parts=(ModelTextPart("\n".join(lines)),), is_error=failed)
 
     async def call_tools(
-        self,
-        *,
-        params: dict,
-        ctx: RunContext,
-        output_mode: str = MCPOutputMode.RAW,
-    ) -> str:
-        logger.info("[MCPHost] call_tools count=%d", len(params) if params else 0)
+        self, *, params: dict[str, dict[str, Any]], output_mode: MCPOutputMode = MCPOutputMode.RAW
+    ) -> CapabilityResult:
+        if not params:
+            raise ToolError("MCP tool_call requires at least one tool")
 
-        try:
-            result = await self._run_mcp_inference(
-                op=MCPOp.TOOL_CALL,
-                param={
-                    "params": params or {},
-                    "output_mode": str(output_mode),
-                },
+        result = await self._run(
+            MCPOp.TOOL_CALL, {"params": params, "output_mode": output_mode.value}
+        )
+        rows = result.get("results")
+        valid = (
+            isinstance(rows, list)
+            and len(rows) == len(params)
+            and all(
+                isinstance(row, dict)
+                and isinstance(row.get("tool_id"), str)
+                and type(row.get("ok")) is bool
+                for row in rows
             )
-        except Exception as e:
-            logger.exception("[MCPHost] call_tools failed")
-            return f"### MCP TOOL_CALL error\n\n```text\n{e}\n```"
+            and {row["tool_id"] for row in rows} == set(params)
+        )
 
-        if result.get("markdown"):
-            return result["markdown"]
+        failed = not valid or any(not row["ok"] or row.get("error") for row in rows)
+        text = result.get("markdown")
+        if not isinstance(text, str) or not text.strip():
+            text = json.dumps(result, ensure_ascii=False, indent=2)
 
-        if result.get("error"):
-            return f"### MCP TOOL_CALL error\n\n```text\n{result['error']}\n```"
+        if failed:
+            text += (
+                "\n\nNot all requested operations have confirmed successful results. "
+                "An error does not prove that a remote action was rolled back. "
+                "Do not repeat state-changing operations without checking their actual state."
+            )
 
-        return json.dumps(result, ensure_ascii=False, indent=2)
+        return CapabilityResult(parts=(ModelTextPart(text),), is_error=bool(failed))
 
     async def aclose(self) -> None:
-        # Do not disable MCP clients here.
-        # The client lifecycle is managed by the runner/worker inference process.
+        # Remote clients and the VDB are owned by the inference worker, not this session facade.
         return

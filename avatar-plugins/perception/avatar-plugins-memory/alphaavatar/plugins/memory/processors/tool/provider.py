@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from alphaavatar.agents.providers import ProviderGateway
+from alphaavatar.agents.runtime.modules.foundation import ProviderService
 
 from ...log import logger
 from ...schemas.patch import MemoryDelta
@@ -25,29 +25,20 @@ from .prompt import TOOL_DELTA_PROMPT
 
 
 class ToolProvider:
-    def __init__(
-        self,
-        config: ToolProviderConfig,
-    ) -> None:
+    def __init__(self, config: ToolProviderConfig, *, service: ProviderService) -> None:
         self._task = config.task
-        self._gateway = ProviderGateway(config.gateway)
+        self._gateway = service.gateway(config.gateway)
         self._gateway.validate_tasks([self._task])
 
     async def extract(
-        self,
-        *,
-        context_content: str,
-        metadata: dict[str, Any],
-        timeout: float = 30.0,
+        self, *, context_content: str, metadata: dict[str, Any], timeout: float = 30.0
     ) -> MemoryDelta:
         try:
             result = await asyncio.wait_for(
                 self._gateway.ainvoke_structured(
                     task_name=self._task,
                     prompt=TOOL_DELTA_PROMPT,
-                    payload={
-                        "session_content": context_content,
-                    },
+                    payload={"session_content": context_content},
                     output_schema=MemoryDelta,
                     metadata=metadata,
                 ),
@@ -61,19 +52,12 @@ class ToolProvider:
             )
 
         except TimeoutError:
-            logger.warning(
-                "[Memory] tool provider timeout task=%s timeout=%s",
-                self._task,
-                timeout,
-            )
+            logger.warning("Tool provider timeout task=%s timeout=%s", self._task, timeout)
             return MemoryDelta()
 
         except asyncio.CancelledError:
             raise
 
         except Exception:
-            logger.exception(
-                "[Memory] tool provider failed task=%s",
-                self._task,
-            )
+            logger.exception("Tool provider failed task=%s", self._task)
             return MemoryDelta()

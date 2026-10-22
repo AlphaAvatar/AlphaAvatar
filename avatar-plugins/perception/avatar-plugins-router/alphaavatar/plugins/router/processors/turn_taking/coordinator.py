@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Hashable
 from dataclasses import replace
 from typing import TypeVar
@@ -26,19 +27,17 @@ from alphaavatar.agents.router.schemas import (
     TurnTakingEvidence,
 )
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.core.env import (
-    AnnotationKind,
-    EnvObservation,
-    ObservationKind,
-    PerceptionSegmentRef,
-)
-from alphaavatar.core.perception import PerceptionEvent
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.enums import AnnotationKind, ObservationKind
+from alphaavatar.core.env.schemas import PerceptionSegmentRef
+from alphaavatar.core.perception.schemas import PerceptionEvent
 
-from ...log import logger
 from .evidence import TurnEvidenceBuilder
 from .fusion import AddressingFusion
 from .policy import TurnTakingPolicy, TurnTakingPolicyResult
 from .schemas.state import AddressingEvidenceRecord, SpeakerKey, TurnCandidate
+
+logger = logging.getLogger(__name__)
 
 _Key = TypeVar("_Key", bound=Hashable)
 
@@ -47,6 +46,7 @@ class TurnTakingCoordinator:
     SOURCE = "router.turn_taking"
 
     _MAX_ORPHANS = 64
+    _MAX_RETIRED_SEGMENTS = 256
     _MAX_ADDRESSING_RECORDS_PER_TARGET = 8
     _TERMINAL_ACTIONS = {
         TurnTakingAction.COMMIT,
@@ -82,6 +82,7 @@ class TurnTakingCoordinator:
 
         self._candidates: dict[SpeakerKey, TurnCandidate] = {}
         self._segment_owners: dict[PerceptionSegmentRef, SpeakerKey] = {}
+        self._retired_segments: dict[PerceptionSegmentRef, None] = {}
         self._orphan_transcripts: dict[PerceptionSegmentRef, EnvObservation] = {}
         self._orphan_addressing_by_observation: dict[str, list[AddressingEvidenceRecord]] = {}
         self._orphan_addressing_by_segment: dict[
@@ -93,10 +94,7 @@ class TurnTakingCoordinator:
         self._assessment_workers: set[asyncio.Task[None]] = set()
 
     @staticmethod
-    def _speaker_matches(
-        candidate: TurnCandidate,
-        evidence: InteractionAddressingEvidence,
-    ) -> bool:
+    def _speaker_matches(candidate: TurnCandidate, evidence: InteractionAddressingEvidence) -> bool:
         candidate_entity = candidate.speaker.entity
         evidence_entity = evidence.speaker.entity
 
@@ -164,25 +162,29 @@ class TurnTakingCoordinator:
         if result.addressing is not None:
             self._runtime.perception.publish_annotation(
                 result.addressing.to_annotation(
-                    source=self.SOURCE,
-                    observation_id=target_observation_id,
+                    source=self.SOURCE, observation_id=target_observation_id
                 )
             )
 
         self._runtime.perception.publish_annotation(
-            decision.to_annotation(
-                source=self.SOURCE,
-                observation_id=target_observation_id,
-            )
+            decision.to_annotation(source=self.SOURCE, observation_id=target_observation_id)
+        )
+        logger.debug(
+            "TURN DECISION candidate_id=%s revision=%s action=%s reason=%s mode=%s "
+            "segments=%d active_segments=%d missing_transcripts=%d",
+            candidate.turn_candidate_id,
+            candidate.revision,
+            decision.action.value,
+            decision.reason,
+            decision.turn_mode.value,
+            len(candidate.segments),
+            len(candidate.active_segments),
+            len(candidate.missing_transcripts),
         )
 
     """Assessment Helper"""
 
-    def _candidate(
-        self,
-        key: SpeakerKey,
-        turn_candidate_id: str,
-    ) -> TurnCandidate | None:
+    def _candidate(self, key: SpeakerKey, turn_candidate_id: str) -> TurnCandidate | None:
         candidate = self._candidates.get(key)
         if candidate is None or candidate.turn_candidate_id != turn_candidate_id:
             return None
@@ -198,10 +200,7 @@ class TurnTakingCoordinator:
 
     @staticmethod
     def _operational_result(
-        evidence: TurnTakingEvidence,
-        *,
-        action: TurnTakingAction,
-        reason: str,
+        evidence: TurnTakingEvidence, *, action: TurnTakingAction, reason: str
     ) -> TurnTakingPolicyResult:
         return TurnTakingPolicyResult(
             decision=TurnTakingDecision(
@@ -234,6 +233,9 @@ class TurnTakingCoordinator:
         self._cancel_assessment(key)
 
         for segment in candidate.segments:
+            self._retired_segments[segment] = None
+            if len(self._retired_segments) > self._MAX_RETIRED_SEGMENTS:
+                self._retired_segments.pop(next(iter(self._retired_segments)))
             if self._segment_owners.get(segment) == key:
                 self._segment_owners.pop(segment, None)
 
@@ -241,11 +243,7 @@ class TurnTakingCoordinator:
             self._orphan_addressing_by_segment.pop(segment, None)
 
     async def _wait_for_transcript(
-        self,
-        key: SpeakerKey,
-        evidence: TurnTakingEvidence,
-        *,
-        reason: str,
+        self, key: SpeakerKey, evidence: TurnTakingEvidence, *, reason: str
     ) -> None:
         if not self._is_current(key, evidence):
             return
@@ -256,11 +254,7 @@ class TurnTakingCoordinator:
 
         self._publish_result(
             candidate,
-            self._operational_result(
-                evidence,
-                action=TurnTakingAction.HOLD,
-                reason=reason,
-            ),
+            self._operational_result(evidence, action=TurnTakingAction.HOLD, reason=reason),
         )
 
         await asyncio.sleep(self._transcript_wait_sec)
@@ -275,20 +269,13 @@ class TurnTakingCoordinator:
         self._publish_result(
             candidate,
             self._operational_result(
-                evidence,
-                action=TurnTakingAction.CANCEL,
-                reason="transcript_timeout",
+                evidence, action=TurnTakingAction.CANCEL, reason="transcript_timeout"
             ),
         )
         self._drop_candidate(key)
 
     async def _hold_then_resolve(
-        self,
-        key: SpeakerKey,
-        evidence: TurnTakingEvidence,
-        *,
-        timeout_sec: float,
-        reason: str,
+        self, key: SpeakerKey, evidence: TurnTakingEvidence, *, timeout_sec: float, reason: str
     ) -> None:
         await asyncio.sleep(timeout_sec)
 
@@ -300,16 +287,12 @@ class TurnTakingCoordinator:
             return
 
         result = self._policy.resolve_timeout(
-            evidence=evidence,
-            addressing=self._current_addressing(candidate),
-            reason=reason,
+            evidence=evidence, addressing=self._current_addressing(candidate), reason=reason
         )
 
         if result.decision.action == TurnTakingAction.COMMIT and candidate.missing_transcripts:
             await self._wait_for_transcript(
-                key,
-                evidence,
-                reason="awaiting_transcript_after_turn_timeout",
+                key, evidence, reason="awaiting_transcript_after_turn_timeout"
             )
             return
 
@@ -338,9 +321,7 @@ class TurnTakingCoordinator:
 
             if self._model.capabilities.uses_transcript and candidate.missing_transcripts:
                 await self._wait_for_transcript(
-                    key,
-                    evidence,
-                    reason="awaiting_transcript_for_assessment",
+                    key, evidence, reason="awaiting_transcript_for_assessment"
                 )
                 return
 
@@ -360,16 +341,11 @@ class TurnTakingCoordinator:
                 self._publish_result(
                     candidate,
                     self._operational_result(
-                        evidence,
-                        action=TurnTakingAction.HOLD,
-                        reason="turn_assessment_error",
+                        evidence, action=TurnTakingAction.HOLD, reason="turn_assessment_error"
                     ),
                 )
                 await self._hold_then_resolve(
-                    key,
-                    evidence,
-                    timeout_sec=self._max_hold_sec,
-                    reason="assessment_error_timeout",
+                    key, evidence, timeout_sec=self._max_hold_sec, reason="assessment_error_timeout"
                 )
                 return
 
@@ -386,9 +362,7 @@ class TurnTakingCoordinator:
                 self._publish_result(
                     candidate,
                     self._operational_result(
-                        evidence,
-                        action=TurnTakingAction.HOLD,
-                        reason="awaiting_addressing",
+                        evidence, action=TurnTakingAction.HOLD, reason="awaiting_addressing"
                     ),
                 )
 
@@ -408,9 +382,7 @@ class TurnTakingCoordinator:
                         and candidate.missing_transcripts
                     ):
                         await self._wait_for_transcript(
-                            key,
-                            evidence,
-                            reason="awaiting_transcript_after_addressing_timeout",
+                            key, evidence, reason="awaiting_transcript_after_addressing_timeout"
                         )
                         return
 
@@ -419,19 +391,13 @@ class TurnTakingCoordinator:
                     return
 
             assessment = self._fusion.apply(
-                assessment=assessment,
-                records=candidate.addressing_evidence.values(),
+                assessment=assessment, records=candidate.addressing_evidence.values()
             )
-            result = self._policy.decide(
-                evidence=evidence,
-                assessment=assessment,
-            )
+            result = self._policy.decide(evidence=evidence, assessment=assessment)
 
             if result.decision.action == TurnTakingAction.COMMIT and candidate.missing_transcripts:
                 await self._wait_for_transcript(
-                    key,
-                    evidence,
-                    reason="awaiting_transcript_for_commit",
+                    key, evidence, reason="awaiting_transcript_for_commit"
                 )
                 return
 
@@ -457,10 +423,7 @@ class TurnTakingCoordinator:
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception(
-                "Turn assessment task failed turn_candidate_id=%s",
-                turn_candidate_id,
-            )
+            logger.exception("Turn assessment task failed turn_candidate_id=%s", turn_candidate_id)
         finally:
             if self._assessment_tasks.get(key) is asyncio.current_task():
                 self._assessment_tasks.pop(key, None)
@@ -491,10 +454,7 @@ class TurnTakingCoordinator:
             for source in self._required_addressing_sources
         )
 
-    def _current_addressing(
-        self,
-        candidate: TurnCandidate,
-    ) -> InteractionAddressingEvidence | None:
+    def _current_addressing(self, candidate: TurnCandidate) -> InteractionAddressingEvidence | None:
         return self._fusion.resolve(candidate.addressing_evidence.values())
 
     def _maybe_interrupt(self, candidate: TurnCandidate, observation_id: str) -> None:
@@ -503,8 +463,7 @@ class TurnTakingCoordinator:
 
         evidence = self._builder.build(candidate)
         result = self._policy.decide_interruption(
-            evidence=evidence,
-            addressing=self._current_addressing(candidate),
+            evidence=evidence, addressing=self._current_addressing(candidate)
         )
         if result is None or not candidate.claim_interruption():
             return
@@ -518,10 +477,7 @@ class TurnTakingCoordinator:
         )
 
     def _apply_addressing(
-        self,
-        key: SpeakerKey,
-        candidate: TurnCandidate,
-        record: AddressingEvidenceRecord,
+        self, key: SpeakerKey, candidate: TurnCandidate, record: AddressingEvidenceRecord
     ) -> None:
         if not self._speaker_matches(candidate, record.evidence):
             logger.warning(
@@ -552,19 +508,13 @@ class TurnTakingCoordinator:
             self._schedule_assessment(key, candidate.turn_candidate_id)
 
     def _attach_segment_addressing(
-        self,
-        key: SpeakerKey,
-        candidate: TurnCandidate,
-        segment: PerceptionSegmentRef,
+        self, key: SpeakerKey, candidate: TurnCandidate, segment: PerceptionSegmentRef
     ) -> None:
         for record in self._orphan_addressing_by_segment.pop(segment, ()):
             self._apply_addressing(key, candidate, record)
 
     @staticmethod
-    def _identity_score(
-        candidate: TurnCandidate,
-        record: AddressingEvidenceRecord,
-    ) -> int | None:
+    def _identity_score(candidate: TurnCandidate, record: AddressingEvidenceRecord) -> int | None:
         candidate_participant = candidate.speaker.transport_participant_id
         evidence_participant = record.evidence.speaker.transport_participant_id
         if (
@@ -590,8 +540,7 @@ class TurnTakingCoordinator:
 
     @staticmethod
     def _temporal_distance_ns(
-        candidate: TurnCandidate,
-        record: AddressingEvidenceRecord,
+        candidate: TurnCandidate, record: AddressingEvidenceRecord
     ) -> int | None:
         if record.target_time_range is None:
             return None
@@ -605,8 +554,7 @@ class TurnTakingCoordinator:
         return min(abs(target_ns - start_ns), abs(target_ns - end_ns))
 
     def _match_unsegmented(
-        self,
-        record: AddressingEvidenceRecord,
+        self, record: AddressingEvidenceRecord
     ) -> tuple[SpeakerKey, TurnCandidate] | None:
         matches: list[tuple[int, int, SpeakerKey, TurnCandidate]] = []
 
@@ -649,17 +597,13 @@ class TurnTakingCoordinator:
             self._route_unsegmented_addressing(record)
 
     def _route_addressing(
-        self,
-        segment: PerceptionSegmentRef,
-        record: AddressingEvidenceRecord,
+        self, segment: PerceptionSegmentRef, record: AddressingEvidenceRecord
     ) -> None:
+        if segment in self._retired_segments:
+            return
         key = self._segment_owners.get(segment)
         if key is None:
-            self._store_addressing(
-                self._orphan_addressing_by_segment,
-                segment,
-                record,
-            )
+            self._store_addressing(self._orphan_addressing_by_segment, segment, record)
             return
 
         candidate = self._candidates.get(key)
@@ -667,14 +611,10 @@ class TurnTakingCoordinator:
             self._apply_addressing(key, candidate, record)
 
     def _route_observation_addressing(
-        self,
-        observation: EnvObservation,
-        record: AddressingEvidenceRecord,
+        self, observation: EnvObservation, record: AddressingEvidenceRecord
     ) -> None:
         record = replace(
-            record,
-            target_time_range=observation.time_range,
-            target_segment=observation.segment,
+            record, target_time_range=observation.time_range, target_segment=observation.segment
         )
 
         if observation.segment is not None:
@@ -683,18 +623,12 @@ class TurnTakingCoordinator:
             self._route_unsegmented_addressing(record)
 
     def _attach_pending_addressing(self, observation: EnvObservation) -> None:
-        for record in self._orphan_addressing_by_observation.pop(
-            observation.observation_id,
-            (),
-        ):
+        for record in self._orphan_addressing_by_observation.pop(observation.observation_id, ()):
             self._route_observation_addressing(observation, record)
 
     """Observation Handler"""
 
-    def _get_candidate(
-        self,
-        observation: EnvObservation,
-    ) -> tuple[SpeakerKey, TurnCandidate]:
+    def _get_candidate(self, observation: EnvObservation) -> tuple[SpeakerKey, TurnCandidate]:
         key = SpeakerKey.from_observation(observation)
         candidate = self._candidates.get(key)
 
@@ -712,19 +646,25 @@ class TurnTakingCoordinator:
         observation: EnvObservation,
     ) -> None:
         text = self._builder.text(observation)
-        if (
-            text is None
-            or not candidate.add_transcript(segment, observation, text)
-            or candidate.active_segments
-        ):
+        if text is None or not candidate.add_transcript(segment, observation, text):
             return
-
-        self._schedule_assessment(key, candidate.turn_candidate_id)
+        logger.debug(
+            "TURN TRANSCRIPT candidate_id=%s revision=%s segment_id=%s source=%s "
+            "generation=%s observation_id=%s chars=%d active_segments=%d",
+            candidate.turn_candidate_id,
+            candidate.revision,
+            segment.segment_id,
+            segment.source.source_id,
+            segment.source.source_generation,
+            observation.observation_id,
+            len(text),
+            len(candidate.active_segments),
+        )
+        if not candidate.active_segments:
+            self._schedule_assessment(key, candidate.turn_candidate_id)
 
     def _store_orphan_transcript(
-        self,
-        segment: PerceptionSegmentRef,
-        observation: EnvObservation,
+        self, segment: PerceptionSegmentRef, observation: EnvObservation
     ) -> None:
         if (
             segment not in self._orphan_transcripts
@@ -736,13 +676,21 @@ class TurnTakingCoordinator:
 
     def _consume_speech(self, observation: EnvObservation) -> None:
         segment = self._builder.require_segment(observation)
+        if segment in self._retired_segments:
+            return
         key, candidate = self._get_candidate(observation)
+        if (
+            observation.kind == ObservationKind.SPEECH_FRAME
+            and segment in candidate.closed_segments
+        ):
+            return
 
         is_new_segment = candidate.start_segment(segment, observation)
         self._segment_owners[segment] = key
 
         if is_new_segment:
-            candidate.add_input_observation(observation.observation_id)
+            # SPEECH_FRAME is ephemeral. close_segment/add_transcript attach retained evidence;
+            # the frame may still anchor immediate interruption, never a committed Turn.
             self._cancel_assessment(key)
 
         self._attach_segment_addressing(key, candidate, segment)
@@ -759,6 +707,17 @@ class TurnTakingCoordinator:
             return
 
         candidate.close_segment(segment, observation)
+        logger.debug(
+            "TURN SEGMENT CLOSED candidate_id=%s revision=%s segment_id=%s source=%s "
+            "generation=%s observation_id=%s active_segments=%d",
+            candidate.turn_candidate_id,
+            candidate.revision,
+            segment.segment_id,
+            segment.source.source_id,
+            segment.source.source_generation,
+            observation.observation_id,
+            len(candidate.active_segments),
+        )
 
         audio = self._builder.audio(observation)
         if audio is not None:
@@ -769,6 +728,8 @@ class TurnTakingCoordinator:
 
     def _consume_transcript(self, observation: EnvObservation) -> None:
         segment = self._builder.require_segment(observation)
+        if segment in self._retired_segments:
+            return
         key = self._segment_owners.get(segment)
 
         if key is None:
@@ -782,10 +743,7 @@ class TurnTakingCoordinator:
     def handle_observation(self, observation: EnvObservation) -> None:
         self._attach_pending_addressing(observation)
 
-        if observation.kind in {
-            ObservationKind.SPEECH_FRAME,
-            ObservationKind.SPEECH_SEGMENT,
-        }:
+        if observation.kind in {ObservationKind.SPEECH_FRAME, ObservationKind.SPEECH_SEGMENT}:
             self._consume_speech(observation)
         elif observation.kind == ObservationKind.TRANSCRIPT_SEGMENT:
             self._consume_transcript(observation)
@@ -818,11 +776,7 @@ class TurnTakingCoordinator:
         )
 
         if observation is None:
-            self._store_addressing(
-                self._orphan_addressing_by_observation,
-                observation_id,
-                record,
-            )
+            self._store_addressing(self._orphan_addressing_by_observation, observation_id, record)
             return
 
         self._route_observation_addressing(observation, record)
@@ -845,6 +799,7 @@ class TurnTakingCoordinator:
         self._assessment_tasks.clear()
         self._candidates.clear()
         self._segment_owners.clear()
+        self._retired_segments.clear()
         self._orphan_transcripts.clear()
         self._orphan_addressing_by_observation.clear()
         self._orphan_addressing_by_segment.clear()

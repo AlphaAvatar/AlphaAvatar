@@ -19,9 +19,7 @@ from alphaavatar.agents.memory.schemas import MemoryItem
 
 
 def serialize_memory_items(
-    records: list[MemoryItem],
-    *,
-    include_topic: bool = True,
+    records: list[MemoryItem], *, include_topic: bool = True
 ) -> list[dict[str, Any]]:
     return [
         {

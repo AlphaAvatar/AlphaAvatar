@@ -56,20 +56,12 @@ class MemoryStoreBackend(ABC):
 
     @abstractmethod
     async def get_visible(
-        self,
-        memory_ids: list[str],
-        *,
-        owner_refs: list[MemoryOwnerRef],
-        context: MemoryContextRef,
+        self, memory_ids: list[str], *, owner_refs: list[MemoryOwnerRef], context: MemoryContextRef
     ) -> list[MemoryItem]: ...
 
     @abstractmethod
     async def resolve_current(
-        self,
-        memory_ids: list[str],
-        *,
-        owner_refs: list[MemoryOwnerRef],
-        context: MemoryContextRef,
+        self, memory_ids: list[str], *, owner_refs: list[MemoryOwnerRef], context: MemoryContextRef
     ) -> list[MemoryItem]: ...
 
     @abstractmethod
@@ -97,19 +89,9 @@ class MemoryStoreBackend(ABC):
     ) -> list[MemoryOutboxEvent]: ...
 
     @abstractmethod
-    async def complete_outbox(
-        self,
-        event_ids: list[int],
-        *,
-        worker_id: str,
-    ) -> None: ...
+    async def complete_outbox(self, event_ids: list[int], *, worker_id: str) -> None: ...
 
     @abstractmethod
     async def retry_outbox(
-        self,
-        event_id: int,
-        *,
-        worker_id: str,
-        error: str,
-        delay_seconds: float,
+        self, event_id: int, *, worker_id: str, error: str, delay_seconds: float
     ) -> None: ...

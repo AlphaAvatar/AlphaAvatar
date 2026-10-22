@@ -72,8 +72,7 @@ class TurnTakingPolicy:
 
     @staticmethod
     def _evidence_ids(
-        evidence: TurnTakingEvidence,
-        addressing_ids: tuple[str, ...] = (),
+        evidence: TurnTakingEvidence, addressing_ids: tuple[str, ...] = ()
     ) -> tuple[str, ...]:
         return tuple(dict.fromkeys((*evidence.input_observation_ids, *addressing_ids)))
 
@@ -98,10 +97,7 @@ class TurnTakingPolicy:
                 addressees=addressees,
                 addressing_mode=addressing_mode,
                 confidence=(confidence if addressing_confidence is None else addressing_confidence),
-                evidence_observation_ids=self._evidence_ids(
-                    evidence,
-                    addressing_evidence_ids,
-                ),
+                evidence_observation_ids=self._evidence_ids(evidence, addressing_evidence_ids),
             )
 
         return TurnTakingPolicyResult(
@@ -120,10 +116,7 @@ class TurnTakingPolicy:
         )
 
     def decide(
-        self,
-        *,
-        evidence: TurnTakingEvidence,
-        assessment: TurnTakingAssessment,
+        self, *, evidence: TurnTakingEvidence, assessment: TurnTakingAssessment
     ) -> TurnTakingPolicyResult:
         end_probability = assessment.end_of_turn_probability or 0.0
         addressees = assessment.addressees

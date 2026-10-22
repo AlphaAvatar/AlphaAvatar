@@ -1,5 +1,159 @@
 # Contributing to AlphaAvatar
 
+## Python 3.13 development environment
+
+The development target is standard CPython 3.13, not a free-threaded interpreter.
+`.python-version`, all package `requires-python` declarations, Ruff, mypy and CI use
+that target. The root `pyproject.toml` owns workspace policy and development tools;
+each distribution owns its runtime dependencies, entry points and packaged resources.
+The shared `alphaavatar` namespace must not gain a root `__init__.py`.
+
+### Migrate an existing Python 3.11 checkout
+
+Stop the Host and wait for resource cleanup. Keep the working environment and workspace
+backup; do not delete them to make a new installation succeed. Apply the source changes
+in a separate worktree or checkout, then use a new virtual environment:
+
+```bash
+uv python install 3.13
+uv lock --python 3.13
+git diff -- uv.lock
+UV_PROJECT_ENVIRONMENT=.venv313 uv sync --all-packages --locked --python 3.13
+uv pip check --python .venv313/bin/python
+.venv313/bin/alphaavatar --help
+.venv313/bin/alphaavatar --version
+```
+
+Commit the resolver-generated lock together with the metadata after review. Never change
+only the lock's Python header, use `--frozen` to accept a stale lock, or remove a failing
+feature to claim the complete installation passed. Leave existing third-party pins in
+place initially; update only a dependency with a demonstrated incompatibility, then
+repeat resolution, installation and relevant feature checks. `uv sync --all-packages`
+is the integration environment; a lint-only environment is deliberately not equivalent.
+
+Run your chosen configuration with the new environment against your intended services.
+Verify startup, a real dispatch and interaction, cancellation during startup and active
+work, and normal shutdown before updating the service executable. Metadata, import and
+wheel checks alone do not validate models, audio, tool effects, RTC or the AIRI browser.
+Keep the old checkout/environment available for rollback; restoring code does not reverse
+external tool effects or replace a workspace backup.
+
+### Repeatable checks without loading models
+
+Use the committed lock with uv 0.10.0 or newer. CI uses uv 0.10.0. Quality tools have their
+own environment so checking code does not uninstall or replace runtime dependencies:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-quality uv sync --locked --only-group lint --no-install-workspace
+UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync python scripts/check_workspace.py
+UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync ruff check .
+UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync ruff format --check .
+UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync pre-commit validate-config
+uv lock --check
+```
+
+`scripts/check_workspace.py` checks package metadata, dependency relationships, entrypoint
+files, licenses and lock policy without importing the runtime. Its `--metadata-only` mode
+is useful during authoring but explicitly skips source/lock validation; it is not a release
+gate. `uv lock --check` is still required for resolver-level freshness. No command here
+silently treats an unavailable tool or an empty test suite as a successful check.
+
+Ruff is fixed at **0.12.9** in the dependency group, `required-version` and pre-commit.
+Keep 100-column formatting and compact imports; trailing commas do not force expansion.
+Unsafe fixes are not enabled. Inspect safe fixes and formatting before committing:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync ruff check --fix .
+UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync ruff format .
+git diff --check
+git diff
+```
+
+The existing E501 and B904 exceptions are retained; do not add blanket F/I/B/UP exclusions
+to conceal migration failures. Vendored `third_party` code, generated environments and
+workspace data are excluded, but `.github` is not blanket-excluded. TID251 rejects static
+`livekit.agents` imports; dependency/lock checks also reject the removed Agents SDK.
+This is not a security analysis of dynamic import strings or arbitrary third-party code.
+
+The repository's `/tests/` directory is currently local-only. Run maintained local tests
+with the runtime environment when present; pytest exit code 5 means no tests were collected,
+not a passing regression run. The quality workflow runs installation/import/build checks
+but does not claim an absent committed test suite passed.
+
+### Install local commit and push hooks
+
+A committed `.pre-commit-config.yaml` does not install Git hooks. In each checkout, run:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync pre-commit install \
+  --hook-type pre-commit --hook-type pre-push
+```
+
+Commit hooks fix/check staged files. The read-only push hooks run Ruff lint and formatting
+against the complete workspace, including when only configuration files changed. They do
+not build distributions or call model services. CI remains authoritative: local hooks can
+be bypassed and do not accompany commits to another machine.
+
+After changing lint policy or Python syntax targets, align the complete baseline once:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync ruff check --fix .
+UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync ruff format .
+UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync ruff check .
+UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync ruff format --check .
+git diff --check
+git diff
+```
+
+Review PEP 695 type aliases and generic declarations explicitly; do not add `--unsafe-fixes`
+to the hook. An unchanged file can pass unnoticed by a staged-file commit check while
+failing the whole-tree CI check. When diagnosing hook installation, inspect
+`git config --show-origin --get core.hooksPath` and the hook files in the effective hook
+directory; no configured `core.hooksPath` is itself not an error.
+
+### Build every distribution
+
+Build tooling is separate from the runtime and lint environments:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-build uv sync --locked --only-group build --no-install-workspace
+(
+  set -e
+  constraints="$(mktemp)"
+  trap 'rm -f "$constraints"' EXIT
+  uv export --locked --only-group build --no-emit-workspace --no-hashes \
+    --output-file "$constraints" > /dev/null
+  uv build --all-packages --no-sources --build-constraints "$constraints"
+  UV_PROJECT_ENVIRONMENT=.venv-build uv run --no-sync twine check dist/*
+)
+```
+
+The build group's Twine 7 and packaging 26.1-or-newer readers support Core Metadata 2.5.
+Keep the metadata writer and readers compatible in the committed lock. Isolated builds
+use constraints exported from that lock; installing a pinned Hatchling in `.venv-build`
+alone does not constrain an isolated PEP 517 build. A successful wheel build does not
+substitute for `twine check`. Do not edit artifact metadata or skip validation to make a
+release pass.
+
+Each distribution includes its own copy of the root Apache-2.0 `LICENSE`, README,
+`pyproject.toml`, namespace source and existing package resources. License copies are
+checked for drift. `--no-sources` verifies that building does not depend on uv's editable
+workspace overrides; it does not prove that all runtime dependencies can be installed.
+Use a clean output directory when reviewing a release's artifacts.
+
+### Network and installation failures
+
+Distinguish DNS errors, TCP connection failures, TLS verification failures and resolver
+conflicts. A failed GitHub connection does not mean that a repository or dependency version
+is missing. Use the environment's approved network/proxy configuration. Do not disable TLS
+verification or write guessed IP addresses into permanent Git/DNS settings. A container
+with no outbound connection cannot be repaired by changing a package constraint.
+
+When working offline, use a previously populated uv cache or a controlled package mirror
+with the required Python 3.13 artifacts. Do not replace the runtime installation result with
+syntax checks. Record the failing command and stage without publishing proxy credentials,
+access tokens or environment files.
+
 ## Plugin development
 
 Plugin packages are grouped by responsibility:
@@ -55,8 +209,8 @@ Also verify:
 * Package versions are consistent across `__version__` fields and `pyproject.toml` files.
 * GitHub Actions secrets are configured:
 
-  * `TEST_PYPI_TOKEN`
-  * `PYPI_TOKEN`
+  * `TEST_PYPI_API_TOKEN`
+  * `PYPI_API_TOKEN`
 * GitHub CLI is available if you want automatic GitHub Release creation and PR changelog generation:
 
 ```bash

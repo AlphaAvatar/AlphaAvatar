@@ -92,10 +92,7 @@ class FaceCache:
         return max(self._gender_probs.items(), key=lambda x: x[1])[0]
 
     def update_profile_detail(
-        self,
-        profile_details: UserProfileDetails | None,
-        face_attribute: dict,
-        updated_at: datetime,
+        self, profile_details: UserProfileDetails | None, face_attribute: dict, updated_at: datetime
     ) -> UserProfileDetails:
         if profile_details is None:
             profile_details = UserProfileDetails(**{})
@@ -112,9 +109,7 @@ class FaceCache:
                 or profile_details.age.source in {ProfileItemSource.face, ProfileItemSource.speech}
             ):
                 profile_details.age = ProfileItemView(
-                    value=age_range,
-                    source=ProfileItemSource.face,
-                    updated_at=updated_at,
+                    value=age_range, source=ProfileItemSource.face, updated_at=updated_at
                 )
 
         if gender is not None:
@@ -128,9 +123,7 @@ class FaceCache:
                     ProfileItemSource.speech,
                 }:
                     profile_details.gender = ProfileItemView(
-                        value=gender_value,
-                        source=ProfileItemSource.face,
-                        updated_at=updated_at,
+                        value=gender_value, source=ProfileItemSource.face, updated_at=updated_at
                     )
 
         return profile_details

@@ -10,7 +10,13 @@ permissions:
   contents: write
 
 jobs:
+  checks:
+    uses: ./.github/workflows/quality.yml
+    permissions:
+      contents: read
+
   publish:
+    needs: checks
     runs-on: ubuntu-latest
 
     steps:
@@ -22,19 +28,19 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version-file: .python-version
 
       - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.uv/bin" >> $GITHUB_PATH
-          uv --version
+        run: python -m pip install uv==0.10.0
 
-      - name: Create venv & install build tooling
+      - name: Verify lock and install build tooling
         run: |
-          uv venv .venv
-          source .venv/bin/activate
-          uv pip install uv hatchling twine
+          uv lock --check
+          uv sync --locked --only-group build --no-install-workspace
+          constraints="$RUNNER_TEMP/alphaavatar-build-constraints.txt"
+          uv export --locked --only-group build --no-emit-workspace --no-hashes \
+            --output-file "$constraints" > /dev/null
+          echo "UV_BUILD_CONSTRAINT=$constraints" >> "$GITHUB_ENV"
 
       - name: Determine repository (PyPI/TestPyPI) and version
         id: meta

@@ -13,7 +13,7 @@
 # limitations under the License.
 from typing import Any
 
-from alphaavatar.agents.providers import ProviderGateway
+from alphaavatar.agents.runtime.modules.foundation import ProviderService
 
 from ...profile import UserProfileDetails
 from .config import ProfilerProviderConfig
@@ -22,17 +22,13 @@ from .prompt import DELTA_PROMPT
 
 
 class ProfilerProvider:
-    def __init__(self, config: ProfilerProviderConfig) -> None:
+    def __init__(self, config: ProfilerProviderConfig, *, service: ProviderService) -> None:
         self._task = config.profile_delta_task
-        self._gateway = ProviderGateway(config.gateway)
+        self._gateway = service.gateway(config.gateway)
         self._gateway.validate_tasks([self._task])
 
     async def extract(
-        self,
-        *,
-        profile_details_dump: dict[str, Any],
-        new_turn: str,
-        metadata: dict[str, Any],
+        self, *, profile_details_dump: dict[str, Any], new_turn: str, metadata: dict[str, Any]
     ) -> ProfileDelta:
         result = await self._gateway.ainvoke_structured(
             task_name=self._task,

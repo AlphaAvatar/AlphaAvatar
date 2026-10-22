@@ -48,10 +48,7 @@ class MemoryPlugin(AvatarModulePlugin):
 
         store = MemoryStore(runtime=runtime)
         memory = MemoryRuntime(
-            runtime=runtime,
-            avatar_id=avatar_id,
-            store=store,
-            maximum_memory_num=maximum_memory_num,
+            runtime=runtime, avatar_id=avatar_id, store=store, maximum_memory_num=maximum_memory_num
         )
 
         processors = []
@@ -59,28 +56,16 @@ class MemoryPlugin(AvatarModulePlugin):
 
         if config.conversation.enabled:
             conversation = ConversationProcessor(
-                runtime=runtime,
-                memory=memory,
-                config=config.conversation,
+                runtime=runtime, memory=memory, config=config.conversation
             )
             processors.append(conversation)
 
         if config.tool.enabled:
-            processors.append(
-                ToolProcessor(
-                    runtime=runtime,
-                    memory=memory,
-                    config=config.tool,
-                )
-            )
+            processors.append(ToolProcessor(runtime=runtime, memory=memory, config=config.tool))
 
         if config.environment.enabled:
             processors.append(
-                EnvironmentProcessor(
-                    runtime=runtime,
-                    memory=memory,
-                    config=config.environment,
-                )
+                EnvironmentProcessor(runtime=runtime, memory=memory, config=config.environment)
             )
 
         if config.retrieval.enabled:

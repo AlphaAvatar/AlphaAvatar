@@ -16,15 +16,13 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import TYPE_CHECKING
 
-from alphaavatar.agents.runtime.plugin import AvatarRuntimePlugin
+from alphaavatar.core.lifecycle import LifecycleComponent
 
 if TYPE_CHECKING:
-    from livekit.agents.llm import ChatItem
-
     from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
 
 
-class MemoryBase(AvatarRuntimePlugin):
+class MemoryBase(LifecycleComponent):
     @property
     @abstractmethod
     def capability_registry(self) -> AvatarCapabilityRegistry: ...
@@ -36,6 +34,3 @@ class MemoryBase(AvatarRuntimePlugin):
     @property
     @abstractmethod
     def memory_content(self) -> str: ...
-
-    @abstractmethod
-    def add_message(self, *, context_id: str, chat_item: ChatItem) -> None: ...

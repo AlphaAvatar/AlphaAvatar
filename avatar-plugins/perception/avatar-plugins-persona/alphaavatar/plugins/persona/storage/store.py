@@ -44,16 +44,14 @@ class PersonaStore:
     async def _infer(self, payload: dict, *, timeout: float | None) -> bytes | None:
         return await asyncio.wait_for(
             self._runtime.inference.do_inference(
-                self.vdb_inference_method,
-                json.dumps(payload).encode(),
+                self.vdb_inference_method, json.dumps(payload).encode()
             ),
             timeout=timeout,
         )
 
     async def load(self, *, uid: str, timeout: float | None = 3) -> UserProfile:
         result = await self._infer(
-            {"op": VectorRunnerOP.load, "param": {"user_id": uid}},
-            timeout=timeout,
+            {"op": VectorRunnerOP.load, "param": {"user_id": uid}}, timeout=timeout
         )
         if result is None:
             raise RuntimeError(f"Persona store returned no load result uid={uid!r}")
@@ -67,7 +65,7 @@ class PersonaStore:
         )
 
         runtime_state = await self._runtime_state_store.load(
-            user_path=self._runtime.workspace.users.get(uid),
+            user_path=self._runtime.workspace.users.get(uid)
         )
 
         return UserProfile(
@@ -78,19 +76,12 @@ class PersonaStore:
         )
 
     async def search_speaker_vector(
-        self,
-        *,
-        speaker_vector: np.ndarray,
-        threshold: float,
-        timeout: float | None = None,
+        self, *, speaker_vector: np.ndarray, threshold: float, timeout: float | None = None
     ) -> str | None:
         result = await self._infer(
             {
                 "op": VectorRunnerOP.search_speaker_vector,
-                "param": {
-                    "speaker_vector": speaker_vector.tolist(),
-                    "threshold": threshold,
-                },
+                "param": {"speaker_vector": speaker_vector.tolist(), "threshold": threshold},
             },
             timeout=timeout,
         )
@@ -101,19 +92,12 @@ class PersonaStore:
         return str(uid) if uid else None
 
     async def search_face_vector(
-        self,
-        *,
-        face_vector: np.ndarray,
-        threshold: float,
-        timeout: float | None = None,
+        self, *, face_vector: np.ndarray, threshold: float, timeout: float | None = None
     ) -> str | None:
         result = await self._infer(
             {
                 "op": VectorRunnerOP.search_face_vector,
-                "param": {
-                    "face_vector": face_vector.tolist(),
-                    "threshold": threshold,
-                },
+                "param": {"face_vector": face_vector.tolist(), "threshold": threshold},
             },
             timeout=timeout,
         )
@@ -123,13 +107,7 @@ class PersonaStore:
         uid = json.loads(result.decode()).get("user_id")
         return str(uid) if uid else None
 
-    async def _save_vdb(
-        self,
-        *,
-        uid: str,
-        persona: PersonaCache,
-        timeout: float | None,
-    ) -> None:
+    async def _save_vdb(self, *, uid: str, persona: PersonaCache, timeout: float | None) -> None:
         details_items = (
             flatten_profile_items(uid, persona.profile_details.model_dump())
             if persona.profile_details is not None
@@ -158,13 +136,7 @@ class PersonaStore:
         if not result:
             raise RuntimeError(f"Persona VDB save returned no result uid={uid!r}")
 
-    async def save(
-        self,
-        *,
-        uid: str,
-        persona: PersonaCache,
-        timeout: float | None = 15,
-    ) -> None:
+    async def save(self, *, uid: str, persona: PersonaCache, timeout: float | None = 15) -> None:
         operations = []
 
         if persona.runtime_state is not None:
@@ -175,13 +147,7 @@ class PersonaStore:
                 )
             )
 
-        operations.append(
-            self._save_vdb(
-                uid=uid,
-                persona=persona,
-                timeout=timeout,
-            )
-        )
+        operations.append(self._save_vdb(uid=uid, persona=persona, timeout=timeout))
 
         results = await asyncio.gather(*operations, return_exceptions=True)
         errors: list[Exception] = []

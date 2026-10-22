@@ -11,9 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from langchain_core.prompts import ChatPromptTemplate
+from alphaavatar.agents.avatar.provider.schemas import ModelPrompt
 
-DELTA_PROMPT = ChatPromptTemplate.from_messages(
+DELTA_PROMPT = ModelPrompt.from_messages(
     [
         (
             "system",
@@ -40,7 +40,7 @@ General:
 """,
         ),
         (
-            "human",
+            "user",
             "CURRENT PROFILE (JSON):\n```{current_profile}```\n\n"
             "REFERENCE PROFILE FIELDS (type + description):\n```{profile_reference}```\n\n"
             "NEW TURN:\n```{new_turn}```\n\n"

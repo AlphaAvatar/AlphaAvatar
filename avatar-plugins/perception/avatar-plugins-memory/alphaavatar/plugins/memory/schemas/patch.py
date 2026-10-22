@@ -29,8 +29,7 @@ class PatchOp(BaseModel):
         ),
     )
     topic: str | None = Field(
-        default=None,
-        description="Stable short topic label for retrieval and grouping.",
+        default=None, description="Stable short topic label for retrieval and grouping."
     )
     node_mentions: list[GraphNodeMention] = Field(
         default_factory=list,

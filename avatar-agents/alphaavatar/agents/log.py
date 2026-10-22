@@ -67,68 +67,24 @@ def _log_every(
 
 
 def debug_every(
-    msg: str,
-    *args: Any,
-    key: Hashable | None = None,
-    interval_sec: float = 10.0,
-    **kwargs: Any,
+    msg: str, *args: Any, key: Hashable | None = None, interval_sec: float = 10.0, **kwargs: Any
 ) -> None:
-    _log_every(
-        logging.DEBUG,
-        msg,
-        *args,
-        key=key,
-        interval_sec=interval_sec,
-        **kwargs,
-    )
+    _log_every(logging.DEBUG, msg, *args, key=key, interval_sec=interval_sec, **kwargs)
 
 
 def info_every(
-    msg: str,
-    *args: Any,
-    key: Hashable | None = None,
-    interval_sec: float = 10.0,
-    **kwargs: Any,
+    msg: str, *args: Any, key: Hashable | None = None, interval_sec: float = 10.0, **kwargs: Any
 ) -> None:
-    _log_every(
-        logging.INFO,
-        msg,
-        *args,
-        key=key,
-        interval_sec=interval_sec,
-        **kwargs,
-    )
+    _log_every(logging.INFO, msg, *args, key=key, interval_sec=interval_sec, **kwargs)
 
 
 def warning_every(
-    msg: str,
-    *args: Any,
-    key: Hashable | None = None,
-    interval_sec: float = 30.0,
-    **kwargs: Any,
+    msg: str, *args: Any, key: Hashable | None = None, interval_sec: float = 30.0, **kwargs: Any
 ) -> None:
-    _log_every(
-        logging.WARNING,
-        msg,
-        *args,
-        key=key,
-        interval_sec=interval_sec,
-        **kwargs,
-    )
+    _log_every(logging.WARNING, msg, *args, key=key, interval_sec=interval_sec, **kwargs)
 
 
 def dev_every(
-    msg: str,
-    *args: Any,
-    key: Hashable | None = None,
-    interval_sec: float = 10.0,
-    **kwargs: Any,
+    msg: str, *args: Any, key: Hashable | None = None, interval_sec: float = 10.0, **kwargs: Any
 ) -> None:
-    _log_every(
-        DEV_LEVEL,
-        msg,
-        *args,
-        key=key,
-        interval_sec=interval_sec,
-        **kwargs,
-    )
+    _log_every(DEV_LEVEL, msg, *args, key=key, interval_sec=interval_sec, **kwargs)

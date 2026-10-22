@@ -15,8 +15,4 @@ from .base import PersonaBase
 from .cache import PersonaCache
 from .processor import PersonaProcessorBase
 
-__all__ = [
-    "PersonaBase",
-    "PersonaCache",
-    "PersonaProcessorBase",
-]
+__all__ = ["PersonaBase", "PersonaCache", "PersonaProcessorBase"]

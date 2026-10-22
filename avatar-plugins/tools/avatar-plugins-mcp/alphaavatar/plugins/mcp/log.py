@@ -11,24 +11,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
 import logging
 
-from .redact import RedactingFilter
+from alphaavatar.core.log.records import Redactor
 
 logger = logging.getLogger("alphaavatar.plugins.mcp")
+_redact = Redactor()
 
-# Mask tokens, API keys, passwords, and authorization values in everything MCP logs.
-# Third-party loggers that print the full MCP server URL (including its query string,
-# e.g. httpx's "HTTP Request: POST <url>" at INFO) are covered too; a logger's filters
-# do not apply to its children, so each one is listed explicitly.
-_REDACTED_LOGGERS = (
-    logger.name,
-    "httpx",
-    "mcp.client.streamable_http",
-    "mcp.client.sse",
-)
 
-for _name in _REDACTED_LOGGERS:
-    _target = logging.getLogger(_name)
-    if not any(isinstance(f, RedactingFilter) for f in _target.filters):
-        _target.addFilter(RedactingFilter())
+def redact_url(url: str) -> str:
+    """Safe display text only; never use this value to make a request."""
+    return _redact(url, logger=logger.name)
+
+
+def redact_text(text: str) -> str:
+    """Filter model-facing server descriptions without changing global logging handlers."""
+    return _redact(text, logger=logger.name)

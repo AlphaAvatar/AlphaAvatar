@@ -14,11 +14,7 @@
 from .context import MemoryContextRef
 from .graph import GraphNodeMention, MemoryGraphLink, MemoryGraphNode
 from .memory_item import MemoryItem
-from .reference import (
-    MemoryOwnerRef,
-    MemoryParticipantRef,
-    MemorySourceRef,
-)
+from .reference import MemoryOwnerRef, MemoryParticipantRef, MemorySourceRef
 from .scope import MemoryScope
 from .search import MemorySearchHit
 from .store import MemoryCheckpointAdvance, MemoryCommitResult, MemoryOutboxEvent

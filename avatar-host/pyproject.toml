@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "alpha-avatar-host"
+dynamic = ["version"]
+description = "Application assembly and execution hosting for AlphaAvatar."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.13,<3.14"
+classifiers = [
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3 :: Only",
+]
+dependencies = [
+    "alpha-avatar-agents",
+    "alpha-avatar-core",
+    "aiohttp>=3.10,<4",
+    "omegaconf>=2.3,<3",
+    "pydantic>=2,<3",
+    "PyYAML>=6,<7",
+]
+
+[project.optional-dependencies]
+livekit = [
+    "alpha-avatar-rtc[livekit]",
+    "livekit-api>=1.0.4,<2",
+    "livekit-protocol~=1.0",
+    "livekit>=1.0.12,<2",
+]
+
+[project.scripts]
+alphaavatar = "alphaavatar.host.main:main"
+
+[project.urls]
+Source = "https://github.com/AlphaAvatar/AlphaAvatar"
+Issues = "https://github.com/AlphaAvatar/AlphaAvatar/issues"
+
+[tool.hatch.version]
+path = "alphaavatar/host/version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["alphaavatar"]
+
+[tool.hatch.build.targets.sdist]
+include = ["alphaavatar", "README.md", "pyproject.toml", "LICENSE"]

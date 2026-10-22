@@ -14,7 +14,4 @@
 from .config import ToolConfig
 from .processor import ToolProcessor
 
-__all__ = [
-    "ToolConfig",
-    "ToolProcessor",
-]
+__all__ = ["ToolConfig", "ToolProcessor"]

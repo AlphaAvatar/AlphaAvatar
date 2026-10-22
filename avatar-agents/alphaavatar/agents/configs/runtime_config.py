@@ -13,14 +13,14 @@
 # limitations under the License.
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from alphaavatar.core.perception import (
-    PerceptionRetentionPolicy,
-    PerceptionStreamKind,
-    TemporalAlignmentMode,
-    TemporalAlignmentPolicy,
-)
+from alphaavatar.agents.avatar.loop.schemas import LoopLimits
+from alphaavatar.core.perception import TemporalAlignmentMode, TemporalAlignmentPolicy
+from alphaavatar.core.perception.enums import PerceptionStreamKind
+from alphaavatar.core.perception.schemas import PerceptionRetentionPolicy
 
 
 class TemporalAlignmentConfig(BaseModel):
@@ -62,11 +62,10 @@ class PerceptionConfig(BaseModel):
     text_maxlen: int = Field(default=1024, gt=0)
     event_maxlen: int = Field(default=8192, gt=0)
 
+    temporal_alignment: TemporalAlignmentConfig = Field(default_factory=TemporalAlignmentConfig)
+
     def build_stream_maxlens(self) -> dict[PerceptionStreamKind, int]:
-        policy = PerceptionRetentionPolicy(
-            retention_sec=self.retention_sec,
-            headroom=self.headroom,
-        )
+        policy = PerceptionRetentionPolicy(retention_sec=self.retention_sec, headroom=self.headroom)
         audio_interval_sec = self.audio_frame_size_ms / 1000
 
         return {
@@ -88,9 +87,19 @@ class TurnConfig(BaseModel):
     context_ready_timeout_sec: float = Field(default=0.5, ge=0, le=10.0)
 
 
+class EngineConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    max_turn_candidates: int = Field(default=4096, ge=1)
+    max_pending_admissions: int = Field(default=32, ge=1)
+    max_input_bytes: int = Field(default=262144, ge=1)
+    loop_limits: LoopLimits = Field(default_factory=LoopLimits)
+    depth: Literal["auto", "quick", "careful"] = "auto"
+
+
 class RuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    temporal_alignment: TemporalAlignmentConfig = Field(default_factory=TemporalAlignmentConfig)
     perception: PerceptionConfig = Field(default_factory=PerceptionConfig)
     turn: TurnConfig = Field(default_factory=TurnConfig)
+    engine: EngineConfig = Field(default_factory=EngineConfig)

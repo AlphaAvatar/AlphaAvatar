@@ -11,39 +11,27 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""AlphaAvatar output runtime."""
+"""AlphaAvatar output delivery, record journals and execution observations."""
 
-from .runtime import OutputRuntime
-from .schema import (
-    OutputControl,
-    OutputControlType,
-    OutputEvent,
-    OutputKind,
-    OutputLane,
-    OutputPlayback,
-    OutputPlaybackType,
-    OutputTextAudioAlignment,
-    OutputTextChunk,
-    OutputTextMode,
-    OutputTranscriptChunk,
+from .journal import (
+    OutputConsumerFailed,
+    OutputJournal,
+    OutputJournalFull,
+    OutputJournalGap,
+    OutputJournalRead,
 )
+from .runtime import OutputRuntime
 from .stream import OutputStream, OutputSubscription
 from .timeline import OutputTimeline
 
 __all__ = [
-    "OutputControl",
-    "OutputControlType",
-    "OutputEvent",
-    "OutputKind",
-    "OutputLane",
-    "OutputPlayback",
-    "OutputPlaybackType",
+    "OutputConsumerFailed",
+    "OutputJournal",
+    "OutputJournalFull",
+    "OutputJournalGap",
+    "OutputJournalRead",
     "OutputRuntime",
     "OutputStream",
     "OutputSubscription",
-    "OutputTextChunk",
-    "OutputTextMode",
     "OutputTimeline",
-    "OutputTranscriptChunk",
-    "OutputTextAudioAlignment",
 ]

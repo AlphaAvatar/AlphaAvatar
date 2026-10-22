@@ -1,9 +1,6 @@
-# ============================================================
-# AlphaAvatar Voice.ai Companion Pipeline
-# File: examples/agent_configs/voice/pipeline_voiceai.yaml
-# ============================================================
-
-
+# AlphaAvatar native Voice.ai Hiyori-style voice companion pipeline.
+# File: examples/agent_configs/voice/pipeline_voiceai_airi.yaml
+# Native generation: Loop -> ProviderService -> OutputRuntime; no SDK llm section.
 # ============================================================
 # 1. Avatar Identity & Workspace
 # ============================================================
@@ -33,26 +30,57 @@ avatar:
 # ============================================================
 
 runtime:
-  temporal_alignment:
-    mode: auto
-
   perception:
     retention_sec: 60
 
-
-# ============================================================
-# 3. Core Language Model
-# ============================================================
-
-llm:
-  plugin: openai
-  model: gpt-5.6-luna
+    temporal_alignment:
+      mode: auto
 
 
 # ============================================================
-# 4. Shared Provider Defaults
-#
-# YAML anchors reused by Memory and Persona.
+# 3. Foundation Plugins
+# ============================================================
+
+loop:
+  plugin: realtime
+  init_config:
+    model:
+      backend: openai
+      provider: openai
+      model: gpt-5.6-luna
+      temperature: null
+    # Keep the configured model identifier; availability/credentials are deployment-specific.
+    # Configure named tool_policies and/or an Engine authorizer for approved tools.
+    # The default approval requirement is NOT bypassed by the native Host.
+    tool_policies: {}
+    # No wildcard approval bypass. Configure exact capability policies after auditing each tool.
+
+context:
+  plugin: default
+  init_config:
+    history_max_turns: 32
+    history_max_items: 4096
+    history_max_bytes: 8388608
+
+voice:
+  vad:
+    plugin: silero
+
+  stt:
+    plugin: openai_segment
+    model: gpt-4o-transcribe
+
+  tts:
+    plugin: voiceai
+    model: voiceai-tts-v1-latest
+    speaker: a931a6af-fb01-42f0-a8c0-bd14bc302bb1
+
+vision:
+  enabled: false
+
+
+# ============================================================
+# 4. Perception Plugins
 # ============================================================
 
 defaults:
@@ -63,16 +91,6 @@ defaults:
   openai_embedding: &openai_embedding
     provider: openai
     model: text-embedding-3-small
-
-
-# ============================================================
-# 5. Realtime Runtime Plugins
-# ============================================================
-
-
-# ------------------------------------------------------------
-# Interaction Router
-# ------------------------------------------------------------
 
 router:
   plugin: default
@@ -86,9 +104,7 @@ router:
     addressing:
       semantic:
         enabled: true
-        avatar_identities:
-          - AlphaAvatar
-          - Alpha
+        avatar_identities: [AlphaAvatar, Alpha]
         history_turns: 2
         model:
           name: qwen3_0_6b_q8_0
@@ -117,55 +133,15 @@ router:
         enabled: true
         audio_only_speech_start: true
 
-
-# ------------------------------------------------------------
-# Intermediate Status
-# ------------------------------------------------------------
-
 status:
   plugin: default
   enabled: true
   init_config: {}
 
-
-# ------------------------------------------------------------
-# Voice
-# ------------------------------------------------------------
-
-voice:
-  vad:
-    plugin: silero
-
-  stt:
-    plugin: openai_segment
-    model: gpt-4o-transcribe
-
-  tts:
-    plugin: voiceai
-    model: voiceai-tts-v1-latest
-    speaker: a931a6af-fb01-42f0-a8c0-bd14bc302bb1
-
-
-  allow_interruptions: true
-
-
-# ------------------------------------------------------------
-# Virtual Character
-# ------------------------------------------------------------
-
+# Hiyori voice/persona only; the SDK-dependent animated Character is not enabled.
 character:
-  plugin: airi
+  plugin: null
   init_config: {}
-
-
-# ============================================================
-# 6. Stateful Intelligence Plugins
-# ============================================================
-
-
-# ------------------------------------------------------------
-# Memory
-# ------------------------------------------------------------
 
 memory:
   plugin: default
@@ -201,11 +177,6 @@ memory:
     environment:
       enabled: false
 
-
-# ------------------------------------------------------------
-# Persona
-# ------------------------------------------------------------
-
 persona:
   plugin: default
 
@@ -220,10 +191,8 @@ persona:
       enabled: true
       provider:
         profile_delta_task: persona.profile_delta
-
         gateway:
           trace: *provider_trace
-
           tasks:
             persona.profile_delta:
               provider: openai
@@ -235,36 +204,21 @@ persona:
       inference_queue_size: 1
 
     face:
-      enabled: true
+      enabled: false
 
 
 # ============================================================
-# 7. Tool Plugins
+# 5. Tools Plugins
 # ============================================================
 
 tools:
-
-  # ----------------------------------------------------------
-  # Deep Research
-  # ----------------------------------------------------------
-
   deepresearch:
     plugin: null
     init_config: {}
 
-
-  # ----------------------------------------------------------
-  # Retrieval-Augmented Generation
-  # ----------------------------------------------------------
-
   rag:
     plugin: null
     init_config: {}
-
-
-  # ----------------------------------------------------------
-  # Model Context Protocol
-  # ----------------------------------------------------------
 
   mcp:
     plugin: default

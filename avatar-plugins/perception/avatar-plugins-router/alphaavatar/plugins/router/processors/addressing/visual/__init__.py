@@ -14,7 +14,4 @@
 from .config import VisualAddressingConfig
 from .processor import VisualAddressingProcessor
 
-__all__ = [
-    "VisualAddressingConfig",
-    "VisualAddressingProcessor",
-]
+__all__ = ["VisualAddressingConfig", "VisualAddressingProcessor"]

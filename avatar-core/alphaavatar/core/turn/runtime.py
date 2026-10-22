@@ -105,8 +105,7 @@ class TurnRuntime:
 
         start_cutoff = self._last_cutoff
         perception = self._perception.capture_snapshot(
-            after_sequence=start_cutoff.sequence,
-            final_observations=final_observations,
+            after_sequence=start_cutoff.sequence, final_observations=final_observations
         )
 
         snapshot = TurnSnapshot(
@@ -154,9 +153,7 @@ class TurnRuntime:
 
         start_cutoff = self._last_cutoff
         perception = self._perception.capture_snapshot_until(
-            after_cutoff=start_cutoff,
-            until_sequence=cutoff_sequence,
-            captured_at=committed_at,
+            after_cutoff=start_cutoff, until_sequence=cutoff_sequence, captured_at=committed_at
         )
 
         snapshot = TurnSnapshot(
@@ -190,10 +187,7 @@ class TurnRuntime:
         self._context_consumers.discard(consumer_id)
 
     async def wait_context_ready(
-        self,
-        snapshot: TurnSnapshot,
-        *,
-        timeout: float | None = None,
+        self, snapshot: TurnSnapshot, *, timeout: float | None = None
     ) -> bool:
         consumers = tuple(self._context_consumers)
         if not consumers:
@@ -214,8 +208,7 @@ class TurnRuntime:
                 await asyncio.gather(
                     *(
                         self.events.wait_until_consumed(
-                            consumer_id=consumer_id,
-                            cursor_seq=sequence,
+                            consumer_id=consumer_id, cursor_seq=sequence
                         )
                         for consumer_id in consumers
                     )

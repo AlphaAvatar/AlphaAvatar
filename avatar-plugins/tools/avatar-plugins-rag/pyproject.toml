@@ -1,38 +1,32 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
 [project]
 name = "alpha-avatar-plugins-rag"
 dynamic = ["version"]
-description = "AlphaAvatar Framework plugin for RAG service"
+description = "Document ingestion and retrieval tools for AlphaAvatar."
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.11,<3.12"
-keywords = ["llm", "agents", "AI", "internet", "multimodel", "rag"]
+license-files = ["LICENSE"]
+requires-python = ">=3.13,<3.14"
 classifiers = [
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
-    "Topic :: Multimedia :: Sound/Audio",
-    "Topic :: Multimedia :: Video",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3 :: Only",
 ]
 dependencies = [
+    "alpha-avatar-agents",
+    "alpha-avatar-core",
+    "docling",
+    "pydantic>=2,<3",
     "raganything[all]==1.2.8",
-    "docling"
 ]
-
-
-[project.optional-dependencies]
 
 [project.urls]
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"
+Issues = "https://github.com/AlphaAvatar/AlphaAvatar/issues"
 
 [tool.hatch.version]
 path = "alphaavatar/plugins/rag/version.py"
@@ -41,4 +35,4 @@ path = "alphaavatar/plugins/rag/version.py"
 packages = ["alphaavatar"]
 
 [tool.hatch.build.targets.sdist]
-include = ["alphaavatar", "README.md", "LICENSE"]
+include = ["alphaavatar", "README.md", "pyproject.toml", "LICENSE"]

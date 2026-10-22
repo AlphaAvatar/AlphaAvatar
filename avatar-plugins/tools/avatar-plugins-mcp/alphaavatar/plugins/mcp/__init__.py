@@ -11,49 +11,43 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import json
-import os
+from __future__ import annotations
 
-from alphaavatar.agents.runtime import AvatarRuntime
+from typing import TYPE_CHECKING, Any
+
 from alphaavatar.agents.runtime.inference import register_inference_runner_bootstrap
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
-from alphaavatar.agents.tools import MCPAPI
 
-from .inference import configure_inference_runners
-from .log import logger
-from .mcp_host import MCPHost
 from .version import __version__
 
-__all__ = ["__version__"]
+if TYPE_CHECKING:
+    from alphaavatar.agents.runtime import AvatarRuntime
+    from alphaavatar.agents.tools import ToolBase
 
 
 class MCPRemotePlugin(AvatarModulePlugin):
     def __init__(self) -> None:
-        super().__init__(__name__, __version__, __package__, logger)
+        super().__init__("MCP", __version__, __name__)
 
-    def get_plugin(self, runtime: AvatarRuntime, init_config: dict, *args, **kwargs) -> MCPAPI:
-        try:
-            status_emitter = kwargs.pop("status_emitter", None)
-            servers = json.loads(os.getenv("MCP_SERVERS", "{}"))
-            mcp_host = MCPHost(runtime=runtime, servers=servers, **init_config, **kwargs)
-            return MCPAPI(mcp_host, status_emitter=status_emitter)
-        except Exception as exc:
-            raise ImportError(
-                "The MCP plugin failed to initialize. "
-                "Install the optional dependency: `pip install alphaavatar-plugins-mcp`. "
-                f"Original error: {exc}"
-            ) from exc
+    def get_plugin(
+        self,
+        *,
+        runtime: AvatarRuntime,
+        init_config: dict[str, Any],
+        servers: dict[str, dict[str, Any]],
+    ) -> ToolBase:
+        from .service import MCPToolService
+
+        if init_config:
+            raise ValueError("The default MCP tool has no init_config options")
+        return MCPToolService(runtime=runtime, servers=servers)
 
 
-# Plugin register
-AvatarModulePlugin.register(
-    AvatarModule.MCP,
-    "default",
-    MCPRemotePlugin(),
-)
+def _configure_runners(config: Any):
+    from .inference import configure_inference_runners
 
-# Inference Runners
-register_inference_runner_bootstrap(
-    "alphaavatar.plugins.mcp",
-    configure_inference_runners,
-)
+    return configure_inference_runners(config)
+
+
+AvatarModulePlugin.register(AvatarModule.MCP, "default", MCPRemotePlugin())
+register_inference_runner_bootstrap("alphaavatar.plugins.mcp", _configure_runners)

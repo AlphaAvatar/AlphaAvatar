@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 
@@ -34,18 +35,17 @@ from alphaavatar.agents.router.schemas import (
     TurnTakingDecision,
 )
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.core.env import (
-    AnnotationKind,
-    EnvObservation,
-    ObservationKind,
-    PerceptionSegmentRef,
-)
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.enums import AnnotationKind, ObservationKind
+from alphaavatar.core.env.schemas import PerceptionSegmentRef
 from alphaavatar.core.media import TextPayload
-from alphaavatar.core.perception import PerceptionEvent, PerceptionStreamKind
+from alphaavatar.core.perception.enums import PerceptionStreamKind
+from alphaavatar.core.perception.schemas import PerceptionEvent
 
-from ....log import logger
 from .config import SemanticAddressingConfig
 from .factory import create_semantic_addressing_model
+
+logger = logging.getLogger(__name__)
 
 SpeakerKey = tuple[str, str]
 
@@ -93,17 +93,11 @@ class SemanticAddressingProcessor(RouterProcessorBase):
     SEMANTIC_SOURCE = "router.addressing.semantic"
     FOCUS_SOURCE = "router.addressing.focus"
 
-    def __init__(
-        self,
-        *,
-        runtime: AvatarRuntime,
-        config: SemanticAddressingConfig,
-    ) -> None:
+    def __init__(self, *, runtime: AvatarRuntime, config: SemanticAddressingConfig) -> None:
         super().__init__(runtime=runtime)
 
         self._model = create_semantic_addressing_model(
-            config.model.name,
-            inference_executor=runtime.inference,
+            config.model.name, inference_executor=runtime.inference
         )
         self._avatar_identities = config.avatar_identities
         self._history_turns = config.history_turns
@@ -164,8 +158,7 @@ class SemanticAddressingProcessor(RouterProcessorBase):
     def _history_segments(state: _SpeakerState) -> tuple[SemanticAddressingTranscript, ...]:
         return tuple(
             SemanticAddressingTranscript(
-                text=" ".join(segment.text for segment in turn).strip(),
-                final=True,
+                text=" ".join(segment.text for segment in turn).strip(), final=True
             )
             for turn in state.history
             if any(segment.text.strip() for segment in turn)
@@ -194,8 +187,7 @@ class SemanticAddressingProcessor(RouterProcessorBase):
 
         if state.worker is None or state.worker.done():
             state.worker = asyncio.create_task(
-                self._run_jobs(key, state),
-                name=f"router_semantic_addressing:{key[0]}:{key[1]}",
+                self._run_jobs(key, state), name=f"router_semantic_addressing:{key[0]}:{key[1]}"
             )
             self._workers.add(state.worker)
             state.worker.add_done_callback(self._workers.discard)
@@ -243,10 +235,7 @@ class SemanticAddressingProcessor(RouterProcessorBase):
         )
 
     def _publish(
-        self,
-        state: _SpeakerState,
-        job: _AssessmentJob,
-        result: SemanticAddressingResult,
+        self, state: _SpeakerState, job: _AssessmentJob, result: SemanticAddressingResult
     ) -> None:
         confidence = self._confidence(result.label, result.p_avatar)
 
@@ -259,10 +248,7 @@ class SemanticAddressingProcessor(RouterProcessorBase):
             raw_score=result.p_avatar,
         )
         self._runtime.perception.publish_annotation(
-            semantic.to_annotation(
-                source=self.SEMANTIC_SOURCE,
-                observation_id=job.observation_id,
-            )
+            semantic.to_annotation(source=self.SEMANTIC_SOURCE, observation_id=job.observation_id)
         )
 
         if result.label != SemanticAddressingLabel.UNKNOWN:
@@ -277,10 +263,7 @@ class SemanticAddressingProcessor(RouterProcessorBase):
                 observation_ids=job.evidence_observation_ids,
             )
             self._runtime.perception.publish_annotation(
-                focus.to_annotation(
-                    source=self.FOCUS_SOURCE,
-                    observation_id=job.observation_id,
-                )
+                focus.to_annotation(source=self.FOCUS_SOURCE, observation_id=job.observation_id)
             )
 
         logger.debug(
@@ -377,19 +360,15 @@ class SemanticAddressingProcessor(RouterProcessorBase):
         while True:
             try:
                 await self._runtime.perception.wait_for_pending_observations(
-                    consumer_id=self.OBSERVATION_CONSUMER_ID,
-                    streams=streams,
+                    consumer_id=self.OBSERVATION_CONSUMER_ID, streams=streams
                 )
                 window = self._runtime.perception.take_pending_observations(
-                    consumer_id=self.OBSERVATION_CONSUMER_ID,
-                    streams=streams,
-                    require_payload=True,
+                    consumer_id=self.OBSERVATION_CONSUMER_ID, streams=streams, require_payload=True
                 )
 
                 if window.has_gap:
                     logger.warning(
-                        "Semantic Addressing observed transcript gap missed=%s",
-                        window.missed_count,
+                        "Semantic Addressing observed transcript gap missed=%s", window.missed_count
                     )
                     self._clear_context()
 
@@ -414,7 +393,7 @@ class SemanticAddressingProcessor(RouterProcessorBase):
         while True:
             try:
                 await self._runtime.perception.wait_for_pending_annotations(
-                    consumer_id=self.ANNOTATION_CONSUMER_ID,
+                    consumer_id=self.ANNOTATION_CONSUMER_ID
                 )
                 batch = self._runtime.perception.take_pending_annotations(
                     consumer_id=self.ANNOTATION_CONSUMER_ID,
@@ -434,13 +413,11 @@ class SemanticAddressingProcessor(RouterProcessorBase):
                         self._consume_turn_annotation(event)
                     except Exception:
                         logger.exception(
-                            "Semantic Addressing failed turn annotation event_id=%s",
-                            event.event_id,
+                            "Semantic Addressing failed turn annotation event_id=%s", event.event_id
                         )
 
                 self._runtime.perception.commit_annotations(
-                    consumer_id=self.ANNOTATION_CONSUMER_ID,
-                    cursor_seq=batch.cursor_seq,
+                    consumer_id=self.ANNOTATION_CONSUMER_ID, cursor_seq=batch.cursor_seq
                 )
 
             except asyncio.CancelledError:
@@ -456,12 +433,10 @@ class SemanticAddressingProcessor(RouterProcessorBase):
         self._started = True
         self._tasks = (
             asyncio.create_task(
-                self._consume_observations(),
-                name="router_semantic_addressing_observations",
+                self._consume_observations(), name="router_semantic_addressing_observations"
             ),
             asyncio.create_task(
-                self._consume_annotations(),
-                name="router_semantic_addressing_annotations",
+                self._consume_annotations(), name="router_semantic_addressing_annotations"
             ),
         )
 
@@ -490,8 +465,7 @@ class SemanticAddressingProcessor(RouterProcessorBase):
         self._states.clear()
 
         self._runtime.perception.clear_observation_consumer(
-            self.OBSERVATION_CONSUMER_ID,
-            streams={PerceptionStreamKind.TEXT},
+            self.OBSERVATION_CONSUMER_ID, streams={PerceptionStreamKind.TEXT}
         )
         self._runtime.perception.clear_annotation_consumer(self.ANNOTATION_CONSUMER_ID)
 

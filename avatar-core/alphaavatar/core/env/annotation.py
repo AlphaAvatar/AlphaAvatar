@@ -15,7 +15,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from .enum import AnnotationKind
+from .enums import AnnotationKind
 
 
 @dataclass(slots=True)

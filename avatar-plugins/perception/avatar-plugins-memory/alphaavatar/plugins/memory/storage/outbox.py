@@ -136,8 +136,7 @@ class MemoryOutboxWorker:
             items = await self._hydrate(events)
             await self._handler(items)
             await self._backend.complete_outbox(
-                [event.event_id for event in events],
-                worker_id=self._worker_id,
+                [event.event_id for event in events], worker_id=self._worker_id
             )
         except asyncio.CancelledError:
             raise

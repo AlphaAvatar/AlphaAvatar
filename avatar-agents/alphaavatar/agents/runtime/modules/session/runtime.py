@@ -19,11 +19,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from alphaavatar.agents.utils.files.work_dirs import (
-    SessionPath,
-    UserPath,
-    migrate_user_path,
-)
+from alphaavatar.agents.utils.files.work_dirs import SessionPath, UserPath, migrate_user_path
 from alphaavatar.agents.utils.id_utils import get_md5_id, sanitize_id
 from alphaavatar.agents.utils.time import UserTimeContext, application_now
 
@@ -74,8 +70,7 @@ class SessionRuntime(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     session_id: str = Field(
-        default_factory=lambda: uuid.uuid4().hex,
-        description="Session ID for the current session.",
+        default_factory=lambda: uuid.uuid4().hex, description="Session ID for the current session."
     )
 
     created_at: datetime = Field(
@@ -83,10 +78,7 @@ class SessionRuntime(BaseModel):
         description="Application-local wall-clock time when the session was created.",
     )
 
-    session_timeout: int = Field(
-        default=300,
-        description="Session timeout in seconds.",
-    )
+    session_timeout: int = Field(default=300, description="Session timeout in seconds.")
 
     primary_participant_id: str | None = None
     participants: dict[str, ParticipantInfo] = Field(default_factory=dict)

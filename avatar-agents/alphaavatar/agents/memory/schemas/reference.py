@@ -15,17 +15,13 @@ from __future__ import annotations
 
 from pydantic import BaseModel, field_validator, model_validator
 
-from alphaavatar.core.env import (
+from alphaavatar.core.env.schemas import (
     PerceptionEntityRef,
     PerceptionSegmentRef,
     PerceptionSourceRef,
 )
 
-from ..enums import (
-    MemoryOwnerKind,
-    MemoryParticipantKind,
-    MemorySourceKind,
-)
+from ..enums import MemoryOwnerKind, MemoryParticipantKind, MemorySourceKind
 
 
 def _normalize_id(value: str) -> str:
@@ -109,14 +105,8 @@ class MemorySourceRef(BaseModel):
 
     @model_validator(mode="after")
     def _validate_shape(self) -> MemorySourceRef:
-        perception = {
-            MemorySourceKind.PERCEPTION_SOURCE,
-            MemorySourceKind.PERCEPTION_SEGMENT,
-        }
-        tool = {
-            MemorySourceKind.TOOL_CALL,
-            MemorySourceKind.TOOL_RESULT,
-        }
+        perception = {MemorySourceKind.PERCEPTION_SOURCE, MemorySourceKind.PERCEPTION_SEGMENT}
+        tool = {MemorySourceKind.TOOL_CALL, MemorySourceKind.TOOL_RESULT}
 
         if self.kind in perception:
             if self.source_generation is None or self.source_generation <= 0:
@@ -146,10 +136,7 @@ class MemorySourceRef(BaseModel):
 
     @property
     def key(self) -> str:
-        if self.kind in {
-            MemorySourceKind.TOOL_CALL,
-            MemorySourceKind.TOOL_RESULT,
-        }:
+        if self.kind in {MemorySourceKind.TOOL_CALL, MemorySourceKind.TOOL_RESULT}:
             return f"{self.kind.value}:{self.tool_id}:{self.source_id}"
 
         if self.kind is MemorySourceKind.PERCEPTION_SOURCE:
@@ -166,25 +153,14 @@ class MemorySourceRef(BaseModel):
 
     @classmethod
     def tool_call(cls, tool_id: str, call_id: str) -> MemorySourceRef:
-        return cls(
-            kind=MemorySourceKind.TOOL_CALL,
-            source_id=call_id,
-            tool_id=tool_id,
-        )
+        return cls(kind=MemorySourceKind.TOOL_CALL, source_id=call_id, tool_id=tool_id)
 
     @classmethod
     def tool_result(cls, tool_id: str, call_id: str) -> MemorySourceRef:
-        return cls(
-            kind=MemorySourceKind.TOOL_RESULT,
-            source_id=call_id,
-            tool_id=tool_id,
-        )
+        return cls(kind=MemorySourceKind.TOOL_RESULT, source_id=call_id, tool_id=tool_id)
 
     @classmethod
-    def perception_source(
-        cls,
-        ref: PerceptionSourceRef,
-    ) -> MemorySourceRef:
+    def perception_source(cls, ref: PerceptionSourceRef) -> MemorySourceRef:
         return cls(
             kind=MemorySourceKind.PERCEPTION_SOURCE,
             source_id=ref.source_id,
@@ -192,10 +168,7 @@ class MemorySourceRef(BaseModel):
         )
 
     @classmethod
-    def perception_segment(
-        cls,
-        ref: PerceptionSegmentRef,
-    ) -> MemorySourceRef:
+    def perception_segment(cls, ref: PerceptionSegmentRef) -> MemorySourceRef:
         return cls(
             kind=MemorySourceKind.PERCEPTION_SEGMENT,
             source_id=ref.source.source_id,
@@ -204,10 +177,7 @@ class MemorySourceRef(BaseModel):
         )
 
     @classmethod
-    def perception_entity(
-        cls,
-        ref: PerceptionEntityRef,
-    ) -> MemorySourceRef:
+    def perception_entity(cls, ref: PerceptionEntityRef) -> MemorySourceRef:
         return cls(
             kind=MemorySourceKind.PERCEPTION_ENTITY,
             source_id=ref.perception_entity_id,
@@ -216,7 +186,4 @@ class MemorySourceRef(BaseModel):
 
     @classmethod
     def runtime_event(cls, event_id: str) -> MemorySourceRef:
-        return cls(
-            kind=MemorySourceKind.RUNTIME_EVENT,
-            source_id=event_id,
-        )
+        return cls(kind=MemorySourceKind.RUNTIME_EVENT, source_id=event_id)

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
 [project]
@@ -8,42 +8,28 @@ dynamic = ["version"]
 description = "Core runtime schemas and transport primitives for AlphaAvatar."
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.11,<3.12"
-keywords = [
-    "omni",
-    "realtime",
-    "audio",
-    "video",
-    "multimodal",
-    "rtc",
-    "runtime",
-    "AI",
-]
+license-files = ["LICENSE"]
+requires-python = ">=3.13,<3.14"
+keywords = ["omni", "realtime", "audio", "video", "multimodal", "rtc", "runtime", "AI"]
 classifiers = [
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3 :: Only",
     "Topic :: Multimedia :: Sound/Audio",
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3 :: Only",
 ]
-
-# Keep core minimal.
-# Core schemas should not require LiveKit, LangChain, providers, VDB, or livekit-agents.
 dependencies = []
 
 [project.optional-dependencies]
-livekit = [
-    "livekit>=1.0.12,<2",
-    "livekit-api>=1.0.4,<2",
-    "livekit-protocol~=1.0",
-]
+livekit = ["livekit-api>=1.0.4,<2", "livekit-protocol~=1.0", "livekit>=1.0.12,<2"]
+video = ["numpy>=1.26,<3", "opencv-python-headless==4.12.0.88"]
 
 [project.urls]
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"
+Issues = "https://github.com/AlphaAvatar/AlphaAvatar/issues"
 
 [tool.hatch.version]
 path = "alphaavatar/core/version.py"
@@ -52,4 +38,4 @@ path = "alphaavatar/core/version.py"
 packages = ["alphaavatar"]
 
 [tool.hatch.build.targets.sdist]
-include = ["alphaavatar", "README.md", "pyproject.toml"]
+include = ["alphaavatar", "README.md", "pyproject.toml", "LICENSE"]

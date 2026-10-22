@@ -14,20 +14,13 @@
 from __future__ import annotations
 
 from alphaavatar.agents.router.enums import TurnTakingMode
-from alphaavatar.agents.router.schemas import (
-    TurnTakingAudioEvidence,
-    TurnTakingEvidence,
-)
+from alphaavatar.agents.router.schemas import TurnTakingAudioEvidence, TurnTakingEvidence
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.core.env import EnvObservation, PerceptionSegmentRef
-from alphaavatar.core.media import (
-    AudioSegmentPayload,
-    PayloadFormat,
-    PayloadFormatUnavailable,
-    PayloadView,
-    TextPayload,
-)
-from alphaavatar.core.perception import MediaModality, MediaSourceKind
+from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.schemas import PerceptionSegmentRef
+from alphaavatar.core.media import AudioSegmentPayload, PayloadFormatUnavailable, TextPayload
+from alphaavatar.core.media.enums import PayloadFormat, PayloadView
+from alphaavatar.core.perception.enums import MediaModality, MediaSourceKind
 
 from .schemas.state import TurnCandidate
 
@@ -57,9 +50,7 @@ class TurnEvidenceBuilder:
 
         try:
             pcm16_bytes = payload.get(
-                PayloadFormat.AUDIO_PCM16_BYTES,
-                view=PayloadView.RAW,
-                fallback_to_raw=False,
+                PayloadFormat.AUDIO_PCM16_BYTES, view=PayloadView.RAW, fallback_to_raw=False
             )
         except PayloadFormatUnavailable:
             return None
@@ -82,8 +73,7 @@ class TurnEvidenceBuilder:
             return TurnTakingMode.AUDIO_ONLY
 
         cameras = self._runtime.perception.get_source_states(
-            modality=MediaModality.VIDEO,
-            source_kind=MediaSourceKind.CAMERA,
+            modality=MediaModality.VIDEO, source_kind=MediaSourceKind.CAMERA
         )
         return (
             TurnTakingMode.AUDIO_VISUAL

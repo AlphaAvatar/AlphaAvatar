@@ -20,13 +20,9 @@ from .smart_turn_v3 import SmartTurnV3Model
 
 
 def create_turn_taking_model(
-    name: str,
-    *,
-    inference_executor: InferenceExecutor,
+    name: str, *, inference_executor: InferenceExecutor
 ) -> TurnTakingModelBase:
     if name == "smart_turn_v3":
-        return SmartTurnV3Model(
-            inference_executor=inference_executor,
-        )
+        return SmartTurnV3Model(inference_executor=inference_executor)
 
     raise ValueError(f"Unsupported Turn-Taking model: {name!r}")

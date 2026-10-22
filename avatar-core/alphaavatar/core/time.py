@@ -38,8 +38,7 @@ class RuntimeTime:
     def shifted(self, seconds: float) -> RuntimeTime:
         delta_ns = round(seconds * _NS_PER_SECOND)
         return RuntimeTime(
-            unix_ns=self.unix_ns + delta_ns,
-            monotonic_ns=self.monotonic_ns + delta_ns,
+            unix_ns=self.unix_ns + delta_ns, monotonic_ns=self.monotonic_ns + delta_ns
         )
 
 

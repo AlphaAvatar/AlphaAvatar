@@ -12,10 +12,5 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .avatar_config import AvatarConfig
-from .parser import get_avatar_args, read_args
 
-__all__ = [
-    "AvatarConfig",
-    "read_args",
-    "get_avatar_args",
-]
+__all__ = ["AvatarConfig"]

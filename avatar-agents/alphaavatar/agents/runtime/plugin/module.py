@@ -23,6 +23,13 @@ class AvatarModule(str, Enum):
     # Engine
     AVATAR_ENGINE = "avatar_engine"
 
+    LOOP = "loop"
+    CONTEXT = "context"
+
+    # Provider
+    PROVIDER_LLM = "provider_llm"
+    PROVIDER_EMBEDDING = "provider_embedding"
+
     # Voice modules
     VOICE_VAD = "voice_vad"
     VOICE_STT = "voice_stt"

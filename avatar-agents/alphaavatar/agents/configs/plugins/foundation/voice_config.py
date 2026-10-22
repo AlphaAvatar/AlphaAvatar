@@ -1,0 +1,200 @@
+# Copyright 2025 AlphaAvatar project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+import importlib
+from contextlib import AsyncExitStack
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from alphaavatar.agents.avatar.voice import STTBase, TTSBase, VADBase, VoiceBundle
+from alphaavatar.agents.runtime.inference import InferenceExecutor
+from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
+
+# AlphaAvatar voice factories; turn interruption policy belongs to Router.
+importlib.import_module("alphaavatar.plugins.voice")
+
+
+class STTConfig(BaseModel):
+    """Configuration for AlphaAvatar speech-to-text."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    plugin: Literal["openai_realtime", "openai_segment"] | None = Field(
+        default=None, description="STT provider implementation used by Interaction Router."
+    )
+    model: str | None = Field(
+        default=None, description="Model used by the AlphaAvatar STT provider."
+    )
+    delay: Literal["minimal", "low", "medium", "high", "xhigh"] = Field(
+        default="low", description="Realtime transcription latency/quality preference."
+    )
+    base_url: str | None = Field(default=None, description="Optional provider API base URL.")
+
+    def get_plugin(self) -> STTBase | None:
+        if self.plugin is None:
+            return None
+        if self.model is None:
+            raise ValueError(f"voice.stt.model is required when voice.stt.plugin={self.plugin!r}")
+
+        kwargs = {"model": self.model}
+        if self.plugin == "openai_realtime":
+            kwargs["delay"] = self.delay
+
+        if self.base_url is not None:
+            kwargs["base_url"] = self.base_url
+        return AvatarModulePlugin.create(AvatarModule.VOICE_STT, self.plugin, **kwargs)
+
+
+class TTSConfig(BaseModel):
+    """Configuration for the TTS plugin used in the agent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    plugin: Literal["openai", "voiceai"] | None = Field(
+        default=None, description="TTS plugin to use for text-to-speech."
+    )
+    model: str | None = Field(default=None, description="Model to use for text-to-speech.")
+    speaker: str | None = Field(
+        default=None, description="Speaker to use for text-to-speech; voice.ai uses voice_id."
+    )
+    instructions: str | None = Field(default=None, description="Instructions for the TTS model.")
+
+    base_url: str | None = None
+
+    # HTTP waits and retry backoff; queued audio and local playout do not use this budget.
+    timeout: float = Field(default=30.0, gt=0, le=3600, allow_inf_nan=False)
+    first_audio_timeout: float = Field(default=5.0, gt=0, le=3600, allow_inf_nan=False)
+    read_timeout: float = Field(default=15.0, gt=0, le=3600, allow_inf_nan=False)
+
+    # Slow-response diagnostics are independent of hard deadlines.
+    slow_response_after: float = Field(default=2.5, gt=0, le=3600, allow_inf_nan=False)
+    trust_env: bool = Field(default=False, strict=True)
+
+    # Optional speculation spends retry quota and may incur a second synthesis charge.
+    first_audio_hedge_after: float | None = Field(
+        default=2.5, gt=0, le=3600, allow_inf_nan=False, strict=True
+    )
+    max_retries: int = Field(default=1, ge=0, le=3, strict=True)
+    retry_interval: float = Field(default=0.1, gt=0, le=3600, allow_inf_nan=False)
+    frame_size_ms: int = Field(default=20, ge=1, le=100, strict=True)
+    queue_frames: int = Field(default=64, ge=1, le=128, strict=True)
+    max_streams: int = Field(default=4, ge=1, le=32, strict=True)
+    max_audio_seconds: float = Field(default=120.0, gt=0, le=3600, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def validate_provider(self) -> "TTSConfig":
+        if self.first_audio_hedge_after is not None and (
+            self.first_audio_hedge_after >= min(self.first_audio_timeout, self.timeout)
+            or self.max_retries < 1
+        ):
+            raise ValueError("First-audio hedging requires retry quota and a shorter deadline")
+        if self.plugin is None:
+            return self
+        if not self.model or not self.model.strip():
+            raise ValueError("voice.tts.model is required for an enabled TTS plugin")
+        if self.plugin == "openai" and (not self.speaker or not self.speaker.strip()):
+            raise ValueError("voice.tts.speaker is required for OpenAI TTS")
+        if self.speaker is not None and not self.speaker.strip():
+            raise ValueError("voice.tts.speaker cannot be blank")
+        if self.plugin == "voiceai" and self.instructions is not None:
+            raise ValueError("Voice.ai TTS does not support instructions")
+        if self.instructions is not None and len(self.instructions) > 4096:
+            raise ValueError("TTS instructions exceed 4096 characters")
+        if self.instructions is not None and self.model in ("tts-1", "tts-1-hd"):
+            raise ValueError("The selected TTS model does not support instructions")
+        return self
+
+    def get_plugin(self) -> TTSBase | None:
+        if self.plugin is None:
+            return None
+
+        return AvatarModulePlugin.create(
+            AvatarModule.VOICE_TTS,
+            self.plugin,
+            model=self.model,
+            speaker=self.speaker,
+            instructions=self.instructions,
+            base_url=self.base_url,
+            timeout=self.timeout,
+            first_audio_timeout=self.first_audio_timeout,
+            read_timeout=self.read_timeout,
+            slow_response_after=self.slow_response_after,
+            trust_env=self.trust_env,
+            first_audio_hedge_after=self.first_audio_hedge_after,
+            max_retries=self.max_retries,
+            retry_interval=self.retry_interval,
+            frame_size_ms=self.frame_size_ms,
+            queue_frames=self.queue_frames,
+            max_streams=self.max_streams,
+            max_audio_seconds=self.max_audio_seconds,
+        )
+
+
+class VADConfig(BaseModel):
+    """Configuration for AlphaAvatar voice activity detection."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    plugin: Literal["silero"] | None = Field(
+        default=None, description="VAD plugin used by Interaction Router."
+    )
+    min_speech_duration: float = Field(default=0.05, ge=0.0)
+    min_silence_duration: float = Field(default=0.55, ge=0.0)
+    activation_threshold: float = Field(default=0.5, gt=0.0, le=1.0)
+    deactivation_threshold: float | None = Field(default=None, gt=0.0, le=1.0)
+    smoothing_alpha: float = Field(default=0.35, ge=0.0, lt=1.0)
+    queue_size: int = Field(default=256, gt=0)
+    inference_timeout_sec: float = Field(default=0.5, gt=0.0)
+
+    def get_plugin(self, *, inference_executor: InferenceExecutor) -> VADBase | None:
+        return AvatarModulePlugin.create(
+            AvatarModule.VOICE_VAD,
+            self.plugin,
+            min_speech_duration=self.min_speech_duration,
+            min_silence_duration=self.min_silence_duration,
+            activation_threshold=self.activation_threshold,
+            deactivation_threshold=self.deactivation_threshold,
+            smoothing_alpha=self.smoothing_alpha,
+            queue_size=self.queue_size,
+            inference_timeout_sec=self.inference_timeout_sec,
+            inference_executor=inference_executor,
+        )
+
+
+class VoiceConfig(BaseModel):
+    """Shared voice factories; interruption is configured under router.init_config."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    stt: STTConfig = Field(default_factory=STTConfig)
+    tts: TTSConfig = Field(default_factory=TTSConfig)
+    vad: VADConfig = Field(default_factory=VADConfig)
+
+    async def get_plugin(self, *, inference_executor: InferenceExecutor) -> VoiceBundle:
+        async with AsyncExitStack() as resources:
+            vad = self.vad.get_plugin(inference_executor=inference_executor)
+            if vad is not None:
+                resources.push_async_callback(vad.aclose)
+
+            stt = self.stt.get_plugin()
+            if stt is not None:
+                resources.push_async_callback(stt.aclose)
+
+            tts = self.tts.get_plugin()
+            if tts is not None:
+                resources.push_async_callback(tts.aclose)
+
+            bundle = VoiceBundle(vad=vad, stt=stt, tts=tts)
+            resources.pop_all()
+            return bundle

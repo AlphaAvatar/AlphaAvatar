@@ -18,22 +18,13 @@ from collections.abc import Callable, Sequence
 from threading import RLock
 from typing import Any
 
-from alphaavatar.core.env import (
-    EnvAnnotation,
-    EnvObservation,
-    ObservationKind,
-    PerceptionSegmentRef,
-    PerceptionSourceRef,
-)
+from alphaavatar.core.env import EnvAnnotation, EnvObservation
+from alphaavatar.core.env.enums import ObservationKind
+from alphaavatar.core.env.schemas import PerceptionSegmentRef, PerceptionSourceRef
 from alphaavatar.core.time import RuntimeClock, RuntimeTime, RuntimeTimeRange
 
-from .enum import (
-    MediaModality,
-    MediaSourceKind,
-    PerceptionEventKind,
-    PerceptionStreamKind,
-)
-from .schema import (
+from .enums import MediaModality, MediaSourceKind, PerceptionEventKind, PerceptionStreamKind
+from .schemas import (
     MediaSourceSnapshot,
     MediaSourceStateEvent,
     PerceptionCutoff,
@@ -106,28 +97,23 @@ class PerceptionRuntime:
 
         # Visual
         self.video = PerceptionStream[EnvObservation](
-            name=PerceptionStreamKind.VIDEO,
-            maxlen=stream_maxlens[PerceptionStreamKind.VIDEO],
+            name=PerceptionStreamKind.VIDEO, maxlen=stream_maxlens[PerceptionStreamKind.VIDEO]
         )
         self.screen = PerceptionStream[EnvObservation](
-            name=PerceptionStreamKind.SCREEN,
-            maxlen=stream_maxlens[PerceptionStreamKind.SCREEN],
+            name=PerceptionStreamKind.SCREEN, maxlen=stream_maxlens[PerceptionStreamKind.SCREEN]
         )
 
         # Voice
         self.audio = PerceptionStream[EnvObservation](
-            name=PerceptionStreamKind.AUDIO,
-            maxlen=stream_maxlens[PerceptionStreamKind.AUDIO],
+            name=PerceptionStreamKind.AUDIO, maxlen=stream_maxlens[PerceptionStreamKind.AUDIO]
         )
         self.speech = PerceptionStream[EnvObservation](
-            name=PerceptionStreamKind.SPEECH,
-            maxlen=stream_maxlens[PerceptionStreamKind.SPEECH],
+            name=PerceptionStreamKind.SPEECH, maxlen=stream_maxlens[PerceptionStreamKind.SPEECH]
         )
 
         # Text
         self.text = PerceptionStream[EnvObservation](
-            name=PerceptionStreamKind.TEXT,
-            maxlen=stream_maxlens[PerceptionStreamKind.TEXT],
+            name=PerceptionStreamKind.TEXT, maxlen=stream_maxlens[PerceptionStreamKind.TEXT]
         )
 
         # Derived annotations
@@ -138,8 +124,7 @@ class PerceptionRuntime:
 
         # Session-level Events
         self.events = PerceptionStream[PerceptionEvent](
-            name=PerceptionStreamKind.EVENT,
-            maxlen=stream_maxlens[PerceptionStreamKind.EVENT],
+            name=PerceptionStreamKind.EVENT, maxlen=stream_maxlens[PerceptionStreamKind.EVENT]
         )
 
         # Stream
@@ -187,10 +172,7 @@ class PerceptionRuntime:
     """Helper"""
 
     def _update_speech_activity_locked(self, observation: EnvObservation) -> None:
-        if observation.kind not in {
-            ObservationKind.SPEECH_FRAME,
-            ObservationKind.SPEECH_SEGMENT,
-        }:
+        if observation.kind not in {ObservationKind.SPEECH_FRAME, ObservationKind.SPEECH_SEGMENT}:
             return
 
         segment = observation.segment
@@ -297,16 +279,10 @@ class PerceptionRuntime:
         return event
 
     async def wait_for_pending_annotations(
-        self,
-        *,
-        consumer_id: str,
-        timeout: float | None = None,
-        min_age_sec: float = 0.0,
+        self, *, consumer_id: str, timeout: float | None = None, min_age_sec: float = 0.0
     ) -> bool:
         return await self.annotation_events.wait_for_pending(
-            consumer_id=consumer_id,
-            timeout=timeout,
-            min_age_sec=min_age_sec,
+            consumer_id=consumer_id, timeout=timeout, min_age_sec=min_age_sec
         )
 
     def take_pending_annotations(
@@ -323,10 +299,7 @@ class PerceptionRuntime:
             else lambda event: event.annotation is not None and predicate(event.annotation)
         )
         return self.annotation_events.read_pending(
-            consumer_id=consumer_id,
-            predicate=event_predicate,
-            min_age_sec=min_age_sec,
-            limit=limit,
+            consumer_id=consumer_id, predicate=event_predicate, min_age_sec=min_age_sec, limit=limit
         )
 
     def commit_annotations(self, *, consumer_id: str, cursor_seq: int) -> None:
@@ -349,10 +322,7 @@ class PerceptionRuntime:
             return self._capture_cutoff_locked()
 
     def capture_snapshot(
-        self,
-        *,
-        after_sequence: int,
-        final_observations: Sequence[EnvObservation] = (),
+        self, *, after_sequence: int, final_observations: Sequence[EnvObservation] = ()
     ) -> PerceptionSnapshot:
         """
         Atomically publish final direct inputs and freeze one immutable event range.
@@ -388,11 +358,7 @@ class PerceptionRuntime:
         )
 
     def capture_snapshot_until(
-        self,
-        *,
-        after_cutoff: PerceptionCutoff,
-        until_sequence: int,
-        captured_at: RuntimeTime,
+        self, *, after_cutoff: PerceptionCutoff, until_sequence: int, captured_at: RuntimeTime
     ) -> PerceptionSnapshot:
         if until_sequence < after_cutoff.sequence:
             raise ValueError(
@@ -408,16 +374,14 @@ class PerceptionRuntime:
                 )
 
             event_slice = self.events.read_range(
-                after_seq=after_cutoff.sequence,
-                until_seq=until_sequence,
+                after_seq=after_cutoff.sequence, until_seq=until_sequence
             )
 
         cutoff = PerceptionCutoff(
             sequence=until_sequence,
             captured_at=captured_at,
             sources=MediaSourceRegistry.project_snapshot(
-                initial_sources=after_cutoff.sources,
-                events=event_slice.items,
+                initial_sources=after_cutoff.sources, events=event_slice.items
             ),
         )
 
@@ -444,9 +408,7 @@ class PerceptionRuntime:
             return self._capture_cutoff_locked()
 
     async def wait_for_speech_idle_cutoff(
-        self,
-        *,
-        timeout: float | None = None,
+        self, *, timeout: float | None = None
     ) -> PerceptionCutoff | None:
         """
         Wait for the next boundary at which all active speech segments are closed.
@@ -464,10 +426,7 @@ class PerceptionRuntime:
             if timeout is None:
                 await event.wait()
             else:
-                await asyncio.wait_for(
-                    event.wait(),
-                    timeout=timeout,
-                )
+                await asyncio.wait_for(event.wait(), timeout=timeout)
         except TimeoutError:
             return None
 
@@ -477,10 +436,7 @@ class PerceptionRuntime:
     """Source state operations"""
 
     def publish_source_state(
-        self,
-        source_state: MediaSourceStateEvent,
-        *,
-        at: RuntimeTime | None = None,
+        self, source_state: MediaSourceStateEvent, *, at: RuntimeTime | None = None
     ) -> PerceptionEvent:
         occurred_at = at or self.clock.now()
         with self._lock:
@@ -493,10 +449,7 @@ class PerceptionRuntime:
         return event
 
     def get_source_states(
-        self,
-        *,
-        modality: MediaModality | None = None,
-        source_kind: MediaSourceKind | None = None,
+        self, *, modality: MediaModality | None = None, source_kind: MediaSourceKind | None = None
     ) -> tuple[MediaSourceSnapshot, ...]:
         with self._lock:
             return self._source_registry.snapshot(modality=modality, source_kind=source_kind)
@@ -527,9 +480,7 @@ class PerceptionRuntime:
     ) -> bool:
         if len(streams) == 1:
             return await streams[0].wait_for_pending(
-                consumer_id=consumer_id,
-                timeout=timeout,
-                min_age_sec=min_age_sec,
+                consumer_id=consumer_id, timeout=timeout, min_age_sec=min_age_sec
             )
 
         tasks = [

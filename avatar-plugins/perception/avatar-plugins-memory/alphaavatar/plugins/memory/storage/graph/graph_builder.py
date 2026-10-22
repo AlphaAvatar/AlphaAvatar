@@ -77,11 +77,7 @@ def _stable_key(*, node_type: str, content: str) -> str:
     return f"{node_type}:{digest}"
 
 
-def normalize_mention(
-    mention: GraphNodeMention,
-    *,
-    context_id: str,
-) -> MemoryGraphNode | None:
+def normalize_mention(mention: GraphNodeMention, *, context_id: str) -> MemoryGraphNode | None:
     content = str(mention.content or "").strip()
     if not content:
         return None
@@ -104,11 +100,7 @@ def normalize_mention(
         extra_data["raw_key"] = raw_key
 
     return MemoryGraphNode(
-        key=key,
-        type=node_type,
-        content=content,
-        weight=mention.weight,
-        extra_data=extra_data,
+        key=key, type=node_type, content=content, weight=mention.weight, extra_data=extra_data
     )
 
 
@@ -141,9 +133,7 @@ def _is_memory_item_node(node: MemoryGraphNode) -> bool:
 
 
 def build_graph_from_mentions(
-    *,
-    item: MemoryItem,
-    mentions: Iterable[GraphNodeMention],
+    *, item: MemoryItem, mentions: Iterable[GraphNodeMention]
 ) -> tuple[list[MemoryGraphNode], list[MemoryGraphLink]]:
     item_node = build_memory_item_node(item)
     nodes_by_key = {item_node.key: item_node}

@@ -15,27 +15,20 @@ from __future__ import annotations
 
 from typing import Any
 
-from .enum.formats import PayloadFormat, PayloadView
+from .enums import PayloadFormat, PayloadView
 from .payload import MediaPayload
 
 
 class TextPayload(MediaPayload):
     def __init__(
-        self,
-        *,
-        language: str | None = None,
-        metadata: dict[str, Any] | None = None,
+        self, *, language: str | None = None, metadata: dict[str, Any] | None = None
     ) -> None:
         super().__init__(modality="text", metadata=metadata)
         self.language = language
 
     @classmethod
     def create(
-        cls,
-        *,
-        text: str,
-        language: str | None = None,
-        metadata: dict[str, Any] | None = None,
+        cls, *, text: str, language: str | None = None, metadata: dict[str, Any] | None = None
     ) -> TextPayload:
         normalized = text.strip()
         if not normalized:

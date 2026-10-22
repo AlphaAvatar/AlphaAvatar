@@ -14,7 +14,4 @@
 from .base import InteractionRouterBase
 from .processor import RouterProcessorBase
 
-__all__ = [
-    "InteractionRouterBase",
-    "RouterProcessorBase",
-]
+__all__ = ["InteractionRouterBase", "RouterProcessorBase"]

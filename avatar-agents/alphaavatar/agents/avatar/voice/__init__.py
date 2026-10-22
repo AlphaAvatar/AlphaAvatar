@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from .bundle import VoiceBundle
 from .schema import (
     TranscriptionEvent,
     TranscriptionEventType,
@@ -18,11 +19,10 @@ from .schema import (
     VoiceActivityEventType,
 )
 from .stt import STTBase, STTCapabilities, STTInputMode, STTStreamBase
-from .tts import LiveKitTTSAdapter, TTSBase
+from .tts import TTSBase, TTSStreamBase
 from .vad import VADBase, VADStreamBase
 
 __all__ = [
-    "LiveKitTTSAdapter",
     "STTInputMode",
     "STTCapabilities",
     "STTBase",
@@ -30,8 +30,10 @@ __all__ = [
     "TranscriptionEvent",
     "TranscriptionEventType",
     "TTSBase",
+    "TTSStreamBase",
     "VADBase",
     "VADStreamBase",
     "VoiceActivityEvent",
     "VoiceActivityEventType",
+    "VoiceBundle",
 ]

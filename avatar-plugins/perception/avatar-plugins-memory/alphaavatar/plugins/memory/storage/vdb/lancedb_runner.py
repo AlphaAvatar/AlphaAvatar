@@ -15,9 +15,10 @@ import json
 import os
 from typing import Any
 
+from alphaavatar.agents.avatar.provider.enums import ProviderKind
+from alphaavatar.agents.avatar.provider.factory import create_embedding_model
+from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
 from alphaavatar.agents.memory.enums import VectorRunnerOP
-from alphaavatar.agents.providers import ProviderKind, ProviderTaskConfig
-from alphaavatar.agents.providers.embedding import create_embedding_model
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.agents.utils.files.work_dirs import WorkspacePaths
@@ -266,11 +267,7 @@ class LanceDBRunner(InferenceRunner):
         return rows
 
     def _query_candidates(
-        self,
-        vector: list[float],
-        *,
-        where: str,
-        limit: int,
+        self, vector: list[float], *, where: str, limit: int
     ) -> list[dict[str, Any]]:
         if limit <= 0:
             return []
@@ -321,14 +318,10 @@ class LanceDBRunner(InferenceRunner):
                 "memory_type": memory_type,
             }
             memories = self._query_candidates(
-                vector,
-                where=self._where(doc_kind="memory_item", **common),
-                limit=top_k,
+                vector, where=self._where(doc_kind="memory_item", **common), limit=top_k
             )
             graph = self._query_candidates(
-                vector,
-                where=self._where(doc_kind="graph_node", **common),
-                limit=top_k,
+                vector, where=self._where(doc_kind="graph_node", **common), limit=top_k
             )
             out["candidates"] = self._merge_candidates(memories, graph, limit=top_k)
         except Exception as exc:
@@ -480,10 +473,7 @@ class LanceDBRunner(InferenceRunner):
 
         return create_embedding_model(
             ProviderTaskConfig(
-                kind=ProviderKind.EMBEDDING,
-                provider=provider,
-                model=model,
-                extra=extra,
+                kind=ProviderKind.EMBEDDING, provider=provider, model=model, extra=extra
             )
         )
 

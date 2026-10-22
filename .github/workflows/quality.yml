@@ -1,0 +1,149 @@
+name: Quality
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Install uv
+        run: python -m pip install uv==0.10.0
+      - name: Check lock freshness
+        run: uv lock --check
+      - name: Install only quality tools
+        id: quality_tools
+        run: uv sync --locked --only-group lint --no-install-workspace
+      - name: Check workspace and hooks
+        run: |
+          uv run --no-sync python scripts/check_workspace.py
+          uv run --no-sync pre-commit validate-config
+      - name: Ruff lint
+        if: ${{ !cancelled() && steps.quality_tools.outcome == 'success' }}
+        run: uv run --no-sync ruff check .
+      - name: Ruff formatting
+        if: ${{ !cancelled() && steps.quality_tools.outcome == 'success' }}
+        run: uv run --no-sync ruff format --check .
+      - name: Verify checks left the checkout unchanged
+        if: ${{ !cancelled() && steps.quality_tools.outcome == 'success' }}
+        run: git diff --exit-code
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Install uv
+        run: python -m pip install uv==0.10.0
+      - name: Install build tools from the lock
+        run: uv sync --locked --only-group build --no-install-workspace
+      - name: Report build and metadata readers
+        run: |
+          uv run --no-sync python - <<'PY'
+          from importlib.metadata import version
+
+          for name in ("build", "hatchling", "twine", "packaging"):
+              print(f"{name}=={version(name)}")
+          PY
+      - name: Build and validate all distributions
+        run: |
+          constraints="$RUNNER_TEMP/alphaavatar-build-constraints.txt"
+          uv export --locked --only-group build --no-emit-workspace --no-hashes \
+            --output-file "$constraints" > /dev/null
+          uv build --all-packages --no-sources --build-constraints "$constraints"
+          uv run --no-sync twine check dist/*
+          git diff --exit-code
+
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ALPHAAVATAR_MODEL_OFFLINE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Install uv
+        run: python -m pip install uv==0.10.0
+      - name: Install the complete workspace on Python 3.13
+        run: |
+          uv sync --all-packages --locked
+          uv pip check --python .venv/bin/python
+      - name: Verify package imports without initializing models
+        run: |
+          uv run --no-sync python - <<'PY'
+          import importlib
+          import importlib.metadata
+          import pathlib
+          import sys
+          import tomllib
+
+          assert sys.version_info[:2] == (3, 13), sys.version
+          for forbidden in ("livekit-agents", "livekit-plugins-openai"):
+              try:
+                  importlib.metadata.distribution(forbidden)
+              except importlib.metadata.PackageNotFoundError:
+                  continue
+              raise RuntimeError(f"Removed SDK is installed: {forbidden}")
+          config = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
+          for pattern in config["tool"]["uv"]["workspace"]["members"]:
+              for directory in sorted(pathlib.Path().glob(pattern)):
+                  manifest = tomllib.loads((directory / "pyproject.toml").read_text())
+                  version_path = pathlib.PurePosixPath(manifest["tool"]["hatch"]["version"]["path"])
+                  module = ".".join(version_path.parent.parts)
+                  importlib.import_module(module)
+                  name = manifest["project"]["name"]
+                  print(name, importlib.metadata.version(name), module)
+          PY
+      - name: Verify native session adapter lifecycle contracts
+        run: |
+          uv run --no-sync python - <<'PYCODE'
+          import importlib
+          import inspect
+
+          from alphaavatar.core.lifecycle import LifecycleComponent
+
+          adapters = (
+              ("alphaavatar.rtc.livekit.text", "LiveKitTextInput"),
+              ("alphaavatar.rtc.livekit.audio.input", "LiveKitAudioInput"),
+              ("alphaavatar.rtc.livekit.audio.output", "LiveKitTransientAudioOutput"),
+              ("alphaavatar.rtc.livekit.video.input", "LiveKitVideoInput"),
+              ("alphaavatar.rtc.livekit.status.output", "LiveKitStatusOutput"),
+              ("alphaavatar.rtc.livekit.transcript.output", "LiveKitTranscriptOutput"),
+              ("alphaavatar.host.sessions.livekit.connection", "LiveKitConnection"),
+              ("alphaavatar.host.sessions.livekit.character", "LiveKitCharacterTransport"),
+          )
+          for module, name in adapters:
+              component = getattr(importlib.import_module(module), name)
+              if not issubclass(component, LifecycleComponent) or inspect.isabstract(component):
+                  raise TypeError(f"Invalid native lifecycle component: {module}.{name}")
+              for hook in ("on_start", "on_stop"):
+                  if not inspect.iscoroutinefunction(getattr(component, hook, None)):
+                      raise TypeError(f"Missing async lifecycle hook: {module}.{name}.{hook}")
+              print(f"Lifecycle contract verified: {module}.{name}")
+          PYCODE
+      - name: Verify lightweight public entrypoint
+        run: |
+          uv run --no-sync alphaavatar --help
+          uv run --no-sync alphaavatar --version
+          git diff --exit-code
