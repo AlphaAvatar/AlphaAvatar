@@ -136,6 +136,7 @@ class LiveKitBackend(SessionBackend):
         from alphaavatar.rtc.livekit.status.output import LiveKitStatusOutput
         from alphaavatar.rtc.livekit.text import LiveKitTextInput
         from alphaavatar.rtc.livekit.transcript.output import LiveKitTranscriptOutput
+        from alphaavatar.rtc.livekit.transcript.user import LiveKitUserTranscriptOutput
         from alphaavatar.rtc.livekit.video.input import LiveKitVideoInput
 
         from .character import LiveKitCharacterTransport
@@ -217,6 +218,18 @@ class LiveKitBackend(SessionBackend):
                 )
                 outputs.append(text_output)
 
+            user_transcript = None
+            if mode.audio_input_enabled and mode.text_output_enabled:
+                user_transcript = own(
+                    LiveKitUserTranscriptOutput(
+                        room=room,
+                        perception=runtime.perception,
+                        participant_identities=frozenset((access.participant_identity,)),
+                        consumer_id=f"livekit:user_transcript:{connection.request.attachment_id}",
+                    )
+                )
+                outputs.append(user_transcript)
+
             inputs = []
             if mode.audio_input_enabled:
                 inputs.append(
@@ -267,6 +280,8 @@ class LiveKitBackend(SessionBackend):
             monitors = []
             if text_output is not None:
                 monitors.append(text_output.wait_failed)
+            if user_transcript is not None:
+                monitors.append(user_transcript.wait_failed)
             if text_input is not None:
                 monitors.append(text_input.wait_failed)
             if character is not None:

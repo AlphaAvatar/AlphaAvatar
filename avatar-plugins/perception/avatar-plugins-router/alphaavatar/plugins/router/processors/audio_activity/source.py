@@ -147,6 +147,7 @@ class AudioActivitySource:
             "source_observation_id": frame_ref.observation.observation_id,
             "source_frame_id": frame_ref.observation.frame_id,
             "router_processor": "audio_activity",
+            "input_source": self.input_source.to_dict(),
         }
         if speech_start:
             metadata["speech_event"] = "start"
@@ -226,6 +227,7 @@ class AudioActivitySource:
 
             metadata = {
                 "speech_event": "end",
+                "input_source": self.input_source.to_dict(),
                 "sample_rate": self.sample_rate,
                 "num_channels": self.num_channels,
                 "route_start_sample": self._route_start_sample,

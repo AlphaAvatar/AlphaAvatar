@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from alphaavatar.agents.avatar.voice import (
@@ -47,6 +48,7 @@ class _SegmentState:
     entity: PerceptionEntityRef | None
     closed: bool = False
     discarded: bool = False
+    input_source: PerceptionSourceRef | None = None
 
 
 @dataclass(slots=True)
@@ -121,6 +123,18 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
 
         return frame if isinstance(frame, AudioFrame) else None
 
+    @staticmethod
+    def _input_source(observation: EnvObservation) -> PerceptionSourceRef | None:
+        value = observation.metadata.get("input_source")
+        if not isinstance(value, Mapping):
+            return None
+        source_id, generation = value.get("source_id"), value.get("source_generation")
+        if not isinstance(source_id, str) or not source_id:
+            return None
+        if type(generation) is not int or generation <= 0:
+            return None
+        return PerceptionSourceRef(source_id=source_id, source_generation=generation)
+
     def _create_source(self, source_ref: PerceptionSourceRef) -> _STTSource:
         transcript_source = self._runtime.perception.next_source(
             self._transcript_source_id(source_ref.source_id)
@@ -160,10 +174,14 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
                 time_range=observation.time_range,
                 transport_participant_id=observation.transport_participant_id,
                 entity=observation.entity,
+                input_source=self._input_source(observation),
             )
             self._segments[segment] = state
         else:
             state.time_range = self._merge_time_range(state.time_range, observation.time_range)
+            # Conflicting provenance disables external forwarding, not internal recognition.
+            if state.input_source != self._input_source(observation):
+                state.input_source = None
 
             if observation.transport_participant_id is not None:
                 state.transport_participant_id = observation.transport_participant_id
@@ -252,12 +270,15 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
         if not text:
             return
 
-        metadata = {
+        metadata: dict[str, object] = {
             "language": event.language,
             "confidence": event.confidence,
             "provider": event.provider,
             "model": event.model,
         }
+        if state.input_source is not None:
+            metadata["input_source"] = state.input_source.to_dict()
+
         payload = TextPayload.create(text=text, language=event.language, metadata=dict(metadata))
 
         factory = (
