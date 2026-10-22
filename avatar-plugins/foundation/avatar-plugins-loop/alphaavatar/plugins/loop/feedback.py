@@ -235,6 +235,7 @@ class LoopFeedback:
                     output_id=message.output_id,
                     turn_id=self.identity.turn_id,
                     run_id=self.identity.run_id,
+                    phase=OutputMessagePhase(message.phase.value) if message.phase else None,
                 )
                 if self._mode != OutputTextMode.AUDIO_SYNCED:
                     await self._output.complete(

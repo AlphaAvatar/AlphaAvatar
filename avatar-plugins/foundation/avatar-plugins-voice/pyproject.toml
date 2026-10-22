@@ -24,8 +24,10 @@ dependencies = [
     "alpha-avatar-agents",
     "alpha-avatar-core",
     "aiohttp>=3.10",
+    "httpx>=0.28,<1",
     "numpy==2.2.6",
     "onnxruntime==1.23.1",
+    "openai>=2.7.2,<3",
     "pydantic>=2,<3",
     "soxr>=0.5",
 ]

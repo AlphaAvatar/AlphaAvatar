@@ -43,6 +43,15 @@ class TTSBase(ABC):
     @abstractmethod
     def num_channels(self) -> int: ...
 
+    @property
+    def max_concurrent_streams(self) -> int:
+        """Maximum owned synthesis streams, including prepared but unplayed audio."""
+        return 1
+
+    def prewarm(self) -> None:
+        """Optionally start owned, best-effort connection setup without waiting for it."""
+        return None
+
     @abstractmethod
     def synthesize(self, text: str) -> TTSStreamBase: ...
 

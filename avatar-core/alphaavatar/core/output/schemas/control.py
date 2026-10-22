@@ -16,6 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..enums import OutputControlType
+from ..enums.message_phase import OutputMessagePhase
 from .identity import OutputIdentity
 from .validation import boolean, counter, identifier
 
@@ -39,12 +40,18 @@ class OutputControl:
     targets: tuple[OutputIdentity, ...] = ()
     barrier: OutputCompletionBarrier | None = None
     affects_scope: bool = False
+    phase: OutputMessagePhase | None = None
 
     def __post_init__(self) -> None:
         if type(self.type) is not OutputControlType:
             raise TypeError("Expected OutputControlType")
         identifier(self.reason, "reason")
         boolean(self.affects_scope, "affects_scope")
+        if self.phase is not None:
+            if type(self.phase) is not OutputMessagePhase:
+                raise TypeError("Expected OutputMessagePhase or None")
+            if self.type != OutputControlType.TEXT_COMPLETE:
+                raise ValueError("Only text completion can finalize a message phase")
         if type(self.targets) is not tuple or any(
             type(target) is not OutputIdentity for target in self.targets
         ):

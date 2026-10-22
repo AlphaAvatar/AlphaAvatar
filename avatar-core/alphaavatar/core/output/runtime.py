@@ -36,6 +36,7 @@ from .enums import (
     OutputPlaybackType,
     OutputTextMode,
 )
+from .enums.message_phase import OutputMessagePhase
 from .journal import OutputJournal
 from .schemas import (
     OutputCompletionBarrier,
@@ -68,6 +69,7 @@ class _OutputRecord:
     source: OutputSource
     presentation: OutputStatusDecision | None
     text_mode: OutputTextMode
+    phase: OutputMessagePhase | None = None
     terminal: OutputControlType | None = None
     terminal_reason: str | None = None
     playback: OutputPlaybackType | None = None
@@ -189,7 +191,12 @@ class OutputRuntime:
             scope=identity.scope,
             output_id=identity.output_id,
             source=OutputSource("output.runtime"),
-            payload=OutputControl(kind, reason, barrier=barrier),
+            payload=OutputControl(
+                kind,
+                reason,
+                barrier=barrier,
+                phase=record.phase if kind == OutputControlType.TEXT_COMPLETE else None,
+            ),
             metadata=metadata,
         )
 
@@ -471,7 +478,14 @@ class OutputRuntime:
                 self._validate_identity(existing, output)
                 if existing.source != output.source or existing.presentation != output.presentation:
                     raise ValueError("Source text provenance changed")
-                return existing if self._accepts_record(existing) else None
+                if not self._accepts_record(existing):
+                    return None
+                phase = output.payload.phase
+                if phase is not None:
+                    if existing.phase is not None and existing.phase != phase:
+                        raise ValueError("Source text phase changed")
+                    existing.phase = phase
+                return existing
             if not self._accepts_owner(output.scope, output.presentation):
                 return None
             if output.payload.replace_lane:
@@ -492,17 +506,20 @@ class OutputRuntime:
                     metadata=EMPTY_METADATA,
                     affects_scope=False,
                 )
+
             if not self._accepts_owner(output.scope, output.presentation):
                 return None
             if len(self._outputs) >= self._record_limit:
                 self._compact_outputs()
                 if len(self._outputs) >= self._record_limit:
                     raise RuntimeError("Output state capacity exhausted before settlement")
+
             record = _OutputRecord(
                 OutputIdentity(output.output_id, output.lane, output.scope),
                 output.source,
                 output.presentation,
                 output.payload.mode,
+                phase=output.payload.phase,
             )
             self._outputs[output.output_id] = record
             return record
@@ -624,6 +641,7 @@ class OutputRuntime:
         turn_id: str,
         run_id: str,
         lane: OutputLane = OutputLane.ASSISTANT,
+        phase: OutputMessagePhase | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> OutputEvent | None:
         identifier(output_id, "output_id")
@@ -631,6 +649,8 @@ class OutputRuntime:
         identifier(run_id, "run_id")
         if type(lane) is not OutputLane:
             raise TypeError("Expected OutputLane")
+        if phase is not None and type(phase) is not OutputMessagePhase:
+            raise TypeError("Expected OutputMessagePhase or None")
         fields = freeze_metadata(metadata)
 
         async def finish() -> OutputEvent | None:
@@ -644,9 +664,14 @@ class OutputRuntime:
                 self._validate_target(record, lane, turn_id)
                 if record.identity.scope.run_id != run_id:
                     raise ValueError("Text completion run mismatch")
+                if phase is not None and record.phase is not None and record.phase != phase:
+                    raise ValueError("Text completion phase disagrees with source text")
                 if record.text_completed or not self._accepts_record(record):
                     return None
+                if phase is not None:
+                    record.phase = phase
                 record.text_sealed = record.text_completed = True
+
             await record.text_idle.wait()
             return await self._dispatch(
                 self._control(

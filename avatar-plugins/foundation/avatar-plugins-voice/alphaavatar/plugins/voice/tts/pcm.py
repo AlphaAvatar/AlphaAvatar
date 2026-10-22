@@ -17,12 +17,13 @@ import asyncio
 import logging
 from abc import abstractmethod
 from collections import deque
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from functools import partial
 from math import isfinite
+from typing import Protocol
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -101,9 +102,38 @@ class TTSTimeoutError(TimeoutError):
 
 
 class TTSTransportError(RuntimeError):
-    def __init__(self, provider: str, phase: str, error_type: str) -> None:
+    def __init__(
+        self, provider: str, phase: str, error_type: str, *, retryable: bool = False
+    ) -> None:
         self.provider, self.phase, self.error_type = provider, phase, error_type
+        self.retryable = retryable
         super().__init__(f"{provider} TTS transport failed during {phase}: {error_type}")
+
+
+class PCMResponse(Protocol):
+    """A streaming byte response; request policy and PCM assembly stay above transport."""
+
+    @property
+    def status(self) -> int: ...
+
+    @property
+    def headers(self) -> Mapping[str, str]: ...
+
+    async def read(self, size: int) -> bytes: ...
+
+    async def aclose(self) -> None: ...
+
+
+class _HTTPResponse:
+    def __init__(self, response: aiohttp.ClientResponse) -> None:
+        self._response = response
+        self.status, self.headers = response.status, response.headers
+
+    async def read(self, size: int) -> bytes:
+        return await self._response.content.read(size)
+
+    async def aclose(self) -> None:
+        self._response.close()
 
 
 class _RequestBudget:
@@ -182,6 +212,10 @@ class PCMHTTPProvider(TTSBase):
     def num_channels(self) -> int:
         return 1
 
+    @property
+    def max_concurrent_streams(self) -> int:
+        return self._settings.max_streams
+
     @staticmethod
     def _observe(task: asyncio.Task[None]) -> None:
         if not task.cancelled():
@@ -231,6 +265,29 @@ class PCMHTTPProvider(TTSBase):
                 read_bufsize=max(4096, self._frame_bytes * self._settings.queue_frames),
             )
         return self._client
+
+    async def _open_response(self, payload: dict[str, str]) -> PCMResponse:
+        response = await self._get_client().post(
+            self._url,
+            json=payload,
+            allow_redirects=False,
+            headers={"Authorization": f"Bearer {self._api_key}", "Accept-Encoding": "identity"},
+        )
+        return _HTTPResponse(response)
+
+    def _transport_failure(self, error: Exception, phase: str) -> Exception:
+        if isinstance(error, aiohttp.ClientError):
+            return TTSTransportError(
+                self._provider,
+                phase,
+                type(error).__name__,
+                retryable=not isinstance(error, aiohttp.ClientSSLError | aiohttp.InvalidURL),
+            )
+        return error
+
+    async def _close_transport(self) -> None:
+        if self._client is not None:
+            await self._client.close()
 
     @staticmethod
     def _retry_after(value: str | None) -> float | None:
@@ -439,18 +496,7 @@ class PCMHTTPProvider(TTSBase):
             )
             try:
                 response = await network(
-                    partial(
-                        self._get_client().post,
-                        self._url,
-                        json=payload,
-                        allow_redirects=False,
-                        headers={
-                            "Authorization": f"Bearer {self._api_key}",
-                            "Accept-Encoding": "identity",
-                        },
-                    ),
-                    phase,
-                    first_deadline,
+                    partial(self._open_response, payload), phase, first_deadline
                 )
                 phase = "response_validation"
                 if response.status != 200:
@@ -482,7 +528,7 @@ class PCMHTTPProvider(TTSBase):
                     # A network fragment is not an audio frame. Reset the idle deadline
                     # on byte progress; retain the first-audio and aggregate hard limits.
                     data = await network(
-                        partial(response.content.read, self._frame_bytes - len(pending)),
+                        partial(response.read, self._frame_bytes - len(pending)),
                         phase,
                         first_deadline,
                     )
@@ -570,23 +616,22 @@ class PCMHTTPProvider(TTSBase):
                 raise
             except Exception as error:
                 budget.hedge_allowed = False
-                last_error = (
-                    TTSTransportError(self._provider, phase, type(error).__name__)
-                    if isinstance(error, aiohttp.ClientError)
-                    else error
-                )
+                last_error = self._transport_failure(error, phase)
                 status = response.status if response is not None else None
-                if isinstance(error, TTSHTTPError):
-                    status = error.status
+                if isinstance(last_error, TTSHTTPError):
+                    status = last_error.status
                 network_failure = phase in ("response_headers", "first_audio", "audio_read")
                 transient = (
                     network_failure
-                    and isinstance(error, (TimeoutError | aiohttp.ClientError))
-                    and not isinstance(error, (aiohttp.ClientSSLError | aiohttp.InvalidURL))
+                    and (
+                        isinstance(last_error, TimeoutError)
+                        or isinstance(last_error, TTSTransportError)
+                        and last_error.retryable
+                    )
                 ) or status in (408, 429, 500, 502, 503, 504)
                 delay = settings.retry_interval * attempt
-                if isinstance(error, TTSHTTPError) and error.retry_after is not None:
-                    delay = max(delay, error.retry_after)
+                if isinstance(last_error, TTSHTTPError) and last_error.retry_after is not None:
+                    delay = max(delay, last_error.retry_after)
                     budget.retry_not_before = max(budget.retry_not_before, clock() + delay)
                 delay = max(delay, budget.retry_not_before - clock())
                 retry = (
@@ -613,15 +658,15 @@ class PCMHTTPProvider(TTSBase):
                     delay * 1000 if retry else 0.0,
                 )
                 if not retry:
-                    if isinstance(error, aiohttp.ClientError):
-                        raise TTSTransportError(
-                            self._provider, phase, type(error).__name__
-                        ) from None
+                    if last_error is not error:
+                        raise last_error from None
                     raise
             finally:
                 if response is not None:
-                    # Incomplete bodies must not return a dirty connection to the shared pool.
-                    response.close()
+                    # The transport owns its context manager even after cancellation or hedging.
+                    await wait_for_cleanup(
+                        asyncio.create_task(response.aclose(), name="tts_response_close")
+                    )
 
             before = clock()
             budget.enter()
@@ -641,11 +686,10 @@ class PCMHTTPProvider(TTSBase):
             *(stream.aclose() for stream in tuple(self._streams)), return_exceptions=True
         )
         errors = [value for value in results if isinstance(value, BaseException)]
-        if self._client is not None:
-            try:
-                await self._client.close()
-            except BaseException as error:
-                errors.append(error)
+        try:
+            await self._close_transport()
+        except BaseException as error:
+            errors.append(error)
         self._streams.clear()
         for index, error in enumerate(errors):
             if isinstance(error, asyncio.CancelledError):

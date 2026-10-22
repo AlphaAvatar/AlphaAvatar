@@ -534,8 +534,10 @@ dependencies = [
     { name = "aiohttp" },
     { name = "alpha-avatar-agents" },
     { name = "alpha-avatar-core" },
+    { name = "httpx" },
     { name = "numpy" },
     { name = "onnxruntime" },
+    { name = "openai" },
     { name = "pydantic" },
     { name = "soxr" },
 ]
@@ -545,8 +547,10 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.10" },
     { name = "alpha-avatar-agents", editable = "avatar-agents" },
     { name = "alpha-avatar-core", editable = "avatar-core" },
+    { name = "httpx", specifier = ">=0.28,<1" },
     { name = "numpy", specifier = "==2.2.6" },
     { name = "onnxruntime", specifier = "==1.23.1" },
+    { name = "openai", specifier = ">=2.7.2,<3" },
     { name = "pydantic", specifier = ">=2,<3" },
     { name = "soxr", specifier = ">=0.5" },
 ]
