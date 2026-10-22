@@ -104,10 +104,15 @@ class TurnCandidate:
         )
 
     def _touch(self, at: RuntimeTime) -> None:
-        self.updated_at = at
+        if at.monotonic_ns > self.updated_at.monotonic_ns:
+            self.updated_at = at
         self.revision += 1
 
     def start_segment(self, segment: PerceptionSegmentRef, observation: EnvObservation) -> bool:
+        # Windows are ordered by media time, not publication time. Trailing silence
+        # frames can follow the final segment and must never reopen it.
+        if segment in self.closed_segments:
+            return False
         is_new = segment not in self.segments
         was_active = segment in self.active_segments
 
@@ -117,7 +122,7 @@ class TurnCandidate:
         self.active_segments.add(segment)
         if is_new or not was_active:
             self._touch(observation.time_range.end)
-        else:
+        elif observation.time_range.end.monotonic_ns > self.updated_at.monotonic_ns:
             self.updated_at = observation.time_range.end
 
         return is_new
@@ -137,7 +142,7 @@ class TurnCandidate:
 
         if is_new or not was_closed:
             self._touch(observation.time_range.end)
-        else:
+        elif observation.time_range.end.monotonic_ns > self.updated_at.monotonic_ns:
             self.updated_at = observation.time_range.end
 
     def add_audio(self, evidence: TurnTakingAudioEvidence) -> bool:

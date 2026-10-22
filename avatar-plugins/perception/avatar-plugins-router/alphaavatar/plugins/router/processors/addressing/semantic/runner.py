@@ -14,8 +14,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
+from time import perf_counter
 
 import llama_cpp
 
@@ -25,6 +27,8 @@ from alphaavatar.agents.runtime.inference import InferenceRunner
 
 from .model_files import SEMANTIC_ADDRESSING_CONFIG, resolve_semantic_addressing_files
 from .prompt import SemanticAddressingPrompt
+
+logger = logging.getLogger(__name__)
 
 
 class SemanticAddressingQwen3Runner(InferenceRunner):
@@ -47,7 +51,9 @@ class SemanticAddressingQwen3Runner(InferenceRunner):
                 )
 
     def _decode(self, prompt: bytes) -> tuple[float, float]:
+        started = perf_counter()
         tokens = self._tokenize(prompt)
+        tokenized = perf_counter()
         if len(tokens) > SEMANTIC_ADDRESSING_CONFIG.context_length:
             raise ValueError(
                 f"Semantic Addressing context too long: "
@@ -55,7 +61,22 @@ class SemanticAddressingQwen3Runner(InferenceRunner):
             )
 
         prefix_length = self._prefix_length
-        if tokens[:prefix_length] == self._prefix_tokens:
+        cached = prefix_length if tokens[:prefix_length] == self._prefix_tokens else 0
+        # Log before native work so a parent-enforced timeout retains its last stage.
+        # Counts only: no speech, prompt, identities or model buffers are exposed.
+        logger.debug(
+            "SEMANTIC PREFILL method=%s pid=%s call=%d prompt_tokens=%d cached_tokens=%d "
+            "eval_tokens=%d threads=%d tokenize_ms=%.1f",
+            self.INFERENCE_METHOD,
+            os.getpid(),
+            self._call_index,
+            len(tokens),
+            cached,
+            len(tokens) - cached,
+            self._threads,
+            (tokenized - started) * 1000,
+        )
+        if cached:
             self._llm.n_tokens = prefix_length
             self._llm.eval(tokens[prefix_length:])
         else:
@@ -64,7 +85,16 @@ class SemanticAddressingQwen3Runner(InferenceRunner):
 
         logits = llama_cpp.llama_get_logits_ith(self._llm.ctx, -1)
         config = SEMANTIC_ADDRESSING_CONFIG
-        return float(logits[config.label_0_token_id]), float(logits[config.label_1_token_id])
+        result = float(logits[config.label_0_token_id]), float(logits[config.label_1_token_id])
+        logger.debug(
+            "SEMANTIC INFERENCE COMPLETE method=%s pid=%s call=%d prefill_ms=%.1f total_ms=%.1f",
+            self.INFERENCE_METHOD,
+            os.getpid(),
+            self._call_index,
+            (perf_counter() - tokenized) * 1000,
+            (perf_counter() - started) * 1000,
+        )
+        return result
 
     def initialize(self) -> None:
         model_path, prompt_path = resolve_semantic_addressing_files()
@@ -72,6 +102,7 @@ class SemanticAddressingQwen3Runner(InferenceRunner):
         threads = int(os.getenv("ALPHAAVATAR_SEMANTIC_ADDRESSING_THREADS", "0"))
         threads = threads or min(8, max(1, (os.cpu_count() or 2) // 2))
 
+        self._call_index, self._threads = 0, threads
         self._prompt = SemanticAddressingPrompt(prompt_path)
         self._llm = llama_cpp.Llama(
             model_path=model_path,
@@ -96,6 +127,14 @@ class SemanticAddressingQwen3Runner(InferenceRunner):
         self._prefix_length = len(self._prefix_tokens)
 
     def run(self, data: bytes) -> bytes:
+        self._call_index += 1
+        logger.debug(
+            "SEMANTIC INFERENCE START method=%s pid=%s call=%d request_bytes=%d",
+            self.INFERENCE_METHOD,
+            os.getpid(),
+            self._call_index,
+            len(data),
+        )
         request = SemanticAddressingRequest.from_dict(json.loads(data))
         logit_0, logit_1 = self._decode(self._prompt.render(request))
         p_avatar = 0.5 * (1.0 + math.tanh((logit_1 - logit_0) * 0.5))

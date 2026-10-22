@@ -46,6 +46,7 @@ class TurnTakingCoordinator:
     SOURCE = "router.turn_taking"
 
     _MAX_ORPHANS = 64
+    _MAX_RETIRED_SEGMENTS = 256
     _MAX_ADDRESSING_RECORDS_PER_TARGET = 8
     _TERMINAL_ACTIONS = {
         TurnTakingAction.COMMIT,
@@ -81,6 +82,7 @@ class TurnTakingCoordinator:
 
         self._candidates: dict[SpeakerKey, TurnCandidate] = {}
         self._segment_owners: dict[PerceptionSegmentRef, SpeakerKey] = {}
+        self._retired_segments: dict[PerceptionSegmentRef, None] = {}
         self._orphan_transcripts: dict[PerceptionSegmentRef, EnvObservation] = {}
         self._orphan_addressing_by_observation: dict[str, list[AddressingEvidenceRecord]] = {}
         self._orphan_addressing_by_segment: dict[
@@ -167,6 +169,18 @@ class TurnTakingCoordinator:
         self._runtime.perception.publish_annotation(
             decision.to_annotation(source=self.SOURCE, observation_id=target_observation_id)
         )
+        logger.debug(
+            "TURN DECISION candidate_id=%s revision=%s action=%s reason=%s mode=%s "
+            "segments=%d active_segments=%d missing_transcripts=%d",
+            candidate.turn_candidate_id,
+            candidate.revision,
+            decision.action.value,
+            decision.reason,
+            decision.turn_mode.value,
+            len(candidate.segments),
+            len(candidate.active_segments),
+            len(candidate.missing_transcripts),
+        )
 
     """Assessment Helper"""
 
@@ -219,6 +233,9 @@ class TurnTakingCoordinator:
         self._cancel_assessment(key)
 
         for segment in candidate.segments:
+            self._retired_segments[segment] = None
+            if len(self._retired_segments) > self._MAX_RETIRED_SEGMENTS:
+                self._retired_segments.pop(next(iter(self._retired_segments)))
             if self._segment_owners.get(segment) == key:
                 self._segment_owners.pop(segment, None)
 
@@ -582,6 +599,8 @@ class TurnTakingCoordinator:
     def _route_addressing(
         self, segment: PerceptionSegmentRef, record: AddressingEvidenceRecord
     ) -> None:
+        if segment in self._retired_segments:
+            return
         key = self._segment_owners.get(segment)
         if key is None:
             self._store_addressing(self._orphan_addressing_by_segment, segment, record)
@@ -627,14 +646,22 @@ class TurnTakingCoordinator:
         observation: EnvObservation,
     ) -> None:
         text = self._builder.text(observation)
-        if (
-            text is None
-            or not candidate.add_transcript(segment, observation, text)
-            or candidate.active_segments
-        ):
+        if text is None or not candidate.add_transcript(segment, observation, text):
             return
-
-        self._schedule_assessment(key, candidate.turn_candidate_id)
+        logger.debug(
+            "TURN TRANSCRIPT candidate_id=%s revision=%s segment_id=%s source=%s "
+            "generation=%s observation_id=%s chars=%d active_segments=%d",
+            candidate.turn_candidate_id,
+            candidate.revision,
+            segment.segment_id,
+            segment.source.source_id,
+            segment.source.source_generation,
+            observation.observation_id,
+            len(text),
+            len(candidate.active_segments),
+        )
+        if not candidate.active_segments:
+            self._schedule_assessment(key, candidate.turn_candidate_id)
 
     def _store_orphan_transcript(
         self, segment: PerceptionSegmentRef, observation: EnvObservation
@@ -649,7 +676,14 @@ class TurnTakingCoordinator:
 
     def _consume_speech(self, observation: EnvObservation) -> None:
         segment = self._builder.require_segment(observation)
+        if segment in self._retired_segments:
+            return
         key, candidate = self._get_candidate(observation)
+        if (
+            observation.kind == ObservationKind.SPEECH_FRAME
+            and segment in candidate.closed_segments
+        ):
+            return
 
         is_new_segment = candidate.start_segment(segment, observation)
         self._segment_owners[segment] = key
@@ -673,6 +707,17 @@ class TurnTakingCoordinator:
             return
 
         candidate.close_segment(segment, observation)
+        logger.debug(
+            "TURN SEGMENT CLOSED candidate_id=%s revision=%s segment_id=%s source=%s "
+            "generation=%s observation_id=%s active_segments=%d",
+            candidate.turn_candidate_id,
+            candidate.revision,
+            segment.segment_id,
+            segment.source.source_id,
+            segment.source.source_generation,
+            observation.observation_id,
+            len(candidate.active_segments),
+        )
 
         audio = self._builder.audio(observation)
         if audio is not None:
@@ -683,6 +728,8 @@ class TurnTakingCoordinator:
 
     def _consume_transcript(self, observation: EnvObservation) -> None:
         segment = self._builder.require_segment(observation)
+        if segment in self._retired_segments:
+            return
         key = self._segment_owners.get(segment)
 
         if key is None:
@@ -752,6 +799,7 @@ class TurnTakingCoordinator:
         self._assessment_tasks.clear()
         self._candidates.clear()
         self._segment_owners.clear()
+        self._retired_segments.clear()
         self._orphan_transcripts.clear()
         self._orphan_addressing_by_observation.clear()
         self._orphan_addressing_by_segment.clear()
