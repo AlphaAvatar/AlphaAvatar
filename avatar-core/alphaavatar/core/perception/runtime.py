@@ -21,6 +21,7 @@ from typing import Any
 from alphaavatar.core.env import EnvAnnotation, EnvObservation
 from alphaavatar.core.env.enums import ObservationKind
 from alphaavatar.core.env.schemas import PerceptionSegmentRef, PerceptionSourceRef
+from alphaavatar.core.log.trace import InputTrace
 from alphaavatar.core.time import RuntimeClock, RuntimeTime, RuntimeTimeRange
 
 from .enums import MediaModality, MediaSourceKind, PerceptionEventKind, PerceptionStreamKind
@@ -83,6 +84,7 @@ class PerceptionRuntime:
         session_id: str,
         stream_maxlens: dict[PerceptionStreamKind, int],
         clock: RuntimeClock | None = None,
+        input_trace: InputTrace | None = None,
     ) -> None:
         if not session_id:
             raise ValueError("session_id cannot be empty")
@@ -94,6 +96,7 @@ class PerceptionRuntime:
 
         self.session_id = session_id
         self.clock = clock or RuntimeClock()
+        self.input_trace = input_trace if input_trace is not None else InputTrace()
 
         # Visual
         self.video = PerceptionStream[EnvObservation](
@@ -232,9 +235,10 @@ class PerceptionRuntime:
 
     def _publish_observation_locked(self, observation: EnvObservation) -> PerceptionEvent | None:
         stream_name = self._STREAM_BY_OBSERVATION_KIND.get(observation.kind)
+        stream_sequence = None
 
         if stream_name is not None:
-            self._observation_streams[stream_name].publish(observation)
+            stream_sequence = self._observation_streams[stream_name].publish(observation)
 
         event: PerceptionEvent | None = None
 
@@ -246,6 +250,23 @@ class PerceptionRuntime:
             )
 
         self._update_speech_activity_locked(observation)
+        if observation.kind in (ObservationKind.SPEECH_SEGMENT, ObservationKind.TRANSCRIPT_SEGMENT):
+            segment = observation.segment
+            source = segment.source if segment is not None else observation.source
+            self.input_trace.record(
+                "perception.speech_closed"
+                if observation.kind == ObservationKind.SPEECH_SEGMENT
+                else "perception.transcript_final",
+                source_id=source.source_id,
+                source_generation=source.source_generation,
+                segment_id=segment.segment_id if segment is not None else None,
+                observation_id=observation.observation_id,
+                event_id=event.event_id if event is not None else None,
+                sequence=event.sequence if event is not None else None,
+                stream_sequence=stream_sequence,
+                start_time_ns=observation.time_range.start.monotonic_ns,
+                end_time_ns=observation.time_range.end.monotonic_ns,
+            )
         return event
 
     def _add_to_timeline(self, observations: Sequence[EnvObservation]) -> None:

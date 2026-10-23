@@ -73,6 +73,20 @@ class TurnRuntime:
             _, removed = self._snapshots.popitem(last=False)
             self._event_sequences.pop(removed.turn_id, None)
 
+        self._perception.input_trace.record(
+            "turn.committed",
+            turn_id=snapshot.turn_id,
+            input_id=snapshot.input_id,
+            candidate_revision=snapshot.metadata.get("candidate_revision"),
+            decision_id=snapshot.metadata.get("decision_annotation_id"),
+            event_id=snapshot.metadata.get("decision_event_id"),
+            sequence=snapshot.metadata.get("decision_event_sequence"),
+            start_cutoff_sequence=snapshot.start_cutoff.sequence,
+            cutoff_sequence=snapshot.cutoff.sequence,
+            evidence_count=len(snapshot.input_observation_ids),
+            missed_count=snapshot.missed_perception_events,
+            text_chars=len(snapshot.text) if isinstance(snapshot.text, str) else 0,
+        )
         return snapshot
 
     def commit_input(

@@ -345,6 +345,32 @@ class AvatarEngine(LifecycleComponent):
         task.add_done_callback(self._watchers.discard)
         task.add_done_callback(self._observe)
 
+    def _trace_admission(
+        self,
+        event: PerceptionEvent,
+        decision: TurnTakingDecision,
+        *,
+        outcome: str,
+        reason: str,
+        evidence_count: int = 0,
+        missing_count: int = 0,
+    ) -> None:
+        trace = self._runtime.perception.input_trace
+        trace.record(
+            "turn.admission",
+            candidate_id=decision.turn_candidate_id,
+            candidate_revision=decision.candidate_revision,
+            decision_id=event.annotation.annotation_id,
+            event_id=event.event_id,
+            sequence=event.sequence,
+            outcome=outcome,
+            reason=reason,
+            evidence_count=evidence_count,
+            missing_count=missing_count,
+        )
+        if outcome == "rejected":
+            trace.freeze(reason=reason)
+
     async def _admit_decision(self, event: PerceptionEvent, decision: TurnTakingDecision) -> None:
         async with self._admission_lock:
             if self._close_task is not None:
@@ -352,6 +378,9 @@ class AvatarEngine(LifecycleComponent):
 
             flags = self._candidate(decision.turn_candidate_id)
             if flags.intersection((TurnTakingAction.COMMIT, TurnTakingAction.CANCEL)):
+                self._trace_admission(
+                    event, decision, outcome="ignored", reason="candidate_terminal"
+                )
                 return
 
             latest = self._runtime.turn.latest
@@ -360,6 +389,7 @@ class AvatarEngine(LifecycleComponent):
                 logger.info(
                     "Skipped superseded turn decision input_id=%s", decision.turn_candidate_id
                 )
+                self._trace_admission(event, decision, outcome="ignored", reason="superseded")
                 return
 
             observations = tuple(
@@ -378,6 +408,14 @@ class AvatarEngine(LifecycleComponent):
                     len(observations),
                     sum(value is None for value in observations),
                 )
+                self._trace_admission(
+                    event,
+                    decision,
+                    outcome="rejected",
+                    reason="evidence_unavailable",
+                    evidence_count=len(observations),
+                    missing_count=sum(value is None for value in observations),
+                )
                 return
 
             text = self._text(observations)
@@ -394,6 +432,13 @@ class AvatarEngine(LifecycleComponent):
                 logger.info(
                     "Turn admission rejected input_id=%s reason=no_usable_input",
                     decision.turn_candidate_id,
+                )
+                self._trace_admission(
+                    event,
+                    decision,
+                    outcome="rejected",
+                    reason="no_usable_input",
+                    evidence_count=len(observations),
                 )
                 return
 
@@ -427,6 +472,13 @@ class AvatarEngine(LifecycleComponent):
                     "decision_annotation_id": event.annotation.annotation_id,
                     "reason": decision.reason,
                 },
+            )
+            self._trace_admission(
+                event,
+                decision,
+                outcome="accepted",
+                reason="committed",
+                evidence_count=len(observations),
             )
             await self._submit(snapshot)
 

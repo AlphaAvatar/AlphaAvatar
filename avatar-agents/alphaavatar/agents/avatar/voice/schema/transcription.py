@@ -39,3 +39,5 @@ class TranscriptionEvent:
     provider: str | None = None
     model: str | None = None
     reason: str | None = None
+    provider_item_id: str | None = None
+    reason_code: str | None = None

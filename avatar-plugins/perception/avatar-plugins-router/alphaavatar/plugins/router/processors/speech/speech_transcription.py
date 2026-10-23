@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import OrderedDict
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from uuid import uuid4
 
 from alphaavatar.agents.avatar.voice import (
     STTBase,
@@ -35,10 +37,24 @@ from alphaavatar.core.env.schemas import (
 )
 from alphaavatar.core.media import AudioFrame, PayloadFormatUnavailable, TextPayload
 from alphaavatar.core.media.enums import PayloadFormat, PayloadView
-from alphaavatar.core.perception.enums import PerceptionStreamKind
 from alphaavatar.core.time import RuntimeTimeRange
 
 logger = logging.getLogger(__name__)
+
+_ERROR_CODES = frozenset(
+    (
+        "empty_segment",
+        "missing_audio",
+        "provider_error",
+        "stream_error",
+        "missing_final",
+        "request_queue_full",
+        "request_timeout",
+        "connection_error",
+        "invalid_final",
+        "input_flushed",
+    )
+)
 
 
 @dataclass(slots=True)
@@ -47,8 +63,12 @@ class _SegmentState:
     transport_participant_id: str | None
     entity: PerceptionEntityRef | None
     closed: bool = False
-    discarded: bool = False
     input_source: PerceptionSourceRef | None = None
+    stream_id: str | None = None
+    first_stream_sequence: int = 0
+    last_stream_sequence: int = 0
+    frame_count: int = 0
+    duplicate_count: int = 0
 
 
 @dataclass(slots=True)
@@ -57,7 +77,11 @@ class _STTSource:
     transcript_source: PerceptionSourceRef
     stream: STTStreamBase
     event_task: asyncio.Task[None] | None = None
+    close_task: asyncio.Task[None] | None = None
     failed: bool = False
+    closing: bool = False
+    retired: bool = False
+    stream_id: str = field(default_factory=lambda: uuid4().hex)
 
 
 class SpeechTranscriptionProcessor(RouterProcessorBase):
@@ -73,18 +97,35 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
     CONSUMER_ID = "router.speech_transcription"
 
     def __init__(
-        self, *, runtime: AvatarRuntime, stt: STTBase, close_timeout_sec: float = 6.0
+        self,
+        *,
+        runtime: AvatarRuntime,
+        stt: STTBase,
+        close_timeout_sec: float = 6.0,
+        max_pending_segments: int = 256,
+        max_retired_segments: int = 1024,
+        max_sources: int = 64,
     ) -> None:
         super().__init__(runtime=runtime)
 
         if close_timeout_sec <= 0:
             raise ValueError("close_timeout_sec must be positive")
+        if min(max_pending_segments, max_retired_segments, max_sources) <= 0:
+            raise ValueError("Speech transcription retention limits must be positive")
 
         self._stt = stt
         self._close_timeout_sec = close_timeout_sec
+        self._max_pending_segments = max_pending_segments
+        self._max_retired_segments = max_retired_segments
+        self._max_sources = max_sources
 
         self._sources: dict[PerceptionSourceRef, _STTSource] = {}
+        self._closing_sources: dict[str, _STTSource] = {}
         self._segments: dict[PerceptionSegmentRef, _SegmentState] = {}
+        self._generations: dict[str, int] = {}
+        # Duplicate protection covers this retained window, not arbitrary historical replay.
+        self._retired: OrderedDict[PerceptionSegmentRef, None] = OrderedDict()
+        self._retired_evictions = 0
 
         self._consume_task: asyncio.Task[None] | None = None
         self._started = False
@@ -135,6 +176,83 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
             return None
         return PerceptionSourceRef(source_id=source_id, source_generation=generation)
 
+    def _record(
+        self,
+        stage: str,
+        *,
+        segment: PerceptionSegmentRef | None = None,
+        state: _SegmentState | None = None,
+        source: _STTSource | None = None,
+        **fields: object,
+    ) -> None:
+        source_ref = segment.source if segment is not None else source.source if source else None
+        values: dict[str, object] = {}
+        if source_ref is not None:
+            values.update(
+                source_id=source_ref.source_id, source_generation=source_ref.source_generation
+            )
+        if segment is not None:
+            values["segment_id"] = segment.segment_id
+        if source is not None:
+            values["stream_id"] = source.stream_id
+        if state is not None:
+            values.update(
+                stream_id=state.stream_id,
+                first_stream_sequence=state.first_stream_sequence,
+                last_stream_sequence=state.last_stream_sequence,
+                frame_count=state.frame_count,
+                duplicate_count=state.duplicate_count,
+            )
+        values.update(fields)
+        self._runtime.perception.input_trace.record(stage, **values)
+
+    def _finish_segment(
+        self, segment: PerceptionSegmentRef, *, outcome: str, reason: str, **fields: object
+    ) -> None:
+        if segment in self._retired:
+            return
+        state = self._segments.pop(segment, None)
+        self._retired[segment] = None
+        if len(self._retired) > self._max_retired_segments:
+            self._retired.popitem(last=False)
+            self._retired_evictions += 1
+        self._record(
+            "stt.terminal",
+            segment=segment,
+            state=state,
+            outcome=outcome,
+            reason=reason,
+            retired_evictions=self._retired_evictions,
+            **fields,
+        )
+
+    def _finish_source_segments(self, source: _STTSource, *, outcome: str, reason: str) -> None:
+        for segment, state in tuple(self._segments.items()):
+            if segment.source == source.source and state.stream_id == source.stream_id:
+                self._finish_segment(segment, outcome=outcome, reason=reason)
+
+    async def _accept_generation(self, segment: PerceptionSegmentRef) -> bool:
+        source_ref = segment.source
+        generation = self._generations.get(source_ref.source_id)
+        if generation is not None and source_ref.source_generation < generation:
+            self._finish_segment(segment, outcome="stale", reason="source_generation_retired")
+            return False
+        if generation is None and len(self._generations) >= self._max_sources:
+            self._finish_segment(segment, outcome="rejected", reason="source_capacity")
+            self._runtime.perception.input_trace.freeze(reason="source_capacity")
+            return False
+        if generation != source_ref.source_generation:
+            self._generations[source_ref.source_id] = source_ref.source_generation
+            for current in tuple(self._sources.values()):
+                if (
+                    current.source.source_id == source_ref.source_id
+                    and current.source != source_ref
+                ):
+                    await self._close_source(
+                        current, graceful=False, reason="source_generation_retired"
+                    )
+        return True
+
     def _create_source(self, source_ref: PerceptionSourceRef) -> _STTSource:
         transcript_source = self._runtime.perception.next_source(
             self._transcript_source_id(source_ref.source_id)
@@ -149,6 +267,7 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
             name=f"router_stt_events:{source_ref.source_id}:{source_ref.source_generation}",
         )
         self._sources[source_ref] = source
+        self._record("stt.source_started", source=source, outcome="open")
 
         logger.info(
             "Speech transcription source created source=%s generation=%s "
@@ -190,73 +309,89 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
 
         return segment, state
 
-    def _clear_source_segments(self, source_ref: PerceptionSourceRef) -> None:
-        for segment in tuple(self._segments):
-            if segment.source == source_ref:
-                self._segments.pop(segment, None)
-
-    def _invalidate_source_segments(self, source_ref: PerceptionSourceRef) -> None:
-        for segment, state in tuple(self._segments.items()):
-            if segment.source != source_ref:
-                continue
-
-            if state.closed:
-                self._segments.pop(segment, None)
-            else:
-                state.discarded = True
-
-    async def _close_source(self, source: _STTSource, *, graceful: bool) -> None:
+    async def _close_source(
+        self, source: _STTSource, *, graceful: bool, reason: str = "source_closed"
+    ) -> None:
+        if source.close_task is not None:
+            return
+        source.closing = True
+        if not graceful:
+            source.retired = True
+            self._finish_source_segments(source, outcome="cancelled", reason=reason)
         if self._sources.get(source.source) is source:
             self._sources.pop(source.source, None)
+        self._closing_sources[source.stream_id] = source
+        source.close_task = asyncio.create_task(
+            self._cleanup_source(source, graceful=graceful, reason=reason),
+            name=f"router_stt_close:{source.source.source_id}:{source.stream_id}",
+        )
+        source.close_task.add_done_callback(lambda task: self._observe_close(source, task))
 
+    def _observe_close(self, source: _STTSource, task: asyncio.Task[None]) -> None:
+        self._closing_sources.pop(source.stream_id, None)
+        if not task.cancelled() and (error := task.exception()) is not None:
+            logger.error("Speech transcription source cleanup failed", exc_info=error)
+
+    async def _cleanup_source(self, source: _STTSource, *, graceful: bool, reason: str) -> None:
         task = source.event_task
-
-        if graceful and source.stream.end_input() and task is not None:
+        deadline = asyncio.get_running_loop().time() + self._close_timeout_sec
+        try:
+            # One deadline covers draining and closing; other sources keep consuming meanwhile.
             try:
-                await asyncio.wait_for(asyncio.shield(task), timeout=self._close_timeout_sec)
-            except TimeoutError:
-                logger.warning(
-                    "Speech transcription source drain timed out source=%s generation=%s",
-                    source.source.source_id,
-                    source.source.source_generation,
-                )
+                async with asyncio.timeout_at(deadline):
+                    if graceful:
+                        source.stream.end_input()
+                        if task is not None:
+                            await asyncio.shield(task)
+            finally:
+                source.retired = True
+                if task is not None and not task.done():
+                    task.cancel()
+                async with asyncio.timeout_at(deadline):
+                    await source.stream.aclose()
+                    if task is not None:
+                        await asyncio.gather(task, return_exceptions=True)
+        except TimeoutError:
+            reason = "close_timeout"
+            self._record("stt.error", source=source, reason=reason)
+            self._runtime.perception.input_trace.freeze(reason="stt_close_timeout")
+        except asyncio.CancelledError:
+            reason = "close_cancelled"
+            raise
+        except Exception:
+            reason = "close_error"
+            self._record("stt.error", source=source, reason=reason)
+            self._runtime.perception.input_trace.freeze(reason="stt_close_error")
+            logger.exception("Speech transcription source cleanup failed")
+        finally:
+            source.retired = True
+            if task is not None and not task.done():
+                task.cancel()
+            self._finish_source_segments(source, outcome="closed_without_final", reason=reason)
+            self._record("stt.source_closed", source=source, outcome="closed", reason=reason)
 
-        if task is not None and not task.done():
-            task.cancel()
-
-        await source.stream.aclose()
-
-        if task is not None:
-            await asyncio.gather(task, return_exceptions=True)
-
-    async def _replace_source(self, source_ref: PerceptionSourceRef) -> _STTSource:
-        previous = self._sources.get(source_ref)
-
-        if previous is not None:
-            self._invalidate_source_segments(source_ref)
-            await self._close_source(previous, graceful=False)
-
-        return self._create_source(source_ref)
-
-    async def _get_source(self, source_ref: PerceptionSourceRef) -> _STTSource:
-        # A new source generation retires the previous generation for the same
-        # logical source. Different generations must never share an STT stream.
-        for current_ref, current in tuple(self._sources.items()):
-            if current_ref.source_id != source_ref.source_id or current_ref == source_ref:
-                continue
-
-            await self._close_source(current, graceful=False)
-            self._clear_source_segments(current_ref)
-
+    async def _get_source(self, source_ref: PerceptionSourceRef) -> _STTSource | None:
         source = self._sources.get(source_ref)
+        if source is not None and (source.failed or source.retired):
+            await self._close_source(source, graceful=False, reason="stream_error")
+            source = None
+        if source is None and len(self._sources) + len(self._closing_sources) >= self._max_sources:
+            return None
         return source if source is not None else self._create_source(source_ref)
 
-    async def _close_sources(self, *, graceful: bool) -> None:
-        sources = list(self._sources.values())
-        self._sources.clear()
-
-        for source in sources:
-            await self._close_source(source, graceful=graceful)
+    async def _close_sources(self, *, graceful: bool, reason: str = "source_closed") -> None:
+        for source in tuple(self._sources.values()):
+            await self._close_source(source, graceful=graceful, reason=reason)
+        if graceful and self._closing_sources:
+            tasks = tuple(source.close_task for source in self._closing_sources.values())
+            _, pending = await asyncio.wait(tasks, timeout=self._close_timeout_sec)
+            if pending:
+                self._record("stt.error", reason="close_timeout")
+                self._runtime.perception.input_trace.freeze(reason="stt_close_timeout")
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.wait(pending, timeout=min(0.05, self._close_timeout_sec))
 
     def _publish_transcription_observation(
         self,
@@ -265,10 +400,10 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
         segment: PerceptionSegmentRef,
         state: _SegmentState,
         event: TranscriptionEvent,
-    ) -> None:
+    ) -> tuple[str, int | None] | None:
         text = event.text.strip()
         if not text:
-            return
+            return None
 
         metadata: dict[str, object] = {
             "language": event.language,
@@ -287,42 +422,75 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
             else EnvObservation.transcript_delta
         )
 
-        self._runtime.perception.publish_observation(
-            factory(
-                time_range=state.time_range,
-                source=source.transcript_source,
-                segment=segment,
-                transport_participant_id=state.transport_participant_id,
-                entity=state.entity,
-                payload=payload,
-                metadata=metadata,
-            )
+        observation = factory(
+            time_range=state.time_range,
+            source=source.transcript_source,
+            segment=segment,
+            transport_participant_id=state.transport_participant_id,
+            entity=state.entity,
+            payload=payload,
+            metadata=metadata,
         )
+        published = self._runtime.perception.publish_observation(observation)
+        return observation.observation_id, published.sequence if published is not None else None
 
     async def _dispatch_event(self, source: _STTSource, event: TranscriptionEvent) -> None:
         segment = PerceptionSegmentRef(source=source.source, segment_id=event.segment_id)
-        state = self._segments.get(segment)
+        current = (
+            self._sources.get(source.source) is source
+            or self._closing_sources.get(source.stream_id) is source
+        )
+        if source.retired or not current:
+            self._record("stt.stale", segment=segment, source=source, reason="stream_retired")
+            return
+        if event.source_id != source.source.source_id:
+            self._record("stt.stale", segment=segment, source=source, reason="source_mismatch")
+            return
 
-        if event.type in {
+        reason = event.reason_code if event.reason_code in _ERROR_CODES else "provider_error"
+        if event.type == TranscriptionEventType.ERROR and event.segment_id == "unknown":
+            source.failed = True
+            self._finish_source_segments(source, outcome="error", reason=reason)
+            self._record("stt.error", source=source, reason=reason)
+            self._runtime.perception.input_trace.freeze(reason="stt_stream_error")
+            return
+
+        state = self._segments.get(segment)
+        if state is None or state.stream_id != source.stream_id or source.failed:
+            self._record("stt.stale", segment=segment, source=source, reason="segment_retired")
+            return
+
+        if event.type == TranscriptionEventType.ERROR:
+            self._finish_segment(
+                segment,
+                outcome="cancelled" if reason == "input_flushed" else "error",
+                reason=reason,
+                provider_item_id=event.provider_item_id,
+            )
+            if reason != "input_flushed":
+                self._runtime.perception.input_trace.freeze(reason="stt_segment_error")
+            return
+        if event.type not in {
             TranscriptionEventType.INTERIM_TRANSCRIPT,
             TranscriptionEventType.FINAL_TRANSCRIPT,
         }:
-            if state is None:
-                logger.debug(
-                    "Ignored stale transcription event "
-                    "source=%s generation=%s segment_id=%s type=%s",
-                    source.source.source_id,
-                    source.source.source_generation,
-                    segment.segment_id,
-                    event.type,
-                )
-            elif not state.discarded:
-                self._publish_transcription_observation(
-                    source=source, segment=segment, state=state, event=event
-                )
+            return
 
-        if event.type in {TranscriptionEventType.FINAL_TRANSCRIPT, TranscriptionEventType.ERROR}:
-            self._segments.pop(segment, None)
+        published = self._publish_transcription_observation(
+            source=source, segment=segment, state=state, event=event
+        )
+        if event.type == TranscriptionEventType.FINAL_TRANSCRIPT:
+            self._finish_segment(
+                segment,
+                outcome="final_text" if published else "final_empty",
+                reason="provider_final",
+                text_chars=len(event.text.strip()),
+                provider_item_id=event.provider_item_id,
+                observation_id=published[0] if published else None,
+                sequence=published[1] if published else None,
+            )
+            if published is None:
+                self._runtime.perception.input_trace.freeze(reason="stt_final_empty")
 
     async def _event_loop(self, source: _STTSource) -> None:
         try:
@@ -332,78 +500,119 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
             raise
         except Exception:
             source.failed = True
+            self._finish_source_segments(source, outcome="error", reason="stream_error")
+            self._record("stt.error", source=source, reason="stream_error")
+            self._runtime.perception.input_trace.freeze(reason="stt_stream_error")
             logger.exception(
                 "Speech transcription stream failed source=%s generation=%s",
                 source.source.source_id,
                 source.source.source_generation,
             )
+        else:
+            source.failed = not source.closing
+            self._finish_source_segments(
+                source, outcome="closed_without_final", reason="missing_final"
+            )
+        finally:
+            source.retired = True
 
     async def _consume_frame(
         self, observation: EnvObservation, *, segment: PerceptionSegmentRef, state: _SegmentState
     ) -> None:
-        if state.discarded:
-            return
-
         frame = self._extract_frame(observation)
         if frame is None:
+            self._finish_segment(segment, outcome="rejected", reason="missing_frame_payload")
+            source = self._sources.get(segment.source)
+            if source is not None:
+                await self._close_source(source, graceful=False, reason="missing_frame_payload")
             return
 
         source = await self._get_source(segment.source)
-
-        if source.failed:
-            state.discarded = True
-            await self._replace_source(segment.source)
+        if source is None:
+            self._finish_segment(segment, outcome="rejected", reason="source_cleanup_capacity")
+            self._runtime.perception.input_trace.freeze(reason="stt_source_cleanup_capacity")
             return
-
+        state.stream_id = source.stream_id
         if source.stream.push_frame(frame, segment_id=segment.segment_id):
+            state.frame_count += 1
+            if state.frame_count == 1:
+                self._record(
+                    "speech.start",
+                    segment=segment,
+                    state=state,
+                    observation_id=observation.observation_id,
+                )
             return
-
-        state.discarded = True
-        await self._replace_source(segment.source)
-
-        logger.warning(
-            "Speech transcription discarded segment after input rejection "
-            "source=%s generation=%s segment_id=%s",
-            segment.source.source_id,
-            segment.source.source_generation,
-            segment.segment_id,
-        )
+        self._finish_segment(segment, outcome="rejected", reason="input_rejected")
+        self._runtime.perception.input_trace.freeze(reason="stt_input_rejected")
+        await self._close_source(source, graceful=False, reason="input_rejected")
 
     async def _commit_segment(self, segment: PerceptionSegmentRef, state: _SegmentState) -> None:
-        if state.discarded:
-            self._segments.pop(segment, None)
-            return
-
         source = self._sources.get(segment.source)
-        if source is None:
-            logger.warning(
-                "Speech transcription commit has no active source "
-                "source=%s generation=%s segment_id=%s",
-                segment.source.source_id,
-                segment.source.source_generation,
-                segment.segment_id,
-            )
-            self._segments.pop(segment, None)
+        if source is None or state.stream_id != source.stream_id or not state.frame_count:
+            self._finish_segment(segment, outcome="rejected", reason="missing_audio")
             return
 
         if source.failed or not source.stream.commit_segment(segment.segment_id):
-            state.discarded = True
-            await self._replace_source(segment.source)
+            self._finish_segment(segment, outcome="rejected", reason="commit_rejected")
+            self._runtime.perception.input_trace.freeze(reason="stt_commit_rejected")
+            await self._close_source(source, graceful=False, reason="commit_rejected")
+            return
+        self._record("stt.commit", segment=segment, state=state, outcome="accepted")
 
-            logger.warning(
-                "Speech transcription failed to commit segment "
-                "source=%s generation=%s segment_id=%s",
-                segment.source.source_id,
-                segment.source.source_generation,
-                segment.segment_id,
-            )
-
-    async def _consume_observation(self, observation: EnvObservation) -> None:
+    async def _consume_observation(
+        self, observation: EnvObservation, *, stream_sequence: int = 0
+    ) -> None:
+        segment = observation.segment
+        if segment is None or observation.kind not in {
+            ObservationKind.SPEECH_FRAME,
+            ObservationKind.SPEECH_SEGMENT,
+        }:
+            return
+        if segment in self._retired or not await self._accept_generation(segment):
+            return
+        state = self._segments.get(segment)
+        if state is not None and state.closed:
+            state.duplicate_count += 1
+            return
+        if observation.kind == ObservationKind.SPEECH_FRAME:
+            route_index = observation.metadata.get("route_index")
+            if type(route_index) is not int or route_index <= 0:
+                self._finish_segment(segment, outcome="rejected", reason="invalid_route_index")
+                source = self._sources.get(segment.source)
+                if source is not None:
+                    await self._close_source(source, graceful=False, reason="invalid_route_index")
+                return
+            if state is not None and route_index <= state.frame_count:
+                state.duplicate_count += 1
+                return
+            if state is None and (
+                route_index != 1 or observation.metadata.get("speech_event") != "start"
+            ):
+                self._finish_segment(segment, outcome="rejected", reason="missing_segment_start")
+                return
+            if state is not None and route_index != state.frame_count + 1:
+                self._finish_segment(segment, outcome="rejected", reason="frame_gap")
+                self._runtime.perception.input_trace.freeze(reason="stt_frame_gap")
+                source = self._sources.get(segment.source)
+                if source is not None:
+                    await self._close_source(source, graceful=False, reason="frame_gap")
+                return
+        elif state is None:
+            self._finish_segment(segment, outcome="rejected", reason="missing_segment_start")
+            return
+        if state is None and len(self._segments) >= self._max_pending_segments:
+            self._finish_segment(segment, outcome="rejected", reason="pending_capacity")
+            self._runtime.perception.input_trace.freeze(reason="stt_pending_capacity")
+            return
         current = self._update_segment(observation)
         if current is None:
             return
 
         segment, state = current
+        if not state.first_stream_sequence:
+            state.first_stream_sequence = stream_sequence
+        state.last_stream_sequence = stream_sequence
 
         if observation.kind == ObservationKind.SPEECH_FRAME:
             await self._consume_frame(observation, segment=segment, state=state)
@@ -412,34 +621,50 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
         if observation.kind == ObservationKind.SPEECH_SEGMENT:
             state.time_range = observation.time_range
             state.closed = True
+            self._record(
+                "speech.close",
+                segment=segment,
+                state=state,
+                observation_id=observation.observation_id,
+            )
             await self._commit_segment(segment, state)
 
     async def _consume_loop(self) -> None:
+        stream = self._runtime.perception.speech
         while True:
             try:
-                await self._runtime.perception.wait_for_pending_observations(
-                    consumer_id=self.CONSUMER_ID, streams={PerceptionStreamKind.SPEECH}
-                )
-
-                window = self._runtime.perception.take_pending_observations(
-                    consumer_id=self.CONSUMER_ID,
-                    streams={PerceptionStreamKind.SPEECH},
-                    require_payload=True,
-                )
-
-                if window.has_gap:
-                    logger.warning(
-                        "Speech transcription observed input gap missed=%s", window.missed_count
+                await stream.wait_for_pending(consumer_id=self.CONSUMER_ID)
+                batch = stream.read_pending(consumer_id=self.CONSUMER_ID)
+                if batch.has_gap:
+                    self._record(
+                        "speech.gap",
+                        missed_count=batch.missed_count,
+                        stream_sequence=batch.cursor_seq,
                     )
-                    await self._close_sources(graceful=False)
-                    self._segments.clear()
+                    self._runtime.perception.input_trace.freeze(reason="speech_input_gap")
+                    await self._close_sources(graceful=False, reason="input_gap")
+                    for segment in tuple(self._segments):
+                        self._finish_segment(segment, outcome="cancelled", reason="input_gap")
 
-                for observation in window.speech_observations:
+                # This unfiltered single-stream read preserves the producer's frame/close protocol.
+                first_sequence = batch.cursor_seq - len(batch.items) + 1
+                for sequence, observation in enumerate(batch.items, start=first_sequence):
                     try:
-                        await self._consume_observation(observation)
+                        await self._consume_observation(observation, stream_sequence=sequence)
                     except asyncio.CancelledError:
                         raise
                     except Exception:
+                        segment = observation.segment
+                        if segment is not None:
+                            self._finish_segment(
+                                segment, outcome="error", reason="processing_error"
+                            )
+                            source = self._sources.get(segment.source)
+                            if source is not None:
+                                await self._close_source(
+                                    source, graceful=False, reason="processing_error"
+                                )
+                        self._runtime.perception.input_trace.freeze(reason="stt_processing_error")
                         logger.exception(
                             "Speech transcription failed to process observation "
                             "observation_id=%s kind=%s",
@@ -447,7 +672,7 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
                             observation.kind,
                         )
 
-                self._runtime.perception.commit_observations(window)
+                stream.commit(consumer_id=self.CONSUMER_ID, cursor_seq=batch.cursor_seq)
 
             except asyncio.CancelledError:
                 raise
@@ -482,11 +707,9 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
             await asyncio.gather(self._consume_task, return_exceptions=True)
             self._consume_task = None
 
-        await self._close_sources(graceful=True)
-        self._segments.clear()
-
-        self._runtime.perception.clear_observation_consumer(
-            self.CONSUMER_ID, streams={PerceptionStreamKind.SPEECH}
-        )
+        await self._close_sources(graceful=True, reason="shutdown")
+        for segment in tuple(self._segments):
+            self._finish_segment(segment, outcome="cancelled", reason="shutdown")
+        self._runtime.perception.speech.clear_consumer(self.CONSUMER_ID)
 
         logger.info("Speech transcription stopped")

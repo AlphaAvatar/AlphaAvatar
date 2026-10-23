@@ -18,6 +18,7 @@ import io
 import os
 import time
 import wave
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -187,6 +188,11 @@ class OpenAISegmentSTTStream(STTStreamBase):
         )
         self._job_q: asyncio.Queue[_SegmentJob | object] = asyncio.Queue(maxsize=request_queue_size)
         self._event_q: asyncio.Queue[TranscriptionEvent | object] = asyncio.Queue()
+        self._retention_limit = max(32, queue_size * 4)
+        self._open_segments: set[str] = set()
+        self._pending_segments: set[str] = set()
+        # Protect recent segment identities without keeping an unbounded session history.
+        self._committed_segments: OrderedDict[str, None] = OrderedDict()
 
         self._accepting_input = True
         self._closed = False
@@ -214,16 +220,50 @@ class OpenAISegmentSTTStream(STTStreamBase):
         if frame.num_channels != 1:
             raise ValueError(f"OpenAI STT requires mono audio, got {frame.num_channels} channels")
 
-        return self._put_input(_FrameCommand(frame=frame, segment_id=segment_id))
+        if segment_id in self._committed_segments or segment_id in self._pending_segments:
+            return False
+        if (
+            segment_id not in self._open_segments
+            and len(self._open_segments) + len(self._pending_segments) >= self._input_q.maxsize
+        ):
+            return False
+        if not self._put_input(_FrameCommand(frame=frame, segment_id=segment_id)):
+            return False
+        self._open_segments.add(segment_id)
+        return True
+
+    def _remember_commit(self, segment_id: str) -> None:
+        self._open_segments.discard(segment_id)
+        self._committed_segments[segment_id] = None
+        self._committed_segments.move_to_end(segment_id)
+        if len(self._committed_segments) > self._retention_limit:
+            self._committed_segments.popitem(last=False)
 
     def commit_segment(self, segment_id: str) -> bool:
         if not segment_id:
             raise ValueError("commit_segment requires a segment_id")
 
-        return self._put_input(_CommitCommand(segment_id=segment_id))
+        if not self._accepting_input or self._closed:
+            return False
+        if segment_id in self._committed_segments or segment_id in self._pending_segments:
+            return True
+        if (
+            segment_id not in self._open_segments
+            and len(self._open_segments) + len(self._pending_segments) >= self._input_q.maxsize
+        ):
+            return False
+        if not self._put_input(_CommitCommand(segment_id=segment_id)):
+            return False
+        self._remember_commit(segment_id)
+        self._pending_segments.add(segment_id)
+        return True
 
     def flush(self) -> bool:
-        return self._put_input(_FLUSH)
+        if not self._put_input(_FLUSH):
+            return False
+        for segment_id in tuple(self._open_segments):
+            self._remember_commit(segment_id)
+        return True
 
     def end_input(self) -> bool:
         if not self._accepting_input or self._closed:
@@ -231,6 +271,9 @@ class OpenAISegmentSTTStream(STTStreamBase):
         if not self._put_input(_END_INPUT):
             return False
 
+        for segment_id in tuple(self._open_segments):
+            self._remember_commit(segment_id)
+            self._pending_segments.add(segment_id)
         self._accepting_input = False
         return True
 
@@ -251,7 +294,12 @@ class OpenAISegmentSTTStream(STTStreamBase):
 
             yield item
 
-    def _emit_error(self, segment_id: str, reason: str) -> None:
+    def _emit_error(
+        self, segment_id: str, reason: str, *, reason_code: str = "provider_error"
+    ) -> None:
+        self._pending_segments.discard(segment_id)
+        if segment_id != "unknown":
+            self._remember_commit(segment_id)
         self._event_q.put_nowait(
             TranscriptionEvent(
                 type=TranscriptionEventType.ERROR,
@@ -260,12 +308,16 @@ class OpenAISegmentSTTStream(STTStreamBase):
                 provider="openai",
                 model=self._model,
                 reason=reason,
+                reason_code=reason_code,
             )
         )
 
     def _emit_transcript(
         self, *, event_type: TranscriptionEventType, segment_id: str, text: str, duration_sec: float
     ) -> None:
+        if event_type == TranscriptionEventType.FINAL_TRANSCRIPT:
+            self._pending_segments.discard(segment_id)
+            self._remember_commit(segment_id)
         self._event_q.put_nowait(
             TranscriptionEvent(
                 type=event_type,
@@ -286,11 +338,19 @@ class OpenAISegmentSTTStream(STTStreamBase):
         def commit(segment_id: str) -> None:
             state = segments.pop(segment_id, None)
             if state is None:
-                self._emit_error(segment_id, "STT segment committed without buffered audio")
+                self._emit_error(
+                    segment_id,
+                    "STT segment committed without buffered audio",
+                    reason_code="missing_audio",
+                )
                 return
 
             if not state.pcm:
-                self._emit_error(segment_id, "Cannot commit an empty STT audio segment")
+                self._emit_error(
+                    segment_id,
+                    "Cannot commit an empty STT audio segment",
+                    reason_code="empty_segment",
+                )
                 return
 
             job = _SegmentJob(
@@ -300,7 +360,11 @@ class OpenAISegmentSTTStream(STTStreamBase):
             try:
                 self._job_q.put_nowait(job)
             except asyncio.QueueFull:
-                self._emit_error(segment_id, "OpenAI STT request queue is full; segment discarded")
+                self._emit_error(
+                    segment_id,
+                    "OpenAI STT request queue is full; segment discarded",
+                    reason_code="request_queue_full",
+                )
 
         while True:
             command = await self._input_q.get()
@@ -374,53 +438,76 @@ class OpenAISegmentSTTStream(STTStreamBase):
 
         # whisper-1 ignores stream=True and returns a complete response.
         if not hasattr(response, "__aiter__"):
-            self._emit_transcript(
-                event_type=TranscriptionEventType.FINAL_TRANSCRIPT,
-                segment_id=job.segment_id,
-                text=str(getattr(response, "text", "")),
-                duration_sec=job.duration_sec,
-            )
+            final_text = getattr(response, "text", None)
+            if isinstance(final_text, str):
+                self._emit_transcript(
+                    event_type=TranscriptionEventType.FINAL_TRANSCRIPT,
+                    segment_id=job.segment_id,
+                    text=final_text,
+                    duration_sec=job.duration_sec,
+                )
+            else:
+                self._emit_error(
+                    job.segment_id,
+                    "OpenAI transcription final has no text field",
+                    reason_code="invalid_final",
+                )
             return
 
         text = ""
         final_emitted = False
         last_interim_at = 0.0
 
-        async for event in response:
-            event_type = getattr(event, "type", "")
+        try:
+            async for event in response:
+                event_type = getattr(event, "type", "")
 
-            if event_type == "transcript.text.delta":
-                text += str(getattr(event, "delta", ""))
-                now = time.monotonic()
+                if event_type == "transcript.text.delta":
+                    text += str(getattr(event, "delta", ""))
+                    now = time.monotonic()
 
-                if text and now - last_interim_at >= self._interim_interval_sec:
-                    self._emit_transcript(
-                        event_type=TranscriptionEventType.INTERIM_TRANSCRIPT,
-                        segment_id=job.segment_id,
-                        text=text,
-                        duration_sec=job.duration_sec,
-                    )
-                    last_interim_at = now
+                    if text and now - last_interim_at >= self._interim_interval_sec:
+                        self._emit_transcript(
+                            event_type=TranscriptionEventType.INTERIM_TRANSCRIPT,
+                            segment_id=job.segment_id,
+                            text=text,
+                            duration_sec=job.duration_sec,
+                        )
+                        last_interim_at = now
 
-                continue
+                    continue
 
-            if event_type == "transcript.text.done":
-                text = str(getattr(event, "text", "") or text)
+                if event_type == "transcript.text.done":
+                    final_text = getattr(event, "text", None)
+                    if isinstance(final_text, str):
+                        self._emit_transcript(
+                            event_type=TranscriptionEventType.FINAL_TRANSCRIPT,
+                            segment_id=job.segment_id,
+                            text=final_text,
+                            duration_sec=job.duration_sec,
+                        )
+                    else:
+                        self._emit_error(
+                            job.segment_id,
+                            "OpenAI transcription final has no text field",
+                            reason_code="invalid_final",
+                        )
+                    final_emitted = True
+                    break
+        finally:
+            if (close := getattr(response, "close", None)) is not None:
+                try:
+                    await close()
+                except Exception:
+                    if not final_emitted:
+                        raise
+                    logger.warning("OpenAI STT response cleanup failed after final", exc_info=True)
 
-                self._emit_transcript(
-                    event_type=TranscriptionEventType.FINAL_TRANSCRIPT,
-                    segment_id=job.segment_id,
-                    text=text,
-                    duration_sec=job.duration_sec,
-                )
-                final_emitted = True
-
-        if text and not final_emitted:
-            self._emit_transcript(
-                event_type=TranscriptionEventType.FINAL_TRANSCRIPT,
-                segment_id=job.segment_id,
-                text=text,
-                duration_sec=job.duration_sec,
+        if not final_emitted:
+            self._emit_error(
+                job.segment_id,
+                "OpenAI transcription stream closed without a final result",
+                reason_code="missing_final",
             )
 
     @staticmethod
@@ -454,7 +541,14 @@ class OpenAISegmentSTTStream(STTStreamBase):
 
             except Exception as error:
                 reason = self._api_error_reason(error)
-                self._emit_error(item.segment_id, reason)
+                reason_code = (
+                    "request_timeout"
+                    if isinstance(error, openai.APITimeoutError)
+                    else "connection_error"
+                    if isinstance(error, openai.APIConnectionError)
+                    else "provider_error"
+                )
+                self._emit_error(item.segment_id, reason, reason_code=reason_code)
 
                 if isinstance(
                     error,
@@ -495,7 +589,7 @@ class OpenAISegmentSTTStream(STTStreamBase):
 
             logger.exception("OpenAI segment STT stream failed source_id=%s", self._source_id)
 
-            self._emit_error("unknown", str(error))
+            self._emit_error("unknown", str(error), reason_code="stream_error")
 
         finally:
             for task in (ingest_task, request_task):

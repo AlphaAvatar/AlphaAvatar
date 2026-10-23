@@ -166,9 +166,26 @@ class TurnTakingCoordinator:
                 )
             )
 
-        self._runtime.perception.publish_annotation(
-            decision.to_annotation(source=self.SOURCE, observation_id=target_observation_id)
+        annotation = decision.to_annotation(
+            source=self.SOURCE, observation_id=target_observation_id
         )
+        event = self._runtime.perception.publish_annotation(annotation)
+        trace = self._runtime.perception.input_trace
+        trace.record(
+            "candidate.decision",
+            candidate_id=candidate.turn_candidate_id,
+            candidate_revision=candidate.revision,
+            decision_id=annotation.annotation_id,
+            observation_id=target_observation_id,
+            event_id=event.event_id if event is not None else None,
+            sequence=event.sequence if event is not None else None,
+            action=decision.action.value,
+            outcome="published" if event is not None else "not_published",
+            evidence_count=len(decision.input_observation_ids),
+            missing_count=len(candidate.missing_transcripts),
+        )
+        if decision.action == TurnTakingAction.CANCEL:
+            trace.freeze(reason="candidate_cancelled")
         logger.debug(
             "TURN DECISION candidate_id=%s revision=%s action=%s reason=%s mode=%s "
             "segments=%d active_segments=%d missing_transcripts=%d",
@@ -231,6 +248,13 @@ class TurnTakingCoordinator:
             return
 
         self._cancel_assessment(key)
+        self._runtime.perception.input_trace.record(
+            "candidate.retired",
+            candidate_id=candidate.turn_candidate_id,
+            candidate_revision=candidate.revision,
+            evidence_count=len(candidate.input_observation_ids),
+            missing_count=len(candidate.missing_transcripts),
+        )
 
         for segment in candidate.segments:
             self._retired_segments[segment] = None
@@ -628,6 +652,28 @@ class TurnTakingCoordinator:
 
     """Observation Handler"""
 
+    def _trace_segment(
+        self,
+        stage: str,
+        segment: PerceptionSegmentRef,
+        observation: EnvObservation,
+        *,
+        candidate: TurnCandidate | None = None,
+        state: str | None = None,
+        reason: str | None = None,
+    ) -> None:
+        self._runtime.perception.input_trace.record(
+            stage,
+            source_id=segment.source.source_id,
+            source_generation=segment.source.source_generation,
+            segment_id=segment.segment_id,
+            observation_id=observation.observation_id,
+            candidate_id=candidate.turn_candidate_id if candidate is not None else None,
+            candidate_revision=candidate.revision if candidate is not None else None,
+            state=state,
+            reason=reason,
+        )
+
     def _get_candidate(self, observation: EnvObservation) -> tuple[SpeakerKey, TurnCandidate]:
         key = SpeakerKey.from_observation(observation)
         candidate = self._candidates.get(key)
@@ -648,6 +694,9 @@ class TurnTakingCoordinator:
         text = self._builder.text(observation)
         if text is None or not candidate.add_transcript(segment, observation, text):
             return
+        self._trace_segment(
+            "candidate.transcript", segment, observation, candidate=candidate, state="accepted"
+        )
         logger.debug(
             "TURN TRANSCRIPT candidate_id=%s revision=%s segment_id=%s source=%s "
             "generation=%s observation_id=%s chars=%d active_segments=%d",
@@ -677,6 +726,10 @@ class TurnTakingCoordinator:
     def _consume_speech(self, observation: EnvObservation) -> None:
         segment = self._builder.require_segment(observation)
         if segment in self._retired_segments:
+            if observation.kind == ObservationKind.SPEECH_SEGMENT:
+                self._trace_segment(
+                    "candidate.segment_rejected", segment, observation, reason="retired_segment"
+                )
             return
         key, candidate = self._get_candidate(observation)
         if (
@@ -692,6 +745,9 @@ class TurnTakingCoordinator:
             # SPEECH_FRAME is ephemeral. close_segment/add_transcript attach retained evidence;
             # the frame may still anchor immediate interruption, never a committed Turn.
             self._cancel_assessment(key)
+            self._trace_segment(
+                "candidate.segment", segment, observation, candidate=candidate, state="open"
+            )
 
         self._attach_segment_addressing(key, candidate, segment)
 
@@ -707,6 +763,9 @@ class TurnTakingCoordinator:
             return
 
         candidate.close_segment(segment, observation)
+        self._trace_segment(
+            "candidate.segment", segment, observation, candidate=candidate, state="closed"
+        )
         logger.debug(
             "TURN SEGMENT CLOSED candidate_id=%s revision=%s segment_id=%s source=%s "
             "generation=%s observation_id=%s active_segments=%d",
@@ -729,11 +788,15 @@ class TurnTakingCoordinator:
     def _consume_transcript(self, observation: EnvObservation) -> None:
         segment = self._builder.require_segment(observation)
         if segment in self._retired_segments:
+            self._trace_segment(
+                "candidate.transcript_rejected", segment, observation, reason="retired_segment"
+            )
             return
         key = self._segment_owners.get(segment)
 
         if key is None:
             self._store_orphan_transcript(segment, observation)
+            self._trace_segment("candidate.transcript_pending", segment, observation)
             return
 
         candidate = self._candidates.get(key)
