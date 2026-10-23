@@ -1,0 +1,174 @@
+name: Publish Package to PyPI (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing vX.Y.Z tag to build (e.g., v0.6.8)"
+        required: true
+        type: string
+      package:
+        description: "Publish one package only; availability of other packages is not assumed"
+        required: true
+        type: choice
+        options:
+          - alpha-avatar-host
+          - alpha-avatar-rtc
+          - alpha-avatar-core
+          - alpha-avatar-agents
+          - alpha-avatar-plugins-loop
+          - alpha-avatar-plugins-context
+          - alpha-avatar-plugins-provider
+          - alpha-avatar-plugins-voice
+          - alpha-avatar-plugins-character
+          - alpha-avatar-plugins-memory
+          - alpha-avatar-plugins-persona
+          - alpha-avatar-plugins-router
+          - alpha-avatar-plugins-status
+          - alpha-avatar-plugins-deepresearch
+          - alpha-avatar-plugins-mcp
+          - alpha-avatar-plugins-rag
+      repository:
+        description: "Python package index; TestPyPI is the safer default"
+        required: true
+        type: choice
+        default: testpypi
+        options:
+          - testpypi
+          - pypi
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pypi-${{ inputs.repository }}-${{ inputs.tag }}-${{ inputs.package }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Validate tag input
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Expected an existing vX.Y.Z-style tag, got: $TAG" >&2
+            exit 1
+          fi
+
+      - name: Checkout immutable release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+
+      - name: Verify tag, source lineage, package and version
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          PACKAGE: ${{ inputs.package }}
+        run: |
+          set -euo pipefail
+          TAG_SHA="$(git rev-parse --verify "refs/tags/$TAG^{commit}")"
+          test "$TAG_SHA" = "$(git rev-parse HEAD)" || {
+            echo "Checkout did not resolve to the requested tag" >&2
+            exit 1
+          }
+          git fetch --no-tags --quiet origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor HEAD refs/remotes/origin/main || {
+            echo "Tag is not in main's history; refusing to publish" >&2
+            exit 1
+          }
+
+          python - <<'PY'
+          import ast
+          import os
+          import tomllib
+          from pathlib import Path
+
+          workspace = tomllib.loads(Path("pyproject.toml").read_text())
+          requested = os.environ["PACKAGE"]
+          expected_version = os.environ["TAG"].removeprefix("v")
+          matches = []
+          for pattern in workspace["tool"]["uv"]["workspace"]["members"]:
+              for directory in Path.cwd().glob(pattern):
+                  project = tomllib.loads((directory / "pyproject.toml").read_text())
+                  if project["project"]["name"] == requested:
+                      matches.append((directory, project))
+          if len(matches) != 1:
+              raise SystemExit(f"Expected one workspace package named {requested!r}, found {len(matches)}")
+
+          directory, project = matches[0]
+          path = directory / project["tool"]["hatch"]["version"]["path"]
+          source = ast.parse(path.read_text())
+          versions = [
+              ast.literal_eval(node.value)
+              for node in source.body
+              if isinstance(node, ast.Assign)
+              and any(isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets)
+          ]
+          if versions != [expected_version]:
+              raise SystemExit(f"Version mismatch for {requested}: {versions!r}, expected {expected_version!r}")
+          print(f"Validated {requested}=={expected_version} from {directory}")
+          PY
+
+      - name: Install uv
+        run: python -m pip install uv==0.10.0
+
+      - name: Verify lock and install build tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv lock --check
+          uv sync --locked --only-group build --no-install-workspace
+          constraints="$RUNNER_TEMP/alphaavatar-build-constraints.txt"
+          uv export --locked --only-group build --no-emit-workspace --no-hashes \
+            --output-file "$constraints" > /dev/null
+          echo "UV_BUILD_CONSTRAINT=$constraints" >> "$GITHUB_ENV"
+
+      - name: Build and check the selected package only
+        shell: bash
+        env:
+          PACKAGE: ${{ inputs.package }}
+        run: |
+          set -euo pipefail
+          uv build --package "$PACKAGE" --no-sources
+          uv run --no-sync twine check dist/*
+          git diff --exit-code
+
+      - name: Publish to TestPyPI
+        if: inputs.repository == 'testpypi'
+        shell: bash
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
+          TWINE_NON_INTERACTIVE: "1"
+        run: |
+          set -euo pipefail
+          test -n "$TWINE_PASSWORD" || { echo "Missing TEST_PYPI_API_TOKEN" >&2; exit 1; }
+          uv run --no-sync twine upload --skip-existing \
+            --repository-url https://test.pypi.org/legacy/ dist/*
+
+      - name: Publish to PyPI
+        if: inputs.repository == 'pypi'
+        shell: bash
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+          TWINE_NON_INTERACTIVE: "1"
+        run: |
+          set -euo pipefail
+          test -n "$TWINE_PASSWORD" || { echo "Missing PYPI_API_TOKEN" >&2; exit 1; }
+          uv run --no-sync twine upload --skip-existing \
+            --repository-url https://upload.pypi.org/legacy/ dist/*

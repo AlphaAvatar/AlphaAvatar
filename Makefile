@@ -5,47 +5,26 @@
 # Usage:
 #   make prepare-release-config
 #   make prepare-release VERSION=0.6.1
-#   make release VERSION=0.6.1 TYPE=prod PREVIOUS_TAG=v0.6.0
-#   make release VERSION=0.6.1 TYPE=test
+#   make release VERSION=0.6.9 TYPE=prod
+#   Publish package: Actions -> Publish Package to PyPI (manual)
 #
 # Notes:
 #   - This Makefile uses ".RECIPEPREFIX := >" to avoid Tab-related Makefile errors.
-#   - For prod releases, docs/releases/vX.Y.Z.md must exist and be committed.
-#   - GitHub generated PR notes will be appended after manual notes when GH_RELEASE=1 and GH_GENERATE_NOTES=1.
+#   - For prod releases, docs/releases/vX.Y.Z.md must be committed.
+#   - Production tags trigger GitHub Release only; PyPI is separate and opt-in.
 
 .RECIPEPREFIX := >
 
 VERSION ?= 0.1.0
-TYPE ?= test
+TYPE ?= prod
 
 PYTHON ?= python3
 
 RELEASE_SCRIPT := scripts/release.sh
 
 TAG := v$(VERSION)
-TEST_TAG := test-v$(VERSION)
-
 RELEASE_NOTES := docs/releases/$(TAG).md
-RELEASE_TITLE := AlphaAvatar $(TAG)
-
 RELEASE_CONFIG := .github/release.yml
-GENERATED_RELEASE_DIR := docs/releases/.generated
-GENERATED_PR_NOTES := $(GENERATED_RELEASE_DIR)/$(TAG).pr.md
-FULL_RELEASE_NOTES := $(GENERATED_RELEASE_DIR)/$(TAG).full.md
-
-# Optional previous tag used by GitHub generated release notes.
-# Example:
-#   make release VERSION=0.6.1 TYPE=prod PREVIOUS_TAG=v0.6.0
-PREVIOUS_TAG ?=
-
-# Whether to create/update GitHub Release after pushing the tag.
-# Set GH_RELEASE=0 to skip.
-GH_RELEASE ?= 0
-
-# Whether to append GitHub generated PR notes after manual release notes.
-# Set GH_GENERATE_NOTES=0 to use manual notes only.
-GH_GENERATE_NOTES ?= 1
-
 # -------------------------------
 # Environment setup
 # -------------------------------
@@ -147,7 +126,7 @@ prepare-release:
 > @echo "  1. Edit $(RELEASE_NOTES)"
 > @echo "  2. Update README.md Latest News"
 > @echo "  3. Commit docs"
-> @echo "  4. Run: make release VERSION=$(VERSION) TYPE=prod PREVIOUS_TAG=v0.6.0"
+> @echo "  4. Run: make release VERSION=$(VERSION) TYPE=prod"
 
 # -------------------------------
 # Check release preconditions
@@ -155,12 +134,16 @@ prepare-release:
 .PHONY: check-release
 check-release:
 > @echo "🔎 Checking release preconditions for $(TAG)..."
+> @if [ "$(TYPE)" = "prod" ] && [ "$$(git branch --show-current)" != "main" ]; then \
+>   echo "Release tags must be created from main."; \
+>   exit 1; \
+> fi
 > @if [ "$(TYPE)" = "prod" ] && [ ! -f "$(RELEASE_NOTES)" ]; then \
 >   echo "❌ Missing release notes: $(RELEASE_NOTES)"; \
 >   echo "Run: make prepare-release VERSION=$(VERSION)"; \
 >   exit 1; \
 > fi
-> @if [ "$(TYPE)" = "prod" ] && [ "$(GH_RELEASE)" = "1" ] && [ "$(GH_GENERATE_NOTES)" = "1" ] && [ ! -f "$(RELEASE_CONFIG)" ]; then \
+> @if [ "$(TYPE)" = "prod" ] && [ ! -f "$(RELEASE_CONFIG)" ]; then \
 >   echo "❌ Missing GitHub release config: $(RELEASE_CONFIG)"; \
 >   echo "Run: make prepare-release-config"; \
 >   exit 1; \
@@ -176,14 +159,6 @@ check-release:
 > fi
 > @if [ "$(TYPE)" = "prod" ] && git ls-remote --tags origin "$(TAG)" | grep -q "$(TAG)"; then \
 >   echo "❌ Remote tag $(TAG) already exists."; \
->   exit 1; \
-> fi
-> @if [ "$(TYPE)" = "test" ] && git rev-parse "$(TEST_TAG)" >/dev/null 2>&1; then \
->   echo "❌ Local tag $(TEST_TAG) already exists."; \
->   exit 1; \
-> fi
-> @if [ "$(TYPE)" = "test" ] && git ls-remote --tags origin "$(TEST_TAG)" | grep -q "$(TEST_TAG)"; then \
->   echo "❌ Remote tag $(TEST_TAG) already exists."; \
 >   exit 1; \
 > fi
 > @echo "✅ Release preconditions passed."
@@ -202,100 +177,34 @@ push-branch:
 > git push origin "$$CURRENT_BRANCH"
 
 # -------------------------------
-# Build final GitHub Release notes
-# manual notes + generated PR notes
-# -------------------------------
-.PHONY: build-release-notes
-build-release-notes:
-> @echo "🧩 Building final release notes for $(TAG)..."
-> @if [ ! -f "$(RELEASE_NOTES)" ]; then \
->   echo "❌ Missing release notes: $(RELEASE_NOTES)"; \
->   exit 1; \
-> fi
-> @mkdir -p "$(GENERATED_RELEASE_DIR)"
-> @cp "$(RELEASE_NOTES)" "$(FULL_RELEASE_NOTES)"
-> @if [ "$(GH_GENERATE_NOTES)" = "1" ]; then \
->   if command -v gh >/dev/null 2>&1; then \
->     echo "📝 Generating PR notes from GitHub..."; \
->     if [ -n "$(PREVIOUS_TAG)" ]; then \
->       gh api "repos/:owner/:repo/releases/generate-notes" \
->         -f tag_name="$(TAG)" \
->         -f previous_tag_name="$(PREVIOUS_TAG)" \
->         -f configuration_file_path="$(RELEASE_CONFIG)" \
->         --jq '.body' > "$(GENERATED_PR_NOTES)"; \
->     else \
->       gh api "repos/:owner/:repo/releases/generate-notes" \
->         -f tag_name="$(TAG)" \
->         -f configuration_file_path="$(RELEASE_CONFIG)" \
->         --jq '.body' > "$(GENERATED_PR_NOTES)"; \
->     fi; \
->     if [ -s "$(GENERATED_PR_NOTES)" ]; then \
->       printf '\n\n---\n\n' >> "$(FULL_RELEASE_NOTES)"; \
->       cat "$(GENERATED_PR_NOTES)" >> "$(FULL_RELEASE_NOTES)"; \
->       echo "✅ Appended generated PR notes."; \
->     else \
->       echo "ℹ️ Generated PR notes are empty. Using manual notes only."; \
->     fi; \
->   else \
->     echo "⚠️ GitHub CLI 'gh' not found. Using manual notes only."; \
->   fi; \
-> else \
->   echo "ℹ️ GH_GENERATE_NOTES=$(GH_GENERATE_NOTES). Using manual notes only."; \
-> fi
-> @echo "✅ Final release notes: $(FULL_RELEASE_NOTES)"
-
-# -------------------------------
-# TestPyPI release trigger
+# PyPI publishing is deliberately separate and manual.
 # -------------------------------
 .PHONY: release-test
-release-test: check-release push-branch
-> @echo "🚢 Releasing to TestPyPI trigger tag $(TEST_TAG)"
-> git tag "$(TEST_TAG)"
-> git push origin "$(TEST_TAG)"
+release-test:
+> @echo "TestPyPI is no longer triggered by a test-v* tag."
+> @echo "Use Actions -> Publish Package to PyPI (manual), selecting testpypi."
+> @exit 1
 
 # -------------------------------
-# PyPI release trigger
+# GitHub-only production release tag
 # -------------------------------
 .PHONY: release-prod
 release-prod: check-release push-branch
-> @echo "🚀 Releasing to PyPI trigger tag $(TAG)"
+> @echo "Pushing GitHub Release trigger tag $(TAG) (no automatic PyPI upload)"
 > git tag "$(TAG)"
 > git push origin "$(TAG)"
-> @if [ "$(GH_RELEASE)" = "1" ]; then \
->   $(MAKE) release-github VERSION=$(VERSION) PREVIOUS_TAG="$(PREVIOUS_TAG)" GH_GENERATE_NOTES="$(GH_GENERATE_NOTES)"; \
-> else \
->   echo "ℹ️ Skipping GitHub Release because GH_RELEASE=$(GH_RELEASE)"; \
-> fi
+> @echo "GitHub Actions will run Quality checks, generate notes and create the Release."
 
 # -------------------------------
-# Create or update GitHub Release
-# -------------------------------
-.PHONY: release-github
-release-github: build-release-notes
-> @if ! command -v gh >/dev/null 2>&1; then \
->   echo "⚠️ GitHub CLI 'gh' not found. Skipping GitHub Release."; \
->   echo "You can manually create it with notes from $(FULL_RELEASE_NOTES)."; \
->   exit 0; \
-> fi
-> @if gh release view "$(TAG)" >/dev/null 2>&1; then \
->   echo "📝 Updating GitHub Release $(TAG)..."; \
->   gh release edit "$(TAG)" --title "$(RELEASE_TITLE)" --notes-file "$(FULL_RELEASE_NOTES)"; \
-> else \
->   echo "📝 Creating GitHub Release $(TAG)..."; \
->   gh release create "$(TAG)" --title "$(RELEASE_TITLE)" --notes-file "$(FULL_RELEASE_NOTES)" --verify-tag; \
-> fi
-> @echo "✅ GitHub Release ready: $(TAG)"
-
-# -------------------------------
-# Smart release entry
+# Release entrypoint
 # -------------------------------
 .PHONY: release
 release:
 > @if [ "$(TYPE)" = "test" ]; then \
->   $(MAKE) release-test VERSION=$(VERSION) TYPE=$(TYPE); \
+>   $(MAKE) release-test; \
 > elif [ "$(TYPE)" = "prod" ]; then \
->   $(MAKE) release-prod VERSION=$(VERSION) TYPE=$(TYPE) PREVIOUS_TAG="$(PREVIOUS_TAG)" GH_RELEASE="$(GH_RELEASE)" GH_GENERATE_NOTES="$(GH_GENERATE_NOTES)"; \
+>   $(MAKE) release-prod VERSION=$(VERSION) TYPE=prod; \
 > else \
->   echo "❌ Unknown TYPE=$(TYPE). Use TYPE=test or TYPE=prod."; \
+>   echo "Unknown TYPE=$(TYPE). Use TYPE=prod for GitHub Release; PyPI uses Actions."; \
 >   exit 1; \
 > fi

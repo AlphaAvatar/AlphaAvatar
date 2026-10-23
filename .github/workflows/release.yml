@@ -3,160 +3,119 @@ name: Release
 on:
   push:
     tags:
-      - "v*"         # PyPI
-      - "test-v*"    # TestPyPI
+      - "v*"
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: github-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   checks:
+    name: Quality checks
     uses: ./.github/workflows/quality.yml
     permissions:
       contents: read
 
-  publish:
+  notes:
+    name: Generate Release Notes
     needs: checks
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # Required by GitHub's releases/generate-notes API.
+      contents: write
 
     steps:
-      - name: Checkout
+      - name: Checkout release tag and history
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version-file: .python-version
-
-      - name: Install uv
-        run: python -m pip install uv==0.10.0
-
-      - name: Verify lock and install build tooling
-        run: |
-          uv lock --check
-          uv sync --locked --only-group build --no-install-workspace
-          constraints="$RUNNER_TEMP/alphaavatar-build-constraints.txt"
-          uv export --locked --only-group build --no-emit-workspace --no-hashes \
-            --output-file "$constraints" > /dev/null
-          echo "UV_BUILD_CONSTRAINT=$constraints" >> "$GITHUB_ENV"
-
-      - name: Determine repository (PyPI/TestPyPI) and version
-        id: meta
+      - name: Generate release notes body
         shell: bash
-        run: |
-          set -e
-          TAG="${GITHUB_REF_NAME}"   # v0.1.0 or test-v0.1.0
-          if [[ "$TAG" == test-v* ]]; then
-            REPO="testpypi"
-            VERSION="${TAG#test-v}"
-          else
-            REPO="pypi"
-            VERSION="${TAG#v}"
-          fi
-          echo "repo=$REPO" >> $GITHUB_OUTPUT
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Resolved: tag=$TAG repo=$REPO version=$VERSION"
-
-      # 🔑 在这里选择 token 并写入 GITHUB_ENV
-      - name: Select token (PyPI)
-        if: steps.meta.outputs.repo == 'pypi'
-        run: echo "PYPI_TOKEN=${{ secrets.PYPI_API_TOKEN }}" >> $GITHUB_ENV
-
-      - name: Select token (TestPyPI)
-        if: steps.meta.outputs.repo != 'pypi'
-        run: echo "PYPI_TOKEN=${{ secrets.TEST_PYPI_API_TOKEN }}" >> $GITHUB_ENV
-
-      - name: Build & Publish (runs your release script)
-        env:
-          REPO: ${{ steps.meta.outputs.repo }}
-          SKIP_GIT: "1"           # 在 CI 跳过 git 提交/打标签
-        shell: bash
-        run: |
-          set -e
-          source .venv/bin/activate
-          test -n "$PYPI_TOKEN" || { echo "Missing token: set PYPI_API_TOKEN / TEST_PYPI_API_TOKEN in repo secrets."; exit 1; }
-          chmod +x scripts/release.sh
-          ./scripts/release.sh "${{ steps.meta.outputs.version }}"
-
-      - name: Generate Release Notes body
-        id: notes
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: bash
         run: |
           set -euo pipefail
+          TAG="$GITHUB_REF_NAME"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Unsupported release tag: $TAG" >&2
+            exit 1
+          fi
 
-          TAG="${GITHUB_REF_NAME}"
-          VERSION="${{ steps.meta.outputs.version }}"
           MANUAL_NOTES="docs/releases/${TAG}.md"
           GENERATED_NOTES="generated_notes.md"
           BODY_FILE="body.md"
+          PREV="$(git describe --tags --abbrev=0 --match 'v[0-9]*' "${TAG}^" 2>/dev/null || true)"
 
-          echo "Generating release notes for $TAG"
-
-          PREV="$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)"
-          echo "Previous tag: ${PREV:-<auto>}"
-
-          if [ -n "$PREV" ]; then
-            gh api "repos/${{ github.repository }}/releases/generate-notes" \
-              -f tag_name="$TAG" \
-              -f target_commitish="${GITHUB_SHA}" \
-              -f previous_tag_name="$PREV" \
-              -f configuration_file_path=".github/release.yml" \
-              --jq '.body' > "$GENERATED_NOTES"
-          else
-            gh api "repos/${{ github.repository }}/releases/generate-notes" \
-              -f tag_name="$TAG" \
-              -f target_commitish="${GITHUB_SHA}" \
-              -f configuration_file_path=".github/release.yml" \
-              --jq '.body' > "$GENERATED_NOTES"
+          args=(
+            -f "tag_name=$TAG"
+            -f "target_commitish=$GITHUB_SHA"
+            -f "configuration_file_path=.github/release.yml"
+          )
+          if [[ -n "$PREV" ]]; then
+            args+=(-f "previous_tag_name=$PREV")
           fi
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            "${args[@]}" --jq '.body' > "$GENERATED_NOTES"
 
-          : > "$BODY_FILE"
-
-          if [ -f "$MANUAL_NOTES" ]; then
-            echo "Using manual release notes: $MANUAL_NOTES"
-            cat "$MANUAL_NOTES" >> "$BODY_FILE"
-            printf '\n\n---\n\n' >> "$BODY_FILE"
+          if [[ -f "$MANUAL_NOTES" ]]; then
+            cat "$MANUAL_NOTES" > "$BODY_FILE"
+            if [[ -s "$GENERATED_NOTES" ]]; then
+              printf '\n\n---\n\n' >> "$BODY_FILE"
+            fi
           else
-            echo "Manual release notes not found: $MANUAL_NOTES"
-            echo "## AlphaAvatar ${TAG}" >> "$BODY_FILE"
-            printf '\n\n' >> "$BODY_FILE"
+            printf '# AlphaAvatar %s\n\n' "$TAG" > "$BODY_FILE"
           fi
-
           cat "$GENERATED_NOTES" >> "$BODY_FILE"
 
-          if [ -n "$PREV" ]; then
-            {
-              echo
-              echo "Full Changelog: https://github.com/${{ github.repository }}/compare/$PREV...$TAG"
-            } >> "$BODY_FILE"
+          if [[ -n "$PREV" ]]; then
+            printf '\n\nFull Changelog: https://github.com/%s/compare/%s...%s\n' \
+              "$GITHUB_REPOSITORY" "$PREV" "$TAG" >> "$BODY_FILE"
           fi
+          test -s "$BODY_FILE"
+          echo "Release notes generated for $TAG; previous release tag: ${PREV:-none}"
 
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Share notes with release job
+        uses: actions/upload-artifact@v4
+        with:
+          name: github-release-notes
+          path: body.md
+          if-no-files-found: error
+          retention-days: 7
 
-      - name: Create or update GitHub Release
+  github_release:
+    name: Create GitHub Release
+    needs: notes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Retrieve release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: github-release-notes
+
+      - name: Create release if absent
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: bash
         run: |
           set -euo pipefail
-
-          TAG="${{ steps.notes.outputs.tag }}"
-          TITLE="AlphaAvatar ${TAG}"
-
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists. Updating..."
-            gh release edit "$TAG" \
-              --title "$TITLE" \
-              --notes-file body.md
-          else
-            echo "Creating release $TAG..."
-            gh release create "$TAG" \
-              --title "$TITLE" \
-              --notes-file body.md \
-              --verify-tag
+          TAG="$GITHUB_REF_NAME"
+          test -s body.md
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "GitHub Release $TAG already exists; preserving its current notes."
+            exit 0
           fi
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "AlphaAvatar $TAG" \
+            --notes-file body.md
