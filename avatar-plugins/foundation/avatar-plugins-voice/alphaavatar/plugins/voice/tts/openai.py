@@ -25,7 +25,14 @@ import openai
 
 from alphaavatar.core.cleanup import wait_for_cleanup
 
-from .pcm import PCMHTTPProvider, PCMResponse, PCMSettings, TTSHTTPError, TTSTransportError
+from .codec.pcm import (
+    PCMHTTPProvider,
+    PCMPayload,
+    PCMResponse,
+    PCMSettings,
+    TTSHTTPError,
+    TTSTransportError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +84,7 @@ class OpenAITTS(PCMHTTPProvider):
         model: str,
         speaker: str,
         instructions: str | None = None,
+        speed: float = 1.0,
         api_key: str | None = None,
         base_url: str | None = None,
         settings: PCMSettings | None = None,
@@ -92,7 +100,11 @@ class OpenAITTS(PCMHTTPProvider):
         if instructions is not None and model in ("tts-1", "tts-1-hd"):
             raise ValueError("This OpenAI TTS model does not accept instructions")
 
+        if type(speed) not in (int, float) or not 0.25 <= speed <= 4.0:
+            raise ValueError("OpenAI TTS speed must be a finite number in 0.25..4.0")
+
         self._model, self._speaker, self._instructions = model, speaker, instructions
+        self._speed = float(speed)
         base = base_url if base_url is not None else os.getenv("OPENAI_BASE_URL")
         base = "https://api.openai.com/v1" if base is None else base
         super().__init__(
@@ -105,6 +117,12 @@ class OpenAITTS(PCMHTTPProvider):
         self._base_url = base.rstrip("/")
         self._sdk: openai.AsyncOpenAI | None = None
         self._prewarm_task: asyncio.Task[None] | None = None
+        logger.debug(
+            "TTS CONFIG provider=openai model=%r voice=%r speed=%.3f",
+            self._model,
+            self._speaker,
+            self._speed,
+        )
 
     def _get_sdk(self) -> openai.AsyncOpenAI:
         self._check_loop()
@@ -168,10 +186,11 @@ class OpenAITTS(PCMHTTPProvider):
         self._prewarm_task = asyncio.create_task(warm(), name="tts_openai_prewarm")
         self._prewarm_task.add_done_callback(self._observe)
 
-    def _payload(self, text: str) -> dict[str, str]:
-        payload = {
+    def _payload(self, text: str) -> PCMPayload:
+        payload: PCMPayload = {
             "model": self._model,
             "voice": self._speaker,
+            "speed": self._speed,
             "input": text,
             "response_format": "pcm",
             "stream_format": "audio",
@@ -180,7 +199,7 @@ class OpenAITTS(PCMHTTPProvider):
             payload["instructions"] = self._instructions
         return payload
 
-    async def _open_response(self, payload: dict[str, str]) -> PCMResponse:
+    async def _open_response(self, payload: PCMPayload) -> PCMResponse:
         context = self._get_sdk().audio.speech.with_streaming_response.create(
             **payload, extra_headers={"Accept-Encoding": "identity"}
         )

@@ -216,12 +216,19 @@ class AvatarContextManager(ContextManager):
 
             # Standalone native Loop callers use the same acceptance path as the Engine.
             self.accept_turn(snapshot)
+            started = asyncio.get_running_loop().time()
             ready = await self._runtime.turn.wait_context_ready(snapshot)
+            logger.debug(
+                "Context readiness turn_id=%s ready=%s wait_ms=%.1f",
+                snapshot.turn_id,
+                ready,
+                (asyncio.get_running_loop().time() - started) * 1000,
+            )
             self._ensure_open()
             if request.context_id != self._runtime.state.context_id:
                 raise ValueError("State no longer belongs to the requested context")
             if not ready:
-                logger.debug("Context readiness timed out turn_id=%s", request.turn_id)
+                raise TimeoutError("Required Turn context is not ready")
 
             request = replace(
                 request, input=self._history.capture(snapshot, request.context_id, request.input)
@@ -229,6 +236,16 @@ class AvatarContextManager(ContextManager):
             state = self._state_snapshot()
             system = self._system_template(state).instructions(stable_persona=state.user_persona)
             text = RuntimeStateTemplate().render(state_runtime=state)
+            logger.debug(
+                "Context input turn_id=%s history_items=%d system_chars=%d runtime_chars=%d "
+                "memory_chars=%d persona_chars=%d",
+                snapshot.turn_id,
+                len(request.input.items),
+                len(system),
+                len(text),
+                len(state.memory_content or ""),
+                len(state.user_persona or ""),
+            )
             task = asyncio.create_task(
                 asyncio.to_thread(self._compose, request, snapshot, system, text),
                 name=f"context_prepare:{request.turn_id}",

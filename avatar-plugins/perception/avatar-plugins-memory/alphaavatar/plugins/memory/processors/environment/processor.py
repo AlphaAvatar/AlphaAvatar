@@ -21,13 +21,15 @@ from alphaavatar.agents.memory.enums import MemoryType
 from alphaavatar.agents.memory.schemas import MemoryCheckpointAdvance, MemoryScope, MemorySourceRef
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_capability
+from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.turn import TurnInputModality
 
 from ...template import MemoryPluginsTemplate
 from ..base import MemoryProcessor
+from .batch import EnvMemoryBatch
 from .config import EnvironmentConfig
 from .provider import EnvironmentProvider
-from .scheduler import EnvMemoryBatch, EnvMemoryScheduler
+from .scheduler import EnvMemoryScheduler
 
 if TYPE_CHECKING:
     from ...runtime import MemoryRuntime
@@ -68,23 +70,23 @@ class EnvironmentProcessor(MemoryProcessor):
             memory_type=MemoryType.ENV, context_id=state.context_id
         )
 
-        delta = await self._provider.extract(
-            memory_input=batch.memory_input,
-            previous_env_memory=previous or None,
-            conversation_context=batch.conversation_context,
-            metadata=self.trace_metadata(
-                state=state,
-                component="environment",
-                operation="environment_delta",
-                memory_type=MemoryType.ENV,
-                extra={
-                    "slice_count": len(batch.memory_input.slices),
-                    "media_count": len(batch.memory_input.observations),
-                },
-            ),
-            timeout=timeout,
-        )
-
+        async with asyncio.timeout(timeout):
+            delta = await self._provider.extract(
+                memory_input=batch.memory_input,
+                previous_env_memory=previous or None,
+                conversation_context=batch.conversation_context,
+                metadata=self.trace_metadata(
+                    state=state,
+                    component="environment",
+                    operation="environment_delta",
+                    memory_type=MemoryType.ENV,
+                    extra={
+                        "slice_count": len(batch.memory_input.slices),
+                        "media_count": len(batch.memory_input.observations),
+                    },
+                ),
+                timeout=timeout,
+            )
         source_prefix = state.context.session_id or state.context.episode_id
 
         items = self.build_memory_items(
@@ -104,9 +106,23 @@ class EnvironmentProcessor(MemoryProcessor):
             },
         )
 
-        await self.commit_items(
-            state=state, start=batch.from_sequence, end=batch.to_sequence, items=items
-        )
+        async def commit() -> None:
+            await self.store.commit(
+                items,
+                context_id=state.context_id,
+                processor=self.name,
+                idempotency_key=f"{state.context_id}:{self.name}:{batch.from_sequence}:{batch.to_sequence}",
+                checkpoint=MemoryCheckpointAdvance(
+                    from_sequence=batch.from_sequence, to_sequence=batch.to_sequence
+                ),
+            )
+            # Cancellation must never replay an already durable range, even if the
+            # following in-memory cache update fails.
+            batch.committed = True
+            self.memory_runtime.apply_items(items)
+
+        task = asyncio.create_task(commit(), name=f"memory_env_commit:{state.context_id}")
+        await wait_for_cleanup(task)
 
         return items
 
@@ -179,6 +195,7 @@ class EnvironmentProcessor(MemoryProcessor):
                 MemoryPluginsTemplate.apply_update_template(messages, state.cache_type)
             ),
             include_audio=self._config.include_audio,
+            config=self._config.scheduler,
         )
 
         await self._scheduler.start()

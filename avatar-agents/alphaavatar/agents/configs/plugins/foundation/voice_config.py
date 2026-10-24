@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -69,6 +69,7 @@ class TTSConfig(BaseModel):
         default=None, description="Speaker to use for text-to-speech; voice.ai uses voice_id."
     )
     instructions: str | None = Field(default=None, description="Instructions for the TTS model.")
+    speed: float = Field(default=1.0, ge=0.25, le=4.0, allow_inf_nan=False, strict=True)
 
     base_url: str | None = None
 
@@ -107,6 +108,8 @@ class TTSConfig(BaseModel):
             raise ValueError("voice.tts.speaker is required for OpenAI TTS")
         if self.speaker is not None and not self.speaker.strip():
             raise ValueError("voice.tts.speaker cannot be blank")
+        if self.plugin == "voiceai" and self.speed != 1.0:
+            raise ValueError("Voice.ai TTS does not support voice.tts.speed")
         if self.plugin == "voiceai" and self.instructions is not None:
             raise ValueError("Voice.ai TTS does not support instructions")
         if self.instructions is not None and len(self.instructions) > 4096:
@@ -125,6 +128,7 @@ class TTSConfig(BaseModel):
             model=self.model,
             speaker=self.speaker,
             instructions=self.instructions,
+            speed=self.speed,
             base_url=self.base_url,
             timeout=self.timeout,
             first_audio_timeout=self.first_audio_timeout,

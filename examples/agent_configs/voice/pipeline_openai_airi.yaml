@@ -171,6 +171,7 @@ memory:
   init_config:
     retrieval:
       enabled: true
+      passive_timeout_sec: 3.0
       search_context: 3
       recall_num: 6
 

@@ -24,6 +24,7 @@ import llama_cpp
 from alphaavatar.agents.router.enums import SemanticAddressingLabel
 from alphaavatar.agents.router.schemas import SemanticAddressingRequest, SemanticAddressingResult
 from alphaavatar.agents.runtime.inference import InferenceRunner
+from alphaavatar.agents.runtime.inference.cpu import available_cpu_count
 
 from .model_files import SEMANTIC_ADDRESSING_CONFIG, resolve_semantic_addressing_files
 from .prompt import SemanticAddressingPrompt
@@ -54,38 +55,55 @@ class SemanticAddressingQwen3Runner(InferenceRunner):
         started = perf_counter()
         tokens = self._tokenize(prompt)
         tokenized = perf_counter()
-        if len(tokens) > SEMANTIC_ADDRESSING_CONFIG.context_length:
+        if not tokens or len(tokens) > SEMANTIC_ADDRESSING_CONFIG.context_length:
             raise ValueError(
-                f"Semantic Addressing context too long: "
-                f"{len(tokens)} > {SEMANTIC_ADDRESSING_CONFIG.context_length}"
+                f"Semantic Addressing token count outside 1.."
+                f"{SEMANTIC_ADDRESSING_CONFIG.context_length}: {len(tokens)}"
             )
 
-        prefix_length = self._prefix_length
-        cached = prefix_length if tokens[:prefix_length] == self._prefix_tokens else 0
-        # Log before native work so a parent-enforced timeout retains its last stage.
-        # Counts only: no speech, prompt, identities or model buffers are exposed.
-        logger.debug(
-            "SEMANTIC PREFILL method=%s pid=%s call=%d prompt_tokens=%d cached_tokens=%d "
-            "eval_tokens=%d threads=%d tokenize_ms=%.1f",
-            self.INFERENCE_METHOD,
-            os.getpid(),
-            self._call_index,
-            len(tokens),
-            cached,
-            len(tokens) - cached,
-            self._threads,
-            (tokenized - started) * 1000,
-        )
-        if cached:
-            self._llm.n_tokens = prefix_length
-            self._llm.eval(tokens[prefix_length:])
-        else:
-            self._llm.reset()
-            self._llm.eval(tokens)
-
-        logits = llama_cpp.llama_get_logits_ith(self._llm.ctx, -1)
-        config = SEMANTIC_ADDRESSING_CONFIG
-        result = float(logits[config.label_0_token_id]), float(logits[config.label_1_token_id])
+        # Token boundaries can change at the template suffix. Reuse only the actual live prefix.
+        cached = 0
+        limit = min(len(tokens) - 1, len(self._cached_tokens), self._llm.n_tokens)
+        while cached < limit and tokens[cached] == self._cached_tokens[cached]:
+            cached += 1
+        try:
+            if cached and not self._llm._ctx.kv_cache_seq_rm(-1, cached, -1):
+                cached = 0
+            if cached:
+                self._llm.n_tokens = cached
+            else:
+                self._llm.reset()
+            logger.debug(
+                "SEMANTIC CACHE method=%s pid=%s call=%d reused_tokens=%d previous_tokens=%d",
+                self.INFERENCE_METHOD,
+                os.getpid(),
+                self._call_index,
+                cached,
+                len(self._cached_tokens),
+            )
+            # Always evaluate at least the final token: the last live logits must be fresh.
+            logger.debug(
+                "SEMANTIC PREFILL method=%s pid=%s call=%d prompt_tokens=%d cached_tokens=%d "
+                "eval_tokens=%d threads=%d cpu_capacity=%.2f tokenize_ms=%.1f",
+                self.INFERENCE_METHOD,
+                os.getpid(),
+                self._call_index,
+                len(tokens),
+                cached,
+                len(tokens) - cached,
+                self._threads,
+                self._cpu_capacity,
+                (tokenized - started) * 1000,
+            )
+            self._llm.eval(tokens[cached:])
+            logits = llama_cpp.llama_get_logits_ith(self._llm.ctx, -1)
+            config = SEMANTIC_ADDRESSING_CONFIG
+            result = float(logits[config.label_0_token_id]), float(logits[config.label_1_token_id])
+            self._cached_tokens = tokens
+        except Exception:
+            # A partial native eval may have advanced KV; the next request must rebuild it.
+            self._cached_tokens = []
+            raise
         logger.debug(
             "SEMANTIC INFERENCE COMPLETE method=%s pid=%s call=%d prefill_ms=%.1f total_ms=%.1f",
             self.INFERENCE_METHOD,
@@ -97,13 +115,29 @@ class SemanticAddressingQwen3Runner(InferenceRunner):
         return result
 
     def initialize(self) -> None:
+        requested = int(os.getenv("ALPHAAVATAR_SEMANTIC_ADDRESSING_THREADS", "0"))
+        if requested < 0:
+            raise ValueError("Semantic Addressing threads must be nonnegative")
+        self._cpu_capacity = available_cpu_count()
+        capacity = max(1, math.floor(self._cpu_capacity))
+        threads = min(requested, capacity) if requested else min(8, max(1, capacity // 2))
+        self._call_index, self._threads, self._cached_tokens = 0, threads, []
+        started = perf_counter()
+        logger.debug(
+            "SEMANTIC RUNNER INITIALIZE method=%s pid=%s cpu_capacity=%.2f "
+            "requested_threads=%d threads=%d",
+            self.INFERENCE_METHOD,
+            os.getpid(),
+            self._cpu_capacity,
+            requested,
+            threads,
+        )
         model_path, prompt_path = resolve_semantic_addressing_files()
         config = SEMANTIC_ADDRESSING_CONFIG
-        threads = int(os.getenv("ALPHAAVATAR_SEMANTIC_ADDRESSING_THREADS", "0"))
-        threads = threads or min(8, max(1, (os.cpu_count() or 2) // 2))
-
-        self._call_index, self._threads = 0, threads
         self._prompt = SemanticAddressingPrompt(prompt_path)
+        logger.debug(
+            "SEMANTIC MODEL LOAD START method=%s pid=%s", self.INFERENCE_METHOD, os.getpid()
+        )
         self._llm = llama_cpp.Llama(
             model_path=model_path,
             n_ctx=config.context_length,
@@ -117,14 +151,26 @@ class SemanticAddressingQwen3Runner(InferenceRunner):
             embedding=False,
             verbose=False,
         )
-
-        self._prefix_tokens = self._tokenize(self._prompt.constant_prefix)
-        if not self._prefix_tokens:
-            raise RuntimeError("Semantic Addressing constant prefix is empty")
-
+        prefix = self._tokenize(self._prompt.constant_prefix)
+        if not prefix or len(prefix) > config.context_length:
+            raise RuntimeError("Semantic Addressing constant prefix is empty or exceeds context")
         self._validate_label_tokens()
-        self._llm.eval(self._prefix_tokens)
-        self._prefix_length = len(self._prefix_tokens)
+        logger.debug(
+            "SEMANTIC WARMUP START method=%s pid=%s prefix_tokens=%d load_ms=%.1f",
+            self.INFERENCE_METHOD,
+            os.getpid(),
+            len(prefix),
+            (perf_counter() - started) * 1000,
+        )
+        self._llm.eval(prefix)
+        self._cached_tokens = prefix
+        logger.debug(
+            "SEMANTIC RUNNER READY method=%s pid=%s prefix_tokens=%d total_ms=%.1f",
+            self.INFERENCE_METHOD,
+            os.getpid(),
+            len(prefix),
+            (perf_counter() - started) * 1000,
+        )
 
     def run(self, data: bytes) -> bytes:
         self._call_index += 1
@@ -155,6 +201,7 @@ class SemanticAddressingQwen3Runner(InferenceRunner):
         ).encode()
 
     def close(self) -> None:
+        self._cached_tokens = []
         llm = getattr(self, "_llm", None)
         if llm is not None:
             llm.close()

@@ -13,6 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -147,36 +148,42 @@ class EnvMemoryInputBuilder:
 
         return tuple(evidence)
 
-    def _selected_visual_ids(self, alignment: AlignedPerception) -> set[str]:
-        origin_ns = alignment.time_range.start.monotonic_ns
-        buckets: dict[tuple[PerceptionSourceRef, int], EnvObservation] = {}
-
+    def select_observations(
+        self, observations: Iterable[EnvObservation], *, origin_ns: int
+    ) -> set[str]:
         observations = {
-            observation.observation_id: observation
-            for temporal_slice in alignment.slices
-            for observation in temporal_slice.observations
-            if observation.kind in self._VISUAL_KINDS and not self._is_direct_upload(observation)
+            item.observation_id: item for item in observations if not self._is_direct_upload(item)
         }
-
-        for observation in sorted(observations.values(), key=self._observation_key):
-            bucket = (
-                max(0, observation.time_range.end.monotonic_ns - origin_ns)
-                // self._video_interval_ns
-            )
-            buckets[observation.source, bucket] = observation
-
-        return {observation.observation_id for observation in buckets.values()}
-
-    def _build_slices(self, alignment: AlignedPerception) -> tuple[ModelTemporalSlice, ...]:
-        selected_visual_ids = self._selected_visual_ids(alignment)
-
         raw_audio_sources = {
-            observation.source
-            for temporal_slice in alignment.slices
-            for observation in temporal_slice.observations
-            if observation.kind == ObservationKind.AUDIO_FRAME
-            and not self._is_direct_upload(observation)
+            item.source
+            for item in observations.values()
+            if item.kind == ObservationKind.AUDIO_FRAME
         }
+        buckets: dict[tuple[PerceptionSourceRef, int], EnvObservation] = {}
+        selected: set[str] = set()
+        for item in sorted(observations.values(), key=self._observation_key):
+            if item.kind in self._VISUAL_KINDS:
+                bucket = (
+                    max(0, item.time_range.end.monotonic_ns - origin_ns) // self._video_interval_ns
+                )
+                buckets[item.source, bucket] = item
+            elif self._include_audio and item.kind in self._AUDIO_KINDS:
+                if (
+                    item.kind != ObservationKind.AUDIO_SEGMENT
+                    or item.source not in raw_audio_sources
+                ):
+                    selected.add(item.observation_id)
+        selected.update(item.observation_id for item in buckets.values())
+        return selected
+
+    def _build_slices(
+        self, alignment: AlignedPerception, selected_ids: set[str] | None
+    ) -> tuple[ModelTemporalSlice, ...]:
+        if selected_ids is None:
+            selected_ids = self.select_observations(
+                (item for part in alignment.slices for item in part.observations),
+                origin_ns=alignment.time_range.start.monotonic_ns,
+            )
 
         slices: list[ModelTemporalSlice] = []
 
@@ -184,26 +191,8 @@ class EnvMemoryInputBuilder:
             selected: dict[str, EnvObservation] = {}
 
             for observation in temporal_slice.observations:
-                if self._is_direct_upload(observation):
-                    continue
-
-                if observation.kind in self._VISUAL_KINDS:
-                    if observation.observation_id in selected_visual_ids:
-                        selected[observation.observation_id] = observation
-                    continue
-
-                if not self._include_audio or observation.kind not in self._AUDIO_KINDS:
-                    continue
-
-                # Prefer raw continuous audio frames. AUDIO_SEGMENT is only a
-                # fallback when the original frames are unavailable.
-                if (
-                    observation.kind == ObservationKind.AUDIO_SEGMENT
-                    and observation.source in raw_audio_sources
-                ):
-                    continue
-
-                selected[observation.observation_id] = observation
+                if observation.observation_id in selected_ids:
+                    selected[observation.observation_id] = observation
 
             if selected or temporal_slice.source_events:
                 slices.append(
@@ -217,8 +206,12 @@ class EnvMemoryInputBuilder:
 
         return tuple(slices)
 
-    def build(self, alignment: AlignedPerception) -> EnvMemoryInput:
-        temporal = ModelTemporalPart(alignment=alignment, slices=self._build_slices(alignment))
+    def build(
+        self, alignment: AlignedPerception, *, selected_ids: set[str] | None = None
+    ) -> EnvMemoryInput:
+        temporal = ModelTemporalPart(
+            alignment=alignment, slices=self._build_slices(alignment, selected_ids)
+        )
 
         has_media = bool(temporal.observations)
         has_state_events = any(temporal_slice.source_events for temporal_slice in temporal.slices)

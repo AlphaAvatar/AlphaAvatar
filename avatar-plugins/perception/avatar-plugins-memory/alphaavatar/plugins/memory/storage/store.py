@@ -15,8 +15,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
+from time import perf_counter
 from typing import Any
+from uuid import uuid4
 
 from alphaavatar.agents.memory import MemoryStoreBackend
 from alphaavatar.agents.memory.enums import (
@@ -41,6 +44,8 @@ from .export import MemoryExportSink
 from .index_serialization import serialize_memory_items
 from .outbox import MemoryOutboxWorker
 from .sqlite import SQLiteMemoryStore
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryStore:
@@ -129,32 +134,68 @@ class MemoryStore:
         top_k: int,
         memory_type: MemoryType | None = None,
         timeout: float = 3.0,
+        trace_id: str | None = None,
     ) -> list[MemoryItem]:
         if top_k <= 0 or not context_str.strip() or not owner_refs:
             return []
 
-        data = await self._infer(
-            op=VectorRunnerOP.search_by_context,
-            param={
-                "context_str": context_str,
-                "owner_keys": self._owner_keys(owner_refs),
-                "scope_keys": self._scope_keys(context),
-                "memory_type": memory_type.value if memory_type is not None else None,
-                "top_k": max(top_k * 3, top_k),
-            },
-            timeout=timeout,
-        )
+        request_id = uuid4().hex
+        started = perf_counter()
+        inference_wait = resolve_wait = 0.0
+        candidates = hits = 0
+        phase, error_type = "inference", None
+        try:
+            # Queueing, inference and authoritative resolution share one total budget.
+            async with asyncio.timeout(timeout):
+                try:
+                    data = await self._infer(
+                        op=VectorRunnerOP.search_by_context,
+                        param={
+                            "context_str": context_str,
+                            "owner_keys": self._owner_keys(owner_refs),
+                            "scope_keys": self._scope_keys(context),
+                            "memory_type": memory_type.value if memory_type is not None else None,
+                            "top_k": max(top_k * 3, top_k),
+                            "request_id": request_id,
+                            "trace_id": trace_id,
+                        },
+                        timeout=timeout,
+                    )
+                finally:
+                    inference_wait = perf_counter() - started
+                memory_ids = self._candidate_ids(data.get("candidates") or [])
+                candidates = len(memory_ids)
+                if not memory_ids:
+                    return []
 
-        memory_ids = self._candidate_ids(data.get("candidates") or [])
-
-        if not memory_ids:
-            return []
-
-        memories = await self._backend.resolve_current(
-            memory_ids, owner_refs=owner_refs, context=context
-        )
-
-        return memories[:top_k]
+                phase = "resolve"
+                resolve_started = perf_counter()
+                try:
+                    memories = await self._backend.resolve_current(
+                        memory_ids, owner_refs=owner_refs, context=context
+                    )
+                finally:
+                    resolve_wait = perf_counter() - resolve_started
+                items = memories[:top_k]
+                hits = len(items)
+                return items
+        except BaseException as error:
+            error_type = type(error).__name__
+            raise
+        finally:
+            logger.debug(
+                "MEMORY RECALL request_id=%s turn_id=%s phase=%s inference_ms=%.1f "
+                "resolve_ms=%.1f total_ms=%.1f candidates=%d hits=%d error_type=%s",
+                request_id,
+                trace_id,
+                phase,
+                inference_wait * 1000,
+                resolve_wait * 1000,
+                (perf_counter() - started) * 1000,
+                candidates,
+                hits,
+                error_type,
+            )
 
     async def recall_by_graph_node(
         self,

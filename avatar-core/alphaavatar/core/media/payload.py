@@ -13,8 +13,9 @@
 # limitations under the License.
 from __future__ import annotations
 
+from copy import copy
 from threading import RLock
-from typing import Any
+from typing import Any, Self
 
 from .enums import PayloadFormat, PayloadView
 
@@ -119,3 +120,12 @@ class MediaPayload:
     def available_representations(self) -> tuple[tuple[PayloadView, PayloadFormat], ...]:
         with self._lock:
             return tuple(self._representations.keys())
+
+    def snapshot(self) -> Self:
+        """Detach the representation registry while sharing immutable media values."""
+        with self._lock:
+            result = copy(self)
+            result.metadata = dict(self.metadata)
+            result._representations = dict(self._representations)
+            result._lock = RLock()
+            return result

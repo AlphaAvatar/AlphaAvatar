@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import deque
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING
 
@@ -24,11 +23,11 @@ from alphaavatar.agents.memory.schemas import MemoryItem, MemoryOwnerRef
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_capability
 from alphaavatar.agents.runtime.plugin import AvatarModule
-from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
 
 from ...storage.graph import GraphLookup
 from ..base import MemoryProcessor
 from .config import RetrievalConfig
+from .passive import PassiveRecall
 from .schema import RetrievalCapabilityInput, RetrievalOp
 
 if TYPE_CHECKING:
@@ -51,7 +50,7 @@ RecallObserver = Callable[[Iterable[MemoryItem]], None]
     input_schema=RetrievalCapabilityInput,
 )
 class RetrievalProcessor(MemoryProcessor):
-    TURN_CONSUMER_ID = "memory.retrieval.turn"
+    TURN_CONSUMER_ID = PassiveRecall.CONSUMER_ID
 
     def __init__(
         self,
@@ -64,12 +63,12 @@ class RetrievalProcessor(MemoryProcessor):
         super().__init__(runtime=runtime, memory=memory)
 
         self._config = config
-        self._search_context = config.search_context
         self._recall_num = config.recall_num
         self._recall_observers = recall_observers
 
-        self._consumer_task: asyncio.Task[None] | None = None
-        self._query_history: dict[str, deque[str]] = {}
+        self._passive = PassiveRecall(
+            runtime=runtime, memory=memory, config=config, notify=self._notify_passive_recall
+        )
 
     @property
     def name(self) -> str:
@@ -184,81 +183,11 @@ class RetrievalProcessor(MemoryProcessor):
 
         return "\n".join(item.render_line() for item in items) or "No relevant memory was found."
 
-    """Processor Loop"""
-
-    def _turn_query(self, snapshot: TurnSnapshot, context_id: str) -> str:
-        text = (snapshot.text or "").strip()
-        if not text:
-            return ""
-
-        history = self._query_history.setdefault(
-            context_id, deque(maxlen=max(1, self._search_context))
-        )
-        history.append(text)
-        return "\n\n".join(f"### user:\n{item}" for item in history)
-
-    async def _process_turn(self, snapshot: TurnSnapshot) -> None:
-        if snapshot.modality == TurnInputModality.SYSTEM:
-            return
-
-        context_id = self.memory_runtime.resolve_context_id(snapshot.context_ids)
-        if context_id is None:
-            logger.warning(
-                "Memory retrieval has no context for turn turn_id=%s context_ids=%s",
-                snapshot.turn_id,
-                snapshot.context_ids,
-            )
-            return
-
-        query = self._turn_query(snapshot, context_id)
-        if not query:
-            return
-
-        items = await self._search_text(query, context_id=context_id, top_k=self._recall_num)
-
-        self._notify_passive_recall(items)
-        self.memory_runtime.apply_items(items)
-
-    async def _consume_loop(self) -> None:
-        stream = self.runtime.turn.events
-
-        while True:
-            try:
-                await stream.wait_for_pending(consumer_id=self.TURN_CONSUMER_ID)
-                batch = stream.read_pending(consumer_id=self.TURN_CONSUMER_ID, limit=1)
-
-                if batch.has_gap:
-                    logger.warning(
-                        "Memory retrieval missed committed turns missed=%s", batch.missed_count
-                    )
-
-                if not batch.items:
-                    stream.commit(consumer_id=self.TURN_CONSUMER_ID, cursor_seq=batch.cursor_seq)
-                    continue
-
-                await self._process_turn(batch.items[0].snapshot)
-                stream.commit(consumer_id=self.TURN_CONSUMER_ID, cursor_seq=batch.cursor_seq)
-
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("Memory retrieval turn consumer failed")
-                await asyncio.sleep(0.05)
-
     """Runtime operations"""
 
     async def _start(self) -> None:
-        self.runtime.turn.register_context_consumer(self.TURN_CONSUMER_ID)
-        self._consumer_task = asyncio.create_task(
-            self._consume_loop(), name="memory_retrieval_turn_consumer"
-        )
+        if self._config.enabled:
+            await self._passive.start()
 
     async def _stop(self, *, finalize: bool) -> None:
-        if self._consumer_task is not None:
-            self._consumer_task.cancel()
-            await asyncio.gather(self._consumer_task, return_exceptions=True)
-            self._consumer_task = None
-
-        self.runtime.turn.events.clear_consumer(self.TURN_CONSUMER_ID)
-        self.runtime.turn.unregister_context_consumer(self.TURN_CONSUMER_ID)
-        self._query_history.clear()
+        await self._passive.stop()

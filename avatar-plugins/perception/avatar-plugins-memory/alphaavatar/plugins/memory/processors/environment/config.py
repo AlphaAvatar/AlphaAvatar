@@ -23,12 +23,27 @@ class EnvironmentProviderConfig(BaseModel):
     gateway: ProvidersConfig = Field(default_factory=ProvidersConfig)
 
 
+class EnvironmentSchedulerConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    max_pending_batches: int = Field(default=2, ge=1, le=16)
+    max_batch_events: int = Field(default=2048, ge=1, le=65536)
+    max_batch_payload_bytes: int = Field(default=64 * 1024 * 1024, ge=1)
+    max_batch_duration_sec: float = Field(default=30.0, gt=0, le=300)
+    max_context_messages: int = Field(default=64, ge=1, le=1024)
+    max_context_chars: int = Field(default=8192, ge=1, le=131072)
+    process_timeout_sec: float = Field(default=45.0, gt=0, le=300)
+    max_attempts: int = Field(default=2, ge=1, le=8)
+    shutdown_timeout_sec: float = Field(default=5.0, gt=0, le=60)
+
+
 class EnvironmentConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
     include_audio: bool = True
     provider: EnvironmentProviderConfig = Field(default_factory=EnvironmentProviderConfig)
+    scheduler: EnvironmentSchedulerConfig = Field(default_factory=EnvironmentSchedulerConfig)
 
     @model_validator(mode="after")
     def _validate_provider(self) -> "EnvironmentConfig":

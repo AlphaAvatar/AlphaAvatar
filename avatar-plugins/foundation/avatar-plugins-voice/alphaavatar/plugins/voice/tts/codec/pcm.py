@@ -35,6 +35,8 @@ from alphaavatar.core.media import AudioFrame
 
 logger = logging.getLogger(__name__)
 
+type PCMPayload = dict[str, str | float]
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PCMSettings:
@@ -229,7 +231,7 @@ class PCMHTTPProvider(TTSBase):
             raise RuntimeError("TTS providers cannot be shared across event loops")
 
     @abstractmethod
-    def _payload(self, text: str) -> dict[str, str]: ...
+    def _payload(self, text: str) -> PCMPayload: ...
 
     def synthesize(self, text: str) -> TTSStreamBase:
         self._check_loop()
@@ -266,7 +268,7 @@ class PCMHTTPProvider(TTSBase):
             )
         return self._client
 
-    async def _open_response(self, payload: dict[str, str]) -> PCMResponse:
+    async def _open_response(self, payload: PCMPayload) -> PCMResponse:
         response = await self._get_client().post(
             self._url,
             json=payload,
@@ -306,11 +308,7 @@ class PCMHTTPProvider(TTSBase):
             return None
 
     async def _produce(
-        self,
-        payload: dict[str, str],
-        emit: Callable[[AudioFrame], Awaitable[None]],
-        *,
-        request_id: str,
+        self, payload: PCMPayload, emit: Callable[[AudioFrame], Awaitable[None]], *, request_id: str
     ) -> None:
         budget = _RequestBudget(self._settings)
         delay = self._settings.first_audio_hedge_after
@@ -420,7 +418,7 @@ class PCMHTTPProvider(TTSBase):
 
     async def _produce_serial(
         self,
-        payload: dict[str, str],
+        payload: PCMPayload,
         emit: Callable[[AudioFrame], Awaitable[None]],
         *,
         request_id: str,
@@ -430,12 +428,13 @@ class PCMHTTPProvider(TTSBase):
         emitted = received = 0
         blocked = http_wait = retry_wait = 0.0
         read_gaps = slow_reports = 0
+        max_read_gap = 0.0
         started = budget.started
 
         async def network[T](
             operation: Callable[[], Awaitable[T]], phase: str, first_deadline: float
         ) -> T:
-            nonlocal http_wait
+            nonlocal http_wait, read_gaps, max_read_gap
             limit = min(
                 budget.available(),
                 first_deadline - clock() if not emitted else settings.read_timeout,
@@ -443,6 +442,7 @@ class PCMHTTPProvider(TTSBase):
             if limit <= 0:
                 raise TTSTimeoutError(self._provider, phase)
             before = clock()
+            completed = False
             budget.enter()
 
             def report_slow() -> None:
@@ -467,7 +467,9 @@ class PCMHTTPProvider(TTSBase):
                 )
             try:
                 async with asyncio.timeout(limit):
-                    return await operation()
+                    value = await operation()
+                    completed = True
+                    return value
             except TimeoutError:
                 raise TTSTimeoutError(self._provider, phase) from None
             finally:
@@ -476,6 +478,22 @@ class PCMHTTPProvider(TTSBase):
                 waited = clock() - before
                 http_wait += waited
                 budget.leave()
+                if phase == "audio_read":
+                    max_read_gap = max(max_read_gap, waited)
+                    if waited >= 0.05:
+                        read_gaps += 1
+                        if read_gaps <= 3:
+                            logger.debug(
+                                "TTS PCM GAP provider=%s request_id=%s attempt=%d "
+                                "read_wait_ms=%.1f pcm_seconds_before=%.3f "
+                                "read_outcome=%s measurement=body_read_wait",
+                                self._provider,
+                                request_id,
+                                attempt,
+                                waited * 1000,
+                                received / (2 * self.sample_rate),
+                                "completed" if completed else "interrupted",
+                            )
 
         last_error: Exception | None = None
         while True:
@@ -524,7 +542,6 @@ class PCMHTTPProvider(TTSBase):
                 pending = bytearray()
                 while True:
                     phase = "first_audio" if not emitted else "audio_read"
-                    read_started = clock()
                     # A network fragment is not an audio frame. Reset the idle deadline
                     # on byte progress; retain the first-audio and aggregate hard limits.
                     data = await network(
@@ -532,20 +549,6 @@ class PCMHTTPProvider(TTSBase):
                         phase,
                         first_deadline,
                     )
-                    read_wait = clock() - read_started
-                    if data and emitted and read_wait >= 0.05:
-                        read_gaps += 1
-                        if read_gaps <= 3:
-                            logger.debug(
-                                "TTS PCM GAP provider=%s request_id=%s attempt=%d "
-                                "read_wait_ms=%.1f pcm_seconds_before=%.3f "
-                                "measurement=body_read_wait",
-                                self._provider,
-                                request_id,
-                                attempt,
-                                read_wait * 1000,
-                                total / (2 * self.sample_rate),
-                            )
                     last = not data
                     if data:
                         pending.extend(data)
@@ -594,7 +597,8 @@ class PCMHTTPProvider(TTSBase):
 
                 logger.debug(
                     "TTS COMPLETE provider=%s request_id=%s attempt=%d pcm_seconds=%.3f "
-                    "http_wait_seconds=%.3f retry_wait_seconds=%.3f consumer_wait_seconds=%.3f",
+                    "http_wait_seconds=%.3f retry_wait_seconds=%.3f consumer_wait_seconds=%.3f "
+                    "body_read_gaps=%d max_body_read_gap_ms=%.1f",
                     self._provider,
                     request_id,
                     attempt,
@@ -602,16 +606,21 @@ class PCMHTTPProvider(TTSBase):
                     http_wait,
                     retry_wait,
                     blocked,
+                    read_gaps,
+                    max_read_gap * 1000,
                 )
                 return
             except asyncio.CancelledError:
                 logger.debug(
-                    "TTS CANCELLED provider=%s request_id=%s attempt=%d phase=%s frames=%d",
+                    "TTS CANCELLED provider=%s request_id=%s attempt=%d phase=%s frames=%d "
+                    "body_read_gaps=%d max_body_read_gap_ms=%.1f",
                     self._provider,
                     request_id,
                     attempt,
                     phase,
                     emitted,
+                    read_gaps,
+                    max_read_gap * 1000,
                 )
                 raise
             except Exception as error:
@@ -644,7 +653,8 @@ class PCMHTTPProvider(TTSBase):
                 logger.warning(
                     "TTS REQUEST FAILED provider=%s request_id=%s attempt=%d phase=%s "
                     "error_type=%s status=%s frames=%d received_bytes=%d retry=%s "
-                    "attempt_elapsed_ms=%.1f retry_delay_ms=%.1f",
+                    "attempt_elapsed_ms=%.1f retry_delay_ms=%.1f "
+                    "body_read_gaps=%d max_body_read_gap_ms=%.1f",
                     self._provider,
                     request_id,
                     attempt,
@@ -656,6 +666,8 @@ class PCMHTTPProvider(TTSBase):
                     retry,
                     (clock() - attempt_started) * 1000,
                     delay * 1000 if retry else 0.0,
+                    read_gaps,
+                    max_read_gap * 1000,
                 )
                 if not retry:
                     if last_error is not error:
@@ -709,7 +721,7 @@ class PCMHTTPProvider(TTSBase):
 
 
 class _PCMStream(TTSStreamBase):
-    def __init__(self, provider: PCMHTTPProvider, payload: dict[str, str]) -> None:
+    def __init__(self, provider: PCMHTTPProvider, payload: PCMPayload) -> None:
         self._provider, self._payload = provider, payload
         self.request_id = uuid4().hex
 

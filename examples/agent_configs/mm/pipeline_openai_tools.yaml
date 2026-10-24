@@ -76,7 +76,17 @@ voice:
     plugin: openai
     model: gpt-4o-mini-tts
     speaker: ash
-    instructions: Speak in a friendly and conversational tone.
+    speed: 1.15
+    instructions: >
+      Speak naturally, as if having a relaxed, attentive conversation with one person.
+      Use a warm voice, a steady conversational rhythm, and clear articulation.
+      Keep pauses brief and meaningful. Connect phrases smoothly without stretching
+      vowels or lingering at sentence endings. Use subtle, natural intonation;
+      avoid a formal announcer style or exaggerated emotion.
+      Follow the language of the supplied text. Use natural Mandarin for Chinese
+      and clear pronunciation for names, numbers, and English words.
+      Read only the supplied text. Do not add greetings, fillers, reactions,
+      translations, or explanations, and do not rewrite or omit words.
 
 vision:
   enabled: true
@@ -160,6 +170,7 @@ memory:
   init_config:
     retrieval:
       enabled: true
+      passive_timeout_sec: 3.0
       search_context: 3
       recall_num: 6
 

@@ -43,15 +43,18 @@ type MemoryContextItem = MemoryMessage | TurnSnapshot
 
 
 def _deduplicate_keep_latest(items: list[MemoryItem]) -> list[MemoryItem]:
+    # Cache retention follows activation time; historical timestamps remain unchanged.
     latest: dict[str, MemoryItem] = {}
     for item in items:
-        current = latest.get(item.memory_id)
+        current = latest.pop(item.memory_id, None)
         if current is None or (item.revision, item.updated_at or item.created_at) > (
             current.revision,
             current.updated_at or current.created_at,
         ):
             latest[item.memory_id] = item
-    return sorted(latest.values(), key=lambda item: item.created_at)
+        else:
+            latest[item.memory_id] = current
+    return list(latest.values())
 
 
 def _deduplicate_refs(values):
@@ -74,6 +77,10 @@ class MemoryState:
             MemoryType.ENV: [],
         }
     )
+
+    def __post_init__(self) -> None:
+        if self.maximum_memory_num <= 0:
+            raise ValueError("maximum_memory_num must be positive")
 
     @property
     def all_items(self) -> list[MemoryItem]:

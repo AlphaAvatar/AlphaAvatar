@@ -81,6 +81,11 @@ class TurnStream:
             except RuntimeError:
                 pass
 
+    def consumer_cursor(self, consumer_id: str) -> int:
+        self._validate_consumer_id(consumer_id)
+        with self._lock:
+            return self._consumer_cursors.get(consumer_id, 0)
+
     def publish(self, snapshot: TurnSnapshot) -> TurnEvent:
         with self._lock:
             self._sequence += 1

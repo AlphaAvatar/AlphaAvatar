@@ -34,6 +34,7 @@ class OpenAITTSPlugin(AvatarModulePlugin):
         model: str,
         speaker: str | None = None,
         instructions: str | None = None,
+        speed: float = 1.0,
         base_url: str | None = None,
         timeout: float = 30.0,
         first_audio_timeout: float = 5.0,
@@ -48,8 +49,8 @@ class OpenAITTSPlugin(AvatarModulePlugin):
         max_streams: int = 4,
         max_audio_seconds: float = 120.0,
     ) -> TTSBase:
+        from .codec.pcm import PCMSettings
         from .openai import OpenAITTS
-        from .pcm import PCMSettings
 
         if speaker is None:
             raise ValueError("OpenAI TTS requires voice.tts.speaker")
@@ -58,6 +59,7 @@ class OpenAITTSPlugin(AvatarModulePlugin):
             model=model,
             speaker=speaker,
             instructions=instructions,
+            speed=speed,
             base_url=base_url,
             settings=PCMSettings(
                 timeout=timeout,
@@ -86,6 +88,7 @@ class VoiceAITTSPlugin(AvatarModulePlugin):
         model: str,
         speaker: str | None = None,
         instructions: str | None = None,
+        speed: float = 1.0,
         base_url: str | None = None,
         timeout: float = 30.0,
         first_audio_timeout: float = 5.0,
@@ -100,7 +103,7 @@ class VoiceAITTSPlugin(AvatarModulePlugin):
         max_streams: int = 4,
         max_audio_seconds: float = 120.0,
     ) -> TTSBase:
-        from .pcm import PCMSettings
+        from .codec.pcm import PCMSettings
         from .voiceai import VoiceAITTS
 
         if instructions is not None:
@@ -109,6 +112,7 @@ class VoiceAITTSPlugin(AvatarModulePlugin):
         return VoiceAITTS(
             model=model,
             speaker=speaker,
+            speed=speed,
             base_url=base_url,
             settings=PCMSettings(
                 timeout=timeout,

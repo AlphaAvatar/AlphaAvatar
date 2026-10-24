@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import json
+import logging
 import os
+from time import perf_counter
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
@@ -34,6 +36,8 @@ from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
 from alphaavatar.agents.memory.enums import VectorRunnerOP
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import qdrant
+
+logger = logging.getLogger(__name__)
 
 
 class QdrantRunner(InferenceRunner):
@@ -266,30 +270,59 @@ class QdrantRunner(InferenceRunner):
         scope_keys: list[str] | None = None,
         memory_type: str | None = None,
         top_k: int = 10,
+        request_id: str | None = None,
+        trace_id: str | None = None,
     ) -> dict[str, Any]:
         out = {"candidates": [], "error": None}
-
+        started = perf_counter()
+        embedding_wait = vector_wait = 0.0
+        memories, graph = [], []
+        phase, error_type = "embedding", None
         try:
-            vector = self._embeddings.embed_query(context_str)
+            try:
+                vector = self._embeddings.embed_query(context_str)
+            finally:
+                embedding_wait = perf_counter() - started
             common = {
                 "owner_keys": owner_keys,
                 "scope_keys": scope_keys,
                 "memory_type": memory_type,
             }
-            memories = self._query_candidates(
-                vector,
-                query_filter=self._build_filter(doc_kind="memory_item", **common),
-                limit=top_k,
-            )
-            graph = self._query_candidates(
-                vector,
-                query_filter=self._build_filter(doc_kind="graph_node", **common),
-                limit=top_k,
-            )
+            phase = "vector"
+            vector_started = perf_counter()
+            try:
+                memories = self._query_candidates(
+                    vector,
+                    query_filter=self._build_filter(doc_kind="memory_item", **common),
+                    limit=top_k,
+                )
+                graph = self._query_candidates(
+                    vector,
+                    query_filter=self._build_filter(doc_kind="graph_node", **common),
+                    limit=top_k,
+                )
+            finally:
+                vector_wait = perf_counter() - vector_started
             out["candidates"] = self._merge_candidates(memories, graph, limit=top_k)
         except Exception as exc:
+            error_type = type(exc).__name__
             out["error"] = str(exc)
-
+        finally:
+            logger.debug(
+                "MEMORY VECTOR RECALL request_id=%s turn_id=%s backend=qdrant phase=%s "
+                "embedding_ms=%.1f vector_ms=%.1f total_ms=%.1f memory_candidates=%d "
+                "graph_candidates=%d candidates=%d error_type=%s",
+                request_id,
+                trace_id,
+                phase,
+                embedding_wait * 1000,
+                vector_wait * 1000,
+                (perf_counter() - started) * 1000,
+                len(memories),
+                len(graph),
+                len(out["candidates"]),
+                error_type,
+            )
         return out
 
     def _search_by_graph_node(

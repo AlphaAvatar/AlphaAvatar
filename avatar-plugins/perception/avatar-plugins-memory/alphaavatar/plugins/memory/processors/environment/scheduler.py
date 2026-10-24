@@ -15,136 +15,36 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
 from typing import Any
 
 from alphaavatar.core.cleanup import wait_for_cleanup
-from alphaavatar.core.env import EnvObservation
-from alphaavatar.core.env.enums import ObservationKind
 from alphaavatar.core.perception import (
-    AlignedPerception,
     PerceptionRuntime,
     PerceptionTemporalAligner,
     TemporalAlignmentMode,
     TemporalAlignmentPolicy,
 )
-from alphaavatar.core.perception.schemas import PerceptionCutoff, PerceptionEvent
-from alphaavatar.core.time import RuntimeTimeRange
+from alphaavatar.core.perception.schemas import PerceptionCutoff
 
 from ...state import MemoryContextState
-from .input_builder import EnvMemoryInput, EnvMemoryInputBuilder
+from .batch import EnvironmentBatchError, EnvMemoryBatch, EnvMemoryBatchBuilder
+from .config import EnvironmentSchedulerConfig
+from .input_builder import EnvMemoryInputBuilder
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_ENV_MEMORY_INTERVAL_SEC = 30.0
 DEFAULT_ANNOTATION_GRACE_SEC = 0.75
 DEFAULT_MAX_SPEECH_DEFER_SEC = 15.0
-
-DEFAULT_PROCESS_TIMEOUT_SEC = 45.0
-DEFAULT_SHUTDOWN_TIMEOUT_SEC = 2 * DEFAULT_PROCESS_TIMEOUT_SEC + 5.0
-
 DEFAULT_RETRY_DELAY_SEC = 0.5
-DEFAULT_MAX_ATTEMPTS = 2
-
-
-@dataclass(slots=True)
-class EnvMemoryBatch:
-    context_id: str
-    from_sequence: int
-    to_sequence: int
-    events: tuple[PerceptionEvent, ...]
-    alignment: AlignedPerception
-    memory_input: EnvMemoryInput
-    chat_context: str | None
-    triggers: set[str] = field(default_factory=set)
-    raw_event_count: int = 0
-    message_count: int = 0
-    attempts: int = 0
-
-    @property
-    def observations(self) -> list[EnvObservation]:
-        return list(self.memory_input.observations)
-
-    @property
-    def conversation_context(self) -> str | None:
-        return self.chat_context
-
-    @property
-    def trigger_text(self) -> str:
-        return ",".join(sorted(self.triggers))
-
-    @property
-    def missed_count(self) -> int:
-        return self.alignment.missed_event_count
-
-    @property
-    def raw_observation_count(self) -> int:
-        return sum(event.observation is not None for event in self.events)
-
-    def build_evidence(self) -> list[dict]:
-        return list(self.memory_input.evidence)
-
-    async def merge(
-        self,
-        other: EnvMemoryBatch,
-        *,
-        aligner: PerceptionTemporalAligner,
-        input_builder: EnvMemoryInputBuilder,
-    ) -> None:
-        if self.context_id != other.context_id:
-            raise ValueError("Cannot merge ENV memory batches from different contexts")
-
-        self.from_sequence = min(self.from_sequence, other.from_sequence)
-        self.to_sequence = max(self.to_sequence, other.to_sequence)
-        self.attempts = 0
-
-        by_sequence = {event.sequence: event for event in self.events}
-        by_sequence.update({event.sequence: event for event in other.events})
-        self.events = tuple(by_sequence[sequence] for sequence in sorted(by_sequence))
-
-        start = min(
-            self.alignment.time_range.start,
-            other.alignment.time_range.start,
-            key=lambda item: item.monotonic_ns,
-        )
-        end = max(
-            self.alignment.time_range.end,
-            other.alignment.time_range.end,
-            key=lambda item: item.monotonic_ns,
-        )
-        self.alignment = aligner.align(
-            events=self.events,
-            time_range=RuntimeTimeRange(start=start, end=end),
-            source_states_at_start=self.alignment.source_states_at_start,
-            source_states_at_end=other.alignment.source_states_at_end,
-            mode=TemporalAlignmentMode.FIXED,
-            has_event_gap=self.alignment.has_event_gap or other.alignment.has_event_gap,
-            missed_event_count=self.alignment.missed_event_count
-            + other.alignment.missed_event_count,
-        )
-        self.memory_input = await asyncio.to_thread(input_builder.build, self.alignment)
-
-        contexts = [item for item in (self.chat_context, other.chat_context) if item]
-        self.chat_context = "\n\n".join(dict.fromkeys(contexts)) if contexts else None
-        self.triggers.update(other.triggers)
-        self.raw_event_count += other.raw_event_count
-        self.message_count += other.message_count
-
 
 ProcessCallback = Callable[[EnvMemoryBatch, float], Awaitable[object]]
 MessageRenderer = Callable[[list[Any]], str | None]
 
 
 class EnvMemoryScheduler:
-    _ENV_OBSERVATION_KINDS = {
-        ObservationKind.VIDEO_FRAME,
-        ObservationKind.SCREEN_FRAME,
-        ObservationKind.VIDEO_CLIP,
-        ObservationKind.AUDIO_FRAME,
-        ObservationKind.AUDIO_SEGMENT,
-    }
-
     def __init__(
         self,
         *,
@@ -155,387 +55,292 @@ class EnvMemoryScheduler:
         render_messages: MessageRenderer,
         alignment_policy: TemporalAlignmentPolicy | None = None,
         include_audio: bool = True,
+        config: EnvironmentSchedulerConfig | None = None,
     ) -> None:
-        policy = alignment_policy or TemporalAlignmentPolicy(mode=TemporalAlignmentMode.FIXED)
-
-        self._perception_runtime = perception_runtime
-        self._context_state = context_state
-        self._process = process
-        self._render_messages = render_messages
-        self._include_audio = include_audio
-
-        self._aligner = PerceptionTemporalAligner(policy)
-        self._input_builder = EnvMemoryInputBuilder(include_audio=include_audio)
+        self._config = config or EnvironmentSchedulerConfig()
+        self._perception_runtime, self._context_state = perception_runtime, context_state
+        self._process, self._render_messages, self._include_audio = (
+            process,
+            render_messages,
+            include_audio,
+        )
+        self._builder = EnvMemoryBatchBuilder(
+            config=self._config,
+            aligner=PerceptionTemporalAligner(
+                alignment_policy or TemporalAlignmentPolicy(mode=TemporalAlignmentMode.FIXED)
+            ),
+            input_builder=EnvMemoryInputBuilder(include_audio=include_audio),
+        )
         self._last_cutoff = initial_cutoff
-
+        self._committed_sequence = initial_cutoff.sequence
         self._consumer_id = f"memory.environment:{context_state.context_id}"
-        self._message_cursor = 0
         perception_runtime.events.commit(
             consumer_id=self._consumer_id, cursor_seq=initial_cutoff.sequence
         )
-
+        self._pending_batches: deque[EnvMemoryBatch] = deque()
+        self._active_batch: EnvMemoryBatch | None = None
+        self._capture_lock = asyncio.Lock()
         self._requested_triggers: set[str] = set()
         self._wake_event = asyncio.Event()
-        self._pending_batch: EnvMemoryBatch | None = None
         self._scheduler_task: asyncio.Task[None] | None = None
         self._processor_task: asyncio.Task[None] | None = None
-
-        self._stopping = False
         self._stop_task: asyncio.Task[None] | None = None
+        self._stopping = False
+        self._failure: str | None = None
 
     @property
     def context_id(self) -> str:
         return self._context_state.context_id
 
+    @property
+    def status(self) -> dict[str, Any]:
+        batches = (*self._pending_batches, *((self._active_batch,) if self._active_batch else ()))
+        latest = self._perception_runtime.capture_cutoff().sequence
+        return {
+            "context_id": self.context_id,
+            "state": "failed" if self._failure else "stopped" if self._stopping else "running",
+            "failure": self._failure,
+            "pending_batches": len(self._pending_batches),
+            "retained_events": sum(len(batch.events) for batch in batches),
+            "retained_source_bytes": sum(batch.payload_bytes for batch in batches),
+            "committed_sequence": self._committed_sequence,
+            "captured_sequence": self._last_cutoff.sequence,
+            "uncommitted_from_sequence": self._committed_sequence,
+            "uncommitted_to_sequence": latest,
+        }
+
+    def _halt(self, reason: str) -> None:
+        if self._failure is None:
+            self._failure = reason
+            logger.error("ENV processing halted reason=%s status=%s", reason, self.status)
+        self._wake_event.set()
+
     def _take_requested_triggers(self) -> set[str]:
         self._wake_event.clear()
-        triggers = self._requested_triggers
-        self._requested_triggers = set()
+        triggers, self._requested_triggers = self._requested_triggers, set()
         return triggers
 
-    def _environment_events(
-        self, events: tuple[PerceptionEvent, ...]
-    ) -> tuple[PerceptionEvent, ...]:
-        return tuple(
-            event
-            for event in events
-            if event.source_state is not None
-            or (
-                event.observation is not None
-                and event.observation.kind in self._ENV_OBSERVATION_KINDS
-                and event.observation.metadata.get("input_origin") != "direct_upload"
-            )
-        )
-
-    async def _merge_pending_batch(self, batch: EnvMemoryBatch) -> None:
-        if self._pending_batch is None:
-            self._pending_batch = batch
-            return
-
-        await self._pending_batch.merge(
-            batch, aligner=self._aligner, input_builder=self._input_builder
-        )
-
-    async def _restore_pending_batch(self, batch: EnvMemoryBatch) -> None:
-        if self._pending_batch is not None:
-            await batch.merge(
-                self._pending_batch, aligner=self._aligner, input_builder=self._input_builder
-            )
-        self._pending_batch = batch
-
     async def _resolve_capture_cutoff(self, triggers: set[str]) -> PerceptionCutoff:
-        """
-        Resolve a semantic capture boundary.
-
-        Normal triggers wait for an active VAD segment to close. Session shutdown
-        is a hard boundary and never waits.
-        """
-        if (
-            not self._include_audio
-            or DEFAULT_MAX_SPEECH_DEFER_SEC == 0
-            or "session_stop" in triggers
-        ):
+        if not self._include_audio or "session_stop" in triggers:
             return self._perception_runtime.capture_cutoff()
 
         cutoff = self._perception_runtime.capture_cutoff_if_speech_idle()
-        if cutoff is not None:
-            return cutoff
-
-        started_at = asyncio.get_running_loop().time()
-
-        cutoff = await self._perception_runtime.wait_for_speech_idle_cutoff(
-            timeout=DEFAULT_MAX_SPEECH_DEFER_SEC
-        )
-        if cutoff is not None:
-            deferred_sec = asyncio.get_running_loop().time() - started_at
-            triggers.add("speech_boundary")
-
-            logger.debug(
-                "ENV capture deferred to speech boundary sid=%s deferred=%.2fs",
-                self.context_id,
-                deferred_sec,
+        if cutoff is None:
+            cutoff = await self._perception_runtime.wait_for_speech_idle_cutoff(
+                timeout=DEFAULT_MAX_SPEECH_DEFER_SEC
             )
-            return cutoff
-
-        triggers.add("speech_defer_timeout")
-
-        logger.warning(
-            "ENV speech-boundary wait timed out sid=%s timeout=%ss active_segments=%s",
-            self.context_id,
-            DEFAULT_MAX_SPEECH_DEFER_SEC,
-            self._perception_runtime.active_speech_segments,
-        )
-
-        return self._perception_runtime.capture_cutoff()
+            triggers.add("speech_boundary" if cutoff else "speech_defer_timeout")
+        return cutoff or self._perception_runtime.capture_cutoff()
 
     async def _capture_batch(
         self, triggers: set[str], *, target_cutoff: PerceptionCutoff
-    ) -> EnvMemoryBatch | None:
-        start_cutoff = self._last_cutoff
-
-        if target_cutoff.sequence <= start_cutoff.sequence:
+    ) -> tuple[EnvMemoryBatch, PerceptionCutoff] | None:
+        start = self._last_cutoff
+        if target_cutoff.sequence <= start.sequence:
             return None
-
         read = self._perception_runtime.events.read_range(
-            after_seq=start_cutoff.sequence, until_seq=target_cutoff.sequence
+            after_seq=start.sequence, until_seq=target_cutoff.sequence
+        )
+        if read.has_gap:
+            raise EnvironmentBatchError("perception_gap")
+        if not read.items:
+            raise EnvironmentBatchError("perception_gap")
+        end = self._context_state.message_sequence
+        messages = self._context_state.messages_between(
+            max(0, end - self._config.max_context_messages), end
         )
 
-        all_events = tuple(read.items)
-        has_gap = read.has_gap
-        missed_count = read.missed_count
-
-        if has_gap:
-            logger.warning(
-                "ENV event gap sid=%s triggers=%s missed=%s range=%s..%s",
-                self.context_id,
-                sorted(triggers),
-                missed_count,
-                start_cutoff.sequence,
-                target_cutoff.sequence,
+        def build() -> tuple[EnvMemoryBatch, PerceptionCutoff]:
+            context = self._render_messages(messages)
+            return self._builder.build(
+                context_id=self.context_id,
+                events=read.items,
+                start_cutoff=start,
+                target_cutoff=target_cutoff,
+                triggers=triggers,
+                chat_context=context[-self._config.max_context_chars :] if context else None,
+                message_count=len(messages),
             )
 
-        events = self._environment_events(all_events)
-        start = start_cutoff.captured_at
-        end = target_cutoff.captured_at
-
-        if end.monotonic_ns < start.monotonic_ns:
-            end = start
-
-        alignment = self._aligner.align(
-            events=events,
-            time_range=RuntimeTimeRange(start=start, end=end),
-            source_states_at_start=start_cutoff.sources,
-            source_states_at_end=target_cutoff.sources,
-            mode=TemporalAlignmentMode.FIXED,
-            has_event_gap=has_gap,
-            missed_event_count=missed_count,
+        task = asyncio.create_task(
+            asyncio.to_thread(build), name=f"memory_env_capture:{self.context_id}"
         )
+        return await wait_for_cleanup(task)
 
-        memory_input = await asyncio.to_thread(self._input_builder.build, alignment)
-
-        message_end = self._context_state.message_sequence
-        messages = self._context_state.messages_between(self._message_cursor, message_end)
-
-        batch = EnvMemoryBatch(
-            context_id=self.context_id,
-            from_sequence=start_cutoff.sequence,
-            to_sequence=target_cutoff.sequence,
-            events=events,
-            alignment=alignment,
-            memory_input=memory_input,
-            chat_context=self._render_messages(messages),
-            triggers=set(triggers),
-            raw_event_count=len(all_events),
-            message_count=len(messages),
-        )
-
-        self._perception_runtime.events.commit(
-            consumer_id=self._consumer_id, cursor_seq=target_cutoff.sequence
-        )
-        self._last_cutoff = target_cutoff
-        self._message_cursor = message_end
-        return batch
-
-    async def _enqueue_batch(self, batch: EnvMemoryBatch) -> None:
-        await self._merge_pending_batch(batch)
-
-        if not self._stopping and (self._processor_task is None or self._processor_task.done()):
+    def _start_processor(self) -> None:
+        if self._failure or not self._pending_batches:
+            return
+        if self._processor_task is None or self._processor_task.done():
             self._processor_task = asyncio.create_task(
                 self._processor_loop(), name=f"memory_env_processor:{self.context_id}"
             )
+            self._processor_task.add_done_callback(self._processor_done)
 
     async def _capture_and_enqueue(
-        self, triggers: set[str], *, annotation_grace_sec: float | None = None
+        self,
+        triggers: set[str],
+        *,
+        annotation_grace_sec: float | None = None,
+        target_cutoff: PerceptionCutoff | None = None,
     ) -> bool:
-        if not triggers:
+        if not triggers or self._failure:
             return False
-
-        try:
-            target_cutoff = await self._resolve_capture_cutoff(triggers)
-
-            grace_sec = (
-                DEFAULT_ANNOTATION_GRACE_SEC
-                if annotation_grace_sec is None
-                else annotation_grace_sec
-            )
-
-            # Wait after freezing the cutoff. Annotations can settle, while events
-            # published after target_cutoff remain outside this batch.
-            if grace_sec > 0:
-                await asyncio.sleep(grace_sec)
-
-            batch = await self._capture_batch(triggers, target_cutoff=target_cutoff)
-
-            if batch is None:
+        async with self._capture_lock:
+            if self._failure:
+                return False
+            if len(self._pending_batches) >= self._config.max_pending_batches:
+                self._requested_triggers.update(triggers)
+                return False
+            try:
+                target = target_cutoff or await self._resolve_capture_cutoff(triggers)
+                grace = (
+                    DEFAULT_ANNOTATION_GRACE_SEC
+                    if annotation_grace_sec is None
+                    else annotation_grace_sec
+                )
+                if grace > 0:
+                    await asyncio.sleep(grace)
+                result = await self._capture_batch(triggers, target_cutoff=target)
+                if result is None or self._failure:
+                    return False
+                batch, cutoff = result
+                # Admission and cursor advancement have no await. Pending work is never merged
+                # with a retrying active batch, so new capture cannot reset its retry budget.
+                self._pending_batches.append(batch)
+                self._last_cutoff = cutoff
+                self._perception_runtime.events.commit(
+                    consumer_id=self._consumer_id, cursor_seq=cutoff.sequence
+                )
+                if cutoff.sequence < target.sequence:
+                    self._requested_triggers.update(triggers)
+                self._start_processor()
+                return True
+            except EnvironmentBatchError as error:
+                self._halt(str(error))
+                return False
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                logger.error(
+                    "ENV capture failed context=%s error_type=%s",
+                    self.context_id,
+                    type(error).__name__,
+                )
+                self._halt("capture_failed")
                 return False
 
-            await self._enqueue_batch(batch)
-            return True
-
-        except asyncio.CancelledError:
-            raise
-
-        except Exception:
-            logger.exception(
-                "ENV capture failed cid=%s triggers=%s", self.context_id, sorted(triggers)
-            )
-            return False
-
-    async def _scheduler_loop(self) -> None:
-        loop = asyncio.get_running_loop()
-        next_periodic_at = loop.time() + DEFAULT_ENV_MEMORY_INTERVAL_SEC
-
-        while True:
-            try:
-                timeout = max(0.0, next_periodic_at - loop.time())
-
-                try:
-                    await asyncio.wait_for(self._wake_event.wait(), timeout=timeout)
-
-                except TimeoutError:
-                    triggers = {"periodic"}
-                    if self._wake_event.is_set():
-                        triggers.update(self._take_requested_triggers())
-
-                    await self._capture_and_enqueue(triggers)
-                    next_periodic_at = loop.time() + DEFAULT_ENV_MEMORY_INTERVAL_SEC
-                    continue
-
-                captured = await self._capture_and_enqueue(self._take_requested_triggers())
-                if captured:
-                    next_periodic_at = loop.time() + DEFAULT_ENV_MEMORY_INTERVAL_SEC
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("ENV scheduler failed cid=%s", self.context_id)
-                await asyncio.sleep(0.05)
+    def _advance(self, batch: EnvMemoryBatch) -> None:
+        if batch.from_sequence != self._committed_sequence:
+            raise RuntimeError("ENV committed batch is not contiguous")
+        self._committed_sequence = batch.to_sequence
+        self._active_batch = None
 
     async def _processor_loop(self) -> None:
-        while not self._stopping and self._pending_batch is not None:
-            batch = self._pending_batch
-            self._pending_batch = None
-
-            try:
-                while True:
-                    if self._stopping and batch.attempts:
-                        await self._restore_pending_batch(batch)
-                        return
-
+        try:
+            while self._pending_batches and not self._failure:
+                batch = self._active_batch = self._pending_batches.popleft()
+                if self._requested_triggers:
+                    self._wake_event.set()
+                while batch.attempts < self._config.max_attempts:
+                    batch.attempts += 1
                     try:
-                        await self._process(batch, DEFAULT_PROCESS_TIMEOUT_SEC)
-                        break
+                        await self._process(batch, self._config.process_timeout_sec)
                     except asyncio.CancelledError:
+                        if batch.committed:
+                            self._advance(batch)
                         raise
-                    except Exception:
-                        batch.attempts += 1
-
-                        if self._stopping or batch.attempts >= DEFAULT_MAX_ATTEMPTS:
-                            logger.exception(
-                                "ENV batch retained context=%s attempts=%s triggers=%s events=%s",
-                                batch.context_id,
-                                batch.attempts,
-                                sorted(batch.triggers),
-                                len(batch.events),
-                            )
-                            await self._restore_pending_batch(batch)
-                            return
-
+                    except Exception as error:
                         logger.warning(
-                            "ENV processing failed; retrying context=%s attempt=%s",
-                            batch.context_id,
+                            "ENV batch failed context=%s attempt=%d error_type=%s",
+                            self.context_id,
                             batch.attempts,
-                            exc_info=True,
+                            type(error).__name__,
                         )
+                        if batch.committed:
+                            self._advance(batch)
+                            self._halt("post_commit_failed")
+                            return
+                        if batch.attempts >= self._config.max_attempts:
+                            self._halt("retry_exhausted")
+                            return
                         await asyncio.sleep(DEFAULT_RETRY_DELAY_SEC)
+                    else:
+                        batch.committed = True
+                        self._advance(batch)
+                        break
+        except asyncio.CancelledError:
+            if not self._stopping:
+                self._halt("processor_cancelled")
+            raise
 
-            except asyncio.CancelledError:
-                await self._restore_pending_batch(batch)
-                raise
+    def _processor_done(self, task: asyncio.Task[None]) -> None:
+        if task.cancelled():
+            if not self._stopping:
+                self._halt("processor_cancelled")
+        elif task.exception() is not None:
+            self._halt("processor_failed")
+
+    async def _scheduler_loop(self) -> None:
+        while not self._stopping and not self._failure:
+            try:
+                await asyncio.wait_for(self._wake_event.wait(), DEFAULT_ENV_MEMORY_INTERVAL_SEC)
+                triggers = self._take_requested_triggers()
+            except TimeoutError:
+                triggers = {"periodic"}
+            if not self._failure:
+                await self._capture_and_enqueue(triggers)
 
     def request(self, trigger: str) -> None:
-        if self._stopping or not (trigger := trigger.strip()):
-            return
-        self._requested_triggers.add(trigger)
-        self._wake_event.set()
+        if not self._stopping and not self._failure and (trigger := trigger.strip()):
+            self._requested_triggers.add(trigger)
+            self._wake_event.set()
 
     async def start(self) -> None:
         if self._stop_task is not None:
-            await wait_for_cleanup(self._stop_task)
-            self._stop_task = None
-
-        if self._scheduler_task is not None and not self._scheduler_task.done():
-            return
-
-        self._stopping = False
-        self._scheduler_task = asyncio.create_task(
-            self._scheduler_loop(), name=f"memory_env_scheduler:{self.context_id}"
-        )
+            raise RuntimeError("ENV scheduler cannot restart after stopping")
+        if self._scheduler_task is None:
+            self._scheduler_task = asyncio.create_task(
+                self._scheduler_loop(), name=f"memory_env_scheduler:{self.context_id}"
+            )
 
     async def _shutdown(self, *, finalize: bool) -> None:
-        deadline = asyncio.timeout(DEFAULT_SHUTDOWN_TIMEOUT_SEC)
+        final_cutoff = self._perception_runtime.capture_cutoff()
         try:
-            async with deadline:
+            async with asyncio.timeout(self._config.shutdown_timeout_sec):
                 if self._scheduler_task is not None:
                     self._scheduler_task.cancel()
                     await asyncio.gather(self._scheduler_task, return_exceptions=True)
-                    self._scheduler_task = None
 
                 if not finalize:
                     return
-
-                final_cutoff = self._perception_runtime.capture_cutoff()
-
-                # Complete the active batch before capturing and processing the tail.
-                if self._processor_task is not None:
-                    await self._processor_task
-                    self._processor_task = None
-
-                final_batch = await self._capture_batch(
-                    {"session_stop"}, target_cutoff=final_cutoff
-                )
-                if final_batch is not None:
-                    await self._merge_pending_batch(final_batch)
-
-                batch = self._pending_batch
-                if batch is not None:
-                    await self._process(batch, DEFAULT_PROCESS_TIMEOUT_SEC)
-                    self._pending_batch = None
-
-        except TimeoutError as exc:
-            reason = "shutdown deadline" if deadline.expired() else "batch processing timeout"
-            raise TimeoutError(
-                f"ENV finalization failed: {reason}; context={self.context_id}"
-            ) from exc
-
+                while not self._failure:
+                    self._start_processor()
+                    if self._processor_task is not None:
+                        await asyncio.shield(self._processor_task)
+                    if self._last_cutoff.sequence >= final_cutoff.sequence:
+                        break
+                    if not await self._capture_and_enqueue(
+                        {"session_stop"}, annotation_grace_sec=0, target_cutoff=final_cutoff
+                    ):
+                        break
+        except TimeoutError:
+            self._halt("shutdown_timeout")
+        except asyncio.CancelledError:
+            if self._processor_task is not None and self._processor_task.cancelled():
+                self._halt("processor_cancelled")
+            else:
+                raise
         finally:
-            tasks = tuple(
-                task for task in (self._scheduler_task, self._processor_task) if task is not None
-            )
+            tasks = tuple(task for task in (self._scheduler_task, self._processor_task) if task)
             for task in tasks:
-                if not task.done() and not task.cancelling():
+                if not task.done():
                     task.cancel()
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
-
-            self._scheduler_task = None
-            self._processor_task = None
+            await asyncio.gather(*tasks, return_exceptions=True)
+            self._scheduler_task = self._processor_task = None
             self._requested_triggers.clear()
             self._wake_event.clear()
-            if not finalize:
-                self._pending_batch = None
-
             self._perception_runtime.events.clear_consumer(self._consumer_id)
-            if self._pending_batch is not None:
-                batch = self._pending_batch
-                logger.warning(
-                    "ENV stopped with uncommitted batch context=%s range=%s..%s; "
-                    "batch is only retained in memory",
-                    self.context_id,
-                    batch.from_sequence,
-                    batch.to_sequence,
-                )
-            else:
-                logger.info("ENV scheduler stopped context=%s", self.context_id)
+            logger.info("ENV scheduler stopped status=%s", self.status)
 
     async def stop(self, *, finalize: bool = True) -> None:
         if self._stop_task is None:

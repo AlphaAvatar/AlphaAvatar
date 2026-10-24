@@ -13,9 +13,12 @@
 # limitations under the License.
 from __future__ import annotations
 
+import logging
 import os
 
-from .pcm import PCMHTTPProvider, PCMSettings
+from .codec.pcm import PCMHTTPProvider, PCMPayload, PCMSettings
+
+logger = logging.getLogger(__name__)
 
 
 class VoiceAITTS(PCMHTTPProvider):
@@ -24,6 +27,7 @@ class VoiceAITTS(PCMHTTPProvider):
         *,
         model: str,
         speaker: str | None = None,
+        speed: float = 1.0,
         language: str = "en",
         api_key: str | None = None,
         base_url: str | None = None,
@@ -36,6 +40,9 @@ class VoiceAITTS(PCMHTTPProvider):
         if not isinstance(language, str) or not language.strip():
             raise ValueError("Voice.ai TTS requires a language")
 
+        if type(speed) not in (int, float) or speed != 1.0:
+            raise ValueError("Voice.ai TTS does not support voice.tts.speed")
+
         self._model, self._speaker, self._language = model, speaker, language
         base = base_url if base_url is not None else "https://dev.voice.ai"
         super().__init__(
@@ -46,8 +53,10 @@ class VoiceAITTS(PCMHTTPProvider):
             settings=settings or PCMSettings(),
         )
 
-    def _payload(self, text: str) -> dict[str, str]:
-        payload = {
+        logger.debug("TTS CONFIG provider=voiceai model=%r voice=%r speed=1.000", model, speaker)
+
+    def _payload(self, text: str) -> PCMPayload:
+        payload: PCMPayload = {
             "model": self._model,
             "text": text,
             "language": self._language,
