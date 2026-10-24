@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING
 
 from alphaavatar.agents.memory.enums import MemoryType
@@ -22,7 +23,6 @@ from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_capability
 from alphaavatar.core.turn import TurnInputModality
 
-from ...log import logger
 from ...template import MemoryPluginsTemplate
 from ..base import MemoryProcessor
 from .config import EnvironmentConfig
@@ -31,6 +31,8 @@ from .scheduler import EnvMemoryBatch, EnvMemoryScheduler
 
 if TYPE_CHECKING:
     from ...runtime import MemoryRuntime
+
+logger = logging.getLogger(__name__)
 
 
 @avatar_capability(

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
@@ -23,7 +24,6 @@ from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_capability
 from alphaavatar.agents.utils.time import application_now
 
-from ...log import logger
 from ...state import MemoryContextState
 from ..base import MemoryProcessor
 from .config import ConversationConfig
@@ -32,6 +32,8 @@ from .provider import ConversationProvider
 
 if TYPE_CHECKING:
     from ...runtime import MemoryRuntime
+
+logger = logging.getLogger(__name__)
 
 
 @avatar_capability(

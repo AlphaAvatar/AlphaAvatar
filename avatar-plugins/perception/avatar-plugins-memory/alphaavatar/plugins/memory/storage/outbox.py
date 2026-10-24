@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from uuid import uuid4
 
@@ -21,7 +22,7 @@ from alphaavatar.agents.memory import MemoryStoreBackend
 from alphaavatar.agents.memory.enums import MemoryOutboxTarget
 from alphaavatar.agents.memory.schemas import MemoryItem, MemoryOutboxEvent
 
-from ..log import logger
+logger = logging.getLogger(__name__)
 
 OutboxHandler = Callable[[list[MemoryItem]], Awaitable[None]]
 

@@ -22,12 +22,13 @@ from typing import Any
 from alphaavatar.agents.memory.enums import MemoryKind
 from alphaavatar.agents.memory.schemas import MemoryItem, MemorySearchHit
 
-from ....log import logger
 from .candidates import RecalledCandidateCache, consolidated_from_hits, merge_candidates
 from .config import CandidateSource, ConsolidationConfig, ConsolidationMode
 from .consolidation_op import apply_assignments
 from .prompts import render_candidates, render_incoming
 from .schema import ConsolidationPlan, ConsolidationResult
+
+logger = logging.getLogger(__name__)
 
 CandidateSearch = Callable[..., Awaitable[list[list[MemorySearchHit]]]]
 PlanConsolidation = Callable[..., Awaitable[ConsolidationPlan]]

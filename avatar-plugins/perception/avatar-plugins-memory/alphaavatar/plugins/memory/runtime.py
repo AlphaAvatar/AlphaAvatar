@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import pathlib
 from collections.abc import Sequence
 
@@ -34,10 +35,11 @@ from alphaavatar.core.output import OutputJournalGap
 from alphaavatar.core.output.schemas import OutputRecordBatch
 from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
 
-from .log import logger
 from .processors.base import MemoryProcessor
 from .state import MemoryContextState, MemoryState
 from .storage import MemoryStore
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryRuntime(MemoryBase):

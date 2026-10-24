@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
@@ -21,11 +22,12 @@ from pydantic import BaseModel
 from alphaavatar.agents.avatar.provider.schemas import ModelPrompt
 from alphaavatar.agents.runtime.modules.foundation import ProviderService
 
-from ...log import logger
 from ...schemas.patch import MemoryDelta
 from .config import ConversationProviderConfig
 from .consolidation import CONSOLIDATION_PROMPT, SESSION_SUMMARY_PROMPT, ConsolidationPlan
 from .prompt import build_conversation_delta_prompt
+
+logger = logging.getLogger(__name__)
 
 TStructuredOutput = TypeVar("TStructuredOutput", bound=BaseModel)
 

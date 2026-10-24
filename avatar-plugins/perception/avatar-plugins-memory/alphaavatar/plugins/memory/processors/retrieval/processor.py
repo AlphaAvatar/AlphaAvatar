@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import deque
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING
@@ -25,7 +26,6 @@ from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_c
 from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
 
-from ...log import logger
 from ...storage.graph import GraphLookup
 from ..base import MemoryProcessor
 from .config import RetrievalConfig
@@ -33,6 +33,8 @@ from .schema import RetrievalCapabilityInput, RetrievalOp
 
 if TYPE_CHECKING:
     from ...runtime import MemoryRuntime
+
+logger = logging.getLogger(__name__)
 
 RecallObserver = Callable[[Iterable[MemoryItem]], None]
 

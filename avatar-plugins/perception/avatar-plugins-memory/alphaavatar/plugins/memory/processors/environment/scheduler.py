@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -31,9 +32,10 @@ from alphaavatar.core.perception import (
 from alphaavatar.core.perception.schemas import PerceptionCutoff, PerceptionEvent
 from alphaavatar.core.time import RuntimeTimeRange
 
-from ...log import logger
 from ...state import MemoryContextState
 from .input_builder import EnvMemoryInput, EnvMemoryInputBuilder
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_ENV_MEMORY_INTERVAL_SEC = 30.0
 DEFAULT_ANNOTATION_GRACE_SEC = 0.75
