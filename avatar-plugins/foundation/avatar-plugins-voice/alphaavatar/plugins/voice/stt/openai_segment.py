@@ -370,6 +370,10 @@ class OpenAISegmentSTTStream(STTStreamBase):
             command = await self._input_q.get()
 
             if command is _FLUSH:
+                for segment_id in segments:
+                    self._emit_error(
+                        segment_id, "Buffered STT input was flushed", reason_code="input_flushed"
+                    )
                 segments.clear()
                 continue
 

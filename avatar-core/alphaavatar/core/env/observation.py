@@ -21,18 +21,23 @@ from alphaavatar.core.media import MediaPayload
 from alphaavatar.core.time import RuntimeTimeRange
 
 from .annotation import EnvAnnotation
-from .enums import ObservationKind
+from .enums import ObservationKind, SpeechCancellationReason
 from .schemas import PerceptionEntityRef, PerceptionSegmentRef, PerceptionSourceRef
 
 _SEGMENT_REQUIRED_KINDS = {
     ObservationKind.AUDIO_SEGMENT,
     ObservationKind.SPEECH_FRAME,
     ObservationKind.SPEECH_SEGMENT,
+    ObservationKind.SPEECH_CANCELLED,
     ObservationKind.TRANSCRIPT_DELTA,
     ObservationKind.TRANSCRIPT_SEGMENT,
 }
 
-_SPEECH_KINDS = {ObservationKind.SPEECH_FRAME, ObservationKind.SPEECH_SEGMENT}
+_SPEECH_KINDS = {
+    ObservationKind.SPEECH_FRAME,
+    ObservationKind.SPEECH_SEGMENT,
+    ObservationKind.SPEECH_CANCELLED,
+}
 
 
 _RESERVED_METADATA_KEYS = frozenset(
@@ -106,6 +111,13 @@ class EnvObservation:
             and self.segment.source != self.source
         ):
             raise ValueError(f"{self.kind.value} segment source must match observation source")
+
+        if self.kind == ObservationKind.SPEECH_CANCELLED:
+            if self.payload is not None:
+                raise ValueError("speech_cancelled cannot carry an audio payload")
+            self.metadata["reason_code"] = SpeechCancellationReason(
+                self.metadata.get("reason_code")
+            ).value
 
     @property
     def source_id(self) -> str:
@@ -193,6 +205,12 @@ class EnvObservation:
     def speech_segment(cls, **kwargs: Any) -> EnvObservation:
         kwargs.setdefault("mime_type", "audio/pcm")
         return cls._create(kind=ObservationKind.SPEECH_SEGMENT, **kwargs)
+
+    @classmethod
+    def speech_cancelled(cls, *, reason: SpeechCancellationReason, **kwargs: Any) -> EnvObservation:
+        metadata = dict(kwargs.pop("metadata", None) or {})
+        metadata["reason_code"] = SpeechCancellationReason(reason).value
+        return cls._create(kind=ObservationKind.SPEECH_CANCELLED, metadata=metadata, **kwargs)
 
     @classmethod
     def transcript_delta(cls, **kwargs: Any) -> EnvObservation:

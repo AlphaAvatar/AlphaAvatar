@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from threading import RLock
 from typing import Any
 
@@ -41,6 +41,14 @@ from .window import PerceptionWindow, PerceptionWindowBuilder
 class PerceptionRuntime:
     """Session-scoped full-duplex perception runtime."""
 
+    _MAX_RETIRED_SPEECH_SEGMENTS = 1024
+    _MAX_SPEECH_SOURCES = 256
+    _SPEECH_TRACE_STAGES = {
+        ObservationKind.SPEECH_SEGMENT: "perception.speech_closed",
+        ObservationKind.SPEECH_CANCELLED: "perception.speech_cancelled",
+        ObservationKind.TRANSCRIPT_SEGMENT: "perception.transcript_final",
+    }
+
     _STREAM_BY_OBSERVATION_KIND = {
         ObservationKind.VIDEO_FRAME: PerceptionStreamKind.VIDEO,
         ObservationKind.VIDEO_CLIP: PerceptionStreamKind.VIDEO,
@@ -49,6 +57,7 @@ class PerceptionRuntime:
         ObservationKind.AUDIO_SEGMENT: PerceptionStreamKind.AUDIO,
         ObservationKind.SPEECH_FRAME: PerceptionStreamKind.SPEECH,
         ObservationKind.SPEECH_SEGMENT: PerceptionStreamKind.SPEECH,
+        ObservationKind.SPEECH_CANCELLED: PerceptionStreamKind.SPEECH,
         ObservationKind.TRANSCRIPT_DELTA: PerceptionStreamKind.TEXT,
         ObservationKind.TRANSCRIPT_SEGMENT: PerceptionStreamKind.TEXT,
         ObservationKind.TEXT_INPUT: PerceptionStreamKind.TEXT,
@@ -60,6 +69,7 @@ class PerceptionRuntime:
         ObservationKind.SCREEN_FRAME: 128,
         ObservationKind.AUDIO_SEGMENT: 64,
         ObservationKind.SPEECH_SEGMENT: 64,
+        ObservationKind.SPEECH_CANCELLED: 64,
         ObservationKind.TRANSCRIPT_SEGMENT: 128,
         ObservationKind.TEXT_INPUT: 128,
         ObservationKind.IMAGE_INPUT: 64,
@@ -153,6 +163,10 @@ class PerceptionRuntime:
 
         # speech active event
         self._active_speech_segments: set[PerceptionSegmentRef] = set()
+        # Recent terminal/source protection is bounded, not an infinite replay ledger.
+        self._retired_speech_segments: dict[PerceptionSegmentRef, None] = {}
+        self._speech_generations: dict[str, tuple[int, bool]] = {}
+        self._retired_speech_evictions = 0
         self._speech_idle_event = asyncio.Event()
         self._speech_idle_event.set()
         self._last_speech_idle_cutoff = self._capture_cutoff_locked()
@@ -170,12 +184,68 @@ class PerceptionRuntime:
     @property
     def active_speech_segments(self) -> tuple[PerceptionSegmentRef, ...]:
         with self._lock:
-            return tuple(sorted(self._active_speech_segments))
+            return tuple(
+                sorted(
+                    self._active_speech_segments,
+                    key=lambda item: (
+                        item.source.source_id,
+                        item.source.source_generation,
+                        item.segment_id,
+                    ),
+                )
+            )
 
     """Helper"""
 
+    def _accept_speech_locked(self, observation: EnvObservation) -> bool:
+        if observation.kind not in {
+            ObservationKind.SPEECH_FRAME,
+            ObservationKind.SPEECH_SEGMENT,
+            ObservationKind.SPEECH_CANCELLED,
+        }:
+            return True
+
+        segment = observation.segment
+        source = observation.source
+        generation, cancelled = self._speech_generations.get(source.source_id, (0, False))
+        reason = None
+        if segment in self._retired_speech_segments:
+            reason = "segment_terminal"
+        elif observation.kind == ObservationKind.SPEECH_FRAME:
+            if source.source_generation < generation:
+                reason = "source_generation_retired"
+            elif source.source_generation == generation and cancelled:
+                reason = "speech_source_cancelled"
+        if reason is not None:
+            self.input_trace.record(
+                "perception.speech_ignored",
+                source_id=source.source_id,
+                source_generation=source.source_generation,
+                segment_id=segment.segment_id if segment is not None else None,
+                observation_id=observation.observation_id,
+                reason=reason,
+            )
+            return False
+
+        if source.source_generation > generation or (
+            source.source_generation == generation
+            and observation.kind == ObservationKind.SPEECH_CANCELLED
+        ):
+            self._speech_generations[source.source_id] = (
+                source.source_generation,
+                observation.kind == ObservationKind.SPEECH_CANCELLED,
+            )
+            if len(self._speech_generations) > self._MAX_SPEECH_SOURCES:
+                self._speech_generations.pop(next(iter(self._speech_generations)))
+                self.input_trace.record("perception.speech_source_evicted", evicted_count=1)
+        return True
+
     def _update_speech_activity_locked(self, observation: EnvObservation) -> None:
-        if observation.kind not in {ObservationKind.SPEECH_FRAME, ObservationKind.SPEECH_SEGMENT}:
+        if observation.kind not in {
+            ObservationKind.SPEECH_FRAME,
+            ObservationKind.SPEECH_SEGMENT,
+            ObservationKind.SPEECH_CANCELLED,
+        }:
             return
 
         segment = observation.segment
@@ -196,10 +266,14 @@ class PerceptionRuntime:
 
         was_active = bool(self._active_speech_segments)
         self._active_speech_segments.discard(segment)
+        self._retired_speech_segments[segment] = None
+        if len(self._retired_speech_segments) > self._MAX_RETIRED_SPEECH_SEGMENTS:
+            self._retired_speech_segments.pop(next(iter(self._retired_speech_segments)))
+            self._retired_speech_evictions += 1
 
         if was_active and not self._active_speech_segments:
-            # SPEECH_SEGMENT has already entered the global event stream when this
-            # method runs, so the cutoff includes the complete segment boundary.
+            # Completion/cancellation already entered the event stream, so the
+            # idle cutoff includes the terminal boundary that released this waiter.
             self._last_speech_idle_cutoff = self._capture_cutoff_locked()
             self._speech_idle_event.set()
 
@@ -234,6 +308,9 @@ class PerceptionRuntime:
         return event
 
     def _publish_observation_locked(self, observation: EnvObservation) -> PerceptionEvent | None:
+        if not self._accept_speech_locked(observation):
+            return None
+
         stream_name = self._STREAM_BY_OBSERVATION_KIND.get(observation.kind)
         stream_sequence = None
 
@@ -250,15 +327,17 @@ class PerceptionRuntime:
             )
 
         self._update_speech_activity_locked(observation)
-        if observation.kind in (ObservationKind.SPEECH_SEGMENT, ObservationKind.TRANSCRIPT_SEGMENT):
+        if stage := self._SPEECH_TRACE_STAGES.get(observation.kind):
             segment = observation.segment
             source = segment.source if segment is not None else observation.source
+            input_source = observation.metadata.get("input_source")
+            input_source = input_source if isinstance(input_source, Mapping) else {}
             self.input_trace.record(
-                "perception.speech_closed"
-                if observation.kind == ObservationKind.SPEECH_SEGMENT
-                else "perception.transcript_final",
+                stage,
                 source_id=source.source_id,
                 source_generation=source.source_generation,
+                input_source_id=input_source.get("source_id"),
+                input_source_generation=input_source.get("source_generation"),
                 segment_id=segment.segment_id if segment is not None else None,
                 observation_id=observation.observation_id,
                 event_id=event.event_id if event is not None else None,
@@ -266,6 +345,10 @@ class PerceptionRuntime:
                 stream_sequence=stream_sequence,
                 start_time_ns=observation.time_range.start.monotonic_ns,
                 end_time_ns=observation.time_range.end.monotonic_ns,
+                reason=observation.metadata.get("reason_code")
+                if observation.kind == ObservationKind.SPEECH_CANCELLED
+                else None,
+                retired_evictions=self._retired_speech_evictions,
             )
         return event
 
@@ -355,9 +438,11 @@ class PerceptionRuntime:
             raise ValueError("after_sequence cannot be negative")
 
         final_observations = tuple(final_observations)
+        published: list[EnvObservation] = []
         with self._lock:
             for observation in final_observations:
-                self._publish_observation_locked(observation)
+                if self._publish_observation_locked(observation) is not None:
+                    published.append(observation)
 
             cutoff = self._capture_cutoff_locked()
             if after_sequence > cutoff.sequence:
@@ -369,7 +454,7 @@ class PerceptionRuntime:
                 after_seq=after_sequence, until_seq=cutoff.sequence
             )
 
-        self._add_to_timeline(final_observations)
+        self._add_to_timeline(published)
         return PerceptionSnapshot(
             after_sequence=after_sequence,
             cutoff=cutoff,
@@ -435,7 +520,7 @@ class PerceptionRuntime:
         Wait for the next boundary at which all active speech segments are closed.
 
         The returned cutoff was captured atomically when the final active
-        SPEECH_SEGMENT was published.
+        speech completion or cancellation was published.
         """
         with self._lock:
             if not self._active_speech_segments:
@@ -528,7 +613,8 @@ class PerceptionRuntime:
         with self._lock:
             event = self._publish_observation_locked(observation)
 
-        self._add_to_timeline((observation,))
+        if event is not None:
+            self._add_to_timeline((observation,))
         return event
 
     async def wait_for_pending_observations(

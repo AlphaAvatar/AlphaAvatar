@@ -28,8 +28,8 @@ from alphaavatar.agents.router.schemas import (
 )
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.core.env import EnvObservation
-from alphaavatar.core.env.enums import AnnotationKind, ObservationKind
-from alphaavatar.core.env.schemas import PerceptionSegmentRef
+from alphaavatar.core.env.enums import AnnotationKind, ObservationKind, SpeechCancellationReason
+from alphaavatar.core.env.schemas import PerceptionSegmentRef, PerceptionSourceRef
 from alphaavatar.core.perception.schemas import PerceptionEvent
 
 from .evidence import TurnEvidenceBuilder
@@ -47,6 +47,7 @@ class TurnTakingCoordinator:
 
     _MAX_ORPHANS = 64
     _MAX_RETIRED_SEGMENTS = 256
+    _MAX_CANCELLED_SOURCES = 256
     _MAX_ADDRESSING_RECORDS_PER_TARGET = 8
     _TERMINAL_ACTIONS = {
         TurnTakingAction.COMMIT,
@@ -83,6 +84,7 @@ class TurnTakingCoordinator:
         self._candidates: dict[SpeakerKey, TurnCandidate] = {}
         self._segment_owners: dict[PerceptionSegmentRef, SpeakerKey] = {}
         self._retired_segments: dict[PerceptionSegmentRef, None] = {}
+        self._cancelled_sources: dict[PerceptionSourceRef, None] = {}
         self._orphan_transcripts: dict[PerceptionSegmentRef, EnvObservation] = {}
         self._orphan_addressing_by_observation: dict[str, list[AddressingEvidenceRecord]] = {}
         self._orphan_addressing_by_segment: dict[
@@ -257,14 +259,16 @@ class TurnTakingCoordinator:
         )
 
         for segment in candidate.segments:
-            self._retired_segments[segment] = None
-            if len(self._retired_segments) > self._MAX_RETIRED_SEGMENTS:
-                self._retired_segments.pop(next(iter(self._retired_segments)))
             if self._segment_owners.get(segment) == key:
                 self._segment_owners.pop(segment, None)
+            self._retire_segment(segment)
 
-            self._orphan_transcripts.pop(segment, None)
-            self._orphan_addressing_by_segment.pop(segment, None)
+    def _retire_segment(self, segment: PerceptionSegmentRef) -> None:
+        self._retired_segments[segment] = None
+        if len(self._retired_segments) > self._MAX_RETIRED_SEGMENTS:
+            self._retired_segments.pop(next(iter(self._retired_segments)))
+        self._orphan_transcripts.pop(segment, None)
+        self._orphan_addressing_by_segment.pop(segment, None)
 
     async def _wait_for_transcript(
         self, key: SpeakerKey, evidence: TurnTakingEvidence, *, reason: str
@@ -623,7 +627,7 @@ class TurnTakingCoordinator:
     def _route_addressing(
         self, segment: PerceptionSegmentRef, record: AddressingEvidenceRecord
     ) -> None:
-        if segment in self._retired_segments:
+        if segment in self._retired_segments or segment.source in self._cancelled_sources:
             return
         key = self._segment_owners.get(segment)
         if key is None:
@@ -725,11 +729,24 @@ class TurnTakingCoordinator:
 
     def _consume_speech(self, observation: EnvObservation) -> None:
         segment = self._builder.require_segment(observation)
-        if segment in self._retired_segments:
+        if segment in self._retired_segments or segment.source in self._cancelled_sources:
             if observation.kind == ObservationKind.SPEECH_SEGMENT:
                 self._trace_segment(
                     "candidate.segment_rejected", segment, observation, reason="retired_segment"
                 )
+            return
+        if (
+            observation.kind == ObservationKind.SPEECH_FRAME
+            and segment not in self._segment_owners
+            and (
+                observation.metadata.get("speech_event") != "start"
+                or observation.metadata.get("route_index") != 1
+            )
+        ):
+            self._retire_segment(segment)
+            self._trace_segment(
+                "candidate.segment_rejected", segment, observation, reason="missing_segment_start"
+            )
             return
         key, candidate = self._get_candidate(observation)
         if (
@@ -787,7 +804,7 @@ class TurnTakingCoordinator:
 
     def _consume_transcript(self, observation: EnvObservation) -> None:
         segment = self._builder.require_segment(observation)
-        if segment in self._retired_segments:
+        if segment in self._retired_segments or segment.source in self._cancelled_sources:
             self._trace_segment(
                 "candidate.transcript_rejected", segment, observation, reason="retired_segment"
             )
@@ -803,7 +820,52 @@ class TurnTakingCoordinator:
         if candidate is not None:
             self._apply_transcript(key, candidate, segment, observation)
 
+    def _consume_cancelled(self, observation: EnvObservation) -> None:
+        segment = self._builder.require_segment(observation)
+        if segment.source in self._cancelled_sources:
+            self._retire_segment(segment)
+            return
+
+        reason = SpeechCancellationReason(observation.metadata["reason_code"]).value
+        self._cancelled_sources[segment.source] = None
+        if len(self._cancelled_sources) > self._MAX_CANCELLED_SOURCES:
+            self._cancelled_sources.pop(next(iter(self._cancelled_sources)))
+        self._trace_segment("candidate.cancelled", segment, observation, reason=reason)
+
+        # Cancellation invalidates the derived source epoch, including pending candidates.
+        for key, candidate in tuple(self._candidates.items()):
+            if key.source != segment.source:
+                continue
+            self._cancel_assessment(key)
+            candidate.cancel_segment(segment, observation)
+            self._trace_segment(
+                "candidate.segment",
+                segment,
+                observation,
+                candidate=candidate,
+                state="cancelled",
+                reason=reason,
+            )
+            self._publish_result(
+                candidate,
+                self._operational_result(
+                    self._builder.build(candidate), action=TurnTakingAction.CANCEL, reason=reason
+                ),
+            )
+            self._drop_candidate(key)
+
+        self._retire_segment(segment)
+        for current in tuple(self._orphan_transcripts):
+            if current.source == segment.source:
+                self._retire_segment(current)
+        for current in tuple(self._orphan_addressing_by_segment):
+            if current.source == segment.source:
+                self._retire_segment(current)
+
     def handle_observation(self, observation: EnvObservation) -> None:
+        if observation.kind == ObservationKind.SPEECH_CANCELLED:
+            self._consume_cancelled(observation)
+            return
         self._attach_pending_addressing(observation)
 
         if observation.kind in {ObservationKind.SPEECH_FRAME, ObservationKind.SPEECH_SEGMENT}:
@@ -857,12 +919,17 @@ class TurnTakingCoordinator:
             if not candidate.active_segments:
                 self._schedule_assessment(key, candidate.turn_candidate_id)
 
-    async def reset(self) -> None:
+    async def reset(self, *, retain_retired: bool = False) -> None:
         tasks = tuple(self._assessment_workers)
+        if retain_retired:
+            for key in tuple(self._candidates):
+                self._drop_candidate(key)
         self._assessment_tasks.clear()
         self._candidates.clear()
         self._segment_owners.clear()
-        self._retired_segments.clear()
+        if not retain_retired:
+            self._retired_segments.clear()
+            self._cancelled_sources.clear()
         self._orphan_transcripts.clear()
         self._orphan_addressing_by_observation.clear()
         self._orphan_addressing_by_segment.clear()

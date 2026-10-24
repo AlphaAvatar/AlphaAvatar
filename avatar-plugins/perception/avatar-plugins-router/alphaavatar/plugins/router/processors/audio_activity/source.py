@@ -17,6 +17,7 @@ import asyncio
 import logging
 import uuid
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from alphaavatar.agents.avatar.voice import (
@@ -26,6 +27,7 @@ from alphaavatar.agents.avatar.voice import (
     VoiceActivityEventType,
 )
 from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.enums import SpeechCancellationReason
 from alphaavatar.core.env.schemas import PerceptionSegmentRef, PerceptionSourceRef
 from alphaavatar.core.media import AudioFrame, AudioSegmentPayload
 from alphaavatar.core.perception import PerceptionRuntime
@@ -54,12 +56,13 @@ class AudioActivitySource:
         num_channels: int,
         pre_roll_sec: float,
         max_buffer_sec: float,
+        close_timeout_sec: float = 1.0,
+        on_failed: Callable[[AudioActivitySource, SpeechCancellationReason], None] | None = None,
     ) -> None:
         self.perception_runtime = perception_runtime
         self.input_source = input_source
-        self.speech_source = PerceptionSourceRef(
-            source_id=f"router:speech:{input_source.source_id}",
-            source_generation=input_source.source_generation,
+        self.speech_source = perception_runtime.next_source(
+            f"router:speech:{input_source.source_id}"
         )
 
         self.sample_rate = sample_rate
@@ -68,6 +71,8 @@ class AudioActivitySource:
         self._pre_roll_samples = int(pre_roll_sec * sample_rate)
         self._max_buffer_samples = int(max_buffer_sec * sample_rate)
         self._vad_stream: VADStreamBase = vad.stream()
+        self._close_timeout_sec = close_timeout_sec
+        self._on_failed = on_failed
 
         self._pending: deque[AudioFrameRef] = deque()
         self._segment_frames: list[AudioFrameRef] = []
@@ -80,6 +85,9 @@ class AudioActivitySource:
 
         self.failed = False
         self._closed = False
+        self._aborted = False
+        self._close_task: asyncio.Task[None] | None = None
+        self._provider_close_task: asyncio.Task[None] | None = None
 
         self._event_task = asyncio.create_task(
             self._event_loop(),
@@ -93,6 +101,14 @@ class AudioActivitySource:
     @property
     def speaking(self) -> bool:
         return self._segment is not None
+
+    @property
+    def cleanup_tasks(self) -> tuple[asyncio.Task[None], ...]:
+        return tuple(
+            task
+            for task in (self._event_task, self._provider_close_task, self._close_task)
+            if task is not None
+        )
 
     def matches(self, frame: AudioFrame) -> bool:
         return frame.sample_rate == self.sample_rate and frame.num_channels == self.num_channels
@@ -116,7 +132,7 @@ class AudioActivitySource:
         return frame_ref
 
     def push(self, observation: EnvObservation, frame: AudioFrame) -> bool:
-        if self._closed or observation.source != self.input_source:
+        if self._closed or self.failed or observation.source != self.input_source:
             return False
 
         frame_ref = self._append_frame(observation, frame)
@@ -136,7 +152,7 @@ class AudioActivitySource:
     ) -> EnvObservation | None:
         segment = self._segment
 
-        if segment is None or frame_ref.routed_segment == segment:
+        if self._aborted or segment is None or frame_ref.routed_segment == segment:
             return None
 
         self._route_index += 1
@@ -169,7 +185,7 @@ class AudioActivitySource:
         return routed
 
     def _start_segment(self, event: VoiceActivityEvent) -> None:
-        if self.speaking:
+        if self._aborted or self.speaking:
             return
 
         accumulated = int(event.raw_accumulated_speech * self.sample_rate)
@@ -211,63 +227,100 @@ class AudioActivitySource:
             frame_ref for frame_ref in self._segment_frames if frame_ref.start_sample < speech_end
         ]
 
-        if frames:
-            segment_start = self._time_at_sample(frames, self._speech_start_sample)
-            segment_end = self._time_at_sample(frames, speech_end)
+        if not frames:
+            self._fail(SpeechCancellationReason.EMPTY_SEGMENT)
+            return
 
-            if segment_start is None or segment_end is None:
-                segment_range = RuntimeTimeRange(
-                    start=frames[0].observation.time_range.start,
-                    end=frames[-1].observation.time_range.end,
-                )
-            else:
-                segment_range = RuntimeTimeRange(start=segment_start, end=segment_end)
+        segment_start = self._time_at_sample(frames, self._speech_start_sample)
+        segment_end = self._time_at_sample(frames, speech_end)
 
-            source_observation_ids = [frame_ref.observation.observation_id for frame_ref in frames]
-
-            metadata = {
-                "speech_event": "end",
-                "input_source": self.input_source.to_dict(),
-                "sample_rate": self.sample_rate,
-                "num_channels": self.num_channels,
-                "route_start_sample": self._route_start_sample,
-                "speech_start_sample": self._speech_start_sample,
-                "speech_end_sample": speech_end,
-                "frame_count": len(frames),
-                "speech_duration": event.speech_duration,
-                "silence_duration": event.silence_duration,
-                "vad_probability": event.probability,
-                "vad_reason": event.reason,
-            }
-
-            payload = AudioSegmentPayload.from_frames(
-                segment_id=segment.segment_id,
-                frames=[frame_ref.frame for frame_ref in frames],
-                source_observation_ids=source_observation_ids,
-                metadata=dict(metadata),
+        if segment_start is None or segment_end is None:
+            segment_range = RuntimeTimeRange(
+                start=frames[0].observation.time_range.start,
+                end=frames[-1].observation.time_range.end,
             )
+        else:
+            segment_range = RuntimeTimeRange(start=segment_start, end=segment_end)
 
-            first_observation = frames[0].observation
+        source_observation_ids = [frame_ref.observation.observation_id for frame_ref in frames]
 
-            speech_segment = EnvObservation.speech_segment(
-                time_range=segment_range,
-                source=self.speech_source,
-                segment=segment,
-                transport_participant_id=first_observation.transport_participant_id,
-                entity=first_observation.entity,
-                payload=payload,
-                metadata=metadata,
-            )
+        metadata = {
+            "speech_event": "end",
+            "input_source": self.input_source.to_dict(),
+            "sample_rate": self.sample_rate,
+            "num_channels": self.num_channels,
+            "route_start_sample": self._route_start_sample,
+            "speech_start_sample": self._speech_start_sample,
+            "speech_end_sample": speech_end,
+            "frame_count": len(frames),
+            "speech_duration": event.speech_duration,
+            "silence_duration": event.silence_duration,
+            "vad_probability": event.probability,
+            "vad_reason": event.reason,
+        }
 
-            self.perception_runtime.publish_observation(speech_segment)
+        payload = AudioSegmentPayload.from_frames(
+            segment_id=segment.segment_id,
+            frames=[frame_ref.frame for frame_ref in frames],
+            source_observation_ids=source_observation_ids,
+            metadata=dict(metadata),
+        )
+
+        first_observation = frames[0].observation
+
+        speech_segment = EnvObservation.speech_segment(
+            time_range=segment_range,
+            source=self.speech_source,
+            segment=segment,
+            transport_participant_id=first_observation.transport_participant_id,
+            entity=first_observation.entity,
+            payload=payload,
+            metadata=metadata,
+        )
+
+        self.perception_runtime.publish_observation(speech_segment)
 
         self._segment = None
         self._segment_frames.clear()
         self._route_index = 0
 
+    def _abort(self, reason: SpeechCancellationReason) -> None:
+        self._closed = self._aborted = True
+        segment, self._segment = self._segment, None
+        if segment is not None:
+            first = self._segment_frames[0].observation if self._segment_frames else None
+            self.perception_runtime.publish_observation(
+                EnvObservation.speech_cancelled(
+                    reason=reason,
+                    source=self.speech_source,
+                    segment=segment,
+                    time_range=RuntimeTimeRange.point(self.perception_runtime.clock.now()),
+                    transport_participant_id=first.transport_participant_id if first else None,
+                    entity=first.entity if first else None,
+                    metadata={
+                        "input_source": self.input_source.to_dict(),
+                        "frame_count": self._route_index,
+                        "router_processor": "audio_activity",
+                    },
+                )
+            )
+        self._pending.clear()
+        self._segment_frames.clear()
+        self._route_index = 0
+
+    def _fail(self, reason: SpeechCancellationReason) -> None:
+        self.failed = True
+        self._abort(reason)
+        if self._on_failed is not None:
+            self._on_failed(self, reason)
+        else:
+            self.begin_close(graceful=False, reason=reason)
+
     async def _event_loop(self) -> None:
         try:
             async for event in self._vad_stream:
+                if self._aborted:
+                    break
                 if event.type == VoiceActivityEventType.START_OF_SPEECH:
                     self._start_segment(event)
                 elif event.type == VoiceActivityEventType.END_OF_SPEECH:
@@ -276,26 +329,78 @@ class AudioActivitySource:
         except asyncio.CancelledError:
             raise
         except Exception:
-            self.failed = True
+            self._fail(SpeechCancellationReason.VAD_ERROR)
             logger.exception("Audio Activity VAD failed source=%s", self.input_source)
+        else:
+            if not self._closed:
+                self._fail(SpeechCancellationReason.VAD_ENDED)
 
-    async def close(self, *, graceful: bool) -> None:
-        if self._closed:
-            return
-
+    def begin_close(
+        self,
+        *,
+        graceful: bool,
+        reason: SpeechCancellationReason = SpeechCancellationReason.SOURCE_CLOSED,
+    ) -> asyncio.Task[None]:
         self._closed = True
+        if not graceful:
+            # Publish the terminal before waiting for any provider resource to close.
+            self._abort(reason)
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(
+                self._close(graceful=graceful, reason=reason),
+                name=(
+                    f"router_audio_activity_close:{self.speech_source.source_id}:"
+                    f"{self.speech_source.source_generation}"
+                ),
+            )
+        return self._close_task
 
-        if graceful and self._vad_stream.end_input():
+    async def _close(self, *, graceful: bool, reason: SpeechCancellationReason) -> None:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._close_timeout_sec
+        try:
+            if graceful and not self._aborted and self._vad_stream.end_input():
+                _, pending = await asyncio.wait(
+                    (self._event_task,), timeout=max(0.0, deadline - loop.time())
+                )
+                if pending:
+                    reason = SpeechCancellationReason.CLOSE_TIMEOUT
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            reason = SpeechCancellationReason.PROCESSING_ERROR
+            logger.exception("Audio Activity drain failed source=%s", self.input_source)
+        finally:
+            self._abort(reason)
+            if not self._event_task.done():
+                self._event_task.cancel()
+            self._provider_close_task = asyncio.create_task(
+                self._vad_stream.aclose(), name="router_audio_activity_provider_close"
+            )
+            tasks = (self._event_task, self._provider_close_task)
             try:
-                await asyncio.wait_for(asyncio.shield(self._event_task), timeout=1.0)
-            except TimeoutError:
-                pass
+                done, pending = await asyncio.wait(tasks, timeout=max(0.0, deadline - loop.time()))
+                for task in done:
+                    if not task.cancelled() and task.exception() is not None:
+                        logger.warning("Audio Activity cleanup failed source=%s", self.input_source)
+                if pending:
+                    self.perception_runtime.input_trace.record(
+                        "audio.close_timeout",
+                        source_id=self.speech_source.source_id,
+                        source_generation=self.speech_source.source_generation,
+                        input_source_id=self.input_source.source_id,
+                        input_source_generation=self.input_source.source_generation,
+                        reason="close_timeout",
+                    )
+            finally:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
 
-        if not self._event_task.done():
-            self._event_task.cancel()
-
-        await self._vad_stream.aclose()
-        await asyncio.gather(self._event_task, return_exceptions=True)
-
-        self._pending.clear()
-        self._segment_frames.clear()
+    async def close(
+        self,
+        *,
+        graceful: bool,
+        reason: SpeechCancellationReason = SpeechCancellationReason.SOURCE_CLOSED,
+    ) -> None:
+        await asyncio.shield(self.begin_close(graceful=graceful, reason=reason))

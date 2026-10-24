@@ -12,5 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .kind import AnnotationKind, ObservationKind
+from .speech import SpeechCancellationReason
 
-__all__ = ["AnnotationKind", "ObservationKind"]
+__all__ = ["AnnotationKind", "ObservationKind", "SpeechCancellationReason"]

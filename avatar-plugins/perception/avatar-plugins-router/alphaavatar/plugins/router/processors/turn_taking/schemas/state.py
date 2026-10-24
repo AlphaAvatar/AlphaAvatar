@@ -145,6 +145,14 @@ class TurnCandidate:
         elif observation.time_range.end.monotonic_ns > self.updated_at.monotonic_ns:
             self.updated_at = observation.time_range.end
 
+    def cancel_segment(self, segment: PerceptionSegmentRef, observation: EnvObservation) -> None:
+        if segment not in self.segments:
+            self.segments.append(segment)
+        self.active_segments.clear()
+        self.anchor_observation_id = observation.observation_id
+        self.add_input_observation(observation.observation_id)
+        self._touch(observation.time_range.end)
+
     def add_audio(self, evidence: TurnTakingAudioEvidence) -> bool:
         if self.audio.get(evidence.segment) == evidence:
             return False

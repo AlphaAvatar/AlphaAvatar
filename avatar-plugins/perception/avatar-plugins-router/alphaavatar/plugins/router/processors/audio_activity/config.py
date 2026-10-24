@@ -15,11 +15,14 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class AudioActivityConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     enabled: bool = True
     pre_roll_sec: float = Field(default=0.3, ge=0.0)
     max_buffer_sec: float = Field(default=2.0, gt=0.0)
+    close_timeout_sec: float = Field(default=1.0, gt=0.0, le=30.0)
+    max_sources: int = Field(default=64, strict=True, gt=0, le=1024)
+    event_batch_size: int = Field(default=64, strict=True, gt=0, le=1024)
 
     @model_validator(mode="after")
     def validate_buffer(self) -> "AudioActivityConfig":

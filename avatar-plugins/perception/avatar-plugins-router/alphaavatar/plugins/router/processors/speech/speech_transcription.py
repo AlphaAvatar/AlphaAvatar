@@ -29,7 +29,7 @@ from alphaavatar.agents.avatar.voice import (
 from alphaavatar.agents.router import RouterProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.core.env import EnvObservation
-from alphaavatar.core.env.enums import ObservationKind
+from alphaavatar.core.env.enums import ObservationKind, SpeechCancellationReason
 from alphaavatar.core.env.schemas import (
     PerceptionEntityRef,
     PerceptionSegmentRef,
@@ -123,6 +123,8 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
         self._closing_sources: dict[str, _STTSource] = {}
         self._segments: dict[PerceptionSegmentRef, _SegmentState] = {}
         self._generations: dict[str, int] = {}
+        # Cancelled producer epochs remain retired until a newer generation arrives.
+        self._cancelled_generations: dict[str, int] = {}
         # Duplicate protection covers this retained window, not arbitrary historical replay.
         self._retired: OrderedDict[PerceptionSegmentRef, None] = OrderedDict()
         self._retired_evictions = 0
@@ -203,6 +205,11 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
                 frame_count=state.frame_count,
                 duplicate_count=state.duplicate_count,
             )
+            if state.input_source is not None:
+                values.update(
+                    input_source_id=state.input_source.source_id,
+                    input_source_generation=state.input_source.source_generation,
+                )
         values.update(fields)
         self._runtime.perception.input_trace.record(stage, **values)
 
@@ -237,12 +244,16 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
         if generation is not None and source_ref.source_generation < generation:
             self._finish_segment(segment, outcome="stale", reason="source_generation_retired")
             return False
+        if self._cancelled_generations.get(source_ref.source_id) == source_ref.source_generation:
+            self._finish_segment(segment, outcome="stale", reason="source_generation_retired")
+            return False
         if generation is None and len(self._generations) >= self._max_sources:
             self._finish_segment(segment, outcome="rejected", reason="source_capacity")
             self._runtime.perception.input_trace.freeze(reason="source_capacity")
             return False
         if generation != source_ref.source_generation:
             self._generations[source_ref.source_id] = source_ref.source_generation
+            self._cancelled_generations.pop(source_ref.source_id, None)
             for current in tuple(self._sources.values()):
                 if (
                     current.source.source_id == source_ref.source_id
@@ -567,7 +578,36 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
         if segment is None or observation.kind not in {
             ObservationKind.SPEECH_FRAME,
             ObservationKind.SPEECH_SEGMENT,
+            ObservationKind.SPEECH_CANCELLED,
         }:
+            return
+
+        if observation.kind == ObservationKind.SPEECH_CANCELLED:
+            if not await self._accept_generation(segment):
+                return
+            reason = SpeechCancellationReason(observation.metadata["reason_code"]).value
+            self._cancelled_generations[segment.source.source_id] = segment.source.source_generation
+            state = self._segments.get(segment)
+            if state is not None:
+                state.last_stream_sequence = stream_sequence
+            input_source = self._input_source(observation) or (
+                state.input_source if state else None
+            )
+            self._finish_segment(
+                segment,
+                outcome="cancelled",
+                reason=reason,
+                observation_id=observation.observation_id,
+                stream_sequence=stream_sequence,
+                input_source_id=input_source.source_id if input_source is not None else None,
+                input_source_generation=(
+                    input_source.source_generation if input_source is not None else None
+                ),
+            )
+            # A cancelled producer epoch cannot share its remote PCM buffer with its successor.
+            source = self._sources.get(segment.source)
+            if source is not None:
+                await self._close_source(source, graceful=False, reason=reason)
             return
         if segment in self._retired or not await self._accept_generation(segment):
             return

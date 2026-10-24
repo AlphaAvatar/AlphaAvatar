@@ -77,7 +77,11 @@ class PerceptionWindow:
 
     @property
     def speech_observations(self) -> list[EnvObservation]:
-        return self.by_kind(ObservationKind.SPEECH_FRAME, ObservationKind.SPEECH_SEGMENT)
+        return self.by_kind(
+            ObservationKind.SPEECH_FRAME,
+            ObservationKind.SPEECH_SEGMENT,
+            ObservationKind.SPEECH_CANCELLED,
+        )
 
     @property
     def has_gap(self) -> bool:

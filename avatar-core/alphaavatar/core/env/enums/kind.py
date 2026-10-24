@@ -23,6 +23,7 @@ class ObservationKind(StrEnum):
     AUDIO_SEGMENT = "audio_segment"
     SPEECH_FRAME = "speech_frame"
     SPEECH_SEGMENT = "speech_segment"
+    SPEECH_CANCELLED = "speech_cancelled"
 
     TRANSCRIPT_DELTA = "transcript_delta"
     TRANSCRIPT_SEGMENT = "transcript_segment"

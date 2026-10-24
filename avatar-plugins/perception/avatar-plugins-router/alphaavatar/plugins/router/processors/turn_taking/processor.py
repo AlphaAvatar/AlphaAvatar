@@ -88,7 +88,7 @@ class MultimodalTurnTakingProcessor(RouterProcessorBase):
                     logger.warning(
                         "Turn Taking observed perception gap missed=%s", window.missed_count
                     )
-                    await self._coordinator.reset()
+                    await self._coordinator.reset(retain_retired=True)
 
                 for observation in window.observations:
                     try:

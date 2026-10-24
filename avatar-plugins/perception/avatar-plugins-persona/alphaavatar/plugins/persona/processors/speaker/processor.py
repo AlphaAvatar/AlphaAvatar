@@ -26,6 +26,7 @@ from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_c
 from alphaavatar.agents.utils import NumpyOP
 from alphaavatar.agents.utils.time import application_now
 from alphaavatar.core.env import EnvObservation
+from alphaavatar.core.env.enums import ObservationKind
 from alphaavatar.core.env.schemas import PerceptionSegmentRef, PerceptionSourceRef
 from alphaavatar.core.media import AudioFrame, PayloadFormatUnavailable
 from alphaavatar.core.media.enums import PayloadFormat, PayloadView
@@ -49,11 +50,13 @@ class SpeakerSourceState:
     window_index: int = 0
     seen_observation_ids: set[str] = field(default_factory=set)
     seen_order: deque[str] = field(default_factory=deque)
+    token: object = field(default_factory=object)
 
 
 @dataclass(slots=True, frozen=True)
 class SpeakerWindow:
     source: PerceptionSourceRef
+    source_token: object
     segment: PerceptionSegmentRef | None
     window_index: int
     audio_f32: bytes
@@ -70,6 +73,7 @@ class SpeakerProcessor(PersonaProcessorBase):
     CONSUMER_ID = "persona.speaker"
 
     MAX_SEEN_OBSERVATIONS = 2048
+    MAX_RETIRED_SOURCES = 256
     ATTRIBUTE_INTERVAL_SEC = 5.0
 
     def __init__(
@@ -93,6 +97,7 @@ class SpeakerProcessor(PersonaProcessorBase):
         self._attribute_every = max(1, math.ceil(self.ATTRIBUTE_INTERVAL_SEC / self._step_sec))
 
         self._sources: dict[PerceptionSourceRef, SpeakerSourceState] = {}
+        self._retired_sources: dict[PerceptionSourceRef, None] = {}
         self._profile_caches: dict[str, SpeakerCache] = {}
         self._inference_queue: asyncio.Queue[SpeakerWindow] = asyncio.Queue(
             maxsize=config.inference_queue_size
@@ -100,6 +105,8 @@ class SpeakerProcessor(PersonaProcessorBase):
 
         self._consume_task: asyncio.Task[None] | None = None
         self._inference_task: asyncio.Task[None] | None = None
+        self._inference_job: asyncio.Task[None] | None = None
+        self._active_window: SpeakerWindow | None = None
 
     @property
     def name(self) -> str:
@@ -133,6 +140,45 @@ class SpeakerProcessor(PersonaProcessorBase):
 
         return True
 
+    def _window_is_current(self, window: SpeakerWindow) -> bool:
+        state = self._sources.get(window.source)
+        return state is not None and state.token is window.source_token
+
+    def _discard_windows(self, source: PerceptionSourceRef | None = None) -> None:
+        retained: list[SpeakerWindow] = []
+        while not self._inference_queue.empty():
+            item = self._inference_queue.get_nowait()
+            if source is not None and item.source != source:
+                retained.append(item)
+        for item in retained:
+            self._inference_queue.put_nowait(item)
+
+        if self._active_window is not None and (
+            source is None or self._active_window.source == source
+        ):
+            task = self._inference_job
+            if task is not None and not task.done() and not task.cancelling():
+                task.cancel()
+
+    def _retire_source(self, source: PerceptionSourceRef) -> None:
+        state = self._sources.pop(source, None)
+        if state is not None:
+            state.pcm.clear()
+            state.seen_observation_ids.clear()
+            state.seen_order.clear()
+        self._retired_sources[source] = None
+        if len(self._retired_sources) > self.MAX_RETIRED_SOURCES:
+            self._retired_sources.pop(next(iter(self._retired_sources)))
+        self._discard_windows(source)
+
+    def _retire_previous_generations(self, source: PerceptionSourceRef) -> None:
+        for current in tuple(self._sources):
+            if (
+                current.source_id == source.source_id
+                and current.source_generation < source.source_generation
+            ):
+                self._retire_source(current)
+
     def _enqueue_window(self, window: SpeakerWindow) -> None:
         try:
             self._inference_queue.put_nowait(window)
@@ -157,6 +203,8 @@ class SpeakerProcessor(PersonaProcessorBase):
 
     def _append_frame(self, observation: EnvObservation, frame: AudioFrame) -> None:
         source = observation.source
+        if source in self._retired_sources:
+            return
         if frame.sample_rate != self._sample_rate or frame.num_channels != 1:
             logger.warning(
                 "Speaker received unsupported audio "
@@ -170,6 +218,13 @@ class SpeakerProcessor(PersonaProcessorBase):
 
         state = self._sources.get(source)
         if state is None:
+            if any(
+                current.source_id == source.source_id
+                and current.source_generation > source.source_generation
+                for current in (*self._sources, *self._retired_sources)
+            ):
+                return
+            self._retire_previous_generations(source)
             state = SpeakerSourceState(
                 source=source, sample_rate=frame.sample_rate, num_channels=frame.num_channels
             )
@@ -195,6 +250,7 @@ class SpeakerProcessor(PersonaProcessorBase):
             self._enqueue_window(
                 SpeakerWindow(
                     source=source,
+                    source_token=state.token,
                     segment=observation.segment,
                     window_index=state.window_index,
                     audio_f32=audio.tobytes(),
@@ -206,8 +262,10 @@ class SpeakerProcessor(PersonaProcessorBase):
     """Inference worker"""
 
     async def _resolve_speaker_vector(
-        self, speaker_vector: np.ndarray, *, timeout: float | None = None
+        self, speaker_vector: np.ndarray, *, window: SpeakerWindow, timeout: float | None = None
     ) -> str | None:
+        if not self._window_is_current(window):
+            return None
         vector = NumpyOP.l2_normalize(NumpyOP.to_np(speaker_vector))
 
         uid = NumpyOP.best_cosine_match(
@@ -224,8 +282,12 @@ class SpeakerProcessor(PersonaProcessorBase):
             uid = await self.persona.store.search_speaker_vector(
                 speaker_vector=vector, threshold=SPEAKER_MATCH_THRESHOLD, timeout=timeout
             )
+            if not self._window_is_current(window):
+                return None
             if uid is not None:
                 await self.persona.load_profile(uid=uid)
+                if not self._window_is_current(window):
+                    return None
 
         if uid is not None:
             if cache := self.persona.persona_cache.get(uid):
@@ -246,11 +308,14 @@ class SpeakerProcessor(PersonaProcessorBase):
             ),
             timeout=self._vector_config.inference_timeout_sec,
         )
+        if not self._window_is_current(window):
+            return None
         if result is None:
             raise RuntimeError("Speaker vector runner returned no result")
 
         return await self._resolve_speaker_vector(
             np.frombuffer(result, dtype=np.float32),
+            window=window,
             timeout=self._vector_config.inference_timeout_sec,
         )
 
@@ -261,6 +326,8 @@ class SpeakerProcessor(PersonaProcessorBase):
             ),
             timeout=self._attribute_config.inference_timeout_sec,
         )
+        if not self._window_is_current(window):
+            return
 
         if result is None:
             raise RuntimeError("Speaker attribute runner returned no result")
@@ -277,20 +344,30 @@ class SpeakerProcessor(PersonaProcessorBase):
 
     """Processor Loop"""
 
+    async def _infer_window(self, item: SpeakerWindow) -> None:
+        uid = await self._resolve_speaker(item)
+        if (
+            uid is not None
+            and self._window_is_current(item)
+            and (item.window_index - 1) % self._attribute_every == 0
+        ):
+            await self._infer_attribute(item, uid)
+
     async def _inference_loop(self) -> None:
         while True:
             item = await self._inference_queue.get()
 
-            if not isinstance(item, SpeakerWindow):
+            if not isinstance(item, SpeakerWindow) or not self._window_is_current(item):
                 continue
 
             started = time.perf_counter()
+            self._active_window = item
+            task = self._inference_job = asyncio.create_task(
+                self._infer_window(item), name="persona_speaker_window"
+            )
 
             try:
-                uid = await self._resolve_speaker(item)
-
-                if uid is not None and (item.window_index - 1) % self._attribute_every == 0:
-                    await self._infer_attribute(item, uid)
+                await task
 
                 duration = time.perf_counter() - started
 
@@ -308,7 +385,8 @@ class SpeakerProcessor(PersonaProcessorBase):
                     )
 
             except asyncio.CancelledError:
-                raise
+                if asyncio.current_task().cancelling():
+                    raise
             except Exception:
                 logger.exception(
                     "Speaker window inference failed source_id=%s generation=%s segment_id=%s window_index=%s",
@@ -317,31 +395,36 @@ class SpeakerProcessor(PersonaProcessorBase):
                     item.segment.segment_id if item.segment else None,
                     item.window_index,
                 )
+            finally:
+                self._inference_job = None
+                self._active_window = None
 
     async def _consume_loop(self) -> None:
+        stream = self.perception_runtime.speech
         while True:
             try:
-                await self.perception_runtime.wait_for_pending_observations(
-                    consumer_id=self.CONSUMER_ID, streams={PerceptionStreamKind.SPEECH}
-                )
-                window = self.perception_runtime.take_pending_observations(
-                    consumer_id=self.CONSUMER_ID,
-                    streams={PerceptionStreamKind.SPEECH},
-                    require_payload=True,
-                )
+                await stream.wait_for_pending(consumer_id=self.CONSUMER_ID)
+                batch = stream.read_pending(consumer_id=self.CONSUMER_ID)
 
-                if window.has_gap:
+                if batch.has_gap:
                     logger.warning(
-                        "Persona Speaker observed speech gap missed=%s", window.missed_count
+                        "Persona Speaker observed speech gap missed=%s", batch.missed_count
                     )
                     self._sources.clear()
+                    self._discard_windows()
 
-                for observation in window.speech_frames:
+                for observation in batch.items:
+                    if observation.kind == ObservationKind.SPEECH_CANCELLED:
+                        self._retire_previous_generations(observation.source)
+                        self._retire_source(observation.source)
+                        continue
+                    if observation.kind != ObservationKind.SPEECH_FRAME:
+                        continue
                     frame = self._extract_frame(observation)
                     if frame is not None:
                         self._append_frame(observation, frame)
 
-                self.perception_runtime.commit_observations(window)
+                stream.commit(consumer_id=self.CONSUMER_ID, cursor_seq=batch.cursor_seq)
 
             except asyncio.CancelledError:
                 raise
@@ -389,6 +472,7 @@ class SpeakerProcessor(PersonaProcessorBase):
                 break
 
         self._sources.clear()
+        self._retired_sources.clear()
         self._profile_caches.clear()
 
         self.perception_runtime.clear_observation_consumer(
