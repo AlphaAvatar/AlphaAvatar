@@ -142,6 +142,15 @@ jobs:
                       raise TypeError(f"Missing async lifecycle hook: {module}.{name}.{hook}")
               print(f"Lifecycle contract verified: {module}.{name}")
           PYCODE
+      - name: Run deterministic offline tests
+        timeout-minutes: 5
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          git status --porcelain --ignored > "$RUNNER_TEMP/checkout-before.txt"
+          uv run --no-sync pytest -p no:cacheprovider --basetemp="$RUNNER_TEMP/pytest" --durations=10
+          git status --porcelain --ignored > "$RUNNER_TEMP/checkout-after.txt"
+          diff -u "$RUNNER_TEMP/checkout-before.txt" "$RUNNER_TEMP/checkout-after.txt"
       - name: Verify lightweight public entrypoint
         run: |
           uv run --no-sync alphaavatar --help

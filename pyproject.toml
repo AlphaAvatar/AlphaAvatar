@@ -86,7 +86,14 @@ skip-magic-trailing-comma = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-addopts = ["--import-mode=importlib", "--ignore=examples"]
+addopts = ["--import-mode=importlib", "--ignore=examples", "--strict-markers", "--strict-config"]
+testpaths = ["avatar-core/tests", "avatar-agents/tests", "avatar-host/tests"]
+# Spawned inference children resolve test runners by module name.
+pythonpath = ["avatar-agents/tests"]
+xfail_strict = true
+faulthandler_timeout = 60
+tmp_path_retention_policy = "failed"
+filterwarnings = ["error::ResourceWarning", "error::pytest.PytestUnraisableExceptionWarning"]
 
 [tool.mypy]
 python_version = "3.13"
