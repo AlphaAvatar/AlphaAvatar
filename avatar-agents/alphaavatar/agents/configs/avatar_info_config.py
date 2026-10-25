@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import os
 import pathlib
-import uuid
 from collections.abc import Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -32,7 +31,7 @@ class AvatarInfoConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    id: str = Field(default_factory=lambda: uuid.uuid4().hex, min_length=1, max_length=256)
+    id: str = Field(min_length=1, max_length=256)
     name: str = Field(default="Assistant", min_length=1)
     introduction: str = "You are a helpful voice AI assistant."
     timezone: str | None = None

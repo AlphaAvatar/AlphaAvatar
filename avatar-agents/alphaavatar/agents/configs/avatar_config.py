@@ -36,7 +36,7 @@ class AvatarConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # Avatar information and runtime configuration.
-    avatar: AvatarInfoConfig = Field(default_factory=AvatarInfoConfig)
+    avatar: AvatarInfoConfig
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
 
     # Foundation plugins.

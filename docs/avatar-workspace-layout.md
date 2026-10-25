@@ -37,8 +37,9 @@ When that location is not writable, it uses `$XDG_DATA_HOME/<avatar-id>/` when c
 or `~/.local/share/<avatar-id>/`. The home directory belongs to the account running the
 service; a container or service account may have a different home from your login shell.
 
-Keep `avatar.id` unchanged when upgrading or restoring data. An omitted ID is generated;
-a different ID selects a different workspace rather than finding the old one automatically.
+`avatar.id` is required; a configuration without it is rejected. Keep it unchanged when
+upgrading or restoring data: a different ID selects a different workspace rather than
+finding the old one automatically.
 Changing `avatar.name` does not rename the data directory, but it changes the dispatch
 name used by the current LiveKit configuration.
 
