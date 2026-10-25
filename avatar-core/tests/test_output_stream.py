@@ -136,10 +136,21 @@ async def test_cancelled_publisher_reaps_its_fanout_tasks() -> None:
     await stream.subscribe("full", max_pending=1)
     await stream.subscribe("open", max_pending=8)
     await stream.publish(text("a"))
+    before = asyncio.all_tasks()
     publisher = asyncio.create_task(stream.publish(text("b")))
     await settle()
+    fanout = {
+        task
+        for task in asyncio.all_tasks() - before
+        if task.get_coro().__qualname__ == "OutputSubscription.push"
+    }
+    # The open subscriber accepted immediately; only the push into the full queue is pending.
+    assert len(fanout) == 1 and not publisher.done()
+
     publisher.cancel()
     with pytest.raises(asyncio.CancelledError):
         await publisher
-    # The owned-task guard fails this test if a per-subscriber push outlives the publication.
+    # Checked before aclose(): closing the stream would release a blocked push by itself.
+    assert all(task.cancelled() for task in fanout)
+    assert asyncio.all_tasks() - before == set()
     await stream.aclose()

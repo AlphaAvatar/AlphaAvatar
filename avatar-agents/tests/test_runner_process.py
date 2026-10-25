@@ -16,8 +16,10 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import multiprocessing as mp
 import os
+from collections.abc import Callable
 from multiprocessing import resource_tracker
 from pathlib import Path
 
@@ -40,6 +42,15 @@ def runner(runner_cls: type[InferenceRunner]) -> RunnerProcess:
         close_timeout=0.5,
         max_pending=4,
     )
+
+
+async def wait_until(condition: Callable[[], bool], failure: str) -> None:
+    try:
+        async with asyncio.timeout(HANG_GUARD):
+            while not condition():
+                await asyncio.sleep(0.001)
+    except TimeoutError:
+        pytest.fail(failure, pytrace=False)
 
 
 def open_descriptors() -> set[str] | None:
@@ -119,17 +130,40 @@ async def test_cancelled_queued_request_is_withdrawn_without_breaking_the_runner
     process = runner(EchoRunner)
     async with asyncio.timeout(HANG_GUARD):
         await process.start()
-    dispatched = asyncio.create_task(process.run(b"sleep:0.3"))
-    for _ in range(5):
-        await asyncio.sleep(0)
+    # Read-only inspection of the existing exchange registry; no production interface is added.
+    exchanges = process._requests
+
+    def dispatch_states() -> list[bool]:
+        return [request.dispatched for request in exchanges.values()]
+
+    def queued_behind_lock() -> bool:
+        tasks = list(exchanges)
+        # Acquiring the serial lock is the only suspension point before dispatch.
+        return (
+            dispatch_states() == [True, False]
+            and inspect.getcoroutinestate(tasks[1].get_coro()) == inspect.CORO_SUSPENDED
+        )
+
+    dispatched = asyncio.create_task(process.run(b"sleep:1"))
+    await wait_until(
+        lambda: process._lock.locked() and dispatch_states() == [True],
+        "the first request never occupied the runner",
+    )
     queued = asyncio.create_task(process.run(b"queued"))
-    for _ in range(5):
-        await asyncio.sleep(0)
+    await wait_until(queued_behind_lock, "the second request never waited behind the first")
+    first_exchange, queued_exchange = exchanges
+    assert process._lock.locked() and not dispatched.done()
+
     queued.cancel()
     with pytest.raises(asyncio.CancelledError):
         await queued
-    assert await dispatched == b"sleep:0.3"
+    await wait_until(
+        lambda: list(exchanges) == [first_exchange], "the queued exchange was not withdrawn"
+    )
+    assert queued_exchange.cancelled()
+    assert await dispatched == b"sleep:1"
     assert process.is_alive
+    # A withdrawn request that reached the runner would desynchronize this response.
     assert await process.run(b"next") == b"next"
     async with asyncio.timeout(HANG_GUARD):
         await process.close()
