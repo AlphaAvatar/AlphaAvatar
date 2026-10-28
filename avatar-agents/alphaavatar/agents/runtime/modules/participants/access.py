@@ -30,8 +30,8 @@ class UserDataAccess:
                 raise ValueError("User data grants require nonempty user identifiers")
             object.__setattr__(self, name, values)
 
-    def can_read_user(self, user_id: str) -> bool:
-        return user_id in self.readable_users
+    def can_read_user(self, user_id: str | None) -> bool:
+        return user_id is not None and user_id in self.readable_users
 
-    def can_write_user(self, user_id: str) -> bool:
-        return user_id in self.writable_users
+    def can_write_user(self, user_id: str | None) -> bool:
+        return user_id is not None and user_id in self.writable_users
