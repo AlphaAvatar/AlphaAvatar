@@ -18,10 +18,9 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from alphaavatar.core.cleanup import wait_for_cleanup
-from alphaavatar.core.env.schemas import PerceptionSourceRef
 from alphaavatar.core.output import OutputRuntime
 from alphaavatar.core.perception import PerceptionRuntime
-from alphaavatar.core.session import Participant, SessionRuntime
+from alphaavatar.core.session import SessionRuntime
 from alphaavatar.core.time import RuntimeClock
 from alphaavatar.core.turn import TurnRuntime
 from alphaavatar.core.workspace import SessionPath, WorkspacePaths
@@ -29,7 +28,7 @@ from alphaavatar.core.workspace import SessionPath, WorkspacePaths
 from .capability import AvatarCapabilityRegistry
 from .inference import InferenceExecutor
 from .modules.foundation import FoundationRuntime
-from .modules.participants import ParticipantBindings, UserDataAccess
+from .modules.participants import ParticipantRuntime
 from .modules.state import StateRuntime
 
 if TYPE_CHECKING:
@@ -57,12 +56,11 @@ class AvatarRuntime:
 
     # agent-level
     state: StateRuntime
+    participants: ParticipantRuntime
 
     # lifecycle-level
     inference: InferenceExecutor
     timezone: str | None = None
-    data_access: UserDataAccess = field(default_factory=UserDataAccess)
-    participant_bindings: ParticipantBindings = field(default_factory=ParticipantBindings)
     foundation: FoundationRuntime | None = None
 
     # capability
@@ -79,6 +77,11 @@ class AvatarRuntime:
             raise ValueError("Session path belongs to another session")
         if self.session.clock is not self.clock:
             raise ValueError("SessionRuntime must use AvatarRuntime.clock")
+        if (
+            self.participants.session is not self.session
+            or self.participants.workspace != self.workspace
+        ):
+            raise ValueError("ParticipantRuntime must use AvatarRuntime's session and workspace")
 
         if session_id != self.perception.session_id:
             raise ValueError(
@@ -113,8 +116,7 @@ class AvatarRuntime:
         inference: InferenceExecutor,
         foundation: FoundationRuntime | None = None,
         timezone: str | None = None,
-        data_access: UserDataAccess | None = None,
-        participant_bindings: ParticipantBindings | None = None,
+        participants: ParticipantRuntime | None = None,
     ) -> AvatarRuntime:
         """Compose activated resources without filesystem work or ambient configuration."""
         clock = session.clock
@@ -145,20 +147,11 @@ class AvatarRuntime:
             inference=inference,
             foundation=foundation,
             timezone=timezone,
-            data_access=data_access if data_access is not None else UserDataAccess(),
-            participant_bindings=(
-                participant_bindings if participant_bindings is not None else ParticipantBindings()
+            participants=(
+                participants
+                if participants is not None
+                else ParticipantRuntime(session=session, workspace=workspace)
             ),
-        )
-
-    def resolve_participant(
-        self, transport_participant_id: str | None, *, source: PerceptionSourceRef | None = None
-    ) -> Participant | None:
-        participant_id = self.participant_bindings.resolve(transport_participant_id, source=source)
-        return (
-            self.session.get_participant(participant_id=participant_id)
-            if participant_id is not None
-            else None
         )
 
     def bind_foundation(self, foundation: FoundationRuntime) -> None:
@@ -184,6 +177,7 @@ class AvatarRuntime:
                 errors.append(error)
             except Exception as exc:
                 errors.append(exc)
+        self.participants.close()
         if errors:
             raise ExceptionGroup("AvatarRuntime cleanup failed", errors)
 

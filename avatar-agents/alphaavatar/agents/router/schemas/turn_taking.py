@@ -18,7 +18,11 @@ from typing import Any
 
 from alphaavatar.core.env import EnvAnnotation
 from alphaavatar.core.env.enums import AnnotationKind
-from alphaavatar.core.env.schemas import PerceptionEntityRef, PerceptionSegmentRef
+from alphaavatar.core.env.schemas import (
+    PerceptionEntityRef,
+    PerceptionSegmentRef,
+    PerceptionSourceRef,
+)
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
 
 from ..enums import (
@@ -60,6 +64,7 @@ class InteractionEntityRef:
     kind: InteractionEntityKind
     entity: PerceptionEntityRef | None = None
     transport_participant_id: str | None = None
+    source: PerceptionSourceRef | None = None
 
     def __post_init__(self) -> None:
         if self.transport_participant_id == "":
@@ -74,15 +79,20 @@ class InteractionEntityRef:
         if self.transport_participant_id is not None:
             data["transport_participant_id"] = self.transport_participant_id
 
+        if self.source is not None:
+            data["source"] = self.source.to_dict()
+
         return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> InteractionEntityRef:
         entity = data.get("entity")
+        source = data.get("source")
         return cls(
             kind=InteractionEntityKind(data["kind"]),
             entity=PerceptionEntityRef.from_dict(entity) if entity else None,
             transport_participant_id=data.get("transport_participant_id"),
+            source=PerceptionSourceRef.from_dict(source) if source else None,
         )
 
 

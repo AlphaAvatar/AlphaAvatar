@@ -13,5 +13,6 @@
 # limitations under the License.
 from .access import UserDataAccess
 from .binding import ParticipantBindings
+from .runtime import ParticipantRuntime
 
-__all__ = ["UserDataAccess", "ParticipantBindings"]
+__all__ = ["UserDataAccess", "ParticipantBindings", "ParticipantRuntime"]

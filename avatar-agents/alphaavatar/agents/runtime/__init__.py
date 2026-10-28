@@ -15,17 +15,24 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .access import UserDataAccess
+    from .modules.participants import ParticipantRuntime, UserDataAccess
     from .modules.state.runtime import InteractionMethod, StateRuntime
     from .runtime import AvatarRuntime
 
-__all__ = ["AvatarRuntime", "StateRuntime", "InteractionMethod", "UserDataAccess"]
+__all__ = [
+    "AvatarRuntime",
+    "StateRuntime",
+    "InteractionMethod",
+    "UserDataAccess",
+    "ParticipantRuntime",
+]
 
 _EXPORTS = {
     "AvatarRuntime": ".runtime",
     "StateRuntime": ".modules.state.runtime",
     "InteractionMethod": ".modules.state.runtime",
-    "UserDataAccess": ".access",
+    "UserDataAccess": ".modules.participants",
+    "ParticipantRuntime": ".modules.participants",
 }
 
 

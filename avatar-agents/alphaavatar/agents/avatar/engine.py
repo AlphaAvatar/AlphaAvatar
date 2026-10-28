@@ -25,7 +25,11 @@ from alphaavatar.agents.router.schemas import TurnTakingDecision
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import AnnotationKind, ObservationKind
-from alphaavatar.core.env.schemas import PerceptionSourceRef
+from alphaavatar.core.env.schemas import (
+    PerceptionEntityRef,
+    PerceptionSegmentRef,
+    PerceptionSourceRef,
+)
 from alphaavatar.core.lifecycle import LifecycleComponent, LifecycleGroup, LifecyclePhase
 from alphaavatar.core.log.events import log_event
 from alphaavatar.core.media import TextPayload
@@ -244,10 +248,17 @@ class AvatarEngine(LifecycleComponent):
         participant_id: str | None,
         *,
         kind: str = "person",
-        entity=None,
+        entity: PerceptionEntityRef | None = None,
         source: PerceptionSourceRef | None = None,
+        segment: PerceptionSegmentRef | None = None,
+        endpoint: bool = False,
     ) -> TurnEntityRef:
-        participant = self._runtime.resolve_participant(participant_id, source=source)
+        participant = self._runtime.participants.resolve(
+            participant_id, source=source, entity=entity, segment=segment, endpoint=endpoint
+        )
+        if entity is None and segment is not None:
+            entity = self._runtime.participants.entity_for_segment(segment)
+
         # Perception labels are evidence; only the Session owns accepted user bindings.
         return TurnEntityRef(
             kind=kind,
@@ -259,10 +270,56 @@ class AvatarEngine(LifecycleComponent):
         )
 
     def _entity(
-        self, ref: InteractionEntityRef, *, source: PerceptionSourceRef | None = None
+        self,
+        ref: InteractionEntityRef,
+        *,
+        source: PerceptionSourceRef | None = None,
+        segment: PerceptionSegmentRef | None = None,
     ) -> TurnEntityRef:
         return self._participant_entity(
-            ref.transport_participant_id, kind=ref.kind.value, entity=ref.entity, source=source
+            ref.transport_participant_id,
+            kind=ref.kind.value,
+            entity=ref.entity,
+            source=ref.source if ref.source is not None else source,
+            segment=segment,
+        )
+
+    def _decision_actor(
+        self, ref: InteractionEntityRef, observations: tuple[EnvObservation, ...]
+    ) -> TurnEntityRef:
+        sources = {
+            value.segment.source if value.segment is not None else value.source
+            for value in observations
+        }
+        actor = self._entity(ref, source=next(iter(sources)) if len(sources) == 1 else None)
+        segments = {value.segment for value in observations if value.segment is not None}
+        if not segments:
+            return actor
+
+        participants = [self._runtime.participants.resolve(segment=segment) for segment in segments]
+        first = participants[0]
+        if (
+            first is None
+            or any(
+                value is None or value.participant_id != first.participant_id
+                for value in participants
+            )
+            or (actor.participant_id is not None and actor.participant_id != first.participant_id)
+            or (ref.entity is not None and actor.participant_id is None)
+        ):
+            # A merged Turn cannot discard an unknown/conflicting segment's ownership constraint.
+            return replace(actor, participant_id=None, user_id=None, identity_sequence=None)
+
+        entity = actor.entity
+        if entity is None and len(segments) == 1:
+            entity = self._runtime.participants.entity_for_segment(next(iter(segments)))
+
+        return replace(
+            actor,
+            participant_id=first.participant_id,
+            user_id=first.effective_user_id,
+            identity_sequence=first.identity_sequence,
+            entity=entity,
         )
 
     async def _own_admission(self, operation: Coroutine[Any, Any, object]) -> object:
@@ -464,7 +521,7 @@ class AvatarEngine(LifecycleComponent):
                 committed_at=event.time_range.end,
                 cutoff_sequence=event.sequence,
                 input_observation_ids=decision.input_observation_ids,
-                actors=(self._entity(decision.actor, source=observations[0].source),)
+                actors=(self._decision_actor(decision.actor, observations),)
                 if decision.actor is not None
                 else (),
                 addressees=tuple(self._entity(ref) for ref in decision.addressees),
@@ -508,6 +565,7 @@ class AvatarEngine(LifecycleComponent):
                         observation.transport_participant_id,
                         entity=observation.entity,
                         source=observation.source,
+                        endpoint=True,
                     ),
                 ),
                 context_ids=(self._runtime.state.context_id,),

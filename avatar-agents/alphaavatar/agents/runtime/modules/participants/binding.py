@@ -14,42 +14,60 @@
 from __future__ import annotations
 
 from alphaavatar.core.env.schemas import PerceptionSourceRef
+from alphaavatar.core.session.schemas import validate_identity
 
 
 class ParticipantBindings:
-    """Adapter-owned links to internal participants; unbound input remains observable."""
+    """Simple links to participant IDs; identity and lifecycle belong to their runtimes."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_entities: int = 1024, max_transports: int = 256) -> None:
+        if any(type(value) is not int or value <= 0 for value in (max_entities, max_transports)):
+            raise ValueError("Participant binding limits must be positive integers")
+
+        self._max_entities, self._max_transports = max_entities, max_transports
         self._transports: dict[str, str] = {}
-        self._sources: dict[PerceptionSourceRef, str] = {}
+        self._entities: dict[tuple[PerceptionSourceRef, str], str] = {}
 
     def bind_transport(self, transport_id: str, participant_id: str) -> None:
-        if not transport_id or not participant_id:
-            raise ValueError("Transport and participant identifiers cannot be empty")
-        current = self._transports.get(transport_id)
-        if current is not None and current != participant_id:
-            raise ValueError("Transport is already bound to another participant")
+        validate_identity(transport_id, name="transport_id")
+        validate_identity(participant_id, name="participant_id")
+        previous = self._transports.get(transport_id)
+        if previous is not None and previous != participant_id:
+            raise ValueError("Transport endpoint is already bound to another participant")
+        if previous is None and len(self._transports) >= self._max_transports:
+            raise RuntimeError("Participant endpoint capacity reached")
         self._transports[transport_id] = participant_id
 
-    def bind_source(self, source: PerceptionSourceRef, participant_id: str) -> None:
-        if not participant_id:
-            raise ValueError("Participant identifier cannot be empty")
-        current = self._sources.get(source)
-        if current is not None and current != participant_id:
-            raise ValueError("Source generation is already bound to another participant")
-        self._sources[source] = participant_id
+    def get_transport(self, transport_id: str) -> str | None:
+        return self._transports.get(transport_id)
 
     def unbind_transport(self, transport_id: str) -> None:
         self._transports.pop(transport_id, None)
 
-    def unbind_source(self, source: PerceptionSourceRef) -> None:
-        self._sources.pop(source, None)
+    def check_entity(self, source: PerceptionSourceRef, entity_id: str) -> None:
+        if not isinstance(entity_id, str) or not entity_id:
+            raise ValueError("Perception entity identifier must be a nonempty string")
+        if (source, entity_id) not in self._entities and len(self._entities) >= self._max_entities:
+            raise RuntimeError("Participant entity capacity reached")
 
-    def resolve(
-        self, transport_participant_id: str | None, *, source: PerceptionSourceRef | None = None
-    ) -> str | None:
-        transport = self._transports.get(transport_participant_id or "")
-        participant = self._sources.get(source) if source is not None else None
-        if transport is not None and participant is not None and transport != participant:
-            return None
-        return participant if participant is not None else transport
+    def bind_entity(self, source: PerceptionSourceRef, entity_id: str, participant_id: str) -> None:
+        validate_identity(participant_id, name="participant_id")
+        self.check_entity(source, entity_id)
+        key = (source, entity_id)
+        previous = self._entities.get(key)
+        if previous is not None and previous != participant_id:
+            raise ValueError("Entity is already bound to another participant")
+        self._entities[key] = participant_id
+
+    def get_entity(self, source: PerceptionSourceRef, entity_id: str) -> str | None:
+        return self._entities.get((source, entity_id))
+
+    def release_entity(self, source: PerceptionSourceRef, entity_id: str) -> None:
+        self._entities.pop((source, entity_id), None)
+
+    def release_source(self, source: PerceptionSourceRef) -> None:
+        self._entities = {key: value for key, value in self._entities.items() if key[0] != source}
+
+    def clear(self) -> None:
+        self._transports.clear()
+        self._entities.clear()
