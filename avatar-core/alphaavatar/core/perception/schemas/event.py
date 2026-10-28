@@ -31,7 +31,8 @@ class MediaSourceStateEvent:
     source_kind: MediaSourceKind
     state: MediaSourceState
 
-    transport_participant_id: str | None = None
+    device_id: str | None = None
+
     reason: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -53,7 +54,7 @@ class MediaSourceSnapshot:
     changed_at: RuntimeTime
     changed_sequence: int
 
-    transport_participant_id: str | None = None
+    device_id: str | None = None
 
     latest_observation_at: RuntimeTime | None = None
     latest_observation_sequence: int | None = None

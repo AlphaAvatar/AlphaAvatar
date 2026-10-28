@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from threading import RLock
 from uuid import uuid4
 
-from .schema import TurnEvent, TurnSnapshot
+from .schemas import TurnEvent, TurnSnapshot
 
 
 @dataclass(frozen=True, slots=True)

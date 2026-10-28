@@ -54,7 +54,7 @@ class MediaSourceRegistry:
             state=event.state,
             changed_at=at,
             changed_sequence=sequence,
-            transport_participant_id=event.transport_participant_id,
+            device_id=event.device_id,
             latest_observation_at=(previous.latest_observation_at if previous else None),
             latest_observation_sequence=(
                 previous.latest_observation_sequence if previous else None

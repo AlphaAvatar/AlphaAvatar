@@ -113,7 +113,7 @@ class SessionRuntime:
     @property
     def primary_user_id(self) -> str | None:
         participant = self.primary_participant
-        return None if participant is None else participant.effective_user_id
+        return None if participant is None else participant.user_id
 
     def _snapshot(self) -> SessionSnapshot:
         return SessionSnapshot(
@@ -132,7 +132,7 @@ class SessionRuntime:
     def join(
         self,
         *,
-        user_id: str,
+        user_id: str | None = None,
         participant_id: str | None = None,
         timezone: str | None = None,
         primary: bool = False,
@@ -173,9 +173,7 @@ class SessionRuntime:
         with self._lock:
             if participant_id is not None:
                 participant = self._participants.get(participant_id)
-                if participant is not None and (
-                    user_id is None or participant.effective_user_id == user_id
-                ):
+                if participant is not None and (user_id is None or participant.user_id == user_id):
                     return participant
                 return None
 
@@ -185,7 +183,7 @@ class SessionRuntime:
             matches = [
                 participant
                 for participant in self._participants.values()
-                if participant.effective_user_id == user_id
+                if participant.user_id == user_id
             ]
             return matches[0] if len(matches) == 1 else None
 
@@ -196,9 +194,11 @@ class SessionRuntime:
         with self._lock:
             if self._closed:
                 return IdentityOutcome.CLOSED
+
             participant = self._participants[request.participant_id]
             if participant.identity_sequence != request.basis_sequence:
                 return IdentityOutcome.STALE
+
             snapshot = self._snapshot()
 
         # Policies receive immutable values and cannot hold the state lock across arbitrary work.
@@ -209,6 +209,7 @@ class SessionRuntime:
         with self._lock:
             if self._closed:
                 return IdentityOutcome.CLOSED
+
             current = self._participants[request.participant_id]
             if (
                 current.identity_sequence != request.basis_sequence
@@ -219,13 +220,11 @@ class SessionRuntime:
             if not allowed:
                 return IdentityOutcome.REJECTED
 
-            if current.resolved_user_id == request.user_id:
+            if current.user_id == request.user_id:
                 return IdentityOutcome.UNCHANGED
 
             updated = replace(
-                current,
-                resolved_user_id=request.user_id,
-                identity_sequence=current.identity_sequence + 1,
+                current, user_id=request.user_id, identity_sequence=current.identity_sequence + 1
             )
             event = SessionEvent(
                 session_id=self._session_id,
@@ -233,7 +232,7 @@ class SessionRuntime:
                 kind=SessionEventKind.IDENTITY,
                 at=self._clock.now(),
                 participant=updated,
-                previous_user_id=current.effective_user_id,
+                previous_user_id=current.user_id,
                 source=request.source,
                 primary_participant_id=self._primary_participant_id,
             )

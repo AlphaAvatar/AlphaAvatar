@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass
-from uuid import uuid4
 
 from alphaavatar.core.env.schemas import (
     PerceptionEntityRef,
@@ -68,9 +67,7 @@ class ParticipantRuntime:
         self._closed = False
         self._max_participants = max_participants
         self._max_segments, self._max_sources = max_segments, max_sources
-        self._bindings = ParticipantBindings(
-            max_entities=max_participants, max_transports=max_sources
-        )
+        self._bindings = ParticipantBindings(max_entities=max_participants, max_devices=max_sources)
         self._generations: dict[str, tuple[int, bool]] = {}
         self._segments: OrderedDict[PerceptionSegmentRef, _SegmentState] = OrderedDict()
         self._next_segment_token = 0
@@ -115,49 +112,44 @@ class ParticipantRuntime:
             raise RuntimeError("Session participant capacity reached")
 
         return self.session.join(
-            user_id=uuid4().hex if user_id is None else user_id,
-            participant_id=participant_id,
-            timezone=timezone,
-            primary=primary,
+            user_id=user_id, participant_id=participant_id, timezone=timezone, primary=primary
         )
 
     def get(self, participant_id: str) -> Participant | None:
         return self.session.get_participant(participant_id=participant_id)
 
-    def bind_transport(self, transport_id: str, participant_id: str) -> None:
+    def bind_device(self, device_id: str, participant_id: str) -> None:
         self._require_participant(participant_id)
-        self._bindings.bind_transport(transport_id, participant_id)
+        self._bindings.bind_device(device_id, participant_id)
 
-    def unbind_transport(self, transport_id: str) -> None:
-        self._bindings.unbind_transport(transport_id)
+    def unbind_device(self, device_id: str) -> None:
+        self._bindings.unbind_device(device_id)
 
     def bind_entity(
         self, source: PerceptionSourceRef, entity: PerceptionEntityRef, participant_id: str
     ) -> None:
         self._require_participant(participant_id)
         self._activate(source)
-        self._bindings.bind_entity(source, entity.perception_entity_id, participant_id)
+        self._bindings.bind_entity(source, entity.entity_id, participant_id)
 
     def ensure_entity(
         self, source: PerceptionSourceRef, entity: PerceptionEntityRef
     ) -> Participant:
         self._activate(source)
-        self._bindings.check_entity(source, entity.perception_entity_id)
+        self._bindings.check_entity(source, entity.entity_id)
         participant = self.resolve(source=source, entity=entity)
         if participant is None:
             participant = self.join()
-            self._bindings.bind_entity(
-                source, entity.perception_entity_id, participant.participant_id
-            )
+            self._bindings.bind_entity(source, entity.entity_id, participant.participant_id)
         return participant
 
     def release_entity(self, source: PerceptionSourceRef, entity: PerceptionEntityRef) -> None:
-        self._bindings.release_entity(source, entity.perception_entity_id)
+        self._bindings.release_entity(source, entity.entity_id)
         for segment, current in self._segments.items():
             if (
                 segment.source == source
                 and current.entity is not None
-                and current.entity.perception_entity_id == entity.perception_entity_id
+                and current.entity.entity_id == entity.entity_id
             ):
                 current.invalid = True
 
@@ -215,13 +207,12 @@ class ParticipantRuntime:
         current = self._segments[segment]
         if (
             entity is not None
-            and self._bindings.get_entity(segment.source, entity.perception_entity_id) is None
+            and self._bindings.get_entity(segment.source, entity.entity_id) is None
         ):
             raise ValueError("Segment entity must be associated with a participant first")
 
         if entity is None or (
-            current.entity is not None
-            and current.entity.perception_entity_id != entity.perception_entity_id
+            current.entity is not None and current.entity.entity_id != entity.entity_id
         ):
             current.invalid = True
             return False
@@ -238,7 +229,7 @@ class ParticipantRuntime:
 
     def resolve(
         self,
-        transport_id: str | None = None,
+        device_id: str | None = None,
         *,
         source: PerceptionSourceRef | None = None,
         entity: PerceptionEntityRef | None = None,
@@ -255,8 +246,7 @@ class ParticipantRuntime:
             source = segment.source
             associated = self.entity_for_segment(segment)
             if associated is None or (
-                entity is not None
-                and entity.perception_entity_id != associated.perception_entity_id
+                entity is not None and entity.entity_id != associated.entity_id
             ):
                 return None
 
@@ -268,23 +258,21 @@ class ParticipantRuntime:
         if entity is not None:
             # Each observed person needs their own association, even on a shared device.
             participant_id = (
-                self._bindings.get_entity(source, entity.perception_entity_id)
-                if source is not None
-                else None
+                self._bindings.get_entity(source, entity.entity_id) if source is not None else None
             )
         else:
-            participant_id = self._bindings.get_transport(transport_id or "") if endpoint else None
+            participant_id = self._bindings.get_device(device_id or "") if endpoint else None
 
         return self.get(participant_id) if participant_id is not None else None
 
     def bind_user(self, request: IdentityRequest) -> IdentityOutcome:
-        # Correcting a user's identity never changes the application's data grants.
+        # None unbinds the user. Identity changes never alter the application's data grants.
         return IdentityOutcome.CLOSED if self._closed else self.session.request_identity(request)
 
-    def can_read_user(self, user_id: str) -> bool:
+    def can_read_user(self, user_id: str | None) -> bool:
         return not self._closed and self._access.can_read_user(user_id)
 
-    def can_write_user(self, user_id: str) -> bool:
+    def can_write_user(self, user_id: str | None) -> bool:
         return not self._closed and self._access.can_write_user(user_id)
 
     def user_path(self, user_id: str, *, write: bool = False) -> UserPath:

@@ -24,7 +24,7 @@ from alphaavatar.agents.persona.schemas.user_profile import (
 )
 from alphaavatar.agents.runtime.modules.session.runtime import ParticipantInfo
 from alphaavatar.agents.utils import NumpyOP
-from alphaavatar.core.turn import TurnSnapshot
+from alphaavatar.core.turn.schemas import TurnSnapshot
 
 
 class DefaultPersonaCache(PersonaCache):

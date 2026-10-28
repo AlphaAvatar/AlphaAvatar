@@ -33,7 +33,8 @@ from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.output import OutputJournalGap
 from alphaavatar.core.output.schemas import OutputRecordBatch
-from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
+from alphaavatar.core.turn.enums import TurnInputModality
+from alphaavatar.core.turn.schemas import TurnSnapshot
 
 from .processors.base import MemoryProcessor
 from .state import MemoryContextState, MemoryState

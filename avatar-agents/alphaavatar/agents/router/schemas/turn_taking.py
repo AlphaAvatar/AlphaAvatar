@@ -63,12 +63,12 @@ def _annotation(
 class InteractionEntityRef:
     kind: InteractionEntityKind
     entity: PerceptionEntityRef | None = None
-    transport_participant_id: str | None = None
+    device_id: str | None = None
     source: PerceptionSourceRef | None = None
 
     def __post_init__(self) -> None:
-        if self.transport_participant_id == "":
-            raise ValueError("transport_participant_id cannot be empty")
+        if self.device_id == "":
+            raise ValueError("device_id cannot be empty")
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {"kind": self.kind.value}
@@ -76,8 +76,8 @@ class InteractionEntityRef:
         if self.entity is not None:
             data["entity"] = self.entity.to_dict()
 
-        if self.transport_participant_id is not None:
-            data["transport_participant_id"] = self.transport_participant_id
+        if self.device_id is not None:
+            data["device_id"] = self.device_id
 
         if self.source is not None:
             data["source"] = self.source.to_dict()
@@ -91,7 +91,7 @@ class InteractionEntityRef:
         return cls(
             kind=InteractionEntityKind(data["kind"]),
             entity=PerceptionEntityRef.from_dict(entity) if entity else None,
-            transport_participant_id=data.get("transport_participant_id"),
+            device_id=data.get("device_id"),
             source=PerceptionSourceRef.from_dict(source) if source else None,
         )
 

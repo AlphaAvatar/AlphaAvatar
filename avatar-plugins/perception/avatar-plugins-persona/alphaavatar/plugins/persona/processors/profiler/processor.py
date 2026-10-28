@@ -20,7 +20,8 @@ from alphaavatar.agents.persona import PersonaBase, PersonaCache, PersonaProcess
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_capability
 from alphaavatar.agents.utils.time import application_now
-from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
+from alphaavatar.core.turn.enums import TurnInputModality
+from alphaavatar.core.turn.schemas import TurnSnapshot
 
 from ...log import logger
 from ...profile import UserProfileDetails

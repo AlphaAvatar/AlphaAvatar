@@ -13,6 +13,8 @@
 # limitations under the License.
 from __future__ import annotations
 
+import json
+
 from pydantic import BaseModel, field_validator, model_validator
 
 from alphaavatar.core.env.schemas import (
@@ -91,28 +93,36 @@ class MemorySourceRef(BaseModel):
     segment_id: str | None = None
 
     tool_id: str | None = None
-    resolved_entity_id: str | None = None
+    entity_id: str | None = None
 
     @field_validator("source_id")
     @classmethod
     def _validate_source_id(cls, value: str) -> str:
-        return _normalize_id(value)
+        if not value:
+            raise ValueError("source_id cannot be empty")
+        return value
 
-    @field_validator("segment_id", "tool_id", "resolved_entity_id")
+    @field_validator("segment_id", "tool_id", "entity_id")
     @classmethod
     def _validate_optional_id(cls, value: str | None) -> str | None:
-        return _normalize_id(value) if value is not None else None
+        if value == "":
+            raise ValueError("reference identifiers cannot be empty")
+        return value
 
     @model_validator(mode="after")
     def _validate_shape(self) -> MemorySourceRef:
-        perception = {MemorySourceKind.PERCEPTION_SOURCE, MemorySourceKind.PERCEPTION_SEGMENT}
+        perception = {
+            MemorySourceKind.PERCEPTION_SOURCE,
+            MemorySourceKind.PERCEPTION_SEGMENT,
+            MemorySourceKind.PERCEPTION_ENTITY,
+        }
         tool = {MemorySourceKind.TOOL_CALL, MemorySourceKind.TOOL_RESULT}
 
         if self.kind in perception:
             if self.source_generation is None or self.source_generation <= 0:
                 raise ValueError("perception source_generation must be positive")
         elif self.source_generation is not None:
-            raise ValueError("source_generation is only valid for perception source/segment refs")
+            raise ValueError("source_generation is only valid for perception refs")
 
         if self.kind is MemorySourceKind.PERCEPTION_SEGMENT:
             if self.segment_id is None:
@@ -126,16 +136,21 @@ class MemorySourceRef(BaseModel):
         elif self.tool_id is not None:
             raise ValueError("tool_id is only valid for tool refs")
 
-        if (
-            self.kind is not MemorySourceKind.PERCEPTION_ENTITY
-            and self.resolved_entity_id is not None
-        ):
-            raise ValueError("resolved_entity_id is only valid for perception entity refs")
+        if self.kind is MemorySourceKind.PERCEPTION_ENTITY:
+            if self.entity_id is None:
+                raise ValueError("perception entity ref requires entity_id")
+        elif self.entity_id is not None:
+            raise ValueError("entity_id is only valid for perception entity refs")
 
         return self
 
     @property
     def key(self) -> str:
+        if self.kind is MemorySourceKind.PERCEPTION_ENTITY:
+            # Entity IDs are local to a source generation and may contain separators.
+            identity = (self.source_id, self.source_generation, self.entity_id)
+            return f"{self.kind.value}:{json.dumps(identity, ensure_ascii=False, separators=(',', ':'))}"
+
         if self.kind in {MemorySourceKind.TOOL_CALL, MemorySourceKind.TOOL_RESULT}:
             return f"{self.kind.value}:{self.tool_id}:{self.source_id}"
 
@@ -177,11 +192,14 @@ class MemorySourceRef(BaseModel):
         )
 
     @classmethod
-    def perception_entity(cls, ref: PerceptionEntityRef) -> MemorySourceRef:
+    def perception_entity(
+        cls, source: PerceptionSourceRef, entity: PerceptionEntityRef
+    ) -> MemorySourceRef:
         return cls(
             kind=MemorySourceKind.PERCEPTION_ENTITY,
-            source_id=ref.perception_entity_id,
-            resolved_entity_id=ref.resolved_entity_id,
+            source_id=source.source_id,
+            source_generation=source.source_generation,
+            entity_id=entity.entity_id,
         )
 
     @classmethod

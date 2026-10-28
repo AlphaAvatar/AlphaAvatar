@@ -22,7 +22,7 @@ from alphaavatar.agents.memory.schemas import MemoryCheckpointAdvance, MemorySco
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_capability
 from alphaavatar.core.cleanup import wait_for_cleanup
-from alphaavatar.core.turn import TurnInputModality
+from alphaavatar.core.turn.enums import TurnInputModality
 
 from ...template import MemoryPluginsTemplate
 from ..base import MemoryProcessor

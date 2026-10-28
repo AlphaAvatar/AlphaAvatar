@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from alphaavatar.agents.memory import MemoryBase
     from alphaavatar.agents.persona import PersonaBase
     from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
-    from alphaavatar.core.turn import TurnSnapshot
+    from alphaavatar.core.turn.schemas import TurnSnapshot
 
 logger = logging.getLogger(__name__)
 

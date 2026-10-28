@@ -35,7 +35,8 @@ from alphaavatar.core.log.events import log_event
 from alphaavatar.core.media import TextPayload
 from alphaavatar.core.output.enums import ExecutionSignalKind
 from alphaavatar.core.output.schemas import OutputExecutionSignal, OutputScope
-from alphaavatar.core.turn import TurnEntityRef, TurnInputModality
+from alphaavatar.core.turn.enums import TurnInputModality
+from alphaavatar.core.turn.schemas import TurnEntityRef
 
 from .loop.schemas import LoopRequest
 
@@ -45,7 +46,7 @@ if TYPE_CHECKING:
     from alphaavatar.agents.runtime import AvatarRuntime
     from alphaavatar.core.perception.schemas import PerceptionEvent
     from alphaavatar.core.session import SessionRuntime
-    from alphaavatar.core.turn import TurnSnapshot
+    from alphaavatar.core.turn.schemas import TurnSnapshot
 
     from .loop import LoopHandle
     from .loop.base import ToolAuthorizer
@@ -245,7 +246,7 @@ class AvatarEngine(LifecycleComponent):
 
     def _participant_entity(
         self,
-        participant_id: str | None,
+        device_id: str | None,
         *,
         kind: str = "person",
         entity: PerceptionEntityRef | None = None,
@@ -254,7 +255,7 @@ class AvatarEngine(LifecycleComponent):
         endpoint: bool = False,
     ) -> TurnEntityRef:
         participant = self._runtime.participants.resolve(
-            participant_id, source=source, entity=entity, segment=segment, endpoint=endpoint
+            device_id, source=source, entity=entity, segment=segment, endpoint=endpoint
         )
         if entity is None and segment is not None:
             entity = self._runtime.participants.entity_for_segment(segment)
@@ -264,8 +265,8 @@ class AvatarEngine(LifecycleComponent):
             kind=kind,
             participant_id=participant.participant_id if participant is not None else None,
             identity_sequence=participant.identity_sequence if participant is not None else None,
-            user_id=participant.effective_user_id if participant is not None else None,
-            transport_participant_id=participant_id,
+            user_id=participant.user_id if participant is not None else None,
+            device_id=device_id,
             entity=entity,
         )
 
@@ -277,7 +278,7 @@ class AvatarEngine(LifecycleComponent):
         segment: PerceptionSegmentRef | None = None,
     ) -> TurnEntityRef:
         return self._participant_entity(
-            ref.transport_participant_id,
+            ref.device_id,
             kind=ref.kind.value,
             entity=ref.entity,
             source=ref.source if ref.source is not None else source,
@@ -317,7 +318,7 @@ class AvatarEngine(LifecycleComponent):
         return replace(
             actor,
             participant_id=first.participant_id,
-            user_id=first.effective_user_id,
+            user_id=first.user_id,
             identity_sequence=first.identity_sequence,
             entity=entity,
         )
@@ -562,7 +563,7 @@ class AvatarEngine(LifecycleComponent):
                 final_observations=(observation,),
                 actors=(
                     self._participant_entity(
-                        observation.transport_participant_id,
+                        observation.device_id,
                         entity=observation.entity,
                         source=observation.source,
                         endpoint=True,

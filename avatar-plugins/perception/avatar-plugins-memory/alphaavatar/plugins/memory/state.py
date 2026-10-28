@@ -35,7 +35,7 @@ from alphaavatar.agents.memory.schemas import (
     MemoryOwnerRef,
     MemoryParticipantRef,
 )
-from alphaavatar.core.turn import TurnSnapshot
+from alphaavatar.core.turn.schemas import TurnSnapshot
 
 from .messages import MemoryMessage, memory_message, same_message
 

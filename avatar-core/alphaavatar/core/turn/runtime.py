@@ -26,7 +26,8 @@ from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.perception import PerceptionRuntime
 from alphaavatar.core.time import RuntimeTime
 
-from .schema import TurnEntityRef, TurnInputModality, TurnSnapshot
+from .enums import TurnInputModality
+from .schemas import TurnEntityRef, TurnSnapshot
 from .stream import TurnStream
 
 logger = logging.getLogger(__name__)

@@ -20,29 +20,29 @@ from alphaavatar.core.session.schemas import validate_identity
 class ParticipantBindings:
     """Simple links to participant IDs; identity and lifecycle belong to their runtimes."""
 
-    def __init__(self, *, max_entities: int = 1024, max_transports: int = 256) -> None:
-        if any(type(value) is not int or value <= 0 for value in (max_entities, max_transports)):
+    def __init__(self, *, max_entities: int = 1024, max_devices: int = 256) -> None:
+        if any(type(value) is not int or value <= 0 for value in (max_entities, max_devices)):
             raise ValueError("Participant binding limits must be positive integers")
 
-        self._max_entities, self._max_transports = max_entities, max_transports
-        self._transports: dict[str, str] = {}
+        self._max_entities, self._max_devices = max_entities, max_devices
+        self._devices: dict[str, str] = {}
         self._entities: dict[tuple[PerceptionSourceRef, str], str] = {}
 
-    def bind_transport(self, transport_id: str, participant_id: str) -> None:
-        validate_identity(transport_id, name="transport_id")
+    def bind_device(self, device_id: str, participant_id: str) -> None:
+        validate_identity(device_id, name="device_id")
         validate_identity(participant_id, name="participant_id")
-        previous = self._transports.get(transport_id)
+        previous = self._devices.get(device_id)
         if previous is not None and previous != participant_id:
-            raise ValueError("Transport endpoint is already bound to another participant")
-        if previous is None and len(self._transports) >= self._max_transports:
+            raise ValueError("Device endpoint is already bound to another participant")
+        if previous is None and len(self._devices) >= self._max_devices:
             raise RuntimeError("Participant endpoint capacity reached")
-        self._transports[transport_id] = participant_id
+        self._devices[device_id] = participant_id
 
-    def get_transport(self, transport_id: str) -> str | None:
-        return self._transports.get(transport_id)
+    def get_device(self, device_id: str) -> str | None:
+        return self._devices.get(device_id)
 
-    def unbind_transport(self, transport_id: str) -> None:
-        self._transports.pop(transport_id, None)
+    def unbind_device(self, device_id: str) -> None:
+        self._devices.pop(device_id, None)
 
     def check_entity(self, source: PerceptionSourceRef, entity_id: str) -> None:
         if not isinstance(entity_id, str) or not entity_id:
@@ -69,5 +69,5 @@ class ParticipantBindings:
         self._entities = {key: value for key, value in self._entities.items() if key[0] != source}
 
     def clear(self) -> None:
-        self._transports.clear()
+        self._devices.clear()
         self._entities.clear()

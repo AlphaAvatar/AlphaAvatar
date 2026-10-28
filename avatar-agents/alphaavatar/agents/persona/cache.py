@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     import numpy as np
 
     from alphaavatar.core.session.schemas import Participant
-    from alphaavatar.core.turn import TurnSnapshot
+    from alphaavatar.core.turn.schemas import TurnSnapshot
 
     from .schemas import DetailsBase, UserProfile, UserRuntimeState
 

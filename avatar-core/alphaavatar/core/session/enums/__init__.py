@@ -11,28 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from enum import StrEnum
-
-
-class IdentitySource(StrEnum):
-    DECLARED = "declared"
-    PERCEPTION = "perception"
-    AGENT = "agent"
-    MODEL = "model"
-
-
-class IdentityOutcome(StrEnum):
-    APPLIED = "applied"
-    UNCHANGED = "unchanged"
-    STALE = "stale"
-    REJECTED = "rejected"
-    CLOSED = "closed"
-
-
-class SessionEventKind(StrEnum):
-    JOINED = "joined"
-    IDENTITY = "identity"
-    CLOSED = "closed"
-
+from .identity import IdentityOutcome, IdentitySource
+from .kind import SessionEventKind
 
 __all__ = ["IdentityOutcome", "IdentitySource", "SessionEventKind"]

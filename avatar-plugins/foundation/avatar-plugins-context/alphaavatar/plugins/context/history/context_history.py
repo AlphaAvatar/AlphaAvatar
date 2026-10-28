@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from alphaavatar.agents.avatar.provider.schemas.model_input import ModelInputItem
     from alphaavatar.core.output import OutputRuntime
     from alphaavatar.core.output.schemas import OutputRecordBatch
-    from alphaavatar.core.turn import TurnSnapshot
+    from alphaavatar.core.turn.schemas import TurnSnapshot
 
     from ..config import ContextConfig
 

@@ -25,7 +25,7 @@ from alphaavatar.agents.avatar.provider.schemas.model_input import (
     ModelTextPart,
 )
 from alphaavatar.agents.memory.enums.cache_type import MemoryCacheType
-from alphaavatar.core.turn import TurnSnapshot
+from alphaavatar.core.turn.schemas import TurnSnapshot
 
 from .state import MemoryContextItem
 

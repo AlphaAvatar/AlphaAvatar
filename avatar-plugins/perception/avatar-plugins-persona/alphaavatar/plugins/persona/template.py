@@ -18,7 +18,7 @@ from typing import Any
 
 from alphaavatar.agents.persona.schemas import UserProfile, UserRuntimeState
 from alphaavatar.agents.utils.time import format_datetime_for_timezone
-from alphaavatar.core.turn import TurnSnapshot
+from alphaavatar.core.turn.schemas import TurnSnapshot
 
 
 class PersonaPluginsTemplate:

@@ -33,7 +33,7 @@ from alphaavatar.agents.memory.schemas import (
 )
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.utils.time import application_now
-from alphaavatar.core.turn import TurnSnapshot
+from alphaavatar.core.turn.schemas import TurnSnapshot
 
 from ..schemas import norm_token, norm_topic
 from ..storage.graph import build_graph_from_mentions

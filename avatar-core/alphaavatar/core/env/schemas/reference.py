@@ -62,23 +62,14 @@ class PerceptionSegmentRef:
 
 @dataclass(frozen=True, slots=True)
 class PerceptionEntityRef:
-    perception_entity_id: str
-    resolved_entity_id: str | None = None
+    entity_id: str
 
     def __post_init__(self) -> None:
-        _validate_id("perception_entity_id", self.perception_entity_id)
-        if self.resolved_entity_id == "":
-            raise ValueError("resolved_entity_id cannot be empty")
+        _validate_id("entity_id", self.entity_id)
 
     def to_dict(self) -> dict[str, str]:
-        data = {"perception_entity_id": self.perception_entity_id}
-        if self.resolved_entity_id is not None:
-            data["resolved_entity_id"] = self.resolved_entity_id
-        return data
+        return {"entity_id": self.entity_id}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PerceptionEntityRef:
-        return cls(
-            perception_entity_id=str(data["perception_entity_id"]),
-            resolved_entity_id=data.get("resolved_entity_id"),
-        )
+        return cls(entity_id=str(data["entity_id"]))

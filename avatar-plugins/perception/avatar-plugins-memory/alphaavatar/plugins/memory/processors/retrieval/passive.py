@@ -22,7 +22,8 @@ from typing import TYPE_CHECKING
 
 from alphaavatar.agents.memory.schemas import MemoryItem, MemoryOwnerRef
 from alphaavatar.core.cleanup import wait_for_cleanup
-from alphaavatar.core.turn import TurnInputModality, TurnSnapshot
+from alphaavatar.core.turn.enums import TurnInputModality
+from alphaavatar.core.turn.schemas import TurnSnapshot
 
 from .config import RetrievalConfig
 

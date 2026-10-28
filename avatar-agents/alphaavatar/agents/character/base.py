@@ -25,12 +25,12 @@ class CharacterConnection:
 
     transport: str
     url: str
-    agent_identity: str
-    participant_identity: str
+    agent_device_id: str
+    device_id: str
     token: str = field(repr=False)
 
     def __post_init__(self) -> None:
-        for name in ("transport", "url", "agent_identity", "participant_identity", "token"):
+        for name in ("transport", "url", "agent_device_id", "device_id", "token"):
             value = getattr(self, name)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"Character connection requires {name}")

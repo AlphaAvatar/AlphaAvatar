@@ -24,7 +24,7 @@ from .schemas import ContextPrepareRequest
 if TYPE_CHECKING:
     from alphaavatar.agents.memory import MemoryBase
     from alphaavatar.agents.persona import PersonaBase
-    from alphaavatar.core.turn import TurnSnapshot
+    from alphaavatar.core.turn.schemas import TurnSnapshot
 
 
 class ContextManager(ABC):

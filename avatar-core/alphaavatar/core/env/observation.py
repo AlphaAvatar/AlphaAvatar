@@ -54,17 +54,12 @@ _RESERVED_METADATA_KEYS = frozenset(
         "segment_id",
         "speech_source_id",
         "speech_source_generation",
-        # Transport identity
-        "transport_participant_id",
-        "participant_identity",
-        # Perception / resolved entity identity
-        "perception_entity_id",
-        "resolved_entity_id",
-        # Old / ambiguous identity names that must disappear
-        "speaker_perception_id",
-        "speaker_entity_id",
-        "speaker_track_id",
-        "track_id",
+        # Device identity
+        "device_id",
+        # Entity and session identity must not be shadowed in metadata.
+        "entity_id",
+        "participant_id",
+        "user_id",
     }
 )
 
@@ -78,7 +73,7 @@ class EnvObservation:
     payload: MediaPayload | None = None
     segment: PerceptionSegmentRef | None = None
 
-    transport_participant_id: str | None = None
+    device_id: str | None = None
     entity: PerceptionEntityRef | None = None
 
     frame_id: str | None = None
@@ -90,8 +85,8 @@ class EnvObservation:
     annotations: list[EnvAnnotation] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        if self.transport_participant_id == "":
-            raise ValueError("transport_participant_id cannot be empty")
+        if self.device_id == "":
+            raise ValueError("device_id cannot be empty")
         if self.frame_id == "":
             raise ValueError("frame_id cannot be empty")
 
@@ -148,7 +143,7 @@ class EnvObservation:
         source: PerceptionSourceRef,
         payload: MediaPayload | None = None,
         segment: PerceptionSegmentRef | None = None,
-        transport_participant_id: str | None = None,
+        device_id: str | None = None,
         entity: PerceptionEntityRef | None = None,
         frame_id: str | None = None,
         path: str | None = None,
@@ -162,7 +157,7 @@ class EnvObservation:
             source=source,
             payload=payload,
             segment=segment,
-            transport_participant_id=transport_participant_id,
+            device_id=device_id,
             entity=entity,
             frame_id=frame_id,
             path=path,
@@ -263,8 +258,8 @@ class EnvObservation:
         if self.segment is not None:
             data["segment"] = self.segment.to_dict()
 
-        if self.transport_participant_id is not None:
-            data["transport_participant_id"] = self.transport_participant_id
+        if self.device_id is not None:
+            data["device_id"] = self.device_id
 
         if self.entity is not None:
             data["entity"] = self.entity.to_dict()
