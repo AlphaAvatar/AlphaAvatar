@@ -1,4 +1,4 @@
-# Copyright 2025 AlphaAvatar project
+# Copyright 2026 AlphaAvatar project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ from alphaavatar.agents.router.schemas import TurnTakingDecision
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import AnnotationKind, ObservationKind
+from alphaavatar.core.env.schemas import PerceptionSourceRef
 from alphaavatar.core.lifecycle import LifecycleComponent, LifecycleGroup, LifecyclePhase
 from alphaavatar.core.log.events import log_event
 from alphaavatar.core.media import TextPayload
@@ -37,8 +38,9 @@ from .loop.schemas import LoopRequest
 if TYPE_CHECKING:
     from alphaavatar.agents.configs import AvatarConfig
     from alphaavatar.agents.router.schemas import InteractionEntityRef
-    from alphaavatar.agents.runtime import AvatarRuntime, SessionRuntime
+    from alphaavatar.agents.runtime import AvatarRuntime
     from alphaavatar.core.perception.schemas import PerceptionEvent
+    from alphaavatar.core.session import SessionRuntime
     from alphaavatar.core.turn import TurnSnapshot
 
     from .loop import LoopHandle
@@ -103,7 +105,8 @@ class AvatarEngine(LifecycleComponent):
             phases=(
                 LifecyclePhase.create("avatar-status", (self._status,)),
                 LifecyclePhase.create("avatar-tools", self._tool_plugins),
-                LifecyclePhase.create("avatar-perception", (self._persona, self._memory)),
+                LifecyclePhase.create("avatar-memory", (self._memory,)),
+                LifecyclePhase.create("avatar-persona", (self._persona,)),
             )
         )
         self._routers = LifecycleGroup(
@@ -236,31 +239,30 @@ class AvatarEngine(LifecycleComponent):
             self._runtime.output.revoke_run(run_id)
             self._loop.interrupt(run_id=run_id, reason=reason)
 
-    def _entity(self, ref: InteractionEntityRef) -> TurnEntityRef:
-        return self._participant_entity(
-            ref.transport_participant_id, kind=ref.kind.value, entity=ref.entity
+    def _participant_entity(
+        self,
+        participant_id: str | None,
+        *,
+        kind: str = "person",
+        entity=None,
+        source: PerceptionSourceRef | None = None,
+    ) -> TurnEntityRef:
+        participant = self._runtime.resolve_participant(participant_id, source=source)
+        # Perception labels are evidence; only the Session owns accepted user bindings.
+        return TurnEntityRef(
+            kind=kind,
+            participant_id=participant.participant_id if participant is not None else None,
+            identity_sequence=participant.identity_sequence if participant is not None else None,
+            user_id=participant.effective_user_id if participant is not None else None,
+            transport_participant_id=participant_id,
+            entity=entity,
         )
 
-    def _participant_entity(
-        self, participant_id: str | None, *, kind: str = "person", entity=None
+    def _entity(
+        self, ref: InteractionEntityRef, *, source: PerceptionSourceRef | None = None
     ) -> TurnEntityRef:
-        participant = next(
-            (
-                value
-                for value in self._runtime.session.participants.values()
-                if value.participant_identity == participant_id
-            ),
-            None,
-        )
-        user_id = (
-            entity.resolved_entity_id
-            if entity is not None and entity.resolved_entity_id
-            else participant.effective_user_id
-            if participant is not None
-            else None
-        )
-        return TurnEntityRef(
-            kind=kind, user_id=user_id, transport_participant_id=participant_id, entity=entity
+        return self._participant_entity(
+            ref.transport_participant_id, kind=ref.kind.value, entity=ref.entity, source=source
         )
 
     async def _own_admission(self, operation: Coroutine[Any, Any, object]) -> object:
@@ -462,7 +464,9 @@ class AvatarEngine(LifecycleComponent):
                 committed_at=event.time_range.end,
                 cutoff_sequence=event.sequence,
                 input_observation_ids=decision.input_observation_ids,
-                actors=(self._entity(decision.actor),) if decision.actor is not None else (),
+                actors=(self._entity(decision.actor, source=observations[0].source),)
+                if decision.actor is not None
+                else (),
                 addressees=tuple(self._entity(ref) for ref in decision.addressees),
                 context_ids=(self._runtime.state.context_id,),
                 metadata={
@@ -501,7 +505,9 @@ class AvatarEngine(LifecycleComponent):
                 final_observations=(observation,),
                 actors=(
                     self._participant_entity(
-                        observation.transport_participant_id, entity=observation.entity
+                        observation.transport_participant_id,
+                        entity=observation.entity,
+                        source=observation.source,
                     ),
                 ),
                 context_ids=(self._runtime.state.context_id,),
@@ -662,11 +668,6 @@ class AvatarEngine(LifecycleComponent):
             lambda: self._runtime.perception.clear_annotation_consumer(self.CONSUMER_ID),
             errors,
             "Turn consumer retirement",
-        )
-        await self._step(
-            lambda: self._runtime.session.flush_user_path_migrations(remove_old=True),
-            errors,
-            "User path migration flush",
         )
         if self._failure is not None and self._failure not in errors:
             errors.insert(0, self._failure)

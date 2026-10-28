@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import calendar
-from datetime import datetime
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel
@@ -41,30 +41,21 @@ class ParticipantTimeContext(BaseModel):
     user_time: UserTimeContext
 
 
-def _resolve_user_timezone(metadata: dict | None = None) -> tuple[str | None, str]:
-    """
-    Resolve user-facing timezone by priority:
-
-    1. Participant/browser metadata
-    2. AlphaAvatar application timezone
-    3. Server local timezone
-    """
+def resolve_user_timezone(
+    metadata: dict | None = None, *, default: str | None = None
+) -> str | None:
+    """Resolve presentation time without changing the Avatar or process timezone."""
     metadata = metadata or {}
 
     timezone = metadata.get("timezone") or metadata.get("browser_timezone") or metadata.get("tz")
     if timezone:
-        return str(timezone), str(metadata.get("timezone_source") or "browser")
-
-    application_timezone = resolve_application_timezone()
-    if application_timezone:
-        return application_timezone, "application"
-
-    return None, "server"
+        return resolve_application_timezone(str(timezone))
+    return resolve_application_timezone(default)
 
 
 def _user_now(timezone: str | None) -> datetime:
     if timezone is None:
-        return datetime.now().astimezone()
+        return datetime.now(UTC)
 
     try:
         return datetime.now(ZoneInfo(timezone))
@@ -118,8 +109,3 @@ def format_datetime_for_timezone(value: datetime, timezone: str | None = None) -
         f"{weekday}, {month} {dt.day}, {dt.year}, "
         f"{hour12}:{dt.minute:02d} {ampm} ({timezone_display})"
     )
-
-
-def build_user_time_context(metadata: dict | None = None) -> UserTimeContext:
-    timezone, source = _resolve_user_timezone(metadata)
-    return format_user_time(timezone, source)

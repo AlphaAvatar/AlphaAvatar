@@ -13,21 +13,18 @@
 # limitations under the License.
 from __future__ import annotations
 
-import os
-import pathlib
-from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from alphaavatar.agents.utils.files.work_dirs import (
-    WorkspacePaths,
-    default_work_dir,
-    prepare_workspace,
-)
+from alphaavatar.core.workspace import path_key
+from alphaavatar.core.workspace.paths import absolute_root
 
 
 class AvatarInfoConfig(BaseModel):
-    """Resolve an Avatar workspace once; child snapshots retain the absolute directory."""
+    """Avatar configuration; resolving and preparing paths belongs to the application."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -35,41 +32,38 @@ class AvatarInfoConfig(BaseModel):
     name: str = Field(default="Assistant", min_length=1)
     introduction: str = "You are a helpful voice AI assistant."
     timezone: str | None = None
-    work_dir: str = Field(
-        default="", description="Workspace base directory; the Avatar ID is appended once."
+    workspace_root: str | None = Field(
+        default=None, description="Explicit complete Avatar workspace root, without ID appending."
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_legacy_workspace(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "work_dir" in value:
+            raise ValueError(
+                "avatar.work_dir used a base directory with the Avatar ID appended. "
+                "Replace it with avatar.workspace_root pointing to the existing complete "
+                "workspace directory; back up existing data before changing its location."
+            )
+        return value
 
     @field_validator("id")
     @classmethod
     def check_id(cls, value: str) -> str:
-        if (
-            value in (".", "..")
-            or value != value.strip()
-            or any(char in value for char in "/\\\x00")
-            or pathlib.PureWindowsPath(value).drive
-        ):
-            raise ValueError("Avatar ID must be a single nonempty directory name")
+        path_key(value)
         return value
 
-    def model_post_init(self, context) -> None:
-        if isinstance(context, Mapping) and context.get("resolved_workspace") is True:
-            if not pathlib.Path(self.work_dir).is_absolute():
-                raise ValueError("A restored Avatar workspace must be absolute")
-            os.environ["AVATAR_WORK_DIR"] = self.work_dir
-            if self.timezone:
-                os.environ["AVATAR_TIMEZONE"] = self.timezone
-            return
+    @field_validator("workspace_root")
+    @classmethod
+    def check_workspace_root(cls, value: str | None) -> str | None:
+        return str(absolute_root(Path(value))) if value is not None else None
 
-        self.name = os.getenv("AVATAR_NAME") or self.name
-        self.timezone = os.getenv("AVATAR_TIMEZONE") or self.timezone
-        base = os.getenv("AVATAR_WORK_DIR") or self.work_dir
-        root = (
-            pathlib.Path(base).expanduser() / self.id if base.strip() else default_work_dir(self.id)
-        )
-        workspace = WorkspacePaths.from_root(root.resolve())
-        prepare_workspace(workspace)
-
-        self.work_dir = str(workspace.root)
-        os.environ["AVATAR_WORK_DIR"] = self.work_dir
-        if self.timezone:
-            os.environ["AVATAR_TIMEZONE"] = self.timezone
+    @field_validator("timezone")
+    @classmethod
+    def check_timezone(cls, value: str | None) -> str | None:
+        if value is not None:
+            try:
+                ZoneInfo(value)
+            except (ValueError, ZoneInfoNotFoundError):
+                raise ValueError("avatar.timezone must be an IANA timezone name") from None
+        return value

@@ -17,10 +17,11 @@ from .bootstrap import (
     register_inference_runner_bootstrap,
 )
 from .executor import INFERENCE_ENDPOINT_ENV, InferenceExecutor
-from .runner import InferenceRunner
+from .runner import InferenceRunner, RunnerLaunch
 from .runtime import InferenceRuntime
 
 __all__ = [
+    "RunnerLaunch",
     "INFERENCE_ENDPOINT_ENV",
     "InferenceExecutor",
     "InferenceRunner",

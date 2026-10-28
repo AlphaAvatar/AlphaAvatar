@@ -43,7 +43,7 @@ from .protocol import (
     validate_method,
     write_frame,
 )
-from .runner import InferenceRunner
+from .runner import InferenceRunner, RunnerLaunch
 from .schemas import InferenceRunnerStatus
 
 logger = logging.getLogger(__name__)
@@ -57,6 +57,7 @@ class InferenceRuntime:
         runners: dict[str, type[InferenceRunner]],
         *,
         mp_ctx: BaseContext | None = None,
+        launch: RunnerLaunch | None = None,
         initialize_timeout: float = 300,
         request_timeout: float = 30,
         close_timeout: float = 5,
@@ -66,6 +67,7 @@ class InferenceRuntime:
         restart_limit: int = 2,
         restart_window_seconds: float = 300,
     ) -> None:
+        self._launch = launch
         self._runner_classes = dict(runners)
         for method, runner in self._runner_classes.items():
             validate_method(method)
@@ -234,6 +236,7 @@ class InferenceRuntime:
                 request_timeout=self._request_timeout,
                 close_timeout=self._close_timeout,
                 max_pending=self._max_pending,
+                launch=self._launch,
             )
             self._runners[method] = runner  # Own partial initialization before the first await.
             await self._initialize_runner(method, runner, index)
@@ -391,6 +394,7 @@ class InferenceRuntime:
                         request_timeout=self._request_timeout,
                         close_timeout=self._close_timeout,
                         max_pending=self._max_pending,
+                        launch=self._launch,
                     )
                     self._runners[method] = replacement
                     await self._initialize_runner(method, replacement, index)

@@ -18,10 +18,11 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 from alphaavatar.agents.log import logger
-from alphaavatar.agents.runtime import AvatarRuntime, SessionRuntime
+from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import AvatarCapability
 from alphaavatar.agents.runtime.inference import InferenceExecutor
 from alphaavatar.core.perception import PerceptionRuntime
+from alphaavatar.core.session import SessionRuntime
 
 if TYPE_CHECKING:
     from .base import MemoryBase

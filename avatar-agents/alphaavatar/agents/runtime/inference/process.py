@@ -46,7 +46,7 @@ from .protocol import (
     validate_data,
     write_frame,
 )
-from .runner import InferenceRunner
+from .runner import InferenceRunner, RunnerLaunch
 from .signals import configure_runner_signals, start_runner_process
 
 logger = logging.getLogger(__name__)
@@ -59,19 +59,27 @@ def _error() -> bytes:
     return diagnostic.encode("utf-8")[:16384]
 
 
-def _runner_main(runner_spec: tuple[str, str], sock: socket.socket) -> None:
+def _runner_main(
+    runner_spec: tuple[str, str], sock: socket.socket, launch: RunnerLaunch | None = None
+) -> None:
     configure_runner_signals()
     client = None
     try:
         client = configure_from_env()
-        _serve_runner(runner_spec, sock, capture=client is not None)
+        _serve_runner(runner_spec, sock, capture=client is not None, launch=launch)
     finally:
         sock.close()
         if client is not None:
             client.close()
 
 
-def _serve_runner(runner_spec: tuple[str, str], sock: socket.socket, *, capture: bool) -> None:
+def _serve_runner(
+    runner_spec: tuple[str, str],
+    sock: socket.socket,
+    *,
+    capture: bool,
+    launch: RunnerLaunch | None = None,
+) -> None:
     runner = None
     try:
         # Resolve model/plugin imports only after installing the signal and logging policy.
@@ -82,6 +90,8 @@ def _serve_runner(runner_spec: tuple[str, str], sock: socket.socket, *, capture:
             if not isinstance(runner_cls, type) or not issubclass(runner_cls, InferenceRunner):
                 raise TypeError("Inference target must be an InferenceRunner class")
             runner = runner_cls()
+            if launch is not None:
+                runner.configure(launch)
             runner.initialize()
             configure_runner_signals()  # Model initialization does not own terminal shutdown.
     except BaseException:
@@ -148,7 +158,9 @@ class RunnerProcess:
         request_timeout: float,
         close_timeout: float,
         max_pending: int,
+        launch: RunnerLaunch | None = None,
     ) -> None:
+        self._launch = launch
         self.method = runner_cls.INFERENCE_METHOD
         self._runner_cls, self._mp_ctx = runner_cls, mp_ctx
         self._initialize_timeout, self._request_timeout = initialize_timeout, request_timeout
@@ -201,7 +213,11 @@ class RunnerProcess:
         parent.setblocking(False)
         self._process = self._mp_ctx.Process(
             target=_runner_main,
-            args=((self._runner_cls.__module__, self._runner_cls.__qualname__), child),
+            args=(
+                (self._runner_cls.__module__, self._runner_cls.__qualname__),
+                child,
+                self._launch,
+            ),
             name=f"inference:{self.method}",
         )
 

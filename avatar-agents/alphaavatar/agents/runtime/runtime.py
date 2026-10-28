@@ -17,21 +17,19 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from alphaavatar.agents.utils.files.work_dirs import (
-    WorkspacePaths,
-    prepare_session_path,
-    prepare_workspace,
-)
 from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.env.schemas import PerceptionSourceRef
 from alphaavatar.core.output import OutputRuntime
 from alphaavatar.core.perception import PerceptionRuntime
+from alphaavatar.core.session import Participant, SessionRuntime
 from alphaavatar.core.time import RuntimeClock
 from alphaavatar.core.turn import TurnRuntime
+from alphaavatar.core.workspace import SessionPath, WorkspacePaths
 
 from .capability import AvatarCapabilityRegistry
 from .inference import InferenceExecutor
 from .modules.foundation import FoundationRuntime
-from .modules.session import SessionRuntime
+from .modules.participants import ParticipantBindings, UserDataAccess
 from .modules.state import StateRuntime
 
 if TYPE_CHECKING:
@@ -49,18 +47,22 @@ class AvatarRuntime:
 
     clock: RuntimeClock
     workspace: WorkspacePaths
+    session_path: SessionPath
 
     # core-level
+    session: SessionRuntime
     perception: PerceptionRuntime
     turn: TurnRuntime
     output: OutputRuntime
 
     # agent-level
-    session: SessionRuntime
     state: StateRuntime
 
     # lifecycle-level
     inference: InferenceExecutor
+    timezone: str | None = None
+    data_access: UserDataAccess = field(default_factory=UserDataAccess)
+    participant_bindings: ParticipantBindings = field(default_factory=ParticipantBindings)
     foundation: FoundationRuntime | None = None
 
     # capability
@@ -72,6 +74,11 @@ class AvatarRuntime:
 
     def __post_init__(self) -> None:
         session_id = self.session.session_id
+
+        if self.session_path.session_id != session_id:
+            raise ValueError("Session path belongs to another session")
+        if self.session.clock is not self.clock:
+            raise ValueError("SessionRuntime must use AvatarRuntime.clock")
 
         if session_id != self.perception.session_id:
             raise ValueError(
@@ -100,19 +107,18 @@ class AvatarRuntime:
         *,
         workspace: WorkspacePaths,
         session: SessionRuntime,
+        session_path: SessionPath,
         state: StateRuntime,
         config: RuntimeConfig,
-        inference: InferenceExecutor | None = None,
+        inference: InferenceExecutor,
         foundation: FoundationRuntime | None = None,
+        timezone: str | None = None,
+        data_access: UserDataAccess | None = None,
+        participant_bindings: ParticipantBindings | None = None,
     ) -> AvatarRuntime:
-        clock = RuntimeClock()
+        """Compose activated resources without filesystem work or ambient configuration."""
+        clock = session.clock
         session_id = session.session_id
-
-        prepare_workspace(workspace)
-
-        session_path = workspace.data.sessions.get(session.session_id, session.created_at.date())
-        prepare_session_path(session_path)
-        session.bind_path(session_path)
 
         perception = PerceptionRuntime(
             session_id=session_id,
@@ -131,12 +137,28 @@ class AvatarRuntime:
             clock=clock,
             workspace=workspace,
             session=session,
+            session_path=session_path,
             state=state,
             perception=perception,
             turn=turn,
             output=OutputRuntime(session_id=session_id, clock=clock),
-            inference=inference if inference is not None else InferenceExecutor.from_env(),
+            inference=inference,
             foundation=foundation,
+            timezone=timezone,
+            data_access=data_access if data_access is not None else UserDataAccess(),
+            participant_bindings=(
+                participant_bindings if participant_bindings is not None else ParticipantBindings()
+            ),
+        )
+
+    def resolve_participant(
+        self, transport_participant_id: str | None, *, source: PerceptionSourceRef | None = None
+    ) -> Participant | None:
+        participant_id = self.participant_bindings.resolve(transport_participant_id, source=source)
+        return (
+            self.session.get_participant(participant_id=participant_id)
+            if participant_id is not None
+            else None
         )
 
     def bind_foundation(self, foundation: FoundationRuntime) -> None:

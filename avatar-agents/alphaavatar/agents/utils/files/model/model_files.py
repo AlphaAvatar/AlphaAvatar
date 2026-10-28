@@ -28,7 +28,7 @@ from zipfile import ZipFile
 
 from filelock import FileLock
 
-from .model_cache import build_model_cache_dir
+from alphaavatar.core.workspace.paths import absolute_root, path_key
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -93,6 +93,7 @@ def _read_json(path: Path) -> dict:
 
 def resolve_hf_file(
     *,
+    models_dir: str | Path,
     namespace: tuple[str, ...],
     repo_id: str,
     revision: str,
@@ -106,7 +107,8 @@ def resolve_hf_file(
         raise ValueError("Model repository and revision are required")
     _filename(filename)
     _digest(sha256)
-    root = build_model_cache_dir(*namespace, create=True)
+    root = absolute_root(models_dir).joinpath(*(path_key(part) for part in namespace))
+    root.mkdir(parents=True, exist_ok=True)
     identity = {"repo_id": repo_id, "revision": revision, "filename": filename}
     key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     marker = root / f".{key}.json"
@@ -154,6 +156,7 @@ def resolve_hf_file(
 
 def resolve_url_file(
     *,
+    models_dir: str | Path,
     namespace: tuple[str, ...],
     filename: str,
     url: str,
@@ -164,7 +167,8 @@ def resolve_url_file(
     _digest(sha256)
     if not url.startswith("https://") or (size is not None and size <= 0):
         raise ValueError("Model downloads require HTTPS and a positive declared size")
-    root = build_model_cache_dir(*namespace, create=True)
+    root = absolute_root(models_dir).joinpath(*(path_key(part) for part in namespace))
+    root.mkdir(parents=True, exist_ok=True)
     target = root / filename
     marker = root / f".{filename}.json"
     source = {"url": url, "sha256": sha256, "size": size}
@@ -200,6 +204,7 @@ def resolve_url_file(
 
 def resolve_zip_directory(
     *,
+    models_dir: str | Path,
     namespace: tuple[str, ...],
     name: str,
     url: str,
@@ -216,7 +221,8 @@ def resolve_zip_directory(
         raise ValueError("Archive model files must be nonempty and unique")
     for filename in files:
         _filename(filename)
-    root = build_model_cache_dir(*namespace, create=True)
+    root = absolute_root(models_dir).joinpath(*(path_key(part) for part in namespace))
+    root.mkdir(parents=True, exist_ok=True)
     target = root / "models" / name
     target.parent.mkdir(parents=True, exist_ok=True)
     identity = {"url": url, "sha256": sha256, "size": size, "files": list(files)}
@@ -235,6 +241,7 @@ def resolve_zip_directory(
                 return target
 
         archive = resolve_url_file(
+            models_dir=models_dir,
             namespace=(*namespace, "archives"),
             filename=f"{name}.zip",
             url=url,

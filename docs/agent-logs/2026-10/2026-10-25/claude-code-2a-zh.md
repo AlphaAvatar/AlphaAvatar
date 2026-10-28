@@ -11,7 +11,7 @@
 | 2A-1 | 最小测试基础设施（21 个测试） | 2026-10-25 | `1ab771a` | `780091c` | 已验收；CI lint、build、install 通过，21 passed |
 | 2A-1 审计修正 | 加强两个取消回归测试 | 2026-10-25 | `780091c` | `5c2c5b7` | 已验收；CI 21 passed |
 | 2A-2a | `avatar.id` 必填 | 2026-10-25 | `5c2c5b7` | `468c807` | 已验收；CI Lint、Build、Install 通过，23 passed |
-| 2A-C1 | 删除未使用的 Host diagnostics | 2026-10-26 | `468c807` | 未提交 | 等待审计 |
+| 2A-C1 | 删除未使用的 Host diagnostics | 2026-10-26 | `468c807` | `00cc6ef` | 已验收；CI Lint、Build、Install 通过，23 passed；KD-9 关闭 |
 
 ## 已知缺陷（当前状态，只记录不修复）
 
@@ -26,6 +26,7 @@
 | KD-7 | ToolPolicy 的默认审批策略与部分示例文档不一致。**未授权修改默认行为**；需要另行审查工具权限模型、执行授权和用户确认策略，不能损害合理的自主执行能力 | 独立审查 | 2A-1 记录为"`ToolPolicy.approval_required` 默认为 False，与示例 YAML 注释矛盾"（原归属 Tools 批次）；2A-2a 按审计改为独立审查 |
 | KD-8 | Health 服务默认暴露在网络上（绑定 `0.0.0.0`），`/status` 没有鉴权 | Host 批次 | 2A-1 记录 |
 | ~~KD-9~~ | ~~`host/diagnostics.py` 无引用、与 Core diagnostics 重复、与计划中的 `host/diagnostics/` 包同名冲突~~ | 已关闭 | 2A-1 记录；**2A-C1 删除文件后解决** |
+| KD-10 | **待修复（数据完整性，高优先级）**。临时身份 B 解析为稳定身份 A 的链路有四类风险：① **文件丢失**：会话关闭时 `flush_user_path_migrations(remove_old=True)` 先做不覆盖合并，再 `rmtree` 旧目录，两边同名的文件中旧目录那份被删除；连续解析 B→A→C 会删除稳定用户 A 的目录；② **Memory 归属**：上下文 Owner 只在消费 Turn 或输出记录时才同步，已持久化的 B 记录从不更新 Owner，A 之后检索不到；③ **Persona 合并**：A 已有 Details 时整体丢弃 B 的 Details；身份解析前提交、解析后才消费的 Turn 被 Profiler 丢弃；④ **重复或错误的身份解析**：已稳定的身份可被再次重绑定；`load_profile` 不区分证据来自哪个 Participant，缺少可比较向量时直接视为匹配；未注册 Participant 的声纹和人脸会写入主 Participant | KD10-1…KD10-5，逐批授权 | 2A-2b 审计记为候选；2026-10-27 独立审计确认，并用合成数据离线复现，标为待修复；2A-2b-1 暂缓 |
 | O-1 | 初始化期间取消 Runner，要先等满 `close_timeout`（默认 5 s）才发 SIGTERM；测试中以 0.5 s 观测到 | 仅记录 | 2A-1 记录 |
 | O-2 | 导入 `alphaavatar.agents.configs` 会立即加载全部插件和 torch、cv2、weasyprint、openai 等（约 1.7 s）；导入期间第三方库会改写 `LD_LIBRARY_PATH`、`QT_QPA_*`、`OPENBLAS_MAIN_FREE` 等变量 | 仅记录 | 2A-2a 新增 |
 
