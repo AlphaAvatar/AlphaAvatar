@@ -9,7 +9,7 @@
 | `device_id` | 应用接入端点的标识，由接入适配层提供。一个端点可以提供文字、麦克风、摄像头等输入，也可以作为渲染端点。 | 当前接入后端的命名空间，例如一个 LiveKit room。当前适配器使用 `participant.identity`；它不是硬件序列号，重连或重新附着时可以复用或更换。 |
 | `entity_id` | 感知到的一个实体，例如同一摄像头画面中的某个人，或音频来源中持续跟踪的一名说话者。由感知输入或跟踪器提供。 | 必须连同 `PerceptionSourceRef` 使用，即 `(source_id, source_generation, entity_id)`；会话之间还需区分 `session_id`。实体跟踪有容量和过期边界，不能把编号相同当作跨来源或跨会话的同一个人。 |
 | `participant_id` | 当前会话中的逻辑参与者，由 `SessionRuntime` 管理。它把来自不同媒体的已确认关联汇集到一个会话对象。 | 在一个 `SessionRuntime` 中唯一，默认生成 UUID。身份纠正不更换该 ID；它不等于接入端点、媒体实体或长期用户。 |
-| `user_id` | 长期用户身份，指向用户 Persona、Identity、Memory 等数据。由应用声明或身份决策提供。 | 在当前应用用户数据命名空间中解释，可跨会话使用。`Participant.user_id` 是当前判断，可以为 `None`，也可以多次纠正。 |
+| `user_id` | 长期用户身份，指向用户 Persona、Identity、Memory 等数据。由可信应用明确建立，或由运行时识别／决策组件提交并接受。 | 在当前应用用户数据命名空间中解释，可跨会话使用。`Participant.user_id` 是当前判断，可以为 `None`，也可以多次纠正。 |
 
 `agent_device_id` 表示 Avatar 自身的接入端点，仍然属于 `device_id` 的同一种标识；它不等于 `avatar_id`。`SessionContext.device_id` 指当前用户端点，`CharacterConnection.device_id` 指该渲染连接的目标端点。字段所在对象决定角色，不要求这两者取相同值。`device_ids`、`excluded_device_ids` 是端点集合，不是新的 ID 类型。
 
@@ -25,9 +25,9 @@
 | `(PerceptionSourceRef, entity_id) → participant_id` | `ParticipantBindings._entities` | 每个来源实体独立关联；多个来源实体可以明确关联到同一个参与者。 |
 | `participant_id → user_id` | `SessionRuntime.participants[participant_id].user_id` | 当前用户身份只有这一份。`ParticipantBindings` 不复制用户映射。 |
 | `PerceptionSegmentRef → entity` | `ParticipantRuntime` 的有界片段状态 | 把声纹推理结果限定到具体音频片段；不新增人物 ID。 |
-| `user_id → 读写许可` | 应用注入的 `UserDataAccess` | 独立于身份映射，分别检查读、写权限。 |
+| `Participant → 用户资料` | `ParticipantRuntime.user_path(participant)` | 使用当前接受的参与者快照；已捕获写入可使用经过历史核验的旧版本，不维护启动用户名单。 |
 
-业务侧统一通过 [ParticipantRuntime](../avatar-agents/alphaavatar/agents/runtime/modules/participants/runtime.py) 操作：`join`、`get`、`bind_device`、`unbind_device`、`ensure_entity`、`bind_entity`、`release_entity`、`resolve`、`bind_user`、`can_read_user`、`can_write_user`、`user_path`。底层 [ParticipantBindings](../avatar-agents/alphaavatar/agents/runtime/modules/participants/binding.py) 只维护两张关联表，不承担识别策略、目录 I/O 或长期用户状态。
+业务侧统一通过 [ParticipantRuntime](../avatar-agents/alphaavatar/agents/runtime/modules/participants/runtime.py) 操作：`join`、`get`、`bind_device`、`ensure_entity`、`release_entity`、`resolve`、`bind_user`、`invoke`、`accepts_identity`、`user_path`。`invoke` 是同一 Runtime 的 Agent 主动身份入口，其他识别／决策组件使用 `bind_user`，统一交由 Session 接受判断。底层 [ParticipantBindings](../avatar-agents/alphaavatar/agents/runtime/modules/participants/binding.py) 只维护两张关联表，不承担识别策略、目录 I/O 或长期用户状态。
 
 `resolve(device_id, endpoint=True)` 只用于明确的端点提交者；默认不使用端点关联。带实体或片段的解析优先遵循该证据：未知实体、冲突片段、过期来源或已淘汰的片段返回未知，不回退到设备用户或主参与者。缺少端点信息不妨碍保留感知观测，也不自动允许身份绑定。
 
@@ -42,7 +42,7 @@
 | 手机提交的一条明确属于账户持有者的文字 | 可通过端点关联 `phone-1 → participant-a` 解析提交者 |
 | 麦克风中尚未确认的说话者 | 保持独立或未知，不能因为来自 `phone-1` 就归到 `participant-a` |
 
-人脸实体和声纹实体只有在关联证据成立时，才通过 `bind_entity` 指向同一个 `participant_id`。同设备、相同 `user_id` 或相同局部 `entity_id` 都不自动合并参与者。若实体已关联另一参与者，应显式释放后重新关联，不能无声覆盖。
+人脸实体和声纹实体只有在关联证据成立时，才通过 `ensure_entity(source, entity, participant_id=...)` 指向同一个 `participant_id`；省略该参数时复用原关联或创建新参与者。同设备、相同 `user_id` 或相同局部 `entity_id` 都不自动合并参与者。若实体已关联另一参与者，应显式释放后重新关联，不能无声覆盖。
 
 以下示例的 `participants` 是当前会话的 `ParticipantRuntime`，演示同一摄像头中两个人的独立身份判断：
 
@@ -56,22 +56,32 @@ person_b = participants.ensure_entity(source, PerceptionEntityRef("face-b"))
 participants.bind_user(IdentityRequest(
     participant_id=person_a.participant_id, user_id="user-a",
     source=IdentitySource.PERCEPTION, basis_sequence=person_a.identity_sequence,
+    reason="Face recognition matched user-a above the configured threshold",
 ))
 participants.bind_user(IdentityRequest(
     participant_id=person_b.participant_id, user_id="user-b",
     source=IdentitySource.MODEL, basis_sequence=person_b.identity_sequence,
+    reason="Identity decision model resolved the current participant as user-b",
 ))
 ```
 
-该示例不授予用户数据访问。`user_path(user_id, write=...)` 先检查应用许可，只返回类型化路径，不创建目录。
+判断接受后，读取 `participants.get(person_a.participant_id)` 获得新的不可变快照，再调用 `user_path(participant)` 自动解析资料路径。该操作不做 I/O；目录在需要保存资料时显式创建。`accepts_identity(participant)` 核验当前版本；已经捕获的写入可用 `accepts_identity(participant, current=False)` 核验已接受历史，并通过 `user_path(participant, current=False)` 固定原目标。旧快照不能用于新的读取。
 
 ### 纠正、解绑和快照
 
-`bind_user(IdentityRequest(...))` 支持声明、感知、Agent 和独立模型提交身份更正。默认策略不限制“只识别一次”，也不要求 Agent 的目标用户先经过感知提名。应用可以替换身份策略，但数据读写许可仍单独检查。
+`bind_user(IdentityRequest(...))` 支持声明、感知、Agent 和独立模型提交身份更正。默认策略不限制“只识别一次”，也不要求 Agent 的目标用户先经过感知提名。默认策略要求决策组件提供非空 `reason`；它记录接受依据，不负责在 Core 内调用模型。识别阈值和异步推理由处理器完成，应用可以替换接受策略。Host 的原始连接 metadata 不直接建立已知用户身份；默认以 `user_id=None` 入场，也不自动创建随机长期访客账户。
+
+Engine 直接注册 `runtime.participants` 的 `participant.identity` 能力，主动身份判断实现在 `ParticipantRuntime.invoke()` 中，纯文本输入也可使用。它只能选择调用所属 Turn 的参与者；只有单一参与者时可以省略 `participant_id`。模型参数为目标 `user_id`、判断依据 `reason` 和可选的 `basis_sequence`，不会增加另一套人物标识，也不返回用户资料。默认以 Turn 捕获的版本作比较；同次执行中再次更正时，必须结合新证据并使用前次结果返回的版本。
 
 请求必须携带读取时的 `identity_sequence`，填入 `basis_sequence`；迟到结果会返回 `STALE`，调用方需重新获取参与者并判断是否重试。`user_id=None` 表示解绑，不恢复最初用户，也不生成临时长期用户 ID。若应用确实创建了访客账户，那是明确创建的用户，与尚未识别的感知参与者不同。
 
-`Participant` 是不可变快照。改绑保留 `participant_id`，替换当前快照并递增身份版本。`TurnEntityRef` 中的 `participant_id`、`user_id`、`identity_sequence` 固定该 Turn 的身份事实；这些历史引用不能被后来的纠正悄悄重写，也不授予存储权限。Session 事件流有界，当前 Snapshot 不能替代已遗漏的全部持久化副作用。
+`Participant` 是不可变快照。改绑保留 `participant_id`，替换当前快照并递增身份版本。`TurnEntityRef` 中的 `participant_id`、`user_id`、`identity_sequence` 固定该 Turn 的身份事实；这些历史引用不能被后来的纠正悄悄重写。Persona／Memory 通过对应 Turn 的 actors 选择用户资料。没有明确主体时不把整个 Session 的用户资料合并到提示中。
+
+能力调用采用显式 `input_id`：Loop 将 `LoopRequest.input_id` 作为独立关键字参数传给 Registry，再传入 `invoke(request, *, input_id=...)`。ParticipantRuntime 和 Memory 主动检索从所属 `TurnRuntime.get(input_id)` 获取原始快照；缺失或过期的输入会被拒绝，不回退到 `TurnRuntime.latest`。`input_id` 不属于模型工具参数，也不会被模型参数覆盖。AvatarRuntime 统一创建并注入同一个 TurnRuntime；没有额外的隐式 Turn 上下文或另一份当前 Turn 状态。
+
+Persona 会随已接受身份异步加载相应资料，Context 在准备完成及使用捕获前缀时复核身份版本。已知用户改绑后，正在使用旧身份前缀的 Loop 通过独立的 Session 消费者以 `identity_changed` 取消，模型停顿或输出背压也不必等待下一条模型事件。输出接纳及投递位置另行复核当前版本，拦截迟到文本和音频；后续 Turn 使用新身份，先前已输出的内容无法撤回。未知参与者首次被识别时，当前执行可继续确认结果，但不把新用户的私有资料追加进原 Turn 前缀。普通缓存更新不改变已捕获的前缀。
+
+`SessionRuntime.identity_history(participant_id)` 返回本会话生命周期内全部已接受身份事件，包括初始加入及 B→A→C 等变化；`get_identity(participant_id, identity_sequence)` 可取得某个已接受版本。该历史独立于有界 `SessionStream`，包含旧／新用户、时间、来源、原因和可选分数。历史保存在内存，不保证进程重启恢复，也不自动迁移历史 Memory。当前 Snapshot 仍只表示当前状态，不能代替遗漏的持久化副作用。
 
 ## 2. 媒体来源、片段和观测
 
@@ -110,7 +120,7 @@ participants.bind_user(IdentityRequest(
 
 当前结构区分连接附着、Session、执行和工作上下文，但这些 ID 本身不承诺断线任务恢复或跨进程持久续跑。`pid` 只是运行进程的操作系统进程号。
 
-实现入口：[Avatar 配置](../avatar-agents/alphaavatar/agents/configs/avatar_info_config.py)、[Host 执行契约](../avatar-host/alphaavatar/host/execution/schemas.py)、[TurnCandidate](../avatar-plugins/perception/avatar-plugins-router/alphaavatar/plugins/router/processors/turn_taking/schemas/state.py)、[输入接纳](../avatar-agents/alphaavatar/agents/avatar/engine.py)、[TurnRuntime](../avatar-core/alphaavatar/core/turn/runtime.py)、[Turn 契约](../avatar-core/alphaavatar/core/turn/schema.py)、[LoopIdentity](../avatar-agents/alphaavatar/agents/avatar/loop/schemas/identity.py)。
+实现入口：[Avatar 配置](../avatar-agents/alphaavatar/agents/configs/avatar_info_config.py)、[Host 执行契约](../avatar-host/alphaavatar/host/execution/schemas.py)、[TurnCandidate](../avatar-plugins/perception/avatar-plugins-router/alphaavatar/plugins/router/processors/turn_taking/schemas/state.py)、[输入接纳](../avatar-agents/alphaavatar/agents/avatar/engine.py)、[TurnRuntime](../avatar-core/alphaavatar/core/turn/runtime.py)、[Turn 契约](../avatar-core/alphaavatar/core/turn/schemas/snapshot.py)、[LoopIdentity](../avatar-agents/alphaavatar/agents/avatar/loop/schemas/identity.py)。
 
 ## 4. 模型、工具、输出与事件
 
@@ -164,6 +174,7 @@ participants.bind_user(IdentityRequest(
 | `source_generation` | 单个来源的世代，防止旧流结果进入新流。 |
 | `candidate_revision` / candidate `revision` | 同一 Turn 候选的证据修订号，防止旧决策覆盖新证据。 |
 | `sequence`、`cursor_seq`、`committed_cursor_seq` | 某条事件流的发布顺序、读游标和确认游标；不同流的数值不能互相比较。 |
+| `OutputRuntime.text_sequence(output_id)` | 该输出最后一次本地接纳文本的 Output 事件序号，未知或尚未接纳时为 `0`。取消时用于区分已接纳内容和被丢弃的待发文本，不表示远端已收到或播放，也不生成新的文本 ID。 |
 | `cutoff.sequence` | 提交 Turn 时引用的 Perception 流边界，不是 Turn ID，也不代替来源/片段证据。 |
 | `revision`、`content_index`、`output_index` | 各自记录的修订或内容位置，必须结合所属记录解释。 |
 | 片段 `token` | ParticipantRuntime 内部的 admission 版本；不是用户标识或授权凭据。连接中的 `token` 则是接入凭据，两者不得混用或统一输出到诊断。 |
@@ -178,4 +189,4 @@ participants.bind_user(IdentityRequest(
 
 第三方协议仍使用其真实字段：LiveKit 的 `participant.identity`、`participant_identity`、`sender_identity`，以及 Airi 的 `agentIdentity` 只在适配边界转换。外部 `track_sid` 标识媒体轨道，`room_name` 标识房间；模型下载的 `repo_id` 和语音服务的 `voice_id` 也按供应商命名空间解释，不能改成用户或设备 ID。
 
-新增消费者应接收完整的类型化引用，跨层传递既有 ID；只有生命周期或被标识对象确实不同，才需要新 ID。身份、媒体归属和数据授权分别通过各自入口判断，不能仅凭相同字符串相互推导。
+新增消费者应接收完整的类型化引用，跨层传递既有 ID；只有生命周期或被标识对象确实不同，才需要新 ID。身份接受、媒体归属和操作主体分别通过类型化入口核验，不能仅凭相同字符串相互推导。静态 `UserDataAccess` 已移除；当前身份与原始操作快照驱动资料使用。

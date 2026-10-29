@@ -17,20 +17,7 @@ import math
 from dataclasses import dataclass
 
 from ..enums import IdentitySource
-
-
-def validate_identity(value: str, *, name: str = "identity") -> str:
-    """Validate a logical identity without rewriting it or imposing path syntax."""
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string")
-    if not value or value != value.strip() or not value.isprintable():
-        raise ValueError(f"{name} must be nonempty, printable and have no surrounding whitespace")
-    return value
-
-
-def _validate_sequence(value: int, *, name: str) -> None:
-    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-        raise ValueError(f"{name} must be a nonnegative integer")
+from .validation import validate_identity, validate_sequence
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +27,7 @@ class IdentityRequest:
     source: IdentitySource
     basis_sequence: int
     score: float | None = None
+    reason: str | None = None
 
     def __post_init__(self) -> None:
         validate_identity(self.participant_id, name="participant_id")
@@ -47,8 +35,12 @@ class IdentityRequest:
             validate_identity(self.user_id, name="user_id")
         if not isinstance(self.source, IdentitySource):
             raise TypeError("source must be IdentitySource")
-        _validate_sequence(self.basis_sequence, name="basis_sequence")
+        validate_sequence(self.basis_sequence, name="basis_sequence")
         if self.score is not None and (
             isinstance(self.score, bool) or not math.isfinite(self.score)
         ):
             raise ValueError("score must be finite")
+        if self.reason is not None and (
+            not isinstance(self.reason, str) or not self.reason.strip() or len(self.reason) > 2048
+        ):
+            raise ValueError("reason must be nonempty text of at most 2048 characters")

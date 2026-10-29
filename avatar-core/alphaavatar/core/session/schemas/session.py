@@ -23,15 +23,6 @@ from ..enums import IdentitySource, SessionEventKind
 from .participant import Participant
 
 
-def validate_identity(value: str, *, name: str = "identity") -> str:
-    """Validate a logical identity without rewriting it or imposing path syntax."""
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string")
-    if not value or value != value.strip() or not value.isprintable():
-        raise ValueError(f"{name} must be nonempty, printable and have no surrounding whitespace")
-    return value
-
-
 @dataclass(frozen=True, slots=True)
 class SessionEvent:
     session_id: str
@@ -42,6 +33,8 @@ class SessionEvent:
     previous_user_id: str | None = None
     source: IdentitySource | None = None
     primary_participant_id: str | None = None
+    reason: str | None = None
+    score: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

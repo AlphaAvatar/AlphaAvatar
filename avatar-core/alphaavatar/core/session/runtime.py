@@ -22,13 +22,14 @@ from uuid import uuid4
 
 from alphaavatar.core.time import RuntimeClock, RuntimeTime
 
-from .enums import IdentityOutcome, SessionEventKind
+from .enums import IdentityOutcome, IdentitySource, SessionEventKind
 from .schemas import IdentityRequest, Participant, SessionEvent, SessionSnapshot, validate_identity
+from .schemas.validation import validate_sequence
 from .stream import SessionStream
 
 
 class IdentityPolicy(Protocol):
-    """Synchronous, nonblocking identity decision; never performs I/O or grants data access."""
+    """Accept a runtime decision without I/O; recognition/model work happens before submission."""
 
     def allow(
         self, request: IdentityRequest, *, participant: Participant, snapshot: SessionSnapshot
@@ -36,12 +37,12 @@ class IdentityPolicy(Protocol):
 
 
 class DefaultIdentityPolicy:
-    """Accept versioned corrections from every source; data access has a separate owner."""
+    """Require a reason from the deciding component, without restricting correction sources."""
 
     def allow(
         self, request: IdentityRequest, *, participant: Participant, snapshot: SessionSnapshot
     ) -> bool:
-        return True
+        return request.reason is not None
 
 
 class SessionRuntime:
@@ -67,6 +68,8 @@ class SessionRuntime:
 
         # participant -> user
         self._participants: dict[str, Participant] = {}
+        # Keep identity changes independently of the bounded notification stream.
+        self._identity_history: dict[str, list[SessionEvent]] = {}
 
         self._primary_participant_id: str | None = None
         self._closed = False
@@ -129,6 +132,24 @@ class SessionRuntime:
         with self._lock:
             return self._snapshot()
 
+    def identity_history(self, participant_id: str) -> tuple[SessionEvent, ...]:
+        """Accepted identity history for this session lifetime, including initial admission."""
+        with self._lock:
+            return tuple(self._identity_history.get(participant_id, ()))
+
+    def get_identity(
+        self, participant_id: str, identity_sequence: int | None = None
+    ) -> Participant | None:
+        if identity_sequence is not None:
+            validate_sequence(identity_sequence, name="identity_sequence")
+        with self._lock:
+            if identity_sequence is None:
+                return self._participants.get(participant_id)
+            history = self._identity_history.get(participant_id, ())
+            return (
+                history[identity_sequence].participant if identity_sequence < len(history) else None
+            )
+
     def join(
         self,
         *,
@@ -137,6 +158,7 @@ class SessionRuntime:
         timezone: str | None = None,
         primary: bool = False,
     ) -> Participant:
+        # A supplied user is an explicit application decision, never transport metadata.
         participant = Participant(
             participant_id=uuid4().hex if participant_id is None else participant_id,
             user_id=user_id,
@@ -161,7 +183,10 @@ class SessionRuntime:
                 at=participant.joined_at,
                 participant=participant,
                 primary_participant_id=self._primary_participant_id,
+                source=IdentitySource.DECLARED if user_id is not None else None,
+                reason="Application admitted a known user" if user_id is not None else None,
             )
+            self._identity_history[participant.participant_id] = [event]
             waiters = self._events._append(event)
 
         self._events._wake(waiters)
@@ -235,8 +260,11 @@ class SessionRuntime:
                 previous_user_id=current.user_id,
                 source=request.source,
                 primary_participant_id=self._primary_participant_id,
+                reason=request.reason,
+                score=request.score,
             )
             self._participants[request.participant_id] = updated
+            self._identity_history[request.participant_id].append(event)
             waiters = self._events._append(event)
 
         self._events._wake(waiters)

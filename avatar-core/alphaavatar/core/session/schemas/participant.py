@@ -17,19 +17,7 @@ from dataclasses import dataclass
 
 from alphaavatar.core.time import RuntimeTime
 
-
-def validate_identity(value: str, *, name: str = "identity") -> str:
-    """Validate a logical identity without rewriting it or imposing path syntax."""
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string")
-    if not value or value != value.strip() or not value.isprintable():
-        raise ValueError(f"{name} must be nonempty, printable and have no surrounding whitespace")
-    return value
-
-
-def _validate_sequence(value: int, *, name: str) -> None:
-    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-        raise ValueError(f"{name} must be a nonnegative integer")
+from .validation import validate_identity, validate_sequence
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +34,6 @@ class Participant:
             validate_identity(self.user_id, name="user_id")
         if not isinstance(self.joined_at, RuntimeTime):
             raise TypeError("joined_at must be RuntimeTime")
-        _validate_sequence(self.identity_sequence, name="identity_sequence")
+        validate_sequence(self.identity_sequence, name="identity_sequence")
         if self.timezone is not None:
             validate_identity(self.timezone, name="timezone")

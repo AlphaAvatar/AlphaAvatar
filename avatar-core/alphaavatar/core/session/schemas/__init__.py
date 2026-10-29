@@ -14,5 +14,13 @@
 from .participant import Participant
 from .request import IdentityRequest
 from .session import SessionEvent, SessionSnapshot, SessionStreamRead
+from .validation import validate_identity
 
-__all__ = ["IdentityRequest", "Participant", "SessionEvent", "SessionSnapshot", "SessionStreamRead"]
+__all__ = [
+    "IdentityRequest",
+    "Participant",
+    "SessionEvent",
+    "SessionSnapshot",
+    "SessionStreamRead",
+    "validate_identity",
+]
