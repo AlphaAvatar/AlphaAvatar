@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from enum import Enum
 from pathlib import Path, PurePath
 from typing import Any
@@ -23,10 +24,12 @@ from uuid import UUID
 
 from pydantic import SecretStr
 
+from alphaavatar.core.workspace import ApplicationPaths, WorkspacePaths
 from alphaavatar.host.application.config import HostConfig
 from alphaavatar.host.sessions.factory import validate_session_config
 
 from .application import ApplicationConfig
+from .paths import platform_application_root, resolve_application_paths
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -49,20 +52,47 @@ def _snapshot_scalar(value: Any) -> Any:
     raise ValueError("Application configuration contains a non-serializable value")
 
 
-def _validate(value: Any, *, restored: bool) -> ApplicationConfig:
+def _validate(value: Any, *, paths: ApplicationPaths | None = None) -> ApplicationConfig:
     from alphaavatar.agents.configs import AvatarConfig
 
     data = _mapping(value)
     avatar_data = dict(data)
+    application = _mapping(avatar_data.pop("application", {}))
+    unknown = set(application) - {"home", "cache_root"}
+    if unknown:
+        raise ValueError("Unknown application path configuration")
+
+    # ApplicationPaths
+    if "home" in application:
+        paths = ApplicationPaths.from_root(
+            application["home"], cache_root=application.get("cache_root")
+        )
+    elif paths is None:
+        raise ValueError("An explicit application home or ApplicationPaths is required")
+    elif "cache_root" in application:
+        paths = ApplicationPaths.from_root(paths.root, cache_root=application["cache_root"])
+
+    # HostConfig
     host = HostConfig.model_validate(avatar_data.pop("host", {}))
     validate_session_config(host.rtc)
 
-    context = {"resolved_workspace": True} if restored else None
-    avatar = AvatarConfig.model_validate(avatar_data, context=context)
+    # AvatarConfig
+    avatar = AvatarConfig.model_validate(avatar_data)
 
-    # Resolve defaults and Avatar identity once. Re-reading raw YAML in a fresh interpreter
-    # would create another default identity and append avatar_id to the workspace again.
-    resolved = {"host": host.model_dump(mode="python"), **avatar.model_dump(mode="python")}
+    # WorkspacePaths
+    workspace = (
+        WorkspacePaths.from_root(avatar.avatar.workspace_root)
+        if avatar.avatar.workspace_root is not None
+        else paths.workspace(avatar.avatar.id)
+    )
+    avatar.avatar.workspace_root = str(workspace.root)
+    resolved = {
+        "application": {"home": str(paths.root), "cache_root": str(paths.cache.root)},
+        "host": host.model_dump(mode="python"),
+        **avatar.model_dump(mode="python"),
+    }
+
+    # payload
     payload = json.dumps(
         resolved,
         default=_snapshot_scalar,
@@ -70,16 +100,18 @@ def _validate(value: Any, *, restored: bool) -> ApplicationConfig:
         allow_nan=False,
         separators=(",", ":"),
     )
-    return ApplicationConfig(host=host, avatar=avatar, payload=payload)
+    return ApplicationConfig(
+        host=host, avatar=avatar, paths=paths, workspace=workspace, payload=payload
+    )
 
 
-def validate_application(value: Any) -> ApplicationConfig:
-    return _validate(value, restored=False)
+def validate_application(value: Any, *, paths: ApplicationPaths | None = None) -> ApplicationConfig:
+    return _validate(value, paths=paths)
 
 
 def restore_application(payload: str) -> ApplicationConfig:
-    """Strictly validate a parent-owned resolved snapshot without repeating workspace resolution."""
-    return _validate(json.loads(payload), restored=True)
+    """Restore explicit roots without consulting the child process environment."""
+    return _validate(json.loads(payload))
 
 
 def load_application(path: str | Path, overrides: Sequence[str] = ()) -> ApplicationConfig:
@@ -111,4 +143,20 @@ def load_application(path: str | Path, overrides: Sequence[str] = ()) -> Applica
         host["execution"] = execution
         data["host"] = host
 
-    return validate_application(data)
+    paths = resolve_application_paths(
+        os.environ, default_root=platform_application_root(os.environ, Path.home())
+    )
+    config = validate_application(data, paths=paths)
+    raw_avatar = _mapping(data.get("avatar", {}))
+    if raw_avatar.get("workspace_root") is None:
+        identity = config.avatar.avatar.id
+        if identity not in {".", ".."} and not any(c in identity for c in "/\\\x00"):
+            home = Path.home()
+            previous = [home / ".local" / "share" / identity]
+            if os.name == "posix":
+                previous.append(Path("/var/lib") / identity)
+            if os.environ.get("XDG_DATA_HOME"):
+                previous.append(Path(os.environ["XDG_DATA_HOME"]) / identity)
+            config = replace(config, previous_workspace_roots=tuple(previous))
+
+    return config

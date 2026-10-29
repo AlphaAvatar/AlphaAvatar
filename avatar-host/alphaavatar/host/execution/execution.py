@@ -67,6 +67,9 @@ class HostExecution:
                 errors.append(failure)
             except Exception as error:
                 errors.append(error)
+
+        # The Host owns this Session. Plugins persist explicit snapshots before this boundary.
+        self.runtime.session.close()
         if errors:
             raise ExceptionGroup("Host execution cleanup failed", errors)
 

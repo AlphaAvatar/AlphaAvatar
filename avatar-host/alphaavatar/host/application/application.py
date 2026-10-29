@@ -113,9 +113,26 @@ class AvatarHost:
     async def _serve(self) -> None:
         from alphaavatar.agents.runtime.inference import (
             InferenceRuntime,
+            RunnerLaunch,
             bootstrap_inference_runners,
             prepare_inference_runners,
         )
+        from alphaavatar.core.workspace import (
+            check_legacy_identity,
+            check_workspace_continuity,
+            prepare_application,
+            prepare_workspace,
+        )
+
+        # Workspace
+        def activate_paths() -> None:
+            check_workspace_continuity(self.config.workspace, self.config.previous_workspace_roots)
+            if self.config.workspace == self.config.paths.workspace(self.config.avatar.avatar.id):
+                check_legacy_identity(self.config.paths.avatars_dir, self.config.avatar.avatar.id)
+            prepare_application(self.config.paths)
+            prepare_workspace(self.config.workspace)
+
+        await asyncio.to_thread(activate_paths)
 
         # Health
         self._health_start = asyncio.create_task(self._health.on_start(), name="host_health_start")
@@ -126,7 +143,11 @@ class AvatarHost:
         # Inference
         prepare_inference_runners(self.config.avatar)
         self._inference = InferenceRuntime(
-            bootstrap_inference_runners(), mp_ctx=mp.get_context("spawn")
+            bootstrap_inference_runners(),
+            mp_ctx=mp.get_context("spawn"),
+            launch=RunnerLaunch(
+                str(self.config.workspace.root), str(self.config.paths.cache.models_dir)
+            ),
         )
         self._inference_start = asyncio.create_task(
             self._inference.start(), name="host_inference_start"

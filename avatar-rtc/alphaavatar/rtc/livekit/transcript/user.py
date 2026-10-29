@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 class _UserTranscript:
     segment: PerceptionSegmentRef
     input_source: PerceptionSourceRef
-    participant_identity: str
+    device_id: str
     track_sid: str
     segment_id: str
     text: str
@@ -58,7 +58,7 @@ class LiveKitUserTranscriptOutput(LifecycleComponent):
         *,
         room: rtc.Room,
         perception: PerceptionRuntime,
-        participant_identities: frozenset[str],
+        device_ids: frozenset[str],
         consumer_id: str = "livekit:user_transcript",
         publish_legacy: bool = True,
         publish_text_stream: bool = True,
@@ -68,11 +68,13 @@ class LiveKitUserTranscriptOutput(LifecycleComponent):
         max_pending_bytes: int = 262_144,
         max_queue_age: float = 30.0,
     ) -> None:
-        if isinstance(participant_identities, str) or not participant_identities:
-            raise ValueError("User transcript participants must be an explicit nonempty collection")
-        participants = frozenset(participant_identities)
-        if any(not isinstance(value, str) or not value for value in participants):
-            raise ValueError("User transcript participant identities must be nonempty strings")
+        if isinstance(device_ids, str) or not device_ids:
+            raise ValueError(
+                "User transcript transport IDs must be an explicit nonempty collection"
+            )
+        device_ids = frozenset(device_ids)
+        if any(not isinstance(value, str) or not value for value in device_ids):
+            raise ValueError("User transcript transport IDs must be nonempty strings")
         if not consumer_id or not (publish_legacy or publish_text_stream):
             raise ValueError("User transcript requires a consumer identity and an enabled protocol")
         if (
@@ -86,7 +88,7 @@ class LiveKitUserTranscriptOutput(LifecycleComponent):
         if not all(isfinite(value) and value > 0 for value in (publish_timeout, max_queue_age)):
             raise ValueError("User transcript timeouts must be positive and finite")
 
-        self._room, self._perception, self._participants = room, perception, participants
+        self._room, self._perception, self._device_ids = room, perception, device_ids
         self._name = consumer_id
         self._legacy, self._text_stream = publish_legacy, publish_text_stream
         self._timeout, self._max_age = publish_timeout, max_queue_age
@@ -114,17 +116,17 @@ class LiveKitUserTranscriptOutput(LifecycleComponent):
             return None
         return PerceptionSourceRef(source_id=source_id, source_generation=generation)
 
-    def _track_sid(self, source: PerceptionSourceRef, participant_identity: str) -> str | None:
-        if participant_identity not in self._participants:
+    def _track_sid(self, source: PerceptionSourceRef, device_id: str) -> str | None:
+        if device_id not in self._device_ids:
             return None
-        participant = self._room.remote_participants.get(participant_identity)
+        participant = self._room.remote_participants.get(device_id)
         if participant is None:
             return None
         # Resolve the original capture binding, never parse Router's derived source names.
         for state in self._perception.get_source_states(
             modality=MediaModality.AUDIO, source_kind=MediaSourceKind.MICROPHONE
         ):
-            if state.source != source or state.transport_participant_id != participant_identity:
+            if state.source != source or state.device_id != device_id:
                 continue
             if (
                 state.state
@@ -144,9 +146,9 @@ class LiveKitUserTranscriptOutput(LifecycleComponent):
                 return sid
         return None
 
-    def _segment_id(self, participant: str, segment: PerceptionSegmentRef) -> str:
+    def _segment_id(self, device_id: str, segment: PerceptionSegmentRef) -> str:
         identity = json.dumps(
-            (self._perception.session_id, participant, segment.to_dict()),
+            (self._perception.session_id, device_id, segment.to_dict()),
             ensure_ascii=False,
             separators=(",", ":"),
         )
@@ -161,12 +163,8 @@ class LiveKitUserTranscriptOutput(LifecycleComponent):
     def _ingest(self, observation: EnvObservation) -> None:
         if self._close_task is not None or observation.kind != ObservationKind.TRANSCRIPT_SEGMENT:
             return
-        participant, segment = observation.transport_participant_id, observation.segment
-        if (
-            not isinstance(participant, str)
-            or participant not in self._participants
-            or segment is None
-        ):
+        device_id, segment = observation.device_id, observation.segment
+        if not isinstance(device_id, str) or device_id not in self._device_ids or segment is None:
             return
         if observation.time_range.end.monotonic_ns < self._started_ns:
             return
@@ -174,7 +172,7 @@ class LiveKitUserTranscriptOutput(LifecycleComponent):
         if not isinstance(payload, TextPayload) or not payload.text.strip():
             return
         source = self._input_source(observation)
-        if source is None or (sid := self._track_sid(source, participant)) is None:
+        if source is None or (sid := self._track_sid(source, device_id)) is None:
             logger.debug("USER TRANSCRIPT SKIPPED reason=missing_or_retired_audio_binding")
             return
         text = payload.text
@@ -186,7 +184,7 @@ class LiveKitUserTranscriptOutput(LifecycleComponent):
         except UnicodeEncodeError:
             logger.warning("USER TRANSCRIPT DROPPED reason=invalid_utf8")
             return
-        segment_id = self._segment_id(participant, segment)
+        segment_id = self._segment_id(device_id, segment)
         digest = hashlib.sha256(encoded).digest()
         if (previous := self._recent.get(segment_id)) is not None:
             if previous != digest:
@@ -211,7 +209,7 @@ class LiveKitUserTranscriptOutput(LifecycleComponent):
             _UserTranscript(
                 segment=segment,
                 input_source=source,
-                participant_identity=participant,
+                device_id=device_id,
                 track_sid=sid,
                 segment_id=segment_id,
                 text=text,
@@ -239,7 +237,7 @@ class LiveKitUserTranscriptOutput(LifecycleComponent):
         return (
             self._close_task is None
             and asyncio.get_running_loop().time() - item.queued_at <= self._max_age
-            and self._track_sid(item.input_source, item.participant_identity) == item.track_sid
+            and self._track_sid(item.input_source, item.device_id) == item.track_sid
         )
 
     def _attributes(self, item: _UserTranscript, *, final: bool) -> dict[str, str]:
@@ -265,7 +263,7 @@ class LiveKitUserTranscriptOutput(LifecycleComponent):
             async with asyncio.timeout(self._timeout):
                 writer = await self._room.local_participant.stream_text(
                     topic="lk.transcription",
-                    sender_identity=item.participant_identity,
+                    sender_identity=item.device_id,
                     attributes=self._attributes(item, final=False),
                 )
 
@@ -304,7 +302,7 @@ class LiveKitUserTranscriptOutput(LifecycleComponent):
         async with asyncio.timeout(self._timeout):
             await self._room.local_participant.publish_transcription(
                 rtc.Transcription(
-                    participant_identity=item.participant_identity,
+                    participant_identity=item.device_id,
                     track_sid=item.track_sid,
                     segments=[
                         rtc.TranscriptionSegment(

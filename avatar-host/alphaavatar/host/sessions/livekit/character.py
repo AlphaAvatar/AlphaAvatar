@@ -33,12 +33,12 @@ class LiveKitCharacterTransport(CharacterTransport):
         self,
         *,
         room: rtc.Room,
-        agent_identity: str,
+        agent_device_id: str,
         livekit_url: str | None = None,
         api_key: str | None = None,
         api_secret: str | None = None,
     ) -> None:
-        self._room, self._agent_identity = room, agent_identity
+        self._room, self._agent_device_id = room, agent_device_id
         self._url = livekit_url if livekit_url is not None else os.getenv("LIVEKIT_URL", "")
         self._api_key = api_key if api_key is not None else os.getenv("LIVEKIT_API_KEY", "")
         self._api_secret = (
@@ -68,11 +68,11 @@ class LiveKitCharacterTransport(CharacterTransport):
             raise ValueError("Remote Character connections require TLS")
         if not all(
             isinstance(v, str) and v.strip()
-            for v in (agent_identity, self._api_key, self._api_secret)
+            for v in (agent_device_id, self._api_key, self._api_secret)
         ):
             raise ValueError("Character requires Agent identity and LiveKit service credentials")
 
-        self._identity = f"alphaavatar-character-{uuid4().hex}"
+        self._device_id = f"alphaavatar-character-{uuid4().hex}"
         self._connection: CharacterConnection | None = None
         self._callbacks: list[tuple[str, Callable]] = []
         self._changed, self._failed = asyncio.Event(), asyncio.Event()
@@ -80,8 +80,8 @@ class LiveKitCharacterTransport(CharacterTransport):
         self._ready_seen = self._started = self._closed = False
 
     @property
-    def participant_identity(self) -> str:
-        return self._identity
+    def device_id(self) -> str:
+        return self._device_id
 
     @property
     def connection(self) -> CharacterConnection:
@@ -101,7 +101,7 @@ class LiveKitCharacterTransport(CharacterTransport):
             or not self._started
             or packet.topic != "avatar_status"
             or packet.participant is None
-            or packet.participant.identity != self._identity
+            or packet.participant.identity != self._device_id
             or len(packet.data) > 1024
         ):
             return
@@ -116,7 +116,7 @@ class LiveKitCharacterTransport(CharacterTransport):
     def _on_track(
         self, publication: rtc.RemoteTrackPublication, participant: rtc.RemoteParticipant
     ) -> None:
-        if participant.identity != self._identity or self._closed:
+        if participant.identity != self._device_id or self._closed:
             return
         if publication.kind == rtc.TrackKind.KIND_AUDIO:
             self._fail("Character attempted to publish a second audio track")
@@ -125,22 +125,22 @@ class LiveKitCharacterTransport(CharacterTransport):
     def _on_unpublished(
         self, publication: rtc.RemoteTrackPublication, participant: rtc.RemoteParticipant
     ) -> None:
-        if participant.identity == self._identity and publication.kind == rtc.TrackKind.KIND_VIDEO:
+        if participant.identity == self._device_id and publication.kind == rtc.TrackKind.KIND_VIDEO:
             self._fail("Character video publication ended unexpectedly")
 
     def _on_participant(self, participant: rtc.RemoteParticipant) -> None:
-        if participant.identity == self._identity:
+        if participant.identity == self._device_id:
             self._changed.set()
 
     def _on_participant_left(self, participant: rtc.RemoteParticipant) -> None:
-        if participant.identity == self._identity:
+        if participant.identity == self._device_id:
             self._fail("Character participant disconnected unexpectedly")
 
     def _on_disconnected(self, *_) -> None:
         self._fail("Character room disconnected")
 
     def _has_video(self) -> bool:
-        participant = self._room.remote_participants.get(self._identity)
+        participant = self._room.remote_participants.get(self._device_id)
         if participant is None:
             return False
         publications = tuple(participant.track_publications.values())
@@ -169,7 +169,7 @@ class LiveKitCharacterTransport(CharacterTransport):
         token = (
             api.AccessToken(self._api_key, self._api_secret)
             .with_kind("agent")
-            .with_identity(self._identity)
+            .with_identity(self._device_id)
             .with_ttl(timedelta(minutes=5))
             .with_grants(
                 api.VideoGrants(
@@ -181,14 +181,14 @@ class LiveKitCharacterTransport(CharacterTransport):
                     can_update_own_metadata=False,
                 )
             )
-            .with_attributes({"lk.publish_on_behalf": self._agent_identity})
+            .with_attributes({"lk.publish_on_behalf": self._agent_device_id})
             .to_jwt()
         )
         self._connection = CharacterConnection(
             transport="livekit",
             url=self._url,
-            agent_identity=self._agent_identity,
-            participant_identity=self._identity,
+            agent_device_id=self._agent_device_id,
+            device_id=self._device_id,
             token=token,
         )
         self._api_key = self._api_secret = ""

@@ -26,7 +26,7 @@ class LiveKitConfig(BaseModel):
 
     connection_mode: Literal["dispatch", "direct"] = "dispatch"
     room_name: str | None = Field(default=None, min_length=1, max_length=256)
-    participant_identity: str | None = Field(default=None, min_length=1, max_length=256)
+    device_id: str | None = Field(default=None, min_length=1, max_length=256)
     connect_timeout: float = Field(default=30.0, strict=True, gt=0)
     participant_timeout: float = Field(default=60.0, strict=True, gt=0)
     registration_timeout: float = Field(default=15.0, strict=True, gt=0)

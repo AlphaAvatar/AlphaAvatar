@@ -47,7 +47,7 @@ class _AudioTrackBinding:
     track_source: int
 
     source: PerceptionSourceRef
-    transport_participant_id: str
+    device_id: str
 
     publication: rtc.RemoteTrackPublication
     stream: rtc.AudioStream
@@ -74,7 +74,7 @@ class LiveKitAudioInput(LifecycleComponent):
         frame_size_ms: int,
         sample_rate: int = 48_000,
         num_channels: int = 1,
-        excluded_participant_identities: frozenset[str] = frozenset(),
+        excluded_device_ids: frozenset[str] = frozenset(),
     ) -> None:
         if sample_rate <= 0:
             raise ValueError("sample_rate must be positive")
@@ -88,11 +88,11 @@ class LiveKitAudioInput(LifecycleComponent):
         self._sample_rate = sample_rate
         self._num_channels = num_channels
         self._frame_size_ms = frame_size_ms
-        if isinstance(excluded_participant_identities, str):
-            raise TypeError("Excluded participants must be a collection, not a string")
-        self._excluded_participants = frozenset(excluded_participant_identities)
-        if any(not isinstance(value, str) or not value for value in self._excluded_participants):
-            raise ValueError("Excluded participant identities must be nonempty strings")
+        if isinstance(excluded_device_ids, str):
+            raise TypeError("Excluded transport IDs must be a collection, not a string")
+        self._excluded_device_ids = frozenset(excluded_device_ids)
+        if any(not isinstance(value, str) or not value for value in self._excluded_device_ids):
+            raise ValueError("Excluded transport IDs must be nonempty strings")
 
         self._bindings: dict[str, _AudioTrackBinding] = {}
         self._tasks: set[asyncio.Task[None]] = set()
@@ -103,8 +103,8 @@ class LiveKitAudioInput(LifecycleComponent):
         self._started = False
 
     @staticmethod
-    def _source_id(participant_identity: str, track_sid: str, track_source: int) -> str:
-        owner = participant_identity or "anonymous"
+    def _source_id(device_id: str, track_sid: str, track_source: int) -> str:
+        owner = device_id or "anonymous"
         discriminator = f"source:{track_source}" if track_source else f"track:{track_sid}"
         return f"env:audio:{owner}:{discriminator}"
 
@@ -145,7 +145,7 @@ class LiveKitAudioInput(LifecycleComponent):
                 modality=MediaModality.AUDIO,
                 source_kind=MediaSourceKind.MICROPHONE,
                 state=state,
-                transport_participant_id=binding.transport_participant_id,
+                device_id=binding.device_id,
                 reason=reason,
                 metadata={
                     "rtc_backend": "livekit",
@@ -220,7 +220,7 @@ class LiveKitAudioInput(LifecycleComponent):
             time_range=time_range,
             source=binding.source,
             frame_id=frame_id,
-            transport_participant_id=binding.transport_participant_id,
+            device_id=binding.device_id,
             payload=payload,
             metadata={
                 "track_sid": binding.track_sid,
@@ -256,9 +256,9 @@ class LiveKitAudioInput(LifecycleComponent):
                     )
                 except Exception:
                     logger.exception(
-                        "Failed to convert LiveKit audio frame participant=%s track_sid=%s "
+                        "Failed to convert LiveKit audio frame device_id=%s track_sid=%s "
                         "generation=%s frame_index=%s",
-                        binding.transport_participant_id,
+                        binding.device_id,
                         binding.track_sid,
                         binding.source_generation,
                         frame_index,
@@ -281,8 +281,8 @@ class LiveKitAudioInput(LifecycleComponent):
             terminal_state = MediaSourceState.ERROR
             terminal_reason = "reader_error"
             logger.exception(
-                "LiveKit audio reader failed participant=%s track_sid=%s generation=%s",
-                binding.transport_participant_id,
+                "LiveKit audio reader failed device_id=%s track_sid=%s generation=%s",
+                binding.device_id,
                 binding.track_sid,
                 binding.source_generation,
             )
@@ -291,13 +291,9 @@ class LiveKitAudioInput(LifecycleComponent):
                 await self._close_stream(binding)
 
     def _create_stream(
-        self,
-        *,
-        track: rtc.Track,
-        publication: rtc.RemoteTrackPublication,
-        transport_participant_id: str,
+        self, *, track: rtc.Track, publication: rtc.RemoteTrackPublication, device_id: str
     ) -> None:
-        if not self._started or transport_participant_id in self._excluded_participants:
+        if not self._started or device_id in self._excluded_device_ids:
             return
 
         existing = self._bindings.get(publication.sid)
@@ -309,15 +305,13 @@ class LiveKitAudioInput(LifecycleComponent):
             ):
                 self._schedule_close(existing)
 
-        source_id = self._source_id(
-            transport_participant_id, publication.sid, int(publication.source)
-        )
+        source_id = self._source_id(device_id, publication.sid, int(publication.source))
         binding = _AudioTrackBinding(
             track_sid=publication.sid,
             track_name=publication.name,
             track_source=int(publication.source),
             source=self._perception.next_source(source_id),
-            transport_participant_id=transport_participant_id,
+            device_id=device_id,
             publication=publication,
             stream=rtc.AudioStream(
                 track,
@@ -357,9 +351,7 @@ class LiveKitAudioInput(LifecycleComponent):
                 track = publication.track
                 if track is not None and publication.kind == rtc.TrackKind.KIND_AUDIO:
                     self._create_stream(
-                        track=track,
-                        publication=publication,
-                        transport_participant_id=participant.identity,
+                        track=track, publication=publication, device_id=participant.identity
                     )
 
     def _register_listeners(self) -> None:
@@ -376,9 +368,7 @@ class LiveKitAudioInput(LifecycleComponent):
         ) -> None:
             if self._started and track.kind == rtc.TrackKind.KIND_AUDIO:
                 self._create_stream(
-                    track=track,
-                    publication=publication,
-                    transport_participant_id=participant.identity,
+                    track=track, publication=publication, device_id=participant.identity
                 )
 
         @self._events.on("track_muted")
@@ -428,7 +418,7 @@ class LiveKitAudioInput(LifecycleComponent):
             bindings = [
                 binding
                 for binding in self._bindings.values()
-                if binding.transport_participant_id == participant.identity
+                if binding.device_id == participant.identity
             ]
             for binding in bindings:
                 if self._detach_binding(

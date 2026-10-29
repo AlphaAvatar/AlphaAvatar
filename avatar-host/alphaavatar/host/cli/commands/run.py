@@ -36,10 +36,26 @@ def run(path: str, overrides: Sequence[str], *, devmode: bool) -> int:
         stage = "load environment"
         init_env()
         logs.refresh_secrets()
+
         stage = "load application configuration"
         config = load_application(path, overrides)
+
+        stage = "prepare application paths"
+        from alphaavatar.core.workspace import (
+            check_legacy_identity,
+            check_workspace_continuity,
+            prepare_application,
+            prepare_workspace,
+        )
+
+        check_workspace_continuity(config.workspace, config.previous_workspace_roots)
+        if config.workspace == config.paths.workspace(config.avatar.avatar.id):
+            check_legacy_identity(config.paths.avatars_dir, config.avatar.avatar.id)
+        prepare_application(config.paths)
+        prepare_workspace(config.workspace)
+
         stage = "activate Host logging"
-        logs.activate(config.host.log, workspace=config.avatar.avatar.work_dir)
+        logs.activate(config.host.log, workspace=str(config.workspace.root))
         result = 1
 
         async def serve() -> None:
@@ -50,6 +66,7 @@ def run(path: str, overrides: Sequence[str], *, devmode: bool) -> int:
 
             stage = "construct Host"
             host = AvatarHost(config, devmode=devmode)
+
             stage = "run Host"
             with shutdown_signals(host.stop_event.set):
                 await host.run()

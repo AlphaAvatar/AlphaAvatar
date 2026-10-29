@@ -49,7 +49,7 @@ class _VideoTrackBinding:
 
     source: PerceptionSourceRef
     source_kind: MediaSourceKind
-    transport_participant_id: str
+    device_id: str
 
     publication: rtc.RemoteTrackPublication
     stream: rtc.VideoStream
@@ -76,7 +76,7 @@ class LiveKitVideoInput(LifecycleComponent):
         perception: PerceptionRuntime,
         publish_interval_sec: float,
         jpeg_quality: int = 85,
-        excluded_participant_identities: frozenset[str] = frozenset(),
+        excluded_device_ids: frozenset[str] = frozenset(),
     ) -> None:
         if publish_interval_sec <= 0:
             raise ValueError("publish_interval_sec must be positive")
@@ -85,11 +85,11 @@ class LiveKitVideoInput(LifecycleComponent):
         self._perception = perception
         self._publish_interval_sec = publish_interval_sec
         self._jpeg_quality = jpeg_quality
-        if isinstance(excluded_participant_identities, str):
-            raise TypeError("Excluded participants must be a collection, not a string")
-        self._excluded_participants = frozenset(excluded_participant_identities)
-        if any(not isinstance(value, str) or not value for value in self._excluded_participants):
-            raise ValueError("Excluded participant identities must be nonempty strings")
+        if isinstance(excluded_device_ids, str):
+            raise TypeError("Excluded transport IDs must be a collection, not a string")
+        self._excluded_device_ids = frozenset(excluded_device_ids)
+        if any(not isinstance(value, str) or not value for value in self._excluded_device_ids):
+            raise ValueError("Excluded transport IDs must be nonempty strings")
 
         self._bindings: dict[str, _VideoTrackBinding] = {}
         self._tasks: set[asyncio.Task[None]] = set()
@@ -134,11 +134,9 @@ class LiveKitVideoInput(LifecycleComponent):
 
     @staticmethod
     def _source_id(
-        transport_participant_id: str,
-        source_kind: MediaSourceKind,
-        publication: rtc.RemoteTrackPublication,
+        device_id: str, source_kind: MediaSourceKind, publication: rtc.RemoteTrackPublication
     ) -> str:
-        owner = transport_participant_id or "anonymous"
+        owner = device_id or "anonymous"
 
         # Standard LiveKit camera/screenshare publications represent one logical
         # source per participant. Re-publication becomes a new source generation.
@@ -164,7 +162,7 @@ class LiveKitVideoInput(LifecycleComponent):
                 modality=MediaModality.VIDEO,
                 source_kind=binding.source_kind,
                 state=state,
-                transport_participant_id=binding.transport_participant_id,
+                device_id=binding.device_id,
                 reason=reason,
                 metadata={
                     "rtc_backend": "livekit",
@@ -258,7 +256,7 @@ class LiveKitVideoInput(LifecycleComponent):
             time_range=RuntimeTimeRange.point(occurred_at),
             source=binding.source,
             frame_id=frame_id,
-            transport_participant_id=binding.transport_participant_id,
+            device_id=binding.device_id,
             payload=payload,
             metadata=metadata,
         )
@@ -304,9 +302,9 @@ class LiveKitVideoInput(LifecycleComponent):
                     raise
                 except Exception:
                     logger.exception(
-                        "Failed to convert LiveKit video frame participant=%s "
+                        "Failed to convert LiveKit video frame device_id=%s "
                         "track_sid=%s generation=%s frame_index=%s",
-                        binding.transport_participant_id,
+                        binding.device_id,
                         binding.track_sid,
                         binding.source_generation,
                         frame_index,
@@ -332,8 +330,8 @@ class LiveKitVideoInput(LifecycleComponent):
             terminal_state = MediaSourceState.ERROR
             terminal_reason = "reader_error"
             logger.exception(
-                "LiveKit video reader failed participant=%s track_sid=%s generation=%s",
-                binding.transport_participant_id,
+                "LiveKit video reader failed device_id=%s track_sid=%s generation=%s",
+                binding.device_id,
                 binding.track_sid,
                 binding.source_generation,
             )
@@ -342,13 +340,9 @@ class LiveKitVideoInput(LifecycleComponent):
                 await self._close_stream(binding)
 
     def _create_stream(
-        self,
-        *,
-        track: rtc.Track,
-        publication: rtc.RemoteTrackPublication,
-        transport_participant_id: str,
+        self, *, track: rtc.Track, publication: rtc.RemoteTrackPublication, device_id: str
     ) -> None:
-        if not self._started or transport_participant_id in self._excluded_participants:
+        if not self._started or device_id in self._excluded_device_ids:
             return
 
         existing = self._bindings.get(publication.sid)
@@ -361,7 +355,7 @@ class LiveKitVideoInput(LifecycleComponent):
                 self._schedule_close(existing)
 
         source_kind = self._source_kind(publication)
-        source_id = self._source_id(transport_participant_id, source_kind, publication)
+        source_id = self._source_id(device_id, source_kind, publication)
 
         binding = _VideoTrackBinding(
             track_sid=publication.sid,
@@ -369,7 +363,7 @@ class LiveKitVideoInput(LifecycleComponent):
             track_source=int(publication.source),
             source=self._perception.next_source(source_id),
             source_kind=source_kind,
-            transport_participant_id=transport_participant_id,
+            device_id=device_id,
             publication=publication,
             stream=rtc.VideoStream(track),
         )
@@ -407,9 +401,7 @@ class LiveKitVideoInput(LifecycleComponent):
                 track = publication.track
                 if track is not None and publication.kind == rtc.TrackKind.KIND_VIDEO:
                     self._create_stream(
-                        track=track,
-                        publication=publication,
-                        transport_participant_id=participant.identity,
+                        track=track, publication=publication, device_id=participant.identity
                     )
 
     def _register_listeners(self) -> None:
@@ -426,9 +418,7 @@ class LiveKitVideoInput(LifecycleComponent):
         ) -> None:
             if self._started and track.kind == rtc.TrackKind.KIND_VIDEO:
                 self._create_stream(
-                    track=track,
-                    publication=publication,
-                    transport_participant_id=participant.identity,
+                    track=track, publication=publication, device_id=participant.identity
                 )
 
         @self._events.on("track_muted")
@@ -478,7 +468,7 @@ class LiveKitVideoInput(LifecycleComponent):
             bindings = [
                 binding
                 for binding in self._bindings.values()
-                if binding.transport_participant_id == participant.identity
+                if binding.device_id == participant.identity
             ]
 
             for binding in bindings:

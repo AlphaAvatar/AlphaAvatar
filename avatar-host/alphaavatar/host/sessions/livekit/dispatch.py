@@ -38,10 +38,10 @@ logger = logging.getLogger(__name__)
 class _Offer:
     reservation: ExecutionReservation
     epoch: int
-    identity: str
+    agent_device_id: str
     fingerprint: tuple
     room_name: str
-    participant_identity: str | None
+    device_id: str | None
 
 
 def _fingerprint(job: agent.Job) -> tuple:
@@ -119,6 +119,7 @@ class LiveKitDispatch:
     ) -> None:
         if epoch != self._epoch or ws is not self._ws:
             return
+
         job = request.job
         offer = self._offers.get(job.id)
         allowed = (
@@ -135,20 +136,22 @@ class LiveKitDispatch:
             self._manager.cancel_reservation(offer.reservation, "availability_identity_changed")
             self._offers.pop(job.id, None)
             offer, allowed = None, False
+
         if allowed and offer is None:
             reservation = self._manager.reserve(backend="livekit", source_id=job.id)
             if reservation is not None:
                 offer = _Offer(
                     reservation=reservation,
                     epoch=epoch,
-                    identity=f"alphaavatar-{reservation.execution_id}",
+                    agent_device_id=f"alphaavatar-{reservation.execution_id}",
                     fingerprint=_fingerprint(job),
                     room_name=job.room.name,
-                    participant_identity=(job.participant.identity or None)
+                    device_id=(job.participant.identity or None)
                     if job.HasField("participant")
-                    else self._config.participant_identity,
+                    else self._config.device_id,
                 )
                 self._offers[job.id] = offer
+
         available = bool(
             allowed and offer is not None and self._manager.reservation_valid(offer.reservation)
         )
@@ -156,7 +159,7 @@ class LiveKitDispatch:
             job_id=job.id,
             available=available,
             supports_resume=False,
-            participant_identity=offer.identity if available else "",
+            participant_identity=offer.agent_device_id if available else "",
             participant_name=self._agent_name if available else "",
         )
         await self._send(ws, agent.WorkerMessage(availability=response))
@@ -164,10 +167,12 @@ class LiveKitDispatch:
     def _assignment(self, assignment: agent.JobAssignment, epoch: int) -> None:
         if epoch != self._epoch or not self._registered:
             return
+
         offer = self._offers.pop(assignment.job.id, None)
         if offer is None:
             # Duplicate, unsolicited or late assignments never allocate another execution.
             return
+
         if (
             not self._accepting
             or offer.epoch != epoch
@@ -176,6 +181,7 @@ class LiveKitDispatch:
         ):
             self._manager.cancel_reservation(offer.reservation, "assignment_identity_mismatch")
             return
+
         # Wire ownership belongs to this registration only, not the Host's full ledger.
         self._assigned_jobs[assignment.job.id] = offer.reservation
         try:
@@ -188,8 +194,8 @@ class LiveKitDispatch:
                     "url": url,
                     "token": assignment.token,
                     "room_name": offer.room_name,
-                    "agent_identity": offer.identity,
-                    "participant_identity": offer.participant_identity,
+                    "agent_device_id": offer.agent_device_id,
+                    "device_id": offer.device_id,
                 },
             )
         except ValueError:

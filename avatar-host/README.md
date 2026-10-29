@@ -64,7 +64,7 @@ tool providers need their own credentials. Remote endpoints require TLS.
 | Connection mode | Behavior |
 | --- | --- |
 | `dispatch` | Registers using `avatar.name` and waits for matching explicit dispatches. The assignment supplies the room. Host remains available after a session ends. |
-| `direct` | Requires `room_name`, optionally selects `participant_identity`, and exits after its single execution ends. It still requires LiveKit. |
+| `direct` | Requires `room_name`, optionally selects `device_id`, and exits after its single execution ends. It still requires LiveKit. |
 
 The remote participant's `session_type` metadata selects `chat`, `agent`, `audio` or
 `video`; the default is `video`. This is independent of connection mode and `dev/start`.

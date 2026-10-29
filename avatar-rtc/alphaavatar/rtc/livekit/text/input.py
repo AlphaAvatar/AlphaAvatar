@@ -49,7 +49,7 @@ class LiveKitTextInput(LifecycleComponent):
         room: rtc.Room,
         clock: RuntimeClock,
         session_id: str,
-        participant_identities: frozenset[str],
+        device_ids: frozenset[str],
         submit: Callable[[EnvObservation], Awaitable[None]],
         max_streams: int = 16,
         max_bytes: int = 262144,
@@ -57,10 +57,10 @@ class LiveKitTextInput(LifecycleComponent):
     ) -> None:
         if (
             not session_id
-            or not participant_identities
-            or any(not isinstance(v, str) or not v for v in participant_identities)
+            or not device_ids
+            or any(not isinstance(v, str) or not v for v in device_ids)
         ):
-            raise ValueError("Text input requires session and authorized participant identities")
+            raise ValueError("Text input requires a session and authorized transport IDs")
         if (
             type(max_streams) is not int
             or max_streams < 1
@@ -71,7 +71,7 @@ class LiveKitTextInput(LifecycleComponent):
         if not isfinite(read_timeout) or read_timeout <= 0 or not callable(submit):
             raise ValueError("Text input requires a positive timeout and submit callback")
         self._room, self._clock, self._session_id = room, clock, session_id
-        self._participants, self._submit = frozenset(participant_identities), submit
+        self._device_ids, self._submit = frozenset(device_ids), submit
         self._max_streams, self._max_bytes, self._timeout = max_streams, max_bytes, read_timeout
         self._tasks: set[asyncio.Task[None]] = set()
         self._failure: Exception | None = None
@@ -103,25 +103,23 @@ class LiveKitTextInput(LifecycleComponent):
         elif (error := task.exception()) is not None:
             self._fail(error)
 
-    def _receive(self, reader: rtc.TextStreamReader, participant_identity: str) -> None:
+    def _receive(self, reader: rtc.TextStreamReader, device_id: str) -> None:
         # Identity comes from the RTC callback, never from reader attributes.
         if self._close_task is not None or self._failure is not None:
             self._fail(RuntimeError("Text stream arrived after intake closed"))
             return
-        if participant_identity not in self._participants:
+        if device_id not in self._device_ids:
             self._fail(PermissionError("Text sender is not attached to this Avatar session"))
             return
         if len(self._tasks) >= self._max_streams:
             self._fail(RuntimeError("Text stream capacity exhausted"))
             return
-        task = asyncio.create_task(
-            self._read(reader, participant_identity), name="livekit_text_input"
-        )
+        task = asyncio.create_task(self._read(reader, device_id), name="livekit_text_input")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         task.add_done_callback(self._observe)
 
-    async def _read(self, reader: rtc.TextStreamReader, participant_identity: str) -> None:
+    async def _read(self, reader: rtc.TextStreamReader, device_id: str) -> None:
         info = reader.info
         if not isinstance(info.stream_id, str) or not 1 <= len(info.stream_id) <= 512:
             raise ValueError("Invalid RTC text stream identity")
@@ -145,17 +143,13 @@ class LiveKitTextInput(LifecycleComponent):
         text = "".join(chunks)
         if not text.strip():
             return
-        key = json.dumps(
-            [self._session_id, participant_identity, info.stream_id], ensure_ascii=False
-        ).encode()
+        key = json.dumps([self._session_id, device_id, info.stream_id], ensure_ascii=False).encode()
         observation = EnvObservation(
             observation_id=f"rtc_text:{hashlib.sha256(key).hexdigest()}",
             kind=ObservationKind.TEXT_INPUT,
             time_range=RuntimeTimeRange.point(self._clock.now()),
-            source=PerceptionSourceRef(
-                source_id=f"env:text:{participant_identity}", source_generation=1
-            ),
-            transport_participant_id=participant_identity,
+            source=PerceptionSourceRef(source_id=f"env:text:{device_id}", source_generation=1),
+            device_id=device_id,
             payload=TextPayload.create(text=text),
             mime_type="text/plain",
             metadata={"rtc_backend": "livekit"},

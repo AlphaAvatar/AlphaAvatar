@@ -33,8 +33,8 @@ class LiveKitAccess(BaseModel):
     url: str
     token: str = Field(min_length=1, repr=False)
     room_name: str = Field(min_length=1, max_length=256)
-    agent_identity: str = Field(min_length=1, max_length=256)
-    participant_identity: str | None = Field(default=None, min_length=1, max_length=256)
+    agent_device_id: str = Field(min_length=1, max_length=256)
+    device_id: str | None = Field(default=None, min_length=1, max_length=256)
 
 
 class LiveKitConnection(SessionConnection):
@@ -44,6 +44,7 @@ class LiveKitConnection(SessionConnection):
         self.request, self._config = request, config
         self._access = LiveKitAccess.model_validate(request.connection)
         self.url = websocket_url(self._access.url)
+
         self.room = rtc.Room()
         self._events = RoomEventBindings(self.room)
         self._changed, self._ended = asyncio.Event(), asyncio.Event()
@@ -67,8 +68,8 @@ class LiveKitConnection(SessionConnection):
 
     def _candidate(self) -> rtc.RemoteParticipant | None:
         for participant in self.room.remote_participants.values():
-            identity = self._access.participant_identity
-            if identity is not None and participant.identity != identity:
+            device_id = self._access.device_id
+            if device_id is not None and participant.identity != device_id:
                 continue
             if participant.kind in (
                 rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD,
@@ -87,11 +88,7 @@ class LiveKitConnection(SessionConnection):
         def participant_disconnected(participant: rtc.RemoteParticipant) -> None:
             if self._close_task is not None:
                 return
-            linked = (
-                self._context.participant_identity
-                if self._context
-                else self._access.participant_identity
-            )
+            linked = self._context.device_id if self._context else self._access.device_id
             if linked is not None and participant.identity == linked:
                 self._signal_end("linked_participant_disconnected")
             self._changed.set()
@@ -105,27 +102,32 @@ class LiveKitConnection(SessionConnection):
             await self.room.connect(
                 self.url, self._access.token, options=rtc.RoomOptions(auto_subscribe=True)
             )
+
         self._access.token = ""
         if (
             self.room.name != self._access.room_name
-            or self.room.local_participant.identity != self._access.agent_identity
+            or self.room.local_participant.identity != self._access.agent_device_id
         ):
             raise RuntimeError("LiveKit room or participant identity did not match the assignment")
+
         async with asyncio.timeout(self._config.participant_timeout):
             while True:
                 if self._end is not None or not self.room.isconnected():
                     raise RuntimeError("LiveKit connection ended before participant readiness")
+
                 self._changed.clear()
                 participant = self._candidate()
                 if participant is not None:
                     if len(participant.metadata.encode("utf-8")) > 65536:
                         raise ValueError("Participant metadata is too large")
+
                     metadata = json.loads(participant.metadata) if participant.metadata else {}
                     if not isinstance(metadata, dict):
                         raise ValueError("Participant metadata must be a JSON object")
+
                     self._context = SessionContext(
-                        participant_identity=participant.identity,
-                        agent_identity=self.room.local_participant.identity,
+                        device_id=participant.identity,
+                        agent_device_id=self.room.local_participant.identity,
                         room_name=self.room.name,
                         metadata=metadata,
                     )

@@ -14,8 +14,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+from alphaavatar.core.workspace import ApplicationPaths, WorkspacePaths
 from alphaavatar.host.application.config import HostConfig
 
 if TYPE_CHECKING:
@@ -27,5 +29,9 @@ class ApplicationConfig:
     host: HostConfig
     avatar: AvatarConfig
 
+    paths: ApplicationPaths
+    workspace: WorkspacePaths
+
     # Resolved input, not a file to re-read after accepting an assignment.
     payload: str = field(repr=False)
+    previous_workspace_roots: tuple[Path, ...] = ()

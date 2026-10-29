@@ -87,10 +87,10 @@ class LiveKitBackend(SessionBackend):
         if reservation is None:
             raise RuntimeError("Direct execution was not admitted")
 
-        agent_identity = f"alphaavatar-{reservation.execution_id}"
+        agent_device_id = f"alphaavatar-{reservation.execution_id}"
         token = (
             api.AccessToken(credentials.api_key, credentials.api_secret)
-            .with_identity(agent_identity)
+            .with_identity(agent_device_id)
             .with_name(agent_name)
             .with_kind("agent")
             .with_grants(api.VideoGrants(room_join=True, room=self._config.room_name, agent=True))
@@ -104,8 +104,8 @@ class LiveKitBackend(SessionBackend):
                 "url": credentials.url,
                 "token": token,
                 "room_name": self._config.room_name,
-                "agent_identity": agent_identity,
-                "participant_identity": self._config.participant_identity,
+                "agent_device_id": agent_device_id,
+                "device_id": self._config.device_id,
             },
         )
         if not manager.assign(reservation, request):
@@ -164,7 +164,7 @@ class LiveKitBackend(SessionBackend):
             excluded: frozenset[str] = frozenset()
             if avatar.character.plugin is not None:
                 transport = LiveKitCharacterTransport(
-                    room=room, agent_identity=access.agent_identity, livekit_url=connection.url
+                    room=room, agent_device_id=access.agent_device_id, livekit_url=connection.url
                 )
 
                 # Until the Character factory accepts the transport, this local stack owns it.
@@ -180,7 +180,7 @@ class LiveKitBackend(SessionBackend):
 
                 transport_owner.pop_all()
                 own(character)
-                excluded = frozenset((transport.participant_identity,))
+                excluded = frozenset((transport.device_id,))
 
             outputs = [
                 own(
@@ -224,7 +224,7 @@ class LiveKitBackend(SessionBackend):
                     LiveKitUserTranscriptOutput(
                         room=room,
                         perception=runtime.perception,
-                        participant_identities=frozenset((access.participant_identity,)),
+                        device_ids=frozenset((access.device_id,)),
                         consumer_id=f"livekit:user_transcript:{connection.request.attachment_id}",
                     )
                 )
@@ -240,7 +240,7 @@ class LiveKitBackend(SessionBackend):
                             sample_rate=16000,
                             num_channels=1,
                             frame_size_ms=avatar.runtime.perception.audio_frame_size_ms,
-                            excluded_participant_identities=excluded,
+                            excluded_device_ids=excluded,
                         )
                     )
                 )
@@ -253,7 +253,7 @@ class LiveKitBackend(SessionBackend):
                             publish_interval_sec=(
                                 avatar.runtime.perception.video_publish_interval_sec
                             ),
-                            excluded_participant_identities=excluded,
+                            excluded_device_ids=excluded,
                         )
                     )
                 )
@@ -265,7 +265,7 @@ class LiveKitBackend(SessionBackend):
                         room=room,
                         clock=runtime.perception.clock,
                         session_id=runtime.session.session_id,
-                        participant_identities=frozenset((access.participant_identity,)),
+                        device_ids=frozenset((access.device_id,)),
                         submit=engine.submit_input,
                         max_streams=avatar.runtime.engine.max_pending_admissions,
                         max_bytes=avatar.runtime.engine.max_input_bytes,

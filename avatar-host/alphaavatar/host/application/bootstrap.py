@@ -14,9 +14,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.host.execution.execution import HostExecution
@@ -28,8 +32,10 @@ from alphaavatar.host.sessions.schemas import SessionContext, SessionEnd, Sessio
 
 if TYPE_CHECKING:
     from alphaavatar.agents.configs import AvatarConfig
-    from alphaavatar.agents.runtime import AvatarRuntime, SessionRuntime, StateRuntime
-    from alphaavatar.agents.utils.files.work_dirs import WorkspacePaths
+    from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
+    from alphaavatar.agents.runtime.modules.participants import ParticipantRuntime
+    from alphaavatar.core.session import SessionRuntime
+    from alphaavatar.core.workspace import SessionPath, WorkspacePaths
     from alphaavatar.host.configs.application import ApplicationConfig
     from alphaavatar.host.sessions.attachment import SessionAttachment
 
@@ -39,7 +45,9 @@ async def create_avatar_runtime(
     avatar_config: AvatarConfig,
     workspace: WorkspacePaths,
     session: SessionRuntime,
+    session_path: SessionPath,
     state: StateRuntime,
+    participants: ParticipantRuntime,
 ) -> AvatarRuntime:
     from alphaavatar.agents.runtime import AvatarRuntime
     from alphaavatar.agents.runtime.inference import InferenceExecutor
@@ -54,9 +62,12 @@ async def create_avatar_runtime(
         runtime = AvatarRuntime.create(
             workspace=workspace,
             session=session,
+            session_path=session_path,
             state=state,
             config=avatar_config.runtime,
             inference=inference,
+            timezone=avatar_config.avatar.timezone,
+            participants=participants,
         )
         resources.pop_all()
         resources.push_async_callback(runtime.aclose)
@@ -104,15 +115,16 @@ async def create_avatar_runtime(
 async def create_execution(config: ApplicationConfig, access: SessionContext) -> HostExecution:
     from alphaavatar.agents.avatar import AvatarEngine
     from alphaavatar.agents.constants import DEFAULT_CONTEXT_VALUE
-    from alphaavatar.agents.runtime import InteractionMethod, SessionRuntime, StateRuntime
-    from alphaavatar.agents.utils.files.work_dirs import WorkspacePaths, prepare_user_path
-    from alphaavatar.agents.utils.id_utils import get_session_id, get_user_id
-    from alphaavatar.agents.utils.time import build_user_time_context
+    from alphaavatar.agents.runtime import InteractionMethod, StateRuntime, UserDataAccess
+    from alphaavatar.agents.runtime.modules.participants import ParticipantRuntime
+    from alphaavatar.agents.utils.time import resolve_user_timezone
+    from alphaavatar.core.session import SessionRuntime
+    from alphaavatar.core.workspace import prepare_session_path, prepare_user_path
 
     # Metadata
     avatar, metadata = config.avatar, access.metadata
-    user_id = metadata.get("user_id", get_user_id())
-    session_id = metadata.get("session_id", get_session_id())
+    user_id = metadata.get("user_id", uuid4().hex)
+    session_id = metadata.get("session_id", uuid4().hex)
     if not all(isinstance(value, str) and 0 < len(value) <= 256 for value in (user_id, session_id)):
         raise ValueError(
             "User and session identifiers must be nonempty strings of at most 256 characters"
@@ -121,21 +133,48 @@ async def create_execution(config: ApplicationConfig, access: SessionContext) ->
     # Session
     session_type = resolve_session_type(metadata)
     mode = resolve_session_mode(session_type)
-    workspace = WorkspacePaths.from_env()
-    user_path = workspace.users.get(user_id)
-    prepare_user_path(user_path)
+    workspace = config.workspace
 
     # Runtime
     session = SessionRuntime(session_id=session_id)
-    session.add_participant(
-        participant_identity=access.participant_identity,
-        user_id=user_id,
-        room_id=access.room_name,
-        room_type=access.room_type,
-        user_time=build_user_time_context(metadata),
-        user_path=user_path,
-        metadata=metadata,
-        primary=True,
+    # Transport metadata supplies claims, never data grants. Applications may supply verified
+    # grants in SessionContext; a newly generated guest owns only its own empty profile.
+    data_access = access.data_access
+    if "user_id" not in metadata:
+        data_access = UserDataAccess(
+            readable_users=data_access.readable_users | {user_id},
+            writable_users=data_access.writable_users | {user_id},
+        )
+
+    participants = ParticipantRuntime(session=session, workspace=workspace, access=data_access)
+    participant = participants.join(
+        user_id=user_id, timezone=resolve_user_timezone(metadata), primary=True
+    )
+    participants.bind_device(access.device_id, participant.participant_id)
+    created_at = datetime.fromtimestamp(session.created_at.unix_seconds, UTC)
+    zone = ZoneInfo(avatar.avatar.timezone) if avatar.avatar.timezone else UTC
+    session_path = workspace.data.sessions.get(
+        session.session_id, created_at.astimezone(zone).date()
+    )
+
+    def prepare_paths() -> None:
+        if participants.can_write_user(user_id):
+            prepare_user_path(participants.user_path(user_id, write=True))
+
+        prepare_session_path(session_path)
+
+        # A new execution must never silently reuse another execution's provider files.
+        manifest = {
+            "session_id": session.session_id,
+            "created_at": created_at.isoformat(),
+            "created_at_unix_ns": session.created_at.unix_ns,
+        }
+        with session_path.manifest_file.open("x", encoding="utf-8") as stream:
+            json.dump(manifest, stream, ensure_ascii=False)
+            stream.write("\n")
+
+    await wait_for_cleanup(
+        asyncio.create_task(asyncio.to_thread(prepare_paths), name="session_paths")
     )
     state = StateRuntime(
         interaction_method=InteractionMethod(
@@ -154,12 +193,17 @@ async def create_execution(config: ApplicationConfig, access: SessionContext) ->
         global_behavior_rules=metadata.get("global_behavior_rules", DEFAULT_CONTEXT_VALUE),
         extra_context={
             "room_name": access.room_name,
-            "agent_identity": access.agent_identity,
+            "agent_device_id": access.agent_device_id,
             "session_id": session_id,
         },
     )
     runtime = await create_avatar_runtime(
-        avatar_config=avatar, workspace=workspace, session=session, state=state
+        avatar_config=avatar,
+        workspace=workspace,
+        session=session,
+        session_path=session_path,
+        state=state,
+        participants=participants,
     )
 
     # Engine
@@ -174,6 +218,7 @@ async def create_execution(config: ApplicationConfig, access: SessionContext) ->
 
             diagnostics = CoreEventTrace(runtime)
             resources.push_async_callback(diagnostics.on_stop)
+
         execution = HostExecution(runtime=runtime, engine=engine, diagnostics=diagnostics)
         resources.pop_all()
         return execution
