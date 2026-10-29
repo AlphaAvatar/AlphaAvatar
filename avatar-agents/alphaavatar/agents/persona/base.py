@@ -21,6 +21,7 @@ from alphaavatar.core.lifecycle import LifecycleComponent
 if TYPE_CHECKING:
     from alphaavatar.agents.persona.cache import PersonaCache
     from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
+    from alphaavatar.core.turn.schemas import TurnSnapshot
 
 
 class PersonaBase(LifecycleComponent):
@@ -35,6 +36,9 @@ class PersonaBase(LifecycleComponent):
     @property
     @abstractmethod
     def persona_content(self) -> str: ...
+
+    @abstractmethod
+    def content_for(self, snapshot: TurnSnapshot) -> str: ...
 
     @abstractmethod
     def cache_for(self, participant_id: str) -> PersonaCache | None: ...

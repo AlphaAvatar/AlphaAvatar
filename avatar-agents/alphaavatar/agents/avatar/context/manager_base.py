@@ -27,6 +27,10 @@ if TYPE_CHECKING:
     from alphaavatar.core.turn.schemas import TurnSnapshot
 
 
+class ContextIdentityChanged(RuntimeError):
+    """A prepared query's accepted user changed before its result could be used."""
+
+
 class ContextManager(ABC):
     """One public context API; query prefixes are execution-owned snapshots."""
 

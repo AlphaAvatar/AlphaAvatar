@@ -11,17 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from enum import StrEnum
+from .capability import AvatarCapabilityName
 
-
-class AvatarCapabilityName(StrEnum):
-    # Persona
-    PERSONA_PROFILE = "persona.profile"
-    PERSONA_SPEAKER_RECOGNITION = "persona.speaker_recognition"
-    PERSONA_FACE_RECOGNITION = "persona.face_recognition"
-
-    # Memory
-    MEMORY_CONVERSATION = "memory.conversation"
-    MEMORY_ENVIRONMENT = "memory.environment"
-    MEMORY_TOOL = "memory.tool"
-    MEMORY_RETRIEVAL = "memory.retrieval"
+__all__ = ["AvatarCapabilityName"]

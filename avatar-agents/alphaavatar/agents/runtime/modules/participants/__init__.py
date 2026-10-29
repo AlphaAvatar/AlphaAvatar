@@ -11,8 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .access import UserDataAccess
 from .binding import ParticipantBindings
 from .runtime import ParticipantRuntime
 
-__all__ = ["UserDataAccess", "ParticipantBindings", "ParticipantRuntime"]
+__all__ = ["ParticipantBindings", "ParticipantRuntime"]

@@ -99,3 +99,6 @@ class PersonaCache(ABC):
 
     @abstractmethod
     def add_turn(self, snapshot: TurnSnapshot) -> None: ...
+
+    @abstractmethod
+    def snapshot(self) -> PersonaCache: ...

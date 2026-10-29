@@ -21,10 +21,10 @@ from typing import Any
 from pydantic import BaseModel
 
 from .decorator import validate_handler
-from .schema import AvatarCapability
+from .schemas import AvatarCapability
 
 Arguments = Mapping[str, Any] | BaseModel | None
-Handler = Callable[[Any], Awaitable[Any]]
+Handler = Callable[..., Awaitable[Any]]
 
 
 class AvatarCapabilityRegistry:
@@ -39,11 +39,13 @@ class AvatarCapabilityRegistry:
         return tuple(capability for capability, _ in self._bindings.values())
 
     @staticmethod
-    async def _execute(handler: Handler, request: Any, timeout: float | None) -> Any:
+    async def _execute(
+        handler: Handler, request: Any, timeout: float | None, input_id: str | None
+    ) -> Any:
         if timeout is not None and (not isfinite(timeout) or timeout <= 0):
             raise ValueError("timeout must be finite and positive")
         async with asyncio.timeout(timeout):
-            return await handler(request)
+            return await handler(request, input_id=input_id)
 
     def _prepare(self, name: str, arguments: Arguments) -> tuple[Handler, Any]:
         if not isinstance(name, str):
@@ -108,10 +110,15 @@ class AvatarCapabilityRegistry:
         self._bindings, self._aliases = staged._bindings, staged._aliases
 
     async def invoke(
-        self, name: str, arguments: Arguments = None, *, timeout: float | None = None
+        self,
+        name: str,
+        arguments: Arguments = None,
+        *,
+        timeout: float | None = None,
+        input_id: str | None = None,
     ) -> Any:
         handler, request = self._prepare(name, arguments)
-        return await self._execute(handler, request, timeout)
+        return await self._execute(handler, request, timeout, input_id)
 
     async def invoke_many(
         self,
@@ -119,19 +126,23 @@ class AvatarCapabilityRegistry:
         *,
         concurrency: int = 1,
         timeout: float | None = None,
+        input_id: str | None = None,
     ) -> list[Any]:
         if isinstance(concurrency, bool) or not isinstance(concurrency, int) or concurrency < 1:
             raise ValueError("concurrency must be a positive integer")
         prepared = [self._prepare(name, arguments) for name, arguments in calls]
         if concurrency == 1:
-            return [await self._execute(handler, request, timeout) for handler, request in prepared]
+            return [
+                await self._execute(handler, request, timeout, input_id)
+                for handler, request in prepared
+            ]
 
         results: list[Any] = [None] * len(prepared)
         pending = iter(enumerate(prepared))
 
         async def worker() -> None:
             for index, (handler, request) in pending:
-                results[index] = await self._execute(handler, request, timeout)
+                results[index] = await self._execute(handler, request, timeout, input_id)
 
         async with asyncio.TaskGroup() as group:
             for _ in range(min(concurrency, len(prepared))):

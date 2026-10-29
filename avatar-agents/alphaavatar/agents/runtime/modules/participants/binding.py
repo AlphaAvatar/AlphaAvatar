@@ -41,9 +41,6 @@ class ParticipantBindings:
     def get_device(self, device_id: str) -> str | None:
         return self._devices.get(device_id)
 
-    def unbind_device(self, device_id: str) -> None:
-        self._devices.pop(device_id, None)
-
     def check_entity(self, source: PerceptionSourceRef, entity_id: str) -> None:
         if not isinstance(entity_id, str) or not entity_id:
             raise ValueError("Perception entity identifier must be a nonempty string")

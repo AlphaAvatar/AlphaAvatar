@@ -80,8 +80,11 @@ class AvatarRuntime:
         if (
             self.participants.session is not self.session
             or self.participants.workspace != self.workspace
+            or self.participants.turn is not self.turn
         ):
-            raise ValueError("ParticipantRuntime must use AvatarRuntime's session and workspace")
+            raise ValueError(
+                "ParticipantRuntime must use AvatarRuntime's session, workspace and Turn"
+            )
 
         if session_id != self.perception.session_id:
             raise ValueError(
@@ -116,7 +119,6 @@ class AvatarRuntime:
         inference: InferenceExecutor,
         foundation: FoundationRuntime | None = None,
         timezone: str | None = None,
-        participants: ParticipantRuntime | None = None,
     ) -> AvatarRuntime:
         """Compose activated resources without filesystem work or ambient configuration."""
         clock = session.clock
@@ -147,11 +149,7 @@ class AvatarRuntime:
             inference=inference,
             foundation=foundation,
             timezone=timezone,
-            participants=(
-                participants
-                if participants is not None
-                else ParticipantRuntime(session=session, workspace=workspace)
-            ),
+            participants=ParticipantRuntime(session=session, workspace=workspace, turn=turn),
         )
 
     def bind_foundation(self, foundation: FoundationRuntime) -> None:

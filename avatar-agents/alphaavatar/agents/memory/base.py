@@ -20,6 +20,7 @@ from alphaavatar.core.lifecycle import LifecycleComponent
 
 if TYPE_CHECKING:
     from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
+    from alphaavatar.core.turn.schemas import TurnSnapshot
 
 
 class MemoryBase(LifecycleComponent):
@@ -34,3 +35,7 @@ class MemoryBase(LifecycleComponent):
     @property
     @abstractmethod
     def memory_content(self) -> str: ...
+
+    @abstractmethod
+    def content_for(self, snapshot: TurnSnapshot) -> str:
+        """Project shared memory for the actual actors of one committed Turn."""

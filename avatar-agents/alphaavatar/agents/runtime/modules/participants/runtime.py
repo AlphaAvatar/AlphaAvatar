@@ -22,12 +22,14 @@ from alphaavatar.core.env.schemas import (
     PerceptionSourceRef,
 )
 from alphaavatar.core.session import Participant, SessionRuntime
-from alphaavatar.core.session.enums import IdentityOutcome
+from alphaavatar.core.session.enums import IdentityOutcome, IdentitySource
 from alphaavatar.core.session.schemas import IdentityRequest
+from alphaavatar.core.turn import TurnRuntime
 from alphaavatar.core.workspace import UserPath, WorkspacePaths
 
-from .access import UserDataAccess
+from ...capability import AvatarCapabilityName, avatar_capability
 from .binding import ParticipantBindings
+from .schemas import ParticipantInput
 
 
 @dataclass(slots=True)
@@ -37,11 +39,23 @@ class _SegmentState:
     invalid: bool = False
 
 
+@avatar_capability(
+    name=AvatarCapabilityName.PARTICIPANT_IDENTITY,
+    description=(
+        "Identify or correct a participant speaking in this Turn using the conversation "
+        "and available evidence. A user does not need a previous face or voice match. "
+        "Explain the evidence in reason; use null user_id to clear a mistaken match. "
+        "The default basis is the Turn's captured identity version. For a further correction, "
+        "use the version returned by the previous result and reassess the evidence. "
+        "Never blindly retry a stale decision. This tool returns identity state, not user data."
+    ),
+    input_schema=ParticipantInput,
+)
 class ParticipantRuntime:
-    """Participant operations, observation links and application-issued data grants.
+    """Participant operations, observation links and accepted identity snapshots.
 
     Session owns identity state and events. This runtime performs no filesystem or model I/O;
-    callers prepare an authorized UserPath explicitly, outside the realtime event loop.
+    callers prepare a resolved UserPath explicitly, outside the realtime event loop.
     """
 
     def __init__(
@@ -49,7 +63,7 @@ class ParticipantRuntime:
         *,
         session: SessionRuntime,
         workspace: WorkspacePaths,
-        access: UserDataAccess | None = None,
+        turn: TurnRuntime,
         max_participants: int = 1024,
         max_segments: int = 1024,
         max_sources: int = 256,
@@ -59,11 +73,13 @@ class ParticipantRuntime:
             for value in (max_participants, max_segments, max_sources)
         ):
             raise ValueError("Participant runtime limits must be positive integers")
+        if turn.perception.session_id != session.session_id:
+            raise ValueError("ParticipantRuntime and TurnRuntime must belong to the same session")
 
         self.session = session
         self.workspace = workspace
+        self.turn = turn
 
-        self._access = access if access is not None else UserDataAccess()
         self._closed = False
         self._max_participants = max_participants
         self._max_segments, self._max_sources = max_segments, max_sources
@@ -122,25 +138,20 @@ class ParticipantRuntime:
         self._require_participant(participant_id)
         self._bindings.bind_device(device_id, participant_id)
 
-    def unbind_device(self, device_id: str) -> None:
-        self._bindings.unbind_device(device_id)
-
-    def bind_entity(
-        self, source: PerceptionSourceRef, entity: PerceptionEntityRef, participant_id: str
-    ) -> None:
-        self._require_participant(participant_id)
-        self._activate(source)
-        self._bindings.bind_entity(source, entity.entity_id, participant_id)
-
     def ensure_entity(
-        self, source: PerceptionSourceRef, entity: PerceptionEntityRef
+        self,
+        source: PerceptionSourceRef,
+        entity: PerceptionEntityRef,
+        *,
+        participant_id: str | None = None,
     ) -> Participant:
+        participant = (
+            self._require_participant(participant_id) if participant_id is not None else None
+        )
         self._activate(source)
         self._bindings.check_entity(source, entity.entity_id)
-        participant = self.resolve(source=source, entity=entity)
-        if participant is None:
-            participant = self.join()
-            self._bindings.bind_entity(source, entity.entity_id, participant.participant_id)
+        participant = participant or self.resolve(source=source, entity=entity) or self.join()
+        self._bindings.bind_entity(source, entity.entity_id, participant.participant_id)
         return participant
 
     def release_entity(self, source: PerceptionSourceRef, entity: PerceptionEntityRef) -> None:
@@ -266,21 +277,74 @@ class ParticipantRuntime:
         return self.get(participant_id) if participant_id is not None else None
 
     def bind_user(self, request: IdentityRequest) -> IdentityOutcome:
-        # None unbinds the user. Identity changes never alter the application's data grants.
+        # Decision components submit corrections; transport claims never call this implicitly.
         return IdentityOutcome.CLOSED if self._closed else self.session.request_identity(request)
 
-    def can_read_user(self, user_id: str | None) -> bool:
-        return not self._closed and self._access.can_read_user(user_id)
+    def accepts_identity(self, participant: Participant, *, current: bool = True) -> bool:
+        """Check a current identity, or a captured write's previously accepted identity."""
+        return (
+            not self._closed
+            and isinstance(participant, Participant)
+            and self.session.get_identity(
+                participant.participant_id, None if current else participant.identity_sequence
+            )
+            == participant
+        )
 
-    def can_write_user(self, user_id: str | None) -> bool:
-        return not self._closed and self._access.can_write_user(user_id)
+    def user_path(self, participant: Participant, *, current: bool = True) -> UserPath:
+        """Resolve the accepted subject; captured writes may retain an earlier accepted version."""
+        if not self.accepts_identity(participant, current=current) or participant.user_id is None:
+            raise PermissionError("User data requires an accepted participant identity")
+        return self.workspace.users.get(participant.user_id)
 
-    def user_path(self, user_id: str, *, write: bool = False) -> UserPath:
-        allowed = self.can_write_user(user_id) if write else self.can_read_user(user_id)
-        if not allowed:
-            operation = "write" if write else "read"
-            raise PermissionError(f"User data {operation} access is not granted")
-        return self.workspace.users.get(user_id)
+    async def invoke(
+        self, request: ParticipantInput, *, input_id: str | None = None
+    ) -> dict[str, str | int | None]:
+        snapshot = self.turn.get(input_id) if input_id is not None else None
+        if snapshot is None:
+            raise ValueError("Identity decisions require the calling execution's committed input")
+
+        participant_id = request.participant_id
+        if participant_id is None:
+            participant_ids = {actor.participant_id for actor in snapshot.actors}
+            participant_id = next(iter(participant_ids)) if len(participant_ids) == 1 else None
+            if participant_id is None:
+                raise ValueError("Select a participant_id from the current Turn's actors")
+
+        actors = tuple(actor for actor in snapshot.actors if actor.participant_id == participant_id)
+        if not actors or len({(actor.user_id, actor.identity_sequence) for actor in actors}) != 1:
+            raise ValueError("The participant must have one identity in the current Turn")
+
+        actor = actors[0]
+        participant = self.session.get_identity(participant_id, actor.identity_sequence)
+        if (
+            actor.identity_sequence is None
+            or participant is None
+            or participant.user_id != actor.user_id
+        ):
+            raise ValueError("The Turn actor must reference an accepted participant identity")
+
+        # The execution supplies input_id separately from model arguments; binding uses one CAS.
+        outcome = self.bind_user(
+            IdentityRequest(
+                participant_id=participant_id,
+                user_id=request.user_id,
+                source=IdentitySource.AGENT,
+                basis_sequence=(
+                    actor.identity_sequence
+                    if request.basis_sequence is None
+                    else request.basis_sequence
+                ),
+                reason=request.reason,
+            )
+        )
+        current = self.get(participant_id)
+        return {
+            "outcome": outcome.value,
+            "participant_id": participant_id,
+            "user_id": current.user_id if current is not None else None,
+            "identity_sequence": current.identity_sequence if current is not None else None,
+        }
 
     def close(self) -> None:
         self._closed = True

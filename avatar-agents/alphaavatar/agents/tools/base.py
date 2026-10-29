@@ -62,7 +62,7 @@ class ToolBase(LifecycleComponent):
             await self.on_stop()
             raise
 
-    async def invoke(self, request: Any) -> Any:
+    async def invoke(self, request: Any, *, input_id: str | None = None) -> Any:
         if not self._ready or self._close_task is not None:
             raise ToolError("Tool is not running", code=ToolErrorCode.UNAVAILABLE)
 

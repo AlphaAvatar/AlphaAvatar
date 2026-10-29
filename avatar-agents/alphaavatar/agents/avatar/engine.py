@@ -99,7 +99,9 @@ class AvatarEngine(LifecycleComponent):
         self._tool_plugins = avatar_config.tools.get_tools(runtime)
 
         # Step 2: initialize runtime capability.
-        runtime.capability_registry.collect(self._memory, self._persona, *self._tool_plugins)
+        runtime.capability_registry.collect(
+            runtime.participants, self._memory, self._persona, *self._tool_plugins
+        )
 
         # Step 3: bind memory and persona to runtime context.
         self._context_manager = foundation.context
