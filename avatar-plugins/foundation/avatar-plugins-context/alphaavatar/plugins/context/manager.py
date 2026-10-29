@@ -123,12 +123,13 @@ class AvatarContextManager(ContextManager):
     def _state_snapshot(self) -> StateRuntime:
         state = self._runtime.state
         times = {}
-        for identity, participant in self._runtime.session.participants.items():
+        for participant_id, participant in self._runtime.session.participants.items():
             time = format_user_time(
-                participant.user_time.timezone, participant.user_time.timezone_source
+                participant.timezone or self._runtime.timezone,
+                "participant" if participant.timezone else "application",
             )
-            times[identity] = ParticipantTimeContext(
-                participant_id=identity, user_id=participant.effective_user_id, user_time=time
+            times[participant_id] = ParticipantTimeContext(
+                participant_id=participant_id, user_id=participant.user_id, user_time=time
             )
 
         # Read sources once. Preparing a query must not write to shared State or participants.

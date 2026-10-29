@@ -65,7 +65,12 @@ class MemoryPluginsTemplate:
         for item in chat_context:
             if isinstance(item, TurnSnapshot):
                 if item.text:
-                    blocks.append(f"### user:\n{item.text}")
+                    actors = "; ".join(
+                        f"participant={actor.participant_id or 'unknown'}, "
+                        f"user={actor.user_id or 'unknown'}"
+                        for actor in item.actors
+                    )
+                    blocks.append(f"### user [{actors or 'unattributed'}]:\n{item.text}")
             elif isinstance(item, ModelInputMessage):
                 phase = item.phase.value if item.phase is not None else "unspecified"
                 blocks.append(

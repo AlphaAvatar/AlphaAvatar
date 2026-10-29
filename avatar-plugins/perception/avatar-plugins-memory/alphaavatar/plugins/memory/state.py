@@ -35,9 +35,12 @@ from alphaavatar.agents.memory.schemas import (
     MemoryOwnerRef,
     MemoryParticipantRef,
 )
-from alphaavatar.core.turn.schemas import TurnSnapshot
+from alphaavatar.core.session import Participant, SessionSnapshot
+from alphaavatar.core.turn.enums import TurnInputModality
+from alphaavatar.core.turn.schemas import TurnEntityRef, TurnSnapshot
 
 from .messages import MemoryMessage, memory_message, same_message
+from .schemas import MemoryIdentitySnapshot
 
 type MemoryContextItem = MemoryMessage | TurnSnapshot
 
@@ -134,13 +137,32 @@ class MemoryContextState:
         owner_refs: list[MemoryOwnerRef],
         participant_refs: list[MemoryParticipantRef] | None = None,
         cache_type: MemoryCacheType = MemoryCacheType.SESSION_INTERACTION,
+        participants: tuple[Participant, ...] = (),
     ) -> None:
         if not owner_refs:
             raise ValueError("Memory context requires at least one owner")
+
         self._context = context
         self._provider_dir = provider_dir
         self._owner_refs = _deduplicate_refs(owner_refs)
         self._participant_refs = _deduplicate_refs(participant_refs or [])
+        self._participants = {
+            participant.participant_id: participant for participant in participants
+        }
+        self._identity_sequence = 0
+
+        dynamic_users = {p.user_id for p in participants if p.user_id is not None}
+        self._owner_refs = [
+            ref
+            for ref in self._owner_refs
+            if ref.kind is not MemoryOwnerKind.USER or ref.id not in dynamic_users
+        ]
+        self._participant_refs = [
+            ref
+            for ref in self._participant_refs
+            if ref.kind is not MemoryParticipantKind.USER or ref.id not in dynamic_users
+        ]
+
         self._cache_type = cache_type
         self._messages: list[MemoryContextItem] = []
         self._message_ids: dict[str, MemoryMessage] = {}
@@ -148,6 +170,8 @@ class MemoryContextState:
         self._call_names: dict[str, str] = {}
         self._turn_ids: dict[str, str] = {}
         self._turn_input_ids: dict[str, str] = {}
+        self._turns: dict[str, TurnSnapshot] = {}
+        self._message_turn_ids: dict[str, str | None] = {}
 
     @property
     def context(self) -> MemoryContextRef:
@@ -167,11 +191,29 @@ class MemoryContextState:
 
     @property
     def owner_refs(self) -> list[MemoryOwnerRef]:
-        return list(self._owner_refs)
+        return _deduplicate_refs(
+            [
+                *self._owner_refs,
+                *(
+                    MemoryOwnerRef.user(p.user_id)
+                    for p in self._participants.values()
+                    if p.user_id is not None
+                ),
+            ]
+        )
 
     @property
     def participant_refs(self) -> list[MemoryParticipantRef]:
-        return list(self._participant_refs)
+        return _deduplicate_refs(
+            [
+                *self._participant_refs,
+                *(
+                    MemoryParticipantRef.user(p.user_id)
+                    for p in self._participants.values()
+                    if p.user_id is not None
+                ),
+            ]
+        )
 
     @property
     def cache_type(self) -> MemoryCacheType:
@@ -190,27 +232,79 @@ class MemoryContextState:
             raise ValueError(f"Invalid Memory context message range: {start}..{end}")
         return list(self._messages[start:end])
 
-    def replace_user_id(self, old_user_id: str | None, new_user_id: str) -> None:
-        if not old_user_id or old_user_id == new_user_id:
+    def sync_identity(self, snapshot: SessionSnapshot, *, include_new: bool = False) -> None:
+        if self.session_id != snapshot.session_id:
             return
-        self._owner_refs = _deduplicate_refs(
-            [
-                MemoryOwnerRef.user(new_user_id)
-                if ref.kind is MemoryOwnerKind.USER and ref.id == old_user_id
-                else ref
-                for ref in self._owner_refs
+        # These are transient associations. Durable records retain their original write evidence.
+        participants = snapshot.participants
+        self._participants = {
+            participant_id: participant
+            for participant_id, participant in participants.items()
+            if include_new or participant_id in self._participants
+        }
+        self._identity_sequence = snapshot.sequence
+
+    def capture_identity(
+        self, messages: Sequence[MemoryContextItem] | None = None
+    ) -> MemoryIdentitySnapshot:
+        participants = tuple(self._participants.values())
+        owner_refs, participant_refs = self.owner_refs, self.participant_refs
+        actors: dict[TurnEntityRef, None] = {}
+        unattributed = messages is None and any(p.user_id is None for p in participants)
+        if messages is not None:
+            selected: dict[str, Participant] = {}
+            for item in messages:
+                turn = (
+                    item
+                    if isinstance(item, TurnSnapshot)
+                    else self._turns.get(self._message_turn_ids.get(item.id))
+                )
+                if turn is None or turn.modality is TurnInputModality.SYSTEM or not turn.actors:
+                    unattributed = True
+                    continue
+                for actor in turn.actors:
+                    actors[actor] = None
+                    participant = self._participants.get(actor.participant_id)
+                    if (
+                        participant is None
+                        or actor.user_id != participant.user_id
+                        or actor.identity_sequence != participant.identity_sequence
+                    ):
+                        unattributed = True
+                    else:
+                        selected[participant.participant_id] = participant
+
+            participants = tuple(selected.values())
+            # Extraction does not assign each patch to a particular speaker. A mixed or
+            # uncertain batch stays context-scoped rather than publishing it to every user.
+            unattributed = (
+                unattributed
+                or any(p.user_id is None for p in participants)
+                or len({p.user_id for p in participants}) != 1
+            )
+            owner_refs = [ref for ref in self._owner_refs if ref.kind is not MemoryOwnerKind.USER]
+            owner_refs.extend(
+                MemoryOwnerRef.user(p.user_id) for p in participants if p.user_id is not None
+            )
+            participant_refs = [
+                ref for ref in self._participant_refs if ref.kind is not MemoryParticipantKind.USER
             ]
-        )
-        self._participant_refs = _deduplicate_refs(
-            [
-                MemoryParticipantRef.user(new_user_id)
-                if ref.kind is MemoryParticipantKind.USER and ref.id == old_user_id
-                else ref
-                for ref in self._participant_refs
-            ]
+            participant_refs.extend(
+                MemoryParticipantRef.user(p.user_id) for p in participants if p.user_id is not None
+            )
+
+        return MemoryIdentitySnapshot(
+            sequence=self._identity_sequence,
+            participants=participants,
+            owner_refs=tuple(ref.model_copy(deep=True) for ref in _deduplicate_refs(owner_refs)),
+            participant_refs=tuple(
+                ref.model_copy(deep=True) for ref in _deduplicate_refs(participant_refs)
+            ),
+            actors=tuple(actors),
+            unattributed=unattributed,
         )
 
-    def add_messages(self, items: Sequence[ModelInputItem]) -> None:
+    def add_messages(self, items: Sequence[ModelInputItem], *, turn_id: str | None = None) -> None:
         staged: dict[str, MemoryMessage] = {}
         tools: dict[tuple[type, str], str] = {}
         names: dict[str, str] = {}
@@ -225,7 +319,10 @@ class MemoryContextState:
             if previous is not None:
                 if not same_message(previous, item):
                     raise ModelProtocolError(f"Conflicting Memory item replay: {item.id}")
+                if item.id in self._message_ids and self._message_turn_ids[item.id] != turn_id:
+                    raise ModelProtocolError("Memory record origin cannot change during replay")
                 continue
+
             if isinstance(item, ModelFunctionCall | ModelFunctionOutput):
                 name = names.get(item.call_id, self._call_names.get(item.call_id))
                 if name is not None and name != item.name:
@@ -236,9 +333,12 @@ class MemoryContextState:
                 if previous_id is not None and previous_id != item.id:
                     raise ModelProtocolError(f"Duplicate Memory tool record: {item.call_id}")
                 tools[key] = item.id
+
             staged[item.id] = item
+
         self._messages.extend(staged.values())
         self._message_ids.update(staged)
+        self._message_turn_ids.update((item_id, turn_id) for item_id in staged)
         self._tool_ids.update(tools)
         self._call_names.update(names)
 
@@ -254,6 +354,8 @@ class MemoryContextState:
             return
         if snapshot.input_id in self._turn_input_ids or snapshot.input_id in self._message_ids:
             raise ModelProtocolError("Committed turn input identity is already recorded")
+
         self._messages.append(snapshot)
         self._turn_ids[snapshot.turn_id] = snapshot.input_id
         self._turn_input_ids[snapshot.input_id] = snapshot.turn_id
+        self._turns[snapshot.turn_id] = snapshot

@@ -26,7 +26,7 @@ class SileroVADRunner(InferenceRunner):
     def initialize(self) -> None:
         import onnxruntime as ort
 
-        model_path = resolve_silero_model_path()
+        model_path = resolve_silero_model_path(models_dir=self.launch.models_dir)
 
         options = ort.SessionOptions()
         options.add_session_config_entry("session.intra_op.allow_spinning", "0")

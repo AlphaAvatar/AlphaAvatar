@@ -13,6 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
@@ -22,7 +23,7 @@ from alphaavatar.agents.avatar.provider.schemas import (
     ModelInputMessage,
 )
 from alphaavatar.agents.memory import MemoryProcessorBase
-from alphaavatar.agents.memory.enums import MemoryType
+from alphaavatar.agents.memory.enums import MemoryOwnerKind, MemoryType
 from alphaavatar.agents.memory.schemas import (
     MemoryCheckpointAdvance,
     MemoryItem,
@@ -33,6 +34,7 @@ from alphaavatar.agents.memory.schemas import (
 )
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.utils.time import application_now
+from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.turn.schemas import TurnSnapshot
 
 from ..schemas import norm_token, norm_topic
@@ -41,7 +43,7 @@ from ..template import MemoryPluginsTemplate
 
 if TYPE_CHECKING:
     from ..runtime import MemoryRuntime
-    from ..schemas import PatchOp
+    from ..schemas import MemoryIdentitySnapshot, PatchOp
     from ..state import MemoryContextItem, MemoryContextState
     from ..storage import MemoryStore
 
@@ -92,12 +94,35 @@ class MemoryProcessor(MemoryProcessorBase):
         source_refs: list[MemorySourceRef],
         scope: MemoryScope,
         extra_data: dict[str, Any] | None = None,
+        identity: MemoryIdentitySnapshot | None = None,
     ) -> list[MemoryItem]:
+        identity = identity or state.capture_identity()
+        access = self.runtime.participants
+        ungranted = any(
+            p.user_id is None or not access.can_write_user(p.user_id) for p in identity.participants
+        )
+        ungranted = ungranted or any(
+            ref.kind is MemoryOwnerKind.USER and not access.can_write_user(ref.id)
+            for ref in owner_refs
+        )
+        if ungranted or identity.unattributed:
+            # Preserve unverified observations in their originating context, without publishing
+            # them into another user's long-term memory or the Avatar's shared owner scope.
+            owner_refs, scope = (
+                [MemoryOwnerRef.avatar(self.avatar_id)],
+                MemoryScope.context(state.context_id),
+            )
+
+        extra_data = {**(extra_data or {}), "session_identity": identity.evidence()}
+        if identity.unattributed:
+            extra_data["unattributed_input"] = True
+
         created_at = application_now()
         items: list[MemoryItem] = []
         for patch in patches:
             if not norm_token(patch.value):
                 continue
+
             item = MemoryItem(
                 context=state.context,
                 scope=scope,
@@ -145,8 +170,13 @@ class MemoryProcessor(MemoryProcessorBase):
         self, state: MemoryContextState, messages: list[MemoryContextItem]
     ) -> str:
         content = MemoryPluginsTemplate.apply_update_template(messages, state.cache_type)
-        env_memory = self.memory_runtime.memory_state.render(
-            memory_type=MemoryType.ENV, context_id=state.context_id
+        env_memory = "\n".join(
+            item.render_line()
+            for item in self.memory_runtime.visible_items(
+                self.memory_runtime.memory_state.get(
+                    memory_type=MemoryType.ENV, context_id=state.context_id
+                )
+            )
         )
         if not env_memory:
             return content
@@ -174,14 +204,17 @@ class MemoryProcessor(MemoryProcessorBase):
     async def commit_items(
         self, *, state: MemoryContextState, start: int, end: int, items: list[MemoryItem]
     ) -> None:
-        await self.store.commit(
-            items,
-            context_id=state.context_id,
-            processor=self.name,
-            idempotency_key=f"{state.context_id}:{self.name}:{start}:{end}",
-            checkpoint=MemoryCheckpointAdvance(from_sequence=start, to_sequence=end),
-        )
-        self.memory_runtime.apply_items(items)
+        async def commit() -> None:
+            await self.store.commit(
+                items,
+                context_id=state.context_id,
+                processor=self.name,
+                idempotency_key=f"{state.context_id}:{self.name}:{start}:{end}",
+                checkpoint=MemoryCheckpointAdvance(from_sequence=start, to_sequence=end),
+            )
+            self.memory_runtime.apply_items(items)
+
+        await wait_for_cleanup(asyncio.create_task(commit(), name=f"memory_{self.name}_commit"))
 
     async def _start(self) -> None: ...
 

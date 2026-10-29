@@ -119,10 +119,8 @@ def _source_states_xml(states: tuple[MediaSourceSnapshot, ...], *, phase: str) -
             f"available={_xml_attr(str(state.available).lower())}",
         ]
 
-        if state.transport_participant_id is not None:
-            attributes.append(
-                f"transport_participant_id={_xml_attr(state.transport_participant_id)}"
-            )
+        if state.device_id is not None:
+            attributes.append(f"device_id={_xml_attr(state.device_id)}")
 
         lines.append(f"  <source {' '.join(attributes)} />")
 
@@ -203,8 +201,8 @@ def _source_event_xml(event: PerceptionEvent, alignment: AlignedPerception) -> s
         f"state={_xml_attr(_enum_value(state.state))}",
     ]
 
-    if state.transport_participant_id is not None:
-        attributes.append(f"transport_participant_id={_xml_attr(state.transport_participant_id)}")
+    if state.device_id is not None:
+        attributes.append(f"device_id={_xml_attr(state.device_id)}")
 
     if state.reason:
         attributes.append(f"reason={_xml_attr(state.reason)}")
@@ -355,10 +353,8 @@ def _ordered_slice_parts(
             'sampled="true"',
         ]
 
-        if observation.transport_participant_id is not None:
-            attributes.append(
-                f"transport_participant_id={_xml_attr(observation.transport_participant_id)}"
-            )
+        if observation.device_id is not None:
+            attributes.append(f"device_id={_xml_attr(observation.device_id)}")
 
         entries.append(
             (
@@ -396,10 +392,8 @@ def _direct_input_parts(
             f"source_generation={_xml_attr(observation.source.source_generation)}",
         ]
 
-        if observation.transport_participant_id is not None:
-            attributes.append(
-                f"transport_participant_id={_xml_attr(observation.transport_participant_id)}"
-            )
+        if observation.device_id is not None:
+            attributes.append(f"device_id={_xml_attr(observation.device_id)}")
 
         common_attributes = " ".join(attributes)
 
