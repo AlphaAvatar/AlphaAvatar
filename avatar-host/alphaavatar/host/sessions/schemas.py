@@ -18,8 +18,6 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from alphaavatar.agents.runtime.modules.participants import UserDataAccess
-
 
 class SessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -37,7 +35,6 @@ class SessionContext:
     room_name: str
     metadata: dict[str, Any] = field(repr=False)
     room_type: str = "alphaavatar_app"
-    data_access: UserDataAccess = field(default_factory=UserDataAccess, repr=False)
 
 
 @dataclass(frozen=True, slots=True)

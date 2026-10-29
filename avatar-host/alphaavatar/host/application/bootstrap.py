@@ -33,7 +33,6 @@ from alphaavatar.host.sessions.schemas import SessionContext, SessionEnd, Sessio
 if TYPE_CHECKING:
     from alphaavatar.agents.configs import AvatarConfig
     from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
-    from alphaavatar.agents.runtime.modules.participants import ParticipantRuntime
     from alphaavatar.core.session import SessionRuntime
     from alphaavatar.core.workspace import SessionPath, WorkspacePaths
     from alphaavatar.host.configs.application import ApplicationConfig
@@ -47,7 +46,6 @@ async def create_avatar_runtime(
     session: SessionRuntime,
     session_path: SessionPath,
     state: StateRuntime,
-    participants: ParticipantRuntime,
 ) -> AvatarRuntime:
     from alphaavatar.agents.runtime import AvatarRuntime
     from alphaavatar.agents.runtime.inference import InferenceExecutor
@@ -67,7 +65,6 @@ async def create_avatar_runtime(
             config=avatar_config.runtime,
             inference=inference,
             timezone=avatar_config.avatar.timezone,
-            participants=participants,
         )
         resources.pop_all()
         resources.push_async_callback(runtime.aclose)
@@ -115,20 +112,16 @@ async def create_avatar_runtime(
 async def create_execution(config: ApplicationConfig, access: SessionContext) -> HostExecution:
     from alphaavatar.agents.avatar import AvatarEngine
     from alphaavatar.agents.constants import DEFAULT_CONTEXT_VALUE
-    from alphaavatar.agents.runtime import InteractionMethod, StateRuntime, UserDataAccess
-    from alphaavatar.agents.runtime.modules.participants import ParticipantRuntime
+    from alphaavatar.agents.runtime import InteractionMethod, StateRuntime
     from alphaavatar.agents.utils.time import resolve_user_timezone
     from alphaavatar.core.session import SessionRuntime
-    from alphaavatar.core.workspace import prepare_session_path, prepare_user_path
+    from alphaavatar.core.workspace import prepare_session_path
 
     # Metadata
     avatar, metadata = config.avatar, access.metadata
-    user_id = metadata.get("user_id", uuid4().hex)
     session_id = metadata.get("session_id", uuid4().hex)
-    if not all(isinstance(value, str) and 0 < len(value) <= 256 for value in (user_id, session_id)):
-        raise ValueError(
-            "User and session identifiers must be nonempty strings of at most 256 characters"
-        )
+    if not isinstance(session_id, str) or not 0 < len(session_id) <= 256:
+        raise ValueError("Session identifier must be nonempty text of at most 256 characters")
 
     # Session
     session_type = resolve_session_type(metadata)
@@ -137,20 +130,6 @@ async def create_execution(config: ApplicationConfig, access: SessionContext) ->
 
     # Runtime
     session = SessionRuntime(session_id=session_id)
-    # Transport metadata supplies claims, never data grants. Applications may supply verified
-    # grants in SessionContext; a newly generated guest owns only its own empty profile.
-    data_access = access.data_access
-    if "user_id" not in metadata:
-        data_access = UserDataAccess(
-            readable_users=data_access.readable_users | {user_id},
-            writable_users=data_access.writable_users | {user_id},
-        )
-
-    participants = ParticipantRuntime(session=session, workspace=workspace, access=data_access)
-    participant = participants.join(
-        user_id=user_id, timezone=resolve_user_timezone(metadata), primary=True
-    )
-    participants.bind_device(access.device_id, participant.participant_id)
     created_at = datetime.fromtimestamp(session.created_at.unix_seconds, UTC)
     zone = ZoneInfo(avatar.avatar.timezone) if avatar.avatar.timezone else UTC
     session_path = workspace.data.sessions.get(
@@ -158,9 +137,6 @@ async def create_execution(config: ApplicationConfig, access: SessionContext) ->
     )
 
     def prepare_paths() -> None:
-        if participants.can_write_user(user_id):
-            prepare_user_path(participants.user_path(user_id, write=True))
-
         prepare_session_path(session_path)
 
         # A new execution must never silently reuse another execution's provider files.
@@ -203,13 +179,17 @@ async def create_execution(config: ApplicationConfig, access: SessionContext) ->
         session=session,
         session_path=session_path,
         state=state,
-        participants=participants,
     )
 
     # Engine
     resources = AsyncExitStack()
     resources.push_async_callback(runtime.aclose)
     try:
+        # A connection supplies observations; runtime decision components accept identity later.
+        participant = runtime.participants.join(
+            timezone=resolve_user_timezone(metadata), primary=True
+        )
+        runtime.participants.bind_device(access.device_id, participant.participant_id)
         engine = AvatarEngine(avatar_config=avatar, runtime=runtime)
         resources.push_async_callback(engine.on_stop)
         diagnostics = None
