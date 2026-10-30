@@ -87,8 +87,8 @@ class EnvMemoryInputBuilder:
             "state": state.state.value,
         }
 
-        if state.transport_participant_id is not None:
-            data["transport_participant_id"] = state.transport_participant_id
+        if state.device_id is not None:
+            data["device_id"] = state.device_id
 
         return data
 
@@ -127,8 +127,8 @@ class EnvMemoryInputBuilder:
                     "reason": state.reason,
                 }
 
-                if state.transport_participant_id is not None:
-                    item["transport_participant_id"] = state.transport_participant_id
+                if state.device_id is not None:
+                    item["device_id"] = state.device_id
 
                 evidence.append(item)
 

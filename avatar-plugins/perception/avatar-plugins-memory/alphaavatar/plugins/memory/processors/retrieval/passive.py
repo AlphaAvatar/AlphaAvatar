@@ -115,6 +115,7 @@ class PassiveRecall:
                 return None
             self._expired.add(self._entries.pop(key).sequence)
             self._prune_expired()
+
         loop = asyncio.get_running_loop()
         age = max(0.0, self._runtime.perception.clock.now().elapsed_since(snapshot.committed_at))
         entry = _Recall(
@@ -145,16 +146,23 @@ class PassiveRecall:
             self._history.popitem(last=False)
         return context_id
 
-    async def _run(self, entry: _Recall, context_id: str, query: str) -> None:
+    async def _run(
+        self, entry: _Recall, context_id: str, query: str, snapshot: TurnSnapshot
+    ) -> None:
         try:
             async with asyncio.timeout_at(entry.deadline):
+                self._memory.sync_session()
                 state = self._memory.context_state(context_id)
+                identity = state.capture_identity([snapshot])
+                if not self._memory.identity_is_current(identity):
+                    self._finish(entry, "identity_changed")
+                    return
                 owners = list(
                     {
                         ref.key: ref
                         for ref in (
                             MemoryOwnerRef.avatar(self._memory.avatar_id),
-                            *state.owner_refs,
+                            *(() if identity.unattributed else identity.owner_refs),
                         )
                     }.values()
                 )
@@ -169,11 +177,16 @@ class PassiveRecall:
                     top_k=self._config.recall_num,
                     timeout=remaining,
                     trace_id=entry.turn_id,
+                    participants=identity.participants,
                 )
+
             # Cancellation-resistant transports must never publish after the owned deadline.
             if asyncio.get_running_loop().time() >= entry.deadline:
                 self._finish(entry, "timeout")
+            elif not self._memory.identity_is_current(identity):
+                self._finish(entry, "identity_changed")
             elif not entry.result.done():
+                items = self._memory.visible_items(items, identity=identity, context=state.context)
                 self._memory.apply_items(items)
                 self._finish(entry, "ok" if items else "empty", count=len(items))
                 try:
@@ -228,7 +241,7 @@ class PassiveRecall:
                 return
             query = "\n\n".join(f"### user:\n{text}" for text in self._history[context_id])
             entry.task = asyncio.create_task(
-                self._run(entry, context_id, query[-self._config.max_query_chars :]),
+                self._run(entry, context_id, query[-self._config.max_query_chars :], snapshot),
                 name=f"memory_passive_recall:{entry.turn_id}",
             )
             self._tasks.add(entry.task)

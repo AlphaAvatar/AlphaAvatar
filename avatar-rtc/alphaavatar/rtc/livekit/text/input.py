@@ -143,6 +143,7 @@ class LiveKitTextInput(LifecycleComponent):
         text = "".join(chunks)
         if not text.strip():
             return
+
         key = json.dumps([self._session_id, device_id, info.stream_id], ensure_ascii=False).encode()
         observation = EnvObservation(
             observation_id=f"rtc_text:{hashlib.sha256(key).hexdigest()}",

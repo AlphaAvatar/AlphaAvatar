@@ -294,7 +294,9 @@ class LoopTools:
                     executed=True,
                 )
                 executed = True
-                return await self._registry.invoke(call.name, payload)
+                return await self._registry.invoke(
+                    call.name, payload, input_id=self._budget.request.input_id
+                )
 
             remaining = deadline - asyncio.get_running_loop().time()
             async with asyncio.timeout(min(limits.tool_timeout, max(0, remaining))):

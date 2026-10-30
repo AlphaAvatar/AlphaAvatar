@@ -60,7 +60,7 @@ _ERROR_CODES = frozenset(
 @dataclass(slots=True)
 class _SegmentState:
     time_range: RuntimeTimeRange
-    transport_participant_id: str | None
+    device_id: str | None
     entity: PerceptionEntityRef | None
     closed: bool = False
     input_source: PerceptionSourceRef | None = None
@@ -302,7 +302,7 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
         if state is None:
             state = _SegmentState(
                 time_range=observation.time_range,
-                transport_participant_id=observation.transport_participant_id,
+                device_id=observation.device_id,
                 entity=observation.entity,
                 input_source=self._input_source(observation),
             )
@@ -313,8 +313,8 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
             if state.input_source != self._input_source(observation):
                 state.input_source = None
 
-            if observation.transport_participant_id is not None:
-                state.transport_participant_id = observation.transport_participant_id
+            if observation.device_id is not None:
+                state.device_id = observation.device_id
             if observation.entity is not None:
                 state.entity = observation.entity
 
@@ -437,7 +437,7 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
             time_range=state.time_range,
             source=source.transcript_source,
             segment=segment,
-            transport_participant_id=state.transport_participant_id,
+            device_id=state.device_id,
             entity=state.entity,
             payload=payload,
             metadata=metadata,

@@ -13,7 +13,6 @@
 # limitations under the License.
 from __future__ import annotations
 
-import hashlib
 import json
 import pathlib
 import re
@@ -22,14 +21,7 @@ from typing import Any
 from alphaavatar.agents.memory.enums import MemoryScopeKind
 from alphaavatar.agents.memory.schemas import MemoryItem
 from alphaavatar.agents.utils.files.atomic import locked_directory, write_text_atomic
-
-
-def _safe_name(value: str) -> str:
-    value = str(value)
-    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,159}", value):
-        return value
-    # Preserve ordinary UUIDs/keys; unsafe or long IDs use a separate, bounded filename domain.
-    return "~" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+from alphaavatar.core.workspace import path_key
 
 
 def _wrap_text(text: str) -> list[str]:
@@ -113,20 +105,18 @@ def _render_document(item: MemoryItem) -> str:
 
 
 def _export_paths(export_dir: pathlib.Path, item: MemoryItem) -> list[pathlib.Path]:
-    filename = f"{_safe_name(item.memory_id)}.md"
+    filename = f"{path_key(item.memory_id)}.md"
 
     if item.scope.kind is MemoryScopeKind.OWNER:
         return [
-            export_dir / "owners" / ref.kind.value / _safe_name(ref.id) / filename
+            export_dir / "owners" / ref.kind.value / path_key(ref.id) / filename
             for ref in item.owner_refs
         ]
 
     if item.scope.kind is MemoryScopeKind.EPISODE:
-        return [
-            export_dir / "episodes" / _safe_name(item.context.episode_id) / "memories" / filename
-        ]
+        return [export_dir / "episodes" / path_key(item.context.episode_id) / "memories" / filename]
 
-    return [export_dir / "contexts" / _safe_name(item.context.context_id) / "memories" / filename]
+    return [export_dir / "contexts" / path_key(item.context.context_id) / "memories" / filename]
 
 
 def export_memory_items(export_dir: pathlib.Path, items: list[MemoryItem]) -> list[pathlib.Path]:

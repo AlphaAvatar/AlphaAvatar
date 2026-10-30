@@ -232,9 +232,13 @@ class MemoryContextState:
             raise ValueError(f"Invalid Memory context message range: {start}..{end}")
         return list(self._messages[start:end])
 
+    def get_turn(self, turn_id: str) -> TurnSnapshot | None:
+        return self._turns.get(turn_id)
+
     def sync_identity(self, snapshot: SessionSnapshot, *, include_new: bool = False) -> None:
         if self.session_id != snapshot.session_id:
             return
+
         # These are transient associations. Durable records retain their original write evidence.
         participants = snapshot.participants
         self._participants = {
@@ -262,6 +266,7 @@ class MemoryContextState:
                 if turn is None or turn.modality is TurnInputModality.SYSTEM or not turn.actors:
                     unattributed = True
                     continue
+
                 for actor in turn.actors:
                     actors[actor] = None
                     participant = self._participants.get(actor.participant_id)

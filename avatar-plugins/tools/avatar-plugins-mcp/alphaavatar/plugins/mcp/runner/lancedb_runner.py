@@ -27,10 +27,10 @@ from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.agents.tools.schemas import ToolError
-from alphaavatar.agents.utils.files.work_dirs import WorkspacePaths
 from alphaavatar.agents.utils.loop_thread import AsyncLoopThread
 from alphaavatar.agents.utils.vdb import lancedb
 from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.workspace import WorkspacePaths
 
 from ..config import DEFAULT_TIMEOUT, MCPServerConfig
 from ..enums import MCPOp, MCPOutputMode
@@ -549,7 +549,7 @@ class LanceDBRunner(InferenceRunner):
         vdb_config = {key: value for key, value in config.items() if key != "embedding"}
         if not vdb_config.get("client_path"):
             vdb_config["client_path"] = str(
-                WorkspacePaths.from_env()
+                WorkspacePaths.from_root(self.launch.workspace_root)
                 .data.indexes.namespace(AvatarModule.MCP.value)
                 .backend("lancedb")
                 .root

@@ -106,7 +106,7 @@ class PersonaPluginsTemplate:
         skip_empty: bool = True,
     ) -> str:
         blocks: list[str] = []
-        for uid, profile in user_profiles.items():
+        for label, profile in user_profiles.items():
             sections: list[str] = []
             timezone = (
                 profile.runtime_state.current_timezone
@@ -135,6 +135,6 @@ class PersonaPluginsTemplate:
                     sections.append("### User profile details\n" + "\n".join(lines))
 
             if sections:
-                blocks.append(f"## User {uid}\n" + "\n\n".join(sections))
+                blocks.append(f"## User {label}\n" + "\n\n".join(sections))
 
         return "\n\n".join(blocks)

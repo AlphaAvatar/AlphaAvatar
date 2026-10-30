@@ -8,7 +8,6 @@
 avatar:
   id: alphaavatar_airi
   name: AlphaAvatar
-  work_dir: .alphaavatar_workspace/
 
   introduction: >
     You are Hiyori, a lively anime-style voice companion.

@@ -83,9 +83,11 @@ class ParticipantRuntime:
         self._closed = False
         self._max_participants = max_participants
         self._max_segments, self._max_sources = max_segments, max_sources
+
         self._bindings = ParticipantBindings(max_entities=max_participants, max_devices=max_sources)
         self._generations: dict[str, tuple[int, bool]] = {}
         self._segments: OrderedDict[PerceptionSegmentRef, _SegmentState] = OrderedDict()
+
         self._next_segment_token = 0
 
     def _require_participant(self, participant_id: str) -> Participant:

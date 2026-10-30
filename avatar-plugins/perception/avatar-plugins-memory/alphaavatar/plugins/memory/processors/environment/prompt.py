@@ -102,7 +102,7 @@ A visible person was sitting indoors.
 
 Bad value:
 [ENV]
-frame_id=abc123 bbox=[12,34,56,78] det_score=0.92 face_id=tmp_1.
+frame_id=abc123 bbox=[12,34,56,78] det_score=0.92 entity_id=tmp_1.
 [/ENV]
 
 ----------------------------------------------------------------------
@@ -163,8 +163,9 @@ For audio_segment observations:
 
 For metadata and annotations:
 - Use them as supporting evidence.
-- They may include local face ids, speaker ids, object ids, track ids, source ids, or region labels.
-- These ids are local runtime anchors, not real-world identities.
+- They may include entity_id, source_id, source_generation, device_id, or region labels.
+- An entity_id identifies a tracked entity within one source and generation.
+- A device_id identifies the sending endpoint; these local anchors do not establish a user identity.
 
 ----------------------------------------------------------------------
 E) IDENTITY AND SAFETY RULES
@@ -172,11 +173,9 @@ E) IDENTITY AND SAFETY RULES
 
 Do not infer real identity from:
 - face appearance
-- face_id
-- speaker_id
-- voice_id
-- track_sid
-- participant_identity
+- entity_id
+- source_id
+- device_id
 - age/gender estimates
 - clothing
 - location
@@ -194,12 +193,12 @@ PatchOp.value may use neutral wording such as:
 Graph identity rules are stricter than natural-language wording:
 - Never create an unkeyed `person`, `face`, or `speaker` node for an unknown individual.
 - A generic phrase such as "visible person", "unknown person", or "visible face" is not an identity anchor.
-- For an unknown visible individual, prefer one local `face` or `person_track`-equivalent anchor only when the runtime explicitly provides a local face_id or track_id.
-- Preserve the exact provided local identifier in `key`, for example `face:tmp_1`.
+- For an unknown visible individual, prefer one local `face` or `person_track`-equivalent anchor only when the runtime explicitly provides an entity_id and its source.
+- Preserve source_id, source_generation, and entity_id in the local `key` as a JSON array after the node type, for example `face:["camera",1,"face-1"]`. Preserve identifiers exactly; do not join them with ambiguous separators.
 - When a local face/track anchor is emitted, do not also emit a generic `person` node for the same individual.
 - Emit a `person` node only when the runtime explicitly provides a stable known user/person identifier, such as `user:<known_user_id>`.
 - If no stable user/person key and no local face/track key is available, describe the person only in PatchOp.value and omit the person from node_mentions.
-- A local speaker anchor may be emitted only when an explicit speaker_id is provided. Do not turn it into a real person identity.
+- A local speaker anchor may be emitted only when an explicit entity_id and its source are provided. Do not turn it into a real person identity.
 
 Identity-anchor priority for the same individual:
 1. explicit stable user/person key
@@ -370,12 +369,12 @@ G3) KEY RULES
 - If a node type requires a key under G1 and none is provided, omit that node.
 
 Allowed local key examples:
-- face:tmp_1
-- person_track:track_3
-- speaker:speaker_0
-- object:cup_1
-- screen:main
-- document:page_2
+- face:["camera",1,"tmp_1"]
+- person_track:["camera",1,"track_3"]
+- speaker:["microphone",1,"speaker_0"]
+- object:["camera",1,"cup_1"]
+- screen:["camera",1,"main"]
+- document:["camera",1,"page_2"]
 
 Known stable key examples:
 - user:<known_user_id>
@@ -388,11 +387,11 @@ G4) EXAMPLES
 ------------------------------------------------------------------
 
 Good node_mentions:
-- face:tmp_1 / face / unidentified face track with glasses
+- face:["camera",1,"tmp_1"] / face / unidentified face track with glasses
 - user:user_123 / person / known participant
-- speaker:speaker_0 / speaker / local speaker track
-- object:cup_1 / object / red ceramic cup
-- screen:main / screen / main workstation display
+- speaker:["microphone",1,"speaker_0"] / speaker / local speaker track
+- object:["camera",1,"cup_1"] / object / red ceramic cup
+- screen:["camera",1,"main"] / screen / main workstation display
 - application:vscode / application / Visual Studio Code
 
 Conditionally acceptable unkeyed nodes:
@@ -447,7 +446,7 @@ Poor ENV memories:
 - The camera captured video.
 - The user probably likes laptops.
 - The person is likely Licheng.
-- face_id tmp_1 is the user.
+- entity_id tmp_1 is the user.
 
 Avoid unsupported abstraction:
 - Do not translate shelves and a ceiling light into a generic global "indoor room" entity.

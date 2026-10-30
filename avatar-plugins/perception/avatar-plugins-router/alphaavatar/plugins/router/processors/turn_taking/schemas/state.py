@@ -30,16 +30,18 @@ from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
 @dataclass(frozen=True, slots=True)
 class SpeakerKey:
     source: PerceptionSourceRef
-    perception_entity_id: str | None
-    transport_participant_id: str | None
+    entity_id: str | None
+    segment_id: str | None = None
 
     @classmethod
     def from_observation(cls, observation: EnvObservation) -> SpeakerKey:
         entity = observation.entity
         return cls(
             source=observation.segment.source if observation.segment else observation.source,
-            perception_entity_id=entity.perception_entity_id if entity else None,
-            transport_participant_id=observation.transport_participant_id,
+            entity_id=entity.entity_id if entity else None,
+            segment_id=observation.segment.segment_id
+            if observation.segment and entity is None
+            else None,
         )
 
 
@@ -78,6 +80,7 @@ class TurnCandidate:
 
     input_observation_ids: list[str] = field(default_factory=list)
     anchor_observation_id: str | None = None
+    latest_observation_id: str | None = None
 
     @property
     def missing_transcripts(self) -> set[PerceptionSegmentRef]:
@@ -97,7 +100,8 @@ class TurnCandidate:
             speaker=InteractionEntityRef(
                 kind=InteractionEntityKind.PERSON,
                 entity=observation.entity,
-                transport_participant_id=observation.transport_participant_id,
+                device_id=observation.device_id,
+                source=observation.segment.source if observation.segment else observation.source,
             ),
             started_at=observation.time_range.start,
             updated_at=observation.time_range.end,

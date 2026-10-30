@@ -23,8 +23,10 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import TypeVar
 
+from filelock import FileLock
+
 from alphaavatar.agents.persona.schemas import UserRuntimeState
-from alphaavatar.agents.utils.files.work_dirs import UserPath
+from alphaavatar.core.workspace import UserPath
 
 from ..log import logger
 
@@ -39,7 +41,7 @@ _JSON_PATTERN = re.compile(
 
 
 class RuntimeStateStore:
-    """Local runtime-state persistence; locks are scoped to this store instance."""
+    """Atomic runtime-state updates; disk merging is serialized across executions."""
 
     def __init__(self) -> None:
         self._locks: dict[Path, asyncio.Lock] = {}
@@ -47,6 +49,104 @@ class RuntimeStateStore:
     @staticmethod
     def _path(user_path: UserPath) -> Path:
         return user_path.runtime_dir / "runtime_state.md"
+
+    @staticmethod
+    def _read_text(path: Path) -> str:
+        try:
+            return path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return ""
+
+    @classmethod
+    def _load(cls, path: Path) -> UserRuntimeState | None:
+        match = _JSON_PATTERN.search(cls._read_text(path))
+        if match is None:
+            return None
+
+        try:
+            return UserRuntimeState.model_validate_json(match.group(1))
+        except ValueError as exc:
+            logger.warning("Runtime state load failed path=%s: %s", path, exc)
+            return None
+
+    @classmethod
+    def _save(cls, path: Path, state: UserRuntimeState) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with FileLock(str(path) + ".lock", timeout=10):
+            return cls._save_locked(path, state)
+
+    @classmethod
+    def _save_locked(cls, path: Path, state: UserRuntimeState) -> Path:
+        old_text = cls._read_text(path)
+        previous = cls._load(path)
+        seen = (
+            bool(state.current_session_id)
+            and f"<!-- session_id:{state.current_session_id} -->" in old_text
+        )
+        state.login_count = (previous.login_count if previous is not None else 0) + (
+            0 if seen else 1
+        )
+        if previous is not None and previous.current_session_id != state.current_session_id:
+            state.last_timezone = previous.current_timezone
+            state.last_login_at = previous.current_login_at
+            state.last_session_id = previous.current_session_id
+            state.last_room_type = previous.current_room_type
+        latest = state
+        if (
+            previous is not None
+            and previous.current_login_at is not None
+            and state.current_login_at is not None
+            and previous.current_login_at > state.current_login_at
+        ):
+            latest = previous.model_copy(update={"login_count": state.login_count})
+        data = latest.model_dump(mode="json", exclude_none=True)
+        latest_block = (
+            f"{_BEGIN}\n```json\n{json.dumps(data, ensure_ascii=False, indent=2)}\n```\n{_END}"
+        )
+
+        session_id = state.current_session_id or ""
+        login_time = state.current_login_at.isoformat() if state.current_login_at else ""
+        history_item = (
+            f"<!-- session_id:{session_id} -->\n"
+            f"- login_time: {login_time}\n"
+            f"  session_id: {session_id}\n"
+            f"  room_type: {state.current_room_type or ''}\n"
+            f"  timezone: {state.current_timezone or ''}\n"
+            f"  login_count: {state.login_count}\n"
+        )
+
+        if old_text:
+            if _BLOCK_PATTERN.search(old_text):
+                text = _BLOCK_PATTERN.sub(lambda _: latest_block, old_text, count=1)
+            else:
+                text = f"# Runtime State\n\n{latest_block}\n\n## Previous Content\n\n{old_text}"
+
+            if "## Login History" not in text:
+                text = text.rstrip() + "\n\n## Login History\n\n"
+
+            if session_id and f"<!-- session_id:{session_id} -->" not in text:
+                text = text.rstrip() + "\n\n" + history_item
+        else:
+            text = f"# Runtime State\n\n{latest_block}\n\n## Login History\n\n{history_item}"
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path: Path | None = None
+
+        try:
+            with NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False
+            ) as file:
+                temporary_path = Path(file.name)
+                file.write(text)
+                file.flush()
+                os.fsync(file.fileno())
+
+            os.replace(temporary_path, path)
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+
+        return path
 
     async def _run_io(self, path: Path, operation: Callable[[], T]) -> T:
         async with self._locks.setdefault(path, asyncio.Lock()):
@@ -80,74 +180,3 @@ class RuntimeStateStore:
         path = self._path(user_path)
         snapshot = runtime_state.model_copy(deep=True)
         return await self._run_io(path, partial(self._save, path, snapshot))
-
-    @staticmethod
-    def _read_text(path: Path) -> str:
-        try:
-            return path.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            return ""
-
-    @classmethod
-    def _load(cls, path: Path) -> UserRuntimeState | None:
-        match = _JSON_PATTERN.search(cls._read_text(path))
-        if match is None:
-            return None
-
-        try:
-            return UserRuntimeState.model_validate_json(match.group(1))
-        except ValueError as exc:
-            logger.warning("Runtime state load failed path=%s: %s", path, exc)
-            return None
-
-    @classmethod
-    def _save(cls, path: Path, state: UserRuntimeState) -> Path:
-        data = state.model_dump(mode="json", exclude_none=True)
-        latest_block = (
-            f"{_BEGIN}\n```json\n{json.dumps(data, ensure_ascii=False, indent=2)}\n```\n{_END}"
-        )
-
-        session_id = state.current_session_id or ""
-        login_time = state.current_login_at.isoformat() if state.current_login_at else ""
-        history_item = (
-            f"<!-- session_id:{session_id} -->\n"
-            f"- login_time: {login_time}\n"
-            f"  session_id: {session_id}\n"
-            f"  room_type: {state.current_room_type or ''}\n"
-            f"  timezone: {state.current_timezone or ''}\n"
-            f"  login_count: {state.login_count}\n"
-        )
-
-        old_text = cls._read_text(path)
-        if old_text:
-            if _BLOCK_PATTERN.search(old_text):
-                text = _BLOCK_PATTERN.sub(lambda _: latest_block, old_text, count=1)
-            else:
-                text = f"# Runtime State\n\n{latest_block}\n\n## Previous Content\n\n{old_text}"
-
-            if "## Login History" not in text:
-                text = text.rstrip() + "\n\n## Login History\n\n"
-
-            if session_id and f"<!-- session_id:{session_id} -->" not in text:
-                text = text.rstrip() + "\n\n" + history_item
-        else:
-            text = f"# Runtime State\n\n{latest_block}\n\n## Login History\n\n{history_item}"
-
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary_path: Path | None = None
-
-        try:
-            with NamedTemporaryFile(
-                mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False
-            ) as file:
-                temporary_path = Path(file.name)
-                file.write(text)
-                file.flush()
-                os.fsync(file.fileno())
-
-            os.replace(temporary_path, path)
-        finally:
-            if temporary_path is not None:
-                temporary_path.unlink(missing_ok=True)
-
-        return path

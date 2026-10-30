@@ -97,15 +97,18 @@ class MemoryProcessor(MemoryProcessorBase):
         identity: MemoryIdentitySnapshot | None = None,
     ) -> list[MemoryItem]:
         identity = identity or state.capture_identity()
-        access = self.runtime.participants
-        ungranted = any(
-            p.user_id is None or not access.can_write_user(p.user_id) for p in identity.participants
+        users = {
+            p.user_id
+            for p in identity.participants
+            if p.user_id is not None
+            and self.runtime.participants.accepts_identity(p, current=False)
+        }
+        unattributed = (
+            identity.unattributed
+            or any(p.user_id not in users for p in identity.participants)
+            or any(ref.kind is MemoryOwnerKind.USER and ref.id not in users for ref in owner_refs)
         )
-        ungranted = ungranted or any(
-            ref.kind is MemoryOwnerKind.USER and not access.can_write_user(ref.id)
-            for ref in owner_refs
-        )
-        if ungranted or identity.unattributed:
+        if unattributed or not owner_refs:
             # Preserve unverified observations in their originating context, without publishing
             # them into another user's long-term memory or the Avatar's shared owner scope.
             owner_refs, scope = (
@@ -114,7 +117,7 @@ class MemoryProcessor(MemoryProcessorBase):
             )
 
         extra_data = {**(extra_data or {}), "session_identity": identity.evidence()}
-        if identity.unattributed:
+        if unattributed:
             extra_data["unattributed_input"] = True
 
         created_at = application_now()
@@ -167,15 +170,22 @@ class MemoryProcessor(MemoryProcessorBase):
         return metadata
 
     def render_context_content(
-        self, state: MemoryContextState, messages: list[MemoryContextItem]
+        self,
+        state: MemoryContextState,
+        messages: list[MemoryContextItem],
+        *,
+        identity: MemoryIdentitySnapshot | None = None,
     ) -> str:
+        identity = identity or state.capture_identity(messages)
         content = MemoryPluginsTemplate.apply_update_template(messages, state.cache_type)
         env_memory = "\n".join(
             item.render_line()
             for item in self.memory_runtime.visible_items(
                 self.memory_runtime.memory_state.get(
                     memory_type=MemoryType.ENV, context_id=state.context_id
-                )
+                ),
+                identity=identity,
+                context=state.context,
             )
         )
         if not env_memory:
@@ -202,7 +212,13 @@ class MemoryProcessor(MemoryProcessorBase):
         return start, end, state.messages_between(start, end)
 
     async def commit_items(
-        self, *, state: MemoryContextState, start: int, end: int, items: list[MemoryItem]
+        self,
+        *,
+        state: MemoryContextState,
+        start: int,
+        end: int,
+        items: list[MemoryItem],
+        identity: MemoryIdentitySnapshot | None = None,
     ) -> None:
         async def commit() -> None:
             await self.store.commit(
@@ -211,6 +227,7 @@ class MemoryProcessor(MemoryProcessorBase):
                 processor=self.name,
                 idempotency_key=f"{state.context_id}:{self.name}:{start}:{end}",
                 checkpoint=MemoryCheckpointAdvance(from_sequence=start, to_sequence=end),
+                participants=identity.participants if identity is not None else (),
             )
             self.memory_runtime.apply_items(items)
 

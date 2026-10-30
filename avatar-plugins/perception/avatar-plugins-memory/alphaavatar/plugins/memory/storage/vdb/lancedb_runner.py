@@ -23,8 +23,8 @@ from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
 from alphaavatar.agents.memory.enums import VectorRunnerOP
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.runtime.plugin import AvatarModule
-from alphaavatar.agents.utils.files.work_dirs import WorkspacePaths
 from alphaavatar.agents.utils.vdb import lancedb
+from alphaavatar.core.workspace import WorkspacePaths
 
 logger = logging.getLogger(__name__)
 
@@ -521,7 +521,7 @@ class LanceDBRunner(InferenceRunner):
         vdb_config = self._get_vdb_config(config)
         if not vdb_config.get("client_path"):
             vdb_config["client_path"] = str(
-                WorkspacePaths.from_env()
+                WorkspacePaths.from_root(self.launch.workspace_root)
                 .data.indexes.namespace(AvatarModule.MEMORY.value)
                 .backend("lancedb")
                 .root

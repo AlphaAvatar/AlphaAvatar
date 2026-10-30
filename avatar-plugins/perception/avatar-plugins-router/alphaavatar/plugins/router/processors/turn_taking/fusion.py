@@ -25,7 +25,7 @@ from alphaavatar.agents.router.schemas import (
 
 from .schemas.state import AddressingEvidenceRecord
 
-_EntityKey = tuple[str, str, str, str]
+_EntityKey = tuple[str, str, int, str, str]
 _TargetKey = tuple[str, tuple[_EntityKey, ...]]
 
 
@@ -33,9 +33,10 @@ def _entity_key(entity: InteractionEntityRef) -> _EntityKey:
     perception = entity.entity
     return (
         entity.kind.value,
-        perception.resolved_entity_id if perception and perception.resolved_entity_id else "",
-        perception.perception_entity_id if perception else "",
-        entity.transport_participant_id or "",
+        entity.source.source_id if entity.source else "",
+        entity.source.source_generation if entity.source else 0,
+        perception.entity_id if perception else "",
+        "" if perception else entity.device_id or "",
     )
 
 

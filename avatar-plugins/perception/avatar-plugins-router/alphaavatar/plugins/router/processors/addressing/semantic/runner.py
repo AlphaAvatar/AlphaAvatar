@@ -19,8 +19,6 @@ import math
 import os
 from time import perf_counter
 
-import llama_cpp
-
 from alphaavatar.agents.router.enums import SemanticAddressingLabel
 from alphaavatar.agents.router.schemas import SemanticAddressingRequest, SemanticAddressingResult
 from alphaavatar.agents.runtime.inference import InferenceRunner
@@ -96,7 +94,7 @@ class SemanticAddressingQwen3Runner(InferenceRunner):
                 (tokenized - started) * 1000,
             )
             self._llm.eval(tokens[cached:])
-            logits = llama_cpp.llama_get_logits_ith(self._llm.ctx, -1)
+            logits = self._llama_cpp.llama_get_logits_ith(self._llm.ctx, -1)
             config = SEMANTIC_ADDRESSING_CONFIG
             result = float(logits[config.label_0_token_id]), float(logits[config.label_1_token_id])
             self._cached_tokens = tokens
@@ -115,6 +113,9 @@ class SemanticAddressingQwen3Runner(InferenceRunner):
         return result
 
     def initialize(self) -> None:
+        import llama_cpp
+
+        self._llama_cpp = llama_cpp
         requested = int(os.getenv("ALPHAAVATAR_SEMANTIC_ADDRESSING_THREADS", "0"))
         if requested < 0:
             raise ValueError("Semantic Addressing threads must be nonnegative")
@@ -132,7 +133,9 @@ class SemanticAddressingQwen3Runner(InferenceRunner):
             requested,
             threads,
         )
-        model_path, prompt_path = resolve_semantic_addressing_files()
+        model_path, prompt_path = resolve_semantic_addressing_files(
+            models_dir=self.launch.models_dir
+        )
         config = SEMANTIC_ADDRESSING_CONFIG
         self._prompt = SemanticAddressingPrompt(prompt_path)
         logger.debug(

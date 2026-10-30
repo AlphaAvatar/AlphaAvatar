@@ -25,6 +25,7 @@ from alphaavatar.agents.memory import MemoryStoreBackend
 from alphaavatar.agents.memory.enums import (
     MemoryKind,
     MemoryOutboxTarget,
+    MemoryOwnerKind,
     MemoryType,
     VectorRunnerOP,
 )
@@ -39,6 +40,7 @@ from alphaavatar.agents.memory.schemas import (
 )
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.plugin import AvatarModule
+from alphaavatar.core.session import Participant
 
 from .export import MemoryExportSink
 from .index_serialization import serialize_memory_items
@@ -107,6 +109,26 @@ class MemoryStore:
     def _scope_keys(context: MemoryContextRef) -> list[str]:
         return list(MemoryScope.applicable_keys(context))
 
+    def _read_owners(
+        self, owners: list[MemoryOwnerRef], participants: tuple[Participant, ...]
+    ) -> list[MemoryOwnerRef]:
+        users = {
+            participant.user_id
+            for participant in participants
+            if participant.user_id is not None
+            and self._runtime.participants.accepts_identity(participant)
+        }
+        return [
+            ref.model_copy(deep=True)
+            for ref in owners
+            if ref.kind is not MemoryOwnerKind.USER or ref.id in users
+        ]
+
+    def _readable_items(
+        self, items: list[MemoryItem], participants: tuple[Participant, ...]
+    ) -> list[MemoryItem]:
+        return [item for item in items if self._read_owners(item.owner_refs, participants)]
+
     @staticmethod
     def _candidate_ids(candidates: list[dict[str, Any]]) -> list[str]:
         return list(
@@ -135,7 +157,9 @@ class MemoryStore:
         memory_type: MemoryType | None = None,
         timeout: float = 3.0,
         trace_id: str | None = None,
+        participants: tuple[Participant, ...] = (),
     ) -> list[MemoryItem]:
+        owner_refs = self._read_owners(owner_refs, participants)
         if top_k <= 0 or not context_str.strip() or not owner_refs:
             return []
 
@@ -176,7 +200,7 @@ class MemoryStore:
                     )
                 finally:
                     resolve_wait = perf_counter() - resolve_started
-                items = memories[:top_k]
+                items = self._readable_items(memories, participants)[:top_k]
                 hits = len(items)
                 return items
         except BaseException as error:
@@ -208,7 +232,9 @@ class MemoryStore:
         node_type: str | None = None,
         top_k: int = 50,
         timeout: float = 3.0,
+        participants: tuple[Participant, ...] = (),
     ) -> list[MemoryItem]:
+        owner_refs = self._read_owners(owner_refs, participants)
         if top_k <= 0 or not owner_refs:
             return []
 
@@ -235,7 +261,7 @@ class MemoryStore:
             memory_ids, owner_refs=owner_refs, context=context
         )
 
-        return memories[:top_k]
+        return self._readable_items(memories, participants)[:top_k]
 
     async def search_similar_batch(
         self,
@@ -247,7 +273,9 @@ class MemoryStore:
         kind: MemoryKind | None = None,
         top_k: int,
         timeout: float = 5.0,
+        participants: tuple[Participant, ...] = (),
     ) -> list[list[MemorySearchHit]]:
+        owner_refs = self._read_owners(owner_refs, participants)
         if not texts:
             return []
 
@@ -281,7 +309,7 @@ class MemoryStore:
 
         visible = await self._backend.get_visible(all_ids, owner_refs=owner_refs, context=context)
 
-        by_id = {memory.memory_id: memory for memory in visible}
+        by_id = {memory.memory_id: memory for memory in self._readable_items(visible, participants)}
 
         return [
             [
@@ -300,7 +328,22 @@ class MemoryStore:
         processor: str,
         idempotency_key: str,
         checkpoint: MemoryCheckpointAdvance | None = None,
+        participants: tuple[Participant, ...] = (),
     ) -> MemoryCommitResult:
+        # A commit owns its accepted identity snapshot even if another Turn rebinds the actor.
+        items = [item.model_copy(deep=True) for item in items]
+        users = {
+            participant.user_id
+            for participant in participants
+            if participant.user_id is not None
+            and self._runtime.participants.accepts_identity(participant, current=False)
+        }
+        if any(
+            ref.kind is MemoryOwnerKind.USER and ref.id not in users
+            for item in items
+            for ref in item.owner_refs
+        ):
+            raise PermissionError("Memory write requires an accepted participant identity")
         result = await self._backend.commit(
             items,
             context_id=context_id,
@@ -315,20 +358,40 @@ class MemoryStore:
 
         return result
 
-    async def get_many(self, memory_ids: list[str]) -> list[MemoryItem]:
-        return await self._backend.get_many(memory_ids)
+    async def get_many(
+        self, memory_ids: list[str], *, participants: tuple[Participant, ...] = ()
+    ) -> list[MemoryItem]:
+        return self._readable_items(await self._backend.get_many(memory_ids), participants)
 
     async def get_visible(
-        self, memory_ids: list[str], *, owner_refs: list[MemoryOwnerRef], context: MemoryContextRef
+        self,
+        memory_ids: list[str],
+        *,
+        owner_refs: list[MemoryOwnerRef],
+        context: MemoryContextRef,
+        participants: tuple[Participant, ...] = (),
     ) -> list[MemoryItem]:
-        return await self._backend.get_visible(memory_ids, owner_refs=owner_refs, context=context)
+        owner_refs = self._read_owners(owner_refs, participants)
+        if not owner_refs:
+            return []
+        items = await self._backend.get_visible(memory_ids, owner_refs=owner_refs, context=context)
+        return self._readable_items(items, participants)
 
     async def resolve_current(
-        self, memory_ids: list[str], *, owner_refs: list[MemoryOwnerRef], context: MemoryContextRef
+        self,
+        memory_ids: list[str],
+        *,
+        owner_refs: list[MemoryOwnerRef],
+        context: MemoryContextRef,
+        participants: tuple[Participant, ...] = (),
     ) -> list[MemoryItem]:
-        return await self._backend.resolve_current(
+        owner_refs = self._read_owners(owner_refs, participants)
+        if not owner_refs:
+            return []
+        items = await self._backend.resolve_current(
             memory_ids, owner_refs=owner_refs, context=context
         )
+        return self._readable_items(items, participants)
 
     async def query_visible(
         self,
@@ -338,10 +401,15 @@ class MemoryStore:
         memory_type: MemoryType | None = None,
         kind: MemoryKind | None = None,
         limit: int = 100,
+        participants: tuple[Participant, ...] = (),
     ) -> list[MemoryItem]:
-        return await self._backend.query_visible(
+        owner_refs = self._read_owners(owner_refs, participants)
+        if not owner_refs:
+            return []
+        items = await self._backend.query_visible(
             owner_refs=owner_refs, context=context, memory_type=memory_type, kind=kind, limit=limit
         )
+        return self._readable_items(items, participants)
 
     async def get_checkpoint(self, *, context_id: str, processor: str) -> int:
         return await self._backend.get_checkpoint(context_id=context_id, processor=processor)

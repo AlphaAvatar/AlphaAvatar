@@ -47,7 +47,7 @@ from .factory import create_semantic_addressing_model
 
 logger = logging.getLogger(__name__)
 
-SpeakerKey = tuple[str, str]
+SpeakerKey = tuple[str, int, str, str]
 
 _TERMINAL_ACTIONS = {
     TurnTakingAction.COMMIT,
@@ -111,27 +111,14 @@ class SemanticAddressingProcessor(RouterProcessorBase):
         return "semantic_addressing"
 
     @staticmethod
-    def _key_from_observation(observation: EnvObservation) -> SpeakerKey:
-        if observation.transport_participant_id:
-            return "participant", observation.transport_participant_id
-        if observation.entity is not None:
-            return "entity", observation.entity.perception_entity_id
-        return "anonymous", "session"
-
-    @staticmethod
-    def _key_from_entity(entity: InteractionEntityRef) -> SpeakerKey:
-        if entity.transport_participant_id:
-            return "participant", entity.transport_participant_id
-        if entity.entity is not None:
-            return "entity", entity.entity.perception_entity_id
-        return "anonymous", "session"
-
-    @staticmethod
-    def _speaker(observation: EnvObservation) -> InteractionEntityRef:
-        return InteractionEntityRef(
-            kind=InteractionEntityKind.PERSON,
-            entity=observation.entity,
-            transport_participant_id=observation.transport_participant_id,
+    def _key_from_entity(entity: InteractionEntityRef) -> SpeakerKey | None:
+        if entity.entity is None or entity.source is None:
+            return None
+        return (
+            entity.source.source_id,
+            entity.source.source_generation,
+            "entity",
+            entity.entity.entity_id,
         )
 
     @staticmethod
@@ -140,19 +127,6 @@ class SemanticAddressingProcessor(RouterProcessorBase):
         if not isinstance(payload, TextPayload):
             return None
         return payload.text.strip() or None
-
-    def _state(self, observation: EnvObservation) -> tuple[SpeakerKey, _SpeakerState]:
-        key = self._key_from_observation(observation)
-        speaker = self._speaker(observation)
-        state = self._states.get(key)
-
-        if state is None:
-            state = _SpeakerState(speaker=speaker, history=deque(maxlen=self._history_turns))
-            self._states[key] = state
-        else:
-            state.speaker = speaker
-
-        return key, state
 
     @staticmethod
     def _history_segments(state: _SpeakerState) -> tuple[SemanticAddressingTranscript, ...]:
@@ -163,34 +137,6 @@ class SemanticAddressingProcessor(RouterProcessorBase):
             for turn in state.history
             if any(segment.text.strip() for segment in turn)
         )
-
-    def _request(self, state: _SpeakerState) -> SemanticAddressingRequest:
-        current = tuple(record.transcript for record in state.current.values())
-        return SemanticAddressingRequest(
-            avatar_identities=self._avatar_identities,
-            previous_focus=state.focus_at_turn_start,
-            transcript_segments=(*self._history_segments(state), *current),
-        )
-
-    def _enqueue(self, key: SpeakerKey, state: _SpeakerState, observation: EnvObservation) -> None:
-        state.pending.append(
-            _AssessmentJob(
-                generation=state.generation,
-                request=self._request(state),
-                speaker=state.speaker,
-                observation_id=observation.observation_id,
-                evidence_observation_ids=tuple(
-                    record.observation_id for record in state.current.values()
-                ),
-            )
-        )
-
-        if state.worker is None or state.worker.done():
-            state.worker = asyncio.create_task(
-                self._run_jobs(key, state), name=f"router_semantic_addressing:{key[0]}:{key[1]}"
-            )
-            self._workers.add(state.worker)
-            state.worker.add_done_callback(self._workers.discard)
 
     @staticmethod
     def _target(
@@ -211,6 +157,86 @@ class SemanticAddressingProcessor(RouterProcessorBase):
         if label == SemanticAddressingLabel.NON_AVATAR:
             return 1.0 - p_avatar
         return 0.0
+
+    def _speaker(self, observation: EnvObservation) -> InteractionEntityRef:
+        entity = observation.entity
+        if entity is None and observation.segment is not None:
+            entity = self._runtime.participants.entity_for_segment(observation.segment)
+
+        return InteractionEntityRef(
+            kind=InteractionEntityKind.PERSON,
+            entity=entity,
+            device_id=observation.device_id,
+            source=observation.segment.source if observation.segment else observation.source,
+        )
+
+    def _key_from_observation(self, observation: EnvObservation) -> SpeakerKey:
+        speaker = self._speaker(observation)
+        source = observation.segment.source if observation.segment else observation.source
+        if speaker.entity is not None:
+            return (source.source_id, source.source_generation, "entity", speaker.entity.entity_id)
+
+        if observation.segment is not None:
+            return (
+                source.source_id,
+                source.source_generation,
+                "segment",
+                observation.segment.segment_id,
+            )
+
+        return source.source_id, source.source_generation, "observation", observation.observation_id
+
+    def _state(self, observation: EnvObservation) -> tuple[SpeakerKey, _SpeakerState]:
+        key = self._key_from_observation(observation)
+        speaker = self._speaker(observation)
+        state = self._states.get(key)
+
+        if state is None:
+            # Shared endpoints may expose many transient subjects; retain bounded histories.
+            if len(self._states) >= 128:
+                removed = self._states.pop(next(iter(self._states)))
+                removed.generation += 1
+                removed.pending.clear()
+                if removed.worker is not None:
+                    removed.worker.cancel()
+
+            state = _SpeakerState(speaker=speaker, history=deque(maxlen=self._history_turns))
+            self._states[key] = state
+        else:
+            state.speaker = speaker
+
+        return key, state
+
+    def _request(self, state: _SpeakerState) -> SemanticAddressingRequest:
+        current = tuple(record.transcript for record in state.current.values())
+        return SemanticAddressingRequest(
+            avatar_identities=self._avatar_identities,
+            previous_focus=state.focus_at_turn_start,
+            transcript_segments=(*self._history_segments(state), *current),
+        )
+
+    def _enqueue(self, key: SpeakerKey, state: _SpeakerState, observation: EnvObservation) -> None:
+        if len(state.pending) >= 2:
+            state.pending.popleft()
+
+        state.pending.append(
+            _AssessmentJob(
+                generation=state.generation,
+                request=self._request(state),
+                speaker=state.speaker,
+                observation_id=observation.observation_id,
+                evidence_observation_ids=tuple(
+                    record.observation_id for record in state.current.values()
+                ),
+            )
+        )
+
+        if state.worker is None or state.worker.done():
+            state.worker = asyncio.create_task(
+                self._run_jobs(key, state), name=f"router_semantic_addressing:{key[0]}:{key[1]}"
+            )
+            self._workers.add(state.worker)
+            state.worker.add_done_callback(self._workers.discard)
 
     def _evidence(
         self,
@@ -291,7 +317,12 @@ class SemanticAddressingProcessor(RouterProcessorBase):
                     )
                     continue
 
-                if self._states.get(key) is state and state.generation == job.generation:
+                if (
+                    self._states.get(key) is state
+                    and state.generation == job.generation
+                    and job.speaker.source is not None
+                    and self._runtime.participants.source_is_current(job.speaker.source)
+                ):
                     self._publish(state, job, result)
 
         finally:
@@ -301,6 +332,18 @@ class SemanticAddressingProcessor(RouterProcessorBase):
     def _consume_transcript(self, observation: EnvObservation) -> None:
         if observation.kind != ObservationKind.TRANSCRIPT_SEGMENT or observation.segment is None:
             return
+
+        source = observation.segment.source
+        if not self._runtime.participants.observe_source(source):
+            return
+
+        for key, previous in tuple(self._states.items()):
+            if key[0] == source.source_id and key[1] < source.source_generation:
+                previous.generation += 1
+                previous.pending.clear()
+                if previous.worker is not None:
+                    previous.worker.cancel()
+                self._states.pop(key, None)
 
         text = self._text(observation)
         if text is None:
@@ -326,17 +369,22 @@ class SemanticAddressingProcessor(RouterProcessorBase):
         if decision.actor is None:
             return
 
-        state = self._states.get(self._key_from_entity(decision.actor))
-        if state is None:
-            return
-
-        if state.current and decision.action != TurnTakingAction.CANCEL and self._history_turns:
-            state.history.append(tuple(record.transcript for record in state.current.values()))
-
-        state.generation += 1
-        state.current.clear()
-        state.pending.clear()
-        state.focus_at_turn_start = None
+        key = self._key_from_entity(decision.actor)
+        observation_ids = set(decision.input_observation_ids)
+        for current_key, state in tuple(self._states.items()):
+            if current_key != key and not any(
+                record.observation_id in observation_ids for record in state.current.values()
+            ):
+                continue
+            if state.current and decision.action != TurnTakingAction.CANCEL and self._history_turns:
+                state.history.append(tuple(record.transcript for record in state.current.values()))
+            state.generation += 1
+            state.current.clear()
+            state.pending.clear()
+            state.focus_at_turn_start = None
+            # Unknown speakers never inherit the previous occupant's conversation focus.
+            if current_key[2] != "entity":
+                self._states.pop(current_key, None)
 
     def _consume_turn_annotation(self, event: PerceptionEvent) -> None:
         annotation = event.annotation
@@ -353,6 +401,8 @@ class SemanticAddressingProcessor(RouterProcessorBase):
             state.pending.clear()
 
         self._states.clear()
+
+    """Processor Loop"""
 
     async def _consume_observations(self) -> None:
         streams = {PerceptionStreamKind.TEXT}
@@ -425,6 +475,8 @@ class SemanticAddressingProcessor(RouterProcessorBase):
             except Exception:
                 logger.exception("Semantic Addressing annotation consumer failed")
                 await asyncio.sleep(0.05)
+
+    """Runtime operations"""
 
     async def start(self) -> None:
         if self._started:

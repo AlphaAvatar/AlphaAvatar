@@ -15,12 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from alphaavatar.agents.avatar.loop.enums import LoopState
 from alphaavatar.agents.avatar.loop.schemas import LoopIdentity
-from alphaavatar.agents.avatar.provider.enums import ModelMessagePhase
+from alphaavatar.agents.avatar.provider.enums import ModelMessagePhase, ModelRole
 from alphaavatar.agents.avatar.provider.errors import ModelProtocolError
 from alphaavatar.agents.avatar.provider.schemas import (
     ModelInputMessage,
@@ -63,6 +63,7 @@ class _Message:
     content_index: int = -1
     completed: bool = False
     phase: ModelMessagePhase | None = None
+    item: ModelInputMessage | None = None
 
 
 class LoopFeedback:
@@ -97,8 +98,37 @@ class LoopFeedback:
         self._request_id: str | None = None
         self._close_task: asyncio.Task[None] | None = None
 
+    def _phase(self, message: _Message, phase: ModelMessagePhase | None) -> None:
+        if phase is not None:
+            if message.phase is not None and message.phase != phase:
+                raise ModelProtocolError("Assistant message phase changed")
+
+            message.phase = phase
+
+        if message.text and message.phase == ModelMessagePhase.COMMENTARY:
+            self._commentary[message.output_id] = None
+
     def output_id(self, item_id: str) -> str:
         return f"{self.identity.run_id}:{item_id}"
+
+    def accepted_message(self, item_id: str) -> ModelInputMessage | None:
+        message = self._messages.get(item_id)
+        if message is None or not message.text:
+            return None
+        if (
+            message.item is not None
+            and "\n".join(part.text for part in message.item.parts) == message.text
+        ):
+            return replace(
+                message.item, interrupted=message.item.interrupted or not message.completed
+            )
+        return ModelInputMessage(
+            id=item_id,
+            role=ModelRole.ASSISTANT,
+            parts=(ModelTextPart(message.text),),
+            phase=message.phase,
+            interrupted=True,
+        )
 
     def signal(self, kind: ExecutionSignalKind, **fields) -> None:
         try:
@@ -152,6 +182,9 @@ class LoopFeedback:
     async def _text(self, message: _Message, text: str, *, content_index: int) -> None:
         if not text or not self._output.accepts_run(self.identity.run_id):
             return
+
+        sequence = self._output.text_sequence(message.output_id)
+        event = None
         try:
             content = EnvOutput(
                 kind=OutputKind.TEXT_CHUNK,
@@ -171,23 +204,16 @@ class LoopFeedback:
             async with asyncio.timeout(self._timeout):
                 event = await self._output.publish(content)
 
-            if event is not None:
-                message.text += text
-                if message.phase == ModelMessagePhase.COMMENTARY:
-                    self._commentary[message.output_id] = None
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             raise LoopDeliveryError("Loop text publication failed") from exc
-
-    def _phase(self, message: _Message, phase: ModelMessagePhase | None) -> None:
-        if phase is not None:
-            if message.phase is not None and message.phase != phase:
-                raise ModelProtocolError("Assistant message phase changed")
-
-            message.phase = phase
-        if message.text and message.phase == ModelMessagePhase.COMMENTARY:
-            self._commentary[message.output_id] = None
+        finally:
+            # The local receipt survives cancellation; it does not claim remote delivery.
+            if event is not None or self._output.text_sequence(message.output_id) > sequence:
+                message.text += text
+                if message.phase == ModelMessagePhase.COMMENTARY:
+                    self._commentary[message.output_id] = None
 
     async def text(self, event: ModelTextDelta) -> None:
         if not self._output.accepts_run(self.identity.run_id):
@@ -226,9 +252,17 @@ class LoopFeedback:
         if not text.startswith(message.text):
             raise ModelProtocolError("Completed message disagrees with streamed content")
 
+        message.item = replace(
+            item,
+            parts=tuple(
+                part for part in item.parts if isinstance(part, ModelTextPart | ModelRefusalPart)
+            ),
+        )
         await self._text(
             message, text[len(message.text) :], content_index=max(message.content_index, 0)
         )
+        if message.text != text:
+            return
         try:
             async with asyncio.timeout(self._timeout):
                 await self._output.finish_text(

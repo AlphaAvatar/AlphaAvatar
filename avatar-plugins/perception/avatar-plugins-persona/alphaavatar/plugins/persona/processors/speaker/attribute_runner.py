@@ -59,7 +59,7 @@ class SpeakerAttributeRunner(InferenceRunner):
     def initialize(self) -> None:
         import onnxruntime as ort
 
-        path = resolve_speaker_model_path(self.MODEL_TYPE)
+        path = resolve_speaker_model_path(self.MODEL_TYPE, models_dir=self.launch.models_dir)
         options = ort.SessionOptions()
         options.intra_op_num_threads = max(1, min(math.ceil(available_cpu_count()) // 2, 4))
         options.inter_op_num_threads = 1

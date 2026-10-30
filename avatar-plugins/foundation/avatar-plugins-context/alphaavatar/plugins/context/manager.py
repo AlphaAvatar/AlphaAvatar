@@ -16,14 +16,15 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import replace
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-from alphaavatar.agents.avatar.context import ContextManager
+from alphaavatar.agents.avatar.context import ContextIdentityChanged, ContextManager
 from alphaavatar.agents.avatar.context.schemas import ContextBuildRequest, ContextPrepareRequest
 from alphaavatar.agents.avatar.provider.enums import ModelInputType
 from alphaavatar.agents.avatar.provider.errors import ModelProtocolError
 from alphaavatar.agents.avatar.provider.schemas import ModelInput
-from alphaavatar.agents.avatar.provider.schemas.model_input import ModelInputItem
+from alphaavatar.agents.avatar.provider.schemas.model_input import ModelInputItem, ModelInputMessage
 from alphaavatar.agents.avatar.vision import VisualFrameSelector
 from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
 from alphaavatar.agents.utils.time import ParticipantTimeContext, format_user_time
@@ -120,7 +121,7 @@ class AvatarContextManager(ContextManager):
             stable_behavior_rules=self._config.behavior_rules,
         )
 
-    def _state_snapshot(self) -> StateRuntime:
+    def _state_snapshot(self, snapshot: TurnSnapshot) -> StateRuntime:
         state = self._runtime.state
         times = {}
         for participant_id, participant in self._runtime.session.participants.items():
@@ -133,8 +134,12 @@ class AvatarContextManager(ContextManager):
             )
 
         # Read sources once. Preparing a query must not write to shared State or participants.
-        memory = self._memory.memory_content if self._memory is not None else state.memory_content
-        persona = self._persona.persona_content if self._persona is not None else state.user_persona
+        memory = (
+            self._memory.content_for(snapshot) if self._memory is not None else state.memory_content
+        )
+        persona = (
+            self._persona.content_for(snapshot) if self._persona is not None else state.user_persona
+        )
         return replace(
             state,
             participant_time=times,
@@ -145,6 +150,16 @@ class AvatarContextManager(ContextManager):
             user_persona=persona or DEFAULT_SYSTEM_VALUE,
             turn_behavior_rules="\n".join((state.global_behavior_rules, state.turn_behavior_rules)),
         )
+
+    def _check_identity(self, basis: tuple[tuple[str, str, int], ...]) -> None:
+        for participant_id, user_id, sequence in basis:
+            current = self._runtime.participants.get(participant_id)
+            if (
+                current is None
+                or current.user_id != user_id
+                or current.identity_sequence != sequence
+            ):
+                raise ContextIdentityChanged("Prepared context identity changed")
 
     def _compose(
         self,
@@ -234,7 +249,13 @@ class AvatarContextManager(ContextManager):
             request = replace(
                 request, input=self._history.capture(snapshot, request.context_id, request.input)
             )
-            state = self._state_snapshot()
+            state = self._state_snapshot(snapshot)
+            basis = tuple(
+                (actor.participant_id, actor.user_id, actor.identity_sequence)
+                for actor in snapshot.actors
+                if actor.participant_id is not None and actor.user_id is not None
+            )
+            self._check_identity(basis)
             system = self._system_template(state).instructions(stable_persona=state.user_persona)
             text = RuntimeStateTemplate().render(state_runtime=state)
             logger.debug(
@@ -260,7 +281,17 @@ class AvatarContextManager(ContextManager):
             # Cancellation drops this request's delivery, not ownership of an in-flight worker.
             result = await asyncio.shield(task)
             self._ensure_open()
-            return result
+            self._check_identity(basis)
+            system_item = result.items[0]
+            return result.replace(
+                system_item.id,
+                replace(
+                    system_item,
+                    metadata=MappingProxyType(
+                        {**system_item.metadata, "alphaavatar_identity": basis}
+                    ),
+                ),
+            )
         finally:
             if reserved:
                 self._pending -= 1
@@ -271,6 +302,9 @@ class AvatarContextManager(ContextManager):
         self._ensure_open()
         if not isinstance(prefix, ModelInput):
             raise TypeError("ContextManager requires a captured ModelInput")
+
+        if prefix.items and isinstance(prefix.items[0], ModelInputMessage):
+            self._check_identity(prefix.items[0].metadata.get("alphaavatar_identity", ()))
 
         identities = {item.id for item in prefix.items}
         added = {item.id for item in continuation}

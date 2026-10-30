@@ -45,7 +45,7 @@ SMART_TURN_V3_CONFIG = SmartTurnModelConfig(
 )
 
 
-def resolve_smart_turn_model_path() -> str:
+def resolve_smart_turn_model_path(*, models_dir: str) -> str:
     override = os.getenv("SMART_TURN_MODEL_PATH")
     if override:
         path = Path(override).expanduser()
@@ -54,6 +54,7 @@ def resolve_smart_turn_model_path() -> str:
         return str(path)
     config = SMART_TURN_V3_CONFIG
     return resolve_hf_file(
+        models_dir=models_dir,
         namespace=("router", "turn_taking", "smart_turn", config.version),
         repo_id=config.repo_id,
         revision=config.revision,

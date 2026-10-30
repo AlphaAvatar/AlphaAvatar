@@ -49,6 +49,7 @@ class TurnTakingConfig(BaseModel):
     transcript_wait_sec: float = Field(default=0.75, ge=0.0)
     unsegmented_alignment_sec: float = Field(default=0.75, gt=0.0)
     max_hold_sec: float = Field(default=1.5, gt=0.0)
+    max_active_candidates: int = Field(default=128, ge=1, le=4096)
 
     fusion: AddressingFusionConfig = Field(default_factory=AddressingFusionConfig)
     model: TurnTakingModelConfig = Field(default_factory=TurnTakingModelConfig)

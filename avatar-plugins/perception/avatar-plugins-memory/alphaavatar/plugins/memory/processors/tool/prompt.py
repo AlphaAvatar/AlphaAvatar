@@ -190,9 +190,9 @@ Rules:
 - Do not output graph_nodes or graph_links.
 - Do not generate embeddings or final graph node IDs.
 - Do not write alias mappings.
-- Do not infer real identity from face_id, speaker_id, voice_id, or visual appearance.
+- Do not infer real identity from entity_id, device_id, or visual appearance.
 - For tools, modules, operations, errors, artifacts, and concepts, prefer stable keys when obvious.
-- For local face, voice, speaker, or object IDs, raw local keys are allowed; runtime will scope them to the current context.
+- For local entities, use <type>:<JSON array of source_id, source_generation, entity_id>; runtime will scope it to the current context. Preserve identifiers exactly and omit keyed anchors when their source is missing.
 
 Stable key examples:
 - tool:lancedb
@@ -209,9 +209,9 @@ Stable key examples:
 - user:<known_user_id> only if explicitly provided by runtime
 
 Local key examples:
-- face:tmp_1
-- voice:speaker_0
-- object:cup_1
+- face:["camera",1,"tmp_1"]
+- voice:["microphone",1,"speaker_0"]
+- object:["camera",1,"cup_1"]
 
 If no stable key is obvious, omit key and provide type/content.
 
@@ -305,8 +305,8 @@ TOOL_DELTA_PROMPT = ModelPrompt.from_messages(
             "- Do not output graph_nodes or graph_links.\n"
             "- Do not output embeddings.\n"
             "- Do not write aliases or canonical identity mappings.\n"
-            "- Do not infer real identity from face_id, speaker_id, voice_id, visual appearance, or ENV observations.\n"
-            "- If local face/voice/object ids appear in an explicit tool/system event, you may include them as raw local node_mentions keys such as face:tmp_1, voice:speaker_0, or object:cup_1. The runtime will scope them to the current context.\n"
+            "- Do not infer real identity from entity_id, device_id, visual appearance, or ENV observations.\n"
+            "- If local face/voice/object ids and their sources appear in an explicit tool/system event, preserve source_id, source_generation, and entity_id as a JSON array after the node type in each local key. The runtime will scope them to the current context.\n"
             "- Include concrete component, operation, outcome, and relevant sanitized details in PatchOp.value when supported by the session content.\n"
             "- Aggregate repeated operations into one tool episode unless there is a meaningful boundary such as a different component, phase, failure, retry, fallback, or correction.\n"
             "- Do not invent details not supported by the session content.\n",

@@ -44,7 +44,7 @@ class RAGService(ToolBase):
     async def _start(self) -> None:
         from .rag_anything import RAGAnythingTool
 
-        path = self._runtime.session.session_path
+        path = self._runtime.session_path
         if path is None:
             raise RuntimeError("Session workspace must exist before tools start")
         self._service = RAGAnythingTool(session_path=path, **self._options)

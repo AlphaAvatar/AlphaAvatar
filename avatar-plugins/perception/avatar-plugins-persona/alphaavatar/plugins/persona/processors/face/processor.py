@@ -14,7 +14,9 @@
 import asyncio
 import json
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 import cv2
@@ -28,16 +30,17 @@ from alphaavatar.agents.constants import (
 )
 from alphaavatar.agents.persona import PersonaProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_capability
-from alphaavatar.agents.utils import NumpyOP
-from alphaavatar.agents.utils.time import application_now
+from alphaavatar.agents.runtime.capability import avatar_capability
+from alphaavatar.agents.runtime.capability.enums import AvatarCapabilityName
 from alphaavatar.core.env import EnvAnnotation, EnvObservation
 from alphaavatar.core.env.enums import AnnotationKind, ObservationKind
-from alphaavatar.core.env.schemas import PerceptionSourceRef
+from alphaavatar.core.env.schemas import PerceptionEntityRef, PerceptionSourceRef
 from alphaavatar.core.media import PayloadFormatUnavailable, VideoFrame
 from alphaavatar.core.media.codecs.video import bgr_to_video_frame, video_frame_to_bgr
 from alphaavatar.core.media.enums import PayloadFormat, PayloadView
 from alphaavatar.core.perception.enums import PerceptionStreamKind
+from alphaavatar.core.session.enums import IdentityOutcome, IdentitySource
+from alphaavatar.core.session.schemas import IdentityRequest, Participant
 
 from ...log import logger
 from ...runtime import PersonaRuntime
@@ -45,11 +48,13 @@ from .analysis_runner import FaceAnalysisRunner
 from .cache import FaceCache
 from .config import FaceConfig
 from .model_files import FACE_MODEL_CONFIG
+from .tracking import FaceTracks
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class FaceFrameJob:
     observation: EnvObservation
+    participants: Mapping[str, Participant]
 
 
 @avatar_capability(
@@ -71,7 +76,9 @@ class FaceProcessor(PersonaProcessorBase):
         self._config = config
         self._face_config = FACE_MODEL_CONFIG[FaceAnalysisRunner.MODEL_TYPE]
         self._last_sample_ts: dict[PerceptionSourceRef, float] = {}
+        self._tracks = FaceTracks(config)
         self._profile_caches: dict[str, FaceCache] = {}
+        self._identity_slots = asyncio.Semaphore(config.identity_concurrency)
 
         self._det_score_threshold = self._face_config.det_thresh
         self._min_face_size = self._face_config.min_face_size
@@ -117,12 +124,23 @@ class FaceProcessor(PersonaProcessorBase):
 
         timestamp = observation.time_range.end.monotonic_ns / 1_000_000_000
         source = observation.source
+        if not self.runtime.participants.observe_source(source) or not self._tracks.activate(
+            source
+        ):
+            return
+
+        self._release_retired_tracks()
+        for previous in tuple(self._last_sample_ts):
+            if previous.source_id == source.source_id and previous != source:
+                self._last_sample_ts.pop(previous)
+
         last_ts = self._last_sample_ts.get(source, 0.0)
 
         if VIDEO_PERSONA_INTERVAL_SEC > 0 and timestamp - last_ts < VIDEO_PERSONA_INTERVAL_SEC:
             return
 
-        if not self._enqueue_latest(FaceFrameJob(observation=observation)):
+        job = FaceFrameJob(observation, self.session_runtime.snapshot().participants)
+        if not self._enqueue_latest(job):
             logger.debug(
                 "Face frame queue full; drop frame source_id=%s generation=%s frame_id=%s",
                 source.source_id,
@@ -133,34 +151,29 @@ class FaceProcessor(PersonaProcessorBase):
 
         self._last_sample_ts[source] = timestamp
 
-    def _select_best_face(self, faces: list[dict[str, Any]]) -> dict[str, Any] | None:
-        candidates: list[tuple[float, float, dict[str, Any]]] = []
-
-        for face in faces:
-            bbox = face.get("bbox")
-            det_score = float(face.get("det_score") or 0.0)
-
-            if bbox is None or len(bbox) != 4:
-                continue
-
-            if det_score < self._det_score_threshold:
-                continue
-
-            x1, y1, x2, y2 = [float(x) for x in bbox]
-            width = max(0.0, x2 - x1)
-            height = max(0.0, y2 - y1)
-
-            if width < self._min_face_size or height < self._min_face_size:
-                continue
-
-            area = width * height
-            candidates.append((det_score, area, face))
-
-        if not candidates:
+    def _face_vector(self, face: dict[str, Any]) -> np.ndarray | None:
+        bbox = face.get("bbox")
+        if bbox is None or len(bbox) != 4 or face.get("embedding") is None:
             return None
+        x1, y1, x2, y2 = (float(value) for value in bbox)
+        if (
+            float(face.get("det_score") or 0) < self._det_score_threshold
+            or x2 - x1 < self._min_face_size
+            or y2 - y1 < self._min_face_size
+        ):
+            return None
+        vector = np.asarray(face["embedding"], dtype=np.float32)
+        if vector.shape != (self._face_config.embedding_dim,) or not np.isfinite(vector).all():
+            return None
+        norm = float(np.linalg.norm(vector))
+        return vector / norm if np.isfinite(norm) and norm > 0 else None
 
-        candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
-        return candidates[0][2]
+    def _release_retired_tracks(self) -> None:
+        for source, entity in self._tracks.drain_retired():
+            participant = self.runtime.participants.resolve(source=source, entity=entity)
+            if participant is not None:
+                self._profile_caches.pop(participant.participant_id, None)
+            self.runtime.participants.release_entity(source, entity)
 
     """Annotation operations"""
 
@@ -168,20 +181,20 @@ class FaceProcessor(PersonaProcessorBase):
         self,
         faces: list[dict[str, Any]],
         *,
-        selected_face: dict[str, Any] | None,
-        observation: EnvObservation,
+        entities: list[PerceptionEntityRef | None],
+        selected_entity: PerceptionEntityRef | None,
     ) -> tuple[tuple[FaceDetection, ...], int | None]:
         safe_faces: list[FaceDetection] = []
         selected_index: int | None = None
 
-        for face in faces:
+        for face, entity in zip(faces, entities, strict=True):
             bbox = face.get("bbox")
             if bbox is None or len(bbox) != 4:
                 continue
 
             keypoints = face.get("kps")
 
-            if face is selected_face:
+            if entity is not None and entity == selected_entity:
                 selected_index = len(safe_faces)
 
             safe_faces.append(
@@ -191,7 +204,7 @@ class FaceProcessor(PersonaProcessorBase):
                     keypoints=(
                         FaceKeypoints5.from_sequence(keypoints) if keypoints is not None else None
                     ),
-                    entity=(observation.entity if face is selected_face else None),
+                    entity=entity,
                 )
             )
 
@@ -202,12 +215,12 @@ class FaceProcessor(PersonaProcessorBase):
         *,
         job: FaceFrameJob,
         faces: list[dict[str, Any]],
-        selected_face: dict[str, Any] | None,
+        entities: list[PerceptionEntityRef | None],
         image_width: int,
         image_height: int,
     ) -> None:
         safe_faces, selected_index = self._safe_face_annotations(
-            faces, selected_face=selected_face, observation=job.observation
+            faces, entities=entities, selected_entity=job.observation.entity
         )
 
         if not safe_faces:
@@ -309,42 +322,121 @@ class FaceProcessor(PersonaProcessorBase):
 
     """Inference worker"""
 
-    async def _resolve_face_vector(
-        self, face_vector: np.ndarray, *, timeout: float | None = None
-    ) -> str | None:
-        vector = NumpyOP.l2_normalize(NumpyOP.to_np(face_vector))
-
-        uid = NumpyOP.best_cosine_match(
-            vector,
-            {
-                uid: cache.face_vector
-                for uid, cache in self.persona.persona_cache.items()
-                if cache.face_vector is not None
-            },
-            FACE_MATCH_THRESHOLD,
+    def _job_is_current(self, job: FaceFrameJob) -> bool:
+        source = job.observation.source
+        if (
+            self.session_runtime.closed
+            or not self._tracks.current(source)
+            or not self.runtime.participants.source_is_current(source)
+        ):
+            return False
+        return all(
+            state.source_id != source.source_id or (state.source == source and state.available)
+            for state in self.perception_runtime.get_source_states()
         )
 
-        if uid is None:
-            uid = await self.persona.store.search_face_vector(
-                face_vector=vector, threshold=FACE_MATCH_THRESHOLD, timeout=timeout
+    def _identity_is_current(
+        self, job: FaceFrameJob, entity: PerceptionEntityRef, participant: Participant
+    ) -> bool:
+        current = self.runtime.participants.resolve(source=job.observation.source, entity=entity)
+        return (
+            self._job_is_current(job)
+            and current is not None
+            and current.participant_id == participant.participant_id
+            and self.runtime.participants.accepts_identity(participant)
+        )
+
+    async def _resolve_face_vector(
+        self,
+        vector: np.ndarray,
+        *,
+        job: FaceFrameJob,
+        entity: PerceptionEntityRef,
+        participant: Participant,
+        timeout: float | None = None,
+    ) -> Participant | None:
+        if not self._identity_is_current(job, entity, participant):
+            return None
+
+        user_id = await self.persona.store.search_face_vector(
+            face_vector=vector, threshold=FACE_MATCH_THRESHOLD, timeout=timeout
+        )
+        if not self._identity_is_current(job, entity, participant):
+            return None
+
+        if user_id is not None:
+            outcome = self.runtime.participants.bind_user(
+                IdentityRequest(
+                    participant_id=participant.participant_id,
+                    user_id=user_id,
+                    source=IdentitySource.PERCEPTION,
+                    basis_sequence=participant.identity_sequence,
+                    reason=f"Face vector matched the stored user above {FACE_MATCH_THRESHOLD}",
+                )
             )
-            if uid is not None:
-                await self.persona.load_profile(uid=uid)
+            if outcome not in (IdentityOutcome.APPLIED, IdentityOutcome.UNCHANGED):
+                return None
 
-        if uid is not None:
-            if cache := self.persona.persona_cache.get(uid):
-                cache.face_vector = vector
-            return uid
+        cache = self.persona.cache_for(participant.participant_id)
+        if cache is None:
+            return None
 
-        for uid, cache in self.persona.persona_cache.items():
-            if cache.face_vector is None:
-                cache.face_vector = vector
-                return uid
+        cache.face_vector = vector
+        return cache.participant
 
-        return None
+    def _participant_for(
+        self, job: FaceFrameJob, entity: PerceptionEntityRef
+    ) -> Participant | None:
+        current = self.runtime.participants.resolve(source=job.observation.source, entity=entity)
+        if current is not None:
+            # Recognition uses the identity view captured before the model await.
+            return job.participants.get(current.participant_id)
+
+        try:
+            return self.runtime.participants.ensure_entity(job.observation.source, entity)
+        except (ValueError, RuntimeError):
+            logger.debug("Face entity admission unavailable source=%s", job.observation.source)
+            return None
+
+    async def _update_face(
+        self,
+        job: FaceFrameJob,
+        face: dict[str, Any],
+        vector: np.ndarray,
+        entity: PerceptionEntityRef,
+        participant: Participant,
+    ) -> None:
+        async with self._identity_slots:
+            current = await self._resolve_face_vector(
+                vector,
+                job=job,
+                entity=entity,
+                participant=participant,
+                timeout=self._face_config.inference_timeout_sec,
+            )
+            if current is None or not self._identity_is_current(job, entity, current):
+                return
+
+            cache = self.persona.cache_for(current.participant_id)
+            if cache is None:
+                return
+
+            if current.participant_id not in self._profile_caches:
+                if len(self._profile_caches) >= self._config.max_tracks:
+                    self._profile_caches.pop(next(iter(self._profile_caches)))
+                self._profile_caches[current.participant_id] = FaceCache()
+
+            profile_cache = self._profile_caches[current.participant_id]
+            cache.profile_details = profile_cache.update_profile_detail(
+                cache.profile_details,
+                face,
+                updated_at=datetime.fromtimestamp(self.runtime.clock.now().unix_seconds, UTC),
+            )
 
     async def _inference_face_job(self, job: FaceFrameJob) -> None:
         start_time = time.perf_counter()
+        if not self._job_is_current(job):
+            return
 
         payload = job.observation.payload
         if payload is None:
@@ -374,32 +466,12 @@ class FaceProcessor(PersonaProcessorBase):
         results = await self.inference_executor.do_inference(
             FaceAnalysisRunner.INFERENCE_METHOD, image_bytes
         )
+        if not self._job_is_current(job):
+            return
 
         data: dict[str, Any] = json.loads(results.decode())
         faces = data.get("faces", [])
         if not faces:
-            return
-
-        face = self._select_best_face(faces)
-        if face is None:
-            self._publish_face_annotation(
-                job=job,
-                faces=faces,
-                selected_face=None,
-                image_width=int(data["image_width"]),
-                image_height=int(data["image_height"]),
-            )
-            return
-
-        embedding = face.get("embedding")
-        if embedding is None:
-            self._publish_face_annotation(
-                job=job,
-                faces=faces,
-                selected_face=face,
-                image_width=int(data["image_width"]),
-                image_height=int(data["image_height"]),
-            )
             return
 
         inference_duration = time.perf_counter() - start_time
@@ -410,38 +482,56 @@ class FaceProcessor(PersonaProcessorBase):
                 FACE_INFERENCE_THRESHOLD,
             )
 
-        #  Match & Retrieve & Update Face
-        face_vector = np.asarray(embedding, dtype=np.float32)
-        uid = await self._resolve_face_vector(
-            face_vector, timeout=self._face_config.inference_timeout_sec
+        # One frame inference supplies all faces. Identity work has its own bounded budget.
+        candidates = faces[: self._config.max_faces]
+        vectors = [self._face_vector(face) for face in candidates]
+        explicit = [
+            PerceptionEntityRef.from_dict(face["entity"])
+            if isinstance(face.get("entity"), dict)
+            else job.observation.entity
+            if len(faces) == 1
+            else None
+            for face in candidates
+        ]
+        associated = self._tracks.associate(
+            job.observation.source,
+            vectors,
+            explicit,
+            at=job.observation.time_range.end.monotonic_ns / 1_000_000_000,
         )
+        self._release_retired_tracks()
+        entities = list(associated) + [None] * (len(faces) - len(candidates))
+        updates = []
+        for index, (face, vector, entity) in enumerate(
+            zip(candidates, vectors, associated, strict=True)
+        ):
+            if entity is None:
+                continue
 
-        face_attribute = {
-            "age": face.get("age"),
-            "gender": face.get("gender"),
-            "bbox": face.get("bbox"),
-            "det_score": face.get("det_score"),
-            "transport_participant_id": job.observation.transport_participant_id,
-            "track_sid": job.observation.metadata.get("track_sid"),
-            "frame_id": job.observation.frame_id,
-            "observation_id": job.observation.observation_id,
-        }
+            participant = self._participant_for(job, entity)
+            if participant is None:
+                entities[index] = None
+            elif vector is not None:
+                updates.append((face, vector, entity, participant))
 
-        if uid:
-            persona_cache = self.persona.persona_cache.get(uid)
-            if persona_cache is not None:
-                profile_cache = self._profile_caches.setdefault(uid, FaceCache())
-                persona_cache.profile_details = profile_cache.update_profile_detail(
-                    persona_cache.profile_details, face_attribute, updated_at=application_now()
-                )
-
+        # Publish per-face evidence before remote identity lookups can delay visual routing.
         self._publish_face_annotation(
             job=job,
             faces=faces,
-            selected_face=face,
+            entities=entities,
             image_width=int(data["image_width"]),
             image_height=int(data["image_height"]),
         )
+        outcomes = await asyncio.gather(
+            *(self._update_face(job, *update) for update in updates), return_exceptions=True
+        )
+        for outcome in outcomes:
+            if isinstance(outcome, Exception):
+                logger.warning(
+                    "Face identity lookup failed source=%s error=%s",
+                    job.observation.source,
+                    outcome,
+                )
 
     """Processor Loop"""
 
@@ -458,9 +548,9 @@ class FaceProcessor(PersonaProcessorBase):
             except Exception as error:
                 observation = job.observation
                 logger.warning(
-                    "Face worker failed participant=%s track_sid=%s error=%s",
-                    observation.transport_participant_id,
-                    observation.metadata.get("track_sid"),
+                    "Face worker failed device_id=%s source=%s error=%s",
+                    observation.device_id,
+                    observation.source,
                     error,
                     exc_info=True,
                 )
@@ -544,6 +634,8 @@ class FaceProcessor(PersonaProcessorBase):
         )
 
         self._last_sample_ts.clear()
+        self._tracks.clear()
+        self._release_retired_tracks()
         self._profile_caches.clear()
 
         logger.info("Persona Face stopped consumer_id=%s", self.CONSUMER_ID)

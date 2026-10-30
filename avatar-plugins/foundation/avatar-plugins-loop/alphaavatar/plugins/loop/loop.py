@@ -109,7 +109,9 @@ class AvatarLoop(Loop):
         )
 
         try:
-            self._runtime.output.activate_run(execution.identity.run_id)
+            self._runtime.output.activate_run(
+                execution.identity.run_id, guard=execution.delivery_guard
+            )
         except BaseException as original:
             try:
                 await execution.aclose()

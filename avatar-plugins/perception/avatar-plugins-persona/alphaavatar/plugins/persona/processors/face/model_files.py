@@ -53,9 +53,10 @@ FACE_MODEL_CONFIG: dict[FaceModelType, RunnerFaceModelConfig] = {
 }
 
 
-def resolve_face_model_root(model_type: FaceModelType) -> str:
+def resolve_face_model_root(model_type: FaceModelType, *, models_dir: str) -> str:
     config = FACE_MODEL_CONFIG[model_type]
     model_dir = resolve_zip_directory(
+        models_dir=models_dir,
         namespace=("persona", "face", config.model_name, config.version),
         name=config.model_name,
         url=config.url,

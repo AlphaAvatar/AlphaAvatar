@@ -23,6 +23,7 @@ from alphaavatar.agents.router.enums import TurnTakingAction
 from alphaavatar.agents.router.models import TurnTakingModelBase
 from alphaavatar.agents.router.schemas import (
     InteractionAddressingEvidence,
+    InteractionEntityRef,
     TurnTakingDecision,
     TurnTakingEvidence,
 )
@@ -68,7 +69,12 @@ class TurnTakingCoordinator:
         max_hold_sec: float,
         unsegmented_alignment_sec: float,
         required_addressing_sources: tuple[str, ...] = (),
+        max_active_candidates: int = 128,
     ) -> None:
+        if type(max_active_candidates) is not int or max_active_candidates <= 0:
+            raise ValueError("max_active_candidates must be a positive integer")
+
+        self._max_active_candidates = max_active_candidates
         self._runtime = runtime
         self._model = model
         self._policy = policy
@@ -95,26 +101,6 @@ class TurnTakingCoordinator:
         self._assessment_tasks: dict[SpeakerKey, asyncio.Task[None]] = {}
         self._assessment_workers: set[asyncio.Task[None]] = set()
 
-    @staticmethod
-    def _speaker_matches(candidate: TurnCandidate, evidence: InteractionAddressingEvidence) -> bool:
-        candidate_entity = candidate.speaker.entity
-        evidence_entity = evidence.speaker.entity
-
-        if (
-            candidate_entity is not None
-            and evidence_entity is not None
-            and candidate_entity.perception_entity_id != evidence_entity.perception_entity_id
-        ):
-            return False
-
-        candidate_participant = candidate.speaker.transport_participant_id
-        evidence_participant = evidence.speaker.transport_participant_id
-        return not (
-            candidate_participant is not None
-            and evidence_participant is not None
-            and candidate_participant != evidence_participant
-        )
-
     @classmethod
     def _store_addressing(
         cls,
@@ -132,6 +118,40 @@ class TurnTakingCoordinator:
         records.append(record)
         if len(records) > cls._MAX_ADDRESSING_RECORDS_PER_TARGET:
             del records[: -cls._MAX_ADDRESSING_RECORDS_PER_TARGET]
+
+    def _same_subject(self, left: InteractionEntityRef, right: InteractionEntityRef) -> bool:
+        if left.entity is None or right.entity is None:
+            return False
+
+        if left.source is None or right.source is None:
+            return False
+
+        if not all(
+            self._runtime.participants.source_is_current(source)
+            for source in (left.source, right.source)
+        ):
+            return False
+
+        if left.source == right.source and left.entity.entity_id == right.entity.entity_id:
+            return True
+
+        first = self._runtime.participants.resolve(source=left.source, entity=left.entity)
+        second = self._runtime.participants.resolve(source=right.source, entity=right.entity)
+        return (
+            first is not None
+            and second is not None
+            and first.participant_id == second.participant_id
+        )
+
+    def _speaker_matches(
+        self, candidate: TurnCandidate, evidence: InteractionAddressingEvidence
+    ) -> bool:
+        left, right = candidate.speaker, evidence.speaker
+        if left.entity is not None or right.entity is not None:
+            return self._same_subject(left, right)
+
+        # Entity-less evidence is only attached through a matching segment/observation below.
+        return left.source is not None and left.source == right.source
 
     def _store_unsegmented_addressing(self, record: AddressingEvidenceRecord) -> None:
         if (
@@ -188,6 +208,7 @@ class TurnTakingCoordinator:
         )
         if decision.action == TurnTakingAction.CANCEL:
             trace.freeze(reason="candidate_cancelled")
+
         logger.debug(
             "TURN DECISION candidate_id=%s revision=%s action=%s reason=%s mode=%s "
             "segments=%d active_segments=%d missing_transcripts=%d",
@@ -541,30 +562,11 @@ class TurnTakingCoordinator:
         for record in self._orphan_addressing_by_segment.pop(segment, ()):
             self._apply_addressing(key, candidate, record)
 
-    @staticmethod
-    def _identity_score(candidate: TurnCandidate, record: AddressingEvidenceRecord) -> int | None:
-        candidate_participant = candidate.speaker.transport_participant_id
-        evidence_participant = record.evidence.speaker.transport_participant_id
-        if (
-            candidate_participant is not None
-            and evidence_participant is not None
-            and candidate_participant != evidence_participant
-        ):
-            return None
-
-        candidate_entity = candidate.speaker.entity
-        evidence_entity = record.evidence.speaker.entity
-        if candidate_entity is not None and evidence_entity is not None:
-            return (
-                3
-                if candidate_entity.perception_entity_id == evidence_entity.perception_entity_id
-                else None
-            )
-
-        if candidate_participant is not None and evidence_participant is not None:
-            return 2
-
-        return None
+    def _identity_score(
+        self, candidate: TurnCandidate, record: AddressingEvidenceRecord
+    ) -> int | None:
+        # A common transport is not evidence that two detected people are the same speaker.
+        return 3 if self._same_subject(candidate.speaker, record.evidence.speaker) else None
 
     @staticmethod
     def _temporal_distance_ns(
@@ -679,13 +681,35 @@ class TurnTakingCoordinator:
         )
 
     def _get_candidate(self, observation: EnvObservation) -> tuple[SpeakerKey, TurnCandidate]:
-        key = SpeakerKey.from_observation(observation)
+        owner = self._segment_owners.get(observation.segment) if observation.segment else None
+        key = owner if owner is not None else SpeakerKey.from_observation(observation)
         candidate = self._candidates.get(key)
 
         if candidate is None:
+            if len(self._candidates) >= self._max_active_candidates:
+                oldest_key = next(iter(self._candidates))
+                oldest = self._candidates[oldest_key]
+                self._publish_result(
+                    oldest,
+                    self._operational_result(
+                        self._builder.build(oldest),
+                        action=TurnTakingAction.CANCEL,
+                        reason="candidate_capacity",
+                    ),
+                    observation_id=oldest.latest_observation_id,
+                )
+                self._drop_candidate(oldest_key)
+
             candidate = TurnCandidate.create(observation)
             self._candidates[key] = candidate
+        elif observation.segment is not None and observation.entity is not None:
+            previous = candidate.speaker.entity
+            if previous is not None and previous.entity_id != observation.entity.entity_id:
+                self._runtime.participants.invalidate_segment(observation.segment)
+                candidate.speaker = replace(candidate.speaker, entity=None)
+                candidate.has_perception_gap = True
 
+        candidate.latest_observation_id = observation.observation_id
         return key, candidate
 
     def _apply_transcript(
@@ -735,6 +759,7 @@ class TurnTakingCoordinator:
                     "candidate.segment_rejected", segment, observation, reason="retired_segment"
                 )
             return
+
         if (
             observation.kind == ObservationKind.SPEECH_FRAME
             and segment not in self._segment_owners
@@ -748,6 +773,7 @@ class TurnTakingCoordinator:
                 "candidate.segment_rejected", segment, observation, reason="missing_segment_start"
             )
             return
+
         key, candidate = self._get_candidate(observation)
         if (
             observation.kind == ObservationKind.SPEECH_FRAME

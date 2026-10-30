@@ -27,7 +27,7 @@ JSONScalar = str | int | float | bool
 class PatchOp(BaseModel):
     op: Literal["set", "append", "remove", "clear"]
     path: str = Field(..., description="JSON Pointer-like path, e.g. /name")
-    value: JSONScalar | None = Field(
+    value: JSONScalar | list[str] | None = Field(
         default=None,
         description="For set/append/remove, provide a JSON value. For clear, omit or null.",
     )
@@ -104,7 +104,11 @@ def write_set(
     if not isinstance(parent, dict):
         raise TypeError(f"Cannot set at non-dict parent for key '{key}'")
 
-    parent[key] = {"value": value, "source": source, "updated_at": updated_at}
+    parent[key] = (
+        [{"value": item, "source": source, "updated_at": updated_at} for item in value]
+        if isinstance(value, list)
+        else {"value": value, "source": source, "updated_at": updated_at}
+    )
 
 
 def clear_path(container: dict[str, Any], tokens: list[str]) -> None:

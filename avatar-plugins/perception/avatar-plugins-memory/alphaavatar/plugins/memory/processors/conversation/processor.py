@@ -18,10 +18,11 @@ import logging
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
-from alphaavatar.agents.memory.enums import MemoryCacheType, MemoryKind, MemoryType
+from alphaavatar.agents.memory.enums import MemoryCacheType, MemoryKind, MemoryOwnerKind, MemoryType
 from alphaavatar.agents.memory.schemas import MemoryItem, MemoryOwnerRef, MemoryScope
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_capability
+from alphaavatar.agents.runtime.capability import avatar_capability
+from alphaavatar.agents.runtime.capability.enums import AvatarCapabilityName
 from alphaavatar.agents.utils.time import application_now
 
 from ...state import MemoryContextState
@@ -69,7 +70,7 @@ class ConversationProcessor(MemoryProcessor):
         self._consolidator.record_recall(records)
 
     async def _candidate_search(
-        self, texts: list[str], *, owner_refs, context, timeout: float = 5.0
+        self, texts: list[str], *, owner_refs, context, participants=(), timeout: float = 5.0
     ):
         try:
             return await self.store.search_similar_batch(
@@ -80,6 +81,7 @@ class ConversationProcessor(MemoryProcessor):
                 kind=MemoryKind.CONSOLIDATED,
                 top_k=(self._config.pipeline.consolidation.max_candidates_per_item),
                 timeout=timeout,
+                participants=participants,
             )
 
         except Exception:
@@ -96,7 +98,9 @@ class ConversationProcessor(MemoryProcessor):
             if start == end:
                 return
 
-            content = self.render_context_content(state, messages)
+            self.memory_runtime.sync_session()
+            identity = state.capture_identity(messages)
+            content = self.render_context_content(state, messages, identity=identity)
 
             delta = await self._provider.extract(
                 context_content=content,
@@ -116,19 +120,21 @@ class ConversationProcessor(MemoryProcessor):
                 memory_type=MemoryType.Avatar,
                 patches=delta.assistant_memory_entries,
                 owner_refs=[MemoryOwnerRef.avatar(self.avatar_id)],
-                participant_refs=state.participant_refs,
+                participant_refs=list(identity.participant_refs),
                 source_refs=source_refs,
                 scope=MemoryScope.owner(),
+                identity=identity,
             )
 
             conversation_items = self.build_memory_items(
                 state=state,
                 memory_type=MemoryType.CONVERSATION,
                 patches=delta.user_or_tool_memory_entries,
-                owner_refs=state.owner_refs,
-                participant_refs=state.participant_refs,
+                owner_refs=[ref for ref in identity.owner_refs if ref.kind is MemoryOwnerKind.USER],
+                participant_refs=list(identity.participant_refs),
                 source_refs=source_refs,
                 scope=MemoryScope.owner(),
+                identity=identity,
             )
 
             conversation_items = await self._consolidator.consolidate_session(
@@ -143,10 +149,16 @@ class ConversationProcessor(MemoryProcessor):
                         memory_type=MemoryType.CONVERSATION,
                     )
                 ),
+                identity_is_current=lambda: self.memory_runtime.identity_is_current(identity),
+                participants=identity.participants,
             )
 
             await self.commit_items(
-                state=state, start=start, end=end, items=[*avatar_items, *conversation_items]
+                state=state,
+                start=start,
+                end=end,
+                items=[*avatar_items, *conversation_items],
+                identity=identity,
             )
 
     async def _stop(self, *, finalize: bool) -> None:

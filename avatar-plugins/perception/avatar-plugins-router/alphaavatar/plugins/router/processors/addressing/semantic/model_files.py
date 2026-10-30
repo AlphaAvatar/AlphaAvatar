@@ -48,10 +48,11 @@ SEMANTIC_ADDRESSING_CONFIG = SemanticAddressingModelConfig(
 )
 
 
-def resolve_semantic_addressing_files() -> tuple[str, str]:
+def resolve_semantic_addressing_files(*, models_dir: str) -> tuple[str, str]:
     config = SEMANTIC_ADDRESSING_CONFIG
     namespace = ("router", "addressing", "semantic")
     model = resolve_hf_file(
+        models_dir=models_dir,
         namespace=namespace,
         repo_id=config.repo_id,
         revision=config.revision,
@@ -59,6 +60,7 @@ def resolve_semantic_addressing_files() -> tuple[str, str]:
         sha256=config.model_sha256,
     )
     prompt = resolve_hf_file(
+        models_dir=models_dir,
         namespace=namespace,
         repo_id=config.repo_id,
         revision=config.revision,

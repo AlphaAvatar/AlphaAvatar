@@ -17,11 +17,13 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from alphaavatar.agents.avatar.provider.schemas import ModelFunctionCall, ModelFunctionOutput
-from alphaavatar.agents.memory.enums import MemoryCacheType, MemoryType
+from alphaavatar.agents.memory.enums import MemoryCacheType, MemoryOwnerKind, MemoryType
 from alphaavatar.agents.memory.schemas import MemoryOwnerRef, MemoryParticipantRef, MemoryScope
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_capability
+from alphaavatar.agents.runtime.capability import avatar_capability
+from alphaavatar.agents.runtime.capability.enums import AvatarCapabilityName
 
+from ...schemas import MemoryIdentitySnapshot
 from ...state import MemoryContextItem, MemoryContextState
 from ..base import MemoryProcessor
 from .config import ToolConfig
@@ -57,9 +59,9 @@ class ToolProcessor(MemoryProcessor):
         return any(isinstance(item, ModelFunctionCall | ModelFunctionOutput) for item in messages)
 
     def _participants(
-        self, state: MemoryContextState, messages: list[MemoryContextItem]
+        self, identity: MemoryIdentitySnapshot, messages: list[MemoryContextItem]
     ) -> list[MemoryParticipantRef]:
-        refs = list(state.participant_refs)
+        refs = list(identity.participant_refs)
         refs.extend(
             MemoryParticipantRef.tool(item.name)
             for item in messages
@@ -82,7 +84,10 @@ class ToolProcessor(MemoryProcessor):
                 await self.commit_items(state=state, start=start, end=end, items=[])
                 return
 
-            content = self.render_context_content(state, messages)
+            self.memory_runtime.sync_session()
+            identity = state.capture_identity(messages)
+            participants = self._participants(identity, messages)
+            content = self.render_context_content(state, messages, identity=identity)
             delta = await self._provider.extract(
                 context_content=content,
                 metadata=self.trace_metadata(
@@ -92,7 +97,6 @@ class ToolProcessor(MemoryProcessor):
                     memory_type=MemoryType.TOOLS,
                 ),
             )
-            participants = self._participants(state, messages)
             source_refs = self.source_refs(messages)
             avatar_items = self.build_memory_items(
                 state=state,
@@ -102,18 +106,24 @@ class ToolProcessor(MemoryProcessor):
                 participant_refs=participants,
                 source_refs=source_refs,
                 scope=MemoryScope.owner(),
+                identity=identity,
             )
             tool_items = self.build_memory_items(
                 state=state,
                 memory_type=MemoryType.TOOLS,
                 patches=delta.user_or_tool_memory_entries,
-                owner_refs=state.owner_refs,
+                owner_refs=[ref for ref in identity.owner_refs if ref.kind is MemoryOwnerKind.USER],
                 participant_refs=participants,
                 source_refs=source_refs,
                 scope=MemoryScope.owner(),
+                identity=identity,
             )
             await self.commit_items(
-                state=state, start=start, end=end, items=[*avatar_items, *tool_items]
+                state=state,
+                start=start,
+                end=end,
+                items=[*avatar_items, *tool_items],
+                identity=identity,
             )
 
     async def _stop(self, *, finalize: bool) -> None:

@@ -25,7 +25,7 @@ from alphaavatar.agents.tools.schemas import ToolError
 from alphaavatar.core.cleanup import wait_for_cleanup
 
 if TYPE_CHECKING:
-    from alphaavatar.agents.utils.files.work_dirs import SessionPath
+    from alphaavatar.core.workspace import SessionPath
 
 
 class RAGAnythingTool:

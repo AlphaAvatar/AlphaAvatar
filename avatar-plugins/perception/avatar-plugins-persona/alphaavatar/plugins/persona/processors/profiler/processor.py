@@ -13,13 +13,13 @@
 # limitations under the License.
 import asyncio
 from copy import deepcopy
-from datetime import datetime
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, get_args, get_origin
 
 from alphaavatar.agents.persona import PersonaBase, PersonaCache, PersonaProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_capability
-from alphaavatar.agents.utils.time import application_now
+from alphaavatar.agents.runtime.capability import avatar_capability
+from alphaavatar.agents.runtime.capability.enums import AvatarCapabilityName
 from alphaavatar.core.turn.enums import TurnInputModality
 from alphaavatar.core.turn.schemas import TurnSnapshot
 
@@ -62,18 +62,25 @@ class ProfilerProcessor(PersonaProcessorBase):
     def name(self) -> str:
         return "profiler"
 
+    @staticmethod
+    def _is_list_field(name: str) -> bool:
+        annotation = UserProfileDetails.model_fields[name].annotation
+        return get_origin(annotation) is list or any(
+            get_origin(value) is list for value in get_args(annotation)
+        )
+
     async def _aextract_delta(
-        self, *, uid: str, profile_details_dump: dict[str, Any], new_turn: str
+        self, *, user_id: str, profile_details_dump: dict[str, Any], new_turn: str
     ) -> ProfileDelta:
         return await self._provider.extract(
             profile_details_dump=profile_details_dump,
             new_turn=new_turn,
             metadata={
-                "provider_dir": self.session_runtime.session_path.provider_dir,
+                "provider_dir": self.runtime.session_path.provider_dir,
                 "plugin": "persona",
                 "component": "profiler",
                 "operation": "profile_delta",
-                "user_id": uid,
+                "user_id": user_id,
                 "session_id": self.session_runtime.session_id,
             },
         )
@@ -86,7 +93,7 @@ class ProfilerProcessor(PersonaProcessorBase):
 
         for patch in delta.ops:
             tokens = parse_pointer(patch.path)
-            if not tokens or len(tokens) != 1:
+            if len(tokens) != 1 or tokens[0] not in UserProfileDetails.model_fields:
                 continue
 
             try:
@@ -96,7 +103,7 @@ class ProfilerProcessor(PersonaProcessorBase):
                     clear_path(data, tokens)
                 elif patch.op == "append" and patch.value is not None:
                     current = data.get(tokens[0])
-                    if isinstance(current, list):
+                    if isinstance(current, list) or self._is_list_field(tokens[0]):
                         append_string(data, tokens, patch.value, updated_at)
                     else:
                         append_text(data, tokens, patch.value, updated_at)
@@ -105,13 +112,19 @@ class ProfilerProcessor(PersonaProcessorBase):
                 updated = True
             except Exception:
                 logger.exception(
-                    "Failed to apply profile delta uid operation=%s path=%s", patch.op, patch.path
+                    "Failed to apply profile delta user_id operation=%s path=%s",
+                    patch.op,
+                    patch.path,
                 )
 
         return updated, data
 
-    async def _update_profile(self, uid: str, persona_cache: PersonaCache) -> None:
+    async def _update_profile(self, participant_id: str, persona_cache: PersonaCache) -> None:
         if not persona_cache.turns:
+            return
+
+        participant = self.session_runtime.get_participant(participant_id=participant_id)
+        if participant is None or participant.user_id is None:
             return
 
         current = (
@@ -121,47 +134,51 @@ class ProfilerProcessor(PersonaProcessorBase):
         )
 
         delta = await self._aextract_delta(
-            uid=uid,
+            user_id=participant.user_id,
             profile_details_dump=persona_cache.profile_details_dump_value,
             new_turn=PersonaPluginsTemplate.apply_update_template(persona_cache.turns),
         )
 
-        is_updated, details = self._apply_delta(application_now(), current, delta)
+        latest = self.session_runtime.get_participant(participant_id=participant_id)
+        if latest is None or latest.identity_sequence != participant.identity_sequence:
+            return
+
+        updated_at = datetime.fromtimestamp(self.runtime.clock.now().unix_seconds, UTC)
+        is_updated, details = self._apply_delta(updated_at, current, delta)
         if is_updated:
-            logger.info(f"[uid: {uid}] User Profile UPDATE success: {details}")
             persona_cache.profile_details = UserProfileDetails(**details)
-        else:
-            logger.info(f"[uid: {uid}] User Profile output is empty, UPDATE skip!")
+            operations = {}
+            for patch in delta.ops:
+                tokens = parse_pointer(patch.path)
+                if len(tokens) == 1 and tokens[0] in UserProfileDetails.model_fields:
+                    operations.setdefault(tokens[0], []).append(
+                        {
+                            "op": patch.op,
+                            "value": patch.value,
+                            "list": self._is_list_field(tokens[0]),
+                        }
+                    )
+
+            persona_cache.mark_profile_fields(set(operations), updated_at=updated_at)
+            persona_cache.record_profile_operations(operations)
+            logger.info("Persona profile observations updated participant=%s", participant_id)
 
     """Processor Loop"""
-
-    def _target_uids(self, snapshot: TurnSnapshot) -> tuple[str, ...]:
-        uids = []
-
-        for actor in snapshot.actors:
-            uid = actor.user_id or (
-                actor.entity.resolved_entity_id if actor.entity is not None else None
-            )
-            if uid and uid not in uids:
-                uids.append(uid)
-
-        if uids:
-            return tuple(uids)
-
-        if len(self.session_runtime.participants) == 1 and self.session_runtime.primary_user_id:
-            return (self.session_runtime.primary_user_id,)
-
-        return ()
 
     async def _record_turn(self, snapshot: TurnSnapshot) -> None:
         if snapshot.modality == TurnInputModality.SYSTEM or not (snapshot.text or "").strip():
             return
 
-        for uid in self._target_uids(snapshot):
-            if uid not in self.persona.persona_cache:
-                await self.persona.load_profile(uid=uid)
+        # A claimed user_id is not a physical speaker; only explicit participant references count.
+        for participant_id in dict.fromkeys(actor.participant_id for actor in snapshot.actors):
+            if participant_id is None:
+                continue
 
-            cache = self.persona.persona_cache.get(uid)
+            participant = self.session_runtime.get_participant(participant_id=participant_id)
+            if participant is None:
+                continue
+
+            cache = self.persona.cache_for(participant_id)
             if cache is not None:
                 cache.add_turn(snapshot)
 
@@ -234,8 +251,8 @@ class ProfilerProcessor(PersonaProcessorBase):
 
         results = await asyncio.gather(
             *(
-                self._update_profile(uid, cache)
-                for uid, cache in self.persona.persona_cache.items()
+                self._update_profile(participant_id, cache)
+                for participant_id, cache in self.persona.persona_cache.items()
             ),
             return_exceptions=True,
         )

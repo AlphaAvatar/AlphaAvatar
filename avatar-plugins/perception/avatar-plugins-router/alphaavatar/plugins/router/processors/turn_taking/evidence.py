@@ -68,8 +68,8 @@ class TurnEvidenceBuilder:
         )
 
     def mode(self, candidate: TurnCandidate) -> TurnTakingMode:
-        participant_id = candidate.speaker.transport_participant_id
-        if participant_id is None:
+        device_id = candidate.speaker.device_id
+        if device_id is None:
             return TurnTakingMode.AUDIO_ONLY
 
         cameras = self._runtime.perception.get_source_states(
@@ -77,10 +77,7 @@ class TurnEvidenceBuilder:
         )
         return (
             TurnTakingMode.AUDIO_VISUAL
-            if any(
-                source.available and source.transport_participant_id == participant_id
-                for source in cameras
-            )
+            if any(source.available and source.device_id == device_id for source in cameras)
             else TurnTakingMode.AUDIO_ONLY
         )
 

@@ -8,7 +8,6 @@
 avatar:
   id: alphaavatar_tools
   name: AlphaAvatar
-  work_dir: .alphaavatar_workspace/
 
   introduction: >
     You are a helpful Tools Assistant. You assist users by effectively utilizing

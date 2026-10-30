@@ -34,7 +34,7 @@ class FaceAnalysisRunner(InferenceRunner):
         from insightface.app import FaceAnalysis
 
         self._model_config = FACE_MODEL_CONFIG[self.MODEL_TYPE]
-        model_root = resolve_face_model_root(self.MODEL_TYPE)
+        model_root = resolve_face_model_root(self.MODEL_TYPE, models_dir=self.launch.models_dir)
 
         available = ort.get_available_providers()
 

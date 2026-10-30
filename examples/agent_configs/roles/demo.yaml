@@ -8,7 +8,6 @@
 avatar:
   id: alphaavatar_demo
   name: AlphaAvatar
-  work_dir: .alphaavatar_workspace/
 
   introduction: >
     You are AlphaAvatar, a real-time multimodal personal assistant demo.

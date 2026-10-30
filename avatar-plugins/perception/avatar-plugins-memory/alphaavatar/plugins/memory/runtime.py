@@ -33,6 +33,7 @@ from alphaavatar.agents.memory.schemas import (
     MemoryItem,
     MemoryOwnerRef,
     MemoryParticipantRef,
+    MemoryScope,
 )
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
@@ -114,51 +115,84 @@ class MemoryRuntime(MemoryBase):
     @property
     def memory_content(self) -> str:
         self.sync_session()
-        kinds = (MemoryType.Avatar, MemoryType.CONVERSATION, MemoryType.TOOLS, MemoryType.ENV)
-        return "\n".join(
-            item.render_line()
-            for kind in kinds
-            for item in self.visible_items(self._memory_state.get(memory_type=kind))
-        )
+        return self._render_content()
 
     @staticmethod
     def _observe(task: asyncio.Task[None]) -> None:
         if not task.cancelled():
             task.exception()
 
-    def visible_items(self, items: Sequence[MemoryItem]) -> list[MemoryItem]:
+    def _render_content(
+        self,
+        identity: MemoryIdentitySnapshot | None = None,
+        context: MemoryContextRef | None = None,
+    ) -> str:
+        kinds = (MemoryType.Avatar, MemoryType.CONVERSATION, MemoryType.TOOLS, MemoryType.ENV)
+        return "\n".join(
+            item.render_line()
+            for kind in kinds
+            for item in self.visible_items(
+                self._memory_state.get(memory_type=kind), identity=identity, context=context
+            )
+        )
+
+    def content_for(self, snapshot: TurnSnapshot) -> str:
+        if self._runtime.turn.get(snapshot.input_id) is not snapshot:
+            raise ValueError("Memory context requires a Turn owned by this runtime")
+        self.sync_session()
+        context_id = self.resolve_context_id(snapshot.context_ids)
+        if context_id is None:
+            return ""
+        state = self.context_state(context_id)
+        return self._render_content(state.capture_identity([snapshot]), state.context)
+
+    def visible_items(
+        self,
+        items: Sequence[MemoryItem],
+        *,
+        identity: MemoryIdentitySnapshot | None = None,
+        context: MemoryContextRef | None = None,
+    ) -> list[MemoryItem]:
         users = {
             participant.user_id
-            for participant in self._runtime.session.participants.values()
+            for participant in (
+                () if identity is None or identity.unattributed else identity.participants
+            )
             if participant.user_id is not None
+            and self._runtime.participants.accepts_identity(participant)
         }
-        access = self._runtime.participants
+        scopes = set(MemoryScope.applicable_keys(context)) if context is not None else None
         return [
             item
             for item in items
             if any(
                 (ref.kind is MemoryOwnerKind.AVATAR and ref.id == self._avatar_id)
-                or (
-                    ref.kind is MemoryOwnerKind.USER
-                    and ref.id in users
-                    and access.can_read_user(ref.id)
-                )
+                or (ref.kind is MemoryOwnerKind.USER and ref.id in users)
                 for ref in item.owner_refs
             )
             and (
-                item.scope.kind is not MemoryScopeKind.CONTEXT
-                or item.context.context_id in self._memory_contexts
+                item.scope.key in scopes
+                if scopes is not None
+                else item.scope.kind is MemoryScopeKind.OWNER
+                or (
+                    item.scope.kind is MemoryScopeKind.CONTEXT
+                    and item.context.context_id in self._memory_contexts
+                )
             )
         ]
 
     def identity_is_current(self, identity: MemoryIdentitySnapshot) -> bool:
-        snapshot = self._runtime.session.snapshot()
-        if snapshot.sequence != identity.sequence:
-            return False
         return all(
-            (current := snapshot.participants.get(participant.participant_id)) is not None
-            and current.identity_sequence == participant.identity_sequence
+            self._runtime.participants.accepts_identity(participant)
             for participant in identity.participants
+        ) and all(
+            actor.participant_id is None
+            or (
+                (current := self._runtime.participants.get(actor.participant_id)) is not None
+                and current.user_id == actor.user_id
+                and current.identity_sequence == actor.identity_sequence
+            )
+            for actor in identity.actors
         )
 
     def bind_processors(self, processors: Sequence[MemoryProcessor]) -> None:
@@ -244,7 +278,9 @@ class MemoryRuntime(MemoryBase):
         superseded = {memory_id for item in items for memory_id in item.supersedes_memory_ids}
         if superseded:
             self._memory_state.discard(superseded)
-        current = self.visible_items([item for item in items if item.memory_id not in superseded])
+
+        # Retain one shared cache; each Turn projects only its own accepted participants.
+        current = [item for item in items if item.memory_id not in superseded]
         for memory_type in MemoryType:
             bucket = [item for item in current if item.memory_type is memory_type]
             if bucket:
@@ -356,11 +392,8 @@ class MemoryRuntime(MemoryBase):
         if self._root_context_id is not None:
             return
 
-        user_id = self._runtime.session.primary_user_id
         session_path = self._runtime.session_path
         state_runtime = self._runtime.state
-        if not user_id:
-            return
 
         context = MemoryContextRef(
             episode_id=state_runtime.episode_id,
@@ -371,11 +404,8 @@ class MemoryRuntime(MemoryBase):
         self.open_context(
             context=context,
             provider_dir=session_path.provider_dir,
-            owner_refs=[MemoryOwnerRef.user(user_id)],
-            participant_refs=[
-                MemoryParticipantRef.user(user_id),
-                MemoryParticipantRef.avatar(self._avatar_id),
-            ],
+            owner_refs=[MemoryOwnerRef.avatar(self._avatar_id)],
+            participant_refs=[MemoryParticipantRef.avatar(self._avatar_id)],
             participants=tuple(self._runtime.session.participants.values()),
         )
         self._root_context_id = context.context_id

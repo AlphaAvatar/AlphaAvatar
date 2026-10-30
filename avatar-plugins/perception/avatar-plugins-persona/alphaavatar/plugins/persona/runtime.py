@@ -16,16 +16,15 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
+from datetime import UTC, datetime
 
-from alphaavatar.agents.constants import FACE_MATCH_THRESHOLD, SPEAKER_MATCH_THRESHOLD
 from alphaavatar.agents.persona import PersonaBase, PersonaCache, PersonaProcessorBase
-from alphaavatar.agents.persona.schemas import UserProfile, UserRuntimeState
+from alphaavatar.agents.persona.schemas import UserRuntimeState
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
-from alphaavatar.agents.runtime.modules.session.runtime import ParticipantInfo
-from alphaavatar.agents.utils import NumpyOP
-from alphaavatar.agents.utils.files.work_dirs import prepare_user_path
 from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.session.schemas import Participant
+from alphaavatar.core.turn.schemas import TurnSnapshot
 
 from .cache import DefaultPersonaCache
 from .storage import PersonaStore
@@ -35,11 +34,13 @@ logger = logging.getLogger(__name__)
 
 
 class PersonaRuntime(PersonaBase):
+    CONSUMER_ID = "persona.session"
+
     def __init__(self, *, runtime: AvatarRuntime, store: PersonaStore) -> None:
         self._runtime = runtime
         self._store = store
 
-        self._persona_cache: dict[str, PersonaCache] = {}
+        self._persona_cache: dict[str, DefaultPersonaCache] = {}
         self._processors: tuple[PersonaProcessorBase, ...] = ()
         self._entered_processors: list[PersonaProcessorBase] = []
 
@@ -47,6 +48,10 @@ class PersonaRuntime(PersonaBase):
         self._started = False
         self._start_task: asyncio.Task[None] | None = None
         self._close_task: asyncio.Task[None] | None = None
+        self._session_task: asyncio.Task[None] | None = None
+        self._load_tasks: dict[str, asyncio.Task[None]] = {}
+        self._pending_loads: set[asyncio.Task[None]] = set()
+        self._save_lock = asyncio.Lock()
 
         self._capability_registry = AvatarCapabilityRegistry()
 
@@ -64,89 +69,101 @@ class PersonaRuntime(PersonaBase):
 
     @property
     def persona_content(self) -> str:
-        profiles = {
-            uid: cache.profile
-            for uid, cache in self._persona_cache.items()
-            if cache.profile is not None
-        }
+        """Unscoped context contains observations only, never loaded user profiles."""
+        profiles = {}
+        for participant in self._runtime.session.participants.values():
+            cache = self.cache_for(participant.participant_id)
+            if cache is None:
+                continue
+
+            profile = cache.observation_profile
+            profile.runtime_state = None
+            if not profile.is_empty:
+                label = (
+                    f"{participant.user_id or 'unknown'} (participant {participant.participant_id})"
+                )
+                profiles[label] = profile
+
         return PersonaPluginsTemplate.apply_provider_template(profiles)
-
-    @staticmethod
-    def _can_merge_profiles(
-        session_profile: UserProfile | None, loaded_profile: UserProfile
-    ) -> bool:
-        if session_profile is None:
-            return True
-
-        if session_profile.speaker_vector is not None and loaded_profile.speaker_vector is not None:
-            score = float(
-                NumpyOP.l2_normalize(NumpyOP.to_np(session_profile.speaker_vector))
-                @ NumpyOP.l2_normalize(NumpyOP.to_np(loaded_profile.speaker_vector))
-            )
-            if score < SPEAKER_MATCH_THRESHOLD:
-                return False
-
-        if session_profile.face_vector is not None and loaded_profile.face_vector is not None:
-            score = float(
-                NumpyOP.l2_normalize(NumpyOP.to_np(session_profile.face_vector))
-                @ NumpyOP.l2_normalize(NumpyOP.to_np(loaded_profile.face_vector))
-            )
-            if score < FACE_MATCH_THRESHOLD:
-                return False
-
-        return True
-
-    @staticmethod
-    def _merge_profiles(
-        loaded_profile: UserProfile, session_profile: UserProfile | None
-    ) -> UserProfile:
-        if session_profile is None:
-            return loaded_profile
-
-        if loaded_profile.details is None:
-            loaded_profile.details = session_profile.details
-        if loaded_profile.speaker_vector is None:
-            loaded_profile.speaker_vector = session_profile.speaker_vector
-        if loaded_profile.face_vector is None:
-            loaded_profile.face_vector = session_profile.face_vector
-
-        return loaded_profile
 
     @staticmethod
     def _observe(task: asyncio.Task[None]) -> None:
         if not task.cancelled():
             task.exception()
 
-    def _ensure_runtime_state(self, profile: UserProfile) -> UserRuntimeState:
-        if profile.runtime_state is None:
-            profile.runtime_state = UserRuntimeState()
-        return profile.runtime_state
-
-    def _update_runtime_state(self, *, participant: ParticipantInfo, profile: UserProfile) -> None:
-        state = self._ensure_runtime_state(profile)
+    def _runtime_state(
+        self, participant: Participant, cache: DefaultPersonaCache
+    ) -> UserRuntimeState:
+        profile = cache.profile
+        state = (
+            profile.runtime_state.model_copy(deep=True)
+            if profile is not None and profile.runtime_state is not None
+            else UserRuntimeState()
+        )
         session_id = self._runtime.session.session_id
-
-        if state.current_session_id == session_id:
-            state.current_timezone = participant.user_time.timezone
-            state.current_login_at = participant.joined_at
-            state.current_room_type = participant.room_type
-            return
-
-        if state.current_session_id:
+        if state.current_session_id != session_id:
             state.last_timezone = state.current_timezone
             state.last_login_at = state.current_login_at
             state.last_session_id = state.current_session_id
             state.last_room_type = state.current_room_type
+            state.login_count += 1
 
-        state.current_timezone = participant.user_time.timezone
-        state.current_login_at = participant.joined_at
+        state.current_timezone = participant.timezone
+        state.current_login_at = datetime.fromtimestamp(participant.joined_at.unix_seconds, UTC)
         state.current_session_id = session_id
-        state.current_room_type = participant.room_type
-        state.login_count += 1
+        state.current_room_type = self._runtime.state.interaction_method.room_type
+        return state
+
+    def cache_for(self, participant_id: str) -> DefaultPersonaCache | None:
+        participant = self._runtime.participants.get(participant_id)
+        if participant is None:
+            return None
+
+        cache = self._persona_cache.get(participant_id)
+        if cache is None:
+            cache = self._persona_cache[participant_id] = DefaultPersonaCache(
+                participant=participant
+            )
+        else:
+            cache.participant = participant
+
+        if participant.user_id is None or not self._runtime.participants.accepts_identity(
+            participant
+        ):
+            cache.clear_base()
+
+        return cache
+
+    def content_for(self, snapshot: TurnSnapshot) -> str:
+        if self._runtime.turn.get(snapshot.input_id) is not snapshot:
+            raise ValueError("Persona context requires a Turn owned by this runtime")
+
+        profiles = {}
+        for actor in snapshot.actors:
+            if actor.participant_id is None:
+                continue
+
+            participant = self._runtime.participants.get(actor.participant_id)
+            if (
+                participant is None
+                or actor.user_id != participant.user_id
+                or actor.identity_sequence != participant.identity_sequence
+                or not self._runtime.participants.accepts_identity(participant)
+            ):
+                continue
+
+            cache = self.cache_for(participant.participant_id)
+            if cache is not None and (profile := cache.profile) is not None:
+                label = (
+                    f"{participant.user_id or 'unknown'} (participant {participant.participant_id})"
+                )
+                profiles[label] = profile
+
+        return PersonaPluginsTemplate.apply_provider_template(profiles)
 
     def bind_processors(self, processors: Sequence[PersonaProcessorBase]) -> None:
         if self._processors_bound:
-            raise RuntimeError("Persona processors have already been bound.")
+            raise RuntimeError("Persona processors have already been bound")
         if self._start_task is not None or self._close_task is not None:
             raise RuntimeError("Persona processors cannot be bound after runtime start or stop")
 
@@ -154,87 +171,138 @@ class PersonaRuntime(PersonaBase):
         if len(names) != len(set(names)):
             raise ValueError(f"Persona processor names must be unique: {names}")
 
-        registry = AvatarCapabilityRegistry(*processors)
-
         self._processors = tuple(processors)
-        self._capability_registry = registry
+        self._capability_registry = AvatarCapabilityRegistry(*processors)
         self._processors_bound = True
 
-    async def load_profile(self, *, uid: str) -> None:
-        if uid in self._persona_cache:
+    async def load_profile(self, *, participant_id: str) -> None:
+        cache = self.cache_for(participant_id)
+        if cache is None:
+            raise KeyError(f"Unknown participant: {participant_id}")
+
+        participant = cache.participant
+        user_id = participant.user_id
+        if user_id is None or not self._runtime.participants.accepts_identity(participant):
             return
 
-        participant = self._runtime.session.get_participant(user_id=uid)
-        profile = await self._store.load(uid=uid)
-
-        if participant is None and profile.is_empty:
-            logger.warning("No participant or persistent Persona profile uid=%s", uid)
+        profile = await self._store.load(participant=participant)
+        if not self._runtime.participants.accepts_identity(participant):
             return
 
-        if participant is not None:
-            self._update_runtime_state(participant=participant, profile=profile)
-            self._persona_cache[uid] = DefaultPersonaCache(
-                participant=participant, user_profile=profile
+        cache.participant = participant
+        cache.set_base(profile)
+        cache.runtime_state = self._runtime_state(participant, cache)
+
+    async def save(self, *, user_id: str | None = None) -> None:
+        async with self._save_lock:
+            targets = []
+            for participant in self._runtime.session.snapshot().participants.values():
+                target_user_id = participant.user_id
+                if target_user_id is None:
+                    continue
+
+                if user_id is not None and target_user_id != user_id:
+                    continue
+
+                if not self._runtime.participants.accepts_identity(participant):
+                    continue
+
+                cache = self.cache_for(participant.participant_id)
+                if cache is None:
+                    continue
+
+                if cache.participant.identity_sequence != participant.identity_sequence:
+                    continue
+
+                snapshot = cache.snapshot()
+                snapshot.runtime_state = self._runtime_state(participant, cache)
+                targets.append(snapshot)
+
+            if user_id is not None and not targets:
+                raise PermissionError(f"No writable Persona participant for user_id={user_id!r}")
+
+            # Each write owns a pinned identity and observation copy, independent of later rebinding.
+            results = await asyncio.gather(
+                *(self._store.save(persona=cache) for cache in targets), return_exceptions=True
             )
+            errors = []
+            for result in results:
+                if isinstance(result, asyncio.CancelledError):
+                    raise result
+                if isinstance(result, Exception):
+                    errors.append(result)
+                elif isinstance(result, BaseException):
+                    raise result
+
+            if errors:
+                raise ExceptionGroup("One or more Persona profiles failed to save", errors)
+
+    """Session Loop"""
+
+    def _schedule_load(self, participant: Participant) -> None:
+        participant_id = participant.participant_id
+        previous = self._load_tasks.get(participant_id)
+        if previous is not None and not previous.done():
+            previous.cancel()
+
+        cache = self.cache_for(participant_id)
+        if (
+            cache is None
+            or participant.user_id is None
+            or not self._runtime.participants.accepts_identity(participant)
+        ):
             return
 
-        for cache_uid in tuple(self._persona_cache):
-            cache = self._persona_cache[cache_uid]
-
-            if not self._can_merge_profiles(cache.profile, profile):
-                continue
-
-            user_path = self._runtime.workspace.users.get(uid)
-            prepare_user_path(user_path)
-
-            self._runtime.session.resolve_participant_user(
-                participant_id=cache.participant.participant_id, user_id=uid, user_path=user_path
-            )
-
-            self._update_runtime_state(participant=cache.participant, profile=profile)
-
-            cache.profile = self._merge_profiles(profile, cache.profile)
-
-            del self._persona_cache[cache_uid]
-            self._persona_cache[uid] = cache
-            return
-
-        logger.warning("Persistent Persona profile could not be attached uid=%s", uid)
-
-    async def save(self, *, uid: str | None = None) -> None:
-        if uid is not None:
-            cache = self._persona_cache.get(uid)
-            if cache is None:
-                raise ValueError(f"Unknown Persona uid={uid!r}")
-            targets = ((uid, cache),)
-        else:
-            targets = tuple(self._persona_cache.items())
-
-        results = await asyncio.gather(
-            *(self._store.save(uid=target_uid, persona=cache) for target_uid, cache in targets),
-            return_exceptions=True,
+        task = asyncio.create_task(
+            self.load_profile(participant_id=participant_id),
+            name=f"persona_profile:{participant_id}",
         )
+        self._load_tasks[participant_id] = task
+        self._pending_loads.add(task)
 
-        errors: list[Exception] = []
-        for result in results:
-            if isinstance(result, asyncio.CancelledError):
-                failure = RuntimeError("Persona profile save cancelled itself")
-                failure.__cause__ = result
-                errors.append(failure)
-            elif isinstance(result, Exception):
-                errors.append(result)
-            elif isinstance(result, BaseException):
-                raise result
-        if errors:
-            raise ExceptionGroup("One or more Persona profiles failed to save", errors)
+        def complete(finished: asyncio.Task[None]) -> None:
+            self._pending_loads.discard(finished)
+            if self._load_tasks.get(participant_id) is finished:
+                self._load_tasks.pop(participant_id, None)
+            if not finished.cancelled() and (error := finished.exception()) is not None:
+                logger.warning(
+                    "Persona profile load failed participant=%s: %s", participant_id, error
+                )
+
+        task.add_done_callback(complete)
+
+    def _sync_session(self) -> None:
+        stream = self._runtime.session.events
+        batch = stream.read_pending(consumer_id=self.CONSUMER_ID)
+        if batch.has_gap:
+            # This consumer owns only read-only views; persisted writes use their own snapshots.
+            snapshot = self._runtime.session.snapshot()
+            for participant in snapshot.participants.values():
+                self._schedule_load(participant)
+
+            stream.commit(consumer_id=self.CONSUMER_ID, cursor_seq=snapshot.sequence)
+            return
+
+        for event in batch.items:
+            if event.participant is not None:
+                current = self._runtime.participants.get(event.participant.participant_id)
+                if current is not None:
+                    self._schedule_load(current)
+
+        stream.commit(consumer_id=self.CONSUMER_ID, cursor_seq=batch.cursor_seq)
+
+    async def _consume_session(self) -> None:
+        stream = self._runtime.session.events
+        while await stream.wait_for_pending(consumer_id=self.CONSUMER_ID):
+            self._sync_session()
+
+    """Runtime operations"""
 
     async def _start(self) -> None:
-        primary_user_id = self._runtime.session.primary_user_id
-        if primary_user_id:
-            await self.load_profile(uid=primary_user_id)
+        self._sync_session()
+        self._session_task = asyncio.create_task(self._consume_session(), name=self.CONSUMER_ID)
 
         for processor in self._processors:
-            # A failing start may already own subscriptions or provider resources.
             self._entered_processors.append(processor)
             await processor.start()
 
@@ -243,7 +311,9 @@ class PersonaRuntime(PersonaBase):
             raise asyncio.CancelledError
 
         self._started = True
-        logger.info("Persona started processors=%s", [p.name for p in self._processors])
+        logger.info(
+            "Persona started processors=%s", [processor.name for processor in self._processors]
+        )
 
     async def _close(self) -> None:
         start = self._start_task
@@ -268,9 +338,22 @@ class PersonaRuntime(PersonaBase):
 
         for processor in reversed(self._entered_processors):
             await close_step(processor.stop(finalize=finalize))
-        self._entered_processors.clear()
 
-        # Rollback must not finalize or persist an incompletely started session.
+        self._entered_processors.clear()
+        if self._session_task is not None:
+            self._session_task.cancel()
+            await asyncio.gather(self._session_task, return_exceptions=True)
+            self._session_task = None
+
+        tasks = tuple(self._pending_loads)
+        for task in tasks:
+            task.cancel()
+
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._load_tasks.clear()
+        self._pending_loads.clear()
+        self._runtime.session.events.clear_consumer(self.CONSUMER_ID)
+
         if finalize:
             await close_step(self.save())
         if errors:

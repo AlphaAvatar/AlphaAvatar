@@ -41,8 +41,7 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True, slots=True)
 class VisualSubjectKey:
     source: PerceptionSourceRef
-    perception_entity_id: str | None
-    transport_participant_id: str | None
+    entity_id: str | None
 
 
 @dataclass(slots=True)
@@ -91,49 +90,25 @@ class VisualAddressingProcessor(RouterProcessorBase):
         observation: EnvObservation, entity: PerceptionEntityRef | None
     ) -> VisualSubjectKey:
         return VisualSubjectKey(
-            source=observation.source,
-            perception_entity_id=(entity.perception_entity_id if entity is not None else None),
-            transport_participant_id=(observation.transport_participant_id),
+            source=observation.source, entity_id=entity.entity_id if entity is not None else None
         )
 
-    def _select_face(
+    def _select_faces(
         self, *, observation: EnvObservation, result: FaceDetectionResult
-    ) -> FaceDetection | None:
-        if not result.faces:
-            return None
+    ) -> tuple[FaceDetection, ...]:
+        if len(result.faces) == 1 and observation.entity is not None:
+            return result.faces
 
-        if len(result.faces) == 1:
-            return result.faces[0]
-
-        observation_entity = observation.entity
-
-        if observation_entity is not None:
-            matches = tuple(
-                face
-                for face in result.faces
-                if (
-                    face.entity is not None
-                    and face.entity.perception_entity_id == observation_entity.perception_entity_id
-                )
-            )
-
-            if len(matches) == 1:
-                return matches[0]
-
-        if result.selected_face_index is not None:
-            selected = result.faces[result.selected_face_index]
-
-            # In a multi-face frame, a selected bounding box alone does not
-            # prove which current speaker it belongs to.
-            if selected.entity is not None:
-                return selected
-
-        logger.debug(
-            "Skip ambiguous multi-face visual addressing observation_id=%s faces=%s",
-            observation.observation_id,
-            len(result.faces),
+        counts: dict[str, int] = {}
+        for face in result.faces:
+            if face.entity is not None:
+                key = face.entity.entity_id
+                counts[key] = counts.get(key, 0) + 1
+        return tuple(
+            face
+            for face in result.faces
+            if face.entity is not None and counts[face.entity.entity_id] == 1
         )
-        return None
 
     def _target(self, score: float) -> str | None:
         if score >= self._toward_threshold:
@@ -152,7 +127,8 @@ class VisualAddressingProcessor(RouterProcessorBase):
         speaker = InteractionEntityRef(
             kind=InteractionEntityKind.PERSON,
             entity=entity,
-            transport_participant_id=(observation.transport_participant_id),
+            device_id=observation.device_id,
+            source=observation.source,
         )
 
         if target == "avatar":
@@ -181,33 +157,32 @@ class VisualAddressingProcessor(RouterProcessorBase):
             evidence.to_annotation(source=self.SOURCE, observation_id=observation.observation_id)
         )
 
-    def _handle(self, event: PerceptionEvent) -> None:
-        annotation = event.annotation
+    """Processor Loop"""
 
-        if annotation is None:
-            return
-
-        observation_id = annotation.observation_id
-        if observation_id is None:
-            return
-
-        observation = self._runtime.perception.timeline.get_observation(
-            observation_id=observation_id
-        )
-        if observation is None:
-            return
-
-        result = FaceDetectionResult.from_annotation(annotation)
-        face = self._select_face(observation=observation, result=result)
-        if face is None:
-            return
-
+    def _handle_face(
+        self,
+        event: PerceptionEvent,
+        observation: EnvObservation,
+        result: FaceDetectionResult,
+        face: FaceDetection,
+    ) -> None:
         estimate = self._estimator.estimate(face=face, result=result)
         if estimate is None:
             return
 
         entity = self._entity(observation, face)
         key = self._subject_key(observation, entity)
+        for previous in tuple(self._states):
+            if previous.source.source_id != key.source.source_id:
+                continue
+            if previous.source.source_generation > key.source.source_generation:
+                return
+            if previous.source.source_generation < key.source.source_generation:
+                self._states.pop(previous, None)
+
+        if key not in self._states and len(self._states) >= 256:
+            self._states.pop(next(iter(self._states)))
+
         state = self._states.setdefault(key, VisualOrientationState())
 
         state.score = (
@@ -257,6 +232,26 @@ class VisualAddressingProcessor(RouterProcessorBase):
         )
         state.suppressed_logs = 0
 
+    def _handle(self, event: PerceptionEvent) -> None:
+        annotation = event.annotation
+
+        if annotation is None:
+            return
+
+        observation_id = annotation.observation_id
+        if observation_id is None:
+            return
+
+        observation = self._runtime.perception.timeline.get_observation(
+            observation_id=observation_id
+        )
+        if observation is None:
+            return
+
+        result = FaceDetectionResult.from_annotation(annotation)
+        for face in self._select_faces(observation=observation, result=result):
+            self._handle_face(event, observation, result, face)
+
     async def _consume_loop(self) -> None:
         while True:
             try:
@@ -291,6 +286,8 @@ class VisualAddressingProcessor(RouterProcessorBase):
             except Exception:
                 logger.exception("Visual addressing annotation consumer failed")
                 await asyncio.sleep(0.05)
+
+    """Runtime operations"""
 
     async def start(self) -> None:
         if self._task is not None:

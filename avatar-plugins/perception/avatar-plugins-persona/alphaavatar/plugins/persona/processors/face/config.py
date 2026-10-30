@@ -11,10 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class FaceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
+
+    max_faces: int = Field(default=16, ge=1, le=128)
+    max_tracks: int = Field(default=128, ge=1, le=1024)
+    track_ttl_sec: float = Field(default=60.0, gt=0, allow_inf_nan=False)
+    track_match_threshold: float = Field(default=0.65, gt=0, le=1)
+    track_match_margin: float = Field(default=0.08, ge=0, le=1)
+    identity_concurrency: int = Field(default=4, ge=1, le=16)

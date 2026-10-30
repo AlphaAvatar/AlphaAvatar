@@ -64,10 +64,19 @@ class EnvironmentProcessor(MemoryProcessor):
         return "environment"
 
     async def _process_batch(self, batch: EnvMemoryBatch, timeout: float):
+        self.memory_runtime.sync_session()
         state = self.memory_runtime.context_state(batch.context_id)
+        identity = state.capture_identity()
 
-        previous = self.memory_runtime.memory_state.render(
-            memory_type=MemoryType.ENV, context_id=state.context_id
+        previous = "\n".join(
+            item.render_line()
+            for item in self.memory_runtime.visible_items(
+                self.memory_runtime.memory_state.get(
+                    memory_type=MemoryType.ENV, context_id=state.context_id
+                ),
+                identity=identity,
+                context=state.context,
+            )
         )
 
         async with asyncio.timeout(timeout):
@@ -93,8 +102,8 @@ class EnvironmentProcessor(MemoryProcessor):
             state=state,
             memory_type=MemoryType.ENV,
             patches=delta.env_memory_entries,
-            owner_refs=state.owner_refs,
-            participant_refs=state.participant_refs,
+            owner_refs=list(identity.owner_refs),
+            participant_refs=list(identity.participant_refs),
             source_refs=[
                 MemorySourceRef.runtime_event(f"{source_prefix}:{event.sequence}")
                 for event in batch.events
@@ -104,6 +113,7 @@ class EnvironmentProcessor(MemoryProcessor):
                 "trigger": batch.trigger_text,
                 "perception_missed_count": batch.missed_count,
             },
+            identity=identity,
         )
 
         async def commit() -> None:
@@ -115,6 +125,7 @@ class EnvironmentProcessor(MemoryProcessor):
                 checkpoint=MemoryCheckpointAdvance(
                     from_sequence=batch.from_sequence, to_sequence=batch.to_sequence
                 ),
+                participants=identity.participants,
             )
             # Cancellation must never replay an already durable range, even if the
             # following in-memory cache update fails.

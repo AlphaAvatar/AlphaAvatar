@@ -23,6 +23,9 @@ from alphaavatar.agents.persona import PersonaCache
 from alphaavatar.agents.persona.enums import VectorRunnerOP
 from alphaavatar.agents.persona.schemas import UserProfile
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.session.schemas import Participant
+from alphaavatar.core.workspace import check_legacy_identity, prepare_user_path
 
 from ..profile import UserProfileDetails
 from ..profile.serialization import flatten_profile_items, rebuild_profile_items
@@ -49,12 +52,18 @@ class PersonaStore:
             timeout=timeout,
         )
 
-    async def load(self, *, uid: str, timeout: float | None = 3) -> UserProfile:
+    async def load(self, *, participant: Participant, timeout: float | None = 3) -> UserProfile:
+        user_path = self._runtime.participants.user_path(participant)
+        user_id = participant.user_id
+        await asyncio.to_thread(check_legacy_identity, user_path.root.parent, user_id)
+        if not self._runtime.participants.accepts_identity(participant):
+            return UserProfile()
+
         result = await self._infer(
-            {"op": VectorRunnerOP.load, "param": {"user_id": uid}}, timeout=timeout
+            {"op": VectorRunnerOP.load, "param": {"user_id": user_id}}, timeout=timeout
         )
         if result is None:
-            raise RuntimeError(f"Persona store returned no load result uid={uid!r}")
+            raise RuntimeError(f"Persona store returned no load result user_id={user_id!r}")
 
         data = json.loads(result.decode())
 
@@ -64,9 +73,9 @@ class PersonaStore:
             else None
         )
 
-        runtime_state = await self._runtime_state_store.load(
-            user_path=self._runtime.workspace.users.get(uid)
-        )
+        runtime_state = await self._runtime_state_store.load(user_path=user_path)
+        if not self._runtime.participants.accepts_identity(participant):
+            return UserProfile()
 
         return UserProfile(
             details=details,
@@ -88,8 +97,8 @@ class PersonaStore:
         if not result:
             return None
 
-        uid = json.loads(result.decode()).get("user_id")
-        return str(uid) if uid else None
+        user_id = json.loads(result.decode()).get("user_id")
+        return str(user_id) if user_id else None
 
     async def search_face_vector(
         self, *, face_vector: np.ndarray, threshold: float, timeout: float | None = None
@@ -104,12 +113,20 @@ class PersonaStore:
         if not result:
             return None
 
-        uid = json.loads(result.decode()).get("user_id")
-        return str(uid) if uid else None
+        user_id = json.loads(result.decode()).get("user_id")
+        return str(user_id) if user_id else None
 
-    async def _save_vdb(self, *, uid: str, persona: PersonaCache, timeout: float | None) -> None:
+    async def _save_vdb(
+        self, *, user_id: str, persona: PersonaCache, timeout: float | None
+    ) -> None:
         details_items = (
-            flatten_profile_items(uid, persona.profile_details.model_dump())
+            flatten_profile_items(
+                user_id,
+                persona.profile_details.model_dump(mode="json"),
+                fields=persona.detail_fields,
+                updated_at=persona.detail_timestamps,
+                operations=persona.detail_operations,
+            )
             if persona.profile_details is not None
             else None
         )
@@ -125,7 +142,7 @@ class PersonaStore:
             {
                 "op": VectorRunnerOP.save,
                 "param": {
-                    "user_id": uid,
+                    "user_id": user_id,
                     "details_items": details_items,
                     "speaker_vector": speaker_vector,
                     "face_vector": face_vector,
@@ -134,29 +151,39 @@ class PersonaStore:
             timeout=timeout,
         )
         if not result:
-            raise RuntimeError(f"Persona VDB save returned no result uid={uid!r}")
+            raise RuntimeError(f"Persona VDB save returned no result user_id={user_id!r}")
 
-    async def save(self, *, uid: str, persona: PersonaCache, timeout: float | None = 15) -> None:
-        operations = []
+        saved = json.loads(result.decode())
+        failures = {
+            name: value for name, value in saved.items() if name.endswith("error") and value
+        }
+        if failures:
+            raise RuntimeError(f"Persona VDB save failed: {failures}")
 
-        if persona.runtime_state is not None:
-            operations.append(
-                self._runtime_state_store.save(
-                    user_path=self._runtime.workspace.users.get(uid),
-                    runtime_state=persona.runtime_state,
+    async def save(self, *, persona: PersonaCache, timeout: float | None = 15) -> None:
+        # An admitted write retains its exact participant and observations across rebinding.
+        persona = persona.snapshot()
+        participant = persona.participant
+        user_path = self._runtime.participants.user_path(participant, current=False)
+        user_id = participant.user_id
+
+        async def commit() -> None:
+            await asyncio.to_thread(prepare_user_path, user_path)
+            operations = [self._save_vdb(user_id=user_id, persona=persona, timeout=timeout)]
+            if persona.runtime_state is not None:
+                operations.append(
+                    self._runtime_state_store.save(
+                        user_path=user_path, runtime_state=persona.runtime_state
+                    )
                 )
-            )
+            results = await asyncio.gather(*operations, return_exceptions=True)
+            errors: list[Exception] = []
+            for result in results:
+                if isinstance(result, asyncio.CancelledError):
+                    raise result
+                if isinstance(result, Exception):
+                    errors.append(result)
+            if errors:
+                raise ExceptionGroup(f"Failed to save persona user_id={user_id!r}", errors)
 
-        operations.append(self._save_vdb(uid=uid, persona=persona, timeout=timeout))
-
-        results = await asyncio.gather(*operations, return_exceptions=True)
-        errors: list[Exception] = []
-
-        for result in results:
-            if isinstance(result, asyncio.CancelledError):
-                raise result
-            if isinstance(result, Exception):
-                errors.append(result)
-
-        if errors:
-            raise ExceptionGroup(f"Failed to save persona uid={uid!r}", errors)
+        await wait_for_cleanup(asyncio.create_task(commit(), name="persona_store_commit"))

@@ -28,7 +28,7 @@ from alphaavatar.core.cleanup import wait_for_cleanup
 from .schemas import TavilyExtractObj, TavilySearchObj
 
 if TYPE_CHECKING:
-    from alphaavatar.agents.utils.files.work_dirs import SessionPath
+    from alphaavatar.core.workspace import SessionPath
 
 
 class TavilyDeepResearchTool:

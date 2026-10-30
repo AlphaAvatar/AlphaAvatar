@@ -61,6 +61,7 @@ class MultimodalTurnTakingProcessor(RouterProcessorBase):
             addressing_wait_sec=config.addressing_wait_sec,
             transcript_wait_sec=config.transcript_wait_sec,
             max_hold_sec=config.max_hold_sec,
+            max_active_candidates=config.max_active_candidates,
             unsegmented_alignment_sec=config.unsegmented_alignment_sec,
             required_addressing_sources=required_addressing_sources,
         )

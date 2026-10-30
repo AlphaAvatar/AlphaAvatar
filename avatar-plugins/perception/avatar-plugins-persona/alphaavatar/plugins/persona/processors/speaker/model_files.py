@@ -58,9 +58,10 @@ SPEAKER_MODEL_CONFIG: dict[SpeakerModelType, RunnerSpeakerModelConfig] = {
 }
 
 
-def resolve_speaker_model_path(model_type: SpeakerModelType) -> str:
+def resolve_speaker_model_path(model_type: SpeakerModelType, *, models_dir: str) -> str:
     config = SPEAKER_MODEL_CONFIG[model_type]
     return resolve_hf_file(
+        models_dir=models_dir,
         namespace=config.cache_parts,
         repo_id=config.hf_model,
         revision=config.revision,

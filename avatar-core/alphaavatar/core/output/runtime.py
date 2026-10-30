@@ -337,6 +337,7 @@ class OutputRuntime:
         identifier(run_id, "run_id")
         if guard is not None and not callable(guard):
             raise TypeError("Run delivery guard must be callable")
+
         self._foreground_run = run_id
         self._foreground_guard = guard
         self._compact_outputs()

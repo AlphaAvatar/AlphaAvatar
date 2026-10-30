@@ -21,7 +21,8 @@ from typing import TYPE_CHECKING
 from alphaavatar.agents.memory.enums import MemoryType
 from alphaavatar.agents.memory.schemas import MemoryItem, MemoryOwnerRef
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_capability
+from alphaavatar.agents.runtime.capability import avatar_capability
+from alphaavatar.agents.runtime.capability.enums import AvatarCapabilityName
 from alphaavatar.agents.runtime.plugin import AvatarModule
 
 from ...storage.graph import GraphLookup
@@ -31,7 +32,11 @@ from .passive import PassiveRecall
 from .schema import RetrievalCapabilityInput, RetrievalOp
 
 if TYPE_CHECKING:
+    from alphaavatar.core.turn.schemas import TurnSnapshot
+
     from ...runtime import MemoryRuntime
+    from ...schemas import MemoryIdentitySnapshot
+    from ...state import MemoryContextState
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +100,24 @@ class RetrievalProcessor(MemoryProcessor):
     def _recall_owners(self, owner_refs: list[MemoryOwnerRef]) -> list[MemoryOwnerRef]:
         return self.deduplicate_refs([MemoryOwnerRef.avatar(self.avatar_id), *owner_refs])
 
+    def _recall_context(
+        self, context_id: str | None, snapshot: TurnSnapshot | None
+    ) -> tuple[MemoryContextState, MemoryIdentitySnapshot]:
+        self.memory_runtime.sync_session()
+        if snapshot is not None:
+            context_id = context_id or self.memory_runtime.resolve_context_id(snapshot.context_ids)
+
+        state = self.memory_runtime.context_state(context_id or self.memory_runtime.root_context_id)
+        if snapshot is not None and (
+            state.context_id not in snapshot.context_ids
+            or (
+                state.get_turn(snapshot.turn_id) is not snapshot
+                and self.runtime.turn.get(snapshot.input_id) is not snapshot
+            )
+        ):
+            raise ValueError("Memory retrieval requires the execution's committed Turn")
+        return state, state.capture_identity(() if snapshot is None else (snapshot,))
+
     async def _search_text(
         self,
         query: str,
@@ -103,24 +126,33 @@ class RetrievalProcessor(MemoryProcessor):
         memory_type: MemoryType | None = None,
         top_k: int | None = None,
         timeout: float | None = None,
+        snapshot: TurnSnapshot | None = None,
     ) -> list[MemoryItem]:
         query = query.strip()
 
         if not query:
             return []
 
-        state = self.memory_runtime.context_state(context_id or self.memory_runtime.root_context_id)
+        state, identity = self._recall_context(context_id, snapshot)
+        if not self.memory_runtime.identity_is_current(identity):
+            return []
 
-        owners = self._recall_owners(state.owner_refs)
+        owners = self._recall_owners([] if identity.unattributed else list(identity.owner_refs))
 
         try:
-            return await self.store.recall_by_context(
+            items = await self.store.recall_by_context(
                 context_str=query,
                 owner_refs=owners,
                 context=state.context,
                 memory_type=memory_type,
                 top_k=(top_k if top_k is not None else self._recall_num),
                 timeout=(timeout if timeout is not None else 3.0),
+                participants=identity.participants,
+            )
+            return (
+                self.memory_runtime.visible_items(items, identity=identity, context=state.context)
+                if self.memory_runtime.identity_is_current(identity)
+                else []
             )
 
         except Exception as exc:
@@ -138,10 +170,13 @@ class RetrievalProcessor(MemoryProcessor):
         max_hops: int = 0,
         top_k: int = 50,
         timeout: float | None = None,
+        snapshot: TurnSnapshot | None = None,
     ) -> list[MemoryItem]:
-        state = self.memory_runtime.context_state(context_id or self.memory_runtime.root_context_id)
+        state, identity = self._recall_context(context_id, snapshot)
+        if not self.memory_runtime.identity_is_current(identity):
+            return []
 
-        owners = self._recall_owners(state.owner_refs)
+        owners = self._recall_owners([] if identity.unattributed else list(identity.owner_refs))
 
         node_keys: list[str] = []
 
@@ -149,7 +184,7 @@ class RetrievalProcessor(MemoryProcessor):
             node_keys = await asyncio.to_thread(self._resolve_graph_keys, node_key, max_hops)
 
         try:
-            return await self.store.recall_by_graph_node(
+            items = await self.store.recall_by_graph_node(
                 owner_refs=owners,
                 context=state.context,
                 node_keys=node_keys,
@@ -158,6 +193,12 @@ class RetrievalProcessor(MemoryProcessor):
                 node_type=node_type,
                 top_k=top_k,
                 timeout=(timeout if timeout is not None else 3.0),
+                participants=identity.participants,
+            )
+            return (
+                self.memory_runtime.visible_items(items, identity=identity, context=state.context)
+                if self.memory_runtime.identity_is_current(identity)
+                else []
             )
 
         except Exception as exc:
@@ -166,10 +207,17 @@ class RetrievalProcessor(MemoryProcessor):
 
     """Processor invoke"""
 
-    async def invoke(self, request: RetrievalCapabilityInput) -> str:
+    async def invoke(
+        self, request: RetrievalCapabilityInput, *, input_id: str | None = None
+    ) -> str:
+        if not input_id or (snapshot := self.runtime.turn.get(input_id)) is None:
+            raise ValueError("Memory retrieval requires a committed input_id")
+
         match request.op:
             case RetrievalOp.TEXT_SEARCH:
-                items = await self._search_text(request.query or "", top_k=request.top_k)
+                items = await self._search_text(
+                    request.query or "", top_k=request.top_k, snapshot=snapshot
+                )
             case RetrievalOp.GRAPH_SEARCH:
                 items = await self._search_graph(
                     node_key=request.node_key,
@@ -177,6 +225,7 @@ class RetrievalProcessor(MemoryProcessor):
                     node_type=request.node_type,
                     max_hops=request.max_hops,
                     top_k=request.top_k,
+                    snapshot=snapshot,
                 )
             case _:
                 raise ValueError(f"Unsupported retrieval operation: {request.op}")

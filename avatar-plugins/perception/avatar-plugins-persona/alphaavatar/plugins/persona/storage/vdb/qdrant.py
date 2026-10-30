@@ -13,15 +13,14 @@
 # limitations under the License.
 import json
 import os
+from threading import RLock
 from typing import Any
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid5
 
-from langchain_qdrant import QdrantVectorStore
 from qdrant_client.models import (
     Distance,
     FieldCondition,
     Filter,
-    FilterSelector,
     MatchValue,
     PayloadSchemaType,
     PointStruct,
@@ -40,6 +39,7 @@ from ...processors.face.analysis_runner import FaceAnalysisRunner
 from ...processors.face.model_files import FACE_MODEL_CONFIG
 from ...processors.speaker.model_files import SPEAKER_MODEL_CONFIG
 from ...processors.speaker.vector_runner import SpeakerVectorRunner
+from ...profile.serialization import merge_profile_items
 
 
 class QdrantRunner(InferenceRunner):
@@ -47,6 +47,7 @@ class QdrantRunner(InferenceRunner):
 
     def __init__(self):
         super().__init__()
+        self._user_locks: dict[str, RLock] = {}
 
     def _ensure_collection(self, collection_name, embedding_dim) -> None:
         """Create collection if missing; infer embedding dimension dynamically (sync)."""
@@ -98,42 +99,6 @@ class QdrantRunner(InferenceRunner):
                 break
         return all_pts
 
-    def _save_batch_speaker_vector(self, *, items: list[dict]) -> dict:
-        result = {"inserted": 0, "error": None}
-        try:
-            points: list[PointStruct] = []
-            for it in items:
-                vid = str(it.get("id") or uuid4())
-                vec = it["vector"]
-                payload = it.get("payload") or {}
-                points.append(PointStruct(id=vid, vector=vec, payload=payload))
-
-            self._client.upsert(
-                collection_name=self._speaker_collection_name, points=points, wait=True
-            )
-            result["inserted"] = len(points)
-        except Exception as e:
-            result["error"] = str(e)
-        return result
-
-    def _save_batch_face_vector(self, *, items: list[dict]) -> dict:
-        result = {"inserted": 0, "error": None}
-        try:
-            points: list[PointStruct] = []
-            for it in items:
-                vid = str(it.get("id") or uuid4())
-                vec = it["vector"]
-                payload = it.get("payload") or {}
-                points.append(PointStruct(id=vid, vector=vec, payload=payload))
-
-            self._client.upsert(
-                collection_name=self._face_collection_name, points=points, wait=True
-            )
-            result["inserted"] = len(points)
-        except Exception as e:
-            result["error"] = str(e)
-        return result
-
     def _load(self, *, user_id: str, **kwargs) -> dict:
         # 1) Load details_items from profiler collection
         details_items: list[dict[str, Any]] = []
@@ -182,7 +147,11 @@ class QdrantRunner(InferenceRunner):
             "face_vector": face_vector,
         }
 
-    def _save(
+    def _save(self, *, user_id: str, **updates) -> dict:
+        with self._user_locks.setdefault(user_id, RLock()):
+            return self._save_user(user_id=user_id, **updates)
+
+    def _save_user(
         self,
         *,
         user_id: str,
@@ -190,91 +159,41 @@ class QdrantRunner(InferenceRunner):
         speaker_vector: list[float] | None,
         face_vector: list[float] | None = None,
     ) -> dict:
-        result = {
-            "user_id": user_id,
-            "deleted": False,
-            "inserted": 0,
-            "error": None,
-            "speaker_deleted": False,
-            "speaker_inserted": 0,
-            "speaker_error": None,
-            "face_deleted": False,
-            "face_inserted": 0,
-            "face_error": None,
-        }
-
-        # 1) Save details_items to profiler collection
+        # Stable field IDs make retries idempotent and preserve unrelated fields.
         if details_items:
-            try:
-                filt = Filter(
-                    must=[FieldCondition(key="metadata.user_id", match=MatchValue(value=user_id))]
+            normalized = []
+            for item in details_items:
+                metadata = dict(item.get("metadata") or {})
+                metadata["user_id"] = user_id
+                normalized.append({**item, "metadata": metadata})
+            normalized = merge_profile_items(
+                self._load(user_id=user_id)["details_items"], normalized
+            )
+            if normalized:
+                self._profiler_vector_store.add_texts(
+                    [item["page_content"] for item in normalized],
+                    [item["metadata"] for item in normalized],
+                    [item["id"] for item in normalized],
                 )
-                self._client.delete(
-                    collection_name=self._profiler_collection_name,
-                    points_selector=FilterSelector(filter=filt),
-                    wait=True,
-                )
-                result["deleted"] = True
-
-                texts = [it["page_content"] for it in details_items]
-                metadatas = [it["metadata"] for it in details_items]
-                ids = [it["id"] for it in details_items]
-                self._profiler_vector_store.add_texts(texts, metadatas, ids)
-                result["inserted"] = len(details_items)
-            except Exception as e:
-                result["error"] = str(e)
-
-        # 2) Save speaker vector to speaker collection
-        if speaker_vector:
-            try:
-                # delete existing speaker vectors for this user (support both payload schemas)
-                speaker_filt = Filter(
-                    must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]
-                )
-                self._client.delete(
-                    collection_name=self._speaker_collection_name,
-                    points_selector=FilterSelector(filter=speaker_filt),
-                    wait=True,
-                )
-                result["speaker_deleted"] = True
-
-                # upsert the new vector
-                payload = {"user_id": user_id}
-                save_res = self._save_batch_speaker_vector(
-                    items=[{"vector": speaker_vector, "payload": payload}]
-                )
-                if save_res.get("error"):
-                    result["speaker_error"] = save_res["error"]
-                else:
-                    result["speaker_inserted"] = save_res.get("inserted", 0)
-            except Exception as e:
-                result["speaker_error"] = str(e)
-
-        # 3) Save face vector to face collection
-        if face_vector:
-            try:
-                face_filt = Filter(
-                    must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]
-                )
-                self._client.delete(
-                    collection_name=self._face_collection_name,
-                    points_selector=FilterSelector(filter=face_filt),
-                    wait=True,
-                )
-                result["face_deleted"] = True
-
-                payload = {"user_id": user_id}
-                save_res = self._save_batch_face_vector(
-                    items=[{"vector": face_vector, "payload": payload}]
-                )
-                if save_res.get("error"):
-                    result["face_error"] = save_res["error"]
-                else:
-                    result["face_inserted"] = save_res.get("inserted", 0)
-            except Exception as e:
-                result["face_error"] = str(e)
-
-        return result
+        for kind, vector, collection in (
+            ("speaker", speaker_vector, self._speaker_collection_name),
+            ("face", face_vector, self._face_collection_name),
+        ):
+            if vector is None:
+                continue
+            filt = Filter(must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))])
+            existing = self._scroll_all(filt, collection)
+            ids = [point.id for point in existing] or [
+                str(uuid5(NAMESPACE_URL, f"{kind}:{user_id}"))
+            ]
+            self._client.upsert(
+                collection_name=collection,
+                points=[
+                    PointStruct(id=key, vector=vector, payload={"user_id": user_id}) for key in ids
+                ],
+                wait=True,
+            )
+        return {"user_id": user_id, "inserted": len(details_items or []), "error": None}
 
     def _search_speaker_vector(
         self,
@@ -305,9 +224,9 @@ class QdrantRunner(InferenceRunner):
         for h in hits or []:
             payload = h.payload or {}
 
-            uid = payload.get("user_id")
-            if uid is None:
-                uid = (payload.get("metadata") or {}).get("user_id")
+            user_id = payload.get("user_id")
+            if user_id is None:
+                user_id = (payload.get("metadata") or {}).get("user_id")
 
             vec = None
             hv = getattr(h, "vector", None)
@@ -318,7 +237,7 @@ class QdrantRunner(InferenceRunner):
                 vec = hv
 
             results.append(
-                {"user_id": uid, "vector": vec, "id": str(h.id), "score": float(h.score)}
+                {"user_id": user_id, "vector": vec, "id": str(h.id), "score": float(h.score)}
             )
 
         return results[0] if results else None
@@ -352,9 +271,9 @@ class QdrantRunner(InferenceRunner):
         for h in hits or []:
             payload = h.payload or {}
 
-            uid = payload.get("user_id")
-            if uid is None:
-                uid = (payload.get("metadata") or {}).get("user_id")
+            user_id = payload.get("user_id")
+            if user_id is None:
+                user_id = (payload.get("metadata") or {}).get("user_id")
 
             vec = None
             hv = getattr(h, "vector", None)
@@ -365,7 +284,7 @@ class QdrantRunner(InferenceRunner):
                 vec = hv
 
             results.append(
-                {"user_id": uid, "vector": vec, "id": str(h.id), "score": float(h.score)}
+                {"user_id": user_id, "vector": vec, "id": str(h.id), "score": float(h.score)}
             )
 
         return results[0] if results else None
@@ -401,6 +320,8 @@ class QdrantRunner(InferenceRunner):
         return create_embedding_model(task_config)
 
     def initialize(self) -> None:
+        from langchain_qdrant import QdrantVectorStore
+
         # get config
         config = os.getenv("PERSONA_VDB_CONFIG", "{}")
         config = json.loads(config)
