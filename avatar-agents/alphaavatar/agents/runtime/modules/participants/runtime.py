@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass
+from uuid import uuid4
 
 from alphaavatar.core.env.schemas import (
     PerceptionEntityRef,
@@ -130,8 +131,12 @@ class ParticipantRuntime:
         if len(self.session.participants) >= self._max_participants:
             raise RuntimeError("Session participant capacity reached")
 
+        # Newcomers own a user namespace; recognition can correct this initial association later.
         return self.session.join(
-            user_id=user_id, participant_id=participant_id, timezone=timezone, primary=primary
+            user_id=uuid4().hex if user_id is None else user_id,
+            participant_id=participant_id,
+            timezone=timezone,
+            primary=primary,
         )
 
     def get(self, participant_id: str) -> Participant | None:

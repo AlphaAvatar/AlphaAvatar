@@ -117,7 +117,6 @@ class AvatarContextManager(ContextManager):
         return AvatarSysPromptTemplate(
             self._introduction,
             interaction_method=state.interaction_method,
-            internal_capabilities=self._runtime.capability_registry.capabilities,
             stable_behavior_rules=self._config.behavior_rules,
         )
 

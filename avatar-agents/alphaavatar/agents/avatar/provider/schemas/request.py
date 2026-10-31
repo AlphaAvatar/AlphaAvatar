@@ -37,7 +37,7 @@ class ModelGenerationOptions(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class ModelToolDefinition:
-    """Projection of a callable capability. No handler or tool registry lives here."""
+    """Model-visible capability schema; it need not have an executable handler."""
 
     name: str
     description: str
@@ -63,7 +63,7 @@ class ModelRequest:
         if self.tool_choice not in {"auto", "none", "required"}:
             raise ValueError("Unknown tool choice")
         if self.tool_choice == "required" and not self.tools:
-            raise ValueError("Required tool choice needs callable tools")
+            raise ValueError("Required tool choice needs tool definitions")
         if self.output_schema is not None and (
             not isinstance(self.output_schema, type)
             or not issubclass(self.output_schema, BaseModel)

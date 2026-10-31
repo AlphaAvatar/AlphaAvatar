@@ -385,9 +385,7 @@ class AvatarEngine(LifecycleComponent):
             context_id=context_id,
             input=model_input,
             allowed_capabilities=tuple(
-                capability.id
-                for capability in self._runtime.capability_registry.capabilities
-                if capability.callable
+                capability.id for capability in self._runtime.capability_registry.capabilities
             ),
             limits=self._config.loop_limits,
             depth=self._config.depth,

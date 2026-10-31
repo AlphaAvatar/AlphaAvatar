@@ -9,7 +9,7 @@
 | `device_id` | 应用接入端点的标识，由接入适配层提供。一个端点可以提供文字、麦克风、摄像头等输入，也可以作为渲染端点。 | 当前接入后端的命名空间，例如一个 LiveKit room。当前适配器使用 `participant.identity`；它不是硬件序列号，重连或重新附着时可以复用或更换。 |
 | `entity_id` | 感知到的一个实体，例如同一摄像头画面中的某个人，或音频来源中持续跟踪的一名说话者。由感知输入或跟踪器提供。 | 必须连同 `PerceptionSourceRef` 使用，即 `(source_id, source_generation, entity_id)`；会话之间还需区分 `session_id`。实体跟踪有容量和过期边界，不能把编号相同当作跨来源或跨会话的同一个人。 |
 | `participant_id` | 当前会话中的逻辑参与者，由 `SessionRuntime` 管理。它把来自不同媒体的已确认关联汇集到一个会话对象。 | 在一个 `SessionRuntime` 中唯一，默认生成 UUID。身份纠正不更换该 ID；它不等于接入端点、媒体实体或长期用户。 |
-| `user_id` | 长期用户身份，指向用户 Persona、Identity、Memory 等数据。由可信应用明确建立，或由运行时识别／决策组件提交并接受。 | 在当前应用用户数据命名空间中解释，可跨会话使用。`Participant.user_id` 是当前判断，可以为 `None`，也可以多次纠正。 |
+| `user_id` | 长期用户身份，指向用户 Persona、Identity、Memory 等数据。`ParticipantRuntime.join()` 为未指定用户的新参与者分配独立 UUID；应用可指定已有用户，识别／决策组件也可提交更正。 | 在当前应用用户数据命名空间中解释，可跨会话使用。`Participant.user_id` 是当前判断，明确解绑后可为 `None`，也可以多次纠正。 |
 
 `agent_device_id` 表示 Avatar 自身的接入端点，仍然属于 `device_id` 的同一种标识；它不等于 `avatar_id`。`SessionContext.device_id` 指当前用户端点，`CharacterConnection.device_id` 指该渲染连接的目标端点。字段所在对象决定角色，不要求这两者取相同值。`device_ids`、`excluded_device_ids` 是端点集合，不是新的 ID 类型。
 
@@ -69,11 +69,13 @@ participants.bind_user(IdentityRequest(
 
 ### 纠正、解绑和快照
 
-`bind_user(IdentityRequest(...))` 支持声明、感知、Agent 和独立模型提交身份更正。默认策略不限制“只识别一次”，也不要求 Agent 的目标用户先经过感知提名。默认策略要求决策组件提供非空 `reason`；它记录接受依据，不负责在 Core 内调用模型。识别阈值和异步推理由处理器完成，应用可以替换接受策略。Host 的原始连接 metadata 不直接建立已知用户身份；默认以 `user_id=None` 入场，也不自动创建随机长期访客账户。
+`bind_user(IdentityRequest(...))` 支持声明、感知、Agent 和独立模型提交身份更正。默认策略不限制“只识别一次”，也不要求 Agent 的目标用户先经过感知提名。默认策略要求决策组件提供非空 `reason`；它记录接受依据，不负责在 Core 内调用模型。识别阈值和异步推理由处理器完成，应用可以替换接受策略。Host 的原始连接 metadata 不直接建立已知用户身份；未指定 `user_id` 时，`ParticipantRuntime.join()` 在初始 JOINED 事件中关联新分配的用户 ID，供首次交互保存状态和观测。这不是对已有用户的识别，也不从 `device_id`、`entity_id` 或 `participant_id` 推导用户身份。复用已有实体关联不会重复分配；Core `SessionRuntime.join()` 仍可表达 `user_id=None` 的未绑定参与者。
 
 Engine 直接注册 `runtime.participants` 的 `participant.identity` 能力，主动身份判断实现在 `ParticipantRuntime.invoke()` 中，纯文本输入也可使用。它只能选择调用所属 Turn 的参与者；只有单一参与者时可以省略 `participant_id`。模型参数为目标 `user_id`、判断依据 `reason` 和可选的 `basis_sequence`，不会增加另一套人物标识，也不返回用户资料。默认以 Turn 捕获的版本作比较；同次执行中再次更正时，必须结合新证据并使用前次结果返回的版本。
 
-请求必须携带读取时的 `identity_sequence`，填入 `basis_sequence`；迟到结果会返回 `STALE`，调用方需重新获取参与者并判断是否重试。`user_id=None` 表示解绑，不恢复最初用户，也不生成临时长期用户 ID。若应用确实创建了访客账户，那是明确创建的用户，与尚未识别的感知参与者不同。
+请求必须携带读取时的 `identity_sequence`，填入 `basis_sequence`；迟到结果会返回 `STALE`，调用方需重新获取参与者并判断是否重试。`bind_user()` 中的 `user_id=None` 表示明确解绑，不恢复最初用户，也不再次分配用户 ID；未绑定期间仍有当前会话运行状态，但不能读取或保存长期用户资料。自动分配只发生在业务入口创建新参与者时，不改变后续纠正或解绑语义。
+
+Persona 在 `cache_for()` 中同步构建当前会话的 `runtime_state`，不执行 I/O，也不等待向量库。后台先独立读取本地登录历史并合并，再加载 Persona 资料；向量库失败不会清空已合并的登录历史。身份版本变化会清除原用户的基础资料和登录状态，按新身份重新构建，迟到加载不能覆盖新身份。同一用户在同一会话重复加载或保存不重复计数，磁盘合并保留已有 `last_*` 和最早的当前会话登录时间。
 
 `Participant` 是不可变快照。改绑保留 `participant_id`，替换当前快照并递增身份版本。`TurnEntityRef` 中的 `participant_id`、`user_id`、`identity_sequence` 固定该 Turn 的身份事实；这些历史引用不能被后来的纠正悄悄重写。Persona／Memory 通过对应 Turn 的 actors 选择用户资料。没有明确主体时不把整个 Session 的用户资料合并到提示中。
 
@@ -142,7 +144,11 @@ Persona 会随已接受身份异步加载相应资料，Context 在准备完成�
 
 语音输入沿用 `segment_id`，语音输出沿用 `output_id` 及其块/对齐引用；当前没有单独的 `speech_id` 或 `playback_id` 契约。
 
-实现入口：[模型请求](../avatar-agents/alphaavatar/agents/avatar/provider/schemas/request.py)、[模型项目](../avatar-agents/alphaavatar/agents/avatar/provider/schemas/model_input.py)、[模型流](../avatar-agents/alphaavatar/agents/avatar/provider/schemas/stream.py)、[追踪记录](../avatar-agents/alphaavatar/agents/avatar/provider/schemas/trace_record.py)、[能力注册](../avatar-agents/alphaavatar/agents/runtime/capability/schema.py)、[输出身份](../avatar-core/alphaavatar/core/output/schemas/identity.py)、[输出记录](../avatar-core/alphaavatar/core/output/schemas/records.py)、[输出块](../avatar-core/alphaavatar/core/output/schemas/chunk.py)、[对齐](../avatar-core/alphaavatar/core/output/schemas/alignment.py)、[展示决策](../avatar-core/alphaavatar/core/output/schemas/decision.py)。
+`LoopRequest.allowed_capabilities` 指本次 Run 可以向模型展示的注册能力，包含可调用和不可调用两类。`LoopTools.definitions` 将允许展示的两类能力统一投影为 `ModelRequest.tools`，描述均来自 `AvatarCapability.model_description`。不可调用能力使用空对象参数 schema，其描述附带 `[Description only; do not call this capability.]` 提醒；保留 `input_schema=None` 和无 handler 的运行时语义，不会因展示为 tool 而变成可执行操作。system prompt 不再重复列出能力清单，也不通过 `ContextContribution` 或轮次消息注入能力描述。
+
+未准入或 `enabled=False` 的能力不会被展示；执行审批要求只约束可调用工具。不可调用能力即使被模型误调用，也会以 `not_callable` 拒绝，且不会执行处理器。工具定义在本次 Run 创建时捕获，后续模型步骤与最终收尾复用同一份定义；最终收尾使用 `tool_choice="none"`，同时保留全部已展示的能力说明。能力声明本身不会成为轮次消息或执行记录。
+
+实现入口：[模型请求](../avatar-agents/alphaavatar/agents/avatar/provider/schemas/request.py)、[模型项目](../avatar-agents/alphaavatar/agents/avatar/provider/schemas/model_input.py)、[模型流](../avatar-agents/alphaavatar/agents/avatar/provider/schemas/stream.py)、[追踪记录](../avatar-agents/alphaavatar/agents/avatar/provider/schemas/trace_record.py)、[能力注册](../avatar-agents/alphaavatar/agents/runtime/capability/schemas/capability.py)、[输出身份](../avatar-core/alphaavatar/core/output/schemas/identity.py)、[输出记录](../avatar-core/alphaavatar/core/output/schemas/records.py)、[输出块](../avatar-core/alphaavatar/core/output/schemas/chunk.py)、[对齐](../avatar-core/alphaavatar/core/output/schemas/alignment.py)、[展示决策](../avatar-core/alphaavatar/core/output/schemas/decision.py)。
 
 ## 5. Memory、上下文和图
 

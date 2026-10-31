@@ -17,7 +17,6 @@ from xml.sax.saxutils import escape
 
 from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
 from alphaavatar.agents.runtime import InteractionMethod, StateRuntime
-from alphaavatar.agents.runtime.capability.schemas import AvatarCapability
 from alphaavatar.agents.utils.time import ParticipantTimeContext
 
 from .prompts.avatar_system_prompts import (
@@ -31,15 +30,6 @@ from .prompts.xlm_protocol_prompts import XML_PROTOCOL_PROMPT
 
 def _xml_text(value: object | None) -> str:
     return escape(str(value or DEFAULT_SYSTEM_VALUE))
-
-
-def _render_capabilities(capabilities: tuple[AvatarCapability, ...]) -> str:
-    return (
-        "\n".join(
-            f"- {capability.id}: {capability.model_description}" for capability in capabilities
-        )
-        or DEFAULT_SYSTEM_VALUE
-    )
 
 
 def _render_participant_time(participant_time: dict[str, ParticipantTimeContext]) -> str:
@@ -66,13 +56,11 @@ class AvatarSysPromptTemplate:
         avatar_introduction: str,
         *,
         interaction_method: InteractionMethod | None = None,
-        internal_capabilities: tuple[AvatarCapability, ...] = (),
         stable_persona: str = DEFAULT_SYSTEM_VALUE,
         stable_behavior_rules: str = DEFAULT_SYSTEM_VALUE,
     ) -> None:
         self._avatar_introduction = avatar_introduction
         self._interaction_method = interaction_method or InteractionMethod()
-        self._internal_capabilities = _render_capabilities(internal_capabilities)
         self._stable_persona = stable_persona
         self._stable_behavior_rules = stable_behavior_rules
 
@@ -97,7 +85,6 @@ class AvatarSysPromptTemplate:
             response_style=SPOKEN_RESPONSE_STYLE
             if self._interaction_method.audio_output
             else TEXT_RESPONSE_STYLE,
-            internal_capabilities=self._internal_capabilities,
             # half-dynamic
             stable_persona=persona,
             stable_behavior_rules=behavior_rules,
