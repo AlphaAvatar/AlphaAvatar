@@ -116,7 +116,8 @@ class RetrievalProcessor(MemoryProcessor):
             )
         ):
             raise ValueError("Memory retrieval requires the execution's committed Turn")
-        return state, state.capture_identity(() if snapshot is None else (snapshot,))
+        current = () if snapshot is None else (self.runtime.participants.project_turn(snapshot),)
+        return state, state.capture_identity(current)
 
     async def _search_text(
         self,

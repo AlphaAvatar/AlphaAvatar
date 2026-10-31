@@ -19,12 +19,14 @@ import json
 import logging
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from math import isfinite
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from pydantic import BaseModel
 
+from alphaavatar.agents.avatar.context import ContextIdentityChanged
 from alphaavatar.agents.avatar.loop.base import ToolAuthorizer
 from alphaavatar.agents.avatar.loop.enums import ToolOutcome
 from alphaavatar.agents.avatar.loop.schemas import LoopIdentity, ToolCallContext, ToolRecord
@@ -35,6 +37,7 @@ from alphaavatar.agents.avatar.provider.schemas import (
     ModelTextPart,
     ModelToolDefinition,
 )
+from alphaavatar.agents.runtime.capability.enums import AvatarCapabilityName
 from alphaavatar.agents.runtime.capability.result import CapabilityResult
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.output.enums import ExecutionSignalKind
@@ -121,16 +124,19 @@ class LoopTools:
         unsafe_lock: asyncio.Lock,
         cancelled: Callable[[], bool],
         *,
+        identity_is_current: Callable[[], bool],
         policies: Mapping[str, ToolPolicy],
         authorize: ToolAuthorizer | None,
     ) -> None:
         self._identity = identity
+        self._runtime = runtime
         self._registry = runtime.capability_registry
         self._authorize = authorize
         self._budget = budget
         self._feedback = feedback
         self._unsafe_lock = unsafe_lock
         self._cancelled = cancelled
+        self._identity_is_current = identity_is_current
 
         allowed = set(budget.request.allowed_capabilities)
         capabilities = {c.id: c for c in self._registry.capabilities}
@@ -144,6 +150,7 @@ class LoopTools:
         self._policies = dict(policies)
         self._signatures: dict[str, int] = {}
         self._records: dict[str, ToolRecord] = {}
+        self._memory_identities: dict[str, tuple[tuple[str, str | None, int | None], ...]] = {}
         self.records: list[ToolRecord] = []
 
     @property
@@ -159,7 +166,58 @@ class LoopTools:
 
     def _stopping(self) -> bool:
         task = asyncio.current_task()
-        return self._cancelled() or bool(task is not None and task.cancelling())
+        return (
+            self._cancelled()
+            or bool(task is not None and task.cancelling())
+            or not self._identity_is_current()
+        )
+
+    def _check_dispatch(self) -> None:
+        if not self._stopping():
+            return
+        task = asyncio.current_task()
+        if self._cancelled() or (task is not None and task.cancelling()):
+            raise asyncio.CancelledError
+        raise ContextIdentityChanged("Tool dispatch identity changed")
+
+    def _memory_basis(self) -> tuple[tuple[str, str | None, int | None], ...]:
+        snapshot = self._runtime.turn.get(self._budget.request.input_id)
+        if snapshot is None:
+            raise ValueError("Memory retrieval requires its committed input")
+        return tuple(
+            (actor.participant_id, actor.user_id, actor.identity_sequence)
+            for actor in self._runtime.participants.project_turn(snapshot).actors
+            if actor.participant_id is not None
+        )
+
+    def _memory_is_current(self, call_id: str) -> bool:
+        return all(
+            (current := self._runtime.participants.get(participant_id)) is not None
+            and current.user_id == user_id
+            and current.identity_sequence == sequence
+            and self._runtime.participants.accepts_identity(current)
+            for participant_id, user_id, sequence in self._memory_identities.get(call_id, ())
+        )
+
+    @staticmethod
+    def _stale_memory(record: ToolRecord) -> ToolRecord:
+        parts = (
+            ModelTextPart(
+                json.dumps(
+                    {
+                        "status": ToolOutcome.FAILED.value,
+                        "code": "identity_changed",
+                        "executed": record.executed,
+                    },
+                    separators=(",", ":"),
+                )
+            ),
+        )
+        return replace(
+            record,
+            output=replace(record.output, parts=parts, is_error=True),
+            outcome=ToolOutcome.FAILED,
+        )
 
     def _policy(self, call: ModelFunctionCall) -> ToolPolicy:
         capability = self._capabilities.get(call.name)
@@ -216,8 +274,7 @@ class LoopTools:
             asyncio.get_running_loop().time() + limits.tool_timeout,
         )
         try:
-            if self._stopping():
-                raise asyncio.CancelledError
+            self._check_dispatch()
 
             capability = self._capabilities.get(call.name)
             if capability is None:
@@ -239,8 +296,16 @@ class LoopTools:
 
             # Validate before authorization and before obtaining the side-effect execution slot.
             capability.parse(payload)
+            memory_basis = (
+                self._memory_basis()
+                if capability.id == AvatarCapabilityName.MEMORY_RETRIEVAL
+                else None
+            )
+            signature_input: list[Any] = [capability.id, payload]
+            if memory_basis is not None:
+                signature_input.append(memory_basis)
             signature = hashlib.sha256(
-                json.dumps([capability.id, payload], sort_keys=True, allow_nan=False).encode()
+                json.dumps(signature_input, sort_keys=True, allow_nan=False).encode()
             ).hexdigest()
             count = self._signatures.get(signature, 0)
             if count >= limits.max_same_call:
@@ -289,8 +354,7 @@ class LoopTools:
 
             async def execute() -> Any:
                 nonlocal executed
-                if self._stopping():
-                    raise asyncio.CancelledError
+                self._check_dispatch()
                 if asyncio.get_running_loop().time() >= deadline:
                     raise TimeoutError("Tool dispatch deadline expired")
                 self._feedback.signal(
@@ -299,6 +363,8 @@ class LoopTools:
                     tool_name=call.name,
                     executed=True,
                 )
+                if memory_basis is not None:
+                    self._memory_identities[call.call_id] = memory_basis
                 executed = True
                 return await self._registry.invoke(
                     call.name, payload, input_id=self._budget.request.input_id
@@ -312,6 +378,8 @@ class LoopTools:
                     # Serialize local write dispatch across foreground and retiring executions.
                     async with self._unsafe_lock:
                         raw = await execute()
+            if memory_basis is not None and not self._memory_is_current(call.call_id):
+                raise ContextIdentityChanged("Memory retrieval identity changed")
             try:
                 parts, is_error = result_parts(raw, max_bytes=limits.max_result_bytes)
             except (ValueError, TypeError, RecursionError):
@@ -329,6 +397,14 @@ class LoopTools:
                 started=started,
                 parts=parts,
                 is_error=is_error,
+            )
+        except ContextIdentityChanged:
+            return self._record(
+                call,
+                ToolOutcome.FAILED if executed else ToolOutcome.SKIPPED,
+                executed=executed,
+                started=started,
+                code="identity_changed",
             )
         except asyncio.CancelledError:
             uncertain = executed and not policy.read_only
@@ -372,10 +448,16 @@ class LoopTools:
                     code=reason,
                 )
             record = self._records[call.call_id]
-            ordered.append(record)
             if call.call_id not in known:
+                # Only uncommitted results can change; canonical history remains immutable.
+                if call.call_id in self._memory_identities and not self._memory_is_current(
+                    call.call_id
+                ):
+                    record = self._stale_memory(record)
+                    self._records[call.call_id] = record
                 self.records.append(record)
                 known.add(call.call_id)
+            ordered.append(record)
         return tuple(ordered)
 
     async def batch(self, calls: tuple[ModelFunctionCall, ...]) -> tuple[ToolRecord, ...]:
@@ -385,10 +467,14 @@ class LoopTools:
 
         tasks: list[asyncio.Task[ToolRecord]] = []
         active: list[asyncio.Task[ToolRecord]] = []
+        reason = "execution_stopped"
         try:
             for call in calls:
-                if self._stopping():
-                    raise asyncio.CancelledError
+                try:
+                    self._check_dispatch()
+                except ContextIdentityChanged:
+                    reason = "identity_changed"
+                    break
 
                 budget = self._budget
                 if budget.tool_calls >= budget.request.limits.max_tool_calls:
@@ -408,8 +494,11 @@ class LoopTools:
                 if active and (not parallel or at_capacity):
                     await asyncio.shield(asyncio.gather(*active))
                     active.clear()
-                if self._stopping():
-                    raise asyncio.CancelledError
+                try:
+                    self._check_dispatch()
+                except ContextIdentityChanged:
+                    reason = "identity_changed"
+                    break
 
                 task = asyncio.create_task(self._invoke(call), name=f"loop_tool:{call.call_id}")
                 tasks.append(task)
@@ -430,5 +519,15 @@ class LoopTools:
 
             await wait_for_cleanup(asyncio.create_task(finish(), name="loop_tool_batch_close"))
 
-        # The execution owner commits all results, including unstarted/cancelled calls.
-        return self.settle(calls, reason="execution_stopped")
+        # The owner revalidates and freezes results together with canonical admission.
+        for call in calls:
+            if call.call_id not in self._records:
+                self._record(
+                    call,
+                    ToolOutcome.SKIPPED,
+                    executed=False,
+                    started=time.perf_counter(),
+                    code=reason,
+                )
+
+        return tuple(self._records[call.call_id] for call in calls)

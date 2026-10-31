@@ -144,7 +144,8 @@ class MemoryRuntime(MemoryBase):
         if context_id is None:
             return ""
         state = self.context_state(context_id)
-        return self._render_content(state.capture_identity([snapshot]), state.context)
+        current = self._runtime.participants.project_turn(snapshot)
+        return self._render_content(state.capture_identity([current]), state.context)
 
     def visible_items(
         self,

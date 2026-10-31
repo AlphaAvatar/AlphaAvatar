@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 from collections import OrderedDict
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from uuid import uuid4
 
 from alphaavatar.core.env.schemas import (
@@ -28,6 +28,7 @@ from alphaavatar.core.session import Participant, SessionRuntime
 from alphaavatar.core.session.enums import IdentityOutcome, IdentitySource
 from alphaavatar.core.session.schemas import IdentityRequest
 from alphaavatar.core.turn import TurnRuntime
+from alphaavatar.core.turn.schemas import TurnSnapshot
 from alphaavatar.core.workspace import UserPath, WorkspacePaths
 
 from ...capability import avatar_capability
@@ -50,7 +51,8 @@ class _SegmentState:
         "Identify or correct a participant speaking in this Turn using the conversation "
         "and available evidence. A user does not need a previous face or voice match. "
         "Explain the evidence in reason; use null user_id to clear a mistaken match. "
-        "The default basis is the Turn's captured identity version. For a further correction, "
+        "The default basis is the current accepted version of this Turn's participant. "
+        "For an explicit version check, "
         "use the version returned by the previous result and reassess the evidence. "
         "Never blindly retry a stale decision. This tool returns identity state, not user data."
     ),
@@ -145,6 +147,31 @@ class ParticipantRuntime:
 
     def get(self, participant_id: str) -> Participant | None:
         return self.session.get_participant(participant_id=participant_id)
+
+    def project_turn(self, snapshot: TurnSnapshot) -> TurnSnapshot:
+        """Read current identities for this Turn without rewriting its accepted history."""
+        if self.turn.get(snapshot.input_id) is not snapshot:
+            raise ValueError("Identity projection requires a Turn owned by this runtime")
+
+        actors = []
+        for actor in snapshot.actors:
+            if actor.participant_id is None:
+                actors.append(actor)
+                continue
+
+            participant = self.get(actor.participant_id)
+            if participant is None or not self.accepts_identity(participant):
+                raise ValueError("Turn participant no longer has an accepted identity")
+
+            actors.append(
+                replace(
+                    actor,
+                    user_id=participant.user_id,
+                    identity_sequence=participant.identity_sequence,
+                )
+            )
+
+        return replace(snapshot, actors=tuple(actors))
 
     def bind_device(self, device_id: str, participant_id: str) -> None:
         self._require_participant(participant_id)
@@ -353,6 +380,8 @@ class ParticipantRuntime:
         snapshot = self.turn.get(input_id) if input_id is not None else None
         if snapshot is None:
             raise ValueError("Identity decisions require the calling execution's committed input")
+
+        snapshot = self.project_turn(snapshot)
 
         participant_id = request.participant_id
         if participant_id is None:

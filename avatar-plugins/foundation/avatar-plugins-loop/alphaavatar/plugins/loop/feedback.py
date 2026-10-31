@@ -289,6 +289,12 @@ class LoopFeedback:
             if message.text and not message.completed:
                 await self._output.interrupt(output_id=message.output_id, reason=reason)
 
+    async def interrupt_outputs(self, reason: str) -> None:
+        # Completed text may still own queued synthesis or playback under the old identity.
+        for message in self._messages.values():
+            if message.text:
+                await self._output.interrupt(output_id=message.output_id, reason=reason)
+
     async def aclose(self, *, interrupted: bool = False) -> None:
         if self._close_task is None:
 

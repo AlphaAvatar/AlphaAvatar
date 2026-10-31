@@ -150,13 +150,14 @@ class AvatarContextManager(ContextManager):
             turn_behavior_rules="\n".join((state.global_behavior_rules, state.turn_behavior_rules)),
         )
 
-    def _check_identity(self, basis: tuple[tuple[str, str, int], ...]) -> None:
+    def _check_identity(self, basis: tuple[tuple[str, str | None, int], ...]) -> None:
         for participant_id, user_id, sequence in basis:
             current = self._runtime.participants.get(participant_id)
             if (
                 current is None
                 or current.user_id != user_id
                 or current.identity_sequence != sequence
+                or not self._runtime.participants.accepts_identity(current)
             ):
                 raise ContextIdentityChanged("Prepared context identity changed")
 
@@ -248,11 +249,12 @@ class AvatarContextManager(ContextManager):
             request = replace(
                 request, input=self._history.capture(snapshot, request.context_id, request.input)
             )
+            current = self._runtime.participants.project_turn(snapshot)
             state = self._state_snapshot(snapshot)
             basis = tuple(
                 (actor.participant_id, actor.user_id, actor.identity_sequence)
-                for actor in snapshot.actors
-                if actor.participant_id is not None and actor.user_id is not None
+                for actor in current.actors
+                if actor.participant_id is not None
             )
             self._check_identity(basis)
             system = self._system_template(state).instructions(stable_persona=state.user_persona)

@@ -35,7 +35,7 @@ class ParticipantInput(BaseModel):
         default=None,
         ge=0,
         strict=True,
-        description="Version from a previous identity result; defaults to the Turn actor's version",
+        description="Expected identity version; defaults to the current accepted Turn participant",
     )
 
     @field_validator("user_id", "participant_id")

@@ -153,7 +153,8 @@ class PassiveRecall:
             async with asyncio.timeout_at(entry.deadline):
                 self._memory.sync_session()
                 state = self._memory.context_state(context_id)
-                identity = state.capture_identity([snapshot])
+                current = self._runtime.participants.project_turn(snapshot)
+                identity = state.capture_identity([current])
                 if not self._memory.identity_is_current(identity):
                     self._finish(entry, "identity_changed")
                     return

@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from alphaavatar.agents.avatar.context import ContextIdentityChanged
@@ -82,10 +82,10 @@ class LoopExecution(LoopHandle):
             raise ValueError("Execution requires its committed input")
 
         participants = runtime.participants
-        identities = tuple(
+        self._identity_basis = tuple(
             (actor.participant_id, actor.user_id, actor.identity_sequence)
-            for actor in snapshot.actors
-            if actor.participant_id is not None and actor.user_id is not None
+            for actor in participants.project_turn(snapshot).actors
+            if actor.participant_id is not None
         )
 
         def delivery_guard() -> bool:
@@ -94,7 +94,7 @@ class LoopExecution(LoopHandle):
                 and current.user_id == user_id
                 and current.identity_sequence == sequence
                 and participants.accepts_identity(current)
-                for participant_id, user_id, sequence in identities
+                for participant_id, user_id, sequence in self._identity_basis
             )
 
         self._delivery_guard = delivery_guard
@@ -110,6 +110,8 @@ class LoopExecution(LoopHandle):
         self._commits = 0
         self._pending_calls: tuple[ModelFunctionCall, ...] = ()
         self._context: ModelInput | None = None
+        self._operation: asyncio.Task[Any] | None = None
+        self._identity_cleanup: asyncio.Task[None] | None = None
         self._turn: TurnSnapshot = snapshot
         self._generation_options = self._budget.options(config.reasoning, finalizing=False)
         self._cancel_reason: str | None = None
@@ -130,6 +132,7 @@ class LoopExecution(LoopHandle):
             self._feedback,
             unsafe_lock,
             cancelled=lambda: self._cancel_reason is not None,
+            identity_is_current=self._delivery_guard,
             policies=config.tool_policies,
             authorize=authorize,
         )
@@ -168,6 +171,26 @@ class LoopExecution(LoopHandle):
                 isinstance(part, ModelTextPart | ModelRefusalPart) and part.text.strip()
                 for part in item.parts
             )
+        )
+
+    def _log(self, name: str, **fields) -> None:
+        log_event(
+            logger,
+            name,
+            session_id=self._runtime.session.session_id,
+            context_id=self.identity.context_id,
+            turn_id=self.identity.turn_id,
+            run_id=self.identity.run_id,
+            **fields,
+        )
+
+    def _diagnose(self, error: BaseException, *, stage: str) -> None:
+        # Keep exception chains and code locations, never prompts, payloads or tool arguments.
+        logger.warning(
+            "Avatar loop failed run_id=%s stage=%s\n%s",
+            self.identity.run_id,
+            stage,
+            format_error(error, details=True),
         )
 
     def cancel(self, *, reason: str = "interrupted") -> None:
@@ -270,14 +293,71 @@ class LoopExecution(LoopHandle):
             while True:
                 sequence = stream.latest_sequence
                 if not self._delivery_guard():
-                    self.cancel(reason="identity_changed")
-                    return
+                    # Tool effects must settle; only preparation/generation can be restarted.
+                    if self._operation is not None and not self._operation.done():
+                        self._operation.cancel()
+
+                    await self._interrupt_identity()
+
                 # This consumer observes current state only; version checks also detect ABA/gaps.
                 stream.commit(consumer_id=consumer_id, cursor_seq=sequence)
                 if not await stream.wait_for_pending(consumer_id=consumer_id):
                     return
         finally:
             stream.clear_consumer(consumer_id)
+
+    async def _interrupt_identity(self) -> None:
+        if self._identity_cleanup is None:
+            self._identity_cleanup = asyncio.create_task(
+                self._feedback.interrupt_outputs("identity_changed"), name="loop_identity_output"
+            )
+        await wait_for_cleanup(self._identity_cleanup)
+
+    async def _with_identity[T](self, operation: Coroutine[Any, Any, T]) -> T:
+        task = self._operation = asyncio.create_task(operation)
+        try:
+            return await task
+        except asyncio.CancelledError:
+            owner = asyncio.current_task()
+            if (
+                self._cancel_reason is None
+                and owner is not None
+                and not owner.cancelling()
+                and not self._delivery_guard()
+            ):
+                raise ContextIdentityChanged("Execution identity changed") from None
+            raise
+        finally:
+            self._operation = None
+
+    async def _prepare_context(self) -> None:
+        if self._context is not None and self._delivery_guard():
+            return
+
+        # Seal old outputs before a new guard can make this run deliverable again.
+        await self._interrupt_identity()
+        if self._cancel_reason is not None:
+            raise asyncio.CancelledError
+
+        self._context = None
+        self._identity_basis = tuple(
+            (actor.participant_id, actor.user_id, actor.identity_sequence)
+            for actor in self._runtime.participants.project_turn(self._turn).actors
+            if actor.participant_id is not None
+        )
+        self._identity_cleanup = None
+        preparation = ContextPrepareRequest(
+            input=self._request.input,
+            turn_id=self.identity.turn_id,
+            context_id=self.identity.context_id,
+            input_id=self._request.input_id,
+            contributions=(self._budget.contribution(),),
+        )
+        self._context = await self._with_identity(self._context_manager.prepare(preparation))
+        if not isinstance(self._context, ModelInput):
+            raise TypeError("ContextManager.prepare must return ModelInput")
+
+        self._check_identity()
 
     async def _model(self, *, finalizing: bool, reason: str | None) -> ModelResponseCompleted:
         self._check_identity()
@@ -465,7 +545,9 @@ class LoopExecution(LoopHandle):
 
             try:
                 async with asyncio.timeout_at(budget.exploration_deadline):
-                    response = await self._model(finalizing=False, reason=None)
+                    await self._prepare_context()
+                    response = await self._with_identity(self._model(finalizing=False, reason=None))
+                    self._check_identity()
                     calls = tuple(
                         item for item in response.items if isinstance(item, ModelFunctionCall)
                     )
@@ -489,6 +571,9 @@ class LoopExecution(LoopHandle):
                 reason = "time_budget"
             except ModelIncompleteError:
                 reason = "incomplete_response"
+            except ContextIdentityChanged:
+                # Accepted tool pairs and the original budgets survive identity correction.
+                self._context = None
             finally:
                 await self._settle_pending(
                     reason=reason or self._cancel_reason or "execution_stopped"
@@ -499,7 +584,16 @@ class LoopExecution(LoopHandle):
 
         # One answer-only request, using the same prefix, tools and reasoning profile.
         async with asyncio.timeout_at(budget.deadline):
-            response = await self._model(finalizing=True, reason=reason)
+            while True:
+                try:
+                    await self._prepare_context()
+                    response = await self._with_identity(
+                        self._model(finalizing=True, reason=reason)
+                    )
+                    self._check_identity()
+                    break
+                except ContextIdentityChanged:
+                    self._context = None
 
         answers = self._answers(response)
         if not answers:
@@ -507,26 +601,6 @@ class LoopExecution(LoopHandle):
 
         refused = any(isinstance(p, ModelRefusalPart) for a in answers for p in a.parts)
         return LoopState.REFUSED if refused else LoopState.PARTIAL, answers, reason
-
-    def _log(self, name: str, **fields) -> None:
-        log_event(
-            logger,
-            name,
-            session_id=self._runtime.session.session_id,
-            context_id=self.identity.context_id,
-            turn_id=self.identity.turn_id,
-            run_id=self.identity.run_id,
-            **fields,
-        )
-
-    def _diagnose(self, error: BaseException, *, stage: str) -> None:
-        # Keep exception chains and code locations, never prompts, payloads or tool arguments.
-        logger.warning(
-            "Avatar loop failed run_id=%s stage=%s\n%s",
-            self.identity.run_id,
-            stage,
-            format_error(error, details=True),
-        )
 
     async def _run(self) -> LoopResult:
         self._started = True
@@ -541,26 +615,9 @@ class LoopExecution(LoopHandle):
 
             await self._feedback.change(LoopState.ACCEPTED)
             self._log("run.started", input_id=self._request.input_id, state="accepted")
-            snapshot = self._turn
-            if any(actor.user_id is not None for actor in snapshot.actors):
-                identity_watch = asyncio.create_task(
-                    self._watch_identity(), name=f"loop_identity:{self.identity.run_id}"
-                )
-
-            async with asyncio.timeout_at(self._budget.exploration_deadline):
-                preparation = ContextPrepareRequest(
-                    input=self._request.input,
-                    turn_id=self.identity.turn_id,
-                    context_id=self.identity.context_id,
-                    input_id=self._request.input_id,
-                    contributions=(self._budget.contribution(),),
-                )
-                self._context = await self._context_manager.prepare(preparation)
-
-            if not isinstance(self._context, ModelInput):
-                raise TypeError("ContextManager.prepare must return ModelInput")
-            if self._cancel_reason is not None:
-                raise asyncio.CancelledError
+            identity_watch = asyncio.create_task(
+                self._watch_identity(), name=f"loop_identity:{self.identity.run_id}"
+            )
 
             stage = "model_and_tools"
             state, answers, reason = await self._drive()

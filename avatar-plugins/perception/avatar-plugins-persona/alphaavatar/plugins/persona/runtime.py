@@ -138,7 +138,7 @@ class PersonaRuntime(PersonaBase):
             raise ValueError("Persona context requires a Turn owned by this runtime")
 
         profiles = {}
-        for actor in snapshot.actors:
+        for actor in self._runtime.participants.project_turn(snapshot).actors:
             if actor.participant_id is None:
                 continue
 
