@@ -110,7 +110,7 @@ def result_parts(value: Any, *, max_bytes: int) -> tuple[tuple[Any, ...], bool]:
 
 
 class LoopTools:
-    """Scheduling and call records only. Invocation always uses the existing registry."""
+    """Run-scoped capability exposure and calls; invocation uses the existing registry."""
 
     def __init__(
         self,
@@ -133,9 +133,9 @@ class LoopTools:
         self._cancelled = cancelled
 
         allowed = set(budget.request.allowed_capabilities)
-        capabilities = {c.id: c for c in self._registry.capabilities if c.callable}
+        capabilities = {c.id: c for c in self._registry.capabilities}
         if unknown := allowed - capabilities.keys():
-            raise ValueError(f"Unknown or description-only capabilities: {sorted(unknown)}")
+            raise ValueError(f"Unknown capabilities: {sorted(unknown)}")
         self._capabilities = {capabilities[name].tool_name: capabilities[name] for name in allowed}
 
         if unknown := set(policies) - capabilities.keys():
@@ -150,11 +150,11 @@ class LoopTools:
     def definitions(self) -> tuple[ModelToolDefinition, ...]:
         return tuple(
             ModelToolDefinition(
-                name=c.tool_name, description=c.description, parameters=c.parameters
+                name=c.tool_name, description=c.model_description, parameters=c.parameters
             )
             for c in sorted(self._capabilities.values(), key=lambda c: c.id)
             if (policy := self._policies.get(c.id, ToolPolicy())).enabled
-            and (not policy.approval_required or self._authorize is not None)
+            and (not c.callable or not policy.approval_required or self._authorize is not None)
         )
 
     def _stopping(self) -> bool:
@@ -228,6 +228,11 @@ class LoopTools:
             if not policy.enabled:
                 return self._record(
                     call, ToolOutcome.DENIED, executed=False, started=started, code="policy_denied"
+                )
+
+            if not capability.callable:
+                return self._record(
+                    call, ToolOutcome.DENIED, executed=False, started=started, code="not_callable"
                 )
 
             payload = parse_arguments(call.arguments, max_bytes=limits.max_arguments_bytes)
