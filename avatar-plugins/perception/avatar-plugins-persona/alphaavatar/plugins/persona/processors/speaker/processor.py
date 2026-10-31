@@ -145,6 +145,7 @@ class SpeakerProcessor(PersonaProcessorBase):
         ) is state and self.runtime.participants.segment_is_current(state.segment, state.token)
 
     def _retire(self, state: SpeakerSegmentState) -> None:
+        self.runtime.participants.finish_segment_resolution(state.segment, token=state.token)
         if self._segments.get(state.segment) is state:
             self._segments.pop(state.segment)
         state.pcm.clear()
@@ -170,6 +171,7 @@ class SpeakerProcessor(PersonaProcessorBase):
             state.pending -= 1
         if self._segments.get(state.segment) is state:
             state.inference_failed = True
+            self.runtime.participants.finish_segment_resolution(state.segment, token=state.token)
             if state.closed and state.pending == 0:
                 self._retire(state)
 
@@ -213,18 +215,23 @@ class SpeakerProcessor(PersonaProcessorBase):
                 self._invalidate(removed)
                 self._retire(removed)
 
+            token = self.runtime.participants.observe_segment(segment)
             entity = observation.entity
-            participant = (
-                self.runtime.participants.ensure_entity(segment.source, entity)
-                if entity is not None
-                else None
-            )
+            try:
+                participant = (
+                    self.runtime.participants.ensure_entity(segment.source, entity)
+                    if entity is not None
+                    else None
+                )
+            except Exception:
+                self.runtime.participants.finish_segment_resolution(segment, token=token)
+                raise
             state = SpeakerSegmentState(
                 segment=segment,
                 entity=entity,
                 participant=participant,
                 identities=self.session_runtime.snapshot().participants,
-                token=self.runtime.participants.observe_segment(segment),
+                token=token,
             )
             self._segments[segment] = state
         elif observation.entity is not None and observation.entity != state.entity:
@@ -232,15 +239,18 @@ class SpeakerProcessor(PersonaProcessorBase):
                 # Conflicting explicit subjects invalidate the physical association.
                 self._invalidate(state)
             else:
-                state.entity = observation.entity
-                existing = self.runtime.participants.resolve(
-                    source=segment.source, entity=state.entity
-                )
-                state.participant = (
-                    state.identities.get(existing.participant_id)
-                    if existing is not None
-                    else self.runtime.participants.ensure_entity(segment.source, state.entity)
-                )
+                entity = observation.entity
+                existing = self.runtime.participants.resolve(source=segment.source, entity=entity)
+                try:
+                    participant = (
+                        state.identities.get(existing.participant_id)
+                        if existing is not None
+                        else self.runtime.participants.ensure_entity(segment.source, entity)
+                    )
+                except Exception:
+                    self._retire(state)
+                    raise
+                state.entity, state.participant = entity, participant
 
         # An explicit subject is usable before optional identity inference has completed.
         if state.entity is not None and not state.invalid:
@@ -293,7 +303,11 @@ class SpeakerProcessor(PersonaProcessorBase):
         state.pcm.clear()
         state.recent.clear()
         if state.pending == 0:
-            self._enqueue(state)
+            if state.invalid or state.inference_failed or state.vector is None:
+                # Short speech has no vector job to wait for; finish without joining the queue.
+                self._retire(state)
+            else:
+                self._enqueue(state)
 
     def _cancel_source(self, source: PerceptionSourceRef) -> None:
         for state in tuple(self._segments.values()):
@@ -496,6 +510,9 @@ class SpeakerProcessor(PersonaProcessorBase):
             if self._is_current(state):
                 # Missing model evidence must not revoke an explicit physical association.
                 state.inference_failed = True
+                self.runtime.participants.finish_segment_resolution(
+                    state.segment, token=state.token
+                )
             raise
 
         finally:
@@ -562,6 +579,7 @@ class SpeakerProcessor(PersonaProcessorBase):
     """Runtime operations"""
 
     async def _start(self) -> None:
+        self.runtime.participants.set_segment_resolver(self.CONSUMER_ID, enabled=True)
         self._inference_task = asyncio.create_task(
             self._inference_loop(), name="persona_speaker_inference"
         )
@@ -575,6 +593,7 @@ class SpeakerProcessor(PersonaProcessorBase):
         )
 
     async def _stop(self, *, finalize: bool) -> None:
+        self.runtime.participants.set_segment_resolver(self.CONSUMER_ID, enabled=False)
         for task in (self._consume_task, self._inference_task):
             if task is not None:
                 task.cancel()

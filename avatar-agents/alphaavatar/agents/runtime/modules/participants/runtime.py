@@ -13,8 +13,10 @@
 # limitations under the License.
 from __future__ import annotations
 
+import asyncio
 from collections import OrderedDict
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, field
 from uuid import uuid4
 
 from alphaavatar.core.env.schemas import (
@@ -39,6 +41,7 @@ class _SegmentState:
     token: int
     entity: PerceptionEntityRef | None = None
     invalid: bool = False
+    ready: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 @avatar_capability(
@@ -89,6 +92,7 @@ class ParticipantRuntime:
         self._bindings = ParticipantBindings(max_entities=max_participants, max_devices=max_sources)
         self._generations: dict[str, tuple[int, bool]] = {}
         self._segments: OrderedDict[PerceptionSegmentRef, _SegmentState] = OrderedDict()
+        self._segment_resolver: str | None = None
 
         self._next_segment_token = 0
 
@@ -114,9 +118,9 @@ class ParticipantRuntime:
 
     def _drop_source(self, source: PerceptionSourceRef) -> None:
         self._bindings.release_source(source)
-        self._segments = OrderedDict(
-            (key, value) for key, value in self._segments.items() if key.source != source
-        )
+        for segment in tuple(self._segments):
+            if segment.source == source:
+                self._segments.pop(segment).ready.set()
 
     def join(
         self,
@@ -171,6 +175,7 @@ class ParticipantRuntime:
                 and current.entity.entity_id == entity.entity_id
             ):
                 current.invalid = True
+                current.ready.set()
 
     def retire_source(self, source: PerceptionSourceRef) -> None:
         if self.source_is_current(source):
@@ -192,15 +197,49 @@ class ParticipantRuntime:
         self._activate(source)
         return True
 
+    def set_segment_resolver(self, consumer_id: str, *, enabled: bool) -> None:
+        if not isinstance(consumer_id, str) or not consumer_id:
+            raise ValueError("Segment resolver consumer_id must be a nonempty string")
+
+        if enabled:
+            if self._closed:
+                raise RuntimeError("ParticipantRuntime is closed")
+            if self._segment_resolver not in (None, consumer_id):
+                raise ValueError("A segment resolver is already registered")
+
+            self._segment_resolver = consumer_id
+        elif self._segment_resolver == consumer_id:
+            self._segment_resolver = None
+            for current in self._segments.values():
+                current.ready.set()
+
     def observe_segment(self, segment: PerceptionSegmentRef) -> int:
         self._activate(segment.source)
         current = self._segments.get(segment)
         if current is None:
             self._next_segment_token += 1
             current = self._segments[segment] = _SegmentState(self._next_segment_token)
+            if self._segment_resolver is None:
+                current.ready.set()
             while len(self._segments) > self._max_segments:
-                self._segments.popitem(last=False)
+                _, removed = self._segments.popitem(last=False)
+                removed.ready.set()
         return current.token
+
+    def finish_segment_resolution(self, segment: PerceptionSegmentRef, *, token: int) -> None:
+        current = self._segments.get(segment)
+        if current is not None and current.token == token:
+            current.ready.set()
+
+    async def wait_for_segments(self, segments: Iterable[PerceptionSegmentRef]) -> None:
+        """Wait for physical associations; the caller owns the deadline and rechecks identities."""
+        pending = tuple(
+            current.ready
+            for segment in dict.fromkeys(segments)
+            if (current := self._segments.get(segment)) is not None and not current.ready.is_set()
+        )
+        for ready in pending:
+            await ready.wait()
 
     def segment_is_current(self, segment: PerceptionSegmentRef, token: int) -> bool:
         current = self._segments.get(segment)
@@ -215,6 +254,7 @@ class ParticipantRuntime:
         current = self._segments.get(segment)
         if current is not None:
             current.invalid = True
+            current.ready.set()
 
     def bind_segment(
         self, segment: PerceptionSegmentRef, entity: PerceptionEntityRef | None, *, token: int
@@ -234,9 +274,11 @@ class ParticipantRuntime:
             current.entity is not None and current.entity.entity_id != entity.entity_id
         ):
             current.invalid = True
+            current.ready.set()
             return False
 
         current.entity = entity
+        current.ready.set()
         return True
 
     def entity_for_segment(self, segment: PerceptionSegmentRef) -> PerceptionEntityRef | None:
@@ -356,6 +398,9 @@ class ParticipantRuntime:
 
     def close(self) -> None:
         self._closed = True
+        self._segment_resolver = None
+        for current in self._segments.values():
+            current.ready.set()
         self._bindings.clear()
         self._generations.clear()
         self._segments.clear()

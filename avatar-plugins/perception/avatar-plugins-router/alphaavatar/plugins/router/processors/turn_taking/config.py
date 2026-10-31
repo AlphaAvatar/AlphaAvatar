@@ -47,6 +47,7 @@ class TurnTakingConfig(BaseModel):
 
     addressing_wait_sec: float = Field(default=0.5, gt=0.0)
     transcript_wait_sec: float = Field(default=0.75, ge=0.0)
+    association_wait_sec: float = Field(default=0.15, ge=0.0, allow_inf_nan=False)
     unsegmented_alignment_sec: float = Field(default=0.75, gt=0.0)
     max_hold_sec: float = Field(default=1.5, gt=0.0)
     max_active_candidates: int = Field(default=128, ge=1, le=4096)

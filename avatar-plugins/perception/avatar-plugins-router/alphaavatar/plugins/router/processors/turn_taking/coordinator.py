@@ -17,6 +17,7 @@ import asyncio
 import logging
 from collections.abc import Hashable
 from dataclasses import replace
+from math import isfinite
 from typing import TypeVar
 
 from alphaavatar.agents.router.enums import TurnTakingAction
@@ -68,11 +69,14 @@ class TurnTakingCoordinator:
         transcript_wait_sec: float,
         max_hold_sec: float,
         unsegmented_alignment_sec: float,
+        association_wait_sec: float = 0.15,
         required_addressing_sources: tuple[str, ...] = (),
         max_active_candidates: int = 128,
     ) -> None:
         if type(max_active_candidates) is not int or max_active_candidates <= 0:
             raise ValueError("max_active_candidates must be a positive integer")
+        if not isfinite(association_wait_sec) or association_wait_sec < 0:
+            raise ValueError("association_wait_sec must be finite and nonnegative")
 
         self._max_active_candidates = max_active_candidates
         self._runtime = runtime
@@ -83,6 +87,7 @@ class TurnTakingCoordinator:
 
         self._addressing_wait_sec = addressing_wait_sec
         self._transcript_wait_sec = transcript_wait_sec
+        self._association_wait_sec = association_wait_sec
         self._max_hold_sec = max_hold_sec
         self._unsegmented_alignment_ns = int(unsegmented_alignment_sec * 1_000_000_000)
         self._required_addressing_sources = frozenset(required_addressing_sources)
@@ -239,6 +244,11 @@ class TurnTakingCoordinator:
             source
         ):
             return
+
+        # Resolve all subjects before testing continuation; either candidate may have changed.
+        for key, candidate in tuple(self._candidates.items()):
+            if key.source == source:
+                self._refresh_speaker(candidate)
         for key, candidate in tuple(self._candidates.items()):
             task = self._assessment_tasks.get(key)
             if key.source == source and (task is None or task.done()):
@@ -443,8 +453,48 @@ class TurnTakingCoordinator:
             )
             return
 
+        if result.decision.action == TurnTakingAction.COMMIT and not await self._prepare_commit(
+            key, evidence
+        ):
+            return
+
         self._publish_result(candidate, result)
         self._drop_candidate(key)
+
+    async def _prepare_commit(self, key: SpeakerKey, evidence: TurnTakingEvidence) -> bool:
+        if not self._is_current(key, evidence):
+            return False
+
+        candidate = self._candidates[key]
+        if candidate.association_deadline is None:
+            # Reassessment and late transcripts share one budget for this candidate.
+            candidate.association_deadline = (
+                asyncio.get_running_loop().time() + self._association_wait_sec
+            )
+        started_at = self._runtime.clock.now()
+        outcome = "ready"
+        try:
+            async with asyncio.timeout_at(candidate.association_deadline):
+                await self._runtime.participants.wait_for_segments(tuple(candidate.segments))
+        except TimeoutError:
+            outcome = "timeout"
+
+        self._runtime.perception.input_trace.record(
+            "candidate.association",
+            candidate_id=candidate.turn_candidate_id,
+            candidate_revision=evidence.candidate_revision,
+            outcome=outcome,
+            start_time_ns=started_at.monotonic_ns,
+            end_time_ns=self._runtime.clock.now().monotonic_ns,
+            evidence_count=len(candidate.segments),
+            missing_count=sum(
+                self._runtime.participants.entity_for_segment(segment) is None
+                for segment in candidate.segments
+            ),
+        )
+
+        # A successful association changes the evidence and schedules a fresh assessment.
+        return self._is_current(key, evidence)
 
     async def _assess_candidate(self, key: SpeakerKey, turn_candidate_id: str) -> None:
         try:
@@ -535,6 +585,12 @@ class TurnTakingCoordinator:
                         )
                         return
 
+                    if (
+                        result.decision.action == TurnTakingAction.COMMIT
+                        and not await self._prepare_commit(key, evidence)
+                    ):
+                        return
+
                     self._publish_result(candidate, result)
                     self._drop_candidate(key)
                     return
@@ -548,6 +604,11 @@ class TurnTakingCoordinator:
                 await self._wait_for_transcript(
                     key, evidence, reason="awaiting_transcript_for_commit"
                 )
+                return
+
+            if result.decision.action == TurnTakingAction.COMMIT and not await self._prepare_commit(
+                key, evidence
+            ):
                 return
 
             self._publish_result(candidate, result)
@@ -873,7 +934,11 @@ class TurnTakingCoordinator:
 
     def _consume_speech(self, observation: EnvObservation) -> None:
         segment = self._builder.require_segment(observation)
-        if segment in self._retired_segments or segment.source in self._cancelled_sources:
+        if (
+            segment in self._retired_segments
+            or segment.source in self._cancelled_sources
+            or not self._runtime.participants.source_is_current(segment.source)
+        ):
             if observation.kind == ObservationKind.SPEECH_SEGMENT:
                 self._trace_segment(
                     "candidate.segment_rejected", segment, observation, reason="retired_segment"
@@ -894,6 +959,7 @@ class TurnTakingCoordinator:
             )
             return
 
+        self._runtime.participants.observe_segment(segment)
         key, candidate = self._get_candidate(observation)
         changed = self._refresh_speaker(candidate, observation)
         if (

@@ -70,6 +70,7 @@ class TurnCandidate:
     interruption_requested: bool = False
     has_perception_gap: bool = False
     has_entity_conflict: bool = False
+    association_deadline: float | None = None
 
     segments: list[PerceptionSegmentRef] = field(default_factory=list)
     active_segments: set[PerceptionSegmentRef] = field(default_factory=set)

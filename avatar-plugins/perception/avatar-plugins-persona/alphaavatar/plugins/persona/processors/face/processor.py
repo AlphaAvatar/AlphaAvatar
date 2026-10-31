@@ -510,7 +510,12 @@ class FaceProcessor(PersonaProcessorBase):
 
             participant = self._participant_for(job, entity)
             if participant is None:
-                entities[index] = None
+                # A queued frame can predate the identity while its physical entity is valid.
+                if (
+                    self.runtime.participants.resolve(source=job.observation.source, entity=entity)
+                    is None
+                ):
+                    entities[index] = None
             elif vector is not None:
                 updates.append((face, vector, entity, participant))
 
