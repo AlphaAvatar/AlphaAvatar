@@ -184,7 +184,7 @@ class SessionRuntime:
                 participant=participant,
                 primary_participant_id=self._primary_participant_id,
                 source=IdentitySource.DECLARED if user_id is not None else None,
-                reason="Application admitted a known user" if user_id is not None else None,
+                reason="Application assigned a user identity" if user_id is not None else None,
             )
             self._identity_history[participant.participant_id] = [event]
             waiters = self._events._append(event)

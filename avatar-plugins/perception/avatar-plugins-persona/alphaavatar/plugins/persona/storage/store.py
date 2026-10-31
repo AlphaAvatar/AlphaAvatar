@@ -21,7 +21,7 @@ import numpy as np
 
 from alphaavatar.agents.persona import PersonaCache
 from alphaavatar.agents.persona.enums import VectorRunnerOP
-from alphaavatar.agents.persona.schemas import UserProfile
+from alphaavatar.agents.persona.schemas import UserProfile, UserRuntimeState
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.session.schemas import Participant
@@ -52,16 +52,22 @@ class PersonaStore:
             timeout=timeout,
         )
 
-    async def load(self, *, participant: Participant, timeout: float | None = 3) -> UserProfile:
+    async def load_runtime_state(self, *, participant: Participant) -> UserRuntimeState | None:
         user_path = self._runtime.participants.user_path(participant)
-        user_id = participant.user_id
-        await asyncio.to_thread(check_legacy_identity, user_path.root.parent, user_id)
+        await asyncio.to_thread(check_legacy_identity, user_path.root.parent, user_path.user_id)
         if not self._runtime.participants.accepts_identity(participant):
-            return UserProfile()
+            return None
 
+        state = await self._runtime_state_store.load(user_path=user_path)
+        return state if self._runtime.participants.accepts_identity(participant) else None
+
+    async def load(self, *, participant: Participant, timeout: float | None = 3) -> UserProfile:
+        user_id = self._runtime.participants.user_path(participant).user_id
         result = await self._infer(
             {"op": VectorRunnerOP.load, "param": {"user_id": user_id}}, timeout=timeout
         )
+        if not self._runtime.participants.accepts_identity(participant):
+            return UserProfile()
         if result is None:
             raise RuntimeError(f"Persona store returned no load result user_id={user_id!r}")
 
@@ -73,13 +79,8 @@ class PersonaStore:
             else None
         )
 
-        runtime_state = await self._runtime_state_store.load(user_path=user_path)
-        if not self._runtime.participants.accepts_identity(participant):
-            return UserProfile()
-
         return UserProfile(
             details=details,
-            runtime_state=runtime_state,
             speaker_vector=data.get("speaker_vector"),
             face_vector=data.get("face_vector"),
         )

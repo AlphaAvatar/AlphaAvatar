@@ -92,24 +92,22 @@ class PersonaRuntime(PersonaBase):
             task.exception()
 
     def _runtime_state(
-        self, participant: Participant, cache: DefaultPersonaCache
+        self, participant: Participant, previous: UserRuntimeState | None
     ) -> UserRuntimeState:
-        profile = cache.profile
-        state = (
-            profile.runtime_state.model_copy(deep=True)
-            if profile is not None and profile.runtime_state is not None
-            else UserRuntimeState()
-        )
+        state = previous.model_copy(deep=True) if previous is not None else UserRuntimeState()
         session_id = self._runtime.session.session_id
+        login_at = datetime.fromtimestamp(participant.joined_at.unix_seconds, UTC)
         if state.current_session_id != session_id:
             state.last_timezone = state.current_timezone
             state.last_login_at = state.current_login_at
             state.last_session_id = state.current_session_id
             state.last_room_type = state.current_room_type
             state.login_count += 1
+        elif state.current_login_at is not None:
+            login_at = min(login_at, state.current_login_at)
 
         state.current_timezone = participant.timezone
-        state.current_login_at = datetime.fromtimestamp(participant.joined_at.unix_seconds, UTC)
+        state.current_login_at = login_at
         state.current_session_id = session_id
         state.current_room_type = self._runtime.state.interaction_method.room_type
         return state
@@ -132,6 +130,7 @@ class PersonaRuntime(PersonaBase):
         ):
             cache.clear_base()
 
+        cache.runtime_state = self._runtime_state(participant, cache.runtime_state)
         return cache
 
     def content_for(self, snapshot: TurnSnapshot) -> str:
@@ -185,13 +184,17 @@ class PersonaRuntime(PersonaBase):
         if user_id is None or not self._runtime.participants.accepts_identity(participant):
             return
 
+        # Current state is already available; local login history does not depend on the VDB.
+        previous = await self._store.load_runtime_state(participant=participant)
+        if not self._runtime.participants.accepts_identity(participant):
+            return
+
+        cache.runtime_state = self._runtime_state(participant, previous)
         profile = await self._store.load(participant=participant)
         if not self._runtime.participants.accepts_identity(participant):
             return
 
-        cache.participant = participant
         cache.set_base(profile)
-        cache.runtime_state = self._runtime_state(participant, cache)
 
     async def save(self, *, user_id: str | None = None) -> None:
         async with self._save_lock:
@@ -214,9 +217,7 @@ class PersonaRuntime(PersonaBase):
                 if cache.participant.identity_sequence != participant.identity_sequence:
                     continue
 
-                snapshot = cache.snapshot()
-                snapshot.runtime_state = self._runtime_state(participant, cache)
-                targets.append(snapshot)
+                targets.append(cache.snapshot())
 
             if user_id is not None and not targets:
                 raise PermissionError(f"No writable Persona participant for user_id={user_id!r}")

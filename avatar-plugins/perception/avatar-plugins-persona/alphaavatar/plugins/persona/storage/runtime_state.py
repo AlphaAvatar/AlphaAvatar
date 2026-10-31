@@ -79,21 +79,37 @@ class RuntimeStateStore:
     def _save_locked(cls, path: Path, state: UserRuntimeState) -> Path:
         old_text = cls._read_text(path)
         previous = cls._load(path)
-        seen = (
-            bool(state.current_session_id)
-            and f"<!-- session_id:{state.current_session_id} -->" in old_text
+        seen = bool(state.current_session_id) and (
+            f"<!-- session_id:{state.current_session_id} -->" in old_text
+            or previous is not None
+            and previous.current_session_id == state.current_session_id
         )
         state.login_count = (previous.login_count if previous is not None else 0) + (
             0 if seen else 1
         )
-        if previous is not None and previous.current_session_id != state.current_session_id:
-            state.last_timezone = previous.current_timezone
-            state.last_login_at = previous.current_login_at
-            state.last_session_id = previous.current_session_id
-            state.last_room_type = previous.current_room_type
+        if previous is not None:
+            if previous.current_session_id == state.current_session_id:
+                # Another participant or an unfinished profile load may have only current facts.
+                state.last_timezone = previous.last_timezone
+                state.last_login_at = previous.last_login_at
+                state.last_session_id = previous.last_session_id
+                state.last_room_type = previous.last_room_type
+                state.current_timezone = state.current_timezone or previous.current_timezone
+                state.current_room_type = state.current_room_type or previous.current_room_type
+                if previous.current_login_at is not None and (
+                    state.current_login_at is None
+                    or previous.current_login_at < state.current_login_at
+                ):
+                    state.current_login_at = previous.current_login_at
+            else:
+                state.last_timezone = previous.current_timezone
+                state.last_login_at = previous.current_login_at
+                state.last_session_id = previous.current_session_id
+                state.last_room_type = previous.current_room_type
         latest = state
         if (
             previous is not None
+            and previous.current_session_id != state.current_session_id
             and previous.current_login_at is not None
             and state.current_login_at is not None
             and previous.current_login_at > state.current_login_at
