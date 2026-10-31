@@ -20,7 +20,8 @@ from typing import TYPE_CHECKING
 from alphaavatar.agents.memory.enums import MemoryType
 from alphaavatar.agents.memory.schemas import MemoryCheckpointAdvance, MemoryScope, MemorySourceRef
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.capability import AvatarCapabilityName, avatar_capability
+from alphaavatar.agents.runtime.capability import avatar_capability
+from alphaavatar.agents.runtime.capability.enums import AvatarCapabilityName
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.turn.enums import TurnInputModality
 

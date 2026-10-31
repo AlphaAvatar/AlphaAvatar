@@ -17,7 +17,7 @@ from xml.sax.saxutils import escape
 
 from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
 from alphaavatar.agents.runtime import InteractionMethod, StateRuntime
-from alphaavatar.agents.runtime.capability import AvatarCapability
+from alphaavatar.agents.runtime.capability.schemas import AvatarCapability
 from alphaavatar.agents.utils.time import ParticipantTimeContext
 
 from .prompts.avatar_system_prompts import (

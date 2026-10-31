@@ -140,6 +140,7 @@ class LoopTools:
 
         if unknown := set(policies) - capabilities.keys():
             raise ValueError(f"Tool policies require registered capability IDs: {sorted(unknown)}")
+
         self._policies = dict(policies)
         self._signatures: dict[str, int] = {}
         self._records: dict[str, ToolRecord] = {}

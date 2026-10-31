@@ -17,7 +17,7 @@ import asyncio
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any
 
-from alphaavatar.agents.runtime.capability import AvatarCapability
+from alphaavatar.agents.runtime.capability.schemas import AvatarCapability
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.lifecycle import LifecycleComponent
 

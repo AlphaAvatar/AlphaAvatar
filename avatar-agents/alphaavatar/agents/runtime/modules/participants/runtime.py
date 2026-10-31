@@ -27,7 +27,8 @@ from alphaavatar.core.session.schemas import IdentityRequest
 from alphaavatar.core.turn import TurnRuntime
 from alphaavatar.core.workspace import UserPath, WorkspacePaths
 
-from ...capability import AvatarCapabilityName, avatar_capability
+from ...capability import avatar_capability
+from ...capability.enums import AvatarCapabilityName
 from .binding import ParticipantBindings
 from .schemas import ParticipantInput
 

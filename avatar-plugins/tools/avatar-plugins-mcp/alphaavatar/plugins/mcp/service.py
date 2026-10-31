@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from alphaavatar.agents.runtime.capability import AvatarCapability
+from alphaavatar.agents.runtime.capability.schemas import AvatarCapability
 from alphaavatar.agents.tools import ToolBase
 
 from .enums import MCPOp
