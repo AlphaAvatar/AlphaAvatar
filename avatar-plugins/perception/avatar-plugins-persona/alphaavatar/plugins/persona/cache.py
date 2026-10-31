@@ -26,7 +26,8 @@ from alphaavatar.agents.utils import NumpyOP
 from alphaavatar.core.session.schemas import Participant
 from alphaavatar.core.turn.schemas import TurnSnapshot
 
-from .profile.serialization import apply_profile_changes
+from .profile import UserProfileDetails
+from .profile.serialization import field_metadata, merge_profile_field
 
 
 class DefaultPersonaCache(PersonaCache):
@@ -67,16 +68,20 @@ class DefaultPersonaCache(PersonaCache):
         if self._observations.details is not None:
             data = result.details.model_dump(mode="json") if result.details is not None else {}
             observed = self._observations.details.model_dump(mode="json")
+            metadata = deepcopy(getattr(result.details, "_field_metadata", {}))
+            observed_metadata = getattr(self._observations.details, "_field_metadata", {})
             for name in self._detail_fields:
-                changes = self._detail_operations.get(name)
-                data[name] = (
-                    apply_profile_changes(
-                        data.get(name), changes, self._detail_timestamps[name].isoformat()
-                    )
-                    if changes
-                    else observed.get(name)
+                incoming = {
+                    **observed_metadata.get(name, {}),
+                    "value": observed.get(name),
+                    "updated_at": self._detail_timestamps[name].isoformat(),
+                    "changes": self._detail_operations.get(name, []),
+                }
+                data[name], metadata[name] = merge_profile_field(
+                    data.get(name), metadata.get(name, {}), incoming
                 )
             result.details = type(self._observations.details)(**data)
+            result.details._field_metadata = metadata
         for name in ("runtime_state", "speaker_vector", "face_vector"):
             value = getattr(self._observations, name)
             if value is not None:
@@ -101,19 +106,39 @@ class DefaultPersonaCache(PersonaCache):
 
     @property
     def profile_details(self) -> DetailsBase | None:
-        details = self._observations.details
-        return details.model_copy(deep=True) if details is not None else None
+        profile = self.profile
+        return profile.details if profile is not None else None
 
     @profile_details.setter
     def profile_details(self, details: DetailsBase | None) -> None:
-        previous = self._observations.details
-        old = previous.model_dump() if previous is not None else {}
-        new = details.model_dump() if details is not None else {}
+        previous = self.profile_details
+        old = previous.model_dump(mode="json") if previous is not None else {}
+        new = details.model_dump(mode="json") if details is not None else {}
         changed = {name for name in old.keys() | new.keys() if old.get(name) != new.get(name)}
-        self.mark_profile_fields(changed, updated_at=datetime.now(UTC))
+        if not changed:
+            return
+
+        observed = self._observations.details
+        data = observed.model_dump(mode="json") if observed is not None else {}
+        metadata = deepcopy(getattr(observed, "_field_metadata", {}))
         for name in changed:
+            update = field_metadata(new.get(name))
+            if new.get(name) in (None, []):
+                update["source"] = "chat"
+            stamp = update.get("updated_at") or datetime.now(UTC).isoformat()
+            update.update(value=new.get(name), updated_at=stamp, changes=[])
+            value, effective = merge_profile_field(
+                old.get(name), getattr(previous, "_field_metadata", {}).get(name, {}), update
+            )
+            if value == old.get(name):
+                continue
+            data[name], metadata[name] = value, effective
+            self.mark_profile_fields({name}, updated_at=datetime.fromisoformat(stamp))
             self._detail_operations.pop(name, None)
-        self._observations.details = details.model_copy(deep=True) if details is not None else None
+
+        model = type(details or previous)
+        self._observations.details = model(**data)
+        self._observations.details._field_metadata = metadata
 
     @property
     def profile_details_dump_value(self) -> dict:
@@ -177,6 +202,8 @@ class DefaultPersonaCache(PersonaCache):
         self._detail_timestamps.update(dict.fromkeys(fields, updated_at))
 
     def record_profile_operations(self, operations: dict[str, list[dict]]) -> None:
+        if operations and self._observations.details is None:
+            self._observations.details = UserProfileDetails()
         self._detail_operations.update(deepcopy(operations))
 
     def snapshot(self) -> DefaultPersonaCache:

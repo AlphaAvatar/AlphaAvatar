@@ -23,7 +23,14 @@ from uuid import uuid4
 from alphaavatar.core.time import RuntimeClock, RuntimeTime
 
 from .enums import IdentityOutcome, IdentitySource, SessionEventKind
-from .schemas import IdentityRequest, Participant, SessionEvent, SessionSnapshot, validate_identity
+from .schemas import (
+    AssociationRequest,
+    IdentityRequest,
+    Participant,
+    SessionEvent,
+    SessionSnapshot,
+    validate_identity,
+)
 from .schemas.validation import validate_sequence
 from .stream import SessionStream
 
@@ -35,6 +42,8 @@ class IdentityPolicy(Protocol):
         self, request: IdentityRequest, *, participant: Participant, snapshot: SessionSnapshot
     ) -> bool: ...
 
+    def select(self, request: AssociationRequest, *, snapshot: SessionSnapshot) -> str | None: ...
+
 
 class DefaultIdentityPolicy:
     """Require a reason from the deciding component, without restricting correction sources."""
@@ -43,6 +52,9 @@ class DefaultIdentityPolicy:
         self, request: IdentityRequest, *, participant: Participant, snapshot: SessionSnapshot
     ) -> bool:
         return request.reason is not None
+
+    def select(self, request: AssociationRequest, *, snapshot: SessionSnapshot) -> str | None:
+        return None
 
 
 class SessionRuntime:
@@ -131,6 +143,33 @@ class SessionRuntime:
     def snapshot(self) -> SessionSnapshot:
         with self._lock:
             return self._snapshot()
+
+    def select_participant(self, request: AssociationRequest) -> Participant | None:
+        if not isinstance(request, AssociationRequest):
+            raise TypeError("request must be AssociationRequest")
+
+        with self._lock:
+            if self._closed:
+                return None
+            snapshot = self._snapshot()
+
+        selected = self._identity_policy.select(request, snapshot=snapshot)
+        if selected is None:
+            return None
+
+        if not isinstance(selected, str):
+            raise TypeError(
+                "IdentityPolicy.select must return a participant ID or None synchronously"
+            )
+        if selected not in snapshot.participants:
+            raise ValueError(
+                "Association policy selected a participant outside its Session snapshot"
+            )
+
+        with self._lock:
+            if self._closed or self._events.latest_sequence != snapshot.sequence:
+                return None
+            return self._participants[selected]
 
     def identity_history(self, participant_id: str) -> tuple[SessionEvent, ...]:
         """Accepted identity history for this session lifetime, including initial admission."""

@@ -15,6 +15,7 @@ import asyncio
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any, get_args, get_origin
+from uuid import uuid4
 
 from alphaavatar.agents.persona import PersonaBase, PersonaCache, PersonaProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
@@ -28,6 +29,7 @@ from ...profile import UserProfileDetails
 from ...template import PersonaPluginsTemplate
 from .config import ProfilerConfig
 from .op import (
+    PatchOp,
     ProfileDelta,
     append_string,
     append_text,
@@ -87,15 +89,17 @@ class ProfilerProcessor(PersonaProcessorBase):
 
     def _apply_delta(
         self, updated_at: datetime, profile_details_dump: dict, delta: ProfileDelta
-    ) -> tuple[bool, dict[str, Any]]:
+    ) -> tuple[dict[str, Any], list[PatchOp]]:
         data = deepcopy(profile_details_dump)
-        updated = False
+        accepted = []
 
         for patch in delta.ops:
             tokens = parse_pointer(patch.path)
             if len(tokens) != 1 or tokens[0] not in UserProfileDetails.model_fields:
                 continue
 
+            name = tokens[0]
+            previous, present = deepcopy(data.get(name)), name in data
             try:
                 if patch.op == "set":
                     write_set(data, tokens, patch.value, updated_at)
@@ -108,16 +112,24 @@ class ProfilerProcessor(PersonaProcessorBase):
                     else:
                         append_text(data, tokens, patch.value, updated_at)
                 elif patch.op == "remove" and patch.value is not None:
+                    if not self._is_list_field(name):
+                        raise ValueError("Profile remove requires a list field")
                     remove_string(data, tokens, patch.value)
-                updated = True
+
+                UserProfileDetails(**{name: data.get(name)})
+                accepted.append(patch)
             except Exception:
+                if present:
+                    data[name] = previous
+                else:
+                    data.pop(name, None)
                 logger.exception(
                     "Failed to apply profile delta user_id operation=%s path=%s",
                     patch.op,
                     patch.path,
                 )
 
-        return updated, data
+        return data, accepted
 
     async def _update_profile(self, participant_id: str, persona_cache: PersonaCache) -> None:
         if not persona_cache.turns:
@@ -126,12 +138,6 @@ class ProfilerProcessor(PersonaProcessorBase):
         participant = self.session_runtime.get_participant(participant_id=participant_id)
         if participant is None or participant.user_id is None:
             return
-
-        current = (
-            persona_cache.profile_details.model_dump()
-            if persona_cache.profile_details is not None
-            else {}
-        )
 
         delta = await self._aextract_delta(
             user_id=participant.user_id,
@@ -143,19 +149,27 @@ class ProfilerProcessor(PersonaProcessorBase):
         if latest is None or latest.identity_sequence != participant.identity_sequence:
             return
 
+        # The provider may await while profile loading or sensor observations advance.
+        current_details = persona_cache.profile_details
+        current = current_details.model_dump() if current_details is not None else {}
+        pending = persona_cache.detail_operations
         updated_at = datetime.fromtimestamp(self.runtime.clock.now().unix_seconds, UTC)
-        is_updated, details = self._apply_delta(updated_at, current, delta)
-        if is_updated:
+        details, accepted = self._apply_delta(updated_at, current, delta)
+        if accepted:
             persona_cache.profile_details = UserProfileDetails(**details)
             operations = {}
-            for patch in delta.ops:
+            for patch in accepted:
                 tokens = parse_pointer(patch.path)
                 if len(tokens) == 1 and tokens[0] in UserProfileDetails.model_fields:
-                    operations.setdefault(tokens[0], []).append(
+                    changes = operations.setdefault(tokens[0], list(pending.get(tokens[0], [])))
+                    changes.append(
                         {
                             "op": patch.op,
                             "value": patch.value,
                             "list": self._is_list_field(tokens[0]),
+                            "updated_at": updated_at.isoformat(),
+                            "sequence": len(changes),
+                            "id": uuid4().hex,
                         }
                     )
 

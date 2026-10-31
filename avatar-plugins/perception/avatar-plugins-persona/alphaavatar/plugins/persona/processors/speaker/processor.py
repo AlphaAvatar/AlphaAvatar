@@ -55,6 +55,7 @@ class SpeakerSegmentState:
     participant: Participant | None
     identities: Mapping[str, Participant]
     token: int
+    device_id: str | None = None
     pcm: bytearray = field(default_factory=bytearray)
     recent: bytearray = field(default_factory=bytearray)
     seen: set[str] = field(default_factory=set)
@@ -203,6 +204,13 @@ class SpeakerProcessor(PersonaProcessorBase):
                 self._retire(current)
 
         state = self._segments.get(segment)
+        if state is not None:
+            if state.device_id is None:
+                state.device_id = observation.device_id
+            elif observation.device_id is not None and state.device_id != observation.device_id:
+                self._invalidate(state)
+                self._retire(state)
+                return None
         if state is not None and not self.runtime.participants.segment_is_current(
             segment, state.token
         ):
@@ -219,7 +227,9 @@ class SpeakerProcessor(PersonaProcessorBase):
             entity = observation.entity
             try:
                 participant = (
-                    self.runtime.participants.ensure_entity(segment.source, entity)
+                    self.runtime.participants.ensure_entity(
+                        segment.source, entity, kind="speaker", device_id=observation.device_id
+                    )
                     if entity is not None
                     else None
                 )
@@ -232,6 +242,7 @@ class SpeakerProcessor(PersonaProcessorBase):
                 participant=participant,
                 identities=self.session_runtime.snapshot().participants,
                 token=token,
+                device_id=observation.device_id,
             )
             self._segments[segment] = state
         elif observation.entity is not None and observation.entity != state.entity:
@@ -245,7 +256,9 @@ class SpeakerProcessor(PersonaProcessorBase):
                     participant = (
                         state.identities.get(existing.participant_id)
                         if existing is not None
-                        else self.runtime.participants.ensure_entity(segment.source, entity)
+                        else self.runtime.participants.ensure_entity(
+                            segment.source, entity, kind="speaker", device_id=state.device_id
+                        )
                     )
                 except Exception:
                     self._retire(state)
@@ -254,6 +267,9 @@ class SpeakerProcessor(PersonaProcessorBase):
 
         # An explicit subject is usable before optional identity inference has completed.
         if state.entity is not None and not state.invalid:
+            self.runtime.participants.ensure_entity(
+                segment.source, state.entity, kind="speaker", device_id=state.device_id
+            )
             if not self.runtime.participants.bind_segment(segment, state.entity, token=state.token):
                 state.invalid = True
 
@@ -476,10 +492,13 @@ class SpeakerProcessor(PersonaProcessorBase):
                 existing = self.runtime.participants.resolve(
                     source=state.segment.source, entity=state.entity
                 )
+                associated = self.runtime.participants.ensure_entity(
+                    state.segment.source, state.entity, kind="speaker", device_id=state.device_id
+                )
                 state.participant = (
                     state.identities.get(existing.participant_id)
                     if existing is not None
-                    else self.runtime.participants.ensure_entity(state.segment.source, state.entity)
+                    else associated
                 )
 
             if not self.runtime.participants.bind_segment(

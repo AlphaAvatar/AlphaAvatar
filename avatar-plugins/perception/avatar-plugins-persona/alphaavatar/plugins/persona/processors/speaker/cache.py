@@ -19,6 +19,7 @@ from alphaavatar.agents.persona.enums import ProfileItemSource
 from alphaavatar.agents.persona.schemas import ProfileItemView
 
 from ...profile import UserProfileDetails
+from ...profile.serialization import can_update_profile_field
 
 
 class SpeakerCache:
@@ -117,12 +118,8 @@ class SpeakerCache:
         age_score = float(np.clip(self._logits_age.squeeze(), 0.0, 1.0))
         age_years = int(round(age_score * 100.0))
         age_range = self._age_to_range(age_years)
-        if age_range is not None and (
-            profile_details.age is None
-            or (
-                profile_details.age.source == ProfileItemSource.speech
-                and profile_details.age.value != age_range
-            )
+        if age_range is not None and can_update_profile_field(
+            profile_details, "age", ProfileItemSource.speech, updated_at
         ):
             profile_details.age = ProfileItemView(
                 value=age_range, source=ProfileItemSource.speech, updated_at=updated_at
@@ -132,7 +129,9 @@ class SpeakerCache:
         probs = self._softmax(self._logits_gender, axis=-1).squeeze()
         idx = int(np.argmax(probs))
         gender = self._gender_labels[idx]
-        if profile_details.gender is None or profile_details.gender.value != gender:
+        if gender != "child" and can_update_profile_field(
+            profile_details, "gender", ProfileItemSource.speech, updated_at
+        ):
             profile_details.gender = ProfileItemView(
                 value=gender, source=ProfileItemSource.speech, updated_at=updated_at
             )

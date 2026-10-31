@@ -385,18 +385,23 @@ class FaceProcessor(PersonaProcessorBase):
         return cache.participant
 
     def _participant_for(
-        self, job: FaceFrameJob, entity: PerceptionEntityRef
+        self, job: FaceFrameJob, entity: PerceptionEntityRef, *, candidate_count: int
     ) -> Participant | None:
         current = self.runtime.participants.resolve(source=job.observation.source, entity=entity)
-        if current is not None:
-            # Recognition uses the identity view captured before the model await.
-            return job.participants.get(current.participant_id)
-
         try:
-            return self.runtime.participants.ensure_entity(job.observation.source, entity)
+            participant = self.runtime.participants.ensure_entity(
+                job.observation.source,
+                entity,
+                kind="face",
+                device_id=job.observation.device_id,
+                candidate_count=candidate_count,
+            )
         except (ValueError, RuntimeError):
             logger.debug("Face entity admission unavailable source=%s", job.observation.source)
             return None
+
+        # Register late endpoint evidence without refreshing a queued identity decision.
+        return job.participants.get(current.participant_id) if current is not None else participant
 
     async def _update_face(
         self,
@@ -508,7 +513,7 @@ class FaceProcessor(PersonaProcessorBase):
             if entity is None:
                 continue
 
-            participant = self._participant_for(job, entity)
+            participant = self._participant_for(job, entity, candidate_count=len(faces))
             if participant is None:
                 # A queued frame can predate the identity while its physical entity is valid.
                 if (

@@ -82,10 +82,10 @@ class RuntimeStateStore:
         seen = bool(state.current_session_id) and (
             f"<!-- session_id:{state.current_session_id} -->" in old_text
             or previous is not None
-            and previous.current_session_id == state.current_session_id
+            and state.current_session_id in (previous.current_session_id, previous.last_session_id)
         )
         state.login_count = (previous.login_count if previous is not None else 0) + (
-            0 if seen else 1
+            1 if state.current_session_id and not seen else 0
         )
         if previous is not None:
             if previous.current_session_id == state.current_session_id:
@@ -106,15 +106,53 @@ class RuntimeStateStore:
                 state.last_login_at = previous.current_login_at
                 state.last_session_id = previous.current_session_id
                 state.last_room_type = previous.current_room_type
+
         latest = state
         if (
             previous is not None
             and previous.current_session_id != state.current_session_id
-            and previous.current_login_at is not None
-            and state.current_login_at is not None
-            and previous.current_login_at > state.current_login_at
+            and (
+                seen
+                or not state.current_session_id
+                or state.current_login_at is None
+                or previous.current_login_at is not None
+                and previous.current_login_at > state.current_login_at
+            )
         ):
             latest = previous.model_copy(update={"login_count": state.login_count})
+            if state.current_session_id and state.current_session_id == previous.last_session_id:
+                # A late participant cannot move an already recorded session's login forward.
+                if (
+                    state.current_login_at is not None
+                    and (
+                        previous.last_login_at is None
+                        or state.current_login_at < previous.last_login_at
+                    )
+                    and (
+                        previous.current_login_at is None
+                        or state.current_login_at < previous.current_login_at
+                    )
+                ):
+                    latest.last_login_at = state.current_login_at
+                latest.last_timezone = previous.last_timezone or state.current_timezone
+                latest.last_room_type = previous.last_room_type or state.current_room_type
+            elif (
+                not seen
+                and state.current_session_id
+                and state.current_login_at is not None
+                and previous.current_login_at is not None
+                and state.current_login_at < previous.current_login_at
+                and (
+                    previous.last_login_at is None
+                    or state.current_login_at > previous.last_login_at
+                )
+            ):
+                # An out-of-order first save can still fill the immediate predecessor.
+                latest.last_timezone = state.current_timezone
+                latest.last_login_at = state.current_login_at
+                latest.last_session_id = state.current_session_id
+                latest.last_room_type = state.current_room_type
+
         data = latest.model_dump(mode="json", exclude_none=True)
         latest_block = (
             f"{_BEGIN}\n```json\n{json.dumps(data, ensure_ascii=False, indent=2)}\n```\n{_END}"

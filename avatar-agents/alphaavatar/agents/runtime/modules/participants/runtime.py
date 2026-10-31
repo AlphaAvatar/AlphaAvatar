@@ -26,7 +26,7 @@ from alphaavatar.core.env.schemas import (
 )
 from alphaavatar.core.session import Participant, SessionRuntime
 from alphaavatar.core.session.enums import IdentityOutcome, IdentitySource
-from alphaavatar.core.session.schemas import IdentityRequest
+from alphaavatar.core.session.schemas import AssociationRequest, IdentityRequest, validate_identity
 from alphaavatar.core.turn import TurnRuntime
 from alphaavatar.core.turn.schemas import TurnSnapshot
 from alphaavatar.core.workspace import UserPath, WorkspacePaths
@@ -92,6 +92,8 @@ class ParticipantRuntime:
         self._max_segments, self._max_sources = max_segments, max_sources
 
         self._bindings = ParticipantBindings(max_entities=max_participants, max_devices=max_sources)
+        self._association_kinds: dict[str, set[str]] = {}
+        self._association_devices: dict[str, set[str]] = {}
         self._generations: dict[str, tuple[int, bool]] = {}
         self._segments: OrderedDict[PerceptionSegmentRef, _SegmentState] = OrderedDict()
         self._segment_resolver: str | None = None
@@ -183,14 +185,66 @@ class ParticipantRuntime:
         entity: PerceptionEntityRef,
         *,
         participant_id: str | None = None,
+        kind: str | None = None,
+        device_id: str | None = None,
+        candidate_count: int = 1,
     ) -> Participant:
+        if kind is not None and kind not in {"face", "speaker"}:
+            raise ValueError("Participant association kind must be face or speaker")
+        if device_id is not None:
+            validate_identity(device_id, name="device_id")
+        if type(candidate_count) is not int or candidate_count < 1:
+            raise ValueError("candidate_count must be a positive integer")
+
         participant = (
             self._require_participant(participant_id) if participant_id is not None else None
         )
         self._activate(source)
         self._bindings.check_entity(source, entity.entity_id)
-        participant = participant or self.resolve(source=source, entity=entity) or self.join()
+        existing = self.resolve(source=source, entity=entity)
+        if (
+            participant is not None
+            and existing is not None
+            and participant.participant_id != existing.participant_id
+        ):
+            raise ValueError("Entity is already bound to another participant")
+
+        participant = participant or existing
+        endpoint = self._bindings.get_device(device_id) if device_id is not None else None
+        if participant is None and kind is not None and device_id is not None:
+            participant = self.session.select_participant(
+                AssociationRequest(
+                    source=source,
+                    entity=entity,
+                    kind=kind,
+                    endpoint_participant_id=endpoint,
+                    occupied_kinds=tuple(
+                        (participant_id, value)
+                        for participant_id, values in self._association_kinds.items()
+                        for value in sorted(values)
+                    ),
+                    peer_participant_ids=frozenset(self._association_devices.get(device_id, ())),
+                    candidate_count=candidate_count,
+                )
+            )
+
+        participant = participant or self.join()
+        if (
+            kind is not None
+            and participant.participant_id not in self._association_kinds
+            and len(self._association_kinds) >= self._max_participants
+        ):
+            raise RuntimeError("Participant association capacity reached")
+
         self._bindings.bind_entity(source, entity.entity_id, participant.participant_id)
+        if kind is not None:
+            # Reserve before inference/I/O; expiration cannot transfer a slot to a stranger.
+            self._association_kinds.setdefault(participant.participant_id, set()).add(kind)
+            if device_id is not None and endpoint is not None:
+                self._association_devices.setdefault(device_id, set()).add(
+                    participant.participant_id
+                )
+
         return participant
 
     def release_entity(self, source: PerceptionSourceRef, entity: PerceptionEntityRef) -> None:
@@ -431,5 +485,7 @@ class ParticipantRuntime:
         for current in self._segments.values():
             current.ready.set()
         self._bindings.clear()
+        self._association_kinds.clear()
+        self._association_devices.clear()
         self._generations.clear()
         self._segments.clear()

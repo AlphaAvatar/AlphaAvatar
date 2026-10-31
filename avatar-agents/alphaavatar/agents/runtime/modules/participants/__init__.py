@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .binding import ParticipantBindings
+from .policy import PrimaryParticipantIdentityPolicy
 from .runtime import ParticipantRuntime
 
-__all__ = ["ParticipantBindings", "ParticipantRuntime"]
+__all__ = ["ParticipantBindings", "ParticipantRuntime", "PrimaryParticipantIdentityPolicy"]

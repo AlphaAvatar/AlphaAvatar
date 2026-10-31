@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .participant import Participant
-from .request import IdentityRequest
+from .request import AssociationRequest, IdentityRequest
 from .session import SessionEvent, SessionSnapshot, SessionStreamRead
 from .validation import validate_identity
 
 __all__ = [
+    "AssociationRequest",
     "IdentityRequest",
     "Participant",
     "SessionEvent",

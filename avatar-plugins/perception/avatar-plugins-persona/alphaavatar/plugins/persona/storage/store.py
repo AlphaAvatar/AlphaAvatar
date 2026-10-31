@@ -28,7 +28,7 @@ from alphaavatar.core.session.schemas import Participant
 from alphaavatar.core.workspace import check_legacy_identity, prepare_user_path
 
 from ..profile import UserProfileDetails
-from ..profile.serialization import flatten_profile_items, rebuild_profile_items
+from ..profile.serialization import ProfileValueType, flatten_profile_items, rebuild_profile_items
 from .runtime_state import RuntimeStateStore
 
 
@@ -78,6 +78,13 @@ class PersonaStore:
             if data.get("details_items")
             else None
         )
+
+        if details is not None:
+            details._field_metadata = {
+                item["metadata"]["path"].strip("/"): item["metadata"]
+                for item in data["details_items"]
+                if item.get("metadata", {}).get("type") == ProfileValueType.field
+            }
 
         return UserProfile(
             details=details,

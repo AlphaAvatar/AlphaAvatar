@@ -113,6 +113,7 @@ async def create_execution(config: ApplicationConfig, access: SessionContext) ->
     from alphaavatar.agents.avatar import AvatarEngine
     from alphaavatar.agents.constants import DEFAULT_CONTEXT_VALUE
     from alphaavatar.agents.runtime import InteractionMethod, StateRuntime
+    from alphaavatar.agents.runtime.modules.participants import PrimaryParticipantIdentityPolicy
     from alphaavatar.agents.utils.time import resolve_user_timezone
     from alphaavatar.core.session import SessionRuntime
     from alphaavatar.core.workspace import prepare_session_path
@@ -129,7 +130,9 @@ async def create_execution(config: ApplicationConfig, access: SessionContext) ->
     workspace = config.workspace
 
     # Runtime
-    session = SessionRuntime(session_id=session_id)
+    session = SessionRuntime(
+        session_id=session_id, identity_policy=PrimaryParticipantIdentityPolicy()
+    )
     created_at = datetime.fromtimestamp(session.created_at.unix_seconds, UTC)
     zone = ZoneInfo(avatar.avatar.timezone) if avatar.avatar.timezone else UTC
     session_path = workspace.data.sessions.get(
