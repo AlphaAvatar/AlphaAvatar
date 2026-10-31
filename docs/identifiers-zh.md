@@ -24,7 +24,7 @@
 | `device_id → participant_id` | `ParticipantBindings._devices` | 表示明确提交者的端点关联；一个端点当前至多关联一个提交者，但这不限制该端点画面中的人数。 |
 | `(PerceptionSourceRef, entity_id) → participant_id` | `ParticipantBindings._entities` | 每个来源实体独立关联；多个来源实体可以明确关联到同一个参与者。 |
 | `participant_id → user_id` | `SessionRuntime.participants[participant_id].user_id` | 当前用户身份只有这一份。`ParticipantBindings` 不复制用户映射。 |
-| `PerceptionSegmentRef → entity` | `ParticipantRuntime` 的有界片段状态 | 把声纹推理结果限定到具体音频片段；不新增人物 ID。 |
+| `PerceptionSegmentRef → entity` | `ParticipantRuntime` 的有界片段状态 | 把明确的实体证据或声纹跟踪结果关联到具体音频片段；不新增人物 ID。 |
 | `Participant → 用户资料` | `ParticipantRuntime.user_path(participant)` | 使用当前接受的参与者快照；已捕获写入可使用经过历史核验的旧版本，不维护启动用户名单。 |
 
 业务侧统一通过 [ParticipantRuntime](../avatar-agents/alphaavatar/agents/runtime/modules/participants/runtime.py) 操作：`join`、`get`、`bind_device`、`ensure_entity`、`release_entity`、`resolve`、`bind_user`、`invoke`、`accepts_identity`、`user_path`。`invoke` 是同一 Runtime 的 Agent 主动身份入口，其他识别／决策组件使用 `bind_user`，统一交由 Session 接受判断。底层 [ParticipantBindings](../avatar-agents/alphaavatar/agents/runtime/modules/participants/binding.py) 只维护两张关联表，不承担识别策略、目录 I/O 或长期用户状态。
@@ -102,6 +102,8 @@ Persona 会随已接受身份异步加载相应资料，Context 在准备完成�
 
 来源退役会释放实体和片段关联，已存在的 Session 参与者及历史事件保留。片段 admission `token` 用于拒绝过期推理结果；片段被淘汰后，即使同名片段再次出现，旧 token 也不能重新打开关联。
 
+语音片段的物理关联与长期用户身份分别核验。输入已经明确提供 `entity_id` 时，Speaker 处理器立即建立片段关联，不等待声纹窗口或用户识别。短语音、推理失败或用户 B→A 的身份纠正不会单独使已确认的物理关联失效；真实的主体冲突、混说、来源退役和取消仍使片段失效。用户识别和资料写入继续核对原先捕获的身份版本，迟到推理不能覆盖后来的身份决定。没有实体证据的片段保持未解析，不回退到设备用户。
+
 实现入口：[EnvObservation](../avatar-core/alphaavatar/core/env/observation.py)、[EnvAnnotation](../avatar-core/alphaavatar/core/env/annotation.py)、[来源注册表](../avatar-core/alphaavatar/core/perception/source_registry.py)、[LiveKit 帧标识](../avatar-rtc/alphaavatar/rtc/livekit/utils/frame_id.py)、[图像载荷](../avatar-core/alphaavatar/core/media/image.py)、[STT 契约](../avatar-agents/alphaavatar/agents/avatar/voice/schema/transcription.py)。
 
 ## 3. 应用、会话、Turn 和执行
@@ -121,6 +123,10 @@ Persona 会随已接受身份异步加载相应资料，Context 在准备完成�
 | `consumer_id` | 某条事件流的消费者标识。 | 在该流中维护独立游标；不代表参与者或用户。 |
 
 当前结构区分连接附着、Session、执行和工作上下文，但这些 ID 本身不承诺断线任务恢复或跨进程持久续跑。`pid` 只是运行进程的操作系统进程号。
+
+候选可以依据同一片段的明确实体或已建立的片段关联，从未知主体补全为具体实体；补全保留候选 ID，并通过修订号淘汰旧评估。实体冲突不会被新的迟到结果无声覆盖。同一来源出现可能属于连续发言的活动片段时，旧候选暂缓提交，活动结束或关联证据排除连续发言后恢复评估；各片段和候选保持独立，不据此合并参与者。
+
+语义寻址收到终态时，只结束该决定引用的观测及对应片段。已经到达的后续片段、文本和无关推理任务继续保留；受已结束片段影响的推理会被取消或重建，迟到结果不能重新发布已结束片段的证据。
 
 实现入口：[Avatar 配置](../avatar-agents/alphaavatar/agents/configs/avatar_info_config.py)、[Host 执行契约](../avatar-host/alphaavatar/host/execution/schemas.py)、[TurnCandidate](../avatar-plugins/perception/avatar-plugins-router/alphaavatar/plugins/router/processors/turn_taking/schemas/state.py)、[输入接纳](../avatar-agents/alphaavatar/agents/avatar/engine.py)、[TurnRuntime](../avatar-core/alphaavatar/core/turn/runtime.py)、[Turn 契约](../avatar-core/alphaavatar/core/turn/schemas/snapshot.py)、[LoopIdentity](../avatar-agents/alphaavatar/agents/avatar/loop/schemas/identity.py)。
 

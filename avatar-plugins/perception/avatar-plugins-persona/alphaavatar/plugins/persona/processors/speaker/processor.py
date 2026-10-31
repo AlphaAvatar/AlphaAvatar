@@ -65,6 +65,7 @@ class SpeakerSegmentState:
     pending: int = 0
     closed: bool = False
     invalid: bool = False
+    inference_failed: bool = False
     vector: np.ndarray | None = None
     last_audio: bytes | None = None
 
@@ -167,8 +168,8 @@ class SpeakerProcessor(PersonaProcessorBase):
         state = job.state if isinstance(job, SpeakerWindow) else job
         if isinstance(job, SpeakerWindow):
             state.pending -= 1
-        if self._is_current(state):
-            self._invalidate(state)
+        if self._segments.get(state.segment) is state:
+            state.inference_failed = True
             if state.closed and state.pending == 0:
                 self._retire(state)
 
@@ -226,9 +227,25 @@ class SpeakerProcessor(PersonaProcessorBase):
                 token=self.runtime.participants.observe_segment(segment),
             )
             self._segments[segment] = state
-        elif observation.entity != state.entity:
-            # A segment containing conflicting subjects cannot be assigned to its first speaker.
-            self._invalidate(state)
+        elif observation.entity is not None and observation.entity != state.entity:
+            if state.entity is not None:
+                # Conflicting explicit subjects invalidate the physical association.
+                self._invalidate(state)
+            else:
+                state.entity = observation.entity
+                existing = self.runtime.participants.resolve(
+                    source=segment.source, entity=state.entity
+                )
+                state.participant = (
+                    state.identities.get(existing.participant_id)
+                    if existing is not None
+                    else self.runtime.participants.ensure_entity(segment.source, state.entity)
+                )
+
+        # An explicit subject is usable before optional identity inference has completed.
+        if state.entity is not None and not state.invalid:
+            if not self.runtime.participants.bind_segment(segment, state.entity, token=state.token):
+                state.invalid = True
 
         return state
 
@@ -237,7 +254,7 @@ class SpeakerProcessor(PersonaProcessorBase):
             return
 
         state = self._state(observation)
-        if state is None or state.closed or state.invalid:
+        if state is None or state.closed or state.invalid or state.inference_failed:
             return
 
         observation_id = str(
@@ -267,6 +284,7 @@ class SpeakerProcessor(PersonaProcessorBase):
         # Include the final tail in a full window; no zero-padding of short utterances.
         if (
             not state.invalid
+            and not state.inference_failed
             and len(state.recent) == self._window_bytes
             and state.last_window_end != state.samples
         ):
@@ -292,7 +310,7 @@ class SpeakerProcessor(PersonaProcessorBase):
 
     async def _infer_window(self, job: SpeakerWindow) -> None:
         state = job.state
-        if not self._is_current(state) or state.invalid:
+        if not self._is_current(state) or state.invalid or state.inference_failed:
             return
 
         result = await asyncio.wait_for(
@@ -301,7 +319,7 @@ class SpeakerProcessor(PersonaProcessorBase):
             ),
             timeout=self._vector_config.inference_timeout_sec,
         )
-        if not self._is_current(state) or state.invalid:
+        if not self._is_current(state) or state.invalid or state.inference_failed:
             return
 
         if result is None:
@@ -310,16 +328,15 @@ class SpeakerProcessor(PersonaProcessorBase):
         vector = np.frombuffer(result, dtype=np.float32)
         norm = float(np.linalg.norm(vector))
         if not np.isfinite(vector).all() or not np.isfinite(norm) or norm <= 0:
-            self._invalidate(state)
-            return
+            raise ValueError("Speaker vector must contain finite values and have a positive norm")
 
         vector = vector / norm
-        if state.vector is not None and (
-            state.vector.shape != vector.shape
-            or float(np.dot(state.vector, vector)) < self._config.segment_consistency_threshold
-        ):
-            self._invalidate(state)
-            return
+        if state.vector is not None:
+            if state.vector.shape != vector.shape:
+                raise ValueError("Speaker vector shape changed within a segment")
+            if float(np.dot(state.vector, vector)) < self._config.segment_consistency_threshold:
+                self._invalidate(state)
+                return
 
         if state.vector is None:
             state.vector = vector.copy()
@@ -428,17 +445,18 @@ class SpeakerProcessor(PersonaProcessorBase):
             return
 
         try:
-            if state.invalid or state.vector is None:
-                self._invalidate(state)
+            if state.invalid:
                 return
 
             if state.entity is None:
+                if state.vector is None or state.inference_failed:
+                    return
+
                 state.entity = self._tracks.resolve(
                     state.segment.source, state.vector, time.monotonic()
                 )
                 self._release_tracks()
                 if state.entity is None:
-                    self._invalidate(state)
                     return
 
                 existing = self.runtime.participants.resolve(
@@ -450,17 +468,16 @@ class SpeakerProcessor(PersonaProcessorBase):
                     else self.runtime.participants.ensure_entity(state.segment.source, state.entity)
                 )
 
-            participant = state.participant
-            if participant is None or not self.runtime.participants.accepts_identity(participant):
-                self._invalidate(state)
-                return
-
             if not self.runtime.participants.bind_segment(
                 state.segment, state.entity, token=state.token
             ):
                 return
 
             if self.runtime.participants.resolve(segment=state.segment) is None:
+                return
+
+            participant = state.participant
+            if participant is None or state.vector is None or state.inference_failed:
                 return
 
             participant = await self._resolve_identity(state, participant)
@@ -477,7 +494,8 @@ class SpeakerProcessor(PersonaProcessorBase):
 
         except BaseException:
             if self._is_current(state):
-                self._invalidate(state)
+                # Missing model evidence must not revoke an explicit physical association.
+                state.inference_failed = True
             raise
 
         finally:
@@ -485,7 +503,7 @@ class SpeakerProcessor(PersonaProcessorBase):
                 state.pending -= 1
 
             if not self._is_current(state) or (
-                state.closed and state.pending == 0 and state.invalid
+                state.closed and state.pending == 0 and (state.invalid or state.inference_failed)
             ):
                 self._retire(state)
 

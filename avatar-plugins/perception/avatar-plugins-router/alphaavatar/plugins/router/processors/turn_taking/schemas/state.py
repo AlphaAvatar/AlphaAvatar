@@ -69,6 +69,7 @@ class TurnCandidate:
     revision: int = 0
     interruption_requested: bool = False
     has_perception_gap: bool = False
+    has_entity_conflict: bool = False
 
     segments: list[PerceptionSegmentRef] = field(default_factory=list)
     active_segments: set[PerceptionSegmentRef] = field(default_factory=set)

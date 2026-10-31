@@ -143,15 +143,106 @@ class TurnTakingCoordinator:
             and first.participant_id == second.participant_id
         )
 
-    def _speaker_matches(
-        self, candidate: TurnCandidate, evidence: InteractionAddressingEvidence
+    def _refresh_speaker(
+        self, candidate: TurnCandidate, observation: EnvObservation | None = None
     ) -> bool:
-        left, right = candidate.speaker, evidence.speaker
-        if left.entity is not None or right.entity is not None:
+        if candidate.has_entity_conflict:
+            return False
+
+        entities = {}
+        if candidate.speaker.entity is not None:
+            entities[candidate.speaker.entity.entity_id] = candidate.speaker.entity
+        if observation is not None and observation.segment in candidate.segments:
+            if observation.entity is not None:
+                entities[observation.entity.entity_id] = observation.entity
+        for segment in candidate.segments:
+            entity = self._runtime.participants.entity_for_segment(segment)
+            if entity is not None:
+                entities[entity.entity_id] = entity
+
+        if len(entities) > 1:
+            # Conflicting entity evidence cannot leave a valid owner for Engine to reconstruct.
+            for segment in candidate.segments:
+                associated = self._runtime.participants.entity_for_segment(segment)
+                if (
+                    candidate.speaker.entity is None
+                    or associated is not None
+                    and associated != candidate.speaker.entity
+                    or observation is not None
+                    and observation.segment == segment
+                    and observation.entity is not None
+                    and observation.entity != candidate.speaker.entity
+                ):
+                    self._runtime.participants.invalidate_segment(segment)
+            candidate.has_entity_conflict = candidate.has_perception_gap = True
+            candidate.addressing_evidence.clear()
+            entity = None
+        else:
+            entity = next(iter(entities.values()), None)
+            if entity == candidate.speaker.entity:
+                return False
+
+        candidate.speaker = replace(candidate.speaker, entity=entity)
+        candidate.revision += 1
+        self._cancel_assessment(candidate.key)
+        return True
+
+    def _speaker_matches(self, candidate: TurnCandidate, record: AddressingEvidenceRecord) -> bool:
+        if candidate.has_entity_conflict:
+            return False
+
+        left, right = candidate.speaker, record.evidence.speaker
+        if left.entity is not None and right.entity is not None:
+            if left.source == right.source and left.entity != right.entity:
+                return False
             return self._same_subject(left, right)
 
-        # Entity-less evidence is only attached through a matching segment/observation below.
-        return left.source is not None and left.source == right.source
+        segment = record.target_segment
+        if (
+            segment not in candidate.segments
+            or left.source != segment.source
+            or right.source != segment.source
+        ):
+            return False
+        if left.entity is None and right.entity is None:
+            return True
+
+        # A late entity can corroborate earlier anonymous evidence only for this exact segment.
+        entity = left.entity or right.entity
+        associated = self._runtime.participants.entity_for_segment(segment)
+        observation = self._runtime.perception.timeline.get_observation(
+            observation_id=record.target_observation_id
+        )
+        observed = (
+            observation.entity
+            if observation is not None and observation.segment == segment
+            else None
+        )
+        proofs = [item for item in (associated, observed) if item is not None]
+        return bool(proofs) and all(item.entity_id == entity.entity_id for item in proofs)
+
+    def _related_speech(self, left: TurnCandidate, right: TurnCandidate) -> bool:
+        return left.key.source == right.key.source and (
+            left.speaker.entity is None
+            or right.speaker.entity is None
+            or self._same_subject(left.speaker, right.speaker)
+        )
+
+    def _speech_active(self, candidate: TurnCandidate) -> bool:
+        return bool(candidate.active_segments) or any(
+            other.active_segments and self._related_speech(candidate, other)
+            for other in self._candidates.values()
+        )
+
+    def _resume_source(self, source: PerceptionSourceRef) -> None:
+        if source in self._cancelled_sources or not self._runtime.participants.source_is_current(
+            source
+        ):
+            return
+        for key, candidate in tuple(self._candidates.items()):
+            task = self._assessment_tasks.get(key)
+            if key.source == source and (task is None or task.done()):
+                self._schedule_assessment(key, candidate.turn_candidate_id)
 
     def _store_unsegmented_addressing(self, record: AddressingEvidenceRecord) -> None:
         if (
@@ -232,10 +323,17 @@ class TurnTakingCoordinator:
 
     def _is_current(self, key: SpeakerKey, evidence: TurnTakingEvidence) -> bool:
         candidate = self._candidates.get(key)
+        if candidate is not None and candidate.turn_candidate_id == evidence.turn_candidate_id:
+            if self._refresh_speaker(candidate):
+                self._schedule_assessment(key, candidate.turn_candidate_id)
+                self._resume_source(key.source)
+                return False
         return (
             candidate is not None
             and candidate.turn_candidate_id == evidence.turn_candidate_id
             and candidate.revision == evidence.candidate_revision
+            and self._runtime.participants.source_is_current(key.source)
+            and not self._speech_active(candidate)
         )
 
     @staticmethod
@@ -256,16 +354,14 @@ class TurnTakingCoordinator:
         )
 
     def _cancel_assessment(self, key: SpeakerKey) -> None:
-        task = self._assessment_tasks.pop(key, None)
-        if (
-            task is not None
-            and task is not asyncio.current_task()
-            and not task.done()
-            and not task.cancelling()
-        ):
+        task = self._assessment_tasks.get(key)
+        if task is asyncio.current_task():
+            return
+        self._assessment_tasks.pop(key, None)
+        if task is not None and not task.done() and not task.cancelling():
             task.cancel()
 
-    def _drop_candidate(self, key: SpeakerKey) -> None:
+    def _drop_candidate(self, key: SpeakerKey, *, resume: bool = True) -> None:
         candidate = self._candidates.pop(key, None)
         if candidate is None:
             return
@@ -283,6 +379,8 @@ class TurnTakingCoordinator:
             if self._segment_owners.get(segment) == key:
                 self._segment_owners.pop(segment, None)
             self._retire_segment(segment)
+        if resume:
+            self._resume_source(key.source)
 
     def _retire_segment(self, segment: PerceptionSegmentRef) -> None:
         self._retired_segments[segment] = None
@@ -351,9 +449,11 @@ class TurnTakingCoordinator:
     async def _assess_candidate(self, key: SpeakerKey, turn_candidate_id: str) -> None:
         try:
             candidate = self._candidate(key, turn_candidate_id)
-            if candidate is None or candidate.active_segments:
+            if candidate is None or self._speech_active(candidate):
                 return
 
+            if self._refresh_speaker(candidate):
+                self._resume_source(key.source)
             evidence = self._builder.build(candidate)
 
             if not self._model.capabilities.supports(evidence.turn_mode):
@@ -479,6 +579,16 @@ class TurnTakingCoordinator:
 
     def _schedule_assessment(self, key: SpeakerKey, turn_candidate_id: str) -> None:
         self._cancel_assessment(key)
+        candidate = self._candidate(key, turn_candidate_id)
+        if (
+            candidate is None
+            or not candidate.closed_segments
+            or key.source in self._cancelled_sources
+            or not self._runtime.participants.source_is_current(key.source)
+            or self._speech_active(candidate)
+        ):
+            return
+
         task = asyncio.create_task(
             self._assess_candidate(key, turn_candidate_id),
             name=f"router_turn_assessment:{turn_candidate_id}",
@@ -528,24 +638,32 @@ class TurnTakingCoordinator:
     def _apply_addressing(
         self, key: SpeakerKey, candidate: TurnCandidate, record: AddressingEvidenceRecord
     ) -> None:
-        if not self._speaker_matches(candidate, record.evidence):
+        observation = self._runtime.perception.timeline.get_observation(
+            observation_id=record.target_observation_id
+        )
+        changed = self._refresh_speaker(candidate, observation)
+        if not self._speaker_matches(candidate, record):
             logger.warning(
                 "Addressing evidence speaker mismatch turn_candidate_id=%s annotation_id=%s",
                 candidate.turn_candidate_id,
                 record.annotation_id,
             )
+            if changed:
+                self._resume_source(key.source)
             return
 
         was_ready = self._addressing_ready(candidate)
         previous = self._current_addressing(candidate)
 
         if not candidate.update_addressing_evidence(record):
+            if changed:
+                self._resume_source(key.source)
             return
 
         is_ready = self._addressing_ready(candidate)
         current = self._current_addressing(candidate)
 
-        if was_ready == is_ready and self._fusion.same_target(previous, current):
+        if not changed and was_ready == is_ready and self._fusion.same_target(previous, current):
             return
 
         candidate.mark_addressing_changed()
@@ -555,6 +673,8 @@ class TurnTakingCoordinator:
             self._maybe_interrupt(candidate, record.target_observation_id)
         else:
             self._schedule_assessment(key, candidate.turn_candidate_id)
+        if changed:
+            self._resume_source(key.source)
 
     def _attach_segment_addressing(
         self, key: SpeakerKey, candidate: TurnCandidate, segment: PerceptionSegmentRef
@@ -702,12 +822,6 @@ class TurnTakingCoordinator:
 
             candidate = TurnCandidate.create(observation)
             self._candidates[key] = candidate
-        elif observation.segment is not None and observation.entity is not None:
-            previous = candidate.speaker.entity
-            if previous is not None and previous.entity_id != observation.entity.entity_id:
-                self._runtime.participants.invalidate_segment(observation.segment)
-                candidate.speaker = replace(candidate.speaker, entity=None)
-                candidate.has_perception_gap = True
 
         candidate.latest_observation_id = observation.observation_id
         return key, candidate
@@ -719,9 +833,13 @@ class TurnTakingCoordinator:
         segment: PerceptionSegmentRef,
         observation: EnvObservation,
     ) -> None:
+        changed = self._refresh_speaker(candidate, observation)
         text = self._builder.text(observation)
         if text is None or not candidate.add_transcript(segment, observation, text):
+            if changed:
+                self._resume_source(segment.source)
             return
+
         self._trace_segment(
             "candidate.transcript", segment, observation, candidate=candidate, state="accepted"
         )
@@ -739,6 +857,8 @@ class TurnTakingCoordinator:
         )
         if not candidate.active_segments:
             self._schedule_assessment(key, candidate.turn_candidate_id)
+        if changed:
+            self._resume_source(segment.source)
 
     def _store_orphan_transcript(
         self, segment: PerceptionSegmentRef, observation: EnvObservation
@@ -775,22 +895,30 @@ class TurnTakingCoordinator:
             return
 
         key, candidate = self._get_candidate(observation)
+        changed = self._refresh_speaker(candidate, observation)
         if (
             observation.kind == ObservationKind.SPEECH_FRAME
             and segment in candidate.closed_segments
         ):
+            if changed:
+                self._resume_source(segment.source)
             return
 
         is_new_segment = candidate.start_segment(segment, observation)
         self._segment_owners[segment] = key
+        if is_new_segment:
+            changed = self._refresh_speaker(candidate, observation) or changed
 
         if is_new_segment:
             # SPEECH_FRAME is ephemeral. close_segment/add_transcript attach retained evidence;
             # the frame may still anchor immediate interruption, never a committed Turn.
-            self._cancel_assessment(key)
             self._trace_segment(
                 "candidate.segment", segment, observation, candidate=candidate, state="open"
             )
+        if is_new_segment or changed:
+            for other_key, other in self._candidates.items():
+                if self._related_speech(candidate, other):
+                    self._cancel_assessment(other_key)
 
         self._attach_segment_addressing(key, candidate, segment)
 
@@ -803,6 +931,8 @@ class TurnTakingCoordinator:
             self._apply_transcript(key, candidate, segment, orphan)
 
         if observation.kind != ObservationKind.SPEECH_SEGMENT:
+            if changed:
+                self._resume_source(segment.source)
             return
 
         candidate.close_segment(segment, observation)
@@ -827,6 +957,7 @@ class TurnTakingCoordinator:
 
         if not candidate.active_segments:
             self._schedule_assessment(key, candidate.turn_candidate_id)
+        self._resume_source(segment.source)
 
     def _consume_transcript(self, observation: EnvObservation) -> None:
         segment = self._builder.require_segment(observation)
@@ -949,7 +1080,7 @@ class TurnTakingCoordinator:
         tasks = tuple(self._assessment_workers)
         if retain_retired:
             for key in tuple(self._candidates):
-                self._drop_candidate(key)
+                self._drop_candidate(key, resume=False)
         self._assessment_tasks.clear()
         self._candidates.clear()
         self._segment_owners.clear()
