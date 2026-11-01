@@ -16,7 +16,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import replace
 from types import MappingProxyType
-from typing import Any
 
 from alphaavatar.agents.avatar.provider.enums import ModelMessagePhase, ModelRole
 from alphaavatar.agents.avatar.provider.schemas.model_input import (
@@ -37,16 +36,6 @@ from alphaavatar.agents.avatar.provider.schemas.model_input import (
 from alphaavatar.agents.constants import RUNTIME_CONTEXT_TOOL_NAME
 
 type MemoryMessage = ModelInputMessage | ModelFunctionCall | ModelFunctionOutput
-
-
-def _freeze(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
-    if isinstance(value, list | tuple):
-        return tuple(_freeze(item) for item in value)
-    if isinstance(value, set | frozenset):
-        return frozenset(_freeze(item) for item in value)
-    return value
 
 
 def memory_message(item: ModelInputItem) -> MemoryMessage | None:
@@ -75,11 +64,11 @@ def memory_message(item: ModelInputItem) -> MemoryMessage | None:
         if isinstance(item, ModelFunctionOutput) and type(item.is_error) is not bool:
             raise TypeError("Memory tool errors must be explicit booleans")
 
-    changes: dict[str, Any] = {}
+    changes = {}
     if isinstance(item, ModelInputMessage | ModelFunctionCall):
         if not isinstance(item.metadata, Mapping):
             raise TypeError("Memory record metadata must be a mapping")
-        changes["metadata"] = _freeze(item.metadata)
+        changes["metadata"] = MappingProxyType({})
     if isinstance(item, ModelInputMessage | ModelFunctionOutput):
         parts = []
         for part in item.parts:
@@ -90,8 +79,7 @@ def memory_message(item: ModelInputItem) -> MemoryMessage | None:
             ):
                 raise TypeError("Memory text parts must contain strings")
             if isinstance(part, ModelTextPart):
-                annotations = tuple(_freeze(value) for value in part.annotations)
-                part = replace(part, annotations=annotations)
+                part = replace(part, annotations=())
             elif not isinstance(
                 part,
                 ModelRefusalPart
@@ -101,6 +89,23 @@ def memory_message(item: ModelInputItem) -> MemoryMessage | None:
                 | ModelMediaPart,
             ):
                 raise TypeError("Unsupported memory content part")
+            if isinstance(part, ModelImagePart | ModelAudioPart):
+                part = ModelTextPart(
+                    f"[media evidence: observation={part.observation.observation_id}]"
+                )
+            elif isinstance(part, ModelTemporalPart):
+                observations = ",".join(
+                    observation.observation_id
+                    for value in part.slices
+                    for observation in value.observations
+                )
+                part = ModelTextPart(
+                    f"[temporal evidence: observations={observations}; not decoded here]"
+                )
+            elif isinstance(part, ModelMediaPart):
+                part = ModelTextPart(
+                    f"[media evidence: {part.kind.value}, {part.mime_type}; not decoded here]"
+                )
             parts.append(part)
         if not parts and isinstance(item, ModelInputMessage):
             return None
@@ -108,43 +113,6 @@ def memory_message(item: ModelInputItem) -> MemoryMessage | None:
     return replace(item, **changes)
 
 
-def _part_key(part: Any) -> Any:
-    # Core observations are identified by their immutable evidence identity, not decoded pixels.
-    if isinstance(part, ModelImagePart | ModelAudioPart):
-        return type(part), part.observation.observation_id
-    if isinstance(part, ModelTemporalPart):
-        return type(part), tuple(
-            (
-                value.index,
-                value.time_range,
-                tuple(item.observation_id for item in value.observations),
-                tuple(event.event_id for event in value.source_events),
-            )
-            for value in part.slices
-        )
-    return part
-
-
 def same_message(left: MemoryMessage, right: MemoryMessage) -> bool:
-    """Detect conflicting replay without encoding or hashing large media payloads."""
-    if type(left) is not type(right) or left.id != right.id:
-        return False
-    if isinstance(left, ModelInputMessage):
-        return (
-            left.role == right.role
-            and left.phase == right.phase
-            and left.interrupted == right.interrupted
-            and left.transcript_confidence == right.transcript_confidence
-            and left.created_at == right.created_at
-            and left.metadata == right.metadata
-            and tuple(map(_part_key, left.parts)) == tuple(map(_part_key, right.parts))
-        )
-    if isinstance(left, ModelFunctionCall):
-        return left == right
-    return (
-        left.call_id == right.call_id
-        and left.name == right.name
-        and left.is_error == right.is_error
-        and left.created_at == right.created_at
-        and tuple(map(_part_key, left.parts)) == tuple(map(_part_key, right.parts))
-    )
+    """The compact buffer contains frozen text and scalar evidence only."""
+    return type(left) is type(right) and left == right
