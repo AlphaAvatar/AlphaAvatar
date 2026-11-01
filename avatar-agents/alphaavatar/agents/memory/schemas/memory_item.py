@@ -22,17 +22,8 @@ from alphaavatar.agents.utils.time import application_now
 from ..enums import MemoryKind, MemoryScopeKind, MemoryType
 from .context import MemoryContextRef
 from .graph import MemoryGraphLink, MemoryGraphNode
-from .reference import MemoryOwnerRef, MemoryParticipantRef, MemorySourceRef
+from .reference import MemoryOwnerRef, MemoryParticipantRef, MemorySourceRef, deduplicate_refs
 from .scope import MemoryScope
-
-
-def _deduplicate_refs(values):
-    out, seen = [], set()
-    for value in values:
-        if value.key not in seen:
-            seen.add(value.key)
-            out.append(value)
-    return out
 
 
 def _deduplicate_ids(values) -> list[str]:
@@ -90,7 +81,7 @@ class MemoryItem(BaseModel):
     @field_validator("owner_refs", mode="after")
     @classmethod
     def _normalize_owners(cls, value):
-        value = _deduplicate_refs(value)
+        value = deduplicate_refs(value)
         if not value:
             raise ValueError("owner_refs cannot be empty")
         return value
@@ -98,7 +89,7 @@ class MemoryItem(BaseModel):
     @field_validator("participant_refs", "source_refs", mode="after")
     @classmethod
     def _normalize_refs(cls, value):
-        return _deduplicate_refs(value)
+        return deduplicate_refs(value)
 
     @field_validator("source_memory_ids", "supersedes_memory_ids", mode="before")
     @classmethod

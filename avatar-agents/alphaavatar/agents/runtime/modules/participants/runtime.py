@@ -26,7 +26,12 @@ from alphaavatar.core.env.schemas import (
 )
 from alphaavatar.core.session import Participant, SessionRuntime
 from alphaavatar.core.session.enums import IdentityOutcome, IdentitySource
-from alphaavatar.core.session.schemas import AssociationRequest, IdentityRequest, validate_identity
+from alphaavatar.core.session.schemas import (
+    AssociationRequest,
+    IdentityBasis,
+    IdentityRequest,
+    validate_identity,
+)
 from alphaavatar.core.turn import TurnRuntime
 from alphaavatar.core.turn.schemas import TurnSnapshot
 from alphaavatar.core.workspace import UserPath, WorkspacePaths
@@ -197,6 +202,16 @@ class ParticipantRuntime:
             )
 
         return replace(snapshot, actors=tuple(actors))
+
+    def identity_basis(self, snapshot: TurnSnapshot) -> IdentityBasis:
+        return IdentityBasis.from_participants(
+            self._require_participant(actor.participant_id)
+            for actor in self.project_turn(snapshot).actors
+            if actor.participant_id is not None
+        )
+
+    def identity_basis_is_current(self, basis: IdentityBasis) -> bool:
+        return not self._closed and basis.matches(self.get)
 
     def bind_device(self, device_id: str, participant_id: str) -> None:
         self._require_participant(participant_id)

@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from .identity import IdentityBasis, IdentityRef
 from .participant import Participant
 from .request import AssociationRequest, IdentityRequest
 from .session import SessionEvent, SessionSnapshot, SessionStreamRead
@@ -18,6 +19,8 @@ from .validation import validate_identity
 
 __all__ = [
     "AssociationRequest",
+    "IdentityBasis",
+    "IdentityRef",
     "IdentityRequest",
     "Participant",
     "SessionEvent",

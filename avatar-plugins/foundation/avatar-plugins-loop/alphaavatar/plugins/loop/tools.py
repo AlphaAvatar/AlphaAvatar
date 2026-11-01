@@ -19,7 +19,7 @@ import json
 import logging
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import replace
+from dataclasses import asdict, replace
 from math import isfinite
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -41,6 +41,7 @@ from alphaavatar.agents.runtime.capability.enums import AvatarCapabilityName
 from alphaavatar.agents.runtime.capability.result import CapabilityResult
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.output.enums import ExecutionSignalKind
+from alphaavatar.core.session.schemas import IdentityBasis
 
 from .config import ToolPolicy
 from .feedback import LoopFeedback
@@ -150,7 +151,7 @@ class LoopTools:
         self._policies = dict(policies)
         self._signatures: dict[str, int] = {}
         self._records: dict[str, ToolRecord] = {}
-        self._memory_identities: dict[str, tuple[tuple[str, str | None, int | None], ...]] = {}
+        self._memory_identities: dict[str, IdentityBasis] = {}
         self.records: list[ToolRecord] = []
 
     @property
@@ -180,24 +181,15 @@ class LoopTools:
             raise asyncio.CancelledError
         raise ContextIdentityChanged("Tool dispatch identity changed")
 
-    def _memory_basis(self) -> tuple[tuple[str, str | None, int | None], ...]:
+    def _memory_basis(self) -> IdentityBasis:
         snapshot = self._runtime.turn.get(self._budget.request.input_id)
         if snapshot is None:
             raise ValueError("Memory retrieval requires its committed input")
-        return tuple(
-            (actor.participant_id, actor.user_id, actor.identity_sequence)
-            for actor in self._runtime.participants.project_turn(snapshot).actors
-            if actor.participant_id is not None
-        )
+        return self._runtime.participants.identity_basis(snapshot)
 
     def _memory_is_current(self, call_id: str) -> bool:
-        return all(
-            (current := self._runtime.participants.get(participant_id)) is not None
-            and current.user_id == user_id
-            and current.identity_sequence == sequence
-            and self._runtime.participants.accepts_identity(current)
-            for participant_id, user_id, sequence in self._memory_identities.get(call_id, ())
-        )
+        basis = self._memory_identities.get(call_id)
+        return basis is None or self._runtime.participants.identity_basis_is_current(basis)
 
     @staticmethod
     def _stale_memory(record: ToolRecord) -> ToolRecord:
@@ -303,7 +295,8 @@ class LoopTools:
             )
             signature_input: list[Any] = [capability.id, payload]
             if memory_basis is not None:
-                signature_input.append(memory_basis)
+                signature_input.append(asdict(memory_basis))
+
             signature = hashlib.sha256(
                 json.dumps(signature_input, sort_keys=True, allow_nan=False).encode()
             ).hexdigest()
@@ -312,6 +305,7 @@ class LoopTools:
                 return self._record(
                     call, ToolOutcome.SKIPPED, executed=False, started=started, code="repeat_limit"
                 )
+
             self._signatures[signature] = count + 1
             # The deployment-selected registry and Run scope grant access. Read-only is an
             # execution/concurrency fact, not a second permission gate. Explicit policy wins.

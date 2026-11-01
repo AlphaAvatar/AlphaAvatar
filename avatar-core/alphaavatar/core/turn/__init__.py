@@ -12,6 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .runtime import TurnRuntime
-from .stream import TurnStream, TurnStreamRead
+from .stream import TurnStream, TurnStreamGap, TurnStreamRead
 
-__all__ = ["TurnStream", "TurnStreamRead", "TurnRuntime"]
+__all__ = ["TurnStream", "TurnStreamGap", "TurnStreamRead", "TurnRuntime"]

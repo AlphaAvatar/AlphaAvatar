@@ -82,20 +82,10 @@ class LoopExecution(LoopHandle):
             raise ValueError("Execution requires its committed input")
 
         participants = runtime.participants
-        self._identity_basis = tuple(
-            (actor.participant_id, actor.user_id, actor.identity_sequence)
-            for actor in participants.project_turn(snapshot).actors
-            if actor.participant_id is not None
-        )
+        self._identity_basis = participants.identity_basis(snapshot)
 
         def delivery_guard() -> bool:
-            return all(
-                (current := participants.get(participant_id)) is not None
-                and current.user_id == user_id
-                and current.identity_sequence == sequence
-                and participants.accepts_identity(current)
-                for participant_id, user_id, sequence in self._identity_basis
-            )
+            return participants.identity_basis_is_current(self._identity_basis)
 
         self._delivery_guard = delivery_guard
         self._identity = LoopIdentity(uuid4().hex, request.turn_id, request.context_id)
@@ -341,11 +331,7 @@ class LoopExecution(LoopHandle):
             raise asyncio.CancelledError
 
         self._context = None
-        self._identity_basis = tuple(
-            (actor.participant_id, actor.user_id, actor.identity_sequence)
-            for actor in self._runtime.participants.project_turn(self._turn).actors
-            if actor.participant_id is not None
-        )
+        self._identity_basis = self._runtime.participants.identity_basis(self._turn)
         self._identity_cleanup = None
         preparation = ContextPrepareRequest(
             input=self._request.input,

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 
 from pydantic import BaseModel, field_validator, model_validator
 
@@ -87,9 +88,10 @@ class MemoryParticipantRef(BaseModel):
 
 class MemorySourceRef(BaseModel):
     kind: MemorySourceKind
-    source_id: str
 
+    source_id: str
     source_generation: int | None = None
+
     segment_id: str | None = None
 
     tool_id: str | None = None
@@ -205,3 +207,15 @@ class MemorySourceRef(BaseModel):
     @classmethod
     def runtime_event(cls, event_id: str) -> MemorySourceRef:
         return cls(kind=MemorySourceKind.RUNTIME_EVENT, source_id=event_id)
+
+
+def deduplicate_refs[T: MemoryOwnerRef | MemoryParticipantRef | MemorySourceRef](
+    values: Iterable[T],
+) -> list[T]:
+    result: list[T] = []
+    seen: set[str] = set()
+    for value in values:
+        if value.key not in seen:
+            seen.add(value.key)
+            result.append(value)
+    return result

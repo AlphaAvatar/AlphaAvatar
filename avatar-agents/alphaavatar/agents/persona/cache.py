@@ -21,16 +21,11 @@ if TYPE_CHECKING:
     import numpy as np
 
     from alphaavatar.core.session.schemas import Participant
-    from alphaavatar.core.turn.schemas import TurnSnapshot
 
     from .schemas import DetailsBase, UserProfile, UserRuntimeState
 
 
 class PersonaCache(ABC):
-    @property
-    @abstractmethod
-    def turns(self) -> list[TurnSnapshot]: ...
-
     @property
     @abstractmethod
     def participant(self) -> Participant: ...
@@ -96,9 +91,6 @@ class PersonaCache(ABC):
 
     @abstractmethod
     def mark_profile_fields(self, fields: set[str], *, updated_at: datetime) -> None: ...
-
-    @abstractmethod
-    def add_turn(self, snapshot: TurnSnapshot) -> None: ...
 
     @abstractmethod
     def snapshot(self) -> PersonaCache: ...

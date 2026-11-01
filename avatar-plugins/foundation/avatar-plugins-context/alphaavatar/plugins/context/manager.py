@@ -31,6 +31,7 @@ from alphaavatar.agents.utils.time import ParticipantTimeContext, format_user_ti
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.env.enums import ObservationKind
 from alphaavatar.core.perception import PerceptionTemporalAligner, TemporalAlignmentMode
+from alphaavatar.core.session.schemas import IdentityBasis
 from alphaavatar.core.time import RuntimeTimeRange
 
 from .builder import ContextBuilder
@@ -150,16 +151,13 @@ class AvatarContextManager(ContextManager):
             turn_behavior_rules="\n".join((state.global_behavior_rules, state.turn_behavior_rules)),
         )
 
-    def _check_identity(self, basis: tuple[tuple[str, str | None, int], ...]) -> None:
-        for participant_id, user_id, sequence in basis:
-            current = self._runtime.participants.get(participant_id)
-            if (
-                current is None
-                or current.user_id != user_id
-                or current.identity_sequence != sequence
-                or not self._runtime.participants.accepts_identity(current)
-            ):
-                raise ContextIdentityChanged("Prepared context identity changed")
+    def _check_identity(self, basis: IdentityBasis | None) -> None:
+        if basis is None:
+            return
+        if not isinstance(basis, IdentityBasis):
+            raise TypeError("Context identity evidence must be IdentityBasis")
+        if not self._runtime.participants.identity_basis_is_current(basis):
+            raise ContextIdentityChanged("Prepared context identity changed")
 
     def _compose(
         self,
@@ -249,13 +247,8 @@ class AvatarContextManager(ContextManager):
             request = replace(
                 request, input=self._history.capture(snapshot, request.context_id, request.input)
             )
-            current = self._runtime.participants.project_turn(snapshot)
+            basis = self._runtime.participants.identity_basis(snapshot)
             state = self._state_snapshot(snapshot)
-            basis = tuple(
-                (actor.participant_id, actor.user_id, actor.identity_sequence)
-                for actor in current.actors
-                if actor.participant_id is not None
-            )
             self._check_identity(basis)
             system = self._system_template(state).instructions(stable_persona=state.user_persona)
             text = RuntimeStateTemplate().render(state_runtime=state)
@@ -305,7 +298,7 @@ class AvatarContextManager(ContextManager):
             raise TypeError("ContextManager requires a captured ModelInput")
 
         if prefix.items and isinstance(prefix.items[0], ModelInputMessage):
-            self._check_identity(prefix.items[0].metadata.get("alphaavatar_identity", ()))
+            self._check_identity(prefix.items[0].metadata.get("alphaavatar_identity"))
 
         identities = {item.id for item in prefix.items}
         added = {item.id for item in continuation}

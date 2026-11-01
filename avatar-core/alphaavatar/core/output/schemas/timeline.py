@@ -19,8 +19,7 @@ from typing import TYPE_CHECKING
 from alphaavatar.core.env.schemas.metadata import OutputMetadata
 from alphaavatar.core.media.audio import AudioSampleFormat
 
-from .identity import OutputIdentity
-from .source import OutputSource
+from .identity import OutputIdentity, OutputSource
 
 if TYPE_CHECKING:
     from alphaavatar.core.env.output import EnvOutput

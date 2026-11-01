@@ -14,7 +14,7 @@
 from .context import MemoryContextRef
 from .graph import GraphNodeMention, MemoryGraphLink, MemoryGraphNode
 from .memory_item import MemoryItem
-from .reference import MemoryOwnerRef, MemoryParticipantRef, MemorySourceRef
+from .reference import MemoryOwnerRef, MemoryParticipantRef, MemorySourceRef, deduplicate_refs
 from .scope import MemoryScope
 from .search import MemorySearchHit
 from .store import MemoryCheckpointAdvance, MemoryCommitResult, MemoryOutboxEvent
@@ -33,4 +33,5 @@ __all__ = [
     "MemoryCheckpointAdvance",
     "MemoryCommitResult",
     "MemoryOutboxEvent",
+    "deduplicate_refs",
 ]
