@@ -107,11 +107,9 @@ for future use; they are not files you should create yourself or expect after st
 │   ├── sessions/
 │   │   └── <YYYY-MM-DD>/<session_key>/
 │   │       ├── manifest.json                 # Host-created Session identity and creation time.
-│   │       ├── provider/                     # Provider traces and durable Memory inputs.
-│   │       │   └── memory_context_<context_key>.sqlite3
+│   │       ├── provider/                     # Provider traces, when enabled.
 │   │       ├── observations/                 # Observation-related files, when saved.
 │   │       ├── turns/                        # Turn-related files, when saved.
-│   │       │   └── persona-profiler.sqlite3   # Retained Persona extraction inputs/progress.
 │   │       ├── artifacts/                    # Files produced for this session.
 │   │       └── .logs/                        # Session diagnostics, when used.
 │   │
@@ -187,15 +185,10 @@ traces and prompts when their recording settings are enabled. `artifacts/` conta
 files produced for that session. The presence of `observations/` or `turns/` does not
 promise that all audio, camera frames or conversation turns have been recorded.
 
-With the corresponding plugins enabled, `provider/memory_context_<context_key>.sqlite3`
-retains Memory extraction inputs and their identity/source evidence, while
-`turns/persona-profiler.sqlite3` retains Persona inputs and processing progress. These
-databases retain complete text independently of optional provider tracing. Bounded
-in-memory batches do not delete their archived input. They are private workspace data,
-not disposable diagnostic logs; include them in backups even when tracing is disabled.
-The Memory extraction checkpoint and extracted memories remain in
-`data/memory/records.sqlite3`. These retained inputs do not provide general task or
-cross-process execution recovery.
+Extracted memories and Memory extraction checkpoints are stored in
+`data/memory/records.sqlite3`. Pending Conversation, Tool and Persona extraction inputs
+are held in memory; the current plugins do not archive those inputs or restore them
+after a process restart.
 
 `graph/memory/` keeps relationships derived from memories. The `persona/` and
 `documents/` graph directories in the diagram are reserved separation points, not
