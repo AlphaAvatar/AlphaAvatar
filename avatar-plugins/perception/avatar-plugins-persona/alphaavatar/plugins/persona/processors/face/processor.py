@@ -13,6 +13,7 @@
 # limitations under the License.
 import asyncio
 import json
+import logging
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -42,13 +43,14 @@ from alphaavatar.core.perception.enums import PerceptionStreamKind
 from alphaavatar.core.session.enums import IdentityOutcome, IdentitySource
 from alphaavatar.core.session.schemas import IdentityRequest, Participant
 
-from ...log import logger
 from ...runtime import PersonaRuntime
 from .analysis_runner import FaceAnalysisRunner
 from .cache import FaceCache
 from .config import FaceConfig
 from .model_files import FACE_MODEL_CONFIG
 from .tracking import FaceTracks
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)

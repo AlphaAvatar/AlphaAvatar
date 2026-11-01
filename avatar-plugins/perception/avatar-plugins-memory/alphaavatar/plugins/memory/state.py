@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pathlib
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 
 from alphaavatar.agents.avatar.provider.errors import ModelProtocolError
 from alphaavatar.agents.avatar.provider.schemas.model_input import (
@@ -44,17 +44,7 @@ from alphaavatar.core.turn.schemas import TurnEntityRef, TurnSnapshot
 from .messages import MemoryMessage, memory_message, same_message
 from .schemas import MemoryIdentitySnapshot
 
-
-@dataclass(frozen=True, slots=True)
-class MemoryTurn:
-    turn_id: str
-    input_id: str
-    text: str | None
-    modality: TurnInputModality
-    actors: tuple[TurnEntityRef, ...]
-
-
-type MemoryContextItem = MemoryMessage | MemoryTurn
+type MemoryContextItem = MemoryMessage | TurnSnapshot
 
 
 def _deduplicate_keep_latest(items: list[MemoryItem]) -> list[MemoryItem]:
@@ -132,8 +122,6 @@ class MemoryState:
 
 
 class MemoryContextState:
-    """Pending extraction text and provenance; Core owns the original input and media."""
-
     def __init__(
         self,
         *,
@@ -170,17 +158,14 @@ class MemoryContextState:
 
         self._cache_type = cache_type
         self._messages: list[MemoryContextItem] = []
-        self._offset = 0
-        self._checkpoints: dict[str, int] = {}
-        self._retain_inputs = True
-        self._message_bases: dict[str, IdentityBasis | None] = {}
         self._message_ids: dict[str, MemoryMessage] = {}
         self._tool_ids: dict[tuple[type, str], str] = {}
         self._call_names: dict[str, str] = {}
         self._turn_ids: dict[str, str] = {}
         self._turn_input_ids: dict[str, str] = {}
-        self._turns: dict[str, MemoryTurn] = {}
+        self._turns: dict[str, TurnSnapshot] = {}
         self._message_turn_ids: dict[str, str | None] = {}
+        self._message_bases: dict[str, IdentityBasis] = {}
 
     @property
     def context(self) -> MemoryContextRef:
@@ -233,78 +218,16 @@ class MemoryContextState:
         return list(self._messages)
 
     @property
-    def message_offset(self) -> int:
-        return self._offset
-
-    @property
     def message_sequence(self) -> int:
-        return self._offset + len(self._messages)
+        return len(self._messages)
 
     def messages_between(self, start: int, end: int) -> list[MemoryContextItem]:
-        if not self._offset <= start <= end <= self.message_sequence:
+        if not 0 <= start <= end <= len(self._messages):
             raise ValueError(f"Invalid Memory context message range: {start}..{end}")
-        return list(self._messages[start - self._offset : end - self._offset])
+        return list(self._messages[start:end])
 
-    def get_turn(self, turn_id: str) -> MemoryTurn | None:
+    def get_turn(self, turn_id: str) -> TurnSnapshot | None:
         return self._turns.get(turn_id)
-
-    def set_processors(self, names: Iterable[str]) -> None:
-        self._checkpoints = {name: self._checkpoints.get(name, self._offset) for name in names}
-        self._retain_inputs = bool(self._checkpoints)
-        if not self._retain_inputs:
-            self._release_before(self.message_sequence)
-
-    def acknowledge(self, processor: str, sequence: int) -> None:
-        self._checkpoints[processor] = sequence
-        self._release_before(min(self._checkpoints.values()))
-
-    def _release_before(self, floor: int) -> None:
-        count = floor - self._offset
-        if count <= 0:
-            return
-        for item in self._messages[:count]:
-            if isinstance(item, MemoryTurn):
-                self._turns[item.turn_id] = replace(item, text=None)
-        del self._messages[:count]
-        self._offset = floor
-        retained_ids = {item.id for item in self._messages if not isinstance(item, MemoryTurn)}
-        for item_id in tuple(self._message_ids):
-            if item_id not in retained_ids:
-                self._message_ids.pop(item_id)
-                self._message_bases.pop(item_id, None)
-                self._message_turn_ids.pop(item_id, None)
-        # Keep only bounded scalar origins for model records which arrive after user extraction.
-        while len(self._turns) > 256:
-            turn_id = next(iter(self._turns))
-            turn = self._turns.pop(turn_id)
-            self._turn_ids.pop(turn_id, None)
-            self._turn_input_ids.pop(turn.input_id, None)
-        self._tool_ids = {
-            (type(item), item.call_id): item.id
-            for item in self._message_ids.values()
-            if isinstance(item, ModelFunctionCall | ModelFunctionOutput)
-        }
-        self._call_names = {
-            item.call_id: item.name
-            for item in self._message_ids.values()
-            if isinstance(item, ModelFunctionCall | ModelFunctionOutput)
-        }
-
-    def actors_for(self, item: MemoryContextItem) -> tuple[TurnEntityRef, ...]:
-        if isinstance(item, MemoryTurn | TurnSnapshot):
-            return item.actors
-        basis = self._message_bases.get(item.id)
-        if basis is not None:
-            return tuple(
-                TurnEntityRef(
-                    participant_id=ref.participant_id,
-                    user_id=ref.user_id,
-                    identity_sequence=ref.identity_sequence,
-                )
-                for ref in basis.participants
-            )
-        turn = self._turns.get(self._message_turn_ids.get(item.id))
-        return turn.actors if turn is not None else ()
 
     def sync_identity(self, snapshot: SessionSnapshot, *, include_new: bool = False) -> None:
         if self.session_id != snapshot.session_id:
@@ -329,7 +252,27 @@ class MemoryContextState:
         if messages is not None:
             selected: dict[str, Participant] = {}
             for item in messages:
-                item_actors = self.actors_for(item)
+                turn = (
+                    item
+                    if isinstance(item, TurnSnapshot)
+                    else self._turns.get(self._message_turn_ids.get(item.id))
+                )
+                basis = None if isinstance(item, TurnSnapshot) else self._message_bases.get(item.id)
+                if basis is not None:
+                    item_actors = tuple(
+                        TurnEntityRef(
+                            participant_id=ref.participant_id,
+                            user_id=ref.user_id,
+                            identity_sequence=ref.identity_sequence,
+                        )
+                        for ref in basis.participants
+                    )
+                else:
+                    item_actors = (
+                        turn.actors
+                        if turn is not None and turn.modality is not TurnInputModality.SYSTEM
+                        else ()
+                    )
                 if not item_actors:
                     unattributed = True
                     continue
@@ -383,26 +326,22 @@ class MemoryContextState:
         turn_id: str | None = None,
         identity_basis: IdentityBasis | None = None,
     ) -> None:
-        if not self._retain_inputs:
-            return
-
+        if identity_basis is not None and not isinstance(identity_basis, IdentityBasis):
+            raise TypeError("Memory record provenance requires IdentityBasis")
         staged: dict[str, MemoryMessage] = {}
         tools: dict[tuple[type, str], str] = {}
         names: dict[str, str] = {}
         # Validate and snapshot the entire batch before advancing any processor's sequence.
         for raw in items:
             item = memory_message(raw)
-
             if item is None:
                 continue
             if item.id in self._turn_input_ids:
                 raise ModelProtocolError("Memory item identity collides with committed user input")
-
             previous = staged.get(item.id, self._message_ids.get(item.id))
             if previous is not None:
                 if not same_message(previous, item):
                     raise ModelProtocolError(f"Conflicting Memory item replay: {item.id}")
-
                 if item.id in self._message_ids and (
                     self._message_turn_ids[item.id] != turn_id
                     or self._message_bases.get(item.id) != identity_basis
@@ -414,21 +353,20 @@ class MemoryContextState:
                 name = names.get(item.call_id, self._call_names.get(item.call_id))
                 if name is not None and name != item.name:
                     raise ModelProtocolError("Memory tool call/result names do not match")
-
                 names[item.call_id] = item.name
                 key = type(item), item.call_id
                 previous_id = tools.get(key, self._tool_ids.get(key))
                 if previous_id is not None and previous_id != item.id:
                     raise ModelProtocolError(f"Duplicate Memory tool record: {item.call_id}")
-
                 tools[key] = item.id
 
             staged[item.id] = item
 
         self._messages.extend(staged.values())
         self._message_ids.update(staged)
-        self._message_bases.update((item_id, identity_basis) for item_id in staged)
         self._message_turn_ids.update((item_id, turn_id) for item_id in staged)
+        if identity_basis is not None:
+            self._message_bases.update((item_id, identity_basis) for item_id in staged)
         self._tool_ids.update(tools)
         self._call_names.update(names)
 
@@ -445,17 +383,7 @@ class MemoryContextState:
         if snapshot.input_id in self._turn_input_ids or snapshot.input_id in self._message_ids:
             raise ModelProtocolError("Committed turn input identity is already recorded")
 
-        snapshot = MemoryTurn(
-            snapshot.turn_id, snapshot.input_id, snapshot.text, snapshot.modality, snapshot.actors
-        )
-        if self._retain_inputs:
-            self._messages.append(snapshot)
-        else:
-            snapshot = replace(snapshot, text=None)
+        self._messages.append(snapshot)
         self._turn_ids[snapshot.turn_id] = snapshot.input_id
         self._turn_input_ids[snapshot.input_id] = snapshot.turn_id
         self._turns[snapshot.turn_id] = snapshot
-        if not self._retain_inputs and len(self._turns) > 256:
-            turn = self._turns.pop(next(iter(self._turns)))
-            self._turn_ids.pop(turn.turn_id, None)
-            self._turn_input_ids.pop(turn.input_id, None)

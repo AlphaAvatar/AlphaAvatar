@@ -12,14 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import json
+import logging
 
 import cv2
 import numpy as np
 
 from alphaavatar.agents.runtime.inference import InferenceRunner
 
-from ...log import logger
 from .model_files import FACE_MODEL_CONFIG, FaceModelType, resolve_face_model_root
+
+logger = logging.getLogger(__name__)
 
 
 class FaceAnalysisRunner(InferenceRunner):

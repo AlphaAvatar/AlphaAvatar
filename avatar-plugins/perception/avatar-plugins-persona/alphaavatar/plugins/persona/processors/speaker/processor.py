@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+import logging
 import time
 from collections import deque
 from collections.abc import Mapping
@@ -38,7 +39,6 @@ from alphaavatar.core.perception.enums import PerceptionStreamKind
 from alphaavatar.core.session.enums import IdentityOutcome, IdentitySource
 from alphaavatar.core.session.schemas import IdentityRequest, Participant
 
-from ...log import logger
 from ...runtime import PersonaRuntime
 from .attribute_runner import SpeakerAttributeRunner
 from .cache import SpeakerCache
@@ -46,6 +46,8 @@ from .config import SpeakerConfig
 from .model_files import SPEAKER_MODEL_CONFIG
 from .tracking import SpeakerTracks
 from .vector_runner import SpeakerVectorRunner
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)

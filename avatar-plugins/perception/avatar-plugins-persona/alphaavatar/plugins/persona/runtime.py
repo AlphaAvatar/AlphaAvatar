@@ -41,11 +41,7 @@ class PersonaRuntime(PersonaBase):
         self._store = store
 
         self._persona_cache: dict[str, DefaultPersonaCache] = {}
-        self._processors: tuple[PersonaProcessorBase, ...] = ()
-        self._entered_processors: list[PersonaProcessorBase] = []
-
-        self._processors_bound = False
-        self._started = False
+        self._processors: tuple[PersonaProcessorBase, ...] | None = None
         self._start_task: asyncio.Task[None] | None = None
         self._close_task: asyncio.Task[None] | None = None
         self._session_task: asyncio.Task[None] | None = None
@@ -161,7 +157,7 @@ class PersonaRuntime(PersonaBase):
         return PersonaPluginsTemplate.apply_provider_template(profiles)
 
     def bind_processors(self, processors: Sequence[PersonaProcessorBase]) -> None:
-        if self._processors_bound:
+        if self._processors is not None:
             raise RuntimeError("Persona processors have already been bound")
         if self._start_task is not None or self._close_task is not None:
             raise RuntimeError("Persona processors cannot be bound after runtime start or stop")
@@ -170,9 +166,9 @@ class PersonaRuntime(PersonaBase):
         if len(names) != len(set(names)):
             raise ValueError(f"Persona processor names must be unique: {names}")
 
+        registry = AvatarCapabilityRegistry(*processors)
         self._processors = tuple(processors)
-        self._capability_registry = AvatarCapabilityRegistry(*processors)
-        self._processors_bound = True
+        self._capability_registry = registry
 
     async def load_profile(self, *, participant_id: str) -> None:
         cache = self.cache_for(participant_id)
@@ -303,17 +299,16 @@ class PersonaRuntime(PersonaBase):
         self._sync_session()
         self._session_task = asyncio.create_task(self._consume_session(), name=self.CONSUMER_ID)
 
-        for processor in self._processors:
-            self._entered_processors.append(processor)
+        for processor in self._processors or ():
             await processor.start()
 
         task = asyncio.current_task()
         if self._close_task is not None or (task is not None and task.cancelling()):
             raise asyncio.CancelledError
 
-        self._started = True
         logger.info(
-            "Persona started processors=%s", [processor.name for processor in self._processors]
+            "Persona started processors=%s",
+            [processor.name for processor in self._processors or ()],
         )
 
     async def _close(self) -> None:
@@ -323,8 +318,7 @@ class PersonaRuntime(PersonaBase):
                 start.cancel()
             await asyncio.gather(start, return_exceptions=True)
 
-        finalize = self._started
-        self._started = False
+        finalize = start is not None and not start.cancelled() and start.exception() is None
         errors: list[Exception] = []
 
         async def close_step(operation) -> None:
@@ -337,10 +331,9 @@ class PersonaRuntime(PersonaBase):
             except Exception as error:
                 errors.append(error)
 
-        for processor in reversed(self._entered_processors):
-            await close_step(processor.stop(finalize=finalize))
-
-        self._entered_processors.clear()
+        for processor in reversed(self._processors or ()):
+            if processor.started:
+                await close_step(processor.stop(finalize=finalize))
         if self._session_task is not None:
             self._session_task.cancel()
             await asyncio.gather(self._session_task, return_exceptions=True)
@@ -365,7 +358,7 @@ class PersonaRuntime(PersonaBase):
     async def on_start(self) -> None:
         if self._close_task is not None:
             raise RuntimeError("Persona runtime is closing or closed")
-        if not self._processors_bound:
+        if self._processors is None:
             raise RuntimeError("Persona processors have not been bound")
         if self._start_task is None:
             self._start_task = asyncio.create_task(self._start(), name="persona_runtime_start")

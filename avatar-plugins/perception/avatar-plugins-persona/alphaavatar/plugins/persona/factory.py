@@ -13,6 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from alphaavatar.agents.persona import PersonaBase, PersonaProcessorBase
@@ -20,11 +21,12 @@ from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
 
 from .config import DefaultPersonaConfig
-from .log import logger
 from .processors import FaceProcessor, ProfilerProcessor, SpeakerProcessor
 from .runtime import PersonaRuntime
 from .storage import PersonaStore
 from .version import __version__
+
+logger = logging.getLogger(__name__)
 
 
 class PersonaPlugin(AvatarModulePlugin):

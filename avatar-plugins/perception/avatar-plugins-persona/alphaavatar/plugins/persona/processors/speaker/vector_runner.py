@@ -13,6 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+import logging
 import math
 import os
 
@@ -21,8 +22,9 @@ import numpy as np
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.runtime.inference.cpu import available_cpu_count
 
-from ...log import logger
 from .model_files import SpeakerModelType, resolve_speaker_model_path
+
+logger = logging.getLogger(__name__)
 
 
 class SpeakerVectorRunner(InferenceRunner):

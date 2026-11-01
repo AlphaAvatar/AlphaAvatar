@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 from collections.abc import Callable
@@ -28,7 +29,7 @@ from filelock import FileLock
 from alphaavatar.agents.persona.schemas import UserRuntimeState
 from alphaavatar.core.workspace import UserPath
 
-from ..log import logger
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 

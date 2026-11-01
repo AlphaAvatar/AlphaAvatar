@@ -41,7 +41,6 @@ from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.output import OutputJournalGap
 from alphaavatar.core.output.schemas import OutputRecordBatch
 from alphaavatar.core.session import Participant
-from alphaavatar.core.session.enums import IdentitySource
 from alphaavatar.core.session.schemas import IdentityBasis
 from alphaavatar.core.turn import TurnStreamGap
 from alphaavatar.core.turn.enums import TurnInputModality
@@ -74,31 +73,15 @@ class MemoryRuntime(MemoryBase):
 
         self._memory_contexts: dict[str, MemoryContextState] = {}
         self._memory_state = MemoryState(maximum_memory_num=maximum_memory_num)
+
         self._root_context_id: str | None = None
-        self._processors: tuple[MemoryProcessor, ...] = ()
-        self._entered_processors: list[MemoryProcessor] = []
-        self._processors_bound = False
-        self._started = False
+        self._processors: tuple[MemoryProcessor, ...] | None = None
         self._capability_registry = AvatarCapabilityRegistry()
-
         self._turn_task: asyncio.Task[None] | None = None
-        self._turn_error: Exception | None = None
-        self._turn_stopping = False
-
-        self._corrected_participants: set[str] = set()
-        self._owner_corrections: dict[str, tuple[str, str]] = {}
-        self._correction_lock = asyncio.Lock()
-
         self._session_task: asyncio.Task[None] | None = None
-
         self._record_task: asyncio.Task[None] | None = None
-        self._record_error: Exception | None = None
-        self._record_registered = False
-        self._record_stopping = False
-
         self._close_task: asyncio.Task[None] | None = None
         self._start_task: asyncio.Task[None] | None = None
-        self._store_open = False
 
     @property
     def avatar_id(self) -> str:
@@ -211,7 +194,7 @@ class MemoryRuntime(MemoryBase):
         )
 
     def bind_processors(self, processors: Sequence[MemoryProcessor]) -> None:
-        if self._processors_bound:
+        if self._processors is not None:
             raise RuntimeError("Memory processors have already been bound")
         if self._start_task is not None or self._close_task is not None:
             raise RuntimeError("Memory processors cannot be bound after runtime start or stop")
@@ -222,12 +205,7 @@ class MemoryRuntime(MemoryBase):
 
         registry = AvatarCapabilityRegistry(*processors)
         self._processors = tuple(processors)
-        for state in self._memory_contexts.values():
-            state.set_processors(
-                p.name for p in self._processors if state.cache_type in p.cache_types
-            )
         self._capability_registry = registry
-        self._processors_bound = True
 
     def context_state(self, context_id: str) -> MemoryContextState:
         state = self._memory_contexts.get(context_id)
@@ -256,10 +234,6 @@ class MemoryRuntime(MemoryBase):
             cache_type=cache_type,
             participants=participants,
         )
-        if self._processors_bound:
-            state.set_processors(
-                p.name for p in self._processors if state.cache_type in p.cache_types
-            )
         self._memory_contexts[context.context_id] = state
         state.sync_identity(self._runtime.session.snapshot())
         return state
@@ -282,46 +256,9 @@ class MemoryRuntime(MemoryBase):
             return
 
         snapshot = session.snapshot()
-        candidates = (
-            snapshot.participants
-            if batch.has_gap
-            else {
-                event.participant.participant_id: event.participant
-                for event in batch.items
-                if event.participant is not None
-            }
-        )
-        for participant_id in candidates:
-            if participant_id in self._corrected_participants:
-                continue
-            history = session.identity_history(participant_id)
-            if not history or history[0].source is not IdentitySource.GENERATED:
-                continue
-            provisional = history[0].participant.user_id
-            target = next(
-                (
-                    event.participant.user_id
-                    for event in history[1:]
-                    if event.participant is not None
-                    and event.participant.user_id is not None
-                    and event.participant.user_id != provisional
-                ),
-                None,
-            )
-            if provisional is not None and target is not None:
-                self._owner_corrections[participant_id] = provisional, target
-                for processor in self._processors:
-                    processor.notify()
-        # Views update synchronously; validated provisional corrections persist separately.
+        # Identity events update views only. They never rewrite owners of durable records.
         for state in self._memory_contexts.values():
             state.sync_identity(snapshot, include_new=state.context_id == self._root_context_id)
-
-        normalize = getattr(self._store, "normalize_provisional_items", None)
-        if self._owner_corrections and normalize is not None:
-            for kind in MemoryType:
-                self._memory_state.replace(
-                    kind, normalize(self._memory_state.get(memory_type=kind))
-                )
 
         session.events.commit(consumer_id=self.SESSION_CONSUMER_ID, cursor_seq=snapshot.sequence)
 
@@ -333,28 +270,13 @@ class MemoryRuntime(MemoryBase):
         turn_id: str | None = None,
         identity_basis: IdentityBasis | None = None,
     ) -> None:
-        if not self._record_registered:
+        if self._record_task is None:
             raise RuntimeError("Memory record consumer is not registered")
         state = self.context_state(context_id)
         self.sync_session()
         state.add_messages(items, turn_id=turn_id, identity_basis=identity_basis)
-        for processor in self._processors:
-            processor.notify()
-
-    async def correct_owners(self) -> None:
-        async with self._correction_lock:
-            for participant_id, (provisional, target) in tuple(self._owner_corrections.items()):
-                await self._store.correct_provisional_owner(
-                    session_id=self._runtime.session.session_id,
-                    participant_id=participant_id,
-                    from_user_id=provisional,
-                    to_user_id=target,
-                )
-                self._corrected_participants.add(participant_id)
-                self._owner_corrections.pop(participant_id, None)
 
     def apply_items(self, items: list[MemoryItem]) -> None:
-        items = self._store.normalize_provisional_items(items)
         superseded = {memory_id for item in items for memory_id in item.supersedes_memory_ids}
         if superseded:
             self._memory_state.discard(superseded)
@@ -378,11 +300,14 @@ class MemoryRuntime(MemoryBase):
             return
         context_id = self.resolve_context_id(snapshot.context_ids)
         if context_id is None:
-            raise ValueError(f"Memory has no context for committed Turn: {snapshot.turn_id}")
+            logger.warning(
+                "Memory has no context for turn turn_id=%s context_ids=%s",
+                snapshot.turn_id,
+                snapshot.context_ids,
+            )
+            return
         self.context_state(context_id).add_turn(snapshot)
         self.sync_session()
-        for processor in self._processors:
-            processor.notify()
 
     def _drain_turns(self) -> None:
         stream = self._runtime.turn.events
@@ -390,7 +315,6 @@ class MemoryRuntime(MemoryBase):
             batch = stream.read_pending(consumer_id=self.TURN_CONSUMER_ID, limit=32)
             if batch.has_gap:
                 error = TurnStreamGap("Memory missed committed user inputs")
-                self._turn_error = error
                 stream.fail(self.TURN_CONSUMER_ID, error)
                 raise error
             for event in batch.items:
@@ -438,14 +362,13 @@ class MemoryRuntime(MemoryBase):
                 self._drain_turns()
                 await asyncio.sleep(0)
         except asyncio.CancelledError:
-            if not self._turn_stopping:
-                self._turn_error = RuntimeError("Memory Turn consumer cancelled unexpectedly")
-                stream.fail(self.TURN_CONSUMER_ID, self._turn_error)
+            if self._close_task is None:
+                stream.fail(self.TURN_CONSUMER_ID, RuntimeError("Memory Turn consumer cancelled"))
             raise
-        except Exception as exc:
-            self._turn_error = exc
-            stream.fail(self.TURN_CONSUMER_ID, exc)
+        except Exception as error:
+            stream.fail(self.TURN_CONSUMER_ID, error)
             logger.exception("Memory Turn consumer failed")
+            raise
 
     async def _consume_records(self) -> None:
         journal = self._runtime.output.records
@@ -454,25 +377,20 @@ class MemoryRuntime(MemoryBase):
                 self._read_records()
                 await asyncio.sleep(0)
         except asyncio.CancelledError:
-            if not self._record_stopping:
+            if self._close_task is None:
                 error = RuntimeError("Memory record consumer was cancelled unexpectedly")
-                self._record_error = error
                 journal.fail(self.RECORD_CONSUMER_ID, error)
 
             raise
         except Exception as exc:
-            self._record_error = exc
             journal.fail(self.RECORD_CONSUMER_ID, exc)
             logger.exception("Memory canonical record consumer failed")
+            raise
 
     async def _consume_session(self) -> None:
         stream = self._runtime.session.events
         while await stream.wait_for_pending(consumer_id=self.SESSION_CONSUMER_ID):
             self.sync_session()
-            try:
-                await self.correct_owners()
-            except Exception:
-                logger.exception("Memory identity correction retained for retry")
 
     """Runtime operations"""
 
@@ -502,75 +420,60 @@ class MemoryRuntime(MemoryBase):
     def _start_record_consumer(self) -> None:
         journal = self._runtime.output.records
         journal.register(self.RECORD_CONSUMER_ID, required=True)
-        self._record_registered = True
-        self._record_stopping = False
         self._record_task = asyncio.create_task(
             self._consume_records(), name="memory_output_records"
         )
+        self._record_task.add_done_callback(self._observe)
 
     async def _stop_record_consumer(self, *, drain: bool) -> None:
-        self._record_stopping = True
-        task, self._record_task = self._record_task, None
-        if task is not None:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-        if not self._record_registered:
+        task = self._record_task
+        if task is None:
             return
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
         try:
-            if self._record_error is not None:
-                raise RuntimeError("Memory output record ingestion failed") from self._record_error
+            if not task.cancelled():
+                task.result()
             if drain:
                 while self._read_records():
                     await asyncio.sleep(0)
         finally:
             self._runtime.output.records.unregister(self.RECORD_CONSUMER_ID)
-            self._record_registered = False
+            self._record_task = None
 
     async def _stop_turn_consumer(self, *, drain: bool) -> None:
-        self._turn_stopping = True
         self._runtime.turn.unregister_context_consumer(self.TURN_CONSUMER_ID)
-        if self._turn_task is not None:
-            self._turn_task.cancel()
-            await asyncio.gather(self._turn_task, return_exceptions=True)
-            self._turn_task = None
-        try:
-            if self._turn_error is not None:
-                raise RuntimeError("Memory Turn ingestion failed") from self._turn_error
-            if drain:
-                self._drain_turns()
-        finally:
-            self._runtime.turn.events.clear_consumer(self.TURN_CONSUMER_ID)
+        task = self._turn_task
+        if task is not None:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        if task is not None and not task.cancelled():
+            task.result()
+        if drain:
+            self._drain_turns()
 
     async def _start(self) -> None:
-        # The close path owns even a partially initialized store.
-        self._store_open = True
         await self._store.start()
         self._open_root_context()
-
-        # session loop
         self._session_task = asyncio.create_task(
             self._consume_session(), name=self.SESSION_CONSUMER_ID
         )
         self._session_task.add_done_callback(self._observe)
         self._runtime.turn.register_context_consumer(self.TURN_CONSUMER_ID)
-
-        # turn loop
         self._turn_task = asyncio.create_task(self._consume_turns(), name="memory_turn_consumer")
         self._turn_task.add_done_callback(self._observe)
         self._start_record_consumer()
-
-        # start processors
-        for processor in self._processors:
-            # Own partial initialization before the processor can suspend or fail.
-            self._entered_processors.append(processor)
+        for processor in self._processors or ():
             await processor.start()
-            if self._record_error is not None:
-                raise RuntimeError("Memory output ingestion failed during startup")
+            for task in (self._turn_task, self._record_task):
+                if task.done():
+                    task.result()
 
         task = asyncio.current_task()
         if self._close_task is not None or (task is not None and task.cancelling()):
             raise asyncio.CancelledError
-        self._started = True
 
     async def _close(self) -> None:
         start = self._start_task
@@ -578,8 +481,7 @@ class MemoryRuntime(MemoryBase):
             if not start.done():
                 start.cancel()
             await asyncio.gather(start, return_exceptions=True)
-        finalize = self._started
-        self._started = False
+        finalize = start is not None and not start.cancelled() and start.exception() is None
         errors: list[Exception] = []
 
         async def close_step(operation) -> None:
@@ -595,18 +497,18 @@ class MemoryRuntime(MemoryBase):
         # Drain records before final extraction. One failure must not skip later cleanup.
         await close_step(self._stop_turn_consumer(drain=finalize))
         await close_step(self._stop_record_consumer(drain=finalize))
-        await close_step(self.correct_owners())
-        for processor in reversed(self._entered_processors):
-            await close_step(processor.stop(finalize=finalize))
+        self._turn_task = None
+        self._runtime.turn.events.clear_consumer(self.TURN_CONSUMER_ID)
+        for processor in reversed(self._processors or ()):
+            if processor.started:
+                await close_step(processor.stop(finalize=finalize))
 
-        self._entered_processors.clear()
         if self._session_task is not None:
             self._session_task.cancel()
             await asyncio.gather(self._session_task, return_exceptions=True)
             self._session_task = None
         self._runtime.session.events.clear_consumer(self.SESSION_CONSUMER_ID)
-        if self._store_open:
-            self._store_open = False
+        if start is not None:
             await close_step(self._store.stop())
         if errors:
             raise ExceptionGroup("Memory shutdown failed", errors)
@@ -614,7 +516,7 @@ class MemoryRuntime(MemoryBase):
     async def on_start(self) -> None:
         if self._close_task is not None:
             raise RuntimeError("Memory runtime is closing or closed")
-        if not self._processors_bound:
+        if self._processors is None:
             raise RuntimeError("Memory processors have not been bound")
         if self._start_task is None:
             self._start_task = asyncio.create_task(self._start(), name="memory_runtime_start")

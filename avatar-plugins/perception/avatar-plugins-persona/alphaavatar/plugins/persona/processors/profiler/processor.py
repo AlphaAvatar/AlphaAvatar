@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+import logging
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any, get_args, get_origin
@@ -24,7 +25,6 @@ from alphaavatar.agents.runtime.capability.enums import AvatarCapabilityName
 from alphaavatar.core.turn.enums import TurnInputModality
 from alphaavatar.core.turn.schemas import TurnSnapshot
 
-from ...log import logger
 from ...profile import UserProfileDetails
 from ...template import PersonaPluginsTemplate
 from .config import ProfilerConfig
@@ -39,6 +39,8 @@ from .op import (
     write_set,
 )
 from .provider import ProfilerProvider
+
+logger = logging.getLogger(__name__)
 
 
 @avatar_capability(
