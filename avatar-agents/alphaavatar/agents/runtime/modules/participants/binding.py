@@ -28,7 +28,7 @@ class ParticipantBindings:
         self._devices: dict[str, str] = {}
         self._entities: dict[tuple[PerceptionSourceRef, str], str] = {}
 
-    def bind_device(self, device_id: str, participant_id: str) -> None:
+    def check_device(self, device_id: str, participant_id: str) -> None:
         validate_identity(device_id, name="device_id")
         validate_identity(participant_id, name="participant_id")
         previous = self._devices.get(device_id)
@@ -36,10 +36,16 @@ class ParticipantBindings:
             raise ValueError("Device endpoint is already bound to another participant")
         if previous is None and len(self._devices) >= self._max_devices:
             raise RuntimeError("Participant endpoint capacity reached")
+
+    def bind_device(self, device_id: str, participant_id: str) -> None:
+        self.check_device(device_id, participant_id)
         self._devices[device_id] = participant_id
 
     def get_device(self, device_id: str) -> str | None:
         return self._devices.get(device_id)
+
+    def has_participant(self, participant_id: str) -> bool:
+        return participant_id in self._devices.values() or participant_id in self._entities.values()
 
     def check_entity(self, source: PerceptionSourceRef, entity_id: str) -> None:
         if not isinstance(entity_id, str) or not entity_id:
@@ -59,11 +65,13 @@ class ParticipantBindings:
     def get_entity(self, source: PerceptionSourceRef, entity_id: str) -> str | None:
         return self._entities.get((source, entity_id))
 
-    def release_entity(self, source: PerceptionSourceRef, entity_id: str) -> None:
-        self._entities.pop((source, entity_id), None)
+    def release_entity(self, source: PerceptionSourceRef, entity_id: str) -> str | None:
+        return self._entities.pop((source, entity_id), None)
 
-    def release_source(self, source: PerceptionSourceRef) -> None:
+    def release_source(self, source: PerceptionSourceRef) -> frozenset[str]:
+        removed = frozenset(value for key, value in self._entities.items() if key[0] == source)
         self._entities = {key: value for key, value in self._entities.items() if key[0] != source}
+        return removed
 
     def clear(self) -> None:
         self._devices.clear()

@@ -7,24 +7,35 @@ same as removing memories, profiles or conversation data.
 
 ## Find or choose the cache location
 
-The default location is:
+The default model location is below the application home:
 
 ```text
-~/.cache/alphaavatar/models/
+<application-home>/cache/models/
 ```
 
-`~` refers to the home directory of the account running AlphaAvatar. A container or service
-account can use a different location from your interactive terminal.
+On Linux, the default application home is `$XDG_DATA_HOME/alphaavatar/` or
+`~/.local/share/alphaavatar/`; macOS uses `~/Library/Application Support/AlphaAvatar/`,
+and Windows uses `%LOCALAPPDATA%/AlphaAvatar/` or `~/AppData/Local/AlphaAvatar/`.
+`~` refers to the service account. Set `ALPHAAVATAR_HOME` to an absolute application home,
+or override it with `application.home` in the selected YAML.
 
-Set `ALPHAAVATAR_MODEL_CACHE` in your launch environment to choose another directory:
+To choose another application cache directory, add this top-level YAML section:
 
-```dotenv
-ALPHAAVATAR_MODEL_CACHE=/srv/alphaavatar-models
+```yaml
+application:
+  cache_root: /srv/alphaavatar-cache
 ```
 
-Use an absolute path and give the service account read/write permission. The setting
-selects the model-cache root itself; AlphaAvatar creates the feature subdirectories below
-it. It does not move an existing cache automatically.
+Use an absolute path without `..` or a literal `~` and give the service account read/write
+permission. This setting selects the entire application cache, so models are stored under
+`/srv/alphaavatar-cache/models/`; other cache areas include `downloads/`, `providers/`,
+`diagnostics/` and `avatars/`. It does not move existing files automatically.
+
+The old `ALPHAAVATAR_MODEL_CACHE` environment variable is rejected by Host. Unset it and
+use `application.cache_root`. If the previous model directory was `/srv/alphaavatar-models/`,
+copy its complete contents into the new cache's `models/` directory before changing the
+configuration. Do not set `application.cache_root` to that old model directory itself,
+because the new layout would otherwise look for an extra `models/` child directory.
 
 ## Understand the layout
 
@@ -61,8 +72,9 @@ for optional Character presentation are also separate; see
 ## Move or reuse a cache
 
 Stop the Host and its model processes before moving files. Copy the entire model-cache
-root, preserving subdirectories, hidden files, manifests and symbolic links. Update
-`ALPHAAVATAR_MODEL_CACHE` to the new root, keep the original copy initially, then restart
+root, preserving subdirectories, hidden files, manifests and symbolic links. Copy it into
+`<new-application-cache>/models/` and update `application.cache_root` to that cache parent.
+Keep the original copy initially, then restart
 with the intended configuration to verify that the required models load.
 
 Changing the cache setting does not migrate an older layout. A missing file at the new

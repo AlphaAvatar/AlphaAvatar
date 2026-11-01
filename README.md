@@ -312,7 +312,7 @@ Edit .env.dev and provide credentials for the selected RTC, model, embedding and
 
 Enabled inference runners resolve their model files during initialization. Missing files are downloaded automatically; no separate download command is required.
 
-Set `ALPHAAVATAR_MODEL_CACHE` to choose the model cache directory. Set `ALPHAAVATAR_MODEL_OFFLINE=1` to require locally cached, validated files. See [Model cache](docs/models-cache-layout.md) for downloads and offline use, and [Avatar workspace](docs/avatar-workspace-layout.md) for personal data, backups and cleanup.
+Set `ALPHAAVATAR_HOME` to choose the application home, or set top-level YAML `application.cache_root` to choose a separate application cache; downloaded models live in its `models/` directory. Host rejects the former `ALPHAAVATAR_MODEL_CACHE` setting. Set `ALPHAAVATAR_MODEL_OFFLINE=1` to require locally cached, validated files. See [Model cache](docs/models-cache-layout.md) for downloads and offline use, and [Avatar workspace](docs/avatar-workspace-layout.md) for personal data, backups and cleanup.
 
 ```bash
 ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/voice/pipeline_openai_tools_minimal.yaml

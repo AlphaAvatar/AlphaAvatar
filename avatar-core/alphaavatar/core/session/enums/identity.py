@@ -15,6 +15,7 @@ from enum import StrEnum
 
 
 class IdentitySource(StrEnum):
+    GENERATED = "generated"
     DECLARED = "declared"
     PERCEPTION = "perception"
     AGENT = "agent"

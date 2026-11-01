@@ -31,15 +31,27 @@ LIVEKIT_URL=wss://your-livekit-host
 LIVEKIT_API_KEY=your-key
 LIVEKIT_API_SECRET=your-secret
 OPENAI_API_KEY=your-openai-key
-AVATAR_WORK_DIR=/var/lib/alphaavatar
-ALPHAAVATAR_MODEL_CACHE=/var/cache/alphaavatar/models
+ALPHAAVATAR_HOME=/var/lib/alphaavatar
 ```
 
-Create the two storage locations and make them writable by the service account. Do not
-run the assistant as root merely to access `/var/lib` or `/var/cache`.
+Create the application home and make it writable by the service account. Do not run the
+assistant as root merely to access `/var/lib`. With `avatar.id: my_avatar` and no explicit
+workspace setting, the workspace is `/var/lib/alphaavatar/avatars/my_avatar/` and models
+are cached under `/var/lib/alphaavatar/cache/models/`.
 
-`AVATAR_WORK_DIR` is a **base** directory. With `avatar.id: my_avatar`, the resolved
-workspace is `/var/lib/alphaavatar/my_avatar/`. The downloaded model cache is separate.
+To keep a separate cache, merge this top-level section into the selected YAML and create
+the writable cache directory:
+
+```yaml
+application:
+  cache_root: /var/cache/alphaavatar
+```
+
+This places models under `/var/cache/alphaavatar/models/`. `application.home`, if set,
+overrides the environment-selected application home. For an existing workspace, set
+`avatar.workspace_root` to its complete absolute directory; no Avatar ID is appended.
+Remove legacy `AVATAR_WORK_DIR` and `ALPHAAVATAR_MODEL_CACHE` values from the service
+environment and `.env` file: Host rejects both rather than relocating existing data.
 See [Avatar workspace](docs/avatar-workspace-layout.md) and
 [Model cache](docs/models-cache-layout.md) for locating, backing up and moving data.
 
@@ -180,7 +192,8 @@ Inspect JSONL files with a text editor, or explicitly select the current `create
 Keep a stable Avatar ID across updates. The current layout is:
 
 ```text
-/var/lib/alphaavatar/<avatar-id>/
+/var/lib/alphaavatar/avatars/<avatar_key>/
+├── env/
 ├── users/
 ├── graph/
 ├── data/

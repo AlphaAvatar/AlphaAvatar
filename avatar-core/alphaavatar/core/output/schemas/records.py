@@ -48,6 +48,7 @@ class OutputRecordBatch[T]:
     items: tuple[T, ...]
     digest: str
     size_bytes: int
+    identity_basis: tuple[tuple[str, str | None, int], ...] | None = None
 
     def __post_init__(self) -> None:
         for value in (self.batch_id, self.source, self.schema):
@@ -65,6 +66,18 @@ class OutputRecordBatch[T]:
             raise ValueError("Record digest must be SHA-256 hex")
         if type(self.size_bytes) is not int or self.size_bytes <= 0:
             raise ValueError("Record size_bytes must be positive")
+        if self.identity_basis is not None:
+            if not isinstance(self.identity_basis, tuple) or any(
+                not isinstance(value, tuple)
+                or len(value) != 3
+                or not isinstance(value[0], str)
+                or not value[0]
+                or (value[1] is not None and (not isinstance(value[1], str) or not value[1]))
+                or type(value[2]) is not int
+                or value[2] < 0
+                for value in self.identity_basis
+            ):
+                raise ValueError("Record identity basis requires accepted participant versions")
 
 
 @dataclass(frozen=True, slots=True)

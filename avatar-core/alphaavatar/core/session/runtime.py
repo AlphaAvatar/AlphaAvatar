@@ -196,7 +196,11 @@ class SessionRuntime:
         participant_id: str | None = None,
         timezone: str | None = None,
         primary: bool = False,
+        generated: bool = False,
     ) -> Participant:
+        if type(generated) is not bool or generated and user_id is None:
+            raise ValueError("Generated identity admission requires a user namespace")
+
         # A supplied user is an explicit application decision, never transport metadata.
         participant = Participant(
             participant_id=uuid4().hex if participant_id is None else participant_id,
@@ -222,8 +226,16 @@ class SessionRuntime:
                 at=participant.joined_at,
                 participant=participant,
                 primary_participant_id=self._primary_participant_id,
-                source=IdentitySource.DECLARED if user_id is not None else None,
-                reason="Application assigned a user identity" if user_id is not None else None,
+                source=IdentitySource.GENERATED
+                if generated
+                else IdentitySource.DECLARED
+                if user_id is not None
+                else None,
+                reason="Session allocated a provisional user identity"
+                if generated
+                else "Application assigned a user identity"
+                if user_id is not None
+                else None,
             )
             self._identity_history[participant.participant_id] = [event]
             waiters = self._events._append(event)

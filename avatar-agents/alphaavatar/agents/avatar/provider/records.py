@@ -117,7 +117,12 @@ def _parts(parts: tuple) -> tuple[tuple, list[dict], int]:
 
 
 def model_record_batch(
-    *, batch_id: str, source: str, scope: OutputScope, items: Sequence[ModelInputItem]
+    *,
+    batch_id: str,
+    source: str,
+    scope: OutputScope,
+    items: Sequence[ModelInputItem],
+    identity_basis: tuple[tuple[str, str | None, int], ...] | None = None,
 ) -> OutputRecordBatch[ModelInputItem] | None:
     """Project immutable evidence; never publish private continuation, policy or user input.
 
@@ -191,7 +196,12 @@ def model_record_batch(
         return None
 
     encoded = json.dumps(
-        {"schema": MODEL_RECORD_SCHEMA, "source": source, "records": content},
+        {
+            "schema": MODEL_RECORD_SCHEMA,
+            "source": source,
+            "records": content,
+            "identity_basis": identity_basis,
+        },
         sort_keys=True,
         ensure_ascii=False,
         allow_nan=False,
@@ -206,4 +216,5 @@ def model_record_batch(
         items=tuple(records),
         digest=sha256(encoded).hexdigest(),
         size_bytes=len(encoded) + size,
+        identity_basis=identity_basis,
     )

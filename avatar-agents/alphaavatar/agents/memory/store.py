@@ -76,6 +76,11 @@ class MemoryStoreBackend(ABC):
     ) -> list[MemoryItem]: ...
 
     @abstractmethod
+    async def query_session_owner(
+        self, *, session_id: str, owner_ref: MemoryOwnerRef, after_id: str = "", limit: int = 128
+    ) -> list[MemoryItem]: ...
+
+    @abstractmethod
     async def get_checkpoint(self, *, context_id: str, processor: str) -> int: ...
 
     @abstractmethod

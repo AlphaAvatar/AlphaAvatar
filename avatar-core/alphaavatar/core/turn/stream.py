@@ -22,6 +22,10 @@ from uuid import uuid4
 from .schemas import TurnEvent, TurnSnapshot
 
 
+class TurnStreamGap(RuntimeError):
+    """A consumer lost committed inputs and must not acknowledge subsequent work."""
+
+
 @dataclass(frozen=True, slots=True)
 class TurnStreamRead:
     items: tuple[TurnEvent, ...]
@@ -51,6 +55,7 @@ class TurnStream:
         self.maxlen = maxlen
         self._events: deque[TurnEvent] = deque(maxlen=maxlen)
         self._consumer_cursors: dict[str, int] = {}
+        self._consumer_failures: dict[str, Exception] = {}
         self._publish_waiters: set[asyncio.Future[None]] = set()
         self._commit_waiters: set[asyncio.Future[None]] = set()
         self._sequence = 0
@@ -86,6 +91,22 @@ class TurnStream:
         with self._lock:
             return self._consumer_cursors.get(consumer_id, 0)
 
+    def _check_consumer(self, consumer_id: str) -> None:
+        if failure := self._consumer_failures.get(consumer_id):
+            raise RuntimeError(f"Turn consumer failed: {consumer_id}") from failure
+
+    def fail(self, consumer_id: str, error: Exception) -> None:
+        self._validate_consumer_id(consumer_id)
+        if not isinstance(error, Exception):
+            raise TypeError("Turn consumer failures must be exceptions")
+
+        with self._lock:
+            self._consumer_failures.setdefault(consumer_id, error)
+            waiters = tuple(self._publish_waiters | self._commit_waiters)
+            self._publish_waiters.clear()
+            self._commit_waiters.clear()
+        self._wake(waiters)
+
     def publish(self, snapshot: TurnSnapshot) -> TurnEvent:
         with self._lock:
             self._sequence += 1
@@ -112,6 +133,7 @@ class TurnStream:
 
         while True:
             with self._lock:
+                self._check_consumer(consumer_id)
                 cursor = self._consumer_cursors.get(consumer_id, 0)
                 if self._events and self._events[-1].sequence > cursor:
                     return True
@@ -142,6 +164,7 @@ class TurnStream:
             raise ValueError("limit must be positive")
 
         with self._lock:
+            self._check_consumer(consumer_id)
             committed = self._consumer_cursors.get(consumer_id, 0)
             events = tuple(self._events)
             latest = self._sequence
@@ -167,6 +190,7 @@ class TurnStream:
             raise ValueError("cursor_seq cannot be negative")
 
         with self._lock:
+            self._check_consumer(consumer_id)
             if cursor_seq > self._sequence:
                 raise ValueError("Cannot commit future turn sequence")
             if cursor_seq <= self._consumer_cursors.get(consumer_id, 0):
@@ -187,6 +211,7 @@ class TurnStream:
 
         while True:
             with self._lock:
+                self._check_consumer(consumer_id)
                 if self._consumer_cursors.get(consumer_id, 0) >= cursor_seq:
                     return
                 waiter = loop.create_future()
@@ -202,6 +227,7 @@ class TurnStream:
         self._validate_consumer_id(consumer_id)
         with self._lock:
             self._consumer_cursors.pop(consumer_id, None)
+            self._consumer_failures.pop(consumer_id, None)
 
     def clear(self) -> None:
         with self._lock:

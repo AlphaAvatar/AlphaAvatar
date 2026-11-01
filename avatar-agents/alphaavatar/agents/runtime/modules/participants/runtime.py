@@ -92,6 +92,7 @@ class ParticipantRuntime:
         self._max_segments, self._max_sources = max_segments, max_sources
 
         self._bindings = ParticipantBindings(max_entities=max_participants, max_devices=max_sources)
+        self._active_participants: set[str] = set(session.participants)
         self._association_kinds: dict[str, set[str]] = {}
         self._association_devices: dict[str, set[str]] = {}
         self._generations: dict[str, tuple[int, bool]] = {}
@@ -99,6 +100,10 @@ class ParticipantRuntime:
         self._segment_resolver: str | None = None
 
         self._next_segment_token = 0
+
+    @property
+    def active_participant_ids(self) -> frozenset[str]:
+        return frozenset(self._active_participants)
 
     def _require_participant(self, participant_id: str) -> Participant:
         if self._closed:
@@ -121,10 +126,25 @@ class ParticipantRuntime:
         self._generations[source.source_id] = (source.source_generation, True)
 
     def _drop_source(self, source: PerceptionSourceRef) -> None:
-        self._bindings.release_source(source)
+        removed = self._bindings.release_source(source)
         for segment in tuple(self._segments):
             if segment.source == source:
                 self._segments.pop(segment).ready.set()
+        for participant_id in removed:
+            self._release_participant(participant_id)
+
+    def _admit_participant(self, participant_id: str) -> None:
+        if participant_id not in self._active_participants:
+            if len(self._active_participants) >= self._max_participants:
+                raise RuntimeError("Active participant capacity reached")
+            self._active_participants.add(participant_id)
+
+    def _release_participant(self, participant_id: str) -> None:
+        if not self._bindings.has_participant(participant_id):
+            # Session retains accepted identity versions for old Turns and admitted writes.
+            self._active_participants.discard(participant_id)
+            if participant_id != self.session.primary_participant_id:
+                self._association_kinds.pop(participant_id, None)
 
     def join(
         self,
@@ -136,16 +156,19 @@ class ParticipantRuntime:
     ) -> Participant:
         if self._closed:
             raise RuntimeError("ParticipantRuntime is closed")
-        if len(self.session.participants) >= self._max_participants:
-            raise RuntimeError("Session participant capacity reached")
+        if len(self._active_participants) >= self._max_participants:
+            raise RuntimeError("Active participant capacity reached")
 
         # Newcomers own a user namespace; recognition can correct this initial association later.
-        return self.session.join(
+        participant = self.session.join(
             user_id=uuid4().hex if user_id is None else user_id,
             participant_id=participant_id,
             timezone=timezone,
             primary=primary,
+            generated=user_id is None,
         )
+        self._active_participants.add(participant.participant_id)
+        return participant
 
     def get(self, participant_id: str) -> Participant | None:
         return self.session.get_participant(participant_id=participant_id)
@@ -177,6 +200,8 @@ class ParticipantRuntime:
 
     def bind_device(self, device_id: str, participant_id: str) -> None:
         self._require_participant(participant_id)
+        self._bindings.check_device(device_id, participant_id)
+        self._admit_participant(participant_id)
         self._bindings.bind_device(device_id, participant_id)
 
     def ensure_entity(
@@ -229,26 +254,23 @@ class ParticipantRuntime:
             )
 
         participant = participant or self.join()
-        if (
-            kind is not None
-            and participant.participant_id not in self._association_kinds
-            and len(self._association_kinds) >= self._max_participants
-        ):
-            raise RuntimeError("Participant association capacity reached")
-
+        self._admit_participant(participant.participant_id)
         self._bindings.bind_entity(source, entity.entity_id, participant.participant_id)
         if kind is not None:
             # Reserve before inference/I/O; expiration cannot transfer a slot to a stranger.
             self._association_kinds.setdefault(participant.participant_id, set()).add(kind)
             if device_id is not None and endpoint is not None:
-                self._association_devices.setdefault(device_id, set()).add(
-                    participant.participant_id
-                )
+                peers = self._association_devices.setdefault(device_id, set())
+                # One competing-person witness preserves ambiguity without retaining every visit.
+                if participant.participant_id == endpoint or not any(
+                    value != endpoint for value in peers
+                ):
+                    peers.add(participant.participant_id)
 
         return participant
 
     def release_entity(self, source: PerceptionSourceRef, entity: PerceptionEntityRef) -> None:
-        self._bindings.release_entity(source, entity.entity_id)
+        participant_id = self._bindings.release_entity(source, entity.entity_id)
         for segment, current in self._segments.items():
             if (
                 segment.source == source
@@ -257,6 +279,8 @@ class ParticipantRuntime:
             ):
                 current.invalid = True
                 current.ready.set()
+        if participant_id is not None:
+            self._release_participant(participant_id)
 
     def retire_source(self, source: PerceptionSourceRef) -> None:
         if self.source_is_current(source):
@@ -485,6 +509,7 @@ class ParticipantRuntime:
         for current in self._segments.values():
             current.ready.set()
         self._bindings.clear()
+        self._active_participants.clear()
         self._association_kinds.clear()
         self._association_devices.clear()
         self._generations.clear()

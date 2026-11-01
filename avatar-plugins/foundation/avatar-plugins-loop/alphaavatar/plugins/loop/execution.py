@@ -234,6 +234,7 @@ class LoopExecution(LoopHandle):
             source="avatar.loop",
             scope=self._feedback.scope,
             items=records,
+            identity_basis=self._identity_basis,
         )
         if batch is not None:
             try:
