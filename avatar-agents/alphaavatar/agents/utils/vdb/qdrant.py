@@ -11,9 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import os
-
-
 def get_client(
     *,
     host: str | None = None,
@@ -40,10 +37,6 @@ def get_client(
     except Exception:
         raise ImportError("Qdrant vector library import error, please install qdrant-client")
 
-    # init param
-    api_key = api_key or os.getenv("QDRANT_API_KEY", None)
-    url = url or os.getenv("QDRANT_URL", None)
-
     # init mode
     could_client = api_key and url
     local_client = url or (host and port)
@@ -56,6 +49,7 @@ def get_client(
             url=url if url else None,
             host=host if host else None,
             port=port if port else None,
+            api_key=api_key,
             prefer_grpc=prefer_grpc,
         )
     else:

@@ -14,8 +14,6 @@
 from __future__ import annotations
 
 import importlib
-import json
-import os
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -56,6 +54,7 @@ class MCPConfig(BaseModel):
     )
     vdb_config: dict[str, Any] = Field(
         default_factory=dict,
+        repr=False,
         description=(
             "Custom initialization parameters for the MCP VDB backend "
             "(e.g. host, port, url, api_key, prefer_grpc, embedding)."
@@ -63,8 +62,13 @@ class MCPConfig(BaseModel):
     )
     servers: dict[str, dict[str, Any]] = Field(
         default_factory=dict,
+        repr=False,
         description="Mapping of MCP server identifiers to their configuration objects.",
     )
+
+    def model_post_init(self, __context: Any) -> None:
+        if self.enabled and self.plugin is not None:
+            self.servers = resolve_env_placeholders(self.servers)
 
 
 class ToolsConfig(BaseModel):
@@ -77,12 +81,7 @@ class ToolsConfig(BaseModel):
     mcp: MCPConfig = Field(default_factory=MCPConfig)
 
     def model_post_init(self, __context: Any) -> None:
-        # Keep worker configuration available before inference-runner preparation.
-        # This remains the existing single worker-configuration scope, not per-call state.
-        if self.mcp.enabled and self.mcp.plugin is not None and self.mcp.servers:
-            os.environ["MCP_VDB_TYPE"] = "lancedb"
-            os.environ["MCP_VDB_CONFIG"] = json.dumps(self.mcp.vdb_config)
-            os.environ["MCP_SERVERS"] = json.dumps(resolve_env_placeholders(self.mcp.servers))
+        if self.mcp.enabled and self.mcp.plugin is not None:
             importlib.import_module("alphaavatar.plugins.mcp")
 
     def get_tools(self, runtime: AvatarRuntime) -> tuple[ToolBase, ...]:
@@ -115,7 +114,7 @@ class ToolsConfig(BaseModel):
                 self.mcp.plugin,
                 runtime=runtime,
                 init_config=self.mcp.init_config,
-                servers=resolve_env_placeholders(self.mcp.servers),
+                servers=self.mcp.servers,
             )
             if not isinstance(tool, ToolBase):
                 raise TypeError("MCP plugin must return ToolBase")

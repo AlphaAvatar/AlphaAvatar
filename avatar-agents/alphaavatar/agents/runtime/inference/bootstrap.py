@@ -19,6 +19,8 @@ import os
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING
 
+from pydantic import SecretStr
+
 from alphaavatar.agents.log import logger
 
 from .runner import InferenceRunner
@@ -54,6 +56,27 @@ def _add_runner(runners: dict[str, type[InferenceRunner]], runner: type[Inferenc
     runners[method] = runner
 
 
+def snapshot_inference_config(config: AvatarConfig) -> str:
+    """Private immutable launch inputs; never expose these credentials in diagnostics."""
+
+    def encode(value):
+        if isinstance(value, SecretStr):
+            return value.get_secret_value()
+        raise TypeError("Inference configuration contains a non-JSON value")
+
+    return json.dumps(
+        {
+            "memory": config.memory.vdb_config,
+            "persona": config.persona.vdb_config,
+            "mcp": {"vdb_config": config.tools.mcp.vdb_config, "servers": config.tools.mcp.servers},
+        },
+        default=encode,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    )
+
+
 def prepare_inference_runners(config: AvatarConfig) -> tuple[str, ...]:
     """Build a configuration-specific, download-free plan before CLI subprocesses start."""
     os.environ.pop(INFERENCE_PLAN_ENV, None)
@@ -80,9 +103,11 @@ def bootstrap_inference_runners() -> dict[str, type[InferenceRunner]]:
         raise RuntimeError(
             "Inference plan is missing; call prepare_inference_runners(config) first"
         )
+
     plan = json.loads(raw)
     if not isinstance(plan, list):
         raise ValueError("Inference plan must be a list")
+
     runners: dict[str, type[InferenceRunner]] = {}
     for item in plan:
         if not isinstance(item, dict) or set(item) != {"method", "module", "name"}:

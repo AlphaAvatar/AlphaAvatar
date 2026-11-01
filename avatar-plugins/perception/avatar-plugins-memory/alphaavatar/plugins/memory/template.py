@@ -21,8 +21,9 @@ from alphaavatar.agents.avatar.provider.schemas.model_input import (
     ModelTextPart,
 )
 from alphaavatar.agents.memory.enums.cache_type import MemoryCacheType
+from alphaavatar.core.turn.schemas import TurnSnapshot
 
-from .state import MemoryContextItem, MemoryTurn
+from .state import MemoryContextItem
 
 
 def _content(parts: tuple) -> str:
@@ -53,7 +54,7 @@ class MemoryPluginsTemplate:
             "Media markers describe available evidence, not an interpretation of its contents."
         ]
         for item in chat_context:
-            if isinstance(item, MemoryTurn):
+            if isinstance(item, TurnSnapshot):
                 if item.text:
                     actors = "; ".join(
                         f"participant={actor.participant_id or 'unknown'}, "

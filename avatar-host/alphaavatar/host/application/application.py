@@ -116,6 +116,7 @@ class AvatarHost:
             RunnerLaunch,
             bootstrap_inference_runners,
             prepare_inference_runners,
+            snapshot_inference_config,
         )
         from alphaavatar.core.workspace import (
             check_legacy_identity,
@@ -146,7 +147,9 @@ class AvatarHost:
             bootstrap_inference_runners(),
             mp_ctx=mp.get_context("spawn"),
             launch=RunnerLaunch(
-                str(self.config.workspace.root), str(self.config.paths.cache.models_dir)
+                str(self.config.workspace.root),
+                str(self.config.paths.cache.models_dir),
+                config=snapshot_inference_config(self.config.avatar),
             ),
         )
         self._inference_start = asyncio.create_task(

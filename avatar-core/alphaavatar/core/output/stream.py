@@ -80,7 +80,7 @@ class OutputSubscription:
         self.name, self._kinds, self._lanes = name, kinds, lanes
         self._max_pending, self._reliable = max_pending, reliable
         self._control_events: deque[OutputEvent] = deque()
-        self._data_events: deque[OutputEvent] = deque()
+        self._data_events: deque[tuple[OutputEvent, OutputGuard | None]] = deque()
         self._condition = asyncio.Condition()
         self._data_lock = asyncio.Lock()
         self._closed = False
@@ -88,9 +88,17 @@ class OutputSubscription:
         self.dropped_count = 0
         self._failure: Exception | None = None
 
-    def _check_failure(self) -> None:
-        if self._failure is not None:
+    def _check_failure(self, *, publishing: bool = False) -> None:
+        if self._failure is not None and (self._reliable or not publishing):
             raise RuntimeError(f"Output subscription {self.name!r} failed") from self._failure
+
+    def _fail_locked(self, error: Exception) -> None:
+        if self._failure is None:
+            self._failure = error
+        self._closed = True
+        self._control_events.clear()
+        self._data_events.clear()
+        self._condition.notify_all()
 
     def accepts(self, event: OutputEvent) -> bool:
         output = event.output
@@ -114,8 +122,16 @@ class OutputSubscription:
         if _is_priority_control(event):
             # Interrupts must bypass a full ordinary queue and its waiting publishers.
             async with self._condition:
-                self._check_failure()
+                self._check_failure(publishing=True)
                 if self._closed or (guard is not None and not guard()):
+                    return
+                if len(self._control_events) >= self._max_pending:
+                    self._fail_locked(
+                        RuntimeError(
+                            f"Output subscription {self.name!r} interrupt queue overflowed"
+                        )
+                    )
+                    self._check_failure(publishing=True)
                     return
                 self._control_events.append(event)
                 self._condition.notify_all()
@@ -124,7 +140,7 @@ class OutputSubscription:
         # Condition.wait_for releases its lock; keep the data admission slot until enqueue
         # so a new publisher cannot overtake one already waiting for queue capacity.
         async with self._data_lock, self._condition:
-            self._check_failure()
+            self._check_failure(publishing=True)
             if self._closed or (guard is not None and not guard()):
                 return
             if (
@@ -133,11 +149,7 @@ class OutputSubscription:
                 and len(self._data_events) >= self._max_pending
             ):
                 # Fail explicitly instead of coupling a slow presentation path to media pacing.
-                self._failure = RuntimeError(f"Output subscription {self.name!r} overflowed")
-                self._closed = True
-                self._data_events.clear()
-                self._control_events.clear()
-                self._condition.notify_all()
+                self._fail_locked(RuntimeError(f"Output subscription {self.name!r} overflowed"))
                 self._check_failure()
             if self._reliable:
                 await self._condition.wait_for(
@@ -154,27 +166,29 @@ class OutputSubscription:
                 while len(self._data_events) >= self._max_pending:
                     self._data_events.popleft()
                     self.dropped_count += 1
-            self._data_events.append(event)
+            self._data_events.append((event, guard))
             self._condition.notify_all()
 
     async def get(self) -> OutputEvent:
         async with self._condition:
-            await self._condition.wait_for(
-                lambda: self._closed or bool(self._control_events) or bool(self._data_events)
-            )
-            self._check_failure()
-            if self._control_events:
-                event = self._control_events.popleft()
-            elif self._data_events:
-                event = self._data_events.popleft()
-            else:
-                raise RuntimeError(f"Output subscription {self.name!r} is closed")
-            self._condition.notify_all()
-            return event
+            while True:
+                await self._condition.wait_for(
+                    lambda: self._closed or bool(self._control_events) or bool(self._data_events)
+                )
+                self._check_failure()
+                if self._control_events:
+                    event, guard = self._control_events.popleft(), None
+                elif self._data_events:
+                    event, guard = self._data_events.popleft()
+                else:
+                    raise RuntimeError(f"Output subscription {self.name!r} is closed")
+                self._condition.notify_all()
+                if guard is None or guard():
+                    return event
 
     async def discard_pending(self, predicate: OutputPredicate) -> int:
         async with self._condition:
-            retained = deque(event for event in self._data_events if not predicate(event))
+            retained = deque(entry for entry in self._data_events if not predicate(entry[0]))
             discarded = len(self._data_events) - len(retained)
             self._data_events = retained
             self._condition.notify_all()
@@ -185,12 +199,7 @@ class OutputSubscription:
         if not isinstance(error, Exception):
             raise TypeError("Output subscription failures must be Exceptions")
         async with self._condition:
-            if self._failure is None:
-                self._failure = error
-            self._closed = True
-            self._control_events.clear()
-            self._data_events.clear()
-            self._condition.notify_all()
+            self._fail_locked(error)
 
     async def close(self) -> None:
         async with self._condition:
@@ -203,7 +212,7 @@ class OutputSubscription:
 
 
 class OutputStream:
-    """Reliable queues backpressure; unreliable queues drop oldest data, never interrupt facts."""
+    """Reliable queues backpressure; optional observers drop data and fail on interrupt overflow."""
 
     def __init__(self) -> None:
         self._subscriptions: dict[str, OutputSubscription] = {}

@@ -143,8 +143,11 @@ def load_application(path: str | Path, overrides: Sequence[str] = ()) -> Applica
         host["execution"] = execution
         data["host"] = host
 
+    application = _mapping(data.get("application", {}))
     paths = resolve_application_paths(
-        os.environ, default_root=platform_application_root(os.environ, Path.home())
+        os.environ,
+        default_root=platform_application_root(os.environ, Path.home()),
+        home=application.get("home"),
     )
     config = validate_application(data, paths=paths)
     raw_avatar = _mapping(data.get("avatar", {}))

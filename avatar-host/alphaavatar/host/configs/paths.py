@@ -21,7 +21,7 @@ from alphaavatar.core.workspace import ApplicationPaths
 
 
 def resolve_application_paths(
-    environ: Mapping[str, str], *, default_root: str | Path
+    environ: Mapping[str, str], *, default_root: str | Path, home: str | Path | None = None
 ) -> ApplicationPaths:
     """Resolve the application boundary without creating directories or changing environment."""
     if environ.get("AVATAR_WORK_DIR"):
@@ -34,7 +34,9 @@ def resolve_application_paths(
             "Unset ALPHAAVATAR_MODEL_CACHE and set application.cache_root explicitly "
             "and preserve its models/ directory before switching the cache location."
         )
-    return ApplicationPaths.from_root(environ.get("ALPHAAVATAR_HOME") or default_root)
+    return ApplicationPaths.from_root(
+        home if home is not None else environ.get("ALPHAAVATAR_HOME") or default_root
+    )
 
 
 def platform_application_root(environ: Mapping[str, str], home: Path) -> Path:

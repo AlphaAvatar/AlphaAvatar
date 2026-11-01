@@ -80,6 +80,7 @@ class MemoryRuntime(MemoryBase):
         self._turn_task: asyncio.Task[None] | None = None
         self._session_task: asyncio.Task[None] | None = None
         self._record_task: asyncio.Task[None] | None = None
+        self._history_task: asyncio.Task[None] | None = None
         self._close_task: asyncio.Task[None] | None = None
         self._start_task: asyncio.Task[None] | None = None
 
@@ -274,7 +275,8 @@ class MemoryRuntime(MemoryBase):
             raise RuntimeError("Memory record consumer is not registered")
         state = self.context_state(context_id)
         self.sync_session()
-        state.add_messages(items, turn_id=turn_id, identity_basis=identity_basis)
+        if self.history_processors(state):
+            state.add_messages(items, turn_id=turn_id, identity_basis=identity_basis)
 
     def apply_items(self, items: list[MemoryItem]) -> None:
         superseded = {memory_id for item in items for memory_id in item.supersedes_memory_ids}
@@ -306,7 +308,11 @@ class MemoryRuntime(MemoryBase):
                 snapshot.context_ids,
             )
             return
-        self.context_state(context_id).add_turn(snapshot)
+
+        state = self.context_state(context_id)
+        state.add_turn(snapshot)
+        if not self.history_processors(state):
+            state.discard_before(state.message_sequence)
         self.sync_session()
 
     def _drain_turns(self) -> None:
@@ -392,6 +398,71 @@ class MemoryRuntime(MemoryBase):
         while await stream.wait_for_pending(consumer_id=self.SESSION_CONSUMER_ID):
             self.sync_session()
 
+    """Update Loop"""
+
+    def history_processors(self, state: MemoryContextState) -> tuple[MemoryProcessor, ...]:
+        return tuple(
+            processor
+            for processor in self._processors or ()
+            if state.cache_type in processor.cache_types
+        )
+
+    async def _prune_history(self, state: MemoryContextState) -> None:
+        processors = self.history_processors(state)
+        cursors = [
+            await self._store.get_checkpoint(context_id=state.context_id, processor=processor.name)
+            for processor in processors
+        ]
+        state.discard_before(min(cursors) if cursors else state.message_sequence)
+
+    async def _consume_history(self) -> None:
+        try:
+            while True:
+                states = tuple(self._memory_contexts.values())
+                work = [
+                    (processor, state)
+                    for state in states
+                    for processor in self.history_processors(state)
+                    if processor.started
+                ]
+                results = await asyncio.gather(
+                    *(processor.update(state) for processor, state in work), return_exceptions=True
+                )
+                for (processor, state), result in zip(work, results, strict=True):
+                    if isinstance(result, BaseException):
+                        logger.error(
+                            "Memory extraction retained input processor=%s context=%s",
+                            processor.name,
+                            state.context_id,
+                            exc_info=(type(result), result, result.__traceback__),
+                        )
+
+                for state in states:
+                    try:
+                        await self._prune_history(state)
+                    except Exception:
+                        logger.exception(
+                            "Memory extraction input release failed context=%s", state.context_id
+                        )
+
+                await asyncio.sleep(1.0)
+        except asyncio.CancelledError as exc:
+            if self._history_task is not None and self._close_task is None:
+                error = RuntimeError("Memory history worker cancelled unexpectedly")
+                self._runtime.turn.events.fail(self.TURN_CONSUMER_ID, error)
+                self._runtime.output.records.fail(self.RECORD_CONSUMER_ID, error)
+                raise error from exc
+            raise
+
+    async def _stop_history(self) -> None:
+        task, self._history_task = self._history_task, None
+        if task is not None:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            if not task.cancelled():
+                task.result()
+
     """Runtime operations"""
 
     def _open_root_context(self) -> None:
@@ -457,19 +528,30 @@ class MemoryRuntime(MemoryBase):
     async def _start(self) -> None:
         await self._store.start()
         self._open_root_context()
+
+        # session loop
         self._session_task = asyncio.create_task(
             self._consume_session(), name=self.SESSION_CONSUMER_ID
         )
         self._session_task.add_done_callback(self._observe)
+
+        # turn loop
         self._runtime.turn.register_context_consumer(self.TURN_CONSUMER_ID)
         self._turn_task = asyncio.create_task(self._consume_turns(), name="memory_turn_consumer")
         self._turn_task.add_done_callback(self._observe)
         self._start_record_consumer()
+
+        # processor start
         for processor in self._processors or ():
             await processor.start()
             for task in (self._turn_task, self._record_task):
                 if task.done():
                     task.result()
+
+        # update loop
+        if any(processor.cache_types for processor in self._processors or ()):
+            self._history_task = asyncio.create_task(self._consume_history(), name="memory_history")
+            self._history_task.add_done_callback(self._observe)
 
         task = asyncio.current_task()
         if self._close_task is not None or (task is not None and task.cancelling()):
@@ -494,7 +576,8 @@ class MemoryRuntime(MemoryBase):
             except Exception as exc:
                 errors.append(exc)
 
-        # Drain records before final extraction. One failure must not skip later cleanup.
+        # Settle background updates before draining and finalizing all retained input.
+        await close_step(self._stop_history())
         await close_step(self._stop_turn_consumer(drain=finalize))
         await close_step(self._stop_record_consumer(drain=finalize))
         self._turn_task = None
@@ -502,6 +585,9 @@ class MemoryRuntime(MemoryBase):
         for processor in reversed(self._processors or ()):
             if processor.started:
                 await close_step(processor.stop(finalize=finalize))
+
+        for state in tuple(self._memory_contexts.values()):
+            await close_step(self._prune_history(state))
 
         if self._session_task is not None:
             self._session_task.cancel()

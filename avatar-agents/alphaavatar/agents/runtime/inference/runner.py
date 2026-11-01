@@ -13,8 +13,9 @@
 # limitations under the License.
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import ClassVar
+import json
+from dataclasses import dataclass, field
+from typing import Any, ClassVar
 
 from alphaavatar.core.workspace.paths import absolute_root
 
@@ -23,10 +24,13 @@ from alphaavatar.core.workspace.paths import absolute_root
 class RunnerLaunch:
     workspace_root: str
     models_dir: str
+    config: str = field(default="{}", repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspace_root", str(absolute_root(self.workspace_root)))
         object.__setattr__(self, "models_dir", str(absolute_root(self.models_dir)))
+        if not isinstance(self.config, str) or not isinstance(json.loads(self.config), dict):
+            raise ValueError("Runner configuration must be a JSON object")
 
 
 class InferenceRunner:
@@ -46,6 +50,12 @@ class InferenceRunner:
         if launch is None:
             raise RuntimeError("Configure RunnerLaunch before initializing this runner")
         return launch
+
+    def config_for(self, namespace: str) -> dict[str, Any]:
+        value = json.loads(self.launch.config).get(namespace, {})
+        if not isinstance(value, dict):
+            raise ValueError("Runner configuration sections must be objects")
+        return value
 
     def initialize(self) -> None:
         pass

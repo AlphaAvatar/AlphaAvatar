@@ -14,8 +14,6 @@
 from __future__ import annotations
 
 import importlib
-import json
-import os
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -23,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from alphaavatar.agents.persona import PersonaBase
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
-from alphaavatar.agents.utils.vdb import qdrant
+from alphaavatar.agents.utils.vdb.config import snapshot_vdb_config
 
 importlib.import_module("alphaavatar.plugins.persona")
 
@@ -33,29 +31,22 @@ class PersonaConfig(BaseModel):
 
     plugin: str = Field(default="default", description="Persona runtime plugin name.")
     vdb_config: dict[str, Any] = Field(
-        default_factory=dict, description="Persona VDB initialization parameters."
+        default_factory=dict, repr=False, description="Persona VDB initialization parameters."
     )
     init_config: dict[str, Any] = Field(
         default_factory=dict, description="Persona plugin-owned configuration."
     )
 
     def model_post_init(self, __context: Any) -> None:
-        os.environ["PERSONA_VDB_CONFIG"] = json.dumps(self.vdb_config)
-
-        if self.plugin != "default":
-            return
-
-        try:
-            qdrant.get_client(**self.vdb_config)
-            vdb_type = "qdrant"
-        except ValueError:
-            vdb_type = "lancedb"
-
-        os.environ["PERSONA_VDB_TYPE"] = vdb_type
+        self.vdb_config = snapshot_vdb_config(self.vdb_config)
 
     def get_plugin(self, runtime: AvatarRuntime) -> PersonaBase:
         persona = AvatarModulePlugin.create(
-            AvatarModule.PERSONA, self.plugin, runtime=runtime, init_config=self.init_config
+            AvatarModule.PERSONA,
+            self.plugin,
+            runtime=runtime,
+            init_config=self.init_config,
+            vdb_config=self.vdb_config,
         )
         if persona is None:
             raise ValueError(f"Persona plugin '{self.plugin}' is not registered or returned None.")
