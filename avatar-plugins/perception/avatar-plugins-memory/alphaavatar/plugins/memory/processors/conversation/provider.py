@@ -44,7 +44,7 @@ class ConversationProvider:
         prompt: ModelPrompt,
         payload: dict[str, Any],
         output_schema: type[TStructuredOutput],
-        fallback: TStructuredOutput,
+        fallback: TStructuredOutput | None,
         metadata: dict[str, Any],
         timeout: float,
     ) -> TStructuredOutput:
@@ -68,6 +68,8 @@ class ConversationProvider:
 
         except TimeoutError:
             logger.warning("Conversation provider timeout task=%s timeout=%s", self._task, timeout)
+            if fallback is None:
+                raise
             return fallback
 
         except asyncio.CancelledError:
@@ -75,6 +77,8 @@ class ConversationProvider:
 
         except Exception:
             logger.exception("Conversation provider failed task=%s", self._task)
+            if fallback is None:
+                raise
             return fallback
 
     async def extract(
@@ -89,7 +93,7 @@ class ConversationProvider:
             prompt=build_conversation_delta_prompt(session_gate=session_gate),
             payload={"session_content": context_content},
             output_schema=MemoryDelta,
-            fallback=MemoryDelta(),
+            fallback=None,
             metadata=metadata,
             timeout=timeout,
         )

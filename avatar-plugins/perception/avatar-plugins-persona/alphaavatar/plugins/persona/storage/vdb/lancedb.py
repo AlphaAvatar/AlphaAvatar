@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import json
-import os
 from threading import RLock
 from typing import Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
@@ -336,16 +335,16 @@ class LanceDBRunner(InferenceRunner):
         embedding_config = config.get("embedding")
 
         if not embedding_config:
-            raise ValueError("`embedding` is required in PERSONA_VDB_CONFIG")
+            raise ValueError("`embedding` is required in persona.vdb_config")
 
         provider = embedding_config.get("provider")
         model = embedding_config.get("model")
         extra = embedding_config.get("extra") or {}
 
         if not provider:
-            raise ValueError("`embedding.provider` is required in PERSONA_VDB_CONFIG")
+            raise ValueError("`embedding.provider` is required in persona.vdb_config")
         if not model:
-            raise ValueError("`embedding.model` is required in PERSONA_VDB_CONFIG")
+            raise ValueError("`embedding.model` is required in persona.vdb_config")
 
         task_config = ProviderTaskConfig(
             kind=ProviderKind.EMBEDDING, provider=provider, model=model, extra=extra
@@ -355,19 +354,18 @@ class LanceDBRunner(InferenceRunner):
 
     def initialize(self) -> None:
         # get config
-        config = os.getenv("PERSONA_VDB_CONFIG", "{}")
-        config = json.loads(config)
+        config = self.config_for("persona")
 
         self._profiler_collection_name = config.get("profiler_collection_name")
         self._speaker_collection_name = config.get("speaker_collection_name")
         self._face_collection_name = config.get("face_collection_name")
 
         if not self._profiler_collection_name:
-            raise ValueError("`profiler_collection_name` is required in PERSONA_VDB_CONFIG")
+            raise ValueError("`profiler_collection_name` is required in persona.vdb_config")
         if not self._speaker_collection_name:
-            raise ValueError("`speaker_collection_name` is required in PERSONA_VDB_CONFIG")
+            raise ValueError("`speaker_collection_name` is required in persona.vdb_config")
         if not self._face_collection_name:
-            raise ValueError("`face_collection_name` is required in PERSONA_VDB_CONFIG")
+            raise ValueError("`face_collection_name` is required in persona.vdb_config")
 
         # init client
         vdb_config = self._get_vdb_config(config)

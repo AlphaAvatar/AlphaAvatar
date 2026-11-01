@@ -233,6 +233,26 @@ class MemoryProcessor(MemoryProcessorBase):
 
         await wait_for_cleanup(asyncio.create_task(commit(), name=f"memory_{self.name}_commit"))
 
+    async def finalize_contexts(self, states: Iterable[MemoryContextState]) -> None:
+        async def finish() -> None:
+            results = await asyncio.gather(
+                *(self.update(state) for state in states), return_exceptions=True
+            )
+            errors = []
+            for result in results:
+                if isinstance(result, asyncio.CancelledError):
+                    error = RuntimeError(f"Memory {self.name} context finalization was cancelled")
+                    error.__cause__ = result
+                    errors.append(error)
+                elif isinstance(result, Exception):
+                    errors.append(result)
+                elif isinstance(result, BaseException):
+                    raise result
+            if errors:
+                raise ExceptionGroup(f"Memory {self.name} finalization failed", errors)
+
+        await wait_for_cleanup(asyncio.create_task(finish(), name=f"memory_{self.name}_finalize"))
+
     async def _start(self) -> None: ...
 
     async def _stop(self, *, finalize: bool) -> None: ...

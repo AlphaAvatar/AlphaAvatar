@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 
 import numpy as np
 
@@ -33,15 +32,16 @@ from .runtime_state import RuntimeStateStore
 
 
 class PersonaStore:
-    def __init__(self, *, runtime: AvatarRuntime) -> None:
+    def __init__(self, *, runtime: AvatarRuntime, inference_method: str | None = None) -> None:
         self._runtime = runtime
+        self._vdb_inference_method = inference_method
         self._runtime_state_store = RuntimeStateStore()
 
     @property
     def vdb_inference_method(self) -> str:
-        method = os.getenv("PERSONA_VDB_INFERENCE_METHOD")
+        method = self._vdb_inference_method
         if not method:
-            raise RuntimeError("PERSONA_VDB_INFERENCE_METHOD is not configured.")
+            raise RuntimeError("Persona VDB inference method is not configured")
         return method
 
     async def _infer(self, payload: dict, *, timeout: float | None) -> bytes | None:

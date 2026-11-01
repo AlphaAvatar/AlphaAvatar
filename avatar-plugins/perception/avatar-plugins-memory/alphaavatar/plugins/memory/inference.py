@@ -13,7 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb.config import vdb_backend
@@ -22,14 +22,20 @@ if TYPE_CHECKING:
     from alphaavatar.agents.configs.avatar_config import AvatarConfig
 
 
-def configure_inference_runners(config: AvatarConfig) -> tuple[type[InferenceRunner], ...]:
-    if config.memory.plugin != "default":
-        return ()
-    backend = vdb_backend(config.memory.vdb_config)
+def get_vdb_runner(config: dict[str, Any]) -> type[InferenceRunner]:
+    backend = vdb_backend(config)
     if backend == "qdrant":
         from .storage.vdb import QdrantRunner as runner
     elif backend == "lancedb":
         from .storage.vdb import LanceDBRunner as runner
     else:
         raise ValueError(f"Unsupported vector backend: {backend!r}")
-    return (runner,)
+
+    return runner
+
+
+def configure_inference_runners(config: AvatarConfig) -> tuple[type[InferenceRunner], ...]:
+    if config.memory.plugin != "default":
+        return ()
+
+    return (get_vdb_runner(config.memory.vdb_config),)

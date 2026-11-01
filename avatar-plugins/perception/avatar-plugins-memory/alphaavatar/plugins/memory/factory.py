@@ -19,9 +19,9 @@ from typing import Any
 from alphaavatar.agents.memory import MemoryBase
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
-from alphaavatar.agents.utils.vdb.config import vdb_backend
 
 from .config import DefaultMemoryConfig
+from .inference import get_vdb_runner
 from .processors import (
     ConversationProcessor,
     EnvironmentProcessor,
@@ -51,8 +51,7 @@ class MemoryPlugin(AvatarModulePlugin):
         config = DefaultMemoryConfig.model_validate(init_config or {})
 
         store = MemoryStore(
-            runtime=runtime,
-            inference_method=f"alphaavatar.memory.vdb.{vdb_backend(vdb_config or {})}",
+            runtime=runtime, inference_method=get_vdb_runner(vdb_config or {}).INFERENCE_METHOD
         )
         memory = MemoryRuntime(
             runtime=runtime, avatar_id=avatar_id, store=store, maximum_memory_num=maximum_memory_num

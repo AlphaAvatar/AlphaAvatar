@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from time import perf_counter
 from typing import Any
 from uuid import uuid4
@@ -52,12 +51,17 @@ logger = logging.getLogger(__name__)
 
 class MemoryStore:
     def __init__(
-        self, *, runtime: AvatarRuntime, backend: MemoryStoreBackend | None = None
+        self,
+        *,
+        runtime: AvatarRuntime,
+        backend: MemoryStoreBackend | None = None,
+        inference_method: str | None = None,
     ) -> None:
         memory_paths = runtime.workspace.data.memory
         graph_paths = runtime.workspace.graph.namespace(AvatarModule.MEMORY.value)
 
         self._runtime = runtime
+        self._vdb_inference_method = inference_method
         self._backend = backend or SQLiteMemoryStore(memory_paths.records_file)
 
         export_sink = MemoryExportSink(
@@ -76,9 +80,9 @@ class MemoryStore:
 
     @property
     def vdb_inference_method(self) -> str:
-        method = os.getenv("MEMORY_VDB_INFERENCE_METHOD")
+        method = self._vdb_inference_method
         if not method:
-            raise RuntimeError("MEMORY_VDB_INFERENCE_METHOD is not configured")
+            raise RuntimeError("Memory VDB inference method is not configured")
         return method
 
     async def _infer(

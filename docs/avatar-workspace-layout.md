@@ -190,12 +190,12 @@ Extracted memories and Memory extraction checkpoints are stored in
 are held in memory; the current plugins do not archive those inputs or restore them
 after a process restart.
 
-Extraction runs incrementally in bounded requests. Failed batches retain their complete
-pending input for retry; Memory releases processed input after all enabled history
-extractors advance their checkpoints. A bounded recent Turn window may still reference
-existing snapshots to associate late output. These references are not a second media
-archive. Persistent provider or storage failures can accumulate pending input; request
-batch limits do not promise unlimited fault recovery within a fixed memory budget.
+Conversation and Tool processors extract the complete unprocessed input when they
+finalize. Persona updates profiles from the complete cached conversation at shutdown.
+Memory does not schedule periodic extraction, and these updates do not split input into
+smaller batches. Failed Memory extraction does not advance its checkpoint. The retained
+inputs and references to existing Turn snapshots can grow with the session; they are
+not another media archive or a persistent recovery queue.
 
 `graph/memory/` keeps relationships derived from memories. The `persona/` and
 `documents/` graph directories in the diagram are reserved separation points, not

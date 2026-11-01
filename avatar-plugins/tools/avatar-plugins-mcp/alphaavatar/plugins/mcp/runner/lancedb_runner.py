@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 import time
 from collections.abc import Coroutine
@@ -532,20 +531,26 @@ class LanceDBRunner(InferenceRunner):
     def initialize(self) -> None:
         if self._closed or self._initialized or self._loop_thread is not None:
             raise RuntimeError("MCP runner can only initialize once")
-        config = json.loads(os.getenv("MCP_VDB_CONFIG", "{}"))
-        servers = json.loads(os.getenv("MCP_SERVERS", "{}"))
+
+        options = self.config_for("mcp")
+        config = options.get("vdb_config", {})
+        servers = options.get("servers", {})
         if not isinstance(servers, dict) or not servers or len(servers) > 64:
             raise ValueError("MCP requires between one and 64 configured servers")
+
         for key, values in servers.items():
             if not isinstance(key, str) or not key.strip():
                 raise ValueError("MCP server keys must be nonempty names")
             self._servers[key] = MCPServerConfig.model_validate(values).model_dump()
+
         self._collection_name = config.get("collection_name")
         if not self._collection_name:
-            raise ValueError("collection_name is required in MCP_VDB_CONFIG")
+            raise ValueError("collection_name is required in tools.mcp.vdb_config")
+
         embedding = config.get("embedding") or {}
         if not embedding.get("provider") or not embedding.get("model"):
             raise ValueError("MCP embedding.provider and embedding.model are required")
+
         vdb_config = {key: value for key, value in config.items() if key != "embedding"}
         if not vdb_config.get("client_path"):
             vdb_config["client_path"] = str(
@@ -554,6 +559,7 @@ class LanceDBRunner(InferenceRunner):
                 .backend("lancedb")
                 .root
             )
+
         self._client = lancedb.get_client(**vdb_config)
         self._embeddings = create_embedding_model(
             ProviderTaskConfig(

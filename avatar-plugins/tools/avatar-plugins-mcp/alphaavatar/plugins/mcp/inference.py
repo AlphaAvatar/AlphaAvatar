@@ -13,20 +13,28 @@
 # limitations under the License.
 from __future__ import annotations
 
-import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from alphaavatar.agents.runtime.inference import InferenceRunner
+from alphaavatar.agents.utils.vdb.config import vdb_backend
 
 if TYPE_CHECKING:
     from alphaavatar.agents.configs.avatar_config import AvatarConfig
+
+
+def get_vdb_runner(config: dict[str, Any]) -> type[InferenceRunner]:
+    backend = vdb_backend(config)
+    if backend != "lancedb":
+        raise ValueError(f"Unsupported MCP vector backend: {backend!r}")
+
+    from .runner import LanceDBRunner
+
+    return LanceDBRunner
 
 
 def configure_inference_runners(config: AvatarConfig) -> tuple[type[InferenceRunner], ...]:
     options = config.tools.mcp
     if not options.enabled or not options.servers or options.plugin != "default":
         return ()
-    from .runner import LanceDBRunner
 
-    os.environ["MCP_VDB_INFERENCE_METHOD"] = LanceDBRunner.INFERENCE_METHOD
-    return (LanceDBRunner,)
+    return (get_vdb_runner(options.vdb_config),)

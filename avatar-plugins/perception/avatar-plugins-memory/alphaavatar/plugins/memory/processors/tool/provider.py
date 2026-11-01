@@ -55,11 +55,11 @@ class ToolProvider:
 
         except TimeoutError:
             logger.warning("Tool provider timeout task=%s timeout=%s", self._task, timeout)
-            return MemoryDelta()
+            raise
 
         except asyncio.CancelledError:
             raise
 
         except Exception:
             logger.exception("Tool provider failed task=%s", self._task)
-            return MemoryDelta()
+            raise

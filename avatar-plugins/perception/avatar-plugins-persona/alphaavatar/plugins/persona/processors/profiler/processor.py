@@ -22,6 +22,7 @@ from alphaavatar.agents.persona import PersonaBase, PersonaCache, PersonaProcess
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import avatar_capability
 from alphaavatar.agents.runtime.capability.enums import AvatarCapabilityName
+from alphaavatar.core.turn import TurnStreamGap
 from alphaavatar.core.turn.enums import TurnInputModality
 from alphaavatar.core.turn.schemas import TurnSnapshot
 
@@ -141,11 +142,17 @@ class ProfilerProcessor(PersonaProcessorBase):
         if participant is None or participant.user_id is None:
             return
 
+        persona_cache.participant = participant
+
         delta = await self._aextract_delta(
             user_id=participant.user_id,
             profile_details_dump=persona_cache.profile_details_dump_value,
             new_turn=PersonaPluginsTemplate.apply_update_template(persona_cache.turns),
         )
+
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            raise asyncio.CancelledError
 
         latest = self.session_runtime.get_participant(participant_id=participant_id)
         if latest is None or latest.identity_sequence != participant.identity_sequence:
@@ -200,38 +207,26 @@ class ProfilerProcessor(PersonaProcessorBase):
 
     async def _consume_turns(self) -> None:
         stream = self.runtime.turn.events
-
-        while True:
-            try:
-                await stream.wait_for_pending(consumer_id=self.CONSUMER_ID)
-                batch = stream.read_pending(consumer_id=self.CONSUMER_ID, limit=8)
-
-                if batch.has_gap:
-                    logger.warning(
-                        "Persona profiler missed committed turns missed=%s", batch.missed_count
-                    )
-
-                for event in batch.items:
-                    await self._record_turn(event.snapshot)
-
-                stream.commit(consumer_id=self.CONSUMER_ID, cursor_seq=batch.cursor_seq)
-
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("Persona profiler turn consumer failed")
-                await asyncio.sleep(0.05)
+        try:
+            while await stream.wait_for_pending(consumer_id=self.CONSUMER_ID):
+                await self._drain_turns()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            stream.fail(self.CONSUMER_ID, error)
+            logger.exception("Persona profiler turn consumer failed")
+            raise
 
     async def _drain_turns(self) -> None:
         stream = self.runtime.turn.events
-
         while True:
             batch = stream.read_pending(consumer_id=self.CONSUMER_ID, limit=32)
-
             if batch.has_gap:
-                logger.warning(
-                    "Persona profiler missed committed turns missed=%s", batch.missed_count
+                error = TurnStreamGap(
+                    f"Persona profiler missed {batch.missed_count} committed Turns"
                 )
+                stream.fail(self.CONSUMER_ID, error)
+                raise error
 
             for event in batch.items:
                 await self._record_turn(event.snapshot)
@@ -242,19 +237,34 @@ class ProfilerProcessor(PersonaProcessorBase):
             if not batch.items or batch.remaining_count == 0:
                 return
 
+    def _observe_consumer(self, task: asyncio.Task[None]) -> None:
+        if task.cancelled():
+            if self._consumer_task is task:
+                self.runtime.turn.events.fail(
+                    self.CONSUMER_ID, RuntimeError("Persona Turn consumer unexpectedly cancelled")
+                )
+        else:
+            task.exception()
+
     """Runtime operations"""
 
     async def _start(self) -> None:
         self._consumer_task = asyncio.create_task(
             self._consume_turns(), name="persona_profiler_turn_consumer"
         )
+        self._consumer_task.add_done_callback(self._observe_consumer)
         logger.info("Persona Profiler started")
 
     async def _stop(self, *, finalize: bool) -> None:
-        if self._consumer_task is not None:
-            self._consumer_task.cancel()
-            await asyncio.gather(self._consumer_task, return_exceptions=True)
-            self._consumer_task = None
+        consumer, self._consumer_task = self._consumer_task, None
+        if consumer is not None:
+            cancelled = consumer.cancelled() or consumer.cancelling() > 0
+            consumer.cancel()
+            result = (await asyncio.gather(consumer, return_exceptions=True))[0]
+            if finalize and cancelled:
+                raise RuntimeError("Persona Turn consumer unexpectedly cancelled")
+            if finalize and isinstance(result, Exception):
+                raise result
 
         if finalize:
             await self._drain_turns()

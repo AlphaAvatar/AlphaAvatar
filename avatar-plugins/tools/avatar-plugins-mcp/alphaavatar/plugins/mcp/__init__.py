@@ -35,12 +35,19 @@ class MCPRemotePlugin(AvatarModulePlugin):
         runtime: AvatarRuntime,
         init_config: dict[str, Any],
         servers: dict[str, dict[str, Any]],
+        vdb_config: dict[str, Any],
     ) -> ToolBase:
+        from .inference import get_vdb_runner
         from .service import MCPToolService
 
         if init_config:
             raise ValueError("The default MCP tool has no init_config options")
-        return MCPToolService(runtime=runtime, servers=servers)
+
+        return MCPToolService(
+            runtime=runtime,
+            servers=servers,
+            inference_method=get_vdb_runner(vdb_config).INFERENCE_METHOD,
+        )
 
 
 def _configure_runners(config: Any):

@@ -13,7 +13,6 @@
 # limitations under the License.
 import json
 import logging
-import os
 from time import perf_counter
 from typing import Any
 
@@ -496,15 +495,15 @@ class LanceDBRunner(InferenceRunner):
     def _get_memory_embeddings(config: dict[str, Any]):
         embedding_config = config.get("embedding")
         if not embedding_config:
-            raise ValueError("`embedding` is required in MEMORY_VDB_CONFIG")
+            raise ValueError("`embedding` is required in memory.vdb_config")
 
         provider = embedding_config.get("provider")
         model = embedding_config.get("model")
         extra = embedding_config.get("extra") or {}
         if not provider:
-            raise ValueError("`embedding.provider` is required in MEMORY_VDB_CONFIG")
+            raise ValueError("`embedding.provider` is required in memory.vdb_config")
         if not model:
-            raise ValueError("`embedding.model` is required in MEMORY_VDB_CONFIG")
+            raise ValueError("`embedding.model` is required in memory.vdb_config")
 
         return create_embedding_model(
             ProviderTaskConfig(
@@ -513,10 +512,10 @@ class LanceDBRunner(InferenceRunner):
         )
 
     def initialize(self) -> None:
-        config = json.loads(os.getenv("MEMORY_VDB_CONFIG", "{}"))
+        config = self.config_for("memory")
         self._collection_name = config.get("collection_name")
         if not self._collection_name:
-            raise ValueError("collection_name is required in MEMORY_VDB_CONFIG")
+            raise ValueError("collection_name is required in memory.vdb_config")
 
         vdb_config = self._get_vdb_config(config)
         if not vdb_config.get("client_path"):

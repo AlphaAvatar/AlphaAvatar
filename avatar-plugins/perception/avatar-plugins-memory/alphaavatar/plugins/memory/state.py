@@ -158,7 +158,6 @@ class MemoryContextState:
 
         self._cache_type = cache_type
         self._messages: list[MemoryContextItem] = []
-        self._message_offset = 0
         self._message_ids: dict[str, MemoryMessage] = {}
         self._tool_ids: dict[tuple[type, str], str] = {}
         self._call_names: dict[str, str] = {}
@@ -219,60 +218,16 @@ class MemoryContextState:
         return list(self._messages)
 
     @property
-    def message_offset(self) -> int:
-        return self._message_offset
-
-    @property
     def message_sequence(self) -> int:
-        return self._message_offset + len(self._messages)
+        return len(self._messages)
 
     def messages_between(self, start: int, end: int) -> list[MemoryContextItem]:
-        if not self._message_offset <= start <= end <= self.message_sequence:
+        if not 0 <= start <= end <= len(self._messages):
             raise ValueError(f"Invalid Memory context message range: {start}..{end}")
-        return list(self._messages[start - self._message_offset : end - self._message_offset])
-
-    def discard_before(self, sequence: int) -> None:
-        """Release only input acknowledged by every enabled history extractor."""
-        if not self._message_offset <= sequence <= self.message_sequence:
-            raise ValueError("Memory release exceeds the retained input range")
-        if sequence == self._message_offset:
-            return
-        count = sequence - self._message_offset
-        for item in self._messages[:count]:
-            if isinstance(item, TurnSnapshot):
-                continue
-            self._message_ids.pop(item.id, None)
-            self._message_turn_ids.pop(item.id, None)
-            self._message_bases.pop(item.id, None)
-            if isinstance(item, ModelFunctionCall | ModelFunctionOutput):
-                self._tool_ids.pop((type(item), item.call_id), None)
-                if not any(
-                    (kind, item.call_id) in self._tool_ids
-                    for kind in (ModelFunctionCall, ModelFunctionOutput)
-                ):
-                    self._call_names.pop(item.call_id, None)
-        del self._messages[:count]
-        self._message_offset = sequence
-        first_pending = next(
-            (item.turn_id for item in self._messages if isinstance(item, TurnSnapshot)), None
-        )
-        # These alias Core's immutable snapshots. Keep pending inputs and a bounded
-        # recent origin window for late model records, rather than all session media.
-        while len(self._turns) > 128:
-            turn_id = next(iter(self._turns))
-            if turn_id == first_pending:
-                break
-            snapshot = self._turns.pop(turn_id)
-            self._turn_ids.pop(turn_id, None)
-            self._turn_input_ids.pop(snapshot.input_id, None)
+        return list(self._messages[start:end])
 
     def get_turn(self, turn_id: str) -> TurnSnapshot | None:
         return self._turns.get(turn_id)
-
-    def recent_turns(self, limit: int) -> list[TurnSnapshot]:
-        if limit < 1:
-            raise ValueError("Recent Turn limit must be positive")
-        return list(self._turns.values())[-limit:]
 
     def sync_identity(self, snapshot: SessionSnapshot, *, include_new: bool = False) -> None:
         if self.session_id != snapshot.session_id:

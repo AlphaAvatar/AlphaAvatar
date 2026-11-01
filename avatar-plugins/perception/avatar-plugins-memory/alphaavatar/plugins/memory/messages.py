@@ -13,7 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from dataclasses import replace
 from types import MappingProxyType
 
@@ -116,22 +116,3 @@ def memory_message(item: ModelInputItem) -> MemoryMessage | None:
 def same_message(left: MemoryMessage, right: MemoryMessage) -> bool:
     """The compact buffer contains frozen text and scalar evidence only."""
     return type(left) is type(right) and left == right
-
-
-EXTRACTION_MAX_CHARS = 32768
-
-
-def extraction_fragments(content: str) -> Iterator[str]:
-    """Bound each extraction request without dropping an oversized record's suffix."""
-    if len(content) <= EXTRACTION_MAX_CHARS:
-        yield content
-        return
-
-    size = EXTRACTION_MAX_CHARS - 256
-    for offset in range(0, len(content), size):
-        end = min(offset + size, len(content))
-        yield (
-            f"[Evidence fragment, characters {offset}:{end} of {len(content)}. "
-            "Records may continue in another fragment; do not infer missing text.]\n"
-            + content[offset:end]
-        )

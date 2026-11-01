@@ -165,10 +165,8 @@ class ConversationProcessor(MemoryProcessor):
         if not finalize:
             return
 
-        await asyncio.gather(
-            *(
-                self.update(state)
-                for state in self.memory_runtime.memory_contexts.values()
-                if state.cache_type is MemoryCacheType.SESSION_INTERACTION
-            )
+        await self.finalize_contexts(
+            state
+            for state in self.memory_runtime.memory_contexts.values()
+            if state.cache_type is MemoryCacheType.SESSION_INTERACTION
         )

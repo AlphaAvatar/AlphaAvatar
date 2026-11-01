@@ -21,6 +21,7 @@ from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
 
 from .config import DefaultPersonaConfig
+from .inference import get_vdb_runner
 from .processors import FaceProcessor, ProfilerProcessor, SpeakerProcessor
 from .runtime import PersonaRuntime
 from .storage import PersonaStore
@@ -34,10 +35,16 @@ class PersonaPlugin(AvatarModulePlugin):
         super().__init__(__name__, __version__, __package__, logger)
 
     def get_plugin(
-        self, *, runtime: AvatarRuntime, init_config: dict[str, Any] | None = None
+        self,
+        *,
+        runtime: AvatarRuntime,
+        init_config: dict[str, Any] | None = None,
+        vdb_config: dict[str, Any] | None = None,
     ) -> PersonaBase:
         config = DefaultPersonaConfig.model_validate(init_config or {})
-        store = PersonaStore(runtime=runtime)
+        store = PersonaStore(
+            runtime=runtime, inference_method=get_vdb_runner(vdb_config or {}).INFERENCE_METHOD
+        )
         persona = PersonaRuntime(runtime=runtime, store=store)
         processors: list[PersonaProcessorBase] = []
 

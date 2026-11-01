@@ -130,11 +130,9 @@ class ToolProcessor(MemoryProcessor):
         if not finalize:
             return
 
-        await asyncio.gather(
-            *(
-                self.update(state)
-                for state in self.memory_runtime.memory_contexts.values()
-                if state.cache_type
-                in {MemoryCacheType.SESSION_INTERACTION, MemoryCacheType.AGENT_TOOL_INTERACTION}
-            )
+        await self.finalize_contexts(
+            state
+            for state in self.memory_runtime.memory_contexts.values()
+            if state.cache_type
+            in {MemoryCacheType.SESSION_INTERACTION, MemoryCacheType.AGENT_TOOL_INTERACTION}
         )

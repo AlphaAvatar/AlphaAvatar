@@ -14,12 +14,12 @@
 from __future__ import annotations
 
 import json
-import os
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 from alphaavatar.agents.avatar.provider.schemas import ModelTextPart
 from alphaavatar.agents.runtime.capability.result import CapabilityResult
+from alphaavatar.agents.runtime.inference.protocol import validate_method
 from alphaavatar.agents.tools.schemas import ToolError
 
 from .enums import MCPOp, MCPOutputMode
@@ -30,7 +30,11 @@ if TYPE_CHECKING:
 
 
 class MCPHost:
-    def __init__(self, *, runtime: AvatarRuntime, servers: dict[str, dict[str, Any]]) -> None:
+    def __init__(
+        self, *, runtime: AvatarRuntime, servers: dict[str, dict[str, Any]], inference_method: str
+    ) -> None:
+        validate_method(inference_method)
+        self._inference_method = inference_method
         self._runtime = runtime
         self._servers = deepcopy(servers)
 
@@ -47,9 +51,7 @@ class MCPHost:
             raise ToolError(f"Unknown MCP server keys: {', '.join(sorted(unknown))}")
 
     async def _run(self, op: MCPOp, params: dict[str, Any]) -> dict[str, Any]:
-        method = os.getenv("MCP_VDB_INFERENCE_METHOD")
-        if not method:
-            raise ToolError("MCP inference runner is not configured")
+        method = self._inference_method
         payload = json.dumps({"op": op.value, "param": params}, ensure_ascii=False).encode()
         raw = await self._runtime.inference.do_inference(method, payload)
         if raw is None:

@@ -115,6 +115,7 @@ class ToolsConfig(BaseModel):
                 runtime=runtime,
                 init_config=self.mcp.init_config,
                 servers=self.mcp.servers,
+                **({"vdb_config": self.mcp.vdb_config} if self.mcp.plugin == "default" else {}),
             )
             if not isinstance(tool, ToolBase):
                 raise TypeError("MCP plugin must return ToolBase")
