@@ -489,12 +489,7 @@ async def test_recovery_survives_a_stream_that_fails_before_its_boundary(
     await evict_speech_start(pipeline, microphone)
     microphone.speech(16)  # The user keeps talking into the rebuilt stream.
     await wait_until(lambda: skipped(pipeline), "the continuation was never observed")
-    # Read-only: the rebuilt stream, so its failure can be awaited before more audio arrives.
-    rebuilt = pipeline.processor._sources[microphone.source]
-    pipeline.silero.timeouts = 1
-    microphone.speech(4)
-    await wait_until(lambda: rebuilt.failed, "the rebuilt stream never failed")
-    await pipeline.consumed()
+    await fail_vad(pipeline, microphone, speech=True)
 
     # The next stream still opens mid-utterance and must inherit the unconfirmed boundary.
     microphone.speech(SPEECH)
@@ -745,12 +740,17 @@ def stages(pipeline: Pipeline, stage: str) -> int:
     return [record["stage"] for record in records].count(stage)
 
 
-async def fail_vad(pipeline: Pipeline, microphone: Microphone) -> None:
+async def fail_vad(pipeline: Pipeline, microphone: Microphone, *, speech: bool = False) -> None:
     """Retire the current stream for a reason that is not a continuity gap."""
     # Read-only: the stream object, so its failure can be awaited before more audio arrives.
     stream = pipeline.processor._sources[microphone.source]
+    # Queue the frames behind the inference gate before the timeout: a stream that has
+    # already failed would rightly reject them as an input gap (VAD_INPUT_REJECTED).
+    pipeline.silero.gate.clear()
+    microphone.speech(4) if speech else microphone.silence(4)
+    await pipeline.consumed()
     pipeline.silero.timeouts = 1
-    microphone.silence(4)
+    pipeline.silero.gate.set()
     await wait_until(lambda: stream.failed, "the stream never failed")
     await pipeline.consumed()
 

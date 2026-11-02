@@ -19,7 +19,7 @@
 | T-5 | KD-14 收口：恢复要求随输入 generation 保留到边界确认；回放不越过安全下界 | 2026-11-02 | `65bd40f` | `a2b6bde` | 已 review：三条旁路已修好；仍有 1 个 P1（快照更新可绕过恢复要求），KD-14 未关闭，转入 T-6 |
 | T-6 | KD-14：缺口窗口中 generation 已存在的证据不被更新的快照覆盖 | 2026-11-02 | `a2b6bde` | `4cb57c2` | 已验收：review 无新阻断问题，KD-14 关闭；本地 195 passed（CI 方式 ×3），review 环境运行 147 项通过（IPC 用例受环境限制） |
 | T-7 | KD-14 正式回归；修复 O-1、KD-6、KD-8、O-7；KD-10 时序与 O-4 取消补测试 | 2026-11-02 | `2d1d575` | `7e87782` | 已验收：O-1、KD-6、KD-8、O-7 关闭，KD-14 保持关闭，KD-10③ 时序已覆盖，O-4、O-9 保留观察；本地 229 passed；review 环境 229 项收集、183 项通过，新增 CLI 端到端用例受 AF_UNIX 权限阻断（替换日志传输边界后的配置错误处理路径通过，不计为完整 CLI 端到端） |
-| T-8 | 配置公共能力与 CLI 最小闭环：`config init`、`config check`（`check` 已迁入，`config show` 已移除） | 2026-11-02 | `7e87782` | `886efcd`、`e428c9b`、`d9a8b4f`；review 收尾修复未提交 | `d9a8b4f` review 提出 4 项收尾，已修复，待审查；收集 246 个，246 passed（CI 方式 ×1） |
+| T-8 | 配置公共能力与 CLI 最小闭环：`config init`、`config check`（`check` 已迁入，`config show` 已移除） | 2026-11-02 | `7e87782` | `886efcd`、`e428c9b`、`d9a8b4f`、`4365820`；测试屏障收尾未提交 | **已验收**：`4365820` 复核通过，生产代码验收；最后一处测试调度屏障已补齐；本地 246 passed（CI 方式 ×1）；review 环境 246 项收集、199 项通过、1 项失败（即本次修复的用例，IPC 未全量复跑） |
 
 ## 已知缺陷（当前状态，只记录不修复）
 
@@ -1611,3 +1611,43 @@ alphaavatar dev <file> [KEY=VALUE ...]
 | Ruff / 格式 / Workspace / Lock / pre-commit | 全部通过 |
 
 修改文件：`avatar-host/alphaavatar/host/configs/view.py`、`configs/template.py`、`cli/commands/config.py`、`avatar-host/tests/test_config_commands.py`，以及本日志。没有 commit 或 push。
+
+### 12. `4365820` review 与验收
+
+- 基线：`4365820`（第 11 节的修复已提交），开始时工作区干净。
+- review 结论：上轮四项修复复核通过，生产代码可以验收；只剩一处旧测试的调度问题。补齐后将 T-8 标为已验收，下一批进入 Runner 并行。
+- review 环境：收集 246 项，选跑 199 项通过、1 项失败（就是下面这个调度问题）；17 项配置命令测试全部通过；IPC 用例没有独立全量复跑。
+
+**问题**
+
+- `test_audio_activity.py` 的 `fail_vad()` 在注入 VAD 推理超时之后才推入 4 帧静音。
+- 这 4 帧可能遇到一个已经关闭、但还没报告失败的 VAD 输入队列，从而合法地触发 `VAD_INPUT_REJECTED`。这是一种连续性缺口，会给下一条流打上恢复要求。
+- 测试原本假设新流不需要等待边界，于是出现了在挂起保护时间内等不到结果的失败。
+
+**修复（只改测试，音频生产代码不变）**
+
+- `fail_vad()` 改为：
+  1. 关闭离线 VAD 的推理闸门；
+  2. 推入 4 帧，等待它们被 Audio Activity 消费，即已经进入旧流；
+  3. 设置超时并打开闸门。
+- 这样超时只会发生在这些帧被旧流接收之后，失败原因确定是非缺口的 `VAD_ERROR`。
+- 新增 `speech` 参数。`test_recovery_survives_a_stream_that_fails_before_its_boundary` 原来有一段内联的同类注入，也改为使用这个辅助函数。在竞态下，那个用例虽然仍会"通过"，但走的是缺口路径，覆盖不到它要验证的"非缺口失败后仍保留要求"。
+
+**验证**
+
+| 项目 | 结果 |
+|---|---|
+| `test_audio_activity.py` ×3 | 17 passed ×3 |
+| 3 个相关用例，4 个 CPU 满载进程下连续 30 次 | 0 失败 |
+| KD-14 变异重跑（创建流时删除标志、不去重、不按缺口重置、忽略 horizon） | 各自只让对应用例失败，原有的缺口断言仍然有效 |
+| 全量（CI 方式）×1 | **246 passed**，31.9 s；basetemp 无残留；检出目录前后一致 |
+| Ruff / 格式 / Workspace / Lock | 全部通过 |
+
+**T-8 最终状态**
+
+- 已验收。
+- 命令：`config init`、`config check`、`start`、`dev`。
+- 公共接口、安全边界和文档见第 10.7 节。
+- 仍待处理：O-2、O-9（观察），以及真实设备和服务验收。
+- 下一批：Runner 并行。
+- 本节修改没有 commit 或 push。
