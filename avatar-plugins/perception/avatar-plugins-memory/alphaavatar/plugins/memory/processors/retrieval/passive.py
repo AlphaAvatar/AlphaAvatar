@@ -71,6 +71,12 @@ class PassiveRecall:
         self._stop_task: asyncio.Task[None] | None = None
         self._accepting = False
 
+    def _trace(self, turn_id: str, status: str, count: int = 0) -> None:
+        # Turn diagnostics carry the concrete outcome; readiness still only awaits completion.
+        self._runtime.perception.input_trace.record(
+            "memory.recall", turn_id=turn_id, outcome=status, evidence_count=count
+        )
+
     def _finish(self, entry: _Recall, status: str, *, count: int = 0) -> None:
         if entry.result.done():
             return
@@ -78,6 +84,7 @@ class PassiveRecall:
             entry.timer.cancel()
             entry.timer = None
         entry.result.set_result(status)
+        self._trace(entry.turn_id, status, count)
         elapsed = (
             asyncio.get_running_loop().time() - entry.deadline + self._config.passive_timeout_sec
         )
@@ -223,6 +230,9 @@ class PassiveRecall:
         context_id = self._remember(snapshot)
         entry = self._entry(snapshot, sequence)
         if entry is None or entry.result.done():
+            if entry is None and sequence not in self._expired:
+                # Every retained recall is in flight: this Turn is never recalled.
+                self._trace(snapshot.turn_id, "overloaded")
             if entry is not None and entry.task is None:
                 self._inflight.discard(entry.turn_id)
             return

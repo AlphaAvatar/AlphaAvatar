@@ -33,7 +33,8 @@ from .plugins.tools import ToolsConfig
 class AvatarConfig(BaseModel):
     """Runtime settings and configurable Avatar plugins, not SDK generation settings."""
 
-    model_config = ConfigDict(extra="forbid")
+    # The outer model renders nested errors: plugin sections may carry credentials.
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     # Avatar information and runtime configuration.
     avatar: AvatarInfoConfig

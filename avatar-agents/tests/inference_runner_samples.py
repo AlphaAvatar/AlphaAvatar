@@ -42,13 +42,6 @@ class FailingInitRunner(InferenceRunner):
         raise RuntimeError("private model path")
 
 
-class SlowInitRunner(InferenceRunner):
-    INFERENCE_METHOD = "test.slow_init"
-
-    def initialize(self) -> None:
-        time.sleep(60)
-
-
 class JournalRunner(InferenceRunner):
     """Journal every executed request; ``gate:<name>`` waits until the test opens that gate."""
 
@@ -82,3 +75,30 @@ class FailingCloseRunner(EchoRunner):
 
     def close(self) -> None:
         raise RuntimeError("private close detail")
+
+
+class GateInitRunner(InferenceRunner):
+    """Initialization enters a gate the test observes, then waits until the test opens it."""
+
+    INFERENCE_METHOD = "test.gate_init"
+
+    def initialize(self) -> None:
+        root = Path(self.config_for("test")["root"])
+        (root / "init.entered").touch()
+        deadline = time.monotonic() + 60
+        while not (root / "init.open").exists():
+            if time.monotonic() > deadline:
+                raise TimeoutError("The test never opened the initialization gate")
+            time.sleep(0.002)
+
+
+class ClosingRunner(EchoRunner):
+    """A ready runner whose graceful CLOSE path leaves a trace of its close hook."""
+
+    INFERENCE_METHOD = "test.closing"
+
+    def initialize(self) -> None:
+        self._root = Path(self.config_for("test")["root"])
+
+    def close(self) -> None:
+        (self._root / f"{self.INFERENCE_METHOD}.closed").touch()

@@ -42,7 +42,8 @@ class ToolPluginConfig(BaseModel):
 class MCPConfig(BaseModel):
     """Configuration for MCP tool integration."""
 
-    model_config = ConfigDict(extra="forbid")
+    # Server headers and VDB settings carry credentials; errors report locations only.
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     enabled: bool = Field(default=False, description="Whether to enable the MCP plugin.")
     plugin: str | None = Field(

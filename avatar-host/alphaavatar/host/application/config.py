@@ -24,7 +24,8 @@ from alphaavatar.host.sessions.config import SessionConfig
 class HealthConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    bind: str = "0.0.0.0"
+    # Unauthenticated status stays local unless a deployment explicitly binds elsewhere.
+    bind: str = "127.0.0.1"
     port: int | None = Field(default=None, strict=True, ge=0, le=65535)
 
 

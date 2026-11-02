@@ -95,9 +95,10 @@ curl --fail http://127.0.0.1:8081/status
 ```
 
 `/live` checks the Host process, `/ready` checks service readiness, and `/status` explains
-runner and execution state. Readiness is not proof of successful speech, tool calls or
-playback. These endpoints are not authenticated: keep them local or restrict them with
-your deployment network controls. Press Ctrl+C and wait for normal shutdown before
+runner and execution state without configuration or credentials. Readiness is not proof of
+successful speech, tool calls or playback. These endpoints are not authenticated: they bind to
+`127.0.0.1` unless `host.health.bind` is set, so expose them only behind your deployment
+network controls. Press Ctrl+C and wait for normal shutdown before
 installing the service.
 
 ## Install a systemd service

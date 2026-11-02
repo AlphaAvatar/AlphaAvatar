@@ -459,7 +459,8 @@ class RunnerProcess:
             await asyncio.gather(*requests, return_exceptions=True)
 
         self._log_summary(force=True)
-        if self._ready and not self._broken and self._writer is not None:
+        ready = self._ready
+        if ready and not self._broken and self._writer is not None:
             try:
                 async with asyncio.timeout(self._close_timeout):
                     await write_frame(self._writer, CLOSE)
@@ -473,7 +474,8 @@ class RunnerProcess:
                 errors.append(error)
         self._ready = False
         try:
-            await self._retire(force=self._broken)
+            # A runner that never became ready has no exchange to drain: terminate it now.
+            await self._retire(force=self._broken or not ready)
         except Exception as error:
             errors.append(error)
         if errors:

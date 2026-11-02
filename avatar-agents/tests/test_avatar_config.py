@@ -15,7 +15,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import traceback
 from collections.abc import Iterator
 from pathlib import Path
 from unittest import mock
@@ -29,6 +31,8 @@ from pydantic import ValidationError
 # libraries that adjust process variables while importing (O-2). That is an import side
 # effect; validating a configuration afterwards must not write anything.
 from alphaavatar.agents.configs import AvatarConfig
+from alphaavatar.agents.configs.plugins.tools.tools_config import MCPConfig
+from alphaavatar.core.log import format_error
 
 EMBEDDING = {"provider": "openai", "model": "text-embedding-3-small"}
 SECTIONS = {
@@ -151,3 +155,41 @@ def test_unresolved_placeholder_is_rejected_without_side_effects(
     assert [error["loc"] for error in rejected.value.errors()] == [("tools", "mcp")]
     assert "MCP_TEST_TOKEN" in str(rejected.value)
     assert_untouched(tmp_path, environment, vector_clients)
+
+
+SECRET = "sk-fictional-mcp-secret-0042"
+
+
+@pytest.mark.parametrize(
+    ("mcp", "location"),
+    [
+        ({"enabled": True, "token": SECRET, "servers": {}}, ("token",)),
+        ({"enabled": True, "servers": {"docs": SECRET}}, ("servers", "docs")),
+        ({"enabled": True, "vdb_config": SECRET, "servers": {}}, ("vdb_config",)),
+    ],
+    ids=["unknown-field", "server-not-mapping", "vdb-not-mapping"],
+)
+@pytest.mark.parametrize("outer", [True, False], ids=["avatar-config", "mcp-config"])
+def test_rejected_mcp_input_never_reaches_error_output(
+    mcp: dict[str, object], location: tuple[str, ...], outer: bool
+) -> None:
+    with pytest.raises(ValidationError) as rejected:
+        if outer:
+            AvatarConfig.model_validate({"avatar": {"id": "assistant"}, "tools": {"mcp": mcp}})
+        else:
+            MCPConfig.model_validate(mcp)
+    error = rejected.value
+    prefix = ("tools", "mcp") if outer else ()
+    # The location stays actionable; the rejected value appears in no common output.
+    assert [row["loc"][: len(prefix) + len(location)] for row in error.errors()] == [
+        prefix + location
+    ]
+    outputs = {
+        "str": str(error),
+        "repr": repr(error),
+        "traceback": "".join(traceback.format_exception(error)),
+        "diagnostic": format_error(error, details=True),
+        "structured": json.dumps(error.errors(include_input=False), default=str),
+        "json": error.json(include_input=False),
+    }
+    assert [name for name, text in outputs.items() if SECRET in text] == []

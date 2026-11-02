@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import multiprocessing as mp
 import os
 import signal
@@ -27,12 +28,13 @@ from pathlib import Path
 
 import pytest
 from inference_runner_samples import (
+    ClosingRunner,
     EchoRunner,
     FailingCloseRunner,
     FailingInitRunner,
+    GateInitRunner,
     JournalRunner,
     SecondJournalRunner,
-    SlowInitRunner,
 )
 
 from alphaavatar.agents.runtime.inference import (
@@ -42,10 +44,12 @@ from alphaavatar.agents.runtime.inference import (
     InferenceRuntime,
     RunnerLaunch,
 )
+from alphaavatar.agents.runtime.inference.process import RunnerProcess
 
 HANG_GUARD = 30
 ECHO, JOURNAL = EchoRunner.INFERENCE_METHOD, JournalRunner.INFERENCE_METHOD
 SECOND = SecondJournalRunner.INFERENCE_METHOD
+CLOSING = ClosingRunner.INFERENCE_METHOD
 
 
 def service(
@@ -83,6 +87,16 @@ def journal(root: Path, method: str = JOURNAL) -> list[tuple[int, str]]:
 def dispatch_states(runtime: InferenceRuntime, method: str) -> list[bool]:
     # Read-only view of the existing exchange registry; no production interface is added.
     return [request.dispatched for request in runtime._runners[method]._requests.values()]
+
+
+def settled(caplog: pytest.LogCaptureFixture, method: str) -> tuple[int | None, bool]:
+    """Exit code and forced flag from the runner's own reclamation diagnostic."""
+    (record,) = [
+        record
+        for record in caplog.records
+        if record.getMessage().startswith(f"Inference process settled method={method} ")
+    ]
+    return record.args[2], record.args[3]
 
 
 def children() -> set[int]:
@@ -353,22 +367,31 @@ async def test_partial_start_failure_reaps_started_runners_and_releases_the_endp
     assert_released(socket_root, before, fds)
 
 
-async def test_cancelled_start_reaps_ready_and_initializing_runners(
-    tmp_path: Path, socket_root: Path
+@pytest.mark.parametrize("trigger", ["cancel", "close"])
+async def test_mixed_close_drains_ready_runners_and_terminates_initializing_ones(
+    trigger: str, tmp_path: Path, socket_root: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
+    caplog.set_level(logging.INFO, logger=RunnerProcess.__module__)
     before = children()
-    runtime = service(tmp_path, EchoRunner, SlowInitRunner, close_timeout=0.5)
+    # A drain wait of close_timeout would outlast the hang guard; termination does not.
+    runtime = service(tmp_path, ClosingRunner, GateInitRunner, close_timeout=2 * HANG_GUARD)
     starting = asyncio.create_task(runtime.start())
     await wait_until(
-        lambda: [view.startup_state for view in runtime.snapshot()] == ["ready", "initializing"],
-        "the second runner never began initializing",
+        lambda: (tmp_path / "init.entered").exists(), "the second runner never entered its gate"
     )
-    starting.cancel()
-    # The slow child would initialize for 60 seconds; cancellation converges well before that.
+    assert [view.startup_state for view in runtime.snapshot()] == ["ready", "initializing"]
     async with asyncio.timeout(HANG_GUARD):
+        if trigger == "cancel":
+            starting.cancel()
+        else:
+            await runtime.close()
         with pytest.raises(asyncio.CancelledError):
             await starting
     assert [view.startup_state for view in runtime.snapshot()] == ["ready", "cancelled"]
+    # The ready runner drained through CLOSE and its own close hook; the other was terminated.
+    assert (tmp_path / f"{CLOSING}.closed").exists()
+    assert settled(caplog, CLOSING) == (0, False)
+    assert settled(caplog, GateInitRunner.INFERENCE_METHOD) == (-signal.SIGTERM, True)
     assert_released(socket_root, before, None)
 
 

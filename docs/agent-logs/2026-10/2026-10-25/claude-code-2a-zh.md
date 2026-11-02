@@ -18,6 +18,7 @@
 | T-4 | KD-14 补齐：缺口后先确认可靠的静音或结束边界，再接纳语音开始 | 2026-11-02 | `dca356f` | `65bd40f` | 已 review：VAD 接口与短停顿保守丢弃策略接受；普通恢复路径已修好；另有三条旁路，KD-14 仍未关闭，转入 T-5 |
 | T-5 | KD-14 收口：恢复要求随输入 generation 保留到边界确认；回放不越过安全下界 | 2026-11-02 | `65bd40f` | `a2b6bde` | 已 review：三条旁路已修好；仍有 1 个 P1（快照更新可绕过恢复要求），KD-14 未关闭，转入 T-6 |
 | T-6 | KD-14：缺口窗口中 generation 已存在的证据不被更新的快照覆盖 | 2026-11-02 | `a2b6bde` | `4cb57c2` | 已验收：review 无新阻断问题，KD-14 关闭；本地 195 passed（CI 方式 ×3），review 环境运行 147 项通过（IPC 用例受环境限制） |
+| T-7 | KD-14 正式回归；修复 O-1、KD-6、KD-8、O-7；KD-10 时序与 O-4 取消补测试 | 2026-11-02 | `2d1d575` | 未提交 | 待审查；收集 229 个，229 passed（CI 方式 ×1） |
 
 ## 已知缺陷（当前状态，只记录不修复）
 
@@ -28,21 +29,22 @@
 | ~~KD-3~~ | ~~Tools 配置把解析后的 secret 写入 `MCP_*` 环境变量~~ | 已关闭 | 2A-1 记录；**T-1 复核：已修复**。`<ENV>` 占位符在校验时解析进 `servers` 快照，不写环境变量；子进程用 launch 快照。回归：`test_avatar_config.py::test_accepted_configuration_only_reads_its_inputs`、`test_application_config.py::test_restore_keeps_frozen_paths_and_inputs_after_the_environment_changes` |
 | ~~KD-4~~ | ~~Persona LanceDB 查询中 `user_id` 直接拼接、未转义，不安全~~ | 已关闭 | 2A-1 记录；**T-1 复核：已修复**。`_user_filter` 转义单引号，拒绝空值和 NUL。回归：`test_persona_profile.py::test_lancedb_user_predicates_isolate_quoted_identities_and_resave_idempotently`（真实 lancedb） |
 | ~~KD-5~~ | ~~Persona VDB 保存失败的错误没有被正确处理~~ | 已关闭 | 2A-1 记录为"保存只检查结果是否为假值"；2A-2a 按审计统一表述；**T-1 复核：已修复**。空结果和 `*error` 字段都抛 RuntimeError，`save` 汇总为 ExceptionGroup。回归：`test_persona_runtime.py::test_vdb_save_failure_surfaces_instead_of_silently_succeeding` |
-| KD-6 | Memory Passive Recall 的具体完成状态没有完整传播到 Turn-level diagnostics | Memory 诊断批次 | 2A-2a 按审计更正：原表述"检索出错返回 `[]`，与空结果无法区分"不准确，问题不在 MemoryStore；**T-1 复核：仍存在**。`PassiveRecall.wait_context_ready` 只等待完成，timeout/overloaded/unavailable 等状态只写 debug 日志。本轮未补测试 |
+| ~~KD-6~~ | ~~Memory Passive Recall 的具体完成状态没有完整传播到 Turn-level diagnostics~~ | 已关闭 | 2A-2a 按审计更正：原表述"检索出错返回 `[]`，与空结果无法区分"不准确，问题不在 MemoryStore；**T-1 复核：仍存在**。`PassiveRecall.wait_context_ready` 只等待完成，timeout/overloaded/unavailable 等状态只写 debug 日志。本轮未补测试；**T-7 修复**：`PassiveRecall` 在唯一的完成门闩处把具体结果（ok/empty/timeout/overloaded/unavailable/error/identity_changed）写入现有的 InputTrace Turn 诊断（`memory.recall`，带哈希的 `turn_id`）；补上原来没有记录的"保留名额全部在途"路径；等待期限和门闩不变。回归：`test_memory_recall_diagnostics.py` |
 | KD-7 | ToolPolicy 的默认审批策略与部分示例文档不一致。**未授权修改默认行为**；需要另行审查工具权限模型、执行授权和用户确认策略，不能损害合理的自主执行能力 | 独立审查 | 2A-1 记录为"`ToolPolicy.approval_required` 默认为 False，与示例 YAML 注释矛盾"（原归属 Tools 批次）；2A-2a 按审计改为独立审查；**T-1 复核：未变**（loop `config.py` 中默认仍为 False） |
-| KD-8 | Health 服务默认暴露在网络上（绑定 `0.0.0.0`），`/status` 没有鉴权 | Host 批次 | 2A-1 记录；**T-1 复核：未变**（`HealthConfig.bind` 默认 `0.0.0.0`，`/status` 无鉴权） |
+| ~~KD-8~~ | ~~Health 服务默认暴露在网络上（绑定 `0.0.0.0`），`/status` 没有鉴权~~ | 已关闭 | 2A-1 记录；**T-1 复核：未变**（`HealthConfig.bind` 默认 `0.0.0.0`，`/status` 无鉴权）；**T-7 修复**：`HealthConfig.bind` 默认改为 `127.0.0.1`，显式配置的外部绑定保留；`/status` 的字段集合固定为就绪标志、Runner 启动状态和最近执行的 ID/代码/pid，不含配置或凭据。回归：`avatar-host/tests/test_health.py`；`DEPLOY.md`、`avatar-host/README.md` 已同步 |
 | ~~KD-9~~ | ~~`host/diagnostics.py` 无引用、与 Core diagnostics 重复、与计划中的 `host/diagnostics/` 包同名冲突~~ | 已关闭 | 2A-1 记录；**2A-C1 删除文件后解决** |
-| KD-10 | **待修复（数据完整性，高优先级）**。临时身份 B 解析为稳定身份 A 的链路有四类风险：① **文件丢失**：会话关闭时 `flush_user_path_migrations(remove_old=True)` 先做不覆盖合并，再 `rmtree` 旧目录，两边同名的文件中旧目录那份被删除；连续解析 B→A→C 会删除稳定用户 A 的目录；② **Memory 归属**：上下文 Owner 只在消费 Turn 或输出记录时才同步，已持久化的 B 记录从不更新 Owner，A 之后检索不到；③ **Persona 合并**：A 已有 Details 时整体丢弃 B 的 Details；身份解析前提交、解析后才消费的 Turn 被 Profiler 丢弃；④ **重复或错误的身份解析**：已稳定的身份可被再次重绑定；`load_profile` 不区分证据来自哪个 Participant，缺少可比较向量时直接视为匹配；未注册 Participant 的声纹和人脸会写入主 Participant | KD10-1…KD10-5，逐批授权 | 2A-2b 审计记为候选；2026-10-27 独立审计确认，并用合成数据离线复现，标为待修复；2A-2b-1 暂缓；**T-1 复核：主体已修复，剩余两点未覆盖**。① 关闭时的 flush/merge/rmtree 已全部删除（源码无引用），改绑不做磁盘 I/O；② 按已接受的设计，历史持久记录的 Owner 不重写（`test_memory_batches_never_reassign_earlier_turns_to_a_corrected_user`），纠正后 A 能否检索 B 的旧记录属于延期的多人历史政策；③ Persona 改为按 Participant 缓存，字段级合并（`merge_profile_items`），来源优先级和乱序增量有回归，但"解析前提交、解析后消费的 Turn"是否被 Profiler 丢弃，本轮没有单独覆盖；④ 身份可纠正是已接受的设计（被动 B→A、主动 A→C，Agent 改绑走 CAS），`load_profile` 按 Participant 加载并在每次 await 后重查身份，Speaker/Face 证据按 Participant 隔离，旧 source generation 的迟到结果不能绑定身份（`test_persona_sensors.py`、`test_participant_identity.py`、`test_session_identity.py`） |
+| KD-10 | **待修复（数据完整性，高优先级）**。临时身份 B 解析为稳定身份 A 的链路有四类风险：① **文件丢失**：会话关闭时 `flush_user_path_migrations(remove_old=True)` 先做不覆盖合并，再 `rmtree` 旧目录，两边同名的文件中旧目录那份被删除；连续解析 B→A→C 会删除稳定用户 A 的目录；② **Memory 归属**：上下文 Owner 只在消费 Turn 或输出记录时才同步，已持久化的 B 记录从不更新 Owner，A 之后检索不到；③ **Persona 合并**：A 已有 Details 时整体丢弃 B 的 Details；身份解析前提交、解析后才消费的 Turn 被 Profiler 丢弃；④ **重复或错误的身份解析**：已稳定的身份可被再次重绑定；`load_profile` 不区分证据来自哪个 Participant，缺少可比较向量时直接视为匹配；未注册 Participant 的声纹和人脸会写入主 Participant | KD10-1…KD10-5，逐批授权 | 2A-2b 审计记为候选；2026-10-27 独立审计确认，并用合成数据离线复现，标为待修复；2A-2b-1 暂缓；**T-1 复核：主体已修复，剩余两点未覆盖**。① 关闭时的 flush/merge/rmtree 已全部删除（源码无引用），改绑不做磁盘 I/O；② 按已接受的设计，历史持久记录的 Owner 不重写（`test_memory_batches_never_reassign_earlier_turns_to_a_corrected_user`），纠正后 A 能否检索 B 的旧记录属于延期的多人历史政策；③ Persona 改为按 Participant 缓存，字段级合并（`merge_profile_items`），来源优先级和乱序增量有回归，但"解析前提交、解析后消费的 Turn"是否被 Profiler 丢弃，本轮没有单独覆盖；④ 身份可纠正是已接受的设计（被动 B→A、主动 A→C，Agent 改绑走 CAS），`load_profile` 按 Participant 加载并在每次 await 后重查身份，Speaker/Face 证据按 Participant 隔离，旧 source generation 的迟到结果不能绑定身份（`test_persona_sensors.py`、`test_participant_identity.py`、`test_session_identity.py`）；**T-7（仅补测试）**：③ 中"身份解析前提交、解析后才被 Profiler 消费的 Turn"已覆盖，按现有设计画像归入解析后的用户、只保存一次，Turn 的 actors 保持冻结，没有静默漏处理（`test_persona_runtime.py::test_turn_committed_before_identity_resolution_is_profiled_for_the_resolved_user`）。仍待处理：② 跨身份检索旧记录，属于延期的多人历史政策 |
 | ~~KD-11~~ | ~~任一 Runner 处于故障状态时，`InferenceRuntime._accept_client` 因 `not self.is_alive`（要求全部 Runner 存活）直接 abort 所有**新**连接。Executor 按 method 懒连接，所以会话在故障窗口内首次使用另一个健康 method 时，收到裸 `ConnectionResetError`，而不是 "temporarily unavailable"。已建立的连接不受影响。与"不同 method 独立推进"不一致；对真实模型 Runner，故障窗口可能持续数秒~~ | 已关闭 | T-1 新增并保留失败复现；review 补充：`do_inference()` 同样受影响，健康连接取消后重连也会被拒；**T-2 修复**：服务准入（`_serving`）与目标 Runner 健康分开判断，总体 `is_alive` 保留给 Host 监测和恢复。回归：`test_inference_runtime.py::test_failed_method_does_not_refuse_first_use_of_a_healthy_method`（已扩展） |
 | ~~KD-12~~ | ~~Engine 先 `revoke_run` 再 `interrupt`，若两步之间下一句 TTS 首帧到达：`SegmentPreparer.prepare` 因 output 不再 active 抛 CancelledError，`SpeechStreamer.run` 在 `job.cancelled` 仍为 False 时把它当成"准备阶段自己取消"，转成 `RuntimeError("TTS preparation cancelled itself")`。结果 AUDIO_COMPLETE 的 reason 是 `speech_synthesis_failed`，并记 ERROR 日志；帧循环对同一条件判为 `synthesis_interrupted`，两条路径不一致。PCM 已正确停止，收尾事实都完成~~ | 已关闭 | T-1 新增并保留失败复现（低严重度）；**T-2 修复**：准备阶段的取消在 output 已失效时按打断处理，output 仍有效时保持 Provider 自取消的错误边界。回归：`test_speech_synthesis.py::test_revoked_answer_awaiting_tts_first_audio_is_interrupted_not_failed`、`test_provider_self_cancellation_on_an_active_output_remains_a_failure` |
 | ~~KD-13~~ | ~~打断时 partial alignment 漏计已交付的音频：`SpeechStreamer` 只在 `publish()` 完整返回后累计 samples；帧已被一个消费者取走、另一个消费者仍在反压中时，打断让该调用返回 `None`，这一帧不计入最终 alignment（消费端收到 2 帧 0.020 s，alignment 只有 0.010 s）~~ | 已关闭 | T-1 记为未复现的观察；review 做成确定性复现；**T-2 修复**：按 Output 的接纳序号判断，帧一旦被接纳（与 AUDIO_COMPLETE barrier 覆盖范围一致）即计入，未被接纳的帧不计。回归：`test_speech_synthesis.py::test_interrupted_alignment_covers_audio_already_delivered_to_a_consumer` |
-| O-1 | 初始化期间取消 Runner，要先等满 `close_timeout`（默认 5 s）才发 SIGTERM；测试中以 0.5 s 观测到 | 仅记录 | 2A-1 记录；**T-1 复核：仍存在**。实测 `close_timeout=0.5` 时为 0.50 s，`2.0` 时为 2.00 s |
+| ~~O-1~~ | ~~初始化期间取消 Runner，要先等满 `close_timeout`（默认 5 s）才发 SIGTERM；测试中以 0.5 s 观测到~~ | 已关闭 | 2A-1 记录；**T-1 复核：仍存在**。实测 `close_timeout=0.5` 时为 0.50 s，`2.0` 时为 2.00 s；**T-7 修复**：关闭时进程从未 READY，就直接进入终止（SIGTERM）与回收，不再先等满 `close_timeout`；已 READY 的进程照旧走 CLOSE 握手。回归：`test_runner_process.py::test_cancelled_initialization_is_terminated_without_a_drain_wait`、`test_ready_runner_still_closes_through_its_drain_path`、`test_inference_runtime.py::test_mixed_close_drains_ready_runners_and_terminates_initializing_ones` |
 | O-2 | 导入 `alphaavatar.agents.configs` 会立即加载全部插件和 torch、cv2、weasyprint、openai 等（约 1.7 s）；导入期间第三方库会改写 `LD_LIBRARY_PATH`、`QT_QPA_*`、`OPENBLAS_MAIN_FREE` 等变量 | 仅记录 | 2A-2a 新增；**T-1 复核：部分改善**。干净解释器中约 0.92 s，不再导入 torch；仍加载 cv2、weasyprint、openai、numpy 和 memory/persona/router/voice 插件；仍改写 `LD_LIBRARY_PATH`、`QT_QPA_FONTDIR`、`QT_QPA_PLATFORM_PLUGIN_PATH` |
 | ~~O-3~~ | ~~`InferenceRuntime` 把 socket 建在 `tempfile` 目录下（`alphaavatar-inference-*/runtime.sock`），TMPDIR 较长时超过 AF_UNIX 路径上限（约 104–108 字节），启动时报 OSError，没有预检~~ | 已关闭 | T-1 新增；review 改判为启动兼容性缺陷；**T-2 修复**：新增 `alphaavatar.core.ipc.private_socket_path`，Inference 与 Host 日志的 socket 优先放在配置的临时目录，超过 100 字节时回退到 `/tmp` 下新建的私有（0700）目录，都不满足时给出明确的 ENAMETOOLONG。回归：`avatar-host/tests/test_local_endpoints.py` |
-| O-4 | Speaker/Face 的 `_inference_loop` 依赖在途任务抛出取消。若被等待的调用吞掉取消并正常返回，循环自身的取消会丢失，`_stop()` 会挂住。真实 InferenceExecutor 会传播取消，`_process` 也会重新抛出，所以正常生产路径不受影响；Profiler 有 `cancelling()` 防护，这两个循环没有 | 仅记录（未确认风险） | T-1 新增；只能用吞掉取消的替身复现，且会挂死，所以没有提交失败用例 |
+| O-4 | Speaker/Face 的 `_inference_loop` 依赖在途任务抛出取消。若被等待的调用吞掉取消并正常返回，循环自身的取消会丢失，`_stop()` 会挂住。真实 InferenceExecutor 会传播取消，`_process` 也会重新抛出，所以正常生产路径不受影响；Profiler 有 `cancelling()` 防护，这两个循环没有 | 仅记录（未确认风险） | T-1 新增；只能用吞掉取消的替身复现，且会挂死，所以没有提交失败用例；**T-7（仅补测试）**：按真实调用链的取消契约补了 Speaker/Face 在推理或 VDB 查询未返回时 stop 的回归（8 个组合），stop 在有限时间内完成、任务在关闭前回收、stop 之后迟到结果不再写入身份；真实 InferenceExecutor 与 `PersonaStore._infer` 都会传播取消，"被调用方吞掉取消"的路径不可达，仍只作风险记录（`test_persona_sensors.py::test_stop_with_pending_sensor_work_reaps_it_and_admits_no_late_result`） |
 | ~~O-5~~ | ~~ENV Memory 批次附带的对话上下文只取最后 `max_context_messages`（64）条、`max_context_chars`（8192）字符~~ | 已关闭（设计如此） | T-1 新增，交维护者判断；**review 结论：不需修改**。这是 ENV 的有限辅助 prompt；完整的 Conversation/Tool 输入和原始 Turn 都没有被裁剪 |
 | O-6 | `agents/utils/vdb/lancedb.py` 使用已弃用的 `table_names()`，测试中出现 DeprecationWarning（全量 28 条） | 仅记录 | T-1 新增 |
-| O-7 | `MCPConfig` 未设置 `hide_input_in_errors`，ValidationError 文本可能带出部分原始 `servers` 输入（可能含明文 secret）。CLI 当前只输出字段名 | 仅记录 | T-1 新增 |
+| ~~O-7~~ | ~~`MCPConfig` 未设置 `hide_input_in_errors`，ValidationError 文本可能带出部分原始 `servers` 输入（可能含明文 secret）。CLI 当前只输出字段名~~ | 已关闭 | T-1 新增；**T-7 修复**：`MCPConfig` 与实际校验入口 `AvatarConfig` 都设置 `hide_input_in_errors=True`（内层设置只在它作为顶层模型时生效）；CLI 与执行子进程本就只输出 `format_error`（`include_input=False`）。回归：`test_avatar_config.py::test_rejected_mcp_input_never_reaches_error_output`、`test_cli_entrypoint.py::test_rejected_configuration_secret_never_reaches_cli_output` |
+| O-9 | `HostConfig`（含 `rtc.init_config`）没有设置 `hide_input_in_errors`，其校验错误的 `str` 可能带出原始输入。LiveKit 凭据来自环境变量而不是配置，CLI 与执行子进程只输出 `format_error`，所以目前没有暴露路径 | 仅记录 | T-7 新增（O-7 检查输出路径时发现，不在本批范围） |
 | ~~O-8~~ | ~~VAD 积压超过 `max_buffer_sec`（2 s）时最旧的帧被淘汰，语音开头丢失且没有 trace 记录；看起来是有界内存的有意取舍~~ | 升级为 KD-14 | T-2 新增（语音上游测试中观察到，未断言）；review 确定性复现后升级为生产缺陷 |
 | ~~KD-14~~ | ~~VAD 积压超过 2 s 缓存时，迟到的 VAD 起点所在的语音正文已被淘汰，`_start_segment` 不检查，剩余部分仍作为正常 `SPEECH_SEGMENT` 发布，没有缺口或取消记录（review 复现：积压 2.4 s 时，32 帧 0.32 s 的发声只剩 8 帧 0.08 s）~~ | 已关闭 | 原 O-8；**T-3 修复（不完整）**：保留 2 s 缓存上限；起点早于最早保留样本时，记录 `audio.speech_lost`（`reason=vad_backlog_overflow`，`missing_count` 为丢失样本数），以 `INPUT_GAP` 发布 `SPEECH_CANCELLED`，不路由剩余帧，并换一条已追上进度的新 VAD 流；只丢 pre-roll 时照常发布。回归：`test_audio_activity.py::test_speech_evicted_by_the_backlog_bound_is_cancelled_and_recovered`；review（`dca356f`）：换流后用户不停顿继续说话，新流把原句尾部当作新的一句，经 STT/TurnTaking 产生正常 COMMIT，KD-14 重开；**T-4 修复**：连续性缺口（`INPUT_GAP`、`VAD_INPUT_REJECTED`、感知流缺口）之后新建的 VAD 流，要先观察到 VAD 自身的结束静音（`min_silence_duration`）或一次 END_OF_SPEECH，才接纳语音开始；此前的 START 视为原句延续，不路由，记 `audio.speech_skipped`（`reason=unconfirmed_boundary`）。回归：`test_audio_activity.py::test_speech_continuing_through_a_gap_is_not_admitted_as_a_new_utterance`；范围说明：`INPUT_GAP` 会退役整个旧 speech epoch（该 speech source generation），其中尚未完成识别、尚未提交的前段也一并退役；已提交的 Turn 不变；review（`65bd40f`）：普通恢复已修好，另有三条旁路被确定性复现：恢复中再次失败会丢掉等待要求；感知缺口后首次发现的输入不受约束；pre-roll 会带回已跳过的尾句。**T-5 修复**：恢复要求属于输入 generation，只在当前流确认边界后解除，再次换流继承；感知缺口时记录 horizon，在其之前首次出现的输入 generation 也要确认边界；确认边界时把回放下界设为确认静音的起点，pre-roll 不越过。回归：`test_recovery_survives_a_stream_that_fails_before_its_boundary`、`test_input_first_seen_after_a_perception_gap_must_confirm_a_boundary`、`test_pre_roll_after_a_gap_never_reaches_back_into_skipped_speech`；review（`a2b6bde`）：快照用最新的 `changed_sequence` 判断 generation 是否在缺口之后出现，而状态更新时间不代表 generation 首次出现的时间；缺口与读快照之间同一 generation 发生一次静音再恢复，尾句会正常成段并经 STT/TurnTaking 产生 COMMIT。**T-6 修复**：缺口窗口内（序号不超过 horizon）该 generation 的任一事件都算"已存在"的证据，即使更新的快照先登记了这路输入，也要求确认边界；每次缺口对同一 generation 只记一次；最新状态序号仍负责过滤旧帧。回归：`test_snapshot_newer_than_a_gap_keeps_the_boundary_requirement`；**T-6 review（`4cb57c2`）验收，关闭**：review 用真实生产者线程独立复验了竞态（尾句不进 STT、无 COMMIT，新句 32 帧正文完整、恰好提交一次）、每次缺口只施加一次要求、generation 隔离 |
 | ~~KD-15~~ | ~~`HostLog` 在 `try` 之外创建接收 socket，创建失败（例如沙盒 EPERM）时，之前建立的私有目录不会被清理（既存缺口，review 环境实际触发）~~ | 已关闭 | **T-3 修复**：socket 创建移入 `try`，失败时关闭已创建的 socket、删除目录、恢复 endpoint。回归：`test_local_endpoints.py::test_host_log_construction_failure_releases_its_directory` |
@@ -1081,3 +1083,183 @@ T-3、T-4 的回归（静音后恢复、持续讲话、短停顿、VAD 队列拒
 
 - 没有 commit 或 push。
 - 没有修改 CI、依赖或 CLI。
+
+---
+
+## T-7 KD-14 正式回归与四项系统修复
+
+- 日期：2026-11-02
+- 基线 HEAD：`2d1d575efc49cbd31ac7057890e2defafd0fd8b2`（`dev/v0.6.9`，与远端一致）。上一轮的日志修改已包含在这个提交中，工作区开始时是干净的，没有需要保留的未提交改动。
+- 授权范围：
+  1. KD-14 正式回归（只加测试）；
+  2. 修复 O-1、KD-6、KD-8、O-7；
+  3. KD-10 剩余的 Persona 时序和 O-4 先补测试，按证据决定是否修生产代码；
+  4. 保持既定架构边界；KD-7 不变；配置公共服务、CLI、Runner 并行留待后续批次。
+
+### 1. 结果分类
+
+| 类别 | 项 |
+|---|---|
+| 已修复 | O-1、KD-6、KD-8、O-7 |
+| 仅补测试 | KD-14（保持已关闭）；KD-10 ③ 的时序（现有设计通过）；O-4（真实调用链通过，仍作风险记录） |
+| 仍待处理 | KD-7（默认审批策略，另行审查）；KD-10 ②（跨身份检索，属于延期的多人历史政策）；O-2、O-6；O-9（新增，仅记录）；真实设备和服务验收 |
+
+### 2. 修改文件
+
+生产代码：
+
+| 文件 | 项 | 改动 |
+|---|---|---|
+| `avatar-agents/alphaavatar/agents/runtime/inference/process.py` | O-1 | `_close` 记录关闭前是否 READY；从未 READY 的进程直接强制回收 |
+| `avatar-plugins/perception/avatar-plugins-memory/.../retrieval/passive.py` | KD-6 | 新增 `_trace`，在 `_finish` 完成门闩处记 `memory.recall`；补记"保留名额全部在途"路径的 `overloaded` |
+| `avatar-host/alphaavatar/host/application/config.py` | KD-8 | `HealthConfig.bind` 默认改为 `127.0.0.1` |
+| `avatar-agents/alphaavatar/agents/configs/plugins/tools/tools_config.py` | O-7 | `MCPConfig` 设置 `hide_input_in_errors=True` |
+| `avatar-agents/alphaavatar/agents/configs/avatar_config.py` | O-7 | `AvatarConfig` 设置 `hide_input_in_errors=True` |
+| `DEPLOY.md`、`avatar-host/README.md` | KD-8 | 说明默认只绑定本机、显式绑定的含义，以及 `/status` 的返回内容 |
+
+测试：
+
+| 文件 | 改动 |
+|---|---|
+| `avatar-agents/tests/inference_runner_samples.py` | 新增 `GateInitRunner`（初始化时进入测试可观察的屏障）和 `ClosingRunner`（正常关闭时留下关闭钩子的痕迹）；删除已无人使用的 `SlowInitRunner` |
+| `avatar-agents/tests/test_runner_process.py` | 原来依赖 `sleep(0.5)` 的初始化取消用例改为屏障驱动；新增 READY 正常关闭用例 |
+| `avatar-agents/tests/test_inference_runtime.py` | 原混合取消用例改为屏障驱动，并扩为 cancel/close 两个参数 |
+| `avatar-agents/tests/test_avatar_config.py` | +6（O-7） |
+| `avatar-host/tests/test_cli_entrypoint.py` | +1（O-7，CLI 端到端） |
+| `avatar-host/tests/test_health.py` | 新增，3 个（KD-8） |
+| `avatar-plugins/perception/avatar-plugins-memory/tests/test_memory_recall_diagnostics.py` | 新增，7 个（KD-6） |
+| `avatar-plugins/perception/avatar-plugins-persona/tests/test_persona_runtime.py` | +4（KD-10） |
+| `avatar-plugins/perception/avatar-plugins-persona/tests/test_persona_sensors.py` | +8（O-4） |
+| `avatar-plugins/perception/avatar-plugins-router/tests/test_audio_activity.py` | +3（KD-14）；夹具新增 `event_batch_size` 参数和 `ConsumerGate` 调度屏障 |
+
+用例数从 195 增加到 229。依赖、`uv.lock`、CI 均未改动。
+
+### 3. 各项验收
+
+**KD-14 正式回归（只加测试，保持已关闭）**
+
+- 调度屏障 `ConsumerGate` 包装感知事件流的 `wait_for_pending`，让 Audio Activity 只读取测试允许的批次数；每个用例都断言 `audio.input_gap` 的次数，避免额外的缺口掩盖目标问题。
+- 3 个用例：
+
+| 用例 | 场景与断言 |
+|---|---|
+| `test_confirmed_boundary_is_not_reimposed_by_the_rest_of_its_gap_window` | 每批 8 个事件；只放行两批，其中 16 帧静音足以确认边界，确认后再放行窗口内剩余的旧事件；然后让 VAD 超时，强制换流，并立即讲话（不先静音）。断言这句话完整成段、没有 `speech_skipped`、只有 1 次缺口 |
+| `test_each_gap_requires_its_own_boundary` | 两次缺口都发生在讲话中途；第二次缺口时没有活动的流，只有"每次缺口重新记证据"才会再次施加要求。断言每次缺口后续说都被跳过（缺口次数与跳过次数都为 1、2），下一句只含新的帧 |
+| `test_generation_first_seen_after_the_horizon_is_admitted_at_once` | 缺口被读取之后，新的输入 generation 直接讲话。断言段从它的第一帧开始，讲话帧完整，只有 1 次缺口 |
+
+- 变异验证（内存）：
+  - 去掉"每次缺口只施加一次"：只有第 1 个用例失败；
+  - 新缺口不重置证据：只有第 2 个用例失败；
+  - 忽略 horizon：只有第 3 个用例失败。
+- 第 1 个用例的屏障条件只读访问了私有的 `_recovering`，用于判断"边界已确认"；断言仍然只针对可观察的段与 trace。
+
+**O-1（已修复）**
+
+- 改动：`RunnerProcess._close` 记录进程关闭前是否 READY；从未 READY 时，以 `force=True` 回收，即先 SIGTERM，按需再 kill，不再先空等 `close_timeout`。READY 进程的 CLOSE 握手不变。
+- 验收：
+  - 不用固定 sleep：Runner 在初始化中进入一个文件屏障，测试看到屏障后才取消。
+  - 不用苛刻的耗时阈值：`close_timeout` 设为挂起保护的 2 倍（60 s），旧代码会因空等而超过 30 s 的挂起保护，新代码立即收敛。
+  - 终止顺序与回收：从 Runner 自己的 `Inference process settled` 诊断读取退出码和 forced 标记。
+- 3 组用例：
+
+| 用例 | 断言 |
+|---|---|
+| 初始化进入屏障后取消 | 退出码为 `-SIGTERM`、forced=True；pid 已回收 |
+| READY 进程正常关闭 | 关闭钩子执行；退出码 0、forced=False |
+| READY 与初始化中进程混合关闭（调用方取消 `start()` / 直接 `close()` 两种） | 已 READY 的进程经 CLOSE 正常关闭（关闭钩子执行、退出码 0）；初始化中的进程被 SIGTERM 终止；启动状态为 ready/cancelled；子进程、socket 目录和 endpoint 环境变量全部释放 |
+
+- 对照：换回 `HEAD` 版 `process.py` 时，3 个取消或混合用例失败（超过挂起保护），READY 正常关闭照常通过。
+
+**KD-6（已修复）**
+
+- 通道：现有的 Turn 诊断就在 `perception.input_trace` 中（`turn.committed`、`turn.admission` 都带加盐哈希的 `turn_id`），没有新增诊断框架。Host 的 `CoreEventTrace` 只订阅 Core 事件流，所以没有选它。
+- 改动：
+  - `_finish` 是唯一的完成门闩，在它确定结果后记一条 `memory.recall`，字段只有 `turn_id`、`outcome`、`evidence_count`，不含回忆文本；
+  - 原来有一条终止路径没有任何记录（保留名额全部在途时，该 Turn 不会被回忆），现在补记为 `overloaded`；
+  - 没有改等待期限、门闩、调度或 MemoryStore。
+- 状态（沿用已有值）：ok、empty、timeout、overloaded、unavailable、error、identity_changed。
+- 回归：7 个用例，按 Turn 提交顺序与 `turn.committed` 关联，每个 Turn 恰好一条记录。timeout 用例同时断言截止之前就绪被挡住、截止之后才释放。
+- 变异：
+  - 不记录：7 个全部失败；
+  - 错标状态：被换标签的 5 个失败；
+  - 只去掉新补的记录：只有对应用例失败。
+
+**KD-8（已修复）**
+
+- 改动：默认 `bind` 为 `127.0.0.1`；显式配置（例如 `0.0.0.0`）保留，并且经 payload 恢复后不变。
+- `/status` 的实际字段：
+  - 顶层：`ready`、`inference_ready`、`session_backend_ready`、`active_executions`、`admission_available`、`recent_executions`、`inference_runners`、`inference_methods`；
+  - Runner 视图：method、启动状态、ready、耗时、异常类型名；
+  - 执行视图：execution_id、backend、source_id（LiveKit job id）、state、reason、pid、stop_reason。
+
+  原因字符串受 IPC 模式 `^[a-zA-Z0-9_:.-]*$` 约束，最长 128。不返回配置或凭据。
+- 回归：
+  - 默认绑定与显式外部绑定：检查实际监听地址；
+  - 状态输出：起一个真实的 Health 服务，通过只放行的回环地址 GET `/status`，断言字段集合固定，且虚构的 LiveKit key/secret、VDB key、MCP token、配置路径和 VDB URL 都不出现。
+- 对照：换回 `HEAD` 版配置时，默认绑定用例失败。
+- 实现保持最小：没有引入账户、权限或认证框架。
+
+**O-7（已修复）**
+
+- 实测：内层模型上的 `hide_input_in_errors` 只在它作为顶层模型被校验时生效。实际路径 `validate_application` → `AvatarConfig.model_validate` 由外层模型决定，所以除了题目要求的 `MCPConfig`，`AvatarConfig` 也必须设置。
+- 回归（6 个）：经 `AvatarConfig` 和直接校验 `MCPConfig` 两条路径 × 三种错误输入（未知字段、server 不是映射、vdb_config 不是映射）。断言虚构 secret 不出现在以下任何输出中，同时错误位置仍然准确：
+  - `str`、`repr`；
+  - `traceback.format_exception`，即 `logging.exception` 打印的内容；
+  - `format_error`（CLI 和执行子进程使用的诊断）；
+  - `errors(include_input=False)`、`json(include_input=False)`。
+- CLI 端到端：`alphaavatar dev` 加载这样的配置，退出码 2，输出只有 `fields: tools.mcp.token`，不含 secret，也不创建应用目录。这一路径原本就只走 `format_error`，所以用例在旧代码上同样通过，用于防止回退。
+- 对照：
+  - 换回 `HEAD` 版两个配置文件：6 个用例全部失败；
+  - 只修 `MCPConfig`：经 `AvatarConfig` 的 3 个仍然失败。
+- 新增观察 O-9：`HostConfig` 同样没有隐藏输入，但目前没有暴露路径，不在本批范围。
+
+**KD-10 剩余时序（仅补测试）**
+
+- 设计：Profiler 按 participant 记录 Turn；收尾时以参与者当时的身份抽取画像，保存到解析后的用户名下；已提交 Turn 的 actors 保持冻结。
+- 回归：4 个组合，即感知改绑 / Agent 改绑 × Profiler 启动前已提交 / 运行中提交。Turn 以生成的身份提交，解析为 alice 时断言 Profiler 尚未消费。之后断言：
+  - 画像提示包含该 Turn；
+  - 只为 alice 保存一次；
+  - 生成用户的目录不存在；
+  - Turn 的 actors 不变。
+- 结果：现有代码通过，没有静默漏处理，不修生产代码。
+- 变异：Profiler 丢弃"actor 版本与当前身份不一致"的 Turn 时，4 个组合全部失败。
+
+**O-4（仅补测试）**
+
+- 真实调用链：`InferenceExecutor` 和 `PersonaStore._infer` 都会传播取消，"被调用方吞掉取消"的路径不可达。
+- 回归：8 个组合，即 Speaker/Face × 推理挂起 / VDB 查询挂起 × 结果一直挂起 / stop 开始时结果就绪。断言：
+  - stop 在挂起保护内完成；
+  - 测试新建的任务在 runtime 关闭之前全部结束；
+  - stop 之后释放结果，身份和证据都不再变化。
+- 结果：现有代码通过；O-4 仍只作风险记录。
+- 变异：stop 时不取消在途任务，4 个"一直挂起"的组合失败。
+- 观察（不是缺陷）：stop 开始时结果就绪的情况下，Face 的 `_stop` 先等待 poll 任务收尾，worker 可能在 stop 期间处理这个已就绪的结果。stop 完成之后不再写入。
+
+### 4. 运行命令与结果
+
+均在 `cd /home/ecs-user/AlphaAvatar && source .venv/bin/activate` 之后执行。
+
+| 项目 | 结果 |
+|---|---|
+| 定向回归：runner_process、inference_runtime、avatar_config、health、cli_entrypoint、memory、persona、audio_activity | 116 passed |
+| 全量（CI 方式：`PYTHONDONTWRITEBYTECODE=1 pytest -p no:cacheprovider --basetemp=… --durations=6`）×1 | **229 passed**，29.7 s；basetemp 无残留；`/tmp/aa-*` 无残留；本轮没有新增 `/tmp/alphaavatar-*` |
+| 检出目录 | 前后 `git status --porcelain --ignored` 无差异 |
+| 压力入口默认一轮 | 6 passed，3.82 s |
+| Ruff / 格式 / Workspace / Lock / pre-commit | All checks passed；674 files already formatted；16 members consistent；`uv lock --check` 通过；改动文件的 hook 全部通过 |
+
+### 5. 验证类别与限制
+
+- **离线确定性回归**：本批全部新增用例都属于这一类。外部模型、Provider、VDB 和推理传输使用离线替身；真实 spawn 和 IPC 只放行测试自有的 endpoint。
+- **合成压力**：只跑了默认一轮，没有长时运行。
+- **真实设备和服务验收**：未做。没有连接真实的 LiveKit、模型或 VDB 服务；Health 的外部绑定只在本机验证了监听地址。
+- 测试读取或改写了以下私有状态，Runtime 内部重构时需要同步调整：
+  - KD-14 屏障条件：`AudioActivityProcessor._recovering`、`_sources`；
+  - KD-8：`AvatarHost._inference`；Health 监听地址 `_runner.addresses`；
+  - O-4：`persona._processors`。
+- O-1 用例读取 Runner 的 INFO 诊断记录（`Inference process settled`）来判断退出码和是否强制回收。
+
+### 6. 未做事项
+
+- 没有 commit 或 push。
+- 没有修改 KD-7 的默认审批行为。
+- 没有实现配置公共服务、CLI 新功能或 Runner 并行。

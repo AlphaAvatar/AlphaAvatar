@@ -17,32 +17,52 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
+import logging
 import multiprocessing as mp
 import os
+import signal
 from collections import Counter
 from collections.abc import Callable
 from multiprocessing import resource_tracker
 from pathlib import Path
 
 import pytest
-from inference_runner_samples import EchoRunner, FailingInitRunner, SlowInitRunner
+from inference_runner_samples import ClosingRunner, EchoRunner, FailingInitRunner, GateInitRunner
 
 from alphaavatar.agents.runtime.inference.process import RunnerProcess
-from alphaavatar.agents.runtime.inference.runner import InferenceRunner
+from alphaavatar.agents.runtime.inference.runner import InferenceRunner, RunnerLaunch
 
 # Generous hang guards; the test asserts convergence, not CI wall-clock speed.
 HANG_GUARD = 30
 
 
-def runner(runner_cls: type[InferenceRunner]) -> RunnerProcess:
+def runner(
+    runner_cls: type[InferenceRunner], *, root: Path | None = None, close_timeout: float = 0.5
+) -> RunnerProcess:
+    launch = None
+    if root is not None:
+        config = json.dumps({"test": {"root": str(root)}})
+        launch = RunnerLaunch(str(root), str(root / "models"), config=config)
     return RunnerProcess(
         runner_cls,
         mp_ctx=mp.get_context("spawn"),
         initialize_timeout=HANG_GUARD,
         request_timeout=HANG_GUARD,
-        close_timeout=0.5,
+        close_timeout=close_timeout,
         max_pending=4,
+        launch=launch,
     )
+
+
+def settled(caplog: pytest.LogCaptureFixture, method: str) -> tuple[int | None, bool]:
+    """Exit code and forced flag from the runner's own reclamation diagnostic."""
+    (record,) = [
+        record
+        for record in caplog.records
+        if record.getMessage().startswith(f"Inference process settled method={method} ")
+    ]
+    return record.args[2], record.args[3]
 
 
 async def wait_until(condition: Callable[[], bool], failure: str) -> None:
@@ -171,13 +191,34 @@ async def test_cancelled_queued_request_is_withdrawn_without_breaking_the_runner
         await process.close()
 
 
-async def test_cancelled_start_reaps_an_initializing_child() -> None:
-    process = runner(SlowInitRunner)
+async def test_cancelled_initialization_is_terminated_without_a_drain_wait(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger=RunnerProcess.__module__)
+    # A drain wait of close_timeout would outlast the hang guard; immediate termination does not.
+    process = runner(GateInitRunner, root=tmp_path, close_timeout=2 * HANG_GUARD)
     starting = asyncio.create_task(process.start())
-    await asyncio.sleep(0.5)
+    await wait_until(
+        lambda: (tmp_path / "init.entered").exists(), "initialization never entered its gate"
+    )
     starting.cancel()
-    # The child would initialize for 60 seconds; cancellation must converge well before that.
     async with asyncio.timeout(HANG_GUARD):
         with pytest.raises(asyncio.CancelledError):
             await starting
     assert process.pid is None
+    # Terminated by SIGTERM first, not left to exit on its own and not killed.
+    assert settled(caplog, GateInitRunner.INFERENCE_METHOD) == (-signal.SIGTERM, True)
+
+
+async def test_ready_runner_still_closes_through_its_drain_path(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger=RunnerProcess.__module__)
+    process = runner(ClosingRunner, root=tmp_path, close_timeout=2 * HANG_GUARD)
+    async with asyncio.timeout(HANG_GUARD):
+        await process.start()
+        assert await process.run(b"frame") == b"frame"
+        await process.close()
+    assert process.pid is None
+    assert (tmp_path / f"{ClosingRunner.INFERENCE_METHOD}.closed").exists()
+    assert settled(caplog, ClosingRunner.INFERENCE_METHOD) == (0, False)

@@ -31,10 +31,13 @@ from alphaavatar.agents.persona import PersonaProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
 from alphaavatar.agents.runtime.modules.foundation import ProviderService
 from alphaavatar.agents.runtime.modules.participants import ParticipantRuntime
+from alphaavatar.agents.runtime.modules.participants.schemas import ParticipantInput
 from alphaavatar.core.output import OutputRuntime
 from alphaavatar.core.perception import PerceptionRuntime
 from alphaavatar.core.perception.enums import PerceptionStreamKind
 from alphaavatar.core.session import SessionRuntime
+from alphaavatar.core.session.enums import IdentityOutcome, IdentitySource
+from alphaavatar.core.session.schemas import IdentityRequest
 from alphaavatar.core.turn import TurnRuntime, TurnStreamGap
 from alphaavatar.core.turn.enums import TurnInputModality
 from alphaavatar.core.turn.schemas import TurnEntityRef
@@ -297,6 +300,68 @@ async def test_profile_delta_is_discarded_when_a_provider_swallows_cancellation(
 
     await persona.on_stop()
     assert inference.saved == [] and not profiler.started
+    await runtime.aclose()
+
+
+@pytest.mark.parametrize("consumer", ["before-start", "running"])
+@pytest.mark.parametrize("resolution", ["perception", "agent"])
+async def test_turn_committed_before_identity_resolution_is_profiled_for_the_resolved_user(
+    consumer: str, resolution: str, tmp_path: Path
+) -> None:
+    providers, inference = ScriptedProviders(name_ally), PersonaInference()
+    runtime = avatar_runtime(tmp_path, providers, inference)
+    persona, _ = persona_for(runtime)
+    if consumer == "running":
+        await persona.on_start()
+    newcomer = runtime.participants.join(primary=True)  # A generated, unresolved user.
+    actor = TurnEntityRef(
+        participant_id=newcomer.participant_id,
+        user_id=newcomer.user_id,
+        identity_sequence=newcomer.identity_sequence,
+    )
+    runtime.turn.commit_input(
+        input_id="input-0",
+        modality=TurnInputModality.TEXT,
+        text="please call me Ally",
+        actors=(actor,),
+    )
+    # The identity resolves in the same tick, so the profiler can only consume afterwards.
+    if resolution == "perception":
+        outcome = runtime.participants.bind_user(
+            IdentityRequest(
+                participant_id=newcomer.participant_id,
+                user_id="alice",
+                source=IdentitySource.PERCEPTION,
+                basis_sequence=newcomer.identity_sequence,
+                reason="Voice matched the stored user",
+            )
+        )
+        assert outcome == IdentityOutcome.APPLIED
+    else:
+        result = await runtime.participants.invoke(
+            ParticipantInput(user_id="alice", reason="The speaker said they are Alice"),
+            input_id="input-0",
+        )
+        assert result["outcome"] == IdentityOutcome.APPLIED.value
+    stream = runtime.turn.events
+    assert stream.consumer_cursor(ProfilerProcessor.CONSUMER_ID) == 0
+    if consumer == "before-start":
+        await persona.on_start()
+    cache = persona.cache_for(newcomer.participant_id)
+    await wait_until(lambda: len(cache.turns) == 1, "The pre-resolution Turn was never recorded")
+    await persona.on_stop()
+
+    # Not skipped: the Turn is profiled for the participant's resolved user and saved there.
+    (prompt,) = providers.llm.prompts
+    assert "please call me Ally" in prompt
+    (saved,) = inference.saved
+    assert saved["user_id"] == "alice"
+    assert [item["metadata"]["path"] for item in saved["details_items"]] == ["/name"]
+    assert runtime_state_file(runtime).is_file()
+    assert not runtime.workspace.users.get(newcomer.user_id).root.exists()
+    # The committed Turn keeps the identity it was accepted with.
+    (frozen,) = runtime.turn.get("input-0").actors
+    assert (frozen.user_id, frozen.identity_sequence) == (newcomer.user_id, 0)
     await runtime.aclose()
 
 

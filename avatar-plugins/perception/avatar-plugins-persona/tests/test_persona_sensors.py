@@ -78,6 +78,7 @@ class SensorInference:
         self.replies: deque[str] = deque()
         self.hold_search = False
         self.search_held, self.search_release = asyncio.Event(), asyncio.Event()
+        self.saves: list[str] = []
 
     async def _maybe_hold(self, user: str) -> None:
         if user == self.hold:
@@ -127,6 +128,7 @@ class SensorInference:
             return None if result is None else json.dumps(result).encode()
         if request["op"] == "load":
             return b'{"details_items":[],"speaker_vector":null,"face_vector":null}'
+        self.saves.append(request["param"]["user_id"])
         return b'{"user_id":"x","error":null}'
 
     async def close(self) -> None:
@@ -457,4 +459,70 @@ async def test_identity_switch_during_vector_search_discards_the_late_result(
     assert inference.searches == [f"{sensor}:alice", f"{sensor}:bob", f"{sensor}:alice"]
     assert persona_warnings(caplog) == []
     await persona.on_stop()
+    await runtime.aclose()
+
+
+def sensor_state(runtime: AvatarRuntime, persona, sensor: str) -> tuple:
+    identities = sorted(
+        (p.participant_id, p.user_id, p.identity_sequence)
+        for p in runtime.session.participants.values()
+    )
+    evidence = sorted(
+        (pid, vector is not None and vector.tobytes(), str(gender))
+        for pid in persona.persona_cache
+        for vector, gender in [observed(persona, pid, sensor)]
+    )
+    return identities, evidence
+
+
+@pytest.mark.parametrize("timing", ["pending", "ready-at-stop"])
+@pytest.mark.parametrize("stage", ["model", "search"])
+@pytest.mark.parametrize("sensor", ["speaker", "face"])
+async def test_stop_with_pending_sensor_work_reaps_it_and_admits_no_late_result(
+    sensor: str, stage: str, timing: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inference = SensorInference()
+    if stage == "model":
+        inference.hold = "alice"
+        held, release = inference.held, inference.release
+    else:
+        inference.hold_search = True
+        held, release = inference.search_held, inference.search_release
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, sensor)
+    before = asyncio.all_tasks()
+    await persona.on_start()
+    sense(runtime, sensor, PerceptionSourceRef("device", 1), "alice")
+    async with asyncio.timeout(HANG_GUARD):
+        await held.wait()
+
+    if timing == "ready-at-stop":
+        # The awaited call completes exactly as the processor begins to stop.
+        (processor,) = persona._processors  # Read-only lookup of the single enabled sensor.
+        stop = processor._stop
+
+        async def stop_with_ready_result(*, finalize: bool) -> None:
+            release.set()
+            await stop(finalize=finalize)
+
+        monkeypatch.setattr(processor, "_stop", stop_with_ready_result)
+
+    async with asyncio.timeout(HANG_GUARD):
+        await persona.on_stop()
+    # Reaped by stop itself, before any later runtime cleanup could hide a straggler.
+    assert [task.get_name() for task in asyncio.all_tasks() - before if not task.done()] == []
+    stopped = sensor_state(runtime, persona, sensor)
+    release.set()
+    for _ in range(10):
+        await asyncio.sleep(0)
+    assert sensor_state(runtime, persona, sensor) == stopped
+    if timing == "pending":
+        # A cancelled call chain delivers nothing: no identity decision and no evidence.
+        assert participant_of(runtime, "alice") is None
+        assert all(
+            vector is None
+            for vector, _ in (observed(persona, pid, sensor) for pid in persona.persona_cache)
+        )
+        assert "alice" not in inference.saves
+        assert inference.searches == ([] if stage == "model" else [f"{sensor}:alice"])
     await runtime.aclose()

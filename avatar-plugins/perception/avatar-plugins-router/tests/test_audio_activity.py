@@ -143,7 +143,14 @@ class Microphone:
 
 
 class Pipeline:
-    def __init__(self, root: Path, *, pre_roll_sec: float = 0.1, event_maxlen: int = 8192) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        pre_roll_sec: float = 0.1,
+        event_maxlen: int = 8192,
+        event_batch_size: int = 64,
+    ) -> None:
         workspace, session = WorkspacePaths.from_root(root), SessionRuntime(session_id="session")
         self.runtime = AvatarRuntime.create(
             workspace=workspace,
@@ -164,7 +171,9 @@ class Pipeline:
         self.processor = AudioActivityProcessor(
             runtime=self.runtime,
             vad=vad,
-            config=AudioActivityConfig(pre_roll_sec=pre_roll_sec, max_buffer_sec=2.0),
+            config=AudioActivityConfig(
+                pre_roll_sec=pre_roll_sec, max_buffer_sec=2.0, event_batch_size=event_batch_size
+            ),
         )
 
     def speech(self, kind: ObservationKind | None = None) -> list[EnvObservation]:
@@ -702,3 +711,128 @@ async def test_snapshot_newer_than_a_gap_keeps_the_boundary_requirement(
     finally:
         for listener in reversed(listeners):
             await listener.stop()
+
+
+class ConsumerGate:
+    """Scheduling barrier: Audio Activity reads only as many event batches as the test allows."""
+
+    def __init__(self, pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch) -> None:
+        events = pipeline.runtime.perception.events
+        self.allowed: int | None = None
+        self.parked, self._changed = False, asyncio.Event()
+        original = events.wait_for_pending
+
+        async def wait_for_pending(*, consumer_id: str, **options: object) -> bool:
+            if consumer_id == AudioActivityProcessor.CONSUMER_ID:
+                while self.allowed == 0:
+                    self.parked = True
+                    self._changed.clear()
+                    await self._changed.wait()
+                self.parked = False
+                if self.allowed is not None:
+                    self.allowed -= 1
+            return await original(consumer_id=consumer_id, **options)
+
+        monkeypatch.setattr(events, "wait_for_pending", wait_for_pending)
+
+    def allow(self, batches: int | None) -> None:
+        self.allowed = batches
+        self._changed.set()
+
+
+def stages(pipeline: Pipeline, stage: str) -> int:
+    records = pipeline.runtime.perception.input_trace.snapshot().to_dict()["records"]
+    return [record["stage"] for record in records].count(stage)
+
+
+async def fail_vad(pipeline: Pipeline, microphone: Microphone) -> None:
+    """Retire the current stream for a reason that is not a continuity gap."""
+    # Read-only: the stream object, so its failure can be awaited before more audio arrives.
+    stream = pipeline.processor._sources[microphone.source]
+    pipeline.silero.timeouts = 1
+    microphone.silence(4)
+    await wait_until(lambda: stream.failed, "the stream never failed")
+    await pipeline.consumed()
+
+
+@pytest.mark.parametrize("pipeline", [{"event_maxlen": 64, "event_batch_size": 8}], indirect=True)
+async def test_confirmed_boundary_is_not_reimposed_by_the_rest_of_its_gap_window(
+    pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gate, microphone = ConsumerGate(pipeline, monkeypatch), Microphone(pipeline.runtime)
+    gate.allow(0)
+    microphone.silence(40)
+    microphone.speech(40)  # 80 events outrun the parked consumer: it keeps the last 64.
+    # Two batches carry 16 frames of silence, enough for the rebuilt stream's boundary.
+    gate.allow(2)
+    await wait_until(
+        lambda: gate.parked and microphone.source.source_id not in pipeline.processor._recovering,
+        "the boundary was never confirmed inside the gap window",
+    )
+    gate.allow(None)  # The remaining pre-horizon events are consumed after the confirmation.
+    await pipeline.consumed()
+
+    # A later rebuild must not inherit a requirement this gap already released.
+    await fail_vad(pipeline, microphone)
+    first = len(microphone.sent)
+    microphone.speech(SPEECH)  # No leading silence: only an unrecovering stream admits it.
+    microphone.silence(TAIL)
+    await wait_until(
+        lambda: pipeline.speech(ObservationKind.SPEECH_SEGMENT), "the new speech never ended"
+    )
+    (segment,) = pipeline.speech(ObservationKind.SPEECH_SEGMENT)
+    spoken = {item.observation_id for item in microphone.sent[first : first + SPEECH]}
+    assert spoken <= set(segment.payload.source_observation_ids)
+    assert (stages(pipeline, "audio.input_gap"), skipped(pipeline)) == (1, [])
+
+
+@pytest.mark.parametrize("pipeline", [{"event_maxlen": 64}], indirect=True)
+async def test_each_gap_requires_its_own_boundary(
+    pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gate, microphone = ConsumerGate(pipeline, monkeypatch), Microphone(pipeline.runtime)
+    for gap in (1, 2):
+        if gap == 2:
+            # No stream is active when the second gap arrives; only its own evidence counts.
+            await fail_vad(pipeline, microphone)
+        gate.allow(0)
+        microphone.speech(80)  # Continuous speech outruns the consumer: a gap mid-utterance.
+        gate.allow(None)
+        await pipeline.consumed()
+        microphone.speech(SPEECH)  # The cut utterance continues, then ends.
+        microphone.silence(TAIL)
+        await pipeline.consumed()
+        assert (stages(pipeline, "audio.input_gap"), len(skipped(pipeline))) == (gap, gap)
+
+    utterance = len(microphone.sent)
+    microphone.silence(SILENCE)
+    microphone.speech(SPEECH)
+    microphone.silence(TAIL)
+    await wait_until(
+        lambda: pipeline.speech(ObservationKind.SPEECH_SEGMENT), "the next utterance never ended"
+    )
+    assert_only_utterance(pipeline, microphone, utterance, utterance + SILENCE)
+
+
+@pytest.mark.parametrize("pipeline", [{"event_maxlen": 64}], indirect=True)
+async def test_generation_first_seen_after_the_horizon_is_admitted_at_once(
+    pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gate, old = ConsumerGate(pipeline, monkeypatch), Microphone(pipeline.runtime)
+    gate.allow(0)
+    old.speech(80)
+    gate.allow(None)
+    await pipeline.consumed()
+
+    # A reconnect after the gap was read: its audio was never cut, so no boundary is owed.
+    new = Microphone(pipeline.runtime, generation=2)
+    new.speech(SPEECH)
+    new.silence(TAIL)
+    await wait_until(
+        lambda: pipeline.speech(ObservationKind.SPEECH_SEGMENT), "the new generation never ended"
+    )
+    (segment,) = pipeline.speech(ObservationKind.SPEECH_SEGMENT)
+    spoken = {item.observation_id for item in new.sent[:SPEECH]}
+    assert spoken <= set(segment.payload.source_observation_ids)
+    assert segment.payload.source_observation_ids[0] == new.sent[0].observation_id
+    assert stages(pipeline, "audio.input_gap") == 1

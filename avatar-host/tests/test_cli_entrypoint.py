@@ -68,3 +68,31 @@ def test_base_cli_needs_no_models_credentials_or_workspace(tmp_path: Path) -> No
     assert probe.returncode == 0, probe.stderr
     assert json.loads(probe.stdout.splitlines()[-1]) == []
     assert files_under(tmp_path) == before
+
+
+def test_rejected_configuration_secret_never_reaches_cli_output(tmp_path: Path) -> None:
+    secret = "sk-fictional-mcp-secret-0042"
+    config = tmp_path / "avatar.json"
+    config.write_text(
+        json.dumps(
+            {
+                "application": {"home": str(tmp_path / "application")},
+                "avatar": {"id": "assistant"},
+                "tools": {"mcp": {"enabled": True, "token": secret, "servers": {}}},
+            }
+        )
+    )
+    entrypoint = Path(sys.executable).with_name("alphaavatar")
+    # dev prints detailed diagnostics; neither stream may echo the rejected value.
+    completed = subprocess.run(
+        [str(entrypoint), "dev", str(config)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=os.environ,
+    )
+    assert completed.returncode == 2, completed.stderr
+    output = completed.stdout + completed.stderr
+    assert "fields: tools.mcp.token" in output
+    assert secret not in output
+    assert not (tmp_path / "application").exists()
