@@ -1,0 +1,245 @@
+# Copyright 2026 AlphaAvatar project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""Synthetic Runner pressure: one bounded round by default, longer with ``--stress-seconds``.
+
+Numbers printed here are synthetic local results, never device or production performance.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import multiprocessing as mp
+import os
+import signal
+import statistics
+import time
+from collections import Counter
+from collections.abc import AsyncIterator, Callable
+from multiprocessing import resource_tracker
+from pathlib import Path
+
+import pytest
+from inference_runner_samples import EchoRunner, JournalRunner, SecondJournalRunner
+
+from alphaavatar.agents.runtime.inference import (
+    INFERENCE_ENDPOINT_ENV,
+    InferenceExecutor,
+    InferenceRunner,
+    InferenceRuntime,
+    RunnerLaunch,
+)
+
+pytestmark = pytest.mark.stress
+
+HANG_GUARD = 60
+SESSIONS, REQUESTS = 4, 8
+ECHO, JOURNAL = EchoRunner.INFERENCE_METHOD, JournalRunner.INFERENCE_METHOD
+METHODS = (ECHO, JOURNAL, SecondJournalRunner.INFERENCE_METHOD)
+
+
+def service(root: Path, *runners: type[InferenceRunner], **options: int) -> InferenceRuntime:
+    return InferenceRuntime(
+        {runner.INFERENCE_METHOD: runner for runner in runners},
+        mp_ctx=mp.get_context("spawn"),
+        launch=RunnerLaunch(
+            str(root), str(root / "models"), config=json.dumps({"test": {"root": str(root)}})
+        ),
+        initialize_timeout=HANG_GUARD,
+        request_timeout=HANG_GUARD,
+        close_timeout=1,
+        **options,
+    )
+
+
+async def rounds(seconds: float) -> AsyncIterator[int]:
+    deadline, index = time.monotonic() + seconds, 0
+    while True:
+        yield index
+        index += 1
+        if time.monotonic() >= deadline:
+            return
+
+
+async def wait_until(condition: Callable[[], bool], failure: str) -> None:
+    try:
+        async with asyncio.timeout(HANG_GUARD):
+            while not condition():
+                await asyncio.sleep(0.002)
+    except TimeoutError:
+        pytest.fail(failure, pytrace=False)
+
+
+def journal(root: Path, method: str) -> list[tuple[int, str]]:
+    path = root / f"{method}.journal"
+    lines = path.read_text().splitlines() if path.exists() else []
+    return [(int(pid), data) for pid, data in (line.split(" ", 1) for line in lines)]
+
+
+def children() -> set[int]:
+    return {process.pid for process in mp.active_children()}
+
+
+def descriptors() -> set[str] | None:
+    directory = Path("/proc/self/fd")
+    if not directory.is_dir():
+        return None
+    resource_tracker.ensure_running()
+    targets = set()
+    for entry in directory.iterdir():
+        try:
+            targets.add(os.readlink(entry))
+        except FileNotFoundError:
+            pass
+    return targets
+
+
+def milliseconds(samples: list[float]) -> str:
+    return f"p50_ms={1000 * statistics.median(samples):.2f} max_ms={1000 * max(samples):.2f}"
+
+
+async def test_concurrent_sessions_and_methods_never_lose_duplicate_or_misroute_results(
+    tmp_path: Path, socket_root: Path, owned_endpoints: set[object], stress_seconds: float
+) -> None:
+    runtime = service(tmp_path, EchoRunner, JournalRunner, SecondJournalRunner)
+    executors: list[InferenceExecutor] = []
+    sent: Counter[str] = Counter()
+    mismatched: list[tuple[str, bytes | None]] = []
+    latencies: list[float] = []
+    inflight, peak = Counter[str](), Counter[str]()
+
+    async def call(executor: InferenceExecutor, method: str, payload: str) -> None:
+        inflight[method] += 1
+        peak[method] = max(peak[method], inflight[method])
+        started = time.perf_counter()
+        try:
+            result = await executor.do_inference(method, payload.encode())
+        finally:
+            inflight[method] -= 1
+        latencies.append(time.perf_counter() - started)
+        sent[method] += 1
+        if result != payload.encode():
+            mismatched.append((payload, result))
+
+    async def sequence(executor: InferenceExecutor, method: str, prefix: str) -> None:
+        # One session's connection is serial per method; sessions and methods run concurrently.
+        for item in range(REQUESTS):
+            await call(executor, method, f"{prefix}:{item}")
+
+    try:
+        async with asyncio.timeout(HANG_GUARD):
+            await runtime.start()
+        owned_endpoints.add(runtime.endpoint)
+        executors.extend(InferenceExecutor(runtime.endpoint) for _ in range(SESSIONS))
+        completed = 0
+        async for index in rounds(stress_seconds):
+            async with asyncio.timeout(HANG_GUARD):
+                async with asyncio.TaskGroup() as group:
+                    for session, executor in enumerate(executors):
+                        for method in METHODS:
+                            prefix = f"{index}:{session}:{method}"
+                            group.create_task(sequence(executor, method, prefix))
+            completed += 1
+    finally:
+        for executor in executors:
+            await executor.close()
+        await runtime.close()
+
+    expected = completed * SESSIONS * REQUESTS
+    print(
+        f"\n[stress] concurrent rounds={completed} requests={sum(sent.values())} "
+        f"mismatched={len(mismatched)} peak_inflight={dict(peak)} {milliseconds(latencies)}"
+    )
+    assert mismatched == []
+    assert sent == dict.fromkeys(METHODS, expected)
+    # Every journaled request executed exactly once, in one runner process per method.
+    for method in METHODS[1:]:
+        records = journal(tmp_path, method)
+        assert len(records) == len({data for _, data in records}) == expected
+        assert len({pid for pid, _ in records}) == 1
+
+
+async def test_runner_failure_churn_recovers_without_replaying_attempted_work(
+    tmp_path: Path, socket_root: Path, owned_endpoints: set[object], stress_seconds: float
+) -> None:
+    before = children()
+    runtime = service(tmp_path, JournalRunner, EchoRunner, restart_limit=1_000_000)
+    executor = None
+    recoveries: list[float] = []
+    pids: list[int] = []
+    try:
+        async with asyncio.timeout(HANG_GUARD):
+            await runtime.start()
+        owned_endpoints.add(runtime.endpoint)
+        executor = InferenceExecutor(runtime.endpoint)
+        assert await executor.do_inference(ECHO, b"connected") == b"connected"
+        async for index in rounds(stress_seconds):
+            pids.append(int(await executor.do_inference(JOURNAL, b"pid")))
+            lost = asyncio.create_task(executor.do_inference(JOURNAL, f"gate:r{index}".encode()))
+            await wait_until((tmp_path / f"r{index}.entered").exists, "the gate was never entered")
+            os.kill(pids[-1], signal.SIGKILL)
+            with pytest.raises(RuntimeError):
+                await lost
+            started = time.perf_counter()
+            async with asyncio.timeout(HANG_GUARD):
+                assert await runtime.recover_failed_runners()
+            recoveries.append(time.perf_counter() - started)
+            # The healthy method's established connection progressed across the failure.
+            payload = f"echo:{index}".encode()
+            assert await executor.do_inference(ECHO, payload) == payload
+    finally:
+        if executor is not None:
+            await executor.close()
+        await runtime.close()
+
+    records = journal(tmp_path, JOURNAL)
+    gated = [(pid, data) for pid, data in records if data.startswith("gate:")]
+    print(
+        f"\n[stress] churn kills={len(pids)} recoveries={len(recoveries)} "
+        f"recovery_{milliseconds(recoveries)}"
+    )
+    assert len(set(pids)) == len(pids) == len(recoveries)
+    # Each attempted request ran once, in the process that was then killed; none was replayed.
+    assert gated == [(pid, f"gate:r{index}") for index, pid in enumerate(pids)]
+    assert children() - before == set()
+
+
+async def test_repeated_runtime_start_stop_reclaims_processes_descriptors_and_endpoint(
+    tmp_path: Path, socket_root: Path, owned_endpoints: set[object], stress_seconds: float
+) -> None:
+    before, fds = children(), descriptors()
+    cycles: list[float] = []
+    async for index in rounds(stress_seconds):
+        started = time.perf_counter()
+        runtime = service(tmp_path, EchoRunner, JournalRunner)
+        try:
+            async with asyncio.timeout(HANG_GUARD):
+                await runtime.start()
+            owned_endpoints.add(runtime.endpoint)
+            executor = InferenceExecutor(runtime.endpoint)
+            for method in (ECHO, JOURNAL):
+                payload = f"{method}:{index}".encode()
+                assert await executor.do_inference(method, payload) == payload
+            await executor.close()
+        finally:
+            await runtime.close()
+        cycles.append(time.perf_counter() - started)
+        assert children() - before == set()
+        assert INFERENCE_ENDPOINT_ENV not in os.environ
+        assert list(socket_root.iterdir()) == []
+        after = descriptors()
+        if fds is not None and after is not None:
+            assert after - fds == set()
+    print(f"\n[stress] start_stop cycles={len(cycles)} cycle_{milliseconds(cycles)}")
+    assert len(journal(tmp_path, JOURNAL)) == len(cycles)

@@ -15,7 +15,9 @@
 
 from __future__ import annotations
 
+import os
 import time
+from pathlib import Path
 
 from alphaavatar.agents.runtime.inference.runner import InferenceRunner
 
@@ -45,3 +47,38 @@ class SlowInitRunner(InferenceRunner):
 
     def initialize(self) -> None:
         time.sleep(60)
+
+
+class JournalRunner(InferenceRunner):
+    """Journal every executed request; ``gate:<name>`` waits until the test opens that gate."""
+
+    INFERENCE_METHOD = "test.journal"
+
+    def initialize(self) -> None:
+        self._root = Path(self.config_for("test")["root"])
+
+    def run(self, data: bytes) -> bytes | None:
+        with (self._root / f"{self.INFERENCE_METHOD}.journal").open("a") as journal:
+            journal.write(f"{os.getpid()} {data.decode()}\n")
+        if data == b"pid":
+            return str(os.getpid()).encode()
+        if data.startswith(b"gate:"):
+            name = data.removeprefix(b"gate:").decode()
+            (self._root / f"{name}.entered").touch()
+            deadline = time.monotonic() + 60
+            while not (self._root / f"{name}.open").exists():
+                if time.monotonic() > deadline:
+                    raise TimeoutError("The test never opened this gate")
+                time.sleep(0.002)
+        return data
+
+
+class SecondJournalRunner(JournalRunner):
+    INFERENCE_METHOD = "test.journal.second"
+
+
+class FailingCloseRunner(EchoRunner):
+    INFERENCE_METHOD = "test.failing_close"
+
+    def close(self) -> None:
+        raise RuntimeError("private close detail")

@@ -20,11 +20,13 @@ The network guard patches this interpreter only: spawned children do not inherit
 
 from __future__ import annotations
 
+import _socket
 import asyncio
 import inspect
 import multiprocessing
 import os
 import re
+import shutil
 import socket
 import tempfile
 from collections.abc import AsyncIterator, Iterator
@@ -41,6 +43,20 @@ _SCRUBBED = re.compile(
     re.IGNORECASE,
 )
 _IGNORED_ENVIRONMENT = frozenset({"PYTEST_CURRENT_TEST"})
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--stress-seconds",
+        type=float,
+        default=0.0,
+        help="Run each synthetic stress test for this long; 0 runs one bounded round.",
+    )
+
+
+@pytest.fixture
+def stress_seconds(request: pytest.FixtureRequest) -> float:
+    return request.config.getoption("stress_seconds")
 
 
 @pytest.fixture(autouse=True)
@@ -101,6 +117,38 @@ def network_denied(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     if attempts:
         # Fail even when the code under test swallowed the refusal.
         pytest.fail(f"Test attempted network access: {sorted(set(attempts))}", pytrace=False)
+
+
+@pytest.fixture
+def owned_endpoints(network_denied: None, monkeypatch: pytest.MonkeyPatch) -> set[object]:
+    """Opt-in: reach only the AF_UNIX paths or loopback addresses this test registers."""
+    endpoints: set[object] = set()
+    refuse_connect, refuse_sendto = socket.socket.connect, socket.socket.sendto
+
+    def connect(sock: socket.socket, address: object) -> None:
+        if address in endpoints:
+            return _socket.socket.connect(sock, address)
+        return refuse_connect(sock, address)
+
+    def sendto(sock: socket.socket, data: bytes, *args: object) -> int:
+        if args and args[-1] in endpoints:
+            return _socket.socket.sendto(sock, data, *args)
+        return refuse_sendto(sock, data, *args)
+
+    monkeypatch.setattr(socket.socket, "connect", connect)
+    monkeypatch.setattr(socket.socket, "sendto", sendto)
+    return endpoints
+
+
+@pytest.fixture
+def socket_root(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """AF_UNIX paths are short (~104 bytes); give the runtime's socket directory a short root."""
+    root = Path(tempfile.mkdtemp(prefix="aa-", dir="/tmp"))
+    monkeypatch.setattr(tempfile, "tempdir", str(root))
+    yield root
+    leftovers = sorted(path.name for path in root.iterdir())
+    shutil.rmtree(root)
+    assert leftovers == [], "the runtime left its socket directory behind"
 
 
 @pytest.fixture(autouse=True)
