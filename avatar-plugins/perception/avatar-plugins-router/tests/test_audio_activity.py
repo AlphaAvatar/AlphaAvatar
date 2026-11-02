@@ -361,3 +361,61 @@ async def test_speech_evicted_by_the_backlog_bound_is_cancelled_and_recovered(
     assert segment.payload.source_observation_ids == tuple(spoken[: LAST_SPOKEN - FIRST_ROUTED + 1])
     assert segment.metadata["speech_start_sample"] == SPEECH_START
     assert segment.segment.source.source_generation > cancelled.segment.source.source_generation
+
+
+def skipped(pipeline: Pipeline) -> list[dict]:
+    records = pipeline.runtime.perception.input_trace.snapshot().to_dict()["records"]
+    return [record for record in records if record["stage"] == "audio.speech_skipped"]
+
+
+@pytest.mark.parametrize(
+    ("gap", "pause"),
+    [("evicted", 0), ("evicted", 5), ("rejected", 0)],
+    ids=["evicted-continuous", "evicted-short-pause", "vad-rejected-continuous"],
+)
+async def test_speech_continuing_through_a_gap_is_not_admitted_as_a_new_utterance(
+    pipeline: Pipeline, gap: str, pause: int
+) -> None:
+    microphone = Microphone(pipeline.runtime)
+    pipeline.silero.gate.clear()
+    microphone.silence(SILENCE)
+    # 2.4 s of backlog evicts the speech start; 2.84 s also overflows the 256-frame VAD queue.
+    microphone.speech(224 if gap == "evicted" else 268)
+    await pipeline.consumed()
+    pipeline.silero.gate.set()
+    if gap == "evicted":
+        await wait_until(
+            lambda: pipeline.speech(ObservationKind.SPEECH_CANCELLED), "lost speech not cancelled"
+        )
+    await pipeline.consumed()
+
+    # The user keeps talking: the rebuilt stream opens inside the utterance cut by the gap.
+    microphone.silence(pause)  # Shorter than the VAD's 0.1 s end-of-speech silence.
+    microphone.speech(SPEECH)
+    microphone.silence(TAIL)
+    # Its end is a reliable boundary, so the next utterance is admitted normally.
+    utterance = len(microphone.sent)
+    microphone.silence(SILENCE)
+    microphone.speech(SPEECH)
+    microphone.silence(TAIL)
+    await wait_until(
+        lambda: pipeline.speech(ObservationKind.SPEECH_SEGMENT), "the next utterance never ended"
+    )
+
+    ids = [item.observation_id for item in microphone.sent]
+    (segment,) = pipeline.speech(ObservationKind.SPEECH_SEGMENT)
+    routed = {
+        item.metadata["source_observation_id"]
+        for item in pipeline.speech()
+        if item.kind == ObservationKind.SPEECH_FRAME
+    }
+    # Nothing before the confirmed boundary was routed; the new utterance is complete.
+    assert routed <= set(ids[utterance:])
+    assert set(ids[utterance + SILENCE : utterance + SILENCE + SPEECH]) <= set(
+        segment.payload.source_observation_ids
+    )
+    assert set(segment.payload.source_observation_ids) <= set(ids[utterance:])
+    assert [record["reason"] for record in skipped(pipeline)] == ["unconfirmed_boundary"]
+    assert segment.segment.source.source_generation > 1
+    # A VAD queue rejection retires an idle stream; only evicted speech has a segment to cancel.
+    assert len(pipeline.speech(ObservationKind.SPEECH_CANCELLED)) == (gap == "evicted")

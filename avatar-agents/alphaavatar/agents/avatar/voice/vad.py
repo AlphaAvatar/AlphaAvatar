@@ -45,6 +45,11 @@ class VADBase(ABC):
     @abstractmethod
     def update_interval(self) -> float: ...
 
+    @property
+    @abstractmethod
+    def min_silence_duration(self) -> float:
+        """Continuous non-speech, in seconds, that ends a speech segment."""
+
     @abstractmethod
     def stream(self) -> VADStreamBase:
         """Create one stateful detector stream."""

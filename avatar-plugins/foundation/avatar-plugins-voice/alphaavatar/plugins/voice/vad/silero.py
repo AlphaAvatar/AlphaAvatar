@@ -106,6 +106,10 @@ class SileroVAD(VADBase):
     def update_interval(self) -> float:
         return SILERO_MODEL_CONFIG.update_interval
 
+    @property
+    def min_silence_duration(self) -> float:
+        return self._options.min_silence_duration
+
     def stream(self) -> VADStreamBase:
         return SileroVADStream(options=self._options, inference_executor=self._inference_executor)
 

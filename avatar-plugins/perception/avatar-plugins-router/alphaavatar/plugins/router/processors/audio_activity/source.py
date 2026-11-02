@@ -58,6 +58,7 @@ class AudioActivitySource:
         max_buffer_sec: float,
         close_timeout_sec: float = 1.0,
         on_failed: Callable[[AudioActivitySource, SpeechCancellationReason], None] | None = None,
+        recovering: bool = False,
     ) -> None:
         self.perception_runtime = perception_runtime
         self.input_source = input_source
@@ -71,6 +72,10 @@ class AudioActivitySource:
         self._pre_roll_samples = int(pre_roll_sec * sample_rate)
         self._max_buffer_samples = int(max_buffer_sec * sample_rate)
         self._vad_stream: VADStreamBase = vad.stream()
+        # After a continuity gap the new stream may open mid-utterance. A later start is a new
+        # utterance only once this stream has observed the VAD's own end-of-speech silence.
+        self._awaiting_boundary = recovering
+        self._boundary_silence = vad.min_silence_duration
         self._close_timeout_sec = close_timeout_sec
         self._on_failed = on_failed
 
@@ -301,6 +306,24 @@ class AudioActivitySource:
         self._segment_frames.clear()
         self._route_index = 0
 
+    def _await_boundary(self, event: VoiceActivityEvent) -> None:
+        if event.type == VoiceActivityEventType.START_OF_SPEECH:
+            # The remainder of an utterance cut by the gap is never published as a new one.
+            self.perception_runtime.input_trace.record(
+                "audio.speech_skipped",
+                source_id=self.speech_source.source_id,
+                source_generation=self.speech_source.source_generation,
+                input_source_id=self.input_source.source_id,
+                input_source_generation=self.input_source.source_generation,
+                reason="unconfirmed_boundary",
+            )
+        elif event.type == VoiceActivityEventType.END_OF_SPEECH or (
+            not event.speaking
+            and event.raw_accumulated_silence > 0
+            and event.raw_accumulated_silence >= self._boundary_silence
+        ):
+            self._awaiting_boundary = False
+
     def _abort(self, reason: SpeechCancellationReason) -> None:
         self._closed = self._aborted = True
         segment, self._segment = self._segment, None
@@ -338,7 +361,9 @@ class AudioActivitySource:
             async for event in self._vad_stream:
                 if self._aborted:
                     break
-                if event.type == VoiceActivityEventType.START_OF_SPEECH:
+                if self._awaiting_boundary:
+                    self._await_boundary(event)
+                elif event.type == VoiceActivityEventType.START_OF_SPEECH:
                     self._start_segment(event)
                 elif event.type == VoiceActivityEventType.END_OF_SPEECH:
                     self._finish_segment(event)

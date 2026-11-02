@@ -33,6 +33,11 @@ from .source import AudioActivitySource
 
 logger = logging.getLogger(__name__)
 
+# Audio continuity was lost within one input generation, possibly in the middle of speech.
+_CONTINUITY_GAPS = frozenset(
+    (SpeechCancellationReason.INPUT_GAP, SpeechCancellationReason.VAD_INPUT_REJECTED)
+)
+
 
 @dataclass(slots=True)
 class _InputState:
@@ -57,6 +62,8 @@ class AudioActivityProcessor(RouterProcessorBase):
 
         # Keep the latest lifecycle of each admitted input; old generations cannot reopen it.
         self._inputs: dict[str, _InputState] = {}
+        # Input generations whose next VAD stream must confirm a speech boundary first.
+        self._recovering: dict[str, int] = {}
         self._last_sequence = 0
         self._task: asyncio.Task[None] | None = None
         self._started = False
@@ -111,6 +118,8 @@ class AudioActivityProcessor(RouterProcessorBase):
             max_buffer_sec=self._config.max_buffer_sec,
             close_timeout_sec=self._config.close_timeout_sec,
             on_failed=self._source_failed,
+            recovering=self._recovering.pop(observation.source.source_id, None)
+            == observation.source.source_generation,
         )
         self._sources[observation.source] = source
         return source
@@ -139,6 +148,9 @@ class AudioActivityProcessor(RouterProcessorBase):
     ) -> asyncio.Task[None]:
         if self._sources.get(source.input_source) is source:
             self._sources.pop(source.input_source)
+        if reason in _CONTINUITY_GAPS:
+            current = source.input_source
+            self._recovering[current.source_id] = current.source_generation
         existing = source.speech_source in self._closing_sources
         self._closing_sources[source.speech_source] = source
         task = source.begin_close(graceful=graceful, reason=reason)
@@ -223,6 +235,8 @@ class AudioActivityProcessor(RouterProcessorBase):
         trace.freeze("audio_input_gap")
         for source in tuple(self._sources.values()):
             self._retire_source(source, reason=SpeechCancellationReason.INPUT_GAP)
+        # Missed frames may belong to an input without an active VAD stream as well.
+        self._recovering.update((key, state.generation) for key, state in self._inputs.items())
         # The snapshot can be newer than the retained batch. Its sequence also rejects
         # frames from before an unmute/reconnect boundary whose event was overwritten.
         for state in self._runtime.perception.get_source_states(modality=MediaModality.AUDIO):
