@@ -130,8 +130,10 @@ def describe_summary(config: ApplicationConfig) -> dict[str, Any]:
     """What check reports, through the same boundary as the full view.
 
     Only typed selections and facts derived from them: plugin names, vector backend kinds,
-    enabled tools and the health address, never endpoints or plugin-defined settings.
+    enabled tools, runner workers and the health address, never endpoints or plugin-defined
+    settings.
     """
+    from alphaavatar.agents.runtime.inference import plan_inference_runners
     from alphaavatar.agents.utils.vdb.config import vdb_backend
 
     avatar, host = config.avatar, config.host
@@ -148,6 +150,8 @@ def describe_summary(config: ApplicationConfig) -> dict[str, Any]:
         options = DefaultPersonaConfig.model_validate(avatar.persona.init_config)
         persona |= {"speaker": options.speaker.enabled, "face": options.face.enabled}
     mcp = avatar.tools.mcp
+    inference = avatar.runtime.inference
+    runners = plan_inference_runners(avatar)  # The plan the Host will start, checked again.
     return _scrubber(config)(
         {
             "avatar_id": avatar.avatar.id,
@@ -171,6 +175,7 @@ def describe_summary(config: ApplicationConfig) -> dict[str, Any]:
                     else None,
                 },
             },
+            "inference": {method: inference.workers(method) for method in runners},
             "health": {"bind": host.health.bind, "port": host.health.port},
         }
     )

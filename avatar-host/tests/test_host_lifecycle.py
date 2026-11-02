@@ -34,6 +34,7 @@ import alphaavatar.plugins.loop  # noqa: F401  Registers the real plugin this te
 from alphaavatar.agents.avatar.context import ContextManager
 from alphaavatar.agents.avatar.loop import Loop
 from alphaavatar.agents.configs import AvatarConfig
+from alphaavatar.agents.configs.runtime_config import InferenceConfig
 from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
 from alphaavatar.agents.runtime.inference import (
     INFERENCE_ENDPOINT_ENV,
@@ -62,7 +63,7 @@ import alphaavatar.host.application.bootstrap as bootstrap
 async def run_execution(config, request, *, stop, ready):
     from alphaavatar.agents.runtime.inference import InferenceExecutor
 
-    executor = InferenceExecutor.from_env()
+    executor = InferenceExecutor.from_env(config.avatar.runtime.inference)
     try:
         await ready()
         await stop.wait()
@@ -164,8 +165,7 @@ async def shared_inference(
         launch=RunnerLaunch(
             str(root), str(root / "models"), config=json.dumps({"test": {"root": str(root)}})
         ),
-        initialize_timeout=HANG_GUARD,
-        close_timeout=1,
+        config=InferenceConfig(initialize_timeout=HANG_GUARD, close_timeout=1),
     )
     try:
         async with asyncio.timeout(HANG_GUARD):

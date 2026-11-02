@@ -35,6 +35,9 @@ class RunnerLaunch:
 
 class InferenceRunner:
     INFERENCE_METHOD: ClassVar[str]
+    # True only when independent processes may serve this method at once: every request
+    # carries its own state, and no store, lock or cache must stay consistent across them.
+    REPLICABLE: ClassVar[bool] = False
 
     def configure(self, launch: RunnerLaunch) -> None:
         if not isinstance(launch, RunnerLaunch):

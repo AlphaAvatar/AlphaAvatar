@@ -22,6 +22,8 @@ from ..models.model_files import SMART_TURN_V3_CONFIG, resolve_smart_turn_model_
 
 class SmartTurnV3Runner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.router.turn_taking.smart_turn_v3"
+    # Each request is a complete audio window; nothing carries over between requests.
+    REPLICABLE = True
 
     def initialize(self) -> None:
         import onnxruntime as ort

@@ -32,6 +32,7 @@ from launch_runner_samples import LaunchProbeRunner, LaunchProbeTwinRunner
 # Plugin imports register runner bootstraps; their import-time effects stay at collection (O-2).
 import alphaavatar.plugins.mcp  # noqa: F401
 from alphaavatar.agents.configs import AvatarConfig
+from alphaavatar.agents.configs.runtime_config import InferenceConfig
 from alphaavatar.agents.memory.schemas import MemoryContextRef, MemoryOwnerRef
 from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
 from alphaavatar.agents.runtime.inference import (
@@ -231,7 +232,7 @@ async def test_in_process_and_spawned_runners_observe_the_same_launch(
             {LaunchProbeRunner.INFERENCE_METHOD: LaunchProbeRunner},
             mp_ctx=mp.get_context("spawn"),
             launch=launch,
-            close_timeout=HANG_GUARD,
+            config=InferenceConfig(close_timeout=HANG_GUARD),
         )
         try:
             async with asyncio.timeout(HANG_GUARD):

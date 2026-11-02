@@ -20,6 +20,7 @@ import multiprocessing as mp
 import socket
 import sys
 import time
+from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass
 from multiprocessing.context import BaseContext
@@ -159,8 +160,9 @@ class RunnerProcess:
         close_timeout: float,
         max_pending: int,
         launch: RunnerLaunch | None = None,
+        on_settled: Callable[[], None] | None = None,
     ) -> None:
-        self._launch = launch
+        self._launch, self._on_settled = launch, on_settled
         self.method = runner_cls.INFERENCE_METHOD
         self._runner_cls, self._mp_ctx = runner_cls, mp_ctx
         self._initialize_timeout, self._request_timeout = initialize_timeout, request_timeout
@@ -193,6 +195,11 @@ class RunnerProcess:
         )
 
     @property
+    def busy(self) -> bool:
+        # Includes a dispatched exchange whose caller left: the worker still owns its response.
+        return bool(self._requests)
+
+    @property
     def pid(self) -> int | None:
         return self._process.pid if self._process is not None else None
 
@@ -204,6 +211,11 @@ class RunnerProcess:
     def _observe(task: asyncio.Future) -> None:
         if not task.cancelled():
             task.exception()
+
+    def _settle(self, task: asyncio.Task[bytes | None]) -> None:
+        self._requests.pop(task, None)
+        if self._on_settled is not None:
+            self._on_settled()
 
     async def _connect(self, sock: socket.socket) -> None:
         self._reader, self._writer = await asyncio.open_connection(sock=sock)
@@ -363,7 +375,7 @@ class RunnerProcess:
             self._exchange(request, data, timeout), name=f"infer:{self.method}"
         )
         self._requests[task] = request
-        task.add_done_callback(lambda done: self._requests.pop(done, None))
+        task.add_done_callback(self._settle)
         task.add_done_callback(self._observe)
         try:
             return await asyncio.shield(task)

@@ -30,6 +30,7 @@ from pathlib import Path
 import pytest
 from inference_runner_samples import EchoRunner
 
+from alphaavatar.agents.configs.runtime_config import InferenceConfig
 from alphaavatar.agents.runtime.inference import InferenceExecutor, InferenceRuntime
 from alphaavatar.core.ipc import MAX_SOCKET_PATH
 from alphaavatar.core.log.records import LOG_ENDPOINT_ENV
@@ -64,7 +65,9 @@ async def test_inference_endpoint_fits_and_is_released(
 ) -> None:
     root, parent = temp_root
     runtime = InferenceRuntime(
-        {ECHO: EchoRunner}, mp_ctx=mp.get_context("spawn"), initialize_timeout=HANG_GUARD
+        {ECHO: EchoRunner},
+        mp_ctx=mp.get_context("spawn"),
+        config=InferenceConfig(initialize_timeout=HANG_GUARD),
     )
     try:
         async with asyncio.timeout(HANG_GUARD):

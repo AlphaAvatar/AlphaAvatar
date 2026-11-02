@@ -20,6 +20,7 @@ from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING
 
 from pydantic import SecretStr
+from pydantic_core import PydanticCustomError, ValidationError
 
 from alphaavatar.agents.log import logger
 
@@ -27,6 +28,7 @@ from .runner import InferenceRunner
 
 if TYPE_CHECKING:
     from alphaavatar.agents.configs.avatar_config import AvatarConfig
+    from alphaavatar.agents.configs.runtime_config import InferenceConfig
 
 INFERENCE_PLAN_ENV = "ALPHAAVATAR_INFERENCE_PLAN"
 RunnerBootstrapFn = Callable[["AvatarConfig"], Iterable[type[InferenceRunner]]]
@@ -77,9 +79,41 @@ def snapshot_inference_config(config: AvatarConfig) -> str:
     )
 
 
-def prepare_inference_runners(config: AvatarConfig) -> tuple[str, ...]:
-    """Build a configuration-specific, download-free plan before CLI subprocesses start."""
-    os.environ.pop(INFERENCE_PLAN_ENV, None)
+def check_inference_config(
+    runners: dict[str, type[InferenceRunner]], config: InferenceConfig
+) -> None:
+    """Overrides must name selected runners; only replicable runners take several workers.
+
+    Failures are located at the offending override, since reports show locations only.
+    """
+    location = ("runtime", "inference", "methods")
+    errors = [
+        {
+            "type": PydanticCustomError("unselected_runner", "Not a selected inference runner"),
+            "loc": (*location, method),
+            "input": options.workers,
+        }
+        for method, options in config.methods.items()
+        if method not in runners
+    ]
+    errors += [
+        {
+            "type": PydanticCustomError("single_worker", "This inference runner is not REPLICABLE"),
+            "loc": (*location, method, "workers"),
+            "input": config.workers(method),
+        }
+        for method, runner in runners.items()
+        if config.workers(method) > 1 and not runner.REPLICABLE
+    ]
+    if errors:
+        raise ValidationError.from_exception_data("InferenceConfig", errors)
+
+
+def plan_inference_runners(config: AvatarConfig) -> dict[str, type[InferenceRunner]]:
+    """The selected runners, checked against runtime.inference.
+
+    Pure: it never writes the environment, spawns a process or loads a model.
+    """
     runners: dict[str, type[InferenceRunner]] = {}
     for name, bootstrap in tuple(_runner_bootstraps.items()):
         try:
@@ -87,7 +121,14 @@ def prepare_inference_runners(config: AvatarConfig) -> tuple[str, ...]:
                 _add_runner(runners, runner)
         except Exception as exc:
             raise RuntimeError(f"Failed to prepare inference runners for {name!r}") from exc
+    check_inference_config(runners, config.runtime.inference)
+    return runners
 
+
+def prepare_inference_runners(config: AvatarConfig) -> tuple[str, ...]:
+    """Build a configuration-specific, download-free plan before CLI subprocesses start."""
+    os.environ.pop(INFERENCE_PLAN_ENV, None)
+    runners = plan_inference_runners(config)
     plan = [
         {"method": method, "module": runner.__module__, "name": runner.__qualname__}
         for method, runner in runners.items()

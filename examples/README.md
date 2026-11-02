@@ -35,6 +35,34 @@ Temporal alignment is `runtime.perception.temporal_alignment`, not a sibling of 
 
 The multimodal reference retains `candidate_source: union`. Demo and voice-minimal preserve their explicit `consolidated_lookup` setting; the Hiyori examples retain the processor defaults. This formatting migration does not force one candidate policy on every scenario.
 
+## Runner parallelism
+
+By default every selected inference method runs in one runner process that all sessions
+share. A method can opt in to more independent processes; each holds its own model copy,
+so memory grows with every worker, and nothing scales automatically:
+
+```yaml
+runtime:
+  inference:
+    methods:
+      alphaavatar.voice.vad.silero:
+        workers: 2  # 1-8
+```
+
+- Only runners that declare themselves replicable accept `workers` above 1: Silero VAD
+  (`alphaavatar.voice.vad.silero`) and Smart Turn v3
+  (`alphaavatar.router.turn_taking.smart_turn_v3`). Vector stores, MCP, semantic
+  addressing, speaker and face runners stay at one worker.
+- `max_pending` bounds requests per method, waiting and executing together;
+  `queue_timeout` and `request_timeout` bound the wait for a worker and one execution;
+  `client_timeout` bounds a session's local wait, connect and send. Restarts follow
+  `restart_limit` within `restart_window_seconds`.
+- A misspelled, unselected or non-replicable entry is rejected when the file loads;
+  `alphaavatar config check` shows the effective workers. On the command line use the
+  mapping form, since dots in a path would split the method name:
+  `'runtime.inference.methods={alphaavatar.voice.vad.silero: {workers: 2}}'`.
+- Session capacity stays `host.processes.capacity`; it is independent of runner workers.
+
 ## Scope
 
 | Configuration | Scope |

@@ -37,6 +37,7 @@ from inference_runner_samples import (
     SecondJournalRunner,
 )
 
+from alphaavatar.agents.configs.runtime_config import InferenceConfig
 from alphaavatar.agents.runtime.inference import (
     INFERENCE_ENDPOINT_ENV,
     InferenceExecutor,
@@ -52,9 +53,16 @@ SECOND = SecondJournalRunner.INFERENCE_METHOD
 CLOSING = ClosingRunner.INFERENCE_METHOD
 
 
-def service(
-    root: Path, *runners: type[InferenceRunner], close_timeout: float = 1, **options: int
-) -> InferenceRuntime:
+def limits(**options: object) -> InferenceConfig:
+    return InferenceConfig(
+        initialize_timeout=HANG_GUARD,
+        queue_timeout=HANG_GUARD,
+        request_timeout=HANG_GUARD,
+        **({"close_timeout": 1} | options),
+    )
+
+
+def service(root: Path, *runners: type[InferenceRunner], **options: object) -> InferenceRuntime:
     launch = RunnerLaunch(
         str(root), str(root / "models"), config=json.dumps({"test": {"root": str(root)}})
     )
@@ -62,10 +70,7 @@ def service(
         {runner.INFERENCE_METHOD: runner for runner in runners},
         mp_ctx=mp.get_context("spawn"),
         launch=launch,
-        initialize_timeout=HANG_GUARD,
-        request_timeout=HANG_GUARD,
-        close_timeout=close_timeout,
-        **options,
+        config=limits(**options),
     )
 
 
@@ -84,9 +89,10 @@ def journal(root: Path, method: str = JOURNAL) -> list[tuple[int, str]]:
     return [(int(pid), data) for pid, data in (line.split(" ", 1) for line in lines)]
 
 
-def dispatch_states(runtime: InferenceRuntime, method: str) -> list[bool]:
-    # Read-only view of the existing exchange registry; no production interface is added.
-    return [request.dispatched for request in runtime._runners[method]._requests.values()]
+def load(runtime: InferenceRuntime, method: str) -> tuple[int, int]:
+    """Executing and waiting requests, from the public status snapshot."""
+    (view,) = [view for view in runtime.snapshot() if view.method == method]
+    return view.executing, view.waiting
 
 
 def settled(caplog: pytest.LogCaptureFixture, method: str) -> tuple[int | None, bool]:
@@ -142,7 +148,7 @@ async def test_methods_progress_independently_while_each_method_stays_serial(
         await wait_until(lambda: (tmp_path / "a.entered").exists(), "the gate was never entered")
         queued = asyncio.create_task(second.do_inference(JOURNAL, b"queued"))
         await wait_until(
-            lambda: dispatch_states(runtime, JOURNAL) == [True, False],
+            lambda: load(runtime, JOURNAL) == (1, 1),
             "the second session never queued behind the occupied method",
         )
         # Another method, from either session, is not delayed by the occupied runner.
@@ -167,13 +173,15 @@ async def test_methods_progress_independently_while_each_method_stays_serial(
 async def test_capacity_limits_reject_excess_work_without_disturbing_admitted_requests(
     tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
 ) -> None:
-    runtime = service(tmp_path, JournalRunner, EchoRunner, max_pending_per_runner=2)
+    runtime = service(tmp_path, JournalRunner, EchoRunner, max_pending=2)
     executors: list[InferenceExecutor] = []
     try:
         async with asyncio.timeout(HANG_GUARD):
             await runtime.start()
         owned_endpoints.add(runtime.endpoint)
-        limited = InferenceExecutor(runtime.endpoint, max_connections=1, max_pending_per_method=1)
+        limited = InferenceExecutor(
+            runtime.endpoint, InferenceConfig(max_pending=1), max_connections=1
+        )
         queued_session, rejected_session = (InferenceExecutor(runtime.endpoint) for _ in range(2))
         executors.extend((limited, queued_session, rejected_session))
 
@@ -186,9 +194,7 @@ async def test_capacity_limits_reject_excess_work_without_disturbing_admitted_re
             await limited.do_inference(ECHO, b"client-method-overflow")
 
         queued = asyncio.create_task(queued_session.do_inference(JOURNAL, b"queued"))
-        await wait_until(
-            lambda: dispatch_states(runtime, JOURNAL) == [True, False], "no request queued"
-        )
+        await wait_until(lambda: load(runtime, JOURNAL) == (1, 1), "no request queued")
         # The runner's bounded queue rejects a third session instead of waiting unbounded.
         with pytest.raises(RuntimeError, match="at capacity"):
             await rejected_session.do_inference(JOURNAL, b"service-overflow")

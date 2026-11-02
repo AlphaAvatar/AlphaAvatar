@@ -51,7 +51,21 @@ STATUS = {
     "inference_runners",
     "inference_methods",
 }
-RUNNER = {"method", "startup_state", "ready", "startup_elapsed_seconds", "error_type"}
+RUNNER = {
+    "method",
+    "startup_state",
+    "ready",
+    "startup_elapsed_seconds",
+    "error_type",
+    "workers",
+    "ready_workers",
+    "executing",
+    "waiting",
+    "rejected",
+    "queue_timeouts",
+    "execution_timeouts",
+    "restarts",
+}
 EXECUTION = {"execution_id", "backend", "source_id", "state", "reason", "pid", "stop_reason"}
 
 

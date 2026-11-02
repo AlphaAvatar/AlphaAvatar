@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from typing import TYPE_CHECKING
 
 from alphaavatar.core.cleanup import wait_for_cleanup
 
@@ -34,6 +35,9 @@ from .protocol import (
     validate_method,
     write_frame,
 )
+
+if TYPE_CHECKING:
+    from alphaavatar.agents.configs.runtime_config import InferenceConfig
 
 
 class _InferenceConnection:
@@ -153,54 +157,119 @@ class _InferenceConnection:
         await wait_for_cleanup(self._close_task)
 
 
-class InferenceExecutor:
-    """A bounded local client. It owns sockets, never the server or inference processes."""
+class _InferenceChannels:
+    """Up to one serial connection per service worker; a call takes the oldest idle one.
+
+    A connection carries one exchange at a time, so each response belongs to the call
+    holding it. Waiting calls queue here, bounded by count and by the local timeout.
+    """
 
     def __init__(
         self,
         endpoint: str,
+        method: str,
         *,
-        request_timeout: float = 35,
-        close_timeout: float = 5,
-        max_connections: int = 128,
-        max_pending_per_method: int = 64,
+        channels: int,
+        request_timeout: float,
+        close_timeout: float,
+        max_pending: int,
+    ) -> None:
+        self._method, self._request_timeout, self._max_pending = (
+            method,
+            request_timeout,
+            max_pending,
+        )
+        self._connections = tuple(
+            _InferenceConnection(
+                endpoint,
+                method,
+                request_timeout=request_timeout,
+                close_timeout=close_timeout,
+                max_pending=max_pending,
+            )
+            for _ in range(channels)
+        )
+        self._idle: asyncio.Queue[_InferenceConnection] = asyncio.Queue()
+        for connection in self._connections:
+            self._idle.put_nowait(connection)
+        self._pending = 0
+
+    async def run(self, data: bytes) -> bytes | None:
+        if self._pending >= self._max_pending:
+            raise RuntimeError(f"Inference connection {self._method!r} is at capacity")
+        self._pending += 1
+        try:
+            # Waiting for a channel is local and does not consume the network timeout.
+            async with asyncio.timeout(self._request_timeout):
+                connection = await self._idle.get()
+            try:
+                return await connection.run(data)
+            finally:
+                self._idle.put_nowait(connection)
+        finally:
+            self._pending -= 1
+
+    async def close(self) -> None:
+        results = await asyncio.gather(
+            *(connection.close() for connection in self._connections), return_exceptions=True
+        )
+        errors = [result for result in results if isinstance(result, Exception)]
+        if errors:
+            raise ExceptionGroup("Inference connection cleanup failed", errors)
+
+
+class InferenceExecutor:
+    """A bounded local client. It owns sockets, never the server or inference processes.
+
+    Limits come from the same accepted ``runtime.inference`` the Host served: one channel
+    per worker of each method, ``max_pending`` calls per method, and ``client_timeout``
+    for the local wait, connect and send. The response wait is the service's own budget.
+    """
+
+    def __init__(
+        self, endpoint: str, config: InferenceConfig | None = None, *, max_connections: int = 128
     ) -> None:
         if not isinstance(endpoint, str) or not endpoint:
             raise ValueError("Inference endpoint cannot be empty")
+        if config is None:
+            from alphaavatar.agents.configs.runtime_config import InferenceConfig
 
-        self._endpoint = endpoint
-        self._request_timeout = positive_timeout(request_timeout, "request_timeout")
-        self._close_timeout = positive_timeout(close_timeout, "close_timeout")
+            config = InferenceConfig()
+
+        self._endpoint, self._config = endpoint, config
+        self._request_timeout = positive_timeout(config.client_timeout, "client_timeout")
+        self._close_timeout = positive_timeout(config.close_timeout, "close_timeout")
         self._max_connections = positive_limit(max_connections, "max_connections")
-        self._max_pending = positive_limit(max_pending_per_method, "max_pending_per_method")
-        self._connections: dict[str, _InferenceConnection] = {}
+        self._max_pending = positive_limit(config.max_pending, "max_pending")
+        self._connections: dict[str, _InferenceChannels] = {}
         self._close_task: asyncio.Task[None] | None = None
 
     @classmethod
-    def from_env(cls) -> InferenceExecutor:
+    def from_env(cls, config: InferenceConfig) -> InferenceExecutor:
         endpoint = os.getenv(INFERENCE_ENDPOINT_ENV)
         if not endpoint:
             raise RuntimeError(f"{INFERENCE_ENDPOINT_ENV} is not configured")
-        return cls(endpoint)
+        return cls(endpoint, config)
 
     async def do_inference(self, method: str, data: bytes) -> bytes | None:
         validate_method(method)
         validate_data(data)
         if self._close_task is not None:
             raise RuntimeError("Inference executor is closed")
-        connection = self._connections.get(method)
-        if connection is None:
+        channels = self._connections.get(method)
+        if channels is None:
             if len(self._connections) >= self._max_connections:
                 raise RuntimeError("Inference executor connection capacity exhausted")
-            connection = _InferenceConnection(
+            channels = _InferenceChannels(
                 self._endpoint,
                 method,
+                channels=self._config.workers(method),
                 request_timeout=self._request_timeout,
                 close_timeout=self._close_timeout,
                 max_pending=self._max_pending,
             )
-            self._connections[method] = connection
-        return await connection.run(data)
+            self._connections[method] = channels
+        return await channels.run(data)
 
     async def _close(self) -> None:
         results = await asyncio.gather(

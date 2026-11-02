@@ -28,7 +28,7 @@ from inference_runner_samples import EchoRunner
 from alphaavatar.agents.avatar.context import ContextManager
 from alphaavatar.agents.avatar.loop import Loop
 from alphaavatar.agents.avatar.voice import TTSBase, VoiceBundle
-from alphaavatar.agents.configs.runtime_config import RuntimeConfig
+from alphaavatar.agents.configs.runtime_config import InferenceConfig, RuntimeConfig
 from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
 from alphaavatar.agents.runtime.inference import InferenceExecutor, InferenceRuntime
 from alphaavatar.agents.runtime.modules.foundation import FoundationRuntime
@@ -129,8 +129,7 @@ async def shared_inference(owned_endpoints: set[object]) -> AsyncIterator[Infere
     service = InferenceRuntime(
         {ECHO: EchoRunner},
         mp_ctx=mp.get_context("spawn"),
-        initialize_timeout=HANG_GUARD,
-        close_timeout=1,
+        config=InferenceConfig(initialize_timeout=HANG_GUARD, close_timeout=1),
     )
     try:
         async with asyncio.timeout(HANG_GUARD):

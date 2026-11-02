@@ -18,6 +18,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from alphaavatar.agents.avatar.loop.schemas import LoopLimits
+from alphaavatar.agents.constants import MAX_INFERENCE_WORKERS
 from alphaavatar.core.perception import TemporalAlignmentMode, TemporalAlignmentPolicy
 from alphaavatar.core.perception.enums import PerceptionStreamKind
 from alphaavatar.core.perception.schemas import PerceptionRetentionPolicy
@@ -97,9 +98,53 @@ class EngineConfig(BaseModel):
     depth: Literal["auto", "quick", "careful"] = "auto"
 
 
+class InferenceMethodConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # Independent runner processes, each with its own model copy and memory. Opt-in only.
+    workers: int = Field(default=1, strict=True, ge=1, le=MAX_INFERENCE_WORKERS)
+
+
+class InferenceConfig(BaseModel):
+    """Shared Runner service limits: the Host builds one pool from them, sessions only connect."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+
+    # Per method across its workers: requests waiting for a worker plus those executing.
+    max_pending: int = Field(default=64, strict=True, ge=1, le=1024)
+    # Service: waiting for an idle worker. An expired or abandoned request never runs.
+    queue_timeout: float = Field(default=30.0, strict=True, gt=0, le=600)
+    # Service: one execution. Expiry retires that worker; the request is never replayed.
+    request_timeout: float = Field(default=30.0, strict=True, gt=0, le=600)
+    # Client: waiting for a free channel, then connect and send. The response wait is the
+    # service's announced queue, execution and settlement budget, not this value.
+    client_timeout: float = Field(default=35.0, strict=True, gt=0, le=600)
+    initialize_timeout: float = Field(default=300.0, strict=True, gt=0, le=3600)
+    close_timeout: float = Field(default=5.0, strict=True, gt=0, le=60)
+    # Replacements per method within the window; beyond it the Host fails closed.
+    restart_limit: int = Field(default=2, strict=True, ge=1, le=100)
+    restart_window_seconds: float = Field(default=300.0, strict=True, gt=0, le=86400)
+    # Overrides for selected runner methods only, checked against the inference plan.
+    methods: dict[str, InferenceMethodConfig] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_methods(self) -> InferenceConfig:
+        for method, options in self.methods.items():
+            if not method or method != method.strip():
+                raise ValueError("Inference method names must be nonempty and trimmed")
+            if options.workers > self.max_pending:
+                raise ValueError(f"{method} workers exceed max_pending")
+        return self
+
+    def workers(self, method: str) -> int:
+        options = self.methods.get(method)
+        return options.workers if options is not None else 1
+
+
 class RuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     perception: PerceptionConfig = Field(default_factory=PerceptionConfig)
     turn: TurnConfig = Field(default_factory=TurnConfig)
     engine: EngineConfig = Field(default_factory=EngineConfig)
+    inference: InferenceConfig = Field(default_factory=InferenceConfig)

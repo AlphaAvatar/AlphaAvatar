@@ -53,7 +53,8 @@ async def create_avatar_runtime(
 
     resources = AsyncExitStack()
     try:
-        inference = InferenceExecutor.from_env()
+        # The same accepted runtime.inference the Host built its pool from.
+        inference = InferenceExecutor.from_env(avatar_config.runtime.inference)
 
         # 1.AvatarRuntime
         resources.push_async_callback(inference.close)

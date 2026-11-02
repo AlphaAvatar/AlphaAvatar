@@ -13,6 +13,8 @@
 # limitations under the License.
 from .bootstrap import (
     bootstrap_inference_runners,
+    check_inference_config,
+    plan_inference_runners,
     prepare_inference_runners,
     register_inference_runner_bootstrap,
     snapshot_inference_config,
@@ -28,6 +30,8 @@ __all__ = [
     "InferenceRunner",
     "InferenceRuntime",
     "bootstrap_inference_runners",
+    "check_inference_config",
+    "plan_inference_runners",
     "prepare_inference_runners",
     "register_inference_runner_bootstrap",
     "snapshot_inference_config",

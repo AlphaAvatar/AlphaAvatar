@@ -56,6 +56,13 @@ def _lines(summary: dict[str, Any]) -> dict[str, str]:
     if (mcp := tools["mcp"]) is not None:
         enabled.append(f"mcp ({mcp['servers']} server{'' if mcp['servers'] == 1 else 's'})")
     port = health["port"] if health["port"] is not None else "8081 (dev: free port)"
+    runners = summary["inference"]
+    parallel = [f"{method} x{workers}" for method, workers in runners.items() if workers > 1]
+    inference = f"{len(runners)} runner{'' if len(runners) == 1 else 's'}" if runners else "none"
+    if parallel:
+        inference += f"  (workers: {', '.join(parallel)})"
+    elif runners:
+        inference += ", 1 worker each"
     return {
         "avatar_id": summary["avatar_id"],
         "home": summary["home"],
@@ -67,6 +74,7 @@ def _lines(summary: dict[str, Any]) -> dict[str, str]:
         "character": _name(plugins["character"]),
         **stores,
         "tools": ", ".join(enabled) or "none",
+        "inference": inference,
         "health": f"{health['bind']}:{port}",
     }
 

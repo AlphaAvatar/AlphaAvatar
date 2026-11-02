@@ -22,6 +22,8 @@ from ..model_files import SILERO_MODEL_CONFIG, resolve_silero_model_path
 
 class SileroVADRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.voice.vad.silero"
+    # Context and recurrent state travel in each request; the session is read-only here.
+    REPLICABLE = True
 
     def initialize(self) -> None:
         import onnxruntime as ort

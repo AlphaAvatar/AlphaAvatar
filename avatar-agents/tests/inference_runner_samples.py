@@ -70,6 +70,80 @@ class SecondJournalRunner(JournalRunner):
     INFERENCE_METHOD = "test.journal.second"
 
 
+class ParallelRunner(JournalRunner):
+    """A replicable journal runner; ``init<N>.hold``/``init<N>.fail`` steer the N-th start."""
+
+    INFERENCE_METHOD = "test.parallel"
+    REPLICABLE = True
+
+    def initialize(self) -> None:
+        super().initialize()
+        # Workers start one at a time, so the line count numbers each start.
+        inits = self._root / f"{self.INFERENCE_METHOD}.inits"
+        with inits.open("a") as journal:
+            journal.write(f"{os.getpid()}\n")
+        count = len(inits.read_text().splitlines())
+        if (self._root / f"init{count}.fail").exists():
+            raise RuntimeError("private init detail")
+        if (self._root / f"init{count}.hold").exists():
+            (self._root / f"init{count}.entered").touch()
+            deadline = time.monotonic() + 60
+            while not (self._root / f"init{count}.open").exists():
+                if time.monotonic() > deadline:
+                    raise TimeoutError("The test never opened this initialization gate")
+                time.sleep(0.002)
+
+    def run(self, data: bytes) -> bytes | None:
+        # ``work:<ms>:<tag>`` occupies the worker for a fixed time and records its span.
+        if not data.startswith(b"work:"):
+            return super().run(data)
+        started = time.monotonic()
+        time.sleep(int(data.split(b":")[1]) / 1000)
+        with (self._root / f"{self.INFERENCE_METHOD}.spans").open("a") as spans:
+            spans.write(f"{os.getpid()} {started} {time.monotonic()} {data.decode()}\n")
+        return data
+
+
+class SecondParallelRunner(ParallelRunner):
+    INFERENCE_METHOD = "test.parallel.second"
+
+
+class SileroProtocolRunner(InferenceRunner):
+    """Silero's request and response layout without a model.
+
+    Loud windows are speech. The returned state adds 1000 per speech window and 1 per
+    quiet one, so each stream's own history is visible in its state. A window whose first
+    sample is ``HELD_SAMPLE`` waits for the test's ``voice.open`` gate.
+    """
+
+    INFERENCE_METHOD = "alphaavatar.voice.vad.silero"
+    REPLICABLE = True
+    HELD_SAMPLE = 12345
+
+    def initialize(self) -> None:
+        self._root = Path(self.config_for("test")["root"])
+
+    def run(self, data: bytes) -> bytes | None:
+        import numpy as np
+
+        values = np.frombuffer(data, dtype=np.float32)
+        if values.size != 512 + 64 + 256:
+            raise ValueError("Invalid Silero request size")
+        audio, state = values[:512], values[512 + 64 :]
+        if abs(audio[0] * 32767 - self.HELD_SAMPLE) < 0.5:
+            (self._root / "voice.entered").touch()
+            deadline = time.monotonic() + 60
+            while not (self._root / "voice.open").exists():
+                if time.monotonic() > deadline:
+                    raise TimeoutError("The test never opened the voice gate")
+                time.sleep(0.002)
+        speech = float(np.abs(audio).mean() > 0.1)
+        response = np.empty(1 + state.size, dtype=np.float32)
+        response[0] = speech
+        response[1:] = state + (1000.0 if speech else 1.0)
+        return response.tobytes()
+
+
 class FailingCloseRunner(EchoRunner):
     INFERENCE_METHOD = "test.failing_close"
 

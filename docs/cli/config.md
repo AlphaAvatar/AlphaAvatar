@@ -50,11 +50,14 @@ OK  configuration and read-only path checks passed
     memory     default  (vdb: lancedb)
     persona    default  (vdb: lancedb; speaker on, face off)
     tools      rag, mcp (1 server)
+    inference  8 runners  (workers: alphaavatar.voice.vad.silero x2)
     health     127.0.0.1:8081 (dev: free port)
 ```
 
-The summary lists plugin selections, vector store kinds, enabled tools and the health
-address — never endpoints, collection names or plugin-defined settings.
+The summary lists plugin selections, vector store kinds, enabled tools, the inference
+runners the Host would start with their worker counts, and the health address — never
+endpoints, collection names or plugin-defined settings. A misspelled, unselected or
+non-replicable `runtime.inference.methods` entry fails with its field location.
 
 ```text
 ERROR  configuration and read-only path checks failed
@@ -63,7 +66,8 @@ ERROR  configuration and read-only path checks failed
 ```
 
 - Errors go to stderr and name the failing fields, never the rejected values.
-- `--json` prints `{"valid": true, "avatar_id", "home", "workspace", "plugins", "health"}` or
+- `--json` prints `{"valid": true, "avatar_id", "home", "workspace", "plugins", "inference",
+  "health"}` (`inference` maps each runner method to its workers) or
   `{"valid": false, "error": {"type", "fields", "diagnostic"}}`, with credentials and control
   characters removed.
 - Colors appear only on a terminal; pipes, `NO_COLOR` and `TERM=dumb` get plain text.

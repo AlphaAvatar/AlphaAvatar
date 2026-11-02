@@ -141,7 +141,7 @@ class AvatarHost:
         await asyncio.shield(self._health_start)
         logger.info("Host health started port=%d", self._health.port)
 
-        # Inference
+        # Inference: one shared pool from runtime.inference; sessions only connect to it.
         prepare_inference_runners(self.config.avatar)
         self._inference = InferenceRuntime(
             bootstrap_inference_runners(),
@@ -151,6 +151,7 @@ class AvatarHost:
                 str(self.config.paths.cache.models_dir),
                 config=snapshot_inference_config(self.config.avatar),
             ),
+            config=self.config.avatar.runtime.inference,
         )
         self._inference_start = asyncio.create_task(
             self._inference.start(), name="host_inference_start"

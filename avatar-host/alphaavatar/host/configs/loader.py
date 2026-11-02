@@ -54,6 +54,7 @@ def _snapshot_scalar(value: Any) -> Any:
 
 def _validate(value: Any, *, paths: ApplicationPaths | None = None) -> ApplicationConfig:
     from alphaavatar.agents.configs import AvatarConfig
+    from alphaavatar.agents.runtime.inference import plan_inference_runners
 
     data = _mapping(value)
     avatar_data = dict(data)
@@ -78,6 +79,8 @@ def _validate(value: Any, *, paths: ApplicationPaths | None = None) -> Applicati
 
     # AvatarConfig
     avatar = AvatarConfig.model_validate(avatar_data)
+    # runtime.inference against the selected runners: pure, no process, model or environment.
+    plan_inference_runners(avatar)
 
     # WorkspacePaths
     workspace = (

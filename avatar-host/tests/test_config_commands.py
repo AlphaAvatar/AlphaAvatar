@@ -34,6 +34,7 @@ import yaml
 import alphaavatar.agents.configs  # noqa: F401
 from alphaavatar.host.cli.app import main
 from alphaavatar.host.configs import describe_application, load_application
+from alphaavatar.host.configs.loader import restore_application
 from alphaavatar.host.log.format import BOLD, DIM, GREEN, RED, RESET
 from alphaavatar.plugins.memory.config import DefaultMemoryConfig
 from alphaavatar.plugins.persona.config import DefaultPersonaConfig
@@ -146,13 +147,22 @@ def test_check_reports_valid_and_invalid_configurations_with_effective_overrides
         "    memory     default  (vdb: qdrant)",
         "    persona    default  (vdb: lancedb; speaker on, face on)",
         "    tools      deepresearch, rag, mcp (1 server)",
+        "    inference  7 runners, 1 worker each",
         "    health     127.0.0.1:8081 (dev: free port)",
         "",
     ]
     # Selections and backend kinds only: no endpoint, collection or plugin-defined setting.
     assert "invalid" not in text + json.dumps(report)
     # The override is the configuration that would start, including its default workspace.
-    assert report.keys() == {"valid", "avatar_id", "home", "workspace", "plugins", "health"}
+    assert report.keys() == {
+        "valid",
+        "avatar_id",
+        "home",
+        "workspace",
+        "plugins",
+        "inference",
+        "health",
+    }
     assert report["valid"] and report["avatar_id"] == "renamed"
     assert report["plugins"]["memory"] == {"plugin": "default", "vdb": "qdrant"}
     assert report["plugins"]["tools"]["mcp"] == {"plugin": "default", "servers": 1}
@@ -164,9 +174,11 @@ def test_check_reports_valid_and_invalid_configurations_with_effective_overrides
     assert output.err.startswith("\nERROR  configuration and read-only path checks failed\n")
     assert output.err.endswith("\n\n")
     assert "fields: tools.mcp.token" in output.err and "leak" not in output.out + output.err
-    # A remote store without a port fails at startup, so the check reports it first.
+    # A remote store without a port fails the inference plan at startup; loading reports it.
     assert main(["config", "check", str(config), "persona.vdb_config.host=vectors.invalid"]) == 2
-    assert "error: ValueError" in capsys.readouterr().err
+    assert "caused by: ValueError\n    at alphaavatar.agents.utils.vdb.config" in (
+        capsys.readouterr().err
+    )
     assert main(["config", "check", str(config), "avatar.timezone=Not/AZone", "--json"]) == 2
     failure = json.loads(capsys.readouterr().out)
     assert failure["valid"] is False
@@ -319,12 +331,60 @@ def test_credential_values_never_rewrite_fixed_fields(
     assert main(["config", "check", str(config), "--json"]) == 0
     report = json.loads(capsys.readouterr().out)
     assert lines[-2] == "    health     127.0.0.1:8081 (dev: free port)"
-    assert lines[-3] == "    tools      deepresearch, rag, mcp (2 servers)"
-    assert report.keys() == {"valid", "avatar_id", "home", "workspace", "plugins", "health"}
+    assert lines[-4] == "    tools      deepresearch, rag, mcp (2 servers)"
+    assert report.keys() == {
+        "valid",
+        "avatar_id",
+        "home",
+        "workspace",
+        "plugins",
+        "inference",
+        "health",
+    }
     assert (report["avatar_id"], report["health"]["bind"]) == ("assistant", "127.0.0.1")
     view = describe_application(load_application(config))
     assert view["host"]["health"]["bind"] == "127.0.0.1"
     assert set(view["tools"]["mcp"]["servers"]) == {"docs", "blank"}
+
+
+def test_runner_parallelism_is_checked_against_the_selected_plan_and_survives_restore(
+    tmp_path: Path, sandbox: list[str], credentials: object, capsys: pytest.CaptureFixture
+) -> None:
+    config = write(tmp_path / "avatar.json", CONFIG)
+    before = files(tmp_path)
+    turn = "alphaavatar.router.turn_taking.smart_turn_v3"
+    override = f"runtime.inference.methods={{{turn}: {{workers: 2}}}}"
+
+    assert main(["config", "check", str(config), override]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert main(["config", "check", str(config), override, "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert lines[-3] == f"    inference  7 runners  (workers: {turn} x2)"
+    assert report["inference"][turn] == 2
+    assert set(report["inference"].values()) == {1, 2}
+
+    # The session child restores the same limits the Host builds its pool from.
+    loaded = load_application(config, [override])
+    restored = restore_application(loaded.payload)
+    assert restored.avatar.runtime.inference == loaded.avatar.runtime.inference
+    assert restored.avatar.runtime.inference.workers(turn) == 2
+
+    # Rejected at load, located at the override: unselected, misspelled, or not replicable.
+    for method, location in (
+        ("alphaavatar.voice.vad.silero", "alphaavatar.voice.vad.silero"),
+        (f"{turn}_v4", f"{turn}_v4"),
+        ("alphaavatar.memory.vdb.qdrant", "alphaavatar.memory.vdb.qdrant.workers"),
+    ):
+        rejected = f"runtime.inference.methods={{{method}: {{workers: 2}}}}"
+        assert main(["config", "check", str(config), rejected, "--json"]) == 2
+        error = json.loads(capsys.readouterr().out)["error"]
+        assert error["fields"] == [f"runtime.inference.methods.{location}"]
+    assert main(["config", "check", str(config), "runtime.inference.max_pending=0"]) == 2
+    assert "fields: runtime.inference.max_pending" in capsys.readouterr().err
+
+    # Pure checks: no plan exported for workers, no process, client, socket or file.
+    assert "ALPHAAVATAR_INFERENCE_PLAN" not in os.environ
+    assert (sandbox, files(tmp_path)) == ([], before)
 
 
 def test_init_writes_a_minimal_template_that_loads_once_inputs_are_set(

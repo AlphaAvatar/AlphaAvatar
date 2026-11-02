@@ -19,7 +19,8 @@
 | T-5 | KD-14 收口：恢复要求随输入 generation 保留到边界确认；回放不越过安全下界 | 2026-11-02 | `65bd40f` | `a2b6bde` | 已 review：三条旁路已修好；仍有 1 个 P1（快照更新可绕过恢复要求），KD-14 未关闭，转入 T-6 |
 | T-6 | KD-14：缺口窗口中 generation 已存在的证据不被更新的快照覆盖 | 2026-11-02 | `a2b6bde` | `4cb57c2` | 已验收：review 无新阻断问题，KD-14 关闭；本地 195 passed（CI 方式 ×3），review 环境运行 147 项通过（IPC 用例受环境限制） |
 | T-7 | KD-14 正式回归；修复 O-1、KD-6、KD-8、O-7；KD-10 时序与 O-4 取消补测试 | 2026-11-02 | `2d1d575` | `7e87782` | 已验收：O-1、KD-6、KD-8、O-7 关闭，KD-14 保持关闭，KD-10③ 时序已覆盖，O-4、O-9 保留观察；本地 229 passed；review 环境 229 项收集、183 项通过，新增 CLI 端到端用例受 AF_UNIX 权限阻断（替换日志传输边界后的配置错误处理路径通过，不计为完整 CLI 端到端） |
-| T-8 | 配置公共能力与 CLI 最小闭环：`config init`、`config check`（`check` 已迁入，`config show` 已移除） | 2026-11-02 | `7e87782` | `886efcd`、`e428c9b`、`d9a8b4f`、`4365820`；测试屏障收尾未提交 | **已验收**：`4365820` 复核通过，生产代码验收；最后一处测试调度屏障已补齐；本地 246 passed（CI 方式 ×1）；review 环境 246 项收集、199 项通过、1 项失败（即本次修复的用例，IPC 未全量复跑） |
+| T-8 | 配置公共能力与 CLI 最小闭环：`config init`、`config check`（`check` 已迁入，`config show` 已移除） | 2026-11-02 | `7e87782` | `886efcd`、`e428c9b`、`d9a8b4f`、`4365820`、`e7bc3b3` | **已验收**（验收提交 `e7bc3b3`）：本地 246 passed（CI 方式 ×1）；review 环境选跑 200 项全部通过，此前失败的音频用例已通过；Ruff、格式、workspace、lock 通过；IPC 未独立全量复跑 |
+| T-9 | Runner 可配置并行与压力验证（`runtime.inference`、method 级 worker 池、多通道 Executor） | 2026-11-02 | `e7bc3b3` | 未提交 | 待 review：本地 260 passed（CI 方式 ×1）；并行模块 ×10、16 核满载 ×5 无失败；stress 30 s 通过；12 个变异中 11 个被杀死，1 个为等价变异 |
 
 ## 已知缺陷（当前状态，只记录不修复）
 
@@ -1650,4 +1651,213 @@ alphaavatar dev <file> [KEY=VALUE ...]
 - 公共接口、安全边界和文档见第 10.7 节。
 - 仍待处理：O-2、O-9（观察），以及真实设备和服务验收。
 - 下一批：Runner 并行。
-- 本节修改没有 commit 或 push。
+- 本节修改没有 commit 或 push；之后由用户提交为 `e7bc3b3`。
+
+**最终复核（`e7bc3b3`）**
+
+- 验收提交：`e7bc3b3`（即上面的测试屏障收尾）。
+- review 环境选跑 **200 项全部通过**，此前失败的 `fail_vad()` 相关音频用例已通过。
+- Ruff、格式、workspace、lock 检查通过。
+- IPC 用例没有在 review 环境独立全量复跑。
+- T-8 正式收口。
+
+---
+
+## T-9 Runner 可配置并行与压力验证
+
+- 基线：`e7bc3b3`（T-8 验收提交），开始时工作区干净。
+- 范围：同一 inference method 的真实执行并行，默认行为不变；配置放在 `RuntimeConfig.inference`（替换最初的 `host.inference` 方案，实施前已调整，未产生过 `host.inference` 入口）。
+- 不做：自动扩缩容、动态批处理、通用资源调度；不新增 CLI 命令，不恢复 `config show`。
+
+### 1. 最小设计（实施前）
+
+**配置：`RuntimeConfig.inference`（`InferenceConfig`）**
+
+- 配置类只负责参数和纯校验；调度、回收在 `runtime/inference`。
+- 服务端（Host 消费一次，构建共享 Runner 池）：`max_pending`、`queue_timeout`、`request_timeout`、`initialize_timeout`、`close_timeout`、`restart_limit`、`restart_window_seconds`。
+- 客户端（各会话的 Executor）：`client_timeout`（等待本地通道 + 连接 + 发送）；等待响应的预算仍取自服务端握手（排队 + 执行 + 结算），与服务端推理超时分开。
+- 按 method 覆盖：`methods.<method>.workers`，默认 1，上限 8。不按 CPU 核数自动增加副本。
+- `HostConfig` 不重复维护 Runner 配置；会话容量 `host.processes.capacity`、Health、监督轮询仍归 Host。
+
+**并行能力声明**
+
+- `InferenceRunner.REPLICABLE: ClassVar[bool] = False`。只有声明为 `True` 的 Runner 允许 `workers > 1`；否则明确报错。
+- 能力跟随 Runner 类声明，Host、MCP、调度器中不出现 method 字符串。
+- 本批声明：Silero VAD（状态随请求传递）、Smart Turn v3（单请求无状态）。VDB（读改写、进程内锁）、MCP 目录、Semantic Addressing（进程内 KV 缓存、多线程 llama.cpp）、Speaker／Face（可能使用 CUDA，未验证）保持单实例。
+
+**计划与校验（纯操作）**
+
+- `prepare_inference_runners` 拆出纯函数 `plan_inference_runners(config)`：只运行插件 bootstrap、对照 `runtime.inference` 检查拼错/未选中的 method 和不可复制的 Runner，不写环境变量、不启动进程、不加载模型。
+- 配置加载／还原（`validate_application`）、`config check`、摘要、Host 启动都调用同一个检查。
+- `prepare_inference_runners` = 计划 + 写入计划环境变量，仅 Host 启动时调用。
+
+**服务端调度（`runtime/inference/pool.py`）**
+
+- 每个 method 一个 `RunnerPool`，持有 N 个独立 `RunnerProcess`；每个进程内部仍串行，并且一次只接受 1 个请求（`max_pending=1` 作为不变量保护）。
+- 容量：`max_pending` 按 method 计算，**包含执行中和等待中**的请求，不随 worker 或连接数量倍增；`workers` 不能超过 `max_pending`。
+- 优先交给空闲 worker；没有空闲 worker 时，在池内有界 FIFO 队列中等待，不预先塞给某个 worker。
+- 排队阶段受 `queue_timeout` 约束；超时或取消的请求从队列撤回，之后不会执行。分派后受 `request_timeout` 约束；执行超时沿用既有策略：回收该 worker，不重放。
+- 服务端连接处理在请求挂起期间同时监视客户端：客户端断开时撤回排队请求；已分派的请求由原 worker 读完响应并丢弃，迟到响应不会串到其他请求。
+- 健康：全局 `is_alive` 要求每个 method 的所有 worker 就绪；请求准入只要求该 method 至少一个 worker 就绪（降级运行）。全部 worker 不可用时，等待者立即收到"暂时不可用"。
+- 恢复：按 worker 槽位先安全回收，再在既有的每 method 重启额度内重建；替换进程就绪前不接收请求，健康 worker 继续服务。
+
+**客户端（`InferenceExecutor`）**
+
+- 复用现有串行连接单元 `_InferenceConnection`（保留连接锁）；每个 method 增加最多 `workers` 个通道，空闲通道放在 FIFO 队列中，等待受 `client_timeout` 与 `max_pending` 限制。
+- 一个通道同一时间只有一个请求，请求与响应的归属由通道独占保证；取消仍然丢弃该通道的连接。
+- 限制来自会话进程从启动快照还原出的同一份 `runtime.inference`。
+
+**诊断**
+
+- `InferenceRunnerStatus` 增加：`workers`、`ready_workers`、`executing`、`waiting`、`rejected`、`queue_timeouts`、`execution_timeouts`、`restarts`。不包含请求内容、模型输入或凭据。
+- `ready` 含义不变：该 method 配置的 worker 全部就绪（`workers=1` 时与原先相同）。
+
+- 实施中按用户补充调整：`MAX_INFERENCE_WORKERS = 8` 放在 `alphaavatar/agents/constants.py`，`runtime_config.py` 从那里导入。
+
+### 2. 实现与设计的差异
+
+- 校验错误用 pydantic `ValidationError`，位置就是出错的覆盖项，如 `runtime.inference.methods.<method>` 或 `…<method>.workers`。原因：CLI 的 `format_error` 只输出类型和字段位置，不输出异常文本；普通 `ValueError` 无法说明哪一项出错。
+- 计划检查放在 `validate_application`（加载／还原的共同入口），所以 `config check`、`start`/`dev`、会话子进程还原都会执行。副作用：远端 VDB 缺端口这类计划错误，现在加载时就报告（原来在摘要或启动时才报告），原因链不变。
+- 命令行覆盖：带点的 method 名必须用映射写法 `'runtime.inference.methods={alphaavatar.voice.vad.silero: {workers: 2}}'`。点路径写法会把名字拆开，被 `extra="forbid"` 拒绝，不会被静默接受。
+- 进程内调用 `InferenceRuntime.do_inference(timeout=…)` 时，同一个显式预算分别约束排队和执行，与原有语义一致。
+
+### 3. 修改文件
+
+| 文件 | 改动 |
+|---|---|
+| `avatar-agents/alphaavatar/agents/constants.py` | `MAX_INFERENCE_WORKERS = 8` |
+| `avatar-agents/alphaavatar/agents/configs/runtime_config.py` | `InferenceMethodConfig`、`InferenceConfig`，`RuntimeConfig.inference` |
+| `runtime/inference/runner.py` | `InferenceRunner.REPLICABLE = False` |
+| `runtime/inference/pool.py`（新增） | `RunnerPool`：每 method 的有界 FIFO 调度、容量、排队超时、计数 |
+| `runtime/inference/process.py` | `busy`、`on_settled` 回调（不改交换和回收逻辑） |
+| `runtime/inference/runtime.py` | 按 method 建池；按 worker 启动、恢复、关闭；连接处理监视客户端断开；快照计数 |
+| `runtime/inference/executor.py` | `_InferenceChannels`：每 method 至多 `workers` 个串行连接；`InferenceExecutor(endpoint, config)`、`from_env(config)` |
+| `runtime/inference/bootstrap.py`、`__init__.py` | `plan_inference_runners`（纯）、`check_inference_config`；`prepare_inference_runners` 改为调用纯计划 |
+| `runtime/inference/schemas.py` | 状态增加 worker、执行、等待、拒绝、超时、重启计数 |
+| `silero_runner.py`、`smart_turn_v3.py` | `REPLICABLE = True`，并注明依据 |
+| `avatar-host/.../application/application.py` | 用 `avatar.runtime.inference` 构建共享运行时 |
+| `avatar-host/.../application/bootstrap.py` | 会话 Executor 使用还原出的同一份配置 |
+| `avatar-host/.../configs/loader.py` | 加载时检查推理计划 |
+| `avatar-host/.../configs/view.py`、`cli/commands/config.py` | 摘要增加 `inference`（各 method 的 worker 数）与一行文本 |
+| `docs/cli/config.md`、`examples/README.md` | 检查输出示例；并行配置示例和支持边界 |
+| 测试 | 新增 `test_inference_parallel.py`（11 项）；`test_runner_stress.py` 增加并行场景（workers 1/2）；新增 1 项 Host 配置测试；样本 Runner 增加 `ParallelRunner`、`SecondParallelRunner`、`SileroProtocolRunner`；其余测试只随新构造参数和输出行调整 |
+
+### 4. 配置示例与支持边界
+
+```yaml
+runtime:
+  inference:
+    methods:
+      alphaavatar.voice.vad.silero:
+        workers: 2  # 1-8，显式开启；每个 worker 持有一份模型
+```
+
+| Runner | 允许 `workers > 1` | 依据 |
+|---|---|---|
+| Silero VAD | 是 | 上下文与循环状态随请求传入并返回；进程内只有只读 ONNX 会话 |
+| Smart Turn v3 | 是 | 每个请求是完整音频窗口，请求之间无状态 |
+| Memory／Persona／MCP VDB | 否 | 读改写与进程内锁，多实例一致性未证明 |
+| Semantic Addressing | 否 | 进程内 KV 前缀缓存、多线程 llama.cpp；正确性可能不受影响，但内存与 CPU 占用会成倍增加，未验证 |
+| Speaker（vector/attribute）、Face | 否 | 可能使用 CUDA，显存占用与多实例行为未验证 |
+
+- 拼错、未选中或不可复制的覆盖会在加载时报错，并给出字段位置。
+- 默认值：`max_pending=64`（按 method，含执行中）、`queue_timeout=30`、`request_timeout=30`、`client_timeout=35`、`initialize_timeout=300`、`close_timeout=5`、`restart_limit=2`、`restart_window_seconds=300`。
+- `host.processes.capacity`（会话数）与 worker 数相互独立。
+
+### 5. 调度语义（实现后）
+
+- 容量：`max_pending` = 等待 + 已交给 worker + 执行中（包括调用方已离开、worker 仍在读响应的请求）。不随 worker 或连接数倍增；`workers ≤ max_pending`。
+- 每个 worker 一次只接一个请求；`RunnerProcess(max_pending=1)` 保护这个不变量，调度出错时会拒绝，而不是悄悄排队。
+- worker 空闲后立即同步交给最早的等待者（`on_settled → wake`），等待者不会被预先绑定到某个 worker。
+- 排队阶段被取消、超时或客户端断开：撤回，以后不会执行，计入 `queue_timeouts`（超时时）。
+- 已分派后调用方离开：原 worker 读完响应并丢弃，worker 在此期间保持忙碌，迟到响应不会被交给其他请求。
+- 执行超时：沿用既有策略，回收该 worker，不重放，计入 `execution_timeouts`。
+- 所有 worker 都不可用时，等待者立即收到"暂时不可用"，新请求被拒绝。
+- 恢复：每次处理一个槽位，先回收再重建，替换进程就绪后才接收请求；同 method 的健康 worker 继续服务；重启额度按 method 共享。
+- 健康：`is_alive` 要求所有 worker 就绪，所以降级时 Host 的监视器会触发恢复，`ready`/会话准入与原来一样会暂时关闭；请求准入只要求该 method 至少一个 worker 就绪，因此已建立的会话在降级期间仍可推理。
+
+### 6. 测试
+
+`avatar-agents/tests/test_inference_parallel.py`：全部经过真实 `InferenceExecutor` → unix socket → 服务端 → `RunnerProcess`（spawn）。时序依靠 Runner 进入、测试打开的文件闸门，不用固定 sleep 或速度倍率。
+
+| 用例 | 覆盖 |
+|---|---|
+| `test_a_replicable_runner_stays_serial_until_configured` | 默认 1：第二个请求在服务端等待，同一 PID |
+| `test_two_workers_run_one_sessions_requests_at_once_and_never_exceed_the_limit` | 同一 Executor 两个请求同时位于两个不同 PID 的 Runner 内（屏障）；第三个请求在服务端等待，不会进入；乱序完成，结果归属正确；等待者交给先空出的 worker |
+| `test_results_stay_with_their_callers_across_executors_and_methods` | 3 个 Executor × 2 个并行 method × 2 次调用，逆序放行；串行 method 不被阻塞；每个请求只执行一次 |
+| `test_full_queue_rejects_and_cancelled_requests_never_run_or_leak_results` | 容量含执行中（2 + 1）；第 4 个被拒绝；排队取消被撤回且从未执行；执行中取消由 worker 读完并丢弃，worker 不被回收；之后各通道只拿到自己的结果 |
+| `test_queue_and_execution_timeouts_withdraw_or_retire_without_replay` | 排队超时撤回、从未执行；执行超时只回收那个 worker；降级期间另一个 worker 继续服务；恢复后 `restarts=1`；不重放 |
+| `test_a_killed_worker_is_reaped_and_rebuilt_while_its_peer_keeps_serving` | 杀掉一个 worker：在途请求失败且不重放，同伴的在途请求完成；恢复；替换进程初始化失败时同伴继续服务；重启额度耗尽后不再尝试 |
+| `test_waiting_requests_fail_at_once_when_no_worker_is_left` | 两个 worker 都被杀时，等待者立即失败，不等排队超时；恢复后继续服务 |
+| `test_partial_start_failure_and_cancelled_initialization_release_every_worker` | 第 2 个 worker 初始化失败、初始化中取消：进程、fd、socket 目录、端点变量全部回收；诊断不含 Runner 消息 |
+| `test_close_is_idempotent_and_reclaims_every_worker_and_channel` | 两轮启停、在途请求、重复关闭，回收所有资源 |
+| `test_parallel_configuration_is_validated_before_any_process_starts` | 非法数值、类型、额外键、未裁剪名称、`workers > max_pending`；未选中与不可复制的覆盖报错位置；不启动任何进程 |
+| `test_concurrent_voice_sources_keep_their_own_state_results_and_cancellation` | 真实 `SileroVADStream` × 3 共享一个 Executor，服务端为 Silero 协议的无模型 Runner（2 个 worker）。一路被闸门挡住并取消，另外两路继续；各自状态只反映自己的历史（语音 1000、静音 1），事件各自正确（说话者 start/end，聆听者无事件）；被取消的那一路不影响其 worker |
+
+Host：`test_runner_parallelism_is_checked_against_the_selected_plan_and_survives_restore`（`config check` 文本与 JSON 展示 worker 数；`restore_application` 得到相同的 `runtime.inference`；未选中、拼错、不可复制、`max_pending=0` 分别报出字段位置；不写计划环境变量，不构造客户端、socket 或文件）。
+
+### 7. 变异验证（文件临时替换后逐字节恢复）
+
+| 变异 | 结果 |
+|---|---|
+| M1 客户端忽略 workers（固定 1 个通道） | 被杀死（两个请求无法同时进入） |
+| M2 服务端不监视客户端断开 | 被杀死（排队请求未被撤回） |
+| M3 容量不计执行中 | 被杀死（第 4 个未被拒绝） |
+| M4 调度不检查 worker 是否忙 | 被杀死 |
+| M5 去掉排队时限 | 被杀死 |
+| M6 恢复时连同健康 worker 一起重建 | 被杀死（同伴 PID 改变） |
+| M7 全局健康改为"任一 worker 就绪" | 被杀死 |
+| M8 不检查 `REPLICABLE` | 被杀死（agents 与 Host 两侧） |
+| M9 没有 worker 时不让等待者失败 | 被杀死 |
+| M10 调用方离开后提前释放 worker | 被杀死 |
+| M11 接受未选中的 method 覆盖 | 被杀死 |
+| M12 新请求不让位于等待者 | **存活**：等价变异。worker 空出时 `wake()` 同步交给等待者，不会出现"有空闲 worker 且有等待者"的可观察状态；这个判断只是防御 |
+
+### 8. 运行结果
+
+| 项目 | 结果 |
+|---|---|
+| 全量（CI 方式：`--basetemp`、检出前后对比）×1 | **260 passed**，43.0 s；检出目录前后一致 |
+| `test_inference_parallel.py` ×10 | 0 失败 |
+| 并行 + 运行时 + 配置命令（39 项），16 个满载 burner 占满 16 核 ×5 | 0 失败（每轮约 38 s） |
+| Ruff / 格式 / `scripts/check_workspace.py` / `uv lock --check` / pre-commit 配置 | 全部通过 |
+
+**合成压力（`--stress-seconds 30`，模型无关的 Runner，非设备或生产性能）**
+
+| 场景 | 结果 |
+|---|---|
+| 既有并发归属（4 会话 × 3 method） | 3017 轮，289632 次请求，0 错配；p50 1.24 ms，max 3.38 ms |
+| 既有故障回收 | 284 次杀进程，284 次恢复，恢复 p50 101.5 ms；无重放 |
+| 既有启停 | 133 轮，p50 225.7 ms；无残留 |
+| 并行 workers=1（4 会话 × 8 并发，每次执行 5 ms） | 5824 次，0 错误，194 req/s；延迟 p50 86.2 ms／max 168.5 ms；执行 p50 5.07 ms；估算排队 p50 81.1 ms；并发峰值 1；无拒绝、超时、残留进程或 fd |
+| 并行 workers=2（同上） | 11584 次，0 错误，385.5 req/s；延迟 p50 44.8 ms／max 85.0 ms；执行 p50 5.07 ms；估算排队 p50 39.7 ms；并发峰值 2（2 个进程）；无拒绝、超时、残留进程或 fd |
+
+"估算排队" = 端到端延迟 − 执行时间中位数，包含客户端和 IPC 开销。
+
+**真实模型（本机缓存的 Silero v6.2.1，CPU，16 核；只在本地测量，不是 CI 用例，也不是设备或服务验收）**
+
+8 路持续流、4 个 Executor，每路 300 个窗口，每路的请求按顺序发送：
+
+| workers | 吞吐 | p50 | p99 | max |
+|---|---|---|---|---|
+| 1 | 5311／5449 req/s | 0.71／0.72 ms | 1.19／0.80 ms | 237.9／221.3 ms |
+| 2 | 7736／7853 req/s | 1.01／1.00 ms | 1.15／1.24 ms | 3.16／2.82 ms |
+
+- 吞吐约提高 45%；p50 略升（多一个进程竞争）。
+- workers=1 时有一次约 0.2 s 的最大值，原因没有排查（可能是首次推理预热）。
+- 8 路实时音频约需 250 req/s，单 worker 已有充分余量；本机 Silero 并行的收益有限，主要价值在更慢的模型（如 Smart Turn）和更多路数。Smart Turn 没有做真实模型测量。
+
+### 9. 限制与仍待处理
+
+- 只在两个 Runner 上声明可复制；其余保持单实例，需要独立证据后才能开放。
+- 服务端 `max_clients=256` 仍是固定默认值。并行后，连接数约为 会话 × method × worker；默认容量（5 会话）下远低于上限，大规模并行时需要另行评估。
+- 降级时 `is_alive` 为假，沿用"任一 Runner 不健康就暂停新会话准入并触发恢复"的既有策略；重启额度耗尽时 Host 仍然 fail closed，即使同 method 还有健康 worker。
+- 没有真实设备、LiveKit 会话或 GPU 上的验证；真实模型只测了 Silero（本机 CPU）。
+- 本地测量脚本用 `tempfile.mkdtemp()` 在 `/tmp` 留下 4 个空目录（`tmp71l1dagq`、`tmpqkgtb0yt`、`tmp45q1idsn`、`tmpyeclts4j`）。自动删除被权限策略拒绝，未清理。
+- O-2、O-4、O-9、KD-7、KD-10② 继续观察。
+
+### 10. 未做事项
+
+- 没有新增 CLI 命令，没有恢复 `config show`，没有自动扩缩容、动态批处理或通用资源调度。
+- 没有修改各 processor／store 的使用方式；插件仍通过原有 `do_inference` 接口调用。
+- 本批修改没有 commit 或 push。

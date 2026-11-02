@@ -28,3 +28,6 @@ FACE_MATCH_THRESHOLD = 0.45
 FACE_INFERENCE_THRESHOLD = 1.0
 
 USER_TAG_PREFIX = "User_"
+
+# Runner processes per inference method; each copy holds its own model in memory.
+MAX_INFERENCE_WORKERS = 8
