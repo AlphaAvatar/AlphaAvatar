@@ -63,9 +63,11 @@ class AudioActivityProcessor(RouterProcessorBase):
         # Keep the latest lifecycle of each admitted input; old generations cannot reopen it.
         self._inputs: dict[str, _InputState] = {}
         # Input generations that must confirm a speech boundary; kept across every rebuilt
-        # stream until one confirms it. Generations first seen up to the horizon may be cut.
+        # stream until one confirms it. An event up to the gap horizon proves its generation
+        # may have lost audio, whatever newer snapshot registered the input first.
         self._recovering: dict[str, int] = {}
         self._gap_horizon = 0
+        self._gap_evidence: set[tuple[str, int]] = set()
         self._last_sequence = 0
         self._task: asyncio.Task[None] | None = None
         self._started = False
@@ -169,6 +171,13 @@ class AudioActivityProcessor(RouterProcessorBase):
             task.add_done_callback(lambda _task: self._observe_cleanup(source))
         return task
 
+    def _require_boundary(self, source: PerceptionSourceRef) -> None:
+        # Once per generation and gap: a later pre-horizon event cannot undo a confirmation.
+        key = (source.source_id, source.source_generation)
+        if key not in self._gap_evidence:
+            self._gap_evidence.add(key)
+            self._recovering[source.source_id] = source.source_generation
+
     def _accept_input(self, source: PerceptionSourceRef, sequence: int) -> _InputState | None:
         current = self._inputs.get(source.source_id)
         if current is not None and source.source_generation < current.generation:
@@ -188,10 +197,10 @@ class AudioActivityProcessor(RouterProcessorBase):
                         previous, reason=SpeechCancellationReason.SOURCE_GENERATION_RETIRED
                     )
             current = self._inputs[source.source_id] = _InputState(source.source_generation)
-            if sequence <= self._gap_horizon:
-                self._recovering[source.source_id] = source.source_generation
-            else:
+            if sequence > self._gap_horizon:
                 self._recovering.pop(source.source_id, None)
+        if sequence <= self._gap_horizon and source.source_generation == current.generation:
+            self._require_boundary(source)
         return current
 
     def _consume_source_state(
@@ -245,14 +254,15 @@ class AudioActivityProcessor(RouterProcessorBase):
             self._consume_observation(observation, event.sequence)
 
     def _recover_gap(self, missed_count: int, cursor_sequence: int, horizon: int) -> None:
-        self._gap_horizon = horizon
+        self._gap_horizon, self._gap_evidence = horizon, set()
         trace = self._runtime.perception.input_trace
         trace.record("audio.input_gap", missed_count=missed_count, sequence=cursor_sequence)
         trace.freeze("audio_input_gap")
         for source in tuple(self._sources.values()):
             self._retire_source(source, reason=SpeechCancellationReason.INPUT_GAP)
         # Missed frames may belong to an input without an active VAD stream as well.
-        self._recovering.update((key, state.generation) for key, state in self._inputs.items())
+        for key, state in self._inputs.items():
+            self._require_boundary(PerceptionSourceRef(key, state.generation))
         # The snapshot can be newer than the retained batch. Its sequence also rejects
         # frames from before an unmute/reconnect boundary whose event was overwritten.
         for state in self._runtime.perception.get_source_states(modality=MediaModality.AUDIO):

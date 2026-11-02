@@ -16,26 +16,46 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from datetime import date
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+from alphaavatar.agents.avatar.voice import (
+    STTBase,
+    STTCapabilities,
+    STTInputMode,
+    STTStreamBase,
+    TranscriptionEvent,
+    TranscriptionEventType,
+)
 from alphaavatar.agents.configs.runtime_config import RuntimeConfig
+from alphaavatar.agents.router.enums import TurnTakingAction, TurnTakingMode
+from alphaavatar.agents.router.models import TurnTakingModelBase, TurnTakingModelCapabilities
+from alphaavatar.agents.router.schemas import (
+    TurnTakingAssessment,
+    TurnTakingDecision,
+    TurnTakingEvidence,
+)
 from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
 from alphaavatar.agents.runtime.inference import InferenceExecutor
 from alphaavatar.core.env import EnvObservation
-from alphaavatar.core.env.enums import ObservationKind, SpeechCancellationReason
+from alphaavatar.core.env.enums import AnnotationKind, ObservationKind, SpeechCancellationReason
 from alphaavatar.core.env.schemas import PerceptionSourceRef
 from alphaavatar.core.media import AudioFrame, AudioFramePayload
 from alphaavatar.core.media.enums import PayloadFormat, PayloadView
+from alphaavatar.core.perception.enums import MediaModality, MediaSourceKind, MediaSourceState
+from alphaavatar.core.perception.schemas import MediaSourceStateEvent
 from alphaavatar.core.session import SessionRuntime
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
 from alphaavatar.core.workspace import WorkspacePaths
 from alphaavatar.plugins.router.processors.audio_activity import AudioActivityProcessor
 from alphaavatar.plugins.router.processors.audio_activity.config import AudioActivityConfig
+from alphaavatar.plugins.router.processors.speech import SpeechTranscriptionProcessor
+from alphaavatar.plugins.router.processors.turn_taking import processor as turn_taking
+from alphaavatar.plugins.router.processors.turn_taking.config import TurnTakingConfig
 from alphaavatar.plugins.voice.vad import SileroVAD, SileroVADRunner
 from alphaavatar.plugins.voice.vad.model_files import SILERO_MODEL_CONFIG
 
@@ -438,7 +458,9 @@ async def evict_speech_start(pipeline: Pipeline, microphone: Microphone) -> None
     await pipeline.consumed()
 
 
-def assert_only_utterance(pipeline: Pipeline, microphone: Microphone, utterance: int) -> None:
+def assert_only_utterance(
+    pipeline: Pipeline, microphone: Microphone, utterance: int, speech: int
+) -> None:
     ids = [item.observation_id for item in microphone.sent]
     (segment,) = pipeline.speech(ObservationKind.SPEECH_SEGMENT)
     routed = {
@@ -447,6 +469,8 @@ def assert_only_utterance(pipeline: Pipeline, microphone: Microphone, utterance:
     }
     assert routed <= set(ids[utterance:])
     assert set(segment.payload.source_observation_ids) <= set(ids[utterance:])
+    # The new utterance itself is complete: every one of its speech frames is in the segment.
+    assert set(ids[speech : speech + SPEECH]) <= set(segment.payload.source_observation_ids)
 
 
 async def test_recovery_survives_a_stream_that_fails_before_its_boundary(
@@ -473,7 +497,7 @@ async def test_recovery_survives_a_stream_that_fails_before_its_boundary(
     await wait_until(
         lambda: pipeline.speech(ObservationKind.SPEECH_SEGMENT), "the next utterance never ended"
     )
-    assert_only_utterance(pipeline, microphone, utterance)
+    assert_only_utterance(pipeline, microphone, utterance, utterance + SILENCE)
     assert len(skipped(pipeline)) == 2
 
 
@@ -498,7 +522,7 @@ async def test_input_first_seen_after_a_perception_gap_must_confirm_a_boundary(
     await wait_until(
         lambda: pipeline.speech(ObservationKind.SPEECH_SEGMENT), "the next utterance never ended"
     )
-    assert_only_utterance(pipeline, microphone, utterance)
+    assert_only_utterance(pipeline, microphone, utterance, utterance + SILENCE)
     assert [record["reason"] for record in skipped(pipeline)] == ["unconfirmed_boundary"]
 
 
@@ -518,7 +542,163 @@ async def test_pre_roll_after_a_gap_never_reaches_back_into_skipped_speech(
         lambda: pipeline.speech(ObservationKind.SPEECH_SEGMENT), "the next utterance never ended"
     )
     # Pre-roll may cover the confirming silence, never the skipped speech before it.
-    assert_only_utterance(pipeline, microphone, safe)
-    (segment,) = pipeline.speech(ObservationKind.SPEECH_SEGMENT)
-    spoken = [item.observation_id for item in microphone.sent[safe + TAIL : safe + TAIL + SPEECH]]
-    assert set(spoken) <= set(segment.payload.source_observation_ids)
+    assert_only_utterance(pipeline, microphone, safe, safe + TAIL)
+
+
+class FinalizingSTTStream(STTStreamBase):
+    """Offline segment STT: every committed segment finalizes to the same words."""
+
+    def __init__(self, source_id: str) -> None:
+        self.source_id, self.segments = source_id, []
+        self._events: asyncio.Queue[TranscriptionEvent | None] = asyncio.Queue()
+
+    def push_frame(self, frame: AudioFrame, *, segment_id: str) -> bool:
+        if segment_id not in self.segments:
+            self.segments.append(segment_id)
+        return True
+
+    def commit_segment(self, segment_id: str) -> bool:
+        final = TranscriptionEventType.FINAL_TRANSCRIPT
+        self._events.put_nowait(TranscriptionEvent(final, self.source_id, segment_id, "words"))
+        return True
+
+    def flush(self) -> bool:
+        return True
+
+    def end_input(self) -> bool:
+        self._events.put_nowait(None)
+        return True
+
+    async def _iterate(self) -> AsyncIterator[TranscriptionEvent]:
+        while (event := await self._events.get()) is not None:
+            yield event
+
+    def __aiter__(self) -> AsyncIterator[TranscriptionEvent]:
+        return self._iterate()
+
+    async def aclose(self) -> None:
+        self._events.put_nowait(None)
+
+
+class FinalizingSTT(STTBase):
+    def __init__(self) -> None:
+        self.streams: list[FinalizingSTTStream] = []
+
+    @property
+    def provider(self) -> str:
+        return "offline"
+
+    @property
+    def model(self) -> str:
+        return "offline"
+
+    @property
+    def capabilities(self) -> STTCapabilities:
+        return STTCapabilities(STTInputMode.SEGMENT, False, False)
+
+    def stream(self, *, source_id: str) -> FinalizingSTTStream:
+        self.streams.append(FinalizingSTTStream(source_id))
+        return self.streams[-1]
+
+
+class EndpointModel(TurnTakingModelBase):
+    """Offline endpoint detector: every complete, transcribed candidate ends its turn."""
+
+    @property
+    def name(self) -> str:
+        return "offline_endpoint"
+
+    @property
+    def capabilities(self) -> TurnTakingModelCapabilities:
+        return TurnTakingModelCapabilities(
+            modes=frozenset({TurnTakingMode.AUDIO_ONLY}), uses_transcript=True
+        )
+
+    async def assess(self, evidence: TurnTakingEvidence) -> TurnTakingAssessment:
+        return TurnTakingAssessment(
+            turn_candidate_id=evidence.turn_candidate_id,
+            candidate_revision=evidence.candidate_revision,
+            turn_mode=evidence.turn_mode,
+            confidence=1.0,
+            end_of_turn_probability=1.0,
+        )
+
+
+def commits(runtime: AvatarRuntime) -> list[TurnTakingDecision]:
+    events = runtime.perception.annotation_events.read_range(after_seq=0).items
+    decisions = (
+        TurnTakingDecision.from_annotation(event.annotation)
+        for event in events
+        if event.annotation.kind == AnnotationKind.INTERACTION_TURN
+    )
+    return [decision for decision in decisions if decision.action == TurnTakingAction.COMMIT]
+
+
+@pytest.mark.parametrize("pipeline", [{"event_maxlen": 64}], indirect=True)
+@pytest.mark.parametrize("racing", [False, True], ids=["snapshot-at-gap", "state-after-gap"])
+async def test_snapshot_newer_than_a_gap_keeps_the_boundary_requirement(
+    pipeline: Pipeline, racing: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = pipeline.runtime
+    monkeypatch.setattr(
+        turn_taking, "create_turn_taking_model", lambda name, inference_executor: EndpointModel()
+    )
+    stt = FinalizingSTT()
+    listeners = (
+        SpeechTranscriptionProcessor(runtime=runtime, stt=stt, close_timeout_sec=1),
+        turn_taking.MultimodalTurnTakingProcessor(
+            runtime=runtime,
+            config=TurnTakingConfig(transcript_wait_sec=HANG_GUARD, association_wait_sec=0.0),
+        ),
+    )
+    for listener in listeners:
+        await listener.start()
+    try:
+        microphone = Microphone(runtime)
+
+        def publish(state: MediaSourceState):
+            event = MediaSourceStateEvent(
+                microphone.source, MediaModality.AUDIO, MediaSourceKind.MICROPHONE, state
+            )
+            return runtime.perception.publish_source_state(event)
+
+        snapshot, raced = runtime.perception.get_source_states, []
+
+        def racing_snapshot(**filters):
+            # A producer thread mutes and unmutes this generation after the gap batch was read.
+            if racing and filters.get("modality") == MediaModality.AUDIO and not raced:
+                raced.extend(
+                    publish(state) for state in (MediaSourceState.MUTED, MediaSourceState.ACTIVE)
+                )
+            return snapshot(**filters)
+
+        monkeypatch.setattr(runtime.perception, "get_source_states", racing_snapshot)
+        publish(MediaSourceState.ACTIVE)
+        microphone.silence(SILENCE)
+        microphone.speech(80)  # 97 events reach a 64-event window before the consumer runs.
+        await pipeline.consumed()
+        assert [event.sequence for event in raced] == ([98, 99] if racing else [])
+
+        # Later audio arrives within the window, so this stays the only gap.
+        microphone.speech(SPEECH)  # The same sentence continues.
+        microphone.silence(TAIL)
+        await pipeline.consumed()
+        utterance = len(microphone.sent)
+        microphone.silence(SILENCE)
+        microphone.speech(SPEECH)
+        await pipeline.consumed()
+        microphone.silence(TAIL)
+        await wait_until(lambda: commits(runtime), "the next utterance never committed")
+        records = runtime.perception.input_trace.snapshot().to_dict()["records"]
+        assert [record["stage"] for record in records].count("audio.input_gap") == 1
+
+        # The tail never reached STT or Turn-taking; only the new utterance committed.
+        assert_only_utterance(pipeline, microphone, utterance, utterance + SILENCE)
+        (segment,) = pipeline.speech(ObservationKind.SPEECH_SEGMENT)
+        assert [item for stream in stt.streams for item in stream.segments] == [
+            segment.segment.segment_id
+        ]
+        assert len(commits(runtime)) == 1
+    finally:
+        for listener in reversed(listeners):
+            await listener.stop()

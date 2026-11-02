@@ -16,7 +16,8 @@
 | T-2 | 修复 KD-11、KD-12、KD-13、O-3，补定向测试与测试设施 | 2026-11-02 | `161e35f` | `1aecf40` | 已 review：KD-11/12/13、O-3 的修复和 Memory/Persona 补测接受；剩余收尾项转入 T-3 |
 | T-3 | 修复 KD-14（原 O-8）、KD-15，封住 allowlist 旁路，澄清 KD-13 | 2026-11-02 | `1aecf40` | `dca356f` | 已 review：KD-15、allowlist 旁路、KD-13 文案验收；KD-14 未关闭（持续发声边界），转入 T-4 |
 | T-4 | KD-14 补齐：缺口后先确认可靠的静音或结束边界，再接纳语音开始 | 2026-11-02 | `dca356f` | `65bd40f` | 已 review：VAD 接口与短停顿保守丢弃策略接受；普通恢复路径已修好；另有三条旁路，KD-14 仍未关闭，转入 T-5 |
-| T-5 | KD-14 收口：恢复要求随输入 generation 保留到边界确认；回放不越过安全下界 | 2026-11-02 | `65bd40f` | 未提交 | 待审查；收集 193 个，193 passed（CI 方式 ×3） |
+| T-5 | KD-14 收口：恢复要求随输入 generation 保留到边界确认；回放不越过安全下界 | 2026-11-02 | `65bd40f` | `a2b6bde` | 已 review：三条旁路已修好；仍有 1 个 P1（快照更新可绕过恢复要求），KD-14 未关闭，转入 T-6 |
+| T-6 | KD-14：缺口窗口中 generation 已存在的证据不被更新的快照覆盖 | 2026-11-02 | `a2b6bde` | 未提交 | 待审查；收集 195 个，195 passed（CI 方式 ×3） |
 
 ## 已知缺陷（当前状态，只记录不修复）
 
@@ -43,7 +44,7 @@
 | O-6 | `agents/utils/vdb/lancedb.py` 使用已弃用的 `table_names()`，测试中出现 DeprecationWarning（全量 28 条） | 仅记录 | T-1 新增 |
 | O-7 | `MCPConfig` 未设置 `hide_input_in_errors`，ValidationError 文本可能带出部分原始 `servers` 输入（可能含明文 secret）。CLI 当前只输出字段名 | 仅记录 | T-1 新增 |
 | ~~O-8~~ | ~~VAD 积压超过 `max_buffer_sec`（2 s）时最旧的帧被淘汰，语音开头丢失且没有 trace 记录；看起来是有界内存的有意取舍~~ | 升级为 KD-14 | T-2 新增（语音上游测试中观察到，未断言）；review 确定性复现后升级为生产缺陷 |
-| ~~KD-14~~ | ~~VAD 积压超过 2 s 缓存时，迟到的 VAD 起点所在的语音正文已被淘汰，`_start_segment` 不检查，剩余部分仍作为正常 `SPEECH_SEGMENT` 发布，没有缺口或取消记录（review 复现：积压 2.4 s 时，32 帧 0.32 s 的发声只剩 8 帧 0.08 s）~~ | 已关闭 | 原 O-8；**T-3 修复（不完整）**：保留 2 s 缓存上限；起点早于最早保留样本时，记录 `audio.speech_lost`（`reason=vad_backlog_overflow`，`missing_count` 为丢失样本数），以 `INPUT_GAP` 发布 `SPEECH_CANCELLED`，不路由剩余帧，并换一条已追上进度的新 VAD 流；只丢 pre-roll 时照常发布。回归：`test_audio_activity.py::test_speech_evicted_by_the_backlog_bound_is_cancelled_and_recovered`；review（`dca356f`）：换流后用户不停顿继续说话，新流把原句尾部当作新的一句，经 STT/TurnTaking 产生正常 COMMIT，KD-14 重开；**T-4 修复**：连续性缺口（`INPUT_GAP`、`VAD_INPUT_REJECTED`、感知流缺口）之后新建的 VAD 流，要先观察到 VAD 自身的结束静音（`min_silence_duration`）或一次 END_OF_SPEECH，才接纳语音开始；此前的 START 视为原句延续，不路由，记 `audio.speech_skipped`（`reason=unconfirmed_boundary`）。回归：`test_audio_activity.py::test_speech_continuing_through_a_gap_is_not_admitted_as_a_new_utterance`；范围说明：`INPUT_GAP` 会退役整个旧 speech epoch（该 speech source generation），其中尚未完成识别、尚未提交的前段也一并退役；已提交的 Turn 不变；review（`65bd40f`）：普通恢复已修好，另有三条旁路被确定性复现：恢复中再次失败会丢掉等待要求；感知缺口后首次发现的输入不受约束；pre-roll 会带回已跳过的尾句。**T-5 修复**：恢复要求属于输入 generation，只在当前流确认边界后解除，再次换流继承；感知缺口时记录 horizon，在其之前首次出现的输入 generation 也要确认边界；确认边界时把回放下界设为确认静音的起点，pre-roll 不越过。回归：`test_recovery_survives_a_stream_that_fails_before_its_boundary`、`test_input_first_seen_after_a_perception_gap_must_confirm_a_boundary`、`test_pre_roll_after_a_gap_never_reaches_back_into_skipped_speech` |
+| ~~KD-14~~ | ~~VAD 积压超过 2 s 缓存时，迟到的 VAD 起点所在的语音正文已被淘汰，`_start_segment` 不检查，剩余部分仍作为正常 `SPEECH_SEGMENT` 发布，没有缺口或取消记录（review 复现：积压 2.4 s 时，32 帧 0.32 s 的发声只剩 8 帧 0.08 s）~~ | 已关闭 | 原 O-8；**T-3 修复（不完整）**：保留 2 s 缓存上限；起点早于最早保留样本时，记录 `audio.speech_lost`（`reason=vad_backlog_overflow`，`missing_count` 为丢失样本数），以 `INPUT_GAP` 发布 `SPEECH_CANCELLED`，不路由剩余帧，并换一条已追上进度的新 VAD 流；只丢 pre-roll 时照常发布。回归：`test_audio_activity.py::test_speech_evicted_by_the_backlog_bound_is_cancelled_and_recovered`；review（`dca356f`）：换流后用户不停顿继续说话，新流把原句尾部当作新的一句，经 STT/TurnTaking 产生正常 COMMIT，KD-14 重开；**T-4 修复**：连续性缺口（`INPUT_GAP`、`VAD_INPUT_REJECTED`、感知流缺口）之后新建的 VAD 流，要先观察到 VAD 自身的结束静音（`min_silence_duration`）或一次 END_OF_SPEECH，才接纳语音开始；此前的 START 视为原句延续，不路由，记 `audio.speech_skipped`（`reason=unconfirmed_boundary`）。回归：`test_audio_activity.py::test_speech_continuing_through_a_gap_is_not_admitted_as_a_new_utterance`；范围说明：`INPUT_GAP` 会退役整个旧 speech epoch（该 speech source generation），其中尚未完成识别、尚未提交的前段也一并退役；已提交的 Turn 不变；review（`65bd40f`）：普通恢复已修好，另有三条旁路被确定性复现：恢复中再次失败会丢掉等待要求；感知缺口后首次发现的输入不受约束；pre-roll 会带回已跳过的尾句。**T-5 修复**：恢复要求属于输入 generation，只在当前流确认边界后解除，再次换流继承；感知缺口时记录 horizon，在其之前首次出现的输入 generation 也要确认边界；确认边界时把回放下界设为确认静音的起点，pre-roll 不越过。回归：`test_recovery_survives_a_stream_that_fails_before_its_boundary`、`test_input_first_seen_after_a_perception_gap_must_confirm_a_boundary`、`test_pre_roll_after_a_gap_never_reaches_back_into_skipped_speech`；review（`a2b6bde`）：快照用最新的 `changed_sequence` 判断 generation 是否在缺口之后出现，而状态更新时间不代表 generation 首次出现的时间；缺口与读快照之间同一 generation 发生一次静音再恢复，尾句会正常成段并经 STT/TurnTaking 产生 COMMIT。**T-6 修复**：缺口窗口内（序号不超过 horizon）该 generation 的任一事件都算"已存在"的证据，即使更新的快照先登记了这路输入，也要求确认边界；每次缺口对同一 generation 只记一次；最新状态序号仍负责过滤旧帧。回归：`test_snapshot_newer_than_a_gap_keeps_the_boundary_requirement` |
 | ~~KD-15~~ | ~~`HostLog` 在 `try` 之外创建接收 socket，创建失败（例如沙盒 EPERM）时，之前建立的私有目录不会被清理（既存缺口，review 环境实际触发）~~ | 已关闭 | **T-3 修复**：socket 创建移入 `try`，失败时关闭已创建的 socket、删除目录、恢复 endpoint。回归：`test_local_endpoints.py::test_host_log_construction_failure_releases_its_directory` |
 
 已撤回：「recall 结果包含 avatar owner」按 Q8 属于有意设计，不再列为缺陷。
@@ -958,7 +959,7 @@ T-3 中"先静音再恢复"的用例保留为对照，仍然通过。
 
 **旁路 3：回放下界**
 
-- 确认边界时，把回放下界设为确认静音的起点，即 `samples_index - raw_accumulated_silence`。
+- 确认边界时，把回放下界设为确认静音的起点，即 `samples_index - raw_accumulated_silence * sample_rate`（T-6 补正：原文漏写换算系数）。
 - `_start_segment` 的 `route_start_sample` 取 pre-roll 起点和这个下界中较大的一个。
 - 跨越下界的帧，以及起点早于下界的帧，都不回放。
 - 因此 pre-roll 可以覆盖确认边界的那段静音，但不会回到之前被跳过的语音。
@@ -967,8 +968,8 @@ T-3 中"先静音再恢复"的用例保留为对照，仍然通过。
 
 | 用例 | 场景与断言 |
 |---|---|
-| `test_recovery_survives_a_stream_that_fails_before_its_boundary` | KD-14 换流后继续讲话；在重建的流确认边界之前，让离线 VAD 推理超时一次，使这条流失败；之后的尾句仍被跳过，`audio.speech_skipped` 共 2 次，下一句完整成段 |
-| `test_input_first_seen_after_a_perception_gap_must_confirm_a_boundary` | `event_maxlen=64`；112 个事件先于消费者到达，Processor 在讲话中途才第一次见到这路输入；断言出现一次 `audio.input_gap`，剩余尾部不成段，下一句完整成段 |
+| `test_recovery_survives_a_stream_that_fails_before_its_boundary` | KD-14 换流后继续讲话；在重建的流确认边界之前，让离线 VAD 推理超时一次，使这条流失败；之后的尾句仍被跳过，`audio.speech_skipped` 共 2 次，下一句成段且不含旧帧（T-6 补正：T-5 时只断言了这两点，不足以称"完整"；T-6 已补上讲话帧完整的断言） |
+| `test_input_first_seen_after_a_perception_gap_must_confirm_a_boundary` | `event_maxlen=64`；112 个事件先于消费者到达，Processor 在讲话中途才第一次见到这路输入；断言出现一次 `audio.input_gap`，剩余尾部不成段，下一句成段且不含旧帧（T-6 补正同上） |
 | `test_pre_roll_after_a_gap_never_reaches_back_into_skipped_speech` | `pre_roll=0.3s`；被跳过的尾句之后只有 0.16 s 静音（足以确认边界，但短于 pre-roll），紧接下一句；断言路由的帧和成段的帧都不早于那段静音，下一句的讲话帧完整 |
 
 | 变异 / 对照 | 结果 |
@@ -994,6 +995,86 @@ T-3、T-4 的回归（静音后恢复、持续讲话、短停顿、VAD 队列拒
 
 - 断言仍停在 Audio Activity 的输出层，没有串起真实的 STT/TurnTaking 链路去断言 COMMIT。
 - 恢复要求在 MUTED、ENDED 等状态后会一直保留，直到下一次确认边界或 generation 前进。这符合"属于输入 generation"的约束，但没有专门用例。
+- KD-6、KD-7、KD-8、O-1、O-2、O-4、O-6、O-7 未改动；KD-10 的两点剩余见文首表；真实设备和服务验收仍未做。
+
+### 5. 未做事项
+
+- 没有 commit 或 push。
+- 没有修改 CI、依赖或 CLI。
+
+---
+
+## T-6 KD-14：快照不能抹掉缺口窗口中的证据
+
+- 日期：2026-11-02
+- 基线 HEAD：`a2b6bde44feda492317dabc28d979894484e2bdf`（T-5 的提交）
+- 依据：ChatGPT 对 `a2b6bde` 的 review。T-5 的三条旁路已修好，但仍有 1 个 P1，KD-14 暂不能关闭。
+- 问题：`_accept_input` 用快照中最新的 `changed_sequence` 判断这个 generation 是否在缺口之后才出现。但状态更新的时间并不代表 generation 首次出现的时间。review 用真实生产者线程做了确定性复现：
+  1. 输入此前尚未被 Processor 登记，连续讲话触发事件缺口，缺口批次的 `horizon=97`。
+  2. 读取快照之前，同一 generation 发生一次静音再恢复，状态序号变为 99。
+  3. 快照先登记了这路输入，因为 99 > 97，没有设置"等待边界"要求。
+  4. 后续同一句话的 32 帧尾音正常成段，并经真实的 STT/TurnTaking 链路产生了 1 次 COMMIT；没有并发状态变化的对照组则正确跳过尾音，COMMIT 为 0。
+- review 的建议：
+  - 最小修改：保留缺口批次中"这个 generation 已经存在"的证据，合并更新的快照后仍要求它确认边界；
+  - 最新状态序号继续负责过滤旧帧；真正位于 horizon 之后的新 generation 保持现有行为；
+  - 补一个上述并发回归，断言尾句不进入 STT、不产生 COMMIT。
+- 另外两处非阻断的日志问题：
+  - T-5 的下界公式漏了 `* sample_rate`；
+  - T-5 前两个新用例只证明了"成段且没有旧帧"，不足以宣称讲话帧"完整"。
+
+### 1. 修改文件
+
+| 类型 | 文件 | 说明 |
+|---|---|---|
+| 修改 | `avatar-plugins/perception/avatar-plugins-router/.../audio_activity/processor.py` | 缺口证据集合 `_gap_evidence` 和 `_require_boundary`；`_accept_input` 依据证据而不是"首次登记"来设置恢复要求 |
+| 修改 | `avatar-plugins/perception/avatar-plugins-router/tests/test_audio_activity.py` | +2：并发回归和对照组，接入真实的 STT/TurnTaking 链路；`assert_only_utterance` 增加讲话帧完整性断言，T-5 的三个用例同步加强 |
+
+用例数从 193 增加到 195。依赖、`uv.lock`、CI 均未改动。
+
+### 2. 修复说明
+
+- **以证据代替首次登记。** 缺口之后，只要某个 generation 有一个序号不超过 horizon 的事件（帧或状态），就说明它在缺口窗口内已经存在，此前的音频可能已经丢失，因此要求它确认边界。不论这路输入是由更新的快照先登记的，还是在缺口时就已知，都适用。
+- **每次缺口只记一次。** 同一次缺口中，每个 generation 只设置一次恢复要求（`_gap_evidence`）。之后到达的窗口内事件不会重新施加已经确认过的要求。每次新缺口都会重置这个集合。
+- **其余行为不变：**
+  - 最新状态序号（`changed_sequence`）照旧过滤状态变化之前的旧帧；
+  - horizon 之后首次出现的新 generation 照旧清除旧要求、不进入恢复；
+  - 缺口时已知的输入照旧标记，现在统一经由 `_require_boundary`。
+- **日志补正。** T-5 第 2 节的下界公式已改为 `samples_index - raw_accumulated_silence * sample_rate`，代码本身原就有此换算。T-5 第 3 节"完整成段"的表述已在原处加注。
+
+### 3. 回归与验证
+
+`test_snapshot_newer_than_a_gap_keeps_the_boundary_requirement`：`event_maxlen=64`，接入真实的 `SpeechTranscriptionProcessor` 和 `MultimodalTurnTakingProcessor`。离线 STT 在段提交时给出终稿，端点模型对每个已转写的候选都判定说完。
+
+| 参数 | 场景 |
+|---|---|
+| `snapshot-at-gap`（对照） | 先发布 ACTIVE 状态，再发 96 帧（16 帧静音、80 帧讲话）；97 个事件先于消费者到达，形成缺口，horizon=97 |
+| `state-after-gap` | 同上；另外在 Processor 读完缺口批次、读取快照之前注入同一 generation 的 MUTED、ACTIVE（序号 98、99），模拟 review 中生产者线程的时序 |
+
+两种参数的断言相同：
+- 尾句（32 帧讲话、16 帧尾静音）不路由、不成段，没有进入 STT；
+- 下一句成段，所有讲话帧都在段内，不含旧帧；
+- STT 只收到下一句这一段；
+- COMMIT 恰好 1 次；
+- 全程只有 1 次 `audio.input_gap`。后续音频分段推入，避免第二次缺口按"已知输入"重新打上标记、掩盖这条旁路。编写时就遇到过这种情况：一次性推入 112 帧会触发第二次缺口，使 HEAD 代码误通过。
+
+| 变异 / 对照 | 结果 |
+|---|---|
+| 临时恢复 `HEAD` 版 `processor.py`（之后已逐字节还原） | 只有 `state-after-gap` 失败：出现 2 个段、2 次 COMMIT，与 review 的复现一致；对照组和其余 12 个用例通过 |
+
+运行结果（均在 `cd /home/ecs-user/AlphaAvatar && source .venv/bin/activate` 之后执行）：
+
+| 项目 | 结果 |
+|---|---|
+| 全量（CI 方式：`PYTHONDONTWRITEBYTECODE=1 pytest -p no:cacheprovider --basetemp=…`）×3 | 3 次均为 **195 passed**，约 22.4–24.4 s；basetemp 无残留；`/tmp/aa-*` 无残留；本轮没有新增 `/tmp/alphaavatar-*` |
+| `test_audio_activity.py` ×3 | 14 passed ×3 |
+| 检出目录 | 前后 `git status --porcelain --ignored` 无差异 |
+| 压力入口默认一轮 | 6 passed，3.73 s |
+| Ruff / Workspace / Lock / pre-commit | 均通过 |
+
+### 4. 说明与仍未覆盖
+
+- 并发时序是在 `get_source_states` 处确定性注入的，模拟"读完批次之后、读取快照之前"有生产者写入；没有使用真实线程。
+- "每次缺口只记一次"这一点（确认边界后，窗口内的迟到事件不会重新施加要求）没有专门用例。
 - KD-6、KD-7、KD-8、O-1、O-2、O-4、O-6、O-7 未改动；KD-10 的两点剩余见文首表；真实设备和服务验收仍未做。
 
 ### 5. 未做事项
