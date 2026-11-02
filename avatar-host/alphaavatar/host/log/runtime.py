@@ -21,7 +21,6 @@ import select
 import shutil
 import socket
 import sys
-import tempfile
 import threading
 import time
 from collections import deque
@@ -31,6 +30,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import TextIO
 
+from alphaavatar.core.ipc import private_socket_path
 from alphaavatar.core.log.client import LogClient
 from alphaavatar.core.log.events import LABELS, TRACE_EVENTS, safe_fields
 from alphaavatar.core.log.records import LOG_ENDPOINT_ENV, MAX_PACKET_BYTES, LogEntry, Redactor
@@ -82,8 +82,7 @@ class HostLog:
         self._received = self._invalid = self._reported_dropped = self._sink_failures = 0
         self._failure: BaseException | None = None
         self._saved_endpoint = os.environ.get(LOG_ENDPOINT_ENV)
-        self._directory = tempfile.mkdtemp(prefix="alphaavatar-log-")
-        self._path = str(Path(self._directory) / "events.sock")
+        self._directory, self._path = private_socket_path("alphaavatar-log-", "events.sock")
         self._token = secrets.token_hex(32)
         self._socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         self.file_path: Path | None = None

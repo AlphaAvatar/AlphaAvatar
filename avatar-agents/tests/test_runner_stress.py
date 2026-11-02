@@ -91,15 +91,16 @@ def children() -> set[int]:
     return {process.pid for process in mp.active_children()}
 
 
-def descriptors() -> set[str] | None:
+def descriptors() -> Counter[str] | None:
     directory = Path("/proc/self/fd")
     if not directory.is_dir():
         return None
     resource_tracker.ensure_running()
-    targets = set()
+    # Count per target: two leaked descriptors may share one target such as a pipe.
+    targets: Counter[str] = Counter()
     for entry in directory.iterdir():
         try:
-            targets.add(os.readlink(entry))
+            targets[os.readlink(entry)] += 1
         except FileNotFoundError:
             pass
     return targets
@@ -240,6 +241,6 @@ async def test_repeated_runtime_start_stop_reclaims_processes_descriptors_and_en
         assert list(socket_root.iterdir()) == []
         after = descriptors()
         if fds is not None and after is not None:
-            assert after - fds == set()
+            assert after - fds == Counter()
     print(f"\n[stress] start_stop cycles={len(cycles)} cycle_{milliseconds(cycles)}")
     assert len(journal(tmp_path, JOURNAL)) == len(cycles)

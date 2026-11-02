@@ -185,7 +185,12 @@ class SpeechStreamer:
                 except asyncio.CancelledError as error:
                     if preparing.cancelled():
                         preparing = None
-                    if not asyncio.current_task().cancelling() and not job.cancelled:
+                    # Preparation stops for a revoked output; anything else is Provider failure.
+                    if (
+                        not asyncio.current_task().cancelling()
+                        and not job.cancelled
+                        and output.is_active(identity.output_id)
+                    ):
                         raise RuntimeError("TTS preparation cancelled itself") from error
                     raise
                 except Exception:
@@ -237,23 +242,28 @@ class SpeechStreamer:
                             # No alignment, subtitle network or typing timer is awaited here.
                             stage = "audio_delivery"
                             job.audio_attempted = True
-                            async with asyncio.timeout(self._limits.timeout):
-                                event = await output.publish(
-                                    EnvOutput(
-                                        kind=OutputKind.AUDIO_FRAME,
-                                        output_id=identity.output_id,
-                                        lane=identity.lane,
-                                        scope=identity.scope,
-                                        source=job.source,
-                                        payload=frame,
-                                        metadata=job.metadata,
+                            admitted = output.audio_sequence(identity.output_id)
+                            try:
+                                async with asyncio.timeout(self._limits.timeout):
+                                    event = await output.publish(
+                                        EnvOutput(
+                                            kind=OutputKind.AUDIO_FRAME,
+                                            output_id=identity.output_id,
+                                            lane=identity.lane,
+                                            scope=identity.scope,
+                                            source=job.source,
+                                            payload=frame,
+                                            metadata=job.metadata,
+                                        )
                                     )
-                                )
+                            finally:
+                                # An admitted frame may reach one consumer before interruption
+                                # withholds it from another; alignment covers it like the barrier.
+                                if output.audio_sequence(identity.output_id) != admitted:
+                                    samples += frame.samples_per_channel
+                                    job.published_audio_seconds += frame.duration_sec
                             if event is None:
                                 raise asyncio.CancelledError
-
-                            samples += frame.samples_per_channel
-                            job.published_audio_seconds += frame.duration_sec
                             if frames == 1:
                                 current.first = None
                                 logger.debug(

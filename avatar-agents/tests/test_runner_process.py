@@ -19,6 +19,7 @@ import asyncio
 import inspect
 import multiprocessing as mp
 import os
+from collections import Counter
 from collections.abc import Callable
 from multiprocessing import resource_tracker
 from pathlib import Path
@@ -53,29 +54,30 @@ async def wait_until(condition: Callable[[], bool], failure: str) -> None:
         pytest.fail(failure, pytrace=False)
 
 
-def open_descriptors() -> set[str] | None:
+def open_descriptors() -> Counter[str] | None:
     """Return this process's descriptor targets, or None where /proc is unavailable."""
     directory = Path("/proc/self/fd")
     if not directory.is_dir():
         return None
     # The resource tracker is process-wide stdlib infrastructure, not runner-owned.
     resource_tracker.ensure_running()
-    targets = set()
+    # Count per target: two leaked descriptors may share one target such as a pipe.
+    targets: Counter[str] = Counter()
     for entry in directory.iterdir():
         try:
-            targets.add(os.readlink(entry))
+            targets[os.readlink(entry)] += 1
         except FileNotFoundError:
             pass  # The descriptor used to list the directory has already closed.
     return targets
 
 
-def assert_released(process: RunnerProcess, pid: int | None, before: set[str] | None) -> None:
+def assert_released(process: RunnerProcess, pid: int | None, before: Counter[str] | None) -> None:
     assert pid is not None and process.pid is None
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
     after = open_descriptors()
     if before is not None and after is not None:
-        assert after - before == set()
+        assert after - before == Counter()
 
 
 async def test_round_trip_errors_and_close_release_the_child() -> None:
@@ -107,7 +109,7 @@ async def test_initialization_error_is_reported_and_reaped() -> None:
     assert process.pid is None
     after = open_descriptors()
     if before is not None and after is not None:
-        assert after - before == set()
+        assert after - before == Counter()
 
 
 async def test_dispatched_timeout_retires_the_process_instead_of_reusing_it() -> None:

@@ -98,6 +98,8 @@ class OfflineStream(TTSStreamBase):
     async def __anext__(self) -> AudioFrame:
         if self.closed or not self._frames:
             raise StopAsyncIteration
+        if self._tts.self_cancel == self.index:
+            raise asyncio.CancelledError  # A provider bug, not a caller's cancellation.
         while self._tts.budget is not None and len(self._tts.emitted) >= self._tts.budget:
             self._tts.more.clear()
             self._tts.stalled += 1
@@ -120,6 +122,7 @@ class OfflineTTS(TTSBase):
         self.budget: int | None = None  # Frames the provider may emit before it stalls.
         self.more = asyncio.Event()
         self.stalled = 0
+        self.self_cancel: int | None = None  # Request whose stream cancels itself.
 
     def allow(self, budget: int | None) -> None:
         self.budget = budget
@@ -436,6 +439,27 @@ async def test_interrupted_speech_withholds_old_pcm_and_text_but_settles_closing
     assert [item.partial for item in final_alignments(events, "answer")] == [cut == 3]
 
 
+async def test_interrupted_alignment_covers_audio_already_delivered_to_a_consumer(
+    speech: Speech,
+) -> None:
+    output, player = speech.output, speech.player
+    alignments = await speech.record("alignments", (OutputKind.ALIGNMENT,))
+    # A second reliable audio consumer stops reading, so the next frame reaches the player
+    # while its publication still waits on this queue.
+    await output.stream.subscribe("lagging_audio", kinds=(OutputKind.AUDIO_FRAME,), max_pending=1)
+    await speech.say("answer", "One long phrase keeps speaking for many frames here.")
+    await wait_until(lambda: len(player.pcm.get("answer", ())) == 2, "two frames never played")
+
+    await output.interrupt(turn_id="turn", reason="barge_in")
+    await wait_until(lambda: output.transcript_finalized("answer"), "old speech never settled")
+    delivered = len(player.pcm["answer"]) * SAMPLES / RATE
+    (final,) = final_alignments(alignments, "answer")
+    # The interrupted publication returned nothing, yet the player already holds its frame.
+    assert delivered == pytest.approx(2 * SAMPLES / RATE)
+    assert final.partial and final.start_time_sec == 0.0
+    assert final.end_time_sec == pytest.approx(delivered)
+
+
 async def test_revoked_answer_awaiting_tts_first_audio_is_interrupted_not_failed(
     speech: Speech, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -461,6 +485,22 @@ async def test_revoked_answer_awaiting_tts_first_audio_is_interrupted_not_failed
     assert audio_completion(events, "answer").reason != "speech_synthesis_failed"
     assert interrupts == ["barge_in"]
     assert not [record for record in caplog.records if record.levelname == "ERROR"]
+
+
+async def test_provider_self_cancellation_on_an_active_output_remains_a_failure(
+    speech: Speech, caplog: pytest.LogCaptureFixture
+) -> None:
+    output, tts = speech.output, speech.tts
+    events = await speech.record("observer", (OutputKind.CONTROL,))
+    tts.self_cancel = 0
+    await speech.say("answer", "A provider that cancels itself is not an interruption.")
+    await wait_until(lambda: output.transcript_finalized("answer"), "speech never settled")
+
+    # Only a revoked output may turn a preparation cancellation into an interruption.
+    assert audio_completion(events, "answer").reason == "speech_synthesis_failed"
+    (failure,) = [record for record in caplog.records if record.levelname == "ERROR"]
+    assert str(failure.exc_info[1]) == "TTS preparation cancelled itself"
+    assert speech.player.pcm.get("answer") is None
 
 
 @pytest.mark.stress

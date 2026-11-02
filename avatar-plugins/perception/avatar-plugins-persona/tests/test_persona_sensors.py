@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+from collections import deque
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
@@ -41,6 +43,8 @@ from alphaavatar.core.output import OutputRuntime
 from alphaavatar.core.perception import PerceptionRuntime
 from alphaavatar.core.perception.enums import PerceptionStreamKind
 from alphaavatar.core.session import SessionRuntime
+from alphaavatar.core.session.enums import IdentityOutcome, IdentitySource
+from alphaavatar.core.session.schemas import IdentityRequest
 from alphaavatar.core.time import RuntimeTimeRange
 from alphaavatar.core.turn import TurnRuntime
 from alphaavatar.core.workspace import WorkspacePaths, prepare_session_path, prepare_workspace
@@ -53,6 +57,8 @@ VDB = "alphaavatar.persona.vdb.lancedb"
 USERS = ("alice", "bob")
 # Constant PCM levels identify each physical speaker's audio inside the offline model double.
 LEVELS = {8192: "alice", 16384: "bob"}
+# The Persona VDB runner answers a miss with no result, or with a row that has no user.
+SEARCH_REPLIES = {"none": None, "empty-user": {"user_id": "", "score": 0.99}}
 
 
 def embedding(user: str, size: int) -> np.ndarray:
@@ -68,6 +74,10 @@ class SensorInference:
         self.searches: list[str] = []
         self.hold: str | None = None
         self.held, self.release = asyncio.Event(), asyncio.Event()
+        # Vector searches answer in order: "matched" or a SEARCH_REPLIES miss.
+        self.replies: deque[str] = deque()
+        self.hold_search = False
+        self.search_held, self.search_release = asyncio.Event(), asyncio.Event()
 
     async def _maybe_hold(self, user: str) -> None:
         if user == self.hold:
@@ -108,7 +118,13 @@ class SensorInference:
             kind = request["op"].split("_")[1]
             user = USERS[int(np.argmax(request["param"][f"{kind}_vector"]))]
             self.searches.append(f"{kind}:{user}")
-            return json.dumps({"user_id": user}).encode()
+            if self.hold_search:
+                self.hold_search = False
+                self.search_held.set()
+                await self.search_release.wait()
+            reply = self.replies.popleft() if self.replies else "matched"
+            result = {"user_id": user} if reply == "matched" else SEARCH_REPLIES[reply]
+            return None if result is None else json.dumps(result).encode()
         if request["op"] == "load":
             return b'{"details_items":[],"speaker_vector":null,"face_vector":null}'
         return b'{"user_id":"x","error":null}'
@@ -195,13 +211,16 @@ def speak(
         )
 
 
-def show(runtime: AvatarRuntime, source: PerceptionSourceRef, *users: str) -> None:
+def show(
+    runtime: AvatarRuntime, source: PerceptionSourceRef, *users: str, later: float = 0.0
+) -> None:
     payload = VideoFramePayload(frame_id=None, width=640, height=480)
     payload.put(PayloadFormat.IMAGE_JPEG_BYTES, "+".join(users).encode(), view=PayloadView.RAW)
     runtime.perception.publish_observation(
         EnvObservation(
             kind=ObservationKind.VIDEO_FRAME,
-            time_range=RuntimeTimeRange.point(runtime.clock.now()),
+            # A later capture time passes the per-source face sampling interval.
+            time_range=RuntimeTimeRange.point(runtime.clock.now().shifted(later)),
             source=source,
             device_id=source.source_id,
             payload=payload,
@@ -307,5 +326,135 @@ async def test_late_sensor_result_from_a_retired_source_never_binds_identity(
     for cache in persona.persona_cache.values():
         vector = cache.speaker_vector if sensor == "speaker" else cache.face_vector
         assert vector is None or cache.participant.user_id == "bob"
+    await persona.on_stop()
+    await runtime.aclose()
+
+
+def sense(
+    runtime: AvatarRuntime, sensor: str, source: PerceptionSourceRef, user: str, *, take: int = 0
+) -> PerceptionEntityRef:
+    """One observation of a user on a source that stays current; returns its physical entity."""
+    if sensor == "speaker":
+        speak(runtime, source, f"utterance-{take}", user)
+        return PerceptionEntityRef(f"voice-{user}")
+    show(runtime, source, user, later=take)
+    return PerceptionEntityRef(f"face-{user}")
+
+
+def observed(persona, participant_id: str, sensor: str) -> tuple[np.ndarray | None, object]:
+    cache = persona.persona_cache.get(participant_id)
+    if cache is None:
+        return None, None
+    vector = cache.speaker_vector if sensor == "speaker" else cache.face_vector
+    details = cache.profile_details
+    return vector, details.gender if details is not None else None
+
+
+def persona_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.name.startswith("alphaavatar.plugins.persona")
+        and record.levelno >= logging.WARNING
+    ]
+
+
+@pytest.mark.parametrize("reply", ["matched", "none", "empty-user"])
+@pytest.mark.parametrize("sensor", ["speaker", "face"])
+async def test_vector_search_miss_keeps_evidence_with_the_participant_without_binding(
+    sensor: str, reply: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.WARNING, logger="alphaavatar.plugins.persona")
+    inference = SensorInference()
+    inference.replies.append(reply)
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, sensor)
+    await persona.on_start()
+    source = PerceptionSourceRef("device", 1)
+    entity = sense(runtime, sensor, source, "alice")
+    await wait_until(
+        lambda: runtime.participants.resolve(source=source, entity=entity) is not None,
+        f"{sensor} entity was never associated",
+    )
+    participant = runtime.participants.resolve(source=source, entity=entity)
+    await wait_until(
+        lambda: observed(persona, participant.participant_id, sensor)[1] is not None,
+        f"{sensor} evidence was not applied",
+    )
+
+    current = runtime.participants.get(participant.participant_id)
+    generated = runtime.session.get_identity(participant.participant_id, 0)
+    vector, gender = observed(persona, participant.participant_id, sensor)
+    assert generated.user_id not in (None, "alice")
+    if reply == "matched":
+        # Control: the guards still let a valid same-source match bind the stored user.
+        assert (current.user_id, current.identity_sequence) == ("alice", 1)
+    else:
+        # A miss is no identity decision: the generated user and its version stay intact.
+        assert current == generated
+        assert participant_of(runtime, "alice") is None
+    np.testing.assert_allclose(vector, embedding("alice", 192 if sensor == "speaker" else 512))
+    assert gender is not None
+    assert inference.searches == [f"{sensor}:alice"]
+    assert runtime.participants.source_is_current(source)
+    assert persona_warnings(caplog) == []
+    await persona.on_stop()
+    await runtime.aclose()
+
+
+@pytest.mark.parametrize("reply", ["matched", "none"])
+@pytest.mark.parametrize("sensor", ["speaker", "face"])
+async def test_identity_switch_during_vector_search_discards_the_late_result(
+    sensor: str, reply: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.WARNING, logger="alphaavatar.plugins.persona")
+    inference = SensorInference()
+    # The held answer, the barrier participant's match, then the follow-up's miss.
+    inference.replies.extend((reply, "matched", "none"))
+    inference.hold_search = True
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, sensor)
+    await persona.on_start()
+    source = PerceptionSourceRef("device", 1)
+    entity = sense(runtime, sensor, source, "alice")
+    async with asyncio.timeout(HANG_GUARD):
+        await inference.search_held.wait()
+
+    # The Agent corrects the speaker to someone never perceived while the lookup is in flight.
+    before = runtime.participants.resolve(source=source, entity=entity)
+    outcome = runtime.participants.bind_user(
+        IdentityRequest(
+            participant_id=before.participant_id,
+            user_id="carol",
+            source=IdentitySource.AGENT,
+            basis_sequence=before.identity_sequence,
+            reason="The speaker introduced themself as Carol.",
+        )
+    )
+    assert outcome == IdentityOutcome.APPLIED
+    inference.search_release.set()
+    # Sensor work is serial: another person's resolution proves the late result was handled.
+    sense(runtime, sensor, PerceptionSourceRef("barrier", 1), "bob")
+    await wait_until(lambda: participant_of(runtime, "bob") is not None, "Barrier never resolved")
+
+    carol = runtime.participants.get(before.participant_id)
+    assert carol.user_id == "carol" and carol.identity_sequence == before.identity_sequence + 1
+    assert participant_of(runtime, "alice") is None
+    # Evidence judged against the previous identity never lands in Carol's observations.
+    assert observed(persona, carol.participant_id, sensor) == (None, None)
+    assert runtime.participants.source_is_current(source)
+    assert runtime.participants.resolve(source=source, entity=entity) == carol
+
+    # The same, still-current source keeps working for the corrected identity.
+    sense(runtime, sensor, source, "alice", take=1)
+    await wait_until(
+        lambda: observed(persona, carol.participant_id, sensor)[1] is not None,
+        "The corrected participant stopped receiving evidence",
+    )
+    vector, _ = observed(persona, carol.participant_id, sensor)
+    np.testing.assert_allclose(vector, embedding("alice", 192 if sensor == "speaker" else 512))
+    assert runtime.participants.get(carol.participant_id) == carol
+    assert inference.searches == [f"{sensor}:alice", f"{sensor}:bob", f"{sensor}:alice"]
+    assert persona_warnings(caplog) == []
     await persona.on_stop()
     await runtime.aclose()

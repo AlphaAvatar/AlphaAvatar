@@ -18,13 +18,13 @@ import logging
 import multiprocessing as mp
 import os
 import shutil
-import tempfile
 import time
 from collections import deque
 from dataclasses import replace
 from multiprocessing.context import BaseContext
 
 from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.ipc import private_socket_path
 
 from .process import RunnerProcess
 from .protocol import (
@@ -103,7 +103,7 @@ class InferenceRuntime:
         self._client_tasks: set[asyncio.Task[None]] = set()
         self._client_writers: set[asyncio.StreamWriter] = set()
         self._start_task: asyncio.Task[None] | None = None
-        self._directory_task: asyncio.Task[str] | None = None
+        self._directory_task: asyncio.Task[tuple[str, str]] | None = None
         self._listen_task: asyncio.Task[None] | None = None
         self._close_task: asyncio.Task[None] | None = None
         self._started = False
@@ -120,14 +120,19 @@ class InferenceRuntime:
         return self._endpoint
 
     @property
-    def is_alive(self) -> bool:
+    def _serving(self) -> bool:
+        # Admission is per method; one failed runner must not refuse its healthy peers.
         return bool(
             self._started
             and self._close_task is None
             and self._server is not None
             and self._server.is_serving()
-            and all(runner.is_alive for runner in self._runners.values())
         )
+
+    @property
+    def is_alive(self) -> bool:
+        """Overall health for supervision and recovery, not request admission."""
+        return self._serving and all(runner.is_alive for runner in self._runners.values())
 
     def snapshot(self) -> tuple[InferenceRunnerStatus, ...]:
         """Read startup facts and current readiness without inspecting model or request data."""
@@ -214,11 +219,10 @@ class InferenceRuntime:
             raise RuntimeError("An inference endpoint is already configured in this process")
 
         self._directory_task = asyncio.create_task(
-            asyncio.to_thread(tempfile.mkdtemp, prefix="alphaavatar-inference-")
+            asyncio.to_thread(private_socket_path, "alphaavatar-inference-", "runtime.sock")
         )
         self._directory_task.add_done_callback(self._observe)
-        self._socket_dir = await asyncio.shield(self._directory_task)
-        self._endpoint = f"{self._socket_dir}/runtime.sock"
+        self._socket_dir, self._endpoint = await asyncio.shield(self._directory_task)
         self._listen_task = asyncio.create_task(self._listen())
         self._listen_task.add_done_callback(self._observe)
         await asyncio.shield(self._listen_task)
@@ -266,7 +270,7 @@ class InferenceRuntime:
             raise
 
     def _accept_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        if not self.is_alive or len(self._client_tasks) >= self._max_clients:
+        if not self._serving or len(self._client_tasks) >= self._max_clients:
             writer.transport.abort()
             return
 
@@ -339,11 +343,13 @@ class InferenceRuntime:
     async def do_inference(
         self, method: str, data: bytes, *, timeout: float | None = None
     ) -> bytes | None:
-        if not self.is_alive:
+        if not self._serving:
             raise RuntimeError("Inference runtime is not ready")
-        runner = self._runners.get(method)
-        if runner is None:
+        if method not in self._runner_classes:
             raise ValueError(f"Inference runner {method!r} is not registered")
+        runner = self._runners.get(method)
+        if runner is None or not runner.is_alive:
+            raise RuntimeError("Inference runner temporarily unavailable")
         return await runner.run(data, timeout=timeout)
 
     async def recover_failed_runners(self) -> bool:
@@ -414,8 +420,8 @@ class InferenceRuntime:
             await asyncio.gather(self._start_task, return_exceptions=True)
         if self._directory_task is not None:
             results = await asyncio.gather(self._directory_task, return_exceptions=True)
-            if isinstance(results[0], str):
-                self._socket_dir = results[0]
+            if isinstance(results[0], tuple):
+                self._socket_dir = results[0][0]
         if self._listen_task is not None:
             await asyncio.gather(self._listen_task, return_exceptions=True)
         errors: list[Exception] = []

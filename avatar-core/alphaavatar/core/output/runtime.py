@@ -486,6 +486,11 @@ class OutputRuntime:
         record = self._outputs.get(output_id)
         return record.last_text_sequence if record is not None else 0
 
+    def audio_sequence(self, output_id: str) -> int:
+        """Last admitted audio sequence; the frame may have reached only some consumers."""
+        record = self._outputs.get(output_id)
+        return record.last_audio_sequence if record is not None else 0
+
     def can_deliver(self, output_id: str) -> bool:
         record = self._outputs.get(output_id)
         return record is not None and record.interruptible and self._delivery_guard(record)

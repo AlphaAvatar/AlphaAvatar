@@ -36,7 +36,7 @@ from alphaavatar.agents.avatar.provider.schemas.model_input import (
     ModelTextPart,
 )
 from alphaavatar.agents.avatar.provider.schemas.model_result import ProviderModelResult
-from alphaavatar.agents.memory.enums import MemoryType
+from alphaavatar.agents.memory.enums import MemoryOwnerKind, MemoryScopeKind, MemoryType
 from alphaavatar.agents.memory.schemas import (
     MemoryCheckpointAdvance,
     MemoryContextRef,
@@ -57,6 +57,8 @@ from alphaavatar.core.output.schemas import OutputScope
 from alphaavatar.core.perception import PerceptionRuntime
 from alphaavatar.core.perception.enums import PerceptionStreamKind
 from alphaavatar.core.session import SessionRuntime
+from alphaavatar.core.session.enums import IdentityOutcome, IdentitySource
+from alphaavatar.core.session.schemas import IdentityBasis, IdentityRequest
 from alphaavatar.core.time import RuntimeTimeRange
 from alphaavatar.core.turn import TurnRuntime
 from alphaavatar.core.turn.enums import TurnInputModality
@@ -64,7 +66,7 @@ from alphaavatar.core.turn.schemas import TurnEntityRef, TurnSnapshot
 from alphaavatar.core.workspace import WorkspacePaths, prepare_session_path, prepare_workspace
 from alphaavatar.plugins.memory.processors.environment.config import EnvironmentSchedulerConfig
 from alphaavatar.plugins.memory.processors.environment.scheduler import EnvMemoryScheduler
-from alphaavatar.plugins.memory.schemas.patch import MemoryDelta
+from alphaavatar.plugins.memory.schemas.patch import MemoryDelta, PatchOp
 from alphaavatar.plugins.memory.state import MemoryContextState
 from alphaavatar.plugins.memory.storage.sqlite import SQLiteMemoryStore
 
@@ -361,6 +363,196 @@ async def test_failed_or_cancelled_context_waits_for_all_finalization_before_sto
     assert await checkpoint(runtime, root.context_id, "conversation") == 0
     assert await checkpoint(runtime, root.context_id, "tool") == 1
     assert not memory_tasks()
+    await runtime.aclose()
+
+
+def tool_records(
+    runtime: AvatarRuntime,
+    context_id: str,
+    snapshot: TurnSnapshot,
+    tag: str,
+    basis: IdentityBasis | None = None,
+) -> None:
+    runtime.output.publish_records(
+        model_record_batch(
+            batch_id=f"records-{tag}",
+            source="test",
+            scope=OutputScope(context_id=context_id, turn_id=snapshot.turn_id),
+            identity_basis=runtime.participants.identity_basis(snapshot)
+            if basis is None
+            else basis,
+            items=(
+                ModelFunctionCall(
+                    id=f"call-{tag}", call_id=f"c-{tag}", name="lookup", arguments='{"q":2}'
+                ),
+                ModelFunctionOutput(
+                    id=f"output-{tag}",
+                    call_id=f"c-{tag}",
+                    name="lookup",
+                    parts=(ModelTextPart(f"<{tag} result>"),),
+                    is_error=False,
+                ),
+            ),
+        )
+    )
+
+
+def open_side(runtime: AvatarRuntime, memory, *participants) -> MemoryContextState:
+    root = memory.context_state(memory.root_context_id)
+    return memory.open_context(
+        context=MemoryContextRef(
+            episode_id=root.context.episode_id,
+            context_id="side",
+            session_id="session",
+            parent_context_id=root.context_id,
+        ),
+        provider_dir=runtime.session_path.provider_dir,
+        owner_refs=[MemoryOwnerRef.avatar("avatar")],
+        participants=participants,
+    )
+
+
+async def test_failed_tool_extraction_keeps_its_checkpoint_and_surfaces_at_close(
+    tmp_path: Path,
+) -> None:
+    async def tool(prompt: str) -> MemoryDelta:
+        raise ConnectionError("tool provider offline")
+
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=empty, tool=tool))
+    memory, actor = memory_for(runtime), speaker(runtime)
+    await memory.on_start()
+    turn = commit_turn(runtime, actor, 0, "look this up")
+    tool_records(runtime, memory.root_context_id, turn, "root")
+    state = memory.context_state(memory.root_context_id)
+    await wait_until(lambda: state.message_sequence == 3, "Memory never received the tool records")
+    held = state.messages_between(0, 3)
+
+    with pytest.raises(ExceptionGroup) as failed:
+        await memory.on_stop()
+    assert failed.group_contains(ConnectionError)
+    assert await checkpoint(runtime, state.context_id, "tool") == 0
+    # The failed processor does not stop another processor's finalization.
+    assert await checkpoint(runtime, state.context_id, "conversation") == 3
+    assert held[0] is turn
+    assert all(
+        left is right for left, right in zip(state.messages_between(0, 3), held, strict=True)
+    )
+    assert not memory.memory_state.get(memory_type=MemoryType.TOOLS)
+    assert not memory_tasks()
+    await runtime.aclose()
+
+
+@pytest.mark.parametrize(
+    "failure", [RuntimeError("tool failed"), asyncio.CancelledError()], ids=["error", "cancelled"]
+)
+async def test_tool_failure_in_one_context_never_fail_fasts_the_other_contexts(
+    failure: BaseException, tmp_path: Path
+) -> None:
+    entered, failed, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def tool(prompt: str) -> MemoryDelta:
+        if "<side result>" in prompt:
+            entered.set()
+            await release.wait()
+            return MemoryDelta(user_or_tool_memory_entries=[PatchOp(value="side lookup kept")])
+        failed.set()
+        raise failure
+
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=empty, tool=tool))
+    memory, actor = memory_for(runtime), speaker(runtime)
+    await memory.on_start()
+    root, side = memory.context_state(memory.root_context_id), open_side(runtime, memory)
+    tool_records(runtime, root.context_id, commit_turn(runtime, actor, 0, "root context"), "root")
+    tool_records(runtime, "side", commit_turn(runtime, actor, 1, "side context", "side"), "side")
+    await wait_until(
+        lambda: root.message_sequence == side.message_sequence == 3, "Records were not routed"
+    )
+    (processor,) = (item for item in memory._processors if item.name == "tool")
+
+    stopping = asyncio.create_task(memory.on_stop())
+    async with asyncio.timeout(HANG_GUARD):
+        await asyncio.gather(entered.wait(), failed.wait())
+    for _ in range(20):
+        await asyncio.sleep(0)
+    # The failed context has settled; Tool finalization, the Store and its outbox stay open.
+    assert processor.started and not stopping.done()
+    assert {task.get_name() for task in memory_tasks() if not task.done()} >= {
+        "memory_outbox:index",
+        "memory_outbox:export",
+    }
+
+    release.set()
+    with pytest.raises(ExceptionGroup) as stopped:
+        await stopping
+    assert stopped.group_contains(type(failure) if isinstance(failure, Exception) else RuntimeError)
+    for context_id, name, expected in (
+        ("side", "tool", 3),
+        ("side", "conversation", 3),
+        (root.context_id, "conversation", 3),
+        (root.context_id, "tool", 0),
+    ):
+        assert await checkpoint(runtime, context_id, name) == expected
+    (item,) = memory.memory_state.get(memory_type=MemoryType.TOOLS)
+    assert (item.value, item.context.context_id) == ("side lookup kept", "side")
+    assert not memory_tasks()
+    await runtime.aclose()
+
+
+def correct(runtime: AvatarRuntime, participant_id: str, user_id: str) -> None:
+    current = runtime.participants.get(participant_id)
+    request = IdentityRequest(
+        participant_id=participant_id,
+        user_id=user_id,
+        source=IdentitySource.AGENT,
+        basis_sequence=current.identity_sequence,
+        reason="The user corrected their name",
+    )
+    assert runtime.participants.bind_user(request) is IdentityOutcome.APPLIED
+
+
+@pytest.mark.parametrize("correction", ["none", "before-execution", "after-execution"])
+async def test_model_records_are_attributed_by_their_own_identity_basis(
+    correction: str, tmp_path: Path
+) -> None:
+    async def tool(prompt: str) -> MemoryDelta:
+        return MemoryDelta(user_or_tool_memory_entries=[PatchOp(value="prefers window seats")])
+
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=empty, tool=tool))
+    memory, actor = memory_for(runtime), speaker(runtime)
+    await memory.on_start()
+    # Agent tool work is recorded in a child context; the user's Turn lives in the parent.
+    side = open_side(runtime, memory, *runtime.session.participants.values())
+    turn = commit_turn(runtime, actor, 0, "book my usual seat")
+    if correction == "before-execution":
+        correct(runtime, actor.participant_id, "bob")
+    basis = runtime.participants.identity_basis(turn)  # Captured when the execution starts.
+    if correction == "after-execution":
+        correct(runtime, actor.participant_id, "bob")
+    tool_records(runtime, "side", turn, "side", basis=basis)
+    await wait_until(lambda: side.message_sequence == 2, "Memory never received the records")
+    await memory.on_stop()
+
+    (item,) = memory.memory_state.get(memory_type=MemoryType.TOOLS)
+    (ref,) = basis.participants
+    # Durable evidence keeps the record's own basis, not the Turn's or the current identity.
+    assert item.extra_data["session_identity"]["actors"] == [
+        {
+            "participant_id": ref.participant_id,
+            "user_id": ref.user_id,
+            "identity_sequence": ref.identity_sequence,
+        }
+    ]
+    owners = {(owner.kind, owner.id) for owner in item.owner_refs}
+    if correction == "after-execution":
+        # A record admitted under a superseded identity never reaches the corrected user.
+        assert ref.user_id == "alice"
+        assert owners == {(MemoryOwnerKind.AVATAR, "avatar")}
+        assert item.scope.kind is MemoryScopeKind.CONTEXT and item.extra_data["unattributed_input"]
+    else:
+        assert ref.user_id == ("bob" if correction == "before-execution" else "alice")
+        assert owners == {(MemoryOwnerKind.USER, ref.user_id)}
+        assert item.scope.kind is MemoryScopeKind.OWNER
+        assert "unattributed_input" not in item.extra_data
     await runtime.aclose()
 
 

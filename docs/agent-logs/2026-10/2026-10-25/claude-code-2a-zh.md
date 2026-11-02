@@ -12,7 +12,8 @@
 | 2A-1 审计修正 | 加强两个取消回归测试 | 2026-10-25 | `780091c` | `5c2c5b7` | 已验收；CI 21 passed |
 | 2A-2a | `avatar.id` 必填 | 2026-10-25 | `5c2c5b7` | `468c807` | 已验收；CI Lint、Build、Install 通过，23 passed |
 | 2A-C1 | 删除未使用的 Host diagnostics | 2026-10-26 | `468c807` | `00cc6ef` | 已验收；CI Lint、Build、Install 通过，23 passed；KD-9 关闭 |
-| T-1 | 必要回归测试补全与 KD/O 复核（只改测试） | 2026-11-02 | `f708b26` | 未提交 | 待审查；收集 144 个，142 passed，2 个为保留的缺陷复现（KD-11、KD-12） |
+| T-1 | 必要回归测试补全与 KD/O 复核（只改测试） | 2026-11-02 | `f708b26` | `161e35f` | 已 review：测试保留，未验收；按 review 进入 T-2 修复缺陷 |
+| T-2 | 修复 KD-11、KD-12、KD-13、O-3，补定向测试与测试设施 | 2026-11-02 | `161e35f` | 未提交 | 待审查；收集 183 个，183 passed（CI 方式 ×3） |
 
 ## 已知缺陷（当前状态，只记录不修复）
 
@@ -28,15 +29,17 @@
 | KD-8 | Health 服务默认暴露在网络上（绑定 `0.0.0.0`），`/status` 没有鉴权 | Host 批次 | 2A-1 记录；**T-1 复核：未变**（`HealthConfig.bind` 默认 `0.0.0.0`，`/status` 无鉴权） |
 | ~~KD-9~~ | ~~`host/diagnostics.py` 无引用、与 Core diagnostics 重复、与计划中的 `host/diagnostics/` 包同名冲突~~ | 已关闭 | 2A-1 记录；**2A-C1 删除文件后解决** |
 | KD-10 | **待修复（数据完整性，高优先级）**。临时身份 B 解析为稳定身份 A 的链路有四类风险：① **文件丢失**：会话关闭时 `flush_user_path_migrations(remove_old=True)` 先做不覆盖合并，再 `rmtree` 旧目录，两边同名的文件中旧目录那份被删除；连续解析 B→A→C 会删除稳定用户 A 的目录；② **Memory 归属**：上下文 Owner 只在消费 Turn 或输出记录时才同步，已持久化的 B 记录从不更新 Owner，A 之后检索不到；③ **Persona 合并**：A 已有 Details 时整体丢弃 B 的 Details；身份解析前提交、解析后才消费的 Turn 被 Profiler 丢弃；④ **重复或错误的身份解析**：已稳定的身份可被再次重绑定；`load_profile` 不区分证据来自哪个 Participant，缺少可比较向量时直接视为匹配；未注册 Participant 的声纹和人脸会写入主 Participant | KD10-1…KD10-5，逐批授权 | 2A-2b 审计记为候选；2026-10-27 独立审计确认，并用合成数据离线复现，标为待修复；2A-2b-1 暂缓；**T-1 复核：主体已修复，剩余两点未覆盖**。① 关闭时的 flush/merge/rmtree 已全部删除（源码无引用），改绑不做磁盘 I/O；② 按已接受的设计，历史持久记录的 Owner 不重写（`test_memory_batches_never_reassign_earlier_turns_to_a_corrected_user`），纠正后 A 能否检索 B 的旧记录属于延期的多人历史政策；③ Persona 改为按 Participant 缓存，字段级合并（`merge_profile_items`），来源优先级和乱序增量有回归，但"解析前提交、解析后消费的 Turn"是否被 Profiler 丢弃，本轮没有单独覆盖；④ 身份可纠正是已接受的设计（被动 B→A、主动 A→C，Agent 改绑走 CAS），`load_profile` 按 Participant 加载并在每次 await 后重查身份，Speaker/Face 证据按 Participant 隔离，旧 source generation 的迟到结果不能绑定身份（`test_persona_sensors.py`、`test_participant_identity.py`、`test_session_identity.py`） |
-| KD-11 | **新增（T-1，失败复现已保留）**。任一 Runner 处于故障状态时，`InferenceRuntime._accept_client` 因 `not self.is_alive`（要求全部 Runner 存活）直接 abort 所有**新**连接。Executor 按 method 懒连接，所以会话在故障窗口内首次使用另一个健康 method 时，收到裸 `ConnectionResetError`，而不是 "temporarily unavailable"。已建立的连接不受影响。与"不同 method 独立推进"不一致；对真实模型 Runner，故障窗口可能持续数秒 | 需单独授权（Inference） | 复现：`avatar-agents/tests/test_inference_runtime.py::test_failed_method_does_not_refuse_first_use_of_a_healthy_method` |
-| KD-12 | **新增（T-1，失败复现已保留，低严重度）**。Engine 先 `revoke_run` 再 `interrupt`，若两步之间下一句 TTS 首帧到达：`SegmentPreparer.prepare` 因 output 不再 active 抛 CancelledError，`SpeechStreamer.run` 在 `job.cancelled` 仍为 False 时把它当成"准备阶段自己取消"，转成 `RuntimeError("TTS preparation cancelled itself")`。结果 AUDIO_COMPLETE 的 reason 是 `speech_synthesis_failed`，并记 ERROR 日志；帧循环对同一条件判为 `synthesis_interrupted`，两条路径不一致。PCM 已正确停止，收尾事实都完成 | Router/Speech 批次 | 复现：`avatar-plugins/perception/avatar-plugins-router/tests/test_speech_synthesis.py::test_revoked_answer_awaiting_tts_first_audio_is_interrupted_not_failed` |
+| ~~KD-11~~ | ~~任一 Runner 处于故障状态时，`InferenceRuntime._accept_client` 因 `not self.is_alive`（要求全部 Runner 存活）直接 abort 所有**新**连接。Executor 按 method 懒连接，所以会话在故障窗口内首次使用另一个健康 method 时，收到裸 `ConnectionResetError`，而不是 "temporarily unavailable"。已建立的连接不受影响。与"不同 method 独立推进"不一致；对真实模型 Runner，故障窗口可能持续数秒~~ | 已关闭 | T-1 新增并保留失败复现；review 补充：`do_inference()` 同样受影响，健康连接取消后重连也会被拒；**T-2 修复**：服务准入（`_serving`）与目标 Runner 健康分开判断，总体 `is_alive` 保留给 Host 监测和恢复。回归：`test_inference_runtime.py::test_failed_method_does_not_refuse_first_use_of_a_healthy_method`（已扩展） |
+| ~~KD-12~~ | ~~Engine 先 `revoke_run` 再 `interrupt`，若两步之间下一句 TTS 首帧到达：`SegmentPreparer.prepare` 因 output 不再 active 抛 CancelledError，`SpeechStreamer.run` 在 `job.cancelled` 仍为 False 时把它当成"准备阶段自己取消"，转成 `RuntimeError("TTS preparation cancelled itself")`。结果 AUDIO_COMPLETE 的 reason 是 `speech_synthesis_failed`，并记 ERROR 日志；帧循环对同一条件判为 `synthesis_interrupted`，两条路径不一致。PCM 已正确停止，收尾事实都完成~~ | 已关闭 | T-1 新增并保留失败复现（低严重度）；**T-2 修复**：准备阶段的取消在 output 已失效时按打断处理，output 仍有效时保持 Provider 自取消的错误边界。回归：`test_speech_synthesis.py::test_revoked_answer_awaiting_tts_first_audio_is_interrupted_not_failed`、`test_provider_self_cancellation_on_an_active_output_remains_a_failure` |
+| ~~KD-13~~ | ~~打断时 partial alignment 漏计已交付的音频：`SpeechStreamer` 只在 `publish()` 完整返回后累计 samples；帧已被一个消费者取走、另一个消费者仍在反压中时，打断让该调用返回 `None`，这一帧不计入最终 alignment（消费端收到 2 帧 0.020 s，alignment 只有 0.010 s）~~ | 已关闭 | T-1 记为未复现的观察；review 做成确定性复现；**T-2 修复**：按 Output 的接纳序号判断，帧一旦被接纳（与 AUDIO_COMPLETE barrier 覆盖范围一致）即计入，未被接纳的帧不计。回归：`test_speech_synthesis.py::test_interrupted_alignment_covers_audio_already_delivered_to_a_consumer` |
 | O-1 | 初始化期间取消 Runner，要先等满 `close_timeout`（默认 5 s）才发 SIGTERM；测试中以 0.5 s 观测到 | 仅记录 | 2A-1 记录；**T-1 复核：仍存在**。实测 `close_timeout=0.5` 时为 0.50 s，`2.0` 时为 2.00 s |
 | O-2 | 导入 `alphaavatar.agents.configs` 会立即加载全部插件和 torch、cv2、weasyprint、openai 等（约 1.7 s）；导入期间第三方库会改写 `LD_LIBRARY_PATH`、`QT_QPA_*`、`OPENBLAS_MAIN_FREE` 等变量 | 仅记录 | 2A-2a 新增；**T-1 复核：部分改善**。干净解释器中约 0.92 s，不再导入 torch；仍加载 cv2、weasyprint、openai、numpy 和 memory/persona/router/voice 插件；仍改写 `LD_LIBRARY_PATH`、`QT_QPA_FONTDIR`、`QT_QPA_PLATFORM_PLUGIN_PATH` |
-| O-3 | `InferenceRuntime` 把 socket 建在 `tempfile` 目录下（`alphaavatar-inference-*/runtime.sock`），TMPDIR 较长时超过 AF_UNIX 路径上限（约 104–108 字节），启动时报 OSError，没有预检 | 仅记录 | T-1 新增；测试改用根 conftest 的 `socket_root` 短路径 |
+| ~~O-3~~ | ~~`InferenceRuntime` 把 socket 建在 `tempfile` 目录下（`alphaavatar-inference-*/runtime.sock`），TMPDIR 较长时超过 AF_UNIX 路径上限（约 104–108 字节），启动时报 OSError，没有预检~~ | 已关闭 | T-1 新增；review 改判为启动兼容性缺陷；**T-2 修复**：新增 `alphaavatar.core.ipc.private_socket_path`，Inference 与 Host 日志的 socket 优先放在配置的临时目录，超过 100 字节时回退到 `/tmp` 下新建的私有（0700）目录，都不满足时给出明确的 ENAMETOOLONG。回归：`avatar-host/tests/test_local_endpoints.py` |
 | O-4 | Speaker/Face 的 `_inference_loop` 依赖在途任务抛出取消。若被等待的调用吞掉取消并正常返回，循环自身的取消会丢失，`_stop()` 会挂住。真实 InferenceExecutor 会传播取消，`_process` 也会重新抛出，所以正常生产路径不受影响；Profiler 有 `cancelling()` 防护，这两个循环没有 | 仅记录（未确认风险） | T-1 新增；只能用吞掉取消的替身复现，且会挂死，所以没有提交失败用例 |
-| O-5 | ENV Memory 批次附带的对话上下文只取最后 `max_context_messages`（64）条、`max_context_chars`（8192）字符。这是补充上下文，不是抽取输入；ENV 默认关闭，批次按事件数/时长有界 | 待维护者判断 | T-1 新增；conversation/tool 抽取已验证不截断。是否与"不截断文本"冲突，请维护者决定 |
+| ~~O-5~~ | ~~ENV Memory 批次附带的对话上下文只取最后 `max_context_messages`（64）条、`max_context_chars`（8192）字符~~ | 已关闭（设计如此） | T-1 新增，交维护者判断；**review 结论：不需修改**。这是 ENV 的有限辅助 prompt；完整的 Conversation/Tool 输入和原始 Turn 都没有被裁剪 |
 | O-6 | `agents/utils/vdb/lancedb.py` 使用已弃用的 `table_names()`，测试中出现 DeprecationWarning（全量 28 条） | 仅记录 | T-1 新增 |
 | O-7 | `MCPConfig` 未设置 `hide_input_in_errors`，ValidationError 文本可能带出部分原始 `servers` 输入（可能含明文 secret）。CLI 当前只输出字段名 | 仅记录 | T-1 新增 |
+| O-8 | VAD 积压超过 `max_buffer_sec`（2 s）时最旧的帧被淘汰，语音开头丢失且没有 trace 记录；看起来是有界内存的有意取舍 | 仅记录 | T-2 新增（语音上游测试中观察到，未断言） |
 
 已撤回：「recall 结果包含 avatar owner」按 Q8 属于有意设计，不再列为缺陷。
 
@@ -575,3 +578,138 @@ filterwarnings = ["error::ResourceWarning", "error::pytest.PytestUnraisableExcep
 - 没有修改生产代码，没有修复任何 KD/O。
 - 没有新增 CLI 功能或通用测试框架，没有改 CI。
 - 没有 commit 或 push。
+
+---
+
+## T-2 修复 review 确认的缺陷并补定向测试
+
+- 日期：2026-11-02
+- 基线 HEAD：`161e35f6453c76f6f29ecd08b9ad72948732bc7a`（T-1 的提交）
+- 依据：ChatGPT 对 `161e35f` 的 review。结论是"测试值得保留但未验收，直接修复明确缺陷，不先加 xfail"。本轮范围：
+  - 修复 KD-11、KD-13（review 新确认的 partial alignment 漏计）、KD-12、O-3；
+  - 补 Memory、Persona、语音上游三处测试缺口和三项测试设施问题；
+  - O-5 不改代码，只修正日志措辞。
+- review 环境说明：review 方本地选跑了 113 项，其中 3 项因系统禁止创建 AF_UNIX socket 而无法运行，所以 review 没有把 T-1 的"142／2"当作独立复测结果。本节结果都在本机得到。
+
+### 1. 修改文件
+
+| 类型 | 文件 | 说明 |
+|---|---|---|
+| 修改 | `avatar-agents/alphaavatar/agents/runtime/inference/runtime.py` | KD-11：服务准入与目标 Runner 健康分开判断；O-3：socket 目录改用 `private_socket_path` |
+| 修改 | `avatar-plugins/perception/avatar-plugins-router/.../speech_synthesis/streaming.py` | KD-12：准备阶段取消的分类；KD-13：按接纳序号计入音频 |
+| 修改 | `avatar-core/alphaavatar/core/output/runtime.py` | 新增只读 `audio_sequence(output_id)`，与已有的 `text_sequence` 同类 |
+| 新增 | `avatar-core/alphaavatar/core/ipc.py` | `private_socket_path`、`MAX_SOCKET_PATH = 100` |
+| 修改 | `avatar-host/alphaavatar/host/log/runtime.py` | O-3：Host 日志 socket 改用 `private_socket_path` |
+| 修改 | `conftest.py` | `--stress-seconds` 拒绝负数、NaN、无穷；`owned_endpoints` 只接受绝对 AF_UNIX 路径或数字回环 `(host, port)`，并按 socket family 匹配 |
+| 修改 | `avatar-agents/tests/test_runner_process.py`、`test_inference_runtime.py`、`test_runner_stress.py` | fd 泄漏检查改为按 target 计数（`Counter`），不再比较 target 集合 |
+| 修改 | `avatar-agents/tests/test_inference_runtime.py` | 扩展 KD-11 回归 |
+| 修改 | `avatar-plugins/perception/avatar-plugins-router/tests/test_speech_synthesis.py` | KD-13 回归；Provider 自取消边界；离线 TTS 增加 `self_cancel` |
+| 修改 | `avatar-plugins/perception/avatar-plugins-memory/tests/test_memory_runtime.py` | +6 |
+| 修改 | `avatar-plugins/perception/avatar-plugins-persona/tests/test_persona_sensors.py` | +10 |
+| 新增 | `avatar-plugins/perception/avatar-plugins-router/tests/test_audio_activity.py` | 4 |
+| 新增 | `avatar-host/tests/test_local_endpoints.py` | 4 |
+| 新增 | `avatar-core/tests/test_isolation.py` | 13 |
+
+用例数从 144 增加到 183，共 +39。依赖、`uv.lock`、CI 均未改动。
+
+### 2. 修复说明
+
+**KD-11（P1）**
+
+- 新增私有属性 `_serving`：服务已启动、未在关闭、server 正在监听。
+- `_accept_client()` 和 `do_inference()` 改用它做准入，不再用总体 `is_alive`。
+- `do_inference()` 再检查目标 method：
+  - 未注册时抛 ValueError；
+  - 已注册但 Runner 缺失（恢复中）或不健康时，抛 `RuntimeError("Inference runner temporarily unavailable")`，与 socket 路径的报错相同。
+- 总体 `is_alive`（全部 Runner 存活）保持不变，继续供 Host `_monitor`、health 和 `start()` 使用。
+- 按 review 要求，没有改成"任一 Runner 存活"，也没有只包装 `ConnectionResetError`。
+
+**KD-13（partial alignment 漏计）**
+
+- 原因：只有 `publish()` 返回事件后才累计 samples。帧已被一个消费者取走、另一个消费者仍在反压中时，打断让 `publish()` 返回 `None`，这一帧就没有计入。
+- 修复：
+  - 发布前读取 `output.audio_sequence(output_id)`。
+  - 发布结束后（正常返回、返回 `None` 或抛异常都一样），在 `finally` 中判断序号是否前进。前进说明这一帧已被 Output 接纳，计入 samples 和 `published_audio_seconds`。
+  - 在接纳前就被拒绝（guard 不通过）的帧不计入。
+- 依据：接纳正是 OutputRuntime 记录 `last_audio_sequence`、让 AUDIO_COMPLETE barrier 覆盖该帧的边界。源码注释原文："A frame may reach one subscriber before another suspends in backpressure"。
+- 按 review 要求，没有把计数无条件移到发布之前。
+- 残余：已被接纳、但被打断撤回、没有任何消费者取走的帧也会计入。帧是串行发布的，所以每次打断最多多计一帧（本测试中一帧 10 ms）；实际播放量另由播放回执给出上界。
+
+**KD-12（P2）**
+
+- 准备阶段收到取消时，只有同时满足以下三条才判为 Provider 自取消（`TTS preparation cancelled itself` → `speech_synthesis_failed`）：
+  - 当前任务没有在被取消；
+  - 任务本身没有被取消；
+  - output 仍然有效（新增这一条）。
+- output 已失效（撤销 Run 或打断）时按打断处理，与帧循环中同一条件的判断一致。
+
+**O-3（P2，启动兼容性）**
+
+- `private_socket_path(prefix, name)` 优先在配置的临时目录下用 `mkdtemp`（0700）建私有目录。
+- 如果完整 socket 路径超过 100 字节（比 macOS/BSD 的 104、Linux 的 108 都更保守），POSIX 下回退到 `/tmp` 下新建的私有目录。
+- 都不满足时抛 `OSError(ENAMETOOLONG)`，给出明确错误。
+- Inference 和 Host 日志这两个默认启动路径都改用该函数。
+- 测试中的 `socket_root` 仍保留，用于隔离和检查残留。
+
+**O-5**：按 review 结论，不改代码，日志措辞已改为"ENV 的有限辅助 prompt"。
+
+### 3. 定向测试补齐
+
+| 方面 | 新增覆盖 |
+|---|---|
+| KD-11 | 扩展 `test_failed_method_does_not_refuse_first_use_of_a_healthy_method`。故障期间健康 method 能正常使用：<br>• Executor 首次连接；<br>• 进程内 `do_inference()`；<br>• 已派发后取消再重连。<br>故障 method 在两个入口都报 "temporarily unavailable"。总体 `is_alive` 仍为 False，`recover_failed_runners()` 可恢复。日志证明被拒绝的请求从未执行 |
+| KD-13 | `test_interrupted_alignment_covers_audio_already_delivered_to_a_consumer`：第二个可靠音频消费者停止读取，播放器已收到 2 帧时打断，最终 partial alignment 的结束时间等于已交付的 0.020 s |
+| KD-12 边界 | `test_provider_self_cancellation_on_an_active_output_remains_a_failure`：output 仍有效时 Provider 自取消，仍判为 `speech_synthesis_failed` 并记 ERROR |
+| O-3 | `test_local_endpoints.py`：短 / 长临时目录 × Inference / Host 日志，共 4 个。长目录时回退到 `/tmp`；路径不超过 100 字节；目录权限 0700；真实请求和日志都能送达；关闭后目录被删除，临时目录无残留 |
+| Memory | 6 个：<br>• Tool 抽取失败时，tool checkpoint 不推进、输入保留、`on_stop` 报出错误，conversation 照常推进；<br>• 一个 Context 的 Tool 失败或被取消，不会让其他 Context fail-fast，全部 Conversation/Tool 收尾完成后才关闭 Store；<br>• 模型记录按自身 `identity_basis` 归属（无纠正 / 执行前纠正 / 执行后纠正三种情况） |
+| Persona | 10 个，speaker 与 face 各一半，source 始终有效：<br>• VDB 查询未匹配（`None` 或空 `user_id`）时不绑定，证据留在本 Participant，不升级为错误；<br>• 查询期间 Agent 改绑 A→C，迟到结果被丢弃、不覆盖 C，C 之后正常工作；<br>• 匹配作为对照，正常绑定 |
+| 语音上游 | `test_audio_activity.py` 4 个：走真实 `AudioActivityProcessor` → `AudioActivitySource` → `SileroVADStream` 入口，VAD 模型用离线替身。覆盖：<br>• 尾静音回溯后，段边界、帧序和 PCM 精确；<br>• VAD 积压时，积压窗口从 pre-roll 边缘按源顺序回放，并与之后的实时帧无缝衔接；<br>• 旧 generation 退役时取消打开的段，丢弃迟到帧 |
+| 测试设施 | `test_isolation.py` 13 个：`--stress-seconds` 的负数、NaN、无穷值都报用法错误（exit 4），有限值通过；`owned_endpoints` 拒绝相对路径、bytes、抽象命名空间、非回环地址、主机名、非法端口和 4 元组；已登记的 AF_UNIX endpoint 可以连通 |
+
+### 4. 变异验证
+
+| 变异 | 结果 |
+|---|---|
+| `_accept_client` 改回总体 `is_alive` 准入 | KD-11 回归失败 |
+| `do_inference` 改回总体 `is_alive` 准入 | KD-11 回归失败 |
+| 临时恢复 `HEAD` 版 `streaming.py`（之后已逐字节还原） | KD-13 回归失败（`0.01 == 0.02`）；KD-12 复现失败 |
+| KD-12 修过头：准备阶段的取消一律视为打断 | Provider 自取消边界用例失败（`synthesis_interrupted`） |
+| socket 目录改回直接 `mkdtemp` | O-3 的两个长目录用例失败 |
+| Memory：Tool 吞掉异常；Tool 收尾 fail-fast；忽略模型记录的 identity_basis | 均有用例失败 |
+| Persona：去掉查询后的身份重查（speaker 或 face）；未匹配也当作匹配；Store 去掉空 `user_id` 过滤 | 均有用例失败 |
+| 语音上游：关闭回溯；倒序回放积压；不回放积压；speaking 时不实时路由；不退役旧 generation | 均有用例失败 |
+
+Persona 补充：重查与 CAS 之间没有 await，所以单独去掉 CAS 的变异无法被测试单独抓到；只去掉重查时，未匹配用例能抓到。
+
+### 5. 运行命令与结果
+
+均在 `cd /home/ecs-user/AlphaAvatar && source .venv/bin/activate` 之后执行。
+
+| 项目 | 结果 |
+|---|---|
+| 全量（CI 方式：`PYTHONDONTWRITEBYTECODE=1 pytest -p no:cacheprovider --basetemp=… --durations=8`）×3 | 3 次均为 **183 passed**，约 22.3–23.3 s；basetemp 无残留文件；`/tmp/aa-*` 无残留；本轮没有新增 `/tmp/alphaavatar-*`（机器上已有的 54 个均是 8–10 月旧运行留下的，未处理） |
+| 检出目录 | 前后 `git status --porcelain --ignored` 无差异 |
+| 包目录单独运行 | core 42、host 28、router 21、memory 15、persona 34，全部通过 |
+| 压力入口默认一轮 | `pytest -m stress`：6 passed，3.66 s |
+| Ruff / Workspace / Lock / pre-commit | `ruff check .` 通过；672 files already formatted；16 members consistent；`uv lock --check` 通过；所有改动文件的 pre-commit hook 通过 |
+| 发布包 | `alpha-avatar-core` wheel 包含 `alphaavatar/core/ipc.py`，`tests/` 条目为 0 |
+
+警告：仍是 O-6 的 28 条 DeprecationWarning。
+
+### 6. 仍未解决与未覆盖
+
+- 未改动：KD-6、KD-7、KD-8、O-1、O-2、O-4、O-6、O-7、O-8；KD-10 的两点剩余见文首表。
+- KD-13 的残余：每次打断最多多计一帧（见第 2 节）。
+- Memory：Conversation 在身份切换下的 consolidation 路径没有覆盖；混合批次归属属于延期政策，没有断言。
+- Persona：只覆盖了 Agent 主动改绑，没有覆盖另一传感器的被动改绑（例如 speaker 查询期间 face 改绑）；Qdrant 后端的未匹配形态没有覆盖。
+- 语音上游：
+  - 真实 ONNX Silero 和 LiveKit 音频输入使用离线替身；
+  - `VAD_INPUT_REJECTED` 和 `INPUT_GAP` 恢复路径没有覆盖；
+  - O-8 的积压淘汰行为没有断言。
+- 真实设备和服务验收：本轮仍未做。
+
+### 7. 未做事项
+
+- 没有 commit 或 push。
+- 没有修改 CI、依赖或 CLI。
+- 没有处理第 6 节所列的未授权项。

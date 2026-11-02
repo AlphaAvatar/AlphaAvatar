@@ -21,8 +21,10 @@ The network guard patches this interpreter only: spawned children do not inherit
 from __future__ import annotations
 
 import _socket
+import argparse
 import asyncio
 import inspect
+import math
 import multiprocessing
 import os
 import re
@@ -43,12 +45,20 @@ _SCRUBBED = re.compile(
     re.IGNORECASE,
 )
 _IGNORED_ENVIRONMENT = frozenset({"PYTEST_CURRENT_TEST"})
+_LOOPBACK = frozenset({"127.0.0.1", "::1"})
+
+
+def _stress_seconds(value: str) -> float:
+    seconds = float(value)
+    if not math.isfinite(seconds) or seconds < 0:
+        raise argparse.ArgumentTypeError("must be a finite, nonnegative number of seconds")
+    return seconds
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--stress-seconds",
-        type=float,
+        type=_stress_seconds,
         default=0.0,
         help="Run each synthetic stress test for this long; 0 runs one bounded round.",
     )
@@ -119,19 +129,52 @@ def network_denied(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         pytest.fail(f"Test attempted network access: {sorted(set(attempts))}", pytrace=False)
 
 
+class _OwnedEndpoints(set):
+    """Absolute AF_UNIX paths or numeric loopback (host, port) pairs the test serves itself."""
+
+    def add(self, address: object) -> None:
+        unix = type(address) is str and os.path.isabs(address) and "\0" not in address
+        loopback = (
+            type(address) is tuple
+            and len(address) == 2
+            and address[0] in _LOOPBACK
+            and type(address[1]) is int
+            and 0 < address[1] < 65536
+        )
+        if not (unix or loopback):
+            raise TypeError("Own only absolute AF_UNIX paths or numeric loopback (host, port)")
+        super().add(address)
+
+    def update(self, *others: object) -> None:
+        for other in others:
+            for address in other:
+                self.add(address)
+
+    def __ior__(self, other: object) -> _OwnedEndpoints:
+        self.update(other)
+        return self
+
+    def allows(self, sock: socket.socket, address: object) -> bool:
+        if sock.family == socket.AF_UNIX:
+            return type(address) is str and address in self
+        if sock.family in (socket.AF_INET, socket.AF_INET6) and type(address) is tuple:
+            return address[:2] in self
+        return False
+
+
 @pytest.fixture
 def owned_endpoints(network_denied: None, monkeypatch: pytest.MonkeyPatch) -> set[object]:
     """Opt-in: reach only the AF_UNIX paths or loopback addresses this test registers."""
-    endpoints: set[object] = set()
+    endpoints = _OwnedEndpoints()
     refuse_connect, refuse_sendto = socket.socket.connect, socket.socket.sendto
 
     def connect(sock: socket.socket, address: object) -> None:
-        if address in endpoints:
+        if endpoints.allows(sock, address):
             return _socket.socket.connect(sock, address)
         return refuse_connect(sock, address)
 
     def sendto(sock: socket.socket, data: bytes, *args: object) -> int:
-        if args and args[-1] in endpoints:
+        if args and endpoints.allows(sock, args[-1]):
             return _socket.socket.sendto(sock, data, *args)
         return refuse_sendto(sock, data, *args)
 
@@ -142,7 +185,7 @@ def owned_endpoints(network_denied: None, monkeypatch: pytest.MonkeyPatch) -> se
 
 @pytest.fixture
 def socket_root(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """AF_UNIX paths are short (~104 bytes); give the runtime's socket directory a short root."""
+    """Give a runtime its own short temp root and prove it removes its socket directory."""
     root = Path(tempfile.mkdtemp(prefix="aa-", dir="/tmp"))
     monkeypatch.setattr(tempfile, "tempdir", str(root))
     yield root

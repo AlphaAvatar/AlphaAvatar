@@ -20,6 +20,7 @@ import json
 import multiprocessing as mp
 import os
 import signal
+from collections import Counter
 from collections.abc import Callable
 from multiprocessing import resource_tracker
 from pathlib import Path
@@ -30,6 +31,7 @@ from inference_runner_samples import (
     FailingCloseRunner,
     FailingInitRunner,
     JournalRunner,
+    SecondJournalRunner,
     SlowInitRunner,
 )
 
@@ -43,6 +45,7 @@ from alphaavatar.agents.runtime.inference import (
 
 HANG_GUARD = 30
 ECHO, JOURNAL = EchoRunner.INFERENCE_METHOD, JournalRunner.INFERENCE_METHOD
+SECOND = SecondJournalRunner.INFERENCE_METHOD
 
 
 def service(
@@ -86,27 +89,28 @@ def children() -> set[int]:
     return {process.pid for process in mp.active_children()}
 
 
-def descriptors() -> set[str] | None:
+def descriptors() -> Counter[str] | None:
     directory = Path("/proc/self/fd")
     if not directory.is_dir():
         return None
     resource_tracker.ensure_running()  # Process-wide stdlib facility, not runner-owned.
-    targets = set()
+    # Count per target: two leaked descriptors may share one target such as a pipe.
+    targets: Counter[str] = Counter()
     for entry in directory.iterdir():
         try:
-            targets.add(os.readlink(entry))
+            targets[os.readlink(entry)] += 1
         except FileNotFoundError:
             pass
     return targets
 
 
-def assert_released(socket_root: Path, before: set[int], fds: set[str] | None) -> None:
+def assert_released(socket_root: Path, before: set[int], fds: Counter[str] | None) -> None:
     assert children() - before == set()
     assert INFERENCE_ENDPOINT_ENV not in os.environ
     assert list(socket_root.iterdir()) == []
     after = descriptors()
     if fds is not None and after is not None:
-        assert after - fds == set()
+        assert after - fds == Counter()
 
 
 async def test_methods_progress_independently_while_each_method_stays_serial(
@@ -256,7 +260,7 @@ async def test_failed_runner_recovers_in_a_new_process_without_replaying_attempt
 async def test_failed_method_does_not_refuse_first_use_of_a_healthy_method(
     tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
 ) -> None:
-    runtime = service(tmp_path, JournalRunner, EchoRunner)
+    runtime = service(tmp_path, JournalRunner, SecondJournalRunner)
     executor = None
     try:
         async with asyncio.timeout(HANG_GUARD):
@@ -265,8 +269,34 @@ async def test_failed_method_does_not_refuse_first_use_of_a_healthy_method(
         executor = InferenceExecutor(runtime.endpoint)
         os.kill(int(await executor.do_inference(JOURNAL, b"pid")), signal.SIGKILL)
         await wait_until(lambda: not runtime.is_alive, "the killed runner was never observed")
+
         # A session's first request to another, healthy method opens a new connection.
-        assert await executor.do_inference(ECHO, b"first-use") == b"first-use"
+        assert await executor.do_inference(SECOND, b"first-use") == b"first-use"
+        assert await runtime.do_inference(SECOND, b"in-process") == b"in-process"
+        # A cancelled caller drops its channel; reconnecting during the failure is admitted too.
+        caller = asyncio.create_task(executor.do_inference(SECOND, b"gate:c"))
+        await wait_until(lambda: (tmp_path / "c.entered").exists(), "the gate was never entered")
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        (tmp_path / "c.open").touch()
+        assert await executor.do_inference(SECOND, b"reconnected") == b"reconnected"
+
+        # The failed method reports its own unavailability on both entries, never a reset.
+        for entry in (executor.do_inference, runtime.do_inference):
+            with pytest.raises(RuntimeError, match="temporarily unavailable"):
+                await entry(JOURNAL, b"refused")
+        # Overall health still reports the failure so supervision rebuilds it.
+        assert not runtime.is_alive
+        assert await runtime.recover_failed_runners()
+        assert await executor.do_inference(JOURNAL, b"recovered") == b"recovered"
+        assert [data for _, data in journal(tmp_path, SECOND)] == [
+            "first-use",
+            "in-process",
+            "gate:c",
+            "reconnected",
+        ]
+        assert [data for _, data in journal(tmp_path)] == ["pid", "recovered"]
     finally:
         if executor is not None:
             await executor.close()
