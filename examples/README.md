@@ -9,7 +9,7 @@ on your configured provider before running. `temperature: null` avoids injecting
 sampling parameter into a model that may not accept it.
 
 ```bash
-ENV_FILE=.env.dev alphaavatar check examples/agent_configs/mm/pipeline_openai_tools.yaml
+ENV_FILE=.env.dev alphaavatar config check examples/agent_configs/mm/pipeline_openai_tools.yaml  # optional
 ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/mm/pipeline_openai_tools.yaml
 ```
 

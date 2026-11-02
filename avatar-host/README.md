@@ -41,18 +41,17 @@ alphaavatar start examples/agent_configs/mm/pipeline_openai_tools.yaml
 `start` defaults to INFO and port 8081. Help/version do not start models or require RTC
 credentials. Configuration overrides use `key=value` after the filename.
 
-Create, validate and inspect a configuration without starting anything:
+Create a configuration, and optionally check it without starting anything:
 
 ```bash
 alphaavatar config init configs/my-avatar.yaml --avatar-id my-avatar
-alphaavatar check configs/my-avatar.yaml voice.tts.speed=1.2
-alphaavatar config show configs/my-avatar.yaml --json
+alphaavatar config check configs/my-avatar.yaml voice.tts.speed=1.2
 ```
 
-These commands start nothing and create no application or Avatar directories. See
-[docs/cli](../docs/cli/) for every command. The Python entry points live in
-`alphaavatar.host.configs` (`load_application`, `check_application_paths`,
-`describe_application`, `describe_summary`, `describe_error`, `write_template`).
+`start` and `dev` run the same validation before starting. See [docs/cli](../docs/cli/) for
+every command. The Python entry points live in `alphaavatar.host.configs`
+(`load_application`, `check_application_paths`, `describe_summary`, `describe_application`,
+`describe_error`, `write_template`).
 
 ## Configuration
 

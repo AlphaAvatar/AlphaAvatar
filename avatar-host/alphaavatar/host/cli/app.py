@@ -21,7 +21,7 @@ from alphaavatar.host.version import __version__
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="alphaavatar", description="Run, check and configure an AlphaAvatar Host."
+        prog="alphaavatar", description="Run and configure an AlphaAvatar Host."
     )
     parser.add_argument("--version", action="version", version=f"AlphaAvatar {__version__}")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -36,19 +36,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         configured(
             commands.add_parser(command, help=f"Run the Host in {command} mode"), json_output=False
         )
-    configured(
-        commands.add_parser("check", help="Validate a configuration without starting anything"),
-        json_output=True,
-    )
-    config = commands.add_parser("config", help="Show or create application configuration")
+    config = commands.add_parser("config", help="Create or check application configuration")
     actions = config.add_subparsers(dest="action", required=True)
-    configured(
-        actions.add_parser("show", help="Print the effective configuration, credentials removed"),
-        json_output=True,
-    )
     init = actions.add_parser("init", help="Create a minimal configuration file")
     init.add_argument("path", help="Configuration file to create; never overwritten")
     init.add_argument("--avatar-id", required=True, help="Stable Avatar identifier")
+    configured(
+        actions.add_parser("check", help="Validate a configuration without starting anything"),
+        json_output=True,
+    )
 
     args = parser.parse_args(argv)
     for item in getattr(args, "overrides", ()):
@@ -62,8 +58,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     from .commands import config as configuration
 
-    if args.command == "check":
+    if args.action == "check":
         return configuration.check(args.config, args.overrides, as_json=args.json)
-    if args.action == "show":
-        return configuration.show(args.config, args.overrides, as_json=args.json)
     return configuration.init(args.path, avatar_id=args.avatar_id)

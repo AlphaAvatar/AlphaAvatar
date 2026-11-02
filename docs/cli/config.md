@@ -1,23 +1,6 @@
 # `alphaavatar config`
 
-Show or create application configuration. Neither subcommand starts anything.
-
-## `config show`
-
-Print the effective configuration, with credentials removed.
-
-```bash
-alphaavatar config show <config> [KEY=VALUE ...] [--json]
-```
-
-- Shows plugin selections, runtime parameters and resolved paths after `.env`, overrides and
-  defaults.
-- `[redacted]`: credential-like fields and known credential values.
-- `[hidden]`: text inside plugin-defined settings such as `init_config`, `vdb_config` and MCP
-  `servers`. Numbers and booleans stay visible.
-- Terminal output is highlighted YAML; pipes, `NO_COLOR` and `TERM=dumb` get plain YAML.
-  `--json` prints plain JSON.
-- Errors and exit codes match [`check`](check.md).
+Create or check application configuration. Neither subcommand starts anything.
 
 ## `config init`
 
@@ -29,21 +12,65 @@ alphaavatar config init <path> --avatar-id <id>
 
 - Writes the given Avatar ID with OpenAI model, voice, Memory and Persona settings; tools
   are disabled.
-- Writes no credentials and no machine paths.
+- Writes no credentials and no machine paths; the Host chooses the application home.
 - Never overwrites an existing file; removes what it created if writing fails.
 
-Then set these in the environment or `.env` and validate:
+Set these in the environment or `.env`, never in the file:
 
 | Variable | Used for |
 | --- | --- |
 | `OPENAI_API_KEY` | Models, speech, embeddings, Memory and Persona |
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | Session transport |
 
+Then start it with [`alphaavatar dev`](dev.md), or check it first.
+
+## `config check`
+
+Validate a configuration without starting anything. Optional: `start` and `dev` run the same
+validation before they start.
+
 ```bash
-alphaavatar check <path>
+alphaavatar config check <file> [KEY=VALUE ...] [--json]
 ```
 
-| Exit code | Meaning |
-| --- | --- |
-| 0 | Created |
-| 2 | File exists, invalid ID or write failure |
+It runs the same loading steps as `start` — `.env`, overrides, defaults, path resolution,
+schema validation and read-only workspace checks — but starts no Host, runner or model,
+contacts no service, creates no directories and needs no local log socket.
+
+```text
+OK  configuration and read-only path checks passed
+    avatar_id  my-avatar
+    home       /home/me/.local/share/alphaavatar
+    workspace  /home/me/.local/share/alphaavatar/avatars/my-avatar
+    rtc        livekit
+    loop       realtime
+    voice      vad=silero  stt=openai_segment  tts=openai
+    router     default
+    character  none
+    memory     default  (vdb: lancedb)
+    persona    default  (vdb: lancedb; speaker on, face off)
+    tools      rag, mcp (1 server)
+    health     127.0.0.1:8081 (dev: free port)
+```
+
+The summary lists plugin selections, vector store kinds, enabled tools and the health
+address — never endpoints, collection names or plugin-defined settings.
+
+```text
+ERROR  configuration and read-only path checks failed
+  error: ValidationError
+    fields: avatar.timezone
+```
+
+- Errors go to stderr and name the failing fields, never the rejected values.
+- `--json` prints `{"valid": true, "avatar_id", "home", "workspace", "plugins", "health"}` or
+  `{"valid": false, "error": {"type", "fields", "diagnostic"}}`, with credentials and control
+  characters removed.
+- Colors appear only on a terminal; pipes, `NO_COLOR` and `TERM=dumb` get plain text.
+
+## Exit codes
+
+| Code | `init` | `check` |
+| --- | --- | --- |
+| 0 | Created | Valid |
+| 2 | File exists, invalid ID or write failure | Invalid configuration or failed path check |

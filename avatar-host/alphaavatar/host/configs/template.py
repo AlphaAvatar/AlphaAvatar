@@ -28,7 +28,8 @@ _TEMPLATE = """\
 # AlphaAvatar application configuration, created by `alphaavatar config init`.
 # Never write credentials here. Before `alphaavatar start`, set in the environment or .env:
 {environment}
-# Then validate with `alphaavatar check <this file>`; examples/agent_configs has more options.
+# Optionally validate with `alphaavatar config check <this file>`; start validates it too.
+# examples/agent_configs has more options.
 # application.home is chosen per platform; set it only to keep data somewhere else.
 
 avatar:

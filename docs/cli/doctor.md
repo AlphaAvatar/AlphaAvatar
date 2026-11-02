@@ -15,5 +15,5 @@ alphaavatar doctor --runtime --format json    # Machine-readable report
 
 Doctor never prompts, downloads models or makes paid calls without explicit permission.
 
-Today, use [`alphaavatar check`](check.md) for configuration and the Host health endpoints for
-runtime readiness.
+Today, use [`alphaavatar config check`](config.md#config-check) for configuration and the Host
+health endpoints for runtime readiness.

@@ -19,7 +19,7 @@
 | T-5 | KD-14 收口：恢复要求随输入 generation 保留到边界确认；回放不越过安全下界 | 2026-11-02 | `65bd40f` | `a2b6bde` | 已 review：三条旁路已修好；仍有 1 个 P1（快照更新可绕过恢复要求），KD-14 未关闭，转入 T-6 |
 | T-6 | KD-14：缺口窗口中 generation 已存在的证据不被更新的快照覆盖 | 2026-11-02 | `a2b6bde` | `4cb57c2` | 已验收：review 无新阻断问题，KD-14 关闭；本地 195 passed（CI 方式 ×3），review 环境运行 147 项通过（IPC 用例受环境限制） |
 | T-7 | KD-14 正式回归；修复 O-1、KD-6、KD-8、O-7；KD-10 时序与 O-4 取消补测试 | 2026-11-02 | `2d1d575` | `7e87782` | 已验收：O-1、KD-6、KD-8、O-7 关闭，KD-14 保持关闭，KD-10③ 时序已覆盖，O-4、O-9 保留观察；本地 229 passed；review 环境 229 项收集、183 项通过，新增 CLI 端到端用例受 AF_UNIX 权限阻断（替换日志传输边界后的配置错误处理路径通过，不计为完整 CLI 端到端） |
-| T-8 | 配置公共能力与 CLI 最小闭环：`check`、`config show`、`config init`；输出优化与 `docs/cli` 整理 | 2026-11-02 | `7e87782` | `886efcd`（首版）；输出优化未提交 | 首版已确认展示方案；输出优化待审查，收集 247 个，247 passed（CI 方式 ×1） |
+| T-8 | 配置公共能力与 CLI 最小闭环：`config init`、`config check`（`check` 已迁入，`config show` 已移除） | 2026-11-02 | `7e87782` | `886efcd`（首版）、`e428c9b`（输出优化）；CLI 收敛未提交 | 收敛后待审查；收集 245 个，245 passed（CI 方式 ×1） |
 
 ## 已知缺陷（当前状态，只记录不修复）
 
@@ -1290,6 +1290,8 @@ Core 新增 `alphaavatar.core.log.error_fields`：它就是 `format_error` 原�
 
 ### 2. 命令
 
+> T-8 收敛（第 10 节）：顶层 `check` 已迁移为 `config check`，`config show` 已移除；本节保留首版记录。
+
 ```bash
 alphaavatar check <config> [KEY=VALUE ...] [--json]
 alphaavatar config show <config> [KEY=VALUE ...] [--json]
@@ -1403,6 +1405,8 @@ alphaavatar config init <path> --avatar-id <id>
 
 ### 9. 输出优化与 CLI 文档整理（基线 `886efcd`）
 
+> T-8 收敛（第 10 节）：`config show` 及其 YAML 高亮已移除；`check` 的样式、摘要边界修复和安全投影保留。
+
 - 基线：`886efcdad71b05c1f1341969921fd090141798c6`（T-8 首版已提交），开始时工作区干净。
 - 依据：已确认的 CLI 展示方案，以及把 `docs/cli` 按一级命令拆分、内容简洁的要求。
 - 加载、校验和隐藏策略都没有改变；美化只作用在已经脱敏的数据上。
@@ -1472,4 +1476,99 @@ alphaavatar config init <path> --avatar-id <id>
 
 - 颜色使用 24 位真彩色（品牌色）。不支持真彩色的终端会显示近似色，文字不受影响。
 - YAML 高亮按行解析 `yaml.safe_dump` 的输出，只决定颜色，不改变内容。少见的键名形式（例如键名内含 `:`）只是不着色。
+- 本节修改没有 commit 或 push。
+
+### 10. CLI 收敛（基线 `e428c9b`）
+
+- 基线：`e428c9b6828919ec6375299c81a412159cbc2ced`（输出优化已提交），开始时工作区干净，没有未提交的修改。
+- 依据：看过实际终端截图后确认的收敛方案。
+
+#### 10.1 命令
+
+最终保留：
+
+```text
+alphaavatar config init <path> --avatar-id <id>
+alphaavatar config check <file> [KEY=VALUE ...] [--json]
+alphaavatar start <file> [KEY=VALUE ...]
+alphaavatar dev <file> [KEY=VALUE ...]
+```
+
+- 顶层 `check` 迁移为 `config check`，旧入口直接删除，不保留别名；`alphaavatar check …` 现在是 argparse 用法错误（退出码 2）。
+- `config show` 及其帮助入口已删除；`alphaavatar config show …` 同样是用法错误。
+- 未来顶层 `check` 的 Agent 检查用途留给对应批次，本批不预留空命令。
+- `start`、`dev` 照常执行原有校验；手动 `config check` 只是可选的启动前检查。
+
+#### 10.2 config check 输出
+
+- 输出与迁移前的 `check` 完全相同，只是入口改为 `config check`：
+  ```text
+  OK  configuration and read-only path checks passed
+      avatar_id  alphaavatar_tools
+      home       /home/ecs-user/.local/share/alphaavatar
+      workspace  /home/ecs-user/.local/share/alphaavatar/avatars/alphaavatar_tools
+  ```
+- 绿色粗体 `OK`；字段名左对齐并以暗色弱化，值保持默认前景色。
+- 失败时：stderr 输出红色粗体 `ERROR  configuration and read-only path checks failed`，接着是 `format_error` 给出的字段位置，代码位置等辅助行变暗。
+- 摘要来自 `describe_summary`，已脱敏并清理控制字符。
+- 曾按收敛方案改为两行输出（`Configuration valid: <file>` / `Avatar: …`）。看过实际终端后，用户要求保持原来的样式，已恢复。
+- 后续按用户确认补充摘要字段（仍为同一对齐格式）：rtc、loop、voice（vad/stt/tts）、router、character、memory 与 persona（插件和向量库后端类型，persona 另含 speaker/face 开关）、tools（启用的工具，MCP 只计 server 数量）、health（监听地址；未设端口时显示 `8081 (dev: free port)`）。
+  - 只取有类型的配置选择，以及由它们直接推导的事实；向量库后端由现有的 `vdb_backend()` 推导，与启动时的判断一致。不含任何地址、集合名、URL 或插件自定义设置。
+  - 模型名（位于插件自定义设置中）和凭据存在性检测没有加入。
+  - 后端推导与 persona 选项校验在启动时同样会执行，所以"Qdrant 只配 host、不配 port"这类启动期错误，现在 `config check` 也会提前报出。
+- `--json` 保留原有的键，新增 `plugins`、`health` 两个对象：`{"valid": true, "avatar_id", "home", "workspace", "plugins", "health"}`（均已脱敏）或 `{"valid": false, "error": {type, fields, diagnostic}}`。
+- 颜色策略不变：stdout 与 stderr 各自用 `use_color` 检测；非终端、`NO_COLOR`、`TERM=dumb` 时无色；JSON 始终不着色。
+- 按用户要求，`config check` 与 `config init` 的文本输出前后各加一个空行，使报告与命令行分开；`--json` 输出不变。
+- `config init` 的成功提示改为两种可选的下一步：`alphaavatar dev <path>`（会先校验）和 `alphaavatar config check <path>`（可选，只校验不启动）。模板注释同步改为"可选校验，start 也会校验"。
+
+#### 10.3 删除与保留
+
+| 删除 | 保留 |
+|---|---|
+| `show` 命令、YAML 高亮（`_highlight`、`_LINE`、`_PLAIN`、`_MARKERS`、`_open_quote`）、不折行 YAML 渲染 | 公共接口 `describe_application`、`describe_summary`、`describe_error`（供检查结果和后续诊断使用） |
+| show 专属的测试：长内容渲染、终端高亮配色 | 凭据按值替换、控制字符清理、映射键名清理、`Redactor` 的 `limit` 参数（视图不截断） |
+
+`host/log/format.py` 新增的 `GREEN`/`RED` 仍用于 `OK`/`ERROR` 和日志级别颜色；`BRAND_BLUE`/`SIGNAL_CYAN` 仍由 banner 使用。没有引入 Rich。
+
+#### 10.4 测试（`test_config_commands.py`，18 → 16 个）
+
+| 用例 | 覆盖 |
+|---|---|
+| `check_reports_valid_and_invalid…` | 新入口；文本输出逐行比对（原有的标题和 avatar_id/home/workspace，加上新增的插件、存储、工具和 health 行）；JSON 新增 `plugins`/`health`，原有键不变；摘要中不出现 VDB 或 MCP 地址；缺端口的远程向量库会报错；覆盖生效；失败标题和字段；沙盒下不触碰 socket、客户端或目录 |
+| `safe_projection_keeps_useful_settings_without_credentials`（由 show 用例迁移为公共接口测试） | 选择、参数、覆盖与生效路径保留；VDB 和 MCP headers 隐藏；超过 8192 字符的文本完整保留；复用的凭据被替换；值和映射键名中的 ESC 被清除；5 个虚构敏感值都不出现 |
+| `error_output_never_echoes_rejected_values` ×4 | Avatar 分段与外层 Host 分段 × 文本/JSON，都只走 `config check` |
+| `check_summary_passes_the_same_output_boundary` | 已知凭据被复用为 Avatar ID、home 路径和文件名中含 ESC：文本与 JSON 摘要都没有 ESC、`\u001b` 或凭据 |
+| `only_an_enabled_terminal_gets_styles…` ×4 | 终端、管道、`NO_COLOR`、`TERM=dumb`；JSON 始终不着色 |
+| `each_stream_detects_its_own_terminal` ×2 | stdout 与 stderr 分别检测 |
+| `init_writes_a_minimal_template…` | init 提示同时给出 `dev` 和可选的 `config check`；模板可以加载；`config check` 通过 |
+| `init_never_overwrites…` | 拒绝覆盖、非法 ID、写满时清理 |
+| `console_commands_run_without_the_host_log_socket` | 真实命令行入口执行 init 和 `config check --json`；旧的 `check`、`config show` 返回 2；顶层帮助为 `{dev,start,config}`，`config --help` 为 `{init,check}` |
+
+- 内存变异：摘要不脱敏、映射键名不清理，两项分别被对应用例抓到。
+- 本节之前已验证的变异（按值脱敏、HostLog 依赖、颜色策略等）对应的断言仍然保留。
+
+#### 10.5 文档
+
+- `docs/cli/check.md` 已删除。配置相关说明集中到 `docs/cli/config.md`（`config init` 与 `config check`）；`start.md`、`doctor.md` 的链接改为指向 `config.md#config-check`。
+- 根目录 `README.md` Step 1：`config init`，再加上标为可选的 `config check`，删除 `config show`。
+- `examples/README.md`：`config check` 标为可选。
+- `avatar-host/README.md`：只保留 init/check 示例和 Python 接口清单。
+
+#### 10.6 验证
+
+| 项目 | 结果 |
+|---|---|
+| 定向回归：`avatar-host/tests` | 50 passed |
+| 全量（CI 方式）×1 | **245 passed**，32 s；basetemp 无残留；`/tmp/aa-*` 无残留 |
+| Ruff / 格式 / Workspace / Lock / pre-commit / 压力入口默认一轮 | 全部通过 |
+
+检出目录对比时的一个观察：测试开始前仓库根目录有一个未跟踪文件 `my-avatar.yaml`，测试结束后消失。用户确认它是自己手工测试时创建并删除的，与测试套件无关。另外做了哨兵实验：在仓库根目录放置带标记内容的 `my-avatar.yaml` 和 `t8-sentinel.yaml`，再跑一次全量（245 passed），两者都原样保留，随后删除。
+
+#### 10.7 最终交付清单（T-8）
+
+- **命令**：`config init`、`config check`；`start`/`dev` 不变；顶层 `check` 和 `config show` 已删除。
+- **公共接口**（`alphaavatar.host.configs`）：`load_application`、`validate_application`、`restore_application`、`check_application_paths`、`describe_application`、`describe_summary`、`describe_error`、`render_template`、`write_template`、`REQUIRED_ENVIRONMENT`；Core 公开 `error_fields`。
+- **安全**：安全投影、按值替换已知凭据、Host 日志 `Redactor`（不截断）、控制字符与映射键名清理、错误只输出字段位置；Host 配置错误路径有回归；O-9 未暴露。
+- **文档**：`docs/cli/{config,dev,start,doctor,test}.md`、`README.md`、`examples/README.md`、`avatar-host/README.md`。
+- **仍待处理**：O-2（导入副作用）、O-9（观察）；Runner 并行进入下一批；没有做真实设备或服务验收。
 - 本节修改没有 commit 或 push。

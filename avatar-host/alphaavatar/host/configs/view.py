@@ -116,13 +116,52 @@ def describe_application(config: ApplicationConfig) -> dict[str, Any]:
     return _scrubber(config)(view)
 
 
-def describe_summary(config: ApplicationConfig) -> dict[str, str]:
-    """What check reports, through the same boundary as the full view."""
+def describe_summary(config: ApplicationConfig) -> dict[str, Any]:
+    """What check reports, through the same boundary as the full view.
+
+    Only typed selections and facts derived from them: plugin names, vector backend kinds,
+    enabled tools and the health address, never endpoints or plugin-defined settings.
+    """
+    from alphaavatar.agents.utils.vdb.config import vdb_backend
+
+    avatar, host = config.avatar, config.host
+
+    def store(section: BaseModel) -> dict[str, Any]:
+        # The same backend choice the inference plan makes when the Host starts.
+        backend = vdb_backend(section.vdb_config) if section.plugin == "default" else None
+        return {"plugin": section.plugin, "vdb": backend}
+
+    persona = store(avatar.persona)
+    if avatar.persona.plugin == "default":
+        from alphaavatar.plugins.persona.config import DefaultPersonaConfig
+
+        options = DefaultPersonaConfig.model_validate(avatar.persona.init_config)
+        persona |= {"speaker": options.speaker.enabled, "face": options.face.enabled}
+    mcp = avatar.tools.mcp
     return _scrubber(config)(
         {
-            "avatar_id": config.avatar.avatar.id,
+            "avatar_id": avatar.avatar.id,
             "home": str(config.paths.root),
             "workspace": str(config.workspace.root),
+            "plugins": {
+                "rtc": host.rtc.backend,
+                "loop": avatar.loop.plugin,
+                "voice": {
+                    part: getattr(avatar.voice, part).plugin for part in ("vad", "stt", "tts")
+                },
+                "router": avatar.router.plugin,
+                "character": avatar.character.plugin,
+                "memory": store(avatar.memory),
+                "persona": persona,
+                "tools": {
+                    "deepresearch": avatar.tools.deepresearch.plugin,
+                    "rag": avatar.tools.rag.plugin,
+                    "mcp": {"plugin": mcp.plugin, "servers": len(mcp.servers)}
+                    if mcp.enabled and mcp.plugin is not None
+                    else None,
+                },
+            },
+            "health": {"bind": host.health.bind, "port": host.health.port},
         }
     )
 

@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""check, config show and config init: offline, side-effect free and credential safe."""
+"""config init / config check: offline, side-effect free and credential safe."""
 
 from __future__ import annotations
 
@@ -33,8 +33,8 @@ import yaml
 # Imported at collection: configuration plugins adjust process variables while importing (O-2).
 import alphaavatar.agents.configs  # noqa: F401
 from alphaavatar.host.cli.app import main
-from alphaavatar.host.configs.loader import load_application
-from alphaavatar.host.log.format import BOLD, BRAND_BLUE, DIM, GREEN, RED, RESET, SIGNAL_CYAN
+from alphaavatar.host.configs import describe_application, load_application
+from alphaavatar.host.log.format import BOLD, DIM, GREEN, RED, RESET
 from alphaavatar.plugins.memory.config import DefaultMemoryConfig
 from alphaavatar.plugins.persona.config import DefaultPersonaConfig
 
@@ -104,22 +104,62 @@ def files(root: Path) -> list[str]:
     return sorted(str(path.relative_to(root)) for path in root.rglob("*"))
 
 
+class Terminal(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
+def run_cli(*argv: str, stdout: io.StringIO, stderr: io.StringIO) -> int:
+    with mock.patch.object(sys, "stdout", stdout), mock.patch.object(sys, "stderr", stderr):
+        return main(list(argv))
+
+
 def test_check_reports_valid_and_invalid_configurations_with_effective_overrides(
     tmp_path: Path, sandbox: list[str], credentials: object, capsys: pytest.CaptureFixture
 ) -> None:
     config = write(tmp_path / "avatar.json", CONFIG)
     before = files(tmp_path)
 
-    assert main(["check", str(config), "avatar.id=renamed", "--json"]) == 0
+    assert main(["config", "check", str(config), "avatar.id=renamed"]) == 0
+    text = capsys.readouterr().out
+    assert main(["config", "check", str(config), "avatar.id=renamed", "--json"]) == 0
     report = json.loads(capsys.readouterr().out)
+    assert text.splitlines() == [
+        "",
+        "OK  configuration and read-only path checks passed",
+        "    avatar_id  renamed",
+        f"    home       {report['home']}",
+        f"    workspace  {report['workspace']}",
+        "    rtc        livekit",
+        "    loop       realtime",
+        "    voice      vad=none  stt=none  tts=none",
+        "    router     default",
+        "    character  none",
+        "    memory     default  (vdb: qdrant)",
+        "    persona    default  (vdb: lancedb; speaker on, face on)",
+        "    tools      deepresearch, rag, mcp (1 server)",
+        "    health     127.0.0.1:8081 (dev: free port)",
+        "",
+    ]
+    # Selections and backend kinds only: no endpoint, collection or plugin-defined setting.
+    assert "invalid" not in text + json.dumps(report)
     # The override is the configuration that would start, including its default workspace.
+    assert report.keys() == {"valid", "avatar_id", "home", "workspace", "plugins", "health"}
     assert report["valid"] and report["avatar_id"] == "renamed"
+    assert report["plugins"]["memory"] == {"plugin": "default", "vdb": "qdrant"}
+    assert report["plugins"]["tools"]["mcp"] == {"plugin": "default", "servers": 1}
+    assert report["health"] == {"bind": "127.0.0.1", "port": None}
     assert report["workspace"] == f"{report['home']}/avatars/renamed"
 
-    assert main(["check", str(config), "tools.mcp.token=leak"]) == 2
+    assert main(["config", "check", str(config), "tools.mcp.token=leak"]) == 2
     output = capsys.readouterr()
+    assert output.err.startswith("\nERROR  configuration and read-only path checks failed\n")
+    assert output.err.endswith("\n\n")
     assert "fields: tools.mcp.token" in output.err and "leak" not in output.out + output.err
-    assert main(["check", str(config), "avatar.timezone=Not/AZone", "--json"]) == 2
+    # A remote store without a port fails at startup, so the check reports it first.
+    assert main(["config", "check", str(config), "persona.vdb_config.host=vectors.invalid"]) == 2
+    assert "error: ValueError" in capsys.readouterr().err
+    assert main(["config", "check", str(config), "avatar.timezone=Not/AZone", "--json"]) == 2
     failure = json.loads(capsys.readouterr().out)
     assert failure["valid"] is False
     assert failure["error"]["fields"] == ["avatar.timezone"]
@@ -129,28 +169,32 @@ def test_check_reports_valid_and_invalid_configurations_with_effective_overrides
     assert (sandbox, files(tmp_path)) == ([], before)
 
 
-def test_show_prints_the_effective_configuration_without_credentials(
-    tmp_path: Path, sandbox: list[str], credentials: object, capsys: pytest.CaptureFixture
+def test_safe_projection_keeps_useful_settings_without_credentials(
+    tmp_path: Path, sandbox: list[str], credentials: object
 ) -> None:
-    config = write(tmp_path / "avatar.json", CONFIG)
-    before = files(tmp_path)
-    overrides = ["voice.tts.speed=1.3", "loop.plugin=realtime"]
+    # Over the 8192-character log bound; plugin mappings may carry hostile keys too.
+    introduction = "Keep [bold red]this[/] and [hidden] literal: " + "word " * 1800 + "end"
+    value = CONFIG | {
+        "avatar": {"id": "assistant", "introduction": f"{introduction} {SECRETS['vdb']}\x1b[31m"},
+        "context": {"init_config": {"key\x1b[2J": 1}},
+    }
+    config = load_application(
+        write(tmp_path / "avatar.json", value), ["voice.tts.speed=1.3", "loop.plugin=realtime"]
+    )
+    view = describe_application(config)
+    text = json.dumps(view)
 
-    assert main(["config", "show", str(config), *overrides, "--json"]) == 0
-    view = json.loads(capsys.readouterr().out)
-    assert main(["config", "show", str(config), *overrides]) == 0
-    text = capsys.readouterr().out
-
-    assert yaml.safe_load(text) == view
     # Useful, non-sensitive facts stay: selections, parameters, overrides and resolved paths.
     assert (view["voice"]["tts"]["speed"], view["loop"]["plugin"]) == (1.3, "realtime")
-    assert view["avatar"]["workspace_root"] == f"{view['application']['home']}/avatars/assistant"
+    assert view["avatar"]["workspace_root"] == str(config.workspace.root)
     assert view["memory"]["vdb_config"] == {"url": "[hidden]", "api_key": "[hidden]"}
     assert view["tools"]["mcp"]["servers"]["docs"]["headers"] == {"Authorization": "[hidden]"}
-    assert view["avatar"]["introduction"] == "Uses [redacted] inline."
-    for output in (text, json.dumps(view)):
-        assert [name for name, secret in SECRETS.items() if secret in output] == []
-    assert (sandbox, files(tmp_path)) == ([], before)
+    # Complete text, a reused credential replaced and terminal escapes removed, keys included.
+    assert view["avatar"]["introduction"] == f"{introduction} [redacted]"
+    assert view["context"]["init_config"] == {"key": 1}
+    assert [name for name, secret in SECRETS.items() if secret in text] == []
+    assert "\\u001b" not in text and yaml.safe_load(yaml.safe_dump(view)) == view
+    assert sandbox == []
 
 
 @pytest.mark.parametrize("as_json", [False, True], ids=["text", "json"])
@@ -167,18 +211,86 @@ def test_error_output_never_echoes_rejected_values(
     broken: dict, as_json: bool, tmp_path: Path, sandbox: list[str], capsys: pytest.CaptureFixture
 ) -> None:
     config = write(tmp_path / "avatar.json", {"avatar": {"id": "assistant"}, **broken})
-    for command in (["check"], ["config", "show"]):
-        assert main([*command, str(config), *(["--json"] if as_json else [])]) == 2
-        output = capsys.readouterr()
-        streams = output.out + output.err
-        assert SECRETS["vdb"] not in streams
-        if as_json:
-            error = json.loads(output.out)["error"]
-            assert error["type"] == "ValidationError" and error["fields"]
-            assert set(error) == {"type", "fields", "diagnostic"}
-        else:
-            assert "fields: " in output.err
+    assert main(["config", "check", str(config), *(["--json"] if as_json else [])]) == 2
+    output = capsys.readouterr()
+    assert SECRETS["vdb"] not in output.out + output.err
+    if as_json:
+        error = json.loads(output.out)["error"]
+        assert error["type"] == "ValidationError" and error["fields"]
+        assert set(error) == {"type", "fields", "diagnostic"}
+    else:
+        assert "fields: " in output.err
     assert sandbox == []
+
+
+def test_check_summary_passes_the_same_output_boundary(
+    tmp_path: Path, credentials: object, capsys: pytest.CaptureFixture
+) -> None:
+    # A credential reused as the Avatar ID, and terminal escapes in the home and file paths.
+    home = tmp_path / "home\x1b[2Jdir"
+    value = CONFIG | {
+        "application": {"home": str(home)},
+        "avatar": {"id": SECRETS["MCP_DOCS_TOKEN"]},
+    }
+    config = write(tmp_path / "avatar\x1b[31m.json", value)
+    assert main(["config", "check", str(config)]) == 0
+    text = capsys.readouterr().out
+    assert main(["config", "check", str(config), "--json"]) == 0
+    report = capsys.readouterr().out
+    summary = json.loads(report)
+    assert (
+        text.splitlines()[2] == "    avatar_id  [redacted]" and summary["avatar_id"] == "[redacted]"
+    )
+    assert summary["home"] == str(tmp_path / "homedir") and "[redacted]" in summary["workspace"]
+    for output in (text, report):
+        assert "\x1b" not in output and "\\u001b" not in output
+        assert SECRETS["MCP_DOCS_TOKEN"] not in output
+
+
+@pytest.mark.parametrize(
+    ("terminal", "environment"),
+    [(True, {}), (False, {}), (True, {"NO_COLOR": ""}), (True, {"TERM": "dumb"})],
+    ids=["terminal", "pipe", "no-color", "dumb-terminal"],
+)
+def test_only_an_enabled_terminal_gets_styles_and_json_stays_plain(
+    terminal: bool, environment: dict[str, str], tmp_path: Path
+) -> None:
+    config = write(tmp_path / "avatar.json", {"avatar": {"id": "assistant"}})
+    stream = Terminal if terminal else io.StringIO
+    styled = terminal and not environment
+    with mock.patch.dict(os.environ, environment):
+        checked, as_json = stream(), stream()
+        assert run_cli("config", "check", str(config), stdout=checked, stderr=stream()) == 0
+        assert (
+            run_cli("config", "check", str(config), "--json", stdout=as_json, stderr=stream()) == 0
+        )
+
+    assert checked.getvalue().startswith(f"\n{BOLD}{GREEN}OK{RESET}  " if styled else "\nOK  ")
+    assert checked.getvalue().endswith("\n\n")
+    # Labels are auxiliary and dimmed; values keep the default foreground.
+    avatar = f"    {DIM}avatar_id{RESET}  assistant" if styled else "    avatar_id  assistant"
+    assert checked.getvalue().splitlines()[2] == avatar
+    assert ("\x1b" in checked.getvalue()) == styled
+    # JSON never carries terminal styling, even on a terminal.
+    assert "\x1b" not in as_json.getvalue() and json.loads(as_json.getvalue())["valid"]
+
+
+@pytest.mark.parametrize("terminal", ["stdout", "stderr"])
+def test_each_stream_detects_its_own_terminal(terminal: str, tmp_path: Path) -> None:
+    good = write(tmp_path / "good.json", {"avatar": {"id": "assistant"}})
+    bad = write(tmp_path / "bad.json", {"avatar": {"id": "assistant", "timezone": "Not/AZone"}})
+    streams = {"stdout": Terminal(), "stderr": io.StringIO()}
+    if terminal == "stderr":
+        streams = {"stdout": io.StringIO(), "stderr": Terminal()}
+    assert run_cli("config", "check", str(good), **streams) == 0
+    assert run_cli("config", "check", str(bad), **streams) == 2
+    out, err = streams["stdout"].getvalue(), streams["stderr"].getvalue()
+    assert ("\x1b" in out, "\x1b" in err) == (terminal == "stdout", terminal == "stderr")
+    assert "configuration and read-only path checks passed" in out
+    assert "configuration and read-only path checks failed" in err
+    assert "fields: avatar.timezone" in err and "Not/AZone" not in err
+    if terminal == "stderr":
+        assert err.startswith(f"\n{BOLD}{RED}ERROR{RESET}  ")
 
 
 def test_init_writes_a_minimal_template_that_loads_once_inputs_are_set(
@@ -188,6 +300,9 @@ def test_init_writes_a_minimal_template_that_loads_once_inputs_are_set(
     assert main(["config", "init", str(target), "--avatar-id", "my-avatar"]) == 0
     guidance = capsys.readouterr().out
     assert "OPENAI_API_KEY" in guidance and "LIVEKIT_API_SECRET" in guidance
+    # Starting validates the file; a manual check is offered as optional, not required.
+    assert f"alphaavatar dev {target}" in guidance
+    assert f"alphaavatar config check {target}" in guidance and "optional" in guidance
     # Only the requested file and its parents; no application or Avatar workspace.
     created = sorted(set(files(tmp_path)) - set(before))
     assert created == ["configs", "configs/new", "configs/new/avatar.yaml"]
@@ -203,7 +318,11 @@ def test_init_writes_a_minimal_template_that_loads_once_inputs_are_set(
     assert config.avatar.avatar.id == "my-avatar"
     DefaultMemoryConfig.model_validate(config.avatar.memory.init_config)
     DefaultPersonaConfig.model_validate(config.avatar.persona.init_config)
-    assert main(["check", str(target)]) == 0
+    assert main(["config", "check", str(target), "--json"]) == 0
+    plugins = json.loads(capsys.readouterr().out)["plugins"]
+    assert plugins["voice"] == {"vad": "silero", "stt": "openai_segment", "tts": "openai"}
+    assert (plugins["memory"]["vdb"], plugins["persona"]["vdb"]) == ("lancedb", "lancedb")
+    assert plugins["tools"] == {"deepresearch": None, "rag": None, "mcp": None}
     assert sandbox == []
 
 
@@ -251,113 +370,13 @@ def test_console_commands_run_without_the_host_log_socket(tmp_path: Path) -> Non
         )
 
     assert run("config", "init", str(target), "--avatar-id", "console").returncode == 0
-    checked = run("check", str(target), "--json")
+    checked = run("config", "check", str(target), "--json")
     assert checked.returncode == 0, checked.stderr
     assert json.loads(checked.stdout)["avatar_id"] == "console"
-    shown = run("config", "show", str(target), "--json")
-    assert json.loads(shown.stdout)["avatar"]["id"] == "console"
     assert files(tmp_path) == ["avatar.yaml", "home", "tmp"]
-    help_text = run("--help").stdout
-    assert all(command in help_text for command in ("dev", "start", "check", "config"))
-
-
-class Terminal(io.StringIO):
-    def isatty(self) -> bool:
-        return True
-
-
-def run_cli(*argv: str, stdout: io.StringIO, stderr: io.StringIO) -> int:
-    with mock.patch.object(sys, "stdout", stdout), mock.patch.object(sys, "stderr", stderr):
-        return main(list(argv))
-
-
-@pytest.mark.parametrize(
-    ("terminal", "environment"),
-    [(True, {}), (False, {}), (True, {"NO_COLOR": ""}), (True, {"TERM": "dumb"})],
-    ids=["terminal", "pipe", "no-color", "dumb-terminal"],
-)
-def test_only_an_enabled_terminal_gets_styles_and_json_stays_plain(
-    terminal: bool, environment: dict[str, str], tmp_path: Path
-) -> None:
-    config = write(tmp_path / "avatar.json", CONFIG | {"tools": {}})
-    stream = Terminal if terminal else io.StringIO
-    styled = terminal and not environment
-    with mock.patch.dict(os.environ, environment):
-        checked, shown, as_json = stream(), stream(), stream()
-        assert run_cli("check", str(config), stdout=checked, stderr=stream()) == 0
-        assert run_cli("config", "show", str(config), stdout=shown, stderr=stream()) == 0
-        assert (
-            run_cli("config", "show", str(config), "--json", stdout=as_json, stderr=stream()) == 0
-        )
-
-    assert checked.getvalue().startswith(f"{BOLD}{GREEN}OK{RESET}  " if styled else "OK  ")
-    assert ("\x1b" in checked.getvalue() + shown.getvalue()) == styled
-    if styled:
-        text = shown.getvalue()
-        assert f"{BRAND_BLUE}memory{RESET}:" in text
-        assert f"{BRAND_BLUE}api_key{RESET}: {DIM}'[hidden]'{RESET}" in text
-        assert f"{BRAND_BLUE}speed{RESET}: {SIGNAL_CYAN}1.0{RESET}" in text
-        assert f"{BRAND_BLUE}plugin{RESET}: realtime\n" in text  # Plain values keep the default.
-    # JSON never carries terminal styling, even on a terminal.
-    assert "\x1b" not in as_json.getvalue() and json.loads(as_json.getvalue())["avatar"]
-
-
-@pytest.mark.parametrize("terminal", ["stdout", "stderr"])
-def test_each_stream_detects_its_own_terminal(terminal: str, tmp_path: Path) -> None:
-    good = write(tmp_path / "good.json", {"avatar": {"id": "assistant"}})
-    bad = write(tmp_path / "bad.json", {"avatar": {"id": "assistant", "timezone": "Not/AZone"}})
-    streams = {"stdout": Terminal(), "stderr": io.StringIO()}
-    if terminal == "stderr":
-        streams = {"stdout": io.StringIO(), "stderr": Terminal()}
-    assert run_cli("check", str(good), **streams) == 0
-    assert run_cli("check", str(bad), **streams) == 2
-    out, err = streams["stdout"].getvalue(), streams["stderr"].getvalue()
-    assert ("\x1b" in out, "\x1b" in err) == (terminal == "stdout", terminal == "stderr")
-    assert "OK  configuration and read-only path checks passed" in out.replace(f"{RESET}", "")
-    assert "configuration and read-only path checks failed" in err
-    assert "fields: avatar.timezone" in err and "Not/AZone" not in err
-    if terminal == "stderr":
-        assert err.startswith(f"{BOLD}{RED}ERROR{RESET}  ")
-
-
-@pytest.mark.parametrize("terminal", [True, False], ids=["terminal", "pipe"])
-def test_show_renders_long_and_markup_like_values_literally(terminal: bool, tmp_path: Path) -> None:
-    home = tmp_path / ("very-long-directory-" * 8) / "home"
-    # Over the 8192-character log bound, with spaces where a YAML emitter could fold it.
-    introduction = "Keep [bold red]this[/] and [hidden] literal: " + "word " * 1800 + "end"
-    config = write(
-        tmp_path / "avatar.json",
-        {
-            "application": {"home": str(home)},
-            "avatar": {"id": "assistant", "introduction": introduction + "\x1b[31m!"},
-        },
-    )
-    shown = Terminal() if terminal else io.StringIO()
-    assert run_cli("config", "show", str(config), stdout=shown, stderr=io.StringIO()) == 0
-    lines = shown.getvalue().splitlines()
-    # Complete and unwrapped: the long text and the path each stay on one copyable line.
-    assert any(f"{introduction}!" in line for line in lines)
-    assert any(f"{home}/avatars/assistant" in line for line in lines)
-    assert "[truncated]" not in shown.getvalue() and "\x1b[31m" not in shown.getvalue()
-
-
-def test_check_summary_passes_the_same_output_boundary_as_show(
-    tmp_path: Path, credentials: object, capsys: pytest.CaptureFixture
-) -> None:
-    # A credential reused as the Avatar ID, and a terminal escape inside the home path.
-    home = tmp_path / "home\x1b[2Jdir"
-    value = CONFIG | {
-        "application": {"home": str(home)},
-        "avatar": {"id": SECRETS["MCP_DOCS_TOKEN"]},
-    }
-    config = write(tmp_path / "avatar.json", value)
-    assert main(["check", str(config)]) == 0
-    text = capsys.readouterr().out
-    assert main(["check", str(config), "--json"]) == 0
-    report = capsys.readouterr().out
-    summary = json.loads(report)
-    assert summary["avatar_id"] == "[redacted]"
-    assert summary["home"] == str(tmp_path / "homedir") and "[redacted]" in summary["workspace"]
-    for output in (text, report):
-        assert "\x1b" not in output and "\\u001b" not in output
-        assert SECRETS["MCP_DOCS_TOKEN"] not in output
+    # Only the converged commands exist; the removed entry points are usage errors.
+    assert run("check", str(target)).returncode == 2
+    assert run("config", "show", str(target)).returncode == 2
+    commands = run("--help").stdout
+    assert "{dev,start,config}" in commands  # No top-level check.
+    assert "{init,check}" in run("config", "--help").stdout

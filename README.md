@@ -308,12 +308,11 @@ cp .env.template .env.dev
 # Configuration: use an example, or create a minimal file to start from
 alphaavatar config init my-avatar.yaml --avatar-id my-avatar
 
-# Validate it and review the effective settings (credentials removed)
-ENV_FILE=.env.dev alphaavatar check examples/agent_configs/voice/pipeline_openai_tools_minimal.yaml
-ENV_FILE=.env.dev alphaavatar config show examples/agent_configs/voice/pipeline_openai_tools_minimal.yaml
+# Optional: validate without starting (start and dev validate it too)
+ENV_FILE=.env.dev alphaavatar config check examples/agent_configs/voice/pipeline_openai_tools_minimal.yaml
 ```
 
-Edit .env.dev and provide credentials for the selected RTC, model, embedding and tool services; keep credentials out of the YAML file. Example model/voice identifiers are deployment choices, not guarantees of account access. `check` and `config show` start nothing and create no directories.
+Edit .env.dev and provide credentials for the selected RTC, model, embedding and tool services; keep credentials out of the YAML file. Example model/voice identifiers are deployment choices, not guarantees of account access. `config check` starts nothing and creates no directories.
 
 Set `ALPHAAVATAR_HOME` to choose the application home, or set top-level YAML `application.cache_root` to choose a separate application cache; downloaded models live in its `models/` directory. Host rejects the former `ALPHAAVATAR_MODEL_CACHE` setting. Set `ALPHAAVATAR_MODEL_OFFLINE=1` to require locally cached, validated files. See [Model cache](docs/models-cache-layout.md) for downloads and offline use, and [Avatar workspace](docs/avatar-workspace-layout.md) for personal data, backups and cleanup.
 
