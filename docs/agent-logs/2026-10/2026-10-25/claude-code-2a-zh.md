@@ -20,7 +20,7 @@
 | T-6 | KD-14：缺口窗口中 generation 已存在的证据不被更新的快照覆盖 | 2026-11-02 | `a2b6bde` | `4cb57c2` | 已验收：review 无新阻断问题，KD-14 关闭；本地 195 passed（CI 方式 ×3），review 环境运行 147 项通过（IPC 用例受环境限制） |
 | T-7 | KD-14 正式回归；修复 O-1、KD-6、KD-8、O-7；KD-10 时序与 O-4 取消补测试 | 2026-11-02 | `2d1d575` | `7e87782` | 已验收：O-1、KD-6、KD-8、O-7 关闭，KD-14 保持关闭，KD-10③ 时序已覆盖，O-4、O-9 保留观察；本地 229 passed；review 环境 229 项收集、183 项通过，新增 CLI 端到端用例受 AF_UNIX 权限阻断（替换日志传输边界后的配置错误处理路径通过，不计为完整 CLI 端到端） |
 | T-8 | 配置公共能力与 CLI 最小闭环：`config init`、`config check`（`check` 已迁入，`config show` 已移除） | 2026-11-02 | `7e87782` | `886efcd`、`e428c9b`、`d9a8b4f`、`4365820`、`e7bc3b3` | **已验收**（验收提交 `e7bc3b3`）：本地 246 passed（CI 方式 ×1）；review 环境选跑 200 项全部通过，此前失败的音频用例已通过；Ruff、格式、workspace、lock 通过；IPC 未独立全量复跑 |
-| T-9 | Runner 可配置并行与压力验证（`runtime.inference`、method 级 worker 池、多通道 Executor） | 2026-11-02 | `e7bc3b3` | `41ba2c0`；收尾未提交 | 已 review（`41ba2c0`）：主体符合约定，未验收；P2「恢复与关闭并发遗留 Runner 进程」和「Executor 关闭未等本地排队调用」已修复（§11），待复核：本地 263 passed（CI 方式 ×1） |
+| T-9 | Runner 可配置并行与压力验证（`runtime.inference`、method 级 worker 池、多通道 Executor） | 2026-11-02 | `e7bc3b3` | `41ba2c0`、`69813df` | **已验收**（验收提交 `69813df`）：本地 263 passed（CI 方式 ×1）；review 环境收集 263 项、选跑 202 项通过；回环 TCP 替换 Unix 边界后，14 项并行、10 项 Runtime、5 项默认压力测试通过；Ruff、格式、workspace、lock 通过；原生 AF_UNIX 未独立全量复跑 |
 
 ## 已知缺陷（当前状态，只记录不修复）
 
@@ -1915,4 +1915,25 @@ Host：`test_runner_parallelism_is_checked_against_the_selected_plan_and_survive
 | Ruff、格式、`scripts/check_workspace.py`、`uv lock --check`、对改动文件运行 pre-commit | 全部通过 |
 
 - 修改文件：`runtime/inference/runtime.py`、`runtime/inference/executor.py`、`avatar-agents/tests/test_inference_parallel.py`、本日志。
-- 本轮没有 commit 或 push。§9 记录的 4 个 `/tmp` 空目录仍未清理。
+- 收尾修改随 `69813df` 提交。§9 记录的 4 个 `/tmp` 空目录仍未清理。
+
+### 12. `69813df` 复核与验收
+
+- 结论：**T-9 已验收**，验收提交 `69813df`，没有新的阻断问题。
+- 恢复与关闭：
+  - 旧复现不再创建或遗留替代进程；
+  - 关闭中断初始化时，恢复返回 `False`；
+  - 调用方主动取消时，仍传播 `CancelledError`；
+  - 关闭返回前，恢复已经结束。
+- Executor 关闭：
+  - 64 个调用的复现中，`close()` 返回时全部结束，`pending=0`；
+  - 并发关闭、排队取消和清理异常都能正确收尾。
+- review 环境：
+  - 收集 263 项，直接选跑 202 项通过；
+  - 回环 TCP 替换 Unix 监听和连接边界（保留真实子进程和协议）后，14 项并行、10 项 Runtime、5 项默认压力测试全部通过；
+  - Ruff、格式、workspace、lock 检查通过，仓库无修改；
+  - 原生 AF_UNIX 全量复跑仍受该环境限制。
+- 不阻塞验收的已知事项：
+  - `[reaping]` 用例目前确实进入预期窗口，以后重构可能改变这个窗口；
+  - N3、N4 两个存活的防御性变异，不再扩大修改。
+- 下一阶段：安装、升级失败回滚及 Doctor。
