@@ -58,6 +58,7 @@ class AudioActivitySource:
         max_buffer_sec: float,
         close_timeout_sec: float = 1.0,
         on_failed: Callable[[AudioActivitySource, SpeechCancellationReason], None] | None = None,
+        on_boundary: Callable[[AudioActivitySource], None] | None = None,
         recovering: bool = False,
     ) -> None:
         self.perception_runtime = perception_runtime
@@ -76,6 +77,9 @@ class AudioActivitySource:
         # utterance only once this stream has observed the VAD's own end-of-speech silence.
         self._awaiting_boundary = recovering
         self._boundary_silence = vad.min_silence_duration
+        self._on_boundary = on_boundary
+        # Replay, pre-roll included, never reaches before the silence that proved the boundary.
+        self._route_floor = 0
         self._close_timeout_sec = close_timeout_sec
         self._on_failed = on_failed
 
@@ -195,7 +199,9 @@ class AudioActivitySource:
 
         accumulated = int(event.raw_accumulated_speech * self.sample_rate)
         self._speech_start_sample = max(0, event.samples_index - accumulated)
-        self._route_start_sample = max(0, self._speech_start_sample - self._pre_roll_samples)
+        self._route_start_sample = max(
+            self._route_floor, self._speech_start_sample - self._pre_roll_samples
+        )
 
         self._segment = PerceptionSegmentRef(source=self.speech_source, segment_id=uuid.uuid4().hex)
         self._segment_frames.clear()
@@ -221,7 +227,10 @@ class AudioActivitySource:
         first = True
 
         for frame_ref in self._pending:
-            if frame_ref.end_sample <= self._route_start_sample:
+            if (
+                frame_ref.end_sample <= self._route_start_sample
+                or frame_ref.start_sample < self._route_floor
+            ):
                 continue
 
             routed = self._publish_speech_frame(frame_ref, speech_start=first)
@@ -323,6 +332,10 @@ class AudioActivitySource:
             and event.raw_accumulated_silence >= self._boundary_silence
         ):
             self._awaiting_boundary = False
+            silence = int(event.raw_accumulated_silence * self.sample_rate)
+            self._route_floor = max(0, event.samples_index - silence)
+            if self._on_boundary is not None:
+                self._on_boundary(self)
 
     def _abort(self, reason: SpeechCancellationReason) -> None:
         self._closed = self._aborted = True

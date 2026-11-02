@@ -62,8 +62,10 @@ class AudioActivityProcessor(RouterProcessorBase):
 
         # Keep the latest lifecycle of each admitted input; old generations cannot reopen it.
         self._inputs: dict[str, _InputState] = {}
-        # Input generations whose next VAD stream must confirm a speech boundary first.
+        # Input generations that must confirm a speech boundary; kept across every rebuilt
+        # stream until one confirms it. Generations first seen up to the horizon may be cut.
         self._recovering: dict[str, int] = {}
+        self._gap_horizon = 0
         self._last_sequence = 0
         self._task: asyncio.Task[None] | None = None
         self._started = False
@@ -118,7 +120,8 @@ class AudioActivityProcessor(RouterProcessorBase):
             max_buffer_sec=self._config.max_buffer_sec,
             close_timeout_sec=self._config.close_timeout_sec,
             on_failed=self._source_failed,
-            recovering=self._recovering.pop(observation.source.source_id, None)
+            on_boundary=self._boundary_confirmed,
+            recovering=self._recovering.get(observation.source.source_id)
             == observation.source.source_generation,
         )
         self._sources[observation.source] = source
@@ -126,6 +129,14 @@ class AudioActivityProcessor(RouterProcessorBase):
 
     def _source_failed(self, source: AudioActivitySource, reason: SpeechCancellationReason) -> None:
         self._retire_source(source, reason=reason)
+
+    def _boundary_confirmed(self, source: AudioActivitySource) -> None:
+        current = source.input_source
+        if (
+            self._sources.get(current) is source
+            and self._recovering.get(current.source_id) == current.source_generation
+        ):
+            del self._recovering[current.source_id]
 
     def _observe_cleanup(self, source: AudioActivitySource) -> None:
         pending = [task for task in source.cleanup_tasks if not task.done()]
@@ -158,7 +169,7 @@ class AudioActivityProcessor(RouterProcessorBase):
             task.add_done_callback(lambda _task: self._observe_cleanup(source))
         return task
 
-    def _accept_input(self, source: PerceptionSourceRef) -> _InputState | None:
+    def _accept_input(self, source: PerceptionSourceRef, sequence: int) -> _InputState | None:
         current = self._inputs.get(source.source_id)
         if current is not None and source.source_generation < current.generation:
             return None
@@ -177,12 +188,16 @@ class AudioActivityProcessor(RouterProcessorBase):
                         previous, reason=SpeechCancellationReason.SOURCE_GENERATION_RETIRED
                     )
             current = self._inputs[source.source_id] = _InputState(source.source_generation)
+            if sequence <= self._gap_horizon:
+                self._recovering[source.source_id] = source.source_generation
+            else:
+                self._recovering.pop(source.source_id, None)
         return current
 
     def _consume_source_state(
         self, source: PerceptionSourceRef, state: MediaSourceState, sequence: int
     ) -> None:
-        current = self._accept_input(source)
+        current = self._accept_input(source, sequence)
         if current is None or sequence < current.changed_sequence or current.state.terminal:
             return
         current.state, current.changed_sequence = state, sequence
@@ -199,7 +214,7 @@ class AudioActivityProcessor(RouterProcessorBase):
             self._retire_source(active, reason=reason)
 
     def _consume_observation(self, observation: EnvObservation, sequence: int) -> None:
-        current = self._accept_input(observation.source)
+        current = self._accept_input(observation.source, sequence)
         if current is None or not current.state.available or sequence < current.changed_sequence:
             return
         frame = self._extract_frame(observation)
@@ -229,7 +244,8 @@ class AudioActivityProcessor(RouterProcessorBase):
         if observation is not None and observation.kind == ObservationKind.AUDIO_FRAME:
             self._consume_observation(observation, event.sequence)
 
-    def _recover_gap(self, missed_count: int, cursor_sequence: int) -> None:
+    def _recover_gap(self, missed_count: int, cursor_sequence: int, horizon: int) -> None:
+        self._gap_horizon = horizon
         trace = self._runtime.perception.input_trace
         trace.record("audio.input_gap", missed_count=missed_count, sequence=cursor_sequence)
         trace.freeze("audio_input_gap")
@@ -251,7 +267,7 @@ class AudioActivityProcessor(RouterProcessorBase):
                     consumer_id=self.CONSUMER_ID, limit=self._config.event_batch_size
                 )
                 if batch.has_gap:
-                    self._recover_gap(batch.missed_count, batch.cursor_seq)
+                    self._recover_gap(batch.missed_count, batch.cursor_seq, batch.latest_seq)
                 for event in batch.items:
                     try:
                         self._consume_event(event)

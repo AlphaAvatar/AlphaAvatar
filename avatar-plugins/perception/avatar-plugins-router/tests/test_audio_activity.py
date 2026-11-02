@@ -66,10 +66,14 @@ class ScriptedSilero:
         self.gate = asyncio.Event()
         self.gate.set()
         self.windows = 0
+        self.timeouts = 0  # Next inferences that time out, as an overloaded runner would.
 
     async def do_inference(self, method: str, data: bytes) -> bytes:
         assert method == SileroVADRunner.INFERENCE_METHOD
         await self.gate.wait()
+        if self.timeouts:
+            self.timeouts -= 1
+            raise TimeoutError
         audio = np.frombuffer(data, dtype=np.float32, count=WINDOW)
         self.windows += 1
         loud = np.count_nonzero(np.abs(audio) >= 1000 / 32767) * 2 >= audio.size
@@ -119,14 +123,14 @@ class Microphone:
 
 
 class Pipeline:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, pre_roll_sec: float = 0.1, event_maxlen: int = 8192) -> None:
         workspace, session = WorkspacePaths.from_root(root), SessionRuntime(session_id="session")
         self.runtime = AvatarRuntime.create(
             workspace=workspace,
             session=session,
             session_path=workspace.data.sessions.get(session.session_id, date(2026, 1, 1)),
             state=StateRuntime(),
-            config=RuntimeConfig(),
+            config=RuntimeConfig(perception={"event_maxlen": event_maxlen}),
             inference=InferenceExecutor("/unused/inference.sock"),
         )
         self.silero = ScriptedSilero()
@@ -140,7 +144,7 @@ class Pipeline:
         self.processor = AudioActivityProcessor(
             runtime=self.runtime,
             vad=vad,
-            config=AudioActivityConfig(pre_roll_sec=0.1, max_buffer_sec=2.0),
+            config=AudioActivityConfig(pre_roll_sec=pre_roll_sec, max_buffer_sec=2.0),
         )
 
     def speech(self, kind: ObservationKind | None = None) -> list[EnvObservation]:
@@ -165,8 +169,8 @@ class Pipeline:
 
 
 @pytest.fixture
-async def pipeline(tmp_path: Path):
-    pipeline = Pipeline(tmp_path)
+async def pipeline(request: pytest.FixtureRequest, tmp_path: Path):
+    pipeline = Pipeline(tmp_path, **getattr(request, "param", {}))
     await pipeline.processor.start()
     try:
         yield pipeline
@@ -419,3 +423,102 @@ async def test_speech_continuing_through_a_gap_is_not_admitted_as_a_new_utteranc
     assert segment.segment.source.source_generation > 1
     # A VAD queue rejection retires an idle stream; only evicted speech has a segment to cancel.
     assert len(pipeline.speech(ObservationKind.SPEECH_CANCELLED)) == (gap == "evicted")
+
+
+async def evict_speech_start(pipeline: Pipeline, microphone: Microphone) -> None:
+    """Lose the start of an utterance to the 2 s bound; its stream is cancelled and rebuilt."""
+    pipeline.silero.gate.clear()
+    microphone.silence(SILENCE)
+    microphone.speech(224)
+    await pipeline.consumed()
+    pipeline.silero.gate.set()
+    await wait_until(
+        lambda: pipeline.speech(ObservationKind.SPEECH_CANCELLED), "lost speech not cancelled"
+    )
+    await pipeline.consumed()
+
+
+def assert_only_utterance(pipeline: Pipeline, microphone: Microphone, utterance: int) -> None:
+    ids = [item.observation_id for item in microphone.sent]
+    (segment,) = pipeline.speech(ObservationKind.SPEECH_SEGMENT)
+    routed = {
+        item.metadata["source_observation_id"]
+        for item in pipeline.speech(ObservationKind.SPEECH_FRAME)
+    }
+    assert routed <= set(ids[utterance:])
+    assert set(segment.payload.source_observation_ids) <= set(ids[utterance:])
+
+
+async def test_recovery_survives_a_stream_that_fails_before_its_boundary(
+    pipeline: Pipeline,
+) -> None:
+    microphone = Microphone(pipeline.runtime)
+    await evict_speech_start(pipeline, microphone)
+    microphone.speech(16)  # The user keeps talking into the rebuilt stream.
+    await wait_until(lambda: skipped(pipeline), "the continuation was never observed")
+    # Read-only: the rebuilt stream, so its failure can be awaited before more audio arrives.
+    rebuilt = pipeline.processor._sources[microphone.source]
+    pipeline.silero.timeouts = 1
+    microphone.speech(4)
+    await wait_until(lambda: rebuilt.failed, "the rebuilt stream never failed")
+    await pipeline.consumed()
+
+    # The next stream still opens mid-utterance and must inherit the unconfirmed boundary.
+    microphone.speech(SPEECH)
+    microphone.silence(TAIL)
+    utterance = len(microphone.sent)
+    microphone.silence(SILENCE)
+    microphone.speech(SPEECH)
+    microphone.silence(TAIL)
+    await wait_until(
+        lambda: pipeline.speech(ObservationKind.SPEECH_SEGMENT), "the next utterance never ended"
+    )
+    assert_only_utterance(pipeline, microphone, utterance)
+    assert len(skipped(pipeline)) == 2
+
+
+@pytest.mark.parametrize("pipeline", [{"event_maxlen": 64}], indirect=True)
+async def test_input_first_seen_after_a_perception_gap_must_confirm_a_boundary(
+    pipeline: Pipeline,
+) -> None:
+    microphone = Microphone(pipeline.runtime)
+    # 112 events reach a 64-event window before the consumer runs: it first meets this input
+    # in the middle of its speech.
+    microphone.silence(SILENCE)
+    microphone.speech(96)
+    await pipeline.consumed()
+    records = pipeline.runtime.perception.input_trace.snapshot().to_dict()["records"]
+    assert [record["stage"] for record in records].count("audio.input_gap") == 1
+
+    microphone.silence(TAIL)
+    utterance = len(microphone.sent)
+    microphone.silence(SILENCE)
+    microphone.speech(SPEECH)
+    microphone.silence(TAIL)
+    await wait_until(
+        lambda: pipeline.speech(ObservationKind.SPEECH_SEGMENT), "the next utterance never ended"
+    )
+    assert_only_utterance(pipeline, microphone, utterance)
+    assert [record["reason"] for record in skipped(pipeline)] == ["unconfirmed_boundary"]
+
+
+@pytest.mark.parametrize("pipeline", [{"pre_roll_sec": 0.3}], indirect=True)
+async def test_pre_roll_after_a_gap_never_reaches_back_into_skipped_speech(
+    pipeline: Pipeline,
+) -> None:
+    microphone = Microphone(pipeline.runtime)
+    await evict_speech_start(pipeline, microphone)
+    microphone.speech(SPEECH)
+    # 0.16 s of silence confirms the boundary but is shorter than the 0.3 s pre-roll.
+    safe = len(microphone.sent)
+    microphone.silence(TAIL)
+    microphone.speech(SPEECH)
+    microphone.silence(TAIL)
+    await wait_until(
+        lambda: pipeline.speech(ObservationKind.SPEECH_SEGMENT), "the next utterance never ended"
+    )
+    # Pre-roll may cover the confirming silence, never the skipped speech before it.
+    assert_only_utterance(pipeline, microphone, safe)
+    (segment,) = pipeline.speech(ObservationKind.SPEECH_SEGMENT)
+    spoken = [item.observation_id for item in microphone.sent[safe + TAIL : safe + TAIL + SPEECH]]
+    assert set(spoken) <= set(segment.payload.source_observation_ids)
