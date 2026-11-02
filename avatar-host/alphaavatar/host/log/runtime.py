@@ -84,11 +84,13 @@ class HostLog:
         self._saved_endpoint = os.environ.get(LOG_ENDPOINT_ENV)
         self._directory, self._path = private_socket_path("alphaavatar-log-", "events.sock")
         self._token = secrets.token_hex(32)
-        self._socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         self.file_path: Path | None = None
         self._thread: threading.Thread | None = None
         self._client: LogClient | None = None
+        receiver = None
         try:
+            # Socket creation can fail (e.g. EPERM); the private directory must not outlive it.
+            self._socket = receiver = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
             self._socket.bind(self._path)
             self._socket.setblocking(False)
             self._client = LogClient(
@@ -105,7 +107,8 @@ class HostLog:
         except BaseException:
             if self._client is not None:
                 self._client.close()
-            self._socket.close()
+            if receiver is not None:
+                receiver.close()
             shutil.rmtree(self._directory)
             self._restore_endpoint()
             raise

@@ -16,11 +16,13 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import io
 import json
 import logging
 import multiprocessing as mp
 import os
+import socket
 import stat
 import tempfile
 from pathlib import Path
@@ -97,3 +99,27 @@ def test_host_log_endpoint_fits_and_is_released(
     assert "endpoint probe" in stream.getvalue()
     assert not Path(endpoint).parent.exists()
     assert list(root.iterdir()) == []
+
+
+@pytest.mark.parametrize("refused", [1, 2], ids=["receiver", "client"])
+def test_host_log_construction_failure_releases_its_directory(
+    refused: int, socket_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    created, handlers = [], list(logging.root.handlers)
+    real = socket.socket
+
+    def sandboxed(family: int = -1, *args: object, **kwargs: object) -> socket.socket:
+        # A sandbox may refuse local sockets with EPERM, as some review hosts do.
+        if family == socket.AF_UNIX:
+            created.append(family)
+            if len(created) == refused:
+                raise PermissionError(errno.EPERM, "Operation not permitted")
+        return real(family, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "socket", sandboxed)
+    with pytest.raises(PermissionError):
+        HostLog(devmode=False, stream=io.StringIO())
+    assert len(created) == refused
+    assert list(socket_root.iterdir()) == []
+    assert LOG_ENDPOINT_ENV not in os.environ
+    assert logging.root.handlers == handlers

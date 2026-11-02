@@ -13,7 +13,8 @@
 | 2A-2a | `avatar.id` 必填 | 2026-10-25 | `5c2c5b7` | `468c807` | 已验收；CI Lint、Build、Install 通过，23 passed |
 | 2A-C1 | 删除未使用的 Host diagnostics | 2026-10-26 | `468c807` | `00cc6ef` | 已验收；CI Lint、Build、Install 通过，23 passed；KD-9 关闭 |
 | T-1 | 必要回归测试补全与 KD/O 复核（只改测试） | 2026-11-02 | `f708b26` | `161e35f` | 已 review：测试保留，未验收；按 review 进入 T-2 修复缺陷 |
-| T-2 | 修复 KD-11、KD-12、KD-13、O-3，补定向测试与测试设施 | 2026-11-02 | `161e35f` | 未提交 | 待审查；收集 183 个，183 passed（CI 方式 ×3） |
+| T-2 | 修复 KD-11、KD-12、KD-13、O-3，补定向测试与测试设施 | 2026-11-02 | `161e35f` | `1aecf40` | 已 review：KD-11/12/13、O-3 的修复和 Memory/Persona 补测接受；剩余收尾项转入 T-3 |
+| T-3 | 修复 KD-14（原 O-8）、KD-15，封住 allowlist 旁路，澄清 KD-13 | 2026-11-02 | `1aecf40` | 未提交 | 待审查；收集 187 个，187 passed（CI 方式 ×3） |
 
 ## 已知缺陷（当前状态，只记录不修复）
 
@@ -39,7 +40,9 @@
 | ~~O-5~~ | ~~ENV Memory 批次附带的对话上下文只取最后 `max_context_messages`（64）条、`max_context_chars`（8192）字符~~ | 已关闭（设计如此） | T-1 新增，交维护者判断；**review 结论：不需修改**。这是 ENV 的有限辅助 prompt；完整的 Conversation/Tool 输入和原始 Turn 都没有被裁剪 |
 | O-6 | `agents/utils/vdb/lancedb.py` 使用已弃用的 `table_names()`，测试中出现 DeprecationWarning（全量 28 条） | 仅记录 | T-1 新增 |
 | O-7 | `MCPConfig` 未设置 `hide_input_in_errors`，ValidationError 文本可能带出部分原始 `servers` 输入（可能含明文 secret）。CLI 当前只输出字段名 | 仅记录 | T-1 新增 |
-| O-8 | VAD 积压超过 `max_buffer_sec`（2 s）时最旧的帧被淘汰，语音开头丢失且没有 trace 记录；看起来是有界内存的有意取舍 | 仅记录 | T-2 新增（语音上游测试中观察到，未断言） |
+| ~~O-8~~ | ~~VAD 积压超过 `max_buffer_sec`（2 s）时最旧的帧被淘汰，语音开头丢失且没有 trace 记录；看起来是有界内存的有意取舍~~ | 升级为 KD-14 | T-2 新增（语音上游测试中观察到，未断言）；review 确定性复现后升级为生产缺陷 |
+| ~~KD-14~~ | ~~VAD 积压超过 2 s 缓存时，迟到的 VAD 起点所在的语音正文已被淘汰，`_start_segment` 不检查，剩余部分仍作为正常 `SPEECH_SEGMENT` 发布，没有缺口或取消记录（review 复现：积压 2.4 s 时，32 帧 0.32 s 的发声只剩 8 帧 0.08 s）~~ | 已关闭 | 原 O-8；**T-3 修复**：保留 2 s 缓存上限；起点早于最早保留样本时，记录 `audio.speech_lost`（`reason=vad_backlog_overflow`，`missing_count` 为丢失样本数），以 `INPUT_GAP` 发布 `SPEECH_CANCELLED`，不路由剩余帧，并换一条已追上进度的新 VAD 流；只丢 pre-roll 时照常发布。回归：`test_audio_activity.py::test_speech_evicted_by_the_backlog_bound_is_cancelled_and_recovered` |
+| ~~KD-15~~ | ~~`HostLog` 在 `try` 之外创建接收 socket，创建失败（例如沙盒 EPERM）时，之前建立的私有目录不会被清理（既存缺口，review 环境实际触发）~~ | 已关闭 | **T-3 修复**：socket 创建移入 `try`，失败时关闭已创建的 socket、删除目录、恢复 endpoint。回归：`test_local_endpoints.py::test_host_log_construction_failure_releases_its_directory` |
 
 已撤回：「recall 结果包含 avatar owner」按 Q8 属于有意设计，不再列为缺陷。
 
@@ -633,7 +636,7 @@ filterwarnings = ["error::ResourceWarning", "error::pytest.PytestUnraisableExcep
   - 在接纳前就被拒绝（guard 不通过）的帧不计入。
 - 依据：接纳正是 OutputRuntime 记录 `last_audio_sequence`、让 AUDIO_COMPLETE barrier 覆盖该帧的边界。源码注释原文："A frame may reach one subscriber before another suspends in backpressure"。
 - 按 review 要求，没有把计数无条件移到发布之前。
-- 残余：已被接纳、但被打断撤回、没有任何消费者取走的帧也会计入。帧是串行发布的，所以每次打断最多多计一帧（本测试中一帧 10 ms）；实际播放量另由播放回执给出上界。
+- 残余：已被接纳、但被打断撤回、没有任何消费者取走的帧也会计入。帧是串行发布的，所以每次打断最多多计一帧（本测试中一帧 10 ms）；实际播放量另由播放回执给出上界。（T-3 澄清：此表述有歧义，以 T-3 第 2 节为准。）
 
 **KD-12（P2）**
 
@@ -699,7 +702,7 @@ Persona 补充：重查与 CAS 之间没有 await，所以单独去掉 CAS 的�
 ### 6. 仍未解决与未覆盖
 
 - 未改动：KD-6、KD-7、KD-8、O-1、O-2、O-4、O-6、O-7、O-8；KD-10 的两点剩余见文首表。
-- KD-13 的残余：每次打断最多多计一帧（见第 2 节）。
+- KD-13 的残余：每次打断最多多计一帧（见第 2 节；T-3 已澄清含义）。
 - Memory：Conversation 在身份切换下的 consolidation 路径没有覆盖；混合批次归属属于延期政策，没有断言。
 - Persona：只覆盖了 Agent 主动改绑，没有覆盖另一传感器的被动改绑（例如 speaker 查询期间 face 改绑）；Qdrant 后端的未匹配形态没有覆盖。
 - 语音上游：
@@ -713,3 +716,95 @@ Persona 补充：重查与 CAS 之间没有 await，所以单独去掉 CAS 的�
 - 没有 commit 或 push。
 - 没有修改 CI、依赖或 CLI。
 - 没有处理第 6 节所列的未授权项。
+
+---
+
+## T-3 review 收尾：KD-14、KD-15、allowlist 旁路、KD-13 表述
+
+- 日期：2026-11-02
+- 基线 HEAD：`1aecf40e2ef3b5b099b2eecebcc36618ac44ccc7`（T-2 的提交）
+- 依据：ChatGPT 对 `1aecf40` 的 review。结论是 KD-11、KD-12、KD-13、O-3 的修复和 Memory/Persona 补测可以接受，剩下以下收尾项：
+  - O-8 升级为生产缺陷（现编号 KD-14），P1；
+  - HostLog 构造失败时遗留目录（现编号 KD-15），P2；
+  - 测试 allowlist 的 `^=` 旁路；
+  - KD-13 日志表述需要澄清。
+- review 环境说明：默认收集 183 项，选跑 144 项全部通过；完整 IPC 成功路径受该环境权限限制，没有独立复跑。
+
+### 1. 修改文件
+
+| 类型 | 文件 | 说明 |
+|---|---|---|
+| 修改 | `avatar-plugins/perception/avatar-plugins-router/.../audio_activity/source.py` | KD-14：`_start_segment` 检查迟到的 VAD 起点是否已被淘汰 |
+| 修改 | `avatar-host/alphaavatar/host/log/runtime.py` | KD-15：接收 socket 的创建移入 `try`，失败时完整清理 |
+| 修改 | `conftest.py` | `owned_endpoints.allows()` 在放行边界重新校验地址形态；去掉无法覆盖全部写入方式的 `update`/`__ior__` 重载，保留 `add()` 的提前报错 |
+| 修改 | `avatar-plugins/perception/avatar-plugins-router/tests/test_audio_activity.py` | +2：KD-14 回归，以及只丢 pre-roll 的对照 |
+| 修改 | `avatar-host/tests/test_local_endpoints.py` | +2：接收 socket、客户端 socket 分别创建失败 |
+| 修改 | `avatar-core/tests/test_isolation.py` | 地址用例改为先绕过 `add()` 插入，再验证 `allows()` 拒绝；用例数不变 |
+
+用例数从 183 增加到 187。依赖、`uv.lock`、CI 均未改动。
+
+### 2. 修复与澄清
+
+**KD-14（P1，原 O-8）**
+
+- 原因：`_append_frame` 只保留最近 `max_buffer_sec` 的帧。VAD 积压超过这个长度时，迟到的 START 指向的语音正文已被淘汰，但 `_start_segment` 不检查，仍然回放剩余的帧，最后发布一个"完整的"`SPEECH_SEGMENT`。
+- 修复：2 s 上限保留不变。在路由任何帧之前，比较语音起点 `speech_start_sample` 与最早保留的样本：
+  - 起点更早，说明语音正文已丢失：
+    - 记录 `audio.speech_lost`，`reason=vad_backlog_overflow`，`missing_count` 为丢失的样本数；
+    - 以 `SpeechCancellationReason.INPUT_GAP` 让 source 失败，为该段发布 `SPEECH_CANCELLED`，剩余帧一帧都不路由；
+    - Processor 沿用现有的 `INPUT_GAP` 退役路径，下一帧到来时新建 source 和 VAD 流，旧积压一并丢弃，新流从当前位置开始，不再落后。
+  - 只丢了 pre-roll（语音起点之前的缓冲）时，正文完整，照常发布。
+- 选择"退役并新建流"而不是"跳过本段、沿用旧流"的原因：旧流的积压仍超过缓存长度，沿用它只会在下一句重复丢失；这也与感知流缺口（`_recover_gap`）和 `VAD_INPUT_REJECTED` 的现有恢复方式一致。
+
+**KD-15（P2，既存缺口）**
+
+- 接收 socket 在 `try` 外创建，创建失败时（例如沙盒拒绝 AF_UNIX，返回 EPERM），`private_socket_path` 已建好的目录不会被删除。
+- 修复：创建移入 `try`；失败时关闭已创建的 socket，删除目录，恢复 endpoint 环境变量。
+
+**测试 allowlist 旁路**
+
+- `^=`、`symmetric_difference_update()` 等 set 运算不经过 `add()`，可以插入远程地址，之后 `allows()` 只检查成员关系就会放行。
+- 修复：`allows()` 先按 socket family 取出地址键，再用与 `add()` 相同的 `_local_address` 校验，最后才检查成员关系。
+
+**KD-13 表述澄清（代码不变）**
+
+- partial alignment 描述的是**已被 Output 接纳的音频**，实际播放了多少由播放回执确认。
+- T-2 中"每次打断最多多计一帧"只指这一次在途发布的记账：被打断时正在发布的那一帧已被接纳，所以计入。
+- 它不是整体播放误差的上界；帧时长由 TTS 决定，也不固定为 10 ms（10 ms 只是测试替身的帧长）。
+
+### 3. 回归与验证
+
+| 变异 / 对照 | 结果 |
+|---|---|
+| 临时恢复 `HEAD` 版 `source.py`（之后已逐字节还原） | `[speech-evicted]` 失败：等不到取消，直到 10 s 挂起保护超时；`[pre-roll-evicted]` 照常通过 |
+| 临时恢复 `HEAD` 版 `host/log/runtime.py`（之后已逐字节还原） | `[receiver]` 失败，并因目录残留在 teardown 报 ERROR；`[client]` 通过（原代码已处理这条路径） |
+| `allows()` 去掉边界校验、只查成员（临时改动，之后已还原） | 8 个地址用例中 7 个失败；bytes 路径本就因类型不是 str 被拒，不受影响 |
+
+KD-14 回归 `test_speech_evicted_by_the_backlog_bound_is_cancelled_and_recovered`：
+
+- `[speech-evicted]`：VAD 被挡住时推入 240 帧，其中 32 帧是语音。断言：
+  - 只出现一个 `SPEECH_CANCELLED(input_gap)`；
+  - 没有任何 `SPEECH_FRAME` 或 `SPEECH_SEGMENT`；
+  - `audio.speech_lost` 的 `missing_count` 等于 3840 个样本（24 帧）；
+  - 同一路输入的下一句在新的 speech source generation 上得到完整、精确的段。
+- `[pre-roll-evicted]`：推入 210 帧，只丢 pre-roll；段照常发布，内容从最早保留的帧开始，没有取消。
+
+运行结果（均在 `cd /home/ecs-user/AlphaAvatar && source .venv/bin/activate` 之后执行）：
+
+| 项目 | 结果 |
+|---|---|
+| 全量（CI 方式：`PYTHONDONTWRITEBYTECODE=1 pytest -p no:cacheprovider --basetemp=…`）×3 | 3 次均为 **187 passed**，约 22.2–23.3 s；basetemp 无残留；`/tmp/aa-*` 无残留；本轮没有新增 `/tmp/alphaavatar-*` |
+| 检出目录 | 前后 `git status --porcelain --ignored` 无差异 |
+| 压力入口默认一轮 | 6 passed，3.70 s |
+| Ruff / Workspace / Lock / pre-commit | 均通过（672 files already formatted；16 members consistent） |
+
+### 4. 仍未解决
+
+- KD-6、KD-7、KD-8、O-1、O-2、O-4、O-6、O-7 未改动；KD-10 的两点剩余见文首表。
+- 语音上游的 `VAD_INPUT_REJECTED` 和感知流 `INPUT_GAP` 恢复路径仍没有专门的回归用例。
+- 真实设备和服务验收仍未做。
+
+### 5. 未做事项
+
+- 没有 commit 或 push。
+- 没有修改 CI、依赖或 CLI。

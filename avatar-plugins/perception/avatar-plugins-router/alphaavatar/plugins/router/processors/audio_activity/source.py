@@ -196,6 +196,23 @@ class AudioActivitySource:
         self._segment_frames.clear()
         self._route_index = 0
 
+        retained = self._pending[0].start_sample if self._pending else self._next_sample
+        if self._speech_start_sample < retained:
+            # The bounded buffer evicted speech before VAD reported it. Never publish the
+            # remainder as an utterance; cancel it and restart on a caught-up VAD stream.
+            self.perception_runtime.input_trace.record(
+                "audio.speech_lost",
+                source_id=self.speech_source.source_id,
+                source_generation=self.speech_source.source_generation,
+                input_source_id=self.input_source.source_id,
+                input_source_generation=self.input_source.source_generation,
+                segment_id=self._segment.segment_id,
+                missing_count=retained - self._speech_start_sample,  # Samples.
+                reason="vad_backlog_overflow",
+            )
+            self._fail(SpeechCancellationReason.INPUT_GAP)
+            return
+
         first = True
 
         for frame_ref in self._pending:

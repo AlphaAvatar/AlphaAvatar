@@ -129,37 +129,35 @@ def network_denied(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         pytest.fail(f"Test attempted network access: {sorted(set(attempts))}", pytrace=False)
 
 
+def _local_address(address: object) -> bool:
+    if type(address) is str:
+        return os.path.isabs(address) and "\0" not in address
+    return (
+        type(address) is tuple
+        and len(address) == 2
+        and address[0] in _LOOPBACK
+        and type(address[1]) is int
+        and 0 < address[1] < 65536
+    )
+
+
 class _OwnedEndpoints(set):
     """Absolute AF_UNIX paths or numeric loopback (host, port) pairs the test serves itself."""
 
     def add(self, address: object) -> None:
-        unix = type(address) is str and os.path.isabs(address) and "\0" not in address
-        loopback = (
-            type(address) is tuple
-            and len(address) == 2
-            and address[0] in _LOOPBACK
-            and type(address[1]) is int
-            and 0 < address[1] < 65536
-        )
-        if not (unix or loopback):
+        if not _local_address(address):
             raise TypeError("Own only absolute AF_UNIX paths or numeric loopback (host, port)")
         super().add(address)
 
-    def update(self, *others: object) -> None:
-        for other in others:
-            for address in other:
-                self.add(address)
-
-    def __ior__(self, other: object) -> _OwnedEndpoints:
-        self.update(other)
-        return self
-
     def allows(self, sock: socket.socket, address: object) -> bool:
-        if sock.family == socket.AF_UNIX:
-            return type(address) is str and address in self
-        if sock.family in (socket.AF_INET, socket.AF_INET6) and type(address) is tuple:
-            return address[:2] in self
-        return False
+        # Revalidate at the boundary: set operators such as ^= insert without add().
+        if sock.family == socket.AF_UNIX and type(address) is str:
+            key = address
+        elif sock.family in (socket.AF_INET, socket.AF_INET6) and type(address) is tuple:
+            key = address[:2]
+        else:
+            return False
+        return _local_address(key) and key in self
 
 
 @pytest.fixture

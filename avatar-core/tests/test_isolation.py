@@ -46,26 +46,30 @@ def test_stress_budget_must_be_finite_and_nonnegative(value: str, code: int) -> 
 
 
 @pytest.mark.parametrize(
-    "address",
+    ("family", "address"),
     [
-        "relative.sock",
-        b"/tmp/bytes.sock",
-        "\0abstract",
-        ("10.0.0.1", 443),
-        ("localhost", 443),
-        ("127.0.0.1", 0),
-        ("127.0.0.1", "443"),
-        ("127.0.0.1", 443, 0, 0),
+        (socket.AF_UNIX, "relative.sock"),
+        (socket.AF_UNIX, b"/tmp/bytes.sock"),
+        (socket.AF_UNIX, "\0abstract"),
+        (socket.AF_INET, ("10.0.0.1", 443)),
+        (socket.AF_INET, ("localhost", 443)),
+        (socket.AF_INET, ("127.0.0.1", 0)),
+        (socket.AF_INET, ("127.0.0.1", "443")),
+        (socket.AF_INET6, ("::1", 443, 0, 0)),
     ],
 )
 def test_owned_endpoints_accept_only_local_addresses(
-    address: object, owned_endpoints: set[object]
+    family: int, address: object, owned_endpoints: set[object]
 ) -> None:
     with pytest.raises(TypeError):
         owned_endpoints.add(address)
-    with pytest.raises(TypeError):
-        owned_endpoints |= {address}
-    assert not owned_endpoints
+    # Set operators bypass add(); the connect/sendto boundary must still refuse the address.
+    owned_endpoints ^= {address}
+    owned_endpoints.symmetric_difference_update({("192.0.2.1", 80)})
+    with socket.socket(family, socket.SOCK_STREAM) as sock:
+        assert not owned_endpoints.allows(sock, address)
+        if family != socket.AF_UNIX:
+            assert not owned_endpoints.allows(sock, ("192.0.2.1", 80))
 
 
 def test_owned_unix_endpoint_is_reachable(socket_root: Path, owned_endpoints: set[object]) -> None:

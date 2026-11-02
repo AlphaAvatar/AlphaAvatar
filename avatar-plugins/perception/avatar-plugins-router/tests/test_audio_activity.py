@@ -300,3 +300,64 @@ async def test_retired_generation_cancels_its_open_segment_and_drops_late_frames
     assert all(
         item.segment != old_segment for item in pipeline.speech(ObservationKind.SPEECH_SEGMENT)
     )
+
+
+@pytest.mark.parametrize(
+    ("backlog", "evicted"),
+    # The 2 s bound keeps the last 200 frames. 210 frames evict only pre-roll (frames 0–9);
+    # 240 frames evict frames 0–39, so 24 of the 32 speech frames are gone before VAD starts.
+    [(210, 10), (240, 40)],
+    ids=["pre-roll-evicted", "speech-evicted"],
+)
+async def test_speech_evicted_by_the_backlog_bound_is_cancelled_and_recovered(
+    pipeline: Pipeline, backlog: int, evicted: int
+) -> None:
+    microphone = Microphone(pipeline.runtime)
+    pipeline.silero.gate.clear()
+    microphone.silence(SILENCE)
+    microphone.speech(SPEECH)
+    microphone.silence(backlog - SILENCE - SPEECH)
+    await pipeline.consumed()
+    pipeline.silero.gate.set()
+    ids = [item.observation_id for item in microphone.sent]
+
+    if evicted <= SILENCE:
+        # Only pre-roll is lost; the utterance itself is complete and published as usual.
+        await wait_until(
+            lambda: pipeline.speech(ObservationKind.SPEECH_SEGMENT), "VAD never ended the segment"
+        )
+        (segment,) = pipeline.speech(ObservationKind.SPEECH_SEGMENT)
+        assert segment.payload.source_observation_ids == tuple(ids[evicted : SPEECH_END // FRAME])
+        assert segment.metadata["speech_start_sample"] == SPEECH_START
+        assert pipeline.speech(ObservationKind.SPEECH_CANCELLED) == []
+        return
+
+    await wait_until(
+        lambda: pipeline.speech(ObservationKind.SPEECH_CANCELLED), "lost speech was not cancelled"
+    )
+    (cancelled,) = pipeline.speech(ObservationKind.SPEECH_CANCELLED)
+    # The truncated remainder never becomes an utterance: no frame, no segment, explicit gap.
+    assert cancelled.metadata["reason_code"] == SpeechCancellationReason.INPUT_GAP.value
+    assert pipeline.speech(ObservationKind.SPEECH_FRAME) == []
+    assert pipeline.speech(ObservationKind.SPEECH_SEGMENT) == []
+    records = pipeline.runtime.perception.input_trace.snapshot().to_dict()["records"]
+    (lost,) = [record for record in records if record["stage"] == "audio.speech_lost"]
+    assert (lost["reason"], lost["missing_count"]) == (
+        "vad_backlog_overflow",
+        evicted * FRAME - SPEECH_START,
+    )
+
+    # The next utterance runs on a fresh, caught-up VAD stream of the same input.
+    await pipeline.consumed()
+    offset = len(microphone.sent)
+    microphone.silence(SILENCE)
+    microphone.speech(SPEECH)
+    microphone.silence(TAIL)
+    await wait_until(
+        lambda: pipeline.speech(ObservationKind.SPEECH_SEGMENT), "recovered speech never ended"
+    )
+    (segment,) = pipeline.speech(ObservationKind.SPEECH_SEGMENT)
+    spoken = [item.observation_id for item in microphone.sent[offset + FIRST_ROUTED :]]
+    assert segment.payload.source_observation_ids == tuple(spoken[: LAST_SPOKEN - FIRST_ROUTED + 1])
+    assert segment.metadata["speech_start_sample"] == SPEECH_START
+    assert segment.segment.source.source_generation > cancelled.segment.source.source_generation
