@@ -161,7 +161,8 @@ class _InferenceChannels:
     """Up to one serial connection per service worker; a call takes the oldest idle one.
 
     A connection carries one exchange at a time, so each response belongs to the call
-    holding it. Waiting calls queue here, bounded by count and by the local timeout.
+    holding it. Waiting calls queue here, bounded by count and by the local timeout;
+    close returns only after every running and waiting call has left.
     """
 
     def __init__(
@@ -193,11 +194,14 @@ class _InferenceChannels:
         for connection in self._connections:
             self._idle.put_nowait(connection)
         self._pending = 0
+        self._settled = asyncio.Event()
+        self._settled.set()
 
     async def run(self, data: bytes) -> bytes | None:
         if self._pending >= self._max_pending:
             raise RuntimeError(f"Inference connection {self._method!r} is at capacity")
         self._pending += 1
+        self._settled.clear()
         try:
             # Waiting for a channel is local and does not consume the network timeout.
             async with asyncio.timeout(self._request_timeout):
@@ -208,11 +212,15 @@ class _InferenceChannels:
                 self._idle.put_nowait(connection)
         finally:
             self._pending -= 1
+            if not self._pending:
+                self._settled.set()
 
     async def close(self) -> None:
         results = await asyncio.gather(
             *(connection.close() for connection in self._connections), return_exceptions=True
         )
+        # Each closed channel returns to the queue and refuses its local waiters in turn.
+        await self._settled.wait()
         errors = [result for result in results if isinstance(result, Exception)]
         if errors:
             raise ExceptionGroup("Inference connection cleanup failed", errors)

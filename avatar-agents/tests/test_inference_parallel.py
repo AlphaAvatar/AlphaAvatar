@@ -464,6 +464,45 @@ async def test_waiting_requests_fail_at_once_when_no_worker_is_left(
         await runtime.close()
 
 
+@pytest.mark.parametrize("window", ["reaping", "starting"])
+async def test_close_during_recovery_starts_no_worker_and_reclaims_every_one(
+    window: str, tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
+) -> None:
+    before = children()
+    runtime = service(tmp_path, limits({PARALLEL: 2}), ParallelRunner)
+    try:
+        async with asyncio.timeout(HANG_GUARD):
+            await runtime.start()
+        owned_endpoints.add(runtime.endpoint)
+        for pid in (tmp_path / f"{PARALLEL}.inits").read_text().split():
+            os.kill(int(pid), signal.SIGKILL)
+        await wait_until(lambda: view(runtime, PARALLEL).ready_workers == 0, "kills unseen")
+        if window == "starting":
+            (tmp_path / "init3.hold").touch()
+        recovering = asyncio.create_task(runtime.recover_failed_runners())
+        if window == "reaping":
+            # One loop turn: recovery passed its checks and now awaits the first dead worker.
+            await asyncio.sleep(0)
+        else:
+            await entered(tmp_path, "init3")  # The first replacement is initializing.
+        assert not recovering.done()
+
+        async with asyncio.timeout(HANG_GUARD):
+            await runtime.close()
+            stopped = recovering.done()
+            recovered = await recovering
+        # Nothing survives close, now or later, and the caller is not cancelled.
+        assert children() - before == set()
+        assert (stopped, recovered) == (True, False)
+        inits = (tmp_path / f"{PARALLEL}.inits").read_text().split()
+        assert len(inits) == (2 if window == "reaping" else 3)
+        assert view(runtime, PARALLEL).restarts == (0 if window == "reaping" else 1)
+    finally:
+        async with asyncio.timeout(HANG_GUARD):
+            await runtime.close()
+    assert children() - before == set()
+
+
 async def test_partial_start_failure_and_cancelled_initialization_release_every_worker(
     tmp_path: Path, socket_root: Path
 ) -> None:
@@ -519,6 +558,42 @@ async def test_close_is_idempotent_and_reclaims_every_worker_and_channel(
         assert not runtime.is_alive
         assert_released(socket_root, before, fds)
     assert len((tmp_path / f"{PARALLEL}.inits").read_text().split()) == 4
+
+
+async def test_executor_close_returns_after_its_running_and_locally_queued_calls_left(
+    tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
+) -> None:
+    config = limits()
+    runtime = service(tmp_path, config, ParallelRunner)
+    try:
+        async with asyncio.timeout(HANG_GUARD):
+            await runtime.start()
+        owned_endpoints.add(runtime.endpoint)
+        executor = InferenceExecutor(runtime.endpoint, config)  # One channel per worker.
+        held = asyncio.create_task(executor.do_inference(PARALLEL, b"gate:held"))
+        await entered(tmp_path, "held")
+        queued = [
+            asyncio.create_task(executor.do_inference(PARALLEL, f"queued:{call}".encode()))
+            for call in range(16)
+        ]
+        await asyncio.sleep(0)  # Each call now waits locally for the one busy channel.
+        assert not any(task.done() for task in queued)
+
+        async with asyncio.timeout(HANG_GUARD):
+            await executor.close()
+        assert held.done() and all(task.done() for task in queued)
+        with pytest.raises(asyncio.CancelledError):
+            await held
+        for task in queued:
+            with pytest.raises(RuntimeError, match="closed"):
+                await task
+        # The dispatched request settles on its worker; none of the queued ones ran.
+        release(tmp_path, "held")
+        await wait_until(lambda: view(runtime, PARALLEL).executing == 0, "held never settled")
+        assert set(journal(tmp_path)) == {"gate:held"}
+    finally:
+        async with asyncio.timeout(HANG_GUARD):
+            await runtime.close()
 
 
 async def test_parallel_configuration_is_validated_before_any_process_starts(

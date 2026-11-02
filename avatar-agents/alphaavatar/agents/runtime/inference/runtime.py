@@ -411,7 +411,8 @@ class InferenceRuntime:
         A caller owns the policy for failing the Host if safe reclamation or
         a bounded restart is unsuccessful. Only ready replacements are exposed,
         and healthy workers of the same method keep serving meanwhile. The
-        restart budget is per method, shared by its workers.
+        restart budget is per method, shared by its workers. Once close
+        begins, no worker starts and an interrupted recovery returns False.
         """
         config = self._config
         async with self._recovery_lock:
@@ -450,11 +451,17 @@ class InferenceRuntime:
                             # Never start a duplicate while the old process may survive.
                             await self._close_runner(method, previous)
                             pool.slots[slot] = None
+                        if self._close_task is not None:
+                            # Close reclaims the workers it sees; start none after it began.
+                            return False
                         history.append(now)
                         pool.restarts += 1
                         await self._initialize_runner(method, (slot,), index)
                     except asyncio.CancelledError:
-                        raise
+                        # Close interrupted the replacement's start; the caller was not cancelled.
+                        if self._close_task is None or asyncio.current_task().cancelling():
+                            raise
+                        return False
                     except Exception:
                         logger.exception("Inference runner recovery failed method=%s", method)
                         return False
@@ -493,15 +500,20 @@ class InferenceRuntime:
             *(self._close_runner(method, worker) for method, _, worker in runners),
             return_exceptions=True,
         )
-        for (method, slot, _), result in zip(runners, results, strict=True):
+        for (method, slot, worker), result in zip(runners, results, strict=True):
             if result is None:
-                self._pools[method].slots[slot] = None
+                slots = self._pools[method].slots
+                if slots[slot] is worker:  # Clear only the worker this close reclaimed.
+                    slots[slot] = None
             elif isinstance(result, asyncio.CancelledError):
                 errors.append(RuntimeError("Inference process cleanup cancelled unexpectedly"))
             elif isinstance(result, Exception):
                 errors.append(result)
             elif isinstance(result, BaseException):
                 raise result
+        # Recovery starts nothing once closing; its interrupted start ends it. Wait for that.
+        async with self._recovery_lock:
+            pass
         if self._server is not None:
             try:
                 await self._server.wait_closed()

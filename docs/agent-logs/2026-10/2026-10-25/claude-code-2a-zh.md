@@ -20,7 +20,7 @@
 | T-6 | KD-14：缺口窗口中 generation 已存在的证据不被更新的快照覆盖 | 2026-11-02 | `a2b6bde` | `4cb57c2` | 已验收：review 无新阻断问题，KD-14 关闭；本地 195 passed（CI 方式 ×3），review 环境运行 147 项通过（IPC 用例受环境限制） |
 | T-7 | KD-14 正式回归；修复 O-1、KD-6、KD-8、O-7；KD-10 时序与 O-4 取消补测试 | 2026-11-02 | `2d1d575` | `7e87782` | 已验收：O-1、KD-6、KD-8、O-7 关闭，KD-14 保持关闭，KD-10③ 时序已覆盖，O-4、O-9 保留观察；本地 229 passed；review 环境 229 项收集、183 项通过，新增 CLI 端到端用例受 AF_UNIX 权限阻断（替换日志传输边界后的配置错误处理路径通过，不计为完整 CLI 端到端） |
 | T-8 | 配置公共能力与 CLI 最小闭环：`config init`、`config check`（`check` 已迁入，`config show` 已移除） | 2026-11-02 | `7e87782` | `886efcd`、`e428c9b`、`d9a8b4f`、`4365820`、`e7bc3b3` | **已验收**（验收提交 `e7bc3b3`）：本地 246 passed（CI 方式 ×1）；review 环境选跑 200 项全部通过，此前失败的音频用例已通过；Ruff、格式、workspace、lock 通过；IPC 未独立全量复跑 |
-| T-9 | Runner 可配置并行与压力验证（`runtime.inference`、method 级 worker 池、多通道 Executor） | 2026-11-02 | `e7bc3b3` | 未提交 | 待 review：本地 260 passed（CI 方式 ×1）；并行模块 ×10、16 核满载 ×5 无失败；stress 30 s 通过；12 个变异中 11 个被杀死，1 个为等价变异 |
+| T-9 | Runner 可配置并行与压力验证（`runtime.inference`、method 级 worker 池、多通道 Executor） | 2026-11-02 | `e7bc3b3` | `41ba2c0`；收尾未提交 | 已 review（`41ba2c0`）：主体符合约定，未验收；P2「恢复与关闭并发遗留 Runner 进程」和「Executor 关闭未等本地排队调用」已修复（§11），待复核：本地 263 passed（CI 方式 ×1） |
 
 ## 已知缺陷（当前状态，只记录不修复）
 
@@ -1861,3 +1861,58 @@ Host：`test_runner_parallelism_is_checked_against_the_selected_plan_and_survive
 - 没有新增 CLI 命令，没有恢复 `config show`，没有自动扩缩容、动态批处理或通用资源调度。
 - 没有修改各 processor／store 的使用方式；插件仍通过原有 `do_inference` 接口调用。
 - 本批修改没有 commit 或 push。
+
+### 11. `41ba2c0` review 收尾（基线 `41ba2c0`）
+
+- review 结论：配置归属、Host 共享池、默认单 worker、可复制声明、容量控制和响应归属符合要求；有 1 个进程回收问题（P2）和 1 个关闭边界问题，修复前不标为已验收。
+- review 环境：收集 260 项，选跑 202 项通过；11 项并行测试和 5 项默认压力测试通过（只把 Unix 监听和连接换成测试自有的回环 TCP，真实子进程和协议不变）；Ruff、格式、workspace、lock 通过。AF_UNIX 监听受限，原生 IPC 没有独立全量复跑。
+
+#### 11.1 问题与原因
+
+| 问题 | 原因 | 修复前的确定性复现 |
+|---|---|---|
+| P2：恢复与关闭并发时遗留新 Runner 进程 | 恢复在 `await` 回收旧 worker 之后，没有再检查关闭状态，继续创建替代 worker；关闭按旧快照把槽位清成 `None`，丢掉了替代 worker 的引用；恢复又继续处理下一个槽位 | 两个 worker 都被杀死，恢复正在回收第一个时请求关闭：关闭和恢复都返回后仍有替代进程存活，日志显示恢复继续处理了 worker=1。另一个窗口：关闭中断替代 worker 的初始化时，`CancelledError` 传给了并未被取消的恢复调用方 |
+| Executor 关闭返回时本地排队调用尚未退出 | `_InferenceChannels.close()` 只等待连接关闭；排队者要等通道依次回到队列后才失败，此时 `close()` 已经返回 | 1 个在途、16 个本地排队：`close()` 返回时排队调用仍未结束 |
+
+#### 11.2 修复（`runtime.py`、`executor.py`）
+
+- 恢复在回收旧 worker 之后、计数和创建之前检查关闭状态；关闭一旦开始就返回 `False`，不再创建进程，也不计入重启。创建 worker 与写入槽位之间没有 `await`，所以关闭开始后不会出现它看不到的 worker；关闭开始前创建的 worker 都在槽位里，由关闭统一回收，正在初始化的也会被中断。
+- 关闭中断替代 worker 的初始化时，恢复内部把这次取消转为返回 `False`；如果是调用方自己被取消（`cancelling()`），照常传播。
+- 关闭只清空它回收的那个 worker 所在的槽位，按对象比较。
+- 关闭回收全部 worker 后，等待恢复锁释放，因此返回时恢复已经结束。
+- `_InferenceChannels` 记录在途和本地排队的调用；关闭连接后，等它们全部离开才返回。已关闭的通道回到队列后依次拒绝本地等待者，报错为 "Inference connection is closed"；在途调用照旧收到取消；服务端已分派的请求照旧由原 worker 读完并丢弃。
+- Host 的关闭顺序不受影响：Host 先取消监视任务，再关闭推理服务。这次的竞态出现在恢复和关闭由不同调用方并发触发时。
+
+#### 11.3 回归测试（`test_inference_parallel.py`，修复前均失败）
+
+| 用例 | 覆盖 |
+|---|---|
+| `test_close_during_recovery_starts_no_worker_and_reclaims_every_one[reaping]` | 两个 worker 都被杀死；启动恢复后让出一次事件循环，恢复此时已过检查、正在回收第一个失效 worker，这时请求关闭。断言：关闭返回时恢复已结束并返回 `False`；没有子进程残留；没有启动替代进程（`inits` 仍为 2）；`restarts=0`；重复关闭后仍无残留 |
+| 同上 `[starting]` | 替代 worker 被 `init3.hold` 闸门挡在初始化中时请求关闭。断言：初始化被中断，恢复返回 `False`，调用方没有收到取消；第二个槽位没有被重建（`inits=3`）；无残留 |
+| `test_executor_close_returns_after_its_running_and_locally_queued_calls_left` | 一个通道，1 个在途（闸门挡住）、16 个本地排队。`close()` 返回时 17 个调用全部结束：在途调用收到取消，排队调用收到 closed；放行后在途请求在原 worker 上结束，排队的请求都没有执行 |
+
+`[reaping]` 的时机靠 asyncio 的任务调度保证：恢复任务先于测试的后续步骤运行，第一次挂起就在回收旧 worker 处。这里没有公开的观察点；如果以后在回收之前加入新的 `await`，用例仍会覆盖"恢复中途关闭"，但窗口可能会变。
+
+#### 11.4 变异验证（文件临时替换后按 SHA-256 恢复）
+
+| 变异 | 结果 |
+|---|---|
+| N1 关闭开始后恢复仍创建 worker | 被杀死（`[reaping]` 有替代进程残留） |
+| N2 关闭中断初始化时，把取消传给恢复调用方 | 被杀死（`[starting]`） |
+| N3 关闭不等待恢复结束 | **存活**：被中断的恢复在同一批事件循环回调里同步返回，眼下观察不到差别；作为防御保留，让"关闭返回时恢复已结束"不依赖回调顺序 |
+| N4 关闭按旧快照无条件清空槽位 | **存活**：有了 N1 的检查，关闭开始后槽位只会从 worker 变成 `None`，不会换成新 worker；作为防御保留，即 review 指出的第 486–498 行 |
+| N5 Executor 关闭不等待本地排队调用 | 被杀死 |
+
+#### 11.5 运行结果
+
+| 项目 | 结果 |
+|---|---|
+| 全量（CI 方式：`--basetemp`、检出前后对比）×1 | **263 passed**，43.0 s；检出目录前后一致 |
+| 3 个新用例 ×20 | 0 失败 |
+| `test_inference_parallel.py`（14 项）×10 | 0 失败 |
+| 并行、运行时、配置命令测试（42 项），16 个满载 burner 占满 16 核 ×5 | 0 失败（每轮 33–37 s） |
+| `test_runner_stress.py --stress-seconds 10` | 5 passed：并发 96768 次请求、0 错配；故障回收 96 次杀进程、96 次恢复；启停 45 轮；并行 workers=1 为 1952 次、194 req/s，workers=2 为 3872 次、386 req/s；0 错误，无残留进程或 fd |
+| Ruff、格式、`scripts/check_workspace.py`、`uv lock --check`、对改动文件运行 pre-commit | 全部通过 |
+
+- 修改文件：`runtime/inference/runtime.py`、`runtime/inference/executor.py`、`avatar-agents/tests/test_inference_parallel.py`、本日志。
+- 本轮没有 commit 或 push。§9 记录的 4 个 `/tmp` 空目录仍未清理。
