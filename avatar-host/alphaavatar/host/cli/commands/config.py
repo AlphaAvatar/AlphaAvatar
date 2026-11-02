@@ -108,8 +108,8 @@ def check(path: str, overrides: Sequence[str], *, as_json: bool) -> int:
     if as_json:
         print(json.dumps({"valid": True, **summary}, indent=2, ensure_ascii=False))
     else:
+        lines = _lines(summary)  # Complete before printing anything.
         color = _status("OK", GREEN, f"{SCOPE} passed", sys.stdout)
-        lines = _lines(summary)
         width = max(map(len, lines))
         for key, value in lines.items():
             print(f"    {_paint(key.ljust(width), DIM, color)}  {value}")

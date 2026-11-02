@@ -89,6 +89,14 @@ def sandbox(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 @pytest.fixture
+def color_capable() -> object:
+    """Styling assertions must not depend on an inherited NO_COLOR or TERM=dumb."""
+    with mock.patch.dict(os.environ, {"TERM": "xterm-256color"}):
+        os.environ.pop("NO_COLOR", None)
+        yield
+
+
+@pytest.fixture
 def credentials() -> object:
     # Restored before the isolation guard compares the process environment.
     with mock.patch.dict(os.environ, {k: v for k, v in SECRETS.items() if k.isupper()}):
@@ -253,7 +261,7 @@ def test_check_summary_passes_the_same_output_boundary(
     ids=["terminal", "pipe", "no-color", "dumb-terminal"],
 )
 def test_only_an_enabled_terminal_gets_styles_and_json_stays_plain(
-    terminal: bool, environment: dict[str, str], tmp_path: Path
+    terminal: bool, environment: dict[str, str], tmp_path: Path, color_capable: object
 ) -> None:
     config = write(tmp_path / "avatar.json", {"avatar": {"id": "assistant"}})
     stream = Terminal if terminal else io.StringIO
@@ -276,7 +284,9 @@ def test_only_an_enabled_terminal_gets_styles_and_json_stays_plain(
 
 
 @pytest.mark.parametrize("terminal", ["stdout", "stderr"])
-def test_each_stream_detects_its_own_terminal(terminal: str, tmp_path: Path) -> None:
+def test_each_stream_detects_its_own_terminal(
+    terminal: str, tmp_path: Path, color_capable: object
+) -> None:
     good = write(tmp_path / "good.json", {"avatar": {"id": "assistant"}})
     bad = write(tmp_path / "bad.json", {"avatar": {"id": "assistant", "timezone": "Not/AZone"}})
     streams = {"stdout": Terminal(), "stderr": io.StringIO()}
@@ -291,6 +301,30 @@ def test_each_stream_detects_its_own_terminal(terminal: str, tmp_path: Path) -> 
     assert "fields: avatar.timezone" in err and "Not/AZone" not in err
     if terminal == "stderr":
         assert err.startswith(f"\n{BOLD}{RED}ERROR{RESET}  ")
+
+
+def test_credential_values_never_rewrite_fixed_fields(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    # Header values equal to a fixed field name, and an empty bearer remainder.
+    servers = {
+        "docs": {"url": "https://mcp.invalid/a", "headers": {"Authorization": "Bearer health"}},
+        "blank": {"url": "https://mcp.invalid/b", "headers": {"Authorization": "Bearer "}},
+    }
+    value = {"avatar": {"id": "assistant"}, "tools": {"mcp": {"enabled": True, "servers": servers}}}
+    config = write(tmp_path / "avatar.json", value)
+
+    assert main(["config", "check", str(config)]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert main(["config", "check", str(config), "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert lines[-2] == "    health     127.0.0.1:8081 (dev: free port)"
+    assert lines[-3] == "    tools      deepresearch, rag, mcp (2 servers)"
+    assert report.keys() == {"valid", "avatar_id", "home", "workspace", "plugins", "health"}
+    assert (report["avatar_id"], report["health"]["bind"]) == ("assistant", "127.0.0.1")
+    view = describe_application(load_application(config))
+    assert view["host"]["health"]["bind"] == "127.0.0.1"
+    assert set(view["tools"]["mcp"]["servers"]) == {"docs", "blank"}
 
 
 def test_init_writes_a_minimal_template_that_loads_once_inputs_are_set(
@@ -339,6 +373,31 @@ def test_init_never_overwrites_and_leaves_nothing_behind_on_failure(
     before = files(tmp_path)
     assert main(["config", "init", str(tmp_path / "a" / "b.yaml"), "--avatar-id", " x"]) == 2
     assert "fields: avatar.id" in capsys.readouterr().err
+    assert files(tmp_path) == before
+
+    # A line break YAML would fold into a space is rejected; a valid ID is kept exactly.
+    before = files(tmp_path)
+    assert main(["config", "init", str(tmp_path / "f" / "g.yaml"), "--avatar-id", "a\x85b"]) == 2
+    assert "fields: avatar.id" in capsys.readouterr().err
+    assert files(tmp_path) == before
+    unicode = tmp_path / "unicode.yaml"
+    assert main(["config", "init", str(unicode), "--avatar-id", "助手-1"]) == 0
+    capsys.readouterr()
+    assert load_application(unicode).avatar.avatar.id == "助手-1"
+    unicode.unlink()
+
+    # The outer directory is created, then the inner one fails: neither may remain.
+    real_mkdir, outer = os.mkdir, tmp_path / "outer"
+
+    def full_mkdir(path: object, *args: object, **kwargs: object) -> None:
+        if Path(path).name == "inner" and outer.exists():
+            raise OSError(errno.ENOSPC, "No space left on device")
+        real_mkdir(path, *args, **kwargs)
+
+    with mock.patch.object(os, "mkdir", full_mkdir):
+        target = outer / "inner" / "avatar.yaml"
+        assert main(["config", "init", str(target), "--avatar-id", "x"]) == 2
+    assert "errno=28" in capsys.readouterr().err
     assert files(tmp_path) == before
 
     real = Path.open

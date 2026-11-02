@@ -19,7 +19,7 @@
 | T-5 | KD-14 收口：恢复要求随输入 generation 保留到边界确认；回放不越过安全下界 | 2026-11-02 | `65bd40f` | `a2b6bde` | 已 review：三条旁路已修好；仍有 1 个 P1（快照更新可绕过恢复要求），KD-14 未关闭，转入 T-6 |
 | T-6 | KD-14：缺口窗口中 generation 已存在的证据不被更新的快照覆盖 | 2026-11-02 | `a2b6bde` | `4cb57c2` | 已验收：review 无新阻断问题，KD-14 关闭；本地 195 passed（CI 方式 ×3），review 环境运行 147 项通过（IPC 用例受环境限制） |
 | T-7 | KD-14 正式回归；修复 O-1、KD-6、KD-8、O-7；KD-10 时序与 O-4 取消补测试 | 2026-11-02 | `2d1d575` | `7e87782` | 已验收：O-1、KD-6、KD-8、O-7 关闭，KD-14 保持关闭，KD-10③ 时序已覆盖，O-4、O-9 保留观察；本地 229 passed；review 环境 229 项收集、183 项通过，新增 CLI 端到端用例受 AF_UNIX 权限阻断（替换日志传输边界后的配置错误处理路径通过，不计为完整 CLI 端到端） |
-| T-8 | 配置公共能力与 CLI 最小闭环：`config init`、`config check`（`check` 已迁入，`config show` 已移除） | 2026-11-02 | `7e87782` | `886efcd`（首版）、`e428c9b`（输出优化）；CLI 收敛未提交 | 收敛后待审查；收集 245 个，245 passed（CI 方式 ×1） |
+| T-8 | 配置公共能力与 CLI 最小闭环：`config init`、`config check`（`check` 已迁入，`config show` 已移除） | 2026-11-02 | `7e87782` | `886efcd`、`e428c9b`、`d9a8b4f`；review 收尾修复未提交 | `d9a8b4f` review 提出 4 项收尾，已修复，待审查；收集 246 个，246 passed（CI 方式 ×1） |
 
 ## 已知缺陷（当前状态，只记录不修复）
 
@@ -1572,3 +1572,42 @@ alphaavatar dev <file> [KEY=VALUE ...]
 - **文档**：`docs/cli/{config,dev,start,doctor,test}.md`、`README.md`、`examples/README.md`、`avatar-host/README.md`。
 - **仍待处理**：O-2（导入副作用）、O-9（观察）；Runner 并行进入下一批；没有做真实设备或服务验收。
 - 本节修改没有 commit 或 push。
+
+### 11. `d9a8b4f` review 收尾（基线 `d9a8b4f`）
+
+- 基线：`d9a8b4fd88de01cbcaa2e93f295125ff2c349e1b`（CLI 收敛已提交），开始时工作区干净。
+- review 结论：命令收敛方向正确，但有 4 项需要收尾，T-8 暂不标为已验收。命令结构和摘要方案保持不变，修复都是局部的。
+- review 环境：收集 245 项，选跑 196 项通过、3 项失败，失败均对应下表第 4 项；IPC 用例仍受环境限制。
+
+| # | 问题 | 修复 |
+|---|---|---|
+| 1 | `_scrubber` 对固定字段名也做凭据替换。合法配置中出现 `Authorization: "Bearer health"` 时，`health` 键被替换：文本输出先打印 OK、再抛 `KeyError`，JSON 返回成功却缺少字段。`"Bearer "` 剥离前缀后为空字符串，替换时会把 `[redacted]` 插进每个字符之间 | 模型字段名作为固定结构保留，只有来自配置数据的动态键（插件自定义字典中的键，用 `_DynamicKey` 标记）才经过清理；凭据候选剥离前缀后不足 4 个字符的一律过滤。CLI 先完整生成所有输出行，再打印 `OK` |
+| 2 | `config init` 可能悄悄改变 Avatar ID：原始 ID `a\u0085b` 本应被拒绝，但写入 YAML 后 U+0085 被折叠成空格，变成 `a b` 并通过校验 | 渲染前先用 `AvatarConfig` 校验原始 ID；渲染后再确认读回的 ID 与输入完全相同，不同则报错。合法的非 ASCII ID 原样保留 |
+| 3 | 父目录创建失败时清理不完整：外层目录创建成功、内层因 ENOSPC 失败，清理遇到不存在的内层目录（`FileNotFoundError`）就停止，外层空目录被遗留 | 遇到本来就不存在的目录时继续向上清理；只有遇到其他 `OSError`（例如目录非空）才停止 |
+| 4 | 颜色测试没有隔离外部继承的 `NO_COLOR`/`TERM=dumb`，却断言应当着色 | 新增测试夹具 `color_capable`：清除 `NO_COLOR`，设置 `TERM=xterm-256color`，结束时恢复。生产代码继续尊重禁用颜色的设置 |
+
+#### 11.1 回归（16 → 17 个）
+
+| 用例 | 覆盖 |
+|---|---|
+| `credential_values_never_rewrite_fixed_fields`（新增） | MCP 的 Authorization 分别为 `Bearer health` 和 `Bearer `：`config check` 文本完整输出（含 `health`、`tools … (2 servers)` 两行），JSON 键集合完整，`avatar_id` 不被改写；`describe_application` 保留 `host.health`，两个 server 键名不变 |
+| `init_never_overwrites…`（扩展） | `a\x85b` 被拒绝（`fields: avatar.id`），不创建任何文件或目录；`助手-1` 原样写入，并能原样加载；外层目录已创建、内层 mkdir 返回 ENOSPC 时，所有新建目录都被清理 |
+| 两个颜色用例 | 使用 `color_capable` 夹具；在外部设置 `NO_COLOR=1` 或 `TERM=dumb` 的情况下，17 个用例照样全部通过 |
+
+对照与变异：
+
+| 对照 | 结果 |
+|---|---|
+| 临时恢复 `HEAD` 版 `view.py`、`template.py`、`commands/config.py`（之后逐字节还原） | 凭据用例失败（`KeyError: 'plugins'`，由空候选替换引起）；init 用例失败（`a\x85b` 被接受） |
+| 只去掉"遇到不存在的目录继续清理" | 清理断言失败：遗留了 `outer` 目录 |
+| 保留空候选过滤，只让固定字段名也参与替换 | 凭据用例失败：`KeyError: 'health'` |
+
+#### 11.2 验证
+
+| 项目 | 结果 |
+|---|---|
+| 定向回归：`avatar-host/tests` | 51 passed；在外部设置 `NO_COLOR=1` 或 `TERM=dumb` 时，`test_config_commands.py` 也是 17 passed |
+| 全量（CI 方式）×1 | **246 passed**，32 s；basetemp 无残留；检出目录前后一致 |
+| Ruff / 格式 / Workspace / Lock / pre-commit | 全部通过 |
+
+修改文件：`avatar-host/alphaavatar/host/configs/view.py`、`configs/template.py`、`cli/commands/config.py`、`avatar-host/tests/test_config_commands.py`，以及本日志。没有 commit 或 push。

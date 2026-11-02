@@ -119,12 +119,16 @@ def render_template(avatar_id: str) -> str:
 
     from alphaavatar.agents.configs import AvatarConfig
 
+    # Validate the identifier itself: YAML would fold line breaks such as U+0085 into spaces.
+    AvatarConfig.model_validate({"avatar": {"id": avatar_id}})
     text = _TEMPLATE.format(
         # A JSON string is a valid double-quoted YAML scalar for any accepted identifier.
         avatar_id=json.dumps(avatar_id, ensure_ascii=False),
         environment="\n".join(f"#   {name:<50} {use}" for name, use in REQUIRED_ENVIRONMENT),
     )
-    AvatarConfig.model_validate(yaml.safe_load(text))
+    rendered = AvatarConfig.model_validate(yaml.safe_load(text))
+    if rendered.avatar.id != avatar_id:
+        raise ValueError("The Avatar ID would not survive the configuration file unchanged")
     return text
 
 
@@ -145,6 +149,8 @@ def write_template(path: str | Path, *, avatar_id: str) -> Path:
         for parent in missing:
             try:
                 parent.rmdir()
+            except FileNotFoundError:
+                continue  # Never created: an outer directory may still be ours to remove.
             except OSError:
                 break
         raise

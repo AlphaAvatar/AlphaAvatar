@@ -46,10 +46,15 @@ def _opaque(annotation: Any) -> bool:
 
 def _hide(value: Any) -> Any:
     if isinstance(value, dict):
-        return {str(key): _hide(item) for key, item in value.items()}
+        # Plugin-defined keys are data; _DynamicKey marks them for the output boundary.
+        return {_DynamicKey(key): _hide(item) for key, item in value.items()}
     if isinstance(value, list):
         return [_hide(item) for item in value]
     return HIDDEN if isinstance(value, str) else value
+
+
+class _DynamicKey(str):
+    """A mapping key taken from configuration data rather than from a model field."""
 
 
 def _typed(key: str, value: Any) -> Any:
@@ -79,8 +84,9 @@ def _secrets(value: Any, key: str = "") -> set[str]:
         return {secret for name, item in value.items() for secret in _secrets(item, str(name))}
     if isinstance(value, list):
         return {secret for item in value for secret in _secrets(item, key)}
-    if isinstance(value, str) and _SENSITIVE.search(key) and len(value) >= 4:
-        return {value, _SCHEME.sub("", value)}
+    if isinstance(value, str) and _SENSITIVE.search(key):
+        # Short or empty remainders (for example "Bearer ") would rewrite ordinary text.
+        return {secret for secret in (value, _SCHEME.sub("", value)) if len(secret.strip()) >= 4}
     return set()
 
 
@@ -98,7 +104,11 @@ def _scrubber(config: ApplicationConfig) -> Callable[[Any], Any]:
 
     def scrub(value: Any) -> Any:
         if isinstance(value, dict):
-            return {text(str(key)): scrub(item) for key, item in value.items()}
+            # Model field names are fixed output structure; only data keys are filtered.
+            return {
+                text(str(key)) if isinstance(key, _DynamicKey) else key: scrub(item)
+                for key, item in value.items()
+            }
         if isinstance(value, list):
             return [scrub(item) for item in value]
         return text(value) if isinstance(value, str) else value
