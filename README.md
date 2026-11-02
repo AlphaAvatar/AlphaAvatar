@@ -297,22 +297,29 @@ Start the native Host in dev mode against your configured LiveKit deployment. Ap
 
 ---
 
-🧩 Step 1. Configure Environment Variables
+🧩 Step 1. Configuration
 
 ```bash
 cd AlphaAvatar
 
-# Copy template
+# Credentials: copy the template
 cp .env.template .env.dev
+
+# Configuration: use an example, or create a minimal file to start from
+alphaavatar config init my-avatar.yaml --avatar-id my-avatar
+
+# Validate it and review the effective settings (credentials removed)
+ENV_FILE=.env.dev alphaavatar check examples/agent_configs/voice/pipeline_openai_tools_minimal.yaml
+ENV_FILE=.env.dev alphaavatar config show examples/agent_configs/voice/pipeline_openai_tools_minimal.yaml
 ```
 
-Edit .env.dev and provide credentials for the selected RTC, model, embedding and tool services. Example model/voice identifiers are deployment choices, not guarantees of account access.
+Edit .env.dev and provide credentials for the selected RTC, model, embedding and tool services; keep credentials out of the YAML file. Example model/voice identifiers are deployment choices, not guarantees of account access. `check` and `config show` start nothing and create no directories.
+
+Set `ALPHAAVATAR_HOME` to choose the application home, or set top-level YAML `application.cache_root` to choose a separate application cache; downloaded models live in its `models/` directory. Host rejects the former `ALPHAAVATAR_MODEL_CACHE` setting. Set `ALPHAAVATAR_MODEL_OFFLINE=1` to require locally cached, validated files. See [Model cache](docs/models-cache-layout.md) for downloads and offline use, and [Avatar workspace](docs/avatar-workspace-layout.md) for personal data, backups and cleanup.
 
 ✅ Step 2. Run the Agent
 
 Enabled inference runners resolve their model files during initialization. Missing files are downloaded automatically; no separate download command is required.
-
-Set `ALPHAAVATAR_HOME` to choose the application home, or set top-level YAML `application.cache_root` to choose a separate application cache; downloaded models live in its `models/` directory. Host rejects the former `ALPHAAVATAR_MODEL_CACHE` setting. Set `ALPHAAVATAR_MODEL_OFFLINE=1` to require locally cached, validated files. See [Model cache](docs/models-cache-layout.md) for downloads and offline use, and [Avatar workspace](docs/avatar-workspace-layout.md) for personal data, backups and cleanup.
 
 ```bash
 ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/voice/pipeline_openai_tools_minimal.yaml

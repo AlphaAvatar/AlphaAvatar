@@ -32,7 +32,8 @@ def _identifier(value: object) -> str:
     return "?"
 
 
-def _locations(error: BaseException) -> tuple[str, ...]:
+def error_fields(error: BaseException) -> tuple[str, ...]:
+    """Validation error locations only: never input values, context or messages."""
     # Reporting a failed import must not try to import Pydantic again.
     for name in ("pydantic", "pydantic_core"):
         module = sys.modules.get(name)
@@ -91,7 +92,7 @@ def format_error(error: BaseException, *, details: bool = False) -> str:
         elif isinstance(current, OSError) and type(current.errno) is int:
             fields.append(f"errno={current.errno}")
         lines.append(" ".join(fields))
-        locations = _locations(current)
+        locations = error_fields(current)
         if locations:
             lines.append(f"    fields: {', '.join(locations)}")
         frames = _frames(current.__traceback__)

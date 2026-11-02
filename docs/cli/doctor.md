@@ -1,6 +1,6 @@
 # `alphaavatar doctor` — System Diagnostics
 
-> **Design specification — planned for AlphaAvatar v0.6.9.** The commands and options on this page are proposed interfaces, **not implemented CLI features**. The current native Host CLI supports `alphaavatar dev`, `alphaavatar start`, `--help`, and `--version`. See the [Host README](../../avatar-host/README.md) for commands available today.
+> **Design specification — planned for AlphaAvatar v0.6.9.** The commands and options on this page are proposed interfaces, **not implemented CLI features**. The current native Host CLI provides `dev`, `start`, `check`, `config show`, `config init`, `--help`, and `--version`; `check` covers configuration validation only. See the [Host README](../../avatar-host/README.md) for commands available today.
 
 `alphaavatar doctor` is the **system-level, active diagnostic command** for AlphaAvatar. It discovers
 the capabilities supported by the current installation, configuration, and device; runs bounded,
@@ -20,7 +20,7 @@ a passing result must come from an executed check and its assertions, not from m
 | --- | --- | --- |
 | `alphaavatar doctor` | **Can this configured AlphaAvatar system operate correctly, and what is wrong if it cannot?** | Automatically discovers, selects, and runs representative checks across the enabled system. Reports dependencies, failures, and corrective actions. |
 | [`alphaavatar test`](test.md) | **How correct, fast, scalable, and reliable is a specific capability or scenario?** | Runs explicitly selected scenarios and benchmarks with configurable sample counts, load, budgets, and assertions. |
-| `alphaavatar check` | **Are configuration, code, dependencies, and contracts valid?** | Performs targeted static/contract checks; optional Claude/Codex analysis is separate from deterministic validation. **Planned**, not documented as an implemented command. |
+| `alphaavatar check` | **Are configuration, code, dependencies, and contracts valid?** | Performs targeted static/contract checks; optional Claude/Codex analysis is separate from deterministic validation. **Configuration validation is implemented** (`alphaavatar check <config>`); code, dependency and contract checks remain **planned**. |
 
 Doctor and Test must use the **same Probe execution and result contracts**. They differ in selection,
 depth, and presentation, not in test implementations.

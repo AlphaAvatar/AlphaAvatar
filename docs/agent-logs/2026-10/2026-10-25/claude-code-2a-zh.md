@@ -18,7 +18,8 @@
 | T-4 | KD-14 补齐：缺口后先确认可靠的静音或结束边界，再接纳语音开始 | 2026-11-02 | `dca356f` | `65bd40f` | 已 review：VAD 接口与短停顿保守丢弃策略接受；普通恢复路径已修好；另有三条旁路，KD-14 仍未关闭，转入 T-5 |
 | T-5 | KD-14 收口：恢复要求随输入 generation 保留到边界确认；回放不越过安全下界 | 2026-11-02 | `65bd40f` | `a2b6bde` | 已 review：三条旁路已修好；仍有 1 个 P1（快照更新可绕过恢复要求），KD-14 未关闭，转入 T-6 |
 | T-6 | KD-14：缺口窗口中 generation 已存在的证据不被更新的快照覆盖 | 2026-11-02 | `a2b6bde` | `4cb57c2` | 已验收：review 无新阻断问题，KD-14 关闭；本地 195 passed（CI 方式 ×3），review 环境运行 147 项通过（IPC 用例受环境限制） |
-| T-7 | KD-14 正式回归；修复 O-1、KD-6、KD-8、O-7；KD-10 时序与 O-4 取消补测试 | 2026-11-02 | `2d1d575` | 未提交 | 待审查；收集 229 个，229 passed（CI 方式 ×1） |
+| T-7 | KD-14 正式回归；修复 O-1、KD-6、KD-8、O-7；KD-10 时序与 O-4 取消补测试 | 2026-11-02 | `2d1d575` | `7e87782` | 已验收：O-1、KD-6、KD-8、O-7 关闭，KD-14 保持关闭，KD-10③ 时序已覆盖，O-4、O-9 保留观察；本地 229 passed；review 环境 229 项收集、183 项通过，新增 CLI 端到端用例受 AF_UNIX 权限阻断（替换日志传输边界后的配置错误处理路径通过，不计为完整 CLI 端到端） |
+| T-8 | 配置公共能力与 CLI 最小闭环：`check`、`config show`、`config init` | 2026-11-02 | `7e87782` | 未提交 | 待审查；收集 238 个，238 passed（CI 方式 ×1） |
 
 ## 已知缺陷（当前状态，只记录不修复）
 
@@ -29,22 +30,22 @@
 | ~~KD-3~~ | ~~Tools 配置把解析后的 secret 写入 `MCP_*` 环境变量~~ | 已关闭 | 2A-1 记录；**T-1 复核：已修复**。`<ENV>` 占位符在校验时解析进 `servers` 快照，不写环境变量；子进程用 launch 快照。回归：`test_avatar_config.py::test_accepted_configuration_only_reads_its_inputs`、`test_application_config.py::test_restore_keeps_frozen_paths_and_inputs_after_the_environment_changes` |
 | ~~KD-4~~ | ~~Persona LanceDB 查询中 `user_id` 直接拼接、未转义，不安全~~ | 已关闭 | 2A-1 记录；**T-1 复核：已修复**。`_user_filter` 转义单引号，拒绝空值和 NUL。回归：`test_persona_profile.py::test_lancedb_user_predicates_isolate_quoted_identities_and_resave_idempotently`（真实 lancedb） |
 | ~~KD-5~~ | ~~Persona VDB 保存失败的错误没有被正确处理~~ | 已关闭 | 2A-1 记录为"保存只检查结果是否为假值"；2A-2a 按审计统一表述；**T-1 复核：已修复**。空结果和 `*error` 字段都抛 RuntimeError，`save` 汇总为 ExceptionGroup。回归：`test_persona_runtime.py::test_vdb_save_failure_surfaces_instead_of_silently_succeeding` |
-| ~~KD-6~~ | ~~Memory Passive Recall 的具体完成状态没有完整传播到 Turn-level diagnostics~~ | 已关闭 | 2A-2a 按审计更正：原表述"检索出错返回 `[]`，与空结果无法区分"不准确，问题不在 MemoryStore；**T-1 复核：仍存在**。`PassiveRecall.wait_context_ready` 只等待完成，timeout/overloaded/unavailable 等状态只写 debug 日志。本轮未补测试；**T-7 修复**：`PassiveRecall` 在唯一的完成门闩处把具体结果（ok/empty/timeout/overloaded/unavailable/error/identity_changed）写入现有的 InputTrace Turn 诊断（`memory.recall`，带哈希的 `turn_id`）；补上原来没有记录的"保留名额全部在途"路径；等待期限和门闩不变。回归：`test_memory_recall_diagnostics.py` |
+| ~~KD-6~~ | ~~Memory Passive Recall 的具体完成状态没有完整传播到 Turn-level diagnostics~~ | 已关闭 | 2A-2a 按审计更正：原表述"检索出错返回 `[]`，与空结果无法区分"不准确，问题不在 MemoryStore；**T-1 复核：仍存在**。`PassiveRecall.wait_context_ready` 只等待完成，timeout/overloaded/unavailable 等状态只写 debug 日志。本轮未补测试；**T-7 修复**：`PassiveRecall` 在唯一的完成门闩处把具体结果（ok/empty/timeout/overloaded/unavailable/error/identity_changed）写入现有的 InputTrace Turn 诊断（`memory.recall`，带哈希的 `turn_id`）；补上原来没有记录的"保留名额全部在途"路径；等待期限和门闩不变。回归：`test_memory_recall_diagnostics.py`；T-7 review（`7e87782`）验收 |
 | KD-7 | ToolPolicy 的默认审批策略与部分示例文档不一致。**未授权修改默认行为**；需要另行审查工具权限模型、执行授权和用户确认策略，不能损害合理的自主执行能力 | 独立审查 | 2A-1 记录为"`ToolPolicy.approval_required` 默认为 False，与示例 YAML 注释矛盾"（原归属 Tools 批次）；2A-2a 按审计改为独立审查；**T-1 复核：未变**（loop `config.py` 中默认仍为 False） |
-| ~~KD-8~~ | ~~Health 服务默认暴露在网络上（绑定 `0.0.0.0`），`/status` 没有鉴权~~ | 已关闭 | 2A-1 记录；**T-1 复核：未变**（`HealthConfig.bind` 默认 `0.0.0.0`，`/status` 无鉴权）；**T-7 修复**：`HealthConfig.bind` 默认改为 `127.0.0.1`，显式配置的外部绑定保留；`/status` 的字段集合固定为就绪标志、Runner 启动状态和最近执行的 ID/代码/pid，不含配置或凭据。回归：`avatar-host/tests/test_health.py`；`DEPLOY.md`、`avatar-host/README.md` 已同步 |
+| ~~KD-8~~ | ~~Health 服务默认暴露在网络上（绑定 `0.0.0.0`），`/status` 没有鉴权~~ | 已关闭 | 2A-1 记录；**T-1 复核：未变**（`HealthConfig.bind` 默认 `0.0.0.0`，`/status` 无鉴权）；**T-7 修复**：`HealthConfig.bind` 默认改为 `127.0.0.1`，显式配置的外部绑定保留；`/status` 的字段集合固定为就绪标志、Runner 启动状态和最近执行的 ID/代码/pid，不含配置或凭据。回归：`avatar-host/tests/test_health.py`；`DEPLOY.md`、`avatar-host/README.md` 已同步；T-7 review（`7e87782`）验收 |
 | ~~KD-9~~ | ~~`host/diagnostics.py` 无引用、与 Core diagnostics 重复、与计划中的 `host/diagnostics/` 包同名冲突~~ | 已关闭 | 2A-1 记录；**2A-C1 删除文件后解决** |
-| KD-10 | **待修复（数据完整性，高优先级）**。临时身份 B 解析为稳定身份 A 的链路有四类风险：① **文件丢失**：会话关闭时 `flush_user_path_migrations(remove_old=True)` 先做不覆盖合并，再 `rmtree` 旧目录，两边同名的文件中旧目录那份被删除；连续解析 B→A→C 会删除稳定用户 A 的目录；② **Memory 归属**：上下文 Owner 只在消费 Turn 或输出记录时才同步，已持久化的 B 记录从不更新 Owner，A 之后检索不到；③ **Persona 合并**：A 已有 Details 时整体丢弃 B 的 Details；身份解析前提交、解析后才消费的 Turn 被 Profiler 丢弃；④ **重复或错误的身份解析**：已稳定的身份可被再次重绑定；`load_profile` 不区分证据来自哪个 Participant，缺少可比较向量时直接视为匹配；未注册 Participant 的声纹和人脸会写入主 Participant | KD10-1…KD10-5，逐批授权 | 2A-2b 审计记为候选；2026-10-27 独立审计确认，并用合成数据离线复现，标为待修复；2A-2b-1 暂缓；**T-1 复核：主体已修复，剩余两点未覆盖**。① 关闭时的 flush/merge/rmtree 已全部删除（源码无引用），改绑不做磁盘 I/O；② 按已接受的设计，历史持久记录的 Owner 不重写（`test_memory_batches_never_reassign_earlier_turns_to_a_corrected_user`），纠正后 A 能否检索 B 的旧记录属于延期的多人历史政策；③ Persona 改为按 Participant 缓存，字段级合并（`merge_profile_items`），来源优先级和乱序增量有回归，但"解析前提交、解析后消费的 Turn"是否被 Profiler 丢弃，本轮没有单独覆盖；④ 身份可纠正是已接受的设计（被动 B→A、主动 A→C，Agent 改绑走 CAS），`load_profile` 按 Participant 加载并在每次 await 后重查身份，Speaker/Face 证据按 Participant 隔离，旧 source generation 的迟到结果不能绑定身份（`test_persona_sensors.py`、`test_participant_identity.py`、`test_session_identity.py`）；**T-7（仅补测试）**：③ 中"身份解析前提交、解析后才被 Profiler 消费的 Turn"已覆盖，按现有设计画像归入解析后的用户、只保存一次，Turn 的 actors 保持冻结，没有静默漏处理（`test_persona_runtime.py::test_turn_committed_before_identity_resolution_is_profiled_for_the_resolved_user`）。仍待处理：② 跨身份检索旧记录，属于延期的多人历史政策 |
+| KD-10 | **待修复（数据完整性，高优先级）**。临时身份 B 解析为稳定身份 A 的链路有四类风险：① **文件丢失**：会话关闭时 `flush_user_path_migrations(remove_old=True)` 先做不覆盖合并，再 `rmtree` 旧目录，两边同名的文件中旧目录那份被删除；连续解析 B→A→C 会删除稳定用户 A 的目录；② **Memory 归属**：上下文 Owner 只在消费 Turn 或输出记录时才同步，已持久化的 B 记录从不更新 Owner，A 之后检索不到；③ **Persona 合并**：A 已有 Details 时整体丢弃 B 的 Details；身份解析前提交、解析后才消费的 Turn 被 Profiler 丢弃；④ **重复或错误的身份解析**：已稳定的身份可被再次重绑定；`load_profile` 不区分证据来自哪个 Participant，缺少可比较向量时直接视为匹配；未注册 Participant 的声纹和人脸会写入主 Participant | KD10-1…KD10-5，逐批授权 | 2A-2b 审计记为候选；2026-10-27 独立审计确认，并用合成数据离线复现，标为待修复；2A-2b-1 暂缓；**T-1 复核：主体已修复，剩余两点未覆盖**。① 关闭时的 flush/merge/rmtree 已全部删除（源码无引用），改绑不做磁盘 I/O；② 按已接受的设计，历史持久记录的 Owner 不重写（`test_memory_batches_never_reassign_earlier_turns_to_a_corrected_user`），纠正后 A 能否检索 B 的旧记录属于延期的多人历史政策；③ Persona 改为按 Participant 缓存，字段级合并（`merge_profile_items`），来源优先级和乱序增量有回归，但"解析前提交、解析后消费的 Turn"是否被 Profiler 丢弃，本轮没有单独覆盖；④ 身份可纠正是已接受的设计（被动 B→A、主动 A→C，Agent 改绑走 CAS），`load_profile` 按 Participant 加载并在每次 await 后重查身份，Speaker/Face 证据按 Participant 隔离，旧 source generation 的迟到结果不能绑定身份（`test_persona_sensors.py`、`test_participant_identity.py`、`test_session_identity.py`）；**T-7（仅补测试）**：③ 中"身份解析前提交、解析后才被 Profiler 消费的 Turn"已覆盖，按现有设计画像归入解析后的用户、只保存一次，Turn 的 actors 保持冻结，没有静默漏处理（`test_persona_runtime.py::test_turn_committed_before_identity_resolution_is_profiled_for_the_resolved_user`）。仍待处理：② 跨身份检索旧记录，属于延期的多人历史政策；T-7 review（`7e87782`）确认 ③ 的消费时序已覆盖，历史 Turn 的身份信息保持冻结 |
 | ~~KD-11~~ | ~~任一 Runner 处于故障状态时，`InferenceRuntime._accept_client` 因 `not self.is_alive`（要求全部 Runner 存活）直接 abort 所有**新**连接。Executor 按 method 懒连接，所以会话在故障窗口内首次使用另一个健康 method 时，收到裸 `ConnectionResetError`，而不是 "temporarily unavailable"。已建立的连接不受影响。与"不同 method 独立推进"不一致；对真实模型 Runner，故障窗口可能持续数秒~~ | 已关闭 | T-1 新增并保留失败复现；review 补充：`do_inference()` 同样受影响，健康连接取消后重连也会被拒；**T-2 修复**：服务准入（`_serving`）与目标 Runner 健康分开判断，总体 `is_alive` 保留给 Host 监测和恢复。回归：`test_inference_runtime.py::test_failed_method_does_not_refuse_first_use_of_a_healthy_method`（已扩展） |
 | ~~KD-12~~ | ~~Engine 先 `revoke_run` 再 `interrupt`，若两步之间下一句 TTS 首帧到达：`SegmentPreparer.prepare` 因 output 不再 active 抛 CancelledError，`SpeechStreamer.run` 在 `job.cancelled` 仍为 False 时把它当成"准备阶段自己取消"，转成 `RuntimeError("TTS preparation cancelled itself")`。结果 AUDIO_COMPLETE 的 reason 是 `speech_synthesis_failed`，并记 ERROR 日志；帧循环对同一条件判为 `synthesis_interrupted`，两条路径不一致。PCM 已正确停止，收尾事实都完成~~ | 已关闭 | T-1 新增并保留失败复现（低严重度）；**T-2 修复**：准备阶段的取消在 output 已失效时按打断处理，output 仍有效时保持 Provider 自取消的错误边界。回归：`test_speech_synthesis.py::test_revoked_answer_awaiting_tts_first_audio_is_interrupted_not_failed`、`test_provider_self_cancellation_on_an_active_output_remains_a_failure` |
 | ~~KD-13~~ | ~~打断时 partial alignment 漏计已交付的音频：`SpeechStreamer` 只在 `publish()` 完整返回后累计 samples；帧已被一个消费者取走、另一个消费者仍在反压中时，打断让该调用返回 `None`，这一帧不计入最终 alignment（消费端收到 2 帧 0.020 s，alignment 只有 0.010 s）~~ | 已关闭 | T-1 记为未复现的观察；review 做成确定性复现；**T-2 修复**：按 Output 的接纳序号判断，帧一旦被接纳（与 AUDIO_COMPLETE barrier 覆盖范围一致）即计入，未被接纳的帧不计。回归：`test_speech_synthesis.py::test_interrupted_alignment_covers_audio_already_delivered_to_a_consumer` |
-| ~~O-1~~ | ~~初始化期间取消 Runner，要先等满 `close_timeout`（默认 5 s）才发 SIGTERM；测试中以 0.5 s 观测到~~ | 已关闭 | 2A-1 记录；**T-1 复核：仍存在**。实测 `close_timeout=0.5` 时为 0.50 s，`2.0` 时为 2.00 s；**T-7 修复**：关闭时进程从未 READY，就直接进入终止（SIGTERM）与回收，不再先等满 `close_timeout`；已 READY 的进程照旧走 CLOSE 握手。回归：`test_runner_process.py::test_cancelled_initialization_is_terminated_without_a_drain_wait`、`test_ready_runner_still_closes_through_its_drain_path`、`test_inference_runtime.py::test_mixed_close_drains_ready_runners_and_terminates_initializing_ones` |
-| O-2 | 导入 `alphaavatar.agents.configs` 会立即加载全部插件和 torch、cv2、weasyprint、openai 等（约 1.7 s）；导入期间第三方库会改写 `LD_LIBRARY_PATH`、`QT_QPA_*`、`OPENBLAS_MAIN_FREE` 等变量 | 仅记录 | 2A-2a 新增；**T-1 复核：部分改善**。干净解释器中约 0.92 s，不再导入 torch；仍加载 cv2、weasyprint、openai、numpy 和 memory/persona/router/voice 插件；仍改写 `LD_LIBRARY_PATH`、`QT_QPA_FONTDIR`、`QT_QPA_PLATFORM_PLUGIN_PATH` |
+| ~~O-1~~ | ~~初始化期间取消 Runner，要先等满 `close_timeout`（默认 5 s）才发 SIGTERM；测试中以 0.5 s 观测到~~ | 已关闭 | 2A-1 记录；**T-1 复核：仍存在**。实测 `close_timeout=0.5` 时为 0.50 s，`2.0` 时为 2.00 s；**T-7 修复**：关闭时进程从未 READY，就直接进入终止（SIGTERM）与回收，不再先等满 `close_timeout`；已 READY 的进程照旧走 CLOSE 握手。回归：`test_runner_process.py::test_cancelled_initialization_is_terminated_without_a_drain_wait`、`test_ready_runner_still_closes_through_its_drain_path`、`test_inference_runtime.py::test_mixed_close_drains_ready_runners_and_terminates_initializing_ones`；T-7 review（`7e87782`）验收 |
+| O-2 | 导入 `alphaavatar.agents.configs` 会立即加载全部插件和 torch、cv2、weasyprint、openai 等（约 1.7 s）；导入期间第三方库会改写 `LD_LIBRARY_PATH`、`QT_QPA_*`、`OPENBLAS_MAIN_FREE` 等变量 | 仅记录 | 2A-2a 新增；**T-1 复核：部分改善**。干净解释器中约 0.92 s，不再导入 torch；仍加载 cv2、weasyprint、openai、numpy 和 memory/persona/router/voice 插件；仍改写 `LD_LIBRARY_PATH`、`QT_QPA_FONTDIR`、`QT_QPA_PLATFORM_PLUGIN_PATH`；T-8：`check`/`config show` 同样会在加载配置时触发这些导入副作用（只影响 CLI 进程自身），不在本批处理 |
 | ~~O-3~~ | ~~`InferenceRuntime` 把 socket 建在 `tempfile` 目录下（`alphaavatar-inference-*/runtime.sock`），TMPDIR 较长时超过 AF_UNIX 路径上限（约 104–108 字节），启动时报 OSError，没有预检~~ | 已关闭 | T-1 新增；review 改判为启动兼容性缺陷；**T-2 修复**：新增 `alphaavatar.core.ipc.private_socket_path`，Inference 与 Host 日志的 socket 优先放在配置的临时目录，超过 100 字节时回退到 `/tmp` 下新建的私有（0700）目录，都不满足时给出明确的 ENAMETOOLONG。回归：`avatar-host/tests/test_local_endpoints.py` |
-| O-4 | Speaker/Face 的 `_inference_loop` 依赖在途任务抛出取消。若被等待的调用吞掉取消并正常返回，循环自身的取消会丢失，`_stop()` 会挂住。真实 InferenceExecutor 会传播取消，`_process` 也会重新抛出，所以正常生产路径不受影响；Profiler 有 `cancelling()` 防护，这两个循环没有 | 仅记录（未确认风险） | T-1 新增；只能用吞掉取消的替身复现，且会挂死，所以没有提交失败用例；**T-7（仅补测试）**：按真实调用链的取消契约补了 Speaker/Face 在推理或 VDB 查询未返回时 stop 的回归（8 个组合），stop 在有限时间内完成、任务在关闭前回收、stop 之后迟到结果不再写入身份；真实 InferenceExecutor 与 `PersonaStore._infer` 都会传播取消，"被调用方吞掉取消"的路径不可达，仍只作风险记录（`test_persona_sensors.py::test_stop_with_pending_sensor_work_reaps_it_and_admits_no_late_result`） |
+| O-4 | Speaker/Face 的 `_inference_loop` 依赖在途任务抛出取消。若被等待的调用吞掉取消并正常返回，循环自身的取消会丢失，`_stop()` 会挂住。真实 InferenceExecutor 会传播取消，`_process` 也会重新抛出，所以正常生产路径不受影响；Profiler 有 `cancelling()` 防护，这两个循环没有 | 仅记录（未确认风险） | T-1 新增；只能用吞掉取消的替身复现，且会挂死，所以没有提交失败用例；**T-7（仅补测试）**：按真实调用链的取消契约补了 Speaker/Face 在推理或 VDB 查询未返回时 stop 的回归（8 个组合），stop 在有限时间内完成、任务在关闭前回收、stop 之后迟到结果不再写入身份；真实 InferenceExecutor 与 `PersonaStore._infer` 都会传播取消，"被调用方吞掉取消"的路径不可达，仍只作风险记录（`test_persona_sensors.py::test_stop_with_pending_sensor_work_reaps_it_and_admits_no_late_result`）；T-7 review（`7e87782`）：继续保留观察 |
 | ~~O-5~~ | ~~ENV Memory 批次附带的对话上下文只取最后 `max_context_messages`（64）条、`max_context_chars`（8192）字符~~ | 已关闭（设计如此） | T-1 新增，交维护者判断；**review 结论：不需修改**。这是 ENV 的有限辅助 prompt；完整的 Conversation/Tool 输入和原始 Turn 都没有被裁剪 |
 | O-6 | `agents/utils/vdb/lancedb.py` 使用已弃用的 `table_names()`，测试中出现 DeprecationWarning（全量 28 条） | 仅记录 | T-1 新增 |
-| ~~O-7~~ | ~~`MCPConfig` 未设置 `hide_input_in_errors`，ValidationError 文本可能带出部分原始 `servers` 输入（可能含明文 secret）。CLI 当前只输出字段名~~ | 已关闭 | T-1 新增；**T-7 修复**：`MCPConfig` 与实际校验入口 `AvatarConfig` 都设置 `hide_input_in_errors=True`（内层设置只在它作为顶层模型时生效）；CLI 与执行子进程本就只输出 `format_error`（`include_input=False`）。回归：`test_avatar_config.py::test_rejected_mcp_input_never_reaches_error_output`、`test_cli_entrypoint.py::test_rejected_configuration_secret_never_reaches_cli_output` |
-| O-9 | `HostConfig`（含 `rtc.init_config`）没有设置 `hide_input_in_errors`，其校验错误的 `str` 可能带出原始输入。LiveKit 凭据来自环境变量而不是配置，CLI 与执行子进程只输出 `format_error`，所以目前没有暴露路径 | 仅记录 | T-7 新增（O-7 检查输出路径时发现，不在本批范围） |
+| ~~O-7~~ | ~~`MCPConfig` 未设置 `hide_input_in_errors`，ValidationError 文本可能带出部分原始 `servers` 输入（可能含明文 secret）。CLI 当前只输出字段名~~ | 已关闭 | T-1 新增；**T-7 修复**：`MCPConfig` 与实际校验入口 `AvatarConfig` 都设置 `hide_input_in_errors=True`（内层设置只在它作为顶层模型时生效）；CLI 与执行子进程本就只输出 `format_error`（`include_input=False`）。回归：`test_avatar_config.py::test_rejected_mcp_input_never_reaches_error_output`、`test_cli_entrypoint.py::test_rejected_configuration_secret_never_reaches_cli_output`；T-7 review（`7e87782`）验收 |
+| O-9 | `HostConfig`（含 `rtc.init_config`）没有设置 `hide_input_in_errors`，其校验错误的 `str` 可能带出原始输入。LiveKit 凭据来自环境变量而不是配置，CLI 与执行子进程只输出 `format_error`，所以目前没有暴露路径 | 仅记录 | T-7 新增（O-7 检查输出路径时发现，不在本批范围）；T-7 review（`7e87782`）：继续保留观察；T-8 复核：新增的 `check`/`config show` 只输出 `format_error` 与按位置列出的字段，Host 配置错误路径已有回归，不暴露 O-9，继续保留观察 |
 | ~~O-8~~ | ~~VAD 积压超过 `max_buffer_sec`（2 s）时最旧的帧被淘汰，语音开头丢失且没有 trace 记录；看起来是有界内存的有意取舍~~ | 升级为 KD-14 | T-2 新增（语音上游测试中观察到，未断言）；review 确定性复现后升级为生产缺陷 |
 | ~~KD-14~~ | ~~VAD 积压超过 2 s 缓存时，迟到的 VAD 起点所在的语音正文已被淘汰，`_start_segment` 不检查，剩余部分仍作为正常 `SPEECH_SEGMENT` 发布，没有缺口或取消记录（review 复现：积压 2.4 s 时，32 帧 0.32 s 的发声只剩 8 帧 0.08 s）~~ | 已关闭 | 原 O-8；**T-3 修复（不完整）**：保留 2 s 缓存上限；起点早于最早保留样本时，记录 `audio.speech_lost`（`reason=vad_backlog_overflow`，`missing_count` 为丢失样本数），以 `INPUT_GAP` 发布 `SPEECH_CANCELLED`，不路由剩余帧，并换一条已追上进度的新 VAD 流；只丢 pre-roll 时照常发布。回归：`test_audio_activity.py::test_speech_evicted_by_the_backlog_bound_is_cancelled_and_recovered`；review（`dca356f`）：换流后用户不停顿继续说话，新流把原句尾部当作新的一句，经 STT/TurnTaking 产生正常 COMMIT，KD-14 重开；**T-4 修复**：连续性缺口（`INPUT_GAP`、`VAD_INPUT_REJECTED`、感知流缺口）之后新建的 VAD 流，要先观察到 VAD 自身的结束静音（`min_silence_duration`）或一次 END_OF_SPEECH，才接纳语音开始；此前的 START 视为原句延续，不路由，记 `audio.speech_skipped`（`reason=unconfirmed_boundary`）。回归：`test_audio_activity.py::test_speech_continuing_through_a_gap_is_not_admitted_as_a_new_utterance`；范围说明：`INPUT_GAP` 会退役整个旧 speech epoch（该 speech source generation），其中尚未完成识别、尚未提交的前段也一并退役；已提交的 Turn 不变；review（`65bd40f`）：普通恢复已修好，另有三条旁路被确定性复现：恢复中再次失败会丢掉等待要求；感知缺口后首次发现的输入不受约束；pre-roll 会带回已跳过的尾句。**T-5 修复**：恢复要求属于输入 generation，只在当前流确认边界后解除，再次换流继承；感知缺口时记录 horizon，在其之前首次出现的输入 generation 也要确认边界；确认边界时把回放下界设为确认静音的起点，pre-roll 不越过。回归：`test_recovery_survives_a_stream_that_fails_before_its_boundary`、`test_input_first_seen_after_a_perception_gap_must_confirm_a_boundary`、`test_pre_roll_after_a_gap_never_reaches_back_into_skipped_speech`；review（`a2b6bde`）：快照用最新的 `changed_sequence` 判断 generation 是否在缺口之后出现，而状态更新时间不代表 generation 首次出现的时间；缺口与读快照之间同一 generation 发生一次静音再恢复，尾句会正常成段并经 STT/TurnTaking 产生 COMMIT。**T-6 修复**：缺口窗口内（序号不超过 horizon）该 generation 的任一事件都算"已存在"的证据，即使更新的快照先登记了这路输入，也要求确认边界；每次缺口对同一 generation 只记一次；最新状态序号仍负责过滤旧帧。回归：`test_snapshot_newer_than_a_gap_keeps_the_boundary_requirement`；**T-6 review（`4cb57c2`）验收，关闭**：review 用真实生产者线程独立复验了竞态（尾句不进 STT、无 COMMIT，新句 32 帧正文完整、恰好提交一次）、每次缺口只施加一次要求、generation 隔离 |
 | ~~KD-15~~ | ~~`HostLog` 在 `try` 之外创建接收 socket，创建失败（例如沙盒 EPERM）时，之前建立的私有目录不会被清理（既存缺口，review 环境实际触发）~~ | 已关闭 | **T-3 修复**：socket 创建移入 `try`，失败时关闭已创建的 socket、删除目录、恢复 endpoint。回归：`test_local_endpoints.py::test_host_log_construction_failure_releases_its_directory` |
@@ -1263,3 +1264,139 @@ T-3、T-4 的回归（静音后恢复、持续讲话、短停顿、VAD 队列拒
 - 没有 commit 或 push。
 - 没有修改 KD-7 的默认审批行为。
 - 没有实现配置公共服务、CLI 新功能或 Runner 并行。
+
+---
+
+## T-8 配置公共能力与 CLI 最小闭环
+
+- 日期：2026-11-02
+- 基线 HEAD：`7e877827989a0f19737b40ca422256f970e3fc19`（`dev/v0.6.9`，与远端一致），开始时工作区干净。
+- 先完成的记录：T-7 已验收（见总览与 KD 表），O-1、KD-6、KD-8、O-7 关闭，KD-14 保持关闭，KD-10③ 的时序已覆盖，O-4、O-9 保留观察。
+- 授权范围：在现有 `avatar-host/alphaavatar/host/configs` 上整理可复用的 Python 接口；新增 `check`、`config show`、`config init`；`dev`/`start` 保持兼容。
+- 不在本批：Profile/Bundle、交互向导、Web/TUI/Agent 配置入口、Doctor 实际探测、安装升级回滚、Runner 并行。
+
+### 1. 公共接口（`alphaavatar.host.configs`）
+
+| 接口 | 来源 | 说明 |
+|---|---|---|
+| `load_application(path, overrides)` | 既有 | 读取 YAML/JSON，应用 `KEY=VALUE` 覆盖，解析路径并校验，无副作用 |
+| `validate_application(value, paths=)`、`restore_application(payload)` | 既有 | 不变 |
+| `check_application_paths(config)` | 新增，抽取自原有的启动逻辑 | 启动前的只读检查：工作区连续性、旧身份目录；不创建、移动或删除数据。`start` 改为调用它，行为不变 |
+| `describe_application(config)` | 新增（`view.py`） | 生效配置的安全投影，可直接输出为文本或 JSON |
+| `describe_error(error)` | 新增（`view.py`） | 结构化错误：只有 `type`、`fields`（字段位置）和 `diagnostic`（`format_error` 的输出） |
+| `render_template(avatar_id)`、`write_template(path, avatar_id=)`、`REQUIRED_ENVIRONMENT` | 新增（`template.py`） | 最小模板、带校验的写入、需要设置的环境变量清单 |
+
+Core 新增 `alphaavatar.core.log.error_fields`：它就是 `format_error` 原本私有使用的字段位置提取函数，改为公开，以 `include_input=False`、`include_context=False` 调用 `errors()`，只返回位置。
+
+### 2. 命令
+
+```bash
+alphaavatar check <config> [KEY=VALUE ...] [--json]
+alphaavatar config show <config> [KEY=VALUE ...] [--json]
+alphaavatar config init <path> --avatar-id <id>
+```
+
+**`check`**
+
+- 加载链与 `start` 相同：`.env`（`ENV_FILE`）、覆盖、默认值、路径解析、只读路径检查。
+- 通过：退出码 0，输出 avatar_id、home、workspace。
+- 失败：退出码 2；文本模式向 stderr 输出 `format_error`（含 `fields: …`）；`--json` 向 stdout 输出 `{"valid": false, "error": {type, fields, diagnostic}}`。
+
+**`config show`**
+
+- 加载链与 `check` 相同，然后输出 `describe_application`；文本模式是 YAML，`--json` 是 JSON。
+- 失败时的输出与 `check` 一致。
+
+**`config init`**
+
+- 校验 avatar id 并渲染模板，之后才创建文件和缺失的父目录。
+- 以 `x` 模式创建，已有文件一律拒绝覆盖（退出码 2，原文件不变）。
+- 写入失败时删除已创建的文件和本次新建的父目录。
+- 成功后列出需要设置的环境变量和下一步命令。
+
+**共同边界**
+
+- `check`/`show` 不创建 HostLog，不需要 AF_UNIX socket；不启动 Host、Runner、模型或后台任务；不构造 VDB/MCP 客户端；不创建应用或 Avatar 目录；不写任何文件。
+- `dev`/`start` 的参数和行为不变；`--help`/`--version` 仍只做轻量导入，新命令的模块都是按需导入的。
+
+### 3. 脱敏投影
+
+`ApplicationConfig.payload` 是包含真实凭据的启动快照，`show` 不使用它，也不直接打印 `model_dump()`。`describe_application` 按以下规则生成：
+
+1. **结构**：与配置文件一致，即 `application`（生效的 home/cache_root）、`host`，再加上各 Avatar 分段；`avatar.workspace_root` 即生效的工作区路径。
+2. **有类型的字段**：原样展示，包括插件选择、运行参数、路径和数值；字段名像凭据的字符串值（token/secret/passw/api_key/auth/credential/cookie/private）替换为 `[redacted]`。
+3. **插件自定义的映射**：按模型字段类型识别（`dict`/`dict[...]`，如 `init_config`、`vdb_config`、MCP `servers` 等 15 处），无法可靠判断敏感性，所以保留键名、布尔、数值和 null，但所有字符串一律替换为 `[hidden]`。不为此建设字段注册框架。
+4. **按值兜底**：
+   - 从启动快照中收集所有敏感键下的字符串（含去掉 `Bearer`/`Basic` 前缀后的值），在输出的每个字符串中替换为 `[redacted]`，从而覆盖被插值到普通字段里的已解析凭据；
+   - 再对每个字符串使用 Host 日志的 `Redactor`：屏蔽环境变量中的凭据值，去掉 URL 中的账号密码、查询串和片段，屏蔽认证头和 `key=value` 形式的凭据。
+   - 脱敏作用在值上，而不是序列化后的文本上，所以 JSON 仍然合法。
+5. **错误输出**：只用 `format_error` 或 `describe_error`，两者都不含输入值、上下文或异常消息。
+
+实现中修正过一处误判：起初模式里有 `session`，使 `host.execution.on_session_end` 的值被当成凭据，进而按值替换掉了其他字段。会话类字段不是凭据，已从模式中删除，回归断言覆盖了这类非敏感字段。
+
+### 4. 模板
+
+- 内容只包括：avatar（id、name、introduction）、主模型、语音（silero/openai_segment/openai）、关闭 vision、Memory/Persona 的集合名和 embedding、它们的提供方任务，以及默认关闭的工具。用 YAML 锚点复用 embedding 和任务配置，与示例的写法一致。
+- 每一项都对应默认插件启动所需的内容。
+- 不写 `application.home` 或任何本机绝对路径，保留 Host 的平台路径选择。
+- 凭据只在注释里说明：通过环境变量或 `.env` 提供（`OPENAI_API_KEY`、`LIVEKIT_URL/API_KEY/API_SECRET`）；MCP 示例以注释形式给出 `<ENV_VAR>` 占位符的写法。
+- `avatar.id` 以 JSON 字符串（合法的 YAML 双引号标量）写入用户给定的值，不随机生成。
+
+### 5. 修改文件
+
+| 类型 | 文件 |
+|---|---|
+| 新增 | `avatar-host/alphaavatar/host/configs/view.py`、`template.py`；`avatar-host/alphaavatar/host/cli/commands/config.py`；`avatar-host/tests/test_config_commands.py` |
+| 修改 | `avatar-host/alphaavatar/host/configs/__init__.py`（导出公共接口）、`loader.py`（`check_application_paths`）；`avatar-host/alphaavatar/host/cli/app.py`（新增子命令）、`commands/run.py`（改用 `check_application_paths`）；`avatar-core/alphaavatar/core/log/diagnostics.py`、`__init__.py`（公开 `error_fields`） |
+| 文档 | `avatar-host/README.md`（命令、边界与 Python 接口）；`README.md`（Quick Start 的 Step 1 改名为 Configuration，包含凭据、`config init`、`check`、`config show`，以及应用目录、缓存和离线模式的设置；Step 2 只保留启动）、`examples/README.md`（先 `check` 再启动）；`docs/cli/doctor.md`、`docs/cli/test.md`（当前命令列表，`check` 仅覆盖配置校验，其余仍为计划） |
+
+依赖、`uv.lock`、CI、配置格式、工作区和凭据引用方式都没有改变。
+
+### 6. 回归与验证
+
+`avatar-host/tests/test_config_commands.py`，9 个用例。进程内调用的用例在"沙盒"下运行：拒绝创建 AF_UNIX socket（EPERM），Qdrant 和 LanceDB 客户端一构造即失败，同时有禁网和子进程守卫。
+
+| 用例 | 断言 |
+|---|---|
+| `check…effective_overrides` | 覆盖生效（`avatar.id=renamed`，workspace 随之变化）；非法覆盖报出字段，不回显值；JSON 失败结构只含字段；没有触碰 socket 或客户端；目录与执行前完全一致 |
+| `show…without_credentials` | 文本（YAML）与 JSON 内容一致；保留覆盖后的参数、插件选择和生效路径；VDB、MCP headers 被隐藏；插值到 introduction 里的凭据被替换；5 个虚构敏感值都不出现；没有创建目录 |
+| `error_output_never_echoes_rejected_values` ×4 | Avatar 分段错误与外层 Host 分段错误（LiveKit `init_config` 中的凭据字段）× 文本/JSON：`check` 和 `show` 都不回显被拒绝的值；JSON 错误只有 `type`/`fields`/`diagnostic` |
+| `init…loads_once_inputs_are_set` | 只新建请求的文件和父目录；id 为给定值；模板不含本机路径和凭据值；`load_application` 能加载，Memory/Persona 插件配置能通过各自的模型校验；`check` 通过 |
+| `init_never_overwrites…` | 拒绝覆盖，原文件不变；非法 id 在创建任何目录之前失败；写入时磁盘已满（ENOSPC）的情况下，文件和新建的父目录全部清理 |
+| `console_commands_run_without_the_host_log_socket` | 用真实的 console script 依次执行 init、check、show：均不创建 HostLog socket，也不创建工作区；`--help` 列出 dev/start/check/config |
+
+变异验证（内存）：
+
+| 变异 | 失败的用例 |
+|---|---|
+| `show` 直接输出完整的启动快照 | show 用例 |
+| 去掉按值脱敏 | show 用例 |
+| check 准备了应用和工作区目录 | check、show 用例 |
+| 加载前创建 HostLog | 6 个进程内用例（被 AF_UNIX 沙盒拒绝） |
+| 模板写入失败后不清理 | init 失败清理用例 |
+
+运行结果（均在 `cd /home/ecs-user/AlphaAvatar && source .venv/bin/activate` 之后执行）：
+
+| 项目 | 结果 |
+|---|---|
+| 定向回归：`avatar-host/tests` | 43 passed |
+| 全量（CI 方式）×1 | **238 passed**，32.1 s；basetemp 无残留；`/tmp/aa-*` 无残留；本轮没有新增 `/tmp/alphaavatar-*` |
+| 检出目录 | 前后 `git status --porcelain --ignored` 无差异 |
+| 压力入口默认一轮 | 6 passed |
+| Ruff / 格式 / Workspace / Lock / pre-commit | 全部通过（678 files already formatted；16 members consistent） |
+| 发布包 | `alpha-avatar-host` wheel 包含新模块，不含 `tests/` |
+| 仓库示例（手工核对，非用例） | 5 个示例 YAML 在临时 HOME 下 `check` 和 `config show --json` 都返回 0，注入的虚构密钥出现 0 次，HOME 下没有新文件 |
+
+### 7. 限制与仍待处理
+
+- **O-2**：加载配置时仍会导入插件和第三方库，改写 CLI 进程自身的少量环境变量，约需 1 秒。这不影响"不创建、不连接"的契约，按要求不在本批扩大处理。
+- **O-9**：新输出路径不暴露它（只输出 `format_error` 和字段位置），继续保留观察；`HostConfig` 本身没有改动。
+- **脱敏是尽力而为**：类型字段按键名、插件映射按"所有字符串"、另加按值兜底。任意插件映射中的非字符串值（数字、布尔）仍会显示。这是有意的取舍：它们是运行参数。
+- **模板**：只验证了能加载，插件配置模型能通过校验；没有在真实服务下启动。模型名称沿用仓库示例，是否可用取决于部署账号。
+- `AvatarHost._serve` 中原有的同一段只读检查没有改用新函数，行为相同，留待以后整理。
+- 本批全部是离线确定性回归；没有做真实设备或服务验收。
+
+### 8. 未做事项
+
+- 没有 commit 或 push。
+- 没有实现 Profile/Bundle、交互向导、Doctor 探测或安装升级。

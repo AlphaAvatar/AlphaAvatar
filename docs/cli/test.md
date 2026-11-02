@@ -1,6 +1,6 @@
 # `alphaavatar test` — Targeted Tests and Benchmarks
 
-> **Design specification — planned for AlphaAvatar v0.6.9.** The commands and options below describe a proposed interface, **not commands already implemented**. The existing Host CLI currently provides `dev`, `start`, `--help`, and `--version`. See the [Host README](../../avatar-host/README.md).
+> **Design specification — planned for AlphaAvatar v0.6.9.** The commands and options below describe a proposed interface, **not commands already implemented**. The current native Host CLI provides `dev`, `start`, `check`, `config show`, `config init`, `--help`, and `--version`; `check` covers configuration validation only. See the [Host README](../../avatar-host/README.md).
 
 `alphaavatar test` runs **specific, repeatable experiments** against AlphaAvatar capabilities. It
 validates behavior, measures performance, and reproduces failures under controlled input, concurrency,

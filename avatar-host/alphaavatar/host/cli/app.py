@@ -20,19 +20,50 @@ from alphaavatar.host.version import __version__
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="alphaavatar", description="Run an AlphaAvatar Host.")
+    parser = argparse.ArgumentParser(
+        prog="alphaavatar", description="Run, check and configure an AlphaAvatar Host."
+    )
     parser.add_argument("--version", action="version", version=f"AlphaAvatar {__version__}")
     commands = parser.add_subparsers(dest="command", required=True)
+
+    def configured(command: argparse.ArgumentParser, *, json_output: bool) -> None:
+        command.add_argument("config", help="Application YAML or JSON file")
+        command.add_argument("overrides", nargs="*", metavar="KEY=VALUE")
+        if json_output:
+            command.add_argument("--json", action="store_true", help="Print JSON for tools")
+
     for command in ("dev", "start"):
-        run = commands.add_parser(command, help=f"Run the Host in {command} mode")
-        run.add_argument("config", help="Application YAML or JSON file")
-        run.add_argument("overrides", nargs="*", metavar="KEY=VALUE")
+        configured(
+            commands.add_parser(command, help=f"Run the Host in {command} mode"), json_output=False
+        )
+    configured(
+        commands.add_parser("check", help="Validate a configuration without starting anything"),
+        json_output=True,
+    )
+    config = commands.add_parser("config", help="Show or create application configuration")
+    actions = config.add_subparsers(dest="action", required=True)
+    configured(
+        actions.add_parser("show", help="Print the effective configuration, credentials removed"),
+        json_output=True,
+    )
+    init = actions.add_parser("init", help="Create a minimal configuration file")
+    init.add_argument("path", help="Configuration file to create; never overwritten")
+    init.add_argument("--avatar-id", required=True, help="Stable Avatar identifier")
 
     args = parser.parse_args(argv)
-    for item in args.overrides:
+    for item in getattr(args, "overrides", ()):
         if "=" not in item or not item.partition("=")[0]:
             parser.error("Configuration overrides must use KEY=VALUE")
 
-    from .commands.run import run
+    if args.command in ("dev", "start"):
+        from .commands.run import run
 
-    return run(args.config, args.overrides, devmode=args.command == "dev")
+        return run(args.config, args.overrides, devmode=args.command == "dev")
+
+    from .commands import config as configuration
+
+    if args.command == "check":
+        return configuration.check(args.config, args.overrides, as_json=args.json)
+    if args.action == "show":
+        return configuration.show(args.config, args.overrides, as_json=args.json)
+    return configuration.init(args.path, avatar_id=args.avatar_id)

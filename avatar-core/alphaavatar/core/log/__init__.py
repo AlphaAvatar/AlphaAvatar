@@ -14,6 +14,6 @@
 """Explicitly configured diagnostic logging; importing Core never installs a handler."""
 
 from .client import configure_from_env
-from .diagnostics import format_error
+from .diagnostics import error_fields, format_error
 
-__all__ = ["configure_from_env", "format_error"]
+__all__ = ["configure_from_env", "error_fields", "format_error"]

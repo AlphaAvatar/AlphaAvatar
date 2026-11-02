@@ -114,6 +114,15 @@ def restore_application(payload: str) -> ApplicationConfig:
     return _validate(json.loads(payload))
 
 
+def check_application_paths(config: ApplicationConfig) -> None:
+    """Read-only checks before activation; they never create, move or delete data."""
+    from alphaavatar.core.workspace import check_legacy_identity, check_workspace_continuity
+
+    check_workspace_continuity(config.workspace, config.previous_workspace_roots)
+    if config.workspace == config.paths.workspace(config.avatar.avatar.id):
+        check_legacy_identity(config.paths.avatars_dir, config.avatar.avatar.id)
+
+
 def load_application(path: str | Path, overrides: Sequence[str] = ()) -> ApplicationConfig:
     import yaml
     from omegaconf import OmegaConf

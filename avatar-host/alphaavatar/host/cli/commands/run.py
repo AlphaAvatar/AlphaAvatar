@@ -31,7 +31,7 @@ def run(path: str, overrides: Sequence[str], *, devmode: bool) -> int:
         logs = HostLog(devmode=devmode)
         stage = "import configuration loader"
         from alphaavatar.agents.env import init_env
-        from alphaavatar.host.configs.loader import load_application
+        from alphaavatar.host.configs.loader import check_application_paths, load_application
 
         stage = "load environment"
         init_env()
@@ -41,16 +41,9 @@ def run(path: str, overrides: Sequence[str], *, devmode: bool) -> int:
         config = load_application(path, overrides)
 
         stage = "prepare application paths"
-        from alphaavatar.core.workspace import (
-            check_legacy_identity,
-            check_workspace_continuity,
-            prepare_application,
-            prepare_workspace,
-        )
+        from alphaavatar.core.workspace import prepare_application, prepare_workspace
 
-        check_workspace_continuity(config.workspace, config.previous_workspace_roots)
-        if config.workspace == config.paths.workspace(config.avatar.avatar.id):
-            check_legacy_identity(config.paths.avatars_dir, config.avatar.avatar.id)
+        check_application_paths(config)
         prepare_application(config.paths)
         prepare_workspace(config.workspace)
 
