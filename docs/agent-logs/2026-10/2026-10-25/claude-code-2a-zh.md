@@ -19,7 +19,7 @@
 | T-5 | KD-14 收口：恢复要求随输入 generation 保留到边界确认；回放不越过安全下界 | 2026-11-02 | `65bd40f` | `a2b6bde` | 已 review：三条旁路已修好；仍有 1 个 P1（快照更新可绕过恢复要求），KD-14 未关闭，转入 T-6 |
 | T-6 | KD-14：缺口窗口中 generation 已存在的证据不被更新的快照覆盖 | 2026-11-02 | `a2b6bde` | `4cb57c2` | 已验收：review 无新阻断问题，KD-14 关闭；本地 195 passed（CI 方式 ×3），review 环境运行 147 项通过（IPC 用例受环境限制） |
 | T-7 | KD-14 正式回归；修复 O-1、KD-6、KD-8、O-7；KD-10 时序与 O-4 取消补测试 | 2026-11-02 | `2d1d575` | `7e87782` | 已验收：O-1、KD-6、KD-8、O-7 关闭，KD-14 保持关闭，KD-10③ 时序已覆盖，O-4、O-9 保留观察；本地 229 passed；review 环境 229 项收集、183 项通过，新增 CLI 端到端用例受 AF_UNIX 权限阻断（替换日志传输边界后的配置错误处理路径通过，不计为完整 CLI 端到端） |
-| T-8 | 配置公共能力与 CLI 最小闭环：`check`、`config show`、`config init` | 2026-11-02 | `7e87782` | 未提交 | 待审查；收集 238 个，238 passed（CI 方式 ×1） |
+| T-8 | 配置公共能力与 CLI 最小闭环：`check`、`config show`、`config init`；输出优化与 `docs/cli` 整理 | 2026-11-02 | `7e87782` | `886efcd`（首版）；输出优化未提交 | 首版已确认展示方案；输出优化待审查，收集 247 个，247 passed（CI 方式 ×1） |
 
 ## 已知缺陷（当前状态，只记录不修复）
 
@@ -1400,3 +1400,76 @@ alphaavatar config init <path> --avatar-id <id>
 
 - 没有 commit 或 push。
 - 没有实现 Profile/Bundle、交互向导、Doctor 探测或安装升级。
+
+### 9. 输出优化与 CLI 文档整理（基线 `886efcd`）
+
+- 基线：`886efcdad71b05c1f1341969921fd090141798c6`（T-8 首版已提交），开始时工作区干净。
+- 依据：已确认的 CLI 展示方案，以及把 `docs/cli` 按一级命令拆分、内容简洁的要求。
+- 加载、校验和隐藏策略都没有改变；美化只作用在已经脱敏的数据上。
+
+#### 9.1 输出
+
+- **`check`**
+  - 成功：stdout 输出绿色粗体 `OK`，再输出 `configuration and read-only path checks passed`；摘要字段左对齐，字段名变暗。
+  - 失败：stderr 输出红色粗体 `ERROR` 和 `format_error`；代码位置等辅助行变暗，`fields:` 行保持醒目。
+  - 文字标识在无色时同样输出。
+- **`config show`**：保留 YAML 结构并逐行高亮：
+  - 键名：品牌蓝 `BRAND_BLUE`；
+  - 数值、布尔、null：`SIGNAL_CYAN`；
+  - `'[hidden]'`、`'[redacted]'`：灰色 `DIM`；
+  - 普通值：默认前景色。
+
+  不加行号，不加外框。YAML 设为不折行（`width=inf`），多行字符串的引号续行原样输出，不按键名着色。
+- **颜色策略**：复用 `use_color("auto", stream)`，stdout 与 stderr 各自检测；非终端、`NO_COLOR`、`TERM=dumb` 时无色。`--json` 始终输出纯 JSON。输出流和退出码不变。
+- **没有采用 Rich**：直接复用 `host/log/format.py` 中现有的 ANSI 品牌色常量（新增 `GREEN`、`RED`，供日志级别颜色共用），因此不新增依赖，也不存在样式标记解析：`[hidden]`、`[redacted]` 和用户字符串天然按字面输出。帮助和版本入口仍为轻量导入。
+
+#### 9.2 check 摘要的输出边界（修复）
+
+- **问题**：首版的 `check` 摘要直接输出原始的 avatar_id、home、workspace，没有经过 `show` 的脱敏和控制字符清理。
+- **修复**：新增 `describe_summary(config)`，与 `describe_application` 共用同一个 `_scrubber`：已知凭据按值替换，再经 Host 日志 `Redactor` 屏蔽环境变量凭据、处理 URL、清理 ANSI 和控制字符。文本与 JSON 摘要都使用它。
+- **一并修正**：
+  - `_scrubber` 现在也清理插件映射中的键名，原来只处理值；
+  - `Redactor.__call__` 与 `clean` 新增可选的 `limit` 参数，默认值不变，日志行为不变。配置视图传入 `limit=None`，长于 8192 字符的值完整保留，不会被截断。
+
+#### 9.3 回归（新增 9 个，文件共 18 个）
+
+| 用例 | 断言 |
+|---|---|
+| `only_an_enabled_terminal_gets_styles_and_json_stays_plain` ×4（终端 / 管道 / `NO_COLOR` / `TERM=dumb`） | 只有可用的终端才着色：`OK` 的样式、键名蓝色、数值青色、`[hidden]` 灰色、普通值默认色；在终端上 `--json` 仍是纯 JSON |
+| `each_stream_detects_its_own_terminal` ×2 | stdout 与 stderr 分别判断是否着色；失败只输出字段，不输出被拒绝的值 |
+| `show_renders_long_and_markup_like_values_literally` ×2（终端 / 管道） | 超过 8192 字符、带空格的长文本和长路径各占一行、不被截断；`[bold red]this[/]`、`[hidden]` 等按字面输出；注入的 ESC 序列被清除 |
+| `check_summary_passes_the_same_output_boundary_as_show` | 已知凭据被复用为 Avatar ID、home 路径中含 ANSI 控制序列：文本和 JSON 摘要都没有 ESC 或 `\u001b`，也没有凭据；ID 显示为 `[redacted]` |
+
+变异验证（内存）：
+
+| 变异 | 失败的用例 |
+|---|---|
+| 摘要不经过脱敏 | 摘要用例 |
+| 恢复 8192 字符截断 | 两个长内容用例 |
+| YAML 恢复按 80 列折行 | 两个长内容用例 |
+| 忽略 `NO_COLOR` / `TERM=dumb` | 对应两个参数 |
+| 总是着色 | 7 个用例 |
+
+写测试时发现，最初的长文本主体是一串没有空格的连续字符，折行变异因此没有被抓到；已改成由单词组成的长文本。
+
+#### 9.4 CLI 文档
+
+- 按要求删除了 `docs/cli/README.md` 和 `docs/cli/design/`。
+- 现在每个一级命令一个文件：`dev.md`、`start.md`、`check.md`、`config.md`（包含 `show` 与 `init`）、`doctor.md`、`test.md`，共 151 行。
+- `doctor.md`、`test.md` 原来是长篇设计规格（202 行、229 行），现在压缩为"计划中"状态、目的和计划用法。完整规格仍可在 `886efcd` 中查到，例如 `git show 886efcd:docs/cli/doctor.md`。
+- `avatar-host/README.md` 的说明精简为命令示例，并加上指向 `docs/cli/` 的链接。
+
+#### 9.5 验证
+
+| 项目 | 结果 |
+|---|---|
+| 定向回归：`avatar-host/tests`、`avatar-core/tests` | 94 passed |
+| 全量（CI 方式）×1 | **247 passed**，32.1 s；basetemp 无残留；`/tmp/aa-*` 无残留；检出目录前后一致 |
+| 压力入口默认一轮 | 6 passed |
+| Ruff / 格式 / Workspace / Lock / pre-commit | 全部通过 |
+
+#### 9.6 限制
+
+- 颜色使用 24 位真彩色（品牌色）。不支持真彩色的终端会显示近似色，文字不受影响。
+- YAML 高亮按行解析 `yaml.safe_dump` 的输出，只决定颜色，不改变内容。少见的键名形式（例如键名内含 `:`）只是不着色。
+- 本节修改没有 commit 或 push。

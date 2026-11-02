@@ -49,15 +49,10 @@ alphaavatar check configs/my-avatar.yaml voice.tts.speed=1.2
 alphaavatar config show configs/my-avatar.yaml --json
 ```
 
-`config init` writes a minimal template, never overwrites an existing file, and lists the
-environment variables to set; credentials are never written into the file. `check` loads the
-file with the same `.env`, overrides, defaults, path resolution and read-only workspace checks as
-`start`, then reports the failing fields. `config show` prints the effective configuration with
-credentials removed: plugin-defined mappings keep their structure but hide every text value.
-Both accept `--json`, start no Host, runner, model or service client, create no application
-or Avatar directories, and need no local log socket. The Python entry points live in
+These commands start nothing and create no application or Avatar directories. See
+[docs/cli](../docs/cli/) for every command. The Python entry points live in
 `alphaavatar.host.configs` (`load_application`, `check_application_paths`,
-`describe_application`, `describe_error`, `write_template`).
+`describe_application`, `describe_summary`, `describe_error`, `write_template`).
 
 ## Configuration
 

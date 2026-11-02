@@ -21,7 +21,7 @@ from .loader import (
     validate_application,
 )
 from .template import REQUIRED_ENVIRONMENT, render_template, write_template
-from .view import describe_application, describe_error
+from .view import describe_application, describe_error, describe_summary
 
 __all__ = [
     "ApplicationConfig",
@@ -29,6 +29,7 @@ __all__ = [
     "check_application_paths",
     "describe_application",
     "describe_error",
+    "describe_summary",
     "load_application",
     "render_template",
     "restore_application",

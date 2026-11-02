@@ -11,15 +11,85 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Configuration commands: no Host, runner, model, client, workspace or log socket."""
+"""Configuration commands: no Host, runner, model, client, workspace or log socket.
+
+Output styling only touches already redacted, control-character cleaned text, renders it
+literally and never wraps it. JSON and redirected output stay plain.
+"""
 
 from __future__ import annotations
 
 import json
+import re
 import sys
 from collections.abc import Sequence
+from typing import TextIO
 
 from alphaavatar.core.log.diagnostics import format_error
+from alphaavatar.host.log.format import (
+    BOLD,
+    BRAND_BLUE,
+    DIM,
+    GREEN,
+    RED,
+    RESET,
+    SIGNAL_CYAN,
+    use_color,
+)
+
+SCOPE = "configuration and read-only path checks"
+_LINE = re.compile(
+    r"(?P<lead>\s*(?:- )*)"
+    r"(?:(?P<key>'(?:[^']|'')*'|\"(?:[^\"\\]|\\.)*\"|[^\s'\"#][^:]*?):(?= |$))?"
+    r"(?P<value>.*)"
+)
+_PLAIN = re.compile(
+    r"true|false|null|~|[-+]?\d[\d_]*(?:\.\d*)?(?:[eE][-+]?\d+)?|[-+]?\.(?:inf|nan)"
+)
+_MARKERS = ("'[hidden]'", "'[redacted]'")
+
+
+def _paint(text: str, style: str, color: bool) -> str:
+    return f"{style}{text}{RESET}" if color and text else text
+
+
+def _open_quote(value: str) -> str | None:
+    """The quote a multi-line scalar leaves open; its continuation lines are not keys."""
+    value = value.strip()
+    for quote in "'\"":
+        if value.startswith(quote):
+            inner = value[1:].replace(quote * 2, "") if quote == "'" else value[1:]
+            return None if inner.endswith(quote) and len(value) > 1 else quote
+    return None
+
+
+def _highlight(yaml_text: str) -> str:
+    lines, quote = [], None
+    for line in yaml_text.splitlines():
+        if quote is not None:
+            lines.append(line)
+            if line.rstrip().endswith(quote) and not line.rstrip().endswith(quote * 2):
+                quote = None
+            continue
+        match = _LINE.fullmatch(line)
+        lead, key, value = match["lead"], match["key"], match["value"]
+        scalar = value.lstrip(" ")
+        rendered = lead + (f"{BRAND_BLUE}{key}{RESET}:" if key is not None else "")
+        rendered += value[: len(value) - len(scalar)]
+        if scalar in _MARKERS:
+            rendered += _paint(scalar, DIM, True)
+        elif _PLAIN.fullmatch(scalar):
+            rendered += _paint(scalar, SIGNAL_CYAN, True)
+        else:
+            rendered += scalar
+            quote = _open_quote(scalar)
+        lines.append(rendered)
+    return "\n".join(lines) + "\n"
+
+
+def _status(label: str, style: str, message: str, stream: TextIO) -> None:
+    color = use_color("auto", stream)
+    print(f"{_paint(label, BOLD + style, color)}  {message}", file=stream)
 
 
 def _load(path: str, overrides: Sequence[str]):
@@ -37,26 +107,31 @@ def _failed(error: Exception, *, as_json: bool) -> int:
 
     if as_json:
         print(json.dumps({"valid": False, "error": describe_error(error)}, indent=2))
-    else:
-        print(f"Configuration is invalid:\n{format_error(error)}", file=sys.stderr)
+        return 2
+    color = use_color("auto", sys.stderr)
+    _status("ERROR", RED, f"{SCOPE} failed", sys.stderr)
+    for line in format_error(error).splitlines():
+        # Code locations are auxiliary; the failing fields stay prominent.
+        auxiliary = line.lstrip().startswith(("at ", "additional"))
+        print(_paint(line, DIM, color) if auxiliary else line, file=sys.stderr)
     return 2
 
 
 def check(path: str, overrides: Sequence[str], *, as_json: bool) -> int:
     try:
-        config = _load(path, overrides)
+        from alphaavatar.host.configs.view import describe_summary
+
+        summary = describe_summary(_load(path, overrides))
     except Exception as error:
         return _failed(error, as_json=as_json)
-    summary = {
-        "avatar_id": config.avatar.avatar.id,
-        "home": str(config.paths.root),
-        "workspace": str(config.workspace.root),
-    }
     if as_json:
         print(json.dumps({"valid": True, **summary}, indent=2, ensure_ascii=False))
-    else:
-        print("Configuration is valid.")
-        print("\n".join(f"  {key}: {value}" for key, value in summary.items()))
+        return 0
+    color = use_color("auto", sys.stdout)
+    _status("OK", GREEN, f"{SCOPE} passed", sys.stdout)
+    width = max(map(len, summary))
+    for key, value in summary.items():
+        print(f"    {_paint(key.ljust(width), DIM, color)}  {value}")
     return 0
 
 
@@ -69,10 +144,12 @@ def show(path: str, overrides: Sequence[str], *, as_json: bool) -> int:
         return _failed(error, as_json=as_json)
     if as_json:
         print(json.dumps(view, indent=2, ensure_ascii=False))
-    else:
-        import yaml
+        return 0
+    import yaml
 
-        print(yaml.safe_dump(view, sort_keys=False, allow_unicode=True), end="")
+    # No folding: long paths and text stay on one line, ready to copy.
+    text = yaml.safe_dump(view, sort_keys=False, allow_unicode=True, width=float("inf"))
+    print(_highlight(text) if use_color("auto", sys.stdout) else text, end="")
     return 0
 
 

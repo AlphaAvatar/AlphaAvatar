@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import re
 import typing
+from collections.abc import Callable
 from typing import Any
 
 from pydantic import BaseModel
@@ -83,6 +84,28 @@ def _secrets(value: Any, key: str = "") -> set[str]:
     return set()
 
 
+def _scrubber(config: ApplicationConfig) -> Callable[[Any], Any]:
+    """One output boundary: known credentials, Host log redaction and control characters."""
+    secrets = sorted(_secrets(json.loads(config.payload)), key=len, reverse=True)
+    redact = Redactor()  # The same boundary as Host logs: environment secrets and URLs.
+
+    def text(value: str) -> str:
+        if value in (HIDDEN, REDACTED):
+            return value
+        for secret in secrets:
+            value = value.replace(secret, REDACTED)
+        return redact(value, limit=None)  # Complete values: long paths stay copyable.
+
+    def scrub(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {text(str(key)): scrub(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [scrub(item) for item in value]
+        return text(value) if isinstance(value, str) else value
+
+    return scrub
+
+
 def describe_application(config: ApplicationConfig) -> dict[str, Any]:
     """The effective configuration with credentials removed; safe for text or JSON output."""
     view = {
@@ -90,21 +113,18 @@ def describe_application(config: ApplicationConfig) -> dict[str, Any]:
         "host": _model(config.host, config.host.model_dump(mode="json")),
         **_model(config.avatar, config.avatar.model_dump(mode="json")),
     }
-    secrets = sorted(_secrets(json.loads(config.payload)), key=len, reverse=True)
-    redact = Redactor()  # The same boundary as Host logs: environment secrets and URLs.
+    return _scrubber(config)(view)
 
-    def scrub(value: Any) -> Any:
-        if isinstance(value, dict):
-            return {key: scrub(item) for key, item in value.items()}
-        if isinstance(value, list):
-            return [scrub(item) for item in value]
-        if not isinstance(value, str) or value in (HIDDEN, REDACTED):
-            return value
-        for secret in secrets:
-            value = value.replace(secret, REDACTED)
-        return redact(value)
 
-    return scrub(view)
+def describe_summary(config: ApplicationConfig) -> dict[str, str]:
+    """What check reports, through the same boundary as the full view."""
+    return _scrubber(config)(
+        {
+            "avatar_id": config.avatar.avatar.id,
+            "home": str(config.paths.root),
+            "workspace": str(config.workspace.root),
+        }
+    )
 
 
 def describe_error(error: BaseException) -> dict[str, Any]:

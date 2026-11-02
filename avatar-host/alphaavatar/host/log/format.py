@@ -24,16 +24,11 @@ from alphaavatar.core.log.records import LogEntry, clean
 BRAND_BLUE = "\033[38;2;96;165;250m"  # Figma --color-logo-accent-primary, #60a5fa.
 SIGNAL_CYAN = "\033[38;2;34;211;238m"  # Figma --alphaavatar-signal, #22d3ee.
 DIM = "\033[90m"
+GREEN = "\033[32m"
+RED = "\033[31m"
 RESET = "\033[0m"
 BOLD = "\033[1m"
-_LEVEL_COLORS = {
-    10: DIM,
-    20: "\033[32m",
-    23: SIGNAL_CYAN,
-    30: "\033[33m",
-    40: "\033[31m",
-    50: "\033[1;31m",
-}
+_LEVEL_COLORS = {10: DIM, 20: GREEN, 23: SIGNAL_CYAN, 30: "\033[33m", 40: RED, 50: BOLD + RED}
 
 
 def use_color(mode: str, stream: TextIO) -> bool:

@@ -48,10 +48,10 @@ _SESSION = re.compile(
 )
 
 
-def clean(value: str, limit: int = MAX_TEXT_CHARS) -> str:
+def clean(value: str, limit: int | None = MAX_TEXT_CHARS) -> str:
     value = _ANSI.sub("", value)
     value = _CONTROL.sub("?", value.replace("\r", "\\r"))
-    return value if len(value) <= limit else value[:limit] + " [truncated]"
+    return value if limit is None or len(value) <= limit else value[:limit] + " [truncated]"
 
 
 def _redact_url(match: re.Match[str]) -> str:
@@ -76,10 +76,11 @@ class Redactor:
         }
         self._secrets = tuple(sorted(values, key=len, reverse=True))
 
-    def __call__(self, text: str, *, logger: str = "") -> str:
+    def __call__(self, text: str, *, logger: str = "", limit: int | None = MAX_TEXT_CHARS) -> str:
         # Bound work before regex processing, retaining enough input to mask boundary values.
-        truncated = len(text) > MAX_TEXT_CHARS * 2
-        text = text[: MAX_TEXT_CHARS * 2]
+        truncated = limit is not None and len(text) > limit * 2
+        if truncated:
+            text = text[: limit * 2]
         for secret in self._secrets:
             text = text.replace(secret, "[redacted]")
         text = _URL.sub(_redact_url, text)
@@ -92,7 +93,7 @@ class Redactor:
             ("mcp.", "alphaavatar.plugins.mcp.")
         ):
             text = _SESSION.sub(lambda match: match[1] + "[redacted]", text)
-        return clean(text + (" [truncated]" if truncated else ""))
+        return clean(text + (" [truncated]" if truncated else ""), limit)
 
 
 @dataclass(frozen=True, slots=True)
