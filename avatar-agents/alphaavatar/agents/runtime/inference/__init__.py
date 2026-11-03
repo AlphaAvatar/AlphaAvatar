@@ -20,7 +20,7 @@ from .bootstrap import (
     snapshot_inference_config,
 )
 from .executor import INFERENCE_ENDPOINT_ENV, InferenceExecutor
-from .runner import InferenceRunner, RunnerLaunch
+from .runner import InferenceRunner, RunnerLaunch, RunnerProbe
 from .runtime import InferenceRuntime
 
 __all__ = [
@@ -29,6 +29,7 @@ __all__ = [
     "InferenceExecutor",
     "InferenceRunner",
     "InferenceRuntime",
+    "RunnerProbe",
     "bootstrap_inference_runners",
     "check_inference_config",
     "plan_inference_runners",

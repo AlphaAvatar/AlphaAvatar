@@ -15,15 +15,32 @@ from __future__ import annotations
 
 import numpy as np
 
-from alphaavatar.agents.runtime.inference import InferenceRunner
+from alphaavatar.agents.runtime.inference import InferenceRunner, RunnerProbe
 
-from ..models.model_files import SMART_TURN_V3_CONFIG, resolve_smart_turn_model_path
+from ..models.model_files import (
+    SMART_TURN_V3_CONFIG,
+    missing_smart_turn_model,
+    resolve_smart_turn_model_path,
+)
 
 
 class SmartTurnV3Runner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.router.turn_taking.smart_turn_v3"
     # Each request is a complete audio window; nothing carries over between requests.
     REPLICABLE = True
+
+    @classmethod
+    def probe(cls) -> RunnerProbe:
+        config = SMART_TURN_V3_CONFIG
+        return RunnerProbe(
+            model=f"Smart Turn {config.version}",
+            # The longest window read: shorter audio is padded to it before inference.
+            request=np.zeros(config.max_samples, dtype="<i2").tobytes(),
+            check=_check_probability,
+            missing=lambda models_dir: missing_smart_turn_model(models_dir=models_dir),
+            audio_seconds=config.max_audio_sec,
+            device="cpu",  # Only ONNX Runtime's CPU provider is requested.
+        )
 
     def initialize(self) -> None:
         import onnxruntime as ort
@@ -83,3 +100,10 @@ class SmartTurnV3Runner(InferenceRunner):
         probability = float(np.clip(np.asarray(outputs[0]).reshape(-1)[0], 0.0, 1.0))
 
         return np.asarray([probability], dtype=np.float32).tobytes()
+
+
+def _check_probability(result: bytes | None) -> str:
+    values = np.frombuffer(result or b"", dtype=np.float32)
+    if values.size != 1 or not np.isfinite(values).all() or not 0 <= values[0] <= 1:
+        raise ValueError(f"expected one probability in [0, 1], got {values.size} values")
+    return f"end-of-turn probability {float(values[0]):.3f} for silence"

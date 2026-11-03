@@ -91,6 +91,36 @@ def _read_json(path: Path) -> dict:
         return {}
 
 
+def _model_root(models_dir: str | Path, namespace: tuple[str, ...]) -> Path:
+    return absolute_root(models_dir).joinpath(*(path_key(part) for part in namespace))
+
+
+def cached_hf_file(
+    *,
+    models_dir: str | Path,
+    namespace: tuple[str, ...],
+    repo_id: str,
+    revision: str,
+    filename: str,
+    sha256: str,
+) -> Path | None:
+    """The pinned file ``resolve_hf_file`` would use now; read only: no lock, folder or fetch."""
+    from huggingface_hub import try_to_load_from_cache
+
+    _filename(filename)
+    hub = _model_root(models_dir, namespace) / "hub"
+    path = try_to_load_from_cache(repo_id, filename, cache_dir=hub, revision=revision)
+    return Path(path) if isinstance(path, str) and _valid(Path(path), _digest(sha256)) else None
+
+
+def cached_url_file(
+    *, models_dir: str | Path, namespace: tuple[str, ...], filename: str, sha256: str
+) -> Path | None:
+    """The pinned file ``resolve_url_file`` would use now; read only: no lock, folder or fetch."""
+    target = _model_root(models_dir, namespace) / _filename(filename)
+    return target if _valid(target, _digest(sha256)) else None
+
+
 def resolve_hf_file(
     *,
     models_dir: str | Path,
@@ -107,7 +137,7 @@ def resolve_hf_file(
         raise ValueError("Model repository and revision are required")
     _filename(filename)
     _digest(sha256)
-    root = absolute_root(models_dir).joinpath(*(path_key(part) for part in namespace))
+    root = _model_root(models_dir, namespace)
     root.mkdir(parents=True, exist_ok=True)
     identity = {"repo_id": repo_id, "revision": revision, "filename": filename}
     key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
@@ -167,7 +197,7 @@ def resolve_url_file(
     _digest(sha256)
     if not url.startswith("https://") or (size is not None and size <= 0):
         raise ValueError("Model downloads require HTTPS and a positive declared size")
-    root = absolute_root(models_dir).joinpath(*(path_key(part) for part in namespace))
+    root = _model_root(models_dir, namespace)
     root.mkdir(parents=True, exist_ok=True)
     target = root / filename
     marker = root / f".{filename}.json"
@@ -221,7 +251,7 @@ def resolve_zip_directory(
         raise ValueError("Archive model files must be nonempty and unique")
     for filename in files:
         _filename(filename)
-    root = absolute_root(models_dir).joinpath(*(path_key(part) for part in namespace))
+    root = _model_root(models_dir, namespace)
     root.mkdir(parents=True, exist_ok=True)
     target = root / "models" / name
     target.parent.mkdir(parents=True, exist_ok=True)

@@ -11,16 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Doctor: static, read-only diagnosis of the installation and a selected configuration.
+"""Doctor's checks and their order; the runtime checks themselves are in ``runtime``.
 
 Selection, loading and the output boundary are the public services `config check`, `start`
-and `dev` use. Nothing is created, downloaded, loaded, started or contacted, so models,
-services and devices are reported as not verified, never as passing. The report is plain
-data for the CLI, an App or a TUI.
+and `dev` use. The static checks create, download, load, start and contact nothing, so
+models, services and devices are reported as not verified, never as passing. The report is
+plain data for the CLI, an App or a TUI.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 import platform
 import shutil
@@ -28,28 +29,23 @@ import socket
 import stat
 import sys
 from collections.abc import Callable, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import replace
 from importlib import metadata
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
+
+from .enums import CheckStatus
+from .schemas import Check, CheckSpec, Report
 
 if TYPE_CHECKING:
     from packaging.requirements import Requirement
 
+    from alphaavatar.agents.runtime.inference import InferenceRunner, RunnerProbe
     from alphaavatar.core.workspace import ApplicationPaths
     from alphaavatar.host.configs import ApplicationConfig, ConfigSource
 
-Status = Literal["PASS", "WARN", "FAIL", "SKIP"]
-STATUSES: tuple[Status, ...] = ("PASS", "WARN", "FAIL", "SKIP")
 HOST = "alpha-avatar-host"
 MIN_FREE_BYTES = 1 << 30  # Less leaves little room for models, caches and Avatar data.
-
-
-@dataclass(frozen=True, slots=True)
-class CheckSpec:
-    id: str
-    title: str
-    needs_configuration: bool = False
 
 
 # Stable identifiers, in report order.
@@ -63,45 +59,16 @@ CHECKS = (
     CheckSpec("paths.home", "Application home and settings: state, permissions, free space"),
     CheckSpec("paths.cache", "Cache root: state, permissions, free space"),
     CheckSpec("paths.workspace", "Avatar workspace: state, permissions, free space", True),
+    CheckSpec(
+        "runtime.models", "Selected local models: start, run a fixed sample, close", True, True
+    ),
+    CheckSpec(
+        "runtime.cleanup", "Runtime checks' processes, sockets and files reclaimed", True, True
+    ),
     CheckSpec("models.runners", "Runner models: not loaded, so not verified", True),
     CheckSpec("services.external", "RTC, model, speech and tool services: not contacted", True),
     CheckSpec("devices.media", "Microphones and cameras: not opened"),
 )
-
-
-@dataclass(frozen=True, slots=True)
-class Check:
-    id: str
-    status: Status
-    summary: str
-    details: tuple[str, ...] = ()
-    action: str | None = None  # The next step, for anything but a pass.
-
-
-@dataclass(frozen=True, slots=True)
-class Report:
-    checks: tuple[Check, ...]
-
-    @property
-    def status(self) -> Status:
-        """FAIL if any check failed, else WARN if any warned; skipped checks never pass."""
-        statuses = {check.status for check in self.checks}
-        return "FAIL" if "FAIL" in statuses else "WARN" if "WARN" in statuses else "PASS"
-
-    @property
-    def exit_code(self) -> int:
-        """1 when a check failed; 0 otherwise, warnings and unverified checks included."""
-        return 1 if self.status == "FAIL" else 0
-
-    def counts(self) -> dict[Status, int]:
-        return {status: sum(check.status == status for check in self.checks) for status in STATUSES}
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "status": self.status,
-            "counts": self.counts(),
-            "checks": [asdict(check) for check in self.checks],
-        }
 
 
 def diagnose(
@@ -110,12 +77,55 @@ def diagnose(
     *,
     read_env: Callable[[], object] | None = None,
 ) -> Report:
-    """Every check in ``CHECKS`` order; a check that cannot complete is reported as FAIL.
+    """The static checks in ``CHECKS`` order; one that cannot complete is reported as FAIL.
 
     ``target`` and ``overrides`` mean what they mean for ``config check``. ``read_env``, if
     given, loads the environment file first, as ``start`` does; its failure is reported.
     """
-    from alphaavatar.host.configs import application_paths, output_scrubber
+    checks, loaded = _static(target, overrides, read_env, runtime=False)
+    return _report(checks, loaded)
+
+
+async def diagnose_runtime(
+    target: str | None = None,
+    overrides: Sequence[str] = (),
+    *,
+    read_env: Callable[[], object] | None = None,
+    stop: asyncio.Event | None = None,
+) -> Report:
+    """The static checks, then the runtime checks; arguments as for ``diagnose``.
+
+    Setting ``stop`` interrupts the runtime checks: what runs is closed and reported, and
+    the rest is reported as not run. Cancelling this call also closes what runs first.
+    """
+    from .runtime import runtime_checks
+
+    checks, loaded = await asyncio.to_thread(_static, target, overrides, read_env, runtime=True)
+    if loaded is not None and checks["config.runners"].status == CheckStatus.PASS:
+        try:
+            checks["runtime.models"], checks["runtime.cleanup"] = await runtime_checks(
+                *loaded, stop=stop
+            )
+        except Exception as error:
+            # Whatever ran is closed already; the report still names what could not complete.
+            for check_id in ("runtime.models", "runtime.cleanup"):
+                checks[check_id] = _incomplete(check_id, error)
+    else:
+        reason = "Configuration not loaded" if loaded is None else "Runner plan not valid"
+        for check_id in ("runtime.models", "runtime.cleanup"):
+            see = "config.load" if loaded is None else "config.runners"
+            checks[check_id] = Check(check_id, CheckStatus.SKIP, f"{reason}; see {see}")
+    return _report(checks, loaded)
+
+
+def _static(
+    target: str | None,
+    overrides: Sequence[str],
+    read_env: Callable[[], object] | None,
+    *,
+    runtime: bool,
+) -> tuple[dict[str, Check], tuple[ApplicationConfig, ConfigSource] | None]:
+    from alphaavatar.host.configs import application_paths
 
     loaded, load = _configuration(target, overrides, read_env)
     config = loaded[0] if loaded is not None else None
@@ -126,7 +136,7 @@ def diagnose(
         "config.load": load,
         "devices.media": Check(
             "devices.media",
-            "SKIP",
+            CheckStatus.SKIP,
             "Not verified: Doctor opens no microphone or camera; the Host receives media "
             "from RTC participants",
             action="Join a dev session from a client to try its devices",
@@ -152,42 +162,76 @@ def diagnose(
             "paths.workspace": _safely(
                 "paths.workspace", lambda: _directory("paths.workspace", config.workspace.root)
             ),
-            "models.runners": _safely("models.runners", lambda: _models(config, source)),
+            "models.runners": _safely(
+                "models.runners", lambda: _models(config, source, runtime=runtime)
+            ),
             "services.external": _safely("services.external", lambda: _services(config, source)),
         }
     # Without a configuration, config.load names the next step for every check that needs one.
-    reason = "No configuration selected" if load.status == "WARN" else "Configuration not loaded"
+    reason = (
+        "No configuration selected"
+        if load.status == CheckStatus.WARN
+        else "Configuration not loaded"
+    )
     for spec in CHECKS:
-        checks.setdefault(spec.id, Check(spec.id, "SKIP", f"{reason}; see config.load"))
+        if not spec.needs_runtime:
+            checks.setdefault(
+                spec.id, Check(spec.id, CheckStatus.SKIP, f"{reason}; see config.load")
+            )
+    return checks, loaded
 
-    scrub = output_scrubber(config)
+
+def _report(
+    checks: dict[str, Check], loaded: tuple[ApplicationConfig, ConfigSource] | None
+) -> Report:
+    """The checks present, in ``CHECKS`` order, through the configuration output boundary."""
+    from alphaavatar.host.configs import output_scrubber
+
+    scrub = output_scrubber(loaded[0] if loaded is not None else None)
+
+    def safe(text: str | None) -> str | None:
+        return scrub(text) if text is not None else None
+
     return Report(
         tuple(
-            Check(
-                check.id,
-                check.status,
-                scrub(check.summary),
-                tuple(scrub(line) for line in check.details),
-                scrub(check.action) if check.action is not None else None,
+            replace(
+                check,
+                summary=scrub(check.summary),
+                details=tuple(map(scrub, check.details)),
+                action=safe(check.action),
+                runners=tuple(
+                    replace(
+                        runner,
+                        summary=scrub(runner.summary),
+                        details=tuple(map(scrub, runner.details)),
+                        action=safe(runner.action),
+                        output=safe(runner.output),
+                    )
+                    for runner in check.runners
+                ),
             )
-            for check in (checks[spec.id] for spec in CHECKS)
+            for check in (checks[spec.id] for spec in CHECKS if spec.id in checks)
         )
     )
 
 
 def _safely(check_id: str, run: Callable[[], Check]) -> Check:
-    from alphaavatar.host.configs import format_failure
-
     try:
         return run()
     except Exception as error:
-        return Check(
-            check_id,
-            "FAIL",
-            "The check could not complete",
-            tuple(line.strip() for line in format_failure(error).splitlines() if line.strip()),
-            "Report this with the output of `alphaavatar doctor --json`",
-        )
+        return _incomplete(check_id, error)
+
+
+def _incomplete(check_id: str, error: Exception) -> Check:
+    from alphaavatar.host.configs import format_failure
+
+    return Check(
+        check_id,
+        CheckStatus.FAIL,
+        "The check could not complete",
+        tuple(line.strip() for line in format_failure(error).splitlines() if line.strip()),
+        "Report this with the output of `alphaavatar doctor --json`",
+    )
 
 
 _UNREADABLE_ENV = "The environment file could not be read"
@@ -208,7 +252,9 @@ def _configuration(
 
     def failure(summary: str, error: Exception, action: str) -> Check:
         lines = (line.strip() for line in format_failure(error).splitlines())
-        return Check("config.load", "FAIL", summary, tuple(line for line in lines if line), action)
+        return Check(
+            "config.load", CheckStatus.FAIL, summary, tuple(line for line in lines if line), action
+        )
 
     if read_env is not None:
         try:
@@ -225,7 +271,7 @@ def _configuration(
             if read_settings(paths).get("default_bundle") is None:
                 return None, Check(
                     "config.load",
-                    "WARN",
+                    CheckStatus.WARN,
                     f"No configuration given and no default bundle in {paths.settings_file}",
                     action="Create one with `alphaavatar config init <name> --avatar-id <id>`, "
                     "or pass a bundle name or a configuration file",
@@ -242,7 +288,7 @@ def _configuration(
         return None, failure("The configuration did not load", error, action)
     return (config, source), Check(
         "config.load",
-        "PASS",
+        CheckStatus.PASS,
         f"{_origin(source)} loaded and validated",
         (f"avatar {config.avatar.avatar.id}",),
     )
@@ -259,12 +305,14 @@ def _platform() -> Check:
     if os.name != "posix" or not hasattr(socket, "AF_UNIX"):
         return Check(
             "system.platform",
-            "FAIL",
+            CheckStatus.FAIL,
             f"{system or sys.platform}: the Host needs the POSIX local socket API (AF_UNIX)",
             action="Run AlphaAvatar on Linux or macOS",
         )
     # Only the API is checked: opening a socket is left to start, as sandboxes may refuse it.
-    return Check("system.platform", "PASS", f"{system}; AF_UNIX socket API present, not opened")
+    return Check(
+        "system.platform", CheckStatus.PASS, f"{system}; AF_UNIX socket API present, not opened"
+    )
 
 
 def _python() -> Check:
@@ -275,11 +323,11 @@ def _python() -> Check:
     if supported and not SpecifierSet(supported).contains(version, prereleases=True):
         return Check(
             "python.version",
-            "FAIL",
+            CheckStatus.FAIL,
             f"{found}; AlphaAvatar supports {supported}",
             action=f"Install AlphaAvatar into a Python {supported} environment",
         )
-    return Check("python.version", "PASS", f"{found}; supported ({supported or 'any'})")
+    return Check("python.version", CheckStatus.PASS, f"{found}; supported ({supported or 'any'})")
 
 
 def _packages() -> Check:
@@ -296,7 +344,7 @@ def _packages() -> Check:
     if problems:
         return Check(
             "packages.alphaavatar",
-            "FAIL",
+            CheckStatus.FAIL,
             "The Host's requirements are not all installed",
             tuple(problems),
             f"Install into this Python environment: '{HOST}'",
@@ -304,7 +352,7 @@ def _packages() -> Check:
     if len(releases) > 1:
         return Check(
             "packages.alphaavatar",
-            "WARN",
+            CheckStatus.WARN,
             f"{count} AlphaAvatar packages from {len(releases)} releases",
             tuple(f"{version}: {', '.join(sorted(names))}" for version, names in releases.items()),
             "Install every AlphaAvatar package from the same release",
@@ -312,7 +360,7 @@ def _packages() -> Check:
     (release,) = releases
     return Check(
         "packages.alphaavatar",
-        "PASS",
+        CheckStatus.PASS,
         f"{count} AlphaAvatar packages, release {release}; Host requirements installed",
     )
 
@@ -466,7 +514,7 @@ def _capabilities(config: ApplicationConfig, source: ConfigSource) -> Check:
     if problems:
         return Check(
             "packages.capabilities",
-            "FAIL",
+            CheckStatus.FAIL,
             "Enabled capabilities miss packages",
             (*problems, *unknown),
             "Install into this Python environment: "
@@ -475,12 +523,12 @@ def _capabilities(config: ApplicationConfig, source: ConfigSource) -> Check:
     if unknown:
         return Check(
             "packages.capabilities",
-            "WARN",
+            CheckStatus.WARN,
             f"Requirements installed for {enabled}; some provider backends not verified",
             unknown,
             f"`{_dev(source)}` builds these plugins and reports a missing package or field",
         )
-    return Check("packages.capabilities", "PASS", f"Requirements installed for {enabled}")
+    return Check("packages.capabilities", CheckStatus.PASS, f"Requirements installed for {enabled}")
 
 
 def _runners(config: ApplicationConfig) -> Check:
@@ -493,27 +541,55 @@ def _runners(config: ApplicationConfig) -> Check:
         f"{method} x{count}" for method in runners if (count := inference.workers(method)) > 1
     ]
     workers = f"workers: {', '.join(parallel)}" if parallel else "1 worker each"
-    return Check("config.runners", "PASS", f"{len(runners)} runners ({workers}); plan is valid")
+    return Check(
+        "config.runners", CheckStatus.PASS, f"{len(runners)} runners ({workers}); plan is valid"
+    )
+
+
+def _command(name: str, source: ConfigSource) -> str:
+    if source.default:
+        return f"alphaavatar {name}"
+    return f"alphaavatar {name} {source.bundle if source.bundle is not None else source.path}"
 
 
 def _dev(source: ConfigSource) -> str:
-    if source.default:
-        return "alphaavatar dev"
-    return f"alphaavatar dev {source.bundle if source.bundle is not None else source.path}"
+    return _command("dev", source)
 
 
-def _models(config: ApplicationConfig, source: ConfigSource) -> Check:
+def probes(runners: dict[str, type[InferenceRunner]]) -> dict[str, RunnerProbe]:
+    """The local probes the planned runners offer; a runner without one is never started."""
+    found = {method: runner.probe() for method, runner in runners.items()}
+    return {method: probe for method, probe in found.items() if probe is not None}
+
+
+def _models(config: ApplicationConfig, source: ConfigSource, *, runtime: bool) -> Check:
     from alphaavatar.agents.runtime.inference import plan_inference_runners
 
-    count = len(plan_inference_runners(config.avatar))
+    runners = plan_inference_runners(config.avatar)
+    count, probed = len(runners), len(probes(runners))
     if not count:
-        return Check("models.runners", "SKIP", "No runner selected, so no model to verify")
+        return Check(
+            "models.runners", CheckStatus.SKIP, "No runner selected, so no model to verify"
+        )
+    if runtime:
+        return Check(
+            "models.runners", CheckStatus.SKIP, "Not loaded by static checks; see runtime.models"
+        )
+    # Runners with a probe are Doctor's own to run; the others are verified by starting.
+    steps = []
+    if probed:
+        steps.append(f"`{_command('doctor', source)} --runtime` runs the {probed} with a probe")
+    if probed < count:
+        others = f"the other {count - probed}" if probed else "every runner"
+        steps.append(
+            f"`{_dev(source)}` initializes {others}, fetching missing models, "
+            "before it accepts a session"
+        )
     return Check(
         "models.runners",
-        "SKIP",
+        CheckStatus.SKIP,
         f"Not verified: static checks load and download no model for the {count} runners",
-        action=f"`{_dev(source)}` initializes every runner, fetching missing models, "
-        "before it accepts a session",
+        action="; ".join(steps),
     )
 
 
@@ -536,7 +612,7 @@ def _services(config: ApplicationConfig, source: ConfigSource) -> Check:
         services.append(f"{len(mcp.servers)} MCP server{'' if len(mcp.servers) == 1 else 's'}")
     return Check(
         "services.external",
-        "SKIP",
+        CheckStatus.SKIP,
         "Not verified: static checks contact no service",
         tuple(services),
         f"`{_dev(source)}` connects to them; credentials and access are checked there",
@@ -564,13 +640,13 @@ def _home(paths: ApplicationPaths, overrides: Sequence[str]) -> Check:
     count = len(list(bundles.glob("*.yaml"))) if bundles.is_dir() else 0
     notes = (f"chosen by {chosen}", f"settings: {settings}", f"{count} bundle{'s' * (count != 1)}")
     check = _directory("paths.home", paths.root, notes)
-    if unreadable is None or check.status == "FAIL":
+    if unreadable is None or check.status == CheckStatus.FAIL:
         return check
     # Named bundles and files still load; the default bundle and config init need settings.
     action = f"Fix or remove {paths.settings_file}; config init and runs without a bundle read it"
     return Check(
         "paths.home",
-        "WARN",
+        CheckStatus.WARN,
         f"{check.summary}: settings unreadable",
         (*check.details, *(line.strip() for line in format_failure(unreadable).splitlines())),
         f"{action}; {check.action}" if check.action else action,
@@ -591,7 +667,7 @@ def _directory(check_id: str, path: Path, notes: Sequence[str] = ()) -> Check:
         if nearest.is_symlink():
             return Check(
                 check_id,
-                "FAIL",
+                CheckStatus.FAIL,
                 f"{nearest} is a symbolic link that does not resolve",
                 ("; ".join(lines),) if lines else (),
                 "Remove the link or create its target, or choose another location",
@@ -603,7 +679,7 @@ def _directory(check_id: str, path: Path, notes: Sequence[str] = ()) -> Check:
         blocked = "" if nearest == path else f", so {path} cannot be created"
         return Check(
             check_id,
-            "FAIL",
+            CheckStatus.FAIL,
             f"{nearest} is not a directory{blocked}",
             ("; ".join(lines),) if lines else (),
             "Move it away or choose another location",
@@ -623,7 +699,7 @@ def _directory(check_id: str, path: Path, notes: Sequence[str] = ()) -> Check:
     if not usable:
         return Check(
             check_id,
-            "FAIL",
+            CheckStatus.FAIL,
             f"{state}: this user cannot write there",
             details,
             f"Give this user write access to {nearest}, or choose another location",
@@ -631,9 +707,9 @@ def _directory(check_id: str, path: Path, notes: Sequence[str] = ()) -> Check:
     if free < MIN_FREE_BYTES:
         return Check(
             check_id,
-            "WARN",
+            CheckStatus.WARN,
             f"{state}: less than 1 GiB free",
             details,
             "Free disk space, or choose a location on a larger disk",
         )
-    return Check(check_id, "PASS", state, details)
+    return Check(check_id, CheckStatus.PASS, state, details)
