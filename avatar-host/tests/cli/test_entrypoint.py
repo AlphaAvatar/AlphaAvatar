@@ -138,6 +138,12 @@ def test_console_commands_run_without_the_host_log_socket(tmp_path: Path) -> Non
     started = run("start", "absent")
     assert started.returncode == 2
     assert "Bundle 'absent' does not exist" in started.stdout + started.stderr
+    # The preflight validates built-in plugins' settings as config check does.
+    no_model = tmp_path / "no-model.json"
+    no_model.write_text(json.dumps({"avatar": {"id": "console"}, "loop": {"plugin": "realtime"}}))
+    started = run("start", str(no_model))
+    assert started.returncode == 2
+    assert "fields: loop.init_config.model" in started.stdout + started.stderr
     assert sorted(path.name for path in home.iterdir()) == ["configs", "settings"]
     # Only the converged commands exist; the removed entry points are usage errors.
     assert run("check", "console").returncode == 2

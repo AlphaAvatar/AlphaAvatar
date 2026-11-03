@@ -55,9 +55,9 @@ alphaavatar dev                       # the default bundle
 `start` and `dev` run the same validation before starting. See [docs/cli](../docs/cli/) for
 every command and the bundle layout. The Python entry points live in
 `alphaavatar.host.configs` (`select_configuration`, `load_application`,
-`check_application_paths`, `create_bundle`, `read_settings`, `describe_summary`,
-`describe_application`, `describe_error`, `format_failure`, `output_scrubber`); Doctor's report
-comes from `alphaavatar.host.doctor.diagnose`.
+`check_application_paths`, `validate_plugin_settings`, `create_bundle`, `read_settings`,
+`describe_summary`, `describe_application`, `describe_error`, `format_failure`,
+`output_scrubber`); Doctor's report comes from `alphaavatar.host.doctor.diagnose`.
 
 ## Configuration
 

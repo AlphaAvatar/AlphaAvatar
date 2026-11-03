@@ -161,26 +161,22 @@ def describe_summary(
             values[name] = section.enabled
         return values
 
+    from .loader import validate_plugin_settings
+
+    settings = validate_plugin_settings(config)
     memory = store(avatar.memory)
-    if avatar.memory.plugin == "default":
-        from alphaavatar.plugins.memory.config import DefaultMemoryConfig
-
-        options = DefaultMemoryConfig.model_validate(avatar.memory.init_config)
+    if "memory" in settings:
         names = ("retrieval", "conversation", "tool", "environment")
-        memory |= switches(options, **{name: name for name in names})
+        memory |= switches(settings["memory"], **{name: name for name in names})
     persona = store(avatar.persona)
-    if avatar.persona.plugin == "default":
-        from alphaavatar.plugins.persona.config import DefaultPersonaConfig
-
-        options = DefaultPersonaConfig.model_validate(avatar.persona.init_config)
-        persona |= switches(options, profiler="profiler", speaker="speaker", face="face")
+    if "persona" in settings:
+        persona |= switches(
+            settings["persona"], profiler="profiler", speaker="speaker", face="face"
+        )
     router: dict[str, Any] = {"plugin": avatar.router.plugin}
-    if avatar.router.plugin == "default":
-        from alphaavatar.plugins.router.config import RouterConfig
-
-        options = RouterConfig.model_validate(avatar.router.init_config)
+    if "router" in settings:
         router |= switches(
-            options,
+            settings["router"],
             audio_activity="audio_activity",
             semantic_addressing="addressing.semantic",
             visual_addressing="addressing.visual",

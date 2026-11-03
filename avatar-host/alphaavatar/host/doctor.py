@@ -199,11 +199,11 @@ def _configuration(
     from alphaavatar.host.configs import (
         application_paths,
         check_application_paths,
-        describe_summary,
         format_failure,
         load_application,
         read_settings,
         select_configuration,
+        validate_plugin_settings,
     )
 
     def failure(summary: str, error: Exception, action: str) -> Check:
@@ -233,7 +233,7 @@ def _configuration(
         source = select_configuration(target, overrides)
         config = load_application(source, overrides)
         check_application_paths(config)
-        describe_summary(config, source)  # config check's remaining validation, discarded.
+        validate_plugin_settings(config)  # The steps config check and start take, in order.
     except Exception as error:
         if isinstance(error, ModuleNotFoundError) and error.name:
             action = f"Install the package that provides the Python module {error.name!r}"
@@ -359,17 +359,20 @@ def _with_extra(distribution: str, name: str) -> str:
 
 
 def _provider_backends(config: ApplicationConfig) -> tuple[set[str], list[str]]:
-    """Backends the enabled plugins' provider tasks use, with their configuration defaults.
+    """Backends of the provider tasks start would create, with their configuration defaults.
 
-    Built-in plugins are validated with the schemas they use at start, so omitted fields take
-    their defaults; disabled plugins are not read. Vector store embeddings always use the
-    default backend. What cannot be determined statically is returned as unverified.
+    Built-in plugins' settings are validated as at start, so omitted fields take their
+    defaults. A processor switched off creates nothing, so its tasks are skipped; a disabled
+    plugin is not read. Vector store embeddings always use the default backend. Another
+    plugin's backends cannot be read statically and are returned as unverified.
     """
     from pydantic import BaseModel
 
     from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
+    from alphaavatar.host.configs import validate_plugin_settings
 
     avatar = config.avatar
+    settings = validate_plugin_settings(config)
     default = ProviderTaskConfig.model_fields["backend"].default
     backends: set[str] = set()
     unverified: list[str] = []
@@ -378,6 +381,8 @@ def _provider_backends(config: ApplicationConfig) -> tuple[set[str], list[str]]:
         if isinstance(value, ProviderTaskConfig):
             backends.add(value.backend)
         elif isinstance(value, BaseModel):
+            if getattr(value, "enabled", True) is False:
+                return  # Switched off: start creates neither the processor nor its tasks.
             for name in type(value).model_fields:
                 collect(getattr(value, name))
         elif isinstance(value, dict):
@@ -387,47 +392,20 @@ def _provider_backends(config: ApplicationConfig) -> tuple[set[str], list[str]]:
             for item in value:
                 collect(item)
 
-    def validate(label: str, schema: Callable[[], type[BaseModel]], init_config: Any) -> None:
-        from alphaavatar.host.configs import format_failure
-
-        try:
-            collect(schema().model_validate(init_config))
-        except Exception as error:
-            failure = "; ".join(line.strip() for line in format_failure(error).splitlines())
-            unverified.append(f"{label} init_config: {failure}")
-
-    def loop() -> type[BaseModel]:
-        from alphaavatar.plugins.loop.config import RealtimeLoopConfig
-
-        return RealtimeLoopConfig
-
-    def memory() -> type[BaseModel]:
-        from alphaavatar.plugins.memory.config import DefaultMemoryConfig
-
-        return DefaultMemoryConfig
-
-    def persona() -> type[BaseModel]:
-        from alphaavatar.plugins.persona.config import DefaultPersonaConfig
-
-        return DefaultPersonaConfig
-
-    if avatar.loop.plugin == "realtime":
-        validate("loop", loop, avatar.loop.init_config)
+    if "loop" in settings:
+        collect(settings["loop"])
     else:
         unverified.append(f"loop plugin {avatar.loop.plugin!r}")
-    for name, section, schema in (
-        ("memory", avatar.memory, memory),
-        ("persona", avatar.persona, persona),
-    ):
-        if section.plugin == "default":
-            validate(name, schema, section.init_config)
+    for name in ("memory", "persona"):
+        if name in settings:
+            collect(settings[name])
             backends.add(default)  # Its vector store embeds with the default backend.
         else:
-            unverified.append(f"{name} plugin {section.plugin!r}")
+            unverified.append(f"{name} plugin {getattr(avatar, name).plugin!r}")
     mcp = avatar.tools.mcp
     if mcp.enabled and mcp.plugin is not None:
         if mcp.plugin == "default":
-            backends.add(default)
+            backends.add(default)  # Its tool index embeds with the default backend.
         else:
             unverified.append(f"mcp plugin {mcp.plugin!r}")
     return backends, unverified

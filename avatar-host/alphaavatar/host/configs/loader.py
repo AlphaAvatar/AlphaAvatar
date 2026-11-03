@@ -127,6 +127,60 @@ def check_application_paths(config: ApplicationConfig) -> None:
         check_legacy_identity(config.paths.avatars_dir, config.avatar.avatar.id)
 
 
+def validate_plugin_settings(config: ApplicationConfig) -> dict[str, Any]:
+    """The enabled built-in plugins' settings, validated with the schemas they use at start.
+
+    Pure: it reads only the accepted configuration. Settings a built-in plugin would reject
+    fail here, located under their section (``loop.init_config.model``); another plugin's
+    settings are absent from the result, since only that plugin knows its schema.
+    """
+    from pydantic import ValidationError
+    from pydantic_core import PydanticCustomError
+
+    avatar = config.avatar
+    schemas: dict[str, Any] = {}
+    if avatar.loop.plugin == "realtime":
+        from alphaavatar.plugins.loop.config import RealtimeLoopConfig
+
+        schemas["loop"] = RealtimeLoopConfig
+    if avatar.context.plugin == "default":
+        from alphaavatar.plugins.context.config import ContextConfig
+
+        schemas["context"] = ContextConfig
+    if avatar.router.plugin == "default":
+        from alphaavatar.plugins.router.config import RouterConfig
+
+        schemas["router"] = RouterConfig
+    if avatar.memory.plugin == "default":
+        from alphaavatar.plugins.memory.config import DefaultMemoryConfig
+
+        schemas["memory"] = DefaultMemoryConfig
+    if avatar.persona.plugin == "default":
+        from alphaavatar.plugins.persona.config import DefaultPersonaConfig
+
+        schemas["persona"] = DefaultPersonaConfig
+
+    settings, errors = {}, []
+    for section, schema in schemas.items():
+        try:
+            settings[section] = schema.model_validate(getattr(avatar, section).init_config)
+        except ValidationError as error:
+            errors += [
+                {
+                    # The rendered message as context: braces in it are not a template.
+                    "type": PydanticCustomError(
+                        item["type"], "{message}", {"message": item["msg"]}
+                    ),
+                    "loc": (section, "init_config", *item["loc"]),
+                    "input": item["input"],
+                }
+                for item in error.errors(include_url=False)
+            ]
+    if errors:
+        raise ValidationError.from_exception_data("PluginSettings", errors)
+    return settings
+
+
 def load_application(
     source: str | Path | ConfigSource, overrides: Sequence[str] = ()
 ) -> ApplicationConfig:

@@ -28,6 +28,7 @@ from .loader import (
     load_application,
     restore_application,
     validate_application,
+    validate_plugin_settings,
 )
 from .template import REQUIRED_ENVIRONMENT, CreatedBundle, create_bundle, render_bundle
 from .view import describe_application, describe_error, describe_summary, output_scrubber
@@ -53,4 +54,5 @@ __all__ = [
     "restore_application",
     "select_configuration",
     "validate_application",
+    "validate_plugin_settings",
 ]

@@ -134,12 +134,14 @@ def _load(target: str | None, overrides: Sequence[str]):
         check_application_paths,
         load_application,
         select_configuration,
+        validate_plugin_settings,
     )
 
     init_env()  # The same .env the start command reads for <ENV_VAR> placeholders.
     source = select_configuration(target, overrides)
     config = load_application(source, overrides)
     check_application_paths(config)
+    validate_plugin_settings(config)
     return config, source
 
 

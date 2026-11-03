@@ -66,19 +66,27 @@ step.
 
 ```text
 OK  doctor: 9 passed, 0 warned, 0 failed, 3 not verified or skipped (static checks)
-    PASS  system.platform        Linux 6.8.0 x86_64; AF_UNIX socket API present, not opened
-    PASS  python.version         Python 3.13.13 (CPython) at /home/me/.venv/bin/python3; supported (<3.14,>=3.13)
-    PASS  packages.alphaavatar   16 AlphaAvatar packages, release 0.6.9; Host requirements installed
-    PASS  config.load            bundle my-avatar (default) loaded and validated
-                                 avatar my-avatar
-    PASS  config.runners         8 runners (1 worker each); plan is valid
-    PASS  packages.capabilities  Requirements installed for rtc, loop, context, providers, voice, router, status, memory, persona
-    PASS  paths.home             /home/me/.local/share/alphaavatar  (drwx------, owned by this user)
-                                 chosen by the platform default; settings: default bundle my-avatar; 1 bundle; 120.4 GiB free
-    ...
-    SKIP  models.runners         Not verified: static checks load and download no model for the 8 runners
-                                 -> `alphaavatar dev` initializes every runner, fetching missing models, before it accepts a session
+    environment
+      PASS  system.platform        Linux 6.8.0 x86_64; AF_UNIX socket API present, not opened
+      PASS  python.version         Python 3.13.13 (CPython) at /home/me/.venv/bin/python3; supported (<3.14,>=3.13)
+      PASS  packages.alphaavatar   16 AlphaAvatar packages, release 0.6.9; Host requirements installed
+    configuration
+      PASS  config.load            bundle my-avatar (default) loaded and validated
+      PASS  config.runners         8 runners (1 worker each); plan is valid
+      PASS  packages.capabilities  Requirements installed for rtc, loop, context, providers, voice, router, status, memory, persona
+    directories
+      PASS  paths.home             /home/me/.local/share/alphaavatar  (drwx------, owned by this user)
+      PASS  paths.cache            /home/me/.local/share/alphaavatar/cache  (drwx------, owned by this user)
+      PASS  paths.workspace        /home/me/.local/share/alphaavatar/avatars/my-avatar  (not created yet; created when first needed)
+    not verified
+      SKIP  models.runners         Not verified: static checks load and download no model for the 8 runners
+                                   -> `alphaavatar dev` initializes every runner, fetching missing models, before it accepts a session
+      ...
 ```
+
+The text groups the checks as environment, configuration, directories and not verified. A
+passing check is one line; any other shows its details and next step. `--list` uses the same
+groups. Grouping is presentation only: JSON keeps the flat list, the check IDs and the exit codes.
 
 `--json` prints the same report: `status` (`PASS`, `WARN` or `FAIL`), `counts` per status, and
 `checks` with `id`, `status`, `summary`, `details` and `action`. Text, JSON and details pass the
@@ -86,11 +94,14 @@ same output boundary as `config check`: credentials from the configuration and t
 are replaced and control characters removed. `--list --json` prints each check's `id`, `title`
 and `needs_configuration`.
 
-Model provider backends come from the enabled built-in plugins, read with the schemas they use
-at start: the realtime loop's model, the memory and persona tasks, and the vector store
-embeddings, which always use the default backend. Omitted fields take their defaults, and a
-disabled plugin's settings are not read. For another loop, memory, persona or MCP plugin, or
-settings its schema rejects, `packages.capabilities` warns that the backends are not verified.
+Model provider backends come from the provider tasks start would create: the built-in plugins'
+settings are validated as `config check` does (`validate_plugin_settings`), so omitted fields
+take their defaults; a processor switched off (`enabled: false`) and a disabled plugin create
+nothing and are skipped. The vector store embeddings of the default memory, persona and MCP
+always use the default backend. For another loop, memory, persona or MCP plugin,
+`packages.capabilities` warns that its backends are not verified. Settings a built-in plugin's
+schema rejects, such as a realtime loop without `model`, fail `config.load` as they fail
+`config check`.
 
 Unreadable settings do not stop a named bundle or a file: `paths.home` warns and names the file
 to fix, since `config init` and runs without a configuration argument read it.

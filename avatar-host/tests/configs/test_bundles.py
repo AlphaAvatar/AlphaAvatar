@@ -26,7 +26,7 @@ from unittest import mock
 
 import pytest
 import yaml
-from config_samples import CONFIG, LAYOUT, SECRETS, SECTIONS, files, write
+from config_samples import CONFIG, LAYOUT, LOOP, SECRETS, SECTIONS, files, write
 
 # Imported at collection: configuration plugins adjust process variables while importing (O-2).
 import alphaavatar.agents.configs  # noqa: F401
@@ -193,7 +193,7 @@ def test_selection_follows_the_argument_spelling_from_any_directory(
     bundles = home / "configs" / "bundles"
     # Files in the working directory named like bundles are read only when spelled as files.
     for name in ("beta", "missing"):
-        write(tmp_path / f"{name}.yaml", {"avatar": {"id": f"{name}-file"}})
+        write(tmp_path / f"{name}.yaml", {"avatar": {"id": f"{name}-file"}, "loop": LOOP})
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     before = files(tmp_path)
@@ -576,7 +576,11 @@ def test_named_references_and_init_targets_stay_inside_the_real_home(
     alias = tmp_path / "alias"
     alias.symlink_to(home)
     (configs / "profiles" / "shared").symlink_to(configs / "profiles" / "alpha")
-    beta = {"avatar": {"id": "beta"}, "profiles": {"voice": f"shared/{LAYOUT['voice']}"}}
+    beta = {
+        "avatar": {"id": "beta"},
+        "loop": LOOP,
+        "profiles": {"voice": f"shared/{LAYOUT['voice']}"},
+    }
     write(configs / "bundles" / "beta.yaml", beta)
     with mock.patch.dict(os.environ, {"ALPHAAVATAR_HOME": str(alias)}):
         assert main(["config", "check", "beta"]) == 0 and create("gamma", "gamma") == 0
@@ -622,7 +626,7 @@ def test_named_references_and_init_targets_stay_inside_the_real_home(
         assert "Refusing to create: " in capsys.readouterr().err
         assert contents(tmp_path) == before
     # An explicit file keeps its own rules wherever it is.
-    write(outside / "single.yaml", {"avatar": {"id": "single"}})
+    write(outside / "single.yaml", {"avatar": {"id": "single"}, "loop": LOOP})
     assert main(["config", "check", str(outside / "single.yaml")]) == 0
 
 

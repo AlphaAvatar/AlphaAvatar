@@ -27,8 +27,12 @@ SECRETS = {
 }
 
 
+# The realtime loop's one required setting: its model.
+LOOP = {"plugin": "realtime", "init_config": {"model": {"provider": "openai", "model": "gpt-test"}}}
+
 CONFIG = {
     "avatar": {"id": "assistant", "introduction": f"Uses {SECRETS['vdb']} inline."},
+    "loop": LOOP,
     "memory": {"vdb_config": {"url": "https://vectors.invalid", "api_key": SECRETS["vdb"]}},
     "tools": {
         "mcp": {

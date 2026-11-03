@@ -128,7 +128,9 @@ alphaavatar config check [<bundle> | <file>] [KEY=VALUE ...] [--json]
 ```
 
 It runs the same loading steps as `start` — `.env`, selection, profiles, overrides, defaults,
-path resolution, schema validation and read-only workspace checks — but starts no Host,
+path resolution, schema validation, read-only workspace checks, and the built-in plugins' own
+settings schemas (realtime loop, context, router, memory, persona; for example a loop without
+`model` fails at `loop.init_config.model`) — but starts no Host,
 runner or model, contacts no service, creates no directories or settings and needs no local
 log socket.
 
@@ -166,7 +168,9 @@ on/off switches of the built-in router, status, memory (including `environment`,
 and persona processors, vector store kinds, enabled tools, the inference runners the Host would
 start with their worker counts, and the health address — never endpoints, collection names or
 other plugin-defined settings. Switches are read with each plugin's own schema, so an omitted
-switch shows its default; `--json` gives the same values under `plugins`. A misspelled,
+switch shows its default; `--json` gives the same values under `plugins`: `vision`, `router`
+and `status` are objects (`plugin` and their switches; `router` and `status` were plugin-name
+strings before v0.6.9), and `memory` and `persona` carry their processor switches. A misspelled,
 unselected or non-replicable `runtime.inference.methods` entry fails with its field location.
 
 ```text

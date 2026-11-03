@@ -28,11 +28,12 @@ from types import SimpleNamespace
 from unittest import mock
 
 import pytest
-from config_samples import CONFIG, SECRETS, files, write
+from config_samples import CONFIG, LOOP, SECRETS, files, write
 
 # Imported at collection: configuration plugins adjust process variables while importing (O-2).
 import alphaavatar.agents.configs  # noqa: F401
 from alphaavatar.host.cli.app import main
+from alphaavatar.host.cli.commands.doctor import GROUPS
 from alphaavatar.host.doctor import CHECKS, Check, Report
 
 IDS = [spec.id for spec in CHECKS]
@@ -58,9 +59,14 @@ def doctor(capsys: pytest.CaptureFixture, *argv: str) -> tuple[int, dict[str, di
     assert [check["id"] for check in report["checks"]] == IDS
     assert code == (1 if report["status"] == "FAIL" else 0)
     lines = text.splitlines()
+    # Grouped for reading; a pass is one line, anything else shows its details and next step.
+    headings = [line for line in lines if line.startswith("    ") and line[4] != " "]
+    assert [heading.strip() for heading in headings] == list(GROUPS)
     for check in report["checks"]:
         heading = f"{check['status']}  {check['id'].ljust(21)}  {check['summary']}"
-        assert f"    {heading}" in lines
+        assert f"      {heading}" in lines
+        shown = [line.strip() in check["details"] for line in lines]
+        assert any(shown) == (check["status"] != "PASS" and bool(check["details"]))
     return code, {check["id"]: check for check in report["checks"]}, text + raw
 
 
@@ -133,8 +139,10 @@ def test_doctor_selects_and_loads_configurations_as_config_check_does(
     # The file's remote vector store and MCP server are named, though not contacted.
     assert {"Qdrant", "1 MCP server"} <= set(checks["services.external"]["details"])
 
-    # Refusals match config check's, including its summary validation, with exit code 1.
-    for argv in (["nope"], ["alpha", "persona.init_config.unknown=1"]):
+    # Refusals match config check's, including a built-in plugin's own schema, with exit 1.
+    no_model = write(tmp_path / "no-model.json", CONFIG | {"loop": {"plugin": "realtime"}})
+    before = files(tmp_path)
+    for argv in (["nope"], ["alpha", "persona.init_config.unknown=1"], [str(no_model)]):
         assert main(["config", "check", *argv]) == 2
         refused = capsys.readouterr().err
         code, checks, _ = doctor(capsys, *argv)
@@ -142,6 +150,7 @@ def test_doctor_selects_and_loads_configurations_as_config_check_does(
         assert all(line in refused for line in checks["config.load"]["details"])
         assert checks["config.load"]["action"]
         assert checks["packages.capabilities"]["status"] == "SKIP"
+    assert "fields: loop.init_config.model" in checks["config.load"]["details"]
     assert (files(tmp_path), sandbox) == (before, [])
 
     # Unreadable settings do not stop a named bundle; the home check says what to fix.
@@ -153,26 +162,40 @@ def test_doctor_selects_and_loads_configurations_as_config_check_does(
     assert checks["paths.home"]["action"].startswith(f"Fix or remove {settings};")
 
 
-def test_provider_backends_follow_defaults_and_ignore_disabled_plugins(
+def test_provider_backends_follow_defaults_and_skip_what_start_does_not_create(
     tmp_path: Path, credentials: object, disk: object, capsys: pytest.CaptureFixture
 ) -> None:
-    def providers(model: dict, **sections: dict) -> tuple[list[str], dict[str, dict]]:
+    without_mcp = CONFIG["tools"] | {"mcp": {"enabled": False}}
+
+    def providers(model: dict, **sections: object) -> tuple[list[str], dict[str, dict]]:
         loop = {"plugin": "realtime", "init_config": {"model": model}}
-        config = write(tmp_path / "avatar.json", CONFIG | {"loop": loop} | sections)
-        _, checks, _ = doctor(capsys, str(config))
+        value = CONFIG | {"loop": loop, "tools": without_mcp} | sections
+        _, checks, _ = doctor(capsys, str(write(tmp_path / "avatar.json", value)))
         found = checks["services.external"]["details"]
         return [line for line in found if line.startswith("model providers")], checks
 
+    # The loop alone: memory and persona from another plugin add no store embeddings.
+    others = {"memory": {"plugin": "custom"}, "persona": {"plugin": "custom"}}
     # A task naming only its model takes the schema's defaults, as if they were written out.
-    implicit, _ = providers({"model": "m"})
-    explicit, _ = providers({"model": "m", "backend": "langchain", "provider": "openai"})
+    implicit, _ = providers({"model": "m"}, **others)
+    explicit, _ = providers({"model": "m", "backend": "langchain", "provider": "openai"}, **others)
     assert implicit == explicit == ["model providers (langchain)"]
+    # The store embeddings alone: the loop names another backend; they use the default.
     assert providers({"model": "m", "backend": "openai"})[0] == [
         "model providers (langchain, openai)"
     ]
-    # A disabled tool is not created, so whatever its leftover settings name is not needed.
+    # Switched-off processors and disabled tools are not created: their leftovers need nothing.
+    leftover = {"tasks": {"leftover": {"model": "m", "backend": "nowhere"}}}
+    off = {"enabled": False, "provider": {"gateway": leftover}}
+    memory = CONFIG["memory"] | {"init_config": {"tool": off}}
+    persona = {"init_config": {"profiler": off}}
     rag = {"plugin": None, "init_config": {"summary": {"model": "m", "backend": "nowhere"}}}
-    found, checks = providers({"model": "m"}, tools=CONFIG["tools"] | {"rag": rag})
+    found, checks = providers(
+        LOOP["init_config"]["model"],
+        memory=memory,
+        persona=persona,
+        tools=without_mcp | {"rag": rag},
+    )
     assert found == ["model providers (langchain)"]
     assert not any("nowhere" in line for line in checks["packages.capabilities"]["details"])
 
@@ -201,10 +224,9 @@ def test_missing_packages_unusable_paths_and_env_files_fail_with_a_next_step(
     assert {"rtc: livekit is not installed", "providers: langchain-openai is not installed"} <= set(
         capabilities["details"]
     )
-    assert (
-        "'alpha-avatar-host[livekit]' 'alpha-avatar-plugins-provider[langchain]'"
-        in (capabilities["action"])
-    )
+    # Other packages missing on this machine may be named too.
+    assert "'alpha-avatar-host[livekit]'" in capabilities["action"]
+    assert "'alpha-avatar-plugins-provider[langchain]'" in capabilities["action"]
 
     # Low free space warns.
     disk.free = 1 << 20

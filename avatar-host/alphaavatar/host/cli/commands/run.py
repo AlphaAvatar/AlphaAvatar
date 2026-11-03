@@ -37,6 +37,7 @@ def run(target: str | None, overrides: Sequence[str], *, devmode: bool) -> int:
             format_failure,
             load_application,
             select_configuration,
+            validate_plugin_settings,
         )
 
         describe = format_failure
@@ -49,6 +50,8 @@ def run(target: str | None, overrides: Sequence[str], *, devmode: bool) -> int:
         source = select_configuration(target, overrides)
         stage = "load application configuration"
         config = load_application(source, overrides)
+        stage = "validate plugin settings"
+        validate_plugin_settings(config)
 
         stage = "prepare application paths"
         from alphaavatar.core.workspace import prepare_application, prepare_workspace

@@ -8,7 +8,7 @@
 
 | 批次 | 内容 | 日期 | 基线 HEAD | 提交 | 状态 |
 |---|---|---|---|---|---|
-| T-10B | 基础 Doctor：静态、只读、离线的安装与配置诊断（`doctor`、`doctor <bundle或文件> [KEY=VALUE...]`、`--list`、`--json`） | 2026-11-03 | `7c53c4a` | `0579d81`；review 收尾未提交 | `0579d81` review：暂不验收，三组 P2。已修正，并按用户追加要求调整 `config check` 摘要和 `config init` 布局；待 review。本地全量 301 passed（CI 方式，检出前后一致） |
+| T-10B | 基础 Doctor：静态、只读、离线的安装与配置诊断（`doctor`、`doctor <bundle或文件> [KEY=VALUE...]`、`--list`、`--json`） | 2026-11-03 | `7c53c4a` | `0579d81`、`8a66b81`；第二轮收尾未提交 | `8a66b81` review：剩一处生产误报和一处测试断言，另要求把 loop 必填项纳入 check、Doctor 文本分组；已完成，待 review。本地全量 301 passed（CI 方式，检出前后一致） |
 
 ---
 
@@ -283,4 +283,112 @@ T-10B 首版的变异 D1–D10 在最终代码上重跑：
 - `config check` 和 Doctor 的 `config.load` 都不校验 `loop.init_config`（`RealtimeLoopConfig`）。例如没有写 `model` 的配置能通过 check，但会在启动时失败。Doctor 会在 `packages.capabilities` 中给出 WARN，并指出缺少的字段。是否把这项校验放进 `config check` 留给 review 决定。
 - F4a、F4b、F7 三个变异未被发现，原因见上表。
 - review 环境中那项语音时序失败不在本批范围，没有处理。
+- 本批修改没有 commit 或 push，停在 review 阶段。
+
+---
+
+## T-10B `8a66b81` review 收尾（第二轮）
+
+- 基线：`8a66b81`，开始时工作区干净。
+- review 复验：
+  - 已通过：`.env`、悬空链接、settings 问题已修复；配置分层与旧 profile 兼容。
+  - 还剩一处生产误报、一处测试断言；F4a／F4b 需要在现有用例中隔离两条后端来源。
+- review 环境：收集 301 项，选跑 240 项，239 项通过；失败的 1 项正是下面第 2 条的字符串断言。
+- review 对上一轮四个待定项的决定：
+
+| 项目 | 决定 | 本轮处理 |
+|---|---|---|
+| host、runtime 可以写成 profile | 接受，Avatar 身份留在 bundle | 不变 |
+| memory 配置提前校验 | 接受；建议集中为一个小型公共纯校验函数，由 check 和 Doctor 共用 | 新增 `validate_plugin_settings`，见第 3 条 |
+| router、status 的 JSON 改为对象 | 接受，明确记录结构变化 | 见第 5 条 |
+| loop 缺少必填的 `model` | **纳入 check**：已知 schema 能确定的错误报 FAIL；未知插件的未验证状态仍为 WARN | 见第 3 条 |
+
+### 1. 关闭的处理器不再计入依赖
+
+- 问题：`collect()` 会遍历 schema 的所有字段。关闭 `memory.tool` 或 `persona.profiler` 后，残留任务里的 backend 仍让 Doctor 报 FAIL，而启动时并不会创建这些处理器。
+- 修正：
+  - 遍历时遇到 `enabled` 为 False 的模型就跳过它和它下面的内容；
+  - 向量库 embedding 的默认后端单独计入，与处理器无关：默认 memory、默认 persona 和启用的默认 MCP 各加一次。
+
+### 2. 测试不再假设两个安装目标紧挨着
+
+缺包用例对 `'alpha-avatar-host[livekit]'` 和 `'alpha-avatar-plugins-provider[langchain]'` 分别断言是否包含。机器另外缺包时，建议中会多出其他目标，用例不受影响。
+
+### 3. 公共纯校验函数 `validate_plugin_settings`，loop 必填项纳入 check
+
+- 新增 `alphaavatar.host.configs.validate_plugin_settings(config)`：
+  - 用各内置插件启动时使用的 schema，校验已启用插件的设置：realtime loop、context、router、memory、persona；
+  - 返回校验后的模型，其他插件不在结果中；
+  - 只读取已接受的配置。
+- 错误按所在段定位，例如 `loop.init_config.model`。实现上重建 `ValidationError`，把渲染后的消息作为上下文传入，避免消息中的大括号被当作模板；输出仍只有类型和字段位置，不含输入值。
+- 使用者：
+  - `config check` 的加载步骤；
+  - `start`／`dev` 的预检（新阶段 "validate plugin settings"，在准备目录之前）；
+  - Doctor 的 `config.load`；
+  - `describe_summary` 读取开关；
+  - Doctor 的依赖检查。
+- 因此 `config check`、`start` 和 Doctor 的结论相同：缺少 `model` 的 realtime loop 现在在 check 中就报 FAIL，`start` 退出码 2，不创建任何目录。
+- Doctor 的 `config.load` 不再调用 `describe_summary`：它额外做的校验都已包含在这里，上一轮未被发现的 F7 因此不复存在。
+- 所有 `examples/agent_configs` 都通过 `config check` 和 `doctor`，没有 WARN 或 FAIL。
+- 测试样例：原来的 `CONFIG` 和几个最小配置都没有 loop 的 `model`，`start` 本来就会拒绝它们。`config_samples` 增加 `LOOP`，并加入 `CONFIG`；`test_check`、`test_bundles` 中需要通过 check 的最小配置也带上 `LOOP`。
+
+### 4. Doctor 文本分组
+
+- 分为 environment（system、python、packages.alphaavatar）、configuration（config.load、config.runners、packages.capabilities）、directories（paths.*）、not verified（models、services、devices）四组。
+- 标题、缩进和配色与 `config check` 一致。
+- PASS 只显示一行；WARN、FAIL、SKIP 显示细节和下一步。
+- `--list` 使用相同分组；`--list --json`、报告 JSON、检查 ID 和退出码都不变。
+- 分组只定义在 CLI 中（`GROUPS`）：只影响展示，库接口不变。测试辅助函数会断言每项检查都出现在文本中，所以新增检查而忘记分组时，测试会失败。
+
+### 5. `config check --json` 的结构变化（v0.6.9）
+
+- `plugins.router`：由插件名字符串改为对象 `{plugin, audio_activity, semantic_addressing, visual_addressing, turn_taking, interruption}`。
+- `plugins.status`：由插件名字符串改为对象 `{plugin, enabled}`。
+- 新增 `plugins.vision` `{enabled, input}` 和 `plugins.context`（插件名）。
+- `plugins.memory` 增加 `retrieval`、`conversation`、`tool`、`environment`；`plugins.persona` 增加 `profiler`。
+- 已写入 `docs/cli/config.md`。
+
+### 6. 测试与反向验证
+
+- `test_provider_backends_follow_defaults_and_skip_what_start_does_not_create`（原用例改写，不扩大矩阵）：
+  - **只有 loop 一个来源**：memory 和 persona 使用其他插件、MCP 关闭，所以没有 embedding 的默认后端。只写 `model` 和补写默认值得到相同结果，都是 `(langchain)`。
+  - **只有 embedding 一个来源**：loop 显式使用 openai，MCP 关闭，因此 `(langchain, openai)` 中的 langchain 只能来自 memory 和 persona 的 embedding。
+  - **关闭的处理器和禁用的工具**：`memory.tool`、`persona.profiler` 关闭后残留的 `backend: nowhere`，以及禁用的 rag 中残留的 `nowhere`，都不会出现。
+- 配置复用用例：在拒绝场景中增加"loop 缺少 `model` 的文件"，check 和 Doctor 一致，细节为 `fields: loop.init_config.model`。
+- 入口用例：真实入口运行 `start <缺少 model 的文件>`，退出码 2，输出 `fields: loop.init_config.model`；随后原有的断言确认 Home 中只有 `configs` 和 `settings`。
+- 测试辅助函数：
+  - 断言四个分组标题依次出现；
+  - 断言 PASS 的细节不出现在文本中，其他状态有细节时会显示。
+
+变异（每次只改一处，按 SHA-256 恢复）：
+
+| # | 变异 | 结果 |
+|---|---|---|
+| G1 | 关闭的处理器仍计入依赖 | 被发现（出现 `nowhere`） |
+| G2 | 只计入显式写出的 backend（原 F4a） | **被发现**（只有 loop 来源时为空） |
+| G3 | 不计入 memory／persona embedding 的默认后端（原 F4b） | **被发现**（只剩 `openai`） |
+| G4 | `validate_plugin_settings` 不校验 loop | 被发现（check 返回 0） |
+| G5 | 错误位置不带所在段 | 被发现（只有 `fields: model`） |
+| G6 | `start` 预检不校验插件设置 | 被发现（退出码 1，而不是 2） |
+| G7 | PASS 也显示细节 | 被发现 |
+| G8 | 不显示分组标题 | 被发现 |
+
+- 在最终代码上重跑之前的变异：
+  - D1–D10（D7 已删除）、F1–F3、F5、F6 全部仍被发现；
+  - F4a、F4b 已由 G2、G3 取代；F7 因 `describe_summary` 调用已删除而不复存在。
+
+### 7. 运行结果
+
+| 项目 | 结果 |
+|---|---|
+| 全量（CI 方式：`--basetemp`、检出前后对比） | **301 passed**，49.1 s；检出目录前后一致 |
+| `avatar-host/tests` | 81 passed |
+| `cli`、`configs` 测试 ×10 | 0 失败 |
+| examples 的 `config check` 和 `doctor` | 5 个都通过，没有 WARN 或 FAIL |
+| Ruff、格式、`check_workspace.py`、`uv lock --check`、pre-commit | 全部通过 |
+
+### 8. 限制
+
+- `validate_plugin_settings` 只覆盖 realtime loop、context、router、memory、persona。status、character 和 tools 插件的 `init_config` 仍在启动时才校验。导入它们会执行插件代码（例如 character 依赖 playwright），本批不做。
+- 其他插件的 provider 后端仍报"未验证"（WARN）。
 - 本批修改没有 commit 或 push，停在 review 阶段。

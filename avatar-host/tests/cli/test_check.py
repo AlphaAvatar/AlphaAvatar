@@ -23,7 +23,7 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
-from config_samples import CONFIG, SECRETS, files, write
+from config_samples import CONFIG, LOOP, SECRETS, files, write
 
 # Imported at collection: configuration plugins adjust process variables while importing (O-2).
 import alphaavatar.agents.configs  # noqa: F401
@@ -203,7 +203,7 @@ def test_check_summary_passes_the_same_output_boundary(
 def test_only_an_enabled_terminal_gets_styles_and_json_stays_plain(
     terminal: bool, environment: dict[str, str], tmp_path: Path, color_capable: object
 ) -> None:
-    config = write(tmp_path / "avatar.json", {"avatar": {"id": "assistant"}})
+    config = write(tmp_path / "avatar.json", {"avatar": {"id": "assistant"}, "loop": LOOP})
     stream = Terminal if terminal else io.StringIO
     styled = terminal and not environment
     with mock.patch.dict(os.environ, environment):

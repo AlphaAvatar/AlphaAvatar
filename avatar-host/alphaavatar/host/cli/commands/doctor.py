@@ -28,20 +28,35 @@ from dataclasses import asdict
 from alphaavatar.host.log.format import BOLD, DIM, GREEN, RED, RESET, YELLOW, use_color
 
 _STYLES = {"PASS": GREEN, "WARN": YELLOW, "FAIL": RED, "SKIP": DIM}
+# Text groups only; JSON keeps the flat list and the stable check IDs.
+GROUPS = {
+    "environment": ("system.platform", "python.version", "packages.alphaavatar"),
+    "configuration": ("config.load", "config.runners", "packages.capabilities"),
+    "directories": ("paths.home", "paths.cache", "paths.workspace"),
+    "not verified": ("models.runners", "services.external", "devices.media"),
+}
 
 
 def doctor(target: str | None, overrides: Sequence[str], *, as_json: bool, listing: bool) -> int:
     from alphaavatar.host.doctor import CHECKS
 
+    color = use_color("auto", sys.stdout)
+
+    def paint(text: str, style: str) -> str:
+        return f"{style}{text}{RESET}" if color else text
+
     if listing:
         if as_json:
             print(json.dumps({"checks": [asdict(spec) for spec in CHECKS]}, indent=2))
             return 0
-        width = max(len(spec.id) for spec in CHECKS)
+        specs = {spec.id: spec for spec in CHECKS}
+        width = max(map(len, specs))
         print()
-        for spec in CHECKS:
-            needs = "  (needs a configuration)" if spec.needs_configuration else ""
-            print(f"    {spec.id.ljust(width)}  {spec.title}{needs}")
+        for group, ids in GROUPS.items():
+            print(f"    {paint(group, BOLD)}")
+            for spec in map(specs.__getitem__, ids):
+                needs = "  (needs a configuration)" if spec.needs_configuration else ""
+                print(f"      {spec.id.ljust(width)}  {spec.title}{needs}")
         print()
         return 0
 
@@ -54,11 +69,6 @@ def doctor(target: str | None, overrides: Sequence[str], *, as_json: bool, listi
         print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
         return report.exit_code
 
-    color = use_color("auto", sys.stdout)
-
-    def paint(text: str, style: str) -> str:
-        return f"{style}{text}{RESET}" if color else text
-
     counts = report.counts()
     label = {"PASS": "OK", "WARN": "WARN", "FAIL": "FAIL"}[report.status]
     print(
@@ -66,14 +76,19 @@ def doctor(target: str | None, overrides: Sequence[str], *, as_json: bool, listi
         f"{counts['WARN']} warned, {counts['FAIL']} failed, {counts['SKIP']} not verified "
         "or skipped (static checks)"
     )
-    width = max(len(check.id) for check in report.checks)
-    indent = " " * (4 + 4 + 2 + width + 2)
-    for check in report.checks:
-        status = paint(check.status, _STYLES[check.status])
-        print(f"    {status}  {check.id.ljust(width)}  {check.summary}")
-        for line in check.details:
-            print(f"{indent}{paint(line, DIM)}")
-        if check.action is not None:
-            print(f"{indent}-> {check.action}")
+    checks = {check.id: check for check in report.checks}
+    width = max(map(len, checks))
+    indent = " " * (6 + 4 + 2 + width + 2)
+    for group, ids in GROUPS.items():
+        print(f"    {paint(group, BOLD)}")
+        for check in map(checks.__getitem__, ids):
+            status = paint(check.status, _STYLES[check.status])
+            print(f"      {status}  {check.id.ljust(width)}  {check.summary}")
+            if check.status == "PASS":
+                continue  # A pass is its summary; the details stay in --json.
+            for line in check.details:
+                print(f"{indent}{paint(line, DIM)}")
+            if check.action is not None:
+                print(f"{indent}-> {check.action}")
     print()
     return report.exit_code
