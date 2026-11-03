@@ -4,13 +4,13 @@ Create or check application configuration. Neither subcommand starts anything.
 
 ## Bundles and profiles
 
-A **bundle** is a complete, startable configuration. A **profile** is one plugin section that
-bundles reference and may share. Both live in the application home:
+A **bundle** is a complete, startable configuration. A **profile** is one section that bundles
+reference and may share. Both live in the application home:
 
 | File | Holds |
 | --- | --- |
-| `<home>/configs/bundles/<name>.yaml` | `avatar`, `host`, `runtime` (and any inline section), plus `profiles` |
-| `<home>/configs/profiles/<directory>/<name>.yaml` | One plugin section's body, for example `voice` |
+| `<home>/configs/bundles/<name>.yaml` | `avatar` (and any section set inline), plus `profiles` |
+| `<home>/configs/profiles/<name>.yaml` | One section's body, for example `voice`; `<name>` may have `/` parts |
 | `<home>/settings/settings.yaml` | `default_bundle` and other user settings |
 
 ```yaml
@@ -18,13 +18,18 @@ bundles reference and may share. Both live in the application home:
 avatar:
   id: my-avatar
 profiles:
-  voice: my-avatar/voice      # configs/profiles/my-avatar/voice.yaml
-  memory: my-avatar/memory
+  host: my-avatar/host/host                     # configs/profiles/my-avatar/host/host.yaml
+  runtime: my-avatar/agent/runtime
+  voice: my-avatar/plugins/foundation/voice
+  memory: my-avatar/plugins/perception/memory
 ```
 
-- `profiles` maps a plugin section (`loop`, `voice`, `vision`, `memory`, `persona`, `tools`,
-  `context`, `status`, `router`, `character`) to a profile name. `avatar` and `runtime` stay in
-  the bundle.
+- `profiles` maps a section to a profile name: `host`, `runtime`, or a plugin section
+  (`context`, `loop`, `voice`, `vision`, `status`, `router`, `character`, `memory`, `persona`,
+  `tools`). `avatar`, the Avatar's identity, stays in the bundle.
+- Profiles are grouped in layers: `host`, `agent` (`runtime`), and `plugins/foundation`,
+  `plugins/perception` and `plugins/tools`. `config init` writes them this way and
+  `config check` reports in the same layers; any other name works too.
 - A profile file is that section's body. It references nothing, so references never form a
   cycle; a profile with its own `profiles` is rejected.
 - A section comes from the bundle or from one profile, never both.
@@ -70,12 +75,24 @@ alphaavatar config init <name> --avatar-id <id>
 ```text
 Created bundle my-avatar
   bundle    /home/me/.local/share/alphaavatar/configs/bundles/my-avatar.yaml
-  profiles  /home/me/.local/share/alphaavatar/configs/profiles/my-avatar  (loop, voice, vision, memory, persona, tools)
+  profiles  /home/me/.local/share/alphaavatar/configs/profiles/my-avatar  (host, agent, plugins/foundation, plugins/perception, plugins/tools)
   default   my-avatar (set as the default bundle)
 ```
 
 - Writes the given Avatar ID with OpenAI model, voice, Memory and Persona profiles; tools are
-  disabled. The composed result equals the former single-file template.
+  disabled. Host, runtime, context, status, router and character profiles write out their
+  defaults to be edited, as does memory's `environment` (ENV memory) switch, off. The composed
+  result behaves as the former single-file template.
+
+```text
+configs/bundles/my-avatar.yaml                 avatar, plus the profiles below
+configs/profiles/my-avatar/
+  host/host.yaml                               RTC transport, health, logs
+  agent/runtime.yaml                           inference runners
+  plugins/foundation/{context,loop,voice,vision}.yaml
+  plugins/perception/{status,router,character,memory,persona}.yaml
+  plugins/tools/tools.yaml                     deepresearch, rag, mcp
+```
 - Writes no credentials and no machine paths.
 - Never overwrites an existing bundle or profile file; existing directories are reused.
   Checks each target as loading would: a bundle must stay in `configs/bundles`, a profile in
@@ -117,25 +134,39 @@ log socket.
 
 ```text
 OK  configuration and read-only path checks passed
-    config     bundle my-avatar  (default)
-    avatar_id  my-avatar
-    home       /home/me/.local/share/alphaavatar
-    workspace  /home/me/.local/share/alphaavatar/avatars/my-avatar
-    rtc        livekit
-    loop       realtime
-    voice      vad=silero  stt=openai_segment  tts=openai
-    router     default
-    character  none
-    memory     default  (vdb: lancedb)
-    persona    default  (vdb: lancedb; speaker on, face off)
-    tools      rag, mcp (1 server)
-    inference  8 runners  (workers: alphaavatar.voice.vad.silero x2)
-    health     127.0.0.1:8081 (dev: free port)
+    config          bundle my-avatar  (default)
+    avatar_id       my-avatar
+    home            /home/me/.local/share/alphaavatar
+    workspace       /home/me/.local/share/alphaavatar/avatars/my-avatar
+    host
+      rtc           livekit
+      health        127.0.0.1:8081 (dev: free port)
+    agent
+      inference     8 runners  (workers: alphaavatar.voice.vad.silero x2)
+    plugins/foundation
+      context       default
+      loop          realtime
+      voice         vad=silero  stt=openai_segment  tts=openai
+      vision        on  (input: vlm)
+    plugins/perception
+      status        default
+      router        default  (audio activity on, semantic addressing on, visual addressing on, turn taking on, interruption on)
+      character     none
+      memory        default  (vdb: lancedb; retrieval on, conversation on, tool on, environment off)
+      persona       default  (vdb: lancedb; profiler on, speaker on, face off)
+    plugins/tools
+      deepresearch  none
+      rag           default
+      mcp           default  (1 server)
 ```
 
-The summary lists the checked file or bundle, plugin selections, vector store kinds, enabled
-tools, the inference runners the Host would start with their worker counts, and the health
-address — never endpoints, collection names or plugin-defined settings. A misspelled,
+The summary lists the checked file or bundle, then facts in the profile layers: plugin
+selections, vision and its input, the
+on/off switches of the built-in router, status, memory (including `environment`, the ENV memory)
+and persona processors, vector store kinds, enabled tools, the inference runners the Host would
+start with their worker counts, and the health address — never endpoints, collection names or
+other plugin-defined settings. Switches are read with each plugin's own schema, so an omitted
+switch shows its default; `--json` gives the same values under `plugins`. A misspelled,
 unselected or non-replicable `runtime.inference.methods` entry fails with its field location.
 
 ```text

@@ -15,6 +15,7 @@
 
 from .application import ApplicationConfig
 from .bundles import (
+    LAYERS,
     ConfigReferenceError,
     ConfigSource,
     application_paths,
@@ -32,6 +33,7 @@ from .template import REQUIRED_ENVIRONMENT, CreatedBundle, create_bundle, render
 from .view import describe_application, describe_error, describe_summary, output_scrubber
 
 __all__ = [
+    "LAYERS",
     "ApplicationConfig",
     "ConfigReferenceError",
     "ConfigSource",

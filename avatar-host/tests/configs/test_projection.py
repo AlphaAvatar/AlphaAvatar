@@ -79,7 +79,7 @@ def test_runner_parallelism_is_checked_against_the_selected_plan_and_survives_re
     assert main(["config", "check", str(config), override, "--json"]) == 0
     report = json.loads(capsys.readouterr().out)
     runners = len(report["inference"])
-    assert f"    inference  {runners} runners  (workers: {turn} x2)" in lines
+    assert f"      inference     {runners} runners  (workers: {turn} x2)" in lines
     assert report["inference"][turn] == 2
     assert set(report["inference"].values()) == {1, 2}
 

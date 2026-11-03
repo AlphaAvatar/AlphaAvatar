@@ -48,8 +48,8 @@ def doctor(target: str | None, overrides: Sequence[str], *, as_json: bool, listi
     from alphaavatar.agents.env import init_env
     from alphaavatar.host.doctor import diagnose
 
-    init_env()  # The same .env that config check and start read for <ENV_VAR> placeholders.
-    report = diagnose(target, overrides)
+    # The same .env that config check and start read; a failure to read it is reported.
+    report = diagnose(target, overrides, read_env=init_env)
     if as_json:
         print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
         return report.exit_code

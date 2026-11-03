@@ -75,11 +75,29 @@ def format_failure(error: BaseException, *, details: bool = False) -> str:
     return format_error(error, details=details)
 
 
-def plugin_sections() -> frozenset[str]:
-    """Sections a profile may fill: every Avatar plugin, not the Avatar or its runtime."""
+# The layer of every section a profile may fill: where `config init` writes its profile, and
+# how `config check` groups it. The Avatar identity stays in the bundle.
+LAYERS = {
+    "host": "host",
+    "runtime": "agent",
+    "context": "plugins/foundation",
+    "loop": "plugins/foundation",
+    "voice": "plugins/foundation",
+    "vision": "plugins/foundation",
+    "status": "plugins/perception",
+    "router": "plugins/perception",
+    "character": "plugins/perception",
+    "memory": "plugins/perception",
+    "persona": "plugins/perception",
+    "tools": "plugins/tools",
+}
+
+
+def profile_sections() -> frozenset[str]:
+    """Sections a profile may fill: the Host, the Agent runtime and every Avatar plugin."""
     from alphaavatar.agents.configs import AvatarConfig
 
-    return frozenset(AvatarConfig.model_fields) - {"avatar", "runtime"}
+    return frozenset(AvatarConfig.model_fields) - {"avatar"} | {"host"}
 
 
 def check_bundle_name(name: str) -> str:
@@ -183,9 +201,9 @@ def compose_profiles(
     references = document.pop("profiles", None)
     if references is None:
         return document
-    sections = plugin_sections()
+    sections = profile_sections()
     if not isinstance(references, dict):
-        raise ConfigReferenceError(f"{origin}: profiles must map plugin sections to profiles")
+        raise ConfigReferenceError(f"{origin}: profiles must map sections to profile names")
     for section, name in references.items():
         if section not in sections:
             raise ConfigReferenceError(

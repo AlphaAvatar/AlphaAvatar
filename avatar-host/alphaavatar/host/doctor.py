@@ -54,7 +54,7 @@ class CheckSpec:
 
 # Stable identifiers, in report order.
 CHECKS = (
-    CheckSpec("system.platform", "Operating system and POSIX local sockets"),
+    CheckSpec("system.platform", "Operating system and the POSIX local socket API"),
     CheckSpec("python.version", "Python interpreter against the versions AlphaAvatar supports"),
     CheckSpec("packages.alphaavatar", "AlphaAvatar packages: one release, Host requirements"),
     CheckSpec("config.load", "Selection, profiles, overrides and validation, as config check"),
@@ -104,15 +104,20 @@ class Report:
         }
 
 
-def diagnose(target: str | None = None, overrides: Sequence[str] = ()) -> Report:
+def diagnose(
+    target: str | None = None,
+    overrides: Sequence[str] = (),
+    *,
+    read_env: Callable[[], object] | None = None,
+) -> Report:
     """Every check in ``CHECKS`` order; a check that cannot complete is reported as FAIL.
 
-    ``target`` and ``overrides`` mean what they mean for ``config check``. The caller reads
-    ``.env`` first if it wants the same placeholders as ``start``.
+    ``target`` and ``overrides`` mean what they mean for ``config check``. ``read_env``, if
+    given, loads the environment file first, as ``start`` does; its failure is reported.
     """
     from alphaavatar.host.configs import application_paths, output_scrubber
 
-    loaded, load = _configuration(target, overrides)
+    loaded, load = _configuration(target, overrides, read_env)
     config = loaded[0] if loaded is not None else None
     checks = {
         "system.platform": _safely("system.platform", _platform),
@@ -128,10 +133,12 @@ def diagnose(target: str | None = None, overrides: Sequence[str] = ()) -> Report
         ),
     }
 
-    try:
-        paths = config.paths if config is not None else application_paths(overrides)
-    except Exception:
-        paths = None  # Loading resolves the home the same way: config.load reports why.
+    paths = None
+    if load.summary != _UNREADABLE_ENV:  # Otherwise the home may be set in the unread file.
+        try:
+            paths = config.paths if config is not None else application_paths(overrides)
+        except Exception:
+            pass  # Loading resolves the home the same way: config.load reports why.
     if paths is not None:
         checks["paths.home"] = _safely("paths.home", lambda: _home(paths, overrides))
         checks["paths.cache"] = _safely("paths.cache", lambda: _cache(paths))
@@ -140,7 +147,7 @@ def diagnose(target: str | None = None, overrides: Sequence[str] = ()) -> Report
         checks |= {
             "config.runners": _safely("config.runners", lambda: _runners(config)),
             "packages.capabilities": _safely(
-                "packages.capabilities", lambda: _capabilities(config)
+                "packages.capabilities", lambda: _capabilities(config, source)
             ),
             "paths.workspace": _safely(
                 "paths.workspace", lambda: _directory("paths.workspace", config.workspace.root)
@@ -183,18 +190,35 @@ def _safely(check_id: str, run: Callable[[], Check]) -> Check:
         )
 
 
+_UNREADABLE_ENV = "The environment file could not be read"
+
+
 def _configuration(
-    target: str | None, overrides: Sequence[str]
+    target: str | None, overrides: Sequence[str], read_env: Callable[[], object] | None
 ) -> tuple[tuple[ApplicationConfig, ConfigSource] | None, Check]:
     from alphaavatar.host.configs import (
         application_paths,
         check_application_paths,
+        describe_summary,
         format_failure,
         load_application,
         read_settings,
         select_configuration,
     )
 
+    def failure(summary: str, error: Exception, action: str) -> Check:
+        lines = (line.strip() for line in format_failure(error).splitlines())
+        return Check("config.load", "FAIL", summary, tuple(line for line in lines if line), action)
+
+    if read_env is not None:
+        try:
+            read_env()
+        except Exception as error:
+            return None, failure(
+                _UNREADABLE_ENV,
+                error,
+                "Fix the file ENV_FILE names (default .env): UTF-8 text of KEY=VALUE lines",
+            )
     try:
         if target is None:
             paths = application_paths(overrides)
@@ -209,19 +233,13 @@ def _configuration(
         source = select_configuration(target, overrides)
         config = load_application(source, overrides)
         check_application_paths(config)
+        describe_summary(config, source)  # config check's remaining validation, discarded.
     except Exception as error:
         if isinstance(error, ModuleNotFoundError) and error.name:
             action = f"Install the package that provides the Python module {error.name!r}"
         else:
             action = "Fix the reported field or reference, then run doctor again"
-        lines = (line.strip() for line in format_failure(error).splitlines())
-        return None, Check(
-            "config.load",
-            "FAIL",
-            "The configuration did not load",
-            tuple(line for line in lines if line),
-            action,
-        )
+        return None, failure("The configuration did not load", error, action)
     return (config, source), Check(
         "config.load",
         "PASS",
@@ -242,10 +260,11 @@ def _platform() -> Check:
         return Check(
             "system.platform",
             "FAIL",
-            f"{system or sys.platform}: the Host needs POSIX local sockets",
+            f"{system or sys.platform}: the Host needs the POSIX local socket API (AF_UNIX)",
             action="Run AlphaAvatar on Linux or macOS",
         )
-    return Check("system.platform", "PASS", f"{system}; POSIX local sockets available")
+    # Only the API is checked: opening a socket is left to start, as sandboxes may refuse it.
+    return Check("system.platform", "PASS", f"{system}; AF_UNIX socket API present, not opened")
 
 
 def _python() -> Check:
@@ -339,34 +358,82 @@ def _with_extra(distribution: str, name: str) -> str:
     return f"{distribution}[{name}]" if name in extras else distribution
 
 
-def _provider_backends(config: ApplicationConfig) -> set[str]:
-    """Backends of the provider tasks in plugin sections: a model with a provider or backend.
+def _provider_backends(config: ApplicationConfig) -> tuple[set[str], list[str]]:
+    """Backends the enabled plugins' provider tasks use, with their configuration defaults.
 
-    A task without a backend uses the default one. Defaults a plugin applies internally are
-    not visible here.
+    Built-in plugins are validated with the schemas they use at start, so omitted fields take
+    their defaults; disabled plugins are not read. Vector store embeddings always use the
+    default backend. What cannot be determined statically is returned as unverified.
     """
-    from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
-    from alphaavatar.host.configs.bundles import plugin_sections
+    from pydantic import BaseModel
 
+    from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
+
+    avatar = config.avatar
     default = ProviderTaskConfig.model_fields["backend"].default
     backends: set[str] = set()
+    unverified: list[str] = []
 
-    def walk(value: Any) -> None:
-        if isinstance(value, dict):
-            if "model" in value and ("provider" in value or "backend" in value):
-                backend = value.get("backend") or default
-                backends.add(backend if isinstance(backend, str) else str(backend))
+    def collect(value: Any) -> None:
+        if isinstance(value, ProviderTaskConfig):
+            backends.add(value.backend)
+        elif isinstance(value, BaseModel):
+            for name in type(value).model_fields:
+                collect(getattr(value, name))
+        elif isinstance(value, dict):
             for item in value.values():
-                walk(item)
-        elif isinstance(value, list):
+                collect(item)
+        elif isinstance(value, list | tuple):
             for item in value:
-                walk(item)
+                collect(item)
 
-    walk(config.avatar.model_dump(mode="json", include=set(plugin_sections())))
-    return backends
+    def validate(label: str, schema: Callable[[], type[BaseModel]], init_config: Any) -> None:
+        from alphaavatar.host.configs import format_failure
+
+        try:
+            collect(schema().model_validate(init_config))
+        except Exception as error:
+            failure = "; ".join(line.strip() for line in format_failure(error).splitlines())
+            unverified.append(f"{label} init_config: {failure}")
+
+    def loop() -> type[BaseModel]:
+        from alphaavatar.plugins.loop.config import RealtimeLoopConfig
+
+        return RealtimeLoopConfig
+
+    def memory() -> type[BaseModel]:
+        from alphaavatar.plugins.memory.config import DefaultMemoryConfig
+
+        return DefaultMemoryConfig
+
+    def persona() -> type[BaseModel]:
+        from alphaavatar.plugins.persona.config import DefaultPersonaConfig
+
+        return DefaultPersonaConfig
+
+    if avatar.loop.plugin == "realtime":
+        validate("loop", loop, avatar.loop.init_config)
+    else:
+        unverified.append(f"loop plugin {avatar.loop.plugin!r}")
+    for name, section, schema in (
+        ("memory", avatar.memory, memory),
+        ("persona", avatar.persona, persona),
+    ):
+        if section.plugin == "default":
+            validate(name, schema, section.init_config)
+            backends.add(default)  # Its vector store embeds with the default backend.
+        else:
+            unverified.append(f"{name} plugin {section.plugin!r}")
+    mcp = avatar.tools.mcp
+    if mcp.enabled and mcp.plugin is not None:
+        if mcp.plugin == "default":
+            backends.add(default)
+        else:
+            unverified.append(f"mcp plugin {mcp.plugin!r}")
+    return backends, unverified
 
 
-def _capabilities(config: ApplicationConfig) -> Check:
+def _capabilities(config: ApplicationConfig, source: ConfigSource) -> Check:
     from packaging.requirements import Requirement
 
     avatar, host = config.avatar, config.host
@@ -383,7 +450,8 @@ def _capabilities(config: ApplicationConfig) -> Check:
     needs["rtc"] = [_with_extra(HOST, host.rtc.backend)]
     plugin("loop", "alphaavatar.loop", avatar.loop.plugin)
     plugin("context", "alphaavatar.context", avatar.context.plugin)
-    for backend in sorted(_provider_backends(config)):
+    backends, unverified = _provider_backends(config)
+    for backend in sorted(backends):
         plugin("providers", "alphaavatar.provider", backend)
     voice = avatar.voice
     if any(part.plugin is not None for part in (voice.vad, voice.stt, voice.tts)):
@@ -416,14 +484,23 @@ def _capabilities(config: ApplicationConfig) -> Check:
                 missing.add(requirement)
     enabled = ", ".join(needs)
     problems = list(dict.fromkeys(problems))  # One package can reach a capability twice.
+    unknown = tuple(f"provider backends not verified: {item}" for item in unverified)
     if problems:
         return Check(
             "packages.capabilities",
             "FAIL",
             "Enabled capabilities miss packages",
-            tuple(problems),
+            (*problems, *unknown),
             "Install into this Python environment: "
             + (" ".join(f"'{item}'" for item in sorted(missing)) or "the named plugins"),
+        )
+    if unknown:
+        return Check(
+            "packages.capabilities",
+            "WARN",
+            f"Requirements installed for {enabled}; some provider backends not verified",
+            unknown,
+            f"`{_dev(source)}` builds these plugins and reports a missing package or field",
         )
     return Check("packages.capabilities", "PASS", f"Requirements installed for {enabled}")
 
@@ -467,7 +544,7 @@ def _services(config: ApplicationConfig, source: ConfigSource) -> Check:
 
     avatar = config.avatar
     services = [f"{config.host.rtc.backend} RTC server"]
-    if backends := sorted(_provider_backends(config)):
+    if backends := sorted(_provider_backends(config)[0]):
         services.append(f"model providers ({', '.join(backends)})")
     if speech := [part.plugin for part in (avatar.voice.stt, avatar.voice.tts) if part.plugin]:
         services.append(f"speech services ({', '.join(speech)})")
@@ -489,7 +566,7 @@ def _services(config: ApplicationConfig, source: ConfigSource) -> Check:
 
 
 def _home(paths: ApplicationPaths, overrides: Sequence[str]) -> Check:
-    from alphaavatar.host.configs import application_paths, read_settings
+    from alphaavatar.host.configs import application_paths, format_failure, read_settings
 
     if paths.root != application_paths(overrides).root:
         chosen = "the configuration file"
@@ -499,15 +576,27 @@ def _home(paths: ApplicationPaths, overrides: Sequence[str]) -> Check:
         chosen = "ALPHAAVATAR_HOME"
     else:
         chosen = "the platform default"
+    unreadable = None
     try:
         default = read_settings(paths).get("default_bundle")
         settings = f"default bundle {default}" if default is not None else "no default bundle"
-    except Exception:
-        settings = "unreadable (see config.load)"
+    except Exception as error:
+        settings, unreadable = "unreadable", error
     bundles = paths.configs.bundles_dir
     count = len(list(bundles.glob("*.yaml"))) if bundles.is_dir() else 0
     notes = (f"chosen by {chosen}", f"settings: {settings}", f"{count} bundle{'s' * (count != 1)}")
-    return _directory("paths.home", paths.root, notes)
+    check = _directory("paths.home", paths.root, notes)
+    if unreadable is None or check.status == "FAIL":
+        return check
+    # Named bundles and files still load; the default bundle and config init need settings.
+    action = f"Fix or remove {paths.settings_file}; config init and runs without a bundle read it"
+    return Check(
+        "paths.home",
+        "WARN",
+        f"{check.summary}: settings unreadable",
+        (*check.details, *(line.strip() for line in format_failure(unreadable).splitlines())),
+        f"{action}; {check.action}" if check.action else action,
+    )
 
 
 def _cache(paths: ApplicationPaths) -> Check:
@@ -517,19 +606,31 @@ def _cache(paths: ApplicationPaths) -> Check:
 
 
 def _directory(check_id: str, path: Path, notes: Sequence[str] = ()) -> Check:
-    nearest = path
-    while not nearest.exists() and nearest.parent != nearest:
-        nearest = nearest.parent
     lines = list(notes)
-    if nearest == path:
-        if not path.is_dir():
+    # The nearest existing ancestor; a link without a target stops creation, as a file does.
+    nearest = path
+    while not nearest.exists():
+        if nearest.is_symlink():
             return Check(
                 check_id,
                 "FAIL",
-                f"{path} is not a directory",
+                f"{nearest} is a symbolic link that does not resolve",
                 ("; ".join(lines),) if lines else (),
-                "Move it away or choose another location",
+                "Remove the link or create its target, or choose another location",
             )
+        if nearest.parent == nearest:
+            break
+        nearest = nearest.parent
+    if not nearest.is_dir():
+        blocked = "" if nearest == path else f", so {path} cannot be created"
+        return Check(
+            check_id,
+            "FAIL",
+            f"{nearest} is not a directory{blocked}",
+            ("; ".join(lines),) if lines else (),
+            "Move it away or choose another location",
+        )
+    if nearest == path:
         info = path.stat()
         mine = info.st_uid == getattr(os, "geteuid", lambda: -1)()
         owner = "this user" if mine else "another user"
@@ -537,7 +638,7 @@ def _directory(check_id: str, path: Path, notes: Sequence[str] = ()) -> Check:
         usable = os.access(path, os.R_OK | os.W_OK | os.X_OK)
     else:
         state = f"{path}  (not created yet; created when first needed)"
-        usable = nearest.is_dir() and os.access(nearest, os.W_OK | os.X_OK)
+        usable = os.access(nearest, os.W_OK | os.X_OK)
     free = shutil.disk_usage(nearest).free
     lines.append(f"{free / (1 << 30):.1f} GiB free")
     details = ("; ".join(lines),)

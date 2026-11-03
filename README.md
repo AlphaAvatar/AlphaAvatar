@@ -315,7 +315,7 @@ ENV_FILE=.env.dev alphaavatar config check my-avatar
 ENV_FILE=.env.dev alphaavatar doctor my-avatar
 ```
 
-`config init` writes a bundle and its plugin profiles under the application home; see [docs/cli/config.md](docs/cli/config.md) for the layout and how a bundle name, a file or the default bundle is chosen. Edit .env.dev and provide credentials for the selected RTC, model, embedding and tool services; keep credentials out of the YAML files. Example model/voice identifiers are deployment choices, not guarantees of account access. `config check` starts nothing and creates no directories.
+`config init` writes a bundle and its profiles, layered as host, agent and plugins (foundation, perception, tools), under the application home; see [docs/cli/config.md](docs/cli/config.md) for the layout and how a bundle name, a file or the default bundle is chosen. Edit .env.dev and provide credentials for the selected RTC, model, embedding and tool services; keep credentials out of the YAML files. Example model/voice identifiers are deployment choices, not guarantees of account access. `config check` starts nothing and creates no directories.
 
 Set `ALPHAAVATAR_HOME` to choose the application home, or set top-level YAML `application.cache_root` to choose a separate application cache; downloaded models live in its `models/` directory. Host rejects the former `ALPHAAVATAR_MODEL_CACHE` setting. Set `ALPHAAVATAR_MODEL_OFFLINE=1` to require locally cached, validated files. See [Model cache](docs/models-cache-layout.md) for downloads and offline use, and [Avatar workspace](docs/avatar-workspace-layout.md) for personal data, backups and cleanup.
 

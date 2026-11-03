@@ -8,7 +8,7 @@
 
 | 批次 | 内容 | 日期 | 基线 HEAD | 提交 | 状态 |
 |---|---|---|---|---|---|
-| T-10B | 基础 Doctor：静态、只读、离线的安装与配置诊断（`doctor`、`doctor <bundle或文件> [KEY=VALUE...]`、`--list`、`--json`） | 2026-11-03 | `7c53c4a` | 未提交 | 待 review：本地全量 300 passed（CI 方式 ×1，检出前后一致）；新增 4 项 Doctor 测试，10 个变异全部被发现 |
+| T-10B | 基础 Doctor：静态、只读、离线的安装与配置诊断（`doctor`、`doctor <bundle或文件> [KEY=VALUE...]`、`--list`、`--json`） | 2026-11-03 | `7c53c4a` | `0579d81`；review 收尾未提交 | `0579d81` review：暂不验收，三组 P2。已修正，并按用户追加要求调整 `config check` 摘要和 `config init` 布局；待 review。本地全量 301 passed（CI 方式，检出前后一致） |
 
 ---
 
@@ -160,4 +160,127 @@
 - 在 Windows 上，`system.platform` 会报 FAIL；其余检查仍然运行，但没有在 Windows 上验证。原生 AF_UNIX 全量只在本机 Linux 运行。
 - 导入配置插件时改写环境变量，是已知的 O-2，与 `config check` 相同。
 - 没有实现：安装器、升级回滚、Agent 自动修复、长时压力测试、`--runtime`／`--live` 探测、首 token／首音频帧／端到端延迟。
+- 本批修改没有 commit 或 push，停在 review 阶段。
+
+---
+
+## T-10B `0579d81` review 收尾
+
+- 基线：`0579d81`，开始时工作区干净。
+- review 结论：暂不验收，三组 P2，都可以集中做小改，不调整整体架构。另有三处说明不准确。
+- review 环境：收集 300 项，选跑 239 项，234 项通过。其中：
+  - 4 项 Doctor 测试失败，原因是审查环境确实缺少声明的依赖；
+  - 1 项未改动的语音测试首次出现时序失败，当前版本和父版本单独重跑都通过，尚未认定为本批回归。
+
+### 1. P2 修正
+
+| # | 问题 | 修正 |
+|---|---|---|
+| 1 | 依赖检查有漏报也有误报。只写 `model` 的任务实际使用默认后端，却被漏掉；补写同样的默认值后，结果反而不同。已禁用工具残留的 `init_config` 仍被扫描，其中未使用的 backend 被报成 FAIL | `_provider_backends` 不再按字典结构猜测，改为用插件启动时的 schema 校验已启用的内置插件，默认值由 schema 补齐后再收集 `ProviderTaskConfig`。所用 schema 为 realtime loop 的 `RealtimeLoopConfig`，以及默认 memory、persona 的 `DefaultMemoryConfig`、`DefaultPersonaConfig`。向量库的 embedding 是固定用默认后端构造的，所以默认 memory、persona 和启用的默认 MCP 都计入默认后端。已禁用的插件不读取。其他插件，或 schema 拒绝的配置，报为"provider backends not verified"，`packages.capabilities` 给 WARN 并指向 `alphaavatar dev` |
+| 2 | 悬空符号链接被当作可创建的目录：`exists()` 跳过了失效链接 | `_directory` 向上寻找已存在的祖先时，遇到 `is_symlink()` 但无法解析的路径，就直接 FAIL（"is a symbolic link that does not resolve"）；遇到不是目录的祖先，也明确 FAIL。Home 是悬空链接时，Home 和 cache 都 FAIL |
+| 3 | `.env` 读不了时，`doctor --json` 输出裸 traceback，stdout 为空 | `diagnose(..., read_env=init_env)` 在报告内读取 `.env`。失败时 `config.load` 报 FAIL，摘要为"The environment file could not be read"，细节是 `format_failure` 的类型和位置，下一步说明 ENV_FILE 应为 UTF-8 的 KEY=VALUE 文本。此时 Home 可能就定义在没读到的 `.env` 里，所以依赖它的路径检查 SKIP。JSON 照常输出，退出码 1 |
+
+### 2. 说明更正
+
+- `system.platform` 只确认 AF_UNIX API 存在，不打开 socket，摘要改为"AF_UNIX socket API present, not opened"。
+- 导入边界：用 audit hook 实测，首次导入配置插件时，第三方库会做探测：
+  - `urllib3`（经 `requests`）创建并 bind 一个 IPv6 socket，用来判断是否支持 IPv6；
+  - `weasyprint` 通过 `ctypes.util.find_library` 查找本地库，会运行 `ldconfig`、`gcc`、`ld`，并创建、删除临时文件。
+  - 这些来自 `config check`、`start` 同样会执行的导入；Doctor 自己的检查阶段（导入之后）实测没有 socket、子进程、写文件或建目录，只有 Python 为刚改动的模块写 `__pycache__`。
+  - 文档已改为"Doctor 的检查不创建……"，并写明这条导入边界。2A 日志的 O-2 已补充记录。
+- 显式配置有效、但 settings 损坏时，`config.load` 是 PASS，所以提示不能再指向它。现在由 `paths.home` 报 WARN，细节给出 settings 的错误，下一步直接写出要修复或删除的 settings 文件。
+- 另外发现并修正一处与 `config check` 不一致的地方：Doctor 的 `config.load` 没有执行 `config check` 的 `describe_summary`。现在也执行，两者的结论在构造上一致。现有的 persona 配置错误在加载阶段就已经失败（Runner 计划会校验 persona 设置），所以这处修正目前没有可观察的差别（见变异 F7）。
+
+### 3. 测试
+
+- **测试与本机安装解耦**：本机是否装全了声明的依赖，属于机器本身的状态。原测试断言 `packages.*` 为 PASS、退出码为 0，在审查环境中因此失败。
+  - 改法：辅助函数对每次运行都断言"退出码为 1 当且仅当报告里有 FAIL"；退出码的取值规则直接用 `Report` 验证（只有 WARN 和 SKIP 时为 0，有 FAIL 时为 1）。
+  - `packages.*` 的具体状态只在测试主动移除某个包时断言。缺包用例用"包含"判断，不要求细节完全相等。
+  - 其他检查（平台、Python、配置、路径）的状态仍然精确断言。
+- **新增**：`test_provider_backends_follow_defaults_and_ignore_disabled_plugins`。
+  - 只写 `model` 的任务与补写默认值的任务结果相同；
+  - 显式写 `backend: openai` 时要求 openai；
+  - 已禁用 rag 残留的 `backend: nowhere` 不出现在结果中。
+- **扩展**：
+  - 配置复用用例：增加 `persona.init_config.unknown=1` 这一校验失败场景，与 `config check` 的拒绝一致；增加 settings 损坏时显式 bundle 的情况（`config.load` PASS，`paths.home` WARN）。
+  - 失败用例：增加悬空链接 Home（FAIL，退出码 1）和不可读 `.env`（JSON 完整，`config.load` FAIL，路径检查 SKIP，没有 traceback）。
+- `test_doctor.py` 现为 5 项。
+
+反向验证：用一个临时测试文件把各场景拆开，分别对 `0579d81` 的两个 Doctor 模块和修正后的模块运行；文件随后删除，模块按 SHA-256 恢复。
+
+| 场景 | `0579d81` | 修正后 |
+|---|---|---|
+| 只写 `model` 的任务遵循默认值 | 失败（结果中没有 provider） | 通过 |
+| 已禁用工具的残留不参与检查 | 失败（出现 `nowhere`） | 通过 |
+| 悬空链接 Home 报 FAIL | 失败（退出码 0） | 通过 |
+| `.env` 不可读时仍输出 JSON | 失败（`UnicodeDecodeError` 直接抛出） | 通过 |
+| settings 损坏、显式 bundle | 失败（Home 为 PASS） | 通过 |
+| `persona.init_config` 错误与 `config check` 一致 | 通过（加载阶段已拒绝） | 通过 |
+
+变异（每次只改一处，按 SHA-256 恢复）：
+
+| # | 变异 | 结果 |
+|---|---|---|
+| F1 | 悬空链接按"不存在"处理 | 被发现 |
+| F2 | 在报告之外读取 `.env` | 被发现（`UnicodeDecodeError`） |
+| F3 | settings 损坏时仍报 PASS | 被发现 |
+| F4a | 只计入显式写出的 backend | **未被发现**：默认 memory 和 persona 的 embedding 本身就要求默认后端，在用例中掩盖了 loop 的默认值 |
+| F4b | 不计入 embedding 的默认后端 | **未被发现**：loop 只写 `model` 时同样落到默认后端，两者在用例中互相掩盖 |
+| F4c | 不按 loop 的 schema 读取任务 | 被发现 |
+| F5 | 摘要中没有 memory 处理器开关 | 被发现 |
+| F6 | 摘要中没有 vision | 被发现 |
+| F7 | `config.load` 不调用 `describe_summary` | **未被发现**：现有校验在加载阶段已经覆盖 |
+
+T-10B 首版的变异 D1–D10 在最终代码上重跑：
+- D7（基于结构的扫描）对应的代码已删除，改由 F4 覆盖；
+- 其余 9 个仍全部被发现。
+
+### 4. 用户在本轮追加的配置改动
+
+1. **`config check` 摘要补全开关**：
+   - 新增 `vision`（开关及输入方式）、`context`、`status`；
+   - router 显示 audio activity、semantic addressing、visual addressing、turn taking、interruption 的开关；
+   - memory 显示 retrieval、conversation、tool、environment（ENV memory）的开关；
+   - persona 增加 profiler 的开关。
+   - 开关都用各插件自己的 schema 读取，省略的开关显示默认值。JSON 在 `plugins` 下给出相同的值，`router` 和 `status` 由字符串改为对象。
+   - 行为变化：读取 memory 开关时会校验 `DefaultMemoryConfig`，这一点 Runner 计划此前没有做。所以 `memory.init_config` 无效时，`config check` 现在就会拒绝；原来要到 `start` 才失败。
+2. **`config check` 分层展示**：
+   - 选择信息（config、avatar_id、home、workspace）之后，依次分为 `host`（rtc、health）、`agent`（inference）、`plugins/foundation`、`plugins/perception`、`plugins/tools`；
+   - tools 拆成 deepresearch、rag、mcp 三行。
+   - 层的划分来自 `alphaavatar.host.configs.LAYERS`，与 profile 布局共用同一份定义。JSON 结构不分层。
+3. **profile 分层**（用户选择："host 放 host，agent 放 runtime"，tools 用一个文件）：
+   - `host`、`runtime` 可以作为 profile。`profile_sections()` 取代 `plugin_sections()`，`avatar`（身份）仍只能写在 bundle 中。这改变了 T-10A 已验收的规则。
+   - 错误信息改为"profiles must map sections to profile names"。
+   - `config init` 按层生成 12 个 profile：
+
+     ```
+     configs/profiles/<name>/
+       host/host.yaml
+       agent/runtime.yaml
+       plugins/foundation/{context,loop,voice,vision}.yaml
+       plugins/perception/{status,router,character,memory,persona}.yaml
+       plugins/tools/tools.yaml
+     ```
+
+   - 新增的 host、runtime、context、status、router、character profile 都显式写出默认值。memory 增加 `environment: {enabled: false}`；persona 增加 `profiler.enabled`、`speaker`（`enabled`、`inference_queue_size`）和 `face`（`enabled`）。
+   - 生成时，host 用 `HostConfig` 校验，其余用 `AvatarConfig` 校验。
+   - init 输出的 profiles 行改为指向 bundle 的 profile 根目录，并列出各层。
+   - 原测试逐值比较 bundle 与旧的单文件模板，现在改为套用各插件 schema 后再比较（context、router、memory、persona），因为新 profile 把单文件里隐含的默认值写了出来。新增断言 `set(LAYERS) == profile_sections()`。
+4. 此前已按要求删除 README 中 `config check examples/.../pipeline_openai_tools_minimal.yaml` 一行。用户机器上已有的 `~/.local/share/alphaavatar` 文件没有改动。
+
+### 5. 运行结果
+
+| 项目 | 结果 |
+|---|---|
+| 全量（CI 方式：`--basetemp`、检出前后对比） | **301 passed**（新增 1 项），46.6 s；检出目录前后一致 |
+| `avatar-host/tests` | 81 passed |
+| Doctor、check、bundles 测试 ×10 | 0 失败 |
+| 真实入口 | 不可读 `.env` 时 `--json` 输出完整、stderr 为空、退出码 1；悬空链接 Home 时两项路径检查 FAIL、退出码 1；settings 损坏时显式 bundle 得到 `config.load` PASS、`paths.home` WARN |
+| Ruff、格式、`check_workspace.py`、`uv lock --check`、pre-commit | 全部通过 |
+
+### 6. 限制
+
+- `config check` 和 Doctor 的 `config.load` 都不校验 `loop.init_config`（`RealtimeLoopConfig`）。例如没有写 `model` 的配置能通过 check，但会在启动时失败。Doctor 会在 `packages.capabilities` 中给出 WARN，并指出缺少的字段。是否把这项校验放进 `config check` 留给 review 决定。
+- F4a、F4b、F7 三个变异未被发现，原因见上表。
+- review 环境中那项语音时序失败不在本批范围，没有处理。
 - 本批修改没有 commit 或 push，停在 review 阶段。

@@ -62,20 +62,32 @@ def test_check_reports_valid_and_invalid_configurations_with_effective_overrides
     assert text.splitlines() == [
         "",
         "OK  configuration and read-only path checks passed",
-        f"    config     {config}",
-        "    avatar_id  renamed",
-        f"    home       {report['home']}",
-        f"    workspace  {report['workspace']}",
-        "    rtc        livekit",
-        "    loop       realtime",
-        "    voice      vad=none  stt=none  tts=none",
-        "    router     default",
-        "    character  none",
-        "    memory     default  (vdb: qdrant)",
-        "    persona    default  (vdb: lancedb; speaker on, face on)",
-        "    tools      deepresearch, rag, mcp (1 server)",
-        f"    inference  {len(report['inference'])} runners, 1 worker each",
-        "    health     127.0.0.1:8081 (dev: free port)",
+        f"    config          {config}",
+        "    avatar_id       renamed",
+        f"    home            {report['home']}",
+        f"    workspace       {report['workspace']}",
+        "    host",
+        "      rtc           livekit",
+        "      health        127.0.0.1:8081 (dev: free port)",
+        "    agent",
+        f"      inference     {len(report['inference'])} runners, 1 worker each",
+        "    plugins/foundation",
+        "      context       default",
+        "      loop          realtime",
+        "      voice         vad=none  stt=none  tts=none",
+        "      vision        off",
+        "    plugins/perception",
+        "      status        default",
+        "      router        default  (audio activity on, semantic addressing on, "
+        "visual addressing on, turn taking on, interruption on)",
+        "      character     none",
+        "      memory        default  "
+        "(vdb: qdrant; retrieval on, conversation on, tool on, environment off)",
+        "      persona       default  (vdb: lancedb; profiler on, speaker on, face on)",
+        "    plugins/tools",
+        "      deepresearch  default",
+        "      rag           default",
+        "      mcp           default  (1 server)",
         "",
     ]
     # Selections and backend kinds only: no endpoint, collection or plugin-defined setting.
@@ -93,10 +105,25 @@ def test_check_reports_valid_and_invalid_configurations_with_effective_overrides
     }
     assert report["config"] == {"bundle": None, "default": False, "file": str(config)}
     assert report["valid"] and report["avatar_id"] == "renamed"
-    assert report["plugins"]["memory"] == {"plugin": "default", "vdb": "qdrant"}
+    assert report["plugins"]["memory"] == {
+        "plugin": "default",
+        "vdb": "qdrant",
+        "retrieval": True,
+        "conversation": True,
+        "tool": True,
+        "environment": False,
+    }
     assert report["plugins"]["tools"]["mcp"] == {"plugin": "default", "servers": 1}
     assert report["health"] == {"bind": "127.0.0.1", "port": None}
     assert report["workspace"] == f"{report['home']}/avatars/renamed"
+    # Switches follow the configuration: environment memory and vision, as start would run.
+    environment = "memory.init_config.environment"
+    switched = (f"{environment}.enabled=true", f"{environment}.provider.task=memory.env_delta")
+    switched += ("vision.enabled=true", "vision.input_mode=vlm")
+    assert main(["config", "check", str(config), *switched]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert "      vision        on  (input: vlm)" in lines
+    assert any(line.endswith("tool on, environment on)") for line in lines)
 
     assert main(["config", "check", str(config), "tools.mcp.token=leak"]) == 2
     output = capsys.readouterr()
@@ -159,7 +186,8 @@ def test_check_summary_passes_the_same_output_boundary(
     assert main(["config", "check", str(config), "--json"]) == 0
     report = capsys.readouterr().out
     summary = json.loads(report)
-    assert "    avatar_id  [redacted]" in text.splitlines() and summary["avatar_id"] == "[redacted]"
+    assert "    avatar_id       [redacted]" in text.splitlines()
+    assert summary["avatar_id"] == "[redacted]"
     assert summary["config"]["file"] == str(tmp_path / "avatar.json")
     assert summary["home"] == str(tmp_path / "homedir") and "[redacted]" in summary["workspace"]
     for output in (text, report):
@@ -188,7 +216,8 @@ def test_only_an_enabled_terminal_gets_styles_and_json_stays_plain(
     assert checked.getvalue().startswith(f"\n{BOLD}{GREEN}OK{RESET}  " if styled else "\nOK  ")
     assert checked.getvalue().endswith("\n\n")
     # Labels are auxiliary and dimmed; values keep the default foreground.
-    avatar = f"    {DIM}avatar_id{RESET}  assistant" if styled else "    avatar_id  assistant"
+    label = "avatar_id".ljust(len("deepresearch") + 2)  # Aligned with the nested labels.
+    avatar = f"    {DIM}{label}{RESET}  assistant" if styled else f"    {label}  assistant"
     assert avatar in checked.getvalue().splitlines()
     assert ("\x1b" in checked.getvalue()) == styled
     # JSON never carries terminal styling, even on a terminal.

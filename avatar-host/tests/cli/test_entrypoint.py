@@ -21,7 +21,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from config_samples import SECTIONS
+from config_samples import LAYOUT
 
 # Base CLI commands must not need models, providers, transports or avatar configuration.
 FORBIDDEN_IMPORTS = (
@@ -129,7 +129,7 @@ def test_console_commands_run_without_the_host_log_socket(tmp_path: Path) -> Non
     assert configuration == sorted(
         [
             "configs/bundles/console.yaml",
-            *(f"configs/profiles/console/{section}.yaml" for section in SECTIONS),
+            *(f"configs/profiles/console/{path}.yaml" for path in LAYOUT.values()),
             "settings/.write.lock",
             "settings/settings.yaml",
         ]

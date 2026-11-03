@@ -26,7 +26,7 @@ from unittest import mock
 
 import pytest
 import yaml
-from config_samples import CONFIG, SECRETS, SECTIONS, files, write
+from config_samples import CONFIG, LAYOUT, SECRETS, SECTIONS, files, write
 
 # Imported at collection: configuration plugins adjust process variables while importing (O-2).
 import alphaavatar.agents.configs  # noqa: F401
@@ -38,9 +38,12 @@ from alphaavatar.host.configs import (
     select_configuration,
     template,
 )
+from alphaavatar.host.configs.bundles import LAYERS, profile_sections
 from alphaavatar.host.configs.loader import restore_application
+from alphaavatar.plugins.context.config import ContextConfig
 from alphaavatar.plugins.memory.config import DefaultMemoryConfig
 from alphaavatar.plugins.persona.config import DefaultPersonaConfig
+from alphaavatar.plugins.router.config import RouterConfig
 
 # The single-file template `config init` wrote before bundles, its YAML anchors included.
 SINGLE_FILE_TEMPLATE = """\
@@ -74,6 +77,7 @@ tools: {deepresearch: {plugin: null}, rag: {plugin: null}, mcp: {enabled: false}
 
 
 HANG_GUARD = 30
+VOICE = f"alpha/{LAYOUT['voice']}"
 
 
 LOCK = "application/settings/.write.lock"
@@ -110,7 +114,7 @@ def test_init_splits_the_minimal_template_into_a_bundle_and_profiles_that_load_u
     assert create("my-avatar", "my-avatar") == 0
     output = capsys.readouterr().out
     bundle = home / "configs" / "bundles" / "my-avatar.yaml"
-    profiles = [profile(home, f"my-avatar/{section}") for section in SECTIONS]
+    profiles = [profile(home, f"my-avatar/{LAYOUT[section]}") for section in SECTIONS]
     settings = home / "settings" / "settings.yaml"
     # Configuration files and their directories only: no cache, workspace or log.
     lock = settings.with_name(".write.lock")  # Kept by the lock library, as elsewhere.
@@ -123,7 +127,10 @@ def test_init_splits_the_minimal_template_into_a_bundle_and_profiles_that_load_u
     assert sorted(set(files(tmp_path)) - set(before)) == sorted(created)
     # Locations and the default choice, never the configuration itself.
     assert f"  bundle    {bundle}\n" in output
-    assert f"  profiles  {profiles[0].parent}  ({', '.join(SECTIONS)})\n" in output
+    layers = "host, agent, plugins/foundation, plugins/perception, plugins/tools"
+    assert f"  profiles  {home / 'configs' / 'profiles' / 'my-avatar'}  ({layers})\n" in output
+    # Every section a profile may fill has a layer, so init and check cover them all.
+    assert set(LAYERS) == profile_sections() == set(SECTIONS)
     assert "  default   my-avatar (set as the default bundle)\n" in output
     assert "OPENAI_API_KEY" in output and "alphaavatar dev my-avatar" in output
     assert "gpt-4o" not in output and "silero" not in output
@@ -142,19 +149,30 @@ def test_init_splits_the_minimal_template_into_a_bundle_and_profiles_that_load_u
             "name": "Assistant",
             "introduction": "You are a helpful voice AI assistant.",
         },
-        "profiles": {section: f"my-avatar/{section}" for section in SECTIONS},
+        "profiles": {section: f"my-avatar/{LAYOUT[section]}" for section in SECTIONS},
     }
     assert yaml.safe_load(settings.read_text()) == {"default_bundle": "my-avatar"}
 
-    # The composed configuration is the previous single-file template, value for value.
+    # The composed configuration is the previous single-file template as the plugins read it:
+    # the added profiles spell out defaults that the single file left implicit.
+    def effective(loaded: object) -> dict:
+        payload = json.loads(loaded.payload)
+        for section, schema in (
+            ("context", ContextConfig),
+            ("router", RouterConfig),
+            ("memory", DefaultMemoryConfig),
+            ("persona", DefaultPersonaConfig),
+        ):
+            options = schema.model_validate(payload[section]["init_config"])
+            payload[section]["init_config"] = options.model_dump(mode="json")
+        return payload
+
     single = tmp_path / "single.yaml"
     single.write_text(SINGLE_FILE_TEMPLATE)
-    expected = json.loads(load_application(single).payload)
+    expected = effective(load_application(single))
     for target in (None, "my-avatar", str(bundle)):
         loaded = load_application(select_configuration(target))
-        assert json.loads(loaded.payload) == expected
-    DefaultMemoryConfig.model_validate(loaded.avatar.memory.init_config)
-    DefaultPersonaConfig.model_validate(loaded.avatar.persona.init_config)
+        assert effective(loaded) == expected
     assert main(["config", "check", "--json"]) == 0
     plugins = json.loads(capsys.readouterr().out)["plugins"]
     assert plugins["voice"] == {"vad": "silero", "stt": "openai_segment", "tts": "openai"}
@@ -209,13 +227,14 @@ def test_selection_follows_the_argument_spelling_from_any_directory(
     assert (files(tmp_path), sandbox) == (before, [])
 
     # Overrides apply to the composed configuration; profiles.<section> picks a reference.
-    voice = profile(home, "beta/voice")
+    beta = f"beta/{LAYOUT['voice']}"
+    voice = profile(home, beta)
     voice.write_text(voice.read_text().replace("speaker: ash", "speaker: shimmer"))
     for overrides, expected in (
         ((), "ash"),
         (("voice.tts.speaker=nova",), "nova"),
-        (("profiles.voice=beta/voice",), "shimmer"),
-        (("profiles.voice=beta/voice", "voice.tts.speaker=nova"), "nova"),
+        ((f"profiles.voice={beta}",), "shimmer"),
+        ((f"profiles.voice={beta}", "voice.tts.speaker=nova"), "nova"),
     ):
         source = select_configuration("alpha", overrides)
         assert speaker(load_application(source, overrides)) == expected
@@ -265,17 +284,17 @@ def test_without_a_default_bundle_selection_fails_clearly_and_settings_never_cho
 @pytest.mark.parametrize(
     ("bundle", "voice", "message"),
     [
-        ({}, None, "profiles.voice references missing profile 'alpha/voice'"),
+        ({}, None, f"profiles.voice references missing profile '{VOICE}'"),
         ({"profiles": {"voice": "../alpha/voice"}}, "", "profiles.voice must be a profile name"),
         ({"profiles": {"voice": "/alpha/voice"}}, "", "profiles.voice must be a profile name"),
         ({"profiles": {"voice": "Alpha/Voice"}}, "", "profiles.voice must be a profile name"),
         ({"profiles": {"voice": "alpha/voice.yaml"}}, "", "profiles.voice must be a profile name"),
-        ({"profiles": {"host": "alpha/voice"}}, "", "profiles may only fill character, context"),
-        ({"profiles": "alpha/voice"}, "", "profiles must map plugin sections to profiles"),
+        ({"profiles": {"avatar": VOICE}}, "", "profiles may only fill character, context, host"),
+        ({"profiles": VOICE}, "", "profiles must map sections to profile names"),
         ({"voice": {"vad": {"plugin": "silero"}}}, "", "voice is set both inline and by profiles"),
-        ({}, "profiles: {voice: alpha/voice}\n", "'alpha/voice' references profiles; only bundles"),
-        ({}, "- vad\n", "profile 'alpha/voice' must be a mapping"),
-        ({}, f"tts: {{speaker: '{SECRETS['vdb']}\n", "profile 'alpha/voice' is not valid YAML"),
+        ({}, f"profiles: {{voice: {VOICE}}}\n", f"'{VOICE}' references profiles; only bundles"),
+        ({}, "- vad\n", f"profile '{VOICE}' must be a mapping"),
+        ({}, f"tts: {{speaker: '{SECRETS['vdb']}\n", f"profile '{VOICE}' is not valid YAML"),
         ({"application": {"home": "/elsewhere"}}, "", "sets another application.home"),
     ],
     ids=[
@@ -284,7 +303,7 @@ def test_without_a_default_bundle_selection_fails_clearly_and_settings_never_cho
         "absolute",
         "uppercase",
         "suffix",
-        "not-a-plugin",
+        "not-a-section",
         "not-a-mapping",
         "inline-and-profile",
         "self-reference",
@@ -298,7 +317,7 @@ def test_reference_errors_locate_the_bundle_and_profile_without_values(
 ) -> None:
     assert create("alpha", "alpha") == 0
     capsys.readouterr()
-    path, target = home / "configs" / "bundles" / "alpha.yaml", profile(home, "alpha/voice")
+    path, target = home / "configs" / "bundles" / "alpha.yaml", profile(home, VOICE)
     data = yaml.safe_load(path.read_text())
     for key, value in bundle.items():
         merge = isinstance(value, dict) and isinstance(data.get(key), dict)
@@ -328,7 +347,7 @@ def test_bundles_share_profiles_and_an_accepted_snapshot_stays_frozen(
     assert create("alpha", "alpha") == 0
     capsys.readouterr()
     # Generation groups profiles by bundle; any bundle may reference them.
-    references = {"voice": "alpha/voice", "memory": "alpha/memory"}
+    references = {section: f"alpha/{LAYOUT[section]}" for section in ("voice", "memory")}
     write(
         home / "configs" / "bundles" / "beta.yaml", {"avatar": {"id": "b"}, "profiles": references}
     )
@@ -336,7 +355,7 @@ def test_bundles_share_profiles_and_an_accepted_snapshot_stays_frozen(
     for section in references:
         assert json.loads(beta.payload)[section] == json.loads(alpha.payload)[section]
 
-    voice = profile(home, "alpha/voice")
+    voice = profile(home, VOICE)
     voice.write_text(voice.read_text().replace("speaker: ash", "speaker: nova"))
     assert speaker(load_application(select_configuration("beta"))) == "nova"
     # Sessions restore the accepted payload; profiles on disk are never read again.
@@ -357,7 +376,7 @@ def test_checking_a_bundle_reads_only_and_hides_profile_credentials(
     assert create("alpha", "alpha") == 0
     capsys.readouterr()
     for section, change in (("memory", CONFIG["memory"]), ("tools", CONFIG["tools"])):
-        path = profile(home, f"alpha/{section}")
+        path = profile(home, f"alpha/{LAYOUT[section]}")
         data = yaml.safe_load(path.read_text())
         for key, value in change.items():
             data[key] = data.get(key, {}) | value
@@ -392,8 +411,8 @@ def test_init_never_overwrites_reuses_directories_and_keeps_an_existing_default(
     assert (settings.read_text(), notes.read_text()) == (kept, "keep")
 
     # An existing bundle, or any profile it would write, refuses before anything changes.
-    taken = profile(home, "beta/voice")
-    taken.parent.mkdir()
+    taken = profile(home, f"beta/{LAYOUT['voice']}")
+    taken.parent.mkdir(parents=True)
     taken.write_text("keep: me\n")
     before = contents(tmp_path)
     for name, existing in (("alpha", home / "configs" / "bundles" / "alpha.yaml"), ("beta", taken)):
@@ -557,7 +576,7 @@ def test_named_references_and_init_targets_stay_inside_the_real_home(
     alias = tmp_path / "alias"
     alias.symlink_to(home)
     (configs / "profiles" / "shared").symlink_to(configs / "profiles" / "alpha")
-    beta = {"avatar": {"id": "beta"}, "profiles": {"voice": "shared/voice"}}
+    beta = {"avatar": {"id": "beta"}, "profiles": {"voice": f"shared/{LAYOUT['voice']}"}}
     write(configs / "bundles" / "beta.yaml", beta)
     with mock.patch.dict(os.environ, {"ALPHAAVATAR_HOME": str(alias)}):
         assert main(["config", "check", "beta"]) == 0 and create("gamma", "gamma") == 0
@@ -569,8 +588,9 @@ def test_named_references_and_init_targets_stay_inside_the_real_home(
     (configs / "profiles" / "zeta").symlink_to(configs / "bundles" / "shared")
     before = contents(tmp_path)
     assert create("zeta", "zeta") == 2
-    assert f"Refusing to create: {profile(home, 'zeta/loop')} resolves outside" in (
-        capsys.readouterr().err
+    assert (
+        f"Refusing to create: {profile(home, f'zeta/{LAYOUT[SECTIONS[0]]}')} resolves outside"
+        in (capsys.readouterr().err)
     )
     assert contents(tmp_path) == before
     (configs / "profiles" / "zeta").unlink()
@@ -588,7 +608,7 @@ def test_named_references_and_init_targets_stay_inside_the_real_home(
     shutil.move(configs / "profiles" / "alpha", outside / "profiles")
     (configs / "profiles" / "alpha").symlink_to(outside / "profiles")
     assert main(["config", "check", "alpha"]) == 2
-    assert "Bundle 'alpha': profiles.loop: " in capsys.readouterr().err
+    assert f"Bundle 'alpha': profiles.{SECTIONS[0]}: " in capsys.readouterr().err
 
     # init refuses targets that would resolve out of the home before writing anything.
     (configs / "profiles" / "delta").symlink_to(outside / "delta")

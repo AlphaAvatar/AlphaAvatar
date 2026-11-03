@@ -20,8 +20,10 @@ output stay plain.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any, TextIO
 
 from alphaavatar.core.log.records import clean
@@ -41,19 +43,28 @@ def _status(label: str, style: str, message: str, stream: TextIO) -> bool:
     return color
 
 
-def _lines(summary: dict[str, Any]) -> dict[str, str]:
-    """One aligned line per fact; plugins, tools and health are summarized, not listed raw."""
+def _lines(summary: dict[str, Any]) -> dict[str, dict[str, str]]:
+    """Aligned facts by layer, as bundles lay out their profiles; "" holds the selection.
+
+    Plugins, tools and health are summarized, not listed raw.
+    """
+    from alphaavatar.host.configs import LAYERS
+
     plugins, tools, health = summary["plugins"], summary["plugins"]["tools"], summary["health"]
-    memory, persona = plugins["memory"], plugins["persona"]
     stores = {}
-    for name, store in (("memory", memory), ("persona", persona)):
+    for name in ("memory", "persona"):
+        store = plugins[name]
         details = [f"vdb: {store['vdb']}"] if store["vdb"] else []
-        if "speaker" in store:
-            details += [f"speaker {_switch(store['speaker'])}, face {_switch(store['face'])}"]
+        if switches := _switches(store, ("vdb",)):
+            details.append(switches)
         stores[name] = _name(store["plugin"]) + (f"  ({'; '.join(details)})" if details else "")
-    enabled = [name for name in ("deepresearch", "rag") if tools[name] is not None]
-    if (mcp := tools["mcp"]) is not None:
-        enabled.append(f"mcp ({mcp['servers']} server{'' if mcp['servers'] == 1 else 's'})")
+    router = _name(plugins["router"]["plugin"])
+    if switches := _switches(plugins["router"]):
+        router += f"  ({switches})"
+    vision = plugins["vision"]
+    mcp = tools["mcp"]
+    if mcp is not None:
+        mcp = f"{mcp['plugin']}  ({mcp['servers']} server{'' if mcp['servers'] == 1 else 's'})"
     port = health["port"] if health["port"] is not None else "8081 (dev: free port)"
     runners = summary["inference"]
     parallel = [f"{method} x{workers}" for method, workers in runners.items() if workers > 1]
@@ -65,21 +76,39 @@ def _lines(summary: dict[str, Any]) -> dict[str, str]:
     source = summary["config"]
     config = f"bundle {source['bundle']}" if source["bundle"] else source["file"]
     config += "  (default)" if source["default"] else ""
-    return {
-        "config": config,
-        "avatar_id": summary["avatar_id"],
-        "home": summary["home"],
-        "workspace": summary["workspace"],
-        "rtc": plugins["rtc"],
-        "loop": _name(plugins["loop"]),
-        "voice": "  ".join(f"{part}={_name(name)}" for part, name in plugins["voice"].items()),
-        "router": _name(plugins["router"]),
-        "character": _name(plugins["character"]),
-        **stores,
-        "tools": ", ".join(enabled) or "none",
-        "inference": inference,
-        "health": f"{health['bind']}:{port}",
+    sections = {
+        "host": {"rtc": plugins["rtc"], "health": f"{health['bind']}:{port}"},
+        "runtime": {"inference": inference},
+        "context": {"context": _name(plugins["context"])},
+        "loop": {"loop": _name(plugins["loop"])},
+        "voice": {
+            "voice": "  ".join(f"{part}={_name(name)}" for part, name in plugins["voice"].items())
+        },
+        "vision": {"vision": f"on  (input: {vision['input']})" if vision["enabled"] else "off"},
+        "status": {
+            "status": _name(plugins["status"]["plugin"]) if plugins["status"]["enabled"] else "off"
+        },
+        "router": {"router": router},
+        "character": {"character": _name(plugins["character"])},
+        "memory": {"memory": stores["memory"]},
+        "persona": {"persona": stores["persona"]},
+        "tools": {
+            "deepresearch": _name(tools["deepresearch"]),
+            "rag": _name(tools["rag"]),
+            "mcp": _name(mcp),
+        },
     }
+    layers: dict[str, dict[str, str]] = {
+        "": {
+            "config": config,
+            "avatar_id": summary["avatar_id"],
+            "home": summary["home"],
+            "workspace": summary["workspace"],
+        }
+    }
+    for section, layer in LAYERS.items():
+        layers.setdefault(layer, {}).update(sections[section])
+    return layers
 
 
 def _name(plugin: str | None) -> str:
@@ -88,6 +117,15 @@ def _name(plugin: str | None) -> str:
 
 def _switch(enabled: bool) -> str:
     return "on" if enabled else "off"
+
+
+def _switches(section: dict[str, Any], skip: tuple[str, ...] = ()) -> str:
+    """A plugin's processor switches, e.g. ``turn taking on, environment off``."""
+    return ", ".join(
+        f"{name.replace('_', ' ')} {_switch(value)}"
+        for name, value in section.items()
+        if name not in ("plugin", *skip)
+    )
 
 
 def _load(target: str | None, overrides: Sequence[str]):
@@ -124,11 +162,16 @@ def check(target: str | None, overrides: Sequence[str], *, as_json: bool) -> int
     if as_json:
         print(json.dumps({"valid": True, **summary}, indent=2, ensure_ascii=False))
     else:
-        lines = _lines(summary)  # Complete before printing anything.
+        layers = _lines(summary)  # Complete before printing anything.
         color = _status("OK", GREEN, f"{SCOPE} passed", sys.stdout)
-        width = max(map(len, lines))
-        for key, value in lines.items():
-            print(f"    {_paint(key.ljust(width), DIM, color)}  {value}")
+        # Values share one column; facts of a layer are indented under its name.
+        width = max(len(key) + 2 * bool(layer) for layer, facts in layers.items() for key in facts)
+        for layer, facts in layers.items():
+            if layer:
+                print(f"    {_paint(layer, BOLD, color)}")
+            indent = 2 * bool(layer)
+            for key, value in facts.items():
+                print(f"    {' ' * indent}{_paint(key.ljust(width - indent), DIM, color)}  {value}")
         print()
     return 0
 
@@ -153,14 +196,17 @@ def init(name: str, *, avatar_id: str) -> int:
     except Exception as error:
         print(f"\nCannot create the configuration:\n{format_failure(error)}\n", file=sys.stderr)
         return 2
-    sections = ", ".join(path.stem for path in created.profiles)
+    root = Path(os.path.commonpath(created.profiles))
+    layers = ", ".join(
+        dict.fromkeys(str(path.parent.relative_to(root)) for path in created.profiles)
+    )
     if created.default_bundle == name:
         default = f"{name} (set as the default bundle)"
     else:
         default = f"{clean(created.default_bundle)} (unchanged)"
     print(f"\nCreated bundle {name}")
     print(f"  bundle    {clean(str(created.bundle))}")
-    print(f"  profiles  {clean(str(created.profiles[0].parent))}  ({sections})")
+    print(f"  profiles  {clean(str(root))}  ({layers})")
     print(f"  default   {default}")
     print("Set these in the environment or .env (never in the files):")
     print("\n".join(f"  {key:<50} {use}" for key, use in REQUIRED_ENVIRONMENT))

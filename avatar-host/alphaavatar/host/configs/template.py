@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""A minimal bundle and its plugin profiles a person completes, then loads like any other."""
+"""A minimal bundle and its layered profiles a person completes, then loads like any other."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from pathlib import Path
 
 from alphaavatar.core.workspace import ApplicationPaths
 
-from .bundles import ConfigReferenceError, check_bundle_name, check_inside, read_settings
+from .bundles import LAYERS, ConfigReferenceError, check_bundle_name, check_inside, read_settings
 
 # Credentials stay in the environment (or the .env file named by ENV_FILE), never in the files.
 REQUIRED_ENVIRONMENT = (
@@ -39,7 +39,8 @@ _BUNDLE = """\
 #   start:                    alphaavatar dev {name}
 #   check without starting:   alphaavatar config check {name}
 # Each profiles entry is configs/profiles/<entry>.yaml in this application home and may be
-# shared by several bundles. Avatar, host and runtime settings belong in this file.
+# shared by several bundles: host, agent runtime, and plugins by layer (foundation,
+# perception, tools). The Avatar identity belongs in this file.
 # examples/agent_configs has more options. The application home (per platform, or
 # ALPHAAVATAR_HOME) holds this file, so do not set application.home here.
 
@@ -58,8 +59,28 @@ _PROFILE = """\
 
 {body}"""
 
-# The minimal template's selections and defaults, one plugin section per profile.
+# The minimal template's selections and defaults, one section per profile, by layer.
+# Switches shown are the defaults, written out to be edited.
 _SECTIONS = {
+    "host": """\
+rtc:
+  backend: livekit  # Session transport; LIVEKIT_* in the environment hold its credentials.
+health:
+  bind: 127.0.0.1  # Readiness endpoint; 0.0.0.0 would expose it to the network.
+log:
+  file: true  # Diagnostic log files in the workspace's .logs/host.
+""",
+    "runtime": """\
+inference:
+  methods: {}  # Per runner, for example alphaavatar.voice.vad.silero: {workers: 2}
+""",
+    "context": """\
+plugin: default
+init_config:
+  history_max_turns: 32
+  history_max_items: 4096
+  history_max_bytes: 8388608
+""",
     "loop": """\
 plugin: realtime
 init_config:
@@ -82,6 +103,29 @@ tts:
     "vision": """\
 enabled: false
 """,
+    "status": """\
+plugin: default
+enabled: true  # Intermediate status events, such as searching, sent to the client.
+""",
+    "router": """\
+plugin: default
+init_config:
+  audio_activity:
+    enabled: true
+  addressing:
+    semantic:
+      enabled: true
+      avatar_identities: [AlphaAvatar]  # Names people use to address the Avatar.
+    visual:
+      enabled: true
+  turn_taking:
+    enabled: true
+    interruption:
+      enabled: true
+""",
+    "character": """\
+plugin: null  # airi shows a virtual character; see the character plugin's README to install.
+""",
     "memory": """\
 vdb_config:
   collection_name: memory
@@ -97,6 +141,8 @@ init_config:
       gateway:
         tasks:
           memory.tool_delta: {provider: openai, model: gpt-4o, temperature: 0.1}
+  environment:
+    enabled: false  # ENV memory; enabling it also needs provider.task and its gateway task.
 """,
     "persona": """\
 vdb_config:
@@ -106,10 +152,16 @@ vdb_config:
   embedding: {provider: openai, model: text-embedding-3-small}
 init_config:
   profiler:
+    enabled: true
     provider:
       gateway:
         tasks:
           persona.profile_delta: {provider: openai, model: gpt-4o, temperature: 0.1}
+  speaker:
+    enabled: true  # Who is speaking, from voice; stored in speaker_collection_name.
+    inference_queue_size: 1
+  face:
+    enabled: true  # Who is present, from video frames; stored in face_collection_name.
 """,
     "tools": """\
 deepresearch:
@@ -141,8 +193,10 @@ def render_bundle(name: str, avatar_id: str) -> dict[str, str]:
     import yaml
 
     from alphaavatar.agents.configs import AvatarConfig
+    from alphaavatar.host.application.config import HostConfig
 
     check_bundle_name(name)
+    names = {section: f"{name}/{LAYERS[section]}/{section}" for section in _SECTIONS}
     # Validate the identifier itself: YAML would fold line breaks such as U+0085 into spaces.
     AvatarConfig.model_validate({"avatar": {"id": avatar_id}})
     texts = {
@@ -151,17 +205,18 @@ def render_bundle(name: str, avatar_id: str) -> dict[str, str]:
             # A JSON string is a valid double-quoted YAML scalar for any accepted identifier.
             avatar_id=json.dumps(avatar_id, ensure_ascii=False),
             environment="\n".join(f"#   {key:<50} {use}" for key, use in REQUIRED_ENVIRONMENT),
-            profiles="\n".join(f"  {section}: {name}/{section}" for section in _SECTIONS),
+            profiles="\n".join(f"  {section}: {reference}" for section, reference in names.items()),
         )
     }
     texts |= {
-        f"profiles/{name}/{section}.yaml": _PROFILE.format(
-            section=section, reference=f"{name}/{section}", body=body
+        f"profiles/{names[section]}.yaml": _PROFILE.format(
+            section=section, reference=names[section], body=body
         )
         for section, body in _SECTIONS.items()
     }
     bundle = yaml.safe_load(texts[f"bundles/{name}.yaml"])
     bundle |= {section: yaml.safe_load(body) for section, body in _SECTIONS.items()}
+    HostConfig.model_validate(bundle.pop("host"))
     rendered = AvatarConfig.model_validate({k: v for k, v in bundle.items() if k != "profiles"})
     if rendered.avatar.id != avatar_id:
         raise ValueError("The Avatar ID would not survive the configuration file unchanged")

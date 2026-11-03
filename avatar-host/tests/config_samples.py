@@ -44,7 +44,22 @@ CONFIG = {
 }
 
 
-SECTIONS = ("loop", "voice", "vision", "memory", "persona", "tools")
+# config init's layout: each section's profile under configs/profiles/<bundle>/.
+LAYOUT = {
+    "host": "host/host",
+    "runtime": "agent/runtime",
+    "context": "plugins/foundation/context",
+    "loop": "plugins/foundation/loop",
+    "voice": "plugins/foundation/voice",
+    "vision": "plugins/foundation/vision",
+    "status": "plugins/perception/status",
+    "router": "plugins/perception/router",
+    "character": "plugins/perception/character",
+    "memory": "plugins/perception/memory",
+    "persona": "plugins/perception/persona",
+    "tools": "plugins/tools/tools",
+}
+SECTIONS = tuple(LAYOUT)
 
 
 def write(path: Path, value: dict) -> Path:

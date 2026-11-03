@@ -137,8 +137,9 @@ def describe_summary(
     """What check reports, through the same boundary as the full view.
 
     Only the selected file or bundle, typed selections and facts derived from them: plugin
-    names, vector backend kinds, enabled tools, runner workers and the health address, never
-    endpoints or plugin-defined settings.
+    names, vector backend kinds, the on/off switches of vision and of the built-in router,
+    memory and persona processors, enabled tools, runner workers and the health address,
+    never endpoints or other plugin-defined settings.
     """
     from alphaavatar.agents.runtime.inference import plan_inference_runners
     from alphaavatar.agents.utils.vdb.config import vdb_backend
@@ -150,12 +151,42 @@ def describe_summary(
         backend = vdb_backend(section.vdb_config) if section.plugin == "default" else None
         return {"plugin": section.plugin, "vdb": backend}
 
+    def switches(options: BaseModel, **paths: str) -> dict[str, bool]:
+        # Each built-in plugin's own schema, as at start: omitted switches take its defaults.
+        values = {}
+        for name, path in paths.items():
+            section = options
+            for part in path.split("."):
+                section = getattr(section, part)
+            values[name] = section.enabled
+        return values
+
+    memory = store(avatar.memory)
+    if avatar.memory.plugin == "default":
+        from alphaavatar.plugins.memory.config import DefaultMemoryConfig
+
+        options = DefaultMemoryConfig.model_validate(avatar.memory.init_config)
+        names = ("retrieval", "conversation", "tool", "environment")
+        memory |= switches(options, **{name: name for name in names})
     persona = store(avatar.persona)
     if avatar.persona.plugin == "default":
         from alphaavatar.plugins.persona.config import DefaultPersonaConfig
 
         options = DefaultPersonaConfig.model_validate(avatar.persona.init_config)
-        persona |= {"speaker": options.speaker.enabled, "face": options.face.enabled}
+        persona |= switches(options, profiler="profiler", speaker="speaker", face="face")
+    router: dict[str, Any] = {"plugin": avatar.router.plugin}
+    if avatar.router.plugin == "default":
+        from alphaavatar.plugins.router.config import RouterConfig
+
+        options = RouterConfig.model_validate(avatar.router.init_config)
+        router |= switches(
+            options,
+            audio_activity="audio_activity",
+            semantic_addressing="addressing.semantic",
+            visual_addressing="addressing.visual",
+            turn_taking="turn_taking",
+            interruption="turn_taking.interruption",
+        )
     mcp = avatar.tools.mcp
     inference = avatar.runtime.inference
     runners = plan_inference_runners(avatar)  # The plan the Host will start, checked again.
@@ -173,12 +204,18 @@ def describe_summary(
             "plugins": {
                 "rtc": host.rtc.backend,
                 "loop": avatar.loop.plugin,
+                "context": avatar.context.plugin,
                 "voice": {
                     part: getattr(avatar.voice, part).plugin for part in ("vad", "stt", "tts")
                 },
-                "router": avatar.router.plugin,
+                "vision": {
+                    "enabled": avatar.vision.enabled,
+                    "input": avatar.vision.input_mode.value,
+                },
+                "router": router,
+                "status": {"plugin": avatar.status.plugin, "enabled": avatar.status.enabled},
                 "character": avatar.character.plugin,
-                "memory": store(avatar.memory),
+                "memory": memory,
                 "persona": persona,
                 "tools": {
                     "deepresearch": avatar.tools.deepresearch.plugin,
