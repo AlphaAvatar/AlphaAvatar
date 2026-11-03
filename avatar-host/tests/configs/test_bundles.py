@@ -21,7 +21,6 @@ import json
 import os
 import shutil
 import threading
-from collections.abc import Iterator
 from pathlib import Path
 from unittest import mock
 
@@ -75,13 +74,6 @@ tools: {deepresearch: {plugin: null}, rag: {plugin: null}, mcp: {enabled: false}
 
 
 HANG_GUARD = 30
-
-
-@pytest.fixture
-def home(tmp_path: Path) -> Iterator[Path]:
-    root = tmp_path / "application"
-    with mock.patch.dict(os.environ, {"ALPHAAVATAR_HOME": str(root)}):
-        yield root
 
 
 LOCK = "application/settings/.write.lock"

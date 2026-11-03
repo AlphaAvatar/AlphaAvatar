@@ -310,7 +310,9 @@ ENV_FILE=.env.dev alphaavatar config init my-avatar --avatar-id my-avatar
 
 # Optional: validate without starting (start and dev validate it too)
 ENV_FILE=.env.dev alphaavatar config check my-avatar
-ENV_FILE=.env.dev alphaavatar config check examples/agent_configs/voice/pipeline_openai_tools_minimal.yaml
+
+# Optional: diagnose the installation and the configuration (read-only, offline)
+ENV_FILE=.env.dev alphaavatar doctor my-avatar
 ```
 
 `config init` writes a bundle and its plugin profiles under the application home; see [docs/cli/config.md](docs/cli/config.md) for the layout and how a bundle name, a file or the default bundle is chosen. Edit .env.dev and provide credentials for the selected RTC, model, embedding and tool services; keep credentials out of the YAML files. Example model/voice identifiers are deployment choices, not guarantees of account access. `config check` starts nothing and creates no directories.

@@ -91,9 +91,13 @@ def _secrets(value: Any, key: str = "") -> set[str]:
     return set()
 
 
-def _scrubber(config: ApplicationConfig) -> Callable[[Any], Any]:
-    """One output boundary: known credentials, Host log redaction and control characters."""
-    secrets = sorted(_secrets(json.loads(config.payload)), key=len, reverse=True)
+def output_scrubber(config: ApplicationConfig | None = None) -> Callable[[Any], Any]:
+    """One output boundary: known credentials, Host log redaction and control characters.
+
+    Without an accepted configuration only the Host log redaction and cleaning apply.
+    """
+    payload = json.loads(config.payload) if config is not None else {}
+    secrets = sorted(_secrets(payload), key=len, reverse=True)
     redact = Redactor()  # The same boundary as Host logs: environment secrets and URLs.
 
     def text(value: str) -> str:
@@ -124,7 +128,7 @@ def describe_application(config: ApplicationConfig) -> dict[str, Any]:
         "host": _model(config.host, config.host.model_dump(mode="json")),
         **_model(config.avatar, config.avatar.model_dump(mode="json")),
     }
-    return _scrubber(config)(view)
+    return output_scrubber(config)(view)
 
 
 def describe_summary(
@@ -160,7 +164,7 @@ def describe_summary(
         if source is not None
         else {}
     )
-    return _scrubber(config)(
+    return output_scrubber(config)(
         {
             **selected,
             "avatar_id": avatar.avatar.id,

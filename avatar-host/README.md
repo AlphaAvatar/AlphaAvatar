@@ -48,6 +48,7 @@ it without starting anything:
 ```bash
 alphaavatar config init my-avatar --avatar-id my-avatar
 alphaavatar config check my-avatar voice.tts.speed=1.2
+alphaavatar doctor my-avatar          # installation and configuration, read-only
 alphaavatar dev                       # the default bundle
 ```
 
@@ -55,7 +56,8 @@ alphaavatar dev                       # the default bundle
 every command and the bundle layout. The Python entry points live in
 `alphaavatar.host.configs` (`select_configuration`, `load_application`,
 `check_application_paths`, `create_bundle`, `read_settings`, `describe_summary`,
-`describe_application`, `describe_error`, `format_failure`).
+`describe_application`, `describe_error`, `format_failure`, `output_scrubber`); Doctor's report
+comes from `alphaavatar.host.doctor.diagnose`.
 
 ## Configuration
 

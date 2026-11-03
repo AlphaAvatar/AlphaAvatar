@@ -3,6 +3,7 @@
 - 分支：`dev/v0.6.9`；日期均为 CST。
 - 本阶段（T-10 起）的批次都记录在本文件，按时间顺序追加。
 - 2A 阶段及 T-1～T-9 的记录，以及统一的 KD/O 表，仍在 `docs/agent-logs/2026-10/2026-10-25/claude-code-2a-zh.md`；本文件不复制 KD 表。
+- Doctor（T-10B 起）的设计、实现、实验、测试、限制和后续 review 收尾记录在 [claude-code-doctor-zh.md](claude-code-doctor-zh.md)，本文件不再追加 Doctor 的实施过程。
 
 ## 批次总览
 
@@ -11,9 +12,9 @@
 | T-10A | profile／bundle 配置公共能力：拆分配置生成、选择规则、引用解析 | 2026-11-03 | `62af558` | `de480ad`、`3c40fda`、`85d7fcf` | **已验收**（验收提交 `85d7fcf`）：本地 294 passed（CI 方式 ×1）；review 环境（filelock 3.20.0）收集 294 项、原生选跑 232 项通过，多进程互斥通过；Ruff、格式、workspace、lock 通过；原生 IPC 全量未独立复跑 |
 | T-10A1 | 共享 `locked_directory` 的最小缺陷修复：拒绝符号链接锁文件 | 2026-11-03 | `85d7fcf` | `b46c4ea` | **已验收**（验收提交 `b46c4ea`）：filelock 3.20.0；helper 与 Memory 两条路径共 14 项回归通过；review 环境收集 308 项，原生选跑 246 项通过 |
 | T-10T | 测试整理（只改测试）：按职责调整目录，合并重复、减少绑定实现细节的断言 | 2026-11-03 | `85d7fcf` | `b46c4ea` | **已验收**（验收提交 `b46c4ea`）：原有 294 个参数化用例全部保留，新增 14 项，无重复收集；另有 20 项推理测试在回环 TCP 适配下通过；原生 IPC 全量未独立复跑 |
-| KD-16 | Host 日志关闭时丢失最后一条诊断 | 2026-11-03 | `84f2c6d` | `c09f8dd` | 生产修复已在 `c09f8dd` review 中接受；确定性回归与有界关闭用例在 T-10T3 恢复为常驻测试，待验收 |
-| T-10T2 | 只为修小 BUG 的测试移出项目 | 2026-11-03 | `84f2c6d` | `c09f8dd` | `c09f8dd` review：删测需调整，其中两处"仍由谁覆盖"被变异证伪（提交后取消、Executor 本地排队调用）；在 T-10T3 按最小范围收口 |
-| T-10T3 | `c09f8dd` review 收口：恢复必要回归，合并进现有测试，更正日志 | 2026-11-03 | `c09f8dd` | 未提交 | 待 review：只改测试和日志；T-10T2 移出的 23 项中恢复 9 项、合并 3 项、仍移出 11 项；本地 296 passed（CI 方式 ×1）；13 个变异全部被对应用例发现 |
+| KD-16 | Host 日志关闭时丢失最后一条诊断 | 2026-11-03 | `84f2c6d` | `c09f8dd`、`7c53c4a` | **已关闭**（`7c53c4a` 验收）：生产修复在 `c09f8dd` review 中接受；确定性诊断回归与有界关闭用例作为常驻测试保留 |
+| T-10T2 | 只为修小 BUG 的测试移出项目 | 2026-11-03 | `84f2c6d` | `c09f8dd` | `c09f8dd` review：删测需调整，其中两处"仍由谁覆盖"被变异证伪（提交后取消、Executor 本地排队调用）；**已通过 T-10T3 收口**（验收提交 `7c53c4a`） |
+| T-10T3 | `c09f8dd` review 收口：恢复必要回归，合并进现有测试，更正日志 | 2026-11-03 | `c09f8dd` | `7c53c4a` | **已验收**（验收提交 `7c53c4a`）：T-10T2 移出的 23 项中恢复 9 项、合并 3 项、仍移出 11 项；本地全量 296 passed（CI 方式 ×1）；review 环境收集 296 项、选跑 235 项通过，另有 HostLog 4 项、Executor／初始化取消 2 项专项验证；原生 AF_UNIX 全量未独立复跑 |
 
 ---
 
@@ -718,3 +719,17 @@ Executor 合并的说明：
 - 原生 AF_UNIX 的 IPC 全量只在本地 Linux 运行，review 环境没有独立复跑，与之前相同。
 - 没有开始基础 Doctor（T-10B），没有改生产代码。
 - 本批修改没有 commit 或 push。
+
+---
+
+## T-10T3 复核与验收（`7c53c4a`）
+
+- 结论：T-10T3 已通过独立 review，**已验收**，验收提交 `7c53c4a`。T-10T2 的删测已通过 T-10T3 收口。
+- KD-16 **关闭**：生产修复在 `c09f8dd` review 中已接受；确定性诊断回归（`test_a_record_queued_after_an_empty_wait_is_written_before_close_returns`）和有界关闭用例（`test_close_under_unending_input_fails_at_its_deadline_and_the_writer_still_exits`）作为常驻测试保留。
+- 验证范围：
+  - 本机：全量 296 passed（CI 方式 ×1）；
+  - review 环境：收集 296 项，选跑 235 项通过；另做了 HostLog 4 项、Executor 关闭与初始化取消 2 项专项验证。涉及 Unix 传输的专项用测试自有的回环传输替代；原生 AF_UNIX 全量没有独立复跑。
+- review 对两个待判断项的决定：
+  - `settings-replace` 不补回。settings 替换处的 OSError 继续由 `new-home` 覆盖，提交前取消由 `settings-cancel` 覆盖。
+  - Executor 合并用例依赖调度轮次（关闭自身约 18 次交接，对比 32 个排队调用），作为**已知维护限制**记录：以后关闭路径的 await 明显增多时，要重新跑"关闭不等待本地排队调用"的变异，确认用例仍然敏感。本轮不再扩充测试。
+- 下一批：基础 Doctor（T-10B），记录在 [claude-code-doctor-zh.md](claude-code-doctor-zh.md)。

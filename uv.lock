@@ -271,6 +271,7 @@ dependencies = [
     { name = "alpha-avatar-agents" },
     { name = "alpha-avatar-core" },
     { name = "omegaconf" },
+    { name = "packaging" },
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
@@ -293,6 +294,7 @@ requires-dist = [
     { name = "livekit-api", marker = "extra == 'livekit'", specifier = ">=1.0.4,<2" },
     { name = "livekit-protocol", marker = "extra == 'livekit'", specifier = "~=1.0" },
     { name = "omegaconf", specifier = ">=2.3,<3" },
+    { name = "packaging", specifier = ">=24,<27" },
     { name = "pydantic", specifier = ">=2,<3" },
     { name = "pyyaml", specifier = ">=6,<7" },
 ]

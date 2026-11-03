@@ -21,6 +21,7 @@ dependencies = [
     "alpha-avatar-core",
     "aiohttp>=3.10,<4",
     "omegaconf>=2.3,<3",
+    "packaging>=24,<27",
     "pydantic>=2,<3",
     "PyYAML>=6,<7",
 ]

@@ -41,7 +41,7 @@ profiles:
 
 ## Choosing a configuration
 
-`config check`, `start` and `dev` take the same optional argument:
+`config check`, [`doctor`](doctor.md), `start` and `dev` take the same optional argument:
 
 | Argument | Loads |
 | --- | --- |

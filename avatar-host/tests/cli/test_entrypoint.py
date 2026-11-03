@@ -120,6 +120,9 @@ def test_console_commands_run_without_the_host_log_socket(tmp_path: Path) -> Non
         assert checked.returncode == 0, checked.stderr
         report = json.loads(checked.stdout)
         assert (report["avatar_id"], report["config"]["bundle"]) == ("console", "console")
+    doctored = run("doctor", "console", "--json")  # Static: it adds nothing to the home.
+    assert doctored.returncode == 0, doctored.stderr
+    assert json.loads(doctored.stdout)["counts"]["FAIL"] == 0
     configuration = sorted(
         str(path.relative_to(home)) for path in home.rglob("*") if path.is_file()
     )
@@ -141,5 +144,5 @@ def test_console_commands_run_without_the_host_log_socket(tmp_path: Path) -> Non
     assert run("config", "show", "console").returncode == 2
     helped = run("--help")
     assert helped.returncode == 0, helped.stderr
-    assert "{dev,start,config}" in helped.stdout  # No top-level check.
+    assert "{dev,start,config,doctor}" in helped.stdout  # No top-level check.
     assert "{init,check}" in run("config", "--help").stdout

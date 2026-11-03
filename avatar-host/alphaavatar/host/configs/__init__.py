@@ -29,7 +29,7 @@ from .loader import (
     validate_application,
 )
 from .template import REQUIRED_ENVIRONMENT, CreatedBundle, create_bundle, render_bundle
-from .view import describe_application, describe_error, describe_summary
+from .view import describe_application, describe_error, describe_summary, output_scrubber
 
 __all__ = [
     "ApplicationConfig",
@@ -45,6 +45,7 @@ __all__ = [
     "describe_summary",
     "format_failure",
     "load_application",
+    "output_scrubber",
     "read_settings",
     "render_bundle",
     "restore_application",

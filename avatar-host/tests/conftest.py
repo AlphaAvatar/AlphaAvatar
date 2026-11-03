@@ -18,6 +18,8 @@ from __future__ import annotations
 import errno
 import os
 import socket
+from collections.abc import Iterator
+from pathlib import Path
 from unittest import mock
 
 import lancedb
@@ -50,6 +52,14 @@ def sandbox(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     monkeypatch.setattr(qdrant_client.AsyncQdrantClient, "__init__", record("AsyncQdrantClient"))
     monkeypatch.setattr(lancedb, "connect", record("lancedb.connect"))
     return refused
+
+
+@pytest.fixture
+def home(tmp_path: Path) -> Iterator[Path]:
+    """An application home of the test's own, chosen as users choose one."""
+    root = tmp_path / "application"
+    with mock.patch.dict(os.environ, {"ALPHAAVATAR_HOME": str(root)}):
+        yield root
 
 
 @pytest.fixture

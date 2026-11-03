@@ -49,6 +49,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         actions.add_parser("check", help="Validate a configuration without starting anything"),
         json_output=True,
     )
+    doctor = commands.add_parser(
+        "doctor", help="Diagnose the installation and a configuration; read-only and offline"
+    )
+    configured(doctor, json_output=True)
+    doctor.add_argument("--list", action="store_true", help="List the checks without running")
 
     args = parser.parse_args(argv)
     if "=" in (getattr(args, "config", None) or ""):
@@ -63,6 +68,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         from .commands.run import run
 
         return run(args.config, args.overrides, devmode=args.command == "dev")
+    if args.command == "doctor":
+        if args.list and (args.config is not None or args.overrides):
+            parser.error("--list takes no configuration")
+        from .commands.doctor import doctor
+
+        return doctor(args.config, args.overrides, as_json=args.json, listing=args.list)
 
     from .commands import config as configuration
 
