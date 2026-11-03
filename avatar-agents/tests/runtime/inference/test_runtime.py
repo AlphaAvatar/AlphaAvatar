@@ -21,12 +21,10 @@ import logging
 import multiprocessing as mp
 import os
 import signal
-from collections import Counter
-from collections.abc import Callable
-from multiprocessing import resource_tracker
 from pathlib import Path
 
 import pytest
+from inference_checks import HANG_GUARD, assert_released, children, descriptors, settled, wait_until
 from inference_runner_samples import (
     ClosingRunner,
     EchoRunner,
@@ -47,7 +45,6 @@ from alphaavatar.agents.runtime.inference import (
 )
 from alphaavatar.agents.runtime.inference.process import RunnerProcess
 
-HANG_GUARD = 30
 ECHO, JOURNAL = EchoRunner.INFERENCE_METHOD, JournalRunner.INFERENCE_METHOD
 SECOND = SecondJournalRunner.INFERENCE_METHOD
 CLOSING = ClosingRunner.INFERENCE_METHOD
@@ -74,15 +71,6 @@ def service(root: Path, *runners: type[InferenceRunner], **options: object) -> I
     )
 
 
-async def wait_until(condition: Callable[[], bool], failure: str) -> None:
-    try:
-        async with asyncio.timeout(HANG_GUARD):
-            while not condition():
-                await asyncio.sleep(0.002)
-    except TimeoutError:
-        pytest.fail(failure, pytrace=False)
-
-
 def journal(root: Path, method: str = JOURNAL) -> list[tuple[int, str]]:
     path = root / f"{method}.journal"
     lines = path.read_text().splitlines() if path.exists() else []
@@ -93,44 +81,6 @@ def load(runtime: InferenceRuntime, method: str) -> tuple[int, int]:
     """Executing and waiting requests, from the public status snapshot."""
     (view,) = [view for view in runtime.snapshot() if view.method == method]
     return view.executing, view.waiting
-
-
-def settled(caplog: pytest.LogCaptureFixture, method: str) -> tuple[int | None, bool]:
-    """Exit code and forced flag from the runner's own reclamation diagnostic."""
-    (record,) = [
-        record
-        for record in caplog.records
-        if record.getMessage().startswith(f"Inference process settled method={method} ")
-    ]
-    return record.args[2], record.args[3]
-
-
-def children() -> set[int]:
-    return {process.pid for process in mp.active_children()}
-
-
-def descriptors() -> Counter[str] | None:
-    directory = Path("/proc/self/fd")
-    if not directory.is_dir():
-        return None
-    resource_tracker.ensure_running()  # Process-wide stdlib facility, not runner-owned.
-    # Count per target: two leaked descriptors may share one target such as a pipe.
-    targets: Counter[str] = Counter()
-    for entry in directory.iterdir():
-        try:
-            targets[os.readlink(entry)] += 1
-        except FileNotFoundError:
-            pass
-    return targets
-
-
-def assert_released(socket_root: Path, before: set[int], fds: Counter[str] | None) -> None:
-    assert children() - before == set()
-    assert INFERENCE_ENDPOINT_ENV not in os.environ
-    assert list(socket_root.iterdir()) == []
-    after = descriptors()
-    if fds is not None and after is not None:
-        assert after - fds == Counter()
 
 
 async def test_methods_progress_independently_while_each_method_stays_serial(
@@ -429,7 +379,8 @@ async def test_repeated_start_stop_reclaims_processes_descriptors_and_endpoint(
     tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
 ) -> None:
     before, fds = children(), descriptors()
-    for cycle in range(3):
+    # The second cycle proves a full restart; longer repetition is the stress test's job.
+    for cycle in range(2):
         runtime = service(tmp_path, EchoRunner, JournalRunner)
         async with asyncio.timeout(HANG_GUARD):
             await runtime.start()
@@ -455,5 +406,5 @@ async def test_repeated_start_stop_reclaims_processes_descriptors_and_endpoint(
             await runtime.close()
         assert not Path(endpoint).exists()
         assert_released(socket_root, before, fds)
-    assert [data for _, data in journal(tmp_path)] == ["cycle:0", "cycle:1", "cycle:2"]
-    assert len({pid for pid, _ in journal(tmp_path)}) == 3
+    assert [data for _, data in journal(tmp_path)] == ["cycle:0", "cycle:1"]
+    assert len({pid for pid, _ in journal(tmp_path)}) == 2

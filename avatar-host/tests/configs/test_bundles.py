@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""config init / config check and selection: offline, side-effect free and credential safe."""
+"""Bundles, profiles and the default bundle: selection, creation and failure boundaries."""
 
 from __future__ import annotations
 
@@ -20,18 +20,14 @@ import io
 import json
 import os
 import shutil
-import socket
-import subprocess
-import sys
 import threading
 from collections.abc import Iterator
 from pathlib import Path
 from unittest import mock
 
-import lancedb
 import pytest
-import qdrant_client
 import yaml
+from config_samples import CONFIG, SECRETS, SECTIONS, files, write
 
 # Imported at collection: configuration plugins adjust process variables while importing (O-2).
 import alphaavatar.agents.configs  # noqa: F401
@@ -39,368 +35,13 @@ from alphaavatar.host.cli.app import main
 from alphaavatar.host.configs import (
     application_paths,
     create_bundle,
-    describe_application,
     load_application,
     select_configuration,
     template,
 )
 from alphaavatar.host.configs.loader import restore_application
-from alphaavatar.host.log.format import BOLD, DIM, GREEN, RED, RESET
 from alphaavatar.plugins.memory.config import DefaultMemoryConfig
 from alphaavatar.plugins.persona.config import DefaultPersonaConfig
-
-SECRETS = {
-    "MCP_DOCS_TOKEN": "tok-fictional-0042",
-    "vdb": "vdb-fictional-0042",
-    "url": "pw-fictional-0042",
-    "query": "q-fictional-0042",
-    "OPENAI_API_KEY": "sk-openai-fictional-0042",
-}
-CONFIG = {
-    "avatar": {"id": "assistant", "introduction": f"Uses {SECRETS['vdb']} inline."},
-    "memory": {"vdb_config": {"url": "https://vectors.invalid", "api_key": SECRETS["vdb"]}},
-    "tools": {
-        "mcp": {
-            "enabled": True,
-            "servers": {
-                "docs": {
-                    "url": f"https://user:{SECRETS['url']}@mcp.invalid/x?key={SECRETS['query']}",
-                    "headers": {"Authorization": "Bearer <MCP_DOCS_TOKEN>"},
-                }
-            },
-        }
-    },
-}
-
-
-@pytest.fixture
-def sandbox(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Refuse service clients and local sockets, as a restricted review host would."""
-    refused: list[str] = []
-    real = socket.socket
-
-    def record(name: str):
-        def refuse(*args: object, **kwargs: object) -> None:
-            refused.append(name)
-            raise AssertionError(f"{name} constructed by a configuration command")
-
-        return refuse
-
-    def local_socket(family: int = -1, *args: object, **kwargs: object) -> socket.socket:
-        if family == socket.AF_UNIX:
-            refused.append("AF_UNIX")
-            raise PermissionError(errno.EPERM, "Operation not permitted")
-        return real(family, *args, **kwargs)
-
-    monkeypatch.setattr(socket, "socket", local_socket)
-    monkeypatch.setattr(qdrant_client.QdrantClient, "__init__", record("QdrantClient"))
-    monkeypatch.setattr(qdrant_client.AsyncQdrantClient, "__init__", record("AsyncQdrantClient"))
-    monkeypatch.setattr(lancedb, "connect", record("lancedb.connect"))
-    return refused
-
-
-@pytest.fixture
-def color_capable() -> object:
-    """Styling assertions must not depend on an inherited NO_COLOR or TERM=dumb."""
-    with mock.patch.dict(os.environ, {"TERM": "xterm-256color"}):
-        os.environ.pop("NO_COLOR", None)
-        yield
-
-
-@pytest.fixture
-def credentials() -> object:
-    # Restored before the isolation guard compares the process environment.
-    with mock.patch.dict(os.environ, {k: v for k, v in SECRETS.items() if k.isupper()}):
-        yield
-
-
-def write(path: Path, value: dict) -> Path:
-    path.write_text(json.dumps(value))
-    return path
-
-
-def files(root: Path) -> list[str]:
-    return sorted(str(path.relative_to(root)) for path in root.rglob("*"))
-
-
-class Terminal(io.StringIO):
-    def isatty(self) -> bool:
-        return True
-
-
-def run_cli(*argv: str, stdout: io.StringIO, stderr: io.StringIO) -> int:
-    with mock.patch.object(sys, "stdout", stdout), mock.patch.object(sys, "stderr", stderr):
-        return main(list(argv))
-
-
-def test_check_reports_valid_and_invalid_configurations_with_effective_overrides(
-    tmp_path: Path, sandbox: list[str], credentials: object, capsys: pytest.CaptureFixture
-) -> None:
-    config = write(tmp_path / "avatar.json", CONFIG)
-    before = files(tmp_path)
-
-    assert main(["config", "check", str(config), "avatar.id=renamed"]) == 0
-    text = capsys.readouterr().out
-    assert main(["config", "check", str(config), "avatar.id=renamed", "--json"]) == 0
-    report = json.loads(capsys.readouterr().out)
-    assert text.splitlines() == [
-        "",
-        "OK  configuration and read-only path checks passed",
-        f"    config     {config}",
-        "    avatar_id  renamed",
-        f"    home       {report['home']}",
-        f"    workspace  {report['workspace']}",
-        "    rtc        livekit",
-        "    loop       realtime",
-        "    voice      vad=none  stt=none  tts=none",
-        "    router     default",
-        "    character  none",
-        "    memory     default  (vdb: qdrant)",
-        "    persona    default  (vdb: lancedb; speaker on, face on)",
-        "    tools      deepresearch, rag, mcp (1 server)",
-        "    inference  7 runners, 1 worker each",
-        "    health     127.0.0.1:8081 (dev: free port)",
-        "",
-    ]
-    # Selections and backend kinds only: no endpoint, collection or plugin-defined setting.
-    assert "invalid" not in text + json.dumps(report)
-    # The override is the configuration that would start, including its default workspace.
-    assert report.keys() == {
-        "valid",
-        "config",
-        "avatar_id",
-        "home",
-        "workspace",
-        "plugins",
-        "inference",
-        "health",
-    }
-    assert report["config"] == {"bundle": None, "default": False, "file": str(config)}
-    assert report["valid"] and report["avatar_id"] == "renamed"
-    assert report["plugins"]["memory"] == {"plugin": "default", "vdb": "qdrant"}
-    assert report["plugins"]["tools"]["mcp"] == {"plugin": "default", "servers": 1}
-    assert report["health"] == {"bind": "127.0.0.1", "port": None}
-    assert report["workspace"] == f"{report['home']}/avatars/renamed"
-
-    assert main(["config", "check", str(config), "tools.mcp.token=leak"]) == 2
-    output = capsys.readouterr()
-    assert output.err.startswith("\nERROR  configuration and read-only path checks failed\n")
-    assert output.err.endswith("\n\n")
-    assert "fields: tools.mcp.token" in output.err and "leak" not in output.out + output.err
-    # A remote store without a port fails the inference plan at startup; loading reports it.
-    assert main(["config", "check", str(config), "persona.vdb_config.host=vectors.invalid"]) == 2
-    assert "caused by: ValueError\n    at alphaavatar.agents.utils.vdb.config" in (
-        capsys.readouterr().err
-    )
-    assert main(["config", "check", str(config), "avatar.timezone=Not/AZone", "--json"]) == 2
-    failure = json.loads(capsys.readouterr().out)
-    assert failure["valid"] is False
-    assert failure["error"]["fields"] == ["avatar.timezone"]
-    assert "Not/AZone" not in json.dumps(failure)
-
-    # No Host, client, socket, child process or workspace: only the input file exists.
-    assert (sandbox, files(tmp_path)) == ([], before)
-
-
-def test_safe_projection_keeps_useful_settings_without_credentials(
-    tmp_path: Path, sandbox: list[str], credentials: object
-) -> None:
-    # Over the 8192-character log bound; plugin mappings may carry hostile keys too.
-    introduction = "Keep [bold red]this[/] and [hidden] literal: " + "word " * 1800 + "end"
-    value = CONFIG | {
-        "avatar": {"id": "assistant", "introduction": f"{introduction} {SECRETS['vdb']}\x1b[31m"},
-        "context": {"init_config": {"key\x1b[2J": 1}},
-    }
-    config = load_application(
-        write(tmp_path / "avatar.json", value), ["voice.tts.speed=1.3", "loop.plugin=realtime"]
-    )
-    view = describe_application(config)
-    text = json.dumps(view)
-
-    # Useful, non-sensitive facts stay: selections, parameters, overrides and resolved paths.
-    assert (view["voice"]["tts"]["speed"], view["loop"]["plugin"]) == (1.3, "realtime")
-    assert view["avatar"]["workspace_root"] == str(config.workspace.root)
-    assert view["memory"]["vdb_config"] == {"url": "[hidden]", "api_key": "[hidden]"}
-    assert view["tools"]["mcp"]["servers"]["docs"]["headers"] == {"Authorization": "[hidden]"}
-    # Complete text, a reused credential replaced and terminal escapes removed, keys included.
-    assert view["avatar"]["introduction"] == f"{introduction} [redacted]"
-    assert view["context"]["init_config"] == {"key": 1}
-    assert [name for name, secret in SECRETS.items() if secret in text] == []
-    assert "\\u001b" not in text and yaml.safe_load(yaml.safe_dump(view)) == view
-    assert sandbox == []
-
-
-@pytest.mark.parametrize("as_json", [False, True], ids=["text", "json"])
-@pytest.mark.parametrize(
-    "broken",
-    [
-        {"tools": {"mcp": {"enabled": True, "token": SECRETS["vdb"], "servers": {}}}},
-        # The outer Host section: LiveKit settings reject a credential typed into init_config.
-        {"host": {"rtc": {"init_config": {"api_secret": SECRETS["vdb"]}}}},
-    ],
-    ids=["avatar-section", "host-section"],
-)
-def test_error_output_never_echoes_rejected_values(
-    broken: dict, as_json: bool, tmp_path: Path, sandbox: list[str], capsys: pytest.CaptureFixture
-) -> None:
-    config = write(tmp_path / "avatar.json", {"avatar": {"id": "assistant"}, **broken})
-    assert main(["config", "check", str(config), *(["--json"] if as_json else [])]) == 2
-    output = capsys.readouterr()
-    assert SECRETS["vdb"] not in output.out + output.err
-    if as_json:
-        error = json.loads(output.out)["error"]
-        assert error["type"] == "ValidationError" and error["fields"]
-        assert set(error) == {"type", "fields", "diagnostic"}
-    else:
-        assert "fields: " in output.err
-    assert sandbox == []
-
-
-def test_check_summary_passes_the_same_output_boundary(
-    tmp_path: Path, credentials: object, capsys: pytest.CaptureFixture
-) -> None:
-    # A credential reused as the Avatar ID, and terminal escapes in the home and file paths.
-    home = tmp_path / "home\x1b[2Jdir"
-    value = CONFIG | {
-        "application": {"home": str(home)},
-        "avatar": {"id": SECRETS["MCP_DOCS_TOKEN"]},
-    }
-    config = write(tmp_path / "avatar\x1b[31m.json", value)
-    assert main(["config", "check", str(config)]) == 0
-    text = capsys.readouterr().out
-    assert main(["config", "check", str(config), "--json"]) == 0
-    report = capsys.readouterr().out
-    summary = json.loads(report)
-    assert (
-        text.splitlines()[3] == "    avatar_id  [redacted]" and summary["avatar_id"] == "[redacted]"
-    )
-    assert summary["config"]["file"] == str(tmp_path / "avatar.json")
-    assert summary["home"] == str(tmp_path / "homedir") and "[redacted]" in summary["workspace"]
-    for output in (text, report):
-        assert "\x1b" not in output and "\\u001b" not in output
-        assert SECRETS["MCP_DOCS_TOKEN"] not in output
-
-
-@pytest.mark.parametrize(
-    ("terminal", "environment"),
-    [(True, {}), (False, {}), (True, {"NO_COLOR": ""}), (True, {"TERM": "dumb"})],
-    ids=["terminal", "pipe", "no-color", "dumb-terminal"],
-)
-def test_only_an_enabled_terminal_gets_styles_and_json_stays_plain(
-    terminal: bool, environment: dict[str, str], tmp_path: Path, color_capable: object
-) -> None:
-    config = write(tmp_path / "avatar.json", {"avatar": {"id": "assistant"}})
-    stream = Terminal if terminal else io.StringIO
-    styled = terminal and not environment
-    with mock.patch.dict(os.environ, environment):
-        checked, as_json = stream(), stream()
-        assert run_cli("config", "check", str(config), stdout=checked, stderr=stream()) == 0
-        assert (
-            run_cli("config", "check", str(config), "--json", stdout=as_json, stderr=stream()) == 0
-        )
-
-    assert checked.getvalue().startswith(f"\n{BOLD}{GREEN}OK{RESET}  " if styled else "\nOK  ")
-    assert checked.getvalue().endswith("\n\n")
-    # Labels are auxiliary and dimmed; values keep the default foreground.
-    avatar = f"    {DIM}avatar_id{RESET}  assistant" if styled else "    avatar_id  assistant"
-    assert checked.getvalue().splitlines()[3] == avatar
-    assert ("\x1b" in checked.getvalue()) == styled
-    # JSON never carries terminal styling, even on a terminal.
-    assert "\x1b" not in as_json.getvalue() and json.loads(as_json.getvalue())["valid"]
-
-
-@pytest.mark.parametrize("terminal", ["stdout", "stderr"])
-def test_each_stream_detects_its_own_terminal(
-    terminal: str, tmp_path: Path, color_capable: object
-) -> None:
-    good = write(tmp_path / "good.json", {"avatar": {"id": "assistant"}})
-    bad = write(tmp_path / "bad.json", {"avatar": {"id": "assistant", "timezone": "Not/AZone"}})
-    streams = {"stdout": Terminal(), "stderr": io.StringIO()}
-    if terminal == "stderr":
-        streams = {"stdout": io.StringIO(), "stderr": Terminal()}
-    assert run_cli("config", "check", str(good), **streams) == 0
-    assert run_cli("config", "check", str(bad), **streams) == 2
-    out, err = streams["stdout"].getvalue(), streams["stderr"].getvalue()
-    assert ("\x1b" in out, "\x1b" in err) == (terminal == "stdout", terminal == "stderr")
-    assert "configuration and read-only path checks passed" in out
-    assert "configuration and read-only path checks failed" in err
-    assert "fields: avatar.timezone" in err and "Not/AZone" not in err
-    if terminal == "stderr":
-        assert err.startswith(f"\n{BOLD}{RED}ERROR{RESET}  ")
-
-
-def test_credential_values_never_rewrite_fixed_fields(
-    tmp_path: Path, capsys: pytest.CaptureFixture
-) -> None:
-    # Header values equal to a fixed field name, and an empty bearer remainder.
-    servers = {
-        "docs": {"url": "https://mcp.invalid/a", "headers": {"Authorization": "Bearer health"}},
-        "blank": {"url": "https://mcp.invalid/b", "headers": {"Authorization": "Bearer "}},
-    }
-    value = {"avatar": {"id": "assistant"}, "tools": {"mcp": {"enabled": True, "servers": servers}}}
-    config = write(tmp_path / "avatar.json", value)
-
-    assert main(["config", "check", str(config)]) == 0
-    lines = capsys.readouterr().out.splitlines()
-    assert main(["config", "check", str(config), "--json"]) == 0
-    report = json.loads(capsys.readouterr().out)
-    assert lines[-2] == "    health     127.0.0.1:8081 (dev: free port)"
-    assert lines[-4] == "    tools      deepresearch, rag, mcp (2 servers)"
-    assert report.keys() == {
-        "valid",
-        "config",
-        "avatar_id",
-        "home",
-        "workspace",
-        "plugins",
-        "inference",
-        "health",
-    }
-    assert (report["avatar_id"], report["health"]["bind"]) == ("assistant", "127.0.0.1")
-    view = describe_application(load_application(config))
-    assert view["host"]["health"]["bind"] == "127.0.0.1"
-    assert set(view["tools"]["mcp"]["servers"]) == {"docs", "blank"}
-
-
-def test_runner_parallelism_is_checked_against_the_selected_plan_and_survives_restore(
-    tmp_path: Path, sandbox: list[str], credentials: object, capsys: pytest.CaptureFixture
-) -> None:
-    config = write(tmp_path / "avatar.json", CONFIG)
-    before = files(tmp_path)
-    turn = "alphaavatar.router.turn_taking.smart_turn_v3"
-    override = f"runtime.inference.methods={{{turn}: {{workers: 2}}}}"
-
-    assert main(["config", "check", str(config), override]) == 0
-    lines = capsys.readouterr().out.splitlines()
-    assert main(["config", "check", str(config), override, "--json"]) == 0
-    report = json.loads(capsys.readouterr().out)
-    assert lines[-3] == f"    inference  7 runners  (workers: {turn} x2)"
-    assert report["inference"][turn] == 2
-    assert set(report["inference"].values()) == {1, 2}
-
-    # The session child restores the same limits the Host builds its pool from.
-    loaded = load_application(config, [override])
-    restored = restore_application(loaded.payload)
-    assert restored.avatar.runtime.inference == loaded.avatar.runtime.inference
-    assert restored.avatar.runtime.inference.workers(turn) == 2
-
-    # Rejected at load, located at the override: unselected, misspelled, or not replicable.
-    for method, location in (
-        ("alphaavatar.voice.vad.silero", "alphaavatar.voice.vad.silero"),
-        (f"{turn}_v4", f"{turn}_v4"),
-        ("alphaavatar.memory.vdb.qdrant", "alphaavatar.memory.vdb.qdrant.workers"),
-    ):
-        rejected = f"runtime.inference.methods={{{method}: {{workers: 2}}}}"
-        assert main(["config", "check", str(config), rejected, "--json"]) == 2
-        error = json.loads(capsys.readouterr().out)["error"]
-        assert error["fields"] == [f"runtime.inference.methods.{location}"]
-    assert main(["config", "check", str(config), "runtime.inference.max_pending=0"]) == 2
-    assert "fields: runtime.inference.max_pending" in capsys.readouterr().err
-
-    # Pure checks: no plan exported for workers, no process, client, socket or file.
-    assert "ALPHAAVATAR_INFERENCE_PLAN" not in os.environ
-    assert (sandbox, files(tmp_path)) == ([], before)
-
 
 # The single-file template `config init` wrote before bundles, its YAML anchors included.
 SINGLE_FILE_TEMPLATE = """\
@@ -431,7 +72,8 @@ persona:
     profiler: {provider: {gateway: {tasks: {persona.profile_delta: *task}}}}
 tools: {deepresearch: {plugin: null}, rag: {plugin: null}, mcp: {enabled: false}}
 """
-SECTIONS = ("loop", "voice", "vision", "memory", "persona", "tools")
+
+
 HANG_GUARD = 30
 
 
@@ -1001,42 +643,3 @@ def test_a_linked_settings_lock_is_refused_and_what_it_points_to_is_kept(
     assert create("alpha", "alpha") == 2
     assert "Refusing to lock settings through a symbolic link" in capsys.readouterr().err
     assert contents(tmp_path) == before
-
-
-def test_console_commands_run_without_the_host_log_socket(tmp_path: Path) -> None:
-    entrypoint = Path(sys.executable).with_name("alphaavatar")
-    home = tmp_path / "home" / ".local" / "share" / "alphaavatar"  # The platform default.
-
-    def run(*argv: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [str(entrypoint), *argv], capture_output=True, text=True, timeout=120, env=os.environ
-        )
-
-    assert run("config", "init", "console", "--avatar-id", "console").returncode == 0
-    for argv in (["console"], []):  # By name, then as the default bundle.
-        checked = run("config", "check", *argv, "--json")
-        assert checked.returncode == 0, checked.stderr
-        report = json.loads(checked.stdout)
-        assert (report["avatar_id"], report["config"]["bundle"]) == ("console", "console")
-    configuration = sorted(
-        str(path.relative_to(home)) for path in home.rglob("*") if path.is_file()
-    )
-    assert configuration == sorted(
-        [
-            "configs/bundles/console.yaml",
-            *(f"configs/profiles/console/{section}.yaml" for section in SECTIONS),
-            "settings/.write.lock",
-            "settings/settings.yaml",
-        ]
-    )
-    # start and dev select alike: a missing bundle fails before anything is created.
-    started = run("start", "absent")
-    assert started.returncode == 2
-    assert "Bundle 'absent' does not exist" in started.stdout + started.stderr
-    assert sorted(path.name for path in home.iterdir()) == ["configs", "settings"]
-    # Only the converged commands exist; the removed entry points are usage errors.
-    assert run("check", "console").returncode == 2
-    assert run("config", "show", "console").returncode == 2
-    commands = run("--help").stdout
-    assert "{dev,start,config}" in commands  # No top-level check.
-    assert "{init,check}" in run("config", "--help").stdout

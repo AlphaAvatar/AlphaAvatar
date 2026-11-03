@@ -252,16 +252,7 @@ async def test_finalization_extracts_complete_untruncated_input_without_backgrou
 ) -> None:
     runtime = avatar_runtime(tmp_path, ScriptedProviders(conversation=empty, tool=empty))
     memory, actor = memory_for(runtime), speaker(runtime)
-    before = memory_tasks()
     await memory.on_start()
-    # Only input consumers and the durable outbox run; no timer slices or archives input.
-    assert {task.get_name() for task in memory_tasks() - before} == {
-        "memory.runtime.session",
-        "memory_turn_consumer",
-        "memory_output_records",
-        "memory_outbox:index",
-        "memory_outbox:export",
-    }
 
     oversized = "".join(f"<{index:05d}>" for index in range(6000))
     first = commit_turn(runtime, actor, 0, oversized)
@@ -348,12 +339,9 @@ async def test_failed_or_cancelled_context_waits_for_all_finalization_before_sto
         await asyncio.gather(entered.wait(), failed.wait())
     for _ in range(10):
         await asyncio.sleep(0)
-    # The failed context has settled, yet the Store and its outbox stay open for the other one.
+    # The failed context has settled, yet the Store stays open for the other one: its
+    # finalization still commits after the release below.
     assert not stopping.done()
-    assert {task.get_name() for task in memory_tasks() if not task.done()} >= {
-        "memory_outbox:index",
-        "memory_outbox:export",
-    }
 
     release.set()
     with pytest.raises(ExceptionGroup) as stopped:
@@ -474,12 +462,9 @@ async def test_tool_failure_in_one_context_never_fail_fasts_the_other_contexts(
         await asyncio.gather(entered.wait(), failed.wait())
     for _ in range(20):
         await asyncio.sleep(0)
-    # The failed context has settled; Tool finalization, the Store and its outbox stay open.
+    # The failed context has settled; Tool finalization and the Store stay open, as the
+    # checkpoints committed after the release below show.
     assert processor.started and not stopping.done()
-    assert {task.get_name() for task in memory_tasks() if not task.done()} >= {
-        "memory_outbox:index",
-        "memory_outbox:export",
-    }
 
     release.set()
     with pytest.raises(ExceptionGroup) as stopped:

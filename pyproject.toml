@@ -88,8 +88,8 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = ["--import-mode=importlib", "--ignore=examples", "--strict-markers", "--strict-config"]
 testpaths = ["avatar-core/tests", "avatar-agents/tests", "avatar-host/tests", "avatar-plugins/*/*/tests"]
-# Spawned inference children resolve test runners by module name.
-pythonpath = ["avatar-agents/tests"]
+# Spawned inference children resolve test runners by module name; tests share small samples.
+pythonpath = ["avatar-agents/tests", "avatar-agents/tests/runtime/inference", "avatar-host/tests"]
 xfail_strict = true
 markers = ["stress: synthetic pressure test; --stress-seconds extends it beyond one bounded round"]
 faulthandler_timeout = 60

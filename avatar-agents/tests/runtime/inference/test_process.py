@@ -23,18 +23,16 @@ import multiprocessing as mp
 import os
 import signal
 from collections import Counter
-from collections.abc import Callable
-from multiprocessing import resource_tracker
 from pathlib import Path
 
 import pytest
+from inference_checks import HANG_GUARD, descriptors, settled, wait_until
 from inference_runner_samples import ClosingRunner, EchoRunner, FailingInitRunner, GateInitRunner
 
 from alphaavatar.agents.runtime.inference.process import RunnerProcess
 from alphaavatar.agents.runtime.inference.runner import InferenceRunner, RunnerLaunch
 
 # Generous hang guards; the test asserts convergence, not CI wall-clock speed.
-HANG_GUARD = 30
 
 
 def runner(
@@ -55,53 +53,17 @@ def runner(
     )
 
 
-def settled(caplog: pytest.LogCaptureFixture, method: str) -> tuple[int | None, bool]:
-    """Exit code and forced flag from the runner's own reclamation diagnostic."""
-    (record,) = [
-        record
-        for record in caplog.records
-        if record.getMessage().startswith(f"Inference process settled method={method} ")
-    ]
-    return record.args[2], record.args[3]
-
-
-async def wait_until(condition: Callable[[], bool], failure: str) -> None:
-    try:
-        async with asyncio.timeout(HANG_GUARD):
-            while not condition():
-                await asyncio.sleep(0.001)
-    except TimeoutError:
-        pytest.fail(failure, pytrace=False)
-
-
-def open_descriptors() -> Counter[str] | None:
-    """Return this process's descriptor targets, or None where /proc is unavailable."""
-    directory = Path("/proc/self/fd")
-    if not directory.is_dir():
-        return None
-    # The resource tracker is process-wide stdlib infrastructure, not runner-owned.
-    resource_tracker.ensure_running()
-    # Count per target: two leaked descriptors may share one target such as a pipe.
-    targets: Counter[str] = Counter()
-    for entry in directory.iterdir():
-        try:
-            targets[os.readlink(entry)] += 1
-        except FileNotFoundError:
-            pass  # The descriptor used to list the directory has already closed.
-    return targets
-
-
 def assert_released(process: RunnerProcess, pid: int | None, before: Counter[str] | None) -> None:
     assert pid is not None and process.pid is None
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
-    after = open_descriptors()
+    after = descriptors()
     if before is not None and after is not None:
         assert after - before == Counter()
 
 
 async def test_round_trip_errors_and_close_release_the_child() -> None:
-    before = open_descriptors()
+    before = descriptors()
     process = runner(EchoRunner)
     async with asyncio.timeout(HANG_GUARD):
         await process.start()
@@ -119,7 +81,7 @@ async def test_round_trip_errors_and_close_release_the_child() -> None:
 
 
 async def test_initialization_error_is_reported_and_reaped() -> None:
-    before = open_descriptors()
+    before = descriptors()
     process = runner(FailingInitRunner)
     with pytest.raises(RuntimeError, match="RuntimeError") as failed:
         async with asyncio.timeout(HANG_GUARD):
@@ -127,13 +89,13 @@ async def test_initialization_error_is_reported_and_reaped() -> None:
     assert "inference_runner_samples" in str(failed.value)
     assert "private model path" not in str(failed.value)
     assert process.pid is None
-    after = open_descriptors()
+    after = descriptors()
     if before is not None and after is not None:
         assert after - before == Counter()
 
 
 async def test_dispatched_timeout_retires_the_process_instead_of_reusing_it() -> None:
-    before = open_descriptors()
+    before = descriptors()
     process = runner(EchoRunner)
     async with asyncio.timeout(HANG_GUARD):
         await process.start()

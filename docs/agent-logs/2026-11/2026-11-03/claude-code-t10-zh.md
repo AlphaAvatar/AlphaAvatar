@@ -8,7 +8,9 @@
 
 | 批次 | 内容 | 日期 | 基线 HEAD | 提交 | 状态 |
 |---|---|---|---|---|---|
-| T-10A | profile／bundle 配置公共能力：拆分配置生成、选择规则、引用解析 | 2026-11-03 | `62af558` | `de480ad`、`3c40fda`；收尾未提交 | 已 review（`3c40fda`）：§11 的四项修复成立，未验收；锁文件符号链接、生成与读取的目录边界不一致两处 P2 及测试屏障已修复（§12），待复核：本地 294 passed（CI 方式 ×1） |
+| T-10A | profile／bundle 配置公共能力：拆分配置生成、选择规则、引用解析 | 2026-11-03 | `62af558` | `de480ad`、`3c40fda`、`85d7fcf` | **已验收**（验收提交 `85d7fcf`）：本地 294 passed（CI 方式 ×1）；review 环境（filelock 3.20.0）收集 294 项、原生选跑 232 项通过，多进程互斥通过；Ruff、格式、workspace、lock 通过；原生 IPC 全量未独立复跑 |
+| T-10A1 | 共享 `locked_directory` 的最小缺陷修复：拒绝符号链接锁文件 | 2026-11-03 | `85d7fcf` | 未提交 | 待 review：本地 308 passed（CI 方式 ×1）；filelock 3.20.0；去掉保护后 6 个相关用例全部失败 |
+| T-10T | 测试整理（只改测试）：按职责调整目录，合并重复、减少绑定实现细节的断言 | 2026-11-03 | `85d7fcf` | 未提交 | 待 review：两步都是 308 passed（CI 方式）；第一步 487 个定义 AST 不变、用例集合不变；第二步未删除用例 |
 
 ---
 
@@ -309,4 +311,176 @@ init_config:
 | Ruff、格式、`scripts/check_workspace.py`、`uv lock --check`、对改动文件运行 pre-commit | 全部通过 |
 
 - 修改文件：`configs/template.py`、`avatar-host/tests/test_config_commands.py`、`docs/cli/config.md`（写明生成目标的目录规则和对锁文件链接的拒绝）、本日志。
-- 本轮没有 commit 或 push。
+- 本轮修改随 `85d7fcf` 提交。
+
+### 13. `85d7fcf` 复核与验收
+
+- 结论：**T-10A 已验收**，验收提交 `85d7fcf`，没有新增阻断。
+- 复核确认：
+  - `.write.lock` 指向 Home 内外的目标时都被拒绝，目标内容和文件树不变；
+  - profile 跨到 bundles 子树时，init 在写入前拒绝；合法的内部链接、Home 别名、外部单文件仍正常；
+  - 并发屏障已修正；单独撤掉锁内重新检查后，测试能发现。
+- 持久保留 `settings/.write.lock` 的做法被接受。
+- review 环境（filelock 3.20.0）：收集 294 项，原生选跑 232 项全部通过；Ruff、格式、workspace、lock 通过，仓库无修改；原生 IPC 全量仍未独立复跑。
+- 遗留（既存问题，不阻塞本批）：Memory 的导出和 graph 存储共用 `locked_directory`，存在同样的锁文件符号链接风险。review 建议下一批先只修共享的 `locked_directory` 及必要的调用回归，再进入基础 Doctor。
+
+---
+
+## T-10A1 共享 `locked_directory` 的最小缺陷修复
+
+- 基线：`85d7fcf`（T-10A 验收提交）。开始时工作区有一处未提交的改动，即本日志里 T-10A 的验收收口（§13），已保留。
+- 依赖：`uv.lock` 锁定 filelock 3.20.0，`.venv` 实际安装的也是 3.20.0（`uv pip list`），测试全部用这个版本运行。
+- 范围：只改共享锁工具，补 helper 和 Memory 两条真实调用路径的回归。Memory 的抽取和存储逻辑、配置结构都不变。
+
+### 1. 缺陷与修复
+
+filelock 3.20.0 在 Unix 上获取锁时，按路径用 `O_RDWR | O_TRUNC` 打开锁文件（路径不存在时再加 `O_CREAT`），之后执行 `fchmod`，打开时会跟随符号链接。用这个版本直接实测（不经过 helper）：
+
+| 预置的 `.write.lock` | 直接用 `FileLock` 的结果 |
+|---|---|
+| 链接到已有文件（权限 0640） | 目标内容被截断为空，权限被改成 0644 |
+| 悬空链接 | 在链接指向的位置新建了文件 |
+
+settings 在 T-10A 已经单独防护，但 Memory 的 Markdown 导出（`storage/markdown/export.py`）和 graph 存储（`storage/graph/graph_store.py`）仍走未防护的共享工具。
+
+修复（`avatar-agents/alphaavatar/agents/utils/files/atomic.py`）：
+- `locked_directory()` 在打开锁之前检查 `.write.lock`，只要它是符号链接就拒绝，抛出 `OSError(ELOOP, …, filename=<锁文件路径>)`。指向目录内、目录外的链接和悬空链接都拒绝，不改动链接本身和它指向的文件。
+- 正常的锁文件照常持久保留，不手动删除。
+- 超时、互斥、异常时释放锁、只在线程里同步使用的约定都不变。
+
+上报：
+- Markdown 导出和 graph 存储直接抛出这个 `OSError`。
+- `MemoryExportSink` 把两者的失败汇总成 `ExceptionGroup("Memory export failed")` 上报，这是原有行为。
+
+settings 的入口保留自己的检查，所以那里仍然先给出 `ConfigReferenceError` 的提示。
+
+已知限制：检查和打开之间存在很短的竞态窗口。如果有人恰好在这段时间里换入链接，仍然拦不住。要完全消除，需要锁库以 `O_NOFOLLOW` 方式打开，这超出本批"最小修复"的范围。本修复挡住的是事先就存在的链接，比如残留的、从备份恢复的或同步工具带来的链接。
+
+### 2. 回归测试（全部用隔离的临时目录和离线数据）
+
+`avatar-agents/tests/test_locked_directory.py`（新增，7 项）：
+
+| 用例 | 覆盖 |
+|---|---|
+| `test_a_held_lock_excludes_others_and_its_file_stays_after_release` | 持锁期间，同一进程内另一次获取会等到超时而不会进入；释放后锁文件仍在，可以再次获取 |
+| `test_leaving_the_lock_by_an_exception_releases_it`（`RuntimeError`、`KeyboardInterrupt`） | 异常离开后锁已释放，以零超时就能再次获取 |
+| `test_a_linked_lock_file_is_refused_and_left_as_it_was`（目录内、目录外、悬空） | 抛出 `ELOOP`，带锁文件路径，受保护的代码块没有执行；链接和指向不变；目标内容和权限（0640）不变；悬空的目标没有被创建 |
+| `test_two_processes_exclude_each_other` | 另一个独立解释器持锁（就绪和释放都用文件闸门）：本进程获取超时；放开闸门后能获取 |
+
+`avatar-plugins/perception/avatar-plugins-memory/tests/test_memory_export_locks.py`（新增，7 项）：
+
+| 用例 | 覆盖 |
+|---|---|
+| `test_each_export_writes_under_the_lock_and_keeps_its_file`（markdown、graph） | 连续两次导出，正常写出文档和 JSONL，锁文件保留 |
+| `test_a_linked_lock_stops_an_export_before_any_protected_write`（markdown、graph） | 锁文件链接到外部文件：抛出 `ELOOP`；外部文件、链接、已有的 `memories.jsonl` 和整个文件树逐字节不变，没有任何新的写入 |
+| `test_the_export_sink_reports_both_refusals` | `MemoryExportSink` 以 `ExceptionGroup` 上报两个 `ELOOP`，两个目录都没有写入 |
+| `test_a_failed_graph_export_releases_its_lock` | 损坏的 JSONL 让导出在锁内失败；修好文件后再次导出成功（锁如果没释放，第二次会等满超时后失败） |
+| `test_a_cancelled_export_finishes_under_another_processs_lock_then_releases_it` | 另一个进程持有 Markdown 目录的锁。graph 已完成后，Markdown 没有任何写入；此时取消 sink、放开闸门：取消的调用方等受保护的写入完成后才收到取消；随后的导出正常，锁文件保留 |
+
+`avatar-agents/tests/lock_holder.py`（新增辅助模块）：在独立解释器中持锁，直到测试打开闸门，并在 `finally` 中回收子进程。
+
+settings 已有的回归（锁文件链接两种情形、并发默认值、提交前后取消、失败回滚 4 种）全部通过。
+
+### 3. 反向验证
+
+- 把 `atomic.py` 的检查临时改成 `if False:`，运行上面两个新文件和 settings 的锁文件链接用例：
+  - 6 个与链接相关的用例全部失败：helper 的目录内、目录外、悬空 3 种，Markdown 和 graph 导出 2 种，以及 sink 上报 1 种；
+  - settings 的 2 个用例仍然通过，因为 settings 有自己的检查；
+  - 其余 8 项通过。
+- 随后逐字节恢复文件，用 `cmp` 确认一致。
+
+### 4. 运行结果
+
+| 项目 | 结果 |
+|---|---|
+| 全量（CI 方式：`--basetemp`、检出前后对比）×1 | **308 passed**，51.2 s；检出目录前后一致 |
+| 新增 14 项和 settings 锁回归 9 项（共 23 项）×20 | 0 失败 |
+| Memory 插件测试和 Host 测试 | 112 passed |
+| Ruff、格式、`scripts/check_workspace.py`、`uv lock --check`、对改动和新增文件运行 pre-commit | 全部通过 |
+
+- 修改文件：`avatar-agents/alphaavatar/agents/utils/files/atomic.py`；新增 `avatar-agents/tests/lock_holder.py`、`avatar-agents/tests/test_locked_directory.py`、`avatar-plugins/perception/avatar-plugins-memory/tests/storage/test_export_locks.py`；本日志。
+- 测试按领域放置（用户补充要求）：Memory 的导出与 graph 存储回归放在 `memory/tests/storage/test_export_locks.py`，最初的位置是 `tests/test_memory_export_locks.py`。共享 helper 的测试只有一个文件，按"小目录保持简单"留在 `avatar-agents/tests/` 顶层；`lock_holder.py` 被两个包的测试共用，留在已配置的 pythonpath 根目录。移动后又做了一次反向验证：去掉保护后 6 项失败，恢复后全部通过。
+- 验证限制：
+  - 只在 Linux 上验证（filelock 用 flock）；没有验证 Windows 或移动端，Windows 版 filelock 的打开方式不同，未测；
+  - 跨进程只用同一台机器上的两个解释器；
+  - 原生 IPC 全量不在本批范围。
+- 未做：Doctor、凭据管理、安装升级、App。
+- 本批修改没有 commit 或 push。
+
+---
+
+## T-10T 测试整理（只改测试）
+
+- 基线：`85d7fcf`；与 T-10A1 的改动同在一个工作区，但文件互不重叠。T-10A1 只涉及 `atomic.py` 和它新增的 3 个测试文件，其余都属于本批。
+- 本批不改任何生产代码，也不新增生产接口。
+- 依据：用户要求测试按职责整理，并只保留必要测试。分两步：第一步只调整结构、覆盖不变；第二步审查必要性。
+
+### 第一步：结构整理（覆盖不变）
+
+| 原位置 | 新位置 | 说明 |
+|---|---|---|
+| `avatar-host/tests/test_config_commands.py`（1042 行） | `configs/test_bundles.py` | bundle、profile、默认 bundle：选择、生成、失败边界、快照冻结 |
+| 同上 | `configs/test_projection.py` | 安全投影、凭据不改写固定字段、推理计划校验与快照 |
+| 同上 | `cli/test_check.py` | `config check` 的摘要、失败输出、配色、各输出流 |
+| 同上（console 用例）与 `test_cli_entrypoint.py` | `cli/test_entrypoint.py` | console 入口：导入开销、凭据不外露、收敛后的命令 |
+| `avatar-host/tests/test_application_config.py` | `configs/test_loading.py` | 加载、Home 选择、快照还原 |
+| 原文件中共用的样例和辅助函数 | `avatar-host/tests/config_samples.py` | 虚构凭据样例、`CONFIG`、`SECTIONS`、`write`、`files` |
+| 原文件中共用的 fixture | `avatar-host/tests/conftest.py` | `sandbox`、`credentials`；只在一个文件里用的 fixture 留在原处 |
+| `avatar-agents/tests/test_inference_parallel.py`、`test_inference_runtime.py`、`test_runner_launch.py`、`test_runner_process.py`、`test_runner_stress.py` | `runtime/inference/test_parallel.py`、`test_runtime.py`、`test_launch.py`、`test_process.py`、`test_stress.py` | 推理进程、Runtime、并行、启动输入、压力 |
+| `inference_runner_samples.py`、`launch_runner_samples.py` | `runtime/inference/` | 模块名不变，spawn 子进程按原名导入 |
+| `avatar-agents/tests/test_runtime_lifecycle.py` | `runtime/test_lifecycle.py` | AvatarRuntime 生命周期，不属于推理 |
+
+- `pyproject.toml` 的 pythonpath 增加 `avatar-agents/tests/runtime/inference`（Runner 样例）和 `avatar-host/tests`（`config_samples`）。根 `conftest.py` 的环境、网络、进程、任务隔离守卫不变。
+- 其他目录（Core、Persona、Router、Context、Loop、Memory 其余文件）每个只有 1～7 个文件，职责已经清楚，保持原样，不为单个文件加一层目录。
+- 拆分方法：用脚本按 AST 取出每个顶层定义的原文（连同装饰器和紧挨着的注释）原样拼接，导入部分手写；没有改动任何函数体。
+
+核对：
+- 全部 487 个顶层定义（测试、fixture、辅助函数、常量）在整理前后的 AST 逐一相同，没有丢失、修改或新增。
+- 收集到 308 个用例，与基线的用例名集合完全一致，没有重复收集。
+- 全量（CI 方式）308 passed，检出目录前后一致。
+- 每个新目录单独运行都通过：`cli` 15、`configs` 54、`runtime/inference` 44、`runtime` 47、`memory/tests/storage` 7。
+- 从仓库外的工作目录运行推理与 Host 生命周期用例（真实 spawn），20 passed。
+
+### 第二步：必要性审查
+
+改动（共 6 处，均不删除用例）：
+
+| 改动 | 理由 | 仍由谁覆盖 |
+|---|---|---|
+| 合并推理测试中逐字相同的辅助函数，放进 `runtime/inference/inference_checks.py`：`children`、`descriptors`、`wait_until` 各 3 份，`assert_released`、`settled` 各 2 份，`test_process` 的 `open_descriptors` 与 `descriptors` 只差注释；三个文件的 `HANG_GUARD = 30` 也改为引用该模块 | 同一检查维护多份副本，改一处就可能漏改其他 | 行为不变；压力测试的 `wait_until` 防挂上限从 60 s 变为 30 s，它只等一个闸门被进入，其他测试也用 30 s。`journal`、`service`、`limits`、`test_process` 自己的 `assert_released` 各文件确实不同，保留 |
+| `test_runtime.py::test_repeated_start_stop…` 从 3 轮改为 2 轮 | 第 3 轮与第 2 轮完全相同，2 轮已经证明完整关闭后能重新启动、换了新进程 | 本用例保留同进程竞争者的拒绝、端点文件删除、每轮新进程、资源回收；更长的重复由 `test_stress.py::test_repeated_runtime_start_stop…`（`--stress-seconds`）负责 |
+| `cli/test_entrypoint.py`：基础用例不再单独以子进程运行 `--help`，console 用例补上 `--help` 的退出码断言 | `--help` 原来以子进程跑了两次；导入探针也在进程内运行 `--help`、`--version` | 探针（不导入重依赖）、基础用例的 `--version` 子进程、console 用例的 `--help` 退出码和命令结构 |
+| `cli/test_check.py` 与 `configs/test_projection.py`：按行号位置取输出行的 5 处断言改为按内容匹配；写死的"7 runners"改为从同一份 JSON 报告推导 | 行号和 runner 数量取决于其他插件和输出顺序，与被测风险无关 | `test_check_reports_valid_and_invalid…` 仍逐行固定完整的文本格式（文档化的契约） |
+| Memory `test_finalization_extracts…without_background_updates`：删除断言启动后私有任务名完整集合的那一段 | 绑定内部任务命名 | 同一用例的行为断言：154 条输入全部保留，stop 之前 conversation 和 tool 模型都没有收到 prompt |
+| Memory 两个"一个 context 失败后 Store 仍为其他 context 开启"的用例：删除 `>= {"memory_outbox:index", "memory_outbox:export"}` | 同上 | 同一用例里的 `not stopping.done()`，以及放行后其他 context 的 checkpoint 仍成功提交 |
+
+审查后保留：
+
+| 候选 | 保留理由 |
+|---|---|
+| 压力测试的启停场景与普通启停用例 | 压力测试在默认 0 秒时只跑 1 轮，那一轮的检查被普通用例覆盖；但它是 T-9 要求的显式时长压力报告场景，普通用例则有竞争者、端点文件、新进程等独有断言 |
+| `test_runtime` 与 `test_parallel` 的部分启动失败 | 前者按 method 检查启动状态和"后续 method 从未启动"，后者按 worker 检查并覆盖初始化中取消，层级不同 |
+| `test_parallel::test_close_is_idempotent…` | 独有的重复关闭、worker 与通道回收、在途请求取消 |
+| 多处快照还原 | `test_loading` 两个用例分别覆盖显式 cache/workspace 根目录，以及环境变化后输入保持冻结；`test_projection` 覆盖并行覆盖项经过快照；`test_bundles` 覆盖 profile 被删除后仍能还原，风险各不相同 |
+| `cli/test_entrypoint` 的 dev 凭据用例与 `cli/test_check` 的错误输出用例 | 入口不同（`dev` 子进程与进程内 `config check`），输出边界也不同 |
+| Router 的 `tts:answer` 任务名、Memory 的 `assert not memory_tasks()` | 在 runtime 关闭可能掩盖泄漏之前，证明组件回收了自己的任务的唯一观察点，属于用户允许保留的必要观察点；Persona 那处任务名只用于泄漏时的报错信息 |
+
+核对：
+- 用例集合与第一步相同，仍是 308 项，没有重复。顶层定义从 487 个变为 475 个：删除 18 个重复定义，共享模块新增 6 个。
+- 全量（CI 方式）308 passed，45.6 s，检出目录前后一致。
+- 每个目录单独运行都通过：Core 42、Agents 69、runtime 47、runtime/inference 44、Host 83、cli 15、configs 54、Memory 29、storage 7。
+- 从仓库外目录运行 spawn 场景，20 passed。
+- Ruff、格式、workspace、lock、对改动和新增文件运行 pre-commit，全部通过。
+
+### 发现的既存问题（未修，建议单独开批）
+
+- 整理过程中，单独运行 `cli/` 时 `test_rejected_configuration_secret_never_reaches_cli_output` 偶发失败：`alphaavatar dev` 以退出码 2 结束，但输出里缺少最后一条错误诊断。
+- 判定为既存问题：16 核满载下，HEAD 原文件 10 次失败 5 次，移动后的文件 10 次失败 6 次；空闲时单独运行（各 20 次）、shell 中直接运行 `alphaavatar dev`（30 次）都没有失败。
+- 可能原因：`HostLog.close()` 设置停止标志后，写线程可能在读到 socket 里最后一条记录之前就退出了。
+- 影响：机器负载高时，启动失败的原因可能不显示；这个用例在负载较高的 CI 上可能偶发失败。
+- 本批只改测试，没有修复，也没有放宽该用例。
+
+### 未做
+
+- 没有修改生产代码；没有引入测试基类或 mock 框架。
+- 本批修改没有 commit 或 push。

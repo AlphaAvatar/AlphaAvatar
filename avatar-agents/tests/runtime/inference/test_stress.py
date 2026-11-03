@@ -26,11 +26,11 @@ import signal
 import statistics
 import time
 from collections import Counter
-from collections.abc import AsyncIterator, Callable
-from multiprocessing import resource_tracker
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
+from inference_checks import children, descriptors, wait_until
 from inference_runner_samples import EchoRunner, JournalRunner, ParallelRunner, SecondJournalRunner
 
 from alphaavatar.agents.configs.runtime_config import InferenceConfig
@@ -77,38 +77,10 @@ async def rounds(seconds: float) -> AsyncIterator[int]:
             return
 
 
-async def wait_until(condition: Callable[[], bool], failure: str) -> None:
-    try:
-        async with asyncio.timeout(HANG_GUARD):
-            while not condition():
-                await asyncio.sleep(0.002)
-    except TimeoutError:
-        pytest.fail(failure, pytrace=False)
-
-
 def journal(root: Path, method: str) -> list[tuple[int, str]]:
     path = root / f"{method}.journal"
     lines = path.read_text().splitlines() if path.exists() else []
     return [(int(pid), data) for pid, data in (line.split(" ", 1) for line in lines)]
-
-
-def children() -> set[int]:
-    return {process.pid for process in mp.active_children()}
-
-
-def descriptors() -> Counter[str] | None:
-    directory = Path("/proc/self/fd")
-    if not directory.is_dir():
-        return None
-    resource_tracker.ensure_running()
-    # Count per target: two leaked descriptors may share one target such as a pipe.
-    targets: Counter[str] = Counter()
-    for entry in directory.iterdir():
-        try:
-            targets[os.readlink(entry)] += 1
-        except FileNotFoundError:
-            pass
-    return targets
 
 
 def milliseconds(samples: list[float]) -> str:

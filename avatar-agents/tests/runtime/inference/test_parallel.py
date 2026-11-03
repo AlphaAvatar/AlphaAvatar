@@ -24,13 +24,11 @@ import json
 import multiprocessing as mp
 import os
 import signal
-from collections import Counter
-from collections.abc import Callable
-from multiprocessing import resource_tracker
 from pathlib import Path
 
 import numpy as np
 import pytest
+from inference_checks import HANG_GUARD, assert_released, children, descriptors, wait_until
 from inference_runner_samples import (
     EchoRunner,
     JournalRunner,
@@ -42,7 +40,6 @@ from pydantic import ValidationError
 
 from alphaavatar.agents.configs.runtime_config import InferenceConfig
 from alphaavatar.agents.runtime.inference import (
-    INFERENCE_ENDPOINT_ENV,
     InferenceExecutor,
     InferenceRunner,
     InferenceRuntime,
@@ -52,7 +49,6 @@ from alphaavatar.agents.runtime.inference.schemas import InferenceRunnerStatus
 from alphaavatar.core.media import AudioFrame
 from alphaavatar.plugins.voice.vad.silero import SileroVADOptions, SileroVADStream
 
-HANG_GUARD = 30
 PARALLEL, SECOND = ParallelRunner.INFERENCE_METHOD, SecondParallelRunner.INFERENCE_METHOD
 ECHO, JOURNAL = EchoRunner.INFERENCE_METHOD, JournalRunner.INFERENCE_METHOD
 SILERO = SileroProtocolRunner.INFERENCE_METHOD
@@ -87,15 +83,6 @@ def view(runtime: InferenceRuntime, method: str) -> InferenceRunnerStatus:
     return status
 
 
-async def wait_until(condition: Callable[[], bool], failure: str) -> None:
-    try:
-        async with asyncio.timeout(HANG_GUARD):
-            while not condition():
-                await asyncio.sleep(0.002)
-    except TimeoutError:
-        pytest.fail(failure, pytrace=False)
-
-
 async def entered(root: Path, *names: str) -> None:
     await wait_until(
         lambda: all((root / f"{name}.entered").exists() for name in names),
@@ -116,33 +103,6 @@ def journal(root: Path, method: str = PARALLEL) -> dict[str, list[int]]:
         pid, data = line.split(" ", 1)
         runs.setdefault(data, []).append(int(pid))
     return runs
-
-
-def children() -> set[int]:
-    return {process.pid for process in mp.active_children()}
-
-
-def descriptors() -> Counter[str] | None:
-    directory = Path("/proc/self/fd")
-    if not directory.is_dir():
-        return None
-    resource_tracker.ensure_running()
-    targets: Counter[str] = Counter()
-    for entry in directory.iterdir():
-        try:
-            targets[os.readlink(entry)] += 1
-        except FileNotFoundError:
-            pass
-    return targets
-
-
-def assert_released(socket_root: Path, before: set[int], fds: Counter[str] | None) -> None:
-    assert children() - before == set()
-    assert INFERENCE_ENDPOINT_ENV not in os.environ
-    assert list(socket_root.iterdir()) == []
-    after = descriptors()
-    if fds is not None and after is not None:
-        assert after - fds == Counter()
 
 
 async def test_a_replicable_runner_stays_serial_until_configured(

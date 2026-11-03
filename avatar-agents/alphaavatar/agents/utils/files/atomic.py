@@ -13,6 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+import errno
 import pathlib
 import tempfile
 from collections.abc import Iterator
@@ -26,7 +27,11 @@ def locked_directory(path: pathlib.Path, *, timeout: float = 10.0) -> Iterator[N
     """Serialize cooperating local writers. Call from owned worker threads, not an event loop."""
     path.mkdir(parents=True, exist_ok=True)
     # The lock library owns its sidecar lifecycle; writers must not unlink it manually.
-    with FileLock(str(path / ".write.lock"), timeout=timeout):
+    lock = path / ".write.lock"
+    if lock.is_symlink():
+        # Opening a lock truncates, creates or chmods whatever a linked lock file points to.
+        raise OSError(errno.ELOOP, "Refusing a lock file that is a symbolic link", str(lock))
+    with FileLock(str(lock), timeout=timeout):
         yield
 
 

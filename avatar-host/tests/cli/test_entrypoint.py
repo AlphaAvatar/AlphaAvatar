@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Console entry points: import cost, credential-free errors and the converged commands."""
+
 from __future__ import annotations
 
 import json
@@ -18,6 +20,8 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+
+from config_samples import SECTIONS
 
 # Base CLI commands must not need models, providers, transports or avatar configuration.
 FORBIDDEN_IMPORTS = (
@@ -31,6 +35,8 @@ FORBIDDEN_IMPORTS = (
     "alphaavatar.plugins",
     "alphaavatar.agents.configs",
 )
+
+
 IMPORT_PROBE = """
 import contextlib, io, json, sys
 from alphaavatar.host.cli.app import main
@@ -52,11 +58,12 @@ def test_base_cli_needs_no_models_credentials_or_workspace(tmp_path: Path) -> No
     entrypoint = Path(sys.executable).with_name("alphaavatar")
     assert entrypoint.is_file(), f"Console script is not installed beside {sys.executable}"
     before = files_under(tmp_path)
-    for argv in (["--help"], ["--version"]):
-        completed = subprocess.run(
-            [str(entrypoint), *argv], capture_output=True, text=True, timeout=60, env=os.environ
-        )
-        assert completed.returncode == 0, completed.stderr
+    # The probe runs --help and --version in-process; the console script's --help exit code
+    # and command structure are checked with the converged commands below.
+    completed = subprocess.run(
+        [str(entrypoint), "--version"], capture_output=True, text=True, timeout=60, env=os.environ
+    )
+    assert completed.returncode == 0, completed.stderr
 
     probe = subprocess.run(
         [sys.executable, "-c", IMPORT_PROBE, *FORBIDDEN_IMPORTS],
@@ -96,3 +103,43 @@ def test_rejected_configuration_secret_never_reaches_cli_output(tmp_path: Path) 
     assert "fields: tools.mcp.token" in output
     assert secret not in output
     assert not (tmp_path / "application").exists()
+
+
+def test_console_commands_run_without_the_host_log_socket(tmp_path: Path) -> None:
+    entrypoint = Path(sys.executable).with_name("alphaavatar")
+    home = tmp_path / "home" / ".local" / "share" / "alphaavatar"  # The platform default.
+
+    def run(*argv: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(entrypoint), *argv], capture_output=True, text=True, timeout=120, env=os.environ
+        )
+
+    assert run("config", "init", "console", "--avatar-id", "console").returncode == 0
+    for argv in (["console"], []):  # By name, then as the default bundle.
+        checked = run("config", "check", *argv, "--json")
+        assert checked.returncode == 0, checked.stderr
+        report = json.loads(checked.stdout)
+        assert (report["avatar_id"], report["config"]["bundle"]) == ("console", "console")
+    configuration = sorted(
+        str(path.relative_to(home)) for path in home.rglob("*") if path.is_file()
+    )
+    assert configuration == sorted(
+        [
+            "configs/bundles/console.yaml",
+            *(f"configs/profiles/console/{section}.yaml" for section in SECTIONS),
+            "settings/.write.lock",
+            "settings/settings.yaml",
+        ]
+    )
+    # start and dev select alike: a missing bundle fails before anything is created.
+    started = run("start", "absent")
+    assert started.returncode == 2
+    assert "Bundle 'absent' does not exist" in started.stdout + started.stderr
+    assert sorted(path.name for path in home.iterdir()) == ["configs", "settings"]
+    # Only the converged commands exist; the removed entry points are usage errors.
+    assert run("check", "console").returncode == 2
+    assert run("config", "show", "console").returncode == 2
+    helped = run("--help")
+    assert helped.returncode == 0, helped.stderr
+    assert "{dev,start,config}" in helped.stdout  # No top-level check.
+    assert "{init,check}" in run("config", "--help").stdout
