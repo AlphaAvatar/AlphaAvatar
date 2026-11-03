@@ -305,14 +305,15 @@ cd AlphaAvatar
 # Credentials: copy the template
 cp .env.template .env.dev
 
-# Configuration: use an example, or create a minimal file to start from
-alphaavatar config init my-avatar.yaml --avatar-id my-avatar
+# Configuration: create a minimal bundle (the default one), or use an example file
+ENV_FILE=.env.dev alphaavatar config init my-avatar --avatar-id my-avatar
 
 # Optional: validate without starting (start and dev validate it too)
+ENV_FILE=.env.dev alphaavatar config check my-avatar
 ENV_FILE=.env.dev alphaavatar config check examples/agent_configs/voice/pipeline_openai_tools_minimal.yaml
 ```
 
-Edit .env.dev and provide credentials for the selected RTC, model, embedding and tool services; keep credentials out of the YAML file. Example model/voice identifiers are deployment choices, not guarantees of account access. `config check` starts nothing and creates no directories.
+`config init` writes a bundle and its plugin profiles under the application home; see [docs/cli/config.md](docs/cli/config.md) for the layout and how a bundle name, a file or the default bundle is chosen. Edit .env.dev and provide credentials for the selected RTC, model, embedding and tool services; keep credentials out of the YAML files. Example model/voice identifiers are deployment choices, not guarantees of account access. `config check` starts nothing and creates no directories.
 
 Set `ALPHAAVATAR_HOME` to choose the application home, or set top-level YAML `application.cache_root` to choose a separate application cache; downloaded models live in its `models/` directory. Host rejects the former `ALPHAAVATAR_MODEL_CACHE` setting. Set `ALPHAAVATAR_MODEL_OFFLINE=1` to require locally cached, validated files. See [Model cache](docs/models-cache-layout.md) for downloads and offline use, and [Avatar workspace](docs/avatar-workspace-layout.md) for personal data, backups and cleanup.
 
@@ -321,8 +322,9 @@ Set `ALPHAAVATAR_HOME` to choose the application home, or set top-level YAML `ap
 Enabled inference runners resolve their model files during initialization. Missing files are downloaded automatically; no separate download command is required.
 
 ```bash
+ENV_FILE=.env.dev alphaavatar dev my-avatar   # or omit the name to run the default bundle
+# or an example file
 ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/voice/pipeline_openai_tools_minimal.yaml
-# or
 ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/mm/pipeline_openai_tools.yaml
 ```
 

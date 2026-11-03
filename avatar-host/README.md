@@ -39,19 +39,23 @@ alphaavatar start examples/agent_configs/mm/pipeline_openai_tools.yaml
 
 `dev` defaults to DEBUG and an available health port; it does not watch or reload code.
 `start` defaults to INFO and port 8081. Help/version do not start models or require RTC
-credentials. Configuration overrides use `key=value` after the filename.
+credentials. Each command takes a bundle name, a YAML/JSON file, or nothing for the default
+bundle; configuration overrides use `key=value` after it.
 
-Create a configuration, and optionally check it without starting anything:
+Create a bundle (with its profiles, and as the default if none is set), and optionally check
+it without starting anything:
 
 ```bash
-alphaavatar config init configs/my-avatar.yaml --avatar-id my-avatar
-alphaavatar config check configs/my-avatar.yaml voice.tts.speed=1.2
+alphaavatar config init my-avatar --avatar-id my-avatar
+alphaavatar config check my-avatar voice.tts.speed=1.2
+alphaavatar dev                       # the default bundle
 ```
 
 `start` and `dev` run the same validation before starting. See [docs/cli](../docs/cli/) for
-every command. The Python entry points live in `alphaavatar.host.configs`
-(`load_application`, `check_application_paths`, `describe_summary`, `describe_application`,
-`describe_error`, `write_template`).
+every command and the bundle layout. The Python entry points live in
+`alphaavatar.host.configs` (`select_configuration`, `load_application`,
+`check_application_paths`, `create_bundle`, `read_settings`, `describe_summary`,
+`describe_application`, `describe_error`, `format_failure`).
 
 ## Configuration
 

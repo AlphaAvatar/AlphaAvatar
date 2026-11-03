@@ -2,27 +2,92 @@
 
 Create or check application configuration. Neither subcommand starts anything.
 
-## `config init`
+## Bundles and profiles
 
-Create a minimal configuration file.
+A **bundle** is a complete, startable configuration. A **profile** is one plugin section that
+bundles reference and may share. Both live in the application home:
 
-```bash
-alphaavatar config init <path> --avatar-id <id>
+| File | Holds |
+| --- | --- |
+| `<home>/configs/bundles/<name>.yaml` | `avatar`, `host`, `runtime` (and any inline section), plus `profiles` |
+| `<home>/configs/profiles/<directory>/<name>.yaml` | One plugin section's body, for example `voice` |
+| `<home>/settings/settings.yaml` | `default_bundle` and other user settings |
+
+```yaml
+# configs/bundles/my-avatar.yaml
+avatar:
+  id: my-avatar
+profiles:
+  voice: my-avatar/voice      # configs/profiles/my-avatar/voice.yaml
+  memory: my-avatar/memory
 ```
 
-- Writes the given Avatar ID with OpenAI model, voice, Memory and Persona settings; tools
-  are disabled.
-- Writes no credentials and no machine paths; the Host chooses the application home.
-- Never overwrites an existing file; removes what it created if writing fails.
+- `profiles` maps a plugin section (`loop`, `voice`, `vision`, `memory`, `persona`, `tools`,
+  `context`, `status`, `router`, `character`) to a profile name. `avatar` and `runtime` stay in
+  the bundle.
+- A profile file is that section's body. It references nothing, so references never form a
+  cycle; a profile with its own `profiles` is rejected.
+- A section comes from the bundle or from one profile, never both.
+- Names use 1-64 lowercase letters, digits, `-` or `_`; profile names add `/` between parts.
+  They are never paths and always resolve inside the home, whatever the working directory.
+- YAML anchors do not cross files. `${...}` interpolation resolves after composition, as in a
+  single file.
+- The home is chosen as before: `application.home` override, then `ALPHAAVATAR_HOME`, then the
+  platform default. Settings never choose it, and a named bundle cannot move it.
+- A single YAML or JSON file still loads as before, and may use `profiles` too.
 
-Set these in the environment or `.env`, never in the file:
+## Choosing a configuration
+
+`config check`, `start` and `dev` take the same optional argument:
+
+| Argument | Loads |
+| --- | --- |
+| Contains `/` or has an extension, e.g. `./avatar.yaml` | That file, relative to the working directory |
+| Any other word, e.g. `my-avatar` | `<home>/configs/bundles/my-avatar.yaml` |
+| Omitted | The bundle named by `default_bundle` in settings |
+
+- The spelling decides. A missing bundle is an error and never falls back to a file of a
+  similar name, nor the reverse.
+- With no argument and no default bundle, the command fails and says how to create one.
+- `KEY=VALUE` arguments are always overrides, so `alphaavatar config check voice.tts.speed=1.2`
+  checks the default bundle.
+- `profiles.<section>=<name>` chooses another profile. Every other override applies to the
+  composed configuration, after profiles are placed.
+- After loading, the Host and its sessions use the accepted snapshot; later edits to profiles
+  take effect at the next start.
+
+## `config init`
+
+Create a minimal bundle, its profiles and, if none is set, the default bundle.
+
+```bash
+alphaavatar config init <name> --avatar-id <id>
+```
+
+```text
+Created bundle my-avatar
+  bundle    /home/me/.local/share/alphaavatar/configs/bundles/my-avatar.yaml
+  profiles  /home/me/.local/share/alphaavatar/configs/profiles/my-avatar  (loop, voice, vision, memory, persona, tools)
+  default   my-avatar (set as the default bundle)
+```
+
+- Writes the given Avatar ID with OpenAI model, voice, Memory and Persona profiles; tools are
+  disabled. The composed result equals the former single-file template.
+- Writes no credentials and no machine paths.
+- Never overwrites an existing bundle or profile file; existing directories are reused.
+- Sets `default_bundle` only when none is set, appending it so other settings and comments
+  stay. Settings are replaced atomically.
+- On failure, removes only the files and empty directories it created; existing files,
+  shared profiles and settings stay unchanged.
+
+Set these in the environment or `.env`, never in the files:
 
 | Variable | Used for |
 | --- | --- |
 | `OPENAI_API_KEY` | Models, speech, embeddings, Memory and Persona |
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | Session transport |
 
-Then start it with [`alphaavatar dev`](dev.md), or check it first.
+Then start it with [`alphaavatar dev my-avatar`](dev.md), or check it first.
 
 ## `config check`
 
@@ -30,15 +95,17 @@ Validate a configuration without starting anything. Optional: `start` and `dev` 
 validation before they start.
 
 ```bash
-alphaavatar config check <file> [KEY=VALUE ...] [--json]
+alphaavatar config check [<bundle> | <file>] [KEY=VALUE ...] [--json]
 ```
 
-It runs the same loading steps as `start` — `.env`, overrides, defaults, path resolution,
-schema validation and read-only workspace checks — but starts no Host, runner or model,
-contacts no service, creates no directories and needs no local log socket.
+It runs the same loading steps as `start` — `.env`, selection, profiles, overrides, defaults,
+path resolution, schema validation and read-only workspace checks — but starts no Host,
+runner or model, contacts no service, creates no directories or settings and needs no local
+log socket.
 
 ```text
 OK  configuration and read-only path checks passed
+    config     bundle my-avatar  (default)
     avatar_id  my-avatar
     home       /home/me/.local/share/alphaavatar
     workspace  /home/me/.local/share/alphaavatar/avatars/my-avatar
@@ -54,10 +121,10 @@ OK  configuration and read-only path checks passed
     health     127.0.0.1:8081 (dev: free port)
 ```
 
-The summary lists plugin selections, vector store kinds, enabled tools, the inference
-runners the Host would start with their worker counts, and the health address — never
-endpoints, collection names or plugin-defined settings. A misspelled, unselected or
-non-replicable `runtime.inference.methods` entry fails with its field location.
+The summary lists the checked file or bundle, plugin selections, vector store kinds, enabled
+tools, the inference runners the Host would start with their worker counts, and the health
+address — never endpoints, collection names or plugin-defined settings. A misspelled,
+unselected or non-replicable `runtime.inference.methods` entry fails with its field location.
 
 ```text
 ERROR  configuration and read-only path checks failed
@@ -65,11 +132,18 @@ ERROR  configuration and read-only path checks failed
     fields: avatar.timezone
 ```
 
-- Errors go to stderr and name the failing fields, never the rejected values.
-- `--json` prints `{"valid": true, "avatar_id", "home", "workspace", "plugins", "inference",
-  "health"}` (`inference` maps each runner method to its workers) or
-  `{"valid": false, "error": {"type", "fields", "diagnostic"}}`, with credentials and control
-  characters removed.
+```text
+ERROR  configuration and read-only path checks failed
+  error: ConfigReferenceError
+    Bundle 'my-avatar': profiles.voice references missing profile 'my-avatar/voice': /home/me/.local/share/alphaavatar/configs/profiles/my-avatar/voice.yaml
+```
+
+- Errors go to stderr and name the failing fields, bundle or profile, never the rejected
+  values or file contents.
+- `--json` prints `{"valid": true, "config", "avatar_id", "home", "workspace", "plugins",
+  "inference", "health"}` (`config` is `{"bundle", "default", "file"}`; `inference` maps each
+  runner method to its workers) or `{"valid": false, "error": {"type", "fields",
+  "diagnostic"}}`, with credentials and control characters removed.
 - Colors appear only on a terminal; pipes, `NO_COLOR` and `TERM=dumb` get plain text.
 
 ## Exit codes
@@ -77,4 +151,4 @@ ERROR  configuration and read-only path checks failed
 | Code | `init` | `check` |
 | --- | --- | --- |
 | 0 | Created | Valid |
-| 2 | File exists, invalid ID or write failure | Invalid configuration or failed path check |
+| 2 | File exists, invalid name or ID, unreadable settings or write failure | Invalid configuration, selection or reference, or failed path check |

@@ -3,9 +3,11 @@
 Run the AlphaAvatar Host as a long-running service.
 
 ```bash
-alphaavatar start <config> [KEY=VALUE ...]
+alphaavatar start [<bundle> | <file>] [KEY=VALUE ...]
 ```
 
+- Loads a bundle by name, a YAML/JSON file, or the default bundle when omitted; see
+  [choosing a configuration](config.md#choosing-a-configuration).
 - INFO logging; health endpoints on `127.0.0.1:8081`.
 - Creates the application home and Avatar workspace on first run.
 - Ctrl+C or SIGTERM stops it after every owned resource is released.

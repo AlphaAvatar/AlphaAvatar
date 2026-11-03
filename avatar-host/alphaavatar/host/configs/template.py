@@ -11,147 +11,233 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""A minimal application configuration a person completes, then loads like any other."""
+"""A minimal bundle and its plugin profiles a person completes, then loads like any other."""
 
 from __future__ import annotations
 
+import errno
 import json
+import os
+import secrets
+from dataclasses import dataclass
 from pathlib import Path
 
-# Credentials stay in the environment (or the .env file named by ENV_FILE), never in the file.
+from alphaavatar.core.workspace import ApplicationPaths
+
+from .bundles import check_bundle_name, read_settings
+
+# Credentials stay in the environment (or the .env file named by ENV_FILE), never in the files.
 REQUIRED_ENVIRONMENT = (
     ("OPENAI_API_KEY", "model, speech, embedding and memory/persona providers"),
     ("LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET", "session transport (host.rtc)"),
 )
 
-_TEMPLATE = """\
-# AlphaAvatar application configuration, created by `alphaavatar config init`.
+_BUNDLE = """\
+# AlphaAvatar bundle {name}, created by `alphaavatar config init`.
 # Never write credentials here. Before `alphaavatar start`, set in the environment or .env:
 {environment}
-# Optionally validate with `alphaavatar config check <this file>`; start validates it too.
-# examples/agent_configs has more options.
-# application.home is chosen per platform; set it only to keep data somewhere else.
+#   start:                    alphaavatar dev {name}
+#   check without starting:   alphaavatar config check {name}
+# Each profiles entry is configs/profiles/<entry>.yaml in this application home and may be
+# shared by several bundles. Avatar, host and runtime settings belong in this file.
+# examples/agent_configs has more options. The application home (per platform, or
+# ALPHAAVATAR_HOME) holds this file, so do not set application.home here.
 
 avatar:
   id: {avatar_id}
   name: Assistant
   introduction: You are a helpful voice AI assistant.
 
-defaults:
-  openai_embedding: &openai_embedding
-    provider: openai
-    model: text-embedding-3-small
-  openai_task: &openai_task
-    provider: openai
-    model: gpt-4o
-    temperature: 0.1
-
-loop:
-  plugin: realtime
-  init_config:
-    model:
-      backend: openai
-      provider: openai
-      model: gpt-5.6-luna
-
-voice:
-  vad:
-    plugin: silero
-  stt:
-    plugin: openai_segment
-    model: gpt-4o-transcribe
-  tts:
-    plugin: openai
-    model: gpt-4o-mini-tts
-    speaker: ash
-
-vision:
-  enabled: false
-
-memory:
-  vdb_config:
-    collection_name: memory
-    embedding: *openai_embedding
-  init_config:
-    conversation:
-      provider:
-        gateway:
-          tasks:
-            memory.conversation_delta: *openai_task
-    tool:
-      provider:
-        gateway:
-          tasks:
-            memory.tool_delta: *openai_task
-
-persona:
-  vdb_config:
-    profiler_collection_name: persona_profiler
-    speaker_collection_name: persona_speaker
-    face_collection_name: persona_face
-    embedding: *openai_embedding
-  init_config:
-    profiler:
-      provider:
-        gateway:
-          tasks:
-            persona.profile_delta: *openai_task
-
-tools:
-  deepresearch:
-    plugin: null  # Tavily research reads TAVILY_API_KEY when enabled.
-  rag:
-    plugin: null
-  mcp:
-    enabled: false
-    # Reference credentials with <ENV_VAR> placeholders; they resolve when the file loads:
-    # servers:
-    #   docs:
-    #     url: https://example.com/mcp
-    #     headers:
-    #       Authorization: Bearer <MCP_DOCS_TOKEN>
+profiles:
+{profiles}
 """
 
+_PROFILE = """\
+# AlphaAvatar {section} profile, created by `alphaavatar config init`. Bundles reference it as
+# {reference}. Never write credentials here; the bundle lists the environment it needs.
 
-def render_template(avatar_id: str) -> str:
-    """Render and validate the template; an invalid Avatar ID fails before any file exists."""
+{body}"""
+
+# The minimal template's selections and defaults, one plugin section per profile.
+_SECTIONS = {
+    "loop": """\
+plugin: realtime
+init_config:
+  model:
+    backend: openai
+    provider: openai
+    model: gpt-5.6-luna
+""",
+    "voice": """\
+vad:
+  plugin: silero
+stt:
+  plugin: openai_segment
+  model: gpt-4o-transcribe
+tts:
+  plugin: openai
+  model: gpt-4o-mini-tts
+  speaker: ash
+""",
+    "vision": """\
+enabled: false
+""",
+    "memory": """\
+vdb_config:
+  collection_name: memory
+  embedding: {provider: openai, model: text-embedding-3-small}
+init_config:
+  conversation:
+    provider:
+      gateway:
+        tasks:
+          memory.conversation_delta: {provider: openai, model: gpt-4o, temperature: 0.1}
+  tool:
+    provider:
+      gateway:
+        tasks:
+          memory.tool_delta: {provider: openai, model: gpt-4o, temperature: 0.1}
+""",
+    "persona": """\
+vdb_config:
+  profiler_collection_name: persona_profiler
+  speaker_collection_name: persona_speaker
+  face_collection_name: persona_face
+  embedding: {provider: openai, model: text-embedding-3-small}
+init_config:
+  profiler:
+    provider:
+      gateway:
+        tasks:
+          persona.profile_delta: {provider: openai, model: gpt-4o, temperature: 0.1}
+""",
+    "tools": """\
+deepresearch:
+  plugin: null  # Tavily research reads TAVILY_API_KEY when enabled.
+rag:
+  plugin: null
+mcp:
+  enabled: false
+  # Reference credentials with <ENV_VAR> placeholders; they resolve when the file loads:
+  # servers:
+  #   docs:
+  #     url: https://example.com/mcp
+  #     headers:
+  #       Authorization: Bearer <MCP_DOCS_TOKEN>
+""",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class CreatedBundle:
+    name: str
+    bundle: Path
+    profiles: tuple[Path, ...]
+    default_bundle: str  # The default after creation: this bundle, or the one kept.
+
+
+def render_bundle(name: str, avatar_id: str) -> dict[str, str]:
+    """Bundle and profile texts by path under ``configs``, validated before any file exists."""
     import yaml
 
     from alphaavatar.agents.configs import AvatarConfig
 
+    check_bundle_name(name)
     # Validate the identifier itself: YAML would fold line breaks such as U+0085 into spaces.
     AvatarConfig.model_validate({"avatar": {"id": avatar_id}})
-    text = _TEMPLATE.format(
-        # A JSON string is a valid double-quoted YAML scalar for any accepted identifier.
-        avatar_id=json.dumps(avatar_id, ensure_ascii=False),
-        environment="\n".join(f"#   {name:<50} {use}" for name, use in REQUIRED_ENVIRONMENT),
-    )
-    rendered = AvatarConfig.model_validate(yaml.safe_load(text))
+    texts = {
+        f"bundles/{name}.yaml": _BUNDLE.format(
+            name=name,
+            # A JSON string is a valid double-quoted YAML scalar for any accepted identifier.
+            avatar_id=json.dumps(avatar_id, ensure_ascii=False),
+            environment="\n".join(f"#   {key:<50} {use}" for key, use in REQUIRED_ENVIRONMENT),
+            profiles="\n".join(f"  {section}: {name}/{section}" for section in _SECTIONS),
+        )
+    }
+    texts |= {
+        f"profiles/{name}/{section}.yaml": _PROFILE.format(
+            section=section, reference=f"{name}/{section}", body=body
+        )
+        for section, body in _SECTIONS.items()
+    }
+    bundle = yaml.safe_load(texts[f"bundles/{name}.yaml"])
+    bundle |= {section: yaml.safe_load(body) for section, body in _SECTIONS.items()}
+    rendered = AvatarConfig.model_validate({k: v for k, v in bundle.items() if k != "profiles"})
     if rendered.avatar.id != avatar_id:
         raise ValueError("The Avatar ID would not survive the configuration file unchanged")
-    return text
+    return texts
 
 
-def write_template(path: str | Path, *, avatar_id: str) -> Path:
-    """Create exactly this file and its missing parents; never overwrite or leave a partial."""
-    text = render_template(avatar_id)
-    target = Path(path).expanduser().absolute()
-    missing = [parent for parent in target.parents if not parent.exists()]
-    created = False
+def _directory(path: Path, created: list[Path]) -> None:
+    missing = []
+    while not path.exists():
+        missing.append(path)
+        path = path.parent
+    for directory in reversed(missing):
+        directory.mkdir()
+        created.append(directory)
+
+
+def _set_default(paths: ApplicationPaths, name: str, created: list[Path]) -> str:
+    """Set the default only when none is set, replacing the settings file atomically."""
+    import yaml
+
+    settings = read_settings(paths)
+    if settings.get("default_bundle") is not None:
+        return settings["default_bundle"]
+    target = paths.settings_file
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("x", encoding="utf-8", newline="\n") as stream:
-            created = True
+        text, mode = target.read_text(encoding="utf-8"), target.stat().st_mode
+    except FileNotFoundError:
+        text, mode = "", None
+    expected = settings | {"default_bundle": name}
+    # Appending keeps every other setting and its comments; otherwise rewrite the values.
+    if "default_bundle" not in settings:
+        text += ("\n" if text and not text.endswith("\n") else "") + f"default_bundle: {name}\n"
+    if "default_bundle" in settings or yaml.safe_load(text) != expected:
+        text = yaml.safe_dump(expected, sort_keys=False, allow_unicode=True)
+    _directory(target.parent, created)
+    temporary = target.with_name(f".{target.name}.{secrets.token_hex(8)}.tmp")
+    try:
+        with temporary.open("x", encoding="utf-8", newline="\n") as stream:
             stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if mode is not None:
+            temporary.chmod(mode)
+        os.replace(temporary, target)
     except BaseException:
-        if created:
-            target.unlink(missing_ok=True)
-        for parent in missing:
-            try:
-                parent.rmdir()
-            except FileNotFoundError:
-                continue  # Never created: an outer directory may still be ours to remove.
-            except OSError:
-                break
+        temporary.unlink(missing_ok=True)
         raise
-    return target
+    return name
+
+
+def create_bundle(paths: ApplicationPaths, name: str, *, avatar_id: str) -> CreatedBundle:
+    """Create the bundle and its profiles, then the default; never overwrite existing files.
+
+    A failure removes only the files and empty directories this call created; existing
+    files, shared profiles and settings stay as they were.
+    """
+    texts = render_bundle(name, avatar_id)
+    read_settings(paths)  # Unreadable settings refuse before any file exists.
+    targets = {paths.configs.root / relative: text for relative, text in texts.items()}
+    for target in targets:
+        if target.exists():
+            raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), str(target))
+    created: list[Path] = []
+    try:
+        for target, text in targets.items():
+            _directory(target.parent, created)
+            with target.open("x", encoding="utf-8", newline="\n") as stream:
+                created.append(target)
+                stream.write(text)
+        default = _set_default(paths, name, created)
+    except BaseException:
+        for path in reversed(created):
+            try:
+                path.rmdir() if path.is_dir() else path.unlink()
+            except OSError:
+                continue  # Not empty or already gone: someone else's content stays.
+        raise
+    bundle, *profiles = targets
+    return CreatedBundle(name, bundle, tuple(profiles), default)

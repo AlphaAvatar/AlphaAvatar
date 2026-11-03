@@ -24,7 +24,6 @@ import sys
 from collections.abc import Sequence
 from typing import Any, TextIO
 
-from alphaavatar.core.log.diagnostics import format_error
 from alphaavatar.core.log.records import clean
 from alphaavatar.host.log.format import BOLD, DIM, GREEN, RED, RESET, use_color
 
@@ -63,7 +62,11 @@ def _lines(summary: dict[str, Any]) -> dict[str, str]:
         inference += f"  (workers: {', '.join(parallel)})"
     elif runners:
         inference += ", 1 worker each"
+    source = summary["config"]
+    config = f"bundle {source['bundle']}" if source["bundle"] else source["file"]
+    config += "  (default)" if source["default"] else ""
     return {
+        "config": config,
         "avatar_id": summary["avatar_id"],
         "home": summary["home"],
         "workspace": summary["workspace"],
@@ -87,27 +90,32 @@ def _switch(enabled: bool) -> str:
     return "on" if enabled else "off"
 
 
-def _load(path: str, overrides: Sequence[str]):
+def _load(target: str | None, overrides: Sequence[str]):
     from alphaavatar.agents.env import init_env
-    from alphaavatar.host.configs.loader import check_application_paths, load_application
+    from alphaavatar.host.configs import (
+        check_application_paths,
+        load_application,
+        select_configuration,
+    )
 
     init_env()  # The same .env the start command reads for <ENV_VAR> placeholders.
-    config = load_application(path, overrides)
+    source = select_configuration(target, overrides)
+    config = load_application(source, overrides)
     check_application_paths(config)
-    return config
+    return config, source
 
 
-def check(path: str, overrides: Sequence[str], *, as_json: bool) -> int:
-    from alphaavatar.host.configs.view import describe_error, describe_summary
+def check(target: str | None, overrides: Sequence[str], *, as_json: bool) -> int:
+    from alphaavatar.host.configs import describe_error, describe_summary, format_failure
 
     try:
-        summary = describe_summary(_load(path, overrides))
+        summary = describe_summary(*_load(target, overrides))
     except Exception as error:
         if as_json:
             print(json.dumps({"valid": False, "error": describe_error(error)}, indent=2))
             return 2
         color = _status("ERROR", RED, f"{SCOPE} failed", sys.stderr)
-        for line in format_error(error).splitlines():
+        for line in format_failure(error).splitlines():
             # Code locations are auxiliary; the failing fields stay prominent.
             auxiliary = line.lstrip().startswith(("at ", "additional"))
             print(_paint(line, DIM, color) if auxiliary else line, file=sys.stderr)
@@ -125,21 +133,38 @@ def check(path: str, overrides: Sequence[str], *, as_json: bool) -> int:
     return 0
 
 
-def init(path: str, *, avatar_id: str) -> int:
-    from alphaavatar.host.configs.template import REQUIRED_ENVIRONMENT, write_template
+def init(name: str, *, avatar_id: str) -> int:
+    from alphaavatar.agents.env import init_env
+    from alphaavatar.host.configs import (
+        REQUIRED_ENVIRONMENT,
+        application_paths,
+        create_bundle,
+        format_failure,
+    )
 
     try:
-        target = write_template(path, avatar_id=avatar_id)
-    except FileExistsError:
-        print(f"\nRefusing to overwrite an existing file: {clean(path)}\n", file=sys.stderr)
+        init_env()  # ALPHAAVATAR_HOME may come from the same .env that start reads.
+        created = create_bundle(application_paths(), name, avatar_id=avatar_id)
+    except FileExistsError as error:
+        print(
+            f"\nRefusing to overwrite an existing file: {clean(error.filename)}\n", file=sys.stderr
+        )
         return 2
     except Exception as error:
-        print(f"\nCannot create the configuration:\n{format_error(error)}\n", file=sys.stderr)
+        print(f"\nCannot create the configuration:\n{format_failure(error)}\n", file=sys.stderr)
         return 2
-    print(f"\nCreated {clean(str(target))}")
-    print("Set these in the environment or .env (never in the file):")
-    print("\n".join(f"  {name:<50} {use}" for name, use in REQUIRED_ENVIRONMENT))
+    sections = ", ".join(path.stem for path in created.profiles)
+    if created.default_bundle == name:
+        default = f"{name} (set as the default bundle)"
+    else:
+        default = f"{clean(created.default_bundle)} (unchanged)"
+    print(f"\nCreated bundle {name}")
+    print(f"  bundle    {clean(str(created.bundle))}")
+    print(f"  profiles  {clean(str(created.profiles[0].parent))}  ({sections})")
+    print(f"  default   {default}")
+    print("Set these in the environment or .env (never in the files):")
+    print("\n".join(f"  {key:<50} {use}" for key, use in REQUIRED_ENVIRONMENT))
     print("Next:")
-    print(f"  alphaavatar dev {clean(path)}             # start; validates the file first")
-    print(f"  alphaavatar config check {clean(path)}    # optional: validate without starting\n")
+    print(f"  alphaavatar dev {name}             # start; validates the configuration first")
+    print(f"  alphaavatar config check {name}    # optional: validate without starting\n")
     return 0

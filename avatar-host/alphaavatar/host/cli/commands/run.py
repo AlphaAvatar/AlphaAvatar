@@ -21,7 +21,8 @@ from collections.abc import Sequence
 from alphaavatar.core.log.diagnostics import format_error
 
 
-def run(path: str, overrides: Sequence[str], *, devmode: bool) -> int:
+def run(target: str | None, overrides: Sequence[str], *, devmode: bool) -> int:
+    describe = format_error
     logs = None
     stage = "configure Host logging"
     result = 2
@@ -31,14 +32,23 @@ def run(path: str, overrides: Sequence[str], *, devmode: bool) -> int:
         logs = HostLog(devmode=devmode)
         stage = "import configuration loader"
         from alphaavatar.agents.env import init_env
-        from alphaavatar.host.configs.loader import check_application_paths, load_application
+        from alphaavatar.host.configs import (
+            check_application_paths,
+            format_failure,
+            load_application,
+            select_configuration,
+        )
+
+        describe = format_failure
 
         stage = "load environment"
         init_env()
         logs.refresh_secrets()
 
+        stage = "select application configuration"
+        source = select_configuration(target, overrides)
         stage = "load application configuration"
-        config = load_application(path, overrides)
+        config = load_application(source, overrides)
 
         stage = "prepare application paths"
         from alphaavatar.core.workspace import prepare_application, prepare_workspace
@@ -71,7 +81,7 @@ def run(path: str, overrides: Sequence[str], *, devmode: bool) -> int:
     except KeyboardInterrupt:
         result = 130
     except Exception as error:
-        diagnostic = format_error(error, details=devmode)
+        diagnostic = describe(error, details=devmode)
         try:
             if logs is None:
                 raise RuntimeError("Host logging is unavailable")

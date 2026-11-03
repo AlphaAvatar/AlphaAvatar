@@ -29,6 +29,7 @@ from alphaavatar.host.application.config import HostConfig
 from alphaavatar.host.sessions.factory import validate_session_config
 
 from .application import ApplicationConfig
+from .bundles import ConfigReferenceError, ConfigSource, compose_profiles
 from .paths import platform_application_root, resolve_application_paths
 
 
@@ -126,12 +127,21 @@ def check_application_paths(config: ApplicationConfig) -> None:
         check_legacy_identity(config.paths.avatars_dir, config.avatar.avatar.id)
 
 
-def load_application(path: str | Path, overrides: Sequence[str] = ()) -> ApplicationConfig:
+def load_application(
+    source: str | Path | ConfigSource, overrides: Sequence[str] = ()
+) -> ApplicationConfig:
+    """Load a file, composing the profiles it references; overrides apply to the result.
+
+    ``profiles.<section>=<name>`` overrides choose references; every other override applies
+    after composition, as to a single file.
+    """
     import yaml
     from omegaconf import OmegaConf
     from omegaconf.errors import OmegaConfBaseException
 
-    config_path = Path(path).expanduser().resolve(strict=True)
+    if not isinstance(source, ConfigSource):
+        source = ConfigSource(Path(source))
+    config_path = source.path.expanduser().resolve(strict=True)
     text = config_path.read_text(encoding="utf-8")
     try:
         if config_path.suffix.lower() in (".yaml", ".yml"):
@@ -140,10 +150,28 @@ def load_application(path: str | Path, overrides: Sequence[str] = ()) -> Applica
             data = _mapping(json.loads(text))
         else:
             raise ValueError("Application configuration must be YAML or JSON")
-        merged = OmegaConf.merge(data, OmegaConf.from_dotlist(list(overrides)))
-        data = _mapping(OmegaConf.to_container(merged, resolve=True))
+        changes = OmegaConf.from_dotlist(list(overrides))
+        if (references := changes.pop("profiles", None)) is not None:
+            data = _mapping(OmegaConf.to_container(OmegaConf.merge(data, {"profiles": references})))
+        home = OmegaConf.select(OmegaConf.merge(data, changes), "application.home")
     except (yaml.YAMLError, OmegaConfBaseException):
         # These exceptions may render the original line, including an inline credential.
+        raise ValueError("Invalid YAML, configuration override, or interpolation") from None
+
+    if source.home is not None:
+        if home is not None and ApplicationPaths.from_root(home).root != source.home:
+            raise ConfigReferenceError(
+                f"{source.origin} sets another application.home; a named bundle belongs to "
+                "the home that stores it"
+            )
+        home = source.home
+    paths = resolve_application_paths(
+        os.environ, default_root=platform_application_root(os.environ, Path.home()), home=home
+    )
+    data = compose_profiles(data, paths, source.origin)
+    try:
+        data = _mapping(OmegaConf.to_container(OmegaConf.merge(data, changes), resolve=True))
+    except OmegaConfBaseException:
         raise ValueError("Invalid YAML, configuration override, or interpolation") from None
 
     duration = os.getenv("ALPHAAVATAR_MAX_SESSION_SECONDS")
@@ -155,12 +183,6 @@ def load_application(path: str | Path, overrides: Sequence[str] = ()) -> Applica
         host["execution"] = execution
         data["host"] = host
 
-    application = _mapping(data.get("application", {}))
-    paths = resolve_application_paths(
-        os.environ,
-        default_root=platform_application_root(os.environ, Path.home()),
-        home=application.get("home"),
-    )
     config = validate_application(data, paths=paths)
     raw_avatar = _mapping(data.get("avatar", {}))
     if raw_avatar.get("workspace_root") is None:

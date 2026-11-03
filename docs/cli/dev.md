@@ -3,7 +3,7 @@
 Run the AlphaAvatar Host for development.
 
 ```bash
-ENV_FILE=.env.dev alphaavatar dev <config> [KEY=VALUE ...]
+ENV_FILE=.env.dev alphaavatar dev [<bundle> | <file>] [KEY=VALUE ...]
 ```
 
 Same as [`alphaavatar start`](start.md), except:

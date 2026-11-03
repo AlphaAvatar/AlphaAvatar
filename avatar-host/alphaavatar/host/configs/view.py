@@ -28,10 +28,11 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from alphaavatar.core.log import error_fields, format_error
+from alphaavatar.core.log import error_fields
 from alphaavatar.core.log.records import Redactor
 
 from .application import ApplicationConfig
+from .bundles import ConfigSource, format_failure
 
 HIDDEN = "[hidden]"
 REDACTED = "[redacted]"
@@ -126,12 +127,14 @@ def describe_application(config: ApplicationConfig) -> dict[str, Any]:
     return _scrubber(config)(view)
 
 
-def describe_summary(config: ApplicationConfig) -> dict[str, Any]:
+def describe_summary(
+    config: ApplicationConfig, source: ConfigSource | None = None
+) -> dict[str, Any]:
     """What check reports, through the same boundary as the full view.
 
-    Only typed selections and facts derived from them: plugin names, vector backend kinds,
-    enabled tools, runner workers and the health address, never endpoints or plugin-defined
-    settings.
+    Only the selected file or bundle, typed selections and facts derived from them: plugin
+    names, vector backend kinds, enabled tools, runner workers and the health address, never
+    endpoints or plugin-defined settings.
     """
     from alphaavatar.agents.runtime.inference import plan_inference_runners
     from alphaavatar.agents.utils.vdb.config import vdb_backend
@@ -152,8 +155,14 @@ def describe_summary(config: ApplicationConfig) -> dict[str, Any]:
     mcp = avatar.tools.mcp
     inference = avatar.runtime.inference
     runners = plan_inference_runners(avatar)  # The plan the Host will start, checked again.
+    selected = (
+        {"config": {"bundle": source.bundle, "default": source.default, "file": str(source.path)}}
+        if source is not None
+        else {}
+    )
     return _scrubber(config)(
         {
+            **selected,
             "avatar_id": avatar.avatar.id,
             "home": str(config.paths.root),
             "workspace": str(config.workspace.root),
@@ -186,5 +195,5 @@ def describe_error(error: BaseException) -> dict[str, Any]:
     return {
         "type": type(error).__name__,
         "fields": list(error_fields(error)),
-        "diagnostic": format_error(error),
+        "diagnostic": format_failure(error),
     }

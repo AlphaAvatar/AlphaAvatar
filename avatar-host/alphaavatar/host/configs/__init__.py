@@ -11,28 +11,43 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Application configuration: load, validate, restore, inspect safely and create templates."""
+"""Application configuration: select, load, compose, restore, inspect safely and create."""
 
 from .application import ApplicationConfig
+from .bundles import (
+    ConfigReferenceError,
+    ConfigSource,
+    application_paths,
+    format_failure,
+    read_settings,
+    select_configuration,
+)
 from .loader import (
     check_application_paths,
     load_application,
     restore_application,
     validate_application,
 )
-from .template import REQUIRED_ENVIRONMENT, render_template, write_template
+from .template import REQUIRED_ENVIRONMENT, CreatedBundle, create_bundle, render_bundle
 from .view import describe_application, describe_error, describe_summary
 
 __all__ = [
     "ApplicationConfig",
+    "ConfigReferenceError",
+    "ConfigSource",
+    "CreatedBundle",
     "REQUIRED_ENVIRONMENT",
+    "application_paths",
     "check_application_paths",
+    "create_bundle",
     "describe_application",
     "describe_error",
     "describe_summary",
+    "format_failure",
     "load_application",
-    "render_template",
+    "read_settings",
+    "render_bundle",
     "restore_application",
+    "select_configuration",
     "validate_application",
-    "write_template",
 ]
