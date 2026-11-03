@@ -24,7 +24,7 @@ from pathlib import Path
 
 from alphaavatar.core.workspace import ApplicationPaths
 
-from .bundles import check_bundle_name, check_inside, read_settings
+from .bundles import ConfigReferenceError, check_bundle_name, check_inside, read_settings
 
 # Credentials stay in the environment (or the .env file named by ENV_FILE), never in the files.
 REQUIRED_ENVIRONMENT = (
@@ -190,6 +190,10 @@ def _set_default(
         return default
     target = paths.settings_file
     _directory(target.parent, created)
+    lock = target.parent / ".write.lock"
+    if lock.is_symlink():
+        # Opening the lock truncates whatever a linked lock file points to.
+        raise ConfigReferenceError(f"Refusing to lock settings through a symbolic link: {lock}")
     # Read, decide and replace under one lock: concurrent inits never both become default.
     with locked_directory(target.parent):
         settings = read_settings(paths)
@@ -232,8 +236,11 @@ def create_bundle(paths: ApplicationPaths, name: str, *, avatar_id: str) -> Crea
     texts = render_bundle(name, avatar_id)
     read_settings(paths)  # Unreadable settings refuse before any file exists.
     targets = {paths.configs.root / relative: text for relative, text in texts.items()}
+    bundle, *profiles = targets
+    # The same directories that loading accepts: a created bundle always loads.
     for target, directory in (
-        *((target, paths.configs.root) for target in targets),
+        (bundle, paths.configs.bundles_dir),
+        *((profile, paths.configs.profiles_dir) for profile in profiles),
         (paths.settings_file, paths.settings_dir),
     ):
         check_inside(paths, target, directory, "Refusing to create")
@@ -257,5 +264,4 @@ def create_bundle(paths: ApplicationPaths, name: str, *, avatar_id: str) -> Crea
                 except OSError:
                     continue  # Not empty or already gone: someone else's content stays.
         raise
-    bundle, *profiles = targets
     return CreatedBundle(name, bundle, tuple(profiles), default)

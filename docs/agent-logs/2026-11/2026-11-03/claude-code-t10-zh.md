@@ -8,7 +8,7 @@
 
 | 批次 | 内容 | 日期 | 基线 HEAD | 提交 | 状态 |
 |---|---|---|---|---|---|
-| T-10A | profile／bundle 配置公共能力：拆分配置生成、选择规则、引用解析 | 2026-11-03 | `62af558` | `de480ad`；收尾未提交 | 已 review（`de480ad`）：结构、入口与快照符合约定，未验收；4 处 P2（提交后取消、并发默认值、符号链接越界、settings 格式）已修复（§11），待复核：本地 292 passed（CI 方式 ×1） |
+| T-10A | profile／bundle 配置公共能力：拆分配置生成、选择规则、引用解析 | 2026-11-03 | `62af558` | `de480ad`、`3c40fda`；收尾未提交 | 已 review（`3c40fda`）：§11 的四项修复成立，未验收；锁文件符号链接、生成与读取的目录边界不一致两处 P2 及测试屏障已修复（§12），待复核：本地 294 passed（CI 方式 ×1） |
 
 ---
 
@@ -261,4 +261,52 @@ init_config:
 
 - 修改文件：`configs/bundles.py`、`configs/template.py`、`avatar-host/tests/test_config_commands.py`、`docs/cli/config.md`、本日志。
 - 并发用例用同一进程内的两个线程；filelock 在 Linux 上用 flock，不同的打开文件描述之间互斥。没有做多进程或 Windows 上的锁验证。
+- 本轮修改随 `3c40fda` 提交。
+
+### 12. `3c40fda` review 收尾（基线 `3c40fda`）
+
+- review 结论：
+  - §11 的四项主要修复成立。
+  - 持久保留 `settings/.write.lock`、失败后留下 settings 目录和锁文件，都可以接受。
+  - 两个独立进程的互斥已在 review 环境验证：两边最终都保留第一次设置的默认 bundle。
+  - 剩两处路径边界和一处测试屏障，修复前不验收。
+- review 环境：成功收集 292 项，原生选跑 230 项全部通过；提交前后取消、合法 settings 格式、真实多进程互斥通过；Ruff、格式、workspace、lock 通过。
+
+#### 12.1 问题与修复（`configs/template.py`）
+
+| 问题 | 原因 | 修复 |
+|---|---|---|
+| P2 锁文件本身是符号链接时，会清空它指向的文件 | 打开锁（filelock 3.20.0）会截断锁文件；进入锁之前没有检查 `.write.lock` | 进入锁之前，`.write.lock` 是符号链接就拒绝（`ConfigReferenceError`），指向 Home 内的链接也一样，例如指向 `settings.yaml`。此时尚未提交，本次已写的配置全部回滚。正常的锁文件照常保留 |
+| P2 生成与读取的目录边界不一致 | 生成时 bundle 和 profile 的目标只按整个 `configs` 校验，读取时却分别要求在 `configs/bundles`、`configs/profiles` 内 | 生成时 bundle 按 `bundles_dir`、profile 按 `profiles_dir`、settings 按 `settings_dir` 校验，与读取用同一组目录，生成的默认配置一定能加载 |
+| 测试屏障 | 并发用例在真正读取 settings 之前就发出"读取完成"事件，存在变异误通过的窗口 | 改为先读取，记录读到的默认值，再发出事件；用例另外断言 beta 第二次读取时确实没有默认值。加强后，"锁内不重新检查"这个变异 10 次全部被发现 |
+
+- 观察（不在本批范围）：agents 的 `locked_directory` 还被 Memory 的导出和 graph 存储使用，锁文件位于工作区目录，同样没有检查符号链接。本批只在 settings 的入口检查。
+
+#### 12.2 回归测试
+
+| 用例 | 覆盖 | 在 `3c40fda` 代码上 |
+|---|---|---|
+| `test_a_linked_settings_lock_is_refused_and_what_it_points_to_is_kept[outside]` | `.write.lock` 链接到 Home 外的文件：init 以退出码 2 拒绝；目标文件内容、settings 和整个文件树逐字节不变 | 失败（目标文件被截断） |
+| 同上 `[settings]` | `.write.lock` 链接到 `settings.yaml` 本身：拒绝，settings 不变 | 失败 |
+| `test_named_references_and_init_targets_stay_inside_the_real_home`（扩展） | `profiles/zeta` 链接到 `configs/bundles/shared`：init 拒绝并指出 `zeta/loop` 越界，文件树不变 | 失败（init 成功，生成的配置无法加载） |
+| `test_concurrent_inits_never_both_become_the_default`（加强） | 屏障改为在读取之后发出；断言 beta 第二次读取时没有默认值 | 通过（修复本身原已成立） |
+
+#### 12.3 变异验证
+
+| 变异 | 结果 |
+|---|---|
+| D1 不拒绝符号链接锁文件 | 被杀死（两种情形） |
+| D2 生成目标按整个 `configs` 校验 | 被杀死 |
+| C3' 锁内不重新检查（只运行并发用例，重复 10 次） | 10/10 被杀死 |
+
+#### 12.4 运行结果
+
+| 项目 | 结果 |
+|---|---|
+| 全量（CI 方式：`--basetemp`、检出前后对比）×1 | **294 passed**，46.9 s；检出目录前后一致 |
+| 并发、锁文件链接、真实路径、取消等相关用例（6 项）×30 | 0 失败 |
+| `avatar-host/tests` ×5 | 0 失败（每轮 83 passed） |
+| Ruff、格式、`scripts/check_workspace.py`、`uv lock --check`、对改动文件运行 pre-commit | 全部通过 |
+
+- 修改文件：`configs/template.py`、`avatar-host/tests/test_config_commands.py`、`docs/cli/config.md`（写明生成目标的目录规则和对锁文件链接的拒绝）、本日志。
 - 本轮没有 commit 或 push。

@@ -871,11 +871,12 @@ def test_concurrent_inits_never_both_become_the_default(home: Path) -> None:
     beta_read = threading.Event()
 
     def counted(paths: object) -> dict:
+        settings = read(paths)
         if threading.current_thread() is not threading.main_thread():
-            reads.append(paths)
-            if len(reads) == 2:  # Validation, then beta's own look for a default.
+            reads.append(settings.get("default_bundle"))
+            if len(reads) == 2:  # Validation, then beta's own look for a default: done.
                 beta_read.set()
-        return read(paths)
+        return settings
 
     def create_beta() -> None:
         try:
@@ -897,6 +898,7 @@ def test_concurrent_inits_never_both_become_the_default(home: Path) -> None:
             results["alpha"] = create_bundle(paths, "alpha", avatar_id="alpha").default_bundle
         beta.join(HANG_GUARD)
     assert (failures, beta.is_alive()) == ([], False)
+    assert reads[1] is None  # Beta had found no default before alpha committed.
     assert results == {"alpha": "alpha", "beta": "alpha"}
     assert read(paths) == {"default_bundle": "alpha"}
 
@@ -941,6 +943,19 @@ def test_named_references_and_init_targets_stay_inside_the_real_home(
         assert main(["config", "check", "beta"]) == 0 and create("gamma", "gamma") == 0
     capsys.readouterr()
 
+    # init checks each target against the directory loading accepts: profiles linked into
+    # the bundles directory would create a default bundle that cannot load.
+    (configs / "bundles" / "shared").mkdir()
+    (configs / "profiles" / "zeta").symlink_to(configs / "bundles" / "shared")
+    before = contents(tmp_path)
+    assert create("zeta", "zeta") == 2
+    assert f"Refusing to create: {profile(home, 'zeta/loop')} resolves outside" in (
+        capsys.readouterr().err
+    )
+    assert contents(tmp_path) == before
+    (configs / "profiles" / "zeta").unlink()
+    (configs / "bundles" / "shared").rmdir()
+
     # A bundle file or a profile directory linked out of the home is refused.
     bundle = configs / "bundles" / "alpha.yaml"
     shutil.copy(bundle, outside / "alpha.yaml")
@@ -969,6 +984,23 @@ def test_named_references_and_init_targets_stay_inside_the_real_home(
     # An explicit file keeps its own rules wherever it is.
     write(outside / "single.yaml", {"avatar": {"id": "single"}})
     assert main(["config", "check", str(outside / "single.yaml")]) == 0
+
+
+@pytest.mark.parametrize("victim", ["outside", "settings"])
+def test_a_linked_settings_lock_is_refused_and_what_it_points_to_is_kept(
+    victim: str, tmp_path: Path, home: Path, capsys: pytest.CaptureFixture
+) -> None:
+    settings = home / "settings" / "settings.yaml"
+    settings.parent.mkdir(parents=True)
+    settings.write_text("theme: dark\n")
+    target = settings if victim == "settings" else tmp_path / "victim.txt"
+    target.write_text(target.read_text() if target.exists() else "keep me\n")
+    # Opening a lock truncates its file; through a link, that would empty the target.
+    settings.with_name(".write.lock").symlink_to(target)
+    before = contents(tmp_path)
+    assert create("alpha", "alpha") == 2
+    assert "Refusing to lock settings through a symbolic link" in capsys.readouterr().err
+    assert contents(tmp_path) == before
 
 
 def test_console_commands_run_without_the_host_log_socket(tmp_path: Path) -> None:

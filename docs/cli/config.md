@@ -78,10 +78,12 @@ Created bundle my-avatar
   disabled. The composed result equals the former single-file template.
 - Writes no credentials and no machine paths.
 - Never overwrites an existing bundle or profile file; existing directories are reused.
-  Refuses any target whose real location would leave the home.
+  Checks each target as loading would: a bundle must stay in `configs/bundles`, a profile in
+  `configs/profiles`, and the settings in `settings`, inside the real home.
 - Sets `default_bundle` only when none is set. Reading, deciding and replacing the settings
   happen under one lock (`settings/.write.lock`, kept by the lock library), so concurrent
-  `init` runs never both become the default.
+  `init` runs never both become the default. A lock file that is a symbolic link is refused,
+  since opening it would empty what it points to.
 - Appends `default_bundle` when the file is a plain block mapping, keeping other settings and
   comments. Otherwise — `default_bundle: null`, a flow mapping, an explicit document end — it
   writes the same values again, without comments. Settings are replaced atomically.
