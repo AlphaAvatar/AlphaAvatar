@@ -23,6 +23,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 from unittest import mock
@@ -35,7 +36,14 @@ import yaml
 # Imported at collection: configuration plugins adjust process variables while importing (O-2).
 import alphaavatar.agents.configs  # noqa: F401
 from alphaavatar.host.cli.app import main
-from alphaavatar.host.configs import describe_application, load_application, select_configuration
+from alphaavatar.host.configs import (
+    application_paths,
+    create_bundle,
+    describe_application,
+    load_application,
+    select_configuration,
+    template,
+)
 from alphaavatar.host.configs.loader import restore_application
 from alphaavatar.host.log.format import BOLD, DIM, GREEN, RED, RESET
 from alphaavatar.plugins.memory.config import DefaultMemoryConfig
@@ -424,6 +432,7 @@ persona:
 tools: {deepresearch: {plugin: null}, rag: {plugin: null}, mcp: {enabled: false}}
 """
 SECTIONS = ("loop", "voice", "vision", "memory", "persona", "tools")
+HANG_GUARD = 30
 
 
 @pytest.fixture
@@ -431,6 +440,9 @@ def home(tmp_path: Path) -> Iterator[Path]:
     root = tmp_path / "application"
     with mock.patch.dict(os.environ, {"ALPHAAVATAR_HOME": str(root)}):
         yield root
+
+
+LOCK = "application/settings/.write.lock"
 
 
 def contents(root: Path) -> dict[str, bytes | None]:
@@ -467,9 +479,10 @@ def test_init_splits_the_minimal_template_into_a_bundle_and_profiles_that_load_u
     profiles = [profile(home, f"my-avatar/{section}") for section in SECTIONS]
     settings = home / "settings" / "settings.yaml"
     # Configuration files and their directories only: no cache, workspace or log.
+    lock = settings.with_name(".write.lock")  # Kept by the lock library, as elsewhere.
     created = {
         str(path.relative_to(tmp_path))
-        for target in (bundle, settings, *profiles)
+        for target in (bundle, settings, lock, *profiles)
         for path in (target, *target.parents)
         if path.is_relative_to(home)
     }
@@ -823,7 +836,139 @@ def test_a_failed_init_removes_only_what_it_created(
     with patch:
         assert create("new", "new") == 2
     assert f"errno={code}" in capsys.readouterr().err
-    assert contents(tmp_path) == before
+    # Only the settings lock outlives a failure in a new home; the lock library keeps it.
+    lock = {"application": None, "application/settings": None, LOCK: b""}
+    assert contents(tmp_path) == before | (lock if failure == "new-home" else {})
+
+
+@pytest.mark.parametrize("committed", [False, True], ids=["before-commit", "after-commit"])
+def test_cancelling_init_undoes_it_before_the_settings_commit_and_keeps_it_after(
+    committed: bool, tmp_path: Path, home: Path
+) -> None:
+    settings = home / "settings" / "settings.yaml"
+    settings.parent.mkdir(parents=True)
+    settings.write_text("theme: dark\n")
+    before, replace = contents(tmp_path), os.replace
+
+    def interrupted(*args: object) -> None:
+        if committed:
+            replace(*args)
+        raise KeyboardInterrupt
+
+    with mock.patch.object(os, "replace", interrupted), pytest.raises(KeyboardInterrupt):
+        create("alpha", "alpha")
+    if committed:
+        # The default names a complete bundle; the cancellation still reached the caller.
+        assert yaml.safe_load(settings.read_text()) == {"theme": "dark", "default_bundle": "alpha"}
+        assert load_application(select_configuration(None)).avatar.avatar.id == "alpha"
+    else:
+        assert contents(tmp_path) == before | {LOCK: b""}
+
+
+def test_concurrent_inits_never_both_become_the_default(home: Path) -> None:
+    paths, read, replace = application_paths(), template.read_settings, os.replace
+    reads, results, failures = [], {}, []
+    beta_read = threading.Event()
+
+    def counted(paths: object) -> dict:
+        if threading.current_thread() is not threading.main_thread():
+            reads.append(paths)
+            if len(reads) == 2:  # Validation, then beta's own look for a default.
+                beta_read.set()
+        return read(paths)
+
+    def create_beta() -> None:
+        try:
+            results["beta"] = create_bundle(paths, "beta", avatar_id="beta").default_bundle
+        except BaseException as error:
+            failures.append(error)
+
+    beta = threading.Thread(target=create_beta)
+
+    def racing(*args: object) -> None:
+        if beta.ident is None:
+            # Alpha is about to commit; beta has just found no default either.
+            beta.start()
+            assert beta_read.wait(HANG_GUARD)
+        replace(*args)
+
+    with mock.patch.object(template, "read_settings", counted):
+        with mock.patch.object(os, "replace", racing):
+            results["alpha"] = create_bundle(paths, "alpha", avatar_id="alpha").default_bundle
+        beta.join(HANG_GUARD)
+    assert (failures, beta.is_alive()) == ([], False)
+    assert results == {"alpha": "alpha", "beta": "alpha"}
+    assert read(paths) == {"default_bundle": "alpha"}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "# Personal settings.\ntheme: dark\n",
+        "theme: dark",
+        "{theme: dark}\n",
+        "theme: dark\n...\n",
+        "# Personal settings.\ntheme: dark\ndefault_bundle: null\n",
+    ],
+    ids=["block", "no-final-newline", "flow", "document-end", "null-default"],
+)
+def test_the_default_joins_any_valid_settings_and_keeps_their_values(
+    text: str, home: Path, capsys: pytest.CaptureFixture
+) -> None:
+    settings = home / "settings" / "settings.yaml"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(text)
+    assert create("alpha", "alpha") == 0
+    assert yaml.safe_load(settings.read_text()) == {"theme": "dark", "default_bundle": "alpha"}
+    # A plain block mapping keeps its text and comments; other forms are written again.
+    if "default_bundle" not in text and not text.startswith("{") and "..." not in text:
+        assert settings.read_text() == text.rstrip("\n") + "\ndefault_bundle: alpha\n"
+
+
+def test_named_references_and_init_targets_stay_inside_the_real_home(
+    tmp_path: Path, home: Path, capsys: pytest.CaptureFixture
+) -> None:
+    assert create("alpha", "alpha") == 0
+    configs, outside = home / "configs", tmp_path / "outside"
+    outside.mkdir()
+    # A home reached through an alias, and links that stay inside the home, are valid.
+    alias = tmp_path / "alias"
+    alias.symlink_to(home)
+    (configs / "profiles" / "shared").symlink_to(configs / "profiles" / "alpha")
+    beta = {"avatar": {"id": "beta"}, "profiles": {"voice": "shared/voice"}}
+    write(configs / "bundles" / "beta.yaml", beta)
+    with mock.patch.dict(os.environ, {"ALPHAAVATAR_HOME": str(alias)}):
+        assert main(["config", "check", "beta"]) == 0 and create("gamma", "gamma") == 0
+    capsys.readouterr()
+
+    # A bundle file or a profile directory linked out of the home is refused.
+    bundle = configs / "bundles" / "alpha.yaml"
+    shutil.copy(bundle, outside / "alpha.yaml")
+    bundle.unlink()
+    bundle.symlink_to(outside / "alpha.yaml")
+    assert main(["config", "check", "alpha"]) == 2
+    assert f"Bundle 'alpha': {bundle} resolves outside" in capsys.readouterr().err
+    bundle.unlink()
+    shutil.copy(outside / "alpha.yaml", bundle)
+    shutil.move(configs / "profiles" / "alpha", outside / "profiles")
+    (configs / "profiles" / "alpha").symlink_to(outside / "profiles")
+    assert main(["config", "check", "alpha"]) == 2
+    assert "Bundle 'alpha': profiles.loop: " in capsys.readouterr().err
+
+    # init refuses targets that would resolve out of the home before writing anything.
+    (configs / "profiles" / "delta").symlink_to(outside / "delta")
+    (outside / "delta").mkdir()
+    shutil.move(configs / "bundles", outside / "bundles")
+    for name, link in (("delta", configs / "profiles" / "delta"), ("epsilon", configs / "bundles")):
+        if name == "epsilon":
+            link.symlink_to(outside / "bundles")
+        before = contents(tmp_path)
+        assert create(name, name) == 2
+        assert "Refusing to create: " in capsys.readouterr().err
+        assert contents(tmp_path) == before
+    # An explicit file keeps its own rules wherever it is.
+    write(outside / "single.yaml", {"avatar": {"id": "single"}})
+    assert main(["config", "check", str(outside / "single.yaml")]) == 0
 
 
 def test_console_commands_run_without_the_host_log_socket(tmp_path: Path) -> None:
@@ -848,6 +993,7 @@ def test_console_commands_run_without_the_host_log_socket(tmp_path: Path) -> Non
         [
             "configs/bundles/console.yaml",
             *(f"configs/profiles/console/{section}.yaml" for section in SECTIONS),
+            "settings/.write.lock",
             "settings/settings.yaml",
         ]
     )

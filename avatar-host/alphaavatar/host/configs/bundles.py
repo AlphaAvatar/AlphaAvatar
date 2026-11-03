@@ -21,8 +21,10 @@ application home. Its ``profiles`` mapping places one profile under each plugin 
 
 A profile is one section body and references nothing, so references cannot form a cycle.
 A section comes from the configuration file or from one profile, never both. Names use a
-fixed alphabet and are never paths; explicit configuration files keep their own path rules.
-Reading is pure: it creates no directory and changes no setting or environment variable.
+fixed alphabet and are never paths, and their real locations, symbolic links resolved, stay
+in their directory of the application home; explicit configuration files keep their own path
+rules. Reading is pure: it creates no directory and changes no setting or environment
+variable.
 """
 
 from __future__ import annotations
@@ -95,6 +97,16 @@ def profile_path(paths: ApplicationPaths, name: str) -> Path:
     return paths.configs.profiles_dir.joinpath(*directories, f"{leaf}.yaml")
 
 
+def check_inside(paths: ApplicationPaths, path: Path, directory: Path, label: str) -> None:
+    """A named file's real location stays in its directory, itself in the real home.
+
+    Resolving both sides keeps a home reached through an alias valid.
+    """
+    real, boundary = path.resolve(), directory.resolve()
+    if not (real.is_relative_to(boundary) and boundary.is_relative_to(paths.root.resolve())):
+        raise ConfigReferenceError(f"{label}: {path} resolves outside {directory} to {real}")
+
+
 def application_paths(overrides: Sequence[str] = ()) -> ApplicationPaths:
     """The home holding bundles and settings, chosen as for loading; settings never choose it."""
     from omegaconf import OmegaConf
@@ -155,10 +167,10 @@ def select_configuration(target: str | None, overrides: Sequence[str] = ()) -> C
                 "pass a bundle name or a file, or create a bundle with "
                 "`alphaavatar config init <name> --avatar-id <id>`"
             )
-    path = bundle_path(paths, target)
+    path, label = bundle_path(paths, target), f"{'Default b' if default else 'B'}undle {target!r}"
     if not path.is_file():
-        kind = "Default bundle" if default else "Bundle"
-        raise ConfigReferenceError(f"{kind} {target!r} does not exist: {path}")
+        raise ConfigReferenceError(f"{label} does not exist: {path}")
+    check_inside(paths, path, paths.configs.bundles_dir, label)
     return ConfigSource(path, target, default=default, home=paths.root)
 
 
@@ -187,12 +199,13 @@ def compose_profiles(
                 f"{origin}: {where} must be a profile name, <directory>/<name> with {_NAMES}"
             )
         path = profile_path(paths, name)
-        try:
-            body = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
+        if not path.is_file():
             raise ConfigReferenceError(
                 f"{origin}: {where} references missing profile {name!r}: {path}"
-            ) from None
+            )
+        check_inside(paths, path, paths.configs.profiles_dir, f"{origin}: {where}")
+        try:
+            body = yaml.safe_load(path.read_text(encoding="utf-8"))
         except yaml.YAMLError:
             # The parser error would quote the line, which may hold a credential.
             raise ConfigReferenceError(f"{origin}: profile {name!r} is not valid YAML") from None

@@ -29,7 +29,10 @@ profiles:
   cycle; a profile with its own `profiles` is rejected.
 - A section comes from the bundle or from one profile, never both.
 - Names use 1-64 lowercase letters, digits, `-` or `_`; profile names add `/` between parts.
-  They are never paths and always resolve inside the home, whatever the working directory.
+  They are never paths and resolve inside the home, whatever the working directory.
+- With symbolic links resolved, a named bundle must stay in `configs/bundles` and a profile in
+  `configs/profiles`, both inside the real home; a link out of the home is an error. A home
+  reached through an alias, and links that stay inside the home, are fine.
 - YAML anchors do not cross files. `${...}` interpolation resolves after composition, as in a
   single file.
 - The home is chosen as before: `application.home` override, then `ALPHAAVATAR_HOME`, then the
@@ -75,10 +78,17 @@ Created bundle my-avatar
   disabled. The composed result equals the former single-file template.
 - Writes no credentials and no machine paths.
 - Never overwrites an existing bundle or profile file; existing directories are reused.
-- Sets `default_bundle` only when none is set, appending it so other settings and comments
-  stay. Settings are replaced atomically.
-- On failure, removes only the files and empty directories it created; existing files,
-  shared profiles and settings stay unchanged.
+  Refuses any target whose real location would leave the home.
+- Sets `default_bundle` only when none is set. Reading, deciding and replacing the settings
+  happen under one lock (`settings/.write.lock`, kept by the lock library), so concurrent
+  `init` runs never both become the default.
+- Appends `default_bundle` when the file is a plain block mapping, keeping other settings and
+  comments. Otherwise — `default_bundle: null`, a flow mapping, an explicit document end — it
+  writes the same values again, without comments. Settings are replaced atomically.
+- Replacing the settings commits the bundle. Before that, a failure or Ctrl+C removes only the
+  files and empty directories it created; existing files, shared profiles and settings stay
+  unchanged, and the settings lock file may remain. After it, the complete bundle stays and
+  the interruption is still reported.
 
 Set these in the environment or `.env`, never in the files:
 

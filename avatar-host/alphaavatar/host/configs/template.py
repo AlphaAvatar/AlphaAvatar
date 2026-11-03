@@ -24,7 +24,7 @@ from pathlib import Path
 
 from alphaavatar.core.workspace import ApplicationPaths
 
-from .bundles import check_bundle_name, read_settings
+from .bundles import check_bundle_name, check_inside, read_settings
 
 # Credentials stay in the environment (or the .env file named by ENV_FILE), never in the files.
 REQUIRED_ENVIRONMENT = (
@@ -178,66 +178,84 @@ def _directory(path: Path, created: list[Path]) -> None:
         created.append(directory)
 
 
-def _set_default(paths: ApplicationPaths, name: str, created: list[Path]) -> str:
-    """Set the default only when none is set, replacing the settings file atomically."""
+def _set_default(
+    paths: ApplicationPaths, name: str, created: list[Path], staged: list[Path]
+) -> str:
+    """Set the default only when none is set; replacing the settings file is the commit."""
     import yaml
 
-    settings = read_settings(paths)
-    if settings.get("default_bundle") is not None:
-        return settings["default_bundle"]
+    from alphaavatar.agents.utils.files.atomic import locked_directory
+
+    if (default := read_settings(paths).get("default_bundle")) is not None:
+        return default
     target = paths.settings_file
-    try:
-        text, mode = target.read_text(encoding="utf-8"), target.stat().st_mode
-    except FileNotFoundError:
-        text, mode = "", None
-    expected = settings | {"default_bundle": name}
-    # Appending keeps every other setting and its comments; otherwise rewrite the values.
-    if "default_bundle" not in settings:
-        text += ("\n" if text and not text.endswith("\n") else "") + f"default_bundle: {name}\n"
-    if "default_bundle" in settings or yaml.safe_load(text) != expected:
-        text = yaml.safe_dump(expected, sort_keys=False, allow_unicode=True)
     _directory(target.parent, created)
-    temporary = target.with_name(f".{target.name}.{secrets.token_hex(8)}.tmp")
-    try:
+    # Read, decide and replace under one lock: concurrent inits never both become default.
+    with locked_directory(target.parent):
+        settings = read_settings(paths)
+        if (default := settings.get("default_bundle")) is not None:
+            return default
+        try:
+            text, mode = target.read_text(encoding="utf-8"), target.stat().st_mode
+        except FileNotFoundError:
+            text, mode = "", None
+        expected = settings | {"default_bundle": name}
+        # Appending keeps every other setting and its comments, when the result still holds
+        # the same values; otherwise the values are written again without comments.
+        text += ("\n" if text and not text.endswith("\n") else "") + f"default_bundle: {name}\n"
+        try:
+            appended = "default_bundle" not in settings and yaml.safe_load(text) == expected
+        except yaml.YAMLError:
+            appended = False
+        if not appended:
+            text = yaml.safe_dump(expected, sort_keys=False, allow_unicode=True)
+        temporary = target.with_name(f".{target.name}.{secrets.token_hex(8)}.tmp")
         with temporary.open("x", encoding="utf-8", newline="\n") as stream:
+            staged.append(temporary)
             stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())
         if mode is not None:
             temporary.chmod(mode)
         os.replace(temporary, target)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
     return name
 
 
 def create_bundle(paths: ApplicationPaths, name: str, *, avatar_id: str) -> CreatedBundle:
     """Create the bundle and its profiles, then the default; never overwrite existing files.
 
-    A failure removes only the files and empty directories this call created; existing
-    files, shared profiles and settings stay as they were.
+    Every target stays inside the real application home. Until the settings replacement
+    commits, a failure or cancellation removes only the files and empty directories this
+    call created; existing files, shared profiles and settings stay as they were. After it,
+    the complete bundle stays and the failure propagates.
     """
     texts = render_bundle(name, avatar_id)
     read_settings(paths)  # Unreadable settings refuse before any file exists.
     targets = {paths.configs.root / relative: text for relative, text in texts.items()}
+    for target, directory in (
+        *((target, paths.configs.root) for target in targets),
+        (paths.settings_file, paths.settings_dir),
+    ):
+        check_inside(paths, target, directory, "Refusing to create")
     for target in targets:
         if target.exists():
             raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), str(target))
     created: list[Path] = []
+    staged: list[Path] = []  # The settings replacement: once it is gone, it committed.
     try:
         for target, text in targets.items():
             _directory(target.parent, created)
             with target.open("x", encoding="utf-8", newline="\n") as stream:
                 created.append(target)
                 stream.write(text)
-        default = _set_default(paths, name, created)
+        default = _set_default(paths, name, created, staged)
     except BaseException:
-        for path in reversed(created):
-            try:
-                path.rmdir() if path.is_dir() else path.unlink()
-            except OSError:
-                continue  # Not empty or already gone: someone else's content stays.
+        if not staged or staged[0].exists():
+            for path in reversed([*created, *staged]):
+                try:
+                    path.rmdir() if path.is_dir() else path.unlink()
+                except OSError:
+                    continue  # Not empty or already gone: someone else's content stays.
         raise
     bundle, *profiles = targets
     return CreatedBundle(name, bundle, tuple(profiles), default)

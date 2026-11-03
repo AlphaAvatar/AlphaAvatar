@@ -8,7 +8,7 @@
 
 | 批次 | 内容 | 日期 | 基线 HEAD | 提交 | 状态 |
 |---|---|---|---|---|---|
-| T-10A | profile／bundle 配置公共能力：拆分配置生成、选择规则、引用解析 | 2026-11-03 | `62af558` | 未提交 | 待 review：本地 283 passed（CI 方式 ×1）；Host 测试 ×5 无失败；14 个变异中 12 个被杀死，另重写 1 个后被杀死，1 个为等价变异 |
+| T-10A | profile／bundle 配置公共能力：拆分配置生成、选择规则、引用解析 | 2026-11-03 | `62af558` | `de480ad`；收尾未提交 | 已 review（`de480ad`）：结构、入口与快照符合约定，未验收；4 处 P2（提交后取消、并发默认值、符号链接越界、settings 格式）已修复（§11），待复核：本地 292 passed（CI 方式 ×1） |
 
 ---
 
@@ -201,4 +201,64 @@ init_config:
 
 - Doctor、安装器、升级回滚、App、TUI、Agent 集成。
 - 没有迁移或删除已有单文件配置、cache 或 Avatar 工作区。
-- 本批修改没有 commit 或 push。
+- 首轮修改随 `de480ad` 提交。
+
+### 11. `de480ad` review 收尾（基线 `de480ad`）
+
+- review 结论：配置拆分、统一入口和启动快照符合约定；4 处 P2 修复前不验收；另有 1 处文档问题。
+- review 环境：成功收集 283 项；其他回归 184 项、配置命令 37 项通过；1 条入口测试受 AF_UNIX 权限限制，替换 HostLog 边界后通过；Ruff、格式、workspace、lock 通过。
+
+#### 11.1 问题与修复
+
+| 问题 | 原因 | 修复 |
+|---|---|---|
+| P2 settings 提交后被取消，留下悬空的默认值 | `os.replace()` 成功后，异常清理仍删除了 bundle 和 profiles | settings 替换就是提交点。用同目录的临时文件判断：它还在，说明替换没有生效，全部回滚（临时文件一并删除）；它已经不在，说明已提交，保留完整配置，取消或异常照常向上传播 |
+| P2 并发初始化覆盖刚设置的默认值 | 读取、判断、替换之间没有一致性保护 | 用仓库已有的 `locked_directory`（filelock）锁住 settings 目录。锁内重新读取 settings；此时已有默认值就保持不变，否则写入并替换。锁外的第一次读取只用于在已有默认值时快速返回，不加锁也不写文件 |
+| P2 命名引用经符号链接越出约定目录 | 只校验了名称并拼接路径，没有检查真实位置 | 新增 `check_inside`：解析符号链接后，命名 bundle 必须位于真实的 `configs/bundles` 下，profile 必须位于真实的 `configs/profiles` 下，而这两个目录本身必须在真实 Home 内。读取（选择、组合）和 `config init` 的全部目标（bundle、profiles、settings）都做这项检查，生成时在写入任何文件之前检查。两侧都解析，所以通过别名访问 Home、在 Home 内部的链接仍然有效；显式文件不受限制 |
+| P2 部分合法的 settings 格式导致初始化失败 | 追加后的文本解析失败时，没有进入重新序列化的回退 | 追加后的文本解析失败（`YAMLError`）或值不一致时，保留原有字段，重新序列化后原子替换 |
+| 文档 | `config.md` 说会保留 settings 注释，但 `default_bundle: null` 等情况会重写 | `config.md` 写明：只有普通块映射会追加并保留注释，其余形式按原值重写、不保留注释；同时写明锁文件、提交边界和真实路径规则 |
+
+- 锁文件：`settings/.write.lock` 按锁库和仓库约定保留，不手动删除，否则正在等锁的进程可能锁住一个已删除的文件。由此带来的行为变化：全新 Home 上如果在 settings 这一步失败，会留下 `settings/` 目录和其中的锁文件，其他新建内容全部清理。
+
+#### 11.2 回归测试（`test_config_commands.py`，新增 9 项）
+
+| 用例 | 覆盖 | 在 `de480ad` 代码上 |
+|---|---|---|
+| `test_cancelling_init_undoes_it_before_the_settings_commit_and_keeps_it_after[after-commit]` | 真实 `os.replace` 成功后立即抛出 `KeyboardInterrupt`：取消传给调用方；settings 指向完整 bundle，可以按默认 bundle 加载 | 失败（bundle 被删除，默认值悬空） |
+| 同上 `[before-commit]` | 替换前被取消：除锁文件外逐字节回到原状，原 settings 不变 | 失败，原因只是新增的锁文件预期；原代码在这一路本来就能正确回滚 |
+| `test_concurrent_inits_never_both_become_the_default` | 两个线程：alpha 即将提交时，beta 已读到"没有默认值"，用事件确定这个交错。之后 alpha 提交，beta 在锁内重新读取，保留 alpha；两者都报告 alpha 是默认 | 失败（两者都报告自己是默认） |
+| `test_the_default_joins_any_valid_settings_and_keeps_their_values`（5 种） | 块映射、无结尾换行（追加，原文和注释保留）；流式映射、带 `...` 文档结束标记、`default_bundle: null`（按原值重写）。原有键值都保留 | 流式、文档结束 2 种失败（`ParserError`、`ComposerError`） |
+| `test_named_references_and_init_targets_stay_inside_the_real_home` | 通过别名访问 Home、Home 内部的 profile 链接：check 和 init 正常。bundle 文件链接到外部、profile 目录链接到外部：都报错并指出位置。init 时 profile 目录或 bundles 目录链接到外部：都在写入前拒绝，文件树逐字节不变。外部的显式单文件仍可加载 | 失败（越界的 bundle 通过了检查） |
+
+既有用例更新：
+- 生成的文件清单、console 用例的文件清单加入 `settings/.write.lock`；
+- 全新 Home 上替换失败时，预期留下锁文件和它所在的目录。
+
+#### 11.3 变异验证（文件临时替换后按 SHA-256 恢复）
+
+| 变异 | 结果 |
+|---|---|
+| C1 提交后仍回滚 | 被杀死（after-commit） |
+| C2 settings 已暂存就不回滚 | 被杀死 |
+| C3 锁内不重新检查默认值 | 被杀死（只被并发用例发现） |
+| C4 去掉 settings 锁 | 被杀死（并发用例，以及锁文件预期） |
+| C5 不检查 bundle 的真实路径 | 被杀死 |
+| C6 不检查 profile 的真实路径 | 被杀死 |
+| C7 不检查生成目标 | 被杀死 |
+| C8 追加后解析失败时不回退 | 被杀死（flow、document-end） |
+| C9 不解析 Home 别名 | 被杀死（别名 Home） |
+
+（第一版 C3 把 settings 整个清空，作用过宽，因此重写为 C3'，只去掉锁内的重新检查；表中记录的是重写后的结果。）
+
+#### 11.4 运行结果
+
+| 项目 | 结果 |
+|---|---|
+| 全量（CI 方式：`--basetemp`、检出前后对比）×1 | **292 passed**，45.9 s；检出目录前后一致 |
+| 新增用例与失败回滚用例（13 项）×30 | 0 失败 |
+| `avatar-host/tests` ×5 | 0 失败（每轮 81 passed） |
+| Ruff、格式、`scripts/check_workspace.py`、`uv lock --check`、对改动文件运行 pre-commit | 全部通过 |
+
+- 修改文件：`configs/bundles.py`、`configs/template.py`、`avatar-host/tests/test_config_commands.py`、`docs/cli/config.md`、本日志。
+- 并发用例用同一进程内的两个线程；filelock 在 Linux 上用 flock，不同的打开文件描述之间互斥。没有做多进程或 Windows 上的锁验证。
+- 本轮没有 commit 或 push。
