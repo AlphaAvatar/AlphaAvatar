@@ -151,6 +151,21 @@ class FailingCloseRunner(EchoRunner):
         raise RuntimeError("private close detail")
 
 
+class GateInitRunner(InferenceRunner):
+    """Initialization enters a gate the test observes, then waits until the test opens it."""
+
+    INFERENCE_METHOD = "test.gate_init"
+
+    def initialize(self) -> None:
+        root = Path(self.config_for("test")["root"])
+        (root / "init.entered").touch()
+        deadline = time.monotonic() + 60
+        while not (root / "init.open").exists():
+            if time.monotonic() > deadline:
+                raise TimeoutError("The test never opened the initialization gate")
+            time.sleep(0.002)
+
+
 class ClosingRunner(EchoRunner):
     """A ready runner whose graceful CLOSE path leaves a trace of its close hook."""
 

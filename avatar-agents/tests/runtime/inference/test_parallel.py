@@ -502,22 +502,40 @@ async def test_close_is_idempotent_and_reclaims_every_worker_and_channel(
         async with asyncio.timeout(HANG_GUARD):
             await runtime.start()
         owned_endpoints.add(runtime.endpoint)
-        executor = InferenceExecutor(runtime.endpoint, config)
+        executor = InferenceExecutor(runtime.endpoint, config)  # One channel per worker.
         held = asyncio.create_task(executor.do_inference(PARALLEL, f"gate:h{cycle}".encode()))
         await entered(tmp_path, f"h{cycle}")
         for method in (PARALLEL, SECOND):
             payloads = [f"{method}:{cycle}:{call}".encode() for call in range(4)]
             calls = (executor.do_inference(method, payload) for payload in payloads)
             assert await asyncio.gather(*calls) == payloads
-        await executor.close()
-        with pytest.raises(asyncio.CancelledError):
-            await held
+        # With both channels busy, further calls wait locally. 16 per channel outlast close's
+        # own steps: they have all left on return only because close waits for them.
+        busy = asyncio.create_task(executor.do_inference(PARALLEL, f"gate:b{cycle}".encode()))
+        await entered(tmp_path, f"b{cycle}")
+        queued = [
+            asyncio.create_task(executor.do_inference(PARALLEL, f"queued:{cycle}:{call}".encode()))
+            for call in range(32)
+        ]
+        await asyncio.sleep(0)
+        assert not any(task.done() for task in queued)
+        async with asyncio.timeout(HANG_GUARD):
+            await executor.close()
+        # Close returns only after its running and locally queued calls have left.
+        assert all(task.done() for task in (held, busy, *queued))
+        for task in (held, busy):
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        for task in queued:
+            with pytest.raises(RuntimeError, match="closed"):
+                await task
         async with asyncio.timeout(HANG_GUARD):
             await runtime.close()
             await runtime.close()
         assert not runtime.is_alive
         assert_released(socket_root, before, fds)
     assert len((tmp_path / f"{PARALLEL}.inits").read_text().split()) == 4
+    assert not any(payload.startswith("queued") for payload in journal(tmp_path))
 
 
 async def test_parallel_configuration_is_validated_before_any_process_starts(

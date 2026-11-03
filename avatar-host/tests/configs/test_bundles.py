@@ -20,6 +20,7 @@ import io
 import json
 import os
 import shutil
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 from unittest import mock
@@ -31,7 +32,13 @@ from config_samples import CONFIG, SECRETS, SECTIONS, files, write
 # Imported at collection: configuration plugins adjust process variables while importing (O-2).
 import alphaavatar.agents.configs  # noqa: F401
 from alphaavatar.host.cli.app import main
-from alphaavatar.host.configs import load_application, select_configuration
+from alphaavatar.host.configs import (
+    application_paths,
+    create_bundle,
+    load_application,
+    select_configuration,
+    template,
+)
 from alphaavatar.host.configs.loader import restore_application
 from alphaavatar.plugins.memory.config import DefaultMemoryConfig
 from alphaavatar.plugins.persona.config import DefaultPersonaConfig
@@ -430,10 +437,10 @@ def test_init_never_overwrites_reuses_directories_and_keeps_an_existing_default(
 
 @pytest.mark.parametrize(
     ("failure", "code"),
-    [("profile-write", 28), ("profile-directory", 13), ("settings-replace", 5), ("new-home", 5)],
+    [("profile-write", 28), ("profile-directory", 13), ("settings-cancel", None), ("new-home", 5)],
 )
 def test_a_failed_init_removes_only_what_it_created(
-    failure: str, code: int, tmp_path: Path, home: Path, capsys: pytest.CaptureFixture
+    failure: str, code: int | None, tmp_path: Path, home: Path, capsys: pytest.CaptureFixture
 ) -> None:
     if failure != "new-home":
         # Content to keep: another bundle with its profiles, and settings without a default.
@@ -462,6 +469,8 @@ def test_a_failed_init_removes_only_what_it_created(
         real_mkdir(path, *args, **kwargs)
 
     def unreplaceable(*args: object) -> None:
+        if failure == "settings-cancel":
+            raise KeyboardInterrupt  # Cancelled just before the settings commit.
         raise OSError(errno.EIO, "Input/output error")
 
     patch = {
@@ -469,11 +478,81 @@ def test_a_failed_init_removes_only_what_it_created(
         "profile-directory": mock.patch.object(os, "mkdir", denied),
     }.get(failure, mock.patch.object(os, "replace", unreplaceable))
     with patch:
-        assert create("new", "new") == 2
-    assert f"errno={code}" in capsys.readouterr().err
+        if code is None:
+            with pytest.raises(KeyboardInterrupt):
+                create("new", "new")
+        else:
+            assert create("new", "new") == 2
+            assert f"errno={code}" in capsys.readouterr().err
     # Only the settings lock outlives a failure in a new home; the lock library keeps it.
     lock = {"application": None, "application/settings": None, LOCK: b""}
     assert contents(tmp_path) == before | (lock if failure == "new-home" else {})
+
+
+def test_cancelling_init_after_the_settings_commit_keeps_the_bundle_it_made_default(
+    home: Path,
+) -> None:
+    settings = home / "settings" / "settings.yaml"
+    settings.parent.mkdir(parents=True)
+    settings.write_text("theme: dark\n")
+    replace = os.replace
+
+    def interrupted(*args: object) -> None:
+        replace(*args)
+        raise KeyboardInterrupt
+
+    with mock.patch.object(os, "replace", interrupted), pytest.raises(KeyboardInterrupt):
+        create("alpha", "alpha")
+    # The default names a complete bundle; the cancellation still reached the caller.
+    assert yaml.safe_load(settings.read_text()) == {"theme": "dark", "default_bundle": "alpha"}
+    assert load_application(select_configuration(None)).avatar.avatar.id == "alpha"
+
+
+def test_concurrent_inits_never_both_become_the_default(home: Path) -> None:
+    paths, read, replace = application_paths(), template.read_settings, os.replace
+    reads, results, failures = [], {}, []
+    beta_read = threading.Event()
+
+    def counted(paths: object) -> dict:
+        settings = read(paths)
+        if threading.current_thread() is not threading.main_thread():
+            reads.append(settings.get("default_bundle"))
+            if len(reads) == 2:  # Validation, then beta's own look for a default: done.
+                beta_read.set()
+        return settings
+
+    def create_beta() -> None:
+        try:
+            results["beta"] = create_bundle(paths, "beta", avatar_id="beta").default_bundle
+        except BaseException as error:
+            failures.append(error)
+
+    beta = threading.Thread(target=create_beta)
+
+    def racing(*args: object) -> None:
+        if beta.ident is None:
+            # Alpha is about to commit; beta has just found no default either.
+            beta.start()
+            assert beta_read.wait(HANG_GUARD)
+        replace(*args)
+
+    with mock.patch.object(template, "read_settings", counted):
+        with mock.patch.object(os, "replace", racing):
+            results["alpha"] = create_bundle(paths, "alpha", avatar_id="alpha").default_bundle
+        beta.join(HANG_GUARD)
+    assert (failures, beta.is_alive()) == ([], False)
+    assert reads[1] is None  # Beta had found no default before alpha committed.
+    assert results == {"alpha": "alpha", "beta": "alpha"}
+    assert read(paths) == {"default_bundle": "alpha"}
+
+
+def test_the_default_joins_settings_a_line_cannot_extend_and_keeps_their_values(home: Path) -> None:
+    settings = home / "settings" / "settings.yaml"
+    settings.parent.mkdir(parents=True)
+    # Settings written as JSON: an appended line would break the mapping, so it is rewritten.
+    settings.write_text('{"theme": "dark"}\n')
+    assert create("alpha", "alpha") == 0
+    assert yaml.safe_load(settings.read_text()) == {"theme": "dark", "default_bundle": "alpha"}
 
 
 def test_named_references_and_init_targets_stay_inside_the_real_home(
@@ -533,3 +612,18 @@ def test_named_references_and_init_targets_stay_inside_the_real_home(
     # An explicit file keeps its own rules wherever it is.
     write(outside / "single.yaml", {"avatar": {"id": "single"}})
     assert main(["config", "check", str(outside / "single.yaml")]) == 0
+
+
+def test_a_settings_lock_linked_to_the_settings_is_refused_and_init_leaves_nothing(
+    tmp_path: Path, home: Path, capsys: pytest.CaptureFixture
+) -> None:
+    settings = home / "settings" / "settings.yaml"
+    settings.parent.mkdir(parents=True)
+    settings.write_text("theme: dark\n")
+    # Opening a lock truncates its file; through this link, that would empty the settings.
+    # Other link targets are refused by the shared lock (test_locked_directory.py).
+    settings.with_name(".write.lock").symlink_to(settings)
+    before = contents(tmp_path)
+    assert create("alpha", "alpha") == 2
+    assert "Refusing to lock settings through a symbolic link" in capsys.readouterr().err
+    assert contents(tmp_path) == before

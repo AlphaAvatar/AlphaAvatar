@@ -35,9 +35,15 @@ def test_safe_projection_keeps_useful_settings_without_credentials(
 ) -> None:
     # Over the 8192-character log bound; plugin mappings may carry hostile keys too.
     introduction = "Keep [bold red]this[/] and [hidden] literal: " + "word " * 1800 + "end"
+    # Credentials equal to a fixed field name, or empty after their scheme, rewrite no field.
+    servers = CONFIG["tools"]["mcp"]["servers"] | {
+        "plain": {"url": "https://mcp.invalid/a", "headers": {"Authorization": "Bearer health"}},
+        "blank": {"url": "https://mcp.invalid/b", "headers": {"Authorization": "Bearer "}},
+    }
     value = CONFIG | {
         "avatar": {"id": "assistant", "introduction": f"{introduction} {SECRETS['vdb']}\x1b[31m"},
         "context": {"init_config": {"key\x1b[2J": 1}},
+        "tools": {"mcp": {"enabled": True, "servers": servers}},
     }
     config = load_application(
         write(tmp_path / "avatar.json", value), ["voice.tts.speed=1.3", "loop.plugin=realtime"]
@@ -50,6 +56,8 @@ def test_safe_projection_keeps_useful_settings_without_credentials(
     assert view["avatar"]["workspace_root"] == str(config.workspace.root)
     assert view["memory"]["vdb_config"] == {"url": "[hidden]", "api_key": "[hidden]"}
     assert view["tools"]["mcp"]["servers"]["docs"]["headers"] == {"Authorization": "[hidden]"}
+    assert set(view["tools"]["mcp"]["servers"]) == {"docs", "plain", "blank"}
+    assert view["host"]["health"]["bind"] == "127.0.0.1"
     # Complete text, a reused credential replaced and terminal escapes removed, keys included.
     assert view["avatar"]["introduction"] == f"{introduction} [redacted]"
     assert view["context"]["init_config"] == {"key": 1}

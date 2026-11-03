@@ -11,8 +11,9 @@
 | T-10A | profile／bundle 配置公共能力：拆分配置生成、选择规则、引用解析 | 2026-11-03 | `62af558` | `de480ad`、`3c40fda`、`85d7fcf` | **已验收**（验收提交 `85d7fcf`）：本地 294 passed（CI 方式 ×1）；review 环境（filelock 3.20.0）收集 294 项、原生选跑 232 项通过，多进程互斥通过；Ruff、格式、workspace、lock 通过；原生 IPC 全量未独立复跑 |
 | T-10A1 | 共享 `locked_directory` 的最小缺陷修复：拒绝符号链接锁文件 | 2026-11-03 | `85d7fcf` | `b46c4ea` | **已验收**（验收提交 `b46c4ea`）：filelock 3.20.0；helper 与 Memory 两条路径共 14 项回归通过；review 环境收集 308 项，原生选跑 246 项通过 |
 | T-10T | 测试整理（只改测试）：按职责调整目录，合并重复、减少绑定实现细节的断言 | 2026-11-03 | `85d7fcf` | `b46c4ea` | **已验收**（验收提交 `b46c4ea`）：原有 294 个参数化用例全部保留，新增 14 项，无重复收集；另有 20 项推理测试在回环 TCP 适配下通过；原生 IPC 全量未独立复跑 |
-| KD-16 | Host 日志关闭时丢失最后一条诊断 | 2026-11-03 | `84f2c6d` | 未提交 | 已修复，待复核：确定性竞态用例在原逻辑上 10/10 失败，修复后 30/30 通过；验证后按 T-10T2 规则移出项目；移出后本地 287 passed |
-| T-10T2 | 只为修小 BUG 的测试移出项目 | 2026-11-03 | `84f2c6d` | 未提交 | 待 review：移出 13 个测试函数（23 个用例）；本地 287 passed（CI 方式 ×1） |
+| KD-16 | Host 日志关闭时丢失最后一条诊断 | 2026-11-03 | `84f2c6d` | `c09f8dd` | 生产修复已在 `c09f8dd` review 中接受；确定性回归与有界关闭用例在 T-10T3 恢复为常驻测试，待验收 |
+| T-10T2 | 只为修小 BUG 的测试移出项目 | 2026-11-03 | `84f2c6d` | `c09f8dd` | `c09f8dd` review：删测需调整，其中两处"仍由谁覆盖"被变异证伪（提交后取消、Executor 本地排队调用）；在 T-10T3 按最小范围收口 |
+| T-10T3 | `c09f8dd` review 收口：恢复必要回归，合并进现有测试，更正日志 | 2026-11-03 | `c09f8dd` | 未提交 | 待 review：只改测试和日志；T-10T2 移出的 23 项中恢复 9 项、合并 3 项、仍移出 11 项；本地 296 passed（CI 方式 ×1）；13 个变异全部被对应用例发现 |
 
 ---
 
@@ -536,9 +537,9 @@ settings 已有的回归（锁文件链接两种情形、并发默认值、提�
 - `close()` 在最后一条记录入队之后才设置停止标志，所以这次等待之前的记录一定会被读到并写出。
 - 有界批处理（每批 256 条）、`shutdown_timeout`、期限到时明确报错（`Diagnostic log writer did not drain before its deadline`）、写入失败的上报、脱敏、终端和文件输出格式、CLI 退出码都不变。持续有输入时，写线程不会退出，`close()` 到期限时明确报错，不会静默丢记录后报告关闭成功。
 
-### 2. 回归测试（验证后已按 T-10T2 规则移出项目）
+### 2. 回归测试（T-10T2 曾移出，T-10T3 恢复为常驻）
 
-下面两个用例用来验证修复，验证完成后已从项目中移除（见 T-10T2），副本暂存在 scratchpad 的 `t10t/removed/test_host_log.py`，不进入仓库。
+下面两个用例用来验证修复。T-10T2 曾把它们移出项目；`c09f8dd` review 指出普通入口测试不能稳定替代，T-10T3 已把它们恢复为 `avatar-host/tests/test_host_log.py` 的常驻回归。
 
 | 用例 | 覆盖 |
 |---|---|
@@ -599,6 +600,12 @@ settings 已有的回归（锁文件链接两种情形、并发默认值、提�
 | `runtime/inference/test_runtime.py::test_mixed_close_drains_ready_runners_and_terminates_initializing_ones`（×2） | O-1 在 Runtime 层的对应用例 | 同上 |
 | Router `test_speech_synthesis.py::test_revoked_answer_awaiting_tts_first_audio_is_interrupted_not_failed`、`test_provider_self_cancellation_on_an_active_output_remains_a_failure` | KD-12（低严重度）：打断时的原因标签和 ERROR 日志，后者是它的对照 | 打断时撤回旧 PCM 和文本、仍完成收尾由 `test_interrupted_speech_withholds_old_pcm_and_text_but_settles_closing_facts` 覆盖 |
 
+> **更正（`c09f8dd` review 后）**：上表"仍由谁覆盖"一列有两处不成立，review 已用变异证伪：
+> - 恢复"提交后仍回滚"的旧逻辑，`test_a_failed_init_removes_only_what_it_created` 的 4 个用例全部通过，但默认值已指向被删除的 bundle；
+> - 去掉 Executor 等待本地排队调用收尾的逻辑，`test_close_is_idempotent_and_reclaims_every_worker_and_channel` 仍然通过。
+>
+> 这一列列出的多是相邻用例，并不直接覆盖被移出的行为。最终处理，以及每一项现在有没有直接覆盖，以 T-10T3 为准。
+
 随之删除的测试辅助代码：`test_runtime.py` 的 `CLOSING` 常量、样例中的 `GateInitRunner`（只服务于被移出的 O-1 用例），以及 Ruff 清理掉的、因此不再使用的导入。
 
 审查后保留（不属于"只为修小 BUG"）：
@@ -616,4 +623,98 @@ settings 已有的回归（锁文件链接两种情形、并发默认值、提�
 - Ruff、格式、workspace、lock、对改动文件运行 pre-commit，全部通过；
 - 没有残留未使用的测试辅助定义（逐个检查了每个顶层定义的引用）。
 
+- 本批修改没有 commit 或 push。
+
+---
+
+## `c09f8dd` 复核（KD-16 生产修复接受，T-10T2 删测需调整）
+
+- `c09f8dd` 包含 KD-16 修复和 T-10T2 删测。
+- KD-16：`runtime.py` 的修复成立。在确定性竞态下，最后一条诊断能写出；输入持续到达时，关闭仍在配置的期限内明确报错。没有发现新的生产缺陷。
+- T-10T2：两处替代覆盖不成立（见 T-10T2 一节的更正），建议按最小范围收口，不需要恢复全部 23 项。
+- 必要性按数据一致性、安全边界、资源生命周期和对外契约判断；补丁即使只有几行，也可能值得长期保护。
+- 可以继续精简的：独立的着色测试、重复层级的取消测试、KD-12 这类低严重度的分类测试。日志要写明哪些直接覆盖已经移出。
+- review 环境：收集 287 项，选跑 229 项全部通过；Ruff、格式、workspace、lock 检查通过。IPC 专项用测试自有的回环传输替代 Unix 边界，没有独立完成原生 AF_UNIX 全量验证。
+
+---
+
+## T-10T3 `c09f8dd` review 收口：恢复必要回归，合并进现有测试，更正日志
+
+- 基线：`c09f8dd`，开始时工作区干净。
+- 范围：只改测试和日志。生产代码保持 `c09f8dd` 的状态，`git diff` 中没有测试以外的 `.py` 文件。
+- 判断标准（取代 T-10T2 的标准）：
+  - 保留直接回归：数据一致性、安全边界、资源生命周期、对外契约，即使对应的补丁很小；
+  - 可以移出：独立的展示细节（着色）、同一行为在另一层级的重复测试、低严重度的分类标签。移出时在日志中写明直接覆盖已不在项目中；
+  - 声称的替代覆盖要用变异验证，不能凭推断。
+
+### 1. 恢复与合并
+
+| 范围 | 用例 | 处理 | 理由 |
+|---|---|---|---|
+| 日志关闭 | `test_host_log.py::test_a_record_queued_after_an_empty_wait_is_written_before_close_returns` | 恢复（新文件 `avatar-host/tests/test_host_log.py`） | 对外契约：失败退出必须带诊断。入口用例只有在负载下才可能抓到这个竞态，不能替代 |
+| 日志关闭 | `test_host_log.py::test_close_under_unending_input_fails_at_its_deadline_and_the_writer_still_exits` | 恢复 | 资源生命周期：输入持续到达时，关闭有界并明确报错，写线程之后自行退出 |
+| 资源回收 | `test_local_endpoints.py::test_host_log_construction_failure_releases_its_directory`（receiver、client） | 恢复，保留参数化 | 沙盒拒绝 socket（EPERM）时，私有目录、endpoint 变量和日志 handler 都要回收 |
+| 资源回收 | `runtime/inference/test_process.py::test_cancelled_initialization_is_terminated_without_a_drain_wait`，以及样例 `GateInitRunner` | 恢复，作为初始化取消的唯一代表场景 | 有明确期限：如果先等排空（`close_timeout` = 2×HANG_GUARD），就会超出 HANG_GUARD；断言先发 SIGTERM |
+| 配置初始化 | `configs/test_bundles.py::test_cancelling_init_after_the_settings_commit_keeps_the_bundle_it_made_default` | 只恢复提交后这一侧，改为单个用例 | 数据一致性：提交后取消，不能删除默认值指向的 bundle |
+| 配置初始化 | 提交前取消（原用例的 before-commit 一侧） | 合并进 `test_a_failed_init_removes_only_what_it_created`：原 `settings-replace`（OSError）参数改为 `settings-cancel`（KeyboardInterrupt） | settings 替换处的 OSError 仍由 `new-home` 覆盖（同一个替换失败补丁，断言 errno=5）；两者走同一个 `except BaseException` 回滚，取消版本额外覆盖 BaseException 的路径 |
+| 配置初始化 | `configs/test_bundles.py::test_concurrent_inits_never_both_become_the_default` | 原样恢复 | 数据一致性：并发初始化时，只有第一个成为默认值 |
+| settings | `configs/test_bundles.py::test_the_default_joins_settings_a_line_cannot_extend_and_keeps_their_values` | 5 个参数只保留一个代表场景：JSON 写成的 settings（流式映射） | 追加一行会破坏映射，必须回退为重写，并保留原有值。块映射追加并保留注释由 `test_init_never_overwrites_reuses_directories_and_keeps_an_existing_default` 直接覆盖 |
+| settings | `configs/test_bundles.py::test_a_settings_lock_linked_to_the_settings_is_refused_and_init_leaves_nothing` | 保留一个 Host 回滚集成场景：锁文件链接到 settings 自身 | 数据一致性：打开链接锁会清空 settings。链接到目录外、悬空链接由共享锁的 `test_locked_directory.py` 覆盖 |
+| 安全投影 | 凭据与固定字段名相同（`Bearer health`），以及剥离前缀后为空（`Bearer `） | 合并进 `configs/test_projection.py::test_safe_projection_keeps_useful_settings_without_credentials` | 安全边界与输出契约：断言 `host.health` 字段保留，三个 server 的键名不变 |
+| Executor 关闭 | 关闭返回时，本地排队的调用都已结束 | 合并进 `runtime/inference/test_parallel.py::test_close_is_idempotent_and_reclaims_every_worker_and_channel` | 资源生命周期；排队数量的选择见下 |
+
+Executor 合并的说明：
+- 先按原用例的 16 个排队调用直接并入，变异（去掉 `_InferenceChannels.close` 中的 `await self._settled.wait()`）没有被发现。
+- 原因：现有用例每个 method 有 2 个通道，排队调用分两路交接；关闭自身占用的事件循环轮次，足以让这些调用碰巧全部退出。实测变异下关闭返回时恰好有 18 个已结束，两轮一致。
+- 改为 32 个（每个通道 16 个，与原用例单通道 16 个的深度相同）后，变异下 10/10 失败，未变异时 10/10 通过。
+- 用例最后还确认，排队调用从没有在 Runner 上执行（journal 中没有 `queued` 记录）。
+
+### 2. 仍移出（直接覆盖已不在项目中）
+
+| 用例 | 理由 | 现状 |
+|---|---|---|
+| `cli/test_check.py::test_each_stream_detects_its_own_terminal`（×2） | 独立的着色细节 | **直接覆盖已移出**：stdout、stderr 分别判断各自是否为终端，没有直接测试。`test_only_an_enabled_terminal_gets_styles_and_json_stays_plain` 只断言 stdout 的着色开关 |
+| `test_the_default_joins_…` 的 block、no-final-newline、document-end、null-default 4 个参数 | 同一回退逻辑的其他格式 | block 由 `test_init_never_overwrites_…` 直接覆盖；**其余三种格式的直接覆盖已移出**：没有结尾换行、文档结束标记 `...`、已有 `default_bundle: null` |
+| 锁文件链接到目录外（原 `victim=outside`） | 共享锁已直接覆盖 | `test_locked_directory.py::test_a_linked_lock_file_is_refused_and_left_as_it_was` |
+| `runtime/inference/test_runtime.py::test_mixed_close_drains_ready_runners_and_terminates_initializing_ones`（×2） | 与进程层用例重复的层级 | **直接覆盖已移出**：Runtime 层"就绪 Runner 正常收尾、同时终止初始化中的 Runner"的混合关闭没有直接测试。进程层两侧分别由 `test_cancelled_initialization_is_terminated_without_a_drain_wait` 和 `test_ready_runner_still_closes_through_its_drain_path` 覆盖 |
+| Router `test_revoked_answer_awaiting_tts_first_audio_is_interrupted_not_failed`、`test_provider_self_cancellation_on_an_active_output_remains_a_failure` | KD-12：低严重度的原因标签与日志级别 | **直接覆盖已移出**：AUDIO_COMPLETE 在这一时序下的 reason 是 `synthesis_interrupted`，以及 Provider 在 output 仍有效时自取消仍判为失败，这两点都没有直接测试 |
+
+数量：T-10T2 移出的 23 项中，恢复 9 项（独立用例），合并 3 项（不增加用例数），仍移出 11 项。收集数量从 287 变为 296。
+
+### 3. 反向验证（每次只改一处，运行对应用例，按 SHA-256 恢复）
+
+| # | 变异 | 结果 |
+|---|---|---|
+| M1 | KD-16 原逻辑：根据 `select` 之后的停止标志退出 | 竞态用例失败 |
+| M2 | 停止后读完一批就退出，不管输入是否仍在到达 | 有界关闭用例失败（`close()` 没有报错） |
+| M3 | settings 提交后仍回滚 | 提交后取消用例失败：`Default bundle 'alpha' does not exist` |
+| M4 | 锁内不再重读默认值 | 并发初始化用例失败 |
+| M5 | 去掉 Host 自身的锁链接检查 | 锁链接用例失败：共享锁仍以 `errno=40` 拒绝，但错误信息不再说明原因 |
+| M5b | 同时去掉 Host 与共享锁两处链接检查 | 锁链接用例失败：`config init` 返回 0，settings 经由链接被截断 |
+| M6 | 总是追加，不回退为重写 | JSON settings 用例失败 |
+| M7 | 只在 `Exception` 时回滚，取消不回滚 | `settings-cancel` 失败，其余 3 个参数通过 |
+| M8 | Executor 关闭不等待本地排队调用 | 合并后的关闭用例失败（`all(task.done() …)`），10/10 |
+| M9 | 固定字段名也做凭据替换 | 投影用例失败：`KeyError: 'health'` |
+| M10 | 不过滤空的或过短的凭据候选 | 投影用例失败：普通值被插入 `[redacted]` |
+| M11 | HostLog 构造失败时不删除私有目录 | 构造失败用例失败：遗留 `alphaavatar-log-*` 目录 |
+| M12 | 初始化中取消也先等满排空期限 | 初始化取消用例在 HANG_GUARD 超时失败 |
+
+- 每个变异恢复后都用 SHA-256 确认文件逐字节一致；结束后 `git diff` 中没有生产代码改动。
+- 部分变异下另有一个 teardown ERROR：用例中途失败、没有执行到自己的关闭步骤，由泄漏守卫报告。这属于预期现象。
+
+### 4. 运行结果
+
+| 项目 | 结果 |
+|---|---|
+| 全量（CI 方式：`--basetemp`、检出前后对比）×1 | **296 passed**，39.8 s；检出目录前后一致 |
+| 单目录运行 | `avatar-host/tests` 76、`runtime/inference` 41、Router 32，都通过 |
+| 恢复和合并涉及的文件 ×10 | 0 失败 |
+| Ruff、格式、`scripts/check_workspace.py`、`uv lock --check`、对改动和新增文件运行 pre-commit | 全部通过 |
+
+### 5. 限制与未做
+
+- Executor 合并用例能否发现 M8，取决于"关闭自身占用的轮次少于排队交接的轮次"。现在的余量是 18 对 32，结果确定、不依赖时钟；但如果以后关闭路径的 await 明显增多，需要重新确认。
+- HostLog 用例仍读取私有成员 `_thread`、`_stop`、`_socket`、`_finished`，只用来构造确定性时序，没有为此新增生产接口。
+- 原生 AF_UNIX 的 IPC 全量只在本地 Linux 运行，review 环境没有独立复跑，与之前相同。
+- 没有开始基础 Doctor（T-10B），没有改生产代码。
 - 本批修改没有 commit 或 push。
