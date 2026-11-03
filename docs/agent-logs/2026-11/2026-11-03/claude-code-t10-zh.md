@@ -11,6 +11,8 @@
 | T-10A | profile／bundle 配置公共能力：拆分配置生成、选择规则、引用解析 | 2026-11-03 | `62af558` | `de480ad`、`3c40fda`、`85d7fcf` | **已验收**（验收提交 `85d7fcf`）：本地 294 passed（CI 方式 ×1）；review 环境（filelock 3.20.0）收集 294 项、原生选跑 232 项通过，多进程互斥通过；Ruff、格式、workspace、lock 通过；原生 IPC 全量未独立复跑 |
 | T-10A1 | 共享 `locked_directory` 的最小缺陷修复：拒绝符号链接锁文件 | 2026-11-03 | `85d7fcf` | `b46c4ea` | **已验收**（验收提交 `b46c4ea`）：filelock 3.20.0；helper 与 Memory 两条路径共 14 项回归通过；review 环境收集 308 项，原生选跑 246 项通过 |
 | T-10T | 测试整理（只改测试）：按职责调整目录，合并重复、减少绑定实现细节的断言 | 2026-11-03 | `85d7fcf` | `b46c4ea` | **已验收**（验收提交 `b46c4ea`）：原有 294 个参数化用例全部保留，新增 14 项，无重复收集；另有 20 项推理测试在回环 TCP 适配下通过；原生 IPC 全量未独立复跑 |
+| KD-16 | Host 日志关闭时丢失最后一条诊断 | 2026-11-03 | `84f2c6d` | 未提交 | 已修复，待复核：确定性竞态用例在原逻辑上 10/10 失败，修复后 30/30 通过；验证后按 T-10T2 规则移出项目；移出后本地 287 passed |
+| T-10T2 | 只为修小 BUG 的测试移出项目 | 2026-11-03 | `84f2c6d` | 未提交 | 待 review：移出 13 个测试函数（23 个用例）；本地 287 passed（CI 方式 ×1） |
 
 ---
 
@@ -511,3 +513,107 @@ settings 已有的回归（锁文件链接两种情形、并发默认值、提�
   - 保留关闭期限和脱敏；
   - 补确定性回归；
   - 现有入口测试的诊断断言保留。
+
+---
+
+## KD-16 Host 日志关闭时丢失最后一条诊断
+
+- 基线：`84f2c6d`（T-10A1、T-10T 验收之后的最新提交），开始时工作区干净。
+- 范围：只改 `avatar-host/alphaavatar/host/log/runtime.py` 的收尾，另加必要的回归测试。没有改 dev/start，也没有新增生产观测接口。
+
+### 1. 竞态与修复
+
+原有交错：
+1. 写线程的一次 `select` 返回"无可读数据"；
+2. 最后一条诊断随后进入接收 socket（`LogClient.emit` 在调用线程里同步 `sendto`，返回时记录已入队）；
+3. `close()` 关闭客户端，然后设置停止标志；
+4. 写线程处理第 1 步的空结果，看到停止标志后直接退出，没有消费已入队的记录。
+
+后果：无效配置启动时，进程照常以退出码 2 结束，但不打印错误原因。
+
+修复（`HostLog._listen`）：
+- 每轮在 `select` 之前读取停止标志。只有在停止之后才开始、且结果为空的那次等待，才能作为队列已排空的证据并退出。
+- `close()` 在最后一条记录入队之后才设置停止标志，所以这次等待之前的记录一定会被读到并写出。
+- 有界批处理（每批 256 条）、`shutdown_timeout`、期限到时明确报错（`Diagnostic log writer did not drain before its deadline`）、写入失败的上报、脱敏、终端和文件输出格式、CLI 退出码都不变。持续有输入时，写线程不会退出，`close()` 到期限时明确报错，不会静默丢记录后报告关闭成功。
+
+### 2. 回归测试（验证后已按 T-10T2 规则移出项目）
+
+下面两个用例用来验证修复，验证完成后已从项目中移除（见 T-10T2），副本暂存在 scratchpad 的 `t10t/removed/test_host_log.py`，不进入仓库。
+
+| 用例 | 覆盖 |
+|---|---|
+| `test_a_record_queued_after_an_empty_wait_is_written_before_close_returns` | 用 `select` 包装确定性构造交错：写线程拿到一次空结果后，先停住，直到 `close()` 设置了停止标志才把空结果交回去。断言最后一条诊断在 `close()` 之前已入队（从接收 socket 可读），`close()` 正常返回时它已写出，socket 目录已回收 |
+| `test_close_under_unending_input_fails_at_its_deadline_and_the_writer_still_exits` | 写线程的 `select` 一直报告可读，相当于输入永不停止：`close()` 在 0.1 s 期限到时明确报错；输入停止后写线程自行退出，socket 目录回收 |
+
+- 正常关闭的对照复用已有的 `test_local_endpoints.py::test_host_log_endpoint_fits_and_is_released`（写一条记录后关闭，断言它被写出、资源被释放）。
+- 写入失败和脱敏的代码路径这次没有改动，没有新增测试。
+- 入口用例 `cli/test_entrypoint.py::test_rejected_configuration_secret_never_reaches_cli_output` 的诊断断言原样保留。
+- 测试读取了 `HostLog` 的私有成员 `_thread`、`_stop`、`_socket`、`_finished`。它们只用来构造和观察确定性时序，属于必要的观察点，没有为此新增生产接口。
+
+### 3. 反向验证
+
+- 把修复改回原逻辑（`elif self._stop.is_set()`），把新文件运行 10 次：
+  - 竞态用例 10/10 失败，失败点是"记录已入队但未写出"；
+  - 期限用例 10/10 通过，说明有界关闭本来就是这个行为，这次没有改变它。
+- 恢复后用 `cmp` 确认文件逐字节一致；修复后两项各运行 30 次，0 失败。
+
+### 4. 运行结果
+
+| 项目 | 结果 |
+|---|---|
+| 全量（CI 方式：`--basetemp`、检出前后对比）×1 | **310 passed**，46.9 s；检出目录前后一致 |
+| `test_host_log.py` ×30（移出前） | 0 失败 |
+| Host 日志、本地端点和 CLI 定向测试 | 22 passed |
+| 补充：16 核满载下运行入口用例 ×10 | 0 失败（修复前 HEAD 原文件在同样条件下 10 次失败 5 次）；只作参考，不能代替确定性复现 |
+| Ruff、格式、`scripts/check_workspace.py`、`uv lock --check`、对改动和新增文件运行 pre-commit | 全部通过 |
+
+- 限制：
+  - 只在 Linux（AF_UNIX 数据报）上验证；
+  - 修复保证的是 `close()` 设置停止标志之前已入队的记录；之后才到达的记录（例如仍在运行的子进程发来的）不在保证范围内，这与需求的范围一致。
+- KD-16 标为"已修复，待复核"，不提前关闭。
+- 本批修改没有 commit 或 push。
+
+---
+
+## T-10T2 只为修小 BUG 的测试移出项目
+
+- 基线：`84f2c6d`，与 KD-16 修复同在一个工作区。本批只删测试和不再使用的测试辅助代码，没有改动任何生产代码。
+- 依据：用户要求测试中只为修小 BUG 而存在的非必要测试，不能留在项目中，测试完就删除或移到其他地方；这适用于所有测试目录，不只是 `avatar-host/tests`。
+- 判断标准：
+  - 移出：在修复轮次中为局部小缺陷加的用例，并且它的长期风险已由其他用例覆盖，或者风险本身很小。
+  - 保留：对外契约、安全边界（符号链接越界、脱敏）、资源回收、身份与数据完整性（KD-14、KD-13、KD-10 等）。
+- 已提交的被移出用例都能在 git 历史 `b46c4ea` 中找到；本批新增的 KD-16 用例副本暂存在 scratchpad，不进仓库。
+
+| 移出的用例 | 原因 | 仍由谁覆盖相关风险 |
+|---|---|---|
+| `cli/test_check.py::test_each_stream_detects_its_own_terminal`（×2） | T-8 修复轮次的小问题：stderr 单独判断终端以决定是否着色 | `test_only_an_enabled_terminal_gets_styles_and_json_stays_plain`（着色契约） |
+| `configs/test_projection.py::test_credential_values_never_rewrite_fixed_fields` | T-8 修复轮次：凭据值与固定字段名相同时，误把字段名替换掉 | `test_safe_projection_keeps_useful_settings_without_credentials`、`cli/test_check.py::test_check_summary_passes_the_same_output_boundary`（脱敏契约） |
+| `configs/test_bundles.py::test_cancelling_init_undoes_it_before_the_settings_commit_and_keeps_it_after`（×2） | T-10A 修复轮次：只在 settings 替换前后被打断这一狭窄时刻才出现 | 提交前回滚由 `test_a_failed_init_removes_only_what_it_created`（settings 替换失败、全新 Home）覆盖 |
+| `configs/test_bundles.py::test_concurrent_inits_never_both_become_the_default` | T-10A 修复轮次：线程交错下的默认值竞争 | 锁保留在生产代码；锁本身的互斥由 `test_locked_directory.py::test_two_processes_exclude_each_other` 覆盖 |
+| `configs/test_bundles.py::test_the_default_joins_any_valid_settings_and_keeps_their_values`（×5） | T-10A 修复轮次：流式映射、文档结束标记等格式的回退 | 追加并保留注释由 `test_init_never_overwrites_reuses_directories_and_keeps_an_existing_default` 覆盖 |
+| `configs/test_bundles.py::test_a_linked_settings_lock_is_refused_and_what_it_points_to_is_kept`（×2） | T-10A 修复轮次；同类风险已由共享入口统一防护 | `test_locked_directory.py::test_a_linked_lock_file_is_refused_and_left_as_it_was`（目录内、目录外、悬空） |
+| `test_local_endpoints.py::test_host_log_construction_failure_releases_its_directory`（×2） | KD-15：socket 创建失败时私有目录的清理 | 无单独覆盖，风险小；缺陷保持关闭 |
+| `test_host_log.py`（2 项，整个文件） | KD-16：验证用例，验证后移出 | 入口用例 `cli/test_entrypoint.py::test_rejected_configuration_secret_never_reaches_cli_output` 的诊断断言 |
+| `runtime/inference/test_parallel.py::test_executor_close_returns_after_its_running_and_locally_queued_calls_left` | T-9 修复轮次：本地排队调用比 `close()` 晚约 0.5 ms 退出 | Executor 关闭与在途请求取消由 `test_close_is_idempotent_and_reclaims_every_worker_and_channel` 覆盖 |
+| `runtime/inference/test_process.py::test_cancelled_initialization_is_terminated_without_a_drain_wait` | O-1：初始化中取消要等满排空期限的延迟问题 | 初始化中取消后的资源回收由 `test_parallel.py::test_partial_start_failure_and_cancelled_initialization_release_every_worker` 覆盖；就绪 Runner 正常收尾由 `test_ready_runner_still_closes_through_its_drain_path` 覆盖 |
+| `runtime/inference/test_runtime.py::test_mixed_close_drains_ready_runners_and_terminates_initializing_ones`（×2） | O-1 在 Runtime 层的对应用例 | 同上 |
+| Router `test_speech_synthesis.py::test_revoked_answer_awaiting_tts_first_audio_is_interrupted_not_failed`、`test_provider_self_cancellation_on_an_active_output_remains_a_failure` | KD-12（低严重度）：打断时的原因标签和 ERROR 日志，后者是它的对照 | 打断时撤回旧 PCM 和文本、仍完成收尾由 `test_interrupted_speech_withholds_old_pcm_and_text_but_settles_closing_facts` 覆盖 |
+
+随之删除的测试辅助代码：`test_runtime.py` 的 `CLOSING` 常量、样例中的 `GateInitRunner`（只服务于被移出的 O-1 用例），以及 Ruff 清理掉的、因此不再使用的导入。
+
+审查后保留（不属于"只为修小 BUG"）：
+- `test_parallel.py::test_close_during_recovery_starts_no_worker_and_reclaims_every_one`：会遗留 Runner 进程，属于资源回收；
+- `configs/test_bundles.py::test_named_references_and_init_targets_stay_inside_the_real_home`：符号链接越出 Home，属于安全边界；
+- `cli/test_check.py::test_check_summary_passes_the_same_output_boundary`：脱敏边界；
+- KD-14 的 audio activity 系列：语音丢失和误提交，T-7 已确定为正式回归；
+- KD-13 的 alignment：影响 Agent 认为已经说出的内容；
+- KD-10、KD-11、KD-5、O-7 等：身份、准入、持久化、凭据外露；
+- `test_local_endpoints.py` 的端点长度用例：O-3，长 TMPDIR 和 App 沙盒下的启动兼容性。
+
+运行结果：
+- 全量（CI 方式）**287 passed**（310 − 23），45.3 s，检出目录前后一致；
+- `avatar-host/tests` 68、`runtime/inference` 40、Router 32 单独运行都通过；
+- Ruff、格式、workspace、lock、对改动文件运行 pre-commit，全部通过；
+- 没有残留未使用的测试辅助定义（逐个检查了每个顶层定义的引用）。
+
+- 本批修改没有 commit 或 push。

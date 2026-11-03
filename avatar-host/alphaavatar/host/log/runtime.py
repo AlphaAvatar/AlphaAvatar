@@ -298,6 +298,9 @@ class HostLog:
     def _listen(self) -> None:
         try:
             while True:
+                # Only an empty wait that began after close proves the queue drained: close
+                # sets the flag after its last record was queued, so read the flag first.
+                stopping = self._stop.is_set()
                 readable, _, _ = select.select((self._socket,), (), (), 0.05)
                 if readable:
                     # Drain a bounded batch so a noisy producer cannot prevent shutdown checks.
@@ -307,7 +310,7 @@ class HostLog:
                         except BlockingIOError:
                             break
                         self._receive(payload)
-                elif self._stop.is_set():
+                elif stopping:
                     break
         except BaseException as error:
             self._failure = error

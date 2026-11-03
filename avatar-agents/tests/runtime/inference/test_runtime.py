@@ -17,20 +17,17 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import multiprocessing as mp
 import os
 import signal
 from pathlib import Path
 
 import pytest
-from inference_checks import HANG_GUARD, assert_released, children, descriptors, settled, wait_until
+from inference_checks import HANG_GUARD, assert_released, children, descriptors, wait_until
 from inference_runner_samples import (
-    ClosingRunner,
     EchoRunner,
     FailingCloseRunner,
     FailingInitRunner,
-    GateInitRunner,
     JournalRunner,
     SecondJournalRunner,
 )
@@ -43,11 +40,9 @@ from alphaavatar.agents.runtime.inference import (
     InferenceRuntime,
     RunnerLaunch,
 )
-from alphaavatar.agents.runtime.inference.process import RunnerProcess
 
 ECHO, JOURNAL = EchoRunner.INFERENCE_METHOD, JournalRunner.INFERENCE_METHOD
 SECOND = SecondJournalRunner.INFERENCE_METHOD
-CLOSING = ClosingRunner.INFERENCE_METHOD
 
 
 def limits(**options: object) -> InferenceConfig:
@@ -321,34 +316,6 @@ async def test_partial_start_failure_reaps_started_runners_and_releases_the_endp
     with pytest.raises(RuntimeError, match="not ready"):
         _ = runtime.endpoint
     assert_released(socket_root, before, fds)
-
-
-@pytest.mark.parametrize("trigger", ["cancel", "close"])
-async def test_mixed_close_drains_ready_runners_and_terminates_initializing_ones(
-    trigger: str, tmp_path: Path, socket_root: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    caplog.set_level(logging.INFO, logger=RunnerProcess.__module__)
-    before = children()
-    # A drain wait of close_timeout would outlast the hang guard; termination does not.
-    runtime = service(tmp_path, ClosingRunner, GateInitRunner, close_timeout=2 * HANG_GUARD)
-    starting = asyncio.create_task(runtime.start())
-    await wait_until(
-        lambda: (tmp_path / "init.entered").exists(), "the second runner never entered its gate"
-    )
-    assert [view.startup_state for view in runtime.snapshot()] == ["ready", "initializing"]
-    async with asyncio.timeout(HANG_GUARD):
-        if trigger == "cancel":
-            starting.cancel()
-        else:
-            await runtime.close()
-        with pytest.raises(asyncio.CancelledError):
-            await starting
-    assert [view.startup_state for view in runtime.snapshot()] == ["ready", "cancelled"]
-    # The ready runner drained through CLOSE and its own close hook; the other was terminated.
-    assert (tmp_path / f"{CLOSING}.closed").exists()
-    assert settled(caplog, CLOSING) == (0, False)
-    assert settled(caplog, GateInitRunner.INFERENCE_METHOD) == (-signal.SIGTERM, True)
-    assert_released(socket_root, before, None)
 
 
 async def test_runner_close_failure_still_reaps_every_runner_and_releases_the_endpoint(

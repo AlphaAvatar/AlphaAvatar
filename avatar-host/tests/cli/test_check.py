@@ -28,7 +28,7 @@ from config_samples import CONFIG, SECRETS, files, write
 # Imported at collection: configuration plugins adjust process variables while importing (O-2).
 import alphaavatar.agents.configs  # noqa: F401
 from alphaavatar.host.cli.app import main
-from alphaavatar.host.log.format import BOLD, DIM, GREEN, RED, RESET
+from alphaavatar.host.log.format import BOLD, DIM, GREEN, RESET
 
 
 @pytest.fixture
@@ -193,23 +193,3 @@ def test_only_an_enabled_terminal_gets_styles_and_json_stays_plain(
     assert ("\x1b" in checked.getvalue()) == styled
     # JSON never carries terminal styling, even on a terminal.
     assert "\x1b" not in as_json.getvalue() and json.loads(as_json.getvalue())["valid"]
-
-
-@pytest.mark.parametrize("terminal", ["stdout", "stderr"])
-def test_each_stream_detects_its_own_terminal(
-    terminal: str, tmp_path: Path, color_capable: object
-) -> None:
-    good = write(tmp_path / "good.json", {"avatar": {"id": "assistant"}})
-    bad = write(tmp_path / "bad.json", {"avatar": {"id": "assistant", "timezone": "Not/AZone"}})
-    streams = {"stdout": Terminal(), "stderr": io.StringIO()}
-    if terminal == "stderr":
-        streams = {"stdout": io.StringIO(), "stderr": Terminal()}
-    assert run_cli("config", "check", str(good), **streams) == 0
-    assert run_cli("config", "check", str(bad), **streams) == 2
-    out, err = streams["stdout"].getvalue(), streams["stderr"].getvalue()
-    assert ("\x1b" in out, "\x1b" in err) == (terminal == "stdout", terminal == "stderr")
-    assert "configuration and read-only path checks passed" in out
-    assert "configuration and read-only path checks failed" in err
-    assert "fields: avatar.timezone" in err and "Not/AZone" not in err
-    if terminal == "stderr":
-        assert err.startswith(f"\n{BOLD}{RED}ERROR{RESET}  ")

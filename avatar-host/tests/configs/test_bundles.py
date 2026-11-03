@@ -20,7 +20,6 @@ import io
 import json
 import os
 import shutil
-import threading
 from collections.abc import Iterator
 from pathlib import Path
 from unittest import mock
@@ -32,13 +31,7 @@ from config_samples import CONFIG, SECRETS, SECTIONS, files, write
 # Imported at collection: configuration plugins adjust process variables while importing (O-2).
 import alphaavatar.agents.configs  # noqa: F401
 from alphaavatar.host.cli.app import main
-from alphaavatar.host.configs import (
-    application_paths,
-    create_bundle,
-    load_application,
-    select_configuration,
-    template,
-)
+from alphaavatar.host.configs import load_application, select_configuration
 from alphaavatar.host.configs.loader import restore_application
 from alphaavatar.plugins.memory.config import DefaultMemoryConfig
 from alphaavatar.plugins.persona.config import DefaultPersonaConfig
@@ -483,92 +476,6 @@ def test_a_failed_init_removes_only_what_it_created(
     assert contents(tmp_path) == before | (lock if failure == "new-home" else {})
 
 
-@pytest.mark.parametrize("committed", [False, True], ids=["before-commit", "after-commit"])
-def test_cancelling_init_undoes_it_before_the_settings_commit_and_keeps_it_after(
-    committed: bool, tmp_path: Path, home: Path
-) -> None:
-    settings = home / "settings" / "settings.yaml"
-    settings.parent.mkdir(parents=True)
-    settings.write_text("theme: dark\n")
-    before, replace = contents(tmp_path), os.replace
-
-    def interrupted(*args: object) -> None:
-        if committed:
-            replace(*args)
-        raise KeyboardInterrupt
-
-    with mock.patch.object(os, "replace", interrupted), pytest.raises(KeyboardInterrupt):
-        create("alpha", "alpha")
-    if committed:
-        # The default names a complete bundle; the cancellation still reached the caller.
-        assert yaml.safe_load(settings.read_text()) == {"theme": "dark", "default_bundle": "alpha"}
-        assert load_application(select_configuration(None)).avatar.avatar.id == "alpha"
-    else:
-        assert contents(tmp_path) == before | {LOCK: b""}
-
-
-def test_concurrent_inits_never_both_become_the_default(home: Path) -> None:
-    paths, read, replace = application_paths(), template.read_settings, os.replace
-    reads, results, failures = [], {}, []
-    beta_read = threading.Event()
-
-    def counted(paths: object) -> dict:
-        settings = read(paths)
-        if threading.current_thread() is not threading.main_thread():
-            reads.append(settings.get("default_bundle"))
-            if len(reads) == 2:  # Validation, then beta's own look for a default: done.
-                beta_read.set()
-        return settings
-
-    def create_beta() -> None:
-        try:
-            results["beta"] = create_bundle(paths, "beta", avatar_id="beta").default_bundle
-        except BaseException as error:
-            failures.append(error)
-
-    beta = threading.Thread(target=create_beta)
-
-    def racing(*args: object) -> None:
-        if beta.ident is None:
-            # Alpha is about to commit; beta has just found no default either.
-            beta.start()
-            assert beta_read.wait(HANG_GUARD)
-        replace(*args)
-
-    with mock.patch.object(template, "read_settings", counted):
-        with mock.patch.object(os, "replace", racing):
-            results["alpha"] = create_bundle(paths, "alpha", avatar_id="alpha").default_bundle
-        beta.join(HANG_GUARD)
-    assert (failures, beta.is_alive()) == ([], False)
-    assert reads[1] is None  # Beta had found no default before alpha committed.
-    assert results == {"alpha": "alpha", "beta": "alpha"}
-    assert read(paths) == {"default_bundle": "alpha"}
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "# Personal settings.\ntheme: dark\n",
-        "theme: dark",
-        "{theme: dark}\n",
-        "theme: dark\n...\n",
-        "# Personal settings.\ntheme: dark\ndefault_bundle: null\n",
-    ],
-    ids=["block", "no-final-newline", "flow", "document-end", "null-default"],
-)
-def test_the_default_joins_any_valid_settings_and_keeps_their_values(
-    text: str, home: Path, capsys: pytest.CaptureFixture
-) -> None:
-    settings = home / "settings" / "settings.yaml"
-    settings.parent.mkdir(parents=True)
-    settings.write_text(text)
-    assert create("alpha", "alpha") == 0
-    assert yaml.safe_load(settings.read_text()) == {"theme": "dark", "default_bundle": "alpha"}
-    # A plain block mapping keeps its text and comments; other forms are written again.
-    if "default_bundle" not in text and not text.startswith("{") and "..." not in text:
-        assert settings.read_text() == text.rstrip("\n") + "\ndefault_bundle: alpha\n"
-
-
 def test_named_references_and_init_targets_stay_inside_the_real_home(
     tmp_path: Path, home: Path, capsys: pytest.CaptureFixture
 ) -> None:
@@ -626,20 +533,3 @@ def test_named_references_and_init_targets_stay_inside_the_real_home(
     # An explicit file keeps its own rules wherever it is.
     write(outside / "single.yaml", {"avatar": {"id": "single"}})
     assert main(["config", "check", str(outside / "single.yaml")]) == 0
-
-
-@pytest.mark.parametrize("victim", ["outside", "settings"])
-def test_a_linked_settings_lock_is_refused_and_what_it_points_to_is_kept(
-    victim: str, tmp_path: Path, home: Path, capsys: pytest.CaptureFixture
-) -> None:
-    settings = home / "settings" / "settings.yaml"
-    settings.parent.mkdir(parents=True)
-    settings.write_text("theme: dark\n")
-    target = settings if victim == "settings" else tmp_path / "victim.txt"
-    target.write_text(target.read_text() if target.exists() else "keep me\n")
-    # Opening a lock truncates its file; through a link, that would empty the target.
-    settings.with_name(".write.lock").symlink_to(target)
-    before = contents(tmp_path)
-    assert create("alpha", "alpha") == 2
-    assert "Refusing to lock settings through a symbolic link" in capsys.readouterr().err
-    assert contents(tmp_path) == before

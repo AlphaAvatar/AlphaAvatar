@@ -460,49 +460,6 @@ async def test_interrupted_alignment_covers_audio_already_delivered_to_a_consume
     assert final.end_time_sec == pytest.approx(delivered)
 
 
-async def test_revoked_answer_awaiting_tts_first_audio_is_interrupted_not_failed(
-    speech: Speech, caplog: pytest.LogCaptureFixture
-) -> None:
-    output, tts = speech.output, speech.tts
-    events = await speech.record("observer", (OutputKind.CONTROL,))
-    tts.allow(8)
-    await speech.say("answer", "".join(f"Old answer sentence {i} keeps going. " for i in range(8)))
-    await stall(speech, 8)  # The next phrase's TTS request awaits its first audio.
-
-    # Engine barge-in order: revoke the run, then publish the interrupt. TTS first audio
-    # arriving in between is an ordinary race with a real provider.
-    output.revoke_run("run")
-    tts.allow(None)
-    await output.interrupt(turn_id="turn", reason="barge_in")
-    await wait_until(lambda: output.transcript_finalized("answer"), "old speech never settled")
-
-    interrupts = [
-        event.payload.reason
-        for event in events
-        if event.output_id is None and event.payload.type == OutputControlType.INTERRUPT
-    ]
-    # A revoked output is an interruption on every path, never a synthesis failure.
-    assert audio_completion(events, "answer").reason != "speech_synthesis_failed"
-    assert interrupts == ["barge_in"]
-    assert not [record for record in caplog.records if record.levelname == "ERROR"]
-
-
-async def test_provider_self_cancellation_on_an_active_output_remains_a_failure(
-    speech: Speech, caplog: pytest.LogCaptureFixture
-) -> None:
-    output, tts = speech.output, speech.tts
-    events = await speech.record("observer", (OutputKind.CONTROL,))
-    tts.self_cancel = 0
-    await speech.say("answer", "A provider that cancels itself is not an interruption.")
-    await wait_until(lambda: output.transcript_finalized("answer"), "speech never settled")
-
-    # Only a revoked output may turn a preparation cancellation into an interruption.
-    assert audio_completion(events, "answer").reason == "speech_synthesis_failed"
-    (failure,) = [record for record in caplog.records if record.levelname == "ERROR"]
-    assert str(failure.exc_info[1]) == "TTS preparation cancelled itself"
-    assert speech.player.pcm.get("answer") is None
-
-
 @pytest.mark.stress
 @pytest.mark.parametrize("speech", [SHORT_PHRASES], indirect=True)
 async def test_back_to_back_answers_keep_pcm_and_alignment_under_slow_presentation(

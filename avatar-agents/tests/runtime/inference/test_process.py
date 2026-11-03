@@ -21,13 +21,12 @@ import json
 import logging
 import multiprocessing as mp
 import os
-import signal
 from collections import Counter
 from pathlib import Path
 
 import pytest
 from inference_checks import HANG_GUARD, descriptors, settled, wait_until
-from inference_runner_samples import ClosingRunner, EchoRunner, FailingInitRunner, GateInitRunner
+from inference_runner_samples import ClosingRunner, EchoRunner, FailingInitRunner
 
 from alphaavatar.agents.runtime.inference.process import RunnerProcess
 from alphaavatar.agents.runtime.inference.runner import InferenceRunner, RunnerLaunch
@@ -151,25 +150,6 @@ async def test_cancelled_queued_request_is_withdrawn_without_breaking_the_runner
     assert await process.run(b"next") == b"next"
     async with asyncio.timeout(HANG_GUARD):
         await process.close()
-
-
-async def test_cancelled_initialization_is_terminated_without_a_drain_wait(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    caplog.set_level(logging.INFO, logger=RunnerProcess.__module__)
-    # A drain wait of close_timeout would outlast the hang guard; immediate termination does not.
-    process = runner(GateInitRunner, root=tmp_path, close_timeout=2 * HANG_GUARD)
-    starting = asyncio.create_task(process.start())
-    await wait_until(
-        lambda: (tmp_path / "init.entered").exists(), "initialization never entered its gate"
-    )
-    starting.cancel()
-    async with asyncio.timeout(HANG_GUARD):
-        with pytest.raises(asyncio.CancelledError):
-            await starting
-    assert process.pid is None
-    # Terminated by SIGTERM first, not left to exit on its own and not killed.
-    assert settled(caplog, GateInitRunner.INFERENCE_METHOD) == (-signal.SIGTERM, True)
 
 
 async def test_ready_runner_still_closes_through_its_drain_path(

@@ -520,42 +520,6 @@ async def test_close_is_idempotent_and_reclaims_every_worker_and_channel(
     assert len((tmp_path / f"{PARALLEL}.inits").read_text().split()) == 4
 
 
-async def test_executor_close_returns_after_its_running_and_locally_queued_calls_left(
-    tmp_path: Path, socket_root: Path, owned_endpoints: set[object]
-) -> None:
-    config = limits()
-    runtime = service(tmp_path, config, ParallelRunner)
-    try:
-        async with asyncio.timeout(HANG_GUARD):
-            await runtime.start()
-        owned_endpoints.add(runtime.endpoint)
-        executor = InferenceExecutor(runtime.endpoint, config)  # One channel per worker.
-        held = asyncio.create_task(executor.do_inference(PARALLEL, b"gate:held"))
-        await entered(tmp_path, "held")
-        queued = [
-            asyncio.create_task(executor.do_inference(PARALLEL, f"queued:{call}".encode()))
-            for call in range(16)
-        ]
-        await asyncio.sleep(0)  # Each call now waits locally for the one busy channel.
-        assert not any(task.done() for task in queued)
-
-        async with asyncio.timeout(HANG_GUARD):
-            await executor.close()
-        assert held.done() and all(task.done() for task in queued)
-        with pytest.raises(asyncio.CancelledError):
-            await held
-        for task in queued:
-            with pytest.raises(RuntimeError, match="closed"):
-                await task
-        # The dispatched request settles on its worker; none of the queued ones ran.
-        release(tmp_path, "held")
-        await wait_until(lambda: view(runtime, PARALLEL).executing == 0, "held never settled")
-        assert set(journal(tmp_path)) == {"gate:held"}
-    finally:
-        async with asyncio.timeout(HANG_GUARD):
-            await runtime.close()
-
-
 async def test_parallel_configuration_is_validated_before_any_process_starts(
     tmp_path: Path, socket_root: Path
 ) -> None:

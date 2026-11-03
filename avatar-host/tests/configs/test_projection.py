@@ -58,39 +58,6 @@ def test_safe_projection_keeps_useful_settings_without_credentials(
     assert sandbox == []
 
 
-def test_credential_values_never_rewrite_fixed_fields(
-    tmp_path: Path, capsys: pytest.CaptureFixture
-) -> None:
-    # Header values equal to a fixed field name, and an empty bearer remainder.
-    servers = {
-        "docs": {"url": "https://mcp.invalid/a", "headers": {"Authorization": "Bearer health"}},
-        "blank": {"url": "https://mcp.invalid/b", "headers": {"Authorization": "Bearer "}},
-    }
-    value = {"avatar": {"id": "assistant"}, "tools": {"mcp": {"enabled": True, "servers": servers}}}
-    config = write(tmp_path / "avatar.json", value)
-
-    assert main(["config", "check", str(config)]) == 0
-    lines = capsys.readouterr().out.splitlines()
-    assert main(["config", "check", str(config), "--json"]) == 0
-    report = json.loads(capsys.readouterr().out)
-    assert "    health     127.0.0.1:8081 (dev: free port)" in lines
-    assert "    tools      deepresearch, rag, mcp (2 servers)" in lines
-    assert report.keys() == {
-        "valid",
-        "config",
-        "avatar_id",
-        "home",
-        "workspace",
-        "plugins",
-        "inference",
-        "health",
-    }
-    assert (report["avatar_id"], report["health"]["bind"]) == ("assistant", "127.0.0.1")
-    view = describe_application(load_application(config))
-    assert view["host"]["health"]["bind"] == "127.0.0.1"
-    assert set(view["tools"]["mcp"]["servers"]) == {"docs", "blank"}
-
-
 def test_runner_parallelism_is_checked_against_the_selected_plan_and_survives_restore(
     tmp_path: Path, sandbox: list[str], credentials: object, capsys: pytest.CaptureFixture
 ) -> None:
