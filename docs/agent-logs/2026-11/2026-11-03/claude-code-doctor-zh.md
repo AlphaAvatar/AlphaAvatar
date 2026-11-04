@@ -9,6 +9,7 @@
 | 批次 | 内容 | 日期 | 基线 HEAD | 提交 | 状态 |
 |---|---|---|---|---|---|
 | T-10B | 基础 Doctor：静态、只读、离线的安装与配置诊断（`doctor`、`doctor <bundle或文件> [KEY=VALUE...]`、`--list`、`--json`） | 2026-11-03 | `7c53c4a` | `0579d81`、`8a66b81`；第二轮收尾未提交 | `8a66b81` review：剩一处生产误报和一处测试断言，另要求把 loop 必填项纳入 check、Doctor 文本分组；已完成，待 review。本地全量 301 passed（CI 方式，检出前后一致） |
+| T-10C | 多模态 Doctor 自检：`alphaavatar doctor [配置]` 为唯一入口，静态检查后自行创建有期限的临时诊断会话，固定样本走生产链路，报告端到端指标、分段证据和降级结果 | 2026-11-04 | `8fdc2c2`（临时提交，含已撤回的 `--runtime` 实现） | 未提交 | 实现与 CI 替身验证完成；真实服务实测受阻（见第 11 节），待用户提供可用凭据后补测，待 review。本地全量 304 passed（CI 方式，检出前后一致） |
 
 ---
 
@@ -392,3 +393,283 @@ T-10B 首版的变异 D1–D10 在最终代码上重跑：
 - `validate_plugin_settings` 只覆盖 realtime loop、context、router、memory、persona。status、character 和 tools 插件的 `init_config` 仍在启动时才校验。导入它们会执行插件代码（例如 character 依赖 playwright），本批不做。
 - 其他插件的 provider 后端仍报"未验证"（WARN）。
 - 本批修改没有 commit 或 push，停在 review 阶段。
+
+---
+
+## T-10C 多模态 Doctor 自检
+
+- 基线：`8fdc2c2`（用户的临时提交）。其中包含 T-10C 第一版：`--runtime`、`RunnerProbe`、`InferenceRunner.probe()`，以及 Silero 和 Smart Turn 的专用探针。第一版过程中用户还做过两次结构调整：
+  - Doctor 移入 `host/doctor/` 包，另建 `enums/`、`schemas/`；
+  - probe 改为从 Runner 自身派生，不再在插件层注册。
+- 本轮按用户新的 T-10C 说明重做：
+  - 命令行只保留 `alphaavatar doctor [配置]`，外加 `--list` 和 `--json`。移除 `--runtime`，也不引入 `--live`。
+  - 第一版的探针全部移除。Runner 沿用 `initialize()`、`run()` 和现有的资源释放接口。
+  - 固定样本与结果校验只属于诊断场景。
+
+### 1. 统一入口与授权
+
+- **命令流程**：`alphaavatar doctor [配置]` 先做静态检查（与 T-10B 相同），再决定诊断会话这一步要不要启动。
+  - 是否启动由三方面决定：配置启用的能力、本机可用条件、诊断授权。
+  - 静态检查用同步的 `prepare()` 完成，不创建事件循环，也不打开本地 socket。
+  - 只有需要启动时，才进入 asyncio 并接管 Ctrl+C。
+  - 这样做的原因：受限主机会拒绝 AF_UNIX，而 asyncio 自身要用 socketpair。沙箱测试 `sandbox` 复现了这个问题，见第 9 节。
+- **授权**：新增配置项 `host.doctor.external_services`，默认 false，写在 `config init` 生成的 host 档案里。
+  - 也可以单次覆盖：`alphaavatar doctor my-avatar host.doctor.external_services=true`。
+  - 未授权时诊断会话不运行。`session.start` 列出会话会访问的外部服务，并写明开启方法，同时提示可能计费。
+  - 未授权时仍有一项独立检查：如果 Runner 启动不会访问外部服务，就单独启动 Runner，以检查本地模型缓存。
+  - 默认 memory、persona 和 MCP 的 LanceDB Runner 在 `initialize` 时会对探针文本做一次 embedding，这是付费调用。这些插件启用时，Runner 启动也要等授权（实测见第 10 节）。
+- **Library 接口**（App、TUI 可用）：
+  - `diagnose()`：异步，执行完整诊断；
+  - `prepare()`：同步，只做静态检查；
+  - `Diagnosis.run()`：运行诊断会话；
+  - `Diagnosis.report()`：不运行会话，直接给出报告。
+
+### 2. 结构
+
+| 位置 | 职责 |
+|---|---|
+| `host/doctor/doctor.py` | 检查清单 `CHECKS`、静态检查、`prepare`/`Diagnosis`/`diagnose`、报告输出边界（场景、证据一并脱敏） |
+| `host/doctor/session.py` | 诊断会话：场景规划、授权判定、Runner 启动、`create_execution`、逐轮运行、降级、期限、回收 |
+| `host/doctor/transport.py` | 诊断传输：`DiagnosticSource`（按 RTC 输入适配器的方式发布样本）、`DiagnosticSink`（按 RTC 传输的方式读输出边界，兼任本地音频队列并发送播放回执）、`LogTimings`（采集会话已有的计时日志） |
+| `host/doctor/measure.py` | 由观测构造场景结果：阻塞阶段、端到端指标、分段、选帧、关联证据 |
+| `host/doctor/samples.py` | 固定样本与任务；语音为 16 kHz 单声道 PCM16 WAV（待生成，见第 11 节），图片在代码中绘制 |
+| `host/doctor/config.py` | `DoctorConfig`（`external_services`） |
+| `host/doctor/enums/session.py`、`schemas/session.py` | `ScenarioOutcome`；`Metric`、`Evidence`、`ScenarioResult`、`RunnerResult` |
+
+检查项：
+- 保留的静态检查：`system.platform`、`python.version`、`packages.alphaavatar`、`config.load`、`config.runners`、`packages.capabilities`、`paths.*`、`devices.media`。
+- 新增在诊断会话中运行的检查：`session.start`、`models.runners`、`session.scenarios`、`session.cleanup`。
+- `models.runners` 原来恒为"未验证"，现在报告 Runner 的实际启动结果。
+- `services.external` 未授权时保持未验证；授权后跟随场景结果。RTC 服务器始终不联系。
+- 第一版临时提交中的 `runtime.models`、`runtime.cleanup` 已撤销。
+- 文本分组：environment、configuration、directories、session、not verified。
+
+### 3. 诊断会话复用的生产链路
+
+- **生产组件**：配置解析为 `load_application`，另加覆盖项 `avatar.workspace_root=<临时目录>`。Runner 计划、启动快照、Runner、执行接口都与 `start` 一致：
+  - Runner 计划：`plan_inference_runners`，含配置的 workers；
+  - 启动快照：`snapshot_inference_config`；
+  - 运行：`InferenceRuntime`；
+  - Engine、插件和输出运行时：Host 自己的 `create_execution`（`InferenceExecutor.from_env`、`AvatarEngine`）。
+  - 启动顺序同 `SessionManager.start`：先输出端，再 `execution.start()`，再输入端，最后 `notify_ready()`。
+- **Doctor 自己负责的部分**：只有传输和临时工作区。
+- **输入边界**：`perception.publish_observation`，以及 `publish_source_state` 和 `engine.submit_input`，与 LiveKit 输入适配器的调用位置相同。
+  - 音频：20 ms 一帧（取 `runtime.perception.audio_frame_size_ms`），按采样节奏发送。时间范围取发布时刻往前一帧，与 RTC 适配器一致。源晚于节奏的最大时延单独记录（`input_lateness`）。
+  - 屏幕帧：按 `video_publish_interval_sec` 发送。每帧先在线程里编码 JPEG 再发布，与 RTC 视频输入一致。
+  - 打字输入：经 `engine.submit_input`。
+- **输出边界**：`output.stream.subscribe`，用可靠订阅。Sink 按测试 `Player` 和 LiveKit 音频输出的语义发送播放回执，否则字幕不会结束。Sink 不向任何设备播放。
+- **离线与工作区**：
+  - 会话运行期间，诊断进程置 `ALPHAAVATAR_MODEL_OFFLINE` 和 `HF_HUB_OFFLINE`，结束后复原。Runner 子进程在 spawn 时继承这两个变量。
+  - 模型只用已有缓存。
+  - 工作区为临时目录，结束即删除。真实 Avatar 工作区、Memory、Persona 和向量库都不会写入。
+- **期限**：
+  - Runner 启动、会话装配和就绪各不超过 180 s；
+  - 单轮不超过 60 s；
+  - 全程不超过 480 s；
+  - 关闭步骤各有自己的上限；
+  - 缓存检查就是 Runner 启动本身，计入上述期限。
+- **回收**：
+  - 顺序：先关会话（含其 Executor），再关 Runtime，最后删临时工作区。
+  - 检查 `mp.active_children()` 的差集，有残留子进程即报 FAIL。
+  - 成功、失败、超时和 Ctrl+C 走同一条回收路径。Ctrl+C 只设置停止事件，回收过程本身不会被打断。
+
+### 4. 场景、固定样本与结果类别
+
+| 场景 | 触发条件 | 输入 | 答案须含 |
+|---|---|---|---|
+| `voice_vision` | VAD、STT、TTS 都已配置且视觉开启 | 语音"What color is the card on my screen?"，同时以屏幕共享送入绿色卡片图 | `green`/`绿` |
+| `voice` | VAD、STT、TTS 都已配置且视觉关闭 | 语音"What is two plus three?" | `5`/`five`/`五` |
+| `text` | 总是在语音轮之后运行 | 打字"What is two plus three? Answer in one short sentence." | 同上 |
+| `image_input` | — | 尚无传输向会话送入图片：报尚无覆盖 | |
+| `visual_output` | 配置了 Character | AIRI 在独立的浏览器参会方中渲染，帧不带 Turn：报尚无覆盖；未配置则报未启用 | |
+
+- **语音场景的转写**：转写须含问题中的词（每组任一）。
+- **送图方式**：卡片图走屏幕共享（SCREEN），不走摄像头。
+  - 原因：生产 turn-taking 中，摄像头可用时为 AUDIO_VISUAL 模式（`policy.decide`）。此时没有寻址证据会进入 HOLD，最终判为 PASSIVE，不会作答。
+  - 卡片图没有人脸，视觉寻址无法给出证据。
+  - 屏幕帧不改变 turn 模式，帧选择器同样会选取屏幕帧（`VisualFrameSelector` 接受 `VIDEO_FRAME` 和 `SCREEN_FRAME`）。
+- **结果类别**：`passed`、`failed`（这两项是实测）、`not_enabled`、`conditions_unmet`（缺授权、模型、样本或会话）、`no_coverage`、`interrupted`。
+- **阻塞阶段**：失败场景写出 `blocked_stage`，即下列阶段中第一个未到达的：
+  `input`、`vad.closed`、`stt.final`、`turn.committed`、`frames.selected`、`model.request`、`model.first_event`、`text.first`、`text.complete`、`audio.first`、`response.complete`。
+  全部到达但答案不符时，写 `answer`。
+
+### 5. 降级
+
+原配置失败、且有现成降级路径时，降级在独立会话中试跑，原配置与降级结果分别报告（`configuration` 分别为 `original`、`degraded: …`）：
+
+- **视觉不可用**：`voice_vision` 已到 STT 之后，但停在选帧、模型或答案（`frames.selected`、`model.*`、`text.*`、`answer`）。处理：以 `vision.enabled=false` 和 audio 会话运行 `voice` 场景。
+- **语音输出不可用**：语音轮或打字轮停在 `audio.first`。处理：以 chat 会话运行 `text` 场景，不带音频输出。
+
+两条都是项目已有的路径：
+- 视觉关闭时，`VisionConfig` 归为 TEXT，会话类型 audio 不含视频输入；
+- chat 会话为 IMMEDIATE 文本模式，不带音频。
+
+原配置的状态决定 `session.scenarios` 的状态：原配置失败即为 FAIL，即使降级通过。
+
+### 6. 指标口径
+
+- **时钟**：统一用会话时钟的单调部分（`time.monotonic_ns`）。
+  - 输出事件：`OutputEvent.monotonic_ns`；
+  - 输入轨迹：`recorded_time_ns`；
+  - 日志：`LogTimings` 在处理器收到记录时打的时间戳；
+  - 源：发布时刻。
+- **响应起点**：
+  - 语音轮：样本中最后一个有效语音采样所在帧的发布时刻。有效语音按 20 ms 窗口判定：RMS 不低于样本最大窗口的 5%。尾部静音照常送入，一直送到本轮结束。
+  - 打字轮：`engine.submit_input` 返回、输入被接纳的时刻。
+- **测量边界**：诊断输入到服务端输出边界。没有客户端参与，客户端看到或听到的延迟不测。
+
+端到端指标：
+- `first_text`、`first_audio_frame`：分别到首个答案文本块、首个答案音频帧从输出边界发出。
+- `first_visual_output_frame`：恒为 null，注明没有视觉输出到达输出边界。
+- `text_complete`、`audio_last_frame`、`response_final`：分别到文本完成、末个答案音频帧、响应终态。
+- `last_required_input`（仅 `voice_vision`）：到最后一个被选中的帧或最后有效语音采样到达。
+
+流式供给：
+- `audio_duration`、`audio_frame_interval`（中位数）、`audio_max_gap`。
+- `audio_underruns`：假设从首帧起实时播放、没有启动缓冲的队列会断供的次数，注释中给出断供总时长。
+- `audio_rtf`：产出时长除以音频时长，注释中给出分子和分母。
+- `output_events_dropped`：可靠订阅，不丢帧。慢消费者会反压生产者；反压本身在 sink 侧观测不到，注释中已写明。
+
+分段：
+- `vad_close`、`stt_final`、`turn_cutoff`；
+- `stt_request_to_final`：以 `stt.commit` 为请求起点，即段落进入 STT 请求队列的时刻；
+- `cutoff_to_model_request`、`model_first_token`、`model_first_text`；
+- `tts_text_ready_to_request`、`tts_request_to_first_pcm`、`first_pcm_to_first_audio_frame`、`tts_request_to_first_audio_frame`：
+  - TTS 请求起点取 Router 的 `SPEECH REQUEST`，每种 TTS 插件都会经过；
+  - 首个 PCM 只有 HTTP PCM 提供方会记录，其他插件为 null，并注明原因；
+- 视觉：`frame_input_to_available`（JPEG 编码加发布）、`selected_frame_age`（选中帧到模型请求，给出逐帧值）、`vision_wait`（Turn cutoff 之后等帧的时间）；
+- 会话：`session_ready`；
+- Runner：`models.runners` 给出每个 Runner 的启动时长；`queue_wait_max`、`execution_max` 取自 Runner 进程自己的 `INFERENCE SUMMARY`。峰值队列深度现有观测没有，注明未观测。
+
+每项指标都有数值、单位、起止事件、样本数和测量边界，事件未观测到时值为 null。
+
+### 7. 关联证据
+
+- **复用的观测**：`input_trace` 与现有输出事件，外加 loop 和语音合成已有的日志事件。
+  - loop 的 `model.*`、`run.*` 是结构化的 `ConversationEvent`。
+  - 语音合成的 `SPEECH SEGMENT`/`SPEECH REQUEST`/`Speech first audio`、TTS 的 `TTS FIRST PCM`、Runner 的 `INFERENCE SUMMARY` 是 debug 格式串，按固定前缀匹配，参数按位置取。CI 断言了由此得到的分段，可防止措辞漂移。
+  - 采集只在诊断会话期间进行，范围限于 `alphaavatar` logger，结束后复原级别。
+- **生产代码的两处新增**：
+  - `InputTrace.identity(value)`：轨迹的加盐身份对外的唯一入口，`record()` 也改为调用它。这样 Doctor 可以找到自己已知的 Turn。
+  - Context 选帧时记录 `context.frame_selected`（含 `turn_id`、`observation_id`、perception `sequence`、`event_time_ns`），并在每轮记一条 `context.visual`（含 `frame_count`、`outcome`）。只在视觉作为输入时记录。
+  - 之前没有任何记录能说明"哪一帧进了哪一轮"，选帧结果只出现在 prompt 文本里。
+- **关联方法**：按身份关联，不按时间窗。
+  - 轨迹链：Turn → decision → candidate → segment。
+  - 选中帧按 perception sequence 对上 Doctor 自己发布的帧。
+  - 证据中给出缩短后的身份令牌（`turn`、`decision`、`candidate`、`segment`）。输出事件和日志带原始 Turn，经 `identity()` 换成同一个令牌。
+- **CI 实例**（替身）：
+  - 段 `53bd…` 依次出现在 `perception.speech_closed` 和 `stt.terminal`；
+  - candidate `9c91…` 的 commit decision 为 `c27d…`；
+  - `turn.committed` 记录 decision `c27d…`、turn `73fa…`；
+  - 帧 61/97/104 记为 `context.frame_selected`，turn 同为 `73fa…`；
+  - `model.started` 与 `output.text_chunk` 的 turn 也是 `73fa…`。
+- **边界**：证据最多 64 条，有界且经过报告输出边界。
+
+### 8. 生产代码改动
+
+- `avatar-core/.../log/trace.py`：`InputTrace.identity()`。
+- `avatar-plugins-context/.../manager.py`：选帧的两个轨迹阶段。
+- `host/application/config.py`：`HostConfig.doctor`。
+- `host/configs/template.py`：host 档案增加 `doctor.external_services: false`。
+- `host/cli/app.py`、`cli/commands/doctor.py`：移除 `--runtime`，单一入口，按需建事件循环。
+- 撤回第一版：
+  - 删除 `host/doctor/runtime.py`；
+  - `avatar-agents` 的 `RunnerProbe`、`probe()` 和 `cached_*` 文件查询函数，按 `6ff7334` 的内容逐字恢复；
+  - 插件的 `missing_*`、Runner 的 `probe()` 和校验函数，同样按 `6ff7334` 的内容逐字恢复。
+  - `git diff 6ff7334 -- avatar-agents avatar-plugins` 只剩 context 选帧一处。
+
+### 9. 测试
+
+新增 `avatar-host/tests/doctor/test_session.py`，3 个用例，约 23 s。替身在 `avatar-host/tests/doctor_doubles.py`：
+- 只替换外部服务和模型文件：VAD 与 Smart Turn 协议 Runner、按请求内容作答的流式 LLM、分段 STT、实时节奏 TTS、空 Memory 和空 Persona。
+- Router、Context、Loop、Engine、输出运行时和共享推理运行时都是生产代码。
+
+| 用例 | 保护的边界 |
+|---|---|
+| 配置链路跑固定样本、证据按身份关联 | 外部服务允许、下载未关闭的环境中，会话自行关闭下载，结束后复原，logger 级别复原；语音轮与选中帧进入同一个模型请求，帧逐一对上；证据链顺序与身份令牌一致；响应起点为最后有效采样所在帧（首帧在 −1000 ms）；同一时钟下分段之和等于 `first_text`（误差 0.01 ms 内）；vision wait 为 0；语音合成分段可观测；文本逐场景显示；真实工作区未建、临时目录无残留 |
+| 视觉或语音输出不可用时跑现有降级，两者分别报告 | 模型拒绝图片：原配置停在 `model.first_event`，降级 `voice` 通过且无帧；TTS 失败：原配置停在 `audio.first`，不触发视觉降级，降级 `text` 通过且没有音频帧；各轮都靠自身输出结束，没有因超时结束 |
+| 启动失败、超时与中断都报告并回收 | 首个 Runner 启动失败：其余 Runner 为未到达，`session.start` FAIL，报告不含私有信息；Runner 启动超时，限期 1 s；单轮超时；Ctrl+C（SIGINT 发给本进程）：退出码 130，两个场景为 interrupted；每种情况 `session.cleanup` 都为 PASS，且没有残留进程、socket 目录和临时目录（fixture 检查） |
+
+`tests/cli/test_doctor.py` 的调整：
+- 删除第一版的 3 个 runtime 用例和 `doctor_runner_samples.py`。
+- 辅助函数改为记录 `Diagnosis.report` 给出的报告。这些配置都没有授权，因此不启动任何东西，文本与 JSON 必须一致。
+- `--list --json` 增加 `in_session` 断言；`--runtime`、`--live` 均为用法错误。
+- 未授权路径：会话、Runner 和服务三项均为 SKIP，并写明开启方法；向量库会 embedding 时不启动 Runner。
+- provider 用例关闭 turn-taking，使其保持静态（它关心的是 provider 后端）。
+
+变异（H1–H13，脚本 `scratchpad/t10c/mutate.py`，每次运行后按 SHA-256 逐字恢复原文件）：
+
+| 变异 | 结果 |
+|---|---|
+| H1 诊断进程不关闭模型下载 | 测出：Runner 拒绝在可下载时启动 |
+| H2 离线变量不复原 | 测出 |
+| H3 临时工作区不删除 | 测出（fixture 报残留） |
+| H4 不记录选帧 | 测出 |
+| H5 轮次不等输出完成 | 首轮存活：TTS 替身在 0.1 s 收尾窗口内已结束。替身改为实时节奏后测出 |
+| H6 视觉降级在任何失败时都触发 | 测出 |
+| H7 中断目标不计为完成 | 测出（各轮限 10 s） |
+| H8 响应起点取首个音频帧 | 测出 |
+| H9 不接管 Ctrl+C | 测出（pytest 被 KeyboardInterrupt 中断） |
+| H10 日志级别不复原 | 测出 |
+| H11 未授权也运行会话 | 测出（沙箱中拒绝 AF_UNIX） |
+| H12 启动期限不生效 | 首轮存活：只测了单轮期限。新增卡住的 Runner 后测出 |
+| H13 轨迹身份与 `identity()` 不一致 | 测出 |
+
+### 10. 实验记录
+
+- **CI 替身下的音画联合场景**（数值来自替身，只用于验证口径，不代表性能）：
+  - 端到端：首字 705 ms，首音频帧 727 ms，文本完成 706 ms，音频末帧 958 ms，终态 958 ms。
+  - 分段：VAD 封段 600 ms（静音阈值 0.55 s 加上窗口），STT 终稿 650 ms，cutoff 651 ms，cutoff 到请求 2.9 ms，请求到首 token 50.5 ms。
+  - 选中 3 帧，相对语音结束的偏移约为 0、+499、+599 ms，到请求时的帧龄为 655、156、55 ms。vision wait 为 0。
+  - 音频 0.24 s，RTF 0.96。按无缓冲口径，断供 11 次：替身每帧比实时慢约 0.8 ms。
+- **模型拒绝图片时的降级**：
+  - 原配置 `voice_vision` 停在 `model.first_event`。
+  - 同一会话的 `text` 轮也带上了 cutoff 之后仍在 perception 中的屏幕帧，同样失败。这是生产行为。
+  - 降级 `voice` 通过，首字 705 ms。
+- **会话发现的真实配置缺口**：`voice.stt.model` 只在 `get_plugin` 时检查，`config check` 能通过，`start` 却会在会话装配时失败。Doctor 把它报为 `session.start` FAIL。记入 2A 日志 O-10。
+- **LanceDB Runner 在 `initialize` 时做 `embed_query("dimension-probe")`**：空 key 时报 `OpenAIError`，有 key 时就是一次付费 embedding。因此启用默认 memory、persona、MCP 时，Runner 启动也需要授权。记入 O-12。
+- **空缓存时的离线解析**：`resolve_url_file` 和 `resolve_hf_file` 会先创建命名空间目录和锁文件，然后才报缺失。只有授权或 Runner 可以本地启动时才会发生。记入 O-11。
+- **第一版（已撤回）在缓存副本上的单 Runner 实测**，仅作参考：
+  - Silero：启动 0.73 s，每次请求约 0.3 ms；
+  - Smart Turn：启动 2.28 s，每次请求约 31 ms，8 s 音频 RTF 0.004。
+
+### 11. 真实配置实测：未完成，原因与所需条件
+
+- **凭据**：`.env.dev` 中的 `OPENAI_API_KEY` 被 OpenAI 拒绝（401 invalid_api_key），本次没有产生任何计费。
+  - 我随后想逐个检查其他 env 文件里的 key 是否可用，被权限分类器以"凭据探查"拒绝。我没有绕过。
+  - 因此两个验收场景都没有用真实服务实测：
+    - 音画进入同一轮并按任务作答；
+    - 视觉不可用时试跑纯音频降级。
+- **固定语音样本**：本机没有本地 TTS 引擎。原计划用 OpenAI TTS 生成一次 `samples/card_question.wav` 和 `samples/sum_question.wav`（16 kHz 单声道），随代码提交。凭据无效，这一步也没有完成。
+  - 目前真实运行时，语音场景报 `conditions_unmet`（fixed sample unavailable），不会中断会话。
+  - CI 用合成的语音替代样本，不依赖这两个文件。
+- **补测需要的条件**：
+  - 一个可用的 OpenAI key（或用户指定的 `ENV_FILE`）；
+  - 允许用它生成两个样本，费用不到一美分；
+  - 一个视觉可用的验收配置，以及一个视觉不可用的配置（例如模型不接受图片）；
+  - 模型缓存（本机 `~/.cache/alphaavatar/models` 有 Silero、Smart Turn 和语义寻址模型，可复制后用 `application.cache_root` 指向副本，不改动原文件）。
+- 真实实测结果将与本节的 CI 结果分开记录。
+
+### 12. 运行结果
+
+- **测试**：
+  - 全量：304 passed，CI 方式（`--basetemp` 在 scratchpad），检出前后一致。28 条警告都是既有的 LanceDB `table_names()` 弃用提示（O-6）。
+  - `tests/doctor`：3 passed，约 23 s。
+- **静态检查**：`ruff check`、`ruff format --check`、`check_workspace`（16 个成员）、`uv lock --check` 均通过。
+- **pre-commit**：对本批改动和新增文件运行，通过。
+  - 曾用 `--all-files` 运行，它顺带修正了 4 个与本批无关的已提交文件（两个 `__init__.py` 文件末空行，两个 banner SVG 末尾换行）。已按 HEAD 内容逐字恢复。
+- **真实默认 bundle（未授权）**：静态检查与 T-10B 一致；会话、Runner、服务均为 SKIP 并写明开启方法；home 和 `/tmp` 都没有新增内容。
+
+### 13. 限制与未做
+
+- **未验证的部分**：客户端设备、RTC 服务器、客户端实际展示或播放的延迟。
+- **尚无覆盖**：
+  - 图片输入：没有传输把图片送进会话；
+  - 视觉输出：Character 帧不带 Turn；
+  - 摄像头寻址：样本走屏幕共享。
+- **TTS 首 PCM**：只有 HTTP PCM 提供方（OpenAI、Voice.ai）记录。
+- **观测本身的局限**：
+  - 语音合成与 TTS 的分段依赖 debug 文案前缀。CI 守住了 Router 一侧；`TTS FIRST PCM` 只有真实 TTS 才会触发，CI 没有覆盖。
+  - 播放回执是 sink 收到 COMPLETE 时立即给出的，sink 并不播放，因此不测播放端排队。
+- **不在本轮范围**：Runner 并行沿用已有专项测试；长时运行和压力测试归 `alphaavatar test`（0.6.9 第 11 项）。
+- **未提交**：等待 review。真实实测见第 11 节。

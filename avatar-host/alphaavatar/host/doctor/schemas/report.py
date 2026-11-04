@@ -17,6 +17,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from ..enums import CheckStatus
+from .session import Metric, RunnerResult, ScenarioResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,28 +25,7 @@ class CheckSpec:
     id: str
     title: str
     needs_configuration: bool = False
-    needs_runtime: bool = False  # Run with --runtime only.
-
-
-@dataclass(frozen=True, slots=True)
-class RunnerResult:
-    """One selected runner in a runtime check, with what its local run measured."""
-
-    method: str
-    status: CheckStatus
-    summary: str
-    details: tuple[str, ...] = ()
-    action: str | None = None
-    model: str | None = None
-    # From runner start to ready, as the runtime's startup snapshot records it.
-    initialize_seconds: float | None = None
-    # Each request through the executor: the first, then the later ones.
-    inference_seconds: tuple[float, ...] = ()
-    audio_seconds: float | None = None
-    # The later requests' median over the audio one request carries.
-    real_time_factor: float | None = None
-    device: str | None = None
-    output: str | None = None  # What the probe found in the last answer.
+    in_session: bool = False  # Runs in the diagnostic session.
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +36,8 @@ class Check:
     details: tuple[str, ...] = ()
     action: str | None = None  # The next step, for anything but a pass.
     runners: tuple[RunnerResult, ...] = ()
+    scenarios: tuple[ScenarioResult, ...] = ()
+    metrics: tuple[Metric, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

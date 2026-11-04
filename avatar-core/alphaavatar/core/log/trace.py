@@ -216,6 +216,12 @@ class InputTrace:
             self._frozen_bytes -= self._frozen.popleft().size_bytes
             self._counters["frozen_expired_count"] += 1
 
+    def identity(self, value: str) -> str:
+        """How this trace records an identity, so its owner can find a known one."""
+        # The field name is deliberately excluded: one identity joins across stages.
+        digest = hashlib.blake2b(value.encode("utf-8"), key=self._salt, digest_size=16)
+        return "id_" + digest.hexdigest()
+
     def record(self, stage: str, **fields: object) -> None:
         if not self._lock.acquire(blocking=False):
             # CPython's count increment is atomic; missing evidence is not a business failure.
@@ -242,13 +248,7 @@ class InputTrace:
                         return
                     if type(value) is not str or not value:
                         raise ValueError("Invalid input trace identity")
-                    # The field name is deliberately excluded: one identity joins across stages.
-                    values[key] = (
-                        "id_"
-                        + hashlib.blake2b(
-                            value.encode("utf-8"), key=self._salt, digest_size=16
-                        ).hexdigest()
-                    )
+                    values[key] = self.identity(value)
                 elif key in _CODE_FIELDS:
                     if type(value) is str and len(value) > _MAX_CODE_CHARS:
                         self._counters["truncated_count"] += 1

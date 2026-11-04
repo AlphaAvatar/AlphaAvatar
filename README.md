@@ -311,7 +311,8 @@ ENV_FILE=.env.dev alphaavatar config init my-avatar --avatar-id my-avatar
 # Optional: validate without starting (start and dev validate it too)
 ENV_FILE=.env.dev alphaavatar config check my-avatar
 
-# Optional: diagnose the installation and the configuration (read-only, offline)
+# Optional: diagnose the installation and the configuration: static checks, then a
+# temporary session on fixed samples (paid services only with host.doctor.external_services)
 ENV_FILE=.env.dev alphaavatar doctor my-avatar
 ```
 

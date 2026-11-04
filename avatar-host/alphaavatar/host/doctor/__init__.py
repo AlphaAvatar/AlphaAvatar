@@ -13,22 +13,26 @@
 # limitations under the License.
 """Doctor: diagnosis of the installation and a selected configuration, as plain data.
 
-``diagnose`` runs the static checks; ``diagnose_runtime`` adds the runtime checks, which run
-the selected runners that offer a probe (``InferenceRunner.probe``, see ``runtime``).
+``diagnose`` runs the static checks, then a temporary diagnostic session of the configuration
+on fixed samples (see ``session``).
 """
 
-from .doctor import CHECKS, diagnose, diagnose_runtime, probes
-from .enums import CheckStatus
-from .schemas import Check, CheckSpec, Report, RunnerResult
+from .doctor import CHECKS, Diagnosis, diagnose, prepare
+from .enums import CheckStatus, ScenarioOutcome
+from .schemas import Check, CheckSpec, Evidence, Metric, Report, RunnerResult, ScenarioResult
 
 __all__ = [
     "CHECKS",
     "Check",
     "CheckSpec",
     "CheckStatus",
+    "Diagnosis",
+    "Evidence",
+    "Metric",
     "Report",
     "RunnerResult",
+    "ScenarioOutcome",
+    "ScenarioResult",
     "diagnose",
-    "diagnose_runtime",
-    "probes",
+    "prepare",
 ]

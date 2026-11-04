@@ -87,7 +87,7 @@ Created bundle my-avatar
 ```text
 configs/bundles/my-avatar.yaml                 avatar, plus the profiles below
 configs/profiles/my-avatar/
-  host/host.yaml                               RTC transport, health, logs
+  host/host.yaml                               RTC transport, health, logs, doctor
   agent/runtime.yaml                           inference runners
   plugins/foundation/{context,loop,voice,vision}.yaml
   plugins/perception/{status,router,character,memory,persona}.yaml

@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
@@ -32,26 +31,6 @@ class RunnerLaunch:
         object.__setattr__(self, "models_dir", str(absolute_root(self.models_dir)))
         if not isinstance(self.config, str) or not isinstance(json.loads(self.config), dict):
             raise ValueError("Runner configuration must be a JSON object")
-
-
-@dataclass(frozen=True, slots=True)
-class RunnerProbe:
-    """A local check of a runner: one fixed request and what its answer must satisfy.
-
-    Doctor sends it through the shared runtime and executor. Describing a probe starts
-    nothing and loads no model.
-    """
-
-    model: str
-    request: bytes
-    # The answer's basic contract: a short description, or ValueError.
-    check: Callable[[bytes | None], str]
-    # Read only, given the models directory: what resolution lacks, or None when cached.
-    missing: Callable[[str], str | None]
-    # Audio one request carries, for the real-time factor.
-    audio_seconds: float | None = None
-    # The execution device the runner pins, when it pins one.
-    device: str | None = None
 
 
 class InferenceRunner:
@@ -74,11 +53,6 @@ class InferenceRunner:
         if launch is None:
             raise RuntimeError("Configure RunnerLaunch before initializing this runner")
         return launch
-
-    @classmethod
-    def probe(cls) -> RunnerProbe | None:
-        """Doctor's local check of this runner; without one, Doctor never starts it."""
-        return None
 
     def config_for(self, namespace: str) -> dict[str, Any]:
         value = json.loads(self.launch.config).get(namespace, {})

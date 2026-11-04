@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .report import Check, CheckSpec, Report, RunnerResult
+from .report import Check, CheckSpec, Report
+from .session import Evidence, Metric, RunnerResult, ScenarioResult
 
-__all__ = ["Check", "CheckSpec", "Report", "RunnerResult"]
+__all__ = ["Check", "CheckSpec", "Evidence", "Metric", "Report", "RunnerResult", "ScenarioResult"]

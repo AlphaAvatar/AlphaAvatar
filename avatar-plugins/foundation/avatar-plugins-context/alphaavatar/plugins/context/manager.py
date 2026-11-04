@@ -191,6 +191,29 @@ class AvatarContextManager(ContextManager):
             else None,
         )
         selection = VisualFrameSelector().select(alignment=alignment, config=self._vision)
+        if self._vision.input_mode != ModelInputType.TEXT:
+            # Which frames this Turn's model input carries: identities, positions, times.
+            trace = self._runtime.perception.input_trace
+            sequences = {
+                event.observation.observation_id: event.sequence
+                for event in events
+                if event.observation is not None
+            }
+            for frame in selection.frames:
+                observation = frame.observation
+                trace.record(
+                    "context.frame_selected",
+                    turn_id=request.turn_id,
+                    observation_id=observation.observation_id,
+                    sequence=sequences.get(observation.observation_id),
+                    event_time_ns=observation.time_range.end.monotonic_ns,
+                )
+            trace.record(
+                "context.visual",
+                turn_id=request.turn_id,
+                frame_count=len(selection.frames),
+                outcome="selected" if selection.frames else "none",
+            )
         result = ContextBuilder().build(
             request=ContextBuildRequest(
                 base_input=request.input,

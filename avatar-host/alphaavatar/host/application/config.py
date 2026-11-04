@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from alphaavatar.host.doctor.config import DoctorConfig
 from alphaavatar.host.execution.policy import ExecutionPolicy
 from alphaavatar.host.log.config import LogConfig
 from alphaavatar.host.processes.config import ProcessConfig
@@ -37,4 +38,5 @@ class HostConfig(BaseModel):
     execution: ExecutionPolicy = Field(default_factory=ExecutionPolicy)
     health: HealthConfig = Field(default_factory=HealthConfig)
     log: LogConfig = Field(default_factory=LogConfig)
+    doctor: DoctorConfig = Field(default_factory=DoctorConfig)
     inference_check_interval: float = Field(default=0.5, strict=True, gt=0)

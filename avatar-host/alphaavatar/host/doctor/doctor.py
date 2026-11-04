@@ -11,12 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Doctor's checks and their order; the runtime checks themselves are in ``runtime``.
+"""Doctor's checks and their order: static checks here, the diagnostic session in ``session``.
 
 Selection, loading and the output boundary are the public services `config check`, `start`
-and `dev` use. The static checks create, download, load, start and contact nothing, so
-models, services and devices are reported as not verified, never as passing. The report is
-plain data for the CLI, an App or a TUI.
+and `dev` use. The static checks create, download, load, start and contact nothing. The
+diagnostic session then runs the configured chain on fixed samples, reaching external
+services only when ``host.doctor.external_services`` allows it; what it cannot run is
+reported as not verified, never as passing. The report is plain data for the CLI, an App or
+a TUI.
 """
 
 from __future__ import annotations
@@ -29,18 +31,17 @@ import socket
 import stat
 import sys
 from collections.abc import Callable, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from importlib import metadata
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .enums import CheckStatus
-from .schemas import Check, CheckSpec, Report
+from .schemas import Check, CheckSpec, Evidence, Report
 
 if TYPE_CHECKING:
     from packaging.requirements import Requirement
 
-    from alphaavatar.agents.runtime.inference import InferenceRunner, RunnerProbe
     from alphaavatar.core.workspace import ApplicationPaths
     from alphaavatar.host.configs import ApplicationConfig, ConfigSource
 
@@ -60,70 +61,124 @@ CHECKS = (
     CheckSpec("paths.cache", "Cache root: state, permissions, free space"),
     CheckSpec("paths.workspace", "Avatar workspace: state, permissions, free space", True),
     CheckSpec(
-        "runtime.models", "Selected local models: start, run a fixed sample, close", True, True
+        "session.start", "A temporary session of the configuration: start, ready", True, True
     ),
     CheckSpec(
-        "runtime.cleanup", "Runtime checks' processes, sockets and files reclaimed", True, True
+        "models.runners", "Planned runners started from the model cache, offline", True, True
     ),
-    CheckSpec("models.runners", "Runner models: not loaded, so not verified", True),
-    CheckSpec("services.external", "RTC, model, speech and tool services: not contacted", True),
-    CheckSpec("devices.media", "Microphones and cameras: not opened"),
+    CheckSpec("services.external", "Model, speech, vector store and tool services", True),
+    CheckSpec("session.scenarios", "Fixed samples through each enabled modality chain", True, True),
+    CheckSpec("session.cleanup", "Session, runners, sockets and files reclaimed", True, True),
+    CheckSpec("devices.media", "Microphones, cameras and players: client devices, not opened"),
 )
 
 
-def diagnose(
-    target: str | None = None,
-    overrides: Sequence[str] = (),
-    *,
-    read_env: Callable[[], object] | None = None,
-) -> Report:
-    """The static checks in ``CHECKS`` order; one that cannot complete is reported as FAIL.
-
-    ``target`` and ``overrides`` mean what they mean for ``config check``. ``read_env``, if
-    given, loads the environment file first, as ``start`` does; its failure is reported.
-    """
-    checks, loaded = _static(target, overrides, read_env, runtime=False)
-    return _report(checks, loaded)
-
-
-async def diagnose_runtime(
+async def diagnose(
     target: str | None = None,
     overrides: Sequence[str] = (),
     *,
     read_env: Callable[[], object] | None = None,
     stop: asyncio.Event | None = None,
 ) -> Report:
-    """The static checks, then the runtime checks; arguments as for ``diagnose``.
+    """Every check in ``CHECKS`` order; one that cannot complete is reported as FAIL.
 
-    Setting ``stop`` interrupts the runtime checks: what runs is closed and reported, and
+    ``target`` and ``overrides`` mean what they mean for ``config check``. ``read_env``, if
+    given, loads the environment file first, as ``start`` does; its failure is reported.
+    Setting ``stop`` interrupts the diagnostic session: what runs is closed and reported, and
     the rest is reported as not run. Cancelling this call also closes what runs first.
     """
-    from .runtime import runtime_checks
+    diagnosis = await asyncio.to_thread(prepare, target, overrides, read_env=read_env)
+    return await diagnosis.run(stop=stop) if diagnosis.starts else diagnosis.report()
 
-    checks, loaded = await asyncio.to_thread(_static, target, overrides, read_env, runtime=True)
-    if loaded is not None and checks["config.runners"].status == CheckStatus.PASS:
+
+def prepare(
+    target: str | None = None,
+    overrides: Sequence[str] = (),
+    *,
+    read_env: Callable[[], object] | None = None,
+) -> Diagnosis:
+    """The static checks, without an event loop: opening nothing, not even a local socket."""
+    checks, loaded = _static(target, overrides, read_env)
+    return Diagnosis(checks, loaded, tuple(overrides))
+
+
+@dataclass(frozen=True, slots=True)
+class Diagnosis:
+    """The static checks, then the diagnostic session if it has anything to start."""
+
+    checks: dict[str, Check]
+    loaded: tuple[ApplicationConfig, ConfigSource] | None
+    overrides: tuple[str, ...]
+
+    @property
+    def _planned(self) -> bool:
+        return self.loaded is not None and self.checks["config.runners"].status == "PASS"
+
+    @property
+    def starts(self) -> bool:
+        """Whether ``run`` starts a session or runners; ``report`` suffices otherwise."""
+        from .session import starts
+
+        return self._planned and _safe_starts(
+            lambda: starts(self.loaded[0], _external(self.loaded[0]))
+        )
+
+    def report(self) -> Report:
+        """The report without running anything: the session's checks say why not."""
+        from .session import unstarted
+
+        checks = dict(self.checks)
+        if self._planned:
+            config, source = self.loaded
+            try:
+                checks |= unstarted(config, source, _external(config))
+            except Exception as error:
+                for check_id in (spec.id for spec in CHECKS if spec.in_session):
+                    checks[check_id] = _incomplete(check_id, error)
+        return self._finish(checks)
+
+    async def run(self, *, stop: asyncio.Event | None = None) -> Report:
+        from .session import diagnose_session
+
+        config, source = self.loaded
+        checks = dict(self.checks)
         try:
-            checks["runtime.models"], checks["runtime.cleanup"] = await runtime_checks(
-                *loaded, stop=stop
+            checks |= await diagnose_session(
+                config, source, self.overrides, services=_external(config), stop=stop
             )
         except Exception as error:
             # Whatever ran is closed already; the report still names what could not complete.
-            for check_id in ("runtime.models", "runtime.cleanup"):
+            for check_id in (spec.id for spec in CHECKS if spec.in_session):
                 checks[check_id] = _incomplete(check_id, error)
-    else:
-        reason = "Configuration not loaded" if loaded is None else "Runner plan not valid"
-        for check_id in ("runtime.models", "runtime.cleanup"):
-            see = "config.load" if loaded is None else "config.runners"
-            checks[check_id] = Check(check_id, CheckStatus.SKIP, f"{reason}; see {see}")
-    return _report(checks, loaded)
+        return self._finish(checks)
+
+    def _finish(self, checks: dict[str, Check]) -> Report:
+        if self._planned:
+            config, source = self.loaded
+            checks["services.external"] = _safely(
+                "services.external",
+                lambda: _services(config, source, checks.get("session.scenarios")),
+            )
+        if self.loaded is None:
+            reason, see = "Configuration not loaded", "config.load"
+            if checks["config.load"].status == CheckStatus.WARN:
+                reason = "No configuration selected"
+        else:
+            reason, see = "Runner plan not valid", "config.runners"
+        for spec in CHECKS:
+            checks.setdefault(spec.id, Check(spec.id, CheckStatus.SKIP, f"{reason}; see {see}"))
+        return _report(checks, self.loaded)
+
+
+def _safe_starts(decide: Callable[[], bool]) -> bool:
+    try:
+        return decide()
+    except Exception:
+        return False  # report() then names the failure through the session's own checks.
 
 
 def _static(
-    target: str | None,
-    overrides: Sequence[str],
-    read_env: Callable[[], object] | None,
-    *,
-    runtime: bool,
+    target: str | None, overrides: Sequence[str], read_env: Callable[[], object] | None
 ) -> tuple[dict[str, Check], tuple[ApplicationConfig, ConfigSource] | None]:
     from alphaavatar.host.configs import application_paths
 
@@ -137,8 +192,8 @@ def _static(
         "devices.media": Check(
             "devices.media",
             CheckStatus.SKIP,
-            "Not verified: Doctor opens no microphone or camera; the Host receives media "
-            "from RTC participants",
+            "Not verified: the diagnostic session uses its own samples and opens no microphone, "
+            "camera or player",
             action="Join a dev session from a client to try its devices",
         ),
     }
@@ -162,22 +217,7 @@ def _static(
             "paths.workspace": _safely(
                 "paths.workspace", lambda: _directory("paths.workspace", config.workspace.root)
             ),
-            "models.runners": _safely(
-                "models.runners", lambda: _models(config, source, runtime=runtime)
-            ),
-            "services.external": _safely("services.external", lambda: _services(config, source)),
         }
-    # Without a configuration, config.load names the next step for every check that needs one.
-    reason = (
-        "No configuration selected"
-        if load.status == CheckStatus.WARN
-        else "Configuration not loaded"
-    )
-    for spec in CHECKS:
-        if not spec.needs_runtime:
-            checks.setdefault(
-                spec.id, Check(spec.id, CheckStatus.SKIP, f"{reason}; see config.load")
-            )
     return checks, loaded
 
 
@@ -192,6 +232,10 @@ def _report(
     def safe(text: str | None) -> str | None:
         return scrub(text) if text is not None else None
 
+    def evidence(item: Evidence) -> Evidence:
+        detail = {k: scrub(v) if isinstance(v, str) else v for k, v in item.detail.items()}
+        return replace(item, detail=detail)
+
     return Report(
         tuple(
             replace(
@@ -204,10 +248,20 @@ def _report(
                         runner,
                         summary=scrub(runner.summary),
                         details=tuple(map(scrub, runner.details)),
-                        action=safe(runner.action),
-                        output=safe(runner.output),
                     )
                     for runner in check.runners
+                ),
+                scenarios=tuple(
+                    replace(
+                        result,
+                        summary=scrub(result.summary),
+                        details=tuple(map(scrub, result.details)),
+                        blocked_stage=safe(result.blocked_stage),
+                        transcript=safe(result.transcript),
+                        answer=safe(result.answer),
+                        evidence=tuple(map(evidence, result.evidence)),
+                    )
+                    for result in check.scenarios
                 ),
             )
             for check in (checks[spec.id] for spec in CHECKS if spec.id in checks)
@@ -556,48 +610,12 @@ def _dev(source: ConfigSource) -> str:
     return _command("dev", source)
 
 
-def probes(runners: dict[str, type[InferenceRunner]]) -> dict[str, RunnerProbe]:
-    """The local probes the planned runners offer; a runner without one is never started."""
-    found = {method: runner.probe() for method, runner in runners.items()}
-    return {method: probe for method, probe in found.items() if probe is not None}
-
-
-def _models(config: ApplicationConfig, source: ConfigSource, *, runtime: bool) -> Check:
-    from alphaavatar.agents.runtime.inference import plan_inference_runners
-
-    runners = plan_inference_runners(config.avatar)
-    count, probed = len(runners), len(probes(runners))
-    if not count:
-        return Check(
-            "models.runners", CheckStatus.SKIP, "No runner selected, so no model to verify"
-        )
-    if runtime:
-        return Check(
-            "models.runners", CheckStatus.SKIP, "Not loaded by static checks; see runtime.models"
-        )
-    # Runners with a probe are Doctor's own to run; the others are verified by starting.
-    steps = []
-    if probed:
-        steps.append(f"`{_command('doctor', source)} --runtime` runs the {probed} with a probe")
-    if probed < count:
-        others = f"the other {count - probed}" if probed else "every runner"
-        steps.append(
-            f"`{_dev(source)}` initializes {others}, fetching missing models, "
-            "before it accepts a session"
-        )
-    return Check(
-        "models.runners",
-        CheckStatus.SKIP,
-        f"Not verified: static checks load and download no model for the {count} runners",
-        action="; ".join(steps),
-    )
-
-
-def _services(config: ApplicationConfig, source: ConfigSource) -> Check:
+def _external(config: ApplicationConfig) -> list[str]:
+    """The external services the configured session reaches; the RTC server is apart."""
     from alphaavatar.agents.utils.vdb.config import vdb_backend
 
     avatar = config.avatar
-    services = [f"{config.host.rtc.backend} RTC server"]
+    services = []
     if backends := sorted(_provider_backends(config)[0]):
         services.append(f"model providers ({', '.join(backends)})")
     if speech := [part.plugin for part in (avatar.voice.stt, avatar.voice.tts) if part.plugin]:
@@ -610,12 +628,29 @@ def _services(config: ApplicationConfig, source: ConfigSource) -> Check:
         services.append(f"tool services ({', '.join(tools)})")
     if mcp.enabled and mcp.plugin is not None:
         services.append(f"{len(mcp.servers)} MCP server{'' if len(mcp.servers) == 1 else 's'}")
+    return services
+
+
+def _services(config: ApplicationConfig, source: ConfigSource, scenarios: Check | None) -> Check:
+    services = _external(config)
+    rtc = f"{config.host.rtc.backend} RTC server: not contacted; `{_dev(source)}` connects to it"
+    if not config.host.doctor.external_services:
+        return Check(
+            "services.external",
+            CheckStatus.SKIP,
+            "Not contacted: host.doctor.external_services is false",
+            (*services, rtc),
+            "The diagnostic session reaches them once host.doctor.external_services is true; "
+            "calls may be billed",
+        )
+    status = scenarios.status if scenarios is not None else CheckStatus.SKIP
+    status = CheckStatus.SKIP if status == CheckStatus.WARN else status
     return Check(
         "services.external",
-        CheckStatus.SKIP,
-        "Not verified: static checks contact no service",
-        tuple(services),
-        f"`{_dev(source)}` connects to them; credentials and access are checked there",
+        status,
+        "Reached by the diagnostic session; see session.scenarios for each stage",
+        (*services, rtc),
+        "See the failed scenarios' blocked stages" if status == CheckStatus.FAIL else None,
     )
 
 

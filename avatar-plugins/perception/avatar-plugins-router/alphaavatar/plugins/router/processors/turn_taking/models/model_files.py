@@ -15,7 +15,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from alphaavatar.agents.utils.files.model import cached_hf_file, resolve_hf_file
+from alphaavatar.agents.utils.files.model import resolve_hf_file
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +43,6 @@ SMART_TURN_V3_CONFIG = SmartTurnModelConfig(
     sha256="2bb026316b14a660486a75b1733cd3fbab8c2fd0314dc9af7be49f8cca967e4f",
     file_name="smart-turn-v3.2-cpu.onnx",
 )
-_NAMESPACE = ("router", "turn_taking", "smart_turn", SMART_TURN_V3_CONFIG.version)
 
 
 def resolve_smart_turn_model_path(*, models_dir: str) -> str:
@@ -56,30 +55,9 @@ def resolve_smart_turn_model_path(*, models_dir: str) -> str:
     config = SMART_TURN_V3_CONFIG
     return resolve_hf_file(
         models_dir=models_dir,
-        namespace=_NAMESPACE,
+        namespace=("router", "turn_taking", "smart_turn", config.version),
         repo_id=config.repo_id,
         revision=config.revision,
         filename=config.file_name,
         sha256=config.sha256,
     )
-
-
-def missing_smart_turn_model(*, models_dir: str) -> str | None:
-    """What resolution would lack now, read only; None when the model is ready to load."""
-    override = os.getenv("SMART_TURN_MODEL_PATH")
-    if override:
-        path = Path(override).expanduser()
-        if path.is_file() and path.stat().st_size > 0:
-            return None
-        return f"SMART_TURN_MODEL_PATH names no model file: {path}"
-    config = SMART_TURN_V3_CONFIG
-    if cached_hf_file(
-        models_dir=models_dir,
-        namespace=_NAMESPACE,
-        repo_id=config.repo_id,
-        revision=config.revision,
-        filename=config.file_name,
-        sha256=config.sha256,
-    ):
-        return None
-    return f"Smart Turn {config.version} is not cached, or fails its checksum, in {models_dir}"

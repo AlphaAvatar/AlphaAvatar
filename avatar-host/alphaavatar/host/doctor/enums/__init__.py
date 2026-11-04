@@ -12,5 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .report import CheckStatus
+from .session import ScenarioOutcome
 
-__all__ = ["CheckStatus"]
+__all__ = ["CheckStatus", "ScenarioOutcome"]

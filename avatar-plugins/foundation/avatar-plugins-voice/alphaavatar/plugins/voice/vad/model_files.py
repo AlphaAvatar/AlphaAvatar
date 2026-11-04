@@ -15,7 +15,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from alphaavatar.agents.utils.files.model import cached_url_file, resolve_url_file
+from alphaavatar.agents.utils.files.model import resolve_url_file
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +57,6 @@ SILERO_MODEL_CONFIG = SileroModelConfig(
     context_size_samples=64,
     state_shape=(2, 1, 128),
 )
-_NAMESPACE = ("voice", "vad", "silero", SILERO_MODEL_CONFIG.version)
 
 
 def resolve_silero_model_path(*, models_dir: str) -> str:
@@ -71,25 +70,9 @@ def resolve_silero_model_path(*, models_dir: str) -> str:
     return str(
         resolve_url_file(
             models_dir=models_dir,
-            namespace=_NAMESPACE,
+            namespace=("voice", "vad", "silero", config.version),
             filename=config.file_name,
             url=config.url,
             sha256=config.sha256,
         )
     )
-
-
-def missing_silero_model(*, models_dir: str) -> str | None:
-    """What resolution would lack now, read only; None when the model is ready to load."""
-    override = os.getenv("SILERO_VAD_MODEL_PATH")
-    if override:
-        path = Path(override).expanduser()
-        if path.is_file() and path.stat().st_size > 0:
-            return None
-        return f"SILERO_VAD_MODEL_PATH names no model file: {path}"
-    config = SILERO_MODEL_CONFIG
-    if cached_url_file(
-        models_dir=models_dir, namespace=_NAMESPACE, filename=config.file_name, sha256=config.sha256
-    ):
-        return None
-    return f"Silero VAD {config.version} is not cached, or fails its checksum, in {models_dir}"

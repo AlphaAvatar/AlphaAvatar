@@ -50,15 +50,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         json_output=True,
     )
     doctor = commands.add_parser(
-        "doctor", help="Diagnose the installation and a configuration; read-only and offline"
+        "doctor",
+        help="Diagnose the installation and a configuration: static checks, then a temporary "
+        "session on fixed samples (external services only with host.doctor.external_services)",
     )
     configured(doctor, json_output=True)
     doctor.add_argument("--list", action="store_true", help="List the checks without running")
-    doctor.add_argument(
-        "--runtime",
-        action="store_true",
-        help="Also run the selected local models Doctor has probes for, from the model cache",
-    )
 
     args = parser.parse_args(argv)
     if "=" in (getattr(args, "config", None) or ""):
@@ -74,13 +71,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         return run(args.config, args.overrides, devmode=args.command == "dev")
     if args.command == "doctor":
-        if args.list and (args.config is not None or args.overrides or args.runtime):
-            parser.error("--list takes no configuration or --runtime")
+        if args.list and (args.config is not None or args.overrides):
+            parser.error("--list takes no configuration")
         from .commands.doctor import doctor
 
-        return doctor(
-            args.config, args.overrides, as_json=args.json, listing=args.list, runtime=args.runtime
-        )
+        return doctor(args.config, args.overrides, as_json=args.json, listing=args.list)
 
     from .commands import config as configuration
 

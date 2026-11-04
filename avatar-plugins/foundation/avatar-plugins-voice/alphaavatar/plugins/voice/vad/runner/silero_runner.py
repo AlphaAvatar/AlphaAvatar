@@ -15,29 +15,15 @@ from __future__ import annotations
 
 import numpy as np
 
-from alphaavatar.agents.runtime.inference import InferenceRunner, RunnerProbe
+from alphaavatar.agents.runtime.inference import InferenceRunner
 
-from ..model_files import SILERO_MODEL_CONFIG, missing_silero_model, resolve_silero_model_path
+from ..model_files import SILERO_MODEL_CONFIG, resolve_silero_model_path
 
 
 class SileroVADRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.voice.vad.silero"
     # Context and recurrent state travel in each request; the session is read-only here.
     REPLICABLE = True
-
-    @classmethod
-    def probe(cls) -> RunnerProbe:
-        config = SILERO_MODEL_CONFIG
-        # A silent window, with the empty context and state a new stream starts from.
-        size = config.window_size_samples + config.context_size_samples + config.state_size
-        return RunnerProbe(
-            model=f"Silero VAD {config.version}",
-            request=np.zeros(size, dtype=np.float32).tobytes(),
-            check=_check_silence,
-            missing=lambda models_dir: missing_silero_model(models_dir=models_dir),
-            audio_seconds=config.update_interval,
-            device="cpu",  # Only ONNX Runtime's CPU provider is requested.
-        )
 
     def initialize(self) -> None:
         import onnxruntime as ort
@@ -91,16 +77,3 @@ class SileroVADRunner(InferenceRunner):
         response[1:] = np.asarray(next_state, dtype=np.float32).reshape(-1)
 
         return response.tobytes()
-
-
-def _check_silence(result: bytes | None) -> str:
-    from ..silero import SileroVADOptions
-
-    config = SILERO_MODEL_CONFIG
-    values = np.frombuffer(result or b"", dtype=np.float32)
-    if values.size != 1 + config.state_size or not np.isfinite(values).all():
-        raise ValueError(f"expected {1 + config.state_size} finite values, got {values.size}")
-    probability = float(values[0])
-    if not 0 <= probability < SileroVADOptions().activation_threshold:
-        raise ValueError(f"silence scored as speech: probability {probability:.3f}")
-    return f"speech probability {probability:.3f} for silence; {config.state_size} state values"
