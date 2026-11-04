@@ -157,20 +157,6 @@ class AvatarContextManager(ContextManager):
         if not self._runtime.participants.identity_basis_is_current(basis):
             raise ContextIdentityChanged("Prepared context identity changed")
 
-    async def _prepare_input(
-        self, request: ContextPrepareRequest, state: StateRuntime
-    ) -> ModelInput:
-        async def build(snapshot: TurnSnapshot, base_input: ModelInput) -> ModelInput:
-            return await asyncio.to_thread(
-                self._compose,
-                snapshot,
-                base_input,
-                state if snapshot is request.turn else None,
-                request,
-            )
-
-        return await self._history.capture(request.turn, request.context_id, build)
-
     def _compose(
         self,
         snapshot: TurnSnapshot,
@@ -267,6 +253,20 @@ class AvatarContextManager(ContextManager):
         )
 
         return snapshot_input(result.model_input)
+
+    async def _prepare_input(
+        self, request: ContextPrepareRequest, state: StateRuntime
+    ) -> ModelInput:
+        async def build(snapshot: TurnSnapshot, base_input: ModelInput) -> ModelInput:
+            return await asyncio.to_thread(
+                self._compose,
+                snapshot,
+                base_input,
+                state if snapshot is request.turn else None,
+                request,
+            )
+
+        return await self._history.capture(request.turn, request.context_id, build)
 
     async def prepare(self, request: ContextPrepareRequest) -> ModelInput:
         self._ensure_open()
