@@ -38,6 +38,7 @@ from alphaavatar.core.turn.enums import TurnInputModality
 from .builder import ContextBuilder
 from .builder.renderer.prompt.runtime import render_runtime_context
 from .builder.renderer.prompt.system import render_avatar_instructions
+from .compressor import ContextCompressor
 from .config import ContextConfig
 from .history import ContextHistory
 from .snapshot import snapshot_input
@@ -86,6 +87,7 @@ class AvatarContextManager(ContextManager):
         self._memory: MemoryBase | None = None
         self._persona: PersonaBase | None = None
         self._history = ContextHistory(output=runtime.output, turns=runtime.turn.events)
+        self._compressor = ContextCompressor()
         self._pending = 0
         self._work: set[asyncio.Task[ModelInput]] = set()
         self._close_task: asyncio.Task[None] | None = None
@@ -266,7 +268,24 @@ class AvatarContextManager(ContextManager):
                 request,
             )
 
-        return await self._history.capture(request.turn, request.context_id, build)
+        captured = await self._history.capture(request.turn, request.context_id, build)
+        return await asyncio.to_thread(self._compress_history, captured, request.input_id)
+
+    def _compress_history(self, captured: ModelInput, input_id: str) -> ModelInput:
+        # The Builder prepends the system message. Only items before the current Turn are history.
+        items = captured.items
+        current_index = next(
+            (index for index, item in enumerate(items) if item.id == input_id), None
+        )
+        if current_index is None or current_index == 0:
+            raise ModelProtocolError(
+                "Captured context requires a current input after the system message"
+            )
+        if current_index == 1:
+            return captured
+
+        history = self._compressor.compress(items[1:current_index])
+        return replace(captured, items=(items[0], *history, *items[current_index:]))
 
     async def prepare(self, request: ContextPrepareRequest) -> ModelInput:
         self._ensure_open()

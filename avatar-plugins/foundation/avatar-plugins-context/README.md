@@ -29,7 +29,9 @@ context:
     max_pending_preparations: 16
 ```
 
-History has no capacity limit and evicts nothing during the session; compaction is a separate, later component. Each Turn's user message is kept as ContextBuilder first built it, with its parts, their order and the content of its media fixed at that build, and every later query replays it unchanged. Only the current Turn carries the runtime context. Every retained image is sent again with each later query, so history alone can reach a provider's inline media limit (Responses `max_inline_bytes`). Profiles that still set `history_max_turns`, `history_max_items` or `history_max_bytes` load, and those values are ignored.
+History keeps the complete user message throughout the session, as ContextBuilder first built it, including the order and captured content of its media. After capture, the manager uses ContextCompressor to replace historical image payloads with `<image_not_replayed />` at their original position in the outgoing request. The current Turn carries its complete user message and its own runtime context.
+
+Profiles that still set `history_max_turns`, `history_max_items` or `history_max_bytes` load, and those values are ignored.
 
 StateRuntime.global_behavior_rules may originate from client metadata. It is captured as reference/preferences, not promoted into application system instructions. Binding Memory/Persona sources does not transfer their ownership.
 
