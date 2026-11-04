@@ -27,9 +27,6 @@ context:
   init_config:
     behavior_rules: "Follow the application's execution and authorization policies."
     max_pending_preparations: 16
-    history_max_turns: 32
-    history_max_items: 4096
-    history_max_bytes: 8388608
 ```
 
 The history byte limit bounds serialized retained content, not total process memory or shared media caches. Eviction respects whole-Turn history ownership.

@@ -85,9 +85,7 @@ class AvatarContextManager(ContextManager):
         self._introduction = avatar_config.avatar.introduction
         self._memory: MemoryBase | None = None
         self._persona: PersonaBase | None = None
-        self._history = ContextHistory(
-            output=runtime.output, turns=runtime.turn.events, config=config
-        )
+        self._history = ContextHistory(output=runtime.output, turns=runtime.turn.events)
         self._pending = 0
         self._work: set[asyncio.Task[ModelInput]] = set()
         self._close_task: asyncio.Task[None] | None = None
@@ -159,10 +157,27 @@ class AvatarContextManager(ContextManager):
         if not self._runtime.participants.identity_basis_is_current(basis):
             raise ContextIdentityChanged("Prepared context identity changed")
 
-    def _compose(
-        self, request: ContextPrepareRequest, base_input: ModelInput, state: StateRuntime
+    async def _prepare_input(
+        self, request: ContextPrepareRequest, state: StateRuntime
     ) -> ModelInput:
-        snapshot = request.turn
+        async def build(snapshot: TurnSnapshot, base_input: ModelInput) -> ModelInput:
+            return await asyncio.to_thread(
+                self._compose,
+                snapshot,
+                base_input,
+                state if snapshot is request.turn else None,
+                request,
+            )
+
+        return await self._history.capture(request.turn, request.context_id, build)
+
+    def _compose(
+        self,
+        snapshot: TurnSnapshot,
+        base_input: ModelInput,
+        state: StateRuntime | None,
+        request: ContextPrepareRequest,
+    ) -> ModelInput:
         events = snapshot.perception_events
         if (
             snapshot.system_notice_code is not None
@@ -216,7 +231,7 @@ class AvatarContextManager(ContextManager):
                 observation = frame.observation
                 trace.record(
                     "context.frame_selected",
-                    turn_id=request.turn_id,
+                    turn_id=snapshot.turn_id,
                     observation_id=observation.observation_id,
                     sequence=sequences.get(observation.observation_id),
                     event_time_ns=observation.time_range.end.monotonic_ns,
@@ -224,7 +239,7 @@ class AvatarContextManager(ContextManager):
 
             trace.record(
                 "context.visual",
-                turn_id=request.turn_id,
+                turn_id=snapshot.turn_id,
                 frame_count=len(selection.frames),
                 outcome="selected" if selection.frames else "none",
             )
@@ -232,7 +247,7 @@ class AvatarContextManager(ContextManager):
         result = ContextBuilder().build(
             request=ContextBuildRequest(
                 base_input=base_input,
-                input_id=request.input_id,
+                input_id=snapshot.input_id,
                 alignment=alignment,
                 visual_selection=selection,
                 model_input_type=self._vision.input_mode,
@@ -243,10 +258,12 @@ class AvatarContextManager(ContextManager):
                 interaction_method=state.interaction_method,
                 stable_persona=state.user_persona,
                 stable_behavior_rules=self._config.behavior_rules,
-            ),
-            runtime_context=render_runtime_context(state),
-            contributions=request.contributions,
-            query_scope=f"{request.context_id}:{request.turn_id}",
+            )
+            if state is not None
+            else "",
+            runtime_context=render_runtime_context(state) if state is not None else "",
+            contributions=request.contributions if state is not None else (),
+            query_scope=f"{request.context_id}:{snapshot.turn_id}",
         )
 
         return snapshot_input(result.model_input)
@@ -285,20 +302,11 @@ class AvatarContextManager(ContextManager):
             if not ready:
                 raise TimeoutError("Required Turn context is not ready")
 
-            base_input = self._history.capture(snapshot, request.context_id)
             basis = self._runtime.participants.identity_basis(snapshot)
             state = self._state_snapshot(snapshot)
             self._check_identity(basis)
-            logger.debug(
-                "Context input turn_id=%s history_items=%d memory_chars=%d persona_chars=%d",
-                snapshot.turn_id,
-                len(base_input.items),
-                len(state.memory_content or ""),
-                len(state.user_persona or ""),
-            )
             task = asyncio.create_task(
-                asyncio.to_thread(self._compose, request, base_input, state),
-                name=f"context_prepare:{request.turn_id}",
+                self._prepare_input(request, state), name=f"context_prepare:{request.turn_id}"
             )
             self._work.add(task)
             self._pending -= 1

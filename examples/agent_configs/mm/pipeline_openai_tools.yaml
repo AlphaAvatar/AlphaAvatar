@@ -59,9 +59,7 @@ loop:
 context:
   plugin: default
   init_config:
-    history_max_turns: 32
-    history_max_items: 4096
-    history_max_bytes: 8388608
+    max_pending_preparations: 16
 
 voice:
   vad:

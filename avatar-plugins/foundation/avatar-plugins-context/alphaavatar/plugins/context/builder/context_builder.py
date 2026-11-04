@@ -33,7 +33,6 @@ from alphaavatar.agents.constants import RUNTIME_CONTEXT_TOOL_NAME
 from alphaavatar.core.turn.enums import TurnInputModality
 from alphaavatar.core.turn.schemas import TurnSnapshot
 
-from .renderer.history.message import compact_historical_message
 from .renderer.input.notice import render_timed_notices
 from .renderer.input.xml import replace_current
 
@@ -72,21 +71,12 @@ class ContextBuilder:
             and item.name == RUNTIME_CONTEXT_TOOL_NAME
         )
 
-    def _prepare_base_input(self, model_input: ModelInput, *, current_input_id: str) -> ModelInput:
-        items = []
-        for item in model_input.items:
-            if self._is_runtime_context_item(item):
-                continue
-            if isinstance(item, ModelInputMessage) and item.id != current_input_id:
-                item = compact_historical_message(item)
-            items.append(item)
-        return replace(model_input, items=tuple(items))
-
     def _with_system_prompt(self, model_input: ModelInput, *, system_prompt: str) -> ModelInput:
         items = tuple(
             item
             for item in model_input.items
-            if not (isinstance(item, ModelInputMessage) and item.role == ModelRole.SYSTEM)
+            if not self._is_runtime_context_item(item)
+            and not (isinstance(item, ModelInputMessage) and item.role == ModelRole.SYSTEM)
         )
         message = ModelInputMessage(
             id=self.SYSTEM_MESSAGE_ID, role=ModelRole.SYSTEM, parts=(ModelTextPart(system_prompt),)
@@ -155,28 +145,49 @@ class ContextBuilder:
     ) -> ContextBuildResult:
         from alphaavatar.agents.avatar.context.schemas import ContextBuildResult
 
-        # prepare
-        base = self._prepare_base_input(request.base_input, current_input_id=request.input_id)
-
-        # system
-        base = self._with_system_prompt(base, system_prompt=system_prompt)
-
-        # notice and render
-        notices = render_timed_notices(snapshot, current=True)
-        if notices and snapshot.modality == TurnInputModality.SYSTEM:
-            rendered = replace_current(
-                base, request.input_id, tuple(notice.part for notice in notices)
+        base = self._with_system_prompt(request.base_input, system_prompt=system_prompt)
+        if base.get(request.input_id) is None:
+            message = ModelInputMessage(
+                id=request.input_id,
+                role=ModelRole.USER,
+                parts=(),
+                created_at=snapshot.committed_at.unix_seconds,
+                metadata=MappingProxyType(
+                    {"turn_id": snapshot.turn_id, "input_modality": snapshot.modality.value}
+                ),
             )
-        else:
-            rendered = (
-                self._renderers()
-                .resolve(request.model_input_type)
-                .render(replace(request, base_input=base), notices=notices)
-                .model_input
-            )
+            base = base.append(message)
+            notices = render_timed_notices(snapshot, current=True)
+            if notices and snapshot.modality == TurnInputModality.SYSTEM:
+                base = replace_current(
+                    base, request.input_id, tuple(notice.part for notice in notices)
+                )
+            else:
+                base = (
+                    self._renderers()
+                    .resolve(request.model_input_type)
+                    .render(replace(request, base_input=base), notices=notices)
+                    .model_input
+                )
+                current = base.get(request.input_id)
+                assert isinstance(current, ModelInputMessage)
+                if snapshot.text and not any(
+                    isinstance(part, ModelTextPart)
+                    and ("<text_input " in part.text or "<transcript>" in part.text)
+                    for part in current.parts
+                ):
+                    fallback = ModelTextPart(
+                        f"  <committed_text>{escape(snapshot.text)}</committed_text>"
+                    )
+                    parts = current.parts
+                    if parts and parts[-1] == ModelTextPart("</turn_input>"):
+                        parts = (*parts[:-1], fallback, parts[-1])
+                    else:
+                        parts = (*parts, fallback)
+                    base = replace_current(base, request.input_id, parts)
 
         model_input = self._inject_runtime_context(
-            rendered,
+            base,
             input_id=request.input_id,
             runtime_context=runtime_context,
             contributions=contributions,
