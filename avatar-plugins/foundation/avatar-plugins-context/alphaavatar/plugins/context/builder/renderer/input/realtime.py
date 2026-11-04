@@ -16,12 +16,22 @@ from dataclasses import replace
 from alphaavatar.agents.avatar.context.schemas import ContextBuildRequest, ContextBuildResult
 from alphaavatar.agents.avatar.provider.schemas import RealtimeModelInput
 
+from .notice import TimedSystemNotice
+from .xml import replace_current
+
 
 class RealtimeRenderer:
-    def render(self, request: ContextBuildRequest) -> ContextBuildResult:
+    def render(
+        self, request: ContextBuildRequest, *, notices: tuple[TimedSystemNotice, ...] = ()
+    ) -> ContextBuildResult:
+        base = request.base_input.remove(request.input_id)
+        if notices:
+            base = replace_current(
+                request.base_input, request.input_id, tuple(notice.part for notice in notices)
+            )
         return ContextBuildResult(
             model_input=replace(
-                request.base_input.remove(request.input_id),
+                base,
                 realtime=RealtimeModelInput(
                     alignment=request.alignment,
                     visual_selection=request.visual_selection,

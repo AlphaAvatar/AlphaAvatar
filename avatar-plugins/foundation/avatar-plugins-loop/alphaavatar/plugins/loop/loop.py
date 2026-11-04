@@ -89,10 +89,9 @@ class AvatarLoop(Loop):
         if len(self._runs) >= self._config.max_retiring_runs + 1:
             raise RuntimeError("Previous execution cleanup is still pending")
 
-        snapshot = self._runtime.turn.get(request.input_id)
-        if snapshot is None or snapshot.turn_id != request.turn_id:
-            raise ValueError("Loop input must identify a committed turn")
-        if request.context_id not in snapshot.context_ids:
+        if self._runtime.turn.get(request.input_id) is not request.turn:
+            raise ValueError("Loop input must be a committed Turn owned by this runtime")
+        if request.context_id not in request.turn.context_ids:
             raise ValueError("Loop context does not own this turn")
         if self._current is not None and not self._current.task.done():
             if self._current.identity.turn_id == request.turn_id:

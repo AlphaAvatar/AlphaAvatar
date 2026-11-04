@@ -37,6 +37,7 @@ from alphaavatar.agents.avatar.voice import (
 from alphaavatar.core.media import AudioFrame, AudioSampleFormat
 
 from ..log import logger
+from .constants import TRANSCRIPTION_UNAVAILABLE
 
 _TARGET_SAMPLE_RATE = 24_000
 
@@ -72,6 +73,8 @@ class OpenAIRealtimeSTT(STTBase):
     One stream corresponds to one ordered audio source and maintains one
     long-lived WebSocket connection across multiple speech segments.
     """
+
+    fallback_code = TRANSCRIPTION_UNAVAILABLE
 
     def __init__(
         self,

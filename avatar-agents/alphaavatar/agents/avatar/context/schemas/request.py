@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from alphaavatar.agents.avatar.provider.schemas import ModelInput
+from alphaavatar.core.turn.schemas import TurnSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,22 +35,25 @@ class ContextContribution:
 
 @dataclass(frozen=True, slots=True)
 class ContextPrepareRequest:
-    input: ModelInput
-    turn_id: str
+    turn: TurnSnapshot
     context_id: str
-    input_id: str
     contributions: tuple[ContextContribution, ...] = ()
 
     def __post_init__(self) -> None:
-        if not isinstance(self.input, ModelInput):
-            raise TypeError("Context preparation requires ModelInput")
-        if not all(
-            isinstance(value, str) and value
-            for value in (self.turn_id, self.context_id, self.input_id)
-        ):
-            raise ValueError("Context preparation requires turn, context and input identities")
+        if not isinstance(self.turn, TurnSnapshot):
+            raise TypeError("Context preparation requires a TurnSnapshot")
+        if not isinstance(self.context_id, str) or not self.context_id:
+            raise ValueError("Context preparation requires a context_id")
         if any(not isinstance(item, ContextContribution) for item in self.contributions):
             raise TypeError("Expected ContextContribution")
         names = [item.name for item in self.contributions]
         if len(set(names)) != len(names):
             raise ValueError("Context contribution names must be unique")
+
+    @property
+    def input_id(self) -> str:
+        return self.turn.input_id
+
+    @property
+    def turn_id(self) -> str:
+        return self.turn.turn_id

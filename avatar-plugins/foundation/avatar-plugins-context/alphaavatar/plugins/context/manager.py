@@ -36,8 +36,8 @@ from alphaavatar.core.time import RuntimeTimeRange
 from alphaavatar.core.turn.enums import TurnInputModality
 
 from .builder import ContextBuilder
-from .builder.renderer.runtime import render_runtime_context
-from .builder.renderer.system import render_avatar_instructions
+from .builder.renderer.prompt.runtime import render_runtime_context
+from .builder.renderer.prompt.system import render_avatar_instructions
 from .config import ContextConfig
 from .history import ContextHistory
 from .snapshot import snapshot_input

@@ -24,7 +24,6 @@ from .schemas import ContextPrepareRequest
 if TYPE_CHECKING:
     from alphaavatar.agents.memory import MemoryBase
     from alphaavatar.agents.persona import PersonaBase
-    from alphaavatar.core.turn.schemas import TurnSnapshot
 
 
 class ContextIdentityChanged(RuntimeError):
@@ -43,12 +42,8 @@ class ContextManager(ABC):
         """Borrow state sources without owning their processor lifetimes."""
 
     @abstractmethod
-    def accept_turn(self, snapshot: TurnSnapshot) -> ModelInput:
-        """Retain a committed input and return its seed, without capturing query state."""
-
-    @abstractmethod
     async def prepare(self, request: ContextPrepareRequest) -> ModelInput:
-        """Capture canonical history, state and query-static contributions once."""
+        """Prepare a committed Turn with its canonical history and query-static context."""
 
     @abstractmethod
     def build(

@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .base import RendererRegistry
-from .realtime import RealtimeRenderer
-from .text import TextRenderer
-from .vlm import VLMRenderer
+from .input.realtime import RealtimeRenderer
+from .input.xml import XMLInputRenderer
 
-__all__ = ["RendererRegistry", "TextRenderer", "VLMRenderer", "RealtimeRenderer"]
+__all__ = ["RendererRegistry", "XMLInputRenderer", "RealtimeRenderer"]

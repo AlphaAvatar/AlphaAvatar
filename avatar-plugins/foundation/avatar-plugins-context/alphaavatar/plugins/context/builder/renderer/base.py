@@ -16,9 +16,13 @@ from typing import Protocol
 from alphaavatar.agents.avatar.context.schemas import ContextBuildRequest, ContextBuildResult
 from alphaavatar.agents.avatar.provider.enums import ModelInputType
 
+from .input.notice import TimedSystemNotice
+
 
 class PromptRenderer(Protocol):
-    def render(self, request: ContextBuildRequest) -> ContextBuildResult: ...
+    def render(
+        self, request: ContextBuildRequest, *, notices: tuple[TimedSystemNotice, ...] = ()
+    ) -> ContextBuildResult: ...
 
 
 class RendererRegistry:

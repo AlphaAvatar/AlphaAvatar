@@ -168,6 +168,8 @@ class TurnRuntime:
         addressees: Sequence[TurnEntityRef] = (),
         context_ids: Sequence[str] = (),
         metadata: Mapping[str, Any] | None = None,
+        system_notice_code: str | None = None,
+        system_notice_segment_ids: Sequence[str] = (),
     ) -> TurnSnapshot:
         if not input_id:
             raise ValueError("input_id cannot be empty")
@@ -177,7 +179,10 @@ class TurnRuntime:
 
         start_cutoff = self._last_cutoff
         perception = self._perception.capture_snapshot_until(
-            after_cutoff=start_cutoff, until_sequence=cutoff_sequence, captured_at=committed_at
+            after_cutoff=start_cutoff,
+            until_sequence=cutoff_sequence,
+            captured_at=committed_at,
+            input_observation_ids=input_observation_ids,
         )
 
         snapshot = TurnSnapshot(
@@ -197,6 +202,8 @@ class TurnRuntime:
             addressees=tuple(addressees),
             context_ids=tuple(dict.fromkeys(context_ids)),
             metadata=MappingProxyType(dict(metadata or {})),
+            system_notice_code=system_notice_code,
+            system_notice_segment_ids=tuple(dict.fromkeys(system_notice_segment_ids)),
         )
 
         self._record(snapshot)

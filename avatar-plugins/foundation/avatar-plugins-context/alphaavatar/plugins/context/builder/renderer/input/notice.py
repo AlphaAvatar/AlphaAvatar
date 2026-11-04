@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from dataclasses import dataclass
 from xml.sax.saxutils import escape, quoteattr
 
 from alphaavatar.agents.avatar.provider.enums import ModelTextPartKind
@@ -27,7 +28,14 @@ _SYSTEM_NOTICES = {
 }
 
 
-def _segment_positions(snapshot: TurnSnapshot) -> dict[str, int]:
+@dataclass(frozen=True, slots=True)
+class TimedSystemNotice:
+    segment_id: str | None
+    at_ns: int | None
+    part: ModelTextPart
+
+
+def _segment_positions(snapshot: TurnSnapshot) -> dict[str, tuple[int, int]]:
     owned = set(snapshot.input_observation_ids)
     speech = [
         (observation.time_range.start.monotonic_ns, segment.segment_id)
@@ -38,13 +46,17 @@ def _segment_positions(snapshot: TurnSnapshot) -> dict[str, int]:
         and (segment := observation.segment) is not None
     ]
     speech.sort(key=lambda item: item[0])
-    return {segment_id: position for position, (_, segment_id) in enumerate(speech, 1)}
+    return {
+        segment_id: (position, start_ns)
+        for position, (start_ns, segment_id) in enumerate(speech, 1)
+    }
 
 
-def render_system_notice(snapshot: TurnSnapshot, *, current: bool) -> ModelTextPart | None:
+def _render_notice(
+    snapshot: TurnSnapshot, *, current: bool, segments: tuple[tuple[str, int | None], ...]
+) -> ModelTextPart:
     code = snapshot.system_notice_code
-    if code is None:
-        return None
+    assert code is not None
 
     fact, instruction = _SYSTEM_NOTICES.get(
         code, ("An input could not be understood.", "Briefly ask the user to try the input again.")
@@ -57,13 +69,52 @@ def render_system_notice(snapshot: TurnSnapshot, *, current: bool) -> ModelTextP
         )
 
     body = f"<fact>{escape(fact)}</fact>"
-    if segment_ids := snapshot.system_notice_segment_ids:
-        positions = _segment_positions(snapshot)
-        for segment_id in segment_ids:
-            position = positions.get(segment_id)
-            index = f' position="{position}"' if position is not None else ""
-            body += f"<unavailable_speech segment_id={quoteattr(segment_id)}{index} />"
+    for segment_id, position in segments:
+        index = f' position="{position}"' if position is not None else ""
+        body += f"<unavailable_speech segment_id={quoteattr(segment_id)}{index} />"
     if current:
         body += f"<instruction>{escape(instruction)}</instruction>"
     xml = f'<system_notice code={quoteattr(code)} current="{str(current).lower()}">{body}</system_notice>'
     return ModelTextPart(xml, kind=ModelTextPartKind.SYSTEM_NOTICE)
+
+
+def render_system_notice(snapshot: TurnSnapshot, *, current: bool) -> ModelTextPart | None:
+    if snapshot.system_notice_code is None:
+        return None
+
+    positions = _segment_positions(snapshot)
+    segments = tuple(
+        (segment_id, positions[segment_id][0] if segment_id in positions else None)
+        for segment_id in snapshot.system_notice_segment_ids
+    )
+    return _render_notice(snapshot, current=current, segments=segments)
+
+
+def render_timed_notices(snapshot: TurnSnapshot, *, current: bool) -> tuple[TimedSystemNotice, ...]:
+    if snapshot.system_notice_code is None:
+        return ()
+
+    if snapshot.modality == TurnInputModality.SYSTEM or not snapshot.system_notice_segment_ids:
+        part = render_system_notice(snapshot, current=current)
+        assert part is not None
+        return (TimedSystemNotice(None, None, part),)
+
+    positions = _segment_positions(snapshot)
+    segment_ids = snapshot.system_notice_segment_ids
+    ordered = sorted(
+        segment_ids, key=lambda segment_id: positions.get(segment_id, (len(positions) + 1, 0))
+    )
+    return tuple(
+        TimedSystemNotice(
+            segment_id,
+            positions[segment_id][1] if segment_id in positions else None,
+            _render_notice(
+                snapshot,
+                current=current,
+                segments=(
+                    (segment_id, positions[segment_id][0] if segment_id in positions else None),
+                ),
+            ),
+        )
+        for segment_id in ordered
+    )

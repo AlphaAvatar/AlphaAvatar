@@ -27,6 +27,7 @@ class ObservationKind(StrEnum):
 
     TRANSCRIPT_DELTA = "transcript_delta"
     TRANSCRIPT_SEGMENT = "transcript_segment"
+    TRANSCRIPT_UNAVAILABLE = "transcript_unavailable"
     TEXT_INPUT = "text_input"
 
     IMAGE_INPUT = "image_input"

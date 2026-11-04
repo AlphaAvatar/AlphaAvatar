@@ -17,7 +17,7 @@ from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
 from alphaavatar.agents.runtime import StateRuntime
 from alphaavatar.agents.utils.time import ParticipantTimeContext
 
-from ..prompts.runtime_context_prompts import RUNTIME_CONTEXT_PROMPT
+from ...prompts.runtime_context_prompts import RUNTIME_CONTEXT_PROMPT
 
 
 def _xml_text(value: object | None) -> str:

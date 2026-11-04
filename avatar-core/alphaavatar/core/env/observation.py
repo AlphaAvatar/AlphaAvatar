@@ -31,6 +31,7 @@ _SEGMENT_REQUIRED_KINDS = {
     ObservationKind.SPEECH_CANCELLED,
     ObservationKind.TRANSCRIPT_DELTA,
     ObservationKind.TRANSCRIPT_SEGMENT,
+    ObservationKind.TRANSCRIPT_UNAVAILABLE,
 }
 
 _SPEECH_KINDS = {
@@ -113,6 +114,12 @@ class EnvObservation:
             self.metadata["reason_code"] = SpeechCancellationReason(
                 self.metadata.get("reason_code")
             ).value
+        elif self.kind == ObservationKind.TRANSCRIPT_UNAVAILABLE:
+            if self.payload is not None:
+                raise ValueError("transcript_unavailable cannot carry a payload")
+            reason = self.metadata.get("reason_code")
+            if not isinstance(reason, str) or not reason:
+                raise ValueError("transcript_unavailable requires a reason code")
 
     @property
     def source_id(self) -> str:
@@ -216,6 +223,14 @@ class EnvObservation:
     def transcript_segment(cls, **kwargs: Any) -> EnvObservation:
         kwargs.setdefault("mime_type", "text/plain")
         return cls._create(kind=ObservationKind.TRANSCRIPT_SEGMENT, **kwargs)
+
+    @classmethod
+    def transcript_unavailable(
+        cls, *, outcome: str, reason: str, system_notice_code: str | None, **kwargs: Any
+    ) -> EnvObservation:
+        metadata = dict(kwargs.pop("metadata", None) or {})
+        metadata.update(outcome=outcome, reason_code=reason, system_notice_code=system_notice_code)
+        return cls._create(kind=ObservationKind.TRANSCRIPT_UNAVAILABLE, metadata=metadata, **kwargs)
 
     @classmethod
     def text_input(cls, **kwargs: Any) -> EnvObservation:

@@ -17,7 +17,7 @@ from dataclasses import replace
 from textwrap import indent
 from xml.sax.saxutils import escape, quoteattr
 
-from alphaavatar.agents.avatar.context.schemas import ContextBuildRequest
+from alphaavatar.agents.avatar.context.schemas import ContextBuildRequest, ContextBuildResult
 from alphaavatar.agents.avatar.provider.enums import ModelInputType, ModelRole
 from alphaavatar.agents.avatar.provider.schemas import (
     ModelImagePart,
@@ -34,6 +34,8 @@ from alphaavatar.core.media.enums import PayloadFormat, PayloadView
 from alphaavatar.core.perception import AlignedPerception, TemporalSlice
 from alphaavatar.core.perception.enums import MediaSourceKind
 from alphaavatar.core.perception.schemas import MediaSourceSnapshot, PerceptionEvent
+
+from .notice import TimedSystemNotice
 
 _PAUSE_THRESHOLD_SEC = 0.3
 _VISUAL_OBSERVATION_KINDS = {ObservationKind.VIDEO_FRAME, ObservationKind.SCREEN_FRAME}
@@ -144,13 +146,17 @@ def _perception_integrity_xml(alignment: AlignedPerception) -> str:
     )
 
 
-def _speech_xml(
-    temporal_slice: TemporalSlice, alignment: AlignedPerception, *, include_final_gap_after: bool
-) -> str | None:
+def _speech_parts(
+    temporal_slice: TemporalSlice,
+    alignment: AlignedPerception,
+    *,
+    include_final_gap_after: bool,
+    notice: ModelTextPart | None,
+) -> tuple[ModelTextPart, ...]:
     speech = temporal_slice.speech
 
     if speech is None:
-        return None
+        return ()
 
     transcript = _text(speech.transcript)
     segment = speech.segment
@@ -174,6 +180,16 @@ def _speech_xml(
     else:
         lines.append('  <transcript available="false" />')
 
+    parts: list[ModelTextPart] = []
+    if notice is not None:
+        parts.extend(
+            (
+                ModelTextPart(_indent_xml("\n".join(lines), 6)),
+                replace(notice, text=_indent_xml(notice.text, 8)),
+            )
+        )
+        lines = []
+
     if include_final_gap_after and temporal_slice.gap_after_sec >= _PAUSE_THRESHOLD_SEC:
         lines.append(
             "  <speech_gap_after "
@@ -183,7 +199,8 @@ def _speech_xml(
         )
 
     lines.append("</speech>")
-    return "\n".join(lines)
+    parts.append(ModelTextPart(_indent_xml("\n".join(lines), 6)))
+    return tuple(parts)
 
 
 def _source_event_xml(event: PerceptionEvent, alignment: AlignedPerception) -> str:
@@ -306,24 +323,13 @@ def _last_speech_slice_index(alignment: AlignedPerception) -> int | None:
     )
 
 
-def _slice_open_xml(
-    temporal_slice: TemporalSlice, alignment: AlignedPerception, *, include_final_gap_after: bool
-) -> str:
-    lines = [
+def _slice_open_xml(temporal_slice: TemporalSlice, alignment: AlignedPerception) -> str:
+    return (
         "    <slice "
         f"index={_xml_attr(temporal_slice.index)} "
         f"kind={_xml_attr(temporal_slice.kind.value)} "
         f"{_range_attrs(alignment, temporal_slice)}>"
-    ]
-
-    speech_xml = _speech_xml(
-        temporal_slice, alignment, include_final_gap_after=include_final_gap_after
     )
-
-    if speech_xml:
-        lines.append(_indent_xml(speech_xml, 6))
-
-    return "\n".join(lines)
 
 
 def _ordered_slice_parts(
@@ -331,15 +337,28 @@ def _ordered_slice_parts(
     temporal_slice: TemporalSlice,
     alignment: AlignedPerception,
     frames: tuple[SelectedVisualFrame, ...],
+    speech_parts: tuple[ModelTextPart, ...],
+    notices: tuple[TimedSystemNotice, ...] = (),
+    direct_inputs: tuple[tuple[int, EnvObservation], ...] = (),
+    include_images: bool,
 ) -> tuple[ModelInputPart, ...]:
     entries: list[tuple[int, int, tuple[ModelInputPart, ...]]] = []
+
+    if speech := temporal_slice.speech:
+        entries.append((speech.time_range.start.monotonic_ns, 0, speech_parts))
+
+    for notice in notices:
+        assert notice.at_ns is not None
+        entries.append(
+            (notice.at_ns, 0, (replace(notice.part, text=_indent_xml(notice.part.text, 6)),))
+        )
 
     for event in temporal_slice.source_events:
         event_xml = _source_event_xml(event, alignment)
 
         if event_xml:
             entries.append(
-                (event.time_range.end.monotonic_ns, 0, (ModelTextPart(_indent_xml(event_xml, 6)),))
+                (event.time_range.end.monotonic_ns, 1, (ModelTextPart(_indent_xml(event_xml, 6)),))
             )
 
     for frame in frames:
@@ -359,11 +378,22 @@ def _ordered_slice_parts(
         entries.append(
             (
                 observation.time_range.end.monotonic_ns,
-                1,
+                2,
                 (
                     ModelTextPart(_indent_xml(f"<visual_evidence {' '.join(attributes)}>", 6)),
                     ModelImagePart(observation),
                     ModelTextPart(_indent_xml("</visual_evidence>", 6)),
+                ),
+            )
+        )
+
+    for index, observation in direct_inputs:
+        entries.append(
+            (
+                observation.time_range.start.monotonic_ns,
+                3,
+                _direct_input_parts(
+                    ((index, observation),), include_images=include_images, spaces=6
                 ),
             )
         )
@@ -377,14 +407,14 @@ def _ordered_slice_parts(
 
 
 def _direct_input_parts(
-    alignment: AlignedPerception, *, include_images: bool
+    inputs: tuple[tuple[int, EnvObservation], ...], *, include_images: bool, spaces: int = 2
 ) -> tuple[ModelInputPart, ...]:
-    if not alignment.direct_inputs:
+    if not inputs:
         return (ModelTextPart("  <direct_inputs />"),)
 
     parts: list[ModelInputPart] = [ModelTextPart("  <direct_inputs>")]
 
-    for index, observation in enumerate(alignment.direct_inputs):
+    for index, observation in inputs:
         attributes = [
             f"index={_xml_attr(index)}",
             f"observation_id={_xml_attr(observation.observation_id)}",
@@ -432,7 +462,20 @@ def _direct_input_parts(
             )
 
     parts.append(ModelTextPart("  </direct_inputs>"))
+    if spaces != 2:
+        return tuple(
+            replace(part, text=_indent_xml(part.text, spaces - 2))
+            if isinstance(part, ModelTextPart)
+            else part
+            for part in parts
+        )
     return tuple(parts)
+
+
+def _slice_index(alignment: AlignedPerception, at_ns: int) -> int | None:
+    return next(
+        (item.index for item in alignment.slices if at_ns < item.time_range.end.monotonic_ns), None
+    )
 
 
 def replace_current(
@@ -447,7 +490,10 @@ def replace_current(
 
 
 def render_current_input(
-    request: ContextBuildRequest, *, include_images: bool
+    request: ContextBuildRequest,
+    *,
+    include_images: bool,
+    notices: tuple[TimedSystemNotice, ...] = (),
 ) -> tuple[ModelInputPart, ...]:
     alignment = request.alignment
     duration_label = _relative_label(alignment, alignment.time_range.end.monotonic_ns)
@@ -468,53 +514,79 @@ def render_current_input(
     ]
 
     last_speech_index = _last_speech_slice_index(alignment)
+    speech_ids = {
+        item.speech.segment.segment_id for item in alignment.slices if item.speech is not None
+    }
+    speech_notices: dict[str, ModelTextPart] = {}
+    slot_notices: dict[int | None, list[TimedSystemNotice]] = {}
+    for notice in notices:
+        if notice.segment_id is not None and notice.segment_id in speech_ids:
+            speech_notices[notice.segment_id] = notice.part
+        else:
+            index = _slice_index(alignment, notice.at_ns) if notice.at_ns is not None else None
+            slot_notices.setdefault(index, []).append(notice)
+
+    direct_slots: dict[int | None, list[tuple[int, EnvObservation]]] = {}
+    interleave_direct = bool(speech_notices or any(index is not None for index in slot_notices))
+    for index, observation in enumerate(alignment.direct_inputs):
+        slot = (
+            _slice_index(alignment, observation.time_range.start.monotonic_ns)
+            if interleave_direct
+            else None
+        )
+        direct_slots.setdefault(slot, []).append((index, observation))
 
     for temporal_slice in alignment.slices:
         frames = request.visual_selection.for_slice(temporal_slice.index) if include_images else ()
         visual_count = _visual_observation_count(temporal_slice)
+        slice_notices = tuple(slot_notices.get(temporal_slice.index, ()))
+        direct_inputs = tuple(direct_slots.get(temporal_slice.index, ()))
 
         if (
             temporal_slice.speech is None
             and not temporal_slice.source_events
             and not frames
+            and not slice_notices
+            and not direct_inputs
             and not (not include_images and visual_count)
         ):
             continue
 
-        parts.append(
-            ModelTextPart(
-                _slice_open_xml(
+        parts.append(ModelTextPart(_slice_open_xml(temporal_slice, alignment)))
+        speech = temporal_slice.speech
+        parts.extend(
+            _ordered_slice_parts(
+                temporal_slice=temporal_slice,
+                alignment=alignment,
+                frames=frames,
+                speech_parts=_speech_parts(
                     temporal_slice,
                     alignment,
-                    include_final_gap_after=(temporal_slice.index == last_speech_index),
-                )
+                    include_final_gap_after=temporal_slice.index == last_speech_index,
+                    notice=speech_notices.pop(speech.segment.segment_id, None) if speech else None,
+                ),
+                notices=slice_notices,
+                direct_inputs=direct_inputs,
+                include_images=include_images,
             )
         )
 
-        if include_images:
-            parts.extend(
-                _ordered_slice_parts(
-                    temporal_slice=temporal_slice, alignment=alignment, frames=frames
+        if not include_images and visual_count:
+            parts.append(
+                ModelTextPart(
+                    "      <visual_evidence "
+                    'available_to_model="false" '
+                    f"count={_xml_attr(visual_count)} "
+                    "/>"
                 )
             )
-        else:
-            for event in temporal_slice.source_events:
-                event_xml = _source_event_xml(event, alignment)
-
-                if event_xml:
-                    parts.append(ModelTextPart(_indent_xml(event_xml, 6)))
-
-            if visual_count:
-                parts.append(
-                    ModelTextPart(
-                        "      <visual_evidence "
-                        'available_to_model="false" '
-                        f"count={_xml_attr(visual_count)} "
-                        "/>"
-                    )
-                )
 
         parts.append(ModelTextPart("    </slice>"))
+
+    parts.extend(
+        replace(notice.part, text=_indent_xml(notice.part.text, 4))
+        for notice in slot_notices.get(None, ())
+    )
 
     parts.extend(
         (
@@ -535,7 +607,22 @@ def render_current_input(
         )
     )
 
-    parts.extend(_direct_input_parts(alignment, include_images=include_images))
+    parts.extend(
+        _direct_input_parts(tuple(direct_slots.get(None, ())), include_images=include_images)
+    )
     parts.append(ModelTextPart("</turn_input>"))
 
     return tuple(parts)
+
+
+class XMLInputRenderer:
+    def __init__(self, *, include_images: bool) -> None:
+        self._include_images = include_images
+
+    def render(
+        self, request: ContextBuildRequest, *, notices: tuple[TimedSystemNotice, ...] = ()
+    ) -> ContextBuildResult:
+        parts = render_current_input(request, include_images=self._include_images, notices=notices)
+        return ContextBuildResult(
+            model_input=replace_current(request.base_input, request.input_id, parts)
+        )

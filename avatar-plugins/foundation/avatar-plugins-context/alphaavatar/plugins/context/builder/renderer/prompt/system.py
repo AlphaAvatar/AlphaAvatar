@@ -14,12 +14,12 @@
 from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
 from alphaavatar.agents.runtime import InteractionMethod
 
-from ..prompts.avatar_system_prompts import (
+from ...prompts.avatar_system_prompts import (
     AVATAR_SYSTEM_PROMPT,
     SPOKEN_RESPONSE_STYLE,
     TEXT_RESPONSE_STYLE,
 )
-from ..prompts.xml_protocol_prompts import XML_PROTOCOL_PROMPT
+from ...prompts.xml_protocol_prompts import XML_PROTOCOL_PROMPT
 
 
 def render_avatar_instructions(

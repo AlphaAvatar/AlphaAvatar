@@ -22,30 +22,61 @@ from alphaavatar.agents.avatar.provider.schemas import (
     ModelInputMessage,
     ModelTextPart,
 )
+from alphaavatar.core.env.enums import ObservationKind
+from alphaavatar.core.media import TextPayload
 from alphaavatar.core.turn.enums import TurnInputModality
 from alphaavatar.core.turn.schemas import TurnSnapshot
 
-from .notice import render_system_notice
+from ..notice import render_system_notice, render_timed_notices
 
 
-def render_history_seed(snapshot: TurnSnapshot, context_id: str) -> ModelInputMessage:
-    parts = []
+def _history_parts(snapshot: TurnSnapshot) -> tuple[ModelTextPart, ...]:
     if snapshot.text is not None:
-        parts.append(ModelTextPart(escape(snapshot.text)))
-    elif snapshot.modality != TurnInputModality.SYSTEM or snapshot.system_notice_code is None:
-        parts.append(
+        parts = (ModelTextPart(escape(snapshot.text)),)
+    elif snapshot.modality == TurnInputModality.SYSTEM and snapshot.system_notice_code is not None:
+        parts = ()
+    else:
+        parts = (
             ModelTextPart(
                 '<historical_media omitted="true" current="false">'
                 "Visual input belongs to this earlier turn; do not infer its contents from this placeholder."
                 "</historical_media>"
-            )
+            ),
         )
+
+    if snapshot.text is not None and snapshot.system_notice_segment_ids:
+        owned = set(snapshot.input_observation_ids)
+        inputs = sorted(
+            (observation.time_range.start.monotonic_ns, event.sequence, observation.payload.text)
+            for event in snapshot.perception_events
+            if (observation := event.observation) is not None
+            and observation.observation_id in owned
+            and observation.kind in (ObservationKind.TEXT_INPUT, ObservationKind.TRANSCRIPT_SEGMENT)
+            and isinstance(observation.payload, TextPayload)
+            and observation.payload.text.strip()
+        )
+        notices = render_timed_notices(snapshot, current=False)
+        ordered = [
+            (at_ns, notice.part) for notice in notices if (at_ns := notice.at_ns) is not None
+        ]
+        # Preserve committed text if the snapshot no longer has every timed observation.
+        if (
+            len(ordered) == len(notices)
+            and " ".join(text for _, _, text in inputs) == snapshot.text
+        ):
+            ordered.extend((at_ns, ModelTextPart(escape(text))) for at_ns, _, text in inputs)
+            return tuple(part for _, part in sorted(ordered, key=lambda item: item[0]))
+
     if notice := render_system_notice(snapshot, current=False):
-        parts.append(notice)
+        return (*parts, notice)
+    return parts
+
+
+def render_history_seed(snapshot: TurnSnapshot, context_id: str) -> ModelInputMessage:
     return ModelInputMessage(
         id=snapshot.input_id,
         role=ModelRole.USER,
-        parts=tuple(parts),
+        parts=_history_parts(snapshot),
         created_at=snapshot.committed_at.unix_seconds,
         metadata=MappingProxyType(
             {

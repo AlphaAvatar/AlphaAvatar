@@ -17,6 +17,7 @@ from .media_kind import ModelMediaKind
 from .message_phase import ModelMessagePhase
 from .model_role import ModelRole
 from .provider_kind import ProviderKind
+from .text_part_kind import ModelTextPartKind
 
 __all__ = [
     "ProviderKind",
@@ -25,4 +26,5 @@ __all__ = [
     "ModelRole",
     "ModelFinishReason",
     "ModelMessagePhase",
+    "ModelTextPartKind",
 ]

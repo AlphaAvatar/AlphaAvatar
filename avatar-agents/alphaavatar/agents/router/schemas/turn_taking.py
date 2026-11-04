@@ -253,10 +253,27 @@ class TurnTakingDecision:
     actor: InteractionEntityRef | None = None
     addressees: tuple[InteractionEntityRef, ...] = ()
     input_observation_ids: tuple[str, ...] = ()
+
+    system_notice_code: str | None = None
+    system_notice_segment_ids: tuple[str, ...] = ()
+
     reason: str | None = None
 
     def __post_init__(self) -> None:
         _validate_candidate(self.turn_candidate_id, self.candidate_revision, self.confidence)
+        if self.system_notice_code is not None and (
+            self.action != TurnTakingAction.COMMIT
+            or not isinstance(self.system_notice_code, str)
+            or not 0 < len(self.system_notice_code) <= 64
+        ):
+            raise ValueError("System notices require a commit decision and a bounded code")
+        if self.system_notice_segment_ids and (
+            self.system_notice_code is None
+            or any(
+                not isinstance(value, str) or not value for value in self.system_notice_segment_ids
+            )
+        ):
+            raise ValueError("System notice segments require a notice code and segment identities")
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -274,6 +291,10 @@ class TurnTakingDecision:
 
         if self.reason is not None:
             data["reason"] = self.reason
+        if self.system_notice_code is not None:
+            data["system_notice_code"] = self.system_notice_code
+        if self.system_notice_segment_ids:
+            data["system_notice_segment_ids"] = list(self.system_notice_segment_ids)
 
         return data
 
@@ -292,6 +313,8 @@ class TurnTakingDecision:
             ),
             input_observation_ids=tuple(data.get("input_observation_ids", ())),
             reason=data.get("reason"),
+            system_notice_code=data.get("system_notice_code"),
+            system_notice_segment_ids=tuple(data.get("system_notice_segment_ids", ())),
         )
 
     @classmethod

@@ -54,6 +54,11 @@ class STTBase(ABC):
     def capabilities(self) -> STTCapabilities: ...
 
     @property
+    def fallback_code(self) -> str | None:
+        """System notice code for unusable transcription, or None to suppress the notice."""
+        return None
+
+    @property
     def streaming(self) -> bool:
         """
         Compatibility property.

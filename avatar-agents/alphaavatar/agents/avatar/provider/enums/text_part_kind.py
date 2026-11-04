@@ -11,17 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from alphaavatar.agents.avatar.context.schemas import ContextBuildRequest, ContextBuildResult
-
-from .op import render_current_input, replace_current
+from enum import StrEnum
 
 
-class TextRenderer:
-    def render(self, request: ContextBuildRequest) -> ContextBuildResult:
-        return ContextBuildResult(
-            model_input=replace_current(
-                request.base_input,
-                request.input_id,
-                render_current_input(request, include_images=False),
-            )
-        )
+class ModelTextPartKind(StrEnum):
+    TEXT = "text"
+    SYSTEM_NOTICE = "system_notice"

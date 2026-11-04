@@ -27,7 +27,7 @@ from alphaavatar.agents.avatar.loop import LoopHandle
 from alphaavatar.agents.avatar.loop.base import ToolAuthorizer
 from alphaavatar.agents.avatar.loop.enums import LoopState, ToolOutcome
 from alphaavatar.agents.avatar.loop.schemas import LoopIdentity, LoopRequest, LoopResult
-from alphaavatar.agents.avatar.provider.enums import ModelMessagePhase, ModelRole
+from alphaavatar.agents.avatar.provider.enums import ModelMessagePhase, ModelRole, ModelTextPartKind
 from alphaavatar.agents.avatar.provider.errors import (
     ModelError,
     ModelIncompleteError,
@@ -65,7 +65,6 @@ from .tools import LoopTools
 if TYPE_CHECKING:
     from alphaavatar.agents.avatar.provider.gateway import ProviderGateway
     from alphaavatar.agents.runtime import AvatarRuntime
-    from alphaavatar.core.turn.schemas import TurnSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -85,12 +84,8 @@ class LoopExecution(LoopHandle):
         unsafe_lock: asyncio.Lock,
         authorize: ToolAuthorizer | None = None,
     ) -> None:
-        snapshot = runtime.turn.get(request.input_id)
-        if snapshot is None or snapshot.turn_id != request.turn_id:
-            raise ValueError("Execution requires its committed input")
-
         participants = runtime.participants
-        self._identity_basis = participants.identity_basis(snapshot)
+        self._identity_basis = participants.identity_basis(request.turn)
 
         def delivery_guard() -> bool:
             return participants.identity_basis_is_current(self._identity_basis)
@@ -103,14 +98,12 @@ class LoopExecution(LoopHandle):
         self._gateway = gateway
         self._context_manager = runtime.foundation.context
         self._budget = ExecutionBudget(request, asyncio.get_running_loop().time())
-        self._items: list[ModelInputItem] = list(request.input.items)
-        self._new_items: list[ModelInputItem] = []
+        self._items: list[ModelInputItem] = []
         self._commits = 0
         self._pending_calls: tuple[ModelFunctionCall, ...] = ()
         self._context: ModelInput | None = None
         self._operation: asyncio.Task[Any] | None = None
         self._identity_cleanup: asyncio.Task[None] | None = None
-        self._turn: TurnSnapshot = snapshot
         self._generation_options = self._budget.options(config.reasoning, finalizing=False)
         self._cancel_reason: str | None = None
         self._started = False
@@ -193,7 +186,11 @@ class LoopExecution(LoopHandle):
             part.observation.observation_id for part in parts if isinstance(part, ModelAudioPart)
         }
         # Rendered input may escape markup and wrap lines: the words are compared.
-        texts = " ".join(part.text for part in parts if isinstance(part, ModelTextPart))
+        texts = " ".join(
+            part.text
+            for part in parts
+            if isinstance(part, ModelTextPart) and part.kind == ModelTextPartKind.TEXT
+        )
         words = " ".join(html.unescape(texts).split())
         trace = self._runtime.perception.input_trace
         trace.record(
@@ -204,9 +201,8 @@ class LoopExecution(LoopHandle):
             input_id=self._request.input_id if current is not None else None,
             frame_count=len(images),
         )
-        snapshot = self._runtime.turn.get(self._request.input_id)
         timeline = self._runtime.perception.timeline
-        for observation_id in snapshot.input_observation_ids if snapshot is not None else ():
+        for observation_id in self._request.turn.input_observation_ids:
             observation = timeline.get_observation(observation_id=observation_id)
             payload = observation.payload if observation is not None else None
             said = " ".join(payload.text.split()) if isinstance(payload, TextPayload) else ""
@@ -283,7 +279,6 @@ class LoopExecution(LoopHandle):
                 raise LoopCommitError("Output record batch was not accepted") from exc
 
         self._items.extend(items)
-        self._new_items.extend(items)
         if calls:
             self._pending_calls = calls
 
@@ -381,13 +376,11 @@ class LoopExecution(LoopHandle):
             raise asyncio.CancelledError
 
         self._context = None
-        self._identity_basis = self._runtime.participants.identity_basis(self._turn)
+        self._identity_basis = self._runtime.participants.identity_basis(self._request.turn)
         self._identity_cleanup = None
         preparation = ContextPrepareRequest(
-            input=self._request.input,
-            turn_id=self.identity.turn_id,
+            turn=self._request.turn,
             context_id=self.identity.context_id,
-            input_id=self._request.input_id,
             contributions=(self._budget.contribution(),),
         )
         self._context = await self._with_identity(self._context_manager.prepare(preparation))
@@ -416,7 +409,7 @@ class LoopExecution(LoopHandle):
             )
 
         request = ModelRequest(
-            input=self._context_manager.build(self._context, continuation=tuple(self._new_items)),
+            input=self._context_manager.build(self._context, continuation=tuple(self._items)),
             # Preserve schemas/order even when tool use is disabled for finalization.
             tools=self._definitions,
             tool_choice="auto" if tools_allowed and self._definitions else "none",
@@ -712,7 +705,7 @@ class LoopExecution(LoopHandle):
         result = LoopResult(
             identity=self.identity,
             state=state,
-            items=tuple(self._new_items),
+            items=tuple(self._items),
             final_messages=answers,
             tools=tuple(self._tools.records),
             model_steps=self._budget.model_steps,

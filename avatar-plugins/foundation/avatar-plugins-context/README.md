@@ -17,7 +17,7 @@ State and static `loop_budget` use the synthetic `alphaavatar_runtime_context` f
 
 ## Native history
 
-The manager retains bounded history by context and Turn and independently consumes canonical model records from Output. User input comes from committed Turns, including turns superseded before preparation. A system notice enters the current user message as a typed text part. History keeps the notice facts.
+The manager retains bounded history by context and Turn and independently consumes canonical model records from Output. User input comes from committed Turns, including turns superseded before preparation. A system notice enters the current user message as a typed text part at the corresponding speech segment. History preserves the notice facts and their order when the snapshot retains the timing evidence.
 
 Incomplete tool-call/output pairs are excluded from the next model input. Retiring Run results remain associated with their original identity and do not resurrect evicted Turns. Context acknowledgement is independent of Memory acknowledgement and is not a database-persistence guarantee.
 

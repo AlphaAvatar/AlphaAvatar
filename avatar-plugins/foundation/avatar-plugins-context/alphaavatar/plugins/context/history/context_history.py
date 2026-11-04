@@ -31,7 +31,7 @@ from alphaavatar.agents.avatar.provider.schemas.model_input import (
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.turn import TurnStream
 
-from ..builder.renderer.history import render_history_seed
+from ..builder.renderer.history.message import render_history_seed
 
 if TYPE_CHECKING:
     from alphaavatar.agents.avatar.provider.schemas.model_input import ModelInputItem

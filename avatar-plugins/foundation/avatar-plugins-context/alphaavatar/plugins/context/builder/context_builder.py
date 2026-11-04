@@ -33,9 +33,9 @@ from alphaavatar.agents.constants import RUNTIME_CONTEXT_TOOL_NAME
 from alphaavatar.core.turn.enums import TurnInputModality
 from alphaavatar.core.turn.schemas import TurnSnapshot
 
-from .renderer.history import compact_historical_message
-from .renderer.notice import render_system_notice
-from .renderer.op import replace_current
+from .renderer.history.message import compact_historical_message
+from .renderer.input.notice import render_timed_notices
+from .renderer.input.xml import replace_current
 
 if TYPE_CHECKING:
     from alphaavatar.agents.avatar.context.schemas import ContextBuildRequest, ContextBuildResult
@@ -53,12 +53,12 @@ class ContextBuilder:
 
     def _renderers(self) -> RendererRegistry:
         if self._registry is None:
-            from .renderer import RealtimeRenderer, RendererRegistry, TextRenderer, VLMRenderer
+            from .renderer import RealtimeRenderer, RendererRegistry, XMLInputRenderer
 
             self._registry = RendererRegistry()
             for kind, renderer in (
-                (ModelInputType.TEXT, TextRenderer()),
-                (ModelInputType.VLM, VLMRenderer()),
+                (ModelInputType.TEXT, XMLInputRenderer(include_images=False)),
+                (ModelInputType.VLM, XMLInputRenderer(include_images=True)),
                 (ModelInputType.REALTIME, RealtimeRenderer()),
             ):
                 self._registry.register(input_type=kind, renderer=renderer)
@@ -155,22 +155,25 @@ class ContextBuilder:
     ) -> ContextBuildResult:
         from alphaavatar.agents.avatar.context.schemas import ContextBuildResult
 
+        # prepare
         base = self._prepare_base_input(request.base_input, current_input_id=request.input_id)
+
+        # system
         base = self._with_system_prompt(base, system_prompt=system_prompt)
-        notice = render_system_notice(snapshot, current=True)
-        if notice is not None and snapshot.modality == TurnInputModality.SYSTEM:
-            rendered = replace_current(base, request.input_id, (notice,))
+
+        # notice and render
+        notices = render_timed_notices(snapshot, current=True)
+        if notices and snapshot.modality == TurnInputModality.SYSTEM:
+            rendered = replace_current(
+                base, request.input_id, tuple(notice.part for notice in notices)
+            )
         else:
             rendered = (
                 self._renderers()
                 .resolve(request.model_input_type)
-                .render(replace(request, base_input=base))
+                .render(replace(request, base_input=base), notices=notices)
                 .model_input
             )
-            if notice is not None:
-                current = rendered.get(request.input_id)
-                parts = current.parts if isinstance(current, ModelInputMessage) else ()
-                rendered = replace_current(rendered, request.input_id, (*parts, notice))
 
         model_input = self._inject_runtime_context(
             rendered,

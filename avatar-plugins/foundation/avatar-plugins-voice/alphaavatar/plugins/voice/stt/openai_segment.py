@@ -36,6 +36,7 @@ from alphaavatar.agents.avatar.voice import (
 from alphaavatar.core.media import AudioFrame, AudioSampleFormat
 
 from ..log import logger
+from .constants import TRANSCRIPTION_UNAVAILABLE
 
 _FLUSH = object()
 _END_INPUT = object()
@@ -73,6 +74,8 @@ class _SegmentJob:
 
 class OpenAISegmentSTT(STTBase):
     """OpenAI transcription over completed AlphaAvatar speech segments."""
+
+    fallback_code = TRANSCRIPTION_UNAVAILABLE
 
     def __init__(
         self,

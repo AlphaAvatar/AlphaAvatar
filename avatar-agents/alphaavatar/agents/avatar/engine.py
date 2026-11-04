@@ -20,7 +20,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from alphaavatar.agents.log import logger
-from alphaavatar.agents.router.enums import TurnTakingAction, TurnTakingMode
+from alphaavatar.agents.router.enums import InteractionEntityKind, TurnTakingAction, TurnTakingMode
 from alphaavatar.agents.router.schemas import TurnTakingDecision
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.env import EnvObservation
@@ -77,7 +77,6 @@ class AvatarEngine(LifecycleComponent):
         runtime: AvatarRuntime,
         authorize: ToolAuthorizer | None = None,
     ) -> None:
-        self._avatar_config = avatar_config
         self._runtime = runtime
 
         foundation = runtime.foundation
@@ -104,8 +103,7 @@ class AvatarEngine(LifecycleComponent):
         )
 
         # Step 3: bind memory and persona to runtime context.
-        self._context_manager = foundation.context
-        self._context_manager.bind_sources(memory=self._memory, persona=self._persona)
+        foundation.context.bind_sources(memory=self._memory, persona=self._persona)
 
         # Step 4: manage Agent-owned consumers before enabling the Router.
         self._plugins = LifecycleGroup(
@@ -351,18 +349,17 @@ class AvatarEngine(LifecycleComponent):
 
     async def _submit(self, snapshot: TurnSnapshot) -> None:
         # Observe only committed input. No Run exists yet, and no prompt/history is logged.
+        context_id = self._runtime.state.context_id
         log_event(
             logger,
             "input.committed",
             text=snapshot.text,
             session_id=self._runtime.session.session_id,
-            context_id=self._runtime.state.context_id,
+            context_id=context_id,
             turn_id=snapshot.turn_id,
             input_id=snapshot.input_id,
             modality=snapshot.modality.value,
         )
-        model_input = self._context_manager.accept_turn(snapshot)
-        context_id = self._runtime.state.context_id
         previous, foreground = (
             self._foreground,
             _Foreground(snapshot.turn_id, context_id, snapshot.cutoff.sequence),
@@ -380,13 +377,13 @@ class AvatarEngine(LifecycleComponent):
             raise RuntimeError("Context changed during Turn admission")
 
         request = LoopRequest(
-            input_id=snapshot.input_id,
-            turn_id=snapshot.turn_id,
+            turn=snapshot,
             context_id=context_id,
-            input=model_input,
             allowed_capabilities=tuple(
                 capability.id for capability in self._runtime.capability_registry.capabilities
-            ),
+            )
+            if snapshot.modality != TurnInputModality.SYSTEM
+            else (),
             limits=self._config.loop_limits,
             depth=self._config.depth,
         )
@@ -443,6 +440,12 @@ class AvatarEngine(LifecycleComponent):
                 )
                 return
 
+            context_id = event.annotation.data.get("context_id", self._runtime.state.context_id)
+            if self._runtime.state.context_id != context_id:
+                flags.add(TurnTakingAction.CANCEL)
+                self._trace_admission(event, decision, outcome="ignored", reason="context_changed")
+                return
+
             latest = self._runtime.turn.latest
             if latest is not None and event.sequence <= latest.cutoff.sequence:
                 flags.add(TurnTakingAction.COMMIT)
@@ -478,8 +481,22 @@ class AvatarEngine(LifecycleComponent):
                 )
                 return
 
+            observations = tuple(
+                sorted(observations, key=lambda value: value.time_range.start.monotonic_ns)
+            )
+            started_at = observations[0].time_range.start
+            if (
+                latest is not None
+                and latest.metadata.get("source") == "avatar.engine.direct"
+                and started_at.monotonic_ns < latest.committed_at.monotonic_ns
+            ):
+                flags.add(TurnTakingAction.CANCEL)
+                self._trace_admission(event, decision, outcome="ignored", reason="superseded")
+                return
+
+            notice = decision.system_notice_code
             text = self._text(observations)
-            if text is None and not any(
+            has_input = text is not None or any(
                 value.kind
                 in (
                     ObservationKind.IMAGE_INPUT,
@@ -487,7 +504,34 @@ class AvatarEngine(LifecycleComponent):
                     ObservationKind.SCREEN_FRAME,
                 )
                 for value in observations
-            ):
+            )
+            notice_only = notice is not None and not has_input
+            if notice_only:
+                perception = self._runtime.perception
+                interaction = self._runtime.state.interaction_method
+                if (
+                    not (interaction.text_output or interaction.audio_output)
+                    or perception.has_active_speech
+                    or not any(
+                        ref.kind == InteractionEntityKind.AVATAR for ref in decision.addressees
+                    )
+                    or any(
+                        item.kind == ObservationKind.SPEECH_SEGMENT
+                        and item.segment is not None
+                        and not (
+                            perception.speech_source_is_current(item.segment.source)
+                            and self._runtime.participants.source_is_current(item.segment.source)
+                        )
+                        for item in observations
+                    )
+                ):
+                    flags.add(TurnTakingAction.CANCEL)
+                    self._trace_admission(
+                        event, decision, outcome="ignored", reason="notice_superseded"
+                    )
+                    return
+
+            if not notice_only and not has_input:
                 flags.add(TurnTakingAction.CANCEL)
                 logger.info(
                     "Turn admission rejected input_id=%s reason=no_usable_input",
@@ -504,7 +548,9 @@ class AvatarEngine(LifecycleComponent):
 
             mode = decision.turn_mode
             modality = (
-                TurnInputModality.AUDIO
+                TurnInputModality.SYSTEM
+                if notice_only
+                else TurnInputModality.AUDIO
                 if mode == TurnTakingMode.AUDIO_ONLY
                 else TurnInputModality.IMAGE
                 if mode == TurnTakingMode.VISUAL_ONLY
@@ -515,10 +561,7 @@ class AvatarEngine(LifecycleComponent):
                 input_id=decision.turn_candidate_id,
                 modality=modality,
                 text=text,
-                started_at=min(
-                    (value.time_range.start for value in observations),
-                    key=lambda value: value.monotonic_ns,
-                ),
+                started_at=started_at,
                 committed_at=event.time_range.end,
                 cutoff_sequence=event.sequence,
                 input_observation_ids=decision.input_observation_ids,
@@ -526,7 +569,7 @@ class AvatarEngine(LifecycleComponent):
                 if decision.actor is not None
                 else (),
                 addressees=tuple(self._entity(ref) for ref in decision.addressees),
-                context_ids=(self._runtime.state.context_id,),
+                context_ids=(context_id,),
                 metadata={
                     "candidate_revision": decision.candidate_revision,
                     "decision_event_id": event.event_id,
@@ -534,12 +577,14 @@ class AvatarEngine(LifecycleComponent):
                     "decision_annotation_id": event.annotation.annotation_id,
                     "reason": decision.reason,
                 },
+                system_notice_code=notice,
+                system_notice_segment_ids=decision.system_notice_segment_ids,
             )
             self._trace_admission(
                 event,
                 decision,
                 outcome="accepted",
-                reason="committed",
+                reason="system_notice" if notice_only else "committed",
                 evidence_count=len(observations),
             )
             await self._submit(snapshot)
@@ -616,6 +661,12 @@ class AvatarEngine(LifecycleComponent):
         if decision.action == TurnTakingAction.COMMIT:
             self._schedule_admission(self._admit_decision(event, decision))
         elif decision.action == TurnTakingAction.INTERRUPT:
+            if (
+                event.annotation.data.get("context_id", self._runtime.state.context_id)
+                != self._runtime.state.context_id
+            ):
+                return
+
             flags = self._candidate(decision.turn_candidate_id)
             if flags.intersection((TurnTakingAction.COMMIT, TurnTakingAction.INTERRUPT)):
                 return

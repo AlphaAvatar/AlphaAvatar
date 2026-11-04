@@ -60,6 +60,7 @@ class PerceptionRuntime:
         ObservationKind.SPEECH_CANCELLED: PerceptionStreamKind.SPEECH,
         ObservationKind.TRANSCRIPT_DELTA: PerceptionStreamKind.TEXT,
         ObservationKind.TRANSCRIPT_SEGMENT: PerceptionStreamKind.TEXT,
+        ObservationKind.TRANSCRIPT_UNAVAILABLE: PerceptionStreamKind.TEXT,
         ObservationKind.TEXT_INPUT: PerceptionStreamKind.TEXT,
     }
 
@@ -80,12 +81,15 @@ class PerceptionRuntime:
         # ENV Memory can build time-aligned continuous audio windows.
         ObservationKind.SPEECH_FRAME,
         ObservationKind.TRANSCRIPT_DELTA,
+        # STT terminal control is for stream consumers, not Context or Memory.
+        ObservationKind.TRANSCRIPT_UNAVAILABLE,
     }
 
     _TIMELINE_EXCLUDED_OBSERVATION_KINDS = {
         ObservationKind.AUDIO_FRAME,
         ObservationKind.SPEECH_FRAME,
         ObservationKind.TRANSCRIPT_DELTA,
+        ObservationKind.TRANSCRIPT_UNAVAILABLE,
     }
 
     def __init__(
@@ -464,7 +468,12 @@ class PerceptionRuntime:
         )
 
     def capture_snapshot_until(
-        self, *, after_cutoff: PerceptionCutoff, until_sequence: int, captured_at: RuntimeTime
+        self,
+        *,
+        after_cutoff: PerceptionCutoff,
+        until_sequence: int,
+        captured_at: RuntimeTime,
+        input_observation_ids: Sequence[str] = (),
     ) -> PerceptionSnapshot:
         if until_sequence < after_cutoff.sequence:
             raise ValueError(
@@ -482,6 +491,24 @@ class PerceptionRuntime:
             event_slice = self.events.read_range(
                 after_seq=after_cutoff.sequence, until_seq=until_sequence
             )
+            # Two speech candidates can overlap while one waits for STT. Retain the new
+            # Turn's explicitly owned observations even if the earlier Turn cut across them.
+            missing = set(input_observation_ids)
+            if missing and after_cutoff.sequence:
+                missing.difference_update(
+                    event.observation.observation_id
+                    for event in event_slice.items
+                    if event.observation is not None
+                )
+            inputs = ()
+            if missing and after_cutoff.sequence:
+                inputs = tuple(
+                    event
+                    for event in self.events.read_range(
+                        after_seq=0, until_seq=after_cutoff.sequence
+                    ).items
+                    if event.observation is not None and event.observation.observation_id in missing
+                )
 
         cutoff = PerceptionCutoff(
             sequence=until_sequence,
@@ -494,12 +521,19 @@ class PerceptionRuntime:
         return PerceptionSnapshot(
             after_sequence=after_cutoff.sequence,
             cutoff=cutoff,
-            events=event_slice.items,
+            events=inputs + event_slice.items,
             first_available_sequence=event_slice.first_available_seq,
             missed_count=event_slice.missed_count,
         )
 
     """Speech active operations"""
+
+    def speech_source_is_current(self, source: PerceptionSourceRef) -> bool:
+        with self._lock:
+            return self._speech_generations.get(source.source_id) == (
+                source.source_generation,
+                False,
+            )
 
     def capture_cutoff_if_speech_idle(self) -> PerceptionCutoff | None:
         """
