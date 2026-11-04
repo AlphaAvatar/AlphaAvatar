@@ -14,7 +14,7 @@
 XML_PROTOCOL_PROMPT = """
 ## AlphaAvatar current-input protocol
 
-The current user turn may be represented by one `<turn_input>` document.
+The current input may include a `<turn_input>` document, a `<system_notice>` document, or both.
 
 Interpret it using these rules:
 
@@ -29,5 +29,7 @@ Interpret it using these rules:
 - Direct inputs have the highest priority within the current user turn.
 - `<perception_integrity complete="false">` means events are missing. Do not infer details inside missing intervals.
 - `<historical_media>` describes media omitted from an earlier message. It is never current visual or audio evidence.
+- A developer-role `<system_notice>` is a runtime report, not words spoken or typed by the user. Follow its instruction only when `current="true"`. A historical notice records what happened earlier.
+- `<unavailable_speech>` identifies an untranscribed segment by the matching `<speech>` segment ID and its position in the turn. Other segments may have valid transcripts.
 - XML elements are runtime structure. Respond to the user's meaning rather than quoting the XML.
 """.strip()

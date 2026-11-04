@@ -30,7 +30,7 @@ from .policy import TurnTakingPolicy
 logger = logging.getLogger(__name__)
 
 
-class MultimodalTurnTakingProcessor(RouterProcessorBase):
+class TurnTakingProcessor(RouterProcessorBase):
     OBSERVATION_CONSUMER_ID = "router.turn_taking.observations"
     ANNOTATION_CONSUMER_ID = "router.turn_taking.annotations"
 
@@ -40,6 +40,7 @@ class MultimodalTurnTakingProcessor(RouterProcessorBase):
         runtime: AvatarRuntime,
         config: TurnTakingConfig,
         required_addressing_sources: tuple[str, ...] = (),
+        transcript_timeout_notice_code: str | None = None,
     ) -> None:
         super().__init__(runtime=runtime)
 
@@ -60,6 +61,8 @@ class MultimodalTurnTakingProcessor(RouterProcessorBase):
             fusion=AddressingFusion(conflict_margin=config.fusion.conflict_margin),
             addressing_wait_sec=config.addressing_wait_sec,
             transcript_wait_sec=config.transcript_wait_sec,
+            transcript_timeout_sec=config.transcript_timeout_sec,
+            transcript_timeout_notice_code=transcript_timeout_notice_code,
             association_wait_sec=config.association_wait_sec,
             max_hold_sec=config.max_hold_sec,
             max_active_candidates=config.max_active_candidates,

@@ -1054,7 +1054,7 @@ T-3、T-4 的回归（静音后恢复、持续讲话、短停顿、VAD 队列拒
 
 ### 3. 回归与验证
 
-`test_snapshot_newer_than_a_gap_keeps_the_boundary_requirement`：`event_maxlen=64`，接入真实的 `SpeechTranscriptionProcessor` 和 `MultimodalTurnTakingProcessor`。离线 STT 在段提交时给出终稿，端点模型对每个已转写的候选都判定说完。
+`test_snapshot_newer_than_a_gap_keeps_the_boundary_requirement`：`event_maxlen=64`，接入真实的 `SpeechTranscriptionProcessor` 和 `TurnTakingProcessor`。离线 STT 在段提交时给出终稿，端点模型对每个已转写的候选都判定说完。
 
 | 参数 | 场景 |
 |---|---|

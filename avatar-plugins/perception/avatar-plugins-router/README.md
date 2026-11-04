@@ -14,7 +14,7 @@ The factory orders consumers according to their dependencies. A processor is an 
 | SpeechTranscriptionProcessor | Routed speech | Transcript observations with segment provenance. |
 | SemanticAddressingProcessor | Transcripts and conversation focus | Typed semantic addressing evidence. |
 | VisualAddressingProcessor | Face annotations | Face-orientation addressing evidence. |
-| MultimodalTurnTakingProcessor | Speech, transcripts and addressing evidence | Turn decisions. |
+| TurnTakingProcessor | Speech, transcripts and addressing evidence | Turn decisions. |
 | SpeechSynthesisProcessor | AUDIO_SYNCED source text | AudioFrame and text/audio alignment. |
 | TranscriptSynchronizationProcessor | Source text, alignment, playback and control | Playback-derived transcript chunks. |
 
@@ -40,7 +40,7 @@ Addressing fusion preserves provenance, detects conflicting targets and prioriti
 
 ## 🔀 Turn decisions and Engine admission
 
-MultimodalTurnTakingProcessor coordinates candidate state, transcript/addressing readiness, asynchronous assessments, stale-result rejection and bounded evidence waits. It publishes COMMIT, HOLD, PASSIVE, INTERRUPT or CANCEL decisions according to its policy.
+TurnTakingProcessor coordinates candidate state, transcript/addressing readiness, asynchronous assessments, stale-result rejection and bounded evidence waits. It publishes COMMIT, HOLD, PASSIVE, INTERRUPT or CANCEL decisions according to its policy.
 
 ```text
 Speech + transcripts + addressing

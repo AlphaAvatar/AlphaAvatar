@@ -13,7 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
-from xml.sax.saxutils import escape
+from xml.sax.saxutils import escape, quoteattr
 
 from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
 from alphaavatar.agents.runtime import InteractionMethod, StateRuntime
@@ -26,6 +26,40 @@ from .prompts.avatar_system_prompts import (
 )
 from .prompts.runtime_context_prompts import RUNTIME_CONTEXT_PROMPT
 from .prompts.xlm_protocol_prompts import XML_PROTOCOL_PROMPT
+
+_SYSTEM_NOTICES = {
+    "voice.transcription_unavailable": (
+        "The speaker's words could not be transcribed.",
+        "Briefly and naturally ask them to repeat what they said. Do not guess the words or the cause.",
+    )
+}
+
+
+def render_system_notice(
+    code: str,
+    *,
+    current: bool,
+    segments: tuple[tuple[str, int | None], ...] = (),
+    partial: bool = False,
+) -> str:
+    fact, instruction = _SYSTEM_NOTICES.get(
+        code, ("An input could not be understood.", "Briefly ask the user to try the input again.")
+    )
+    if partial:
+        fact = "Part of this input could not be understood."
+        instruction = (
+            "Briefly acknowledge the missing part and respond to the recognized content. "
+            "Ask only for the missing part if needed. Do not guess what was missed."
+        )
+
+    body = f"<fact>{escape(fact)}</fact>"
+    for segment_id, position in segments:
+        index = f' position="{position}"' if position is not None else ""
+        body += f"<unavailable_speech segment_id={quoteattr(segment_id)}{index} />"
+    if current:
+        body += f"<instruction>{escape(instruction)}</instruction>"
+
+    return f'<system_notice code={quoteattr(code)} current="{str(current).lower()}">{body}</system_notice>'
 
 
 def _xml_text(value: object | None) -> str:

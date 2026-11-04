@@ -20,7 +20,7 @@ from dataclasses import replace
 from math import isfinite
 from typing import TypeVar
 
-from alphaavatar.agents.router.enums import TurnTakingAction
+from alphaavatar.agents.router.enums import InteractionEntityKind, TurnTakingAction
 from alphaavatar.agents.router.models import TurnTakingModelBase
 from alphaavatar.agents.router.schemas import (
     InteractionAddressingEvidence,
@@ -33,6 +33,7 @@ from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import AnnotationKind, ObservationKind, SpeechCancellationReason
 from alphaavatar.core.env.schemas import PerceptionSegmentRef, PerceptionSourceRef
 from alphaavatar.core.perception.schemas import PerceptionEvent
+from alphaavatar.core.session.schemas import IdentityRef
 
 from .evidence import TurnEvidenceBuilder
 from .fusion import AddressingFusion
@@ -70,6 +71,8 @@ class TurnTakingCoordinator:
         max_hold_sec: float,
         unsegmented_alignment_sec: float,
         association_wait_sec: float = 0.15,
+        transcript_timeout_sec: float = 3.0,
+        transcript_timeout_notice_code: str | None = None,
         required_addressing_sources: tuple[str, ...] = (),
         max_active_candidates: int = 128,
     ) -> None:
@@ -77,6 +80,8 @@ class TurnTakingCoordinator:
             raise ValueError("max_active_candidates must be a positive integer")
         if not isfinite(association_wait_sec) or association_wait_sec < 0:
             raise ValueError("association_wait_sec must be finite and nonnegative")
+        if not isfinite(transcript_timeout_sec) or transcript_timeout_sec <= 0:
+            raise ValueError("transcript_timeout_sec must be finite and positive")
 
         self._max_active_candidates = max_active_candidates
         self._runtime = runtime
@@ -87,6 +92,8 @@ class TurnTakingCoordinator:
 
         self._addressing_wait_sec = addressing_wait_sec
         self._transcript_wait_sec = transcript_wait_sec
+        self._transcript_timeout_sec = transcript_timeout_sec
+        self._transcript_timeout_notice_code = transcript_timeout_notice_code
         self._association_wait_sec = association_wait_sec
         self._max_hold_sec = max_hold_sec
         self._unsegmented_alignment_ns = int(unsegmented_alignment_sec * 1_000_000_000)
@@ -105,6 +112,7 @@ class TurnTakingCoordinator:
 
         self._assessment_tasks: dict[SpeakerKey, asyncio.Task[None]] = {}
         self._assessment_workers: set[asyncio.Task[None]] = set()
+        self._speech_order = self._committed_speech_order = 0
 
     @classmethod
     def _store_addressing(
@@ -234,9 +242,13 @@ class TurnTakingCoordinator:
         )
 
     def _speech_active(self, candidate: TurnCandidate) -> bool:
-        return bool(candidate.active_segments) or any(
-            other.active_segments and self._related_speech(candidate, other)
-            for other in self._candidates.values()
+        return (
+            bool(candidate.active_segments)
+            or candidate.transcript_deadline is None
+            and any(
+                other.active_segments and self._related_speech(candidate, other)
+                for other in self._candidates.values()
+            )
         )
 
     def _resume_source(self, source: PerceptionSourceRef) -> None:
@@ -273,6 +285,7 @@ class TurnTakingCoordinator:
         decision = result.decision
         if (
             self._candidates.get(candidate.key) is not candidate
+            or candidate.context_id != self._runtime.state.context_id
             or decision.turn_candidate_id != candidate.turn_candidate_id
             or decision.candidate_revision != candidate.revision
         ):
@@ -281,6 +294,21 @@ class TurnTakingCoordinator:
         target_observation_id = observation_id or candidate.anchor_observation_id
         if target_observation_id is None:
             return
+
+        if (
+            decision.action == TurnTakingAction.COMMIT
+            and candidate.transcript_deadline is not None
+            and candidate.speech_order < self._committed_speech_order
+        ):
+            result = self._operational_result(
+                self._builder.build(candidate),
+                action=TurnTakingAction.CANCEL,
+                reason="superseded_transcript",
+            )
+            decision = result.decision
+        elif decision.action == TurnTakingAction.COMMIT and candidate.unavailable_transcripts:
+            result = self._with_transcript_notice(candidate, result)
+            decision = result.decision
 
         if result.addressing is not None:
             self._runtime.perception.publish_annotation(
@@ -292,7 +320,12 @@ class TurnTakingCoordinator:
         annotation = decision.to_annotation(
             source=self.SOURCE, observation_id=target_observation_id
         )
+        annotation = replace(
+            annotation, data={**annotation.data, "context_id": candidate.context_id}
+        )
         event = self._runtime.perception.publish_annotation(annotation)
+        if event is not None and decision.action == TurnTakingAction.COMMIT:
+            self._committed_speech_order = max(self._committed_speech_order, candidate.speech_order)
         trace = self._runtime.perception.input_trace
         trace.record(
             "candidate.decision",
@@ -334,6 +367,11 @@ class TurnTakingCoordinator:
     def _is_current(self, key: SpeakerKey, evidence: TurnTakingEvidence) -> bool:
         candidate = self._candidates.get(key)
         if candidate is not None and candidate.turn_candidate_id == evidence.turn_candidate_id:
+            if candidate.transcript_deadline is not None and not self._pending_is_current(
+                candidate
+            ):
+                self._drop_candidate(key)
+                return False
             if self._refresh_speaker(candidate):
                 self._schedule_assessment(key, candidate.turn_candidate_id)
                 self._resume_source(key.source)
@@ -377,6 +415,7 @@ class TurnTakingCoordinator:
             return
 
         self._cancel_assessment(key)
+        self._cancel_transcript_timer(candidate)
         self._runtime.perception.input_trace.record(
             "candidate.retired",
             candidate_id=candidate.turn_candidate_id,
@@ -399,37 +438,147 @@ class TurnTakingCoordinator:
         self._orphan_transcripts.pop(segment, None)
         self._orphan_addressing_by_segment.pop(segment, None)
 
-    async def _wait_for_transcript(
-        self, key: SpeakerKey, evidence: TurnTakingEvidence, *, reason: str
+    @staticmethod
+    def _cancel_transcript_timer(candidate: TurnCandidate) -> None:
+        if candidate.transcript_timer is not None:
+            candidate.transcript_timer.cancel()
+            candidate.transcript_timer = None
+
+    def _wait_for_transcript(
+        self,
+        key: SpeakerKey,
+        evidence: TurnTakingEvidence,
+        *,
+        reason: str,
+        commit: TurnTakingDecision | None = None,
     ) -> None:
         if not self._is_current(key, evidence):
             return
 
         candidate = self._candidates[key]
-        if not candidate.missing_transcripts:
+        if not candidate.pending_transcripts:
+            return
+        if not self._pending_is_current(candidate):
+            self._drop_candidate(key)
             return
 
         self._publish_result(
             candidate,
             self._operational_result(evidence, action=TurnTakingAction.HOLD, reason=reason),
         )
+        # A closed candidate waiting for STT keeps its original segments. New speech for
+        # this speaker can now own a separate candidate without stealing their finals.
+        if key.segment_id is None:
+            pending = replace(key, segment_id=candidate.segments[0].segment_id)
+            self._candidates.pop(key)
+            self._candidates[pending] = candidate
+            candidate.key = pending
+            for segment in candidate.segments:
+                self._segment_owners[segment] = pending
 
-        await asyncio.sleep(self._transcript_wait_sec)
+        loop = asyncio.get_running_loop()
+        candidate.transcript_deadline = loop.time() + self._transcript_timeout_sec
+        candidate.transcript_commit = commit
+        candidate.transcript_owners = {
+            segment: IdentityRef.from_participant(owner)
+            for segment in candidate.segments
+            if (owner := self._runtime.participants.resolve(segment=segment)) is not None
+            and owner.user_id is not None
+        }
+        delay = min(self._transcript_wait_sec, self._transcript_timeout_sec)
+        candidate.transcript_timer = loop.call_later(
+            delay, self._transcript_wait_elapsed, candidate
+        )
 
-        if not self._is_current(key, evidence):
+    def _transcript_wait_elapsed(self, candidate: TurnCandidate) -> None:
+        loop = asyncio.get_running_loop()
+        deadline = candidate.transcript_deadline
+        if deadline is None or self._candidates.get(candidate.key) is not candidate:
             return
-
-        candidate = self._candidates[key]
-        if not candidate.missing_transcripts:
+        if not self._pending_is_current(candidate):
+            self._drop_candidate(candidate.key)
             return
+        if loop.time() < deadline:
+            self._runtime.perception.input_trace.record(
+                "candidate.transcript_wait",
+                candidate_id=candidate.turn_candidate_id,
+                candidate_revision=candidate.revision,
+                outcome="pending",
+                missing_count=len(candidate.pending_transcripts),
+            )
+            candidate.transcript_timer = loop.call_at(
+                deadline, self._transcript_wait_elapsed, candidate
+            )
+            return
+        self._expire_transcript_wait(candidate)
 
-        self._publish_result(
-            candidate,
-            self._operational_result(
-                evidence, action=TurnTakingAction.CANCEL, reason="transcript_timeout"
+    def _expire_transcript_wait(self, candidate: TurnCandidate) -> None:
+        candidate.unavailable_transcripts.update(
+            dict.fromkeys(candidate.pending_transcripts, self._transcript_timeout_notice_code)
+        )
+        self._finish_transcript_wait(candidate, reason="transcript_timeout")
+
+    def _finish_transcript_wait(self, candidate: TurnCandidate, *, reason: str) -> None:
+        key = candidate.key
+        if self._candidates.get(key) is not candidate:
+            return
+        if self._pending_is_current(candidate):
+            evidence = self._builder.build(candidate)
+            result = self._policy.resolve_timeout(
+                evidence=evidence, addressing=self._current_addressing(candidate), reason=reason
+            )
+            if not candidate.transcripts and result.decision.action != TurnTakingAction.COMMIT:
+                result = self._operational_result(
+                    evidence, action=TurnTakingAction.CANCEL, reason=reason
+                )
+            self._publish_result(candidate, result)
+        self._drop_candidate(key)
+
+    def _with_transcript_notice(
+        self, candidate: TurnCandidate, result: TurnTakingPolicyResult
+    ) -> TurnTakingPolicyResult:
+        decision = result.decision
+        reason = (
+            "transcript_timeout"
+            if decision.reason == "transcript_timeout"
+            else "transcript_unavailable"
+        )
+        codes = candidate.unavailable_transcripts
+        code = next((codes[segment] for segment in candidate.segments if codes.get(segment)), None)
+        if not candidate.transcripts and (
+            code is None
+            or candidate.speech_order != self._speech_order
+            or self._runtime.perception.has_active_speech
+            or not any(ref.kind == InteractionEntityKind.AVATAR for ref in decision.addressees)
+        ):
+            return self._operational_result(
+                self._builder.build(candidate), action=TurnTakingAction.CANCEL, reason=reason
+            )
+        if code is None:
+            return result
+
+        failed = tuple(
+            segment.segment_id for segment in candidate.segments if codes.get(segment) == code
+        )
+        return replace(
+            result,
+            decision=replace(
+                decision, reason=reason, system_notice_code=code, system_notice_segment_ids=failed
             ),
         )
-        self._drop_candidate(key)
+
+    def _pending_is_current(self, candidate: TurnCandidate) -> bool:
+        source = candidate.key.source
+        return (
+            not candidate.has_entity_conflict
+            and candidate.context_id == self._runtime.state.context_id
+            and self._runtime.participants.source_is_current(source)
+            and self._runtime.perception.speech_source_is_current(source)
+            and all(
+                owner.matches(self._runtime.participants.resolve(segment=segment))
+                for segment, owner in candidate.transcript_owners.items()
+            )
+        )
 
     async def _hold_then_resolve(
         self, key: SpeakerKey, evidence: TurnTakingEvidence, *, timeout_sec: float, reason: str
@@ -447,9 +596,12 @@ class TurnTakingCoordinator:
             evidence=evidence, addressing=self._current_addressing(candidate), reason=reason
         )
 
-        if result.decision.action == TurnTakingAction.COMMIT and candidate.missing_transcripts:
-            await self._wait_for_transcript(
-                key, evidence, reason="awaiting_transcript_after_turn_timeout"
+        if result.decision.action == TurnTakingAction.COMMIT and candidate.pending_transcripts:
+            self._wait_for_transcript(
+                key,
+                evidence,
+                reason="awaiting_transcript_after_turn_timeout",
+                commit=result.decision,
             )
             return
 
@@ -501,10 +653,34 @@ class TurnTakingCoordinator:
             candidate = self._candidate(key, turn_candidate_id)
             if candidate is None or self._speech_active(candidate):
                 return
+            if candidate.transcript_deadline is not None and not self._pending_is_current(
+                candidate
+            ):
+                self._drop_candidate(key)
+                return
 
             if self._refresh_speaker(candidate):
                 self._resume_source(key.source)
             evidence = self._builder.build(candidate)
+
+            if (commit := candidate.transcript_commit) is not None:
+                # The endpoint was settled before STT caught up. Keep that boundary and
+                # recheck the evidence available at commit without another endpoint wait.
+                evidence = replace(evidence, turn_mode=commit.turn_mode)
+                if not await self._prepare_commit(key, evidence):
+                    return
+                result = self._policy.resolve_timeout(
+                    evidence=evidence,
+                    addressing=self._current_addressing(candidate),
+                    reason=commit.reason or "transcript_ready",
+                )
+                if result.decision.action == TurnTakingAction.COMMIT:
+                    result = replace(
+                        result, decision=replace(result.decision, confidence=commit.confidence)
+                    )
+                self._publish_result(candidate, result)
+                self._drop_candidate(key)
+                return
 
             if not self._model.capabilities.supports(evidence.turn_mode):
                 self._publish_result(
@@ -518,11 +694,15 @@ class TurnTakingCoordinator:
                 self._drop_candidate(key)
                 return
 
-            if self._model.capabilities.uses_transcript and candidate.missing_transcripts:
-                await self._wait_for_transcript(
-                    key, evidence, reason="awaiting_transcript_for_assessment"
-                )
-                return
+            if self._model.capabilities.uses_transcript:
+                if candidate.pending_transcripts:
+                    self._wait_for_transcript(
+                        key, evidence, reason="awaiting_transcript_for_assessment"
+                    )
+                    return
+                if candidate.unavailable_transcripts and not candidate.transcripts:
+                    self._finish_transcript_wait(candidate, reason="transcript_unavailable")
+                    return
 
             try:
                 assessment = await self._model.assess(evidence)
@@ -578,10 +758,13 @@ class TurnTakingCoordinator:
                     )
                     if (
                         result.decision.action == TurnTakingAction.COMMIT
-                        and candidate.missing_transcripts
+                        and candidate.pending_transcripts
                     ):
-                        await self._wait_for_transcript(
-                            key, evidence, reason="awaiting_transcript_after_addressing_timeout"
+                        self._wait_for_transcript(
+                            key,
+                            evidence,
+                            reason="awaiting_transcript_after_addressing_timeout",
+                            commit=result.decision,
                         )
                         return
 
@@ -600,9 +783,9 @@ class TurnTakingCoordinator:
             )
             result = self._policy.decide(evidence=evidence, assessment=assessment)
 
-            if result.decision.action == TurnTakingAction.COMMIT and candidate.missing_transcripts:
-                await self._wait_for_transcript(
-                    key, evidence, reason="awaiting_transcript_for_commit"
+            if result.decision.action == TurnTakingAction.COMMIT and candidate.pending_transcripts:
+                self._wait_for_transcript(
+                    key, evidence, reason="awaiting_transcript_for_commit", commit=result.decision
                 )
                 return
 
@@ -647,6 +830,7 @@ class TurnTakingCoordinator:
             or key.source in self._cancelled_sources
             or not self._runtime.participants.source_is_current(key.source)
             or self._speech_active(candidate)
+            or (candidate.transcript_deadline is not None and candidate.pending_transcripts)
         ):
             return
 
@@ -881,7 +1065,7 @@ class TurnTakingCoordinator:
                 )
                 self._drop_candidate(oldest_key)
 
-            candidate = TurnCandidate.create(observation)
+            candidate = TurnCandidate.create(observation, context_id=self._runtime.state.context_id)
             self._candidates[key] = candidate
 
         candidate.latest_observation_id = observation.observation_id
@@ -904,6 +1088,9 @@ class TurnTakingCoordinator:
         self._trace_segment(
             "candidate.transcript", segment, observation, candidate=candidate, state="accepted"
         )
+        if not candidate.pending_transcripts:
+            self._cancel_transcript_timer(candidate)
+
         logger.debug(
             "TURN TRANSCRIPT candidate_id=%s revision=%s segment_id=%s source=%s "
             "generation=%s observation_id=%s chars=%d active_segments=%d",
@@ -924,6 +1111,10 @@ class TurnTakingCoordinator:
     def _store_orphan_transcript(
         self, segment: PerceptionSegmentRef, observation: EnvObservation
     ) -> None:
+        previous = self._orphan_transcripts.get(segment)
+        if previous is not None and previous.kind == ObservationKind.TRANSCRIPT_UNAVAILABLE:
+            return
+
         if (
             segment not in self._orphan_transcripts
             and len(self._orphan_transcripts) >= self._MAX_ORPHANS
@@ -973,6 +1164,8 @@ class TurnTakingCoordinator:
         is_new_segment = candidate.start_segment(segment, observation)
         self._segment_owners[segment] = key
         if is_new_segment:
+            self._speech_order += 1
+            candidate.speech_order = self._speech_order
             changed = self._refresh_speaker(candidate, observation) or changed
 
         if is_new_segment:
@@ -981,9 +1174,10 @@ class TurnTakingCoordinator:
             self._trace_segment(
                 "candidate.segment", segment, observation, candidate=candidate, state="open"
             )
+
         if is_new_segment or changed:
             for other_key, other in self._candidates.items():
-                if self._related_speech(candidate, other):
+                if other.transcript_deadline is None and self._related_speech(candidate, other):
                     self._cancel_assessment(other_key)
 
         self._attach_segment_addressing(key, candidate, segment)
@@ -994,7 +1188,7 @@ class TurnTakingCoordinator:
 
         orphan = self._orphan_transcripts.pop(segment, None)
         if orphan is not None:
-            self._apply_transcript(key, candidate, segment, orphan)
+            self._consume_transcript(orphan)
 
         if observation.kind != ObservationKind.SPEECH_SEGMENT:
             if changed:
@@ -1027,7 +1221,11 @@ class TurnTakingCoordinator:
 
     def _consume_transcript(self, observation: EnvObservation) -> None:
         segment = self._builder.require_segment(observation)
-        if segment in self._retired_segments or segment.source in self._cancelled_sources:
+        if (
+            segment in self._retired_segments
+            or segment.source in self._cancelled_sources
+            or not self._runtime.participants.source_is_current(segment.source)
+        ):
             self._trace_segment(
                 "candidate.transcript_rejected", segment, observation, reason="retired_segment"
             )
@@ -1040,8 +1238,34 @@ class TurnTakingCoordinator:
             return
 
         candidate = self._candidates.get(key)
-        if candidate is not None:
-            self._apply_transcript(key, candidate, segment, observation)
+        if candidate is None or segment in candidate.unavailable_transcripts:
+            return
+        if candidate.transcript_deadline is not None:
+            if not self._pending_is_current(candidate):
+                self._drop_candidate(key)
+                return
+            if segment not in candidate.pending_transcripts:
+                return
+            if asyncio.get_running_loop().time() >= candidate.transcript_deadline:
+                self._expire_transcript_wait(candidate)
+                return
+        if observation.kind == ObservationKind.TRANSCRIPT_UNAVAILABLE:
+            if segment not in candidate.transcripts:
+                code = observation.metadata.get("system_notice_code")
+                candidate.unavailable_transcripts[segment] = code
+                self._trace_segment(
+                    "candidate.transcript",
+                    segment,
+                    observation,
+                    candidate=candidate,
+                    state="unavailable",
+                    reason=observation.metadata.get("reason_code"),
+                )
+                if candidate.transcript_deadline is not None and not candidate.pending_transcripts:
+                    self._cancel_transcript_timer(candidate)
+                    self._schedule_assessment(key, candidate.turn_candidate_id)
+            return
+        self._apply_transcript(key, candidate, segment, observation)
 
     def _consume_cancelled(self, observation: EnvObservation) -> None:
         segment = self._builder.require_segment(observation)
@@ -1089,6 +1313,11 @@ class TurnTakingCoordinator:
         if observation.kind == ObservationKind.SPEECH_CANCELLED:
             self._consume_cancelled(observation)
             return
+
+        if observation.kind == ObservationKind.TRANSCRIPT_UNAVAILABLE:
+            self._consume_transcript(observation)
+            return
+
         self._attach_pending_addressing(observation)
 
         if observation.kind in {ObservationKind.SPEECH_FRAME, ObservationKind.SPEECH_SEGMENT}:
@@ -1147,6 +1376,9 @@ class TurnTakingCoordinator:
         if retain_retired:
             for key in tuple(self._candidates):
                 self._drop_candidate(key, resume=False)
+        else:
+            for candidate in self._candidates.values():
+                self._cancel_transcript_timer(candidate)
         self._assessment_tasks.clear()
         self._candidates.clear()
         self._segment_owners.clear()

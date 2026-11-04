@@ -650,7 +650,7 @@ async def test_snapshot_newer_than_a_gap_keeps_the_boundary_requirement(
     stt = FinalizingSTT()
     listeners = (
         SpeechTranscriptionProcessor(runtime=runtime, stt=stt, close_timeout_sec=1),
-        turn_taking.MultimodalTurnTakingProcessor(
+        turn_taking.TurnTakingProcessor(
             runtime=runtime,
             config=TurnTakingConfig(transcript_wait_sec=HANG_GUARD, association_wait_sec=0.0),
         ),

@@ -11,6 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+# Copyright 2026 AlphaAvatar project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 from __future__ import annotations
 
 import logging
@@ -22,11 +35,11 @@ from alphaavatar.core.output.enums import OutputLane
 from .config import RouterConfig
 from .processors import (
     AudioActivityProcessor,
-    MultimodalTurnTakingProcessor,
     SemanticAddressingProcessor,
     SpeechSynthesisProcessor,
     SpeechTranscriptionProcessor,
     TranscriptSynchronizationProcessor,
+    TurnTakingProcessor,
     VisualAddressingProcessor,
 )
 from .runtime import InteractionRouterRuntime
@@ -81,11 +94,13 @@ class RouterPlugin(AvatarModulePlugin):
             required_addressing_sources = (SemanticAddressingProcessor.SEMANTIC_SOURCE,)
 
         if config.turn_taking.enabled:
+            notice_code = voice.stt.fallback_code if voice.stt is not None else None
             processors.append(
-                MultimodalTurnTakingProcessor(
+                TurnTakingProcessor(
                     runtime=runtime,
                     config=config.turn_taking,
                     required_addressing_sources=required_addressing_sources,
+                    transcript_timeout_notice_code=notice_code,
                 )
             )
 

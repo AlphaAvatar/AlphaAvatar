@@ -298,6 +298,7 @@ class MemoryRuntime(MemoryBase):
     def _record_turn(self, snapshot: TurnSnapshot) -> None:
         if snapshot.modality == TurnInputModality.SYSTEM:
             return
+
         context_id = self.resolve_context_id(snapshot.context_ids)
         if context_id is None:
             logger.warning(

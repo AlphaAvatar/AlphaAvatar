@@ -225,7 +225,7 @@ async def listening(
     )
     runtime, stt = avatar_runtime(tmp_path / "workspace"), OfflineSTT()
     transcription = SpeechTranscriptionProcessor(runtime=runtime, stt=stt, close_timeout_sec=1)
-    turns = turn_taking.MultimodalTurnTakingProcessor(
+    turns = turn_taking.TurnTakingProcessor(
         runtime=runtime,
         # A generous transcript budget unless a test exercises its expiry deliberately.
         config=TurnTakingConfig(

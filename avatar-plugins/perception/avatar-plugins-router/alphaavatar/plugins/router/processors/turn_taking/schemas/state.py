@@ -13,6 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+from asyncio import TimerHandle
 from dataclasses import dataclass, field
 from uuid import uuid4
 
@@ -21,9 +22,11 @@ from alphaavatar.agents.router.schemas import (
     InteractionAddressingEvidence,
     InteractionEntityRef,
     TurnTakingAudioEvidence,
+    TurnTakingDecision,
 )
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.schemas import PerceptionSegmentRef, PerceptionSourceRef
+from alphaavatar.core.session.schemas import IdentityRef
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
 
 
@@ -64,6 +67,7 @@ class TurnCandidate:
     speaker: InteractionEntityRef
     started_at: RuntimeTime
     updated_at: RuntimeTime
+    context_id: str
 
     turn_candidate_id: str = field(default_factory=lambda: uuid4().hex)
     revision: int = 0
@@ -71,12 +75,18 @@ class TurnCandidate:
     has_perception_gap: bool = False
     has_entity_conflict: bool = False
     association_deadline: float | None = None
+    speech_order: int = 0
+    transcript_deadline: float | None = None
+    transcript_timer: TimerHandle | None = None
+    transcript_commit: TurnTakingDecision | None = None
+    transcript_owners: dict[PerceptionSegmentRef, IdentityRef] = field(default_factory=dict)
 
     segments: list[PerceptionSegmentRef] = field(default_factory=list)
     active_segments: set[PerceptionSegmentRef] = field(default_factory=set)
     closed_segments: set[PerceptionSegmentRef] = field(default_factory=set)
 
     transcripts: dict[PerceptionSegmentRef, str] = field(default_factory=dict)
+    unavailable_transcripts: dict[PerceptionSegmentRef, str | None] = field(default_factory=dict)
     audio: dict[PerceptionSegmentRef, TurnTakingAudioEvidence] = field(default_factory=dict)
     addressing_evidence: dict[str, AddressingEvidenceRecord] = field(default_factory=dict)
 
@@ -89,13 +99,17 @@ class TurnCandidate:
         return self.closed_segments.difference(self.transcripts)
 
     @property
+    def pending_transcripts(self) -> set[PerceptionSegmentRef]:
+        return self.closed_segments.difference(self.transcripts, self.unavailable_transcripts)
+
+    @property
     def text(self) -> str:
         return " ".join(
             self.transcripts[segment] for segment in self.segments if segment in self.transcripts
         ).strip()
 
     @classmethod
-    def create(cls, observation: EnvObservation) -> TurnCandidate:
+    def create(cls, observation: EnvObservation, *, context_id: str) -> TurnCandidate:
         key = SpeakerKey.from_observation(observation)
         return cls(
             key=key,
@@ -107,6 +121,7 @@ class TurnCandidate:
             ),
             started_at=observation.time_range.start,
             updated_at=observation.time_range.end,
+            context_id=context_id,
         )
 
     def _touch(self, at: RuntimeTime) -> None:

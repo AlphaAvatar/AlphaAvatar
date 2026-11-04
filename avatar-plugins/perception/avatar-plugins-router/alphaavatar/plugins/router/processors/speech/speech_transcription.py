@@ -64,6 +64,7 @@ class _SegmentState:
     entity: PerceptionEntityRef | None
     closed: bool = False
     input_source: PerceptionSourceRef | None = None
+    transcript_source: PerceptionSourceRef | None = None
     stream_id: str | None = None
     first_stream_sequence: int = 0
     last_stream_sequence: int = 0
@@ -218,11 +219,13 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
     ) -> None:
         if segment in self._retired:
             return
+
         state = self._segments.pop(segment, None)
         self._retired[segment] = None
         if len(self._retired) > self._max_retired_segments:
             self._retired.popitem(last=False)
             self._retired_evictions += 1
+
         self._record(
             "stt.terminal",
             segment=segment,
@@ -232,6 +235,26 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
             retired_evictions=self._retired_evictions,
             **fields,
         )
+
+        if (
+            state is not None
+            and self._started
+            and outcome in {"final_empty", "error", "rejected", "closed_without_final"}
+            and self._generations.get(segment.source.source_id) == segment.source.source_generation
+            and self._cancelled_generations.get(segment.source.source_id)
+            != segment.source.source_generation
+        ):
+            observation = EnvObservation.transcript_unavailable(
+                outcome=outcome,
+                reason=reason,
+                system_notice_code=self._stt.fallback_code,
+                time_range=self._runtime.clock.point(),
+                source=state.transcript_source or segment.source,
+                segment=segment,
+                device_id=state.device_id,
+                entity=state.entity,
+            )
+            self._runtime.perception.publish_observation(observation)
 
     def _finish_source_segments(self, source: _STTSource, *, outcome: str, reason: str) -> None:
         for segment, state in tuple(self._segments.items()):
@@ -543,7 +566,8 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
             self._finish_segment(segment, outcome="rejected", reason="source_cleanup_capacity")
             self._runtime.perception.input_trace.freeze(reason="stt_source_cleanup_capacity")
             return
-        state.stream_id = source.stream_id
+
+        state.stream_id, state.transcript_source = source.stream_id, source.transcript_source
         if source.stream.push_frame(frame, segment_id=segment.segment_id):
             state.frame_count += 1
             if state.frame_count == 1:
@@ -554,6 +578,7 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
                     observation_id=observation.observation_id,
                 )
             return
+
         self._finish_segment(segment, outcome="rejected", reason="input_rejected")
         self._runtime.perception.input_trace.freeze(reason="stt_input_rejected")
         await self._close_source(source, graceful=False, reason="input_rejected")
@@ -569,6 +594,7 @@ class SpeechTranscriptionProcessor(RouterProcessorBase):
             self._runtime.perception.input_trace.freeze(reason="stt_commit_rejected")
             await self._close_source(source, graceful=False, reason="commit_rejected")
             return
+
         self._record("stt.commit", segment=segment, state=state, outcome="accepted")
 
     async def _consume_observation(

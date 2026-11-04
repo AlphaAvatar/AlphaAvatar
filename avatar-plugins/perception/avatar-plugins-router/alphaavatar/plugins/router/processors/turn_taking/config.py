@@ -46,7 +46,11 @@ class TurnTakingConfig(BaseModel):
     enabled: bool = True
 
     addressing_wait_sec: float = Field(default=0.5, gt=0.0)
-    transcript_wait_sec: float = Field(default=0.75, ge=0.0)
+
+    # Report a pending transcript after the soft threshold; only the hard deadline retires it.
+    transcript_wait_sec: float = Field(default=0.75, ge=0.0, allow_inf_nan=False)
+    transcript_timeout_sec: float = Field(default=3.0, gt=0.0, allow_inf_nan=False)
+
     association_wait_sec: float = Field(default=0.15, ge=0.0, allow_inf_nan=False)
     unsegmented_alignment_sec: float = Field(default=0.75, gt=0.0)
     max_hold_sec: float = Field(default=1.5, gt=0.0)
