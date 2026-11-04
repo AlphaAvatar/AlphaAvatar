@@ -18,7 +18,6 @@ import json
 import logging
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from alphaavatar.agents.avatar.provider.enums import ModelRole
@@ -30,6 +29,9 @@ from alphaavatar.agents.avatar.provider.schemas.model_input import (
     ModelFunctionOutput,
 )
 from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.turn import TurnStream
+
+from ..builder.renderer.history import render_history_seed
 
 if TYPE_CHECKING:
     from alphaavatar.agents.avatar.provider.schemas.model_input import ModelInputItem
@@ -91,8 +93,9 @@ class ContextHistory:
 
     CONSUMER_ID = "context.history"
 
-    def __init__(self, *, output: OutputRuntime, config: ContextConfig) -> None:
+    def __init__(self, *, output: OutputRuntime, turns: TurnStream, config: ContextConfig) -> None:
         self._journal = output.records
+        self._turn_events = turns
         self._max_turns = config.history_max_turns
         self._max_items = config.history_max_items
         self._max_bytes = config.history_max_bytes
@@ -274,8 +277,7 @@ class ContextHistory:
             self._fail(error)
             raise
 
-    def accept_turn(self, snapshot: TurnSnapshot, context_id: str) -> ModelInput:
-        self._start()
+    def _accept_turn(self, snapshot: TurnSnapshot, context_id: str) -> None:
         key = context_id, snapshot.turn_id
         previous = self._turns.get(key)
         if previous is not None:
@@ -285,40 +287,22 @@ class ContextHistory:
             ):
                 raise ModelProtocolError("Committed turn identity changed")
 
-            return ModelInput(items=(previous.seed,))
+            return
 
         if snapshot.cutoff.sequence < self._latest_cutoff:
             raise RuntimeError("This committed input is outside the retained context history")
 
-        metadata = MappingProxyType(
-            {
-                "context_id": context_id,
-                "turn_id": snapshot.turn_id,
-                "input_modality": snapshot.modality.value,
-            }
-        )
-        text = (
-            snapshot.text
-            if snapshot.text is not None
-            else (
-                '<historical_media omitted="true" current="false">'
-                "Visual input belongs to this earlier turn; do not infer its contents from this placeholder."
-                "</historical_media>"
-            )
-        )
-        seed = ModelInputMessage(
-            id=snapshot.input_id,
-            role=ModelRole.USER,
-            parts=(ModelTextPart(text),),
-            created_at=snapshot.committed_at.unix_seconds,
-            metadata=metadata,
-        )
+        seed = render_history_seed(snapshot, context_id)
         size = len(
             json.dumps(
                 {
                     "id": seed.id,
-                    "text": text,
-                    "metadata": dict(metadata),
+                    "parts": [
+                        {"kind": part.kind.value, "text": part.text}
+                        for part in seed.parts
+                        if isinstance(part, ModelTextPart)
+                    ],
+                    "metadata": dict(seed.metadata),
                     "created_at": seed.created_at,
                 },
                 ensure_ascii=False,
@@ -339,30 +323,47 @@ class ContextHistory:
         )
         self._bytes, self._items = self._bytes + size, self._items + 1
         self._latest_cutoff = max(self._latest_cutoff, snapshot.cutoff.sequence)
-        return ModelInput(items=(seed,))
 
-    def capture(self, snapshot: TurnSnapshot, context_id: str, current: ModelInput) -> ModelInput:
-        self._ensure_open()
-        if (
-            len(current.items) != 1
-            or not isinstance(current.items[0], ModelInputMessage)
-            or (current.items[0].id != snapshot.input_id or current.items[0].role != ModelRole.USER)
-        ):
-            raise ValueError(
-                "Context preparation requires exactly the current committed input seed"
+    def _accept_through(self, snapshot: TurnSnapshot) -> None:
+        # Read from the commit stream so a superseded run still contributes its input.
+        stream = self._turn_events
+        batch = stream.read_pending(consumer_id=self.CONSUMER_ID)
+        end = next(
+            (index + 1 for index, event in enumerate(batch.items) if event.snapshot is snapshot),
+            None,
+        )
+        if end is None:
+            raise RuntimeError("Current turn is not retained in context history")
+        if batch.has_gap:
+            logger.warning(
+                "Context history missed %d committed turns; using the retained tail",
+                batch.missed_count,
             )
 
-        self.drain()
+        cursor = batch.committed_cursor_seq
+        try:
+            for event in batch.items[:end]:
+                for context_id in event.snapshot.context_ids:
+                    self._accept_turn(event.snapshot, context_id)
+                cursor = event.sequence
+        finally:
+            if cursor > batch.committed_cursor_seq:
+                stream.commit(consumer_id=self.CONSUMER_ID, cursor_seq=cursor)
+
+    def capture(self, snapshot: TurnSnapshot, context_id: str) -> ModelInput:
+        self._start()
         key = context_id, snapshot.turn_id
         if key not in self._turns:
+            self._accept_through(snapshot)
+
+        self.drain()
+        if key not in self._turns:
             raise RuntimeError("Current turn is not retained in context history")
-        if current.realtime is not None or current.items != (self._turns[key].seed,):
-            raise ValueError("Current input differs from its canonical committed Turn seed")
 
         items = []
         for entry_key, turn in self._turns.items():
             if entry_key == key:
-                items.extend(current.items)
+                items.append(turn.seed)
                 break
             if turn.context_id == context_id:
                 items.extend(turn.project())
@@ -390,6 +391,8 @@ class ContextHistory:
                 self._worker.cancel()
             await asyncio.gather(self._worker, return_exceptions=True)
             self._observe(self._worker)
+
+        self._turn_events.clear_consumer(self.CONSUMER_ID)
         if self._registered and self._failure is None:
             self._journal.unregister(self.CONSUMER_ID)
             self._registered = False

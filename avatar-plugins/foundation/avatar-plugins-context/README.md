@@ -6,8 +6,7 @@ The default Context manager is created by Host against a partial AvatarRuntime a
 
 Use `runtime.foundation.context` through the public ContextManager contract:
 
-- `accept_turn(snapshot)` accepts a committed Turn and supplies its current input seed.
-- `prepare(ContextPrepareRequest)` captures the native history, perception and query prefix.
+- `prepare(ContextPrepareRequest)` accepts the committed Turn from Loop and prepares its history, perception and query prefix.
 - `build(prefix, continuation=...)` appends execution continuation without refreshing State.
 
 There is no parallel query-manager API. ContextContribution and ContextPrepareRequest live in the public `alphaavatar.agents.avatar.context.schemas` namespace.
@@ -18,7 +17,7 @@ State and static `loop_budget` use the synthetic `alphaavatar_runtime_context` f
 
 ## Native history
 
-The manager retains bounded history by context and Turn and independently consumes canonical model records from Output. User input comes from committed Turns; Engine does not reconstruct assistant/tool records from a LoopResult or inject Memory writes.
+The manager retains bounded history by context and Turn and independently consumes canonical model records from Output. User input comes from committed Turns, including turns superseded before preparation. A system notice enters the current user message as a typed text part. History keeps the notice facts.
 
 Incomplete tool-call/output pairs are excluded from the next model input. Retiring Run results remain associated with their original identity and do not resurrect evicted Turns. Context acknowledgement is independent of Memory acknowledgement and is not a database-persistence guarantee.
 

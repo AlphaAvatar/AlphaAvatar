@@ -23,15 +23,19 @@ from xml.sax.saxutils import escape
 from alphaavatar.agents.avatar.context.schemas import ContextContribution
 from alphaavatar.agents.avatar.provider.enums import ModelInputType, ModelRole
 from alphaavatar.agents.avatar.provider.schemas import (
-    ModelAudioPart,
     ModelFunctionCall,
     ModelFunctionOutput,
-    ModelImagePart,
     ModelInput,
     ModelInputMessage,
     ModelTextPart,
 )
 from alphaavatar.agents.constants import RUNTIME_CONTEXT_TOOL_NAME
+from alphaavatar.core.turn.enums import TurnInputModality
+from alphaavatar.core.turn.schemas import TurnSnapshot
+
+from .renderer.history import compact_historical_message
+from .renderer.notice import render_system_notice
+from .renderer.op import replace_current
 
 if TYPE_CHECKING:
     from alphaavatar.agents.avatar.context.schemas import ContextBuildRequest, ContextBuildResult
@@ -68,38 +72,13 @@ class ContextBuilder:
             and item.name == RUNTIME_CONTEXT_TOOL_NAME
         )
 
-    @staticmethod
-    def _historical_media_placeholder(*, image_count: int, audio_count: int) -> ModelTextPart:
-        return ModelTextPart(
-            '<historical_media omitted="true" current="false" '
-            f'image_count="{image_count}" audio_count="{audio_count}">'
-            "This media belonged to an earlier message and is not current input."
-            "</historical_media>"
-        )
-
-    def _compact_historical_message(self, message: ModelInputMessage) -> ModelInputMessage:
-        parts = []
-        image_count = audio_count = 0
-        for part in message.parts:
-            if isinstance(part, ModelImagePart):
-                image_count += 1
-            elif isinstance(part, ModelAudioPart):
-                audio_count += 1
-            else:
-                parts.append(part)
-        if image_count or audio_count:
-            parts.append(
-                self._historical_media_placeholder(image_count=image_count, audio_count=audio_count)
-            )
-        return replace(message, parts=tuple(parts))
-
     def _prepare_base_input(self, model_input: ModelInput, *, current_input_id: str) -> ModelInput:
         items = []
         for item in model_input.items:
             if self._is_runtime_context_item(item):
                 continue
             if isinstance(item, ModelInputMessage) and item.id != current_input_id:
-                item = self._compact_historical_message(item)
+                item = compact_historical_message(item)
             items.append(item)
         return replace(model_input, items=tuple(items))
 
@@ -168,6 +147,7 @@ class ContextBuilder:
         self,
         *,
         request: ContextBuildRequest,
+        snapshot: TurnSnapshot,
         system_prompt: str,
         runtime_context: str,
         contributions: tuple[ContextContribution, ...] = (),
@@ -177,13 +157,23 @@ class ContextBuilder:
 
         base = self._prepare_base_input(request.base_input, current_input_id=request.input_id)
         base = self._with_system_prompt(base, system_prompt=system_prompt)
-        rendered = (
-            self._renderers()
-            .resolve(request.model_input_type)
-            .render(replace(request, base_input=base))
-        )
+        notice = render_system_notice(snapshot, current=True)
+        if notice is not None and snapshot.modality == TurnInputModality.SYSTEM:
+            rendered = replace_current(base, request.input_id, (notice,))
+        else:
+            rendered = (
+                self._renderers()
+                .resolve(request.model_input_type)
+                .render(replace(request, base_input=base))
+                .model_input
+            )
+            if notice is not None:
+                current = rendered.get(request.input_id)
+                parts = current.parts if isinstance(current, ModelInputMessage) else ()
+                rendered = replace_current(rendered, request.input_id, (*parts, notice))
+
         model_input = self._inject_runtime_context(
-            rendered.model_input,
+            rendered,
             input_id=request.input_id,
             runtime_context=runtime_context,
             contributions=contributions,
