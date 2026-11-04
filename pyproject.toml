@@ -86,12 +86,23 @@ skip-magic-trailing-comma = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-addopts = ["--import-mode=importlib", "--ignore=examples", "--strict-markers", "--strict-config"]
+# Large samples come from their Dataset only when asked for: pytest -m large_samples.
+addopts = [
+    "--import-mode=importlib",
+    "--ignore=examples",
+    "--strict-markers",
+    "--strict-config",
+    "-m",
+    "not large_samples",
+]
 testpaths = ["avatar-core/tests", "avatar-agents/tests", "avatar-host/tests", "avatar-plugins/*/*/tests"]
 # Spawned inference children resolve test runners by module name; tests share small samples.
 pythonpath = ["avatar-agents/tests", "avatar-agents/tests/runtime/inference", "avatar-host/tests"]
 xfail_strict = true
-markers = ["stress: synthetic pressure test; --stress-seconds extends it beyond one bounded round"]
+markers = [
+    "stress: synthetic pressure test; --stress-seconds extends it beyond one bounded round",
+    "large_samples(*names): needs these samples of tests/fixtures/large_samples.json, fetched",
+]
 faulthandler_timeout = 60
 tmp_path_retention_policy = "failed"
 filterwarnings = ["error::ResourceWarning", "error::pytest.PytestUnraisableExceptionWarning"]

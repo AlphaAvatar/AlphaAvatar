@@ -111,6 +111,18 @@ def test_vision_off_is_a_camera_less_device_and_drops_what_only_vision_needs(
     )
     assert vision_only == {FaceAnalysisRunner.INFERENCE_METHOD}
 
+    # Settings of the runner only vision used go with it; those still planned stay.
+    kept = next(iter(set(plan_inference_runners(config.avatar)) - vision_only))
+    methods = {FaceAnalysisRunner.INFERENCE_METHOD: {"workers": 1}, kept: {"workers": 1}}
+    tuned = load(
+        tmp_path,
+        vision={"enabled": True, "input_mode": "vlm"},
+        runtime={"inference": {"methods": methods}},
+    )
+    without = session.vision_off(tuned)
+    assert set(without.avatar.runtime.inference.methods) == {kept}
+    assert set(tuned.avatar.runtime.inference.methods) == set(methods)
+
 
 def test_a_turn_is_the_one_whose_cutoff_covers_this_input_in_this_session() -> None:
     trace = InputTrace()

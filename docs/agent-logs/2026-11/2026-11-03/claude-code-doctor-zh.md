@@ -9,7 +9,7 @@
 | 批次 | 内容 | 日期 | 基线 HEAD | 提交 | 状态 |
 |---|---|---|---|---|---|
 | T-10B | 基础 Doctor：静态、只读、离线的安装与配置诊断（`doctor`、`doctor <bundle或文件> [KEY=VALUE...]`、`--list`、`--json`） | 2026-11-03 | `7c53c4a` | `0579d81`、`8a66b81`；第二轮收尾未提交 | `8a66b81` review：剩一处生产误报和一处测试断言，另要求把 loop 必填项纳入 check、Doctor 文本分组；已完成，待 review。本地全量 301 passed（CI 方式，检出前后一致） |
-| T-10C | 多模态 Doctor 自检：`alphaavatar doctor [配置]` 为唯一入口，静态检查后自行创建有期限的临时诊断会话，固定样本走生产链路，报告端到端指标、分段证据和降级结果 | 2026-11-04 | `8fdc2c2`（临时提交，含已撤回的 `--runtime` 实现）；review 修复基线 `9993aad` | `9993aad`；review 修复未提交 | `9993aad` review：入口、撤回探针、复用 `create_execution` 通过；其余五项已修复，并按用户要求改为表格输出，待 review。固定语音样本因本机没有可用的离线 TTS 而未生成（见"`9993aad` review 修复"第 1 节）；两个真实服务场景待验收。本地全量 315 passed、1 failed（样本测试），检出前后一致 |
+| T-10C | 多模态 Doctor 自检：`alphaavatar doctor [配置]` 为唯一入口，静态检查后自行创建有期限的临时诊断会话，固定样本走生产链路，报告端到端指标、分段证据和降级结果 | 2026-11-04 | `8fdc2c2`（临时提交，含已撤回的 `--runtime` 实现）；review 修复基线 `9993aad`；收尾基线 `bf79300` | `9993aad`、`bf79300`；收尾未提交 | `bf79300` 收尾：固定样本已入库并通过干净 wheel 校验；大样本清单与按需拉取入口已就绪（HF 数据集尚未发布）；独立 review 的四项已修复，待 review。两个真实服务场景待验收。本地全量 321 passed、0 failed，检出前后一致 |
 
 ---
 
@@ -957,4 +957,190 @@ T-10B 首版的变异 D1–D10 在最终代码上重跑：
 - **库调用**：诊断进程用 `spawn` 启动，与推理 Runner 相同。在脚本中调用 `diagnose()` 需要 `if __name__ == "__main__":` 保护。
 - **用时**：链路测试改走真实诊断进程后，`tests/doctor` 从约 23 s 增加到约 70 s。全量用时见第 9 节，仍在 CI 的 5 分钟内。
 - **不在本轮范围**：Runner 并行沿用已有的专项测试；长时运行和压力测试归 `alphaavatar test`（第 11 项）。
+- **未提交**：等待 review。
+
+---
+
+## T-10C `bf79300` 收尾
+
+- 基线：`bf79300`（用户已提交上一轮的 review 修复和表格输出）。保持不变的部分：表格输出；唯一入口 `alphaavatar doctor [配置]`；`--list` 列出检查项、`--json` 输出同一份报告；`--live`、`--runtime` 仍然移除。
+- 用户已在本机运行 `ENV_FILE=.env.dev alphaavatar doctor my-avatar`：9 项静态检查通过。该 bundle 未授权外部服务、视觉未启用，因此只验证了静态检查和默认授权行为。两个真实服务场景仍待验收（第 6 节）。
+- 本轮只做离线和受控验证。
+
+### 1. 样本存放
+
+- **Doctor 安装后直接使用的小样本**：
+  - 来源：用户提供的 `AlphaAvatar-Doctor-samples-bf79300.zip`。提取前校验了成员：只有两段 WAV，路径正是 `avatar-host/alphaavatar/host/doctor/samples/`，然后只提取这两个文件到仓库。
+
+    | 文件 | SHA-256 | 时长 | 有声结尾 |
+    |---|---|---|---|
+    | `card_question.wav` | `04763dd6b7f5a1b61d91b752c7865fc41182b1d73b3519ac7862976c53374e98` | 3.65 s | 3.52 s |
+    | `sum_question.wav` | `93ac159096acaf89eed0220b1d42b9c4c89f11f6916053266949910268d2d18f` | 3.26 s | 3.14 s |
+
+    两段都是 16 kHz 单声道 PCM16，内容与当前提示词一致。
+  - 读取：由 `importlib.resources` 读取，随 Host wheel 发布。`scripts/doctor_samples.py` 保留，作为可复现的生成入口。
+  - 源码树：`python -I scripts/doctor_samples.py check` 通过，`tests/doctor/test_samples.py` 由上一轮的失败转为通过。
+  - 干净 wheel 安装验证（scratchpad 中）：
+    - `uv build --offline --wheel --package alpha-avatar-host` 构建的 wheel 含两段 WAV，SHA-256 与仓库中的文件一致；
+    - 新建环境中只装该 wheel（`--no-deps`）和 NumPy 2.2.6（锁文件版本），`check --installed` 从该环境的 site-packages 读出两段样本，通过。
+- **仅供测试的小样本**：约定放在使用它的包自己的 `tests/fixtures/` 下。仓库中目前没有这类文件，测试用的语音和画面都在代码里生成，因此没有需要搬迁的。本轮的大样本清单是测试专用文件，放在 `avatar-host/tests/fixtures/large_samples.json`。
+- **大样本**（独立的 Hugging Face Dataset）：
+  - **实际状态（2026-11-04 查询，未带 token）**：`/api/datasets?author=AlphaAvatar` 返回空列表（该组织下有多个公开模型，但没有 dataset）；`/api/datasets/AlphaAvatar/diagnostics-fixtures` 返回 401，即不存在或不公开。
+  - **结论**：尚未发布。清单中 repo ID 仍为此前建议的 `AlphaAvatar/diagnostics-fixtures`；`revision`、`license`，以及每个样本的 `sha256`、`bytes` 均为 `null`；`published: false`。
+  - **拟用清单**：
+
+    | 名称 | 路径 | 用途 |
+    |---|---|---|
+    | `long_session` | `speech/long_session_16k.wav` | 30 分钟语音与停顿：VAD、STT、轮次的长时稳定性 |
+    | `multi_speaker` | `speech/multi_speaker_16k.wav` | 两人轮流和重叠说话：轮次与说话人归属 |
+    | `noisy_room` | `speech/noisy_room_16k.wav` | 室内和街道噪声下的语音：VAD 与 STT 的鲁棒性 |
+    | `barge_in` | `speech/barge_in_16k.wav` | 回答中途用户插话：打断与输出中断 |
+    | `face_toward_away` | `video/face_toward_away_640x360.mp4` | 人脸转向和背离摄像头：视觉寻址与人脸分析 |
+
+  - **测试入口**：
+    - 测试用 `@pytest.mark.large_samples("名称", ...)` 声明所需样本，通过 `large_sample("名称")` 夹具拿到本地文件。
+    - 默认 `addopts` 带 `-m "not large_samples"`，普通运行、离线 CI 和 wheel 校验都不会选中这类测试；用 `pytest -m large_samples` 选中。
+    - 会话级夹具在各测试的禁网与环境守卫生效之前，按清单拉取所选测试需要的全部样本：`hf_hub_download`，固定到清单中的 commit，以 `local_dir` 缓存到 `~/.cache/alphaavatar/test-samples/<repo>/<revision>/`。
+    - 缓存中的文件 SHA-256 有效时直接复用，完全不联网。否则下载并校验。
+    - 下载失败时报告样本名、文件、`repo@revision` 和错误类型；校验不符时报告样本名、文件、期望值与实际值前缀，并删除不符的文件。
+    - 后续接入 `alphaavatar test`。
+  - **实际拉取状态**：未发布，所以没有拉取过。现在选中这类测试，会逐个报 "`<名称>`: AlphaAvatar/diagnostics-fixtures is not published with a pinned revision and SHA-256"。发布后需要填入 commit、license、各文件的 SHA-256 和大小。
+  - **离线机制测试**（`avatar-host/tests/test_large_samples.py`，2 项）：
+    - 清单结构，以及未发布时逐个样本报告的内容；
+    - 按固定 commit 下载；有效缓存不再下载（下载函数被调用就失败）；损坏的缓存重新下载；下载内容不符时报出并删除；下载失败报出原因；清单之外的名称报出。
+
+### 2. review 问题
+
+#### 2.1 场景终态优先
+
+- **问题**：`ended` 为 `timeout`、`interrupted` 或 `session_failed` 时，如果输出在收尾窗口内完整到达，场景仍返回 PASS。
+- **修复**：
+  - `ended` 非空时，场景不再可能 PASS：`interrupted` 记为 INTERRUPTED，其余记为 FAILED。
+  - 没有更早的阻塞阶段时，阻塞阶段为 `turn.timeout`、`turn.interrupted` 或 `turn.session_failed`。
+  - 迟到的输出及其终态（例如 `completed`）仍保留在 `outputs` 和证据中。
+  - `text_complete`、`audio_last_frame`、`response_final` 只在场景正常完成时填写，否则为空、样本数 0，注明 "not recorded: the turn ended by …"。
+- **反例**（`test_measure.py`）：三种结束方式下输出全部在之后完成，结果分别为 FAILED / FAILED / INTERRUPTED，阻塞阶段为 `turn.<结束方式>`，三项完成耗时为空，`outputs` 仍为 `completed`，证据中有 `output.control`。
+
+#### 2.2 实际请求同时携带语音内容和样本帧
+
+- **Loop**（`_trace_request`）：对本轮 TurnSnapshot 的每个 `input_observation_ids`，在同一个 `ModelRequest` 的本轮消息中查找，并记一条 `model.request_input`（`request_id`、`observation_id`，`outcome` 为 `carried` 或 `missing`）。判断方式：
+  - 该配置使用音频输入时，看是否有对应 observation 的 `ModelAudioPart`；
+  - 否则看该 observation 的文本（转录或输入文字）是否出现在请求文本中。比较前反转义 XML/HTML 实体，并合并空白。
+- **Doctor** 新增阶段 `request.content`：
+  - 语音任务：Turn 的首个请求必须 carried 该样本的 STT 终稿 observation（`stt.terminal outcome=final_text` 的 `observation_id`）。
+  - 文字任务：必须 carried 输入的文字。
+  - 关联链：segment → candidate → decision → Turn（`turn_id`）→ `model.request`（`run_id`、`request_id`、`input_id`）→ `model.request_input` 与 `model.request_frame`（样本 observation ID）。
+  - 报告只保留脱敏令牌和校验结果：`request.carries_turn_input`、`carries_turn_content`、`frames`、`sample_frames`。
+- **反例**（`test_session.py`）：替身让 Context 渲染本轮时去掉语音（`_speech_xml` 返回空），其余不变：
+  - 请求仍带本轮 `input_id`，也带样本帧，但不带转录；
+  - 音画场景停在 `request.content`，细节为 "The model request does not carry this Turn's transcript"；
+  - 不触发降级。
+- 主链路测试中，语音轮和文字轮的 `request.content` 都通过。
+
+#### 2.3 视觉不可用降级
+
+- **Runner 设置**：`vision_off()` 先按关闭视觉后的配置（不带任何方法设置）规划 Runner，再只保留仍在计划中的 `runtime.inference.methods`。否则 `check_inference_config` 会以 `unselected_runner` 拒绝该配置。原配置不变，其阻塞结果照常保留。
+  - 反例（`test_isolation.py`）：原配置为人脸分析 Runner 和另一个 Runner 都设置了 workers；关闭视觉后只剩后者的设置，原配置的两项都在。
+- **图像能力拒绝的分类**：
+  - `ModelCapabilityError` 增加可选的 `code`，与 `ModelRequestError.code` 对应。
+  - OpenAI Responses 适配器在本地拒绝图像时标 `code="image_input"`：图像无媒体载荷、没有可编码的表示、本地路径 URL、内联图像超过 `max_inline_bytes`。
+  - Loop 的 `run.finished` 增加 `error_code`，取模型错误的 `code`；同时把 `error_code` 加入 conversation 事件字段白名单。不加的话，带 code 的 `run.finished` 会被 `log_event` 静默丢弃。实测中这会表现为场景没有原因，最终以超时结束；变异 N9 确认了这一点。
+  - Doctor 的 `cause` 带上 provider 的代码，例如 `ModelCapabilityError: image_input`、`ModelRequestError: http_401`。
+  - 只有 `ModelCapabilityError: image_input` 才触发视觉降级。OpenAI 适配器把 HTTP 错误统一归为 `ModelRequestError(code="http_<状态码>")`，从中看不出与视觉有关，因此 HTTP 400、401 和其他服务故障都按原分类报告，不降级。
+- **用实际 provider 适配器验证**（`test_session.py`）：
+  - 测试进程在 loopback 上起一个 HTTP 替身，诊断进程的禁网守卫只额外放行这一个端口。loop 使用真实的 `openai` backend（Responses 适配器和 OpenAI SDK），`base_url` 指向该替身。
+  - `max_inline_bytes=1024`：适配器在发出请求前拒绝样本帧，原配置 `cause=ModelCapabilityError: image_input`，并触发 "degraded: vision off"。纯音频请求真正发出后被替身以 401 拒绝，降级结果为 `ModelRequestError: http_401`，停在 `model.first_event`。
+  - 默认设置下替身返回 400：原配置为 `ModelRequestError: http_400`，没有降级。
+  - 用 ScriptedLLM 补充两个反例：凭据错误（`ModelRequestError: invalid_api_key`），以及与图像无关的 `ModelCapabilityError`（没有 code）。两者都只有原配置结果，不降级。
+
+#### 2.4 诊断进程隔离与零 Runner
+
+- **诊断子进程不继承 Host 的端点**：子进程入口清除 `ALPHAAVATAR_INFERENCE_ENDPOINT`、`ALPHAAVATAR_INFERENCE_PLAN`、`ALPHAAVATAR_LOG_ENDPOINT`，沿用各自已有的常量。
+- **stdout 只属于报告**：子进程启动后先执行 `dup2(2, 1)`，子进程及其 Runner 打印的内容都进 stderr。父进程的 stdout 只有 `--json` 报告。
+- **验证**（`test_session.py`，用 `capfd` 在文件描述符层面捕获）：
+  - 父进程设置了三个 Host 变量，log endpoint 指向测试进程自己绑定的 AF_UNIX 数据报接收端。替身在诊断进程（STT）和其 Runner（VAD）中各打印一行。
+  - 结果：stdout 可以直接整体解析为 JSON；两行打印都出现在 stderr；会话和 Runner 正常启动，音画场景通过；Host 接收端没有收到任何数据报；父进程环境在运行前后完全一致。
+- **零 Runner**：没有任何 Runner 的计划是合法的（例如纯文字配置）。`session.start` 改为按会话实际的启动结果判定，`models.runners` 为 SKIP（"Not started: no runner selected"）。
+  - 反例：纯文字配置中，`models.runners` 为 SKIP，`session.start` 为 PASS（此前为 FAIL）。
+
+### 3. 代码改动
+
+| 文件 | 改动 |
+|---|---|
+| `avatar-agents/.../provider/errors.py` | `ModelCapabilityError(message, *, code=None)` |
+| `avatar-plugins-provider/.../openai/adapters/responses.py` | 图像相关的本地拒绝标 `code="image_input"` |
+| `avatar-plugins-loop/.../execution.py` | `model.request_input`（按 observation 判断请求中是否携带）；`run.finished` 增加 `error_code` |
+| `avatar-core/.../log/events.py` | conversation 事件字段白名单增加 `error_code` |
+| `host/doctor/measure.py` | `request.content` 阶段；`cause` 带代码；场景终态优先；完成耗时只在正常完成时填写 |
+| `host/doctor/session.py` | `vision_off()` 同步修剪 `runtime.inference.methods`；视觉降级只认 `image_input`；零 Runner 的 `session.start` |
+| `host/doctor/process.py` | 清除 Host 端点，stdout 改道到 stderr |
+| `avatar-host/alphaavatar/host/doctor/samples/*.wav` | 两段固定样本（新增） |
+| `avatar-host/tests/large_samples.py`、`tests/fixtures/large_samples.json`、`tests/conftest.py`、根 `pyproject.toml` | 大样本清单、加载器、夹具、`large_samples` 标记和默认排除 |
+| `docs/cli/doctor.md` | 诊断进程隔离、零 Runner、样本存放、`request.content`、带代码的原因、终态优先、视觉降级条件；示例输出重新生成 |
+
+### 4. 测试与变异
+
+- **新增或修改的测试**：
+  - `test_session.py` 共 9 项，新增 2 项：
+    - 用真实 OpenAI 适配器的分类测试；
+    - Host 隔离与 stdout 测试。
+    - 降级测试增加了去掉语音和非图像能力错误两次运行；答案测试增加了零 Runner 断言。
+  - `test_measure.py` 共 4 项，新增终态优先 1 项。
+  - `test_isolation.py`：增加 Runner 设置修剪的断言。
+  - `test_large_samples.py`：新增 2 项。
+- **变异**（脚本 `scratchpad/t10c/mutate3.py`，每次运行后按 SHA-256 逐字恢复原文件，结束后再整体比对校验和，一致）：
+
+| 变异 | 结果 |
+|---|---|
+| N1 迟到的完成覆盖超时终态 | 测出 |
+| N2 中断时只在已有阻塞阶段时才判中断 | 存活：N1 修复后，`ended` 非空时阻塞阶段一定存在，这一条件永远为真，属于等价变异 |
+| N3 未正常结束仍记录完成耗时 | 测出 |
+| N4 不核对请求所带的转录 | 测出（去掉语音的反例） |
+| N5 Loop 不比对请求内容 | 测出 |
+| N6 任何能力错误都触发视觉降级 | 测出（非图像能力错误的反例） |
+| N7 关闭视觉后保留全部 Runner 设置 | 测出（`unselected_runner`） |
+| N8 Loop 不记录错误代码 | 测出 |
+| N9 事件字段白名单没有 `error_code` | 测出（`run.finished` 被丢弃，原因为空） |
+| N10 适配器的体积拒绝不标图像 | 测出（真实适配器测试） |
+| N11 诊断进程继承 Host 的三个端点 | 测出（推理端点冲突，会话没有启动） |
+| N12 诊断进程只清除推理端点 | 测出（Runner 接入 Host 日志，打印不再出现在 stderr） |
+| N13 诊断进程的 stdout 不改道 | 测出（stdout 无法解析为 JSON） |
+| N14 零 Runner 判为启动失败 | 测出 |
+| N15 有效缓存仍重新下载 | 测出 |
+| N16 校验不符时保留坏文件 | 测出 |
+
+### 5. 运行结果
+
+- **全量测试**（CI 方式：`--basetemp` 在 scratchpad，`PYTHONDONTWRITEBYTECODE=1`）：321 passed，0 failed，exit 0，用时 137.7 s，检出前后一致。
+  - 没有被标为 `large_samples` 的测试，所以默认排除没有排除掉任何测试。
+  - 28 条警告都是既有的 LanceDB `table_names()` 弃用提示（O-6）。
+  - 没有出现 `unclosed event loop`（O-13 已修复）。
+- **样本**：
+  - 源码树 `check` 通过；
+  - 干净 wheel 环境的 `check --installed` 通过（第 1 节）；
+  - `test_samples.py` 通过。
+- **Doctor 相关**：`tests/doctor`、`tests/cli/test_doctor.py`、`tests/test_large_samples.py`、Loop 与 trace 的测试合计 33 项通过，其中 `test_session.py` 9 项约 95 s。
+- **静态检查**：以下各项均通过：
+  - `ruff check`、`ruff format --check`；
+  - `check_workspace`（16 个成员）、`uv lock --check`；
+  - pre-commit（本轮改动的文件）。
+- **CI 替身运行（文档示例）**：模型拒绝图片时，原配置 `voice_vision` 停在 `model.first_event`，原因为 `ModelCapabilityError: image_input`；降级 `voice` 通过。
+
+### 6. 待验收
+
+由用户指定 `ENV_FILE` 和配置后运行，用单次 `host.doctor.external_services=true` 授权：
+
+1. **音画同轮**：启用 `vision.enabled=true`、`vision.input_mode=vlm`，使用支持图像的模型。要验证的是：
+   - `request.input`、`request.content`、`request.frames` 均通过，答案为 `green`；
+   - 输出全部正常完成；
+   - 端到端指标和分段指标齐全。
+2. **视觉链路受阻**：从已启用视觉、但视觉链路受阻的配置开始，例如适配器无法内联图像（`ModelCapabilityError: image_input`），或者只有视觉需要的 Runner 缺少缓存。要验证的是：报告中同时给出原配置的具体阻塞原因，以及 "degraded: vision off" 的纯音频实测结果。
+
+真实服务下尚未实测的项目：`TTS FIRST PCM` 分段、真实 STT 对 flite 语音的转录质量。按设计跳过的项目：远程向量存储，以及自定义插件在临时工作区之外的写入（Doctor 无法隔离，只标为未验证）。
+
+### 7. 限制
+
+- **视觉能力的判定**：只有 provider 能确认是视觉能力问题时，才会触发视觉降级。目前只有 OpenAI 适配器的本地图像拒绝带 `image_input`。服务端因模型不支持图像返回的 HTTP 400，按设计仍报 `ModelRequestError: http_400`，不降级。其他 provider 适配器需要各自给出 `code`。
+- **请求内容的判定**：在实际请求中查找文本，依据是转录文字出现在请求的文本部分里。如果某个渲染器改写了转录（例如翻译或摘要），就会判为 missing。目前 Context 原样嵌入转录。
+- **大样本**：数据集尚未发布，拉取流程只用离线替身验证过，没有真实下载过。
 - **未提交**：等待 review。

@@ -65,6 +65,15 @@ def observation(records: list[OutputRecord], **extra: object) -> TurnObservation
             input_id="input-1",
             frame_count=0,
         ),
+        # The typed text itself is in the request.
+        trace(
+            21,
+            "model.request_input",
+            3,
+            request_id="req-1",
+            observation_id="typed-1",
+            outcome="carried",
+        ),
         *extra.pop("trace", ()),
     ]
     return TurnObservation(
@@ -168,3 +177,30 @@ def test_frames_context_selected_are_told_apart_from_frames_the_request_carried(
         (2, True, True),
     ]
     assert result.request["sample_frames"] == 1 and "request.frames" in result.reached
+
+
+def test_a_turn_that_ended_otherwise_keeps_that_end_whatever_completed_after_it() -> None:
+    # Every output completes, but inside the trailing window after the turn had ended.
+    records = [
+        output(40, "text_chunk", "out-a", text="5."),
+        output(41, "audio_frame", "out-a", audio_sec=0.02),
+        output(42, "control", "out-a", control="text_complete"),
+        output(50, "control", "out-a", control="complete"),
+    ]
+    for ended, outcome in (
+        ("timeout", "failed"),
+        ("session_failed", "failed"),
+        ("interrupted", "interrupted"),
+    ):
+        result = scenario(observation(list(records), ended=ended))
+        assert (result.outcome, result.blocked_stage) == (outcome, f"turn.{ended}")
+        metrics = {m.name: m for m in result.metrics}
+        for name in ("text_complete", "audio_last_frame", "response_final"):
+            assert (metrics[name].value, metrics[name].samples) == (None, 0), (ended, name)
+        assert (
+            metrics["response_final"].note
+            == f"not recorded: the turn ended by {ended.replace('_', ' ')}"
+        )
+        # What arrived late stays as evidence.
+        assert [o["terminal"] for o in result.outputs] == ["completed"]
+        assert "output.control" in {item.stage for item in result.evidence}

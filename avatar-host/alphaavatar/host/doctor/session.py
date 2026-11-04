@@ -51,6 +51,9 @@ SESSION_SECONDS = 180.0  # Runners from the cache, or a session's plugins and re
 TURN_SECONDS = 60.0  # One scenario turn, from its first input to its outputs' end
 TOTAL_SECONDS = 480.0  # Everything, closing excluded: each close has its own bounds
 _DEVICE = "doctor-participant"
+_METHODS = "runtime.inference.methods"
+# How a provider says it cannot take the pictures: only this calls for the vision fallback.
+_IMAGES_REFUSED = "ModelCapabilityError: image_input"
 _POLL = 0.02
 
 
@@ -155,14 +158,23 @@ def isolate(config: ApplicationConfig, workspace: str) -> tuple[ApplicationConfi
 
 
 def vision_off(config: ApplicationConfig) -> ApplicationConfig:
-    """A camera-less device: vision off, and the default plugins' camera consumers with it."""
+    """A camera-less device: vision off, and the default plugins' camera consumers with it.
+
+    Its runners are planned anew: settings of a runner only vision used go with it, the
+    settings of every runner still planned stay.
+    """
+    from alphaavatar.agents.runtime.inference import plan_inference_runners
+
     avatar = config.avatar
     changes: dict[str, object] = {"vision.enabled": False}
     if avatar.persona.plugin == "default":
         changes["persona.init_config.face.enabled"] = False
     if avatar.router.plugin == "default":
         changes["router.init_config.addressing.visual.enabled"] = False
-    return derive(config, changes)
+    planned = plan_inference_runners(derive(config, changes | {_METHODS: {}}).avatar)
+    methods = json.loads(config.payload)["runtime"]["inference"]["methods"]
+    kept = {method: options for method, options in methods.items() if method in planned}
+    return derive(config, changes | {_METHODS: kept})
 
 
 # What may start
@@ -600,10 +612,12 @@ class _Run:
         return trials
 
     def _vision_unavailable(self, result: ScenarioResult | None) -> bool:
-        """The model refused the pictures, or a runner only vision needs could not start."""
+        """The provider refused the pictures as such, or a runner only vision needs could not
+        start. A request rejected otherwise (an HTTP 400 or 401, a failing service) keeps its
+        own cause and calls for no fallback."""
         from alphaavatar.agents.runtime.inference import plan_inference_runners
 
-        if result is not None and result.cause == "ModelCapabilityError":
+        if result is not None and result.cause == _IMAGES_REFUSED:
             return True
         failed = {r.method for r in self.runners.get("original", ()) if r.status == "FAIL"}
         if not failed:
@@ -683,7 +697,8 @@ class _Run:
         rebound = tuple(f"moved into the temporary workspace: {item}" for item in self.rebound)
         if self.unstarted is not None and not self.runners.get("original"):
             return Check("session.start", CheckStatus.SKIP, f"Not run: {self.unstarted}", rebound)
-        if not self.runners.get("original") or self.runner_error.get("original"):
+        # No runner at all is a valid plan: the session's own start decides then.
+        if "original" not in self.runners or self.runner_error.get("original"):
             return Check(
                 "session.start",
                 CheckStatus.FAIL,

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 from collections.abc import Callable, Coroutine
 from dataclasses import replace
@@ -27,9 +28,14 @@ from alphaavatar.agents.avatar.loop.base import ToolAuthorizer
 from alphaavatar.agents.avatar.loop.enums import LoopState, ToolOutcome
 from alphaavatar.agents.avatar.loop.schemas import LoopIdentity, LoopRequest, LoopResult
 from alphaavatar.agents.avatar.provider.enums import ModelMessagePhase, ModelRole
-from alphaavatar.agents.avatar.provider.errors import ModelIncompleteError, ModelProtocolError
+from alphaavatar.agents.avatar.provider.errors import (
+    ModelError,
+    ModelIncompleteError,
+    ModelProtocolError,
+)
 from alphaavatar.agents.avatar.provider.records import model_record_batch
 from alphaavatar.agents.avatar.provider.schemas import (
+    ModelAudioPart,
     ModelFunctionCall,
     ModelImagePart,
     ModelInput,
@@ -48,6 +54,7 @@ from alphaavatar.agents.avatar.provider.schemas.stream import (
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.log.diagnostics import format_error
 from alphaavatar.core.log.events import log_event
+from alphaavatar.core.media import TextPayload
 from alphaavatar.core.output.enums import ExecutionSignalKind
 
 from .config import RealtimeLoopConfig
@@ -176,11 +183,18 @@ class LoopExecution(LoopHandle):
         )
 
     def _trace_request(self, request: ModelRequest) -> None:
-        # What the request itself carries for this Turn: its committed input and the frames
-        # in it, by identity, so a diagnosis can join them to the observations it published.
+        # What the request itself carries for this Turn, by identity, so a diagnosis can join
+        # it to the observations it published: its committed input; whether each of the
+        # Turn's input observations is in it, as its words or as an audio part; its frames.
         current = request.input.get(self._request.input_id)
         parts = current.parts if isinstance(current, ModelInputMessage) else ()
         images = [part.observation for part in parts if isinstance(part, ModelImagePart)]
+        audio = {
+            part.observation.observation_id for part in parts if isinstance(part, ModelAudioPart)
+        }
+        # Rendered input may escape markup and wrap lines: the words are compared.
+        texts = " ".join(part.text for part in parts if isinstance(part, ModelTextPart))
+        words = " ".join(html.unescape(texts).split())
         trace = self._runtime.perception.input_trace
         trace.record(
             "model.request",
@@ -190,6 +204,19 @@ class LoopExecution(LoopHandle):
             input_id=self._request.input_id if current is not None else None,
             frame_count=len(images),
         )
+        snapshot = self._runtime.turn.get(self._request.input_id)
+        timeline = self._runtime.perception.timeline
+        for observation_id in snapshot.input_observation_ids if snapshot is not None else ():
+            observation = timeline.get_observation(observation_id=observation_id)
+            payload = observation.payload if observation is not None else None
+            said = " ".join(payload.text.split()) if isinstance(payload, TextPayload) else ""
+            carried = observation_id in audio or bool(said) and said in words
+            trace.record(
+                "model.request_input",
+                request_id=request.request_id,
+                observation_id=observation_id,
+                outcome="carried" if carried else "missing",
+            )
         for observation in images:
             trace.record(
                 "model.request_frame",
@@ -617,7 +644,7 @@ class LoopExecution(LoopHandle):
         self._started = True
         state = LoopState.FAILED
         answers: tuple[ModelInputMessage, ...] = ()
-        reason = error_type = None
+        reason = error_type = error_code = None
         stage = "prepare_context"
         identity_watch = None
         try:
@@ -642,6 +669,8 @@ class LoopExecution(LoopHandle):
                 self._diagnose(exc, stage=stage)
         except Exception as exc:
             error_type = type(exc).__name__
+            # The provider's own classification, such as http_401 or image_input.
+            error_code = getattr(exc, "code", None) if isinstance(exc, ModelError) else None
             reason = "timeout" if isinstance(exc, TimeoutError) else "execution_failed"
             self._diagnose(exc, stage=stage)
 
@@ -660,7 +689,7 @@ class LoopExecution(LoopHandle):
                     self._diagnose(exc, stage="record_settlement")
             except Exception as exc:
                 state, reason, error_type = LoopState.FAILED, "history_failed", type(exc).__name__
-                answers = ()
+                error_code, answers = None, ()
                 self._diagnose(exc, stage="record_settlement")
 
             try:
@@ -672,7 +701,7 @@ class LoopExecution(LoopHandle):
                 state, reason = LoopState.CANCELLED, self._cancel_reason or "cancelled"
             except Exception as exc:
                 state, reason = LoopState.FAILED, "output_cleanup_failed"
-                error_type = type(exc).__name__
+                error_type, error_code = type(exc).__name__, None
                 answers = ()
                 self._diagnose(exc, stage="output_cleanup")
 
@@ -699,6 +728,7 @@ class LoopExecution(LoopHandle):
             state=state.value,
             reason=reason,
             error_type=error_type,
+            error_code=error_code,
             model_steps=result.model_steps,
             tool_rounds=result.tool_rounds,
             elapsed_ms=result.elapsed_ms,

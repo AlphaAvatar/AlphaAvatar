@@ -14,7 +14,8 @@
 """Doctor's diagnostic process: the session runs in a process of Doctor's own.
 
 Model downloads switched off, the inference endpoint and the captured logs all belong to
-that process, so the caller's environment, loggers and children stay as they were. The
+that process, so the caller's environment, loggers and children stay as they were; the
+endpoints a Host caller exports are not inherited, and the caller's stdout stays its report's. The
 process leads its own process group, so the terminal's Ctrl+C reaches only the caller, which
 asks it to stop by closing a pipe; a caller that dies closes it too. The caller owns the
 temporary directory, which is also the process's temporary root (its runtime's socket goes
@@ -185,7 +186,18 @@ def _main(
 ) -> None:
     """The diagnostic process: its own group, downloads off, the session, its report."""
     os.setsid()
+    # The caller's stdout carries its report alone: what this process or its runners print
+    # goes to stderr.
+    os.dup2(2, 1)
+    from alphaavatar.agents.runtime.inference.bootstrap import INFERENCE_PLAN_ENV
+    from alphaavatar.agents.runtime.inference.protocol import INFERENCE_ENDPOINT_ENV
+    from alphaavatar.core.log.records import LOG_ENDPOINT_ENV
+
     os.environ.update(dict.fromkeys(_OFFLINE, "1"))
+    # A Host running Doctor exports its own inference runtime and log receiver; this process
+    # and its runners use their own, never the caller's.
+    for name in (INFERENCE_ENDPOINT_ENV, INFERENCE_PLAN_ENV, LOG_ENDPOINT_ENV):
+        os.environ.pop(name, None)
     # Temporary files of this process and its runners go where the caller removes them.
     os.environ["TMPDIR"] = os.path.join(run, "tmp")
     os.mkdir(os.environ["TMPDIR"], 0o700)

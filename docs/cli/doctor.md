@@ -54,8 +54,12 @@ the configured model cache, and the Engine, plugins and output runtime come from
 - **Process.** The session runs in a process of Doctor's own, which leads its own process
   group. Model downloads are switched off there and in its runners, its inference endpoint
   and log capture stay there, and the caller's environment and loggers are left as they were.
-  Ctrl+C reaches only the `doctor` command, which asks that process to stop; one that does not
-  exit in time is ended with its whole group, runners included.
+  Run from inside a Host, it does not inherit that Host's inference endpoint, runner plan or
+  log receiver (`ALPHAAVATAR_INFERENCE_ENDPOINT`, `ALPHAAVATAR_INFERENCE_PLAN`,
+  `ALPHAAVATAR_LOG_ENDPOINT`), and what it or its runners print goes to stderr: stdout carries
+  the report alone, so `--json` output is parseable as it is. Ctrl+C reaches only the `doctor`
+  command, which asks that process to stop; one that does not exit in time is ended with its
+  whole group, runners included.
 - **Snapshot.** Authorization is decided on the configuration Doctor loaded and validated, and
   that same snapshot is what the diagnostic process starts: nothing is read again in between.
 - **Storage.** The snapshot is moved onto a temporary directory: the Avatar's workspace, and
@@ -70,6 +74,9 @@ the configured model cache, and the Engine, plugins and output runtime come from
   `runtime.perception.video_publish_interval_sec`, typed text through the Engine), and reads
   the output boundary as the RTC transport does, acting as the local audio queue. No RTC
   server, client or device is involved.
+
+A configuration that plans no runner, such as a text-only one, is valid: `models.runners` is
+skipped as having nothing to start, and `session.start` reports the session's own start.
 
 ### Authorization
 
@@ -107,9 +114,12 @@ stopped there), or which of those nothing Doctor ran could show.
 | `visual_output` | a Character is configured | its frames render in a browser participant and carry no Turn | |
 
 The spoken samples are recordings shipped in the Host package (`alphaavatar/host/doctor/
-samples/`, 16 kHz mono PCM16), made offline with FFmpeg's flite voice by
-`scripts/doctor_samples.py make`; `scripts/doctor_samples.py check` reads them back through
-Doctor, and CI does so from the built wheel alone. The microphone keeps sending silence after
+samples/`, 16 kHz mono PCM16, about 3.7 s and 3.3 s), made offline with FFmpeg's flite voice
+by `scripts/doctor_samples.py make`; `scripts/doctor_samples.py check` reads them back
+through Doctor, and CI does so from the built wheel alone. Doctor needs nothing else: small
+samples only tests use live in their package's `tests/fixtures/`, and large ones (long,
+multi-stream or load runs) in a Hugging Face Dataset that only the tests asking for them
+fetch. The microphone keeps sending silence after
 them, as a real one does, until the turn ends. The transcript must contain the question's
 words. An answer passes only when, case, surrounding space and punctuation aside, it is one of
 the expected answers: a wrong or negated answer, a guess ("Green?"), a sentence, or another
@@ -122,16 +132,25 @@ configuration does not select it), `conditions_unmet` (selected, but authorizati
 a sample or the session is missing), `no_coverage` (selected, but Doctor cannot drive or
 observe it yet) or `interrupted`. A failed scenario names its `blocked_stage`, the first of
 `input`, `vad.closed`, `stt.final`, `turn.committed`, `frames.selected`, `model.request`,
-`request.input`, `request.frames`, `model.first_event`, `text.first`, `text.complete`,
-`audio.first`, `outputs.complete`, `run.completed` it did not reach, or `answer` when
-everything was reached but the answer is not the task's; and its `cause` as the producer
-names it, such as `ModelCapabilityError` or `speech_synthesis_failed`.
+`request.input`, `request.content`, `request.frames`, `model.first_event`, `text.first`,
+`text.complete`, `audio.first`, `outputs.complete`, `run.completed` it did not reach, `answer`
+when everything was reached but the answer is not the task's, or `turn.timeout`,
+`turn.interrupted`, `turn.session_failed` when the turn itself ended that way; and its `cause`
+as the producer classified it, with the provider's code when it gave one, such as
+`ModelCapabilityError: image_input`, `ModelRequestError: http_401` or
+`speech_synthesis_failed`.
 
-The spoken and the selected frames must meet in one model request: `request.input` passes when
-the Turn's first model request carries the input the Turn committed, and `request.frames` when
-it carries frames Doctor published. Each output of the Turn's run is judged on its own
-(`outputs`): `completed`, `failed`, `interrupted`, `timed_out` or `not_ended`, with its reason;
-`outputs.complete` passes only when all of them completed.
+The spoken and the selected frames must meet in one model request. The Loop records what each
+request actually carries: the input the Turn committed, whether each of the Turn's input
+observations is in it (as its words, or as an audio part), and its frames. `request.input`
+passes when the Turn's first request carries the Turn's committed input, `request.content`
+when it carries the observation of the sample's STT final (for typed text, the typed
+observation), and `request.frames` when it carries frames Doctor published. Each output of the
+Turn's run is judged on its own (`outputs`): `completed`, `failed`, `interrupted`, `timed_out`
+or `not_ended`, with its reason; `outputs.complete` passes only when all of them completed. A
+turn that ended by timeout, interruption or a failed session keeps that end even if its
+outputs complete afterwards: what arrives late stays as evidence, and completion times are
+given only for a turn that completed.
 
 When text passes and a selected scenario could not run, such as voice without TTS, the summary
 says partial coverage and `session.scenarios` warns.
@@ -141,16 +160,19 @@ says partial coverage and `session.scenarios` warns.
 When the original configuration fails for a reason an existing fallback answers, Doctor tries
 that fallback on its own configuration, with its own runners and sessions, and reports both:
 
-- **Vision unavailable** — the model refused the pictures (`ModelCapabilityError`), or a
-  runner only vision needs could not start: the snapshot runs as a camera-less device, with
-  vision off and the default persona's face analysis and the router's visual addressing off
-  with it, so its runners are planned anew; `voice` runs as an audio session, and `text` too
-  when the original never ran.
+- **Vision unavailable** — the provider refused the pictures as such
+  (`ModelCapabilityError: image_input`; the OpenAI adapter does when it cannot encode or
+  inline them), or a runner only vision needs could not start: the snapshot runs as a
+  camera-less device, with vision off and the default persona's face analysis and the
+  router's visual addressing off with it. Its runners are planned anew, and the
+  `runtime.inference.methods` settings of runners only vision used go with them while the
+  others stay; `voice` runs as an audio session, and `text` too when the original never ran.
 - **Speech output unavailable** — a spoken or typed turn had no audio, or an output's audio
   failed after it began: `text` runs as a chat session, without audio output.
 
-Any other cause, such as rejected credentials (`ModelRequestError`), is reported as it is,
-without a fallback. A degraded result carries its `configuration` (`degraded: vision off`,
+Any other cause is reported as it is, without a fallback: rejected credentials, a generic HTTP
+400 (`ModelRequestError: http_400`; nothing in it shows it is about vision), a failing
+service, or a capability the backend lacks that is not about images. A degraded result carries its `configuration` (`degraded: vision off`,
 `degraded: text output`); the original keeps its own outcome, blocked stage and cause, and
 decides the status.
 
@@ -246,8 +268,8 @@ from its session rows on:
     ------  ---------------------  ------------------------------------------------------------
     ...
     session
-    PASS    session.start          A temporary session with the configured plugins was ready in 41 ms
-    PASS    models.runners         2 runners started from the cache, offline; slowest alphaavatar.router.turn_taking.smart_turn_v3 in 0.72 s
+    PASS    session.start          A temporary session with the configured plugins was ready in 38 ms
+    PASS    models.runners         2 runners started from the cache, offline; slowest alphaavatar.router.turn_taking.smart_turn_v3 in 0.53 s
     FAIL    services.external      2 passed, 1 failed, 3 not verified by the samples
                                    livekit RTC server: not contacted; `alphaavatar dev avatar.json` connects to it
                                    -> See the failed scenarios' blocked stages and causes
@@ -257,14 +279,14 @@ from its session rows on:
 
     STATUS  RUNNER                                        CONFIGURATION         STARTUP  SUMMARY
     ------  --------------------------------------------  --------------------  -------  -------
-    PASS    alphaavatar.voice.vad.silero                  original              0.35 s   started
-    PASS    alphaavatar.router.turn_taking.smart_turn_v3  original              0.72 s   started
-    PASS    alphaavatar.voice.vad.silero                  degraded: vision off  0.33 s   started
-    PASS    alphaavatar.router.turn_taking.smart_turn_v3  degraded: vision off  0.67 s   started
+    PASS    alphaavatar.voice.vad.silero                  original              0.28 s   started
+    PASS    alphaavatar.router.turn_taking.smart_turn_v3  original              0.53 s   started
+    PASS    alphaavatar.voice.vad.silero                  degraded: vision off  0.27 s   started
+    PASS    alphaavatar.router.turn_taking.smart_turn_v3  degraded: vision off  0.53 s   started
 
     SERVICE                              AUTHORIZED  REACHED  PASSED  NOTE
-    -----------------------------------  ----------  -------  ------  -----------------------
-    model providers (scripted)           yes         yes      no      ModelCapabilityError
+    -----------------------------------  ----------  -------  ------  ---------------------------------
+    model providers (scripted)           yes         yes      no      ModelCapabilityError: image_input
     speech recognition (openai_segment)  yes         yes      yes
     speech synthesis (openai)            yes         yes      yes
     custom memory 'doctor'               yes         -        -       external access unknown
@@ -274,32 +296,32 @@ from its session rows on:
     OUTCOME      SCENARIO       CONFIGURATION         SUMMARY
     -----------  -------------  --------------------  ------------------------------------------------------------
     failed       voice_vision   original              Stopped at model.first_event
-                                                      The run ended failed: ModelCapabilityError
+                                                      The run ended failed: ModelCapabilityError: image_input
     failed       text           original              Stopped at model.first_event
-                                                      The run ended failed: ModelCapabilityError
-    passed       voice          degraded: vision off  Answered as the task expects; first text 725 ms; first audio frame 747 ms; complete 1001 ms
+                                                      The run ended failed: ModelCapabilityError: image_input
+    passed       voice          degraded: vision off  Answered as the task expects; first text 705 ms; first audio frame 727 ms; complete 958 ms
     no coverage  image_input    original              No input transport delivers images to a session yet
     not enabled  visual_output  original              No Character is configured
 
     FIGURE (ms)                       voice_vision  text  voice [vision off]
     --------------------------------  ------------  ----  ------------------
-    first_text                        -             -     725
-    first_audio_frame                 -             -     747
-    text_complete                     -             -     725
-    audio_last_frame                  -             -     1001
-    response_final                    -             -     1001
-    last_required_input               604           -     -
-    vad_close                         603           -     600
-    stt_final                         658           -     655
-    turn_cutoff                       660           -     667
+    first_text                        -             -     705
+    first_audio_frame                 -             -     727
+    text_complete                     -             -     706
+    audio_last_frame                  -             -     957
+    response_final                    -             -     958
+    last_required_input               601           -     -
+    vad_close                         601           -     601
+    stt_final                         651           -     651
+    turn_cutoff                       653           -     653
     context_ready_wait                0.0           0.0   0.0
-    cutoff_to_model_request           3.5           7.9   1.4
+    cutoff_to_model_request           3.2           1.9   1.4
     model_first_event                 -             -     0.4
-    model_first_text_delta            -             -     56
-    first_displayable_text            -             -     56
-    tts_request_to_first_audio_frame  -             -     22
-    selected_frame_age                663           -     -
-    last_selected_frame_to_cutoff     56            -     -
+    model_first_text_delta            -             -     51
+    first_displayable_text            -             -     51
+    tts_request_to_first_audio_frame  -             -     21
+    selected_frame_age                755           -     -
+    last_selected_frame_to_cutoff     52            -     -
 ```
 
 The text is a set of tables. The checks come first, grouped as environment, configuration,

@@ -77,6 +77,10 @@ class SpeechRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.voice.vad.silero"
     REPLICABLE = True
 
+    def initialize(self) -> None:
+        if json.loads(os.environ.get(SPEC, "{}")).get("stdout"):
+            print("stand-in VAD runner started", flush=True)  # Not for the report.
+
     def run(self, data: bytes) -> bytes | None:
         values = np.frombuffer(data, dtype=np.float32)
         if values.size != 512 + 64 + 256:
@@ -131,7 +135,8 @@ class ScriptedLLM(StreamingLLMBase):
     """Answers from what the request carries: a picture means it can see the card.
 
     ``images`` False refuses images, as a model without vision input does; ``error`` names a
-    request failure to raise instead, such as rejected credentials. ``messages`` above one
+    request failure to raise instead, such as rejected credentials, or ``capability`` for a
+    capability the backend lacks that is not about images. ``messages`` above one
     precedes the card's answer with remarks, each an output of its own.
     """
 
@@ -173,10 +178,12 @@ class ScriptedLLM(StreamingLLMBase):
         }
         with (self.files / "requests.jsonl").open("a") as stream:
             stream.write(json.dumps(seen) + "\n")
+        if self.error == "capability":
+            raise ModelCapabilityError("This backend cannot represent strict tool schemas")
         if self.error is not None:
             raise ModelRequestError("The provider rejected the credentials", code=self.error)
         if images and not self.images:
-            raise ModelCapabilityError("This model accepts no image input")
+            raise ModelCapabilityError("This model accepts no image input", code="image_input")
         if "plus" in text:
             answer = self.answers["sum"]
         elif images:
@@ -242,6 +249,8 @@ class ScriptedSTTStream(STTStreamBase):
         return True
 
     def commit_segment(self, segment_id: str) -> bool:
+        if self._stt.chatty:
+            print(f"stand-in STT committed {segment_id}", flush=True)  # Not for the report.
         text = self._stt.transcripts.pop(0) if self._stt.transcripts else ""
         with (self._stt.files / "committed").open("a") as stream:
             stream.write(f"{segment_id}\n")  # The test waits on this to interrupt mid-turn.
@@ -276,8 +285,8 @@ class ScriptedSTTStream(STTStreamBase):
 class ScriptedSTT(STTBase):
     """Segment STT: each committed segment's final is the next scripted transcript."""
 
-    def __init__(self, transcripts: list[str], files: Path) -> None:
-        self.transcripts, self.files = transcripts, files
+    def __init__(self, transcripts: list[str], files: Path, *, chatty: bool = False) -> None:
+        self.transcripts, self.files, self.chatty = transcripts, files, chatty
 
     @property
     def provider(self) -> str:
@@ -432,7 +441,7 @@ def child(*args: object) -> None:
     spec = json.loads(os.environ[SPEC])
     files = Path(spec["files"])
     (files / "pid").write_text(str(os.getpid()))
-    _deny_network(files / "network")
+    _deny_network(files / "network", spec.get("loopback"))
     install(spec, files)
     from alphaavatar.host.doctor import process
 
@@ -449,7 +458,7 @@ def install(spec: dict, files: Path) -> None:
     from alphaavatar.host.doctor import samples, session
 
     llm = ScriptedLLM(files, **spec.get("llm", {}))
-    stt = ScriptedSTT(list(spec.get("stt", ())), files)
+    stt = ScriptedSTT(list(spec.get("stt", ())), files, chatty=spec.get("stdout", False))
     tts = ScriptedTTS(**spec.get("tts", {}))
     registry = AvatarModulePlugin._registry
     for module, name, create in (
@@ -474,6 +483,11 @@ def install(spec: dict, files: Path) -> None:
     noise = np.random.default_rng(7).standard_normal(samples.SAMPLE_RATE) * 6000
     voiced = noise.astype("<i2").tobytes()
     samples.speech = lambda name: samples.Speech(name, voiced, 1.0)
+    if spec.get("drop_speech"):
+        # Context renders the Turn without its speech: its input and frames stay.
+        from alphaavatar.plugins.context.builder.renderer import op
+
+        op._speech_xml = lambda *args, **kwargs: None
     if spec.get("deaf"):
         # A process that neither hears the stop nor keeps to its budget: only its group's
         # end reclaims it.
@@ -492,9 +506,11 @@ def _runner(name: str) -> type[InferenceRunner]:
     return getattr(sys.modules[__name__], name, None) or getattr(inference_runner_samples, name)
 
 
-def _deny_network(log: Path) -> None:
-    """The test process's guard, in the diagnostic process: local AF_UNIX paths only."""
-    connect = socket.socket.connect
+def _deny_network(log: Path, port: int | None = None) -> None:
+    """The test process's guard, in the diagnostic process: local AF_UNIX paths only, and
+    the one loopback ``port`` the test serves itself, if any."""
+    connect, resolve = socket.socket.connect, socket.getaddrinfo
+    owned = ("127.0.0.1", port)
 
     def refuse(operation: str):
         def call(*args: object, **kwargs: object) -> object:
@@ -507,10 +523,18 @@ def _deny_network(log: Path) -> None:
     def local(sock: socket.socket, address: object) -> None:
         if sock.family == socket.AF_UNIX and type(address) is str and os.path.isabs(address):
             return connect(sock, address)
+        if port is not None and sock.family == socket.AF_INET and address == owned:
+            return connect(sock, address)
         return refuse("socket.connect")(sock, address)
 
+    def lookup(host: object, service: object, *args: object, **kwargs: object) -> object:
+        if port is not None and (host, service) in (owned, ("127.0.0.1", str(port))):
+            return resolve(host, service, *args, **kwargs)
+        return refuse("socket.getaddrinfo")(host, service, *args, **kwargs)
+
     socket.socket.connect = local
+    socket.getaddrinfo = lookup
     for name in ("connect_ex", "sendto"):
         setattr(socket.socket, name, refuse(f"socket.{name}"))
-    for name in ("getaddrinfo", "gethostbyname", "gethostbyname_ex", "create_connection"):
+    for name in ("gethostbyname", "gethostbyname_ex", "create_connection"):
         setattr(socket, name, refuse(f"socket.{name}"))

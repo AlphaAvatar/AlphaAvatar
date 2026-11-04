@@ -16,10 +16,12 @@
 Evidence joins by identity. The session names the Turn its own input started; the input
 trace hashes identities per session, so that Turn's records are found through
 ``InputTrace.identity`` and the decision, candidate, segment and request identities they
-share. The model request's own records name the committed input and the frames it carries:
-those frames are matched to the ones Doctor published and told apart from the ones Context
-selected. Each output of the Turn's run ends normally, by failure, by interruption or not at
-all; only a turn whose outputs all ended normally has completion times. Every time is
+share. The model request's own records name the committed input, which of the Turn's input
+observations it carries (the transcript of the sample's speech is one), and the frames it
+carries: those frames are matched to the ones Doctor published and told apart from the ones
+Context selected. Each output of the Turn's run ends normally, by failure, by interruption or
+not at all. A turn that ended otherwise (a timeout, an interruption, a failed session) keeps
+that end, whatever arrived after it; only a turn that completed has completion times. Every time is
 ``time.monotonic_ns``; intervals are milliseconds from the response start: the frame carrying
 the last voiced sample, or the typed input's acceptance.
 """
@@ -93,8 +95,10 @@ def scenario(observation: TurnObservation) -> ScenarioResult:
             blocked = "answer"
             details.append(f"The answer is not exactly one of: {', '.join(task.answers)}")
     if observation.ended is not None:
+        # The turn's own end stands: what arrived after it is evidence, not a completion.
         details.append(f"Ended by {observation.ended.replace('_', ' ')}")
-    if observation.ended == "interrupted" and blocked is not None:
+        blocked = blocked or f"turn.{observation.ended}"
+    if observation.ended == "interrupted":
         outcome = ScenarioOutcome.INTERRUPTED
     else:
         outcome = ScenarioOutcome.PASSED if blocked is None else ScenarioOutcome.FAILED
@@ -273,6 +277,24 @@ class _Turn:
     def _sample_frames(self) -> list[dict]:
         return [r for r in self._request_frames() if r.get("observation_id") in self.published]
 
+    def _carries_content(self) -> bool:
+        """The request carries this Turn's input itself: for speech, the observation of the
+        sample's STT final; for typed text, the typed observation."""
+        request = self._request()
+        if request is None:
+            return False
+        carried = {
+            r.get("observation_id")
+            for r in self.trace
+            if r["stage"] == "model.request_input"
+            and r.get("request_id") == request["request_id"]
+            and r.get("outcome") == "carried"
+        }
+        if self.o.task.speech is None:
+            return bool(carried)
+        final = self._trace("stt.terminal", outcome="final_text")
+        return final is not None and final.get("observation_id") in carried
+
     def _carries_input(self) -> bool:
         request, committed = self._request(), self._trace("turn.committed")
         return (
@@ -291,6 +313,7 @@ class _Turn:
             "run": request.get("run_id", "")[3:15],
             "request": request["request_id"][3:15],
             "carries_turn_input": self._carries_input(),
+            "carries_turn_content": self._carries_content(),
             "frames": request.get("frame_count", 0),
             "sample_frames": len(self._sample_frames()),
             "requests": sum(r["stage"] == "model.request" for r in self.trace),
@@ -375,6 +398,9 @@ class _Turn:
         ]
         if self._request() is not None and not self._carries_input():
             lines.append("The model request does not carry this Turn's committed input")
+        if self._request() is not None and not self._carries_content():
+            what = "transcript" if self.o.task.speech is not None else "typed text"
+            lines.append(f"The model request does not carry this Turn's {what}")
         if self.o.task.screen and self._request() is not None and not self._sample_frames():
             lines.append("The model request carries none of the sample's frames")
         finished = self._log("run.finished")
@@ -389,7 +415,10 @@ class _Turn:
         """What stopped the turn, as its producer names it: the run's error, else an output's."""
         finished = self._log("run.finished")
         if finished is not None and finished.fields.get("state") != "completed":
-            return finished.fields.get("error_type") or finished.fields.get("reason")
+            kind, code = finished.fields.get("error_type"), finished.fields.get("error_code")
+            if kind and code:
+                return f"{kind}: {code}"  # As the provider classified it, e.g. http_401.
+            return kind or finished.fields.get("reason")
         return next(
             (reason for _, _, terminal, reason, _ in self._terminals() if terminal == "failed"),
             None,
@@ -412,6 +441,7 @@ class _Turn:
         stages += [
             ("model.request", self._at(self._log("model.started"))),
             ("request.input", self._at(request) if self._carries_input() else None),
+            ("request.content", self._at(request) if self._carries_content() else None),
         ]
         if task.screen:
             stages.append(("request.frames", self._at(request) if self._sample_frames() else None))
@@ -460,9 +490,15 @@ class _Turn:
         origin = self._origin()
         boundary = "diagnostic input to the output boundary, server side"
         text, audio = self._output("text_chunk"), self._output("audio_frame")
-        # Completion is recorded only when every output of the run ended normally.
-        completed = self._completed_at()
-        unfinished = None if completed is not None else "not recorded: an output ended otherwise"
+        # Completion is recorded only for a turn that completed, every output of it normally.
+        completed = self._completed_at() if self.o.ended is None else None
+        unfinished = None
+        if completed is None:
+            unfinished = (
+                f"not recorded: the turn ended by {self.o.ended.replace('_', ' ')}"
+                if self.o.ended is not None
+                else "not recorded: an output ended otherwise"
+            )
         texts = [r for r in self.answers if r.kind == "control" and r.control == "text_complete"]
         last_audio = self._output("audio_frame", last=True)
         metrics = [

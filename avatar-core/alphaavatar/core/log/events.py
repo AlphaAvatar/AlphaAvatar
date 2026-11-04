@@ -44,7 +44,8 @@ LABELS.update({"core.event": "CORE EVENT", "core.gap": "CORE GAP"})
 _FIELDS = frozenset(
     (
         "session_id context_id turn_id input_id run_id request_id response_id item_id output_id "
-        "call_id model backend provider modality state phase reason outcome error_type model_step "
+        "call_id model backend provider modality state phase reason outcome error_type error_code "
+        "model_step "
         "tool_round tool_name executed interrupted elapsed_ms model_steps tool_rounds stage "
         "refusal text_chars parts_truncated content_index output_items input_tokens output_tokens "
         "stream event_id sequence event_time_ns observed_time_ns event_kind observation_id "

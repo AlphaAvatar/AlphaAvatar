@@ -23,10 +23,12 @@ measures is recorded separately, in the T-10C log.
 from __future__ import annotations
 
 import asyncio
+import http.server
 import json
 import logging
 import os
 import signal
+import socket
 import threading
 import time
 from pathlib import Path
@@ -287,7 +289,7 @@ def test_degradations_follow_the_original_cause_and_both_configurations_are_repo
     assert (original["outcome"], original["blocked_stage"], original["cause"]) == (
         "failed",
         "model.first_event",
-        "ModelCapabilityError",
+        "ModelCapabilityError: image_input",
     )
     # Context selected the frames and the request carried them: the model refused them.
     assert original["request"]["sample_frames"] > 0
@@ -305,7 +307,7 @@ def test_degradations_follow_the_original_cause_and_both_configurations_are_repo
     assert (model["reached"], model["passed"], model["note"]) == (
         True,
         False,
-        "ModelCapabilityError",
+        "ModelCapabilityError: image_input",
     )
     assert code == 1 and checks["session.scenarios"]["status"] == "FAIL"
 
@@ -353,11 +355,29 @@ def test_degradations_follow_the_original_cause_and_both_configurations_are_repo
     )
     assert (tts["reached"], tts["passed"]) == (True, False)
 
+    # The request keeps the Turn's input and the frames but not its speech: not one turn.
+    chain.spec |= {"drop_speech": True, "llm": {}, "tts": {}, "stt": [CARD]}
+    _, checks = doctor(capsys, chain, str(path))
+    original = scenarios(checks)["voice_vision", "original"]
+    assert (original["outcome"], original["blocked_stage"]) == ("failed", "request.content")
+    request = original["request"]
+    assert request["carries_turn_input"] and request["sample_frames"] > 0
+    assert not request["carries_turn_content"]
+    assert "The model request does not carry this Turn's transcript" in original["details"]
+    assert {configuration for _, configuration in scenarios(checks)} == {"original"}
+    del chain.spec["drop_speech"]
+
     # Rejected credentials are the model's failure, named as such: no degradation is tried.
     chain.spec |= {"llm": {"error": "invalid_api_key"}, "tts": {}, "stt": [CARD]}
     _, checks = doctor(capsys, chain, str(path))
     found = scenarios(checks)
-    assert found["voice_vision", "original"]["cause"] == "ModelRequestError"
+    assert found["voice_vision", "original"]["cause"] == "ModelRequestError: invalid_api_key"
+    assert {configuration for _, configuration in found} == {"original"}
+    # A capability the backend lacks that is not about pictures: no vision fallback either.
+    chain.spec |= {"llm": {"error": "capability"}, "stt": [CARD]}
+    _, checks = doctor(capsys, chain, str(path))
+    found = scenarios(checks)
+    assert found["voice_vision", "original"]["cause"] == "ModelCapabilityError"
     assert {configuration for _, configuration in found} == {"original"}
     assert checks["session.cleanup"]["status"] == "PASS"
 
@@ -390,6 +410,12 @@ def test_an_answer_passes_only_when_it_is_exactly_the_expected_one(
     text = scenarios(checks)["text", "original"]
     assert (text["outcome"], text["blocked_stage"], text["answer"]) == ("failed", "answer", "15.")
     assert checks["session.scenarios"]["status"] == "FAIL"
+    # No runner is a valid plan: nothing to start there, and the session itself started.
+    assert checks["models.runners"]["summary"] == "Not started: no runner selected"
+    assert (checks["models.runners"]["status"], checks["session.start"]["status"]) == (
+        "SKIP",
+        "PASS",
+    )
 
 
 def wait_for(path: Path, seconds: float = 30.0) -> None:
@@ -564,3 +590,111 @@ def test_a_diagnostic_process_that_does_not_stop_is_ended_with_its_group(
     # Its runtime's socket was under Doctor's directory, removed with it, not left in /tmp.
     assert list(chain.root.iterdir()) == []
     assert {*Path("/tmp").glob("alphaavatar-inference-*")} <= sockets
+
+
+@pytest.fixture
+def provider(socket_root: Path):
+    """An HTTP stand-in for the OpenAI API on loopback: it refuses every request."""
+    refusal = {"status": 401}
+
+    class Refuse(http.server.BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            body = json.dumps({"error": {"message": "refused", "type": "invalid_request_error"}})
+            self.send_response(refusal["status"])
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body.encode())
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Refuse)
+    thread = threading.Thread(target=server.serve_forever, name="openai_stand_in")
+    thread.start()
+    try:
+        yield SimpleNamespace(port=server.server_address[1], refusal=refusal)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_the_openai_adapter_refuses_pictures_as_such_and_other_refusals_keep_their_class(
+    tmp_path: Path,
+    chain: SimpleNamespace,
+    provider: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    monkeypatch.setattr(doctor_session, "TURN_SECONDS", 10.0)
+    url = f"http://127.0.0.1:{provider.port}/v1"
+    model = {"backend": "openai", "provider": "openai", "model": "m"}
+    model["extra"] = {"api_key": "sk-doctor-stand-in", "base_url": url}
+    chain.spec |= {"loopback": provider.port, "stt": [CARD, SUM]}
+
+    # The real Responses adapter cannot inline frames this large: it refuses the pictures
+    # itself, before any call. Doctor then tries the audio session, whose request goes out
+    # and is refused by the service, with that classification.
+    small = model | {"input_options": {"max_inline_bytes": 1024}}
+    loop = {"plugin": "realtime", "init_config": {"model": small}}
+    _, checks = doctor(capsys, chain, str(configuration(tmp_path, loop=loop)))
+    found = scenarios(checks)
+    assert found["voice_vision", "original"]["cause"] == "ModelCapabilityError: image_input"
+    degraded = found["voice", "degraded: vision off"]
+    assert (degraded["blocked_stage"], degraded["cause"]) == (
+        "model.first_event",
+        "ModelRequestError: http_401",
+    )
+
+    # A generic HTTP 400 for the request with pictures is the service's, as classified:
+    # nothing shows it is about vision, so no fallback runs.
+    provider.refusal["status"] = 400
+    chain.spec["stt"] = [CARD]
+    loop = {"plugin": "realtime", "init_config": {"model": model}}
+    _, checks = doctor(capsys, chain, str(configuration(tmp_path, loop=loop)))
+    found = scenarios(checks)
+    assert found["voice_vision", "original"]["cause"] == "ModelRequestError: http_400"
+    assert {configuration for _, configuration in found} == {"original"}
+    assert checks["session.cleanup"]["status"] == "PASS"
+
+
+def test_the_diagnostic_process_leaves_a_calling_host_and_its_report_stdout_alone(
+    tmp_path: Path, chain: SimpleNamespace, capfd: pytest.CaptureFixture
+) -> None:
+    from alphaavatar.agents.runtime.inference.bootstrap import INFERENCE_PLAN_ENV
+    from alphaavatar.agents.runtime.inference.protocol import INFERENCE_ENDPOINT_ENV
+    from alphaavatar.core.log.records import LOG_ENDPOINT_ENV
+
+    # Doctor run from inside a Host: its runtime endpoint, plan and log receiver are set.
+    receiver = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    receiver.bind(str(chain.root / "host-log.sock"))
+    receiver.setblocking(False)
+    log = {
+        "path": str(chain.root / "host-log.sock"),
+        "token": "0" * 64,
+        "level": 10,
+        "third_party_level": 10,
+        "conversation": None,
+    }
+    host = {
+        INFERENCE_ENDPOINT_ENV: str(chain.root / "host-inference.sock"),
+        INFERENCE_PLAN_ENV: "[]",
+        LOG_ENDPOINT_ENV: json.dumps(log),
+    }
+    # The stand-ins print, in the diagnostic process and in a runner of it.
+    environ = dict(os.environ) | host | {doubles.SPEC: json.dumps(chain.spec | {"stdout": True})}
+    try:
+        with mock.patch.dict(os.environ, environ, clear=True):
+            main(["doctor", str(configuration(tmp_path)), "--json"])
+            assert dict(os.environ) == environ
+        out, err = capfd.readouterr()
+        checks = {check["id"]: check for check in json.loads(out)["checks"]}  # Only the report.
+        assert "stand-in STT committed" in err and "stand-in VAD runner started" in err
+        assert [checks[c]["status"] for c in ("session.start", "models.runners")] == ["PASS"] * 2
+        assert scenarios(checks)["voice_vision", "original"]["outcome"] == "passed"
+        with pytest.raises(BlockingIOError):  # Nothing of it reached the Host's receiver.
+            receiver.recv(65536)
+    finally:
+        receiver.close()
+        (chain.root / "host-log.sock").unlink()

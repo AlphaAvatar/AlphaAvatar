@@ -54,7 +54,10 @@ def _url(uri: str, *, image: bool) -> str:
         return uri
     if image and uri.startswith("data:image/") and ";base64," in uri:
         return uri
-    raise ModelCapabilityError("Media must be inline data or an HTTP(S) URL, not a local path")
+    raise ModelCapabilityError(
+        "Media must be inline data or an HTTP(S) URL, not a local path",
+        code="image_input" if image else None,
+    )
 
 
 def _image_part(part: ModelImagePart, options: ResponsesInputConfig) -> ModelMediaPart:
@@ -63,7 +66,7 @@ def _image_part(part: ModelImagePart, options: ResponsesInputConfig) -> ModelMed
 
     payload = part.observation.payload
     if payload is None:
-        raise ModelCapabilityError("Image observation has no media payload")
+        raise ModelCapabilityError("Image observation has no media payload", code="image_input")
     try:
         uri = payload.get(PayloadFormat.IMAGE_URI, view=PayloadView.RAW, fallback_to_raw=False)
         return ModelMediaPart(kind=ModelMediaKind.IMAGE, mime_type="image/*", uri=uri)
@@ -83,7 +86,9 @@ def _image_part(part: ModelImagePart, options: ResponsesInputConfig) -> ModelMed
             PayloadFormat.VIDEO_FRAME, view=PayloadView.ANNOTATED, fallback_to_raw=True
         )
     except PayloadFormatUnavailable as exc:
-        raise ModelCapabilityError("Image has no supported payload representation") from exc
+        raise ModelCapabilityError(
+            "Image has no supported payload representation", code="image_input"
+        ) from exc
     from alphaavatar.core.media.codecs.video import encode_video_frame_to_jpeg
 
     return ModelMediaPart(
@@ -117,14 +122,14 @@ class ResponsesAdapter:
         image = part.kind == ModelMediaKind.IMAGE
         if part.data is not None:
             self._inline_bytes += len(part.data)
-            self._check_size()
+            self._check_size(image=image)
             encoded = base64.b64encode(part.data).decode("ascii")
             value = f"data:{part.mime_type};base64,{encoded}"
         else:
             value = _url(part.uri or "", image=image)
             if value.startswith("data:"):
                 self._inline_bytes += len(value) * 3 // 4
-                self._check_size()
+                self._check_size(image=image)
         if image:
             return {"type": "input_image", "image_url": value, "detail": self._options.image_detail}
         if part.data is not None:
@@ -133,9 +138,12 @@ class ResponsesAdapter:
             return {"type": "input_file", "file_data": value, "filename": part.filename}
         return {"type": "input_file", "file_url": value}
 
-    def _check_size(self) -> None:
+    def _check_size(self, *, image: bool) -> None:
         if self._inline_bytes > self._options.max_inline_bytes:
-            raise ModelCapabilityError("Inline media exceeds the configured request limit")
+            raise ModelCapabilityError(
+                "Inline media exceeds the configured request limit",
+                code="image_input" if image else None,
+            )
 
     def _message(self, item: ModelInputMessage) -> dict[str, Any]:
         if item.role == ModelRole.ASSISTANT:

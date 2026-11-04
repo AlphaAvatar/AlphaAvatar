@@ -23,6 +23,7 @@ from pathlib import Path
 from unittest import mock
 
 import lancedb
+import large_samples
 import pytest
 import qdrant_client
 from config_samples import SECRETS
@@ -67,3 +68,31 @@ def credentials() -> object:
     # Restored before the isolation guard compares the process environment.
     with mock.patch.dict(os.environ, {k: v for k, v in SECRETS.items() if k.isupper()}):
         yield
+
+
+@pytest.fixture(scope="session")
+def large_sample_files(request: pytest.FixtureRequest) -> dict[str, Path]:
+    """Every large sample the selected tests name, fetched once, before any test's guards."""
+    names = sorted(
+        {
+            name
+            for item in request.session.items
+            for marker in item.iter_markers("large_samples")
+            for name in marker.args
+        }
+    )
+    found, failures = {}, []
+    for name in names:
+        try:
+            found[name] = large_samples.fetch(name)
+        except large_samples.LargeSampleError as error:
+            failures.append(str(error))
+    if failures:
+        pytest.fail("Large samples unavailable:\n" + "\n".join(failures), pytrace=False)
+    return found
+
+
+@pytest.fixture
+def large_sample(large_sample_files: dict[str, Path]):
+    """The local file of a large sample this test's ``large_samples`` marker names."""
+    return large_sample_files.__getitem__
