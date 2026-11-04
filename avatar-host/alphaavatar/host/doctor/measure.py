@@ -181,6 +181,8 @@ class _Turn:
             or (r.name.startswith("tts.") and r.fields.get("request_id") in requests)
         ]
         self.trace = self._chain(observation.trace, observation.identity, turn_id)
+        if turn_id is None and observation.timeline is not None:
+            self.trace = self._uncommitted(observation.trace, observation.timeline.started_ns)
         self.published = {
             observation.identity(frame.observation_id): frame
             for frame in (observation.timeline.frames if observation.timeline else ())
@@ -220,6 +222,15 @@ class _Turn:
             or r.get("request_id") in requests
         ]
         return sorted(chained, key=lambda r: r["trace_sequence"])
+
+    @staticmethod
+    def _uncommitted(trace: list[dict], since_ns: int) -> list:
+        """No Turn committed: this input as far as it went, from its own sound on, so the
+        report names the stage it stopped at rather than the first after the input."""
+        stages = ("perception.speech", "audio.", "stt.", "candidate.")
+        return [
+            r for r in trace if r["recorded_time_ns"] >= since_ns and r["stage"].startswith(stages)
+        ]
 
     def _trace(self, stage: str, **match: object) -> dict | None:
         return next(

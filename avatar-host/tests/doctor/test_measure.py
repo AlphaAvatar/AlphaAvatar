@@ -204,3 +204,43 @@ def test_a_turn_that_ended_otherwise_keeps_that_end_whatever_completed_after_it(
         # What arrived late stays as evidence.
         assert [o["terminal"] for o in result.outputs] == ["completed"]
         assert "output.control" in {item.stage for item in result.evidence}
+
+
+def test_a_spoken_input_that_never_committed_shows_where_it_stopped() -> None:
+    from alphaavatar.host.doctor.transport import SourceTimeline
+
+    # The real chain's case: the segment closed and went to STT, turn-taking held, then
+    # cancelled for want of a transcript, and the transcript came after that.
+    timeline = SourceTimeline(started_ns=0, voiced_end_ns=5 * MS, voiced_end_sequence=3)
+    steps = [
+        trace(1, "turn.committed", 1, turn_id="earlier", input_id="input-0"),  # Before: not ours.
+        trace(6, "perception.speech_closed", 2, segment_id="seg-1", observation_id="speech-1"),
+        trace(6, "stt.commit", 3, segment_id="seg-1", outcome="accepted"),
+        trace(7, "candidate.decision", 4, candidate_id="cand-1", decision_id="d-1", action="hold"),
+        trace(
+            8, "candidate.decision", 5, candidate_id="cand-1", decision_id="d-2", action="cancel"
+        ),
+        trace(
+            9, "stt.terminal", 6, segment_id="seg-1", observation_id="final-1", outcome="final_text"
+        ),
+    ]
+    found = TurnObservation(
+        task=samples.VOICE,
+        configuration="original",
+        session_id="s",
+        start_ns=5 * MS,
+        timeline=timeline,
+        turn_id=None,
+        records=[],
+        logs=[],
+        trace=steps,
+        identity=identity,
+        audio_output=True,
+        ended="timeout",
+    )
+    result = scenario(found)
+    assert result.reached == ("input", "vad.closed", "stt.final")
+    assert (result.outcome, result.blocked_stage) == ("failed", "turn.committed")
+    decisions = [e.detail["action"] for e in result.evidence if e.stage == "candidate.decision"]
+    assert decisions == ["hold", "cancel"]
+    assert "turn.committed" not in {e.stage for e in result.evidence}

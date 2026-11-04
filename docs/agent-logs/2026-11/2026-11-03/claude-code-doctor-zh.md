@@ -9,7 +9,7 @@
 | 批次 | 内容 | 日期 | 基线 HEAD | 提交 | 状态 |
 |---|---|---|---|---|---|
 | T-10B | 基础 Doctor：静态、只读、离线的安装与配置诊断（`doctor`、`doctor <bundle或文件> [KEY=VALUE...]`、`--list`、`--json`） | 2026-11-03 | `7c53c4a` | `0579d81`、`8a66b81`；第二轮收尾未提交 | `8a66b81` review：剩一处生产误报和一处测试断言，另要求把 loop 必填项纳入 check、Doctor 文本分组；已完成，待 review。本地全量 301 passed（CI 方式，检出前后一致） |
-| T-10C | 多模态 Doctor 自检：`alphaavatar doctor [配置]` 为唯一入口，静态检查后自行创建有期限的临时诊断会话，固定样本走生产链路，报告端到端指标、分段证据和降级结果 | 2026-11-04 | `8fdc2c2`（临时提交，含已撤回的 `--runtime` 实现）；review 修复基线 `9993aad`；收尾基线 `bf79300` | `9993aad`、`bf79300`；收尾未提交 | `bf79300` 收尾：固定样本已入库并通过干净 wheel 校验；大样本清单与按需拉取入口已就绪（HF 数据集尚未发布）；独立 review 的四项已修复，待 review。两个真实服务场景待验收。本地全量 321 passed、0 failed，检出前后一致 |
+| T-10C | 多模态 Doctor 自检：`alphaavatar doctor [配置]` 为唯一入口，静态检查后自行创建有期限的临时诊断会话，固定样本走生产链路，报告端到端指标、分段证据和降级结果 | 2026-11-04 | `8fdc2c2`（临时提交）；review 修复基线 `9993aad`；收尾基线 `bf79300`；真实验收基线 `6a593f2` | `9993aad`、`bf79300`、`6a593f2`；验收记录未提交 | 真实服务验收（`6a593f2`）：同一实际请求携带转录与样本帧、输出正常结束、指标齐全；视觉受阻时原配置阻塞原因与纯音频降级同时出现。严格答案校验未通过：真实 STT 丢掉样本第二句格式要求，待用户决定；另发现 KD-17（真实语音轮因 `transcript_timeout` 被丢弃）。第 9 条方案待 review。本地全量 322 passed，检出前后一致 |
 
 ---
 
@@ -1144,3 +1144,208 @@ T-10B 首版的变异 D1–D10 在最终代码上重跑：
 - **请求内容的判定**：在实际请求中查找文本，依据是转录文字出现在请求的文本部分里。如果某个渲染器改写了转录（例如翻译或摘要），就会判为 missing。目前 Context 原样嵌入转录。
 - **大样本**：数据集尚未发布，拉取流程只用离线替身验证过，没有真实下载过。
 - **未提交**：等待 review。
+
+---
+
+## T-10C `6a593f2` 真实服务验收
+
+- **基线**：`6a593f2`。
+- **授权**：用户授权以 `/home/ecs-user/AlphaAvatar/.env.dev` 作为 `ENV_FILE`，并执行配置所需的真实服务调用。
+  - 凭据只经 `ENV_FILE` 注入，报告中只出现服务名和错误分类。
+  - 所有 JSON 报告都经过检查：没有 `sk-`，也没有 40 字符以上的类密钥串。
+- **结论**：真实链路的关键证明都成立：
+  - 本轮转录与样本帧进入同一个实际 `ModelRequest`；
+  - 各启用输出正常结束，首字、首音频帧、终态和分段指标齐全；
+  - 视觉受阻时，原配置的 `ModelCapabilityError: image_input` 与纯音频降级（STT、模型、TTS 都实际完成）同时出现在报告中。
+- **未通过之处**：严格答案校验两次都没有通过。真实 STT 返回的转录只有样本的第一句，丢掉了后面的作答格式要求，模型因此用完整句子回答（2.4）。
+- **另外两个发现**：
+  - 默认配置下，真实语音轮会因 `transcript_timeout` 被丢弃（KD-17，2.1）；
+  - 未提交轮次的阻塞阶段原先会被误报，Doctor 已修正（2.1）。
+- **大样本**：HF 数据集的发布与拉取仍单独跟踪，本次没有使用。验收用的是随 Host 打包的两段小样本。
+
+### 1. 验收配置
+
+- **隔离**：
+  - 临时 home 为 `scratchpad/accept/home`。用 `ALPHAAVATAR_HOME` 指向它，以 `alphaavatar config init` 生成两个 bundle：`av-vision`（Avatar `doctor-av-vision`）和 `av-blocked`（`doctor-av-blocked`）。
+  - 用户的 `my-avatar` bundle、真实 home 和 Avatar 数据都没有改动。
+  - 模型缓存只复制了 Silero VAD 和 Smart Turn 两个目录（19 MB）到临时 home 的 `cache/`，真实缓存没有改动。
+- **命令**：`ALPHAAVATAR_HOME=<临时 home> ENV_FILE=.env.dev alphaavatar doctor <bundle> host.doctor.external_services=true --json`，授权只对这一次运行有效。
+- **两份配置共用的链路**（与 `my-avatar` 及模板一致）：
+  - loop：`realtime`，原生 OpenAI Responses backend，模型 `gpt-5.6-luna`；
+  - STT：`openai_segment`，`gpt-4o-transcribe`；
+  - TTS：`openai`，`gpt-4o-mini-tts`，音色 `ash`；
+  - VAD：`silero`；轮次判定：`smart_turn_v3`；
+  - memory、persona：默认插件。LanceDB 位于 Doctor 的临时工作区，embedding 为 `text-embedding-3-small`。
+- **相对模板的改动，两份都有**（完整 diff 在 `scratchpad/accept/config-diff.txt`）：
+
+| 位置 | 模板 | 验收 | 原因 |
+|---|---|---|---|
+| `vision.enabled` / `input_mode` | `false` / `text` | `true` / `vlm` | 音画场景 |
+| `router.init_config.addressing.semantic.enabled` | `true` | `false` | 减少变量：单人会话，样本就是对 Avatar 说的 |
+| `router.init_config.addressing.visual.enabled` | `true` | `false` | 画面以屏幕共享发送，没有人脸 |
+| `router.init_config.turn_taking.transcript_wait_sec` | 默认 0.75 | `3.0` | 见 2.1（KD-17）；第三次运行起才加入 |
+| `persona.init_config.profiler/speaker/face.enabled` | `true` | `false` | 减少变量；也就不需要复制 1.9 GB 的说话人与人脸模型 |
+| `memory.init_config.retrieval/conversation/tool.enabled` | `true` | `false` | 减少变量：不发生 gpt-4o 增量调用 |
+| `status.enabled` | `true` | `false` | 减少变量 |
+
+- **只有 `av-blocked`**：`loop.init_config.model.input_options.max_inline_bytes: 1024`。原生 Responses 适配器因此无法内联样本帧，在发出请求之前就拒绝图像。
+- **静态检查**：两份配置 `config check` 均有效，计划相同：Silero、memory LanceDB、persona LanceDB、Smart Turn，各 1 个 worker。
+
+### 2. 实测过程与结果
+
+#### 2.1 第一、二次运行（`av-vision`，模板默认的 `transcript_wait_sec=0.75`）
+
+- **两次相同的部分**：会话、4 个 Runner、embedding、模型、TTS 都正常；`text` 场景通过（真实 `gpt-5.6-luna` 回答 "5"）。
+- **`voice_vision` 失败**：60 s 内没有提交轮次（Ended by timeout）。
+- **第一次的报告把阻塞阶段误报成 `vad.closed`**：没有提交的 Turn 时，trace 链为空，输入之后的阶段全都显示为缺失。离线用缓存中的真实 Silero 跑这段样本，114 个窗口中有 100 个概率大于 0.5，说明 VAD 本身没有问题。
+- **Doctor 修正**：没有提交的轮次时，按本轮输入的时间窗口追踪其语音片段、STT 和轮次判定记录（`measure._uncommitted`），报告给出实际停下的阶段。
+- **第二次运行，修正后的报告给出实际链路**（时间相对最后有声样本）：
+
+| 时间 | 事件 |
+|---|---|
+| +680 ms | VAD 封段（`perception.speech_closed`） |
+| +681 ms | 提交 STT（`stt.commit`，210 帧） |
+| +815 ms | Smart Turn 判定 HOLD（等待转录） |
+| +1566 ms | CANCEL：等待转录 0.75 s 后超时，候选退役 |
+| +2442 ms | 真实 STT 终稿到达（`final_text`），因片段已退役被拒（`candidate.transcript_rejected reason=retired_segment`） |
+
+- **结论（KD-17）**：轮次判定在判为结束之后，只等待转录 `transcript_wait_sec`（默认 0.75 s）。真实 `gpt-4o-transcribe` 从提交到终稿约 1.76 s，晚于这个等待。按模板默认配置（`my-avatar` 同样如此），只要 STT 比这更慢，用户的语音轮就会被整句丢弃。这是生产问题，不属于 T-10C 范围，本批没有改默认值，已记入 2A 日志的 KD 表，待用户决定。验收从第三次运行起，在两份配置中同时把它设为 3.0 s。
+
+#### 2.2 第三次运行：音画同轮（`av-vision`）
+
+- **检查结果**：13 PASS、1 FAIL（`session.scenarios`）、1 SKIP（`devices.media`），退出码 1。
+  - `session.start` 103 ms 就绪；
+  - Runner：Silero 0.73 s、memory LanceDB 6.53 s、persona LanceDB 4.41 s、Smart Turn 2.29 s；
+  - `services.external`：模型、STT、TTS 三项均为 reached 并通过；
+  - `session.cleanup` PASS：2 个自有部件关闭，Runner 进程、socket 和临时工作区都已回收。
+- **`voice_vision` 场景**：
+  - 转录为 "What color is the card on my screen?"，回答为 "The card is green."；
+  - 停在 `answer`：不是 `green` 这样的单词答案，原因见 2.4。
+- **同一实际请求的关联**（脱敏令牌）：
+  - `model.request`：turn `9b4ef3400415`、run `9202e29b2f68`、request `30e1a51b9e55`，`input` 等于 `turn.committed` 的 input（`carries_turn_input`），`frame_count=4`；
+  - `model.request_input`：STT 终稿 observation `8d970c5d8fec` 为 carried（`carries_turn_content`，即 `request.content` 通过）；VAD 语音片段 observation 为 missing，这是正确的：VLM 模式只带转录，不带音频；
+  - `model.request_frame`：4 帧，全部是 Doctor 发布的样本帧（`sample_frames=4`）。Context 选中与请求所带完全一致，帧龄分别为 2904、1903、1004、104 ms；
+  - 日志 `model.started` 的 run/request 令牌与 trace 一致，输出的 run 也是这个 run。
+- **输出**：1 个输出（text+audio），终态 `completed`。
+- **端到端指标**（起点为最后有声样本发布）：
+
+| 指标 | 值 |
+|---|---|
+| 首字 `first_text` | 3415 ms |
+| 首音频帧 `first_audio_frame` | 4651 ms |
+| 文本完成 `text_complete` | 3943 ms |
+| 音频末帧 `audio_last_frame` | 6431 ms |
+| 响应终态 `response_final` | 6431 ms |
+| 最后必需输入 `last_required_input` | 1482 ms（最后一张选中帧晚于语音结束） |
+| 音频 | 3.15 s，RTF 0.565（3.15 s 音频用 1.78 s 产出），最大间隔 575 ms，按无缓冲口径断供 1 次 |
+
+- **分段指标**：
+
+| 分段 | 值 |
+|---|---|
+| VAD 封段 `vad_close` | 681 ms |
+| STT 终稿 `stt_final` | 1543 ms（提交到终稿 861 ms） |
+| 轮次截断 `turn_cutoff` | 1579 ms |
+| Context 就绪等待 | 0.3 ms |
+| 截断到模型请求 | 4.2 ms |
+| 请求到首个流事件 / 首个文本增量 / 首段文本到输出边界 | 1652 / 1832 / 1832 ms |
+| TTS 请求到首个 PCM | 884 ms |
+| 首个 PCM 到首音频帧 | 0.6 ms |
+| 帧到达到可用（JPEG 编码） | 0.8 ms |
+| 最新选中帧早于截断 | 97 ms |
+| `vision_wait` | 空（没有观测到等待） |
+
+- **Runner 队列**：
+  - Silero 311 次调用，最大排队 0.014 ms、最大执行 2.7 ms；
+  - Smart Turn 2 次，最大执行 37 ms；
+  - LanceDB 1 次，8 ms。
+- **同会话的 `text` 场景**：通过，回答 "5"。首字 992 ms，首音频帧 2022 ms，终态 2410 ms；模型首事件 574 ms，TTS 首 PCM 818 ms。
+
+#### 2.3 视觉受阻后降级为纯音频（`av-blocked`）
+
+- **检查结果**：12 PASS、2 FAIL（`services.external`、`session.scenarios`）、1 SKIP，退出码 1。这是原配置的预期失败导致的，因此单独检查了降级场景自身的结果。
+- **原配置**：
+  - `voice_vision`：转录 "What color is the card on my screen?"，请求带本轮输入、转录（`request.content` 通过）和 4 张样本帧。停在 `model.first_event`，原因为 `ModelCapabilityError: image_input`：Responses 适配器因 `max_inline_bytes=1024` 在本地拒绝图像，没有发出请求。
+  - 同会话的 `text`：同样因上下文中带着屏幕帧，原因为 `ModelCapabilityError: image_input`。这是生产行为。
+  - 原配置的阻塞结果完整保留在报告中。
+- **降级配置 `degraded: vision off`**：重新规划了 Runner，4 个均启动；未修剪任何方法设置（本配置没有设置）。
+  - `voice` 场景实际完成了 STT（转录 "What is two plus three?"）、模型调用（回答 "Two plus three is five."）和 TTS。请求带本轮输入与转录，不带图像。
+  - 输出 1 个（text+audio），终态 `completed`。
+  - 停在 `answer`，原因见 2.4。
+  - 端到端：首字 3274 ms、首音频帧 4189 ms、文本完成 3413 ms、音频末帧与终态 4906/4907 ms；音频 2.4 s，RTF 0.299。
+  - 分段：VAD 682 ms、STT 终稿 1745 ms（提交到终稿 1063 ms）、截断 1781 ms、截断到请求 1.7 ms、请求到首事件 1244 ms、到首文本 1491 ms、TTS 请求到首 PCM 776 ms。
+- **外部服务**：模型 reached 但未通过（原因 `ModelCapabilityError: image_input`），STT 与 TTS 均通过。
+- **回收**：`session.cleanup` PASS，4 个自有部件关闭（原配置与降级配置的会话和各自的运行时）。
+- 本次没有出现普通 HTTP 400、401 或通用服务故障。凭据有效：embedding、模型、STT、TTS 都已实际调用成功。
+
+#### 2.4 严格答案校验没有通过的原因
+
+- **现象**：两段固定样本由 flite 生成，各有两句（问题 + 作答格式要求）。两段都是 VAD 的一个片段（210 帧，覆盖整段），没有被拆开。但真实 `gpt-4o-transcribe` 两次都只返回第一句（"What color is the card on my screen?"、"What is two plus three?"）。STT 插件发送的是整段 PCM，终稿原样使用，没有截断。
+- **后果**：模型没有收到作答格式要求，用完整句子作答。内容正确（"The card is green."、"Two plus three is five."），但不满足"整段答案等于期望单词"。
+- **处理**：我没有放宽判定，避免把真实失败变绿。可选做法（待用户决定）：
+  1. **重写提示词**：改成单句、把格式要求放进问题本身，例如 "In one word, what color is the card on my screen?" 和 "As a single number, what is two plus three?"，再离线重新生成样本。转录模型是否保留前置的格式要求仍需实测，而我在本机无法运行 flite。
+  2. **可确定的去回显判定**：去掉问题中已出现的词以及冠词和系词（`the`、`card`、`is`、`it`、`two`、`plus`、`three` 等）之后，剩下的必须恰好是期望答案。按这个规则，"The card is green." 和 "Two plus three is five." 通过；"Not green."、"Maybe green."、"The card is not green. It is red."、"15"、"Green?" 仍不通过。该规则可以确定判定，也不依赖 STT 保留格式要求。
+  3. 两者结合。
+
+### 3. 回收
+
+- 四次真实运行的 `session.cleanup` 均为 PASS，没有进程残留：第三次运行 2 个部件，`av-blocked` 4 个部件。
+- Doctor 临时目录（含诊断进程的 `TMPDIR` 和 socket）都已删除。
+- 临时 home 中的 `avatars/` 没有生成，诊断数据只写在 Doctor 自己的临时工作区，运行后已删除。
+- 用户的 `~/.local/share/alphaavatar` 只被读取过：用 `config check my-avatar` 读取模型选择。`~/.cache/alphaavatar` 只被读取过：复制了两个模型目录。验收开始后，两处都没有任何文件被修改（已用 `find -newer` 核对）。
+
+### 4. 受控测试（与真实实测分开）
+
+- **新增 `test_measure.py::test_a_spoken_input_that_never_committed_shows_where_it_stopped`**：
+  - 复现真实链路：片段封段、提交 STT、HOLD、CANCEL，之后才到达转录；
+  - 断言阶段到达 `input`、`vad.closed`、`stt.final`，停在 `turn.committed`，证据中按顺序有 hold 和 cancel，且不包含本轮开始之前的旧 `turn.committed`。
+- **变异**（每次运行后按 SHA-256 逐字恢复原文件）：
+  - U1 不跟踪未提交的输入：测出；
+  - U2 不按本轮时间窗口取 trace：测出。
+- **全量结果**：322 passed，0 failed，exit 0，用时 137.8 s（CI 方式），检出前后一致，没有 `unclosed event loop`；`ruff check`、`ruff format --check`（714 个文件）通过。
+
+### 5. 待用户决定
+
+1. **KD-17**：`transcript_wait_sec` 默认 0.75 s，短于真实分段 STT 的延迟（本次实测为 0.86 s 至 1.76 s）。可选：
+   - 提高默认值；
+   - 按 STT 能力（分段或流式）设默认值；
+   - 改为等到 STT 终稿或出错，再加一个上限。
+2. **样本提示词与答案判定**：见 2.4。
+3. **大样本 HF 数据集**：发布、实际拉取和校验仍单独跟踪（见上一节第 1 节）。
+
+### 6. 第 9 条 `config init` 轻量交互入口：最小实现方案（待 review，尚未实现）
+
+- **目标**：交互终端里依次选择：
+  - 预设：纯文本、语音、音画；
+  - Memory 和 Persona 的处理器；
+  - 工具。
+
+  写入前预览启用项和所需凭据的名称。脚本和 CI 可以用显式参数无人值守完成。自动安装另立任务。
+- **配置接口**（放在 `alphaavatar.host.configs`，供 CLI、Web、TUI 和移动端复用，纯函数）：
+  - `InitChoices`（冻结 dataclass）：
+    - `preset`：`text`、`voice` 或 `audio_visual`；
+    - `memory`：retrieval、conversation、tool 中启用的集合；
+    - `persona`：profiler、speaker、face 中启用的集合；
+    - `tools`：deepresearch、rag、mcp 中启用的集合。
+
+    默认值等于现有模板，即 `voice`、全部启用、不启用工具。
+  - `render_bundle(name, avatar_id, choices=InitChoices())`：在现有模板文本上按选择改写各节，例如：
+    - `text` 预设：`voice` 的 vad、stt、tts 均为 null，视觉关闭；
+    - `audio_visual` 预设：视觉启用、`input_mode: vlm`。
+
+    改写后沿用现有校验（`HostConfig` / `AvatarConfig`，以及 Runner 规划），文件写入前就失败。
+  - `preview_bundle(...)`：从渲染结果得出启用项（复用 `describe_summary` 的结构）和所需环境变量名，不含任何值。例如 OpenAI 模型、语音、embedding 需要 `OPENAI_API_KEY`；deepresearch 需要 `TAVILY_API_KEY`；`voiceai` 需要 `VOICEAI_API_KEY`；RTC 需要 `LIVEKIT_*`。现有的 `REQUIRED_ENVIRONMENT` 改为由选择推导。
+  - `create_bundle(paths, name, avatar_id=..., choices=...)`：沿用现有的原子写入、不覆盖和失败回滚逻辑，只是写入渲染后的文本。
+- **CLI**（`cli/commands/config.py`，交互只放在这里）：
+  - `alphaavatar config init <name> --avatar-id ID [--preset text|voice|audio-visual] [--memory retrieval,conversation,tool|none] [--persona profiler,speaker,face|none] [--tools deepresearch,rag,mcp|none] [--yes]`。
+  - stdin 和 stdout 都是终端、且有选项没有给出时，按编号菜单逐项询问，显示预览后确认（`y/N`）。
+  - 非终端，或参数已经给全时，从不提问：用给出的值和默认值，直接预览并写入；`--yes` 跳过确认。
+  - `--json` 输出预览与结果，供脚本使用。
+- **测试**：
+  - 三种预设渲染后都能通过 `config check` 同一套校验；
+  - 预览只列名称、不含值；
+  - 交互流程用替身输入测试，包括取消时不写任何文件；
+  - 无人值守的参数路径；
+  - 不带参数时的输出与现在相同；
+  - 已有的不覆盖、回滚测试保留。
+- **不做**：自动安装依赖、模型下载；凭据的写入或校验（只列出名称）。

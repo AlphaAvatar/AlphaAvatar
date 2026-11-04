@@ -226,7 +226,10 @@ are one identity: a segment joins its candidate, decision and Turn; the Turn joi
 its model request with that request's frames, and its run's outputs. `request` sums that up,
 and `frames` tells the frames Context selected from those the request carried, each matched
 to one Doctor published. The Turn is the one committed in this session whose perception range
-holds this input, so a late event of another turn or session is never counted. Evidence is
+holds this input, so a late event of another turn or session is never counted. When no Turn
+commits, the evidence follows the spoken input from its own sound on (its segment, STT and
+turn-taking decisions), so the report names the stage it stopped at, such as a candidate
+cancelled for want of a transcript before the STT final arrived. Evidence is
 bounded, keeping where the chain began, turned and ended, and passes the same output boundary
 as the rest of the report.
 
