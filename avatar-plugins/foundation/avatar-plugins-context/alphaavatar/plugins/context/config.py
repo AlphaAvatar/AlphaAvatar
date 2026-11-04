@@ -11,9 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from pydantic import BaseModel, ConfigDict, Field
+from collections.abc import Mapping
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from alphaavatar.agents.constants import DEFAULT_SYSTEM_VALUE
+
+# Profiles `config init` wrote while the history had capacity limits; it is now kept whole.
+_HISTORY_LIMITS = frozenset({"history_max_turns", "history_max_items", "history_max_bytes"})
 
 
 class ContextConfig(BaseModel):
@@ -21,3 +27,11 @@ class ContextConfig(BaseModel):
 
     behavior_rules: str = DEFAULT_SYSTEM_VALUE
     max_pending_preparations: int = Field(default=16, ge=1, le=128)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _ignore_history_limits(cls, data: Any) -> Any:
+        # Read and ignored; any other unknown setting is still refused.
+        if isinstance(data, Mapping):
+            return {key: value for key, value in data.items() if key not in _HISTORY_LIMITS}
+        return data

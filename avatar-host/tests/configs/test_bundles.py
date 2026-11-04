@@ -37,6 +37,7 @@ from alphaavatar.host.configs import (
     load_application,
     select_configuration,
     template,
+    validate_plugin_settings,
 )
 from alphaavatar.host.configs.bundles import LAYERS, profile_sections
 from alphaavatar.host.configs.loader import restore_application
@@ -73,6 +74,14 @@ persona:
   init_config:
     profiler: {provider: {gateway: {tasks: {persona.profile_delta: *task}}}}
 tools: {deepresearch: {plugin: null}, rag: {plugin: null}, mcp: {enabled: false}}
+"""
+# The Context profile body `config init` wrote while the history had capacity limits.
+LEGACY_CONTEXT = """\
+plugin: default
+init_config:
+  history_max_turns: 32
+  history_max_items: 4096
+  history_max_bytes: 8388608
 """
 
 
@@ -364,6 +373,26 @@ def test_bundles_share_profiles_and_an_accepted_snapshot_stays_frozen(
         restored = restore_application(accepted.payload)
         assert json.loads(restored.payload) == json.loads(accepted.payload)
         assert speaker(restored) == "ash"
+
+
+def test_a_context_profile_with_the_removed_history_limits_still_loads(
+    home: Path, capsys: pytest.CaptureFixture
+) -> None:
+    assert create("alpha", "alpha") == 0
+    context = profile(home, f"alpha/{LAYOUT['context']}")
+    header = context.read_text().partition("plugin: default")[0]
+    context.write_text(header + LEGACY_CONTEXT)
+    capsys.readouterr()
+    # What start reads before it builds anything: the bundle, then each plugin's settings.
+    assert main(["config", "check", "alpha", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["valid"] is True
+    loaded = load_application(select_configuration("alpha"))
+    assert validate_plugin_settings(loaded)["context"] == ContextConfig()
+    # Their values are ignored; any other unknown setting is still refused, by its location.
+    context.write_text(header + LEGACY_CONTEXT + "  history_max_tokens: 1\n")
+    assert main(["config", "check", "alpha", "--json"]) == 2
+    error = json.loads(capsys.readouterr().out)["error"]
+    assert error["fields"] == ["context.init_config.history_max_tokens"]
 
 
 def test_checking_a_bundle_reads_only_and_hides_profile_credentials(

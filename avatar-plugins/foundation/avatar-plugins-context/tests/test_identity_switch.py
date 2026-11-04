@@ -87,14 +87,7 @@ def commit(runtime: AvatarRuntime, input_id: str, text: str) -> TurnSnapshot:
 
 
 async def prepare(context: ContextManager, turn: TurnSnapshot, context_id: str) -> ModelInput:
-    return await context.prepare(
-        ContextPrepareRequest(
-            input=context.accept_turn(turn),
-            turn_id=turn.turn_id,
-            context_id=context_id,
-            input_id=turn.input_id,
-        )
-    )
+    return await context.prepare(ContextPrepareRequest(turn=turn, context_id=context_id))
 
 
 def texts(model_input: ModelInput) -> list[str]:
@@ -142,8 +135,9 @@ async def test_identity_correction_rebuilds_the_prefix_but_keeps_accepted_histor
         current = await prepare(context, second, context_id)
         system, *history, turn_input = texts(current)
         assert "profile-of-user-a" in system and "profile-of-user-b" not in system
-        # B's accepted turn and the reply already given stay in canonical history verbatim.
-        assert history == ["My name is B.", "Hello B."]
+        # B's accepted turn, as first built, and the reply already given stay in canonical
+        # history verbatim.
+        assert history == [texts(prefix)[1], "Hello B."] and "My name is B." in history[0]
         assert 'input_id="input-2"' in turn_input
         assert context.build(current).items == current.items
         assert runtime.turn.get("input-1").actors == first.actors

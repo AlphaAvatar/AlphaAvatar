@@ -23,10 +23,13 @@ from xml.sax.saxutils import escape
 from alphaavatar.agents.avatar.context.schemas import ContextContribution
 from alphaavatar.agents.avatar.provider.enums import ModelInputType, ModelRole
 from alphaavatar.agents.avatar.provider.schemas import (
+    ModelAudioPart,
     ModelFunctionCall,
     ModelFunctionOutput,
+    ModelImagePart,
     ModelInput,
     ModelInputMessage,
+    ModelInputPart,
     ModelTextPart,
 )
 from alphaavatar.agents.constants import RUNTIME_CONTEXT_TOOL_NAME
@@ -69,6 +72,18 @@ class ContextBuilder:
         return (
             isinstance(item, ModelFunctionCall | ModelFunctionOutput)
             and item.name == RUNTIME_CONTEXT_TOOL_NAME
+        )
+
+    @staticmethod
+    def _pinned(part: ModelInputPart) -> ModelInputPart:
+        if (
+            not isinstance(part, ModelImagePart | ModelAudioPart)
+            or part.observation.payload is None
+        ):
+            return part
+        observation = part.observation
+        return replace(
+            part, observation=replace(observation, payload=observation.payload.snapshot())
         )
 
     def _with_system_prompt(self, model_input: ModelInput, *, system_prompt: str) -> ModelInput:
@@ -171,20 +186,22 @@ class ContextBuilder:
                 )
                 current = base.get(request.input_id)
                 assert isinstance(current, ModelInputMessage)
+                # Media as selected now: a later annotation of the same payload changes neither
+                # this request nor the history that replays it.
+                parts = tuple(map(self._pinned, current.parts))
                 if snapshot.text and not any(
                     isinstance(part, ModelTextPart)
                     and ("<text_input " in part.text or "<transcript>" in part.text)
-                    for part in current.parts
+                    for part in parts
                 ):
                     fallback = ModelTextPart(
                         f"  <committed_text>{escape(snapshot.text)}</committed_text>"
                     )
-                    parts = current.parts
                     if parts and parts[-1] == ModelTextPart("</turn_input>"):
                         parts = (*parts[:-1], fallback, parts[-1])
                     else:
                         parts = (*parts, fallback)
-                    base = replace_current(base, request.input_id, parts)
+                base = replace_current(base, request.input_id, parts)
 
         model_input = self._inject_runtime_context(
             base,

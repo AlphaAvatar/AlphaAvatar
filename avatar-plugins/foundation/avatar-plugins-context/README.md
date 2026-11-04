@@ -17,9 +17,9 @@ State and static `loop_budget` use the synthetic `alphaavatar_runtime_context` f
 
 ## Native history
 
-The manager retains bounded history by context and Turn and independently consumes canonical model records from Output. User input comes from committed Turns, including turns superseded before preparation. A system notice enters the current user message as a typed text part at the corresponding speech segment. History preserves the notice facts and their order when the snapshot retains the timing evidence.
+The manager retains the whole history by context and Turn and independently consumes canonical model records from Output. User input comes from committed Turns, including turns superseded before preparation. A system notice enters the current user message as a typed text part at the corresponding speech segment. History preserves the notice facts and their order when the snapshot retains the timing evidence.
 
-Incomplete tool-call/output pairs are excluded from the next model input. Retiring Run results remain associated with their original identity and do not resurrect evicted Turns. Context acknowledgement is independent of Memory acknowledgement and is not a database-persistence guarantee.
+Incomplete tool-call/output pairs are excluded from the next model input. Retiring Run results remain associated with their original identity. Context acknowledgement is independent of Memory acknowledgement and is not a database-persistence guarantee.
 
 ```yaml
 context:
@@ -29,7 +29,7 @@ context:
     max_pending_preparations: 16
 ```
 
-The history byte limit bounds serialized retained content, not total process memory or shared media caches. Eviction respects whole-Turn history ownership.
+History has no capacity limit and evicts nothing during the session; compaction is a separate, later component. Each Turn's user message is kept as ContextBuilder first built it, with its parts, their order and the content of its media fixed at that build, and every later query replays it unchanged. Only the current Turn carries the runtime context. Every retained image is sent again with each later query, so history alone can reach a provider's inline media limit (Responses `max_inline_bytes`). Profiles that still set `history_max_turns`, `history_max_items` or `history_max_bytes` load, and those values are ignored.
 
 StateRuntime.global_behavior_rules may originate from client metadata. It is captured as reference/preferences, not promoted into application system instructions. Binding Memory/Persona sources does not transfer their ownership.
 

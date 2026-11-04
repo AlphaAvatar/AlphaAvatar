@@ -246,14 +246,11 @@ async def submit(runtime: AvatarRuntime, user_id: str) -> tuple[Participant, Tur
         actors=(actor,),
         context_ids=(context_id,),
     )
-    model_input = runtime.foundation.context.accept_turn(turn)
     await runtime.output.start_turn(turn_id=turn.turn_id)
     handle = await runtime.foundation.loop.submit(
         LoopRequest(
-            input_id=turn.input_id,
-            turn_id=turn.turn_id,
+            turn=turn,
             context_id=context_id,
-            input=model_input,
             allowed_capabilities=tuple(c.id for c in runtime.capability_registry.capabilities),
         )
     )

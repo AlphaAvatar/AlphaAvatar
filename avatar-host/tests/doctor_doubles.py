@@ -25,6 +25,7 @@ pythonpath.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import os
 import socket
@@ -484,10 +485,16 @@ def install(spec: dict, files: Path) -> None:
     voiced = noise.astype("<i2").tobytes()
     samples.speech = lambda name: samples.Speech(name, voiced, 1.0)
     if spec.get("drop_speech"):
-        # Context renders the Turn without its speech: its input and frames stay.
-        from alphaavatar.plugins.context.builder.renderer import op
+        # Context builds the Turn without its speech, or the committed text standing in for
+        # it: its input and frames stay.
+        from alphaavatar.plugins.context.builder import ContextBuilder
+        from alphaavatar.plugins.context.builder.renderer.input import xml
 
-        op._speech_xml = lambda *args, **kwargs: None
+        xml._speech_parts = lambda *args, **kwargs: ()
+        build = ContextBuilder.build
+        ContextBuilder.build = lambda self, *, snapshot, **kwargs: build(
+            self, snapshot=dataclasses.replace(snapshot, text=None), **kwargs
+        )
     if spec.get("deaf"):
         # A process that neither hears the stop nor keeps to its budget: only its group's
         # end reclaims it.

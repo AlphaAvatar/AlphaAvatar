@@ -29,9 +29,10 @@ from alphaavatar.agents.avatar.provider.schemas import (
 from alphaavatar.agents.avatar.vision import SelectedVisualFrame, VisualSelection
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import ObservationKind
+from alphaavatar.core.env.schemas import PerceptionSegmentRef
 from alphaavatar.core.media import PayloadFormatUnavailable
 from alphaavatar.core.media.enums import PayloadFormat, PayloadView
-from alphaavatar.core.perception import AlignedPerception, TemporalSlice
+from alphaavatar.core.perception import AlignedPerception, AlignedSpeechSegment, TemporalSlice
 from alphaavatar.core.perception.enums import MediaSourceKind
 from alphaavatar.core.perception.schemas import MediaSourceSnapshot, PerceptionEvent
 
@@ -323,6 +324,35 @@ def _last_speech_slice_index(alignment: AlignedPerception) -> int | None:
     )
 
 
+def _slice_transcripts(
+    temporal_slice: TemporalSlice,
+    audio: dict[PerceptionSegmentRef, EnvObservation],
+    rendered: set[str],
+) -> tuple[AlignedSpeechSegment, ...]:
+    """A FIXED slice holds transcripts as observations, a ranged one in every slice it overlaps:
+    each renders once, as its speech, in the first."""
+    if temporal_slice.speech is not None:
+        return ()
+    found = []
+    for observation in temporal_slice.observations:
+        if (
+            observation.kind != ObservationKind.TRANSCRIPT_SEGMENT
+            or observation.observation_id in rendered
+        ):
+            continue
+        rendered.add(observation.observation_id)
+        speech = audio.get(observation.segment)
+        found.append(
+            AlignedSpeechSegment(
+                segment=observation.segment,
+                time_range=(speech or observation).time_range,
+                speech=speech,
+                transcript=observation,
+            )
+        )
+    return tuple(found)
+
+
 def _slice_open_xml(temporal_slice: TemporalSlice, alignment: AlignedPerception) -> str:
     return (
         "    <slice "
@@ -338,6 +368,7 @@ def _ordered_slice_parts(
     alignment: AlignedPerception,
     frames: tuple[SelectedVisualFrame, ...],
     speech_parts: tuple[ModelTextPart, ...],
+    spoken: tuple[AlignedSpeechSegment, ...] = (),
     notices: tuple[TimedSystemNotice, ...] = (),
     direct_inputs: tuple[tuple[int, EnvObservation], ...] = (),
     include_images: bool,
@@ -346,6 +377,15 @@ def _ordered_slice_parts(
 
     if speech := temporal_slice.speech:
         entries.append((speech.time_range.start.monotonic_ns, 0, speech_parts))
+
+    for segment in spoken:
+        parts = _speech_parts(
+            replace(temporal_slice, speech=segment),
+            alignment,
+            include_final_gap_after=False,
+            notice=None,
+        )
+        entries.append((segment.time_range.start.monotonic_ns, 0, parts))
 
     for notice in notices:
         assert notice.at_ns is not None
@@ -536,14 +576,23 @@ def render_current_input(
         )
         direct_slots.setdefault(slot, []).append((index, observation))
 
+    audio = {
+        observation.segment: observation
+        for item in alignment.slices
+        for observation in item.observations
+        if observation.kind == ObservationKind.SPEECH_SEGMENT
+    }
+    transcribed: set[str] = set()
     for temporal_slice in alignment.slices:
         frames = request.visual_selection.for_slice(temporal_slice.index) if include_images else ()
         visual_count = _visual_observation_count(temporal_slice)
         slice_notices = tuple(slot_notices.get(temporal_slice.index, ()))
         direct_inputs = tuple(direct_slots.get(temporal_slice.index, ()))
+        spoken = _slice_transcripts(temporal_slice, audio, transcribed)
 
         if (
             temporal_slice.speech is None
+            and not spoken
             and not temporal_slice.source_events
             and not frames
             and not slice_notices
@@ -565,6 +614,7 @@ def render_current_input(
                     include_final_gap_after=temporal_slice.index == last_speech_index,
                     notice=speech_notices.pop(speech.segment.segment_id, None) if speech else None,
                 ),
+                spoken=spoken,
                 notices=slice_notices,
                 direct_inputs=direct_inputs,
                 include_images=include_images,
