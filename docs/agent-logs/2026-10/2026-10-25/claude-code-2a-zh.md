@@ -3,6 +3,7 @@
 - 分支：`dev/v0.6.9`；日期均为 CST
 - 2A 各批次都记录在本文件中，新批次按时间顺序追加到末尾。
 - T-10 起（安装、升级回滚与 Doctor 阶段）的记录在 `docs/agent-logs/2026-11/2026-11-03/claude-code-t10-zh.md`；KD/O 表仍以本文件为准。
+- Context 插件审查修复（2026-11-04 起）的记录在 `docs/agent-logs/2026-11/2026-11-04/claude-code-context-zh.md`。
 - 2026-10-26 按用户要求，把原先拆分的三份日志合并为本文件。合并时没有改写批次内容，只去掉了重复的 KD 表和过时的状态行。原 2A-1 和 2A-2a 日志可在 git 历史中查到（`5c2c5b7`、`468c807`）。
 
 ## 批次总览
@@ -57,6 +58,7 @@
 | O-12 | 默认 memory、persona、MCP 的 LanceDB Runner 在 `initialize` 时对 `"dimension-probe"` 做一次 embedding。每次启动都是一次外部调用，可能计费；缺 key 时 Runner 启动失败 | 仅记录 | T-10C 新增：因此 Doctor 启用这些插件时，Runner 启动也需要 `host.doctor.external_services` |
 | O-13 | 测试基础设施：pytest-asyncio 在首个异步测试前调用 `asyncio.get_event_loop()`，进程里还没有设置过事件循环时，asyncio 会新建一个，此后无人关闭。之后某个同步测试的 `asyncio.run()` 把它从当前循环上换下，会话结束时 GC 报 `unclosed event loop` 和两个 AF_UNIX socket，pytest 以 exit 1 结束（所有测试均通过）。只在全量运行中出现 | 本轮修复，待 review | T-10C `9993aad` review 修复中发现：用临时插件记录事件循环创建栈定位；用 `git archive` 导出的 `9993aad` 代码与测试复现同样的 exit 1，确认既有。修复：根 `conftest.py` 的 `pytest_configure` 中 `asyncio.set_event_loop(None)`，pytest-asyncio 随后拿到"无当前循环"，不再新建；最小复现与全量均不再出现 |
 | KD-17 | 轮次判定在判为轮次结束后，只等待缺失的转录 `transcript_wait_sec`（默认 0.75 s），超时就以 `transcript_timeout` 取消并退役候选，之后到达的 STT 终稿被拒（`retired_segment`）。真实分段 STT（`gpt-4o-transcribe`）从提交到终稿实测为 0.86 s 至 1.76 s。按模板默认配置（含 `my-avatar`），慢于 0.75 s 的 STT 会让用户整句语音被丢弃，没有回应 | 待用户决定，本批未改 | T-10C 真实验收（`6a593f2`）发现：Doctor 报告给出 HOLD +815 ms、CANCEL +1566 ms、终稿 +2442 ms 的链路。验收配置把该值设为 3.0 s 后，同一样本正常提交。可选修复：提高默认值、按 STT 能力（分段或流式）给默认值，或改为等到终稿或出错，再设上限 |
+| KD-18 | Context History 完整保留每轮图片，每个请求都重发全部历史图片；Responses 适配器对每个请求累计内联字节，超过 `max_inline_bytes`（默认 20 MiB）即在发请求前抛 `ModelCapabilityError(code="image_input")`。首次超限那一轮的用户消息在 `prepare` 时已进入 History，此后每一轮（包括纯文字轮）都被拒，会话内无法恢复；纯文字轮也报 `image_input`，Doctor 会误判为图像被拒 | 待用户决定，本批未改 | Context 审查（`43c019f`）P4 复现，回归 `test_turn_history.py::test_history_images_past_the_inline_limit_refuse_every_later_turn` 固定当前行为。现有请求层和适配层没有能同时保留完整媒体、又满足上限的机制（无文件上传／`file_id`、`store: false`、无 `previous_response_id`、无媒体预算）。可选：Context 请求投影加媒体预算（与后续压缩重叠）、适配器省略最早历史图片、Files API 上传、服务端会话状态、调大上限，另可改用独立错误码。详见 `2026-11-04/claude-code-context-zh.md` 第 4 节 |
 
 已撤回：「recall 结果包含 avatar owner」按 Q8 属于有意设计，不再列为缺陷。
 
