@@ -72,21 +72,23 @@ def doctor(capsys: pytest.CaptureFixture, *argv: str) -> tuple[int, dict[str, di
     assert [check["id"] for check in report["checks"]] == IDS
     assert code == (1 if report["status"] == "FAIL" else 0)
     lines = text.splitlines()
-    # Grouped for reading; a pass is one line, anything else shows its details and next step.
-    headings = [line for line in lines if line.startswith("    ") and line[4] != " "]
-    assert [heading.strip() for heading in headings] == list(GROUPS)
+    # A table of checks under group headings: a pass is its row, anything else shows its
+    # details and next step below it.
+    assert ["STATUS", "CHECK", "SUMMARY"] in [line.split() for line in lines]
+    headings = [line.strip() for line in lines if line in {f"    {group}" for group in GROUPS}]
+    assert headings == list(GROUPS)
     for check in report["checks"]:
-        heading = f"{check['status']}  {check['id'].ljust(21)}  {check['summary']}"
-        assert f"      {heading}" in lines
+        row = f"    {check['status'].ljust(6)}  {check['id'].ljust(21)}  {check['summary']}"
+        assert row in lines
         shown_lines = [line.strip() in check["details"] for line in lines]
         assert any(shown_lines) == (check["status"] != "PASS" and bool(check["details"]))
-        # Each scenario on its own line, with what became of it.
+        # Each service and each scenario has a row of its own table.
+        for service in check["services"]:
+            assert any(line.startswith(f"    {service['name']}  ") for line in lines)
         for result in check["scenarios"]:
             outcome = result["outcome"].replace("_", " ")
-            assert any(
-                line.split() == [*outcome.split(), result["name"], *result["summary"].split()]
-                for line in lines
-            )
+            cells = [result["name"], *result["configuration"].split(), *result["summary"].split()]
+            assert any(line.split() == [*outcome.split(), *cells] for line in lines)
     return code, {check["id"]: check for check in report["checks"]}, text + raw
 
 
@@ -132,6 +134,12 @@ def test_without_a_configuration_doctor_says_how_to_create_one_and_checks_the_re
     specs = json.loads(capsys.readouterr().out)["checks"]
     assert [spec["id"] for spec in specs] == IDS
     assert tuple(spec["id"] for spec in specs if spec["in_session"]) == SESSION
+    assert main(["doctor", "--list"]) == 0
+    listed = [line.split()[:2] for line in capsys.readouterr().out.splitlines()]
+    assert ["CHECK", "NEEDS"] in listed
+    for spec in specs:
+        needs = "session" if spec["in_session"] else "configuration"
+        assert [spec["id"], needs if spec["needs_configuration"] else "-"] in listed
     # One entry point: the session is chosen by the configuration, never by a flag.
     for argv in (["alpha"], ["--runtime"], ["--live"]):
         with pytest.raises(SystemExit) as invalid:
@@ -167,8 +175,14 @@ def test_doctor_selects_and_loads_configurations_as_config_check_does(
         assert "host.doctor.external_services=true`" in checks["session.start"]["action"]
         # Starting these runners would embed with the vector stores' provider: not started.
         assert "vector store embeddings" in checks["models.runners"]["summary"]
-    # The file's remote vector store and MCP server are named, though not contacted.
-    assert {"Qdrant", "1 MCP server"} <= set(checks["services.external"]["details"])
+    # The file's remote vector store and MCP server are named, though not contacted; the
+    # store also holds real Avatar data, which Doctor never writes, authorized or not.
+    services = {s["name"]: s for s in checks["services.external"]["services"]}
+    assert {"Qdrant", "1 MCP server"} <= set(services)
+    assert {(s["authorized"], s["reached"], s["passed"]) for s in services.values()} == {
+        (False, False, None)
+    }
+    assert "not isolable: memory's Qdrant store" in checks["session.start"]["details"]
 
     # Refusals match config check's, including a built-in plugin's own schema, with exit 1.
     no_model = write(tmp_path / "no-model.json", CONFIG | {"loop": {"plugin": "realtime"}})
@@ -204,8 +218,8 @@ def test_provider_backends_follow_defaults_and_skip_what_start_does_not_create(
         router = {"init_config": {"turn_taking": {"enabled": False}}}
         value = CONFIG | {"loop": loop, "tools": without_mcp, "router": router} | sections
         _, checks, _ = doctor(capsys, str(write(tmp_path / "avatar.json", value)))
-        found = checks["services.external"]["details"]
-        return [line for line in found if line.startswith("model providers")], checks
+        found = [service["name"] for service in checks["services.external"]["services"]]
+        return [name for name in found if name.startswith("model providers")], checks
 
     # The loop alone: memory and persona from another plugin add no store embeddings.
     others = {"memory": {"plugin": "custom"}, "persona": {"plugin": "custom"}}

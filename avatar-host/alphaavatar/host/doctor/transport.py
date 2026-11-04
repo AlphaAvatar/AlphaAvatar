@@ -57,6 +57,7 @@ class Frame:
 class SourceTimeline:
     started_ns: int = 0
     voiced_end_ns: int | None = None  # When the frame with the last voiced sample went in
+    voiced_end_sequence: int | None = None  # That frame's perception event sequence
     audio_frames: int = 0
     max_lateness_ms: float = 0.0  # Behind the sample cadence, at worst
     frames: list[Frame] = field(default_factory=list)  # Screen frames, and audio milestones
@@ -115,10 +116,17 @@ class DiagnosticSource:
         return next(source for source, _, source_kind in self._sources if source_kind == kind)
 
     async def play(
-        self, speech: Speech, picture: np.ndarray | None, done: asyncio.Event
-    ) -> SourceTimeline:
-        """The recording at its cadence, then silence until ``done``; the picture throughout."""
-        timeline = SourceTimeline(started_ns=time.monotonic_ns())
+        self,
+        speech: Speech,
+        picture: np.ndarray | None,
+        done: asyncio.Event,
+        timeline: SourceTimeline,
+    ) -> None:
+        """The recording at its cadence, then silence until ``done``; the picture throughout.
+
+        ``timeline`` fills as frames go in, so what was sent survives a cancelled playback.
+        """
+        timeline.started_ns = time.monotonic_ns()
         tasks = [asyncio.create_task(self._audio(speech, done, timeline), name="doctor_audio")]
         if picture is not None:
             tasks.append(
@@ -130,7 +138,6 @@ class DiagnosticSource:
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
-        return timeline
 
     async def _audio(self, speech: Speech, done: asyncio.Event, timeline: SourceTimeline) -> None:
         from alphaavatar.core.env import EnvObservation
@@ -186,7 +193,7 @@ class DiagnosticSource:
             index += 1
             timeline.audio_frames = index
             if index * size >= voiced_end > (index - 1) * size and event is not None:
-                timeline.voiced_end_ns = published
+                timeline.voiced_end_ns, timeline.voiced_end_sequence = published, event.sequence
                 timeline.frames.append(
                     Frame(
                         "audio",
@@ -282,10 +289,12 @@ class OutputRecord:
     kind: str
     lane: str
     turn_id: str | None
+    run_id: str | None
     output_id: str | None
     text: str = ""  # Text chunks only, for the task check and a bounded excerpt
     audio_sec: float = 0.0
     control: str | None = None
+    reason: str | None = None  # Controls: why, as the producer states it
     playback: str | None = None
     targets: tuple[str, ...] = ()  # The outputs an interruption ends
 
@@ -354,6 +363,7 @@ class DiagnosticSink:
                 output.kind.value,
                 output.lane.value,
                 output.scope.turn_id if output.scope is not None else None,
+                output.scope.run_id if output.scope is not None else None,
                 output.output_id,
             )
             self.records.append(record)
@@ -376,7 +386,7 @@ class DiagnosticSink:
                     kind = OutputPlaybackType.STARTED if first else OutputPlaybackType.PROGRESS
                     await self._receipt(self._output.output_identity(output.output_id), kind)
             elif output.kind == OutputKind.CONTROL:
-                record.control = payload.type.value
+                record.control, record.reason = payload.type.value, payload.reason
                 if payload.type == OutputControlType.INTERRUPT:
                     record.targets = tuple(identity.output_id for identity in payload.targets)
                     for identity in payload.targets:
@@ -416,6 +426,7 @@ class LogTimings(logging.Handler):
         "SPEECH REQUEST output_id=": ("speech.request", ("output_id", "segment", "request_id")),
         "TTS FIRST PCM provider=": ("tts.first_pcm", ("provider", "request_id", "attempt")),
         "Speech first audio output_id=": ("speech.first_audio", ("output_id", "segment")),
+        "Context readiness turn_id=": ("context.ready", ("turn_id", "ready", "wait_ms")),
         "INFERENCE SUMMARY method=": (
             "inference.summary",
             (

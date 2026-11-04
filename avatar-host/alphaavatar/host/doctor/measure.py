@@ -13,11 +13,15 @@
 # limitations under the License.
 """One diagnostic turn, from what its edges observed, as a scenario result.
 
-Evidence joins by identity: the input trace hashes identities per session, so a Turn's
-records are found through ``InputTrace.identity`` and the decision, candidate and segment
-identities they share. Selected frames are matched to published ones by perception event
-sequence. Every time is ``time.monotonic_ns``; intervals are milliseconds from the response
-start: the frame carrying the last voiced sample, or the typed input's acceptance.
+Evidence joins by identity. The session names the Turn its own input started; the input
+trace hashes identities per session, so that Turn's records are found through
+``InputTrace.identity`` and the decision, candidate, segment and request identities they
+share. The model request's own records name the committed input and the frames it carries:
+those frames are matched to the ones Doctor published and told apart from the ones Context
+selected. Each output of the Turn's run ends normally, by failure, by interruption or not at
+all; only a turn whose outputs all ended normally has completion times. Every time is
+``time.monotonic_ns``; intervals are milliseconds from the response start: the frame carrying
+the last voiced sample, or the typed input's acceptance.
 """
 
 from __future__ import annotations
@@ -35,15 +39,35 @@ from .transport import LogRecord, OutputRecord, SourceTimeline
 _EXCERPT = 200
 _EVIDENCE = 64
 _ASSISTANT = "assistant"
+_CONTENT = ("text_chunk", "audio_frame")
+# Kept when evidence is cut to its bound: where the chain began, turned and ended.
+_TERMINAL = frozenset(
+    (
+        "input.voiced_end",
+        "perception.speech_closed",
+        "stt.terminal",
+        "turn.committed",
+        "context.visual",
+        "model.request",
+        "model.started",
+        "run.finished",
+        "output.control",
+        "output.audio_frame_last",
+    )
+)
+_UNFINISHED = {"timeout": "timed_out", "interrupted": "interrupted"}
+# Why Doctor ends the outputs of a turn that did not end on its own.
+TURN_ENDED = "doctor_turn_ended"
 
 
 @dataclass(slots=True)
 class TurnObservation:
     task: Task
     configuration: str
+    session_id: str
     start_ns: int | None  # The response start; None when the input never went in
     timeline: SourceTimeline | None
-    turn_id: str | None
+    turn_id: str | None  # The Turn this input started, found by its cutoff
     records: list[OutputRecord]
     logs: list[LogRecord]
     trace: list[dict[str, Any]]
@@ -60,14 +84,14 @@ def scenario(observation: TurnObservation) -> ScenarioResult:
     blocked = next((name for name, at in stages if at is None), None)
     transcript, answer = turn.transcript(), turn.answer()
     task = observation.task
-    details: list[str] = []
+    details = turn.problems()
     if blocked is None:
         if task.transcript_words and not task.heard(transcript):
             blocked = "stt.final"
             details.append("The transcript does not contain the sample's words")
         elif not task.answered(answer):
             blocked = "answer"
-            details.append(f"The answer contains none of: {', '.join(task.answer_words)}")
+            details.append(f"The answer is not exactly one of: {', '.join(task.answers)}")
     if observation.ended is not None:
         details.append(f"Ended by {observation.ended.replace('_', ' ')}")
     if observation.ended == "interrupted" and blocked is not None:
@@ -97,10 +121,14 @@ def scenario(observation: TurnObservation) -> ScenarioResult:
         summary=summary,
         configuration=observation.configuration,
         blocked_stage=blocked,
+        cause=turn.cause(),
         details=tuple(details),
         task=task.prompt,
         transcript=transcript[:_EXCERPT] or None,
         answer=answer[:_EXCERPT] or None,
+        reached=tuple(name for name, at in stages if at is not None),
+        request=turn.request(),
+        outputs=turn.outputs(),
         metrics=metrics,
         segments=segments,
         frames=turn.frames(),
@@ -114,22 +142,49 @@ class _Turn:
         self.start = observation.start_ns
         turn_id = observation.turn_id
         self.records = [r for r in observation.records if turn_id and r.turn_id == turn_id]
-        self.answers = [r for r in self.records if r.lane == _ASSISTANT]
+        session = [
+            r
+            for r in observation.logs
+            if r.fields.get("session_id", observation.session_id) == observation.session_id
+        ]
+        started = next(
+            (
+                r
+                for r in session
+                if r.name == "model.started" and r.fields.get("turn_id") == turn_id
+            ),
+            None,
+        )
+        # The run whose request carried this Turn: its outputs are the ones checked.
+        self.run_id = started.fields.get("run_id") if started is not None else None
+        self.answers = [
+            r
+            for r in self.records
+            if r.lane == _ASSISTANT and (self.run_id is None or r.run_id in (self.run_id, None))
+        ]
         # Speech and TTS logs carry no Turn: they belong to it through its outputs' requests.
         outputs = {r.output_id for r in self.records}
         requests = {
             r.fields.get("request_id")
-            for r in observation.logs
+            for r in session
             if r.name == "speech.request" and r.fields.get("output_id") in outputs
         }
         self.logs = [
             r
-            for r in observation.logs
+            for r in session
             if (turn_id is not None and r.fields.get("turn_id") == turn_id)
             or r.fields.get("output_id") in outputs
             or (r.name.startswith("tts.") and r.fields.get("request_id") in requests)
         ]
         self.trace = self._chain(observation.trace, observation.identity, turn_id)
+        self.published = {
+            observation.identity(frame.observation_id): frame
+            for frame in (observation.timeline.frames if observation.timeline else ())
+            if frame.kind == "screen"
+        }
+
+    def _token(self, value: str | None) -> str | None:
+        return self.o.identity(value)[3:15] if value else None
 
     # Correlation
 
@@ -140,6 +195,7 @@ class _Turn:
         key = identity(turn_id)
         turn = [r for r in trace if r.get("turn_id") == key]
         decisions = {r["decision_id"] for r in turn if "decision_id" in r}
+        requests = {r["request_id"] for r in turn if "request_id" in r}
         candidates = {
             r["candidate_id"]
             for r in trace
@@ -157,6 +213,7 @@ class _Turn:
             or r.get("decision_id") in decisions
             or r.get("candidate_id") in candidates
             or r.get("segment_id") in segments
+            or r.get("request_id") in requests
         ]
         return sorted(chained, key=lambda r: r["trace_sequence"])
 
@@ -197,6 +254,147 @@ class _Turn:
             return item["recorded_time_ns"]
         return item.monotonic_ns
 
+    # The model request
+
+    def _request(self) -> dict | None:
+        """The first request of the Turn's run, as the Loop recorded what it carries."""
+        return self._trace("model.request")
+
+    def _request_frames(self) -> list[dict]:
+        request = self._request()
+        if request is None:
+            return []
+        return [
+            r
+            for r in self.trace
+            if r["stage"] == "model.request_frame" and r.get("request_id") == request["request_id"]
+        ]
+
+    def _sample_frames(self) -> list[dict]:
+        return [r for r in self._request_frames() if r.get("observation_id") in self.published]
+
+    def _carries_input(self) -> bool:
+        request, committed = self._request(), self._trace("turn.committed")
+        return (
+            request is not None
+            and committed is not None
+            and request.get("input_id") is not None
+            and request.get("input_id") == committed.get("input_id")
+        )
+
+    def request(self) -> dict[str, str | int | bool]:
+        request = self._request()
+        if request is None:
+            return {}
+        return {
+            "turn": request["turn_id"][3:15],
+            "run": request.get("run_id", "")[3:15],
+            "request": request["request_id"][3:15],
+            "carries_turn_input": self._carries_input(),
+            "frames": request.get("frame_count", 0),
+            "sample_frames": len(self._sample_frames()),
+            "requests": sum(r["stage"] == "model.request" for r in self.trace),
+        }
+
+    # Outputs
+
+    def _terminals(self) -> list[tuple[str, str, str, str | None, int | None]]:
+        """Each output of the run: its id, modalities, how and why it ended, and when."""
+        ids = list(dict.fromkeys(r.output_id for r in self.answers if r.kind in _CONTENT))
+        found = []
+        for output_id in ids:
+            kinds = {r.kind for r in self.answers if r.output_id == output_id}
+            modalities = "+".join(
+                name
+                for kind, name in zip(_CONTENT, ("text", "audio"), strict=True)
+                if kind in kinds
+            )
+            complete = next(
+                (
+                    r
+                    for r in self.answers
+                    if r.kind == "control" and r.control == "complete" and r.output_id == output_id
+                ),
+                None,
+            )
+            # An interruption carries no Turn of its own: it names the outputs it ends.
+            interrupt = next(
+                (
+                    r
+                    for r in self.o.records
+                    if r.kind == "control" and r.control == "interrupt" and output_id in r.targets
+                ),
+                None,
+            )
+            if complete is not None and (
+                interrupt is None or complete.monotonic_ns <= interrupt.monotonic_ns
+            ):
+                found.append((output_id, modalities, "completed", None, complete.monotonic_ns))
+            elif interrupt is not None and interrupt.reason == TURN_ENDED:
+                # Doctor's own interruption: the turn had already ended otherwise.
+                terminal = _UNFINISHED.get(self.o.ended or "", "not_ended")
+                found.append((output_id, modalities, terminal, None, None))
+            elif interrupt is not None:
+                failed = (interrupt.reason or "").endswith("_failed")
+                terminal = "failed" if failed else "interrupted"
+                found.append(
+                    (output_id, modalities, terminal, interrupt.reason, interrupt.monotonic_ns)
+                )
+            else:
+                terminal = _UNFINISHED.get(self.o.ended or "", "not_ended")
+                found.append((output_id, modalities, terminal, None, None))
+        return found
+
+    def _completed_at(self) -> int | None:
+        """When the last output ended, if every output of the run ended normally."""
+        terminals = self._terminals()
+        if not terminals or any(item[2] != "completed" for item in terminals):
+            return None
+        return max(item[4] for item in terminals)
+
+    def outputs(self) -> tuple[dict[str, str | float | None], ...]:
+        return tuple(
+            {
+                "output": self._token(output_id),
+                "modalities": modalities,
+                "terminal": terminal,
+                "reason": reason,
+                "at_ms": round((at - self.start) / 1e6, 3)
+                if at is not None and self.start is not None
+                else None,
+            }
+            for output_id, modalities, terminal, reason, at in self._terminals()
+        )
+
+    def problems(self) -> list[str]:
+        lines = [
+            f"Output {self._token(output_id)} ({modalities}) {terminal.replace('_', ' ')}"
+            + (f": {reason}" if reason else "")
+            for output_id, modalities, terminal, reason, _ in self._terminals()
+            if terminal != "completed"
+        ]
+        if self._request() is not None and not self._carries_input():
+            lines.append("The model request does not carry this Turn's committed input")
+        if self.o.task.screen and self._request() is not None and not self._sample_frames():
+            lines.append("The model request carries none of the sample's frames")
+        finished = self._log("run.finished")
+        if finished is not None and finished.fields.get("state") != "completed":
+            cause = self.cause()
+            lines.append(
+                f"The run ended {finished.fields.get('state')}" + (f": {cause}" if cause else "")
+            )
+        return lines
+
+    def cause(self) -> str | None:
+        """What stopped the turn, as its producer names it: the run's error, else an output's."""
+        finished = self._log("run.finished")
+        if finished is not None and finished.fields.get("state") != "completed":
+            return finished.fields.get("error_type") or finished.fields.get("reason")
+        return next(
+            (reason for _, _, terminal, reason, _ in self._terminals() if terminal == "failed"),
+            None,
+        )
+
     def stages(self) -> list[tuple[str, int | None]]:
         task = self.o.task
         stages: list[tuple[str, int | None]] = [("input", self.start)]
@@ -205,24 +403,29 @@ class _Turn:
                 ("vad.closed", self._at(self._trace("perception.speech_closed"))),
                 ("stt.final", self._at(self._trace("stt.terminal", outcome="final_text"))),
             ]
-        committed = self._log("input.committed")
-        stages.append(("turn.committed", self._at(committed) if self.o.turn_id else None))
+        stages.append(("turn.committed", self._at(self._trace("turn.committed"))))
         if task.screen:
             visual = self._trace("context.visual")
             selected = visual is not None and visual.get("frame_count", 0) > 0
             stages.append(("frames.selected", self._at(visual) if selected else None))
+        request = self._request()
         stages += [
             ("model.request", self._at(self._log("model.started"))),
+            ("request.input", self._at(request) if self._carries_input() else None),
+        ]
+        if task.screen:
+            stages.append(("request.frames", self._at(request) if self._sample_frames() else None))
+        stages += [
             ("model.first_event", self._at(self._log("model.first_event"))),
             ("text.first", self._at(self._output("text_chunk"))),
             ("text.complete", self._at(self._output("control", control="text_complete"))),
         ]
         if self.o.audio_output:
             stages.append(("audio.first", self._at(self._output("audio_frame"))))
+        stages.append(("outputs.complete", self._completed_at()))
         finished = self._log("run.finished")
-        complete = self._output("control", control="complete", last=True)
         ok = finished is not None and finished.fields.get("state") == "completed"
-        stages.append(("response.complete", self._at(complete) if ok else None))
+        stages.append(("run.completed", self._at(finished) if ok else None))
         return stages
 
     def transcript(self) -> str:
@@ -245,7 +448,8 @@ class _Turn:
         value = None
         if start[1] is not None and end[1] is not None:
             value = round((end[1] - start[1]) / 1e6, 3)
-        return Metric(name, value, "ms", start[0], end[0], boundary, note=note)
+        samples = int(value is not None)
+        return Metric(name, value, "ms", start[0], end[0], boundary, samples, note=note)
 
     def _origin(self) -> tuple[str, int | None]:
         if self.o.task.speech is not None:
@@ -256,6 +460,11 @@ class _Turn:
         origin = self._origin()
         boundary = "diagnostic input to the output boundary, server side"
         text, audio = self._output("text_chunk"), self._output("audio_frame")
+        # Completion is recorded only when every output of the run ended normally.
+        completed = self._completed_at()
+        unfinished = None if completed is not None else "not recorded: an output ended otherwise"
+        texts = [r for r in self.answers if r.kind == "control" and r.control == "text_complete"]
+        last_audio = self._output("audio_frame", last=True)
         metrics = [
             self._metric("first_text", origin, ("first answer text out", self._at(text)), boundary),
             self._metric(
@@ -278,34 +487,29 @@ class _Turn:
             self._metric(
                 "text_complete",
                 origin,
-                ("text complete", self._at(self._output("control", control="text_complete"))),
+                ("last text complete", self._at(texts[-1]) if texts and completed else None),
                 boundary,
+                unfinished,
             ),
             self._metric(
                 "audio_last_frame",
                 origin,
-                ("last answer audio frame out", self._at(self._output("audio_frame", last=True))),
+                ("last answer audio frame out", self._at(last_audio) if completed else None),
                 boundary,
+                unfinished,
             ),
             self._metric(
-                "response_final",
-                origin,
-                (
-                    "response complete",
-                    self._at(self._output("control", control="complete", last=True)),
-                ),
-                boundary,
+                "response_final", origin, ("every output complete", completed), boundary, unfinished
             ),
         ]
-        selected = self._selected()
+        selected = [frame for frame in self._frames() if frame["selected"] and frame["frame"]]
         if self.o.task.screen and selected and self.start is not None:
-            last = max(frame["published_ns"] for frame in selected)
-            arrival = max(last, self.start)
+            last = max(frame["frame"].published_ns for frame in selected)
             metrics.append(
                 self._metric(
                     "last_required_input",
                     origin,
-                    ("last selected frame or voiced sample in", arrival),
+                    ("last selected frame or voiced sample in", max(last, self.start)),
                     "diagnostic input",
                     "0 when every selected frame arrived before the speech ended",
                 )
@@ -369,7 +573,7 @@ class _Turn:
                 "first frame out",
                 "last frame out",
                 boundary,
-                len(frames),
+                len(frames) if duration else 0,
                 note=f"{produced:.3f} s producing over {duration:.3f} s of audio",
             ),
             Metric(
@@ -426,10 +630,21 @@ class _Turn:
                         self.o.timeline.audio_frames,
                     )
                 )
-        committed = self._trace("turn.committed")
-        committed_at = self._at(committed) or self._at(self._log("input.committed"))
+        committed_at = self._at(self._trace("turn.committed"))
         request = self._at(self._log("model.started"))
+        ready = self._log("context.ready")
+        wait = ready.fields.get("wait_ms") if ready is not None else None
         segments += [
+            Metric(
+                "context_ready_wait",
+                round(float(wait), 3) if wait is not None else None,
+                "ms",
+                "Context asked for the Turn's context",
+                "context ready",
+                "Context manager log",
+                int(wait is not None),
+                note="how long registered context work held the request back",
+            ),
             self._metric(
                 "cutoff_to_model_request",
                 ("turn committed", committed_at),
@@ -437,13 +652,20 @@ class _Turn:
                 "input trace and loop log",
             ),
             self._metric(
-                "model_first_token",
+                "model_first_event",
                 ("model request", request),
-                ("first model event", self._at(self._log("model.first_event"))),
+                ("first model stream event", self._at(self._log("model.first_event"))),
                 "loop log",
             ),
             self._metric(
-                "model_first_text",
+                "model_first_text_delta",
+                ("model request", request),
+                ("first nonempty text delta", self._at(self._log("model.first_text"))),
+                "loop log",
+                "the first token, as far as the stream shows it",
+            ),
+            self._metric(
+                "first_displayable_text",
                 ("model request", request),
                 ("first answer text out", self._at(self._output("text_chunk"))),
                 "loop log to the output boundary",
@@ -451,57 +673,64 @@ class _Turn:
         ]
         if self.o.audio_output:
             segments += self._speech()
-        frames = self._selected()
         if self.o.task.screen:
-            encode = (
-                [f.encode_ms for f in self.o.timeline.frames if f.kind == "screen"]
-                if self.o.timeline
-                else []
-            )
-            segments.append(
-                Metric(
-                    "frame_input_to_available",
-                    round(statistics.median(encode), 3) if encode else None,
-                    "ms",
-                    "frame arrived",
-                    "frame published to perception",
-                    "the diagnostic source: JPEG encoding, as the RTC video input",
-                    len(encode),
-                    note="median",
-                )
-            )
-            ages = [
-                f["age_at_request_ms"] for f in frames if f.get("age_at_request_ms") is not None
-            ]
-            segments.append(
-                Metric(
-                    "selected_frame_age",
-                    round(max(ages), 3) if ages else None,
-                    "ms",
-                    "frame arrived",
-                    "model request",
-                    "selected frames, oldest",
-                    len(ages),
-                    values=tuple(ages),
-                )
-            )
-            published = [f["published_ns"] for f in frames if "published_ns" in f]
-            wait = None
-            if published and committed_at is not None:
-                wait = round(max(0.0, (max(published) - committed_at) / 1e6), 3)
-            segments.append(
-                Metric(
-                    "vision_wait",
-                    wait,
-                    "ms",
-                    "turn committed",
-                    "last selected frame in",
-                    "the model request's wait for frames after the cutoff",
-                    len(published),
-                    note="0: every selected frame was in before the cutoff",
-                )
-            )
+            segments += self._vision(committed_at)
         return tuple(segments)
+
+    def _vision(self, committed_at: int | None) -> list[Metric]:
+        encode = (
+            [f.encode_ms for f in self.o.timeline.frames if f.kind == "screen"]
+            if self.o.timeline
+            else []
+        )
+        frames = [frame for frame in self._frames() if frame["selected"] and frame["frame"]]
+        ages = [f["age_at_request_ms"] for f in frames if f.get("age_at_request_ms") is not None]
+        lead = None
+        if frames and committed_at is not None:
+            last = max(frame["frame"].published_ns for frame in frames)
+            lead = round((committed_at - last) / 1e6, 3)
+        return [
+            Metric(
+                "frame_input_to_available",
+                round(statistics.median(encode), 3) if encode else None,
+                "ms",
+                "frame arrived",
+                "frame published to perception",
+                "the diagnostic source: JPEG encoding, as the RTC video input",
+                len(encode),
+                note="median",
+            ),
+            Metric(
+                "selected_frame_age",
+                round(max(ages), 3) if ages else None,
+                "ms",
+                "frame arrived",
+                "model request",
+                "frames Context selected, oldest",
+                len(ages),
+                values=tuple(ages),
+            ),
+            Metric(
+                "last_selected_frame_to_cutoff",
+                lead,
+                "ms",
+                "newest selected frame in",
+                "turn committed",
+                "diagnostic input to the input trace",
+                int(lead is not None),
+                note="negative: that frame arrived after the cutoff",
+            ),
+            Metric(
+                "vision_wait",
+                None,
+                "ms",
+                "turn committed",
+                "frames available",
+                "the request's wait for frames after the cutoff",
+                0,
+                note="no wait is observed: Context selects among frames already in",
+            ),
+        ]
 
     def _speech(self) -> list[Metric]:
         output = self._output("audio_frame")
@@ -540,34 +769,40 @@ class _Turn:
             ),
         ]
 
-    def _selected(self) -> list[dict[str, Any]]:
-        timeline = self.o.timeline
-        if timeline is None:
-            return []
-        published = {frame.sequence: frame for frame in timeline.frames if frame.kind == "screen"}
+    # Frames
+
+    def _frames(self) -> list[dict[str, Any]]:
+        """Frames Context selected and frames the request carries, matched to Doctor's own."""
+        selected = {
+            r["observation_id"]: r
+            for r in self.trace
+            if r["stage"] == "context.frame_selected" and "observation_id" in r
+        }
+        requested = {r["observation_id"] for r in self._request_frames() if "observation_id" in r}
         request = self._at(self._log("model.started"))
-        selected = []
-        for record in self.trace:
-            if record["stage"] != "context.frame_selected":
-                continue
-            frame = published.get(record.get("sequence"))
+        found = []
+        for key in dict.fromkeys((*selected, *requested)):
+            frame = self.published.get(key)
             item: dict[str, Any] = {
-                "sequence": record.get("sequence", 0),
-                "matched": frame is not None,
+                "observation": key[3:15],
+                "sequence": frame.sequence if frame else selected.get(key, {}).get("sequence", 0),
+                "published": frame is not None,
+                "selected": key in selected,
+                "requested": key in requested,
+                "frame": frame,
             }
             if frame is not None:
-                item["published_ns"] = frame.published_ns
                 if self.start is not None:
                     item["offset_from_speech_end_ms"] = round((frame.end_ns - self.start) / 1e6, 3)
                 if request is not None:
                     item["age_at_request_ms"] = round((request - frame.end_ns) / 1e6, 3)
-            selected.append(item)
-        return selected
+            found.append(item)
+        return sorted(found, key=lambda item: item["sequence"])
 
     def frames(self) -> tuple[dict[str, Any], ...]:
         return tuple(
-            {key: value for key, value in frame.items() if key != "published_ns"}
-            for frame in self._selected()
+            {key: value for key, value in frame.items() if key != "frame"}
+            for frame in self._frames()
         )
 
     # Evidence
@@ -604,12 +839,21 @@ class _Turn:
                 if key in record
             }
             # The trace's own salted identities, shortened: equal tokens are one identity.
-            for key in ("turn_id", "decision_id", "candidate_id", "segment_id"):
+            for key in (
+                "turn_id",
+                "decision_id",
+                "candidate_id",
+                "segment_id",
+                "input_id",
+                "run_id",
+                "request_id",
+                "observation_id",
+            ):
                 if key in record:
                     detail[key.removesuffix("_id")] = record[key][3:15]
             items.append((record["recorded_time_ns"], record["stage"], "trace", detail))
-        # Outputs and logs carry the raw Turn; the trace's token for it joins them up.
-        turn = self.o.identity(self.o.turn_id)[3:15] if self.o.turn_id else None
+        # Outputs and logs carry raw identities; the trace's tokens for them join them up.
+        turn = self._token(self.o.turn_id)
         seen: set[str] = set()
         for record in self.logs:
             key = (
@@ -627,6 +871,9 @@ class _Turn:
             }
             if turn is not None and record.fields.get("turn_id") == self.o.turn_id:
                 detail["turn"] = turn
+            for name in ("run_id", "request_id"):
+                if record.name.startswith(("model.", "run.")) and record.fields.get(name):
+                    detail[name.removesuffix("_id")] = self._token(record.fields[name])
             items.append((record.monotonic_ns, record.name, "log", detail))
         firsts: set[tuple[str, str | None]] = set()
         for record in self.records:
@@ -637,16 +884,28 @@ class _Turn:
             detail = {"lane": record.lane}
             if turn is not None:
                 detail["turn"] = turn
+            if record.run_id:
+                detail["run"] = self._token(record.run_id)
             if record.control or record.playback:
                 detail["type"] = record.control or record.playback
             items.append((record.monotonic_ns, f"output.{record.kind}", "output", detail))
+        ids = {output_id for output_id, *_ in self._terminals()}
+        for record in self.o.records:
+            if record.control == "interrupt" and ids.intersection(record.targets):
+                detail = {"type": "interrupt", "reason": record.reason or ""}
+                items.append((record.monotonic_ns, "output.control", "output", detail))
         audio = [r for r in self.answers if r.kind == "audio_frame"]
         if audio:
             items.append(
                 (audio[-1].monotonic_ns, "output.audio_frame_last", "output", {"lane": _ASSISTANT})
             )
         items.sort(key=lambda item: item[0])
+        if len(items) > _EVIDENCE:
+            # Bounded: the chain's key steps and its end stay; the earliest others fill up.
+            key = [item for item in items if item[1] in _TERMINAL][:_EVIDENCE]
+            rest = [item for item in items if item[1] not in _TERMINAL]
+            items = sorted(key + rest[: _EVIDENCE - len(key)], key=lambda item: item[0])
         return tuple(
             Evidence(round((at - self.start) / 1e6, 3), stage, source, detail)
-            for at, stage, source, detail in items[:_EVIDENCE]
+            for at, stage, source, detail in items
         )

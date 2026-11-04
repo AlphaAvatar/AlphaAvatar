@@ -9,7 +9,7 @@
 | 批次 | 内容 | 日期 | 基线 HEAD | 提交 | 状态 |
 |---|---|---|---|---|---|
 | T-10B | 基础 Doctor：静态、只读、离线的安装与配置诊断（`doctor`、`doctor <bundle或文件> [KEY=VALUE...]`、`--list`、`--json`） | 2026-11-03 | `7c53c4a` | `0579d81`、`8a66b81`；第二轮收尾未提交 | `8a66b81` review：剩一处生产误报和一处测试断言，另要求把 loop 必填项纳入 check、Doctor 文本分组；已完成，待 review。本地全量 301 passed（CI 方式，检出前后一致） |
-| T-10C | 多模态 Doctor 自检：`alphaavatar doctor [配置]` 为唯一入口，静态检查后自行创建有期限的临时诊断会话，固定样本走生产链路，报告端到端指标、分段证据和降级结果 | 2026-11-04 | `8fdc2c2`（临时提交，含已撤回的 `--runtime` 实现） | 未提交 | 实现与 CI 替身验证完成；真实服务实测受阻（见第 11 节），待用户提供可用凭据后补测，待 review。本地全量 304 passed（CI 方式，检出前后一致） |
+| T-10C | 多模态 Doctor 自检：`alphaavatar doctor [配置]` 为唯一入口，静态检查后自行创建有期限的临时诊断会话，固定样本走生产链路，报告端到端指标、分段证据和降级结果 | 2026-11-04 | `8fdc2c2`（临时提交，含已撤回的 `--runtime` 实现）；review 修复基线 `9993aad` | `9993aad`；review 修复未提交 | `9993aad` review：入口、撤回探针、复用 `create_execution` 通过；其余五项已修复，并按用户要求改为表格输出，待 review。固定语音样本因本机没有可用的离线 TTS 而未生成（见"`9993aad` review 修复"第 1 节）；两个真实服务场景待验收。本地全量 315 passed、1 failed（样本测试），检出前后一致 |
 
 ---
 
@@ -673,3 +673,288 @@ T-10B 首版的变异 D1–D10 在最终代码上重跑：
   - 播放回执是 sink 收到 COMPLETE 时立即给出的，sink 并不播放，因此不测播放端排队。
 - **不在本轮范围**：Runner 并行沿用已有专项测试；长时运行和压力测试归 `alphaavatar test`（0.6.9 第 11 项）。
 - **未提交**：等待 review。真实实测见第 11 节。
+
+---
+
+## T-10C `9993aad` review 修复
+
+- 基线：`9993aad`（用户已 push）。统一 CLI 入口、撤回 Runner 专用探针、复用 `create_execution` 三项已通过审查。本轮修复其余五项，只做离线和受控验证，T-10C 暂不验收。
+- 两个真实服务场景单列为待验收（第 10 节），等用户指定 `ENV_FILE` 和验收配置后再运行。
+
+### 1. 固定语音样本
+
+- **生成方式**：`scripts/doctor_samples.py make [--ffmpeg PATH]`。
+  - 用 FFmpeg 的 `lavfi flite`（kal 音色）。文本取自任务的 `prompt`，经临时 `textfile` 传入，避免过滤器转义。
+  - 参数：`-ar 16000 -ac 1 -c:a pcm_s16le -map_metadata -1 -fflags +bitexact -flags:a +bitexact`，不写元数据。同一 FFmpeg 和 flite 生成同一文件，全程不下载。
+  - 生成后自动执行 `check`。
+- **文本改为要求简短作答**（见第 2 节）：
+  - "What color is the card on my screen? Answer in one word."
+  - "What is two plus three? Answer with just the number."
+  - 独立审查此前按旧文本生成的两段（约 2.24 s、1.75 s）需要按新文本重新生成。
+- **打包**：Host 用 hatchling 的 `packages = ["alphaavatar"]`，`alphaavatar/host/doctor/samples/*.wav` 会自动进入 wheel，也没有被 `.gitignore` 排除，不需要改 `pyproject.toml`。
+- **读取校验**：`check` 通过 Doctor 自己的 `samples.speech()` 读回，校验 16 kHz 单声道 PCM16、时长和有声结尾。`--installed` 还要求读取位置在已安装环境的 site-packages，而不是源码树。
+- **CI**：
+  - `quality.yml` 的 build job 在 `uv build` 之后新增一步：新建空环境，按锁文件装 numpy，`--no-deps` 只装 Host wheel，再执行 `python -I scripts/doctor_samples.py check --installed`。
+  - 另有源码树测试 `tests/doctor/test_samples.py`。
+  - CI 的链路测试继续用替身语音。
+- **本机未能生成样本**：
+  - 本机没有 `ffmpeg`、`flite`、`espeak`。`~/.cache/ffmpeg-static-nodejs` 里缓存了一个静态 FFmpeg 6.0，但它的构建配置没有 `--enable-libflite`。解压出的副本已删除。
+  - 我从 conda-forge 下载了 `flite-2.3.0` 和 `libflite-2.3.0`（SHA-256 与索引一致），准备在 scratchpad 里运行，被权限分类器以"外部代码"拒绝。我没有绕过。
+  - 因此两段 WAV 目前还不存在：
+    - `test_samples.py` 现在失败。这是真实失败，没有 skip。
+    - 真实运行时，语音场景报 `conditions_unmet`（fixed sample unavailable）。
+- **wheel 链路的离线验证**（在 scratchpad 中）：
+  - 用当前树构建 Host wheel（`uv build --offline`），其中没有 WAV。把它装进只含该 wheel 和 numpy 的干净环境，`check --installed` 在 site-packages 下找不到 `card_question.wav`，按预期失败。
+  - 把 avatar-host 复制到 scratchpad，放入两段占位 WAV（正弦音，只用于验证打包，不是语音，不进仓库），再构建 wheel：
+    - wheel 中有 `alphaavatar/host/doctor/samples/card_question.wav` 和 `sum_question.wav`；
+    - 干净环境中 `check --installed` 从 site-packages 读取成功（2.50 s、2.10 s）。
+  - 干净环境所需的 numpy 2.2.6（锁文件版本）不在 uv 缓存中，是从 PyPI 下载装进 scratchpad 环境的。
+  - 真实样本生成后，需要在同样的干净环境里再验证一次（第 10 节）。
+
+### 2. 在实际模型请求边界证明音画同轮，并收紧判定
+
+- **请求边界的记录**（`avatar-plugins-loop` 的 `execution.py`，`_trace_request`）：
+  - Loop 每次构造 `ModelRequest` 并记录 `model.started` 之后，向本会话的 `input_trace` 写一条 `model.request`，字段为 `turn_id`、`run_id`、`request_id`、请求中本轮输入消息的 `input_id`，以及其中的帧数。
+  - 再为每一帧写一条 `model.request_frame`，字段为 `request_id` 和 `ModelImagePart.observation` 的 `observation_id`。
+  - 只看请求中 id 等于本轮 `input_id` 的那条消息。
+  - `InputTrace` 字段白名单增加 `run_id`、`request_id`，仍按会话加盐散列。
+- **Doctor 的判定**（`measure.py`）新增两个阶段：
+  - `request.input`：Turn 的首个模型请求所带的输入（`input_id` 令牌）等于 `turn.committed` 的输入。本轮语音转录沿 segment → candidate → decision → Turn 这条链进入该输入。
+  - `request.frames`（音画场景）：请求所带的帧中，至少有一帧是 Doctor 发布的样本帧。观测 id 按同一加盐身份比对。
+  - 两者缺一，音画场景就不能通过。
+- **报告**：
+  - `request` 摘要：`turn`、`run`、`request` 令牌，`carries_turn_input`、`frames`、`sample_frames`，以及本轮请求数 `requests`。
+  - `frames` 区分 Context 选中的帧（`selected`）、实际进入请求的帧（`requested`）和 Doctor 发布的帧（`published`）。
+- **证据**：
+  - trace 记录带 `input`、`run`、`request`、`observation` 令牌。
+  - loop 日志 `model.started` 中的 `run`、`request`，以及输出事件的 `run`，都用同一个 `identity()` 换成令牌，可以和 trace 直接对上。
+  - 证据仍有界（64 条）。截断时优先保留链路的起点、转折和终态：`input.voiced_end`、`stt.terminal`、`turn.committed`、`model.request`、`run.finished`、`output.control`、末帧等。
+- **答案判定**（`samples.py`）：
+  - 整段答案去掉首尾空白和标点（问号保留），转小写后，必须精确等于期望答案之一。card 为 `green`、`绿`、`绿色`；sum 为 `5`、`five`、`五`。
+  - 转录仍按词组校验，但改为按词匹配，`12` 不再算作 `2`。
+- **逐输出终态**：同一 run 的每个输出按 `output_id` 单独判定。
+  - 终态分为：
+    - `completed`：COMPLETE 早于任何以它为目标的 INTERRUPT；
+    - `failed`：中断原因以 `_failed` 结尾，例如 `speech_synthesis_failed`；
+    - `interrupted`：其他中断原因；
+    - `timed_out` 或 `interrupted`：本轮超时或被停止，由 Doctor 以 `doctor_turn_ended` 收尾；
+    - `not_ended`。
+  - 每个输出附原因和时间。
+  - 新增阶段 `outputs.complete`：全部输出都是 `completed` 才通过。`run.completed` 对应 loop 的运行状态。
+  - `text_complete`、`audio_last_frame`、`response_final` 只在全部输出正常完成后记录，否则为空、样本数为 0，并注明原因。`response_final` 取最后一个输出完成的时刻，不会早于任何输出的末帧。
+
+### 3. 授权、工作区和资源回收限定在本次诊断内
+
+- **同一快照**：
+  - `Diagnosis.run()` 不再重读配置文件和环境。
+  - `session.isolate()` 从已校验快照的 `payload` 派生诊断快照（`derive()`：按点路径改值，再 `validate_application`），只改 Doctor 自己的存储位置。授权判定和启动都用这一份快照。
+  - 诊断进程收到的是这份快照的 payload，用 `restore_application` 还原。
+- **自定义插件**：
+  - Doctor 列出本版本自带的插件名和 provider 后端（`_BUILT_IN`）。其余一律记为 `custom <能力> '<名称>'`，外部访问未知，需要授权。
+  - 不属于 `alphaavatar.plugins.*` 的 Runner 也计入"启动时会访问的服务"，未授权时不会单独启动。
+- **外部服务分四种状态**：
+  - `services.external` 改为结构化的 `services`，字段为 `name`、`authorized`、`reached`、`passed`、`note`。文本逐行写明 configured、authorized、reached、passed，或无法判断的原因。
+  - reached：该服务应答了会话的某个阶段（模型的首个流事件、STT 终稿、TTS 首帧）。
+  - passed：该阶段完成，且没有场景停在这里。
+- **诊断进程**（新增 `process.py`）：
+  - **启动**：用 `spawn` 启动，进程内调用 `os.setsid()` 自成进程组。离线变量在该进程内设置；`TMPDIR` 指向 Doctor 临时目录下的 `tmp/`；推理端点的环境变量和日志采集（`LogTimings`）都只在该进程内。
+  - **停止**：父进程只持有一根管道，关闭写端就是请求停止；父进程意外退出时，这根管道同样会关闭。终端的 Ctrl+C 只到达父进程，因为诊断进程不在前台进程组里。
+  - **结果**：以 pickle 写入 Doctor 的临时目录，父进程在诊断进程退出后读取。
+  - **期限与强制回收**：
+    - 父进程的期限是整轮预算加 `CLOSE_SECONDS`（60 s）。到期或收到停止时关闭管道，再等 `CLOSE_SECONDS`。
+    - 仍未退出就用 `killpg` 结束整个进程组，包括 Runner。
+    - 退出后再检查一次进程组，有残留同样结束，并写入 `session.cleanup`。
+  - **直接取消 `Diagnosis.run()`**：同样关闭管道，等待收尾（不受再次取消打断，有上限），回收之后再抛出 `CancelledError`。取消时没有报告可以返回；Ctrl+C（停止事件）会保留已经取得的结果。
+  - **没有留下报告**：会话类检查记为 FAIL 并写明退出码；回收问题单独写入 `session.cleanup`。
+- **按会话和本次输入关联**（`_find_turn`）：
+  - 语音轮：在本会话的 `input.committed` 中，取 `turn.committed` 感知事件区间 `(start_cutoff_sequence, cutoff_sequence]` 包含本次语音"最后有声帧"事件序号的那一个。
+  - 文字轮：取本会话中文本相同、cutoff 晚于本轮开始的那一个。
+  - 日志再按 `session_id` 过滤，输出按 Turn 和 run 过滤。
+  - 不再取"标记之后的第一个 `input.committed`"。
+- **存储隔离**：
+  - 默认 memory、persona、MCP 的 LanceDB 如果显式指定了 `client_path`，改绑到临时工作区内的默认位置。
+  - Qdrant 等远程存储无法隔离，`session.start` 跳过并写明 "not isolable"。这与 `external_services` 无关：外部调用和写真实 Avatar 数据是两条边界。
+- **预算**：`_bounded` 的行为改为：
+  - 已请求停止或预算已用尽时，不再启动下一项（返回 `interrupted` 或 `budget`）；
+  - 终态在等待结束时确定，任务之后才返回也不改变；
+  - 迟到的结果交给调用方关闭，例如超时之后才装配好的 execution 会立即 `aclose`。
+  - Runner 启动（含模型缓存检查）、会话装配与就绪、每一轮都在整轮预算之内。预算用尽时 Runner 记为"未启动"，不算作 Runner 失败。
+- **单轮回收**：轮次超时、被停止或会话失败时：
+  - 立即取消样本播放。时间线是预先传入的，取消后已发送的部分仍然保留。
+  - 以 `doctor_turn_ended` 中断该轮的全部输出，并关闭本会话。
+  - 剩余场景在新会话中运行，不受前一轮影响。
+
+### 4. 真正的视觉不可用降级
+
+- **触发条件按原因判定**：
+  - 模型拒绝图片：`run.finished` 的 `error_type` 为 `ModelCapabilityError`；
+  - 只有视觉需要的 Runner 启动失败：用原计划的 Runner 集合减去"无摄像头配置"的 Runner 集合，失败的 Runner 落在差集里。
+- **无摄像头配置**（`vision_off()`）：
+  - `vision.enabled=false`，默认 persona 的 `face.enabled=false`，默认 router 的 `addressing.visual.enabled=false`。
+  - 按这份配置重新规划并启动 Runner。
+  - 原配置根本没跑起来时，降级会话同时运行 `voice` 和 `text`。
+- **各配置分开运行**：每个尝试的配置各自启动 Runner 和会话，再各自关闭。`models.runners` 展示原配置的结果，降级配置的 Runner 带 `configuration` 字段另行列出。
+- **其他原因不降级**：凭据错误等（如 `ModelRequestError`）按原因报告。
+- **语音输出降级**：没有音频，或某个输出的音频在首帧之后失败（`speech_synthesis_failed`），都会试跑文本降级。
+
+### 5. 指标与交付
+
+- **模型分段拆为三项**：
+  - `model_first_event`：首个流事件；
+  - `model_first_text_delta`：首个非空文本增量，来自 loop 的 `model.first_text`，没有观测到就为空；
+  - `first_displayable_text`：首段非空文本到达输出边界。
+  - 原来的 `model_first_token`（实际是首事件）删除。
+- **新增 `context_ready_wait`**：取自 Context manager 自己的 readiness 日志。
+- **帧与 cutoff**：
+  - 原 `vision_wait`（实际是帧到达与 commit 之差）改名为 `last_selected_frame_to_cutoff`，正值表示该帧在 cutoff 之前到达。
+  - `vision_wait` 只在观测到等待时填写。目前生产链路里没有"等待帧"的环节，因此它为空，样本数为 0。
+- **样本数**：缺失的指标，样本数统一为 0。
+- **部分覆盖**：原配置有场景通过，但有已启用的场景没能运行（例如语音缺 TTS，或 Character 视觉输出无覆盖）时，`session.scenarios` 为 WARN，摘要以 "Partial coverage" 开头。
+- **CLI**：仍然只有 `alphaavatar doctor [配置]`、`--list`、`--json`。失败场景另外显示 `cause`（细节中已出现时不重复）。
+- **表格输出**（用户在本轮中途提出）：文本输出改为表格，JSON 不变。
+  - 检查表：STATUS / CHECK / SUMMARY，按原分组加组标题行；通过的检查占一行，其余在下方续行写细节和下一步。`--list` 同样是表格（CHECK / NEEDS / TITLE）。
+  - 运行过会话后，依次给出：
+    - Runner 表：STATUS / RUNNER / CONFIGURATION / STARTUP / SUMMARY，原配置与降级配置分行；
+    - 外部服务表：SERVICE / AUTHORIZED / REACHED / PASSED / NOTE。服务已在表中的，检查表不再重复这些行；
+    - 场景表：OUTCOME / SCENARIO / CONFIGURATION / SUMMARY，失败场景在下方续行写阻塞原因；
+    - 指标表：每个实测场景一列，未观测为 `-`，10 ms 以下保留一位小数。原先失败场景下的 "end to end / segments" 两行由该表取代。
+  - 实现是命令模块内的私有 `_table()`：列宽取各列最宽的单元格，最后一列不限宽，颜色只在补齐宽度之后加上；没有引入通用表格框架或新依赖。
+  - 分隔线用 ASCII `-`。
+- **文档**：`docs/cli/doctor.md` 的相应各节已重写，示例输出改为本轮 CI 替身的真实输出。
+
+### 6. 代码改动
+
+| 文件 | 改动 |
+|---|---|
+| `avatar-core/alphaavatar/core/log/trace.py` | `InputTrace` 字段白名单增加 `run_id`、`request_id`，按身份散列 |
+| `avatar-plugins-loop/.../execution.py` | `_trace_request`：在模型请求边界记录 `model.request` 和 `model.request_frame` |
+| `host/doctor/process.py`（新增） | 诊断进程：启动、停止管道、期限、`killpg` 回收、临时目录（同时是诊断进程的 `TMPDIR`）、报告传回 |
+| `host/doctor/session.py` | 快照派生（`derive`、`isolate`、`vision_off`），存储隔离判定，各配置独立的 Runner 与会话，预算与终态，按截断范围找轮次，单轮回收，按原因降级，外部服务四态，部分覆盖 |
+| `host/doctor/measure.py` | 请求边界阶段、逐输出终态、完成类指标条件、指标改名与新增、帧的三种标记、证据令牌与有界截断 |
+| `host/doctor/samples.py` | 新提问文本，整段精确判定，按词校验转录 |
+| `host/doctor/transport.py` | 输出记录带 `run_id`、控制原因；播放时间线由调用方传入；采集 Context readiness 日志 |
+| `host/doctor/doctor.py` | `_external` 返回名称和类别并识别自定义插件；`run()` 经诊断进程；`_report` 一并处理 `cause` 和 `services` |
+| `host/doctor/schemas/` | `ScenarioResult` 增加 `cause`、`reached`、`request`、`outputs`；`RunnerResult.configuration`；新增 `ServiceResult`；`Check.services` |
+| `host/cli/commands/doctor.py` | 文本改为表格（检查、`--list`、Runner、外部服务、场景、指标）；失败场景显示 `cause` |
+| `conftest.py`（根目录） | `pytest_configure` 中 `asyncio.set_event_loop(None)`，见第 9 节 |
+| `scripts/doctor_samples.py`（新增） | 样本生成与读取校验 |
+| `.github/workflows/quality.yml` | build job 新增"只装 Host wheel 读取样本"一步 |
+| `docs/cli/doctor.md` | 诊断进程、快照与存储、授权、场景与判定、降级、指标、证据、期限各节重写；示例输出 |
+
+### 7. 测试与反例验证
+
+- **测试结构**：链路测试改为真正经过诊断进程。
+  - `doctor_doubles.child` 取代诊断进程的入口：先在该进程内装上与测试进程相同的禁网守卫（只允许绝对路径的 AF_UNIX；任何尝试都写入文件，即使调用方吞掉了异常），再装替身，最后调用真实入口。
+  - 替身的说明通过环境变量 `DOCTOR_DOUBLES`（JSON）传入，替身所见写入测试目录。
+  - 每次运行都断言：父进程环境前后完全一致，禁网记录为空。
+- **`tests/doctor/test_session.py`**（7 项）：
+  - **主链路**：
+    - 父进程允许下载时，诊断进程和 Runner 仍然离线（替身 Smart Turn 只在离线时才能启动）；父进程里不出现离线变量和推理端点，日志级别不变。
+    - 请求带本轮输入，样本帧数等于替身实际收到的图片数；三种帧标记；逐输出全部 `completed`。
+    - 证据令牌：`turn.committed` 的 input、`model.request` 的 input/run/request、日志 `model.started` 的 run/request、输出的 run 一一对上。
+    - 分段加和等于端到端；首事件与首文本增量相差约 50 ms（替身先发一个空增量）；`vision_wait` 与视觉输出帧为空、样本数 0。
+    - 服务四态；文本输出。
+    - **快照**：`prepare()` 之后把配置文件改成关闭视觉，运行结果仍是原快照的 `voice_vision`。
+  - **降级**（4 种原因）：
+    - 模型拒绝图片 → 原配置停在 `model.first_event`、`cause=ModelCapabilityError`，但请求已带样本帧；降级 `voice` 通过，请求不带图片；模型服务记为 reached、未通过。
+    - 只有视觉需要的 Runner 缺模型 → 原配置在 `runners` 阻塞；降级配置的 Runner 计划里没有它，`voice` 和 `text` 都通过。
+    - 两个输出，第二个的 TTS 在首帧后失败 → `[completed, failed(speech_synthesis_failed)]`，停在 `outputs.complete`，完成类指标为空、样本数 0；不触发视觉降级；文本降级通过；TTS 服务 reached、未通过。
+    - 凭据被拒（`ModelRequestError`）→ 按原因报告，不尝试任何降级。
+  - **答案判定**：精确匹配与反例清单，另跑一次纯文本会话，答案 "15." 判为失败。
+  - **失败、超时与预算**：Runner 启动失败；启动卡住 1 s 超时；轮次在播报中途超时（输出 `timed_out`，下一场景用新会话，Turn 不同）；预算为 0 时什么都不启动，并写明原因。
+  - **`_bounded` 单元**：超时后迟到返回仍为 `timeout`，被停止后迟到返回仍为 `interrupted`，停止或预算用尽后不再启动。
+  - **Ctrl+C 与直接取消**：退出码 130，两个场景都是 `interrupted`，进程组消失；取消 `Diagnosis.run()` 抛出 `CancelledError`，进程组消失，父进程环境不变，临时根目录为空。
+  - **不响应停止的诊断进程**（替身让它忽略停止和预算，并卡在 Runner 启动里）：约 4 s 后整组被结束；`session.cleanup` 为 FAIL 并写明被结束；卡住的 Runner 进程已不存在；`/tmp` 下没有新的推理 socket 目录残留。
+- **`tests/doctor/test_measure.py`**（3 项，直接构造一轮的记录）：
+  - 评审复现：一个输出完成，另一个在首个音频帧之后被中断，且中断晚于前者完成 → FAILED，停在 `outputs.complete`，`response_final` 和 `audio_last_frame` 为空；两个都完成 → `response_final` ≥ 末帧；从未结束 → `timed_out`。
+  - 请求所带 input 不是本轮的 → 停在 `request.input`；100 条无关步骤时，证据截断仍保留关键终态。
+  - Context 选中两帧、请求只带一帧时，两种标记分开。
+- **`tests/doctor/test_isolation.py`**（4 项，纯判定）：
+  - 显式 LanceDB 路径改绑进工作区，除存储位置外快照不变；Qdrant 即使已授权也阻塞。
+  - 自定义插件需要授权；自定义 Runner 不会在未授权时单独启动。
+  - 关闭视觉时恰好去掉人脸分析 Runner。
+  - 按截断范围和会话找轮次（语音轮与文字轮）。
+- **`tests/doctor/test_samples.py`**（1 项）：源码树中两段样本可被 Doctor 读取。**当前失败**，原因见第 1 节。
+- **`tests/cli/test_doctor.py`**：
+  - 适配结构化的 `services`；新增断言：远程存储标为 not isolable，所有服务都是"未授权、未到达"。
+  - 文本断言改为表格：表头、组标题、检查行（列宽对齐）、非通过项的细节、服务表行、场景表行（含配置列），以及 `--list` 表。
+  - 主链路测试另外断言指标表：表头为各实测场景，未观测为 `-`。
+
+### 8. 变异
+
+脚本 `scratchpad/t10c/mutate2.py`，每次运行后按 SHA-256 逐字恢复原文件，结束后再整体比对一次校验和，一致。
+
+| 变异 | 结果 |
+|---|---|
+| M1 Loop 不记录请求所带帧 | 测出 |
+| M2 不核对请求所带输入 | 测出 |
+| M3 任一输出完成即算完成 | 测出 |
+| M4 失败与中断不区分 | 测出 |
+| M5 超时记成中断 | 测出 |
+| M6 答案按子串判定 | 测出 |
+| M7 轮次不按截断范围关联 | 测出 |
+| M8 超时后迟到的结果记为完成 | 测出 |
+| M9 预算用尽仍启动 | 测出 |
+| M10 停止后仍启动下一项 | 测出 |
+| M11 诊断进程不另立进程组 | 测出（卡住的 Runner 成了孤儿进程，没有被回收） |
+| M12 诊断进程的临时目录不放进 Doctor 目录 | 测出（`/tmp` 残留推理 socket 目录） |
+| M13 超时时只结束诊断进程本身 | 存活：随后的进程组复查会把残留的 Runner 一并结束，结果相同。这是两道等价的回收，记为等价变异 |
+| M14 父进程设置离线变量 | 测出（父进程环境变化） |
+| M15 诊断进程不关闭下载 | 测出 |
+| M16 启动前重读配置 | 测出（快照测试） |
+| M17 不改绑显式 LanceDB 路径 | 测出 |
+| M18 远程存储不阻塞 | 测出 |
+| M19 自定义插件不计入外部访问 | 测出 |
+| M20 自定义 Runner 不计入 | 测出 |
+| M21 关闭视觉时不关人脸分析 | 测出 |
+| M22 视觉降级不看原因 | 测出（TTS 失败时误触发） |
+| M23 视觉专属 Runner 判断失效 | 测出 |
+| M24 降级沿用原配置 | 测出 |
+| M25 首帧后失败不降级到文本 | 测出 |
+| M26 缺失指标的样本数为 1 | 测出 |
+| M27 首文本增量取自首事件 | 测出 |
+| M28 未全部完成仍记录末帧 | 测出 |
+| M29 证据截断丢掉终态 | 测出 |
+| M30 请求帧与选中帧不区分 | 测出 |
+
+### 9. 运行结果
+
+- **全量测试**（CI 方式：`--basetemp` 在 scratchpad，`PYTHONDONTWRITEBYTECODE=1`）：316 项，315 passed，1 failed，用时 112.7 s，检出前后一致。
+  - 唯一失败是 `test_samples.py`：样本尚未生成（第 1 节）。
+  - 28 条警告都是既有的 LanceDB `table_names()` 弃用提示（O-6）。
+  - `tests/doctor` 共 15 项，其中 `test_session.py` 7 项约 72 s；`tests/cli/test_doctor.py` 5 项通过。
+- **事件循环泄漏（O-13，既有问题）**：
+  - 修复前，全量运行 2 次都以 exit 1 结束。会话结束时报 `unclosed event loop` 和两个 AF_UNIX socket，所有测试都是通过的；拆成两半分别运行时不出现。
+  - 我用临时 pytest 插件记录每个事件循环的创建栈，定位到 pytest-asyncio 在首个异步测试（`avatar-core/tests/test_lifecycle.py`）前调用 `asyncio.get_event_loop()` 时新建的那个循环。
+  - 用 `git archive` 导出 `9993aad`，以其代码和测试复现了同样的 exit 1，确认不是本轮引入的。
+  - 根 `conftest.py` 修复后，最小复现和全量运行都不再出现。
+- **静态检查**：以下各项均通过：
+  - `ruff check`、`ruff format --check`（712 个文件）；
+  - `check_workspace`（16 个成员）、`uv lock --check`；
+  - pre-commit（本批改动的文件）；
+  - workflow YAML 可以解析。
+- **CI 替身下的运行**（数值来自替身，只用于验证口径）：
+  - 主链路：`voice_vision` 首字 707 ms、首音频帧 729 ms、完成 961 ms；`text` 首字 53 ms、完成 301 ms。
+  - 模型拒绝图片（文档示例）：原配置 `voice_vision` 停在 `model.first_event`，原因为 `ModelCapabilityError`；降级 `voice` 首字 725 ms，完成 1001 ms。
+  - 真实默认 bundle（未授权）的输出与上一轮一致，只是改为表格。
+
+### 10. 待验收与未实测
+
+- **待验收（等用户指定 `ENV_FILE` 和验收配置后运行）**：
+  - 音画同轮：真实 VAD/STT/LLM/TTS 下，`request.input`、`request.frames` 通过，答案为 `green`，并给出各项指标和分段证据；
+  - 视觉不可用时降级为纯音频：原配置的阻塞阶段和降级结果分别报告。可以用不接受图片的模型，也可以用缺少人脸模型缓存的默认 persona。
+- **先决条件**：用户本机用带 libflite 的 FFmpeg 运行 `uv run python scripts/doctor_samples.py make` 生成两段样本，或允许我在本机运行 conda-forge 的 flite。之后用 `check` 和干净环境中的 `check --installed` 各复验一次，`test_samples.py` 应转为通过。
+- **未实测**：
+  - 真实 TTS 的 `TTS FIRST PCM` 分段；
+  - 真实 STT 对 flite 语音的转录质量；
+  - 远程向量存储（按设计跳过）；
+  - 自定义插件对临时工作区之外的写入（Doctor 无法隔离，只标为未验证）；
+  - 路径过长时，`private_socket_path` 会退回 `/tmp`，此时诊断进程被强制结束后，socket 目录不在 Doctor 目录内。
+
+### 11. 限制
+
+- **直接取消**：直接取消诊断协程时，按 asyncio 惯例抛出 `CancelledError`，已取得的结果不会返回；需要保留结果时用停止事件（Ctrl+C 走的就是这条路径）。
+- **库调用**：诊断进程用 `spawn` 启动，与推理 Runner 相同。在脚本中调用 `diagnose()` 需要 `if __name__ == "__main__":` 保护。
+- **用时**：链路测试改走真实诊断进程后，`tests/doctor` 从约 23 s 增加到约 70 s。全量用时见第 9 节，仍在 CI 的 5 分钟内。
+- **不在本轮范围**：Runner 并行沿用已有的专项测试；长时运行和压力测试归 `alphaavatar test`（第 11 项）。
+- **未提交**：等待 review。

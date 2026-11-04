@@ -55,6 +55,7 @@
 | O-10 | `voice.stt.model` 只在 `STTConfig.get_plugin` 中检查，`config check`（以及 `validate_plugin_settings`）能通过，`start`/`dev` 却在会话装配时以 `ValueError` 失败。`voice.tts.model` 在配置校验时就检查，两者不一致 | 仅记录 | T-10C 新增：Doctor 诊断会话在 `session.start` 报出 |
 | O-11 | 模型解析在离线且文件缺失时，`resolve_url_file`/`resolve_hf_file` 先创建命名空间目录和锁文件，然后才报缺失，缓存中会留下空目录和锁文件 | 仅记录 | T-10C 新增：在空缓存上启动整个 Runner 计划时观测到 |
 | O-12 | 默认 memory、persona、MCP 的 LanceDB Runner 在 `initialize` 时对 `"dimension-probe"` 做一次 embedding。每次启动都是一次外部调用，可能计费；缺 key 时 Runner 启动失败 | 仅记录 | T-10C 新增：因此 Doctor 启用这些插件时，Runner 启动也需要 `host.doctor.external_services` |
+| O-13 | 测试基础设施：pytest-asyncio 在首个异步测试前调用 `asyncio.get_event_loop()`，进程里还没有设置过事件循环时，asyncio 会新建一个，此后无人关闭。之后某个同步测试的 `asyncio.run()` 把它从当前循环上换下，会话结束时 GC 报 `unclosed event loop` 和两个 AF_UNIX socket，pytest 以 exit 1 结束（所有测试均通过）。只在全量运行中出现 | 本轮修复，待 review | T-10C `9993aad` review 修复中发现：用临时插件记录事件循环创建栈定位；用 `git archive` 导出的 `9993aad` 代码与测试复现同样的 exit 1，确认既有。修复：根 `conftest.py` 的 `pytest_configure` 中 `asyncio.set_event_loop(None)`，pytest-asyncio 随后拿到"无当前循环"，不再新建；最小复现与全量均不再出现 |
 
 已撤回：「recall 结果包含 avatar owner」按 Q8 属于有意设计，不再列为缺陷。
 

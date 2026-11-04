@@ -64,6 +64,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    # pytest-asyncio asks for the current loop before each async test. With none ever set,
+    # asyncio would create one there that nothing closes; with "none" set, it creates none.
+    asyncio.set_event_loop(None)
+
+
 @pytest.fixture
 def stress_seconds(request: pytest.FixtureRequest) -> float:
     return request.config.getoption("stress_seconds")

@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from ..enums import CheckStatus
-from .session import Metric, RunnerResult, ScenarioResult
+from .session import Metric, RunnerResult, ScenarioResult, ServiceResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +38,7 @@ class Check:
     runners: tuple[RunnerResult, ...] = ()
     scenarios: tuple[ScenarioResult, ...] = ()
     metrics: tuple[Metric, ...] = ()
+    services: tuple[ServiceResult, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

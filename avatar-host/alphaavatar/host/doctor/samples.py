@@ -13,14 +13,18 @@
 # limitations under the License.
 """Doctor's fixed samples: what the diagnostic session says, shows and expects back.
 
-The questions are recordings shipped as 16 kHz mono PCM16 WAV; the picture is drawn here. A
-task names its input, the words its transcript must contain and the words one of which its
-answer must contain. The answer to the card question depends on the picture alone.
+The questions are recordings shipped as 16 kHz mono PCM16 WAV (``samples/``, generated
+offline by ``scripts/make_doctor_samples.sh``); the picture is drawn here. Each question asks
+for a one-word answer, so a reply is judged whole: it must equal one of the task's answers
+once case, surrounding space and punctuation are set aside. A longer, negated or hedged reply,
+or another number that merely contains the right digit, does not pass. The answer to the
+card question depends on the picture alone.
 """
 
 from __future__ import annotations
 
 import io
+import re
 import wave
 from dataclasses import dataclass
 from functools import cache
@@ -32,6 +36,13 @@ SAMPLE_RATE = 16_000
 TRAILING_SILENCE_SEC = 1.5  # Sent as a microphone would, then silence continues until done.
 _VOICED_WINDOW_SEC = 0.02
 _VOICED_FLOOR = 0.05  # Of the loudest window: quieter windows count as silence.
+# A question mark stays: "Green?" is a guess, not an answer.
+_EDGES = " \t\r\n.,!;:'\"()[]。，！；：、“”‘’（）"
+_WORD = re.compile(r"[\w']+")
+
+
+def _plain(text: str) -> str:
+    return " ".join(text.split()).strip(_EDGES).lower()
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,43 +59,43 @@ class Speech:
 @dataclass(frozen=True, slots=True)
 class Task:
     name: str
-    prompt: str  # What is asked, as the report shows it
-    answer_words: tuple[str, ...]  # One of them must appear in the answer
-    transcript_words: tuple[tuple[str, ...], ...] = ()  # One of each group in the STT final
+    prompt: str  # What is asked, word for word: the recording says it, or it is typed
+    answers: tuple[str, ...]  # The whole answer must be one of these
+    transcript_words: tuple[tuple[str, ...], ...] = ()  # One word of each group in the STT final
     speech: str | None = None  # Recording name
     text: str | None = None  # Typed input
     screen: bool = False  # The card picture on a shared screen while the question is asked
 
     def answered(self, answer: str) -> bool:
-        return any(word in answer.lower() for word in self.answer_words)
+        return _plain(answer) in self.answers
 
     def heard(self, transcript: str) -> bool:
-        words = transcript.lower()
-        return all(any(word in words for word in group) for group in self.transcript_words)
+        words = set(_WORD.findall(transcript.lower()))
+        return all(words.intersection(group) for group in self.transcript_words)
 
 
 # The picture arrives as screen-share frames: it has no face, and a camera would make the
 # turn wait for visual addressing that a picture of a card cannot give.
 VOICE_VISION = Task(
     "voice_vision",
-    "What color is the card on my screen?",
-    answer_words=("green", "绿"),
+    "What color is the card on my screen? Answer in one word.",
+    answers=("green", "绿", "绿色"),
     transcript_words=(("color", "colour"), ("card",)),
     speech="card_question",
     screen=True,
 )
 VOICE = Task(
     "voice",
-    "What is two plus three?",
-    answer_words=("5", "five", "五"),
+    "What is two plus three? Answer with just the number.",
+    answers=("5", "five", "五"),
     transcript_words=(("two", "2"), ("three", "3")),
     speech="sum_question",
 )
 TEXT = Task(
     "text",
-    "What is two plus three? Answer in one short sentence.",
-    answer_words=("5", "five", "五"),
-    text="What is two plus three? Answer in one short sentence.",
+    "What is two plus three? Answer with just the number.",
+    answers=("5", "five", "五"),
+    text="What is two plus three? Answer with just the number.",
 )
 
 

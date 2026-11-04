@@ -19,7 +19,16 @@ on fixed samples (see ``session``).
 
 from .doctor import CHECKS, Diagnosis, diagnose, prepare
 from .enums import CheckStatus, ScenarioOutcome
-from .schemas import Check, CheckSpec, Evidence, Metric, Report, RunnerResult, ScenarioResult
+from .schemas import (
+    Check,
+    CheckSpec,
+    Evidence,
+    Metric,
+    Report,
+    RunnerResult,
+    ScenarioResult,
+    ServiceResult,
+)
 
 __all__ = [
     "CHECKS",
@@ -33,6 +42,7 @@ __all__ = [
     "RunnerResult",
     "ScenarioOutcome",
     "ScenarioResult",
+    "ServiceResult",
     "diagnose",
     "prepare",
 ]

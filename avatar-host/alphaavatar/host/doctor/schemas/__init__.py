@@ -12,6 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .report import Check, CheckSpec, Report
-from .session import Evidence, Metric, RunnerResult, ScenarioResult
+from .session import Evidence, Metric, RunnerResult, ScenarioResult, ServiceResult
 
-__all__ = ["Check", "CheckSpec", "Evidence", "Metric", "Report", "RunnerResult", "ScenarioResult"]
+__all__ = [
+    "Check",
+    "CheckSpec",
+    "Evidence",
+    "Metric",
+    "Report",
+    "RunnerResult",
+    "ScenarioResult",
+    "ServiceResult",
+]

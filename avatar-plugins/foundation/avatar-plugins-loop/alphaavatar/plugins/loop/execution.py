@@ -31,6 +31,7 @@ from alphaavatar.agents.avatar.provider.errors import ModelIncompleteError, Mode
 from alphaavatar.agents.avatar.provider.records import model_record_batch
 from alphaavatar.agents.avatar.provider.schemas import (
     ModelFunctionCall,
+    ModelImagePart,
     ModelInput,
     ModelInputMessage,
     ModelRefusalPart,
@@ -173,6 +174,28 @@ class LoopExecution(LoopHandle):
             run_id=self.identity.run_id,
             **fields,
         )
+
+    def _trace_request(self, request: ModelRequest) -> None:
+        # What the request itself carries for this Turn: its committed input and the frames
+        # in it, by identity, so a diagnosis can join them to the observations it published.
+        current = request.input.get(self._request.input_id)
+        parts = current.parts if isinstance(current, ModelInputMessage) else ()
+        images = [part.observation for part in parts if isinstance(part, ModelImagePart)]
+        trace = self._runtime.perception.input_trace
+        trace.record(
+            "model.request",
+            turn_id=self.identity.turn_id,
+            run_id=self.identity.run_id,
+            request_id=request.request_id,
+            input_id=self._request.input_id if current is not None else None,
+            frame_count=len(images),
+        )
+        for observation in images:
+            trace.record(
+                "model.request_frame",
+                request_id=request.request_id,
+                observation_id=observation.observation_id,
+            )
 
     def _diagnose(self, error: BaseException, *, stage: str) -> None:
         # Keep exception chains and code locations, never prompts, payloads or tool arguments.
@@ -403,6 +426,7 @@ class LoopExecution(LoopHandle):
             model_step=budget.model_steps,
             state=state.value,
         )
+        self._trace_request(request)
         terminal = None
         order: dict[str, int] = {}
         try:

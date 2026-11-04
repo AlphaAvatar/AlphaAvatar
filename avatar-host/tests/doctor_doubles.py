@@ -14,21 +14,30 @@
 """Controlled stand-ins for Doctor's diagnostic session: no model file and no network.
 
 Only the external services and the model files are replaced. Router, Context, Loop, Engine,
-output runtime and the shared inference runtime around them are production code. Runners
-are spawned by name, so they live here, on pytest's pythonpath.
+output runtime and the shared inference runtime around them are production code. The session
+runs in Doctor's diagnostic process, so ``child`` takes the place of that process's entry:
+it denies the network as the test process does, installs the stand-ins the test describes in
+``DOCTOR_DOUBLES`` (JSON), then runs the real entry. What the stand-ins saw is written to the
+test's ``files`` directory. Runners are spawned by name, so they live here, on pytest's
+pythonpath.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
+import os
+import socket
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import numpy as np
 
 from alphaavatar.agents.avatar.provider.base import StreamingLLMBase
 from alphaavatar.agents.avatar.provider.enums import ModelFinishReason, ModelRole
-from alphaavatar.agents.avatar.provider.errors import ModelCapabilityError
+from alphaavatar.agents.avatar.provider.errors import ModelCapabilityError, ModelRequestError
 from alphaavatar.agents.avatar.provider.schemas import (
     ModelImagePart,
     ModelInputMessage,
@@ -53,10 +62,13 @@ from alphaavatar.agents.memory.base import MemoryBase
 from alphaavatar.agents.persona.base import PersonaBase
 from alphaavatar.agents.runtime.capability.registry import AvatarCapabilityRegistry
 from alphaavatar.agents.runtime.inference.runner import InferenceRunner
+from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
 from alphaavatar.core.media import AudioFrame
 
+SPEC = "DOCTOR_DOUBLES"
 TTS_RATE = 24_000
 TTS_FRAME = TTS_RATE // 50  # 20 ms
+ANSWERS = {"card": "Green.", "sum": "5.", "blind": "I cannot tell."}
 
 
 class SpeechRunner(InferenceRunner):
@@ -92,22 +104,48 @@ class EndpointRunner(InferenceRunner):
 
 
 class StuckRunner(InferenceRunner):
-    """A runner whose start never finishes on its own: a model load that hangs."""
+    """A runner whose start never finishes on its own: a model load that hangs. Its process
+    names itself in the test's ``files``, so the test can see that it went."""
 
     INFERENCE_METHOD = "test.doctor.stuck"
 
     def initialize(self) -> None:
         import time
 
+        if SPEC in os.environ:
+            files = Path(json.loads(os.environ[SPEC])["files"])
+            (files / "stuck").write_text(str(os.getpid()))
         time.sleep(60)
 
 
-class ScriptedLLM(StreamingLLMBase):
-    """Answers from what the request carries: a picture means it can see the card."""
+class MissingModelRunner(InferenceRunner):
+    """A runner only vision needs, whose model is not in the cache."""
 
-    def __init__(self, *, images: bool = True) -> None:
-        self.images = images  # False: refuse images, as a model without vision input does.
-        self.requests: list[object] = []
+    INFERENCE_METHOD = "test.doctor.face"
+
+    def initialize(self) -> None:
+        raise FileNotFoundError("The face model is not in the cache")
+
+
+class ScriptedLLM(StreamingLLMBase):
+    """Answers from what the request carries: a picture means it can see the card.
+
+    ``images`` False refuses images, as a model without vision input does; ``error`` names a
+    request failure to raise instead, such as rejected credentials. ``messages`` above one
+    precedes the card's answer with remarks, each an output of its own.
+    """
+
+    def __init__(
+        self,
+        files: Path,
+        *,
+        images: bool = True,
+        answers: dict[str, str] | None = None,
+        messages: int = 1,
+        error: str | None = None,
+    ) -> None:
+        self.files, self.images, self.messages, self.error = files, images, messages, error
+        self.answers = ANSWERS | (answers or {})
 
     def validate_input(self, *, require_input_adapter: bool = False) -> None:
         pass
@@ -118,55 +156,77 @@ class ScriptedLLM(StreamingLLMBase):
     async def aclose(self) -> None:
         pass
 
-    @staticmethod
-    def parts(request) -> list[object]:
-        return [
+    @asynccontextmanager
+    async def stream(self, request) -> AsyncIterator[AsyncIterator[object]]:
+        parts = [
             part
             for item in request.input.items
             if isinstance(item, ModelInputMessage)
             for part in item.parts
         ]
-
-    @asynccontextmanager
-    async def stream(self, request) -> AsyncIterator[AsyncIterator[object]]:
-        self.requests.append(request)
-        parts = self.parts(request)
         text = " ".join(part.text for part in parts if isinstance(part, ModelTextPart)).lower()
-        images = any(isinstance(part, ModelImagePart) for part in parts)
+        images = [part for part in parts if isinstance(part, ModelImagePart)]
+        seen = {
+            "images": [part.observation.observation_id for part in images],
+            "card": "color is the card" in text,
+            "sum": "two plus three" in text,
+        }
+        with (self.files / "requests.jsonl").open("a") as stream:
+            stream.write(json.dumps(seen) + "\n")
+        if self.error is not None:
+            raise ModelRequestError("The provider rejected the credentials", code=self.error)
         if images and not self.images:
             raise ModelCapabilityError("This model accepts no image input")
         if "plus" in text:
-            answer = "Two plus three is five."
+            answer = self.answers["sum"]
         elif images:
-            answer = "The card is green."
+            answer = self.answers["card"]
         else:
-            answer = "I cannot tell."
+            answer = self.answers["blind"]
+        remarks = range(1, self.messages if answer == self.answers["card"] else 1)
+        said = [f"Remark {index}." for index in remarks] + [answer]
 
         async def events() -> AsyncIterator[object]:
             response = f"response:{request.request_id}"
-            message = ModelInputMessage(
-                id=f"answer:{request.request_id}",
-                role=ModelRole.ASSISTANT,
-                parts=(ModelTextPart(answer),),
+            messages = [
+                ModelInputMessage(
+                    id=f"answer:{request.request_id}:{index}",
+                    role=ModelRole.ASSISTANT,
+                    parts=(ModelTextPart(words),),
+                )
+                for index, words in enumerate(said)
+            ]
+            # The stream opens with an empty delta: its first event comes before its first text.
+            yield ModelTextDelta(
+                request_id=request.request_id,
+                response_id=response,
+                item_id=messages[0].id,
+                output_index=0,
+                content_index=0,
+                text="",
             )
             await asyncio.sleep(0.05)
-            words = answer.split(" ")
-            for index, word in enumerate(words):
-                yield ModelTextDelta(
+            for index, message in enumerate(messages):
+                words = message.parts[0].text.split(" ")
+                for position, word in enumerate(words):
+                    yield ModelTextDelta(
+                        request_id=request.request_id,
+                        response_id=response,
+                        item_id=message.id,
+                        output_index=index,
+                        content_index=0,
+                        text=word if not position else f" {word}",
+                    )
+                yield ModelItemCompleted(
                     request_id=request.request_id,
                     response_id=response,
-                    item_id=message.id,
-                    output_index=0,
-                    content_index=0,
-                    text=word if not index else f" {word}",
+                    output_index=index,
+                    item=message,
                 )
-            yield ModelItemCompleted(
-                request_id=request.request_id, response_id=response, output_index=0, item=message
-            )
             yield ModelResponseCompleted(
                 request_id=request.request_id,
                 response_id=response,
-                items=(message,),
+                items=tuple(messages),
                 finish_reason=ModelFinishReason.STOP,
             )
 
@@ -183,6 +243,8 @@ class ScriptedSTTStream(STTStreamBase):
 
     def commit_segment(self, segment_id: str) -> bool:
         text = self._stt.transcripts.pop(0) if self._stt.transcripts else ""
+        with (self._stt.files / "committed").open("a") as stream:
+            stream.write(f"{segment_id}\n")  # The test waits on this to interrupt mid-turn.
         loop = asyncio.get_running_loop()
         loop.call_later(
             0.05,
@@ -214,8 +276,8 @@ class ScriptedSTTStream(STTStreamBase):
 class ScriptedSTT(STTBase):
     """Segment STT: each committed segment's final is the next scripted transcript."""
 
-    def __init__(self, transcripts: list[str]) -> None:
-        self.transcripts = transcripts
+    def __init__(self, transcripts: list[str], files: Path) -> None:
+        self.transcripts, self.files = transcripts, files
 
     @property
     def provider(self) -> str:
@@ -234,14 +296,19 @@ class ScriptedSTT(STTBase):
 
 
 class ScriptedTTSStream(TTSStreamBase):
-    def __init__(self, text: str, index: int, frames: int) -> None:
+    def __init__(self, text: str, index: int, frames: int | None, fail_after: int | None) -> None:
         self.request_id = f"tts-{index}"
         self._frames = max(12, len(text) // 2) if frames is None else frames
+        self._fail_after = fail_after
 
     async def __anext__(self) -> AudioFrame:
+        if self._fail_after is not None and not self._fail_after:
+            raise RuntimeError("Scripted TTS failed mid-stream")
         if not self._frames:
             raise StopAsyncIteration
         self._frames -= 1
+        if self._fail_after is not None:
+            self._fail_after -= 1
         # At real time: audio goes on well after the model's run has finished.
         await asyncio.sleep(0.02)
         return AudioFrame(TTS_RATE, 1, TTS_FRAME, b"\x10\x00" * TTS_FRAME)
@@ -251,8 +318,18 @@ class ScriptedTTSStream(TTSStreamBase):
 
 
 class ScriptedTTS(TTSBase):
-    def __init__(self, *, frames: int | None = None, fail: bool = False) -> None:
+    """``fail`` refuses every request; ``fail_after`` maps a request's number, from 1, to the
+    frames it yields before failing."""
+
+    def __init__(
+        self,
+        *,
+        frames: int | None = None,
+        fail: bool = False,
+        fail_after: dict[str, int] | None = None,
+    ) -> None:
         self.frames, self.fail, self.requests = frames, fail, 0
+        self.fail_after = fail_after or {}
 
     @property
     def sample_rate(self) -> int:
@@ -266,7 +343,8 @@ class ScriptedTTS(TTSBase):
         if self.fail:
             raise RuntimeError("Scripted TTS is unavailable")
         self.requests += 1
-        return ScriptedTTSStream(text, self.requests, self.frames)
+        after = self.fail_after.get(str(self.requests))
+        return ScriptedTTSStream(text, self.requests, self.frames, after)
 
     async def aclose(self) -> None:
         pass
@@ -335,3 +413,104 @@ class NullPersona(PersonaBase):
 
     async def on_stop(self) -> None:
         pass
+
+
+# The diagnostic process
+
+
+class _Factory(AvatarModulePlugin):
+    def __init__(self, create) -> None:
+        super().__init__("doctor doubles", "0", "tests")
+        self.create = create
+
+    def get_plugin(self, *args: object, **kwargs: object) -> object:
+        return self.create()
+
+
+def child(*args: object) -> None:
+    """The diagnostic process's entry under test: guarded, stood in for, then the real one."""
+    spec = json.loads(os.environ[SPEC])
+    files = Path(spec["files"])
+    (files / "pid").write_text(str(os.getpid()))
+    _deny_network(files / "network")
+    install(spec, files)
+    from alphaavatar.host.doctor import process
+
+    process._main(*args)
+
+
+def install(spec: dict, files: Path) -> None:
+    """The stand-ins, plugged in where the configuration names its plugins and runners."""
+    # Built-in plugins register first, so the stand-ins take over their names.
+    import alphaavatar.agents.configs  # noqa: F401
+    from alphaavatar.agents.avatar.provider import factory
+    from alphaavatar.agents.runtime.inference import bootstrap
+    from alphaavatar.agents.runtime.plugin import AvatarModule
+    from alphaavatar.host.doctor import samples, session
+
+    llm = ScriptedLLM(files, **spec.get("llm", {}))
+    stt = ScriptedSTT(list(spec.get("stt", ())), files)
+    tts = ScriptedTTS(**spec.get("tts", {}))
+    registry = AvatarModulePlugin._registry
+    for module, name, create in (
+        (AvatarModule.PROVIDER_LLM, "scripted", lambda: llm),
+        (AvatarModule.VOICE_STT, "openai_segment", lambda: stt),
+        (AvatarModule.VOICE_TTS, "openai", lambda: tts),
+        (AvatarModule.MEMORY, "doctor", NullMemory),
+        (AvatarModule.PERSONA, "doctor", NullPersona),
+    ):
+        registry.setdefault(module, {})[name] = _Factory(create)
+    load = factory._load_backend
+    factory._load_backend = lambda name: name == "scripted" or load(name)
+    for name, runners in spec.get("runners", {}).items():
+        found = tuple(map(_runner, runners))
+        bootstrap._runner_bootstraps[f"alphaavatar.plugins.{name}"] = lambda config, f=found: f
+    if vision := tuple(map(_runner, spec.get("vision_runners", ()))):
+        # Planned only while vision is on, as a camera consumer's runner is.
+        bootstrap._runner_bootstraps["alphaavatar.plugins.persona"] = lambda config: (
+            vision if config.vision.enabled else ()
+        )
+    # A second of loud noise is speech to the stand-in VAD; silence follows, as from a mic.
+    noise = np.random.default_rng(7).standard_normal(samples.SAMPLE_RATE) * 6000
+    voiced = noise.astype("<i2").tobytes()
+    samples.speech = lambda name: samples.Speech(name, voiced, 1.0)
+    if spec.get("deaf"):
+        # A process that neither hears the stop nor keeps to its budget: only its group's
+        # end reclaims it.
+        diagnose = session.diagnose_session
+
+        async def deaf(*args: object, limits: object, stop: object, **kwargs: object):
+            endless = session.Budget(3600.0, 3600.0, 3600.0)
+            return await diagnose(*args, limits=endless, stop=asyncio.Event(), **kwargs)
+
+        session.diagnose_session = deaf
+
+
+def _runner(name: str) -> type[InferenceRunner]:
+    import inference_runner_samples
+
+    return getattr(sys.modules[__name__], name, None) or getattr(inference_runner_samples, name)
+
+
+def _deny_network(log: Path) -> None:
+    """The test process's guard, in the diagnostic process: local AF_UNIX paths only."""
+    connect = socket.socket.connect
+
+    def refuse(operation: str):
+        def call(*args: object, **kwargs: object) -> object:
+            with log.open("a") as stream:
+                stream.write(f"{operation}\n")  # Logged even when the caller swallows it.
+            raise PermissionError(f"Deterministic tests may not use the network: {operation}")
+
+        return call
+
+    def local(sock: socket.socket, address: object) -> None:
+        if sock.family == socket.AF_UNIX and type(address) is str and os.path.isabs(address):
+            return connect(sock, address)
+        return refuse("socket.connect")(sock, address)
+
+    socket.socket.connect = local
+    for name in ("connect_ex", "sendto"):
+        setattr(socket.socket, name, refuse(f"socket.{name}"))
+    for name in ("getaddrinfo", "gethostbyname", "gethostbyname_ex", "create_connection"):
+        setattr(socket, name, refuse(f"socket.{name}"))

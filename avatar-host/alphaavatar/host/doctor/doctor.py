@@ -15,10 +15,11 @@
 
 Selection, loading and the output boundary are the public services `config check`, `start`
 and `dev` use. The static checks create, download, load, start and contact nothing. The
-diagnostic session then runs the configured chain on fixed samples, reaching external
-services only when ``host.doctor.external_services`` allows it; what it cannot run is
-reported as not verified, never as passing. The report is plain data for the CLI, an App or
-a TUI.
+diagnostic session then runs the configured chain on fixed samples in a process of its own
+(``process``), reaching external services only when ``host.doctor.external_services`` allows
+it; a plugin Doctor does not ship counts as one, since what it reaches is unknown. What it
+cannot run is reported as not verified, never as passing. The report is plain data for the
+CLI, an App or a TUI.
 """
 
 from __future__ import annotations
@@ -47,6 +48,24 @@ if TYPE_CHECKING:
 
 HOST = "alpha-avatar-host"
 MIN_FREE_BYTES = 1 << 30  # Less leaves little room for models, caches and Avatar data.
+# The plugins and provider backends this release ships, whose reach Doctor knows. Any other
+# name is a custom plugin: what it reaches cannot be confirmed, so it needs authorization.
+_BUILT_IN = {
+    "loop": ("realtime",),
+    "context": ("default",),
+    "router": ("default",),
+    "status": ("default",),
+    "voice.vad": ("silero",),
+    "voice.stt": ("openai_realtime", "openai_segment"),
+    "voice.tts": ("openai", "voiceai"),
+    "memory": ("default",),
+    "persona": ("default",),
+    "character": ("airi",),
+    "tools.deepresearch": ("default",),
+    "tools.rag": ("default",),
+    "tools.mcp": ("default",),
+    "provider backend": ("langchain", "openai"),
+}
 
 
 # Stable identifiers, in report order.
@@ -120,31 +139,30 @@ class Diagnosis:
         from .session import starts
 
         return self._planned and _safe_starts(
-            lambda: starts(self.loaded[0], _external(self.loaded[0]))
+            lambda: starts(self.loaded[0], [name for name, _ in _external(self.loaded[0])])
         )
 
     def report(self) -> Report:
         """The report without running anything: the session's checks say why not."""
-        from .session import unstarted
-
         checks = dict(self.checks)
         if self._planned:
-            config, source = self.loaded
             try:
-                checks |= unstarted(config, source, _external(config))
+                checks |= self._unstarted()
             except Exception as error:
                 for check_id in (spec.id for spec in CHECKS if spec.in_session):
                     checks[check_id] = _incomplete(check_id, error)
         return self._finish(checks)
 
     async def run(self, *, stop: asyncio.Event | None = None) -> Report:
-        from .session import diagnose_session
+        """The static checks with the diagnostic session's, from one configuration snapshot:
+        what was authorized is what the diagnostic process starts."""
+        from . import process
 
         config, source = self.loaded
         checks = dict(self.checks)
         try:
-            checks |= await diagnose_session(
-                config, source, self.overrides, services=_external(config), stop=stop
+            checks |= await process.diagnose(
+                config, source, _external(config), stop=stop or asyncio.Event()
             )
         except Exception as error:
             # Whatever ran is closed already; the report still names what could not complete.
@@ -152,12 +170,16 @@ class Diagnosis:
                 checks[check_id] = _incomplete(check_id, error)
         return self._finish(checks)
 
+    def _unstarted(self) -> dict[str, Check]:
+        from .session import unstarted
+
+        config, source = self.loaded
+        return unstarted(config, source, _external(config))
+
     def _finish(self, checks: dict[str, Check]) -> Report:
-        if self._planned:
-            config, source = self.loaded
+        if self._planned and "services.external" not in checks:
             checks["services.external"] = _safely(
-                "services.external",
-                lambda: _services(config, source, checks.get("session.scenarios")),
+                "services.external", lambda: self._unstarted()["services.external"]
             )
         if self.loaded is None:
             reason, see = "Configuration not loaded", "config.load"
@@ -257,11 +279,16 @@ def _report(
                         summary=scrub(result.summary),
                         details=tuple(map(scrub, result.details)),
                         blocked_stage=safe(result.blocked_stage),
+                        cause=safe(result.cause),
                         transcript=safe(result.transcript),
                         answer=safe(result.answer),
                         evidence=tuple(map(evidence, result.evidence)),
                     )
                     for result in check.scenarios
+                ),
+                services=tuple(
+                    replace(service, name=scrub(service.name), note=safe(service.note))
+                    for service in check.services
                 ),
             )
             for check in (checks[spec.id] for spec in CHECKS if spec.id in checks)
@@ -610,48 +637,54 @@ def _dev(source: ConfigSource) -> str:
     return _command("dev", source)
 
 
-def _external(config: ApplicationConfig) -> list[str]:
-    """The external services the configured session reaches; the RTC server is apart."""
+def _external(config: ApplicationConfig) -> list[tuple[str, str]]:
+    """The external services the configured session reaches, by kind; the RTC server is apart.
+
+    Kinds tell the diagnostic session which stage shows a service answered: model, stt, tts,
+    qdrant, tools, mcp, or custom for a plugin whose reach is unknown.
+    """
     from alphaavatar.agents.utils.vdb.config import vdb_backend
 
     avatar = config.avatar
     services = []
-    if backends := sorted(_provider_backends(config)[0]):
-        services.append(f"model providers ({', '.join(backends)})")
-    if speech := [part.plugin for part in (avatar.voice.stt, avatar.voice.tts) if part.plugin]:
-        services.append(f"speech services ({', '.join(speech)})")
+    backends = sorted(_provider_backends(config)[0])
+    if backends:
+        services.append((f"model providers ({', '.join(backends)})", "model"))
+    voice = avatar.voice
+    if voice.stt.plugin:
+        services.append((f"speech recognition ({voice.stt.plugin})", "stt"))
+    if voice.tts.plugin:
+        services.append((f"speech synthesis ({voice.tts.plugin})", "tts"))
     mcp = avatar.tools.mcp
     stores = [avatar.memory, avatar.persona] + ([mcp] if mcp.enabled and mcp.plugin else [])
     if any(s.plugin == "default" and vdb_backend(s.vdb_config) == "qdrant" for s in stores):
-        services.append("Qdrant")
+        services.append(("Qdrant", "qdrant"))
     if tools := [name for name in ("deepresearch", "rag") if getattr(avatar.tools, name).plugin]:
-        services.append(f"tool services ({', '.join(tools)})")
+        services.append((f"tool services ({', '.join(tools)})", "tools"))
     if mcp.enabled and mcp.plugin is not None:
-        services.append(f"{len(mcp.servers)} MCP server{'' if len(mcp.servers) == 1 else 's'}")
+        count = len(mcp.servers)
+        services.append((f"{count} MCP server{'' if count == 1 else 's'}", "mcp"))
+    chosen = {
+        "loop": avatar.loop.plugin,
+        "context": avatar.context.plugin,
+        "router": avatar.router.plugin,
+        "status": avatar.status.plugin if avatar.status.enabled else None,
+        "voice.vad": voice.vad.plugin,
+        "voice.stt": voice.stt.plugin,
+        "voice.tts": voice.tts.plugin,
+        "memory": avatar.memory.plugin,
+        "persona": avatar.persona.plugin,
+        "character": avatar.character.plugin,
+        "tools.deepresearch": avatar.tools.deepresearch.plugin,
+        "tools.rag": avatar.tools.rag.plugin,
+        "tools.mcp": mcp.plugin if mcp.enabled else None,
+    }
+    custom = [(part, name) for part, name in chosen.items() if name is not None]
+    custom += [("provider backend", name) for name in backends]
+    for part, name in custom:
+        if name not in _BUILT_IN[part]:
+            services.append((f"custom {part} {name!r}", "custom"))
     return services
-
-
-def _services(config: ApplicationConfig, source: ConfigSource, scenarios: Check | None) -> Check:
-    services = _external(config)
-    rtc = f"{config.host.rtc.backend} RTC server: not contacted; `{_dev(source)}` connects to it"
-    if not config.host.doctor.external_services:
-        return Check(
-            "services.external",
-            CheckStatus.SKIP,
-            "Not contacted: host.doctor.external_services is false",
-            (*services, rtc),
-            "The diagnostic session reaches them once host.doctor.external_services is true; "
-            "calls may be billed",
-        )
-    status = scenarios.status if scenarios is not None else CheckStatus.SKIP
-    status = CheckStatus.SKIP if status == CheckStatus.WARN else status
-    return Check(
-        "services.external",
-        status,
-        "Reached by the diagnostic session; see session.scenarios for each stage",
-        (*services, rtc),
-        "See the failed scenarios' blocked stages" if status == CheckStatus.FAIL else None,
-    )
 
 
 def _home(paths: ApplicationPaths, overrides: Sequence[str]) -> Check:

@@ -72,6 +72,16 @@ jobs:
           uv build --all-packages --no-sources --build-constraints "$constraints"
           uv run --no-sync twine check dist/*
           git diff --exit-code
+      - name: Read Doctor's samples from the built Host wheel alone
+        run: |
+          python="$RUNNER_TEMP/doctor-samples/bin/python"
+          constraints="$RUNNER_TEMP/alphaavatar-constraints.txt"
+          uv venv "$RUNNER_TEMP/doctor-samples"
+          uv export --locked --all-packages --no-emit-workspace --no-hashes \
+            --output-file "$constraints" > /dev/null
+          uv pip install --python "$python" --constraint "$constraints" numpy
+          uv pip install --python "$python" --no-deps dist/alpha_avatar_host-*.whl
+          "$python" -I scripts/doctor_samples.py check --installed
 
   install:
     runs-on: ubuntu-latest
