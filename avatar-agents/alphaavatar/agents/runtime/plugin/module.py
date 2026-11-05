@@ -21,42 +21,39 @@ from typing import Any, ClassVar
 
 class AvatarModule(str, Enum):
     # Engine
-    AVATAR_ENGINE = "avatar_engine"
+    AVATAR_ENGINE = "avatar.engine"
 
-    LOOP = "loop"
-    CONTEXT = "context"
+    LOOP = "avatar.foundation.loop"
+    CONTEXT = "avatar.foundation.context"
 
     # Provider
-    PROVIDER_LLM = "provider_llm"
-    PROVIDER_EMBEDDING = "provider_embedding"
+    PROVIDER_LLM = "avatar.foundation.provider.llm"
+    PROVIDER_EMBEDDING = "avatar.foundation.provider.embedding"
 
     # Voice modules
-    VOICE_VAD = "voice_vad"
-    VOICE_STT = "voice_stt"
-    VOICE_TTS = "voice_tts"
+    VOICE_VAD = "avatar.foundation.voice.vad"
+    VOICE_STT = "avatar.foundation.voice.stt"
+    VOICE_TTS = "avatar.foundation.voice.tts"
 
     # Interaction router modules
-    ROUTER = "router"
+    ROUTER = "avatar.perception.router"
 
     # Status modules
-    STATUS = "status"
-
-    # Intention modules
-    INTENTION = "intention"
+    STATUS = "avatar.perception.status"
 
     # Character modules
-    CHARACTER = "character"
+    CHARACTER = "avatar.perception.character"
 
     # Memory modules
-    MEMORY = "memory"
+    MEMORY = "avatar.perception.memory"
 
     # Persona modules
-    PERSONA = "persona"
+    PERSONA = "avatar.perception.persona"
 
     # tools
-    DEEPRESEARCH = "deepresearch"
-    RAG = "rag"
-    MCP = "mcp"
+    DEEPRESEARCH = "avatar.tools.deepresearch"
+    RAG = "avatar.tools.rag"
+    MCP = "avatar.tools.mcp"
 
 
 class AvatarModulePlugin(ABC):

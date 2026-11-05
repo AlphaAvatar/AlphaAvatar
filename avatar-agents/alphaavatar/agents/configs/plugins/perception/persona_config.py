@@ -23,8 +23,6 @@ from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 from alphaavatar.agents.utils.vdb.config import snapshot_vdb_config
 
-importlib.import_module("alphaavatar.plugins.persona")
-
 
 class PersonaConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -40,7 +38,12 @@ class PersonaConfig(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         self.vdb_config = snapshot_vdb_config(self.vdb_config)
 
+    def runner_config(self) -> dict[str, Any]:
+        """What the plugin's inference runners read at launch; it holds credentials."""
+        return self.vdb_config
+
     def get_plugin(self, runtime: AvatarRuntime) -> PersonaBase:
+        importlib.import_module("alphaavatar.plugins.persona")
         persona = AvatarModulePlugin.create(
             AvatarModule.PERSONA,
             self.plugin,

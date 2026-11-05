@@ -36,6 +36,8 @@ from alphaavatar.agents.memory.enums import VectorRunnerOP
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import qdrant
 
+from ...namespace import NAMESPACE
+
 logger = logging.getLogger(__name__)
 
 
@@ -518,7 +520,7 @@ class QdrantRunner(InferenceRunner):
         )
 
     def initialize(self) -> None:
-        config = self.config_for("memory")
+        config = self.config_for(NAMESPACE)
         self._collection_name = config.get("collection_name")
         if not self._collection_name:
             raise ValueError("collection_name is required in memory.vdb_config")

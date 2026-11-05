@@ -1,0 +1,8 @@
+# The CPU builds of uv.lock's torch and torchaudio, which the Linux x86_64 package installs in
+# place of PyPI's: there, torch brings CUDA libraries (about 3 GB) that the reference bundle never
+# uses, since its only torch work, the speaker's filterbank, runs on the CPU. build.sh checks that
+# the versions match the lock. CUDA belongs to a package for a capability that uses it.
+torch @ https://download-r2.pytorch.org/whl/cpu/torch-2.9.0%2Bcpu-cp313-cp313-manylinux_2_28_x86_64.whl \
+    --hash=sha256:6c9b217584400963d5b4daddb3711ec7a3778eab211e18654fba076cce3b8682
+torchaudio @ https://download-r2.pytorch.org/whl/cpu/torchaudio-2.9.0%2Bcpu-cp313-cp313-manylinux_2_28_x86_64.whl \
+    --hash=sha256:20c0585786f69a182687ee6c3ab76c0ca8e5bf7b209015022e74ee67cda38af4

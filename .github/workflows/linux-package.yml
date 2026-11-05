@@ -1,0 +1,47 @@
+name: Linux package
+
+# The Linux x86_64 package install.sh installs: built from the lock in manylinux_2_28, so its own
+# native code needs no newer glibc than its wheels do. Any commit on demand; release tags
+# through release.yml, which attaches the package to the release.
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      release:
+        description: "The vX.Y.Z tag being released; empty for a build of the commit"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-package-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container: quay.io/pypa/manylinux_2_28_x86_64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install uv
+        run: |
+          /opt/python/cp313-cp313/bin/python -m pip install uv==0.10.0
+          echo "/opt/python/cp313-cp313/bin" >> "$GITHUB_PATH"
+      - name: Build the package
+        env:
+          RELEASE: ${{ inputs.release }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          packaging/linux/build.sh ${RELEASE:+--release "$RELEASE"} --out dist/linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alphaavatar-linux-x86_64-${{ github.sha }}
+          path: dist/linux/
+          if-no-files-found: error
+          retention-days: 30

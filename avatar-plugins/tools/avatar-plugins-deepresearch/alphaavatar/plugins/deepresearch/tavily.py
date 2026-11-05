@@ -25,6 +25,7 @@ from alphaavatar.agents.tools.schemas import ToolError
 from alphaavatar.agents.utils import url_to_filename_id
 from alphaavatar.core.cleanup import wait_for_cleanup
 
+from .namespace import NAMESPACE
 from .schemas import TavilyExtractObj, TavilySearchObj
 
 if TYPE_CHECKING:
@@ -59,9 +60,9 @@ class TavilyDeepResearchTool:
             task.exception()
 
     def _save(self, result: TavilyExtractObj) -> CapabilityResult:
-        from alphaavatar.agents.utils.files import save_single_url_content_to_pdf
+        from alphaavatar.agents.utils.files.url_to_pdf import save_single_url_content_to_pdf
 
-        root = (self.session_path.artifacts_dir / "tavily").resolve()
+        root = (self.session_path.artifacts_dir / NAMESPACE / "tavily").resolve()
         saved, failures = [], [str(value) for value in (result.failed_results or [])]
         for item in result.results:
             name = url_to_filename_id(item.url)

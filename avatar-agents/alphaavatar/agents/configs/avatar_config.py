@@ -67,3 +67,38 @@ class AvatarConfig(BaseModel):
             raise ValueError("defaults must be a mapping of YAML anchor definitions")
         # YAML aliases are already expanded. This is authoring data, not a runtime section.
         return {key: item for key, item in value.items() if key != "defaults"}
+
+    def plugin_packages(self) -> dict[str, str]:
+        """The built-in plugins the selections use, by configuration location.
+
+        Plugin ``<name>`` is the module ``alphaavatar.plugins.<name>``, installed by the package
+        ``alpha-avatar-plugins-<name>``. Validation imports none of them: building a section
+        imports its plugin, and runner planning imports them all, since each registers its
+        factories and inference runners on import.
+        """
+        voice, tools = self.voice, self.tools
+        selected = {
+            "context.plugin": ("context", self.context.plugin == "default"),
+            "loop.plugin": ("loop", self.loop.plugin == "realtime"),
+            **{
+                f"voice.{part}.plugin": ("voice", getattr(voice, part).plugin is not None)
+                for part in ("vad", "stt", "tts")
+            },
+            # Always built, whichever plugin they name; status even while its events are off.
+            "status.plugin": ("status", True),
+            "character.plugin": ("character", self.character.plugin is not None),
+            "memory.plugin": ("memory", True),
+            "persona.plugin": ("persona", True),
+            "router.plugin": ("router", True),
+            "tools.deepresearch.plugin": ("deepresearch", tools.deepresearch.plugin is not None),
+            "tools.rag.plugin": ("rag", tools.rag.plugin is not None),
+            "tools.mcp.enabled": ("mcp", tools.mcp.enabled and tools.mcp.plugin is not None),
+        }
+        return {location: name for location, (name, used) in selected.items() if used}
+
+    def section(self, location: str) -> BaseModel:
+        """The section a setting belongs to: ``tools.mcp`` for ``tools.mcp.enabled``."""
+        section: BaseModel = self
+        for part in location.split(".")[:-1]:
+            section = getattr(section, part)
+        return section

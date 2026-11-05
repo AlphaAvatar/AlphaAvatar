@@ -26,6 +26,7 @@ from alphaavatar.core.turn import TurnStreamGap
 from alphaavatar.core.turn.enums import TurnInputModality
 from alphaavatar.core.turn.schemas import TurnSnapshot
 
+from ...namespace import NAMESPACE
 from ...profile import UserProfileDetails
 from ...template import PersonaPluginsTemplate
 from .config import ProfilerConfig
@@ -82,7 +83,7 @@ class ProfilerProcessor(PersonaProcessorBase):
             new_turn=new_turn,
             metadata={
                 "provider_dir": self.runtime.session_path.provider_dir,
-                "plugin": "persona",
+                "plugin": NAMESPACE,
                 "component": "profiler",
                 "operation": "profile_delta",
                 "user_id": user_id,

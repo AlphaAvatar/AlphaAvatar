@@ -13,8 +13,8 @@
 # limitations under the License.
 """Doctor's fixed speech samples: made offline with FFmpeg's flite voice, read back by Doctor.
 
-    uv run python scripts/doctor_samples.py make [--ffmpeg PATH]
-    python -I scripts/doctor_samples.py check [--installed]
+    uv run python scripts/quality/doctor_samples.py make [--ffmpeg PATH]
+    python -I scripts/quality/doctor_samples.py check [--installed]
 
 ``make`` needs an FFmpeg built with libflite (Debian's and Ubuntu's are: ``ffmpeg -filters``
 lists ``flite``). Each recording says its task's prompt, word for word, in flite's kal voice,

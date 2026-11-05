@@ -24,6 +24,8 @@ from alphaavatar.agents.runtime.capability.result import CapabilityResult
 from alphaavatar.agents.tools.schemas import ToolError
 from alphaavatar.core.cleanup import wait_for_cleanup
 
+from .namespace import NAMESPACE
+
 if TYPE_CHECKING:
     from alphaavatar.agents.workspace import SessionPath
 
@@ -79,7 +81,7 @@ class RAGAnythingTool:
             raise ToolError("This RAG backend currently exposes only data_source='all'")
 
     def _paths(self) -> tuple[Path, Path, Path]:
-        root = self.session_path.artifacts_dir / "rag_anything"
+        root = self.session_path.artifacts_dir / NAMESPACE / "rag_anything"
         index, artifacts = root / "index", root / "artifacts"
         index.mkdir(parents=True, exist_ok=True)
         artifacts.mkdir(parents=True, exist_ok=True)

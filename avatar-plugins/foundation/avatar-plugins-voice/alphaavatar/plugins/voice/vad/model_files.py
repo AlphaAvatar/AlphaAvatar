@@ -17,6 +17,8 @@ from pathlib import Path
 
 from alphaavatar.agents.utils.files.model import resolve_url_file
 
+from ..namespace import NAMESPACE
+
 
 @dataclass(frozen=True, slots=True)
 class SileroModelConfig:
@@ -70,7 +72,7 @@ def resolve_silero_model_path(*, models_dir: str) -> str:
     return str(
         resolve_url_file(
             models_dir=models_dir,
-            namespace=("voice", "vad", "silero", config.version),
+            namespace=(NAMESPACE, "vad", "silero", config.version),
             filename=config.file_name,
             url=config.url,
             sha256=config.sha256,

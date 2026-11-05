@@ -21,8 +21,6 @@ from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 from alphaavatar.agents.utils.vdb.config import snapshot_vdb_config
 
-importlib.import_module("alphaavatar.plugins.memory")
-
 
 class MemoryConfig(BaseModel):
     """Configuration for the Memory plugin used in the agent."""
@@ -51,8 +49,13 @@ class MemoryConfig(BaseModel):
     def model_post_init(self, __context: Any) -> None:
         self.vdb_config = snapshot_vdb_config(self.vdb_config)
 
+    def runner_config(self) -> dict[str, Any]:
+        """What the plugin's inference runners read at launch; it holds credentials."""
+        return self.vdb_config
+
     def get_plugin(self, runtime: AvatarRuntime, avatar_id: str) -> MemoryBase:
         """Returns the Memory plugin instance based on the configuration."""
+        importlib.import_module("alphaavatar.plugins.memory")
         return AvatarModulePlugin.create(
             AvatarModule.MEMORY,
             self.plugin,

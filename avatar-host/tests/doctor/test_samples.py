@@ -13,8 +13,8 @@
 # limitations under the License.
 """Doctor's recordings in its package, as its own loader reads them.
 
-CI also reads them from the built Host wheel alone (``scripts/doctor_samples.py check
---installed``): this checks the source tree the wheel is built from.
+CI also reads them from the built Host wheel alone (``scripts/quality/doctor_samples.py
+check --installed``): this checks the source tree the wheel is built from.
 """
 
 from __future__ import annotations

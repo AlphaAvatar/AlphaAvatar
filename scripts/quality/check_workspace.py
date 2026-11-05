@@ -26,7 +26,7 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]  # scripts/quality/ in the repository root
 PYTHON_RANGE = SpecifierSet(">=3.13,<3.14")
 FORBIDDEN = {"livekit-agents", "livekit-plugins-openai"}
 

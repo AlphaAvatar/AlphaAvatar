@@ -21,8 +21,11 @@ from alphaavatar.agents.avatar.voice import STTBase, TTSBase, VADBase, VoiceBund
 from alphaavatar.agents.runtime.inference import InferenceExecutor
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 
-# AlphaAvatar voice factories; turn interruption policy belongs to Router.
-importlib.import_module("alphaavatar.plugins.voice")
+
+def _create(module: AvatarModule, name: str, **kwargs):
+    # AlphaAvatar voice factories, registered on import; turn interruption belongs to Router.
+    importlib.import_module("alphaavatar.plugins.voice")
+    return AvatarModulePlugin.create(module, name, **kwargs)
 
 
 class STTConfig(BaseModel):
@@ -53,7 +56,7 @@ class STTConfig(BaseModel):
 
         if self.base_url is not None:
             kwargs["base_url"] = self.base_url
-        return AvatarModulePlugin.create(AvatarModule.VOICE_STT, self.plugin, **kwargs)
+        return _create(AvatarModule.VOICE_STT, self.plugin, **kwargs)
 
 
 class TTSConfig(BaseModel):
@@ -122,7 +125,7 @@ class TTSConfig(BaseModel):
         if self.plugin is None:
             return None
 
-        return AvatarModulePlugin.create(
+        return _create(
             AvatarModule.VOICE_TTS,
             self.plugin,
             model=self.model,
@@ -162,7 +165,10 @@ class VADConfig(BaseModel):
     inference_timeout_sec: float = Field(default=0.5, gt=0.0)
 
     def get_plugin(self, *, inference_executor: InferenceExecutor) -> VADBase | None:
-        return AvatarModulePlugin.create(
+        if self.plugin is None:
+            return None
+
+        return _create(
             AvatarModule.VOICE_VAD,
             self.plugin,
             min_speech_duration=self.min_speech_duration,

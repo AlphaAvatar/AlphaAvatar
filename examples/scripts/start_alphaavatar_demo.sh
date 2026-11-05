@@ -5,16 +5,16 @@ set -euo pipefail
 # AlphaAvatar Demo Starter
 # ============================================================
 # Usage:
-#   bash scripts/start_alphaavatar_demo.sh
+#   bash examples/scripts/start_alphaavatar_demo.sh
 #
 # Optional env override:
-#   ENV_FILE=.env.demo CONFIG_FILE=examples/agent_configs/roles/demo.yaml bash scripts/start_alphaavatar_demo.sh
+#   ENV_FILE=.env.demo CONFIG_FILE=examples/agent_configs/roles/demo.yaml bash examples/scripts/start_alphaavatar_demo.sh
 #
 # Optional mode:
-#   START_MODE=dev bash scripts/start_alphaavatar_demo.sh
+#   START_MODE=dev bash examples/scripts/start_alphaavatar_demo.sh
 # ============================================================
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"  # examples/scripts/
 cd "$ROOT_DIR"
 
 ENV_FILE="${ENV_FILE:-.env.demo}"

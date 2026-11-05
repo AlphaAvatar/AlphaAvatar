@@ -16,6 +16,8 @@ from typing import Literal
 
 from alphaavatar.agents.utils.files.model import resolve_hf_file
 
+from ...namespace import NAMESPACE
+
 SpeakerModelType = Literal["eres2netv2", "w2v2l6"]
 
 
@@ -37,7 +39,7 @@ SPEAKER_MODEL_CONFIG: dict[SpeakerModelType, RunnerSpeakerModelConfig] = {
         hf_model="AlphaAvatar/persona-speaker-vector-onnx",
         revision="1899db09a40a60472681f07a189188517f515b4b",
         file_name="model.onnx",
-        cache_parts=("persona", "speaker", "vector"),
+        cache_parts=(NAMESPACE, "speaker", "vector"),
         sample_rate=16000,
         window_size_samples=3 * 16000,
         step_size_samples=16000,
@@ -48,7 +50,7 @@ SPEAKER_MODEL_CONFIG: dict[SpeakerModelType, RunnerSpeakerModelConfig] = {
         hf_model="AlphaAvatar/persona-speaker-attribute-onnx",
         revision="3174195619187307495d5fa782a87dac86c5ddec",
         file_name="model.onnx",
-        cache_parts=("persona", "speaker", "attribute"),
+        cache_parts=(NAMESPACE, "speaker", "attribute"),
         sample_rate=16000,
         window_size_samples=3 * 16000,
         step_size_samples=16000,

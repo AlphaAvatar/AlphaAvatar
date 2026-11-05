@@ -38,8 +38,8 @@ from unittest import mock
 import doctor_doubles as doubles
 import pytest
 
-# Imported at collection: configuration plugins adjust process variables while importing (O-2).
-import alphaavatar.agents.configs  # noqa: F401
+# Imported at collection: the persona plugin's OpenCV adjusts process variables (O-2).
+import alphaavatar.plugins.persona  # noqa: F401
 from alphaavatar.host.cli.app import main
 from alphaavatar.host.configs import ConfigSource, load_application
 from alphaavatar.host.doctor import (

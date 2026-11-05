@@ -24,8 +24,6 @@ if TYPE_CHECKING:
     from alphaavatar.agents.router import InteractionRouterBase
     from alphaavatar.agents.runtime import AvatarRuntime
 
-importlib.import_module("alphaavatar.plugins.router")
-
 
 class RouterConfig(BaseModel):
     """Interaction Router plugin selection and plugin-owned options."""
@@ -36,6 +34,7 @@ class RouterConfig(BaseModel):
     init_config: dict[str, Any] = Field(default_factory=dict)
 
     def get_plugin(self, *, runtime: AvatarRuntime) -> InteractionRouterBase:
+        importlib.import_module("alphaavatar.plugins.router")
         return AvatarModulePlugin.create(
             AvatarModule.ROUTER, self.plugin, runtime=runtime, init_config=self.init_config
         )

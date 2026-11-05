@@ -101,7 +101,7 @@ tts:
   speaker: ash
 """,
     "vision": """\
-enabled: false
+enabled: true  # Camera frames reach the loop's model as images; false keeps the Avatar blind.
 """,
     "status": """\
 plugin: default

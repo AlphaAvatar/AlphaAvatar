@@ -23,8 +23,8 @@ from alphaavatar.agents.memory.schemas import MemoryItem, MemoryOwnerRef
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import avatar_capability
 from alphaavatar.agents.runtime.capability.enums import AvatarCapabilityName
-from alphaavatar.agents.runtime.plugin import AvatarModule
 
+from ...namespace import NAMESPACE
 from ...storage.graph import GraphLookup
 from ..base import MemoryProcessor
 from .config import RetrievalConfig
@@ -80,7 +80,7 @@ class RetrievalProcessor(MemoryProcessor):
         return "retrieval"
 
     def _graph_lookup(self) -> GraphLookup:
-        return GraphLookup(self.runtime.workspace.graph.namespace(AvatarModule.MEMORY.value).root)
+        return GraphLookup(self.runtime.workspace.graph.namespace(NAMESPACE).root)
 
     def _resolve_graph_keys(self, node_key: str, max_hops: int) -> list[str]:
         lookup = self._graph_lookup()

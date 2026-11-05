@@ -59,23 +59,22 @@ def _add_runner(runners: dict[str, type[InferenceRunner]], runner: type[Inferenc
 
 
 def snapshot_inference_config(config: AvatarConfig) -> str:
-    """Private immutable launch inputs; never expose these credentials in diagnostics."""
+    """Private immutable launch inputs, under the name of each selected plugin whose runners
+    read them (``InferenceRunner.config_for``); never expose these credentials in diagnostics.
+    """
 
     def encode(value):
         if isinstance(value, SecretStr):
             return value.get_secret_value()
         raise TypeError("Inference configuration contains a non-JSON value")
 
+    inputs = {}
+    for location, name in config.plugin_packages().items():
+        section = config.section(location)
+        if hasattr(section, "runner_config"):
+            inputs[name] = section.runner_config()
     return json.dumps(
-        {
-            "memory": config.memory.vdb_config,
-            "persona": config.persona.vdb_config,
-            "mcp": {"vdb_config": config.tools.mcp.vdb_config, "servers": config.tools.mcp.servers},
-        },
-        default=encode,
-        ensure_ascii=False,
-        allow_nan=False,
-        separators=(",", ":"),
+        inputs, default=encode, ensure_ascii=False, allow_nan=False, separators=(",", ":")
     )
 
 
@@ -112,10 +111,17 @@ def check_inference_config(
 def plan_inference_runners(config: AvatarConfig) -> dict[str, type[InferenceRunner]]:
     """The selected runners, checked against runtime.inference.
 
-    Pure: it never writes the environment, spawns a process or loads a model.
+    Pure: it never writes the environment, spawns a process or loads a model. It imports the
+    selected built-in plugins, whose bootstraps register on import; theirs come first, in the
+    configuration's order, whichever plugin a process happened to import first.
     """
+    selected = [f"alphaavatar.plugins.{name}" for name in config.plugin_packages().values()]
+    order = {module: index for index, module in enumerate(dict.fromkeys(selected))}
+    for module in order:
+        importlib.import_module(module)
     runners: dict[str, type[InferenceRunner]] = {}
-    for name, bootstrap in tuple(_runner_bootstraps.items()):
+    bootstraps = sorted(_runner_bootstraps.items(), key=lambda item: order.get(item[0], len(order)))
+    for name, bootstrap in bootstraps:
         try:
             for runner in bootstrap(config):
                 _add_runner(runners, runner)

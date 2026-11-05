@@ -45,15 +45,15 @@ own environment so checking code does not uninstall or replace runtime dependenc
 
 ```bash
 UV_PROJECT_ENVIRONMENT=.venv-quality uv sync --locked --only-group lint --no-install-workspace
-UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync python scripts/check_workspace.py
+UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync python scripts/quality/check_workspace.py
 UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync ruff check .
 UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync ruff format --check .
 UV_PROJECT_ENVIRONMENT=.venv-quality uv run --no-sync pre-commit validate-config
 uv lock --check
 ```
 
-`scripts/check_workspace.py` checks package metadata, dependency relationships, entrypoint
-files, licenses and lock policy without importing the runtime. Its `--metadata-only` mode
+`scripts/quality/check_workspace.py` checks package metadata, dependency relationships,
+entrypoint files, licenses and lock policy without importing the runtime. Its `--metadata-only` mode
 is useful during authoring but explicitly skips source/lock validation; it is not a release
 gate. `uv lock --check` is still required for resolver-level freshness. No command here
 silently treats an unavailable tool or an empty test suite as a successful check.
@@ -170,7 +170,7 @@ Keep public namespaces under `alphaavatar.plugins.<plugin>`. Do not encode layer
 
 Consumers own their tasks, streams, and request state; `FoundationRuntime` owns shared service components. Plugin registration must not initialize models. Select inference runners from the active configuration and resolve model files inside runner initialization.
 
-Package changes must keep workspace membership, `[tool.uv.sources]`, `scripts/release.sh`, dependency metadata, and `uv.lock` consistent. Review lockfile changes before committing, then verify:
+Package changes must keep workspace membership, `[tool.uv.sources]`, `scripts/maintenance/release.sh`, dependency metadata, and `uv.lock` consistent. Review lockfile changes before committing, then verify:
 
 ```bash
 uv lock --check

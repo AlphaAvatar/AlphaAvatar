@@ -55,6 +55,25 @@ environment and `.env` file: Host rejects both rather than relocating existing d
 See [Avatar workspace](docs/avatar-workspace-layout.md) and
 [Model cache](docs/models-cache-layout.md) for locating, backing up and moving data.
 
+### Or install the Linux package
+
+On Linux x86_64 with an x86-64-v3 CPU (AVX2, FMA), CI builds one package per release and on
+demand per commit: its own Python, the Host and the plugins `config init`'s reference bundle
+selects, prebuilt, with a SHA-256 beside it. It needs no Python, Node or compiler:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/AlphaAvatar/AlphaAvatar/v<version>/packaging/linux/install.sh
+bash install.sh --version <version>     # or --file <package> for a downloaded CI build
+alphaavatar config init <bundle> --avatar-id <id>
+alphaavatar config check
+```
+
+Program files go to `~/.local/lib/alphaavatar` and the command to `~/.local/bin`
+(`--prefix`, `--bin-dir`); the application home, workspaces and model caches stay where
+`ALPHAAVATAR_HOME` puts them. A new version is unpacked and checked beside the current one,
+which stays in use if anything fails. `packaging/linux/build.sh` builds the same package
+from a checkout.
+
 ## Check the configuration in the foreground
 
 The supplied demo uses `examples/agent_configs/roles/demo.yaml`. Review its enabled
@@ -166,8 +185,8 @@ sudo systemctl restart alphaavatar-demo
 sudo systemctl disable alphaavatar-demo
 ```
 
-The optional `scripts/start_alphaavatar_demo.sh` is a foreground setup helper; it can
-create an environment and synchronize dependencies. It is intentionally not the service
+The optional `examples/scripts/start_alphaavatar_demo.sh` is a foreground setup helper; it
+can create an environment and synchronize dependencies. It is intentionally not the service
 `ExecStart` above. Service restarts must not perform an implicit dependency update.
 
 ## Connect the browser frontend

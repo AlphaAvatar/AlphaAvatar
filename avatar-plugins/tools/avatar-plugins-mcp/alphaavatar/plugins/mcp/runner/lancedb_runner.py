@@ -24,7 +24,6 @@ from alphaavatar.agents.avatar.provider.enums import ProviderKind
 from alphaavatar.agents.avatar.provider.factory import create_embedding_model
 from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
 from alphaavatar.agents.runtime.inference import InferenceRunner
-from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.agents.tools.schemas import ToolError
 from alphaavatar.agents.utils.loop_thread import AsyncLoopThread
 from alphaavatar.agents.utils.vdb import lancedb
@@ -36,6 +35,7 @@ from ..enums import MCPOp, MCPOutputMode
 from ..log import logger
 from ..mcp_server_remote import MCPServerRemote
 from ..mcp_tool import MCPTool
+from ..namespace import NAMESPACE
 from ..schemas import MCP_TOOL_CATEGORIES, MCP_TOP_K_RANGE
 
 COMPACT_RESULT_MAX_CHARS = 2000
@@ -532,7 +532,7 @@ class LanceDBRunner(InferenceRunner):
         if self._closed or self._initialized or self._loop_thread is not None:
             raise RuntimeError("MCP runner can only initialize once")
 
-        options = self.config_for("mcp")
+        options = self.config_for(NAMESPACE)
         config = options.get("vdb_config", {})
         servers = options.get("servers", {})
         if not isinstance(servers, dict) or not servers or len(servers) > 64:
@@ -555,7 +555,7 @@ class LanceDBRunner(InferenceRunner):
         if not vdb_config.get("client_path"):
             vdb_config["client_path"] = str(
                 WorkspacePaths.from_root(self.launch.workspace_root)
-                .data.indexes.namespace(AvatarModule.MCP.value)
+                .data.indexes.namespace(NAMESPACE)
                 .backend("lancedb")
                 .root
             )

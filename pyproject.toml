@@ -42,9 +42,30 @@ test = [
     "tiktoken>=0.9.0",
 ]
 typing = ["mypy>=1.14,<2"]
-build = ["build>=1.2,<2", "hatchling>=1.27,<2", "twine>=7.0,<8"]
+# scikit-build-core, CMake and Ninja build the llama-cpp-python wheel packaging/linux ships.
+build = [
+    "build>=1.2,<2",
+    "cmake>=3.31,<5",
+    "hatchling>=1.27,<2",
+    "ninja>=1.11,<2",
+    "scikit-build-core>=0.11,<1",
+    "twine>=7.0,<8",
+]
 dev = [{ include-group = "lint" }, { include-group = "test" }, { include-group = "typing" }]
 docs = ["pdoc3", "setuptools"]
+# What `config init`'s reference bundle selects, as packaging/linux ships it.
+reference-bundle = [
+    "alpha-avatar-agents[vdb]",
+    "alpha-avatar-host[livekit]",
+    "alpha-avatar-plugins-context",
+    "alpha-avatar-plugins-loop",
+    "alpha-avatar-plugins-memory",
+    "alpha-avatar-plugins-persona",
+    "alpha-avatar-plugins-provider[langchain,openai]",
+    "alpha-avatar-plugins-router",
+    "alpha-avatar-plugins-status",
+    "alpha-avatar-plugins-voice",
+]
 avatar-agent-all = [
     "alpha-avatar-agents[vdb]",
     "alpha-avatar-host[livekit]",

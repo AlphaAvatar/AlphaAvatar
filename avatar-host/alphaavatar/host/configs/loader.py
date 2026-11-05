@@ -19,7 +19,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from enum import Enum
 from pathlib import Path, PurePath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from pydantic import SecretStr
@@ -32,6 +32,9 @@ from alphaavatar.host.workspace import ApplicationPaths
 from .application import ApplicationConfig
 from .bundles import ConfigReferenceError, ConfigSource, compose_profiles
 from .paths import platform_application_root, resolve_application_paths
+
+if TYPE_CHECKING:
+    from alphaavatar.agents.configs import AvatarConfig
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -52,6 +55,31 @@ def _snapshot_scalar(value: Any) -> Any:
     if isinstance(value, set | frozenset):
         return sorted(value)
     raise ValueError("Application configuration contains a non-serializable value")
+
+
+def _check_plugin_packages(avatar: AvatarConfig) -> None:
+    """Every built-in plugin the selections use is installed, checked before any is imported.
+
+    A missing one is named with the setting that selects it, not as a failed import.
+    """
+    from importlib.util import find_spec
+
+    def installed(name: str) -> bool:
+        try:
+            return find_spec(f"alphaavatar.plugins.{name}") is not None
+        except ModuleNotFoundError:  # No plugin package at all: the namespace is missing too.
+            return False
+
+    missing = "".join(
+        f"\n      {location}: alpha-avatar-plugins-{name}"
+        for location, name in avatar.plugin_packages().items()
+        if not installed(name)
+    )
+    if missing:
+        raise ConfigReferenceError(
+            "Selected plugins are not installed; install these packages into AlphaAvatar's "
+            f"Python environment, or change the settings that select them:{missing}"
+        )
 
 
 def _validate(value: Any, *, paths: ApplicationPaths | None = None) -> ApplicationConfig:
@@ -81,7 +109,9 @@ def _validate(value: Any, *, paths: ApplicationPaths | None = None) -> Applicati
 
     # AvatarConfig
     avatar = AvatarConfig.model_validate(avatar_data)
-    # runtime.inference against the selected runners: pure, no process, model or environment.
+    # The selected plugins, then runtime.inference against their runners: pure, no process,
+    # model or environment.
+    _check_plugin_packages(avatar)
     plan_inference_runners(avatar)
 
     # WorkspacePaths

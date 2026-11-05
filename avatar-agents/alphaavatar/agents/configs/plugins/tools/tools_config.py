@@ -71,6 +71,10 @@ class MCPConfig(BaseModel):
         if self.enabled and self.plugin is not None:
             self.servers = resolve_env_placeholders(self.servers)
 
+    def runner_config(self) -> dict[str, Any]:
+        """What the plugin's inference runners read at launch; it holds credentials."""
+        return {"vdb_config": self.vdb_config, "servers": self.servers}
+
 
 class ToolsConfig(BaseModel):
     """Configuration for AlphaAvatar tools."""
@@ -80,10 +84,6 @@ class ToolsConfig(BaseModel):
     deepresearch: ToolPluginConfig = Field(default_factory=ToolPluginConfig)
     rag: ToolPluginConfig = Field(default_factory=ToolPluginConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
-
-    def model_post_init(self, __context: Any) -> None:
-        if self.mcp.enabled and self.mcp.plugin is not None:
-            importlib.import_module("alphaavatar.plugins.mcp")
 
     def get_tools(self, runtime: AvatarRuntime) -> tuple[ToolBase, ...]:
         tools = []

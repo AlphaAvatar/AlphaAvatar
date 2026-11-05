@@ -115,8 +115,8 @@ stopped there), or which of those nothing Doctor ran could show.
 
 The spoken samples are recordings shipped in the Host package (`alphaavatar/host/doctor/
 samples/`, 16 kHz mono PCM16, about 3.7 s and 3.3 s), made offline with FFmpeg's flite voice
-by `scripts/doctor_samples.py make`; `scripts/doctor_samples.py check` reads them back
-through Doctor, and CI does so from the built wheel alone. Doctor needs nothing else: small
+by `scripts/quality/doctor_samples.py make`; `scripts/quality/doctor_samples.py check` reads
+them back through Doctor, and CI does so from the built wheel alone. Doctor needs nothing else: small
 samples only tests use live in their package's `tests/fixtures/`, and large ones (long,
 multi-stream or load runs) in a Hugging Face Dataset that only the tests asking for them
 fetch. The microphone keeps sending silence after

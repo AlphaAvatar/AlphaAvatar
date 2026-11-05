@@ -20,6 +20,8 @@ import io
 import json
 import os
 import shutil
+import subprocess
+import sys
 import threading
 from pathlib import Path
 from unittest import mock
@@ -28,8 +30,9 @@ import pytest
 import yaml
 from config_samples import CONFIG, LAYOUT, LOOP, SECRETS, SECTIONS, files, write
 
-# Imported at collection: configuration plugins adjust process variables while importing (O-2).
-import alphaavatar.agents.configs  # noqa: F401
+# Imported at collection: the persona plugin's OpenCV adjusts process variables (O-2).
+import alphaavatar.plugins.persona  # noqa: F401
+from alphaavatar.agents.runtime.inference import plan_inference_runners
 from alphaavatar.host.cli.app import main
 from alphaavatar.host.configs import (
     application_paths,
@@ -44,6 +47,7 @@ from alphaavatar.host.configs.loader import restore_application
 from alphaavatar.plugins.context.config import ContextConfig
 from alphaavatar.plugins.memory.config import DefaultMemoryConfig
 from alphaavatar.plugins.persona.config import DefaultPersonaConfig
+from alphaavatar.plugins.persona.processors.face.analysis_runner import FaceAnalysisRunner
 from alphaavatar.plugins.router.config import RouterConfig
 
 # The single-file template `config init` wrote before bundles, its YAML anchors included.
@@ -85,6 +89,26 @@ init_config:
 """
 
 
+# The default bundle's runner plan, from an interpreter that has imported no plugin yet, then
+# accepted again with every planned runner's workers overridden.
+PLAN_PROBE = """
+import json, sys
+from alphaavatar.agents.runtime.inference import plan_inference_runners
+from alphaavatar.host.configs import load_application, select_configuration
+imported = sorted(name for name in sys.modules if name.startswith("alphaavatar.plugins"))
+source = select_configuration(None)
+config = load_application(source)
+runners = plan_inference_runners(config.avatar)
+workers = {method: 2 if runner.REPLICABLE else 1 for method, runner in runners.items()}
+methods = {method: {"workers": count} for method, count in workers.items()}
+tuned = load_application(source, [f"runtime.inference.methods={json.dumps(methods)}"])
+print(json.dumps({
+    "imported": imported,
+    "vision": config.avatar.vision.enabled,
+    "planned": list(runners),
+    "workers": {method: tuned.avatar.runtime.inference.workers(method) for method in workers},
+}))
+"""
 HANG_GUARD = 30
 VOICE = f"alpha/{LAYOUT['voice']}"
 
@@ -178,16 +202,44 @@ def test_init_splits_the_minimal_template_into_a_bundle_and_profiles_that_load_u
 
     single = tmp_path / "single.yaml"
     single.write_text(SINGLE_FILE_TEMPLATE)
-    expected = effective(load_application(single))
+    # The reference bundle sees: vision is on, where the single file left it off.
+    expected = effective(load_application(single, ["vision.enabled=true"]))
     for target in (None, "my-avatar", str(bundle)):
         loaded = load_application(select_configuration(target))
         assert effective(loaded) == expected
     assert main(["config", "check", "--json"]) == 0
     plugins = json.loads(capsys.readouterr().out)["plugins"]
     assert plugins["voice"] == {"vad": "silero", "stt": "openai_segment", "tts": "openai"}
+    assert plugins["vision"] == {"enabled": True, "input": "vlm"}
     assert (plugins["memory"]["vdb"], plugins["persona"]["vdb"]) == ("lancedb", "lancedb")
     assert plugins["tools"] == {"deepresearch": None, "rag": None, "mcp": None}
     assert sandbox == []
+
+
+def test_the_reference_bundle_sees_and_plans_its_runners_in_a_fresh_interpreter(
+    home: Path, credentials: object, capsys: pytest.CaptureFixture
+) -> None:
+    assert create("reference", "reference") == 0
+    probe = subprocess.run(
+        [sys.executable, "-c", PLAN_PROBE],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=os.environ,
+    )
+    assert probe.returncode == 0, probe.stderr
+    found = json.loads(probe.stdout.splitlines()[-1])
+    # Nothing registered on import: planning imported the selected plugins itself and found
+    # the runners this process, with every plugin imported, plans for the same bundle.
+    assert found["imported"] == []
+    expected = plan_inference_runners(load_application(select_configuration(None)).avatar)
+    assert found["planned"] == list(expected)
+    assert found["vision"] and FaceAnalysisRunner.INFERENCE_METHOD in found["planned"]
+    # Worker overrides name selected runners only; replicable ones take several.
+    assert found["workers"] == {
+        method: 2 if runner.REPLICABLE else 1 for method, runner in expected.items()
+    }
+    assert any(count == 2 for count in found["workers"].values())
 
 
 def test_selection_follows_the_argument_spelling_from_any_directory(

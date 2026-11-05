@@ -25,8 +25,8 @@ import doctor_doubles as doubles
 import pytest
 from config_samples import LOOP, write
 
-# Imported at collection: configuration plugins adjust process variables while importing (O-2).
-import alphaavatar.agents.configs  # noqa: F401
+# Imported at collection: the persona plugin's OpenCV adjusts process variables (O-2).
+import alphaavatar.plugins.persona  # noqa: F401
 from alphaavatar.agents.runtime.inference import bootstrap, plan_inference_runners
 from alphaavatar.core.log.trace import InputTrace
 from alphaavatar.host.configs import load_application

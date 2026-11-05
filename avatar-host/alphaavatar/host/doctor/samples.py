@@ -14,7 +14,7 @@
 """Doctor's fixed samples: what the diagnostic session says, shows and expects back.
 
 The questions are recordings shipped as 16 kHz mono PCM16 WAV (``samples/``, generated
-offline by ``scripts/make_doctor_samples.sh``); the picture is drawn here. Each question asks
+offline by ``scripts/quality/doctor_samples.py``); the picture is drawn here. Each question asks
 for a one-word answer, so a reply is judged whole: it must equal one of the task's answers
 once case, surrounding space and punctuation are set aside. A longer, negated or hedged reply,
 or another number that merely contains the right digit, does not pass. The answer to the

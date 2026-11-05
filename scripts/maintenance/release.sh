@@ -139,7 +139,7 @@ require_cmd python3
 require_cmd uv
 
 VERSION="${1:-}"
-[[ -n "$VERSION" ]] || die "Usage: ./scripts/release.sh <version> (e.g., 0.1.0)"
+[[ -n "$VERSION" ]] || die "Usage: ./scripts/maintenance/release.sh <version> (e.g., 0.1.0)"
 
 echo "Release config -> VERSION=$VERSION REPO=$REPO DRY=$DRY SKIP_GIT=$SKIP_GIT"
 

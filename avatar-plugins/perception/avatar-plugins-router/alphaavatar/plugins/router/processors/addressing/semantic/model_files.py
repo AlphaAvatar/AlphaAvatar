@@ -15,6 +15,8 @@ from dataclasses import dataclass
 
 from alphaavatar.agents.utils.files.model import resolve_hf_file
 
+from ....namespace import NAMESPACE
+
 
 @dataclass(frozen=True, slots=True)
 class SemanticAddressingModelConfig:
@@ -50,7 +52,7 @@ SEMANTIC_ADDRESSING_CONFIG = SemanticAddressingModelConfig(
 
 def resolve_semantic_addressing_files(*, models_dir: str) -> tuple[str, str]:
     config = SEMANTIC_ADDRESSING_CONFIG
-    namespace = ("router", "addressing", "semantic")
+    namespace = (NAMESPACE, "addressing", "semantic")
     model = resolve_hf_file(
         models_dir=models_dir,
         namespace=namespace,

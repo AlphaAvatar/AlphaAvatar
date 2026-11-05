@@ -21,9 +21,10 @@ from alphaavatar.agents.avatar.provider.factory import create_embedding_model
 from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
 from alphaavatar.agents.memory.enums import VectorRunnerOP
 from alphaavatar.agents.runtime.inference import InferenceRunner
-from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.agents.utils.vdb import lancedb
 from alphaavatar.agents.workspace import WorkspacePaths
+
+from ...namespace import NAMESPACE
 
 logger = logging.getLogger(__name__)
 
@@ -512,7 +513,7 @@ class LanceDBRunner(InferenceRunner):
         )
 
     def initialize(self) -> None:
-        config = self.config_for("memory")
+        config = self.config_for(NAMESPACE)
         self._collection_name = config.get("collection_name")
         if not self._collection_name:
             raise ValueError("collection_name is required in memory.vdb_config")
@@ -521,7 +522,7 @@ class LanceDBRunner(InferenceRunner):
         if not vdb_config.get("client_path"):
             vdb_config["client_path"] = str(
                 WorkspacePaths.from_root(self.launch.workspace_root)
-                .data.indexes.namespace(AvatarModule.MEMORY.value)
+                .data.indexes.namespace(NAMESPACE)
                 .backend("lancedb")
                 .root
             )

@@ -11,6 +11,5 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .url_to_pdf import save_single_url_content_to_pdf
-
-__all__ = ["save_single_url_content_to_pdf"]
+"""File helpers, imported by module: ``url_to_pdf`` loads WeasyPrint and its system Pango
+libraries, which atomic writes and model files never need."""

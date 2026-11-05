@@ -37,6 +37,7 @@ from alphaavatar.agents.utils.time import application_now
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.turn.schemas import TurnSnapshot
 
+from ..namespace import NAMESPACE
 from ..schemas import norm_token, norm_topic
 from ..storage.graph import build_graph_from_mentions
 from ..template import MemoryPluginsTemplate
@@ -156,7 +157,7 @@ class MemoryProcessor(MemoryProcessorBase):
         context = state.context
         metadata = {
             "provider_dir": str(state.provider_dir),
-            "plugin": "memory",
+            "plugin": NAMESPACE,
             "component": component,
             "operation": operation,
             "episode_id": context.episode_id,

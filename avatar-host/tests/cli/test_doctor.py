@@ -31,9 +31,10 @@ from unittest import mock
 import pytest
 from config_samples import CONFIG, LOOP, SECRETS, files, write
 
-# Imported at collection: configuration plugins adjust process variables while importing (O-2).
-import alphaavatar.agents.configs  # noqa: F401
 import alphaavatar.host.doctor as host_doctor
+
+# Imported at collection: the persona plugin's OpenCV adjusts process variables (O-2).
+import alphaavatar.plugins.persona  # noqa: F401
 from alphaavatar.host.cli.app import main
 from alphaavatar.host.cli.commands.doctor import GROUPS
 from alphaavatar.host.doctor import CHECKS, Check, CheckStatus, Report

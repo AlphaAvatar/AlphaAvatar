@@ -21,10 +21,10 @@ from alphaavatar.agents.avatar.provider.factory import create_embedding_model
 from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
 from alphaavatar.agents.persona.enums import VectorRunnerOP
 from alphaavatar.agents.runtime.inference import InferenceRunner
-from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.agents.utils.vdb import lancedb
 from alphaavatar.agents.workspace import WorkspacePaths
 
+from ...namespace import NAMESPACE
 from ...processors.face.analysis_runner import FaceAnalysisRunner
 from ...processors.face.model_files import FACE_MODEL_CONFIG
 from ...processors.speaker.model_files import SPEAKER_MODEL_CONFIG
@@ -354,7 +354,7 @@ class LanceDBRunner(InferenceRunner):
 
     def initialize(self) -> None:
         # get config
-        config = self.config_for("persona")
+        config = self.config_for(NAMESPACE)
 
         self._profiler_collection_name = config.get("profiler_collection_name")
         self._speaker_collection_name = config.get("speaker_collection_name")
@@ -372,7 +372,7 @@ class LanceDBRunner(InferenceRunner):
         if not vdb_config.get("client_path"):
             vdb_config["client_path"] = str(
                 WorkspacePaths.from_root(self.launch.workspace_root)
-                .data.indexes.namespace(AvatarModule.PERSONA.value)
+                .data.indexes.namespace(NAMESPACE)
                 .backend("lancedb")
                 .root
             )

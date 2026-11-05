@@ -34,6 +34,7 @@ from alphaavatar.agents.persona.enums import VectorRunnerOP
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import qdrant
 
+from ...namespace import NAMESPACE
 from ...processors.face.analysis_runner import FaceAnalysisRunner
 from ...processors.face.model_files import FACE_MODEL_CONFIG
 from ...processors.speaker.model_files import SPEAKER_MODEL_CONFIG
@@ -322,7 +323,7 @@ class QdrantRunner(InferenceRunner):
         from langchain_qdrant import QdrantVectorStore
 
         # get config
-        config = self.config_for("persona")
+        config = self.config_for(NAMESPACE)
 
         self._profiler_collection_name = config.get("profiler_collection_name", None)
         self._speaker_collection_name = config.get("speaker_collection_name", None)

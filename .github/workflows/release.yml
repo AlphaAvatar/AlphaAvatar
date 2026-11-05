@@ -19,6 +19,15 @@ jobs:
     permissions:
       contents: read
 
+  linux_package:
+    name: Linux package
+    needs: checks
+    uses: ./.github/workflows/linux-package.yml
+    with:
+      release: ${{ github.ref_name }}
+    permissions:
+      contents: read
+
   notes:
     name: Generate Release Notes
     needs: checks
@@ -90,7 +99,7 @@ jobs:
 
   github_release:
     name: Create GitHub Release
-    needs: notes
+    needs: [notes, linux_package]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -101,6 +110,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: github-release-notes
+
+      - name: Retrieve the Linux package
+        uses: actions/download-artifact@v4
+        with:
+          name: alphaavatar-linux-x86_64-${{ github.sha }}
+          path: package
 
       - name: Create release if absent
         shell: bash
@@ -119,3 +134,21 @@ jobs:
             --verify-tag \
             --title "AlphaAvatar $TAG" \
             --notes-file body.md
+
+      - name: Attach the Linux package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="$GITHUB_REF_NAME"
+          attached="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[].name')"
+          for asset in package/*; do
+            # A published package keeps its bytes: its SHA-256 may already be in use.
+            if grep -Fxq "${asset##*/}" <<< "$attached"; then
+              echo "${asset##*/} is already attached; keeping it."
+            else
+              gh release upload "$TAG" "$asset" --repo "$GITHUB_REPOSITORY"
+            fi
+          done

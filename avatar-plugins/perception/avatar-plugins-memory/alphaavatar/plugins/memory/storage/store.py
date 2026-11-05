@@ -38,9 +38,9 @@ from alphaavatar.agents.memory.schemas import (
     MemorySearchHit,
 )
 from alphaavatar.agents.runtime import AvatarRuntime
-from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.core.session import Participant
 
+from ..namespace import NAMESPACE
 from .export import MemoryExportSink
 from .index_serialization import serialize_memory_items
 from .outbox import MemoryOutboxWorker
@@ -58,7 +58,7 @@ class MemoryStore:
         inference_method: str | None = None,
     ) -> None:
         memory_paths = runtime.workspace.data.memory
-        graph_paths = runtime.workspace.graph.namespace(AvatarModule.MEMORY.value)
+        graph_paths = runtime.workspace.graph.namespace(NAMESPACE)
 
         self._runtime = runtime
         self._vdb_inference_method = inference_method

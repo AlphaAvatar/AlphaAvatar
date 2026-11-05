@@ -32,8 +32,9 @@ jobs:
         run: uv sync --locked --only-group lint --no-install-workspace
       - name: Check workspace and hooks
         run: |
-          uv run --no-sync python scripts/check_workspace.py
+          uv run --no-sync python scripts/quality/check_workspace.py
           uv run --no-sync pre-commit validate-config
+          bash -n packaging/linux/build.sh packaging/linux/install.sh
       - name: Ruff lint
         if: ${{ !cancelled() && steps.quality_tools.outcome == 'success' }}
         run: uv run --no-sync ruff check .
@@ -81,7 +82,7 @@ jobs:
             --output-file "$constraints" > /dev/null
           uv pip install --python "$python" --constraint "$constraints" numpy
           uv pip install --python "$python" --no-deps dist/alpha_avatar_host-*.whl
-          "$python" -I scripts/doctor_samples.py check --installed
+          "$python" -I scripts/quality/doctor_samples.py check --installed
 
   install:
     runs-on: ubuntu-latest

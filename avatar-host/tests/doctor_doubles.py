@@ -452,7 +452,10 @@ def child(*args: object) -> None:
 def install(spec: dict, files: Path) -> None:
     """The stand-ins, plugged in where the configuration names its plugins and runners."""
     # Built-in plugins register first, so the stand-ins take over their names.
-    import alphaavatar.agents.configs  # noqa: F401
+    import alphaavatar.plugins.memory  # noqa: F401
+    import alphaavatar.plugins.persona  # noqa: F401
+    import alphaavatar.plugins.router  # noqa: F401
+    import alphaavatar.plugins.voice  # noqa: F401
     from alphaavatar.agents.avatar.provider import factory
     from alphaavatar.agents.runtime.inference import bootstrap
     from alphaavatar.agents.runtime.plugin import AvatarModule

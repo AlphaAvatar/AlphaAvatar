@@ -24,10 +24,11 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+import alphaavatar.plugins.mcp  # noqa: F401
+
 # Imported at collection: plugin and third-party imports adjust process variables (O-2).
 # Loading a configuration afterwards must leave the environment unchanged.
-import alphaavatar.agents.configs  # noqa: F401
-import alphaavatar.plugins.mcp  # noqa: F401
+import alphaavatar.plugins.persona  # noqa: F401
 from alphaavatar.agents.runtime.inference import snapshot_inference_config
 from alphaavatar.agents.utils.vdb.config import vdb_backend
 from alphaavatar.host.configs import paths as application_paths

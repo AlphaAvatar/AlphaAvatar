@@ -560,25 +560,17 @@ def _capabilities(config: ApplicationConfig, source: ConfigSource) -> Check:
     backends, unverified = _provider_backends(config)
     for backend in sorted(backends):
         plugin("providers", "alphaavatar.provider", backend)
-    voice = avatar.voice
-    if any(part.plugin is not None for part in (voice.vad, voice.stt, voice.tts)):
-        needs["voice"] = ["alpha-avatar-plugins-voice"]
-    needs["router"] = ["alpha-avatar-plugins-router"]
-    if avatar.status.enabled:
-        needs["status"] = ["alpha-avatar-plugins-status"]
-    if avatar.character.plugin is not None:
-        needs["character"] = ["alpha-avatar-plugins-character"]
-    tools = avatar.tools
-    stores = {"memory": avatar.memory.plugin, "persona": avatar.persona.plugin}
-    if tools.mcp.enabled and tools.mcp.plugin is not None:
-        stores["mcp"] = tools.mcp.plugin
-    for capability, name in stores.items():
-        needs[capability] = [f"alpha-avatar-plugins-{capability}"]
-        if name == "default":  # The default plugins keep vectors in a local or remote store.
-            needs[capability].append("alpha-avatar-agents[vdb]")
-    for name in ("deepresearch", "rag"):
-        if getattr(tools, name).plugin is not None:
+    # The built-in plugins loading found installed, now with their own requirements.
+    stores = {
+        "memory": avatar.memory.plugin,
+        "persona": avatar.persona.plugin,
+        "mcp": avatar.tools.mcp.plugin,
+    }
+    for name in avatar.plugin_packages().values():
+        if name not in needs:
             needs[name] = [f"alpha-avatar-plugins-{name}"]
+            if stores.get(name) == "default":  # Vectors stay in a local or remote store.
+                needs[name].append("alpha-avatar-agents[vdb]")
 
     seen: set[tuple[str, str]] = set()
     _unmet(Requirement(HOST), seen)  # Reported by packages.alphaavatar, not again here.

@@ -20,7 +20,7 @@ TYPE ?= prod
 
 PYTHON ?= python3
 
-RELEASE_SCRIPT := scripts/release.sh
+RELEASE_SCRIPT := scripts/maintenance/release.sh
 
 TAG := v$(VERSION)
 RELEASE_NOTES := docs/releases/$(TAG).md

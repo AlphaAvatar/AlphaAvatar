@@ -50,6 +50,20 @@ print(json.dumps(sorted(
 """
 
 
+# The CLI where the named modules are not installed: plugin packages left out of an install,
+# or WeasyPrint, which fails to import without the system's Pango.
+UNINSTALLED = """
+import importlib.abc, json, sys
+class Uninstalled(importlib.abc.MetaPathFinder):
+    def find_spec(self, name, path=None, target=None):
+        if name == "weasyprint" or name.startswith(tuple(sys.argv[2:])):
+            raise ModuleNotFoundError(f"No module named {name!r}", name=name)
+sys.meta_path.insert(0, Uninstalled())
+from alphaavatar.host.cli.app import main
+sys.exit(main(json.loads(sys.argv[1])))
+"""
+
+
 def files_under(root: Path) -> list[Path]:
     return sorted(path.relative_to(root) for path in root.rglob("*"))
 
@@ -103,6 +117,54 @@ def test_rejected_configuration_secret_never_reaches_cli_output(tmp_path: Path) 
     assert "fields: tools.mcp.token" in output
     assert secret not in output
     assert not (tmp_path / "application").exists()
+
+
+def test_init_needs_no_plugin_and_check_names_each_missing_one_where_it_is_selected() -> None:
+    def run(argv: list[str], *uninstalled: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-c", UNINSTALLED, json.dumps(argv), *uninstalled],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=os.environ,
+        )
+
+    def missing(completed: subprocess.CompletedProcess[str]) -> list[str]:
+        assert completed.returncode == 2, completed.stderr
+        assert "Selected plugins are not installed" in completed.stderr
+        return [line.strip() for line in completed.stderr.splitlines() if ": alpha-avatar-" in line]
+
+    # Writing the reference bundle imports no plugin, and not WeasyPrint either.
+    created = run(["config", "init", "lean", "--avatar-id", "lean"], "alphaavatar.plugins.")
+    assert created.returncode == 0, created.stderr
+    # Checking it names every selection of a missing plugin, before importing any of them.
+    assert missing(run(["config", "check"], "alphaavatar.plugins.")) == [
+        "context.plugin: alpha-avatar-plugins-context",
+        "loop.plugin: alpha-avatar-plugins-loop",
+        "voice.vad.plugin: alpha-avatar-plugins-voice",
+        "voice.stt.plugin: alpha-avatar-plugins-voice",
+        "voice.tts.plugin: alpha-avatar-plugins-voice",
+        "status.plugin: alpha-avatar-plugins-status",
+        "memory.plugin: alpha-avatar-plugins-memory",
+        "persona.plugin: alpha-avatar-plugins-persona",
+        "router.plugin: alpha-avatar-plugins-router",
+    ]
+    # One package left out: only what selects it is named; switched off, it is not needed.
+    router = "alphaavatar.plugins.router"
+    assert missing(run(["config", "check"], router)) == [
+        "router.plugin: alpha-avatar-plugins-router"
+    ]
+    checked = run(["config", "check", "character.plugin=airi"], "alphaavatar.plugins.character")
+    assert missing(checked) == ["character.plugin: alpha-avatar-plugins-character"]
+    # Sections always built need their package whichever plugin they name, status even while
+    # its events are off.
+    checked = run(["config", "check", "status.enabled=false"], "alphaavatar.plugins.status")
+    assert missing(checked) == ["status.plugin: alpha-avatar-plugins-status"]
+    checked = run(["config", "check", "persona.plugin=custom"], "alphaavatar.plugins.persona")
+    assert missing(checked) == ["persona.plugin: alpha-avatar-plugins-persona"]
+    voiceless = [f"voice.{part}.plugin=null" for part in ("vad", "stt", "tts")]
+    checked = run(["config", "check", *voiceless], "alphaavatar.plugins.voice")
+    assert checked.returncode == 0, checked.stderr
 
 
 def test_console_commands_run_without_the_host_log_socket(tmp_path: Path) -> None:
