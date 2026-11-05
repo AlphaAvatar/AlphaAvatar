@@ -33,7 +33,6 @@ from alphaavatar.agents.avatar.provider.schemas import (
     ModelInputMessage,
     ModelRequest,
     ModelTextPart,
-    ProviderTaskConfig,
 )
 from alphaavatar.agents.avatar.provider.schemas.stream import (
     ModelItemCompleted,
@@ -41,6 +40,7 @@ from alphaavatar.agents.avatar.provider.schemas.stream import (
     ModelTextDelta,
 )
 from alphaavatar.agents.configs import AvatarConfig
+from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
 from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
 from alphaavatar.agents.runtime.capability import avatar_capability
 from alphaavatar.agents.runtime.capability.enums import AvatarCapabilityName

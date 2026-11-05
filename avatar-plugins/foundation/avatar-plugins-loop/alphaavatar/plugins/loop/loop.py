@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 from alphaavatar.agents.avatar.loop import Loop, LoopHandle
 from alphaavatar.agents.avatar.loop.base import ToolAuthorizer
 from alphaavatar.agents.avatar.loop.schemas import LoopRequest
-from alphaavatar.agents.avatar.provider.schemas import ProvidersConfig
+from alphaavatar.agents.configs.plugins.foundation.provider_config import ProvidersConfig
 from alphaavatar.core.cleanup import wait_for_cleanup
 
 from .config import RealtimeLoopConfig

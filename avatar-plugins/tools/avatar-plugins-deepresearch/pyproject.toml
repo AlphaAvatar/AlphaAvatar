@@ -27,6 +27,9 @@ dependencies = [
     "weasyprint",
 ]
 
+[project.entry-points."alphaavatar.tools.deepresearch"]
+default = "alphaavatar.plugins.deepresearch:DeepResearchToolPlugin"
+
 [project.urls]
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"
 Issues = "https://github.com/AlphaAvatar/AlphaAvatar/issues"

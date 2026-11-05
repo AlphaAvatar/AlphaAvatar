@@ -74,19 +74,28 @@ alphaavatar config check
 `default` is `config init`'s reference bundle: voice, vision, memory and persona, with turn
 taking, addressing, face and speaker models on this machine (about 515 MB to download; the
 semantic addressing model needs an x86-64-v3 CPU). `remote` runs no model on the machine but
-the voice activity detection speech input needs (about 210 MB). With a preset, setup reads
-credentials from the environment; it stores the ones it was given in the application home's
-`settings/credentials.env`, readable only by you, and `start`, `config check` and `doctor`
-read them where the environment does not set them. Model weights are not part of the plan:
-runners fetch them into the model cache. `--plan` prints the plan and changes nothing; a CI
-build's own wheels sit beside its package, so pass `--artifacts <directory>` for one.
+the voice activity detection speech input needs (about 210 MB). Choosing each part, models
+and speech can also come from servers of your own with OpenAI's API (Responses for the
+conversation model). With a preset, setup reads credentials from the environment and stores
+none; asked for, they are stored in the application home's `settings/credentials.env`,
+readable only by you, only if you say so, and a value stored there already, which other
+bundles may read, is replaced only on a second yes. `start`, `config check` and `doctor` read
+stored values where the environment does not set them. Model weights are not part of the
+plan: runners fetch them into the model cache. `--plan` prints the plan and changes nothing; a
+CI build's own wheels sit beside its package, so pass `--artifacts <directory>` for one.
+
+A configuration names each plugin by capability type and implementation, and the installed
+packages' entry points provide them; `config check` and `doctor` name a missing one at the
+setting that selects it, and say whether this release's setup installs it.
 
 Program files go to `~/.local/lib/alphaavatar` and the command to `~/.local/bin`
 (`--prefix`, `--bin-dir`); the application home, workspaces and model caches stay where
 `ALPHAAVATAR_HOME` puts them. A new base version, or setup's environment, is installed and
 checked beside the current one, and the configuration is enabled only after the switch; if
-anything fails, the current version, command, configuration and data stay as they were. A
-second setup keeps what the current environment holds, so earlier bundles keep working.
+anything fails, the current version, command, configuration and data stay as they were;
+nothing is removed that the installer cannot tell it made. A second setup keeps what the
+current environment holds, so earlier bundles keep working, even one that finished while
+this setup waited for confirmation.
 `packaging/linux/build.sh` builds the same files from a checkout.
 
 ## Check the configuration in the foreground

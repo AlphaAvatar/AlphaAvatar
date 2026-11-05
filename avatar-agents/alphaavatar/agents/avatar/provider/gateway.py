@@ -21,12 +21,13 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
+from alphaavatar.agents.configs.plugins.foundation.provider_config import ProvidersConfig
 from alphaavatar.agents.utils import sha256_text
 
 from .base import LLMBase, StreamingLLMBase
 from .errors import ModelCapabilityError
 from .registry import ProviderRegistry
-from .schemas import ModelRequest, ProviderResult, ProvidersConfig, ProviderTraceRecord
+from .schemas import ModelRequest, ProviderResult, ProviderTraceRecord
 from .schemas.prompt import ModelPrompt
 from .schemas.stream import ModelStreamEvent
 from .trace import ProviderTracer, safe_json_dumps, to_jsonable

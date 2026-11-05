@@ -15,19 +15,25 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from alphaavatar.agents.runtime.inference import register_inference_runner_bootstrap
-from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
+from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
 
 from .version import __version__
 
 if TYPE_CHECKING:
+    from alphaavatar.agents.configs import AvatarConfig
     from alphaavatar.agents.runtime import AvatarRuntime
+    from alphaavatar.agents.runtime.inference import InferenceRunner
     from alphaavatar.agents.tools import ToolBase
 
 
 class MCPRemotePlugin(AvatarModulePlugin):
     def __init__(self) -> None:
         super().__init__("MCP", __version__, __name__)
+
+    def inference_runners(self, config: AvatarConfig) -> tuple[type[InferenceRunner], ...]:
+        from .inference import configure_inference_runners
+
+        return configure_inference_runners(config)
 
     def get_plugin(
         self,
@@ -48,13 +54,3 @@ class MCPRemotePlugin(AvatarModulePlugin):
             servers=servers,
             inference_method=get_vdb_runner(vdb_config).INFERENCE_METHOD,
         )
-
-
-def _configure_runners(config: Any):
-    from .inference import configure_inference_runners
-
-    return configure_inference_runners(config)
-
-
-AvatarModulePlugin.register(AvatarModule.MCP, "default", MCPRemotePlugin())
-register_inference_runner_bootstrap("alphaavatar.plugins.mcp", _configure_runners)

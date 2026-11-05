@@ -31,8 +31,8 @@ from alphaavatar.agents.avatar.provider.schemas import (
     ModelInputMessage,
     ModelTemporalPart,
     ModelTextPart,
-    ProviderTaskConfig,
 )
+from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import ObservationKind
 from alphaavatar.core.env.schemas import PerceptionSourceRef

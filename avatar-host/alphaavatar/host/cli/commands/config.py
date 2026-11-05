@@ -216,6 +216,24 @@ def init(name: str, *, avatar_id: str) -> int:
     print("Set these in the environment or .env (never in the files):")
     print("\n".join(f"  {key:<50} {use}" for key, use in REQUIRED_ENVIRONMENT))
     print("Next:")
+    if _bare_package():
+        print("  alphaavatar setup                 # installs capabilities; it creates a new")
+        print(
+            f"                                    # bundle with them, and {name} stays as written"
+        )
+        print(f"  alphaavatar config check {name}    # names what {name} needs installed\n")
+        return 0
     print(f"  alphaavatar dev {name}             # start; validates the configuration first")
     print(f"  alphaavatar config check {name}    # optional: validate without starting\n")
     return 0
+
+
+def _bare_package() -> bool:
+    """An installed base package with no setup environment: plugins are yet to be installed."""
+    from alphaavatar.host.setup.environment import Installation, SetupError
+
+    try:
+        Installation.running()
+    except SetupError:
+        return False
+    return sys.prefix == sys.base_prefix

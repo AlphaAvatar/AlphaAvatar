@@ -13,7 +13,6 @@
 # limitations under the License.
 from __future__ import annotations
 
-import importlib
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -42,8 +41,6 @@ class VirtualCharacterConfig(BaseModel):
 
         from alphaavatar.agents.character import VirtualCharacterSession
         from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
-
-        importlib.import_module("alphaavatar.plugins.character")
 
         session = AvatarModulePlugin.create(
             AvatarModule.CHARACTER,

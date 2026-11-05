@@ -36,9 +36,9 @@ from alphaavatar.agents.avatar.provider.schemas import (
     ModelRefusalPart,
     ModelRequest,
     ProviderModelResult,
-    ProviderTaskConfig,
 )
 from alphaavatar.agents.avatar.provider.schemas.stream import ModelStreamEvent
+from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
 from alphaavatar.core.cleanup import wait_for_cleanup
 
 from ..adapters.responses import ResponsesAdapter, continuation_scope

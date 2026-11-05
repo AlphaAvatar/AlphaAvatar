@@ -24,15 +24,14 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 from alphaavatar.agents.avatar.provider.base import LLMBase, StreamingLLMBase
 from alphaavatar.agents.avatar.provider.errors import ModelCapabilityError
 from alphaavatar.agents.avatar.provider.factory import create_llm_model
-from alphaavatar.agents.avatar.provider.schemas import (
-    ModelRequest,
+from alphaavatar.agents.avatar.provider.schemas import ModelRequest, ProviderTraceRecord
+from alphaavatar.agents.avatar.provider.schemas.stream import ModelResponseCompleted
+from alphaavatar.agents.avatar.provider.trace import ProviderTracer
+from alphaavatar.agents.configs.plugins.foundation.provider_config import (
     ProvidersConfig,
     ProviderTaskConfig,
     ProviderTraceConfig,
-    ProviderTraceRecord,
 )
-from alphaavatar.agents.avatar.provider.schemas.stream import ModelResponseCompleted
-from alphaavatar.agents.avatar.provider.trace import ProviderTracer
 from alphaavatar.core.cleanup import wait_for_cleanup
 
 from .stream import ProviderStream

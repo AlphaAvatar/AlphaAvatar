@@ -18,11 +18,11 @@ from typing import Any
 
 from alphaavatar.agents.avatar.provider.enums import ProviderKind
 from alphaavatar.agents.avatar.provider.factory import create_embedding_model
-from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
+from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
 from alphaavatar.agents.memory.enums import VectorRunnerOP
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import lancedb
-from alphaavatar.agents.utils.vdb.config import vdb_requirement
+from alphaavatar.agents.utils.vdb.config import vdb_embeddings, vdb_requirement
 from alphaavatar.agents.workspace import WorkspacePaths
 
 from ...namespace import NAMESPACE
@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 class LanceDBRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.memory.vdb.lancedb"
     REQUIRES = (vdb_requirement("lancedb"),)
+    PROVIDERS = vdb_embeddings()
 
     _REQUIRED_COLUMNS = {
         "id",

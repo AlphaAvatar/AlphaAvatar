@@ -31,7 +31,7 @@ import yaml
 from config_samples import CONFIG, LAYOUT, LOOP, SECRETS, SECTIONS, files, write
 
 # Imported at collection: the persona plugin's OpenCV adjusts process variables (O-2).
-import alphaavatar.plugins.persona  # noqa: F401
+import alphaavatar.plugins.persona.factory  # noqa: F401
 from alphaavatar.agents.runtime.inference import plan_inference_runners
 from alphaavatar.host.cli.app import main
 from alphaavatar.host.configs import (

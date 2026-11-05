@@ -20,11 +20,15 @@
     <prefix>/current                versions/<base id> or envs/<plan id>: what the alphaavatar
                                     command runs
 
-One installation into a prefix at a time, under the lock install.sh takes. Every artifact is
-downloaded and checked against the plan before the environment exists; the environment is
-checked, the command it holds included, before current switches to it, and the configuration
-is enabled last. Until then a failure or signal leaves current, the command, configurations,
-credentials and Avatar data as they were, and removes only what this run created.
+One installation into a prefix at a time, under the lock install.sh takes; under it the base
+current runs and the requirements of its environment are read again, so a plan made before
+another setup finished still keeps what that one installed. Every artifact is copied or
+downloaded into this run's own stage and checked there, so what is checked is what installs.
+The environment is checked, the command it holds included, before current switches to it;
+the switch and enabling the configuration are one step to signals, which wait until current,
+the default bundle and its credentials agree. Until then a failure or signal leaves current,
+the command, configurations, credentials and Avatar data as they were. Only what carries
+setup's mark and nothing references is ever removed.
 """
 
 from __future__ import annotations
@@ -34,6 +38,7 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -56,6 +61,8 @@ exec "$(dirname -- "$(realpath -- "$0")")/python" -I -c \\
   'import sys; from alphaavatar.host.main import main; sys.exit(main())' "$@"
 """
 PLAN_FILE = Path("share", "alphaavatar", "plan.json")  # Written last: the environment is whole.
+OWNER = ".alphaavatar-setup"  # In each directory setup makes: only those are ever removed.
+SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
 
 
 class SetupError(RuntimeError):
@@ -98,20 +105,39 @@ class Installation:
 
     def installed_requirements(self) -> tuple[str, ...]:
         """What the current setup environment over this base was planned for, if one is current."""
+        plan = self._current_plan()
+        return (
+            tuple(plan.get("requirements", ())) if plan.get("base") == self.manifest["id"] else ()
+        )
+
+    def current_base(self) -> str | None:
+        """The base package current runs: a version, or the one its environment is over."""
         current = self.current()
-        try:
-            plan = json.loads((current / PLAN_FILE).read_text("utf-8")) if current else {}
-        except (OSError, ValueError):
-            return ()
-        if plan.get("base") != self.manifest["id"]:
-            return ()
-        return tuple(plan.get("requirements", ()))
+        if current is None or current.parent.name == "versions":
+            return current.name if current is not None else None
+        return self._current_plan().get("base")
 
     def current(self) -> Path | None:
-        try:
-            return (self.prefix / os.readlink(self.prefix / "current")).resolve()
-        except OSError:
+        """Where current points, a version or an environment of this prefix; None if absent."""
+        link = self.prefix / "current"
+        if not link.is_symlink():
+            if link.exists():
+                raise SetupError(f"{link} is not a link setup or install.sh made; left as it is")
             return None
+        target = (self.prefix / os.readlink(link)).resolve()
+        if target.parent not in (
+            (self.prefix / "versions").resolve(),
+            (self.prefix / "envs").resolve(),
+        ):
+            raise SetupError(f"{link} points outside this installation's versions and envs")
+        return target
+
+    def _current_plan(self) -> dict[str, Any]:
+        current = self.current()
+        try:
+            return json.loads((current / PLAN_FILE).read_text("utf-8")) if current else {}
+        except (OSError, ValueError):
+            return {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,16 +194,24 @@ def _verified(path: Path, artifact: Artifact) -> bool:
     return digest.hexdigest() == artifact.sha256
 
 
-def fetch(artifact: Artifact, sources: Sources, stage: Path) -> tuple[Path, bool]:
-    """The artifact's verified file, and whether it is this run's own download."""
+def fetch(artifact: Artifact, sources: Sources, stage: Path) -> Path:
+    """The artifact, copied or downloaded into this run's stage and verified there."""
     problems = []
+    target, partial = stage / artifact.file, stage / f"{artifact.file}.part"
     for source in sources.candidates(artifact):
         if isinstance(source, Path):
-            if _verified(source, artifact):
-                return source, False
-            problems.append(f"{source}: absent or not the planned file")
+            # A copy of its own: the file checked is the file installed, whatever the source does.
+            try:
+                shutil.copyfile(source, partial)
+            except OSError as error:
+                problems.append(f"{source}: {error.strerror or type(error).__name__}")
+                continue
+            if _verified(partial, artifact):
+                os.replace(partial, target)
+                return target
+            partial.unlink()
+            problems.append(f"{source}: not the planned file (size or SHA-256 differ)")
             continue
-        target, partial = stage / artifact.file, stage / f"{artifact.file}.part"
         received = False
         for attempt in range(3):
             if attempt:
@@ -201,7 +235,7 @@ def fetch(artifact: Artifact, sources: Sources, stage: Path) -> tuple[Path, bool
                 problems.append(f"{source}: {type(error).__name__}")
         if received and _verified(partial, artifact):
             os.replace(partial, target)
-            return target, True
+            return target
         partial.unlink(missing_ok=True)
         if received:
             problems.append(f"{source}: not the planned file (size or SHA-256 differ)")
@@ -226,10 +260,9 @@ def _switch(prefix: Path, target: Path, stage: Path) -> None:
     os.replace(link, prefix / "current")
 
 
-def _create(
-    installation: Installation, environment: Path, wheels: list[Path], done: Callable[[Path], None]
-) -> None:
-    """The virtual environment over the base Python, each wheel in it, and its command."""
+def _create(installation: Installation, environment: Path, wheels: list[Path]) -> None:
+    """The virtual environment over the base Python, each wheel in it, and its command; the
+    directory exists already, marked as setup's."""
     from installer import install
     from installer.destinations import SchemeDictionaryDestination
     from installer.sources import WheelFile
@@ -254,7 +287,7 @@ def _create(
     for wheel in wheels:
         with WheelFile.open(wheel) as source:
             install(source, destination, additional_metadata={"INSTALLER": b"alphaavatar-setup\n"})
-        done(wheel)
+        wheel.unlink()  # The stage's copy: space goes back as the environment grows.
     launcher = environment / "bin" / "alphaavatar"
     launcher.write_text(LAUNCHER, encoding="utf-8")
     launcher.chmod(0o755)
@@ -269,6 +302,28 @@ def complete(environment: Path, plan: Plan) -> bool:
     return recorded == plan.document()
 
 
+@contextmanager
+def _signals_wait() -> Iterator[None]:
+    """Signals received meanwhile act once the block ends, as they would have; in whichever
+    thread one arrives, Python runs its handler here."""
+    received: list[int] = []
+    handlers = {
+        signum: signal.signal(signum, lambda signum, frame: received.append(signum))
+        for signum in SIGNALS
+    }
+    try:
+        yield
+    finally:
+        for signum, handler in handlers.items():
+            signal.signal(signum, signal.SIG_DFL if handler is None else handler)
+        for signum in dict.fromkeys(received):
+            signal.raise_signal(signum)
+
+
+def _marked(path: Path) -> bool:
+    return path.is_dir() and not path.is_symlink() and (path / OWNER).is_file()
+
+
 def install(
     installation: Installation,
     plan: Plan,
@@ -276,45 +331,61 @@ def install(
     *,
     check: Callable[[Path], None],
     enable: Callable[[], None],
+    replan: Callable[[tuple[str, ...]], Plan] | None = None,
     progress: Callable[[str], None] = lambda line: None,
 ) -> Path:
     """Install the plan into its environment, check it, switch to it, then enable.
 
     ``check`` runs the environment's own command before the switch; ``enable`` writes the
-    configuration after it. If either fails, or a signal ends the run first, current goes back
-    to what it was and the environment this run created is removed.
+    configuration after it. Under the lock, a plan missing what the current environment holds
+    is made again by ``replan`` with those requirements, and one for another base refused. If
+    ``check`` or ``enable`` fails, or a signal ends the run before the switch, current goes
+    back to what it was and the environment this run created is removed.
     """
-    import signal
-
     prefix = installation.prefix
-    environment = installation.environment(plan)
-    made_envs = not (prefix / "envs").exists()
-    (prefix / "envs").mkdir(parents=True, exist_ok=True)
     with locked(prefix):
         previous = installation.current()
+        if (base := installation.current_base()) not in (None, plan.base):
+            raise SetupError(
+                f"{prefix / 'current'} runs AlphaAvatar {base} now, not {plan.base}, which this "
+                "setup belongs to; run `alphaavatar setup` again"
+            )
+        if missing := sorted(set(installation.installed_requirements()) - set(plan.requirements)):
+            if replan is None:
+                raise SetupError(f"The current environment holds {', '.join(missing)}; plan them")
+            plan = replan(installation.installed_requirements())
+            progress(
+                f"Another setup installed {', '.join(missing)} meanwhile; kept, plan {plan.id[:16]}"
+            )
+        environment = installation.environment(plan)
+        made_envs = not (prefix / "envs").exists()
+        (prefix / "envs").mkdir(exist_ok=True)
+        for stale in (prefix / "envs").glob(".setup-*"):
+            if _marked(stale):  # A stage whose run was killed: the lock is ours now.
+                shutil.rmtree(stale)
         stage = Path(tempfile.mkdtemp(prefix=".setup-", dir=prefix / "envs"))
+        (stage / OWNER).touch()
         created = enabled = False
         try:
             if complete(environment, plan):
                 progress(f"Environment {environment} is already installed; checking it")
             else:
                 if environment.exists() or environment.is_symlink():
-                    # This plan's own directory, left incomplete by a run that is gone: the
-                    # lock is ours, so nobody is writing it.
+                    # This plan's own directory, left incomplete by a run that is gone, is
+                    # rebuilt; anything else there is not setup's to remove.
+                    if not _marked(environment) or environment.resolve() == previous:
+                        raise SetupError(f"{environment} exists and is not setup's; left as it is")
                     shutil.rmtree(environment)
                 files = []
                 for index, artifact in enumerate(plan.artifacts, 1):
                     progress(f"[{index}/{len(plan.artifacts)}] {artifact.file}")
                     files.append(fetch(artifact, sources, stage))
-                owned = {path for path, mine in files if mine}
-                created = True
                 progress(f"Installing {len(files)} packages into {environment}")
-                _create(
-                    installation,
-                    environment,
-                    [path for path, _ in files],
-                    lambda wheel: wheel.unlink() if wheel in owned else None,
-                )
+                (stage / "env").mkdir()
+                (stage / "env" / OWNER).touch()
+                os.rename(stage / "env", environment)  # It appears with setup's mark.
+                created = True
+                _create(installation, environment, files)
             progress("Checking the environment before switching to it")
             check(environment)
             if created:
@@ -322,13 +393,15 @@ def install(
                 (environment / PLAN_FILE).write_text(
                     json.dumps(plan.document(), indent=1) + "\n", encoding="utf-8"
                 )
-            _switch(prefix, environment, stage)
-            enable()
-            enabled = True
+            # The switch and enabling are one step to signals: they wait until current, the
+            # default bundle and its credentials agree.
+            with _signals_wait():
+                _switch(prefix, environment, stage)
+                enable()
+                enabled = True
         finally:
             # Whatever ends the run, the state on disk decides what to undo; signals wait.
-            signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM, signal.SIGHUP})
-            try:
+            with _signals_wait():
                 if not enabled and installation.current() == environment.resolve():
                     if previous is not None:
                         _switch(prefix, previous, stage)
@@ -339,10 +412,6 @@ def install(
                 shutil.rmtree(stage, ignore_errors=True)
                 if made_envs and not enabled and not any((prefix / "envs").iterdir()):
                     (prefix / "envs").rmdir()
-            finally:
-                signal.pthread_sigmask(
-                    signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM, signal.SIGHUP}
-                )
     return environment
 
 

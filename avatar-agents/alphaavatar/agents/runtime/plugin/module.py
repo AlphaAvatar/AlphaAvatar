@@ -16,44 +16,57 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from enum import Enum
 from logging import Logger
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+
+    from alphaavatar.agents.configs.avatar_config import AvatarConfig
+    from alphaavatar.agents.runtime.inference import InferenceRunner
 
 
 class AvatarModule(str, Enum):
-    # Engine
-    AVATAR_ENGINE = "avatar.engine"
+    """Capability types, each implemented by name: ``voice.stt`` by ``openai_segment``.
 
-    LOOP = "avatar.foundation.loop"
-    CONTEXT = "avatar.foundation.context"
+    Installed packages declare implementations as entry points in the group
+    ``alphaavatar.<type>``, named as configurations select them.
+    """
+
+    LOOP = "loop"
+    CONTEXT = "context"
 
     # Provider
-    PROVIDER_LLM = "avatar.foundation.provider.llm"
-    PROVIDER_EMBEDDING = "avatar.foundation.provider.embedding"
+    PROVIDER_LLM = "provider.llm"
+    PROVIDER_EMBEDDING = "provider.embedding"
 
     # Voice modules
-    VOICE_VAD = "avatar.foundation.voice.vad"
-    VOICE_STT = "avatar.foundation.voice.stt"
-    VOICE_TTS = "avatar.foundation.voice.tts"
+    VOICE_VAD = "voice.vad"
+    VOICE_STT = "voice.stt"
+    VOICE_TTS = "voice.tts"
 
     # Interaction router modules
-    ROUTER = "avatar.perception.router"
+    ROUTER = "router"
 
     # Status modules
-    STATUS = "avatar.perception.status"
+    STATUS = "status"
 
     # Character modules
-    CHARACTER = "avatar.perception.character"
+    CHARACTER = "character"
 
     # Memory modules
-    MEMORY = "avatar.perception.memory"
+    MEMORY = "memory"
 
     # Persona modules
-    PERSONA = "avatar.perception.persona"
+    PERSONA = "persona"
 
     # tools
-    DEEPRESEARCH = "avatar.tools.deepresearch"
-    RAG = "avatar.tools.rag"
-    MCP = "avatar.tools.mcp"
+    DEEPRESEARCH = "tools.deepresearch"
+    RAG = "tools.rag"
+    MCP = "tools.mcp"
+
+    @property
+    def group(self) -> str:
+        return f"alphaavatar.{self.value}"
 
 
 def plugin_requirement(name: str, *extras: str) -> str:
@@ -62,9 +75,8 @@ def plugin_requirement(name: str, *extras: str) -> str:
 
 
 class AvatarModulePlugin(ABC):
-    """Process-scoped module factory; created instances own their runtime state."""
-
-    _registry: ClassVar[dict[AvatarModule, dict[str, AvatarModulePlugin]]] = {}
+    """An implementation's process-scoped factory, the class its entry point names; created
+    instances own their runtime state."""
 
     def __init__(
         self, title: str, version: str, package: str, logger: Logger | None = None
@@ -89,41 +101,22 @@ class AvatarModulePlugin(ABC):
         return self._package
 
     @classmethod
-    def register(cls, module: AvatarModule, name: str, plugin: AvatarModulePlugin) -> None:
-        module = AvatarModule(module)
-        if not isinstance(name, str) or not name or name != name.strip():
-            raise ValueError("Plugin name cannot be empty or contain surrounding whitespace")
-        if not isinstance(plugin, AvatarModulePlugin):
-            raise TypeError("Module plugins must inherit AvatarModulePlugin")
-
-        plugins = cls._registry.setdefault(module, {})
-        if name in plugins:
-            raise ValueError(f"Plugin {module.value}:{name} is already registered")
-        plugins[name] = plugin
-
-    @classmethod
     def create(cls, module: AvatarModule, name: str | None, *args: Any, **kwargs: Any) -> Any:
-        module = AvatarModule(module)
+        from .resolution import resolve_plugin
+
         if name is None:
             return None
 
-        plugins = cls._registry.get(module, {})
-        if name not in plugins:
-            available = ", ".join(sorted(plugins)) or "none"
-            raise ValueError(f"Unknown plugin {module.value}:{name!r}; available: {available}")
-        return plugins[name].get_plugin(*args, **kwargs)
+        return resolve_plugin(module, name).factory.get_plugin(*args, **kwargs)
 
-    @classmethod
-    def registered(cls, module: AvatarModule, name: str) -> bool:
-        return name in cls._registry.get(AvatarModule(module), {})
+    def settings(self, init_config: dict[str, Any]) -> BaseModel | None:
+        """Its init_config validated as ``get_plugin`` reads it, before anything starts; None
+        when it takes none or checks its own when created."""
+        return None
 
-    @classmethod
-    def registered_packages(cls) -> tuple[str, ...]:
-        return tuple(
-            dict.fromkeys(
-                plugin.package for plugins in cls._registry.values() for plugin in plugins.values()
-            )
-        )
+    def inference_runners(self, config: AvatarConfig) -> tuple[type[InferenceRunner], ...]:
+        """The runners this implementation uses under ``config``, planned before any starts."""
+        return ()
 
     @abstractmethod
     def get_plugin(self, *args: Any, **kwargs: Any) -> Any:

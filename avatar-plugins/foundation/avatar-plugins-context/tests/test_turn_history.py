@@ -36,9 +36,9 @@ from alphaavatar.agents.avatar.provider.schemas import (
     ModelMediaPart,
     ModelRequest,
     ModelTextPart,
-    ProviderTaskConfig,
 )
 from alphaavatar.agents.configs import AvatarConfig
+from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
 from alphaavatar.agents.constants import RUNTIME_CONTEXT_TOOL_NAME
 from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
 from alphaavatar.agents.runtime.inference import InferenceExecutor

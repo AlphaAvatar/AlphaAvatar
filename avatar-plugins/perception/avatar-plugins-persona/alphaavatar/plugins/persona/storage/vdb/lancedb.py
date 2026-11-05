@@ -18,11 +18,11 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from alphaavatar.agents.avatar.provider.enums import ProviderKind
 from alphaavatar.agents.avatar.provider.factory import create_embedding_model
-from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
+from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
 from alphaavatar.agents.persona.enums import VectorRunnerOP
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import lancedb
-from alphaavatar.agents.utils.vdb.config import vdb_requirement
+from alphaavatar.agents.utils.vdb.config import vdb_embeddings, vdb_requirement
 from alphaavatar.agents.workspace import WorkspacePaths
 
 from ...namespace import NAMESPACE
@@ -36,6 +36,7 @@ from ...profile.serialization import merge_profile_items
 class LanceDBRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.persona.vdb.lancedb"
     REQUIRES = (vdb_requirement("lancedb"),)
+    PROVIDERS = vdb_embeddings()
 
     def __init__(self):
         super().__init__()

@@ -27,7 +27,7 @@ import pytest
 from inference_runner_samples import EchoRunner
 
 # Imported at collection: the persona plugin's OpenCV adjusts process variables (O-2).
-import alphaavatar.plugins.persona  # noqa: F401
+import alphaavatar.plugins.persona.factory  # noqa: F401
 from alphaavatar.agents.runtime.inference import InferenceRuntime
 from alphaavatar.host.application.application import AvatarHost
 from alphaavatar.host.application.health import HealthServer

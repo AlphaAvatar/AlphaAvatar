@@ -35,7 +35,4 @@ def get_vdb_runner(config: dict[str, Any]) -> type[InferenceRunner]:
 
 
 def configure_inference_runners(config: AvatarConfig) -> tuple[type[InferenceRunner], ...]:
-    if config.memory.plugin != "default":
-        return ()
-
     return (get_vdb_runner(config.memory.vdb_config),)

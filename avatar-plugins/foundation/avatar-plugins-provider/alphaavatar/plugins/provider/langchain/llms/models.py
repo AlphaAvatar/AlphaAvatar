@@ -18,7 +18,7 @@ from typing import Any
 
 import httpx
 
-from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
+from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
 
 from ..resources import ModelResources
 

@@ -31,11 +31,11 @@ from qdrant_client.models import (
 
 from alphaavatar.agents.avatar.provider.enums import ProviderKind
 from alphaavatar.agents.avatar.provider.factory import create_embedding_model
-from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
+from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
 from alphaavatar.agents.memory.enums import VectorRunnerOP
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import qdrant
-from alphaavatar.agents.utils.vdb.config import vdb_requirement
+from alphaavatar.agents.utils.vdb.config import vdb_embeddings, vdb_requirement
 
 from ...namespace import NAMESPACE
 
@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 class QdrantRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.memory.vdb.qdrant"
     REQUIRES = (vdb_requirement("qdrant"),)
+    PROVIDERS = vdb_embeddings()
 
     _PAYLOAD_INDEX_FIELDS = (
         "doc_kind",

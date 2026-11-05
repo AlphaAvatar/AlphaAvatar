@@ -12,11 +12,13 @@
 # Program files only; ALPHAAVATAR_HOME, Avatar workspaces and model caches live elsewhere:
 #   <prefix>/versions/<version>-<commit>/        each package unpacked and checked before use
 #   <prefix>/envs/<plan>/                        what `alphaavatar setup` installs over one
-#   <bin-dir>/alphaavatar -> <prefix>/current/bin/alphaavatar   prepared before the switch
+#   <bin-dir>/alphaavatar -> <prefix>/current/bin/alphaavatar   created before the switch,
+#                                                    never over anything already there
 #   <prefix>/current -> versions/... or envs/... switched last
 # Installing the version current already runs keeps its setup environment. A failed or
 # interrupted run removes only what it created, judged by where current points when it ends;
-# the current version, the command and existing data stay as they were.
+# the current version, the command and existing data stay as they were, and a path this script
+# cannot tell it made is never removed.
 set -euo pipefail
 
 RELEASES="https://github.com/AlphaAvatar/AlphaAvatar/releases/download"
@@ -86,12 +88,23 @@ fi
 
 made_prefix=""
 [[ -e "$prefix" ]] || made_prefix=1
-mkdir -p "$prefix/versions"
+mkdir -p "$prefix"
 exec 9> "$prefix/.install.lock"
 flock -n 9 || die "Another installation into $prefix is running"
+previous="$(readlink "$prefix/current" || true)"
+if [[ -e "$prefix/current" || -L "$prefix/current" ]] \
+    && ! [[ "$previous" =~ ^(versions|envs)/[0-9A-Za-z][0-9A-Za-z._+-]*$ ]]; then
+  die "$prefix/current is not a link this script or setup made; it is left as it is"
+fi
+mkdir -p "$prefix/versions"
+for dir in "$prefix/versions"/.install-*; do
+  # A stage whose run was killed, marked as this script's: the lock is ours now.
+  if [[ -d "$dir" && ! -L "$dir" && -f "$dir/.alphaavatar-install" ]]; then rm -rf -- "$dir"; fi
+done
 # This run's own directory, on the same file system as the versions it renames into.
 stage="$(mktemp -d "$prefix/versions/.install-XXXXXX")"
-fresh="" staged_entry="" made_entry=""
+touch "$stage/.alphaavatar-install"
+fresh="" made_entry=""
 cleanup() {
   trap '' INT TERM HUP  # Finish cleaning up whatever else arrives.
   rm -rf -- "$stage"
@@ -100,10 +113,11 @@ cleanup() {
   then
     rm -rf -- "$fresh"
   fi
-  rm -f -- ${staged_entry:+"$staged_entry"}
   # A first installation that ends without a current version leaves no command either, nor
-  # the prefix it made, if nothing else is in it.
-  if [[ -n "$made_entry" && ! -e "$prefix/current" ]]; then rm -f -- "$entry"; fi
+  # the prefix it made, if nothing else is in it: the link it made, if it still points here.
+  if [[ -n "$made_entry" && ! -e "$prefix/current" && "$(readlink "$entry")" == "$link" ]]; then
+    rm -f -- "$entry"
+  fi
   if [[ -n "$made_prefix" && ! -e "$prefix/current" ]]; then
     rm -f -- "$prefix/.install.lock"
     rmdir -- "$prefix/versions" "$prefix" 2>/dev/null || true
@@ -186,12 +200,13 @@ fi
 
 if [[ "$(readlink "$entry" || true)" != "$link" ]]; then
   mkdir -p "$bin_dir"
-  staged_entry="$bin_dir/.alphaavatar.$$"
-  ln -s "$link" "$staged_entry"
-  mv -Tf "$staged_entry" "$entry"
-  staged_entry="" made_entry=1
+  made_entry=1  # First: a signal may land the moment the link exists.
+  # Created only if nothing is there: another installation may have made it meanwhile.
+  if ! ln -sT "$link" "$entry" 2>/dev/null; then
+    made_entry=""
+    die "$entry appeared meanwhile and runs $(readlink "$entry" || echo something else); choose another --bin-dir"
+  fi
 fi
-previous="$(readlink "$prefix/current" || true)"
 switch="versions/$id"
 # A setup environment over this very version stays current: its capabilities remain.
 if [[ "$previous" == envs/* ]] && "$target/python/bin/python3" -I -c 'import json, sys

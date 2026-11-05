@@ -34,7 +34,6 @@ from .prompt import ModelInputSlot, ModelPrompt, ModelPromptMessage
 from .provider_item import ModelProviderItem
 from .provider_result import ProviderResult
 from .request import ModelGenerationOptions, ModelRequest, ModelToolDefinition
-from .task_config import ProvidersConfig, ProviderTaskConfig, ProviderTraceConfig
 from .trace_record import ProviderTraceRecord
 from .usage import ProviderUsage
 
@@ -63,9 +62,6 @@ __all__ = [
     "ProviderModelResult",
     "ProviderResult",
     "ModelProviderItem",
-    "ProvidersConfig",
-    "ProviderTaskConfig",
-    "ProviderTraceConfig",
     "ProviderTraceRecord",
     "ProviderUsage",
     "RealtimeModelInput",

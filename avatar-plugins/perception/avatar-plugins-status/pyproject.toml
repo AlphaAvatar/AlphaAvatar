@@ -22,6 +22,9 @@ classifiers = [
 ]
 dependencies = ["alpha-avatar-agents", "alpha-avatar-core", "pydantic>=2,<3"]
 
+[project.entry-points."alphaavatar.status"]
+default = "alphaavatar.plugins.status:DefaultStatusPlugin"
+
 [project.urls]
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"
 Issues = "https://github.com/AlphaAvatar/AlphaAvatar/issues"

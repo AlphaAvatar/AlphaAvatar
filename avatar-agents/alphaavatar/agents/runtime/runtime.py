@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from alphaavatar.agents.configs.runtime_config import RuntimeConfig
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(slots=True, frozen=True, kw_only=True)
 class AvatarRuntime:
     """
     Session-scoped runtime composition root.
@@ -57,11 +57,11 @@ class AvatarRuntime:
     # agent-level
     state: StateRuntime
     participants: ParticipantRuntime
+    foundation: FoundationRuntime | None = None
 
     # lifecycle-level
     inference: InferenceExecutor
     timezone: str | None = None
-    foundation: FoundationRuntime | None = None
 
     # capability
     capability_registry: AvatarCapabilityRegistry = field(default_factory=AvatarCapabilityRegistry)

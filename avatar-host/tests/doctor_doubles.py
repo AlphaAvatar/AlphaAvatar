@@ -63,7 +63,12 @@ from alphaavatar.agents.memory.base import MemoryBase
 from alphaavatar.agents.persona.base import PersonaBase
 from alphaavatar.agents.runtime.capability.registry import AvatarCapabilityRegistry
 from alphaavatar.agents.runtime.inference.runner import InferenceRunner
-from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
+from alphaavatar.agents.runtime.plugin import (
+    AvatarModule,
+    AvatarModulePlugin,
+    ResolvedPlugin,
+    resolution,
+)
 from alphaavatar.core.media import AudioFrame
 
 SPEC = "DOCTOR_DOUBLES"
@@ -429,12 +434,47 @@ class NullPersona(PersonaBase):
 
 
 class _Factory(AvatarModulePlugin):
-    def __init__(self, create) -> None:
+    def __init__(self, create, runners=lambda config: ()) -> None:
         super().__init__("doctor doubles", "0", "tests")
-        self.create = create
+        self.create, self.runners = create, runners
+
+    def inference_runners(self, config: object) -> tuple[type[InferenceRunner], ...]:
+        return self.runners(config)
 
     def get_plugin(self, *args: object, **kwargs: object) -> object:
         return self.create()
+
+
+def stand_in(module: AvatarModule, name: str, create, runners=lambda config: ()) -> ResolvedPlugin:
+    """A plugin the configuration names, resolved in place of any installed one."""
+    return ResolvedPlugin(module, name, _Factory(create, runners), None)
+
+
+# What the session tests' configurations name and no installed package provides.
+NAMED = (
+    (AvatarModule.PROVIDER_LLM, "scripted"),
+    (AvatarModule.MEMORY, "doctor"),
+    (AvatarModule.PERSONA, "doctor"),
+)
+
+
+def resolvable(monkeypatch: object, *names: tuple[AvatarModule, str]) -> None:
+    """Test-only plugins resolve in this process, as their stand-ins do in the diagnostic one;
+    nothing here creates them."""
+    for module, name in names or NAMED:
+        monkeypatch.setitem(resolution._resolved, (module, name), stand_in(module, name, object))
+
+
+def _factories(namespace: str) -> list[type[AvatarModulePlugin]]:
+    """The factory classes a built-in plugin package declares."""
+    from importlib.metadata import entry_points
+
+    return [
+        entry.load()
+        for module in AvatarModule
+        for entry in entry_points(group=module.group)
+        if entry.module.split(".")[:3] == ["alphaavatar", "plugins", namespace]
+    ]
 
 
 def child(*args: object) -> None:
@@ -450,39 +490,29 @@ def child(*args: object) -> None:
 
 
 def install(spec: dict, files: Path) -> None:
-    """The stand-ins, plugged in where the configuration names its plugins and runners."""
-    # Built-in plugins register first, so the stand-ins take over their names.
-    import alphaavatar.plugins.memory  # noqa: F401
-    import alphaavatar.plugins.persona  # noqa: F401
-    import alphaavatar.plugins.router  # noqa: F401
-    import alphaavatar.plugins.voice  # noqa: F401
-    from alphaavatar.agents.avatar.provider import factory
-    from alphaavatar.agents.runtime.inference import bootstrap
-    from alphaavatar.agents.runtime.plugin import AvatarModule
+    """The stand-ins, resolved where the configuration names its plugins and runners."""
     from alphaavatar.host.doctor import samples, session
 
     llm = ScriptedLLM(files, **spec.get("llm", {}))
     stt = ScriptedSTT(list(spec.get("stt", ())), files, chatty=spec.get("stdout", False))
     tts = ScriptedTTS(**spec.get("tts", {}))
-    registry = AvatarModulePlugin._registry
-    for module, name, create in (
-        (AvatarModule.PROVIDER_LLM, "scripted", lambda: llm),
-        (AvatarModule.VOICE_STT, "openai_segment", lambda: stt),
-        (AvatarModule.VOICE_TTS, "openai", lambda: tts),
-        (AvatarModule.MEMORY, "doctor", NullMemory),
-        (AvatarModule.PERSONA, "doctor", NullPersona),
+    vision = tuple(map(_runner, spec.get("vision_runners", ())))
+    for module, name, create, runners in (
+        (AvatarModule.PROVIDER_LLM, "scripted", lambda: llm, None),
+        (AvatarModule.VOICE_STT, "openai_segment", lambda: stt, None),
+        (AvatarModule.VOICE_TTS, "openai", lambda: tts, None),
+        (AvatarModule.MEMORY, "doctor", NullMemory, None),
+        # Planned only while vision is on, as a camera consumer's runner is.
+        (AvatarModule.PERSONA, "doctor", NullPersona, lambda c: vision if c.vision.enabled else ()),
     ):
-        registry.setdefault(module, {})[name] = _Factory(create)
-    load = factory._load_backend
-    factory._load_backend = lambda name: name == "scripted" or load(name)
+        resolution._resolved[(module, name)] = stand_in(
+            module, name, create, runners or (lambda config: ())
+        )
+    # The named built-in plugins' implementations use these runners instead of their own.
     for name, runners in spec.get("runners", {}).items():
         found = tuple(map(_runner, runners))
-        bootstrap._runner_bootstraps[f"alphaavatar.plugins.{name}"] = lambda config, f=found: f
-    if vision := tuple(map(_runner, spec.get("vision_runners", ()))):
-        # Planned only while vision is on, as a camera consumer's runner is.
-        bootstrap._runner_bootstraps["alphaavatar.plugins.persona"] = lambda config: (
-            vision if config.vision.enabled else ()
-        )
+        for factory in _factories(name):
+            factory.inference_runners = lambda self, config, f=found: f
     # A second of loud noise is speech to the stand-in VAD; silence follows, as from a mic.
     noise = np.random.default_rng(7).standard_normal(samples.SAMPLE_RATE) * 6000
     voiced = noise.astype("<i2").tobytes()

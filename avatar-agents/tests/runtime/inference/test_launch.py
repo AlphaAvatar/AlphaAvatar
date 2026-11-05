@@ -29,8 +29,6 @@ import pytest
 import qdrant_client
 from launch_runner_samples import LaunchProbeRunner, LaunchProbeTwinRunner
 
-# Plugin imports register runner bootstraps; their import-time effects stay at collection (O-2).
-import alphaavatar.plugins.mcp  # noqa: F401
 from alphaavatar.agents.configs import AvatarConfig
 from alphaavatar.agents.configs.runtime_config import InferenceConfig
 from alphaavatar.agents.memory.schemas import MemoryContextRef, MemoryOwnerRef
@@ -46,6 +44,7 @@ from alphaavatar.agents.runtime.inference import (
 )
 from alphaavatar.agents.workspace import WorkspacePaths
 from alphaavatar.core.session import SessionRuntime
+from alphaavatar.plugins.loop import RealtimeLoopPlugin
 from alphaavatar.plugins.mcp.enums import MCPOp
 from alphaavatar.plugins.mcp.runner import lancedb_runner as mcp_lancedb
 from alphaavatar.plugins.mcp.schemas import MCPRequest
@@ -283,7 +282,7 @@ def test_inference_plan_refuses_conflicts_and_drifted_entries(
     unsupported = AvatarConfig.model_validate(
         LOCAL | {"tools": {**LOCAL["tools"], "mcp": remote_qdrant_mcp}}
     )
-    with pytest.raises(RuntimeError, match="alphaavatar.plugins.mcp") as failed:
+    with pytest.raises(RuntimeError, match="tools.mcp.plugin") as failed:
         prepare_inference_runners(unsupported)
     assert "Unsupported MCP vector backend" in str(failed.value.__cause__)
     # A failed preparation leaves no plan from an earlier configuration behind.
@@ -292,12 +291,12 @@ def test_inference_plan_refuses_conflicts_and_drifted_entries(
         bootstrap_inference_runners()
 
     with monkeypatch.context() as patch:
-        patch.setitem(
-            inference_bootstrap._runner_bootstraps,
-            "test.launch",
-            lambda config: (LaunchProbeRunner, LaunchProbeTwinRunner),
+        patch.setattr(
+            RealtimeLoopPlugin,
+            "inference_runners",
+            lambda self, config: (LaunchProbeRunner, LaunchProbeTwinRunner),
         )
-        with pytest.raises(RuntimeError, match="test.launch") as failed:
+        with pytest.raises(RuntimeError, match="loop.plugin") as failed:
             prepare_inference_runners(AvatarConfig.model_validate(LOCAL))
     assert "Conflicting inference runners" in str(failed.value.__cause__)
 

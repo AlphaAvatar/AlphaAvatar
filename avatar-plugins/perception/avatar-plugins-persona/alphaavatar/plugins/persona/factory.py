@@ -14,18 +14,22 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from alphaavatar.agents.persona import PersonaBase, PersonaProcessorBase
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
 
 from .config import DefaultPersonaConfig
-from .inference import get_vdb_runner
+from .inference import configure_inference_runners, get_vdb_runner
 from .processors import FaceProcessor, ProfilerProcessor, SpeakerProcessor
 from .runtime import PersonaRuntime
 from .storage import PersonaStore
 from .version import __version__
+
+if TYPE_CHECKING:
+    from alphaavatar.agents.configs import AvatarConfig
+    from alphaavatar.agents.runtime.inference import InferenceRunner
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +38,12 @@ class PersonaPlugin(AvatarModulePlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)
 
+    def settings(self, init_config: dict[str, Any]) -> DefaultPersonaConfig:
+        return DefaultPersonaConfig.model_validate(init_config)
+
+    def inference_runners(self, config: AvatarConfig) -> tuple[type[InferenceRunner], ...]:
+        return configure_inference_runners(config)
+
     def get_plugin(
         self,
         *,
@@ -41,7 +51,7 @@ class PersonaPlugin(AvatarModulePlugin):
         init_config: dict[str, Any] | None = None,
         vdb_config: dict[str, Any] | None = None,
     ) -> PersonaBase:
-        config = DefaultPersonaConfig.model_validate(init_config or {})
+        config = self.settings(init_config or {})
         store = PersonaStore(
             runtime=runtime, inference_method=get_vdb_runner(vdb_config or {}).INFERENCE_METHOD
         )

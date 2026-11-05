@@ -19,12 +19,9 @@ from typing import Any
 from pydantic import BaseModel
 
 from alphaavatar.agents.avatar.provider.base import LLMBase
-from alphaavatar.agents.avatar.provider.schemas import (
-    ModelInput,
-    ProviderModelResult,
-    ProviderTaskConfig,
-)
+from alphaavatar.agents.avatar.provider.schemas import ModelInput, ProviderModelResult
 from alphaavatar.agents.avatar.provider.trace import to_jsonable
+from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
 from alphaavatar.core.cleanup import wait_for_cleanup
 
 from ..adapters import LangChainInputAdapterRegistry

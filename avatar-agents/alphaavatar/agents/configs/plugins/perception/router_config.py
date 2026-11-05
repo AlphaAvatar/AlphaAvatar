@@ -13,7 +13,6 @@
 # limitations under the License.
 from __future__ import annotations
 
-import importlib
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -34,7 +33,6 @@ class RouterConfig(BaseModel):
     init_config: dict[str, Any] = Field(default_factory=dict)
 
     def get_plugin(self, *, runtime: AvatarRuntime) -> InteractionRouterBase:
-        importlib.import_module("alphaavatar.plugins.router")
         return AvatarModulePlugin.create(
             AvatarModule.ROUTER, self.plugin, runtime=runtime, init_config=self.init_config
         )

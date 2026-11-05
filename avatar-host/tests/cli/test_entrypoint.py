@@ -53,12 +53,18 @@ print(json.dumps(sorted(
 # The CLI where the named modules are not installed: plugin packages left out of an install,
 # or WeasyPrint, which fails to import without the system's Pango.
 UNINSTALLED = """
-import importlib.abc, json, sys
+import importlib.abc, importlib.metadata, json, sys
+blocked = tuple(sys.argv[2:])
 class Uninstalled(importlib.abc.MetaPathFinder):
     def find_spec(self, name, path=None, target=None):
-        if name == "weasyprint" or name.startswith(tuple(sys.argv[2:])):
+        if name == "weasyprint" or name.startswith(blocked):
             raise ModuleNotFoundError(f"No module named {name!r}", name=name)
 sys.meta_path.insert(0, Uninstalled())
+# Their packages are gone too: no entry point names their modules.
+found = importlib.metadata.entry_points
+importlib.metadata.entry_points = lambda **select: importlib.metadata.EntryPoints(
+    entry for entry in found(**select) if not entry.module.startswith(blocked)
+)
 from alphaavatar.host.cli.app import main
 sys.exit(main(json.loads(sys.argv[1])))
 """
@@ -131,37 +137,36 @@ def test_init_needs_no_plugin_and_check_names_each_missing_one_where_it_is_selec
 
     def missing(completed: subprocess.CompletedProcess[str]) -> list[str]:
         assert completed.returncode == 2, completed.stderr
-        assert "Selected plugins are not installed" in completed.stderr
-        return [line.strip() for line in completed.stderr.splitlines() if ": alpha-avatar-" in line]
+        assert "Selected plugins are not available" in completed.stderr
+        found = completed.stderr.splitlines()
+        return [line.strip() for line in found if ": no installed package provides " in line]
 
     # Writing the reference bundle imports no plugin, and not WeasyPrint either.
     created = run(["config", "init", "lean", "--avatar-id", "lean"], "alphaavatar.plugins.")
     assert created.returncode == 0, created.stderr
-    # Checking it names every selection of a missing plugin, before importing any of them.
+    # Checking it names every selection nothing installed provides, by capability type and
+    # implementation, before importing any plugin; provider backends wait for their plugins.
     assert missing(run(["config", "check"], "alphaavatar.plugins.")) == [
-        "context.plugin: alpha-avatar-plugins-context",
-        "loop.plugin: alpha-avatar-plugins-loop",
-        "voice.vad.plugin: alpha-avatar-plugins-voice",
-        "voice.stt.plugin: alpha-avatar-plugins-voice",
-        "voice.tts.plugin: alpha-avatar-plugins-voice",
-        "status.plugin: alpha-avatar-plugins-status",
-        "memory.plugin: alpha-avatar-plugins-memory",
-        "persona.plugin: alpha-avatar-plugins-persona",
-        "router.plugin: alpha-avatar-plugins-router",
+        "loop.plugin: no installed package provides loop 'realtime'",
+        "context.plugin: no installed package provides context 'default'",
+        "voice.vad.plugin: no installed package provides voice.vad 'silero'",
+        "voice.stt.plugin: no installed package provides voice.stt 'openai_segment'",
+        "voice.tts.plugin: no installed package provides voice.tts 'openai'",
+        "status.plugin: no installed package provides status 'default'",
+        "router.plugin: no installed package provides router 'default'",
+        "memory.plugin: no installed package provides memory 'default'",
+        "persona.plugin: no installed package provides persona 'default'",
     ]
     # One package left out: only what selects it is named; switched off, it is not needed.
     router = "alphaavatar.plugins.router"
     assert missing(run(["config", "check"], router)) == [
-        "router.plugin: alpha-avatar-plugins-router"
+        "router.plugin: no installed package provides router 'default'"
     ]
     checked = run(["config", "check", "character.plugin=airi"], "alphaavatar.plugins.character")
-    assert missing(checked) == ["character.plugin: alpha-avatar-plugins-character"]
-    # Sections always built need their package whichever plugin they name, status even while
-    # its events are off.
+    assert missing(checked) == ["character.plugin: no installed package provides character 'airi'"]
+    # Status is selected even while its events are off.
     checked = run(["config", "check", "status.enabled=false"], "alphaavatar.plugins.status")
-    assert missing(checked) == ["status.plugin: alpha-avatar-plugins-status"]
-    checked = run(["config", "check", "persona.plugin=custom"], "alphaavatar.plugins.persona")
-    assert missing(checked) == ["persona.plugin: alpha-avatar-plugins-persona"]
+    assert missing(checked) == ["status.plugin: no installed package provides status 'default'"]
     voiceless = [f"voice.{part}.plugin=null" for part in ("vad", "stt", "tts")]
     checked = run(["config", "check", *voiceless], "alphaavatar.plugins.voice")
     assert checked.returncode == 0, checked.stderr
@@ -209,7 +214,7 @@ def test_console_commands_run_without_the_host_log_socket(tmp_path: Path) -> Non
     # And checks the selected capabilities, as config check does, before preparing anything.
     started = run("start", "console", "persona.plugin=custom")
     assert started.returncode == 2
-    assert "persona.plugin: no avatar.perception.persona factory 'custom'" in started.stderr
+    assert "persona.plugin: no installed package provides persona 'custom'" in started.stderr
     assert sorted(path.name for path in home.iterdir()) == ["configs", "settings"]
     # Only the converged commands exist; the removed entry points are usage errors.
     assert run("check", "console").returncode == 2

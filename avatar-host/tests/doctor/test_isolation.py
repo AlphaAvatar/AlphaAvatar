@@ -26,8 +26,9 @@ import pytest
 from config_samples import LOOP, write
 
 # Imported at collection: the persona plugin's OpenCV adjusts process variables (O-2).
-import alphaavatar.plugins.persona  # noqa: F401
-from alphaavatar.agents.runtime.inference import bootstrap, plan_inference_runners
+import alphaavatar.plugins.persona.factory  # noqa: F401
+from alphaavatar.agents.runtime.inference import plan_inference_runners
+from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.core.log.trace import InputTrace
 from alphaavatar.host.configs import load_application
 from alphaavatar.host.doctor import samples, session
@@ -73,6 +74,11 @@ def test_local_stores_move_into_the_workspace_and_remote_ones_are_never_written(
 def test_what_doctor_does_not_ship_needs_authorization(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from alphaavatar.plugins.voice.vad import SileroVADPlugin
+
+    doubles.resolvable(
+        monkeypatch, (AvatarModule.MEMORY, "custom"), (AvatarModule.PERSONA, "custom")
+    )
     config = load(tmp_path, memory={"plugin": "custom"}, persona={"plugin": "custom"})
     found = dict(_external(config))
     assert found["custom memory 'custom'"] == "custom"
@@ -88,8 +94,8 @@ def test_what_doctor_does_not_ship_needs_authorization(
         **{k: {"plugin": "custom"} for k in ("memory", "persona")},
     )
     assert session.starts(config, names)  # Silero alone starts offline, unauthorized.
-    monkeypatch.setitem(
-        bootstrap._runner_bootstraps, "alphaavatar.plugins.voice", lambda c: (doubles.SpeechRunner,)
+    monkeypatch.setattr(
+        SileroVADPlugin, "inference_runners", lambda self, config: (doubles.SpeechRunner,)
     )
     assert session.start_services(config) == [
         "custom runners (alphaavatar.voice.vad.silero), external access unknown"

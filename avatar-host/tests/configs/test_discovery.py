@@ -1,0 +1,131 @@
+# Copyright 2026 AlphaAvatar project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""Each selection resolves by capability type and implementation name in a fresh process:
+an installed package's entry point names it, the built-in ones' too. config check, Doctor and
+start resolve alike, and plan workers from the runners the resolved plugins use."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from alphaavatar.host.cli.app import main
+
+PROBES = """
+from alphaavatar.agents.runtime.inference import InferenceRunner
+from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
+
+
+class EchoRunner(InferenceRunner):
+    INFERENCE_METHOD = "probe.loop.echo"
+    REPLICABLE = True
+
+
+class Probe(AvatarModulePlugin):
+    def __init__(self):
+        super().__init__("Probe", "1.0", __name__)
+
+    def get_plugin(self, **kwargs):
+        raise AssertionError("resolving creates nothing")
+
+
+class LoopProbe(Probe):
+    def inference_runners(self, config):
+        return (EchoRunner,)
+"""
+CREDENTIALS = {
+    "OPENAI_API_KEY": "sk-fictional",
+    "LIVEKIT_URL": "wss://livekit.invalid",
+    "LIVEKIT_API_KEY": "lk-fictional",
+    "LIVEKIT_API_SECRET": "lk-fictional-secret",
+}
+
+
+def distribution(site: Path, name: str, entry_points: str) -> None:
+    """An installed package as importlib.metadata finds one: its module and its dist-info."""
+    module = name.replace("-", "_")
+    (site / f"{module}.py").write_text(PROBES)
+    info = site / f"{module}-1.0.dist-info"
+    info.mkdir(parents=True)
+    (info / "METADATA").write_text(f"Metadata-Version: 2.1\nName: {name}\nVersion: 1.0\n")
+    (info / "entry_points.txt").write_text(entry_points.replace("MODULE", module))
+
+
+@pytest.fixture
+def run(tmp_path: Path):
+    site = tmp_path / "site"
+    site.mkdir()
+    entrypoint = Path(sys.executable).with_name("alphaavatar")
+
+    def run(*argv: str) -> subprocess.CompletedProcess[str]:
+        env = os.environ | CREDENTIALS | {"PYTHONPATH": str(site)}
+        return subprocess.run(
+            [str(entrypoint), *argv], capture_output=True, text=True, timeout=180, env=env
+        )
+
+    run.site = site
+    assert main(["config", "init", "alpha", "--avatar-id", "alpha"]) == 0
+    return run
+
+
+def test_selections_resolve_by_type_and_name_and_plan_the_runners_they_use(run) -> None:
+    # The default bundle: every built-in plugin found by its entry point, its runners planned.
+    checked = run("config", "check", "--json")
+    assert checked.returncode == 0, checked.stderr
+    summary = json.loads(checked.stdout)
+    assert summary["inference"]["alphaavatar.voice.vad.silero"] == 1
+    assert summary["inference"]["alphaavatar.memory.vdb.lancedb"] == 1
+
+    # Another package's loop, with two workers for the runner it uses, and its memory where a
+    # built-in import found Memory before; a switched-off part names nothing installed.
+    distribution(
+        run.site,
+        "probe-plugins",
+        "[alphaavatar.loop]\nprobe = MODULE:LoopProbe\n[alphaavatar.memory]\nprobe = MODULE:Probe\n",
+    )
+    workers = 'runtime.inference.methods={"probe.loop.echo": {"workers": 2}}'
+    off = ("tools.mcp.enabled=false", "tools.mcp.plugin=absent", "character.plugin=null")
+    checked = run("config", "check", "loop.plugin=probe", "memory.plugin=probe", workers, *off)
+    assert checked.returncode == 0, checked.stderr
+    checked = run(
+        "config", "check", "loop.plugin=probe", "memory.plugin=probe", workers, *off, "--json"
+    )
+    summary = json.loads(checked.stdout)
+    assert (summary["plugins"]["loop"], summary["plugins"]["memory"]["plugin"]) == ("probe",) * 2
+    assert summary["inference"]["probe.loop.echo"] == 2
+    assert "alphaavatar.memory.vdb.lancedb" not in summary["inference"]  # The probe uses none.
+
+
+def test_missing_and_duplicate_implementations_fail_where_selected_in_every_command(run) -> None:
+    distribution(run.site, "twin-plugins", "[alphaavatar.voice.vad]\nsilero = MODULE:Probe\n")
+    duplicate = (
+        "voice.vad.plugin: 2 installed packages provide voice.vad 'silero': "
+        "alpha-avatar-plugins-voice, twin-plugins"
+    )
+    missing = "router.plugin: no installed package provides router 'absent'"
+    checked = run("config", "check", "router.plugin=absent")
+    assert checked.returncode == 2
+    assert duplicate in checked.stderr and missing in checked.stderr
+    doctored = run("doctor", "router.plugin=absent", "--json")
+    loaded = next(c for c in json.loads(doctored.stdout)["checks"] if c["id"] == "config.load")
+    assert loaded["status"] == "FAIL"
+    assert {duplicate, missing} <= set(loaded["details"])
+    started = run("start", "router.plugin=absent")
+    assert started.returncode == 2
+    assert duplicate in started.stderr and missing in started.stderr

@@ -13,7 +13,7 @@
 # limitations under the License.
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from alphaavatar.agents.avatar.provider.schemas import ProvidersConfig
+from alphaavatar.agents.configs.plugins.foundation.provider_config import ProvidersConfig
 
 from .consolidation import ConsolidationConfig
 

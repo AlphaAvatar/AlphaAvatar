@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
+from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
 
 from .version import __version__
 
@@ -37,6 +37,3 @@ class DefaultStatusPlugin(AvatarModulePlugin):
         return StatusRuntime(
             runtime=runtime, enabled=enabled, config=StatusRuntimeConfig.model_validate(init_config)
         )
-
-
-AvatarModulePlugin.register(AvatarModule.STATUS, "default", DefaultStatusPlugin())

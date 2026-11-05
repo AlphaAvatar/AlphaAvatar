@@ -16,13 +16,10 @@ from __future__ import annotations
 import importlib
 import json
 import os
-from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING
 
 from pydantic import SecretStr
 from pydantic_core import PydanticCustomError, ValidationError
-
-from alphaavatar.agents.log import logger
 
 from .runner import InferenceRunner
 
@@ -31,17 +28,6 @@ if TYPE_CHECKING:
     from alphaavatar.agents.configs.runtime_config import InferenceConfig
 
 INFERENCE_PLAN_ENV = "ALPHAAVATAR_INFERENCE_PLAN"
-RunnerBootstrapFn = Callable[["AvatarConfig"], Iterable[type[InferenceRunner]]]
-_runner_bootstraps: dict[str, RunnerBootstrapFn] = {}
-
-
-def register_inference_runner_bootstrap(
-    name: str, fn: RunnerBootstrapFn, *, override: bool = False
-) -> None:
-    if name in _runner_bootstraps and not override:
-        logger.warning("Inference runner bootstrap already registered: %s, skipped", name)
-        return
-    _runner_bootstraps[name] = fn
 
 
 def _add_runner(runners: dict[str, type[InferenceRunner]], runner: type[InferenceRunner]) -> None:
@@ -59,9 +45,11 @@ def _add_runner(runners: dict[str, type[InferenceRunner]], runner: type[Inferenc
 
 
 def snapshot_inference_config(config: AvatarConfig) -> str:
-    """Private immutable launch inputs, under the name of each selected plugin whose runners
-    read them (``InferenceRunner.config_for``); never expose these credentials in diagnostics.
+    """Private immutable launch inputs, under the namespace of each selected plugin whose
+    runners read them (``InferenceRunner.config_for``); never expose these credentials in
+    diagnostics.
     """
+    from alphaavatar.agents.runtime.plugin import resolve_plugins
 
     def encode(value):
         if isinstance(value, SecretStr):
@@ -69,10 +57,10 @@ def snapshot_inference_config(config: AvatarConfig) -> str:
         raise TypeError("Inference configuration contains a non-JSON value")
 
     inputs = {}
-    for location, name in config.plugin_packages().items():
+    for location, plugin in resolve_plugins(config).plugins.items():
         section = config.section(location)
         if hasattr(section, "runner_config"):
-            inputs[name] = section.runner_config()
+            inputs[plugin.namespace] = section.runner_config()
     return json.dumps(
         inputs, default=encode, ensure_ascii=False, allow_nan=False, separators=(",", ":")
     )
@@ -109,24 +97,16 @@ def check_inference_config(
 
 
 def plan_inference_runners(config: AvatarConfig) -> dict[str, type[InferenceRunner]]:
-    """The selected runners, checked against runtime.inference.
+    """The runners the selected plugins use, checked against runtime.inference.
 
-    Pure: it never writes the environment, spawns a process or loads a model. It imports the
-    selected built-in plugins, whose bootstraps register on import; theirs come first, in the
-    configuration's order, whichever plugin a process happened to import first.
+    Pure: it never writes the environment, spawns a process or loads a model. The selected
+    plugins resolve first, and every one unavailable fails by the setting selecting it.
     """
-    selected = [f"alphaavatar.plugins.{name}" for name in config.plugin_packages().values()]
-    order = {module: index for index, module in enumerate(dict.fromkeys(selected))}
-    for module in order:
-        importlib.import_module(module)
-    runners: dict[str, type[InferenceRunner]] = {}
-    bootstraps = sorted(_runner_bootstraps.items(), key=lambda item: order.get(item[0], len(order)))
-    for name, bootstrap in bootstraps:
-        try:
-            for runner in bootstrap(config):
-                _add_runner(runners, runner)
-        except Exception as exc:
-            raise RuntimeError(f"Failed to prepare inference runners for {name!r}") from exc
+    from alphaavatar.agents.runtime.plugin import resolve_plugins
+
+    selection = resolve_plugins(config)
+    selection.check()
+    runners = {method: runner for method, (_, runner) in selection.runners.items()}
     check_inference_config(runners, config.runtime.inference)
     return runners
 

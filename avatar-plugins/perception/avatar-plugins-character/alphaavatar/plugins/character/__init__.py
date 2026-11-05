@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
+from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
 
 from .log import logger
 from .version import __version__
@@ -42,6 +42,3 @@ class AiriCharacterPlugin(AvatarModulePlugin):
 
         config = AiriConfig.model_validate(init_config or {})
         return AiriCharacterSession(transport=transport, config=config)
-
-
-AvatarModulePlugin.register(AvatarModule.CHARACTER, "airi", AiriCharacterPlugin())

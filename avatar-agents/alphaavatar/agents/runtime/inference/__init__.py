@@ -16,7 +16,6 @@ from .bootstrap import (
     check_inference_config,
     plan_inference_runners,
     prepare_inference_runners,
-    register_inference_runner_bootstrap,
     snapshot_inference_config,
 )
 from .executor import INFERENCE_ENDPOINT_ENV, InferenceExecutor
@@ -33,6 +32,5 @@ __all__ = [
     "check_inference_config",
     "plan_inference_runners",
     "prepare_inference_runners",
-    "register_inference_runner_bootstrap",
     "snapshot_inference_config",
 ]

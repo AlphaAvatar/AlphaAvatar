@@ -43,6 +43,9 @@ dependencies = [
 semantic = ["llama-cpp-python==0.3.35"]
 turn-taking = ["onnxruntime==1.23.1", "transformers==4.57.1"]
 
+[project.entry-points."alphaavatar.router"]
+default = "alphaavatar.plugins.router.factory:RouterPlugin"
+
 [project.urls]
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"
 Issues = "https://github.com/AlphaAvatar/AlphaAvatar/issues"

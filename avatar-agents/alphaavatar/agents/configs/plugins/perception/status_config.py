@@ -13,7 +13,6 @@
 # limitations under the License.
 from __future__ import annotations
 
-from importlib import import_module
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -41,7 +40,6 @@ class StatusConfig(BaseModel):
     )
 
     def get_plugin(self, *, runtime: AvatarRuntime) -> StatusBase:
-        import_module("alphaavatar.plugins.status")
         plugin = AvatarModulePlugin.create(
             AvatarModule.STATUS,
             self.plugin,

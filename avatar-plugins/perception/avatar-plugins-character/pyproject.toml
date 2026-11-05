@@ -25,6 +25,9 @@ dependencies = ["alpha-avatar-agents", "alpha-avatar-core", "playwright", "pydan
 [project.scripts]
 alphaavatar-airi-install = "alphaavatar.plugins.character.airi_avatar.install:main"
 
+[project.entry-points."alphaavatar.character"]
+airi = "alphaavatar.plugins.character:AiriCharacterPlugin"
+
 [project.urls]
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"
 Issues = "https://github.com/AlphaAvatar/AlphaAvatar/issues"

@@ -13,7 +13,6 @@
 # limitations under the License.
 from __future__ import annotations
 
-import importlib
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -96,7 +95,6 @@ class ToolsConfig(BaseModel):
             if config.plugin is None:
                 continue
 
-            importlib.import_module(f"alphaavatar.plugins.{package}")
             tool = AvatarModulePlugin.create(
                 module, config.plugin, runtime=runtime, init_config=config.init_config
             )
@@ -109,7 +107,6 @@ class ToolsConfig(BaseModel):
             if not self.mcp.servers:
                 raise ValueError("Enabled MCP requires at least one configured server")
 
-            importlib.import_module("alphaavatar.plugins.mcp")
             tool = AvatarModulePlugin.create(
                 AvatarModule.MCP,
                 self.mcp.plugin,

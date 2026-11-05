@@ -11,31 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from functools import cache
-from importlib.metadata import entry_points
-
+from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 
 from .base import LLMBase, WorkerEmbeddingBase
 from .enums import ProviderKind
-from .schemas import ProviderTaskConfig
-
-
-@cache
-def _load_backend(name: str) -> None:
-    matches = tuple(entry_points(group="alphaavatar.provider", name=name))
-    if len(matches) != 1:
-        raise RuntimeError(
-            f"Expected one installed provider backend {name!r}, found {len(matches)}"
-        )
-    matches[0].load()
 
 
 def create_llm_model(config: ProviderTaskConfig) -> LLMBase:
     if config.kind != ProviderKind.LLM:
         raise ValueError("An LLM requires kind='llm'")
 
-    _load_backend(config.backend)
     model = AvatarModulePlugin.create(AvatarModule.PROVIDER_LLM, config.backend, config=config)
     if not isinstance(model, LLMBase):
         raise TypeError("Provider LLM factory must return LLMBase")
@@ -47,7 +33,6 @@ def create_embedding_model(config: ProviderTaskConfig) -> WorkerEmbeddingBase:
     if config.kind != ProviderKind.EMBEDDING:
         raise ValueError("An embedding model requires kind='embedding'")
 
-    _load_backend(config.backend)
     model = AvatarModulePlugin.create(
         AvatarModule.PROVIDER_EMBEDDING, config.backend, config=config
     )

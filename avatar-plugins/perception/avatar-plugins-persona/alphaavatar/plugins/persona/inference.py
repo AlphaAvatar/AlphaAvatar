@@ -37,8 +37,6 @@ def get_vdb_runner(config: dict[str, Any]) -> type[InferenceRunner]:
 
 def configure_inference_runners(config: AvatarConfig) -> tuple[type[InferenceRunner], ...]:
     persona = config.persona
-    if persona.plugin != "default":
-        return ()
     options = DefaultPersonaConfig.model_validate(persona.init_config)
 
     runners: list[type[InferenceRunner]] = []

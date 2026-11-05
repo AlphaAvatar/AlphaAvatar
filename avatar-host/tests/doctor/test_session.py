@@ -39,7 +39,7 @@ import doctor_doubles as doubles
 import pytest
 
 # Imported at collection: the persona plugin's OpenCV adjusts process variables (O-2).
-import alphaavatar.plugins.persona  # noqa: F401
+import alphaavatar.plugins.persona.factory  # noqa: F401
 from alphaavatar.host.cli.app import main
 from alphaavatar.host.configs import ConfigSource, load_application
 from alphaavatar.host.doctor import (
@@ -65,6 +65,7 @@ def chain(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, socket_root: Path):
         "runners": {"voice": ["SpeechRunner"], "router": ["EndpointRunner"]},
     }
     monkeypatch.setattr(doctor_process, "_main", doubles.child)
+    doubles.resolvable(monkeypatch)
     # Doctor's directory, the diagnostic process's temporary root, goes under a root of the
     # test's own, which must end empty.
     return SimpleNamespace(spec=spec, files=files, root=socket_root)
@@ -248,8 +249,8 @@ def test_the_configured_chain_runs_fixed_samples_and_one_request_carries_speech_
 
     # The text shows each scenario; nothing was written outside the temporary workspace.
     chain.spec["stt"] = [CARD]
-    # 1: the stand-in backend is no installed provider package, as packages.capabilities says.
-    assert doctor(capsys, chain, str(path), json_output=False)[0] == 1
+    # The stand-ins resolve here as installed plugins would: every check passes.
+    assert doctor(capsys, chain, str(path), json_output=False)[0] == 0
     shown = capsys.readouterr().out
     assert "passed       voice_vision" in shown and "no coverage  image_input" in shown
     # The figures table: a column per measured scenario, a dash where none was observed.
@@ -493,7 +494,10 @@ def test_failed_starts_timeouts_and_spent_budgets_keep_their_state_and_are_recla
     }
 
 
-async def test_a_step_keeps_the_state_its_wait_ended_in(tmp_path: Path) -> None:
+async def test_a_step_keeps_the_state_its_wait_ended_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    doubles.resolvable(monkeypatch)
     path = configuration(tmp_path)
     config = load_application(path)
     limits = doctor_session.Budget(1.0, 1.0, 10.0)

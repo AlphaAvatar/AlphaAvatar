@@ -19,7 +19,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from enum import Enum
 from pathlib import Path, PurePath
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID
 
 from pydantic import SecretStr
@@ -32,9 +32,6 @@ from alphaavatar.host.workspace import ApplicationPaths
 from .application import ApplicationConfig
 from .bundles import ConfigReferenceError, ConfigSource, compose_profiles
 from .paths import platform_application_root, resolve_application_paths
-
-if TYPE_CHECKING:
-    from alphaavatar.agents.configs import AvatarConfig
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -57,36 +54,12 @@ def _snapshot_scalar(value: Any) -> Any:
     raise ValueError("Application configuration contains a non-serializable value")
 
 
-def _check_plugin_packages(avatar: AvatarConfig) -> None:
-    """Every built-in plugin the selections use is installed, checked before any is imported.
-
-    A missing one is named with the setting that selects it, not as a failed import.
-    """
-    from importlib.util import find_spec
-
-    from alphaavatar.agents.runtime.plugin import plugin_requirement
-
-    def installed(name: str) -> bool:
-        try:
-            return find_spec(f"alphaavatar.plugins.{name}") is not None
-        except ModuleNotFoundError:  # No plugin package at all: the namespace is missing too.
-            return False
-
-    missing = "".join(
-        f"\n      {location}: {plugin_requirement(name)}"
-        for location, name in avatar.plugin_packages().items()
-        if not installed(name)
-    )
-    if missing:
-        raise ConfigReferenceError(
-            "Selected plugins are not installed; `alphaavatar setup` installs them, or change "
-            f"the settings that select them:{missing}"
-        )
-
-
 def _validate(value: Any, *, paths: ApplicationPaths | None = None) -> ApplicationConfig:
     from alphaavatar.agents.configs import AvatarConfig
     from alphaavatar.agents.runtime.inference import plan_inference_runners
+    from alphaavatar.agents.runtime.plugin import UnavailablePlugins
+
+    from .capabilities import unavailable
 
     data = _mapping(value)
     avatar_data = dict(data)
@@ -111,10 +84,12 @@ def _validate(value: Any, *, paths: ApplicationPaths | None = None) -> Applicati
 
     # AvatarConfig
     avatar = AvatarConfig.model_validate(avatar_data)
-    # The selected plugins, then runtime.inference against their runners: pure, no process,
-    # model or environment.
-    _check_plugin_packages(avatar)
-    plan_inference_runners(avatar)
+    # The selected plugins resolve, then runtime.inference is checked against their runners:
+    # pure, no process, model or environment.
+    try:
+        plan_inference_runners(avatar)
+    except UnavailablePlugins as error:
+        raise unavailable(error) from None
 
     # WorkspacePaths
     workspace = (
@@ -147,7 +122,8 @@ def validate_application(value: Any, *, paths: ApplicationPaths | None = None) -
 
 
 def restore_application(payload: str) -> ApplicationConfig:
-    """Restore explicit roots without consulting the child process environment."""
+    """Restore explicit roots without consulting the child process environment; the selected
+    plugins resolve and load again here, before any session."""
     return _validate(json.loads(payload))
 
 
@@ -162,57 +138,20 @@ def check_application_paths(config: ApplicationConfig) -> None:
 
 
 def validate_plugin_settings(config: ApplicationConfig) -> dict[str, Any]:
-    """The enabled built-in plugins' settings, validated with the schemas they use at start.
+    """The selected plugins' settings, each validated with its own plugin's schema, by section.
 
-    Pure: it reads only the accepted configuration. Settings a built-in plugin would reject
-    fail here, located under their section (``loop.init_config.model``); another plugin's
-    settings are absent from the result, since only that plugin knows its schema.
+    Pure: it reads only the accepted configuration, resolving the plugins and the provider
+    backends their settings name. Settings a plugin would reject fail here, located under
+    their section (``loop.init_config.model``); a plugin without a schema has none here.
     """
-    from pydantic import ValidationError
-    from pydantic_core import PydanticCustomError
+    from alphaavatar.agents.runtime.plugin import UnavailablePlugins, resolve_plugins
 
-    avatar = config.avatar
-    schemas: dict[str, Any] = {}
-    if avatar.loop.plugin == "realtime":
-        from alphaavatar.plugins.loop.config import RealtimeLoopConfig
+    from .capabilities import unavailable
 
-        schemas["loop"] = RealtimeLoopConfig
-    if avatar.context.plugin == "default":
-        from alphaavatar.plugins.context.config import ContextConfig
-
-        schemas["context"] = ContextConfig
-    if avatar.router.plugin == "default":
-        from alphaavatar.plugins.router.config import RouterConfig
-
-        schemas["router"] = RouterConfig
-    if avatar.memory.plugin == "default":
-        from alphaavatar.plugins.memory.config import DefaultMemoryConfig
-
-        schemas["memory"] = DefaultMemoryConfig
-    if avatar.persona.plugin == "default":
-        from alphaavatar.plugins.persona.config import DefaultPersonaConfig
-
-        schemas["persona"] = DefaultPersonaConfig
-
-    settings, errors = {}, []
-    for section, schema in schemas.items():
-        try:
-            settings[section] = schema.model_validate(getattr(avatar, section).init_config)
-        except ValidationError as error:
-            errors += [
-                {
-                    # The rendered message as context: braces in it are not a template.
-                    "type": PydanticCustomError(
-                        item["type"], "{message}", {"message": item["msg"]}
-                    ),
-                    "loc": (section, "init_config", *item["loc"]),
-                    "input": item["input"],
-                }
-                for item in error.errors(include_url=False)
-            ]
-    if errors:
-        raise ValidationError.from_exception_data("PluginSettings", errors)
-    return settings
+    selection = resolve_plugins(config.avatar, providers=True)
+    if selection.problems:
+        raise unavailable(UnavailablePlugins(selection))
+    return selection.settings
 
 
 def load_application(

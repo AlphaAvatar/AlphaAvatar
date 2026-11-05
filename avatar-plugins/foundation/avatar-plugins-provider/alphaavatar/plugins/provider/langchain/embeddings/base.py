@@ -14,7 +14,7 @@
 from langchain_core.embeddings import Embeddings
 
 from alphaavatar.agents.avatar.provider.base import WorkerEmbeddingBase
-from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
+from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
 
 from .models import create_embedding_model
 

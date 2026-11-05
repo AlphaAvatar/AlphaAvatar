@@ -35,8 +35,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: linux-package-${{ github.ref }}
-  # A newer push supersedes a dev build; each commit merged to main, and a release, finishes.
+  # Each commit merged to main is checked on its own, never queued behind or replaced by the
+  # next; a newer push supersedes a dev build; a release finishes.
+  group: linux-package-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: ${{ inputs.release == '' && github.ref != 'refs/heads/main' }}
 
 jobs:
@@ -66,6 +67,7 @@ jobs:
           path: dist/linux/
           if-no-files-found: error
           retention-days: 30
+          overwrite: true  # Re-running every job builds again: this attempt's files replace it.
 
   verify:
     # The files the build uploaded, installed the way DEPLOY.md tells a person to.
@@ -87,6 +89,12 @@ jobs:
         with:
           name: alphaavatar-linux-x86_64-${{ github.sha }}
           path: /srv/alphaavatar
+      - uses: actions/checkout@v4  # The glibc scanner only; nothing of it is installed.
+        with:
+          sparse-checkout: packaging/linux/glibc-floor.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+          path: source
       - name: A clean machine
         run: |
           for tool in python3 python node gcc cc c++; do
@@ -102,10 +110,13 @@ jobs:
         run: |
           alphaavatar --version
           alphaavatar --help > /dev/null
-          alphaavatar config init reference --avatar-id reference
-          # Nothing but the base: check names each package and setup.
+          alphaavatar config init reference --avatar-id reference > init.txt
+          grep -F 'alphaavatar setup' init.txt
+          # Nothing but the base: check names each implementation and what setup installs.
           if alphaavatar config check 2> check.txt; then exit 1; fi
-          grep -F '`alphaavatar setup` installs them' check.txt
+          grep -F "loop.plugin: no installed package provides loop 'realtime'; \`alphaavatar setup\` installs it" check.txt
+          if alphaavatar config check tools.rag.plugin=default 2> rag.txt; then exit 1; fi
+          grep -F "\`alphaavatar setup\` does not offer it" rag.txt
       - name: Remote inference plans no local model nor its accelerators
         working-directory: /
         run: |
@@ -131,9 +142,7 @@ jobs:
           # After the clean steps: binutils reads the symbol versions native code needs.
           apt-get update -qq && apt-get install -y -qq binutils > /dev/null
           for dir in "$HOME"/.local/lib/alphaavatar/versions/* "$HOME"/.local/lib/alphaavatar/envs/*; do
-            floor="$(find "$dir" -type f \( -name '*.so' -o -name '*.so.*' -o -perm -u+x \) \
-              -print0 | xargs -0 objdump -p 2>/dev/null | grep -o 'GLIBC_[0-9][0-9.]*' \
-              | cut -d_ -f2 | sort -uV | tail -n 1)"
+            floor="$(source/packaging/linux/glibc-floor.sh "$dir")"
             echo "$dir needs glibc >= $floor"
-            [[ "$(printf '%s\n' "$floor" 2.28 | sort -V | tail -n 1)" == 2.28 ]]
+            [[ -n "$floor" && "$(printf '%s\n' "$floor" 2.28 | sort -V | tail -n 1)" == 2.28 ]]
           done

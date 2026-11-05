@@ -140,11 +140,7 @@ chmod 755 "$tree/bin/alphaavatar"
 
 echo "==> Platform floor"
 # The newest glibc symbol version a native file references is the oldest glibc it runs on.
-floor() {
-  find "$@" -type f \( -name '*.so' -o -name '*.so.*' -o -perm -u+x \) -print0 \
-    | { xargs -0 objdump -p 2>/dev/null || true; } | { grep -o 'GLIBC_[0-9][0-9.]*' || true; } \
-    | cut -d_ -f2 | sort -uV | tail -n 1
-}
+floor() { "$root/packaging/linux/glibc-floor.sh" "$@"; }
 base_floor="$(floor "$tree")"
 mkdir "$work/unpacked"
 for wheel in "$wheels"/*.whl; do
@@ -193,9 +189,11 @@ run() { (cd / && env ALPHAAVATAR_HOME="$smoke/home" ENV_FILE="$smoke/absent.env"
     && run "$tree/bin/alphaavatar" config init reference --avatar-id reference > /dev/null \
     && run "$tree/bin/alphaavatar" doctor --list > /dev/null
 } || die "The base does not run"
-# Without capabilities, config check names each package the bundle needs, and setup.
+# Without capabilities, config check names each implementation the bundle selects, where; the
+# tree is not installed into a prefix, so nothing here is said to come from setup.
 report="$(run "$tree/bin/alphaavatar" config check 2>&1)" && die "config check passed bare"
-grep -q 'alphaavatar setup` installs them' <<< "$report" || { echo "$report" >&2; die "$report"; }
+grep -q "voice.vad.plugin: no installed package provides voice.vad 'silero'" <<< "$report" \
+  || { echo "$report" >&2; die "config check does not name what is missing"; }
 # The catalog plans both presets offline (the base is not installed into a prefix here).
 for preset in default remote; do
   run "$py" -I - "$tree" "$preset" <<'PY' || die "The catalog cannot plan $preset"
@@ -207,6 +205,8 @@ tree, preset = Path(sys.argv[1]), sys.argv[2]
 catalog = json.loads((tree / "share/alphaavatar/catalog.json").read_text())
 plan = plan_install(catalog, requirements(PRESETS[preset]), base="build")
 print(f"    {preset}: {len(plan.artifacts)} packages, {plan.download_bytes / 1e6:,.0f} MB")
+# What config check says setup installs: the implementations this build's wheels declare.
+assert catalog["plugins"]["voice.vad"]["silero"] == "alpha-avatar-plugins-voice[silero]"
 PY
 done
 

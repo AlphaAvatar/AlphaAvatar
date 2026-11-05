@@ -28,13 +28,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+import doctor_doubles as doubles
 import pytest
 from config_samples import CONFIG, LOOP, SECRETS, files, write
 
 import alphaavatar.host.doctor as host_doctor
 
 # Imported at collection: the persona plugin's OpenCV adjusts process variables (O-2).
-import alphaavatar.plugins.persona  # noqa: F401
+import alphaavatar.plugins.persona.factory  # noqa: F401
+from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.host.cli.app import main
 from alphaavatar.host.cli.commands.doctor import GROUPS
 from alphaavatar.host.doctor import CHECKS, Check, CheckStatus, Report
@@ -210,8 +212,15 @@ def test_doctor_selects_and_loads_configurations_as_config_check_does(
 
 
 def test_provider_backends_follow_defaults_and_skip_what_start_does_not_create(
-    tmp_path: Path, credentials: object, disk: object, capsys: pytest.CaptureFixture
+    tmp_path: Path,
+    credentials: object,
+    disk: object,
+    capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    doubles.resolvable(
+        monkeypatch, (AvatarModule.MEMORY, "custom"), (AvatarModule.PERSONA, "custom")
+    )
     without_mcp = CONFIG["tools"] | {"mcp": {"enabled": False}}
 
     def providers(model: dict, **sections: object) -> tuple[list[str], dict[str, dict]]:
@@ -223,7 +232,8 @@ def test_provider_backends_follow_defaults_and_skip_what_start_does_not_create(
         found = [service["name"] for service in checks["services.external"]["services"]]
         return [name for name in found if name.startswith("model providers")], checks
 
-    # The loop alone: memory and persona from another plugin add no store embeddings.
+    # Memory and persona from another plugin: their settings name no task; their stores embed
+    # with the default backend, as every vector store does.
     others = {"memory": {"plugin": "custom"}, "persona": {"plugin": "custom"}}
     # A task naming only its model takes the schema's defaults, as if they were written out.
     implicit, _ = providers({"model": "m"}, **others)

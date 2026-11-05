@@ -18,6 +18,9 @@ classifiers = [
 ]
 dependencies = ["alpha-avatar-agents", "alpha-avatar-core", "mcp>=1.24.0,<2", "pydantic>=2,<3"]
 
+[project.entry-points."alphaavatar.tools.mcp"]
+default = "alphaavatar.plugins.mcp:MCPRemotePlugin"
+
 [project.urls]
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"
 Issues = "https://github.com/AlphaAvatar/AlphaAvatar/issues"

@@ -41,7 +41,12 @@ from alphaavatar.agents.runtime.inference import (
     InferenceRuntime,
     RunnerLaunch,
 )
-from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
+from alphaavatar.agents.runtime.plugin import (
+    AvatarModule,
+    AvatarModulePlugin,
+    ResolvedPlugin,
+    resolution as plugin_resolution,
+)
 from alphaavatar.agents.workspace import WorkspacePaths
 from alphaavatar.core.session import SessionRuntime
 from alphaavatar.host.application.application import AvatarHost
@@ -130,6 +135,14 @@ class ProbeContext(Probe, ContextManager):
 
     def build(self, prefix, *, continuation=()):
         raise NotImplementedError
+
+
+def stand_in(
+    monkeypatch: pytest.MonkeyPatch, module: AvatarModule, name: str, factory: AvatarModulePlugin
+) -> None:
+    """The factory resolves for ``name`` in this test, in place of the installed one."""
+    resolved = ResolvedPlugin(module, name, factory, None)
+    monkeypatch.setitem(plugin_resolution._resolved, (module, name), resolved)
 
 
 class ProbePlugin(AvatarModulePlugin):
@@ -228,8 +241,8 @@ async def test_bootstrap_rollback_releases_every_resource_after_loop_initializat
     events: list[str] = []
     loops = ProbePlugin(lambda runtime: ProbeLoop(runtime, events))
     contexts = ProbePlugin(lambda runtime: ProbeContext(runtime, events, failure=cleanup_failure))
-    monkeypatch.setitem(AvatarModulePlugin._registry[AvatarModule.LOOP], "realtime", loops)
-    monkeypatch.setitem(AvatarModulePlugin._registry[AvatarModule.CONTEXT], "default", contexts)
+    stand_in(monkeypatch, AvatarModule.LOOP, "realtime", loops)
+    stand_in(monkeypatch, AvatarModule.CONTEXT, "default", contexts)
     session = SessionRuntime(session_id="bootstrap")
     workspace = WorkspacePaths.from_root(tmp_path / "workspace")
 
@@ -262,8 +275,8 @@ async def test_cancelled_bootstrap_rolls_back_before_cancellation_propagates(
     events: list[str] = []
     loops = ProbePlugin(lambda runtime: ProbeLoop(runtime, events, blocked=True))
     contexts = ProbePlugin(lambda runtime: ProbeContext(runtime, events))
-    monkeypatch.setitem(AvatarModulePlugin._registry[AvatarModule.LOOP], "realtime", loops)
-    monkeypatch.setitem(AvatarModulePlugin._registry[AvatarModule.CONTEXT], "default", contexts)
+    stand_in(monkeypatch, AvatarModule.LOOP, "realtime", loops)
+    stand_in(monkeypatch, AvatarModule.CONTEXT, "default", contexts)
     session = SessionRuntime(session_id="bootstrap")
     workspace = WorkspacePaths.from_root(tmp_path / "workspace")
 

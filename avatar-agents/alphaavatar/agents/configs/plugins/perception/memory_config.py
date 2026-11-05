@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import importlib
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -55,7 +54,6 @@ class MemoryConfig(BaseModel):
 
     def get_plugin(self, runtime: AvatarRuntime, avatar_id: str) -> MemoryBase:
         """Returns the Memory plugin instance based on the configuration."""
-        importlib.import_module("alphaavatar.plugins.memory")
         return AvatarModulePlugin.create(
             AvatarModule.MEMORY,
             self.plugin,

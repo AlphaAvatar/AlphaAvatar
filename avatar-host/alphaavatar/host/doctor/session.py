@@ -123,16 +123,19 @@ def derive(config: ApplicationConfig, changes: Mapping[str, object]) -> Applicat
 
 
 def _stores(config: ApplicationConfig) -> list[tuple[str, str, dict[str, Any]]]:
-    """The selected plugins' vector stores: plugin, its section, its store settings.
+    """The selected plugins' vector stores: the plugin's namespace, its section, its store
+    settings.
 
     A section with store settings has a store, whichever plugin it names: a store Doctor
     cannot account for is still never written.
     """
+    from alphaavatar.agents.runtime.plugin import resolve_plugins
+
     stores = []
-    for location, name in config.avatar.plugin_packages().items():
+    for location, plugin in resolve_plugins(config.avatar).plugins.items():
         section = config.avatar.section(location)
         if (vdb := getattr(section, "vdb_config", None)) is not None:
-            stores.append((name, location.rpartition(".")[0], vdb))
+            stores.append((plugin.namespace, location.rpartition(".")[0], vdb))
     return stores
 
 
@@ -148,8 +151,6 @@ def unisolated(config: ApplicationConfig) -> list[str]:
 def isolate(config: ApplicationConfig, workspace: str) -> tuple[ApplicationConfig, tuple[str, ...]]:
     """The snapshot on Doctor's storage: ``workspace`` as the Avatar workspace, and each
     explicit local vector store path moved inside it, where the default would be."""
-    from importlib import import_module
-
     from alphaavatar.agents.utils.vdb.config import vdb_backend
     from alphaavatar.agents.workspace import WorkspacePaths
 
@@ -159,8 +160,7 @@ def isolate(config: ApplicationConfig, workspace: str) -> tuple[ApplicationConfi
     for name, key, vdb in _stores(config):
         if vdb_backend(vdb) == "lancedb" and vdb.get("client_path"):
             # Where the plugin keeps the store by default: under its own storage name.
-            namespace = import_module(f"alphaavatar.plugins.{name}.namespace").NAMESPACE
-            path = indexes.namespace(namespace).backend("lancedb").root
+            path = indexes.namespace(name).backend("lancedb").root
             changes[f"{key}.vdb_config.client_path"] = str(path)
             rebound.append(f"{name}'s LanceDB path")
     return derive(config, changes), tuple(rebound)

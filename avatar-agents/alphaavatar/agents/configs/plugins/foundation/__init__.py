@@ -13,7 +13,16 @@
 # limitations under the License.
 from .context_config import ContextConfig
 from .loop_config import LoopConfig
+from .provider_config import ProvidersConfig, ProviderTaskConfig, ProviderTraceConfig
 from .vision_config import VisionConfig
 from .voice_config import VoiceConfig
 
-__all__ = ["ContextConfig", "LoopConfig", "VisionConfig", "VoiceConfig"]
+__all__ = [
+    "ContextConfig",
+    "LoopConfig",
+    "ProvidersConfig",
+    "ProviderTaskConfig",
+    "ProviderTraceConfig",
+    "VisionConfig",
+    "VoiceConfig",
+]

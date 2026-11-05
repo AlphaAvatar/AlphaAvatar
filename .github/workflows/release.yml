@@ -96,6 +96,7 @@ jobs:
           path: body.md
           if-no-files-found: error
           retention-days: 7
+          overwrite: true  # A full re-run writes the notes again.
 
   github_release:
     name: Create GitHub Release
@@ -148,4 +149,12 @@ jobs:
           attached="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
             --jq '.assets[] | "\(.name) \(.size)"' | sort)"
           [[ "$attached" == "$expected" ]] || { echo "The draft's files differ" >&2; exit 1; }
+          # The draft's own bytes: its archive matches its .sha256 and every file SHA256SUMS,
+          # this build's, however many attempts uploaded before.
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir draft
+          cmp draft/SHA256SUMS package/SHA256SUMS
+          (cd draft && sha256sum -c --quiet SHA256SUMS)
+          for sum in draft/*.tar.gz.sha256; do
+            (cd draft && sha256sum -c --quiet "${sum##*/}")
+          done
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false

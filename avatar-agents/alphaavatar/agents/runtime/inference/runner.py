@@ -15,9 +15,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from alphaavatar.agents.workspace.paths import absolute_root
+
+if TYPE_CHECKING:
+    from alphaavatar.agents.runtime.plugin import AvatarModule
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +45,16 @@ class InferenceRunner:
     # requirements, usually an extra of its plugin: checked before anything starts, and
     # installed by `alphaavatar setup`.
     REQUIRES: ClassVar[tuple[str, ...]] = ()
+    # The provider implementations it creates models with, by capability type and name:
+    # resolved with the plugins before anything starts.
+    PROVIDERS: ClassVar[tuple[tuple[AvatarModule, str], ...]] = ()
+
+    @property
+    def launch(self) -> RunnerLaunch:
+        launch = getattr(self, "_launch", None)
+        if launch is None:
+            raise RuntimeError("Configure RunnerLaunch before initializing this runner")
+        return launch
 
     def configure(self, launch: RunnerLaunch) -> None:
         if not isinstance(launch, RunnerLaunch):
@@ -50,13 +63,6 @@ class InferenceRunner:
         if previous is not None and previous != launch:
             raise RuntimeError("An initialized runner cannot change its workspace")
         self._launch = launch
-
-    @property
-    def launch(self) -> RunnerLaunch:
-        launch = getattr(self, "_launch", None)
-        if launch is None:
-            raise RuntimeError("Configure RunnerLaunch before initializing this runner")
-        return launch
 
     def config_for(self, namespace: str) -> dict[str, Any]:
         value = json.loads(self.launch.config).get(namespace, {})

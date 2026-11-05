@@ -23,10 +23,11 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTraceConfig
 from alphaavatar.agents.utils.time import application_now
 from alphaavatar.core.cleanup import wait_for_cleanup
 
-from .schemas import ProviderTraceConfig, ProviderTraceRecord
+from .schemas import ProviderTraceRecord
 from .schemas.provider_item import ModelProviderItem
 
 logger = logging.getLogger(__name__)

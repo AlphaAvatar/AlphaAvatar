@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import importlib
 from contextlib import AsyncExitStack
 from typing import Literal
 
@@ -22,19 +21,13 @@ from alphaavatar.agents.runtime.inference import InferenceExecutor
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 
 
-def _create(module: AvatarModule, name: str, **kwargs):
-    # AlphaAvatar voice factories, registered on import; turn interruption belongs to Router.
-    importlib.import_module("alphaavatar.plugins.voice")
-    return AvatarModulePlugin.create(module, name, **kwargs)
-
-
 class STTConfig(BaseModel):
     """Configuration for AlphaAvatar speech-to-text."""
 
     model_config = ConfigDict(extra="forbid")
 
-    plugin: Literal["openai_realtime", "openai_segment"] | None = Field(
-        default=None, description="STT provider implementation used by Interaction Router."
+    plugin: str | None = Field(
+        default=None, min_length=1, description="STT implementation used by Interaction Router."
     )
     model: str | None = Field(
         default=None, description="Model used by the AlphaAvatar STT provider."
@@ -56,7 +49,7 @@ class STTConfig(BaseModel):
 
         if self.base_url is not None:
             kwargs["base_url"] = self.base_url
-        return _create(AvatarModule.VOICE_STT, self.plugin, **kwargs)
+        return AvatarModulePlugin.create(AvatarModule.VOICE_STT, self.plugin, **kwargs)
 
 
 class TTSConfig(BaseModel):
@@ -64,8 +57,8 @@ class TTSConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    plugin: Literal["openai", "voiceai"] | None = Field(
-        default=None, description="TTS plugin to use for text-to-speech."
+    plugin: str | None = Field(
+        default=None, min_length=1, description="TTS implementation to use for text-to-speech."
     )
     model: str | None = Field(default=None, description="Model to use for text-to-speech.")
     speaker: str | None = Field(
@@ -125,7 +118,7 @@ class TTSConfig(BaseModel):
         if self.plugin is None:
             return None
 
-        return _create(
+        return AvatarModulePlugin.create(
             AvatarModule.VOICE_TTS,
             self.plugin,
             model=self.model,
@@ -153,8 +146,8 @@ class VADConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    plugin: Literal["silero"] | None = Field(
-        default=None, description="VAD plugin used by Interaction Router."
+    plugin: str | None = Field(
+        default=None, min_length=1, description="VAD implementation used by Interaction Router."
     )
     min_speech_duration: float = Field(default=0.05, ge=0.0)
     min_silence_duration: float = Field(default=0.55, ge=0.0)
@@ -168,7 +161,7 @@ class VADConfig(BaseModel):
         if self.plugin is None:
             return None
 
-        return _create(
+        return AvatarModulePlugin.create(
             AvatarModule.VOICE_VAD,
             self.plugin,
             min_speech_duration=self.min_speech_duration,

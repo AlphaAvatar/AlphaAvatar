@@ -13,8 +13,6 @@
 # limitations under the License.
 from __future__ import annotations
 
-from functools import cache
-from importlib.metadata import entry_points
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -23,14 +21,6 @@ if TYPE_CHECKING:
     from alphaavatar.agents.avatar.context import ContextManager
     from alphaavatar.agents.configs import AvatarConfig
     from alphaavatar.agents.runtime import AvatarRuntime
-
-
-@cache
-def _load_context(name: str) -> None:
-    matches = tuple(entry_points(group="alphaavatar.context", name=name))
-    if len(matches) != 1:
-        raise RuntimeError(f"Expected one installed context {name!r}, found {len(matches)}")
-    matches[0].load()
 
 
 class ContextConfig(BaseModel):
@@ -43,7 +33,6 @@ class ContextConfig(BaseModel):
         from alphaavatar.agents.avatar.context import ContextManager
         from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 
-        _load_context(self.plugin)
         manager = AvatarModulePlugin.create(
             AvatarModule.CONTEXT,
             self.plugin,

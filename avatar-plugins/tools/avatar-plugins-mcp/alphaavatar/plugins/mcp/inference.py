@@ -34,7 +34,7 @@ def get_vdb_runner(config: dict[str, Any]) -> type[InferenceRunner]:
 
 def configure_inference_runners(config: AvatarConfig) -> tuple[type[InferenceRunner], ...]:
     options = config.tools.mcp
-    if not options.enabled or not options.servers or options.plugin != "default":
+    if not options.servers:
         return ()
 
     return (get_vdb_runner(options.vdb_config),)

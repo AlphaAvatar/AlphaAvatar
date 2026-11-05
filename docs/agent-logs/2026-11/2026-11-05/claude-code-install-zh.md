@@ -10,7 +10,8 @@
 |---|---|---|---|---|---|
 | 第 1 项 | Linux x86_64 安装器：自带 Python，按 tag 或 commit 的锁文件安装 Host，版本目录验证后再切换稳定入口 | 2026-11-05 | `7564770` | 用户已提交（`9f86a6a`） | 已被返工取代：`scripts/install.sh` 已删除，第 7 节待复核的去向见返工第 8 节 |
 | 第 1 项返工 | 1A 整理 `scripts/`；1B CI 构建的 Linux 参考安装包、配置三段分离、默认开启视觉、薄安装脚本 | 2026-11-05 | `9f86a6a` | 用户已提交（`124e012`） | 部分被第二轮取代：完整参考包改为基础包加 `setup`；1A、配置分段、`NAMESPACE` 保留 |
-| 第 1 项第二轮 | 轻量基础包 → `alphaavatar setup` 选择 → 按能力补齐依赖 → 校验后启用；插件 extras 与 runner 依赖声明；开发分支 CI 制品与干净容器验收；发布草稿化 | 2026-11-05 | `124e012` | 未提交（用户提交） | 待审查 |
+| 第 1 项第二轮 | 轻量基础包 → `alphaavatar setup` 选择 → 按能力补齐依赖 → 校验后启用；插件 extras 与 runner 依赖声明；开发分支 CI 制品与干净容器验收；发布草稿化 | 2026-11-05 | `124e012` | 用户已提交（`7c67240`） | 部分被第三轮修正：插件发现、激活事务、凭据保存、CI 三处失败 |
+| 第 1 项第三轮 | 统一插件发现（能力类型 + 实现名，entry point）；安装与激活事务修复；向导凭据与自托管端点；glibc 扫描、Doctor 导入和 CI 重跑修复；短句 TTS 失败复现 | 2026-11-06 | `7c67240` | 未提交（用户提交） | 待审查 |
 
 ## 历史记录（合并来源）
 
@@ -875,3 +876,153 @@ A 测试即 `test_init_needs_no_plugin_and_check_names_each_missing_one_where_it
 - DEPLOY.md 同步改为「`main` 和 `dev/**` 上每次改动了制品内容的推送」。
 
 Doctor 运行指标、启动与停止、升级失败回退，按原顺序在本项审查通过后进行。
+
+## 第 1 项第三轮（基线 `7c67240`）
+
+依据：Codex 对 `7c67240` 的审查和用户的三项要求。远端 CI（Linux package run 42042146953）已跑通默认方案的安装和 `config check`，只在 glibc 扫描一步失败；Quality（run 42042146666）在单独 Host wheel 读 Doctor 样例和短句 TTS 测试两处失败。所有改动在未暂存的工作区。
+
+### 1. 统一插件发现
+
+**规则**：每个插件选择都按「能力类型 + 实现名」解析。`voice.stt.plugin: openai_segment` 就是 `("voice.stt", "openai_segment")`。已安装的包在 entry point 组 `alphaavatar.<类型>` 里用实现名声明它，值指向该实现现有的 factory 类（`AvatarModulePlugin` 子类）。内置插件也一样，在各自 `pyproject.toml` 里声明；原先为发现实现而写死的 `import_module("alphaavatar.plugins.<包>")` 全部删除。
+
+| 能力类型（`AvatarModule` 的值） | 配置字段 | 内置实现 |
+|---|---|---|
+| `loop`、`context` | `loop.plugin`、`context.plugin` | `realtime`、`default` |
+| `provider.llm`、`provider.embedding` | 各插件设置里 `ProviderTaskConfig.backend` | `openai`、`langchain`；`langchain` |
+| `voice.vad`、`voice.stt`、`voice.tts` | `voice.*.plugin` | `silero`；`openai_realtime`、`openai_segment`；`openai`、`voiceai` |
+| `router`、`status`、`memory`、`persona`、`character` | `*.plugin` | `default`；`airi` |
+| `tools.deepresearch`、`tools.rag`、`tools.mcp` | `tools.*.plugin`（MCP 还看 `enabled`） | `default` |
+
+**接口**（Agents `runtime/plugin/resolution.py`，新增；数据类 `ResolvedPlugin`、`PluginSelection` 在 `runtime/plugin/schemas/`）：
+
+- `resolve_plugin(类型, 名字)`：找唯一的 entry point，加载 factory 类并实例化，每个进程只加载一次。没有、多个包重名、加载失败或不是 `AvatarModulePlugin` 子类，都抛 `PluginError`；重名时列出各个包名，加载失败时带上声明它的包。
+- `resolve_plugins(配置, providers=...)`：先按 `AvatarConfig.plugin_factories()` 解析每个被选中的插件，再由这些插件的 factory 给出它们用的 runner（`inference_runners`），然后才规划 worker。带 `providers` 时，还会用插件自己的 schema（`settings`）校验 `init_config`，错误定位到 `loop.init_config.model` 这样的字段；再解析设置里每个 `ProviderTaskConfig` 的后端，以及 runner 声明的 Provider（`InferenceRunner.PROVIDERS`，向量库 runner 声明默认后端的 embedding）。未关闭的部分才算选中：`voice.vad.plugin: null`、`tools.mcp.enabled: false` 不会被解析。
+- factory 上新增两个可选方法：`settings(init_config)` 和 `inference_runners(config)`。原来各包 import 时注册的 runner 引导函数（`register_inference_runner_bootstrap`）和全局注册表删除，runner 逻辑原样挪到 factory 方法里，去掉了 `if plugin != "default"` 这类按名字的门控。
+- `ResolvedPlugin.namespace` 由 factory 所在包得出（`alphaavatar.plugins.memory` → `memory`），runner 设置快照和 Doctor 的存储隔离都改用它，不再用写死的包名表 `plugin_packages()`（已删除）。
+- `voice.*.plugin` 由 `Literal[...]` 改为字符串，其他包的实现也能被选中。
+
+**共用**：`config check`、Doctor 和 `start` 都经同一条路径：加载配置时解析插件并规划 runner；`validate_plugin_settings` 和 `resolve_capabilities` 再带上 Provider。缺失、重名、加载失败和依赖不足都定位到选中它的字段。在安装包里，缺失的实现会注明 `setup` 能否安装（见第 3 节）。会话子进程恢复配置时同样先解析和加载选中的插件；Provider 模型在插件初始化（`validate_tasks`）时创建，都在实时会话开始前。移动端以后可以换掉 `resolve_plugin` 背后的发现来源（例如 App 构建清单），接口不变；这一轮只实现了 Python entry point 这一种来源。
+
+
+### 2. 安装与激活事务
+
+- **current、默认 bundle 和凭据一致**：切换 `current` 和启用（写凭据、写 bundle、替换 `settings.yaml`）合成一步：期间收到的 SIGINT／SIGTERM／SIGHUP 先记下，这一步结束后再按原处理方式生效。最初用 `pthread_sigmask` 实现，测试证明不够：进程里只要有别的线程，信号就会投递到那个线程，Python 仍在主线程执行处理函数。现在改为在 Python 层临时换成「记录」处理函数，与线程无关。`settings.yaml` 替换是提交点；替换之后若出现非信号错误，按已启用处理，不再撤回凭据和 `current`。
+- **命令入口原子、禁止覆盖**：install.sh 改用 `ln -sT`（不带 `-f`），只有该位置为空时才创建，原先的「临时链接再 `mv -Tf`」会覆盖别人刚建的入口。创建前先记下「入口是本次的」，信号恰好落在链接刚出现时也能清理；清理只删仍指向本前缀的入口。
+- **归属不明的路径不碰**：
+  - setup 和 install.sh 都要求 `current` 是指向本前缀 `versions/` 或 `envs/` 的链接，否则拒绝并原样保留；
+  - setup 建的目录（暂存区、环境）都带 `.alphaavatar-setup` 标记，环境目录先在暂存区建好标记再改名到位；同一计划的残留目录只有带标记且不被 `current` 引用时才重建，否则拒绝；
+  - 被强杀留下的暂存区（setup 的 `envs/.setup-*`、install.sh 的 `versions/.install-*`，后者标记为 `.alphaavatar-install`）在下次持锁时清理，没有标记的不动。
+- **锁内复核**：取得安装锁后重读 `current` 的基础版本和当前环境的依赖。基础版本变了就拒绝；当前环境多出计划里没有的依赖（另一个 setup 在本次规划之后完成），就把它们并入重新规划。依赖仍然只增不减。
+- **本地 `--artifacts`**：先复制到本次独占的暂存区再校验，安装的就是校验过的那份；URL 下载本来就落在暂存区。
+
+### 3. 向导和 CI
+
+- **凭据**：`--preset` 只从环境读取，不再写 `credentials.env`，结束时提示 start 从环境或 `.env` 读取哪些变量。交互模式下先问是否保存（默认否）；已保存的同名变量值不同时再单独确认是否替换（默认否），不替换就保留原值并说明。`ENV_FILE` 的移除留在第 2 项。
+- **自托管端点**：交互模式「逐项选择」里可以把模型和语音分别指向自己的 OpenAI 兼容服务：
+  - 模型：对话模型走 `openai` 后端（Responses API，loop 需要流式），记忆和画像任务、embedding 走 `langchain` 的 OpenAI 实现，三者都写 `extra.base_url`；
+  - 语音：`voice.stt.base_url`／`model`、`voice.tts.base_url`／`model`／`speaker`；
+  - 远端语音保留本机 Silero VAD，依赖集合与选 OpenAI 时相同。
+- **如实提示 setup 能装什么**：catalog 新增 `plugins` 表（类型 → 实现名 → 安装它的需求），由构建出的 wheel 的 entry point 生成。安装包里缺某个实现时，`config check` 和 Doctor 会在该行注明「`alphaavatar setup` installs it (…)」或「this release's `alphaavatar setup` does not offer it」；源码检出里不提 setup。RAG、Character 仍不进 catalog。
+- **基础包上的 `config init`**：下一步提示改为 `alphaavatar setup`，说明它会另建一个带所选能力的 bundle，刚生成的这个保持原样。
+- **glibc 扫描**：CI 原先把 `bin/` 里的 shell 启动器也交给 `objdump`，xargs 退出 123。新增 `packaging/linux/glibc-floor.sh`：按 ELF 魔数挑文件，objdump 读不了真正的 ELF 时仍然失败；build.sh 和 CI 共用，build.sh 原来的 `|| true` 吞错也随之去掉。
+- **Doctor 顶层导入**：`doctor.py` 从 `configs.capabilities` 导入 `HOST`，连带导入 Agents，单独安装 Host wheel 时读样例失败。分发名改放 `host/version.py`。
+- **CI**：
+  - `main` 上每个提交独占一个并发组，互不排队也不互相取代；`dev/**` 仍是新推送取消旧构建；
+  - 两处 `upload-artifact` 加 `overwrite: true`，整轮重跑不再因同名制品失败；
+  - 发布前从草稿重新下载全部附件，核对 `SHA256SUMS` 与本次构建一致、逐个校验通过、归档与其 `.sha256` 一致；已公开的 Release 仍一个文件都不改；
+  - 干净容器验收新增：基础包上的 `config init` 提示、`config check` 的 setup 提示和 RAG 行；glibc 扫描改用新脚本，并要求结果非空。
+
+### 4. 短句 TTS 的 `FINISHED`／`PROGRESS` 失败（单独复现，未修）
+
+- **现象**：router 插件的 `test_back_to_back_short_sentences_keep_pcm_and_final_alignment_exact` 期望最后一条播放回执是 `FINISHED`，实际是 `PROGRESS`。Quality 在 `9f86a6a`（run 41994655368）和 `7c67240`（run 42042146666）都因它失败，断言相同。
+- **原因**：测试里的假播放器 `Player._receipt` 先 `await output.publish(FINISHED)`，返回后才把回执追加到 `receipts`。发布 `FINISHED` 本身就会让字幕定稿，测试等到 `transcript_finalized` 醒来时，追加可能还没执行，读到的 `receipts[-1]` 仍是上一条 `PROGRESS`。这是测试替身的时序问题，不涉及产品代码。
+- **确定性复现**：pytest 插件 `widen_receipt.py` 只把 `FINISHED` 回执的追加推迟 20 ms，其余不变。当前工作区和 `9f86a6a` 的源码都必然失败，断言与 CI 相同。`9f86a6a` 与当前的合成、输出链路代码相同（`avatar-core/.../output` 和 router 合成处理器没有差异）。
+- **自然复现（16 核全部占满）**：
+
+| 运行 | 失败／次数 |
+|---|---|
+| 当前工作区 | 36／60，26／30 |
+| 交替运行：当前工作区 对 `9f86a6a` | 19／25 对 3／25 |
+| 交替运行：当前工作区 对 `7c67240` | 13／15 对 11／15 |
+
+  空载下这一轮 4 次全量测试都通过。当前工作区与 `7c67240` 接近，说明本轮改动没有影响；频率在 `9f86a6a` 到 `7c67240` 之间升高，pytest 配置和这条链路的代码都没变，原因没有查明。
+- **未修**：按要求只复现和记录。修法是一行：在测试替身里先追加回执再发布。见第 8 节第 1 条。
+
+### 5. 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `avatar-agents/.../runtime/plugin/resolution.py`、`schemas/`（`resolved_plugin.py`、`plugin_selection.py`） | 新增：`resolve_plugin`、`resolve_plugins`、`PluginError`、`UnavailablePlugins`；数据类 `ResolvedPlugin`、`PluginSelection` 放在 `schemas/`，`check()` 在调用时才导入 `UnavailablePlugins`，因为 `resolution` 导入 `schemas` |
+| `avatar-agents/.../runtime/plugin/module.py`、`__init__.py` | `AvatarModule` 的值改为能力类型，加 `group`；去掉全局注册表，`create` 经解析；factory 加 `settings`、`inference_runners` |
+| `avatar-agents/.../runtime/inference/bootstrap.py`、`__init__.py`、`runner.py` | 删除 runner 引导注册；`plan_inference_runners` 先解析再规划；快照按 namespace；`InferenceRunner.PROVIDERS` |
+| `avatar-agents/.../configs/avatar_config.py`、`configs/plugins/**` | 删除 `plugin_packages()`；各配置段去掉写死的包导入和 `_load_*`；voice 实现名改为字符串 |
+| `avatar-agents/.../avatar/provider/factory.py`、`utils/vdb/config.py` | Provider 经解析创建；`vdb_embeddings()` |
+| `avatar-agents/.../configs/plugins/foundation/provider_config.py`（由 `avatar/provider/schemas/task_config.py` 改名移来）、`configs/__init__.py` | Provider 的配置模型（`ProviderTaskConfig`、`ProvidersConfig`、`ProviderTraceConfig`、`DEFAULT_BACKEND`）归入 foundation 配置段，31 个导入改到新路径，`provider.schemas` 不再导出它们；`configs` 包改为按需导出 `AvatarConfig`，否则 Provider 模块导入新路径时会经 `AvatarConfig` 绕回 runtime，形成循环导入 |
+| `avatar-agents/.../runtime/runtime.py` | `AvatarRuntime.foundation` 归入 agent-level 分组；dataclass 加 `kw_only=True`，带默认值的字段才能排在必填的 `inference` 之前（所有构造本来就用关键字） |
+| 12 个插件的 `pyproject.toml` 和包 `__init__`／factory | 声明 `alphaavatar.<类型>` entry point；删除 import 时注册；runner 和设置校验挂到 factory；voice 的 `inference.py` 删除；向量库 runner 声明 `PROVIDERS` |
+| `avatar-host/.../configs/capabilities.py`、`loader.py` | 基于 `resolve_plugins` 的能力检查；`MissingCapabilities`、`offered()`、`unavailable()`；`validate_plugin_settings` 改由插件 schema |
+| `avatar-host/.../doctor/doctor.py`、`session.py`、`host/version.py` | 分发名移到 `version.py`；去掉「未验证的 Provider」；外部服务和存储隔离改用解析结果；缺插件时的操作提示 |
+| `avatar-host/.../setup/environment.py`、`choices.py`、`cli/commands/setup.py`、`config.py` | 第 2、3 节的事务、凭据、自托管端点、`config init` 提示 |
+| `packaging/linux/install.sh`、`build.sh`、`catalog.py`、`glibc-floor.sh`（新增） | 入口、归属、暂存区清理；共用 glibc 扫描；catalog 的 `plugins` 表 |
+| `.github/workflows/linux-package.yml`、`release.yml` | 第 3 节 CI |
+| `avatar-plugins/README.md`、`DEPLOY.md` | 插件解析规则；setup 的凭据和自托管说明 |
+| 测试 | 新增 `avatar-host/tests/configs/test_discovery.py`；改 `test_capabilities`、`test_setup`、`test_environment`、`test_choices`、`test_entrypoint`、`test_doctor`、Doctor 替身与会话／隔离测试、`test_host_lifecycle`、Agents `test_launch`；10 个 Host 测试把收集期导入改为 `alphaavatar.plugins.persona.factory`（包 `__init__` 不再导入 factory） |
+
+### 6. 验证
+
+**本地实测**
+
+- 最终工作区上：Ruff（`--no-cache`）、格式、`check_workspace.py`（16 个成员）、`uv lock --check`（332 个包）、`git diff --check`、`bash -n`、工作流 YAML、pre-commit（120 个改动和新增文件）全部通过。
+- 全量测试 377 项通过；拦截被移除的包后再跑一遍，也是 377 项通过（最终工作区上两种都重跑过）。
+- `provider_config.py` 移动后：全量测试 377 项通过；Agents 和插件的 492 个模块各自在全新进程里导入都通过。把 `configs/__init__.py` 改回直接导入 `AvatarConfig`，`test_entrypoint` 在全新进程的 `start` 里因循环导入失败，说明按需导出是必需的，而且已有测试覆盖。
+- 数据类移到 `runtime/plugin/schemas/` 后：全量测试 377 项通过，495 个模块各自导入都通过；把 `check()` 里的延迟导入改成一个不存在的名字，Host 的配置与 `config check` 测试有 29 项失败，说明这条路径有测试覆盖。
+- `AvatarRuntime` 改为 `kw_only` 后：全量测试 377 项通过。
+- 变异：本轮 19 个全部被抓到（插件解析 9 个，事务与凭据 10 个），上一轮的「runner 依赖没算进需求」在新代码上重做也被抓到；install.sh 的两个变异（`ln -sfT` 覆盖入口、入口创建后才标记）在宿主机的竞争和中断检查里都被抓到。
+- Doctor 样例（复现 Quality 的「只装 Host wheel」步骤）：修复前退出 1，`No module named 'alphaavatar.agents'`；修复后退出 0。
+- glibc 扫描：旧写法对 `.venv/bin` 退出 123；新脚本给出 2.28；对伪造的坏 ELF 仍退出 123。
+- 本机构建（`--max-glibc 2.32`，62 s）：基础包 65,801,944 字节，SHA-256 `6a34014c169b7e42255a0b04c11660f2e5337a3e7bc9fd3d4634677989289292`，glibc 2.17；12 个 wheel；catalog 的 `plugins` 表列出 13 种类型，没有 RAG 和 Character。
+- **时间先后**：上面的本机构建和下面的干净沙箱结果，都来自三处追加调整（`provider_config.py`、`runtime/plugin/schemas/`、`AvatarRuntime` 的 `kw_only`）之前的工作区，制品 00:22 构建。追加调整之后，只从最终工作区单独构建了 Agents wheel，确认 `provider_config.py`、`runtime/plugin/schemas/` 的三个文件和 `resolution.py` 都在，`task_config.py` 不在。没有重建全部制品，也没有重跑沙箱。
+
+**干净沙箱（Ubuntu 24.04 rootfs，bubblewrap，最终构建）**
+
+| 组 | 结果 |
+|---|---|
+| 用户路径 | 基础包上 `config init` 提示 `setup` 会另建 bundle；裸 `config check` 和 Doctor 逐行写明 `` `alphaavatar setup` installs it (…) ``，选 RAG 时写明本版本 setup 不提供；默认预设 53 s，105 个包、514 MB，环境 1.7 GB，不写 `credentials.env`；`config check`、`silero x2`、未选中覆盖被拒都与上一轮一致 |
+| 安装包内的插件发现（每次全新进程） | 往环境里装一个带 entry point 的包：自定义 Loop 加 `workers=2` 得到 `probe.loop.echo x2`，自定义 Memory 也被选中；MCP 关闭且名字不存在时通过；再装一个也声明 `voice.vad silero` 的包，`config check` 和 `start` 都报出两个包名，`router.plugin=absent` 同时报出 |
+| 已有安装上的失败 | 与上一轮相同：各种中断后 current、入口和数据哈希都不变；切换后收到 SIGTERM 则 B 完整可用；远端预设复用默认环境，默认 bundle 仍通过 |
+| 重叠的 setup | 交互式远端 setup 停在确认提示，期间默认预设完成；恢复后在锁内发现另一个 setup 装了 4 项依赖，并入后复用同一环境，两个 bundle 都通过，`credentials.env` 为 600；预先放一个无标记的环境目录，setup 拒绝且原样保留；带标记的残留暂存区被清理，无标记的保留；`current` 是目录时 setup 和 install.sh 都拒绝且原样保留 |
+| 命令入口 | 两个前缀同时安装到同一命令目录：一个成功，另一个报「appeared meanwhile and runs …」，它的前缀被完整移除；首次安装在入口刚建好时被 SIGTERM：退出 143，入口和前缀都不留；`current` 是目录或指向 `/etc` 时拒绝且不动 |
+| 首次安装 | 与上一轮相同：各种首次失败什么都不留；首次 setup 在 3／10／16／20 s 收到 SIGTERM、6 s 收到 SIGINT，都不留环境；远端预设 23 s，环境 636 MB，本地推理库只有 onnxruntime |
+
+glibc 下限（新脚本实测）：基础包 2.17；远端环境 2.28；默认环境 2.32，只来自本机编译的 llama-cpp（CI 在 manylinux_2_28 里编译）。
+
+凭据替换后注入 SIGTERM 由 pytest 覆盖：用真实的 `install()` 建空环境、真实的 `setup` 命令，分别在 `credentials.env`、`settings.yaml` 替换之后立即向自己发 SIGTERM，结果都完整落在新状态（current、默认 bundle、凭据一致），命令退出 143 并说明 bundle 已启用；`settings.yaml` 替换后抛错也保持新状态。
+
+**推送后待 CI 验证**
+
+- manylinux_2_28 构建；用新脚本实测的 glibc 下限不超过 2.28，且结果非空；
+- 干净容器里新增的检查：基础包上 `config init` 的提示、`config check` 的 setup 行和 RAG 行；
+- `main` 上的逐提交并发组；整轮重跑时制品覆盖；
+- 草稿发布的重新下载与校验，要等第一次打正式 tag。
+
+### 7. 过程中的问题与更正
+
+- **`pthread_sigmask` 不够**：只屏蔽调用线程，pytest 进程里有别的线程，SIGTERM 投递到别处，Python 仍在主线程执行处理函数，测试因此失败。改为在 Python 层延后处理，见第 2 节。
+- **向量库 embedding 的归属**：先写成「有 `vdb_config` 的配置段都需要默认后端」，Doctor 会话测试里不用向量库的替身插件也被算进去。改为由向量库 runner 自己声明 `PROVIDERS`。
+- **收集期导入**：插件包 `__init__` 不再导入 factory 后，测试里 `import alphaavatar.plugins.persona` 不再提前触发 OpenCV 改环境变量，单独运行某个测试时被环境守卫拦下，改为导入 `factory`。
+- **会话子进程恢复配置**：曾让 `restore_application` 也校验插件设置并加载 Provider，最小配置的恢复因此失败。Provider 模型本来就在插件初始化时创建，已撤回。
+- **构建自检**：build.sh 的基础树不在 `versions/` 下，按新规则不提 setup，原先 grep「setup installs them」的自检失败，改为检查定位到字段的缺失行，并检查 catalog 的 `plugins` 表。
+- **install.sh 拒绝时留下空目录**：拒绝陌生 `current` 前就建了 `versions/`，已调整为检查通过后再建。
+- **验收脚本**：入口竞争的假 `ln` 起初只匹配 `/bin/alphaavatar`，没有真正卡住两个安装，修正后重跑。
+
+### 8. 待复核
+
+1. **短句 TTS 测试**：是否在测试替身里改为先追加回执再发布。这一轮未修，Quality 仍可能偶发失败。
+2. **`AvatarModule` 的值**：从 `avatar.perception.memory` 这类名字改为能力类型（`memory`、`voice.stt`、`provider.llm`）。它们只用作注册、日志和 entry point 组名，不是存储名。
+3. **向量库 embedding 的定位**：从 `memory.vdb_config.embedding` 变为 `memory.plugin (runner alphaavatar.memory.vdb.lancedb)`，因为后端由 runner 决定，配置里没有可改的字段。
+4. **自托管端点只在交互的「逐项选择」里**：预设没有对应参数。无人值守部署可以在生成后改 profile，或者另加参数。
+5. **SIGKILL**：无法拦截。若恰好落在切换之后、`settings.yaml` 替换之前，`current` 已是新环境，默认 bundle 仍是旧的；新环境包含旧环境的全部依赖，所以旧 bundle 照常可用。
+6. **追加调整的两处写法**：`PluginSelection.check()` 在调用时才导入 `UnavailablePlugins`，也可以改为把 `PluginError`、`UnavailablePlugins` 移到 `runtime/plugin/errors.py`（同 `avatar/provider/errors.py`）；`AvatarRuntime` 整个类用 `kw_only=True`，也可以只给 `foundation` 用 `field(default=None, kw_only=True)`。
+7. **仍按原计划后移**：setup 只增不减和旧环境清理（第 5 项）；Doctor 里按 `default` 名字判断的内置行为（`vision_off`、`start_services`，第 3 项）；移动端的 App 构建清单来源；去掉 `ENV_FILE`（第 2 项）。
+
+证据（会话临时目录，不入库）：`/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/evidence3/`。

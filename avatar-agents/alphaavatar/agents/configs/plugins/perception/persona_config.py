@@ -13,7 +13,6 @@
 # limitations under the License.
 from __future__ import annotations
 
-import importlib
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -43,7 +42,6 @@ class PersonaConfig(BaseModel):
         return self.vdb_config
 
     def get_plugin(self, runtime: AvatarRuntime) -> PersonaBase:
-        importlib.import_module("alphaavatar.plugins.persona")
         persona = AvatarModulePlugin.create(
             AvatarModule.PERSONA,
             self.plugin,

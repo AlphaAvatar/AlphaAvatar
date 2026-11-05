@@ -72,7 +72,7 @@ MCP owns native MCP client sessions in its isolated runner. One async task enter
 
 ## Registration and lifecycle
 
-`AvatarModulePlugin` registers module factories independently of LiveKit's plugin registry. Factories create configured instances; the registry does not own execution-specific state.
+A configuration selects each implementation by capability type and name: `voice.stt.plugin: openai_segment` selects `voice.stt` `openai_segment`. An installed package declares it as an entry point in the group `alphaavatar.<type>` under that name, naming its `AvatarModulePlugin` class; built-in plugins are declared the same way in their `pyproject.toml`, and no package is imported to find them. The factory validates its `init_config` (`settings`) and names the inference runners it uses (`inference_runners`); `config check`, Doctor and start resolve the selections, then plan workers from those runners, all before a session starts. A missing, duplicated or unloadable implementation fails at the setting that selects it. Factories create configured instances and own no execution-specific state.
 
 `alphaavatar.core.lifecycle.LifecycleComponent` defines `on_start()` and `on_stop()`. `LifecycleGroup` owns ordered startup phases, parallel independent components within a phase, and reverse-phase cleanup. Cleanup also covers partial and unstarted initialization. Repeated close requests share owned work, and a closed instance is not restarted.
 

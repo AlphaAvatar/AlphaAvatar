@@ -46,8 +46,10 @@ from .runtime import InteractionRouterRuntime
 from .version import __version__
 
 if TYPE_CHECKING:
+    from alphaavatar.agents.configs import AvatarConfig
     from alphaavatar.agents.router import RouterProcessorBase
     from alphaavatar.agents.runtime import AvatarRuntime
+    from alphaavatar.agents.runtime.inference import InferenceRunner
 
 logger = logging.getLogger(__name__)
 
@@ -56,10 +58,18 @@ class RouterPlugin(AvatarModulePlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)
 
+    def settings(self, init_config: dict[str, Any]) -> RouterConfig:
+        return RouterConfig.model_validate(init_config)
+
+    def inference_runners(self, config: AvatarConfig) -> tuple[type[InferenceRunner], ...]:
+        from .inference import configure_inference_runners
+
+        return configure_inference_runners(config)
+
     def get_plugin(
         self, *, runtime: AvatarRuntime, init_config: dict[str, Any] | None = None
     ) -> InteractionRouterRuntime:
-        config = RouterConfig.model_validate(init_config or {})
+        config = self.settings(init_config or {})
         voice = runtime.foundation.voice
         processors: list[RouterProcessorBase] = []
 

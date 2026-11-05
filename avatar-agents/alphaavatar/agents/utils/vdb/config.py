@@ -15,7 +15,10 @@ from __future__ import annotations
 
 import os
 from copy import deepcopy
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from alphaavatar.agents.runtime.plugin import AvatarModule
 
 
 def snapshot_vdb_config(value: dict[str, Any]) -> dict[str, Any]:
@@ -27,6 +30,14 @@ def snapshot_vdb_config(value: dict[str, Any]) -> dict[str, Any]:
             config.setdefault("url", os.getenv("QDRANT_URL"))
         config.setdefault("api_key", os.getenv("QDRANT_API_KEY"))
     return config
+
+
+def vdb_embeddings() -> tuple[tuple[AvatarModule, str], ...]:
+    """What a vector store runner embeds with: the default provider backend's embeddings."""
+    from alphaavatar.agents.configs.plugins.foundation.provider_config import DEFAULT_BACKEND
+    from alphaavatar.agents.runtime.plugin import AvatarModule
+
+    return ((AvatarModule.PROVIDER_EMBEDDING, DEFAULT_BACKEND),)
 
 
 def vdb_requirement(backend: str) -> str:

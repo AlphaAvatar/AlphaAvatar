@@ -26,11 +26,19 @@ import yaml
 from omegaconf import OmegaConf
 
 # Imported at collection: the persona plugin's OpenCV adjusts process variables (O-2).
-import alphaavatar.plugins.persona  # noqa: F401
+import alphaavatar.plugins.persona.factory  # noqa: F401
 from alphaavatar.agents.runtime.inference import plan_inference_runners
 from alphaavatar.host.configs import resolve_capabilities, validate_application
 from alphaavatar.host.configs.template import render_bundle
-from alphaavatar.host.setup.choices import PRESETS, Selection, credentials, requirements, sections
+from alphaavatar.host.setup.choices import (
+    PRESETS,
+    Models,
+    Selection,
+    Speech,
+    credentials,
+    requirements,
+    sections,
+)
 from alphaavatar.host.setup.plan import plan_install
 from alphaavatar.host.workspace import ApplicationPaths
 
@@ -81,6 +89,45 @@ def test_each_selection_asks_for_exactly_what_its_bundle_resolves_to(
     assert found == list(requirements(selection))
     names = [credential.name for credential in credentials(selection) if credential.required]
     assert ("QDRANT_URL" in names) == (selection.vector_store == "qdrant")
+
+
+def test_own_servers_take_what_the_installed_providers_send_there(tmp_path: Path) -> None:
+    from alphaavatar.plugins.provider.openai.llms.config import OpenAIClientConfig
+
+    models = Models("http://gpu.invalid:8000/v1", "qwen3-32b", "qwen3-8b", "bge-m3")
+    speech = Speech("http://speech.invalid:8001/v1", "whisper-large-v3", "kokoro", "af_heart")
+    own = Selection(models=models, speech=speech)
+    config = compose(own, tmp_path / "home")
+    avatar, server = config.avatar, {"base_url": models.url}
+    loop = avatar.loop.init_config["model"]
+    assert (loop["backend"], loop["model"], loop["extra"]) == ("openai", "qwen3-32b", server)
+    # The loop's Responses client is pointed at the server; tasks and embeddings go there too.
+    assert OpenAIClientConfig.model_validate(loop["extra"]).base_url == models.url
+    tasks = avatar.persona.init_config["profiler"]["provider"]["gateway"]["tasks"]
+    assert tasks["persona.profile_delta"] == {
+        "provider": "openai",
+        "model": "qwen3-8b",
+        "temperature": 0.1,
+        "extra": server,
+    }
+    for section in (avatar.memory, avatar.persona):
+        assert section.vdb_config["embedding"] == {
+            "provider": "openai",
+            "model": "bge-m3",
+            "extra": server,
+        }
+    voice = avatar.voice
+    assert (voice.stt.base_url, voice.stt.model) == (speech.url, "whisper-large-v3")
+    assert (voice.tts.base_url, voice.tts.model, voice.tts.speaker) == (
+        speech.url,
+        "kokoro",
+        "af_heart",
+    )
+    # The same packages serve them; the key is whatever the servers expect.
+    found = sorted({need.requirement for need in resolve_capabilities(config).needs})
+    assert found == list(requirements(own)) == list(requirements(Selection()))
+    assert "any text if they need none" in credentials(own)[0].purpose
+    assert "any text" not in credentials(Selection(models=models))[0].purpose  # OpenAI speech.
 
 
 def test_the_presets_keep_vision_and_plan_their_runners(tmp_path: Path) -> None:

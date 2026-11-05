@@ -32,6 +32,9 @@ dependencies = [
 face = ["insightface==1.0.1", "onnxruntime==1.23.1"]
 speaker = ["onnxruntime==1.23.1", "torchaudio>=0.10.1"]
 
+[project.entry-points."alphaavatar.persona"]
+default = "alphaavatar.plugins.persona.factory:PersonaPlugin"
+
 [project.urls]
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"
 Issues = "https://github.com/AlphaAvatar/AlphaAvatar/issues"

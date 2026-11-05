@@ -13,8 +13,6 @@
 # limitations under the License.
 from __future__ import annotations
 
-from functools import cache
-from importlib.metadata import entry_points
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -22,14 +20,6 @@ from pydantic import BaseModel, ConfigDict, Field
 if TYPE_CHECKING:
     from alphaavatar.agents.avatar.loop import Loop
     from alphaavatar.agents.runtime import AvatarRuntime
-
-
-@cache
-def _load_loop(name: str) -> None:
-    matches = tuple(entry_points(group="alphaavatar.loop", name=name))
-    if len(matches) != 1:
-        raise RuntimeError(f"Expected one installed loop {name!r}, found {len(matches)}")
-    matches[0].load()
 
 
 class LoopConfig(BaseModel):
@@ -42,7 +32,6 @@ class LoopConfig(BaseModel):
         from alphaavatar.agents.avatar.loop import Loop
         from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 
-        _load_loop(self.plugin)
         loop = AvatarModulePlugin.create(
             AvatarModule.LOOP, self.plugin, runtime=runtime, init_config=self.init_config
         )

@@ -11,19 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from __future__ import annotations
+from .plugin_selection import PluginSelection
+from .resolved_plugin import ResolvedPlugin
 
-from typing import TYPE_CHECKING
-
-from alphaavatar.agents.runtime.inference import InferenceRunner
-
-if TYPE_CHECKING:
-    from alphaavatar.agents.configs.avatar_config import AvatarConfig
-
-
-def configure_inference_runners(config: AvatarConfig) -> tuple[type[InferenceRunner], ...]:
-    if config.voice.vad.plugin != "silero":
-        return ()
-    from .vad.runner.silero_runner import SileroVADRunner
-
-    return (SileroVADRunner,)
+__all__ = ["PluginSelection", "ResolvedPlugin"]

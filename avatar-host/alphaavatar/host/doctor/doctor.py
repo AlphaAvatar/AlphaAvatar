@@ -37,7 +37,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from alphaavatar.host.configs.capabilities import HOST
+from alphaavatar.host.version import DISTRIBUTION as HOST
 
 from .enums import CheckStatus
 from .schemas import Check, CheckSpec, Evidence, Report
@@ -232,7 +232,7 @@ def _static(
         checks |= {
             "config.runners": _safely("config.runners", lambda: _runners(config)),
             "packages.capabilities": _safely(
-                "packages.capabilities", lambda: _capabilities(config, source)
+                "packages.capabilities", lambda: _capabilities(config)
             ),
             "paths.workspace": _safely(
                 "paths.workspace", lambda: _directory("paths.workspace", config.workspace.root)
@@ -360,8 +360,16 @@ def _configuration(
         check_application_paths(config)
         validate_plugin_settings(config)  # The steps config check and start take, in order.
     except Exception as error:
+        from alphaavatar.host.configs.capabilities import MissingCapabilities, offered
+
         if isinstance(error, ModuleNotFoundError) and error.name:
             action = f"Install the package that provides the Python module {error.name!r}"
+        elif isinstance(error, MissingCapabilities):
+            action = (
+                "Install the named packages into this Python environment"
+                if offered() is None
+                else "Run `alphaavatar setup` for what it installs"
+            ) + ", or change the settings that select the rest"
         else:
             action = "Fix the reported field or reference, then run doctor again"
         return None, failure("The configuration did not load", error, action)
@@ -457,7 +465,7 @@ def _install(requirements: str) -> str:
     return f"Run `alphaavatar setup`; it installs {requirements}"
 
 
-def _capabilities(config: ApplicationConfig, source: ConfigSource) -> Check:
+def _capabilities(config: ApplicationConfig) -> Check:
     from alphaavatar.host.configs.capabilities import resolve_capabilities
 
     capabilities = resolve_capabilities(config)
@@ -466,23 +474,14 @@ def _capabilities(config: ApplicationConfig, source: ConfigSource) -> Check:
     for need, found in missing.items():
         problems += [f"{need.location}: {problem}" for problem in found]
     problems = list(dict.fromkeys(problems))  # One package can reach a selection twice.
-    unknown = tuple(f"provider backends not verified: {item}" for item in capabilities.unverified)
     count = f"{len(capabilities.needs)} selections"
     if problems:
         return Check(
             "packages.capabilities",
             CheckStatus.FAIL,
             "Enabled capabilities miss packages",
-            (*problems, *unknown),
+            tuple(problems),
             _install(" ".join(f"'{need.requirement}'" for need in missing) or "the named plugins"),
-        )
-    if unknown:
-        return Check(
-            "packages.capabilities",
-            CheckStatus.WARN,
-            f"Requirements installed for {count}; some provider backends not verified",
-            unknown,
-            f"`{_dev(source)}` builds these plugins and reports a missing package or field",
         )
     return Check("packages.capabilities", CheckStatus.PASS, f"Requirements installed for {count}")
 
@@ -521,10 +520,12 @@ def _external(config: ApplicationConfig) -> list[tuple[str, str]]:
     from alphaavatar.agents.utils.vdb.config import vdb_backend
 
     avatar = config.avatar
-    services = []
-    from alphaavatar.host.configs.capabilities import provider_backends
+    from alphaavatar.agents.runtime.plugin import AvatarModule, resolve_plugins
 
-    backends = sorted(provider_backends(config)[0])
+    services = []
+    providers = (AvatarModule.PROVIDER_LLM, AvatarModule.PROVIDER_EMBEDDING)
+    plugins = resolve_plugins(avatar, providers=True).plugins.values()
+    backends = sorted({plugin.name for plugin in plugins if plugin.module in providers})
     if backends:
         services.append((f"model providers ({', '.join(backends)})", "model"))
     voice = avatar.voice

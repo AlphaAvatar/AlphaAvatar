@@ -18,6 +18,7 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import os
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -142,6 +143,8 @@ def setup_layout(tmp_path: Path):
     base = prefix / "versions" / "base"
     (base / "python" / "bin").mkdir(parents=True)
     (base / "python" / "bin" / "python3").symlink_to(sys._base_executable)
+    (base / "share" / "alphaavatar").mkdir(parents=True)
+    (base / "share" / "alphaavatar" / "manifest.json").write_text('{"id": "base"}')
     os.symlink("versions/base", prefix / "current")
     wheels.mkdir()
     artifacts = tuple(artifact(wheel(wheels, name)) for name in ("alpha", "beta"))
@@ -249,10 +252,95 @@ def test_one_installation_per_prefix_and_a_dead_partial_is_rebuilt(setup_layout)
     assert leftovers(installation.prefix) == []
     assert os.readlink(installation.prefix / "current") == "versions/base"
 
-    # This plan's directory without plan.json: a run that died; the next one rebuilds it.
+    # This plan's directory, not setup's: left as it is.
     partial = installation.environment(plan)
     (partial / "lib").mkdir(parents=True)
     (partial / "lib" / "half-written").write_text("")
+    with pytest.raises(SetupError, match="exists and is not setup's"):
+        install(installation, plan, sources, check=lambda env: None, enable=lambda: None)
+    assert (partial / "lib" / "half-written").exists()
+    # Setup's, without plan.json: a run that died; the next one rebuilds it, and removes the
+    # stage a killed run left, but not a directory without the mark.
+    (partial / environment.OWNER).touch()
+    stale, foreign = (
+        installation.prefix / "envs" / ".setup-dead",
+        installation.prefix / "envs" / ".setup-other",
+    )
+    for directory in (stale, foreign):
+        directory.mkdir()
+    (stale / environment.OWNER).touch()
     install(installation, plan, sources, check=lambda env: None, enable=lambda: None)
-    assert not (partial / "lib" / "half-written").exists()
-    assert installation.current() == partial.resolve()
+    assert not (partial / "lib" / "half-written").exists() and not stale.exists()
+    assert foreign.exists() and installation.current() == partial.resolve()
+
+
+def test_a_plan_made_before_another_setup_finished_keeps_what_that_one_installed(
+    setup_layout,
+) -> None:
+    installation, everything, sources, _ = setup_layout
+    alpha = everything.artifacts[:1]
+
+    def plan(requirements: tuple[str, ...]) -> Plan:
+        chosen = tuple(a for a in everything.artifacts if a.name in requirements)
+        return Plan("1.0", "linux-x86_64", "base", tuple(sorted(set(requirements))), chosen)
+
+    # A remote setup planned alpha alone, then waited; another setup installed both meanwhile.
+    remote = Plan("1.0", "linux-x86_64", "base", ("alpha",), alpha)
+    full = install(installation, everything, sources, check=lambda env: None, enable=lambda: None)
+    with pytest.raises(SetupError, match="holds beta; plan them"):
+        install(installation, remote, sources, check=lambda env: None, enable=lambda: None)
+    # Resumed, it plans again under the lock with what is installed: the bundle keeps beta.
+    replans = []
+    target = install(
+        installation,
+        remote,
+        sources,
+        check=lambda env: None,
+        enable=lambda: None,
+        replan=lambda kept: replans.append(kept) or plan(("alpha", *kept)),
+    )
+    assert replans == [("alpha", "beta")] and target == full
+    assert installation.current() == full.resolve()
+    imported = subprocess.run([target / "bin" / "python", "-I", "-c", "import beta"])
+    assert imported.returncode == 0
+    # A base that changed meanwhile is not this setup's to switch from.
+    os.symlink("versions/newer", installation.prefix / "next")
+    (installation.prefix / "versions" / "newer").mkdir()
+    os.replace(installation.prefix / "next", installation.prefix / "current")
+    with pytest.raises(SetupError, match="runs AlphaAvatar newer now, not base"):
+        install(installation, remote, sources, check=lambda env: None, enable=lambda: None)
+
+
+def test_what_is_checked_is_what_installs_and_unknown_paths_are_left_alone(
+    setup_layout, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    installation, plan, sources, wheels = setup_layout
+    verified = environment._verified
+
+    def replaced_after(path: Path, artifact: Artifact) -> bool:
+        found = verified(path, artifact)
+        if found and artifact.name == "alpha":  # The source changes once it is checked.
+            source = wheels / artifact.file
+            os.replace(wheel(wheels.parent, "alpha"), source)
+            with zipfile.ZipFile(source, "a") as archive:
+                archive.writestr("alpha/other.py", "VALUE = 2\n")
+        return found
+
+    monkeypatch.setattr(environment, "_verified", replaced_after)
+    target = install(installation, plan, sources, check=lambda env: None, enable=lambda: None)
+    found = list(target.glob("lib/python*/site-packages/alpha/other.py"))
+    assert found == []  # The checked copy installed, not what replaced the source.
+
+    # A current that is not a link setup or install.sh made, or points elsewhere: left alone.
+    current = installation.prefix / "current"
+    current.unlink()
+    current.mkdir()
+    (current / "kept").write_text("")
+    with pytest.raises(SetupError, match="not a link setup or install.sh made"):
+        install(installation, plan, sources, check=lambda env: None, enable=lambda: None)
+    assert (current / "kept").exists()
+    shutil.rmtree(current)
+    os.symlink(str(wheels), current)
+    with pytest.raises(SetupError, match="points outside"):
+        install(installation, plan, sources, check=lambda env: None, enable=lambda: None)
+    assert os.readlink(current) == str(wheels)

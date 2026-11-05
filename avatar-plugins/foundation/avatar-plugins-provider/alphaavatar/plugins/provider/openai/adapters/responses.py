@@ -32,8 +32,8 @@ from alphaavatar.agents.avatar.provider.schemas import (
     ModelRefusalPart,
     ModelRequest,
     ModelTextPart,
-    ProviderTaskConfig,
 )
+from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
 
 from ..llms.config import ResponsesInputConfig
 from .schema import output_format, strict_schema

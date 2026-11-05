@@ -28,9 +28,12 @@ langchain = [
 ]
 openai = ["alpha-avatar-core[video]", "httpx>=0.28,<1", "jsonschema>=4.18,<5", "openai>=2.0,<3"]
 
-[project.entry-points."alphaavatar.provider"]
-openai = "alphaavatar.plugins.provider.openai"
-langchain = "alphaavatar.plugins.provider.langchain"
+[project.entry-points."alphaavatar.provider.llm"]
+openai = "alphaavatar.plugins.provider.openai:OpenAIResponsesPlugin"
+langchain = "alphaavatar.plugins.provider.langchain:LangChainLLMPlugin"
+
+[project.entry-points."alphaavatar.provider.embedding"]
+langchain = "alphaavatar.plugins.provider.langchain:LangChainEmbeddingPlugin"
 
 [project.urls]
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"

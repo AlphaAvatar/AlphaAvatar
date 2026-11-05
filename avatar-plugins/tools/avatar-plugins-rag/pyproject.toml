@@ -24,6 +24,9 @@ dependencies = [
     "raganything[all]==1.2.8",
 ]
 
+[project.entry-points."alphaavatar.tools.rag"]
+default = "alphaavatar.plugins.rag:RAGToolPlugin"
+
 [project.urls]
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"
 Issues = "https://github.com/AlphaAvatar/AlphaAvatar/issues"

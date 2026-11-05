@@ -32,11 +32,34 @@ VectorStore = Literal["lancedb", "qdrant"]
 
 
 @dataclass(frozen=True, slots=True)
+class Models:
+    """An OpenAI-compatible server of one's own for the models: the loop's through the
+    Responses API, which it streams; the memory and persona tasks' and the embeddings."""
+
+    url: str  # Its API root, e.g. http://gpu-host:8000/v1
+    chat: str  # The loop's model
+    tasks: str  # Memory and persona tasks
+    embedding: str
+
+
+@dataclass(frozen=True, slots=True)
+class Speech:
+    """An OpenAI-compatible server of one's own for transcription and speech."""
+
+    url: str
+    transcription: str
+    synthesis: str
+    voice: str
+
+
+@dataclass(frozen=True, slots=True)
 class Selection:
     voice: bool = True  # Speech in and out; speech segments come from on-device VAD.
     vision: bool = True  # Camera frames reach the loop's model.
     local_models: bool = True  # Turn taking, addressing, face and speaker models on-device.
     vector_store: VectorStore = "lancedb"  # Memory and persona vectors: workspace or Qdrant.
+    models: Models | None = None  # None: OpenAI's.
+    speech: Speech | None = None  # None: OpenAI's; with voice only.
 
 
 # The reference bundle, as `config init` writes it; and every inference remote except the
@@ -81,9 +104,29 @@ def requirements(selection: Selection) -> tuple[str, ...]:
     return tuple(sorted(needed))
 
 
+def requirements_offered() -> frozenset[str]:
+    """Every requirement some selection installs."""
+    stores: tuple[VectorStore, ...] = ("lancedb", "qdrant")
+    switches = (True, False)
+    return frozenset(
+        needed
+        for voice in switches
+        for vision in switches
+        for local in switches
+        for store in stores
+        for needed in requirements(Selection(voice, vision, local, store))
+    )
+
+
 def credentials(selection: Selection) -> tuple[Credential, ...]:
+    own = selection.models is not None and (selection.speech is not None or not selection.voice)
     found = [
-        Credential("OPENAI_API_KEY", "the model, speech, embeddings and memory/persona tasks"),
+        Credential(
+            "OPENAI_API_KEY",
+            "the key your servers expect, any text if they need none"
+            if own
+            else "the model, speech, embeddings and memory/persona tasks",
+        ),
         Credential("LIVEKIT_URL", "the LiveKit server sessions use", secret=False),
         Credential("LIVEKIT_API_KEY", "LiveKit"),
         Credential("LIVEKIT_API_SECRET", "LiveKit"),
@@ -99,7 +142,20 @@ def credentials(selection: Selection) -> tuple[Credential, ...]:
 def capabilities(selection: Selection) -> tuple[str, ...]:
     """What the selection does, in words."""
     store = {"lancedb": "LanceDB in the Avatar workspace", "qdrant": "your Qdrant server"}
-    found = ["sessions through LiveKit; model, speech and embeddings from OpenAI"]
+    models, speech = selection.models, selection.speech
+    found = ["sessions through LiveKit"]
+    found.append(
+        f"models from {models.url}: {models.chat}; tasks {models.tasks}; "
+        f"embeddings {models.embedding}"
+        if models
+        else "model and embeddings from OpenAI"
+    )
+    if selection.voice:
+        found.append(
+            f"speech from {speech.url}: {speech.transcription}, {speech.synthesis} ({speech.voice})"
+            if speech
+            else "speech from OpenAI"
+        )
     if selection.voice:
         found.append("voice: speech in and out, voice activity detected on this machine")
     found.append("vision: camera frames reach the model" if selection.vision else "vision off")
@@ -141,6 +197,44 @@ def sections(selection: Selection) -> dict[str, str]:
         # Visual addressing reads the faces persona finds.
         edit("router", "init_config", "addressing", "visual", "enabled", value=False)
         edit("persona", "init_config", "face", "enabled", value=False)
+    if models := selection.models:
+        server = {"base_url": models.url}
+        edit(
+            "loop",
+            "init_config",
+            "model",
+            value={
+                "backend": "openai",
+                "provider": "openai",
+                "model": models.chat,
+                "extra": server,
+            },
+        )
+        for section, part, task in (
+            ("memory", "conversation", "memory.conversation_delta"),
+            ("memory", "tool", "memory.tool_delta"),
+            ("persona", "profiler", "persona.profile_delta"),
+        ):
+            settings = {"provider": "openai", "model": models.tasks, "temperature": 0.1}
+            edit(
+                section,
+                "init_config",
+                part,
+                "provider",
+                "gateway",
+                "tasks",
+                task,
+                value=settings | {"extra": server},
+            )
+        for section in ("memory", "persona"):
+            embedding = {"provider": "openai", "model": models.embedding, "extra": server}
+            edit(section, "vdb_config", "embedding", value=embedding)
+    if (speech := selection.speech) and selection.voice:
+        edit("voice", "stt", "model", value=speech.transcription)
+        edit("voice", "stt", "base_url", value=speech.url)
+        edit("voice", "tts", "model", value=speech.synthesis)
+        edit("voice", "tts", "speaker", value=speech.voice)
+        edit("voice", "tts", "base_url", value=speech.url)
     for section in ("memory", "persona"):
         if selection.vector_store == "qdrant":
             # Resolved from the environment, or the stored credentials, when the bundle loads.

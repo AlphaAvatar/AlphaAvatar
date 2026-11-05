@@ -13,27 +13,35 @@
 # limitations under the License.
 """What a configuration's selections need installed, by the setting that selects each.
 
-Start builds the RTC backend, the loop and context their entry points name, a module factory
-for every plugin selection, the provider backends of the tasks it creates, and the planned
-inference runners. Each comes from an installed package, often with an extra: the same
-requirements `alphaavatar setup` installs. Resolving imports the selected plugins, which only
-registers them, and reads package metadata; no runner, model, client or session starts.
+The selections resolve as start resolves them (``resolve_plugins``): each implementation by
+capability type and name from the installed package declaring it, the provider backends their
+settings name, and the inference runners they use. Each needs its package, with the extra
+named after it when the package has one; the RTC backend needs its Host extra and each runner
+its ``REQUIRES``. In an installed package, what `alphaavatar setup` offers is named as such.
+Resolving loads factory modules and reads package metadata; no runner, model, client or
+session starts.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib import metadata
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
+
+from alphaavatar.host.version import DISTRIBUTION as HOST
 
 from .bundles import ConfigReferenceError
 
 if TYPE_CHECKING:
     from packaging.requirements import Requirement
 
+    from alphaavatar.agents.runtime.plugin import PluginSelection, UnavailablePlugins
+
     from .application import ApplicationConfig
 
-HOST = "alpha-avatar-host"
+
+class MissingCapabilities(ConfigReferenceError):
+    """Selections the installed packages do not serve; each line says what would."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,8 +53,12 @@ class Need:
 @dataclass(frozen=True, slots=True)
 class Capabilities:
     needs: tuple[Need, ...]
-    problems: tuple[str, ...]  # Selections no installed package serves, by location.
-    unverified: tuple[str, ...]  # Another plugin's settings: its provider backends are unknown.
+    selection: PluginSelection
+
+    @property
+    def problems(self) -> tuple[str, ...]:
+        """Selections no single installed implementation serves, by location."""
+        return tuple(f"{location}: {error}" for location, error in self.selection.problems.items())
 
     def missing(self) -> dict[Need, list[str]]:
         """Each need's missing or mismatched packages; Host requirements count as reported."""
@@ -107,120 +119,84 @@ def with_extra(distribution: str, name: str) -> str:
     return f"{distribution}[{name}]" if name in extras else distribution
 
 
-def provider_backends(config: ApplicationConfig) -> tuple[dict[str, str], list[str]]:
-    """Backends of the provider tasks start would create, each with its first setting.
-
-    Built-in plugins' settings are validated as at start, so omitted fields take their
-    defaults. A processor switched off creates nothing, so its tasks are skipped; a disabled
-    plugin is not read. Vector store embeddings always use the default backend. Another
-    plugin's backends cannot be read statically and are returned as unverified.
+def offered() -> dict[str, dict[str, str]] | None:
+    """By capability type and name, the requirement `alphaavatar setup` installs for each
+    implementation it offers here; None outside an installed package, where it installs none.
     """
-    from pydantic import BaseModel
+    from alphaavatar.host.setup.choices import requirements_offered
+    from alphaavatar.host.setup.environment import Installation, SetupError
 
-    from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
+    try:
+        catalog = Installation.running().catalog
+    except SetupError:
+        return None
+    reachable = requirements_offered()
+    return {
+        module: {name: needed for name, needed in names.items() if needed in reachable}
+        for module, names in catalog.get("plugins", {}).items()
+    }
 
-    from .loader import validate_plugin_settings
 
-    avatar = config.avatar
-    settings = validate_plugin_settings(config)
-    default = ProviderTaskConfig.model_fields["backend"].default
-    backends: dict[str, str] = {}
-    unverified: list[str] = []
+def unavailable(error: UnavailablePlugins) -> MissingCapabilities:
+    """Every unavailable selection, with what installs it where that is known."""
+    from packaging.requirements import Requirement
 
-    def collect(value: Any, location: str) -> None:
-        if isinstance(value, ProviderTaskConfig):
-            backends.setdefault(value.backend, f"{location}.backend")
-        elif isinstance(value, BaseModel):
-            if getattr(value, "enabled", True) is False:
-                return  # Switched off: start creates neither the processor nor its tasks.
-            for name in type(value).model_fields:
-                collect(getattr(value, name), f"{location}.{name}")
-        elif isinstance(value, dict):
-            for key, item in value.items():
-                collect(item, f"{location}.{key}")
-        elif isinstance(value, list | tuple):
-            for index, item in enumerate(value):
-                collect(item, f"{location}.{index}")
-
-    if "loop" in settings:
-        collect(settings["loop"], "loop.init_config")
-    else:
-        unverified.append(f"loop plugin {avatar.loop.plugin!r}")
-    for name in ("memory", "persona"):
-        if name in settings:
-            collect(settings[name], f"{name}.init_config")
-            # Its vector store embeds with the default backend.
-            backends.setdefault(default, f"{name}.vdb_config.embedding")
-        else:
-            unverified.append(f"{name} plugin {getattr(avatar, name).plugin!r}")
-    mcp = avatar.tools.mcp
-    if mcp.enabled and mcp.plugin is not None:
-        if mcp.plugin == "default":
-            # Its tool index embeds with the default backend.
-            backends.setdefault(default, "tools.mcp.vdb_config.embedding")
-        else:
-            unverified.append(f"mcp plugin {mcp.plugin!r}")
-    return backends, unverified
+    setup = offered()
+    lines = []
+    for location, problem in error.problems.items():
+        module, name = error.selection.selected[location]
+        line = f"{location}: {problem}"
+        if problem.missing and setup is not None:
+            if needed := setup.get(module.value, {}).get(name):
+                line += f"; `alphaavatar setup` installs it ({needed})"
+            else:
+                line += "; this release's `alphaavatar setup` does not offer it"
+        elif problem.distribution is not None:
+            found = unmet(Requirement(with_extra(problem.distribution, name)), set())
+            line += "".join(f"; {item}" for item in found)
+        lines.append(line)
+    return MissingCapabilities(
+        "Selected plugins are not available; install them, or change the settings that "
+        "select them:" + "".join(f"\n      {line}" for line in lines)
+    )
 
 
 def resolve_capabilities(config: ApplicationConfig) -> Capabilities:
-    """Every requirement the selections need, and the selections nothing installed serves."""
-    from alphaavatar.agents.runtime.inference import plan_inference_runners
-    from alphaavatar.agents.runtime.plugin import AvatarModulePlugin, plugin_requirement
+    """Every requirement the selections need, resolved as start resolves them."""
+    from alphaavatar.agents.runtime.plugin import resolve_plugins
 
-    avatar = config.avatar
-    needs: list[Need] = [Need("host.rtc.backend", with_extra(HOST, config.host.rtc.backend))]
-    problems: dict[str, str] = {}
-
-    def entry_point(location: str, group: str, name: str) -> metadata.EntryPoint | None:
-        # Loop, context and provider plugins are found by name, as start finds them.
-        matches = tuple(metadata.entry_points(group=group, name=name))
-        if len(matches) != 1 or matches[0].dist is None:
-            problems[location] = f"{len(matches)} installed {group} plugins named {name!r}"
-            return None
-        needs.append(Need(location, with_extra(matches[0].dist.name, name)))
-        return matches[0]
-
-    for location, group in (
-        ("loop.plugin", "alphaavatar.loop"),
-        ("context.plugin", "alphaavatar.context"),
-    ):
-        found = entry_point(location, group, avatar.section(location).plugin)
-        if found is not None:
-            found.load()  # Registers its factory, as start does.
-    backends, unverified = provider_backends(config)
-    for backend, location in sorted(backends.items()):
-        entry_point(location, "alphaavatar.provider", backend)
-    packages = avatar.plugin_packages()
-    needs += [Need(location, plugin_requirement(name)) for location, name in packages.items()]
-    runners = plan_inference_runners(avatar)  # Imports the selected plugins: they register.
-    for location, (module, name) in avatar.plugin_factories().items():
-        if location not in problems and not AvatarModulePlugin.registered(module, name):
-            problems[location] = f"no {module.value} factory {name!r} is registered"
-    sections = {name: location for location, name in reversed(packages.items())}
-    for method, runner in runners.items():
-        # A runner belongs to the plugin whose package defines it.
-        module = runner.__module__.split(".")
-        plugin = module[2] if module[:2] == ["alphaavatar", "plugins"] else None
-        location = f"{sections.get(plugin, 'runtime.inference')} (runner {method})"
-        needs += [Need(location, requirement) for requirement in runner.REQUIRES]
-    return Capabilities(
-        tuple(dict.fromkeys(needs)),
-        tuple(f"{location}: {problem}" for location, problem in problems.items()),
-        tuple(unverified),
-    )
+    selection = resolve_plugins(config.avatar, providers=True)
+    needs = [Need("host.rtc.backend", with_extra(HOST, config.host.rtc.backend))]
+    for location, plugin in selection.plugins.items():
+        if plugin.distribution is not None:
+            needs.append(Need(location, with_extra(plugin.distribution, plugin.name)))
+    for location, error in selection.problems.items():
+        if error.distribution is not None:  # Declared but not loading: its requirements tell.
+            needs.append(
+                Need(location, with_extra(error.distribution, selection.selected[location][1]))
+            )
+    for method, (location, runner) in selection.runners.items():
+        needs += [Need(f"{location} (runner {method})", needed) for needed in runner.REQUIRES]
+    return Capabilities(tuple(dict.fromkeys(needs)), selection)
 
 
 def check_capabilities(config: ApplicationConfig) -> Capabilities:
     """Each selection served by an installed package with its requirements; else one error."""
+    from alphaavatar.agents.runtime.plugin import UnavailablePlugins
+
     capabilities = resolve_capabilities(config)
-    lines = list(capabilities.problems)
+    if capabilities.selection.problems:
+        raise unavailable(UnavailablePlugins(capabilities.selection))
+    from alphaavatar.host.setup.choices import requirements_offered
+
+    installs = requirements_offered() if offered() is not None else frozenset()
+    lines = []
     for need, problems in capabilities.missing().items():
-        lines += [f"{need.location}: {need.requirement}: {problem}" for problem in problems]
+        suffix = " (`alphaavatar setup` installs it)" if need.requirement in installs else ""
+        lines += [f"{need.location}: {need.requirement}: {problem}{suffix}" for problem in problems]
     if lines:
-        raise ConfigReferenceError(
-            "Selected capabilities are not installed; `alphaavatar setup` installs them, or "
-            "change the settings that select them:"
-            + "".join(f"\n      {line}" for line in dict.fromkeys(lines))
+        raise MissingCapabilities(
+            "Selected capabilities miss packages; install them, or change the settings that "
+            "select them:" + "".join(f"\n      {line}" for line in dict.fromkeys(lines))
         )
     return capabilities

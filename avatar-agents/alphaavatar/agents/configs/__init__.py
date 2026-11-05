@@ -11,6 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .avatar_config import AvatarConfig
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .avatar_config import AvatarConfig
 
 __all__ = ["AvatarConfig"]
+
+
+def __getattr__(name: str) -> Any:
+    # Lazy: section schemas such as provider_config import without the whole AvatarConfig.
+    if name != "AvatarConfig":
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from .avatar_config import AvatarConfig
+
+    globals()[name] = AvatarConfig
+    return AvatarConfig

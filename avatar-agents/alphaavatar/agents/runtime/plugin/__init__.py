@@ -12,5 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .module import AvatarModule, AvatarModulePlugin, plugin_requirement
+from .resolution import PluginError, UnavailablePlugins, resolve_plugin, resolve_plugins
+from .schemas import PluginSelection, ResolvedPlugin
 
-__all__ = ["AvatarModule", "AvatarModulePlugin", "plugin_requirement"]
+__all__ = [
+    "AvatarModule",
+    "AvatarModulePlugin",
+    "PluginError",
+    "PluginSelection",
+    "ResolvedPlugin",
+    "UnavailablePlugins",
+    "plugin_requirement",
+    "resolve_plugin",
+    "resolve_plugins",
+]

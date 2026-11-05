@@ -15,13 +15,15 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ..enums import ProviderKind
+from alphaavatar.agents.avatar.provider.enums import ProviderKind
+
+DEFAULT_BACKEND = "langchain"
 
 
 class ProviderTaskConfig(BaseModel):
     kind: ProviderKind = ProviderKind.LLM
 
-    backend: str = Field(default="langchain", min_length=1)
+    backend: str = Field(default=DEFAULT_BACKEND, min_length=1)
     provider: str = "openai"
     model: str
 
