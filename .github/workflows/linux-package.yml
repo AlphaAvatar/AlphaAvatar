@@ -1,9 +1,28 @@
 name: Linux package
 
-# The Linux x86_64 package install.sh installs: built from the lock in manylinux_2_28, so its own
-# native code needs no newer glibc than its wheels do. Any commit on demand; release tags
-# through release.yml, which attaches the package to the release.
+# The Linux x86_64 base package install.sh installs, and the wheels `alphaavatar setup` adds by
+# capability, built from the lock in manylinux_2_28 so their own native code needs no newer
+# glibc than their wheels do; then installed from those very files on a clean Ubuntu with no
+# Python, Node or compiler, as a person would. A push to main (a merge) or a dev branch that
+# changes what goes into these files, checking that very commit; on demand, once this file is on
+# the default branch, as GitHub requires; and every release tag, in full, through release.yml,
+# which publishes only once this passes. Pushes produce CI artifacts only.
 on:
+  push:
+    branches: ["main", "dev/**"]
+    # What the files hold or are made from; documentation, logs and tests change none of them,
+    # and Quality checks those. scripts/quality/check_workspace.py keeps every member covered.
+    paths:
+      - ".github/workflows/linux-package.yml"
+      - ".github/workflows/release.yml"
+      - ".python-version"
+      - "uv.lock"
+      - "pyproject.toml"
+      - "packaging/**"
+      - "avatar-*/pyproject.toml"
+      - "avatar-*/alphaavatar/**"
+      - "avatar-plugins/*/*/pyproject.toml"
+      - "avatar-plugins/*/*/alphaavatar/**"
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -17,7 +36,8 @@ permissions:
 
 concurrency:
   group: linux-package-${{ github.ref }}
-  cancel-in-progress: false
+  # A newer push supersedes a dev build; each commit merged to main, and a release, finishes.
+  cancel-in-progress: ${{ inputs.release == '' && github.ref != 'refs/heads/main' }}
 
 jobs:
   build:
@@ -29,11 +49,12 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Install uv
+      - name: Install uv and unzip
         run: |
           /opt/python/cp313-cp313/bin/python -m pip install uv==0.10.0
           echo "/opt/python/cp313-cp313/bin" >> "$GITHUB_PATH"
-      - name: Build the package
+          command -v unzip || dnf -y install unzip
+      - name: Build the base package and the capability wheels
         env:
           RELEASE: ${{ inputs.release }}
         run: |
@@ -45,3 +66,74 @@ jobs:
           path: dist/linux/
           if-no-files-found: error
           retention-days: 30
+
+  verify:
+    # The files the build uploaded, installed the way DEPLOY.md tells a person to.
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container: ubuntu:24.04
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Placeholders: setup stores them; nothing here reaches a service.
+      OPENAI_API_KEY: ci-placeholder
+      LIVEKIT_URL: wss://livekit.invalid
+      LIVEKIT_API_KEY: ci-placeholder
+      LIVEKIT_API_SECRET: ci-placeholder
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: alphaavatar-linux-x86_64-${{ github.sha }}
+          path: /srv/alphaavatar
+      - name: A clean machine
+        run: |
+          for tool in python3 python node gcc cc c++; do
+            if command -v "$tool"; then echo "$tool is installed" >&2; exit 1; fi
+          done
+          cd /srv/alphaavatar && sha256sum -c SHA256SUMS
+      - name: Install the base package
+        run: |
+          bash /srv/alphaavatar/install.sh --file /srv/alphaavatar/alphaavatar-*.tar.gz
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: The base runs its CLI from anywhere, and creates and checks configuration
+        working-directory: /
+        run: |
+          alphaavatar --version
+          alphaavatar --help > /dev/null
+          alphaavatar config init reference --avatar-id reference
+          # Nothing but the base: check names each package and setup.
+          if alphaavatar config check 2> check.txt; then exit 1; fi
+          grep -F '`alphaavatar setup` installs them' check.txt
+      - name: Remote inference plans no local model nor its accelerators
+        working-directory: /
+        run: |
+          alphaavatar setup --preset remote --name remote --plan > remote-plan.json
+          for name in torch torchaudio llama-cpp-python insightface transformers onnx scipy; do
+            if grep -q "\"name\": \"$name\"" remote-plan.json; then
+              echo "The remote plan holds $name" >&2; exit 1
+            fi
+          done
+          grep -c '"name":' remote-plan.json
+      - name: Setup's default preset installs, checks and enables
+        working-directory: /
+        run: |
+          alphaavatar setup --preset default --artifacts /srv/alphaavatar
+          alphaavatar config check
+          alphaavatar config check \
+            'runtime.inference.methods={"alphaavatar.voice.vad.silero": {"workers": 2}}' \
+            | grep -F 'alphaavatar.voice.vad.silero x2'
+      - name: Report sizes and the glibc floor
+        run: |
+          ls -l /srv/alphaavatar
+          du -sh "$HOME"/.local/lib/alphaavatar/versions/* "$HOME"/.local/lib/alphaavatar/envs/*
+          # After the clean steps: binutils reads the symbol versions native code needs.
+          apt-get update -qq && apt-get install -y -qq binutils > /dev/null
+          for dir in "$HOME"/.local/lib/alphaavatar/versions/* "$HOME"/.local/lib/alphaavatar/envs/*; do
+            floor="$(find "$dir" -type f \( -name '*.so' -o -name '*.so.*' -o -perm -u+x \) \
+              -print0 | xargs -0 objdump -p 2>/dev/null | grep -o 'GLIBC_[0-9][0-9.]*' \
+              | cut -d_ -f2 | sort -uV | tail -n 1)"
+            echo "$dir needs glibc >= $floor"
+            [[ "$(printf '%s\n' "$floor" 2.28 | sort -V | tail -n 1)" == 2.28 ]]
+          done

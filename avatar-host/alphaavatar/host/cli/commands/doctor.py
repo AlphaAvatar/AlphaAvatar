@@ -100,11 +100,13 @@ def doctor(target: str | None, overrides: Sequence[str], *, as_json: bool, listi
         _table(("CHECK", "NEEDS", "TITLE"), rows, paint)
         return 0
 
-    from alphaavatar.agents.env import init_env
-    from alphaavatar.host import doctor as diagnosis
+    from functools import partial
 
-    # The same .env that config check and start read; a failure to read it is reported.
-    prepared = diagnosis.prepare(target, overrides, read_env=init_env)
+    from alphaavatar.host import doctor as diagnosis
+    from alphaavatar.host.configs.credentials import load_environment
+
+    # The same .env and credentials config check and start read; a failure is reported.
+    prepared = diagnosis.prepare(target, overrides, read_env=partial(load_environment, overrides))
     interrupted = False
     if prepared.starts:
         from alphaavatar.host.application.signals import shutdown_signals

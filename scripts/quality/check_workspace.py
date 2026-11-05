@@ -262,6 +262,46 @@ def check(root: Path, *, metadata_only: bool = False) -> tuple[list[str], int]:
     require("--unsafe-fixes" not in hooks, "pre-commit must not enable unsafe fixes")
     require(config["tool"]["mypy"].get("python_version") == "3.13", "Mypy target must be 3.13")
 
+    # A push builds and checks the Linux artifacts when it changes what they hold or are made
+    # from: each member's metadata and code, the lock, the Python version, packaging/ and the
+    # workflows that build and publish them.
+    workflow = (root / ".github/workflows/linux-package.yml").read_text(encoding="utf-8")
+    listed = re.search(
+        r"(?m)^  push:\n(?:    (?!paths:).*\n)*    paths:\n((?:      - .*\n)+)", workflow
+    )
+    filters = (
+        [line.split("- ", 1)[1].strip('"') for line in listed[1].splitlines()] if listed else []
+    )
+    branches = re.search(r"(?m)^  push:\n    branches: \[(.*)\]$", workflow)
+    pushed = {name.strip().strip('"') for name in branches[1].split(",")} if branches else set()
+    require({"main", "dev/**"} <= pushed, "linux-package.yml: merges to main and dev pushes build")
+
+    def glob(pattern: str) -> str:
+        parts = re.split(r"(\*\*|\*)", pattern)
+        return "".join({"**": ".*", "*": "[^/]*"}.get(part, re.escape(part)) for part in parts)
+
+    built = [
+        ".github/workflows/linux-package.yml",
+        ".github/workflows/release.yml",
+        ".python-version",
+        "uv.lock",
+        "pyproject.toml",
+        *(
+            str(path.relative_to(root))
+            for path in (root / "packaging").rglob("*")
+            if path.is_file()
+        ),
+    ]
+    for member in members(root, config):
+        built += [
+            f"{member.relative_to(root)}/{name}" for name in ("pyproject.toml", "alphaavatar/x.py")
+        ]
+    for path in built:
+        require(
+            any(re.fullmatch(glob(pattern), path) for pattern in filters),
+            f"linux-package.yml: a push changing {path} would build no artifact",
+        )
+
     if not metadata_only:
         lock_path = root / "uv.lock"
         if not lock_path.is_file():

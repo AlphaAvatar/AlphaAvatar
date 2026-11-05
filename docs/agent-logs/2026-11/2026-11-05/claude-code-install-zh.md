@@ -9,7 +9,8 @@
 | 批次 | 内容 | 日期 | 基线 HEAD | 提交 | 状态 |
 |---|---|---|---|---|---|
 | 第 1 项 | Linux x86_64 安装器：自带 Python，按 tag 或 commit 的锁文件安装 Host，版本目录验证后再切换稳定入口 | 2026-11-05 | `7564770` | 用户已提交（`9f86a6a`） | 已被返工取代：`scripts/install.sh` 已删除，第 7 节待复核的去向见返工第 8 节 |
-| 第 1 项返工 | 1A 整理 `scripts/`；1B CI 构建的 Linux 参考安装包、配置三段分离、默认开启视觉、薄安装脚本 | 2026-11-05 | `9f86a6a` | 未提交（用户提交） | 待审查 |
+| 第 1 项返工 | 1A 整理 `scripts/`；1B CI 构建的 Linux 参考安装包、配置三段分离、默认开启视觉、薄安装脚本 | 2026-11-05 | `9f86a6a` | 用户已提交（`124e012`） | 部分被第二轮取代：完整参考包改为基础包加 `setup`；1A、配置分段、`NAMESPACE` 保留 |
+| 第 1 项第二轮 | 轻量基础包 → `alphaavatar setup` 选择 → 按能力补齐依赖 → 校验后启用；插件 extras 与 runner 依赖声明；开发分支 CI 制品与干净容器验收；发布草稿化 | 2026-11-05 | `124e012` | 未提交（用户提交） | 待审查 |
 
 ## 历史记录（合并来源）
 
@@ -499,3 +500,378 @@ A 测试即 `test_init_needs_no_plugin_and_check_names_each_missing_one_where_it
 12. **旧版本不会被清理**：`versions/` 下的旧版本会一直保留，回滚和清理属于第 5 项。
 
 交互配置与凭据、Doctor 运行指标、启动与停止、升级失败回退，按计划在本项审查通过后依次进行。
+
+---
+
+## 第 1 项第二轮返工（基线 `124e012`）
+
+依据：用户对上一轮的审查意见。默认安装入口从这一轮起是「轻量基础包 → `alphaavatar setup` 交互选择 → 补齐依赖 → 校验并启用 bundle」，完整的 Linux 参考包被直接替换，不为旧包、旧安装方式或旧目录布局做兼容。`124e012` 是上一轮返工（用户已提交），其 Quality CI（run 42014311079）在 Ruff 一步失败。1A 的 `scripts/` 结构、DeepResearch 和 RAG 的新产物目录、`NAMESPACE`、配置三段分离都保留。所有改动在未暂存的工作区。
+
+### 1. Ruff、开发分支制品与发布重试
+
+- **Ruff I001**：`doctor.py` 的 `from packaging.requirements import Requirement` 被判为第一方导入。原因是仓库根新增的 `packaging/` 目录：Ruff 的 `src` 默认含仓库根，于是把 PyPI 的 `packaging` 当成本仓库模块。本地没报错，是因为 `.ruff_cache` 缓存了目录出现之前的结果，`ruff check --no-cache .` 可以复现。修复：
+  - `[tool.ruff.lint.isort]` 加 `known-third-party = ["packaging"]`；
+  - 该 TYPE_CHECKING 导入随第 2 节的重构一并删除。
+- **开发分支无需 tag 即可出制品**：`linux-package.yml` 原先只有 `workflow_dispatch` 和 `workflow_call`。前者要求工作流文件在默认分支上，所以在 `dev/v0.6.9` 上只能经 tag 触发的 release.yml 运行。现在推送到 `dev/**` 即构建，并发组只取消被新推送取代的开发构建，发布构建总会跑完。
+- **发布重试时归档与 SHA-256 不匹配**：原来的 release.yml 逐个上传、跳过已存在的文件，构建产物又不可复现。若第一次只上传了 tarball，重试会附上另一次构建的 `.sha256`；改成多文件之后，catalog 里的哈希和 wheel 也会来自不同构建。现在改为：
+  - Release 先以草稿创建，草稿对外不可见；
+  - 删除草稿里本次构建没有的文件，用 `--clobber` 上传本次构建的全部文件；
+  - 核对附件的文件名和大小与本次构建一致后才发布；
+  - 已发布的 Release 在重试时一个文件都不改，因为可能已有人按它的校验和安装。
+  - 另外，tar 改为按名排序、使用提交时间、属主为 0、`gzip -n`，同一构建树打包结果一致。wheel 和编译产物本身仍不保证可复现，所以一致性靠草稿流程保证，而不是靠复现。
+
+### 2. 能力：插件 extras 与 runner 的依赖声明
+
+上一轮中，voice、router、persona 把本地推理依赖写在必选依赖里，因此「只用远端推理」也会装上 torch、llama-cpp、insightface 等。这些依赖现在改为插件的 extras：
+
+| 分发 | 必选依赖（去掉的） | 新 extra |
+|---|---|---|
+| `alpha-avatar-plugins-voice` | 去掉 onnxruntime | `silero = [onnxruntime]` |
+| `alpha-avatar-plugins-router` | 去掉 llama-cpp-python、onnxruntime、transformers | `semantic = [llama-cpp-python]`、`turn-taking = [onnxruntime, transformers]` |
+| `alpha-avatar-plugins-persona` | 去掉 insightface、onnxruntime、torchaudio | `face = [insightface, onnxruntime]`、`speaker = [onnxruntime, torchaudio]` |
+| `alpha-avatar-plugins-memory` | 去掉 torchaudio（代码未用，上一轮第 8 节第 5 条） | 无 |
+| `alpha-avatar-agents` | `vdb` 拆开 | `lancedb = [lancedb]`、`qdrant = [langchain-qdrant, qdrant-client]` |
+
+- 插件导入时本来就只在 runner 里懒加载这些库（逐个核对过）。唯一的例外是向量库：`storage/vdb/__init__.py` 会同时导入 LanceDB 和 Qdrant 两个模块，而 Qdrant 模块顶层导入 `qdrant_client`。改为每个后端只导入自己的模块（memory、persona 的 `inference.py`），`__init__` 只保留说明。
+- **每个 runner 声明自己要的包**：`InferenceRunner.REQUIRES`。
+  - 插件 extra 用 `plugin_requirement(NAMESPACE, "<extra>")` 生成，分发名由插件包名推导，不写死名字。
+  - 向量库 runner 用 `vdb_requirement("lancedb"|"qdrant")`。
+  - 共 11 个 runner 都已标注。
+- **Agents**：
+  - `AvatarConfig.plugin_factories()`：每个配置位置在启动时会创建哪个工厂（`AvatarModule` 和名字）；
+  - `AvatarModulePlugin.registered()`：查询工厂是否已注册。
+- **Host `configs/capabilities.py`**：`resolve_capabilities` 和 `check_capabilities` 按配置位置逐项求出「需要什么、缺什么」：
+  - RTC 后端对应的 Host extra；
+  - loop 和 context 仍按名字查找 entry point（保留按名称发现的机制），找到后加载，由它注册工厂；
+  - provider 后端：从配置校验后的 task 里收集，包括默认值和 embedding 的默认后端，并记下第一个用到它的配置位置；
+  - `plugin_packages()` 里的插件包；
+  - 每个选中位置的工厂是否已注册；
+  - runner 计划中每个 runner 的 `REQUIRES`；
+  - 最后按安装元数据逐项核对版本和 extra，extra 不存在也会报出。
+- **在哪里检查**：
+  - `config check`：只读，`_load` 末尾检查；
+  - `start` / `dev`：在准备 home 和工作区之前检查；下载、安装和校验都发生在实时会话之前；
+  - Doctor 的 `packages.capabilities` 改用同一套求解。Doctor 明细的标签因此从 `rtc`、`providers` 变成了配置位置，测试断言随之更新。
+- 报错示例（沙箱实测，见第 6 节）：
+  `persona.plugin (runner alphaavatar.persona.face.analysis): alpha-avatar-plugins-persona[face]: insightface is not installed`。
+- 开发环境的默认依赖组 `avatar-agent-all` 改为带上全部本地 extras，开发环境的内容不变。上一轮的 `reference-bundle` 组改名为 `setup-catalog`，作为 Linux catalog 的根，并加入 deepresearch 和 mcp。rag 和 character 依赖太重（docling、playwright 浏览器），暂未纳入 catalog。
+
+### 3. `alphaavatar setup`
+
+能力选择（平台无关）和 Linux 上的分发分开放在两层：
+
+| 模块 | 层 | 内容 |
+|---|---|---|
+| `host/setup/choices.py` | 平台无关 | `Selection`：语音、视觉、本机模型、向量库（LanceDB 或自托管 Qdrant）。预设 `default`（参考 bundle）和 `remote`（除语音分段所需的 VAD 外，本机不跑任何模型）。每个选择对应：要替换的配置段、需求（PEP 508）、按后端需要的凭据、给人看的能力描述。CLI 和以后的 App 共用这一层 |
+| `host/setup/plan.py` | 平台无关 | catalog 加需求得到安装计划：每个制品的版本、文件、SHA-256、大小、glibc 下限和 CPU 标志，按分发名排序。计划 ID 是计划文档的 SHA-256：同一版本、平台、基础包和需求，计划和 ID 都相同。模型权重不进计划，由 runner 下载到模型缓存 |
+| `host/setup/environment.py`、`probe.py` | Linux | 在基础包的 Python 之上建虚拟环境，装入计划中的 wheel（`installer` 库），检查通过后切换 `current` |
+| `cli/commands/setup.py` | CLI | 交互问答，或 `--preset` 给 CI 和无人值守部署用，两者走同一条安装路径；`--plan` 只打印计划；`--artifacts` 指定本构建自己的 wheel 所在位置 |
+
+- **选择与实际需求对拍**：16 种选择组合下，`requirements(selection)` 都与该配置在完整环境中 `resolve_capabilities` 求出的需求完全一致（测试见第 6 节）。
+  - LanceDB 选择会显式写 `url: null`。原因：运行时会从环境变量 `QDRANT_URL` 取默认值，环境里设置了它就会把向量悄悄挪到 Qdrant。
+  - Qdrant 选择写 `${oc.env:QDRANT_URL}`，在加载时解析。
+- **`remote` 保留 Silero VAD**：两个 STT 实现（`openai_segment`、`openai_realtime`）都按 `segment_id` 收音频，而语音片段只来自 router 的 audio activity，也就是本机 VAD。所以「只用远端推理且开语音」仍需要 onnxruntime 和一个约 2 MB 的模型。关闭语音（`--no-voice`）后，计划里就没有任何本地推理库。
+- **安装事务**（`environment.install`）：
+  1. 在前缀上取与 install.sh 相同的锁；
+  2. 下载全部制品并按大小和 SHA-256 校验，此时环境目录还不存在；
+  3. 建虚拟环境，逐个装入 wheel，本次下载的 wheel 装完即删以节省磁盘；
+  4. 在新环境里先跑 `probe`：逐个导入环境自己的包中含 `.so` 的最外层包，确认本机能加载这些 native 库；
+  5. 再用新环境的命令对待启用的配置（profile 内联成单文件）跑 `config check`；
+  6. 写入 `plan.json` 作为完成标记，切换 `current`；
+  7. 最后启用配置：先存凭据，再创建 bundle 并设为默认，失败时撤销凭据。
+  - 任何一步失败或收到信号，清理按磁盘上的实际状态判断：`current` 指向新环境且尚未启用，就切回原来的版本；删除本次创建的环境和临时目录，清理期间屏蔽信号。
+  - SIGTERM 和 SIGHUP 在 setup 里像 Ctrl-C 一样让程序走到清理，返回后还原原来的信号处理器。
+  - 已有完整环境（`plan.json` 与计划相同）时直接复用，只再检查一次。同一计划留下的残缺目录（没有 `plan.json`）在持锁时重建。
+- **新计划保留当前环境已有的需求**：当前环境的需求（来自 `plan.json`，且基础包相同）会并入新计划。验收中发现，新增一个远端 bundle 后，原来的默认 bundle 就无法通过检查了（第 7 节第 3 条）。合并后，新增 bundle 不会让旧 bundle 失效；若新需求不超出现有环境，就直接复用。
+- **凭据**：
+  - 交互模式逐项询问，秘密用 `getpass` 输入；`--preset` 时从环境读取，缺少必需项则在任何改动之前报错。
+  - 保存在 `<home>/settings/credentials.env`，权限 600。写入方式是先写临时文件再整体替换，同时保留撤销手段。
+  - `start`、`config check`、`doctor` 先读 `.env`（`ENV_FILE`），再读这个文件，都不覆盖环境里已有的变量。
+- **`config init` 和 `config check` 的边界**：`config init` 仍然只生成 bundle 和 profile（`render_bundle`/`create_bundle` 多了可选的 `sections`、`environment`、`make_default` 参数）；`config check` 仍然只读。
+
+### 4. 打包与 CI
+
+- **基础包**（`packaging/linux/base.txt`）：只含 CLI、配置向导和执行安装计划所需的组件。内容为 Python 3.13.12、Host/Agents/Core 的 wheel，以及 16 个第三方分发：
+  - annotated-types、antlr4、certifi、filelock、installer、numpy、omegaconf、packaging、pydantic、pydantic-core、python-dotenv、python-slugify、pyyaml、text-unidecode、typing-extensions、typing-inspection。
+  - 这个集合是用导入拦截实测 `--help`、`config init`、`config check`、`doctor --list` 得出的，build.sh 每次都在这个集合上冒烟测试。
+  - Host/Agents 其余的必选依赖（aiohttp、langchain、weasyprint 等）随任何计划一起安装：catalog 的 `alpha-avatar-host` 闭包包含它们，减去基础包已有的部分。
+- **`packaging/linux/catalog.py`**：从 `uv.lock` 出发，按 CPython 3.13 / Linux x86_64 求值 marker，沿依赖图求出 `setup-catalog` 组每个分发、每个 extra 的闭包。每个分发只有一个制品：
+  - 第三方取 lock 里 manylinux_2_28 及更老标签中最优的 wheel，带原 URL、SHA-256 和大小；
+  - torch 和 torchaudio 用 `torch-cpu.txt`，大小在构建时用 HEAD 请求取得；
+  - AlphaAvatar 自己的包和没有 wheel 的源码包由本次构建出 wheel，URL 为空，从本构建旁边或 Release 取得；
+  - GUI 版 OpenCV、triton 和 nvidia-* 不进入闭包。
+  - 它的 `base` 模式只用标准库，可以在任何东西安装之前运行。
+- **`build.sh`** 输出一组平铺的文件，Release 原样附上：
+  - 基础包 tarball 和它的 `.sha256`（tarball 里含 manifest 和 catalog）；
+  - 本构建的 12 个 wheel：catalog 引用的 10 个插件包和 rtc，加 llama-cpp-python（x86-64-v3）；
+  - `install.sh`；
+  - `SHA256SUMS`。
+  - 构建过程中测量 glibc 下限，并对两个预设做离线规划。
+- **`install.sh`**：
+  - 只装基础包，不再要求 AVX2；
+  - 清理改为按 `current` 的实际指向判断：在切换之后才收到的 SIGTERM 不会删掉刚切换上的版本；
+  - 首次安装失败时，不留下 `current`、命令入口和空的前缀目录；
+  - 重装同一基础包时保留其上的 setup 环境；
+  - 换成另一个基础包后提示需要重新 `setup`；
+  - 命令入口属于另一个前缀时，说明是哪一个。
+- **`linux-package.yml`**：
+  - `build` job 在 manylinux_2_28 里运行 build.sh；
+  - `verify` job 在 `ubuntu:24.04` 容器里，用刚上传的同一组文件走用户路径：
+    1. 先确认容器里没有 python、node、cc；
+    2. 校验 `SHA256SUMS`；
+    3. 用 `install.sh --file` 安装；
+    4. 在仓库外运行 `--version`、`--help`、`config init`，确认裸 `config check` 会指出缺什么以及 `setup`；
+    5. 用 remote 计划核对没有本地模型和加速库；
+    6. `setup --preset default --artifacts /srv/alphaavatar`；
+    7. `config check` 和并行覆盖；
+    8. 最后才装 binutils，测量 glibc 下限并要求不超过 2.28。
+  - release.yml 的 `linux_package` 复用它，所以验收不过就不会发布。
+
+### 5. 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `pyproject.toml`、`uv.lock` | Ruff `known-third-party`；`setup-catalog` 组取代 `reference-bundle`；`avatar-agent-all` 带上本地 extras；lock 新增 installer 0.7.0（uv 0.10.0，340 个包） |
+| `avatar-agents/pyproject.toml`、5 个插件的 `pyproject.toml`、`avatar-host/pyproject.toml` | 第 2 节的 extras；Host 新增 `certifi`、`installer` |
+| Agents：`configs/avatar_config.py`、`runtime/inference/runner.py`、`runtime/plugin/{__init__,module}.py`、`utils/vdb/config.py` | `plugin_factories`、`REQUIRES`、`registered`、`plugin_requirement`、`vdb_requirement` |
+| 插件：11 个 runner 文件，memory/persona 的 `inference.py`、`storage/vdb/__init__.py` | `REQUIRES`；向量库按后端导入 |
+| Host 新增：`configs/capabilities.py`、`configs/credentials.py`、`setup/{__init__,choices,plan,environment,probe}.py`、`cli/commands/setup.py` | 第 2、3 节 |
+| Host 修改：`cli/app.py`、`cli/commands/{config,run,doctor}.py`、`configs/{__init__,loader,template}.py`、`doctor/doctor.py` | `setup` 子命令；能力检查和凭据读取接入；`render_bundle`/`create_bundle` 的参数；Doctor 改用共享求解 |
+| `packaging/linux/{build.sh,install.sh}`，新增 `base.txt`、`catalog.py` | 第 4 节 |
+| `.github/workflows/{linux-package,release}.yml` | 第 1、4 节 |
+| `DEPLOY.md` | Linux 一节改为基础包加 `setup` |
+| 测试：新增 `tests/setup/{test_choices,test_environment}.py`、`tests/configs/{test_capabilities,test_credentials}.py`、`tests/cli/test_setup.py`；修改 `tests/cli/{test_doctor,test_entrypoint}.py` | 第 6 节 |
+
+### 6. 验证
+
+**本地实测：仓库检查**
+
+- ruff check（`--no-cache`）、ruff format、`check_workspace`（16 个成员）、`uv lock --check`（uv 0.10.0）、`git diff --check`、`bash -n`、三个工作流 YAML 能解析、pre-commit（所有改动和新增文件）：全部通过。
+- 全量离线 pytest：**366 passed**。上一轮 330 项，本轮新增 36 项：test_choices 18、test_environment 9、test_credentials 4、test_capabilities 1、test_setup 4。
+- 新增测试：
+  - **选择对拍**：16 种组合下，`requirements` 与 `resolve_capabilities` 一致，环境里设置了 `QDRANT_URL` 时也一致；两个预设都开视觉，默认 8 个 runner，remote 只有 silero 和两个 lancedb runner；
+  - **真实 `uv.lock` 经 catalog 逻辑求计划**：remote 不含 torch、torchaudio、llama-cpp、insightface、transformers、onnx、tokenizers、safetensors、scikit-image、scipy，关语音后连 onnxruntime 也没有；三个计划都没有 nvidia-*、triton、GUI OpenCV，也没有基础包里已有的分发；
+  - **计划确定性**：需求顺序和重复不影响计划与 ID；未知 extra、不安全的文件名、错误的格式都会被拒绝；
+  - **制品来源**：目录对所有制品都先查；URL 只用于本构建自己的 wheel；
+  - **安装事务**：检查发生在切换前、启用发生在切换后；检查失败、启用失败、切换后收到信号、制品损坏、下载中收到信号这五种失败，都不改 `current`，只删除本次创建的东西；锁被占用时拒绝；复用和重建残缺目录；
+  - **凭据**：权限 600；引号、反斜杠、`${}` 原样往返；不覆盖已有环境变量；撤销能还原；不安全的值在文件改动之前就被拒绝；
+  - **`config check` 按位置报错**：缺 insightface、关掉 face 后通过、未注册的工厂、没有的 entry point；`start` 在准备任何东西之前同样拒绝（子进程测试）；
+  - **setup CLI**：在仓库检出里、没有终端也没给预设、修饰参数没配预设时都拒绝；缺凭据或 bundle 重名时什么都不写；`--plan` 输出稳定；安装失败时不写 bundle 和凭据；成功后设为默认、凭据权限 600、输出里不含秘密；新 bundle 保留当前环境的需求，基础包不同时不保留。
+- **变异验证 16/16 全部被测试捕获**：face extra 漏声明；忽略 runner 的 REQUIRES；先切换后检查；不回滚 `current`；凭据覆盖环境变量；URL 对每个制品都试；LanceDB 不显式固定；保留 CUDA 库；先写 bundle 后安装；不减去基础包；不检查工厂；凭据权限 644；remote 带本机模型；复用环境时跳过检查；新 bundle 丢掉现有需求；保留另一个基础包的需求。日志在临时目录 `evidence2/mutants-final.log`。
+
+**本地实测：构建**（与上一轮相同的本机、相同的 build.sh，`--allow-dirty --max-glibc 2.32`）
+
+- 基础包 `alphaavatar-0.6.8-124e0125ce26-dirty.20261105132735-linux-x86_64.tar.gz`：**65,796,383 字节（63 MB）**，SHA-256 `fd8744c32267af36884951ef882f87b89807e480812f20dcd3550bac6f45dc8a`。
+  - 含 19 个分发：上述 16 个第三方分发、Host/Agents/Core，以及 python-build-standalone 自带的 pip；
+  - 安装后 209 MB，glibc 下限 **2.17**。
+- 本构建的 wheel 共 12 个：10 个插件包（含 deepresearch、mcp）、rtc 和 llama，约 18.6 MB；默认计划用到其中 10 个。本构建 wheel 的 glibc 下限是 **2.32**：只有本机编译的 llama 库超过 2.28，CI 在 manylinux_2_28 里构建，预期为 2.28，待推送后核实。
+- 构建用时约 67 秒，因为 llama 的编译结果有 uv 缓存；上一轮没有缓存时约 3 分钟。
+
+| 计划（对新装的基础包） | 包数 | 下载量 | 其中本构建 | 最大的制品（MB） | glibc 下限（计划声明） | CPU |
+|---|---|---|---|---|---|---|
+| `default` | 134 | **532 MB** | 10 个，18.6 MB | torch 184、opencv-headless 54、pyarrow 48、lancedb 47、scipy 36、llama 18、onnx 18、onnxruntime 17 | 2.32（本机 llama） | avx2、bmi2、f16c、fma |
+| `remote` | 115 | **237 MB** | 9 个，0.6 MB | opencv-headless 54、pyarrow 48、lancedb 47、onnxruntime 17、livekit 11 | 2.28 | 无 |
+
+**本地实测：干净机器验收**
+
+环境：bubblewrap，Ubuntu 24.04.5 根文件系统（glibc 2.39，没有 python、node 和编译器），普通用户 tester。基础包和本构建的 wheel 由本机 HTTP 服务提供，模拟 Release；第三方 wheel 直接从 PyPI 和 download-r2.pytorch.org 下载，即真实的用户路径。三组都在全新的根文件系统上，用最终构建运行。
+
+默认路径：
+
+| 步骤 | 结果 |
+|---|---|
+| `curl` 下载 `install.sh`，`bash install.sh --url …` | 0，3 秒；`current -> versions/<id>`；提示下一步 `alphaavatar setup` |
+| 在 `/` 运行 `--version`、`--help` | 0，子命令为 `dev, start, config, setup, doctor` |
+| `config init reference`、裸 `config check` | 0 / 2。检查逐行列出 9 个配置位置对应的插件包，并提示 `` `alphaavatar setup` installs them `` |
+| `setup --preset default --artifacts <本机服务>`（凭据为占位值，来自环境） | 0，55 秒：下载 134 个包、532 MB，向本机服务只请求本构建的 10 个 wheel，没有 404；建环境、probe、`config check`，然后切换并启用 |
+| `config check`（默认 bundle 为 `avatar`）、`config check reference` | 都是 0；视觉开启（vlm），8 个 runner |
+| 覆盖 `runtime.inference.methods={"alphaavatar.voice.vad.silero": {"workers": 2}}` | `8 runners (workers: alphaavatar.voice.vad.silero x2)` |
+| 覆盖一个未被选中的方法 | 被拒绝：`fields: runtime.inference.methods.alphaavatar.router.unknown` |
+| 安装结果 | `credentials.env` 权限 600；默认 bundle 为 `avatar`；环境 1.8 GB，含 134 个分发；实测 glibc 下限 2.32，不计本机编译的 llama 库为 2.28 |
+
+已安装后的失败场景。每一步后都核对：`current`、命令入口、`--version`、`config check`，以及应用主目录全部文件的哈希（预先放了一个工作区数据文件作为替身）：
+
+| 场景 | 退出码 | 结果 |
+|---|---|---|
+| `setup --preset remote` 第 3 秒 SIGTERM。remote 在默认环境之内，计划复用它，信号落在重新检查期间 | 143 | 状态和数据哈希都不变，没有新环境和临时目录，「nothing was enabled」 |
+| `install.sh` 下载被截断（服务只发 5 MB） | 18 | 不变 |
+| 重装同一基础包 | 0 | 「already installed」，`current` 仍指向 setup 环境 |
+| 安装 B：在替换 `current` 的 `mv` 之前发 SIGTERM（用 PATH 中的替身 `mv` 精确卡点） | 143 | 不变，B 已删除 |
+| 安装 B：`mv` 完成后立即 SIGTERM | 143 | `current -> versions/B`，B 完整保留并可运行；A、setup 环境和数据都在，数据哈希不变。由于 B 是裸基础包，`config check` 返回 2，并指出缺什么 |
+| 第二个前缀共用同一个 `bin-dir` | 1 | 下载前即拒绝：「…/bin/alphaavatar runs the AlphaAvatar installed in …/.local/lib/alphaavatar」；第二个前缀目录不存在 |
+| `setup --preset remote` 完整运行 | 0 | 提示保留当前环境的 4 项本机模型需求，「installed already: nothing to download」；`remote` 成为默认 bundle（3 个 runner，视觉开启），原 `avatar` bundle 仍然通过检查 |
+
+首次安装失败，以及只装了基础包时的 setup 失败：
+
+| 场景 | 退出码 | 结果 |
+|---|---|---|
+| `--sha256` 不匹配 | 1 | 前缀、`bin`、home 都为空 |
+| 要求 glibc 9.99 的包 | 1 | 「Needs glibc 9.99 or newer; found 2.39」，同上为空 |
+| 命令目录不可写 | 1 | 下载前即拒绝，同上为空 |
+| 下载或解包时 SIGTERM | 143 | 同上为空 |
+| 首次安装成功后，首次 `setup` 拿不到本构建的 wheel | 1 | 「Cannot get alpha_avatar_plugins_context…: URLError」；`current` 仍是基础包，没有 `envs`，没有 home |
+| 首次 `setup` 缺凭据 | 1 | 列出缺少的 4 个名字，没有任何改动 |
+| 首次 `setup` 在第 3、10、18、24 秒被 SIGTERM | 143 ×4 | 分别停在下载第 51、73、99 个包，以及第 24 秒的「下载完、正在安装或检查」；每次都没有 `envs`，没有 home，`current` 仍是基础包 |
+| 首次 `setup` 第 6 秒 Ctrl-C | 130 | 停在下载第 61 个包，同上 |
+| 首次 `setup --preset remote` 完整运行 | 0 | 26 秒，115 个包、237 MB；环境 733 MB，第 2 节列出的重型库中只有 onnxruntime；`config check` 通过，3 个 runner，视觉开启 |
+
+**推送后待 CI 验证**
+
+本机无法推送，CI 只会在推送后用同一提交的制品运行：
+- linux-package.yml 的 `build` 能否在 manylinux_2_28 里跑通（含 `dnf install unzip`），本构建 wheel 的 glibc 下限是否 ≤ 2.28；
+- `verify` 在 `ubuntu:24.04` 容器（没有 python、node、cc，也没有系统 CA 证书，HTTPS 走 certifi）里的全部步骤，以及 CI 里实测的基础包大小、默认方案额外下载量和 glibc 下限；
+- release.yml 的草稿发布流程。
+
+本地的制品由同一个 build.sh 构建，但标记为 dirty，且编译用的是本机 glibc 2.32，所以不能代替 CI 结果。
+
+### 7. 过程中的问题与更正
+
+1. **Ruff 在本地没报错**：被 `.ruff_cache` 掩盖，见第 1 节。此后 Ruff 一律加 `--no-cache` 运行。
+2. **Ctrl-C 测试第一次无效**：非交互 shell 的后台任务会忽略 SIGINT，setup 因此没被打断，装完了 remote 计划（顺带验证了远端方案的实装：733 MB，只有 onnxruntime）。改用 `perl -e '$SIG{INT}="DEFAULT"; exec …'` 恢复默认处置后，再测得退出码 130。
+3. **新增 bundle 会让旧 bundle 失效**：用 remote 新增 bundle 后，`current` 切到只含远端依赖的新环境，原默认 bundle 的 `config check` 返回 2，正确指出缺 torchaudio、insightface、llama-cpp-python、transformers。这是设计问题，不是检查的问题。已改为新计划保留当前环境的需求（第 3 节），并加了测试和变异 M15、M16。
+4. **`--artifacts URL` 对每个第三方制品都先请求本机服务**：产生 124 次 404。改为 URL 只用于本构建自己的 wheel，目录则对所有制品都先查。
+5. **连接失败时错误信息多出一行「not the planned file」**：现在只有确实收到了内容才报这一行。
+6. **残留与提示**：
+   - 首次 setup 失败会留下空的 `envs/`，首次安装失败会留下空的前缀目录和锁文件：都已改为只删除本次创建、而且为空的目录；
+   - 「能力属于旧版本」的提示原来在切换前打印，切换前被打断时也会出现：已挪到切换成功之后；
+   - 复用已有环境时摘要仍写「532 MB to download」：已改为「installed already: nothing to download」，这时也跳过磁盘空间检查。
+7. **本机构建默认 `--max-glibc 2.28` 时失败**：本机编译的 llama 需要 2.32，这正是该检查应有的行为。本地构建改用 `--max-glibc 2.32`，CI 仍是 2.28。
+8. **一次清理命令被安全检查拦下**：命令先 `cd` 再对 `*` 执行 `rm -f`，没有执行。改为对绝对路径用 `find -delete`。
+9. **磁盘一度只剩 981 MB**：沙箱里同时有默认环境和远端环境。之后每组验收结束就删除对应的根文件系统，构建产物只保留最终一份。
+
+### 8. 环境限制
+
+- CI 没有运行（见第 6 节「推送后待 CI 验证」）。
+- 测试环境是 bubblewrap 沙箱，不是虚拟机，与主机共享内核 5.10 和网络；基础包从本机 HTTP 服务下载。
+- B（切换用）和 C（要求 glibc 9.99）是从最终基础包派生的测试包，只改了顶层目录名和 manifest 里的 id、glibc。
+- 磁盘约 1–5 GB 可用；用户的 `~/.cache/uv` 没有清理，只被构建读取。
+- 没有实测：glibc 2.28 的系统、不支持 AVX2 的 CPU、真实凭据下的 RTC 会话和模型下载（属于第 3、4 项）。
+
+### 9. 待复核
+
+1. **CI 首次运行**：见第 6 节。另外，开发分支每次推送都构建，并在 GitHub 上做一次约 530 MB 的 PyPI 下载和安装。如果频率太高，可以改为按路径过滤或手动触发。
+2. **基础包只装 Host 依赖的子集**：
+   - Host、Agents、Core 以 `--no-deps` 加 `base.txt` 安装，其余依赖随计划补齐；
+   - 所以在裸基础包里，Doctor 的 `packages.alphaavatar` 会报告 Host 依赖未装齐。这如实反映了现状，但它给出的处理建议是「装入当前环境」，而不是 `setup`；
+   - Agents 的重依赖（langchain-community、weasyprint、mcp 等）本身是否该移到用到它们的插件里，仍待定（上一轮第 8 节第 5 条）。
+3. **每个新计划都会重新下载全部制品**：环境之间不共享 wheel 缓存。旧环境和旧版本不会被清理；换基础包后需要重新 `setup`。这些属于第 5 项（升级与回退）。
+4. **setup 只增不减**：新计划保留当前环境的需求。想精简，需要第 5 项的清理能力。
+5. **remote 仍含 onnxruntime**：原因见第 3 节。如果语音分段将来能来自远端（例如服务端 VAD），remote 就可以去掉它。
+6. **凭据**：
+   - 保存为明文，靠 600 权限保护；
+   - `--preset` 会把环境里给的凭据写入该文件，CI 里写的是占位值；
+   - `ENV_FILE` 仍然存在，去掉它属于第 2 项。
+7. **`config init` 的「Next」提示**：在裸基础包里仍然建议 `alphaavatar dev`，没有提示 `setup`。
+8. **catalog 不含 rag 和 character**：它们依赖太重；`config check` 会照常指出缺包，但 `setup` 装不了它们。
+9. **llama 的 `lib64/` 重复**（上一轮第 6 条）仍然存在。x86-64-v3 现在只是 semantic addressing 的要求：基础包不再要求 AVX2，含 llama 的计划会在下载前检查 CPU 标志。
+10. **上一轮仍待定的事项**：
+    - SIGKILL 留下的 `.install-*`，以及 setup 留下的 `.setup-*`（同一计划的残缺环境目录会在持锁时重建，其他残留仍不清理）；
+    - Doctor 写死的内置插件知识；
+    - loop/context 按名字查找；
+    - 开发环境中 OpenCV 两个版本并存；
+    - `.gitignore` 的 `KMS` 行。
+
+### 10. 追加：Agents 依赖归位与 Doctor 提示（用户对第 9 节第 2 条的决定）
+
+用户决定：
+- 只装了基础包时，Doctor 的处理建议改为提示 `alphaavatar setup`；
+- Agents 的重依赖移到真正用到它们的插件里。
+
+**依赖归位**：先逐个盘点 Agents 声明的依赖在全仓库的实际导入情况。
+
+| 依赖 | 实际用处 | 处理 |
+|---|---|---|
+| weasyprint、markdown、requests | 只被 `agents/utils/files/url_to_pdf.py` 用到，而这个模块只被 deepresearch 调用 | 模块原样（`mv`）移到 `alphaavatar/plugins/deepresearch/url_to_pdf.py`，三个依赖改由 deepresearch 声明；`tavily.py` 仍在保存时才导入 |
+| mcp | 只有 mcp 插件用，它已声明 `mcp>=1.24` | 从 Agents 移除 |
+| langchain-core | 只有 provider 的 `langchain` extra 用，它已声明 | 从 Agents 移除 |
+| langchain-community、livekit-blingfire | 全仓库没有任何代码导入 | 移除 |
+| omegaconf | 只有 Host 用，Host 已声明 | 从 Agents 移除 |
+| numpy | Agents 自己在模块层导入（`utils/__init__` → `numpy_utils`，以及 `persona/schemas/user_profile`），过去是靠 langchain-community 间接带进来的 | Agents 显式声明 `numpy>=1.26,<3` |
+| huggingface-hub、filelock、jsonschema、referencing、python-slugify、python-dotenv | Agents 自己的代码在用 | 保留 |
+
+- 锁文件（uv 0.10.0）从 340 个包降到 332 个，移除的是 langchain-community、langchain-classic、langchain-text-splitters、sqlalchemy、marshmallow、dataclasses-json、typing-inspect、livekit-blingfire。
+- 开发环境用 `uv sync --inexact` 同步，没有删除 `.venv` 里不再被锁定的包；全量测试在拦截这些模块导入的情况下运行（见下）。
+- `docs/cli/doctor.md` 里「导入配置时 WeasyPrint 会探测 native 库」那句已失效，删掉了。
+- `agents/utils/files/__init__.py` 的说明也同步更新。
+
+**新增回归**：`avatar-agents/tests/test_dependencies.py` 用 AST 收集 Agents 代码里的第三方导入，要求：
+- 模块层导入的都在必选依赖里；
+- 函数内导入的在必选依赖或 extras 里（`gpu_available()` 对 torch 的探测除外）；
+- 声明的依赖都被 Agents 自己的代码用到。
+
+**Doctor 提示**：`packages.alphaavatar` 和 `packages.capabilities` 的处理建议由 `_install()` 生成：在安装包里（`Installation.running()` 成立）为「Run `alphaavatar setup`; it installs …」，在源码检出或其他 Python 环境里仍是「Install into this Python environment: …」。`test_doctor` 两种情形都断言了。
+
+**验证（本地实测）**
+
+- 全量 pytest 在拦截上述 8 个分发的导入时运行：**367 passed**（新增 Agents 依赖测试 1 项）。
+- 变异验证 **19/19 全部被捕获**，在第 6 节 16 个的基础上新增 3 个：Agents 不声明 numpy；Agents 重新声明 weasyprint；Doctor 不再提示 setup。
+- 重新构建：基础包 65,790,796 字节，SHA-256 `354d040a4533325fdd0f5c39ab4c94560bafdbc85e5d22ccb1d3308e7c665a89`，glibc 2.17，内容与 `base.txt` 相同。
+
+| 计划（对新装的基础包） | 改前 | 改后 |
+|---|---|---|
+| `default` | 134 个包、532 MB | **105 个包、514 MB**（本构建的 wheel 10 个、18.6 MB）；环境 1.8 GB → **1.7 GB**，含 105 个分发 |
+| `remote` | 115 个包、237 MB | **85 个包、212 MB**；环境 733 MB → **635 MB**，本地推理库只有 onnxruntime |
+
+- 三组沙箱验收在新构建、全新根文件系统上重跑，结论与第 6 节相同：
+  - 默认路径：`setup` 用时 53 秒；`config check` 通过，视觉开启，8 个 runner，`silero x2` 并行覆盖生效；环境里已经没有 langchain-community、sqlalchemy、weasyprint、mcp；glibc 下限实测 2.32（不计本机编译的 llama 为 2.28）。
+  - 安装后的失败场景：`current`、命令入口和数据哈希逐项不变。
+  - 首次安装失败：前缀、`bin`、home 都为空。
+  - 首次 setup：在第 3、10、16 秒（下载中）和第 20 秒（安装中）被 SIGTERM，第 6 秒 Ctrl-C，都没有留下 `envs` 和 home；完整运行 remote 用时 23 秒。
+  - 新增一步：在只装了基础包的机器上跑 `doctor --json`，`packages.alphaavatar` 为 FAIL，处理建议是「Run `alphaavatar setup`; it installs 'alpha-avatar-host'」。
+- 计时上的一处更正：remote 变小后，原来第 24 秒的 SIGTERM 到达前 setup 已经装完（退出码 0），后两步因此撞上「bundle 已存在」。打断时间点改为 3、10、16、20 秒后，这一组重跑。
+- CI 部分仍待推送后验证，同第 6 节。
+
+### 11. 追加：Linux 制品的 CI 触发范围（用户决定第 9 节第 1 条）
+
+用户决定：
+- dev 分支按路径自动触发；
+- 保留手动补跑；
+- 正式发布始终跑完整验收；
+- 触发路径要比 `packaging/**` 宽，覆盖打包与发布工作流、`uv.lock`、Python 版本与依赖声明、`setup` 和 catalog、默认 bundle／profiles、安装验收，以及实际装入制品的运行时代码。
+
+| 场景 | CI 行为 |
+|---|---|
+| 推送到 `dev/**`，改动命中触发路径 | `linux-package.yml` 构建基础包和 wheel，再在 `ubuntu:24.04` 干净容器里用同一提交的制品走完安装、`setup` 和 `config check` |
+| 只改文档、开发日志、测试、Quality 工作流或 `scripts/quality` | 不构建 Linux 制品；Quality 照常运行 |
+| 正式 tag | release.yml 通过 `workflow_call` 调用，路径过滤对它不生效，总是完整构建并验收；通过后才以草稿上传资产并发布 |
+| 手动补跑 | 保留 `workflow_dispatch`。GitHub 要求该工作流文件已在默认分支上，所以在合入 main 之前，dev 分支只能靠推送触发 |
+
+`push.paths` 的触发路径，以及各自覆盖的内容：
+
+| 路径 | 覆盖 |
+|---|---|
+| `.github/workflows/linux-package.yml`、`.github/workflows/release.yml` | 打包、验收和发布流程本身 |
+| `.python-version`、`uv.lock`、`pyproject.toml` | Python 版本、锁文件、根依赖组（含 `setup-catalog`） |
+| `packaging/**` | `build.sh`、`install.sh`、`catalog.py`、`base.txt`、`torch-cpu.txt` |
+| `avatar-*/pyproject.toml`、`avatar-plugins/*/*/pyproject.toml` | 每个包的依赖声明和 extras |
+| `avatar-*/alphaavatar/**`、`avatar-plugins/*/*/alphaavatar/**` | 装入制品的全部代码，包括 `setup`、能力求解、默认 bundle 模板和 Doctor 样例 |
+
+- 插件代码按目录模式整体纳入。不进 catalog 的 rag、character 改动也会触发一次构建；宁可多构建，也不漏。
+- 举例：把 PDF 依赖从 Agents 移到 DeepResearch，改动的是 `avatar-agents/pyproject.toml` 和插件代码，安装脚本没动，但仍会触发构建。
+- **防止以后漏掉**：`scripts/quality/check_workspace.py`（Quality 的 lint job 会运行）从工作流里读出这些路径，要求以下内容都被覆盖：每个 workspace 成员的 `pyproject.toml` 和 `alphaavatar/` 代码、`uv.lock`、`.python-version`、根 `pyproject.toml`、`packaging/` 下的每个文件，以及这两个工作流。
+- **验证（本地实测）**：
+  - 依次删掉 10 条路径中的任意一条，或者删掉整段 `paths`，检查都会失败，并指出哪些路径不再触发构建（11/11）；
+  - 只改日志、DEPLOY.md、README、测试、`quality.yml` 或 `scripts/quality` 时，按同样的匹配规则判断为不触发；改 `url_to_pdf.py`、`avatar-agents/pyproject.toml`、模板、`setup`、`catalog.py` 时会触发；
+  - Ruff、格式、`check_workspace`、`uv lock --check`、pre-commit 都通过。
+- **推送后重点核对**：本次推送改动了 `linux-package.yml` 本身，所以一定会触发。要看的是：
+  - manylinux_2_28 能否构建成功；
+  - 实际的 glibc 下限是否 ≤ 2.28；
+  - 干净容器里的整套验收能否通过。
+  - 草稿发布流程要等第一次打正式 tag 时才会运行。
+
+### 12. 追加：合并到 `main` 也按同一套路径规则触发（用户决定）
+
+用户决定：`push.branches` 设为 `["main", "dev/**"]`。上一节只写了 `dev/**`，合并到 `main` 本身不会触发 Linux 打包验收。
+
+| 场景 | CI 行为 |
+|---|---|
+| 合并到 `main`，改动命中第 11 节的路径 | 用 `main` 上合并后的 SHA 构建，并在干净容器里验收。即使 dev 已经通过，这次验的是实际进入 `main` 的代码；只产出 CI 制品，不发布 |
+| 只合并文档或日志 | 跳过 Linux 制品，照常跑 Quality |
+| 正式 tag | 不变：完整构建、验收，通过后经草稿发布 |
+| 手动补跑 | 工作流进入默认分支 `main` 之后，`workflow_dispatch` 可用 |
+
+- **并发**：dev 分支上，新推送仍会取消正在跑的旧构建；`main` 上不取消，每个合并进来的 SHA 都跑完并留下结果；发版本来就不取消。对应设置为 `cancel-in-progress: ${{ inputs.release == '' && github.ref != 'refs/heads/main' }}`。
+- **防误改**：`check_workspace.py` 要求推送分支同时包含 `main` 和 `dev/**`。本地实测：去掉其中任一个，检查都会失败（2/2）。
+- DEPLOY.md 同步改为「`main` 和 `dev/**` 上每次改动了制品内容的推送」。
+
+Doctor 运行指标、启动与停止、升级失败回退，按原顺序在本项审查通过后进行。

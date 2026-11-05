@@ -33,6 +33,7 @@ from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
 from alphaavatar.agents.persona.enums import VectorRunnerOP
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import qdrant
+from alphaavatar.agents.utils.vdb.config import vdb_requirement
 
 from ...namespace import NAMESPACE
 from ...processors.face.analysis_runner import FaceAnalysisRunner
@@ -44,6 +45,7 @@ from ...profile.serialization import merge_profile_items
 
 class QdrantRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.persona.vdb.qdrant"
+    REQUIRES = (vdb_requirement("qdrant"),)
 
     def __init__(self):
         super().__init__()

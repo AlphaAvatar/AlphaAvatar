@@ -60,7 +60,7 @@ class TavilyDeepResearchTool:
             task.exception()
 
     def _save(self, result: TavilyExtractObj) -> CapabilityResult:
-        from alphaavatar.agents.utils.files.url_to_pdf import save_single_url_content_to_pdf
+        from .url_to_pdf import save_single_url_content_to_pdf  # WeasyPrint, only when saving.
 
         root = (self.session_path.artifacts_dir / NAMESPACE / "tavily").resolve()
         saved, failures = [], [str(value) for value in (result.failed_results or [])]

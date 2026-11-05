@@ -206,11 +206,15 @@ def test_console_commands_run_without_the_host_log_socket(tmp_path: Path) -> Non
     started = run("start", str(no_model))
     assert started.returncode == 2
     assert "fields: loop.init_config.model" in started.stdout + started.stderr
+    # And checks the selected capabilities, as config check does, before preparing anything.
+    started = run("start", "console", "persona.plugin=custom")
+    assert started.returncode == 2
+    assert "persona.plugin: no avatar.perception.persona factory 'custom'" in started.stderr
     assert sorted(path.name for path in home.iterdir()) == ["configs", "settings"]
     # Only the converged commands exist; the removed entry points are usage errors.
     assert run("check", "console").returncode == 2
     assert run("config", "show", "console").returncode == 2
     helped = run("--help")
     assert helped.returncode == 0, helped.stderr
-    assert "{dev,start,config,doctor}" in helped.stdout  # No top-level check.
+    assert "{dev,start,config,setup,doctor}" in helped.stdout  # No top-level check.
     assert "{init,check}" in run("config", "--help").stdout

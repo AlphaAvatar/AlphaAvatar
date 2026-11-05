@@ -49,6 +49,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         actions.add_parser("check", help="Validate a configuration without starting anything"),
         json_output=True,
     )
+    setup = commands.add_parser(
+        "setup",
+        help="Choose capabilities, install what they need, check them, then enable a bundle",
+    )
+    setup.add_argument(
+        "--preset",
+        choices=("default", "remote"),
+        help="No questions: default is the reference bundle; remote runs no model on this "
+        "machine but voice activity detection. Credentials come from the environment",
+    )
+    setup.add_argument("--no-voice", action="store_true", help="With --preset: no speech")
+    setup.add_argument("--no-vision", action="store_true", help="With --preset: no camera")
+    setup.add_argument("--vector-store", choices=("lancedb", "qdrant"), help="With --preset")
+    setup.add_argument("--name", help="Bundle name (default: avatar)")
+    setup.add_argument("--avatar-id", help="Stable Avatar identifier (default: the name)")
+    setup.add_argument(
+        "--artifacts",
+        metavar="DIR|URL",
+        help="Where this build's own wheels are, if not its release: the CI build's directory",
+    )
+    setup.add_argument(
+        "--plan", action="store_true", help="Print the install plan as JSON; change nothing"
+    )
     doctor = commands.add_parser(
         "doctor",
         help="Diagnose the installation and a configuration: static checks, then a temporary "
@@ -66,6 +89,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         if "=" not in item or not item.partition("=")[0]:
             parser.error("Configuration overrides must use KEY=VALUE")
 
+    if args.command == "setup":
+        if args.preset is None and (args.no_voice or args.no_vision or args.vector_store):
+            parser.error("--no-voice, --no-vision and --vector-store go with --preset")
+        from .commands.setup import setup as run_setup
+
+        return run_setup(args)
     if args.command in ("dev", "start"):
         from .commands.run import run
 

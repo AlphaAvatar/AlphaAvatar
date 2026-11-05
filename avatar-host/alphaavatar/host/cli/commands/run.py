@@ -31,19 +31,20 @@ def run(target: str | None, overrides: Sequence[str], *, devmode: bool) -> int:
 
         logs = HostLog(devmode=devmode)
         stage = "import configuration loader"
-        from alphaavatar.agents.env import init_env
         from alphaavatar.host.configs import (
             check_application_paths,
+            check_capabilities,
             format_failure,
             load_application,
             select_configuration,
             validate_plugin_settings,
         )
+        from alphaavatar.host.configs.credentials import load_environment
 
         describe = format_failure
 
         stage = "load environment"
-        init_env()
+        load_environment(overrides)  # The .env file, then the credentials setup stored.
         logs.refresh_secrets()
 
         stage = "select application configuration"
@@ -52,6 +53,8 @@ def run(target: str | None, overrides: Sequence[str], *, devmode: bool) -> int:
         config = load_application(source, overrides)
         stage = "validate plugin settings"
         validate_plugin_settings(config)
+        stage = "check the installed capabilities"
+        check_capabilities(config)  # Before anything starts: downloads belong to setup.
 
         stage = "prepare application paths"
         from alphaavatar.agents.workspace import prepare_workspace

@@ -23,6 +23,7 @@ from .bundles import (
     read_settings,
     select_configuration,
 )
+from .capabilities import Capabilities, Need, check_capabilities, resolve_capabilities
 from .loader import (
     check_application_paths,
     load_application,
@@ -35,13 +36,16 @@ from .view import describe_application, describe_error, describe_summary, output
 
 __all__ = [
     "LAYERS",
+    "Need",
     "ApplicationConfig",
+    "Capabilities",
     "ConfigReferenceError",
     "ConfigSource",
     "CreatedBundle",
     "REQUIRED_ENVIRONMENT",
     "application_paths",
     "check_application_paths",
+    "check_capabilities",
     "create_bundle",
     "describe_application",
     "describe_error",
@@ -51,6 +55,7 @@ __all__ = [
     "output_scrubber",
     "read_settings",
     "render_bundle",
+    "resolve_capabilities",
     "restore_application",
     "select_configuration",
     "validate_application",

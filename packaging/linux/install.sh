@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Install AlphaAvatar's Linux x86_64 package, as CI builds it with packaging/linux/build.sh.
+# Install AlphaAvatar's Linux x86_64 base package, as CI builds it with packaging/linux/build.sh;
+# then `alphaavatar setup` installs the capabilities a person chooses.
 #
 #   bash install.sh --version 0.6.9      # the package of a GitHub release
 #   bash install.sh --file PACKAGE       # one already downloaded, such as a CI build of a commit
@@ -10,10 +11,12 @@
 #
 # Program files only; ALPHAAVATAR_HOME, Avatar workspaces and model caches live elsewhere:
 #   <prefix>/versions/<version>-<commit>/        each package unpacked and checked before use
+#   <prefix>/envs/<plan>/                        what `alphaavatar setup` installs over one
 #   <bin-dir>/alphaavatar -> <prefix>/current/bin/alphaavatar   prepared before the switch
-#   <prefix>/current -> versions/...             switched last
-# A failed or interrupted run removes only what it created; the current version, the command
-# and existing data stay as they were.
+#   <prefix>/current -> versions/... or envs/... switched last
+# Installing the version current already runs keeps its setup environment. A failed or
+# interrupted run removes only what it created, judged by where current points when it ends;
+# the current version, the command and existing data stay as they were.
 set -euo pipefail
 
 RELEASES="https://github.com/AlphaAvatar/AlphaAvatar/releases/download"
@@ -68,6 +71,10 @@ if [[ "$prefix/" == "$home/"* || "$home/" == "$prefix/"* ]]; then
 fi
 entry="$bin_dir/alphaavatar" link="$prefix/current/bin/alphaavatar"
 if [[ -e "$entry" || -L "$entry" ]] && [[ "$(readlink "$entry")" != "$link" ]]; then
+  if [[ "$(readlink "$entry")" == */current/bin/alphaavatar ]]; then
+    die "$entry runs the AlphaAvatar installed in $(dirname "$(dirname "$(dirname \
+      "$(readlink "$entry")")")"); choose another --bin-dir, or that --prefix"
+  fi
   die "$entry exists and is not AlphaAvatar's command; it is left as it is"
 fi
 if [[ "$(readlink "$entry" || true)" != "$link" ]]; then
@@ -77,15 +84,30 @@ if [[ "$(readlink "$entry" || true)" != "$link" ]]; then
   [[ -d "$probe" && -w "$probe" ]] || die "Cannot create $entry: $probe is not a writable directory"
 fi
 
+made_prefix=""
+[[ -e "$prefix" ]] || made_prefix=1
 mkdir -p "$prefix/versions"
 exec 9> "$prefix/.install.lock"
 flock -n 9 || die "Another installation into $prefix is running"
 # This run's own directory, on the same file system as the versions it renames into.
 stage="$(mktemp -d "$prefix/versions/.install-XXXXXX")"
-fresh="" staged_entry=""
+fresh="" staged_entry="" made_entry=""
 cleanup() {
-  rm -rf -- "$stage" ${fresh:+"$fresh"}
+  trap '' INT TERM HUP  # Finish cleaning up whatever else arrives.
+  rm -rf -- "$stage"
+  # Removed unless current points to it: a signal may land just after the switch.
+  if [[ -n "$fresh" && "$(readlink -f "$prefix/current" || true)" != "$(readlink -f "$fresh")" ]]
+  then
+    rm -rf -- "$fresh"
+  fi
   rm -f -- ${staged_entry:+"$staged_entry"}
+  # A first installation that ends without a current version leaves no command either, nor
+  # the prefix it made, if nothing else is in it.
+  if [[ -n "$made_entry" && ! -e "$prefix/current" ]]; then rm -f -- "$entry"; fi
+  if [[ -n "$made_prefix" && ! -e "$prefix/current" ]]; then
+    rm -f -- "$prefix/.install.lock"
+    rmdir -- "$prefix/versions" "$prefix" 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT  # Also on SIGINT and SIGTERM: bash exits through the EXIT trap.
 
@@ -158,7 +180,7 @@ else
   echo "Checking AlphaAvatar $id"
   check "$candidate" || die "The package does not run on this machine"
   mv -T "$candidate" "$target"
-  fresh="$target"  # This run's until it is current: a failure before then removes it.
+  fresh="$target"  # This run's: removed at exit unless current points to it.
   check "$target" || die "The package does not run from $target"
 fi
 
@@ -167,20 +189,32 @@ if [[ "$(readlink "$entry" || true)" != "$link" ]]; then
   staged_entry="$bin_dir/.alphaavatar.$$"
   ln -s "$link" "$staged_entry"
   mv -Tf "$staged_entry" "$entry"
-  staged_entry=""
+  staged_entry="" made_entry=1
 fi
 previous="$(readlink "$prefix/current" || true)"
-ln -s "versions/$id" "$stage/current"
+switch="versions/$id"
+# A setup environment over this very version stays current: its capabilities remain.
+if [[ "$previous" == envs/* ]] && "$target/python/bin/python3" -I -c 'import json, sys
+sys.exit(json.load(open(sys.argv[1], encoding="utf-8"))["base"] != sys.argv[2])' \
+    "$prefix/$previous/share/alphaavatar/plan.json" "$id" 2>/dev/null; then
+  switch="$previous"
+fi
+ln -s "$switch" "$stage/current"
 mv -Tf "$stage/current" "$prefix/current"
-fresh=""
 if ! (cd / && [[ "$("$entry" --version)" == "AlphaAvatar $package_version" ]]); then
   if [[ -n "$previous" ]]; then
     ln -s "$previous" "$stage/previous" && mv -Tf "$stage/previous" "$prefix/current"
+  else
+    rm -f -- "$prefix/current"
   fi
   die "$entry does not run AlphaAvatar $package_version; the previous version stays current"
 fi
 
-echo "Installed AlphaAvatar $id: $entry -> $prefix/current"
+echo "Installed AlphaAvatar $id: $entry -> $prefix/current -> $switch"
+if [[ "$previous" == envs/* && "$switch" != "$previous" ]]; then
+  echo "The capabilities \`alphaavatar setup\` installed belong to the previous version."
+fi
+[[ "$switch" == envs/* ]] || echo "Next: alphaavatar setup    # choose capabilities; it installs them"
 case ":$PATH:" in
   *":$bin_dir:"*) ;;
   *) echo "Add $bin_dir to PATH to run alphaavatar from any directory, e.g. in ~/.profile:"

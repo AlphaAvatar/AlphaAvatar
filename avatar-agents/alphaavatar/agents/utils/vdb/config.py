@@ -29,6 +29,11 @@ def snapshot_vdb_config(value: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
+def vdb_requirement(backend: str) -> str:
+    """The Agents extra holding a vector store backend's client library."""
+    return f"alpha-avatar-agents[{backend}]"
+
+
 def vdb_backend(config: dict[str, Any]) -> str:
     if config.get("url"):
         return "qdrant"

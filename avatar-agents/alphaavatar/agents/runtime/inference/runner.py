@@ -38,6 +38,10 @@ class InferenceRunner:
     # True only when independent processes may serve this method at once: every request
     # carries its own state, and no store, lock or cache must stay consistent across them.
     REPLICABLE: ClassVar[bool] = False
+    # What this runner's code loads beyond its plugin's own requirements, as PEP 508
+    # requirements, usually an extra of its plugin: checked before anything starts, and
+    # installed by `alphaavatar setup`.
+    REQUIRES: ClassVar[tuple[str, ...]] = ()
 
     def configure(self, launch: RunnerLaunch) -> None:
         if not isinstance(launch, RunnerLaunch):

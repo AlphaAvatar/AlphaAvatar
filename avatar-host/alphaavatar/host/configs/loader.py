@@ -64,6 +64,8 @@ def _check_plugin_packages(avatar: AvatarConfig) -> None:
     """
     from importlib.util import find_spec
 
+    from alphaavatar.agents.runtime.plugin import plugin_requirement
+
     def installed(name: str) -> bool:
         try:
             return find_spec(f"alphaavatar.plugins.{name}") is not None
@@ -71,14 +73,14 @@ def _check_plugin_packages(avatar: AvatarConfig) -> None:
             return False
 
     missing = "".join(
-        f"\n      {location}: alpha-avatar-plugins-{name}"
+        f"\n      {location}: {plugin_requirement(name)}"
         for location, name in avatar.plugin_packages().items()
         if not installed(name)
     )
     if missing:
         raise ConfigReferenceError(
-            "Selected plugins are not installed; install these packages into AlphaAvatar's "
-            f"Python environment, or change the settings that select them:{missing}"
+            "Selected plugins are not installed; `alphaavatar setup` installs them, or change "
+            f"the settings that select them:{missing}"
         )
 
 

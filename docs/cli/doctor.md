@@ -41,9 +41,7 @@ The static checks create, download, load, start and contact nothing, and open no
 `.env` Doctor cannot read is a `config.load` failure in the same report. The first
 configuration import in a process loads the plugins, as `config check` and `start` do, and
 some of their libraries probe the machine while importing: `urllib3` opens and binds one IPv6
-socket to test IPv6 support, and `weasyprint` looks up native libraries through
-`ctypes.util.find_library`, which runs `ldconfig`, `gcc` and `ld` and creates and removes
-temporary files.
+socket to test IPv6 support.
 
 ## The diagnostic session
 

@@ -1,29 +1,36 @@
 #!/usr/bin/env bash
-# Build the Linux x86_64 package: a Python, the Host and the plugins `config init`'s reference
-# bundle selects, in one relocatable directory archived for install.sh.
+# Build AlphaAvatar for Linux x86_64: the base package install.sh installs, and the wheels
+# `alphaavatar setup` installs beside it when a person chooses capabilities.
 #
 #   packaging/linux/build.sh [--release vX.Y.Z] [--out DIR] [--max-glibc 2.28] [--allow-dirty]
 #
+# Into DIR, one flat set (a release attaches these files as they are):
+#   alphaavatar-<id>-linux-x86_64.tar.gz(.sha256)  the base: a Python, the Host, Agents and
+#       Core, and base.txt's packages, which run the CLI, `config init|check` and setup; its
+#       share/alphaavatar holds the manifest and catalog.json, every requirement setup can
+#       install, each distribution's artifact with its SHA-256
+#   *.whl  the artifacts this build makes: AlphaAvatar's packages, and the locked sources with
+#       no wheel for the platform (llama-cpp-python, compiled for x86-64-v3)
+#   install.sh  the installer, as packaging/linux holds it
+#   SHA256SUMS  every file above
+# Other artifacts are uv.lock's wheels (torch and torchaudio: torch-cpu.txt's CPU builds), which
+# setup downloads from where the lock records them.
+#
 # CI runs it in manylinux_2_28 (.github/workflows/linux-package.yml). It needs uv 0.10.0, git,
-# curl, a C/C++ compiler and binutils. Every input is pinned: uv.lock for the packages and the
-# llama-cpp-python source, the AlphaAvatar wheels built from this checkout as Quality CI builds
-# them, torch-cpu.txt, and a CPython build that uv verifies. Three locked packages are replaced
-# for a server: torch and torchaudio by their CPU builds, llama-cpp-python by a wheel built here,
-# and opencv-python, the GUI OpenCV insightface names (it needs X11 and OpenGL), by the headless
-# build persona pins, which provides the same cv2. The package needs glibc as new as the newest
-# symbol version its native code references, and an x86-64-v3 CPU.
+# curl, unzip, a C/C++ compiler and binutils. Every input is pinned: uv.lock, torch-cpu.txt,
+# and a CPython build uv verifies. A wheel built here needs glibc as new as the newest symbol
+# version its native code references, at most --max-glibc; llama-cpp-python also needs x86-64-v3.
 set -euo pipefail
 
 PYTHON_VERSION="3.13.12"
 UV_VERSION="0.10.0"
-GROUP="reference-bundle"
-CPU_FLAGS="avx2 fma f16c bmi2"
 # llama-cpp-python, for semantic addressing on the CPU: portable x86-64-v3 code, ggml's own
 # threads rather than the system's libgomp, and no multimodal library the router never loads.
 LLAMA_CMAKE_ARGS="-DGGML_NATIVE=OFF -DGGML_SSE42=ON -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON \
 -DGGML_F16C=ON -DGGML_BMI2=ON -DGGML_OPENMP=OFF -DLLAVA_BUILD=OFF"
-# Modules whose native code the installer loads before switching to a new version.
-IMPORTS="llama_cpp onnxruntime torch torchaudio cv2 insightface lancedb livekit.rtc"
+LLAMA_CPU="avx2,bmi2,f16c,fma"
+# The base's native modules, which install.sh loads before switching to a new version.
+IMPORTS="numpy pydantic_core yaml"
 
 die() { echo "Error: $*" >&2; exit 1; }
 
@@ -44,7 +51,7 @@ while [[ $# -gt 0 ]]; do
     *) die "Unknown option: $1" ;;
   esac
 done
-for cmd in git curl tar gzip sha256sum objdump uv; do
+for cmd in git curl tar gzip sha256sum objdump unzip uv; do
   command -v "$cmd" >/dev/null 2>&1 || die "Missing command: $cmd"
 done
 [[ "$(uv --version)" == "uv $UV_VERSION"* ]] || die "Use uv $UV_VERSION, as CI does"
@@ -66,70 +73,51 @@ if [[ -n "$release" ]]; then
   [[ "$(git rev-parse "$release^{commit}")" == "$commit" ]] || die "$release is not HEAD"
   name="alphaavatar-$version-linux-x86_64"
 fi
+# Archive entries take the commit's time: the same build inputs archive the same way.
+export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
 
 work="$(mktemp -d)"
 trap 'rm -rf -- "$work"' EXIT
-tree="$work/$name"
-mkdir -p "$tree/bin" "$tree/share/alphaavatar" "$out"
+tree="$work/$name" wheels="$work/wheels"
+mkdir -p "$tree/bin" "$tree/share/alphaavatar" "$wheels" "$out"
+[[ -z "$(ls -A "$out")" ]] || die "$out is not empty; a build's files belong together"
 
 echo "==> Python $PYTHON_VERSION"
 UV_PYTHON_INSTALL_DIR="$work/pythons" uv python install --no-bin "$PYTHON_VERSION"
 cp -a "$work/pythons/cpython-$PYTHON_VERSION-linux-x86_64-gnu" "$tree/python"
 py="$tree/python/bin/python3"
-
-echo "==> Locked inputs"
 uv export --locked --only-group build --no-emit-workspace --no-hashes \
   --output-file "$work/build-constraints.txt" > /dev/null
-# Third-party packages of the bundle, except the replaced ones: torch from torch-cpu.txt,
-# without PyPI's CUDA libraries, llama-cpp-python compiled here, and no GUI OpenCV.
-"$py" -I - "$root/uv.lock" "$here/torch-cpu.txt" > "$work/replaced.txt" <<'PY'
-import re, sys, tomllib
-lock = {p["name"]: p for p in tomllib.load(open(sys.argv[1], "rb"))["package"]}
-pins = re.findall(r"^(torch\w*) @ \S+/\1-([\d.]+)%2Bcpu-", open(sys.argv[2]).read(), re.M)
-if sorted(name for name, _ in pins) != ["torch", "torchaudio"]:
-    sys.exit("torch-cpu.txt must pin torch and torchaudio")
-for name, version in pins:
-    if lock[name]["version"] != version:
-        sys.exit(f"torch-cpu.txt has {name} {version}; uv.lock has {lock[name]['version']}")
-llama = lock["llama-cpp-python"]["sdist"]
-print(llama["url"], llama["hash"].removeprefix("sha256:"))
-print(" ".join(["torch", "torchaudio", "llama-cpp-python", "opencv-python", "triton"]
-               + [name for name in lock if name.startswith("nvidia-")]))
-PY
-{ read -r llama_url llama_sha; read -r -a replaced; } < "$work/replaced.txt"
-uv export --locked --no-default-groups --only-group "$GROUP" --no-emit-workspace \
-  "${replaced[@]/#/--no-emit-package=}" --output-file "$work/requirements.txt" > /dev/null
-mapfile -t members < <(uv export --locked --no-default-groups --only-group "$GROUP" \
-  --no-hashes --no-editable | grep '^\./')
 
 echo "==> AlphaAvatar wheels"
+mapfile -t members < <(uv export --locked --all-packages --no-default-groups --no-hashes \
+  --no-editable | grep '^\./')
 for member in "${members[@]}"; do
   uv build --quiet --wheel --no-sources --python "$py" --build-constraints \
-    "$work/build-constraints.txt" --out-dir "$work/wheels" "$member"
+    "$work/build-constraints.txt" --out-dir "$wheels" "$member"
 done
 
-echo "==> llama-cpp-python from its locked source"
-curl -fsSL --retry 3 -o "$work/${llama_url##*/}" "$llama_url"
-echo "$llama_sha  $work/${llama_url##*/}" | sha256sum -c --quiet
-CMAKE_ARGS="$LLAMA_CMAKE_ARGS" CMAKE_BUILD_PARALLEL_LEVEL="$(nproc)" \
-  uv build --wheel --python "$py" --build-constraints "$work/build-constraints.txt" \
-  --out-dir "$work/native" "$work/${llama_url##*/}" > "$work/llama-build.log" 2>&1 \
-  || { tail -n 40 "$work/llama-build.log" >&2; die "llama-cpp-python did not build"; }
-
-echo "==> Install into the package's Python"
+echo "==> The base"
+# base.txt's packages from the lock, with the hashes it records; then the three base wheels.
+"$py" -I "$here/catalog.py" base "$root" > "$work/base-requirements.txt"
 install=(uv pip install --quiet --python "$py" --break-system-packages --no-deps)
-install+=(--compile-bytecode)
-"${install[@]}" --require-hashes -r "$work/requirements.txt" -r "$here/torch-cpu.txt"
-"${install[@]}" "$work"/wheels/*.whl "$work"/native/*.whl
-# Every requirement holds, except that insightface names the GUI OpenCV, replaced above.
-report="$(uv pip check --python "$py" 2>&1)" || true
-expected='^(Using Python .*|Checked [0-9]+ packages? in .*|All installed packages are compatible'
-expected+='|Found [0-9]+ incompatibilit(y|ies)'
-expected+='|The package `insightface` requires `opencv-python`, but it.s not installed)$'
-if grep -Evq "$expected" <<< "$report"; then
-  echo "$report" >&2
-  die "The installed packages do not satisfy each other"
-fi
+"${install[@]}" --compile-bytecode --require-hashes -r "$work/base-requirements.txt"
+"${install[@]}" --compile-bytecode "$wheels"/alpha_avatar_{host,agents,core}-*.whl
+
+echo "==> Wheels from locked sources"
+# Those setup may install without a wheel for the platform; llama-cpp-python for x86-64-v3.
+"$py" -I "$here/catalog.py" sdists "$root" > "$work/sdists.txt"
+while read -r sdist url sha; do
+  curl -fsSL --retry 3 -o "$work/${url##*/}" "$url"
+  echo "$sha  $work/${url##*/}" | sha256sum -c --quiet
+  flags=""
+  [[ "$sdist" == "llama-cpp-python" ]] && flags="$LLAMA_CMAKE_ARGS"
+  CMAKE_ARGS="$flags" CMAKE_BUILD_PARALLEL_LEVEL="$(nproc)" \
+    uv build --wheel --python "$py" --build-constraints "$work/build-constraints.txt" \
+    --out-dir "$wheels" "$work/${url##*/}" > "$work/$sdist-build.log" 2>&1 \
+    || { tail -n 40 "$work/$sdist-build.log" >&2; die "$sdist did not build"; }
+done < "$work/sdists.txt"
+
 # Console scripts name the Python they were installed with; let each run the one beside it.
 cat > "$work/shebang" <<'SH'
 #!/bin/sh
@@ -151,61 +139,87 @@ SH
 chmod 755 "$tree/bin/alphaavatar"
 
 echo "==> Platform floor"
-# The newest glibc symbol version any native file references is the oldest glibc it runs on.
-floor="$(find "$tree" -type f \( -name '*.so' -o -name '*.so.*' -o -perm -u+x \) -print0 \
-  | { xargs -0 objdump -p 2>/dev/null || true; } | { grep -o 'GLIBC_[0-9][0-9.]*' || true; } \
-  | cut -d_ -f2 | sort -uV | tail -n 1)"
-[[ -n "$floor" ]] || die "No native file references glibc"
-[[ "$(printf '%s\n' "$floor" "$max_glibc" | sort -V | tail -n 1)" == "$max_glibc" ]] \
-  || die "The package needs glibc $floor, newer than $max_glibc"
+# The newest glibc symbol version a native file references is the oldest glibc it runs on.
+floor() {
+  find "$@" -type f \( -name '*.so' -o -name '*.so.*' -o -perm -u+x \) -print0 \
+    | { xargs -0 objdump -p 2>/dev/null || true; } | { grep -o 'GLIBC_[0-9][0-9.]*' || true; } \
+    | cut -d_ -f2 | sort -uV | tail -n 1
+}
+base_floor="$(floor "$tree")"
+mkdir "$work/unpacked"
+for wheel in "$wheels"/*.whl; do
+  unzip -q -o "$wheel" -d "$work/unpacked/${wheel##*/}"
+done
+built_floor="$(floor "$work/unpacked")"
+rm -rf "$work/unpacked"
+[[ -n "$base_floor" ]] || die "No native file references glibc"
+for found in "$base_floor" "${built_floor:-0}"; do
+  [[ "$(printf '%s\n' "$found" "$max_glibc" | sort -V | tail -n 1)" == "$max_glibc" ]] \
+    || die "A native file needs glibc $found, newer than $max_glibc"
+done
 
-echo "==> Manifest"
-"$py" -I - "$tree" "$id" "$version" "$commit" "$release" "$floor" "$CPU_FLAGS" "$IMPORTS" \
-  "$PYTHON_VERSION" "$UV_VERSION" "$GROUP" "$(sha256sum < uv.lock | cut -d' ' -f1)" <<'PY'
+echo "==> Catalog and manifest"
+"$py" -I "$here/catalog.py" write "$root" "$wheels" "$tree/share/alphaavatar/catalog.json" \
+  --version "$version" --glibc "${built_floor:-$base_floor}" --cpu "llama-cpp-python=$LLAMA_CPU"
+"$py" -I - "$tree" "$id" "$version" "$commit" "$release" "$base_floor" "$IMPORTS" \
+  "$PYTHON_VERSION" "$UV_VERSION" "$(sha256sum < uv.lock | cut -d' ' -f1)" <<'PY'
 import json, sys
 from importlib import metadata
 from pathlib import Path
-tree, id, version, commit, release, glibc, cpu, imports, python, uv, group, lock = sys.argv[1:]
+tree, id, version, commit, release, glibc, imports, python, uv, lock = sys.argv[1:]
 site = sorted((Path(tree) / "python" / "lib").glob("python3.*/site-packages"))
 packages = {d.metadata["Name"]: d.version for d in metadata.distributions(path=[str(site[0])])}
 manifest = {
     "id": id, "version": version, "commit": commit, "release": release or None,
-    "platform": "linux-x86_64", "glibc": glibc, "cpu": cpu.split(), "imports": imports.split(),
-    "python": python, "uv": uv, "bundle": group, "uv_lock_sha256": lock,
-    "replaced": {
-        "torch": "CPU build, torch-cpu.txt",
-        "torchaudio": "CPU build, torch-cpu.txt",
-        "llama-cpp-python": "wheel built from the locked source for x86-64-v3",
-        "opencv-python": "not installed; opencv-python-headless provides cv2",
-    },
+    "platform": "linux-x86_64", "glibc": glibc, "cpu": [], "imports": imports.split(),
+    "python": python, "uv": uv, "uv_lock_sha256": lock,
     "packages": dict(sorted(packages.items(), key=lambda item: item[0].lower())),
 }
 path = Path(tree) / "share" / "alphaavatar" / "manifest.json"
 path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 PY
-cp "$work/requirements.txt" "$tree/share/alphaavatar/requirements.txt"
-cat "$here/torch-cpu.txt" >> "$tree/share/alphaavatar/requirements.txt"
-(cd "$work" && sha256sum wheels/*.whl native/*.whl) \
-  > "$tree/share/alphaavatar/built-wheels.sha256"
 
-echo "==> Check the package from outside the checkout"
+echo "==> Check the base from outside the checkout"
 smoke="$work/smoke"
 mkdir -p "$smoke"
-# Chained: errexit does not apply inside a tested subshell.
+run() { (cd / && env ALPHAAVATAR_HOME="$smoke/home" ENV_FILE="$smoke/absent.env" "$@"); }
+# Chained: errexit does not apply where a caller tests the status.
 # shellcheck disable=SC2086
-(
-  cd / \
-    && [[ "$("$tree/bin/alphaavatar" --version)" == "AlphaAvatar $version" ]] \
-    && "$tree/bin/alphaavatar" --help > /dev/null \
-    && "$py" -I -c 'import importlib, sys; [importlib.import_module(m) for m in sys.argv[1:]]' \
+{
+  [[ "$(run "$tree/bin/alphaavatar" --version)" == "AlphaAvatar $version" ]] \
+    && run "$tree/bin/alphaavatar" --help > /dev/null \
+    && run "$py" -I -c 'import importlib, sys; [importlib.import_module(m) for m in sys.argv[1:]]' \
       $IMPORTS \
-    && env ALPHAAVATAR_HOME="$smoke/home" ENV_FILE="$smoke/absent.env" \
-      "$tree/bin/alphaavatar" config init reference --avatar-id reference > /dev/null \
-    && env ALPHAAVATAR_HOME="$smoke/home" ENV_FILE="$smoke/absent.env" \
-      "$tree/bin/alphaavatar" config check > /dev/null
-) || die "The built package does not run"
+    && run "$tree/bin/alphaavatar" config init reference --avatar-id reference > /dev/null \
+    && run "$tree/bin/alphaavatar" doctor --list > /dev/null
+} || die "The base does not run"
+# Without capabilities, config check names each package the bundle needs, and setup.
+report="$(run "$tree/bin/alphaavatar" config check 2>&1)" && die "config check passed bare"
+grep -q 'alphaavatar setup` installs them' <<< "$report" || { echo "$report" >&2; die "$report"; }
+# The catalog plans both presets offline (the base is not installed into a prefix here).
+for preset in default remote; do
+  run "$py" -I - "$tree" "$preset" <<'PY' || die "The catalog cannot plan $preset"
+import json, sys
+from pathlib import Path
+from alphaavatar.host.setup.choices import PRESETS, requirements
+from alphaavatar.host.setup.plan import plan_install
+tree, preset = Path(sys.argv[1]), sys.argv[2]
+catalog = json.loads((tree / "share/alphaavatar/catalog.json").read_text())
+plan = plan_install(catalog, requirements(PRESETS[preset]), base="build")
+print(f"    {preset}: {len(plan.artifacts)} packages, {plan.download_bytes / 1e6:,.0f} MB")
+PY
+done
 
 echo "==> Archive"
-tar -C "$work" -czf "$out/$name.tar.gz" "$name"
-(cd "$out" && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
-echo "Built $out/$name.tar.gz ($(du -h "$out/$name.tar.gz" | cut -f1)), glibc >= $floor"
+tar -C "$work" --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner \
+  -cf - "$name" | gzip -n > "$out/$name.tar.gz"
+# The wheels the catalog references beside the package; other members' stay out.
+"$py" -I -c 'import json, sys
+catalog = json.load(open(sys.argv[1], encoding="utf-8"))
+print("\n".join(d["file"] for d in catalog["distributions"].values() if d.get("sha256") and not d["url"]))' \
+  "$tree/share/alphaavatar/catalog.json" | while read -r file; do cp "$wheels/$file" "$out/"; done
+cp "$here/install.sh" "$out/"
+(cd "$out" && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256" && sha256sum -- *.whl \
+  install.sh "$name.tar.gz" > SHA256SUMS)
+echo "Built $out/$name.tar.gz ($(du -h "$out/$name.tar.gz" | cut -f1)), glibc >= $base_floor;" \
+  "$(ls "$out"/*.whl | wc -l) wheels, glibc >= ${built_floor:-none}"

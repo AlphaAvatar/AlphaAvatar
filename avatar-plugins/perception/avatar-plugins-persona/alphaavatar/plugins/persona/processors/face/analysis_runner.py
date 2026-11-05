@@ -18,7 +18,9 @@ import cv2
 import numpy as np
 
 from alphaavatar.agents.runtime.inference import InferenceRunner
+from alphaavatar.agents.runtime.plugin import plugin_requirement
 
+from ...namespace import NAMESPACE
 from .model_files import FACE_MODEL_CONFIG, FaceModelType, resolve_face_model_root
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 class FaceAnalysisRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.persona.face.analysis"
+    REQUIRES = (plugin_requirement(NAMESPACE, "face"),)
     MODEL_TYPE: FaceModelType = "buffalo_l"
 
     def __init__(self):

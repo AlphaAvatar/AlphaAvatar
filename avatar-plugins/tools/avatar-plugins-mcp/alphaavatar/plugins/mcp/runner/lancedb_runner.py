@@ -27,6 +27,7 @@ from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.tools.schemas import ToolError
 from alphaavatar.agents.utils.loop_thread import AsyncLoopThread
 from alphaavatar.agents.utils.vdb import lancedb
+from alphaavatar.agents.utils.vdb.config import vdb_requirement
 from alphaavatar.agents.workspace import WorkspacePaths
 from alphaavatar.core.cleanup import wait_for_cleanup
 
@@ -46,6 +47,7 @@ class LanceDBRunner(InferenceRunner):
     """Serial database work stays in this process; remote sessions own one async loop."""
 
     INFERENCE_METHOD = "alphaavatar.mcp.vdb.lancedb"
+    REQUIRES = (vdb_requirement("lancedb"),)
 
     def __init__(self) -> None:
         self._servers: dict[str, dict[str, Any]] = {}

@@ -23,12 +23,14 @@ classifiers = [
 dependencies = [
     "alpha-avatar-agents",
     "alpha-avatar-core[video]",
-    "insightface==1.0.1",
-    "onnxruntime==1.23.1",
     "opencv-python-headless==4.12.0.88",
     "pydantic>=2,<3",
-    "torchaudio>=0.10.1",
 ]
+
+[project.optional-dependencies]
+# Local inference, installed for the runner that needs it: face and speaker recognition.
+face = ["insightface==1.0.1", "onnxruntime==1.23.1"]
+speaker = ["onnxruntime==1.23.1", "torchaudio>=0.10.1"]
 
 [project.urls]
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"

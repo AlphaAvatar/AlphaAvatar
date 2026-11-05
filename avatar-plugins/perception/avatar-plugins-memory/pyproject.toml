@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Multimedia :: Video",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = ["alpha-avatar-agents", "alpha-avatar-core", "pydantic>=2,<3", "torchaudio>=0.10.1"]
+dependencies = ["alpha-avatar-agents", "alpha-avatar-core", "pydantic>=2,<3"]
 
 [project.urls]
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"

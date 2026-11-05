@@ -16,12 +16,15 @@ from __future__ import annotations
 import numpy as np
 
 from alphaavatar.agents.runtime.inference import InferenceRunner
+from alphaavatar.agents.runtime.plugin import plugin_requirement
 
+from ...namespace import NAMESPACE
 from ..model_files import SILERO_MODEL_CONFIG, resolve_silero_model_path
 
 
 class SileroVADRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.voice.vad.silero"
+    REQUIRES = (plugin_requirement(NAMESPACE, "silero"),)
     # Context and recurrent state travel in each request; the session is read-only here.
     REPLICABLE = True
 

@@ -22,6 +22,7 @@ from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
 from alphaavatar.agents.persona.enums import VectorRunnerOP
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import lancedb
+from alphaavatar.agents.utils.vdb.config import vdb_requirement
 from alphaavatar.agents.workspace import WorkspacePaths
 
 from ...namespace import NAMESPACE
@@ -34,6 +35,7 @@ from ...profile.serialization import merge_profile_items
 
 class LanceDBRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.persona.vdb.lancedb"
+    REQUIRES = (vdb_requirement("lancedb"),)
 
     def __init__(self):
         super().__init__()

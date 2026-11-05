@@ -55,24 +55,39 @@ environment and `.env` file: Host rejects both rather than relocating existing d
 See [Avatar workspace](docs/avatar-workspace-layout.md) and
 [Model cache](docs/models-cache-layout.md) for locating, backing up and moving data.
 
-### Or install the Linux package
+### Or install the Linux package, then choose capabilities
 
-On Linux x86_64 with an x86-64-v3 CPU (AVX2, FMA), CI builds one package per release and on
-demand per commit: its own Python, the Host and the plugins `config init`'s reference bundle
-selects, prebuilt, with a SHA-256 beside it. It needs no Python, Node or compiler:
+On Linux x86_64, CI builds a small base package per release, and on `main` and `dev/**` for
+each push that changes what goes into it: its own Python with the CLI, `config init|check` and
+`alphaavatar setup`. Setup asks
+what the Avatar should run with, or takes a preset, then installs exactly what that needs,
+from a catalog in the package with each artifact's version and SHA-256. Neither needs Python,
+Node or a compiler:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/AlphaAvatar/AlphaAvatar/v<version>/packaging/linux/install.sh
+curl -fsSLO https://github.com/AlphaAvatar/AlphaAvatar/releases/download/v<version>/install.sh
 bash install.sh --version <version>     # or --file <package> for a downloaded CI build
-alphaavatar config init <bundle> --avatar-id <id>
+alphaavatar setup                       # questions; or --preset default|remote
 alphaavatar config check
 ```
 
+`default` is `config init`'s reference bundle: voice, vision, memory and persona, with turn
+taking, addressing, face and speaker models on this machine (about 515 MB to download; the
+semantic addressing model needs an x86-64-v3 CPU). `remote` runs no model on the machine but
+the voice activity detection speech input needs (about 210 MB). With a preset, setup reads
+credentials from the environment; it stores the ones it was given in the application home's
+`settings/credentials.env`, readable only by you, and `start`, `config check` and `doctor`
+read them where the environment does not set them. Model weights are not part of the plan:
+runners fetch them into the model cache. `--plan` prints the plan and changes nothing; a CI
+build's own wheels sit beside its package, so pass `--artifacts <directory>` for one.
+
 Program files go to `~/.local/lib/alphaavatar` and the command to `~/.local/bin`
 (`--prefix`, `--bin-dir`); the application home, workspaces and model caches stay where
-`ALPHAAVATAR_HOME` puts them. A new version is unpacked and checked beside the current one,
-which stays in use if anything fails. `packaging/linux/build.sh` builds the same package
-from a checkout.
+`ALPHAAVATAR_HOME` puts them. A new base version, or setup's environment, is installed and
+checked beside the current one, and the configuration is enabled only after the switch; if
+anything fails, the current version, command, configuration and data stay as they were. A
+second setup keeps what the current environment holds, so earlier bundles keep working.
+`packaging/linux/build.sh` builds the same files from a checkout.
 
 ## Check the configuration in the foreground
 

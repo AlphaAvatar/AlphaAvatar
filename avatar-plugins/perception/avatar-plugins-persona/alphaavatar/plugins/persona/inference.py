@@ -27,9 +27,9 @@ if TYPE_CHECKING:
 def get_vdb_runner(config: dict[str, Any]) -> type[InferenceRunner]:
     backend = vdb_backend(config)
     if backend == "qdrant":
-        from .storage.vdb import QdrantRunner as runner
+        from .storage.vdb.qdrant import QdrantRunner as runner
     elif backend == "lancedb":
-        from .storage.vdb import LanceDBRunner as runner
+        from .storage.vdb.lancedb import LanceDBRunner as runner
     else:
         raise ValueError(f"Unsupported vector backend: {backend!r}")
     return runner

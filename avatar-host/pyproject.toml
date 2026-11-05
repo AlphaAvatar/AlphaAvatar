@@ -20,6 +20,8 @@ dependencies = [
     "alpha-avatar-agents",
     "alpha-avatar-core",
     "aiohttp>=3.10,<4",
+    "certifi>=2024",
+    "installer>=0.7,<1",
     "omegaconf>=2.3,<3",
     "packaging>=24,<27",
     "pydantic>=2,<3",

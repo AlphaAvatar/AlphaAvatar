@@ -16,7 +16,16 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3 :: Only",
 ]
-dependencies = ["alpha-avatar-agents", "alpha-avatar-core", "httpx>=0.28,<1", "pydantic>=2,<3"]
+dependencies = [
+    "alpha-avatar-agents",
+    "alpha-avatar-core",
+    "httpx>=0.28,<1",
+    "pydantic>=2,<3",
+    # Saved pages: url_to_pdf renders them with WeasyPrint, which needs the system's Pango.
+    "markdown",
+    "requests",
+    "weasyprint",
+]
 
 [project.urls]
 Source = "https://github.com/AlphaAvatar/AlphaAvatar"

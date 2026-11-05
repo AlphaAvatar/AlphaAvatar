@@ -1,0 +1,20 @@
+# The third-party distributions the base package installs, beside the Host, Agents and Core
+# wheels: what `--help`, `config init`, `config check`, `doctor --list` and `setup` import, at
+# uv.lock's versions. Everything else the Host and its capabilities need comes with the plan
+# `alphaavatar setup` installs. build.sh checks those commands against exactly this set.
+annotated-types
+antlr4-python3-runtime
+certifi
+filelock
+installer
+numpy
+omegaconf
+packaging
+pydantic
+pydantic-core
+python-dotenv
+python-slugify
+pyyaml
+text-unidecode
+typing-extensions
+typing-inspection

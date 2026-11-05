@@ -19,6 +19,7 @@ import errno
 import json
 import os
 import secrets
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -60,8 +61,9 @@ _PROFILE = """\
 {body}"""
 
 # The minimal template's selections and defaults, one section per profile, by layer.
-# Switches shown are the defaults, written out to be edited.
-_SECTIONS = {
+# Switches shown are the defaults, written out to be edited; `alphaavatar setup` starts from
+# them and replaces the sections its choices change.
+SECTIONS = {
     "host": """\
 rtc:
   backend: livekit  # Session transport; LIVEKIT_* in the environment hold its credentials.
@@ -188,15 +190,28 @@ class CreatedBundle:
     default_bundle: str  # The default after creation: this bundle, or the one kept.
 
 
-def render_bundle(name: str, avatar_id: str) -> dict[str, str]:
-    """Bundle and profile texts by path under ``configs``, validated before any file exists."""
+def render_bundle(
+    name: str,
+    avatar_id: str,
+    *,
+    sections: Mapping[str, str] | None = None,
+    environment: Sequence[tuple[str, str]] = REQUIRED_ENVIRONMENT,
+) -> dict[str, str]:
+    """Bundle and profile texts by path under ``configs``, validated before any file exists.
+
+    ``sections`` replace the template's bodies of those sections; ``environment`` lists the
+    variables the bundle's header names.
+    """
     import yaml
 
     from alphaavatar.agents.configs import AvatarConfig
     from alphaavatar.host.application.config import HostConfig
 
     check_bundle_name(name)
-    names = {section: f"{name}/{LAYERS[section]}/{section}" for section in _SECTIONS}
+    bodies = SECTIONS | dict(sections or {})
+    if set(bodies) != set(SECTIONS):
+        raise ValueError(f"Unknown sections: {', '.join(sorted(set(bodies) - set(SECTIONS)))}")
+    names = {section: f"{name}/{LAYERS[section]}/{section}" for section in bodies}
     # Validate the identifier itself: YAML would fold line breaks such as U+0085 into spaces.
     AvatarConfig.model_validate({"avatar": {"id": avatar_id}})
     texts = {
@@ -204,7 +219,7 @@ def render_bundle(name: str, avatar_id: str) -> dict[str, str]:
             name=name,
             # A JSON string is a valid double-quoted YAML scalar for any accepted identifier.
             avatar_id=json.dumps(avatar_id, ensure_ascii=False),
-            environment="\n".join(f"#   {key:<50} {use}" for key, use in REQUIRED_ENVIRONMENT),
+            environment="\n".join(f"#   {key:<50} {use}" for key, use in environment),
             profiles="\n".join(f"  {section}: {reference}" for section, reference in names.items()),
         )
     }
@@ -212,10 +227,10 @@ def render_bundle(name: str, avatar_id: str) -> dict[str, str]:
         f"profiles/{names[section]}.yaml": _PROFILE.format(
             section=section, reference=names[section], body=body
         )
-        for section, body in _SECTIONS.items()
+        for section, body in bodies.items()
     }
     bundle = yaml.safe_load(texts[f"bundles/{name}.yaml"])
-    bundle |= {section: yaml.safe_load(body) for section, body in _SECTIONS.items()}
+    bundle |= {section: yaml.safe_load(body) for section, body in bodies.items()}
     HostConfig.model_validate(bundle.pop("host"))
     rendered = AvatarConfig.model_validate({k: v for k, v in bundle.items() if k != "profiles"})
     if rendered.avatar.id != avatar_id:
@@ -234,14 +249,14 @@ def _directory(path: Path, created: list[Path]) -> None:
 
 
 def _set_default(
-    paths: ApplicationPaths, name: str, created: list[Path], staged: list[Path]
+    paths: ApplicationPaths, name: str, created: list[Path], staged: list[Path], replace: bool
 ) -> str:
-    """Set the default only when none is set; replacing the settings file is the commit."""
+    """Set the default, unless one is set and not ``replace``; replacing the file commits."""
     import yaml
 
     from alphaavatar.agents.utils.files.atomic import locked_directory
 
-    if (default := read_settings(paths).get("default_bundle")) is not None:
+    if (default := read_settings(paths).get("default_bundle")) is not None and not replace:
         return default
     target = paths.settings_file
     _directory(target.parent, created)
@@ -252,7 +267,7 @@ def _set_default(
     # Read, decide and replace under one lock: concurrent inits never both become default.
     with locked_directory(target.parent):
         settings = read_settings(paths)
-        if (default := settings.get("default_bundle")) is not None:
+        if (default := settings.get("default_bundle")) is not None and not replace:
             return default
         try:
             text, mode = target.read_text(encoding="utf-8"), target.stat().st_mode
@@ -280,15 +295,23 @@ def _set_default(
     return name
 
 
-def create_bundle(paths: ApplicationPaths, name: str, *, avatar_id: str) -> CreatedBundle:
+def create_bundle(
+    paths: ApplicationPaths,
+    name: str,
+    *,
+    avatar_id: str,
+    sections: Mapping[str, str] | None = None,
+    environment: Sequence[tuple[str, str]] = REQUIRED_ENVIRONMENT,
+    make_default: bool = False,
+) -> CreatedBundle:
     """Create the bundle and its profiles, then the default; never overwrite existing files.
 
-    Every target stays inside the real application home. Until the settings replacement
+    The bundle becomes the default when none is set, or always with ``make_default``. Every target stays inside the real application home. Until the settings replacement
     commits, a failure or cancellation removes only the files and empty directories this
     call created; existing files, shared profiles and settings stay as they were. After it,
     the complete bundle stays and the failure propagates.
     """
-    texts = render_bundle(name, avatar_id)
+    texts = render_bundle(name, avatar_id, sections=sections, environment=environment)
     read_settings(paths)  # Unreadable settings refuse before any file exists.
     targets = {paths.configs.root / relative: text for relative, text in texts.items()}
     bundle, *profiles = targets
@@ -310,7 +333,7 @@ def create_bundle(paths: ApplicationPaths, name: str, *, avatar_id: str) -> Crea
             with target.open("x", encoding="utf-8", newline="\n") as stream:
                 created.append(target)
                 stream.write(text)
-        default = _set_default(paths, name, created, staged)
+        default = _set_default(paths, name, created, staged, make_default)
     except BaseException:
         if not staged or staged[0].exists():
             for path in reversed([*created, *staged]):

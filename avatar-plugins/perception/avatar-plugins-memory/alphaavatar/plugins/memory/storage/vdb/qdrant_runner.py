@@ -35,6 +35,7 @@ from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
 from alphaavatar.agents.memory.enums import VectorRunnerOP
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import qdrant
+from alphaavatar.agents.utils.vdb.config import vdb_requirement
 
 from ...namespace import NAMESPACE
 
@@ -43,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 class QdrantRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.memory.vdb.qdrant"
+    REQUIRES = (vdb_requirement("qdrant"),)
 
     _PAYLOAD_INDEX_FIELDS = (
         "doc_kind",

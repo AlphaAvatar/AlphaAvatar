@@ -23,7 +23,9 @@ from alphaavatar.agents.router.enums import SemanticAddressingLabel
 from alphaavatar.agents.router.schemas import SemanticAddressingRequest, SemanticAddressingResult
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.runtime.inference.cpu import available_cpu_count
+from alphaavatar.agents.runtime.plugin import plugin_requirement
 
+from ....namespace import NAMESPACE
 from .model_files import SEMANTIC_ADDRESSING_CONFIG, resolve_semantic_addressing_files
 from .prompt import SemanticAddressingPrompt
 
@@ -32,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 class SemanticAddressingQwen3Runner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.router.addressing.semantic.qwen3_0_6b"
+    REQUIRES = (plugin_requirement(NAMESPACE, "semantic"),)
 
     def _tokenize(self, text: bytes) -> list[int]:
         return self._llm.tokenize(text, add_bos=False, special=True)

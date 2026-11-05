@@ -56,6 +56,11 @@ class AvatarModule(str, Enum):
     MCP = "avatar.tools.mcp"
 
 
+def plugin_requirement(name: str, *extras: str) -> str:
+    """The distribution that installs plugin ``alphaavatar.plugins.<name>``, as a requirement."""
+    return f"alpha-avatar-plugins-{name}" + (f"[{','.join(extras)}]" if extras else "")
+
+
 class AvatarModulePlugin(ABC):
     """Process-scoped module factory; created instances own their runtime state."""
 
@@ -107,6 +112,10 @@ class AvatarModulePlugin(ABC):
             available = ", ".join(sorted(plugins)) or "none"
             raise ValueError(f"Unknown plugin {module.value}:{name!r}; available: {available}")
         return plugins[name].get_plugin(*args, **kwargs)
+
+    @classmethod
+    def registered(cls, module: AvatarModule, name: str) -> bool:
+        return name in cls._registry.get(AvatarModule(module), {})
 
     @classmethod
     def registered_packages(cls) -> tuple[str, ...]:

@@ -38,6 +38,7 @@ import alphaavatar.plugins.persona  # noqa: F401
 from alphaavatar.host.cli.app import main
 from alphaavatar.host.cli.commands.doctor import GROUPS
 from alphaavatar.host.doctor import CHECKS, Check, CheckStatus, Report
+from alphaavatar.host.setup.environment import Installation
 
 IDS = [spec.id for spec in CHECKS]
 SESSION = ("session.start", "models.runners", "session.scenarios", "session.cleanup")
@@ -269,12 +270,25 @@ def test_missing_packages_unusable_paths_and_env_files_fail_with_a_next_step(
         code, checks, _ = doctor(capsys)
     capabilities = checks["packages.capabilities"]
     assert code == 1 and capabilities["status"] == "FAIL"
-    assert {"rtc: livekit is not installed", "providers: langchain-openai is not installed"} <= set(
-        capabilities["details"]
-    )
+    # Each problem is named with the setting that selects it.
+    provider = "memory.init_config.conversation.provider.gateway.tasks.memory.conversation_delta"
+    assert {
+        "host.rtc.backend: livekit is not installed",
+        f"{provider}.backend: langchain-openai is not installed",
+    } <= set(capabilities["details"])
     # Other packages missing on this machine may be named too.
     assert "'alpha-avatar-host[livekit]'" in capabilities["action"]
     assert "'alpha-avatar-plugins-provider[langchain]'" in capabilities["action"]
+    assert capabilities["action"].startswith("Install into this Python environment: ")
+    # An installed package gets them from setup, which installs what it chose.
+    with (
+        mock.patch.object(metadata, "distribution", uninstalled),
+        mock.patch.object(Installation, "running", return_value=object()),
+    ):
+        _, checks, _ = doctor(capsys)
+    action = checks["packages.capabilities"]["action"]
+    assert action.startswith("Run `alphaavatar setup`; it installs ")
+    assert "'alpha-avatar-host[livekit]'" in action
 
     # Low free space warns.
     disk.free = 1 << 20

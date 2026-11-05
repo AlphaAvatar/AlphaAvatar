@@ -17,6 +17,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from alphaavatar.agents.configs.runtime_config import RuntimeConfig
+from alphaavatar.agents.runtime.plugin import AvatarModule
 
 from .avatar_info_config import AvatarInfoConfig
 from .plugins.foundation import ContextConfig, LoopConfig, VisionConfig, VoiceConfig
@@ -95,6 +96,30 @@ class AvatarConfig(BaseModel):
             "tools.mcp.enabled": ("mcp", tools.mcp.enabled and tools.mcp.plugin is not None),
         }
         return {location: name for location, (name, used) in selected.items() if used}
+
+    def plugin_factories(self) -> dict[str, tuple[AvatarModule, str]]:
+        """The module factory each selection creates at start, by configuration location.
+
+        Loop and context plugins register theirs when their entry point loads; the others when
+        their package is imported.
+        """
+        voice, tools = self.voice, self.tools
+        selected = {
+            "loop.plugin": (AvatarModule.LOOP, self.loop.plugin),
+            "context.plugin": (AvatarModule.CONTEXT, self.context.plugin),
+            "voice.vad.plugin": (AvatarModule.VOICE_VAD, voice.vad.plugin),
+            "voice.stt.plugin": (AvatarModule.VOICE_STT, voice.stt.plugin),
+            "voice.tts.plugin": (AvatarModule.VOICE_TTS, voice.tts.plugin),
+            "status.plugin": (AvatarModule.STATUS, self.status.plugin),
+            "router.plugin": (AvatarModule.ROUTER, self.router.plugin),
+            "character.plugin": (AvatarModule.CHARACTER, self.character.plugin),
+            "memory.plugin": (AvatarModule.MEMORY, self.memory.plugin),
+            "persona.plugin": (AvatarModule.PERSONA, self.persona.plugin),
+            "tools.deepresearch.plugin": (AvatarModule.DEEPRESEARCH, tools.deepresearch.plugin),
+            "tools.rag.plugin": (AvatarModule.RAG, tools.rag.plugin),
+            "tools.mcp.plugin": (AvatarModule.MCP, tools.mcp.plugin if tools.mcp.enabled else None),
+        }
+        return {location: factory for location, factory in selected.items() if factory[1]}
 
     def section(self, location: str) -> BaseModel:
         """The section a setting belongs to: ``tools.mcp`` for ``tools.mcp.enabled``."""

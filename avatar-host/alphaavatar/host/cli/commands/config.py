@@ -129,19 +129,22 @@ def _switches(section: dict[str, Any], skip: tuple[str, ...] = ()) -> str:
 
 
 def _load(target: str | None, overrides: Sequence[str]):
-    from alphaavatar.agents.env import init_env
     from alphaavatar.host.configs import (
         check_application_paths,
+        check_capabilities,
         load_application,
         select_configuration,
         validate_plugin_settings,
     )
+    from alphaavatar.host.configs.credentials import load_environment
 
-    init_env()  # The same .env the start command reads for <ENV_VAR> placeholders.
+    # The same .env and stored credentials start reads, for interpolated values.
+    load_environment(overrides)
     source = select_configuration(target, overrides)
     config = load_application(source, overrides)
     check_application_paths(config)
     validate_plugin_settings(config)
+    check_capabilities(config)
     return config, source
 
 

@@ -23,7 +23,9 @@ import numpy as np
 
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.runtime.inference.cpu import available_cpu_count
+from alphaavatar.agents.runtime.plugin import plugin_requirement
 
+from ...namespace import NAMESPACE
 from .model_files import SpeakerModelType, resolve_speaker_model_path
 
 logger = logging.getLogger(__name__)
@@ -31,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 class SpeakerAttributeRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.persona.speaker.attribute"
+    REQUIRES = (plugin_requirement(NAMESPACE, "speaker"),)
     MODEL_TYPE: SpeakerModelType = "w2v2l6"
 
     @staticmethod

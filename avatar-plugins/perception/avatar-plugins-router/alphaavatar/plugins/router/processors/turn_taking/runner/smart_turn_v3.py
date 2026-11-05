@@ -16,12 +16,15 @@ from __future__ import annotations
 import numpy as np
 
 from alphaavatar.agents.runtime.inference import InferenceRunner
+from alphaavatar.agents.runtime.plugin import plugin_requirement
 
+from ....namespace import NAMESPACE
 from ..models.model_files import SMART_TURN_V3_CONFIG, resolve_smart_turn_model_path
 
 
 class SmartTurnV3Runner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.router.turn_taking.smart_turn_v3"
+    REQUIRES = (plugin_requirement(NAMESPACE, "turn-taking"),)
     # Each request is a complete audio window; nothing carries over between requests.
     REPLICABLE = True
 

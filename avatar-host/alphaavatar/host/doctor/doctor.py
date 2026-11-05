@@ -35,18 +35,16 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from importlib import metadata
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
+
+from alphaavatar.host.configs.capabilities import HOST
 
 from .enums import CheckStatus
 from .schemas import Check, CheckSpec, Evidence, Report
 
 if TYPE_CHECKING:
-    from packaging.requirements import Requirement
-
     from alphaavatar.host.configs import ApplicationConfig, ConfigSource
     from alphaavatar.host.workspace import ApplicationPaths
-
-HOST = "alpha-avatar-host"
 MIN_FREE_BYTES = 1 << 30  # Less leaves little room for models, caches and Avatar data.
 # The plugins and provider backends this release ships, whose reach Doctor knows. Any other
 # name is a custom plugin: what it reaches cannot be confirmed, so it needs authorization.
@@ -415,20 +413,22 @@ def _packages() -> Check:
     from packaging.requirements import Requirement
     from packaging.utils import canonicalize_name
 
+    from alphaavatar.host.configs.capabilities import unmet
+
     releases: dict[str, list[str]] = {}
     for distribution in metadata.distributions():
         name = canonicalize_name(distribution.metadata["Name"] or "")
         if name.startswith("alpha-avatar-"):
             releases.setdefault(distribution.version, []).append(name)
     count = sum(map(len, releases.values()))
-    problems = _unmet(Requirement(HOST), set())
+    problems = unmet(Requirement(HOST), set())
     if problems:
         return Check(
             "packages.alphaavatar",
             CheckStatus.FAIL,
             "The Host's requirements are not all installed",
             tuple(problems),
-            f"Install into this Python environment: '{HOST}'",
+            _install(f"'{HOST}'"),
         )
     if len(releases) > 1:
         return Check(
@@ -446,162 +446,45 @@ def _packages() -> Check:
     )
 
 
-def _unmet(requirement: Requirement, seen: set[tuple[str, str]]) -> list[str]:
-    """What is missing or mismatched; AlphaAvatar's own requirements are followed, once each."""
-    from packaging.requirements import Requirement
-    from packaging.utils import canonicalize_name
+def _install(requirements: str) -> str:
+    """How to install what is missing: setup in an installed package, else into this Python."""
+    from alphaavatar.host.setup.environment import Installation, SetupError
 
     try:
-        distribution = metadata.distribution(requirement.name)
-    except metadata.PackageNotFoundError:
-        return [f"{requirement.name} is not installed"]
-    problems = []
-    if not requirement.specifier.contains(distribution.version, prereleases=True):
-        problems.append(
-            f"{requirement.name} {distribution.version} is installed; "
-            f"{requirement.specifier} is required"
-        )
-    name = canonicalize_name(requirement.name)
-    if not name.startswith("alpha-avatar-"):
-        return problems
-    # "" stands for the base requirements; each extra adds its own.
-    extras = [extra for extra in ("", *sorted(requirement.extras)) if (name, extra) not in seen]
-    seen.update((name, extra) for extra in extras)
-    for text in distribution.requires or ():
-        child = Requirement(text)
-        if child.marker is None:
-            wanted = "" in extras
-        else:
-            wanted = any(child.marker.evaluate({"extra": extra}) for extra in extras)
-        if wanted:
-            problems += _unmet(child, seen)
-    return problems
-
-
-def _with_extra(distribution: str, name: str) -> str:
-    """A distribution with the extra named after the selected plugin, if it has one."""
-    try:
-        extras = metadata.metadata(distribution).get_all("Provides-Extra") or []
-    except metadata.PackageNotFoundError:
-        return distribution  # Reported as not installed when checked.
-    return f"{distribution}[{name}]" if name in extras else distribution
-
-
-def _provider_backends(config: ApplicationConfig) -> tuple[set[str], list[str]]:
-    """Backends of the provider tasks start would create, with their configuration defaults.
-
-    Built-in plugins' settings are validated as at start, so omitted fields take their
-    defaults. A processor switched off creates nothing, so its tasks are skipped; a disabled
-    plugin is not read. Vector store embeddings always use the default backend. Another
-    plugin's backends cannot be read statically and are returned as unverified.
-    """
-    from pydantic import BaseModel
-
-    from alphaavatar.agents.avatar.provider.schemas import ProviderTaskConfig
-    from alphaavatar.host.configs import validate_plugin_settings
-
-    avatar = config.avatar
-    settings = validate_plugin_settings(config)
-    default = ProviderTaskConfig.model_fields["backend"].default
-    backends: set[str] = set()
-    unverified: list[str] = []
-
-    def collect(value: Any) -> None:
-        if isinstance(value, ProviderTaskConfig):
-            backends.add(value.backend)
-        elif isinstance(value, BaseModel):
-            if getattr(value, "enabled", True) is False:
-                return  # Switched off: start creates neither the processor nor its tasks.
-            for name in type(value).model_fields:
-                collect(getattr(value, name))
-        elif isinstance(value, dict):
-            for item in value.values():
-                collect(item)
-        elif isinstance(value, list | tuple):
-            for item in value:
-                collect(item)
-
-    if "loop" in settings:
-        collect(settings["loop"])
-    else:
-        unverified.append(f"loop plugin {avatar.loop.plugin!r}")
-    for name in ("memory", "persona"):
-        if name in settings:
-            collect(settings[name])
-            backends.add(default)  # Its vector store embeds with the default backend.
-        else:
-            unverified.append(f"{name} plugin {getattr(avatar, name).plugin!r}")
-    mcp = avatar.tools.mcp
-    if mcp.enabled and mcp.plugin is not None:
-        if mcp.plugin == "default":
-            backends.add(default)  # Its tool index embeds with the default backend.
-        else:
-            unverified.append(f"mcp plugin {mcp.plugin!r}")
-    return backends, unverified
+        Installation.running()
+    except SetupError:
+        return f"Install into this Python environment: {requirements}"
+    return f"Run `alphaavatar setup`; it installs {requirements}"
 
 
 def _capabilities(config: ApplicationConfig, source: ConfigSource) -> Check:
-    from packaging.requirements import Requirement
+    from alphaavatar.host.configs.capabilities import resolve_capabilities
 
-    avatar, host = config.avatar, config.host
-    needs: dict[str, list[str]] = {}
-    problems: list[str] = []
-
-    def plugin(capability: str, group: str, name: str) -> None:
-        matches = tuple(metadata.entry_points(group=group, name=name))
-        if len(matches) == 1 and matches[0].dist is not None:
-            needs.setdefault(capability, []).append(_with_extra(matches[0].dist.name, name))
-        else:
-            problems.append(f"{capability}: {len(matches)} installed {group} plugins {name!r}")
-
-    needs["rtc"] = [_with_extra(HOST, host.rtc.backend)]
-    plugin("loop", "alphaavatar.loop", avatar.loop.plugin)
-    plugin("context", "alphaavatar.context", avatar.context.plugin)
-    backends, unverified = _provider_backends(config)
-    for backend in sorted(backends):
-        plugin("providers", "alphaavatar.provider", backend)
-    # The built-in plugins loading found installed, now with their own requirements.
-    stores = {
-        "memory": avatar.memory.plugin,
-        "persona": avatar.persona.plugin,
-        "mcp": avatar.tools.mcp.plugin,
-    }
-    for name in avatar.plugin_packages().values():
-        if name not in needs:
-            needs[name] = [f"alpha-avatar-plugins-{name}"]
-            if stores.get(name) == "default":  # Vectors stay in a local or remote store.
-                needs[name].append("alpha-avatar-agents[vdb]")
-
-    seen: set[tuple[str, str]] = set()
-    _unmet(Requirement(HOST), seen)  # Reported by packages.alphaavatar, not again here.
-    missing: set[str] = set()
-    for capability, requirements in needs.items():
-        for requirement in requirements:
-            found = _unmet(Requirement(requirement), seen)
-            problems += [f"{capability}: {problem}" for problem in found]
-            if found:
-                missing.add(requirement)
-    enabled = ", ".join(needs)
-    problems = list(dict.fromkeys(problems))  # One package can reach a capability twice.
-    unknown = tuple(f"provider backends not verified: {item}" for item in unverified)
+    capabilities = resolve_capabilities(config)
+    missing = capabilities.missing()
+    problems = list(capabilities.problems)
+    for need, found in missing.items():
+        problems += [f"{need.location}: {problem}" for problem in found]
+    problems = list(dict.fromkeys(problems))  # One package can reach a selection twice.
+    unknown = tuple(f"provider backends not verified: {item}" for item in capabilities.unverified)
+    count = f"{len(capabilities.needs)} selections"
     if problems:
         return Check(
             "packages.capabilities",
             CheckStatus.FAIL,
             "Enabled capabilities miss packages",
             (*problems, *unknown),
-            "Install into this Python environment: "
-            + (" ".join(f"'{item}'" for item in sorted(missing)) or "the named plugins"),
+            _install(" ".join(f"'{need.requirement}'" for need in missing) or "the named plugins"),
         )
     if unknown:
         return Check(
             "packages.capabilities",
             CheckStatus.WARN,
-            f"Requirements installed for {enabled}; some provider backends not verified",
+            f"Requirements installed for {count}; some provider backends not verified",
             unknown,
             f"`{_dev(source)}` builds these plugins and reports a missing package or field",
         )
-    return Check("packages.capabilities", CheckStatus.PASS, f"Requirements installed for {enabled}")
+    return Check("packages.capabilities", CheckStatus.PASS, f"Requirements installed for {count}")
 
 
 def _runners(config: ApplicationConfig) -> Check:
@@ -639,7 +522,9 @@ def _external(config: ApplicationConfig) -> list[tuple[str, str]]:
 
     avatar = config.avatar
     services = []
-    backends = sorted(_provider_backends(config)[0])
+    from alphaavatar.host.configs.capabilities import provider_backends
+
+    backends = sorted(provider_backends(config)[0])
     if backends:
         services.append((f"model providers ({', '.join(backends)})", "model"))
     voice = avatar.voice
