@@ -17,7 +17,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
-from alphaavatar.core.workspace.paths import absolute_root
+from alphaavatar.agents.workspace.paths import absolute_root
 
 
 @dataclass(frozen=True, slots=True)

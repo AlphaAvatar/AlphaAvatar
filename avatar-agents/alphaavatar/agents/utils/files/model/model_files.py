@@ -28,7 +28,7 @@ from zipfile import ZipFile
 
 from filelock import FileLock
 
-from alphaavatar.core.workspace.paths import absolute_root, path_key
+from alphaavatar.agents.workspace.paths import absolute_root, path_key
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")

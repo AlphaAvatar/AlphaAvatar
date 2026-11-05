@@ -30,6 +30,7 @@ import alphaavatar.plugins.persona  # noqa: F401  Registers the default Persona 
 from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
 from alphaavatar.agents.runtime.modules.participants import ParticipantRuntime
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
+from alphaavatar.agents.workspace import WorkspacePaths, prepare_session_path, prepare_workspace
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import ObservationKind
 from alphaavatar.core.env.schemas import (
@@ -47,7 +48,6 @@ from alphaavatar.core.session.enums import IdentityOutcome, IdentitySource
 from alphaavatar.core.session.schemas import IdentityRequest
 from alphaavatar.core.time import RuntimeTimeRange
 from alphaavatar.core.turn import TurnRuntime
-from alphaavatar.core.workspace import WorkspacePaths, prepare_session_path, prepare_workspace
 from alphaavatar.plugins.persona.processors.face.analysis_runner import FaceAnalysisRunner
 from alphaavatar.plugins.persona.processors.speaker.attribute_runner import SpeakerAttributeRunner
 from alphaavatar.plugins.persona.processors.speaker.vector_runner import SpeakerVectorRunner

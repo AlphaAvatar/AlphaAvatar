@@ -33,8 +33,8 @@ from alphaavatar.host.sessions.schemas import SessionContext, SessionEnd, Sessio
 if TYPE_CHECKING:
     from alphaavatar.agents.configs import AvatarConfig
     from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
+    from alphaavatar.agents.workspace import SessionPath, WorkspacePaths
     from alphaavatar.core.session import SessionRuntime
-    from alphaavatar.core.workspace import SessionPath, WorkspacePaths
     from alphaavatar.host.configs.application import ApplicationConfig
     from alphaavatar.host.sessions.attachment import SessionAttachment
 
@@ -116,8 +116,8 @@ async def create_execution(config: ApplicationConfig, access: SessionContext) ->
     from alphaavatar.agents.runtime import InteractionMethod, StateRuntime
     from alphaavatar.agents.runtime.modules.participants import PrimaryParticipantIdentityPolicy
     from alphaavatar.agents.utils.time import resolve_user_timezone
+    from alphaavatar.agents.workspace import prepare_session_path
     from alphaavatar.core.session import SessionRuntime
-    from alphaavatar.core.workspace import prepare_session_path
 
     # Metadata
     avatar, metadata = config.avatar, access.metadata

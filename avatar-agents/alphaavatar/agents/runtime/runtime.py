@@ -17,13 +17,13 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from alphaavatar.agents.workspace import SessionPath, WorkspacePaths
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.output import OutputRuntime
 from alphaavatar.core.perception import PerceptionRuntime
 from alphaavatar.core.session import SessionRuntime
 from alphaavatar.core.time import RuntimeClock
 from alphaavatar.core.turn import TurnRuntime
-from alphaavatar.core.workspace import SessionPath, WorkspacePaths
 
 from .capability import AvatarCapabilityRegistry
 from .inference import InferenceExecutor

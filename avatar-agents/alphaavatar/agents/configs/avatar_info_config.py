@@ -19,8 +19,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from alphaavatar.core.workspace import path_key
-from alphaavatar.core.workspace.paths import absolute_root
+from alphaavatar.agents.workspace import path_key
+from alphaavatar.agents.workspace.paths import absolute_root
 
 
 class AvatarInfoConfig(BaseModel):

@@ -22,9 +22,9 @@ from alphaavatar.agents.persona import PersonaCache
 from alphaavatar.agents.persona.enums import VectorRunnerOP
 from alphaavatar.agents.persona.schemas import UserProfile, UserRuntimeState
 from alphaavatar.agents.runtime import AvatarRuntime
+from alphaavatar.agents.workspace import check_legacy_identity, prepare_user_path
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.session.schemas import Participant
-from alphaavatar.core.workspace import check_legacy_identity, prepare_user_path
 
 from ..profile import UserProfileDetails
 from ..profile.serialization import ProfileValueType, flatten_profile_items, rebuild_profile_items

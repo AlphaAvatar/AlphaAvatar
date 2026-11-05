@@ -32,6 +32,7 @@ from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
 from alphaavatar.agents.runtime.modules.foundation import ProviderService
 from alphaavatar.agents.runtime.modules.participants import ParticipantRuntime
 from alphaavatar.agents.runtime.modules.participants.schemas import ParticipantInput
+from alphaavatar.agents.workspace import WorkspacePaths, prepare_session_path, prepare_workspace
 from alphaavatar.core.output import OutputRuntime
 from alphaavatar.core.perception import PerceptionRuntime
 from alphaavatar.core.perception.enums import PerceptionStreamKind
@@ -41,7 +42,6 @@ from alphaavatar.core.session.schemas import IdentityRequest
 from alphaavatar.core.turn import TurnRuntime, TurnStreamGap
 from alphaavatar.core.turn.enums import TurnInputModality
 from alphaavatar.core.turn.schemas import TurnEntityRef
-from alphaavatar.core.workspace import WorkspacePaths, prepare_session_path, prepare_workspace
 from alphaavatar.plugins.persona.cache import DefaultPersonaCache
 from alphaavatar.plugins.persona.processors.profiler import ProfilerConfig, ProfilerProcessor
 from alphaavatar.plugins.persona.processors.profiler.op import PatchOp, ProfileDelta

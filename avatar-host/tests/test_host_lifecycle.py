@@ -42,8 +42,8 @@ from alphaavatar.agents.runtime.inference import (
     RunnerLaunch,
 )
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
+from alphaavatar.agents.workspace import WorkspacePaths
 from alphaavatar.core.session import SessionRuntime
-from alphaavatar.core.workspace import WorkspacePaths
 from alphaavatar.host.application.application import AvatarHost
 from alphaavatar.host.application.bootstrap import create_avatar_runtime
 from alphaavatar.host.configs.loader import validate_application

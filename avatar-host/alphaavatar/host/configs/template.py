@@ -22,7 +22,7 @@ import secrets
 from dataclasses import dataclass
 from pathlib import Path
 
-from alphaavatar.core.workspace import ApplicationPaths
+from alphaavatar.host.workspace import ApplicationPaths
 
 from .bundles import LAYERS, ConfigReferenceError, check_bundle_name, check_inside, read_settings
 

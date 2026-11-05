@@ -11,25 +11,29 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""History replays each Turn's user message as built, media included, and carries only the
-current Turn's runtime context."""
+"""History keeps each Turn's user message as built, media included. Requests replay it with
+historical images marked in place, and carry only the current Turn's runtime context."""
 
 from __future__ import annotations
 
 import base64
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from alphaavatar.agents.avatar.context import ContextManager
 from alphaavatar.agents.avatar.context.schemas import ContextPrepareRequest
-from alphaavatar.agents.avatar.provider.enums import ModelRole
+from alphaavatar.agents.avatar.provider.enums import ModelMediaKind, ModelRole
 from alphaavatar.agents.avatar.provider.errors import ModelCapabilityError
 from alphaavatar.agents.avatar.provider.records import model_record_batch
 from alphaavatar.agents.avatar.provider.schemas import (
+    ModelFunctionCall,
+    ModelFunctionOutput,
     ModelInput,
     ModelInputMessage,
+    ModelMediaPart,
     ModelRequest,
     ModelTextPart,
     ProviderTaskConfig,
@@ -38,6 +42,7 @@ from alphaavatar.agents.configs import AvatarConfig
 from alphaavatar.agents.constants import RUNTIME_CONTEXT_TOOL_NAME
 from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
 from alphaavatar.agents.runtime.inference import InferenceExecutor
+from alphaavatar.agents.workspace import WorkspacePaths
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.schemas import PerceptionSegmentRef
 from alphaavatar.core.media import ImagePayload, TextPayload
@@ -49,11 +54,11 @@ from alphaavatar.core.session import SessionRuntime
 from alphaavatar.core.time import RuntimeTimeRange
 from alphaavatar.core.turn.enums import TurnInputModality
 from alphaavatar.core.turn.schemas import TurnEntityRef, TurnSnapshot
-from alphaavatar.core.workspace import WorkspacePaths
 from alphaavatar.plugins.provider.openai.adapters.responses import ResponsesAdapter
 from alphaavatar.plugins.provider.openai.llms.config import ResponsesInputConfig
 
 VLM = {"enabled": True, "input_mode": "vlm"}
+MARK = {"type": "input_text", "text": "<image_not_replayed />"}
 
 
 def start(tmp_path: Path, **sections: object) -> tuple[AvatarRuntime, ContextManager]:
@@ -109,7 +114,12 @@ def shown(runtime: AvatarRuntime, jpeg: bytes) -> EnvObservation:
     return observation
 
 
-def reply(runtime: AvatarRuntime, turn: TurnSnapshot, text: str) -> ModelInputMessage:
+def reply(
+    runtime: AvatarRuntime,
+    turn: TurnSnapshot,
+    text: str,
+    *tool: ModelFunctionCall | ModelFunctionOutput,
+) -> ModelInputMessage:
     message = ModelInputMessage(
         id=f"reply-{turn.input_id}", role=ModelRole.ASSISTANT, parts=(ModelTextPart(text),)
     )
@@ -118,7 +128,7 @@ def reply(runtime: AvatarRuntime, turn: TurnSnapshot, text: str) -> ModelInputMe
             batch_id=f"batch-{turn.input_id}",
             source="test.loop",
             scope=OutputScope(runtime.state.context_id, turn.turn_id, f"run-{turn.input_id}"),
-            items=(message,),
+            items=(*tool, message),
             identity_basis=runtime.participants.identity_basis(turn),
         )
     )
@@ -138,28 +148,67 @@ def layout(model_input: ModelInput) -> list[str]:
     ]
 
 
-def images(model_input: ModelInput, *, limit: int = 20 * 1024 * 1024) -> list[str]:
-    """The images the Responses adapter puts on the wire for this input."""
+def kept(context: ContextManager, runtime: AvatarRuntime) -> ModelInput:
+    """The canonical History, before a request projects it."""
+    return context._history._project(runtime.state.context_id)
+
+
+def wire(model_input: ModelInput, *, limit: int = 20 * 1024 * 1024) -> list[dict[str, Any]]:
+    """The input items the Responses adapter puts on the wire."""
     adapter = ResponsesAdapter(
         ProviderTaskConfig(backend="openai", model="vision-model"),
         ResponsesInputConfig(max_inline_bytes=limit),
         "test",
     )
-    payload = adapter.encode(ModelRequest(input=model_input))
-    return [
-        part["image_url"]
-        for item in payload["input"]
-        if isinstance(item.get("content"), list)
-        for part in item["content"]
-        if part["type"] == "input_image"
-    ]
+    return adapter.encode(ModelRequest(input=model_input))["input"]
+
+
+def images(model_input: ModelInput, *, limit: int = 20 * 1024 * 1024) -> list[str]:
+    found = []
+    for item in wire(model_input, limit=limit):
+        parts = item.get("content", item.get("output"))
+        if isinstance(parts, list):
+            found.extend(part["image_url"] for part in parts if part["type"] == "input_image")
+    return found
 
 
 def inline(jpeg: bytes) -> str:
     return f"data:image/jpeg;base64,{base64.b64encode(jpeg).decode()}"
 
 
-async def test_history_sends_the_image_its_turn_sent_after_perception_annotates_it(
+async def test_history_keeps_the_image_and_later_requests_mark_its_place(tmp_path: Path) -> None:
+    runtime, context = start(tmp_path, vision=VLM)
+    try:
+        shown(runtime, b"raw-frame")
+        first = typed(runtime, "input-1", "What do you see?")
+        sent = await prepare(context, first)
+        built = wire(sent)[1]["content"]
+        assert images(sent) == [inline(b"raw-frame")]
+        assert [part["type"] for part in built].count("input_image") == 1
+        assert layout(sent) == ["alphaavatar.system", "input-1", *["runtime_context"] * 2]
+
+        answer = reply(runtime, first, "A desk.")
+        second = await prepare(context, typed(runtime, "input-2", "Anything else?"))
+        # History holds the message the Builder produced, its image included.
+        assert kept(context, runtime).items[:2] == (sent.get("input-1"), answer)
+        assert images(kept(context, runtime)) == [inline(b"raw-frame")]
+        # The request replays it with a marker where the image was, everything else unchanged.
+        marked = [MARK if part["type"] == "input_image" else part for part in built]
+        assert wire(second)[1] == {"role": "user", "content": marked}
+        assert images(second) == []
+        assert layout(second) == [
+            "alphaavatar.system",
+            "input-1",
+            "reply-input-1",
+            "input-2",
+            *["runtime_context"] * 2,
+        ]
+    finally:
+        await context.aclose()
+        await runtime.aclose()
+
+
+async def test_a_retry_resends_the_image_first_fixed_after_perception_annotates_it(
     tmp_path: Path,
 ) -> None:
     runtime, context = start(tmp_path, vision=VLM)
@@ -167,22 +216,64 @@ async def test_history_sends_the_image_its_turn_sent_after_perception_annotates_
         frame = shown(runtime, b"raw-frame")
         first = typed(runtime, "input-1", "What do you see?")
         sent = await prepare(context, first)
-        assert images(sent) == [inline(b"raw-frame")]
-        assert layout(sent) == ["alphaavatar.system", "input-1", *["runtime_context"] * 2]
-
         # A perception processor writes its annotated view into the same payload afterwards.
         frame.payload.put(
             PayloadFormat.IMAGE_JPEG_BYTES, b"annotated-frame", view=PayloadView.ANNOTATED
         )
-        # The request already built, sent again (a retry or a later model step), is unchanged.
+        # The request already built, sent again by a later model step, is unchanged.
         assert images(sent) == [inline(b"raw-frame")]
-        answer = reply(runtime, first, "A desk.")
+        # A retry replays the Turn from History; as the current Turn it keeps its image.
+        retried = await prepare(context, first)
+        assert retried.get("input-1") == sent.get("input-1")
+        assert images(retried) == [inline(b"raw-frame")]
+        assert layout(retried) == ["alphaavatar.system", "input-1", *["runtime_context"] * 2]
+
+        reply(runtime, first, "A desk.")
         second = await prepare(context, typed(runtime, "input-2", "Anything else?"))
-        assert images(second) == [inline(b"raw-frame")]
-        assert second.items[1:3] == (sent.get("input-1"), answer)
+        assert images(kept(context, runtime)) == [inline(b"raw-frame")]
+        assert images(second) == []
+    finally:
+        await context.aclose()
+        await runtime.aclose()
+
+
+async def test_history_tool_images_are_marked_and_keep_their_call_paired(tmp_path: Path) -> None:
+    runtime, context = start(tmp_path)
+    try:
+        first = typed(runtime, "input-1", "What is on my screen?")
+        await prepare(context, first)
+        call = ModelFunctionCall(
+            id="call-item-1", call_id="call-1", name="screenshot", arguments="{}"
+        )
+        output = ModelFunctionOutput(
+            id="call-item-1:result",
+            call_id="call-1",
+            name="screenshot",
+            parts=(
+                ModelTextPart("Captured."),
+                ModelMediaPart(kind=ModelMediaKind.IMAGE, mime_type="image/jpeg", data=b"screen"),
+            ),
+            is_error=False,
+        )
+        reply(runtime, first, "A browser.", call, output)
+
+        second = await prepare(context, typed(runtime, "input-2", "Thanks."))
+        assert images(kept(context, runtime)) == [inline(b"screen")]
+        assert kept(context, runtime).items[1:3] == (call, output)
+        assert wire(second)[2:5] == [
+            {"type": "function_call", "call_id": "call-1", "name": "screenshot", "arguments": "{}"},
+            {
+                "type": "function_call_output",
+                "call_id": "call-1",
+                "output": "Captured.\n<image_not_replayed />",
+            },
+            {"role": "assistant", "content": "A browser."},
+        ]
         assert layout(second) == [
             "alphaavatar.system",
             "input-1",
+            "call-item-1",
+            "call-item-1:result",
             "reply-input-1",
             "input-2",
             *["runtime_context"] * 2,
@@ -271,24 +362,27 @@ async def test_fixed_slices_keep_speech_beside_typing_in_the_request_and_its_his
         await runtime.aclose()
 
 
-async def test_history_images_past_the_inline_limit_refuse_every_later_turn(tmp_path: Path) -> None:
-    """Known limit (KD-18): History keeps every image and each request resends them all, so
-    once they exceed Responses ``max_inline_bytes`` even a text-only Turn is refused."""
+async def test_turn_images_within_the_inline_limit_send_though_history_exceeds_it(
+    tmp_path: Path,
+) -> None:
+    """KD-18: each Turn's image fits Responses ``max_inline_bytes`` but History's together do
+    not. Both Turns and a text-only Turn after them still send."""
     runtime, context = start(tmp_path, vision=VLM)
     try:
-        shown(runtime, bytes(600))
+        shown(runtime, b"1" * 600)
         first = await prepare(context, typed(runtime, "input-1", "What is this?"))
-        assert len(images(first, limit=1000)) == 1
-        shown(runtime, bytes(600))
+        assert images(first, limit=1000) == [inline(b"1" * 600)]
+        shown(runtime, b"2" * 600)
         second = await prepare(context, typed(runtime, "input-2", "And this?"))
-        with pytest.raises(ModelCapabilityError) as refused:
-            images(second, limit=1000)
-        assert refused.value.code == "image_input"
-
+        assert images(second, limit=1000) == [inline(b"2" * 600)]
         third = await prepare(context, typed(runtime, "input-3", "Thanks."))
-        assert len(images(third)) == 2  # History still holds both images in full.
+        assert images(third, limit=1000) == []
+        assert layout(third)[1:] == ["input-1", "input-2", "input-3", *["runtime_context"] * 2]
+
+        # History still holds both images in full, past the limit together.
+        assert images(kept(context, runtime)) == [inline(b"1" * 600), inline(b"2" * 600)]
         with pytest.raises(ModelCapabilityError) as refused:
-            images(third, limit=1000)
+            images(kept(context, runtime), limit=1000)
         assert refused.value.code == "image_input"
     finally:
         await context.aclose()

@@ -118,12 +118,8 @@ class AvatarHost:
             prepare_inference_runners,
             snapshot_inference_config,
         )
-        from alphaavatar.core.workspace import (
-            check_legacy_identity,
-            check_workspace_continuity,
-            prepare_application,
-            prepare_workspace,
-        )
+        from alphaavatar.agents.workspace import check_legacy_identity, prepare_workspace
+        from alphaavatar.host.workspace import check_workspace_continuity, prepare_application
 
         # Workspace
         def activate_paths() -> None:

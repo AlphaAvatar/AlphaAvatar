@@ -38,7 +38,7 @@ from typing import Any
 
 from alphaavatar.core.log.diagnostics import format_error
 from alphaavatar.core.log.records import Redactor
-from alphaavatar.core.workspace import ApplicationPaths
+from alphaavatar.host.workspace import ApplicationPaths
 
 from .paths import platform_application_root, resolve_application_paths
 

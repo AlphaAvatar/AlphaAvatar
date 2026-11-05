@@ -22,6 +22,7 @@ import pytest
 from alphaavatar.agents.memory.schemas import MemoryContextRef, MemoryOwnerRef
 from alphaavatar.agents.runtime.modules.participants import ParticipantRuntime
 from alphaavatar.agents.runtime.modules.participants.schemas import ParticipantInput
+from alphaavatar.agents.workspace import WorkspacePaths
 from alphaavatar.core.env.schemas import (
     PerceptionEntityRef,
     PerceptionSegmentRef,
@@ -39,7 +40,6 @@ from alphaavatar.core.session import (
 from alphaavatar.core.turn import TurnRuntime
 from alphaavatar.core.turn.enums import TurnInputModality
 from alphaavatar.core.turn.schemas import TurnEntityRef, TurnSnapshot
-from alphaavatar.core.workspace import WorkspacePaths
 from alphaavatar.plugins.memory.state import MemoryContextState
 
 

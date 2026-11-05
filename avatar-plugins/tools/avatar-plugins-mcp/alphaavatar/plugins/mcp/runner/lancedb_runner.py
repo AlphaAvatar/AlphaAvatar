@@ -28,8 +28,8 @@ from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.agents.tools.schemas import ToolError
 from alphaavatar.agents.utils.loop_thread import AsyncLoopThread
 from alphaavatar.agents.utils.vdb import lancedb
+from alphaavatar.agents.workspace import WorkspacePaths
 from alphaavatar.core.cleanup import wait_for_cleanup
-from alphaavatar.core.workspace import WorkspacePaths
 
 from ..config import DEFAULT_TIMEOUT, MCPServerConfig
 from ..enums import MCPOp, MCPOutputMode

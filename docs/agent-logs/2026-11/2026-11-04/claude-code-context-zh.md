@@ -9,6 +9,7 @@
 | 批次 | 内容 | 日期 | 基线 HEAD | 提交 | 状态 |
 |---|---|---|---|---|---|
 | Context 审查修复 | 旧 profile 兼容读取、历史媒体内容固定、`FIXED` 语音加打字、历史内联图片超限（只报告） | 2026-11-04 | `43c019f` | `8789e9d`（代码与测试，用户提交）；本日志与 KD-18 未提交 | 待复审。P1–P3 已修复并回归；P4 现有机制无法同时满足，登记 KD-18 待用户决定。本地全量 326 passed，与 `8789e9d` 内容一致 |
+| Context 回归收尾 | 按 `36ba7f6` 的 `ContextCompressor` 更新历史图片回归（KD-18 已修复） | 2026-11-05 | `36ba7f6` | 未提交（用户提交） | 待复核。只改测试和文档 |
 
 ---
 
@@ -146,3 +147,46 @@
 
 - KD-18 的处理方式（第 4 节方案 A–F）。
 - 第 3 节的残留边界：是否把 `<committed_text>` 回退判定改为比对已提交文字与已渲染文字。
+
+---
+
+## Context 回归收尾（基线 `36ba7f6`）
+
+- 基线：`36ba7f6`。用户在该提交中新增 `ContextCompressor`：History 仍完整保存 Builder 产出的消息；`_prepare_input` 在 capture 之后，把当前 Turn 之前的历史条目（用户消息和工具输出）中的图片在原位置换成 `<image_not_replayed />`。生产逻辑已通过审查，本提交只改测试和文档。
+- 基线下 `test_turn_history.py` 有两条旧断言失败或已过时：P2 用例要求下一轮重发旧图；KD-18 用例要求第二轮和纯文字轮超限被拒。第 4 节的 KD-18 方案表和第 9 节的待决定项由此结束。
+
+### 10. 回归改写
+
+`avatar-plugins/foundation/avatar-plugins-context/tests/test_turn_history.py`，所有发送内容都用实际的 `ResponsesAdapter.encode` 验证：
+
+| 用例 | 覆盖 |
+|---|---|
+| `test_history_keeps_the_image_and_later_requests_mark_its_place` | 两项分开验证：① History 中的第一轮消息与首次构建的消息完全相等，编码后仍是原图；② 第二轮请求中，该消息编码后与首次编码逐项相同，只有 `input_image` 那一项换成占位文字，请求不再带图 |
+| `test_a_retry_resends_the_image_first_fixed_after_perception_annotates_it` | 感知处理器在首次构建后写入 `ANNOTATED` 视图；已构建的请求、同轮重试（从 History 重放本轮消息）都仍发首次固定的原图；下一轮请求不带图，History 仍是原图 |
+| `test_history_tool_images_are_marked_and_keep_their_call_paired` | 工具输出带 `ModelMediaPart` 图片：History 保留原图；下一轮请求中 `function_call` 与 `function_call_output` 的 `call_id` 相同且相邻，输出变为 `Captured.\n<image_not_replayed />`，回复顺序不变 |
+| `test_turn_images_within_the_inline_limit_send_though_history_exceeds_it` | KD-18 触发条件：两轮各 600 字节、上限 1000。两轮都只发本轮图片并成功编码，随后纯文字轮也成功；History 仍完整保存两张图，按 1000 上限编码 History 本身会以 `image_input` 被拒，证明合计确实超限 |
+| `test_fixed_slices_keep_speech_beside_typing_in_the_request_and_its_history` | 未改，通过 |
+
+- 每轮只有自己的 `runtime_context`：上述用例的布局断言均为 `[system, 历史条目…, 本轮用户消息, runtime_context ×2]`，历史条目中没有 `runtime_context`。
+- 测试读取 History 用 `context._history._project(context_id)`，即 History 交给 Builder 的规范内容，不经过请求投影。
+
+### 11. 验证
+
+- 变异（每次改一处生产代码，跑 Context 全部用例后还原）：
+
+  | 编号 | 变异 | 结果 |
+  |---|---|---|
+  | M1 | 压缩器原样返回 | 捕获（4 项） |
+  | M2 | 不处理 `ModelMediaPart` 图片 | 捕获（工具用例） |
+  | M3 | 不处理 `ModelImagePart` | 捕获（3 项） |
+  | M4 | 当前 Turn 也被压缩 | 捕获（KD-18 用例） |
+  | M5 | History 保存压缩后的消息 | 捕获（3 项） |
+  | M6 | 丢弃带图的工具输出 | 捕获（工具用例，配对断言） |
+  | M7 | 占位移到消息末尾 | 捕获（位置断言） |
+  | M8 | 不固定 payload 快照 | 捕获（重试用例） |
+  | M9 | 只压缩消息、不压缩工具输出 | 捕获（工具用例） |
+
+- Context 6 项、Loop（含身份切换）、Host 配置、生命周期与 CLI 共 81 项通过；Doctor 19 项通过。
+- 全量（只含本部分改动，CI 同方式）：328 passed、0 failed，用时 2 分 29 秒，磁盘剩余 12 GB，运行未在仓库留下文件。与 Workspace 迁移合并后的全量见 `2026-11-05/claude-code-workspace-zh.md` 第 4 节。
+- 文档：`docs/bugs-zh.md` 中 KD-18 移入"已修复"；2A 表 KD-18 状态改为已修复（`36ba7f6`），回归名称同步。
+- 残留：本轮自身的图片超过上限时仍以 `image_input` 失败，这确实是图像输入问题，未改。

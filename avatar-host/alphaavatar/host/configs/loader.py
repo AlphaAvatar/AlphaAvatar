@@ -24,9 +24,10 @@ from uuid import UUID
 
 from pydantic import SecretStr
 
-from alphaavatar.core.workspace import ApplicationPaths, WorkspacePaths
+from alphaavatar.agents.workspace import WorkspacePaths
 from alphaavatar.host.application.config import HostConfig
 from alphaavatar.host.sessions.factory import validate_session_config
+from alphaavatar.host.workspace import ApplicationPaths
 
 from .application import ApplicationConfig
 from .bundles import ConfigReferenceError, ConfigSource, compose_profiles
@@ -120,7 +121,8 @@ def restore_application(payload: str) -> ApplicationConfig:
 
 def check_application_paths(config: ApplicationConfig) -> None:
     """Read-only checks before activation; they never create, move or delete data."""
-    from alphaavatar.core.workspace import check_legacy_identity, check_workspace_continuity
+    from alphaavatar.agents.workspace import check_legacy_identity
+    from alphaavatar.host.workspace import check_workspace_continuity
 
     check_workspace_continuity(config.workspace, config.previous_workspace_roots)
     if config.workspace == config.paths.workspace(config.avatar.avatar.id):

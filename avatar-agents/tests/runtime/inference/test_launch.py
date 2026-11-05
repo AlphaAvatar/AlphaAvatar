@@ -44,8 +44,8 @@ from alphaavatar.agents.runtime.inference import (
     prepare_inference_runners,
     snapshot_inference_config,
 )
+from alphaavatar.agents.workspace import WorkspacePaths
 from alphaavatar.core.session import SessionRuntime
-from alphaavatar.core.workspace import WorkspacePaths
 from alphaavatar.plugins.mcp.enums import MCPOp
 from alphaavatar.plugins.mcp.runner import lancedb_runner as mcp_lancedb
 from alphaavatar.plugins.mcp.schemas import MCPRequest

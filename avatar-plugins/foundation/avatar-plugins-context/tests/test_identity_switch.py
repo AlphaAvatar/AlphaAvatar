@@ -28,6 +28,7 @@ from alphaavatar.agents.avatar.provider.schemas import ModelInput, ModelInputMes
 from alphaavatar.agents.configs import AvatarConfig
 from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
 from alphaavatar.agents.runtime.inference import InferenceExecutor
+from alphaavatar.agents.workspace import WorkspacePaths
 from alphaavatar.core.output.schemas import OutputScope
 from alphaavatar.core.session import (
     IdentityOutcome,
@@ -37,7 +38,6 @@ from alphaavatar.core.session import (
 )
 from alphaavatar.core.turn.enums import TurnInputModality
 from alphaavatar.core.turn.schemas import TurnEntityRef, TurnSnapshot
-from alphaavatar.core.workspace import WorkspacePaths
 
 
 class UserScopedSource:

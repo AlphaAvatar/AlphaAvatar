@@ -54,7 +54,8 @@ def run(target: str | None, overrides: Sequence[str], *, devmode: bool) -> int:
         validate_plugin_settings(config)
 
         stage = "prepare application paths"
-        from alphaavatar.core.workspace import prepare_application, prepare_workspace
+        from alphaavatar.agents.workspace import prepare_workspace
+        from alphaavatar.host.workspace import prepare_application
 
         check_application_paths(config)
         prepare_application(config.paths)

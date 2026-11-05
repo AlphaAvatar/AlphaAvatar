@@ -32,8 +32,8 @@ from alphaavatar.agents.configs.runtime_config import InferenceConfig, RuntimeCo
 from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
 from alphaavatar.agents.runtime.inference import InferenceExecutor, InferenceRuntime
 from alphaavatar.agents.runtime.modules.foundation import FoundationRuntime
+from alphaavatar.agents.workspace import WorkspacePaths
 from alphaavatar.core.session import SessionRuntime
-from alphaavatar.core.workspace import WorkspacePaths
 
 HANG_GUARD = 30
 ECHO = EchoRunner.INFERENCE_METHOD

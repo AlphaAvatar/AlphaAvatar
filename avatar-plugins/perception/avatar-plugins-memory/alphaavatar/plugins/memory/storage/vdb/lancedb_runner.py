@@ -23,7 +23,7 @@ from alphaavatar.agents.memory.enums import VectorRunnerOP
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.agents.utils.vdb import lancedb
-from alphaavatar.core.workspace import WorkspacePaths
+from alphaavatar.agents.workspace import WorkspacePaths
 
 logger = logging.getLogger(__name__)
 

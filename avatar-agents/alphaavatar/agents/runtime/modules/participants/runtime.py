@@ -19,6 +19,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from uuid import uuid4
 
+from alphaavatar.agents.workspace import UserPath, WorkspacePaths
 from alphaavatar.core.env.schemas import (
     PerceptionEntityRef,
     PerceptionSegmentRef,
@@ -34,7 +35,6 @@ from alphaavatar.core.session.schemas import (
 )
 from alphaavatar.core.turn import TurnRuntime
 from alphaavatar.core.turn.schemas import TurnSnapshot
-from alphaavatar.core.workspace import UserPath, WorkspacePaths
 
 from ...capability import avatar_capability
 from ...capability.enums import AvatarCapabilityName

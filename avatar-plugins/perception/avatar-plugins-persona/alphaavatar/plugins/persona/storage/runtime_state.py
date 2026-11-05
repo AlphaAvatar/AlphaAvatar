@@ -27,7 +27,7 @@ from typing import TypeVar
 from filelock import FileLock
 
 from alphaavatar.agents.persona.schemas import UserRuntimeState
-from alphaavatar.core.workspace import UserPath
+from alphaavatar.agents.workspace import UserPath
 
 logger = logging.getLogger(__name__)
 

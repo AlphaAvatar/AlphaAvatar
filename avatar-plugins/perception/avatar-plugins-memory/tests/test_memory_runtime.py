@@ -49,6 +49,7 @@ from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
 from alphaavatar.agents.runtime.modules.foundation import ProviderService
 from alphaavatar.agents.runtime.modules.participants import ParticipantRuntime
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
+from alphaavatar.agents.workspace import WorkspacePaths, prepare_session_path, prepare_workspace
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import ObservationKind
 from alphaavatar.core.env.schemas import PerceptionSourceRef
@@ -63,7 +64,6 @@ from alphaavatar.core.time import RuntimeTimeRange
 from alphaavatar.core.turn import TurnRuntime
 from alphaavatar.core.turn.enums import TurnInputModality
 from alphaavatar.core.turn.schemas import TurnEntityRef, TurnSnapshot
-from alphaavatar.core.workspace import WorkspacePaths, prepare_session_path, prepare_workspace
 from alphaavatar.plugins.memory.processors.environment.config import EnvironmentSchedulerConfig
 from alphaavatar.plugins.memory.processors.environment.scheduler import EnvMemoryScheduler
 from alphaavatar.plugins.memory.schemas.patch import MemoryDelta, PatchOp

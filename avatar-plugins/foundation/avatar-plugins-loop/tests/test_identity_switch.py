@@ -46,6 +46,7 @@ from alphaavatar.agents.runtime.capability import avatar_capability
 from alphaavatar.agents.runtime.capability.enums import AvatarCapabilityName
 from alphaavatar.agents.runtime.inference import InferenceExecutor
 from alphaavatar.agents.runtime.modules.foundation import FoundationRuntime
+from alphaavatar.agents.workspace import WorkspacePaths
 from alphaavatar.core.output.enums import OutputControlType, OutputKind
 from alphaavatar.core.session import (
     IdentityOutcome,
@@ -56,7 +57,6 @@ from alphaavatar.core.session import (
 )
 from alphaavatar.core.turn.enums import TurnInputModality
 from alphaavatar.core.turn.schemas import TurnEntityRef, TurnSnapshot
-from alphaavatar.core.workspace import WorkspacePaths
 from alphaavatar.plugins.loop.config import RealtimeLoopConfig
 from alphaavatar.plugins.loop.loop import AvatarLoop
 

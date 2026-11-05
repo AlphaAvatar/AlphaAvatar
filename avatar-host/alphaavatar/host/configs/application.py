@@ -17,8 +17,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from alphaavatar.core.workspace import ApplicationPaths, WorkspacePaths
+from alphaavatar.agents.workspace import WorkspacePaths
 from alphaavatar.host.application.config import HostConfig
+from alphaavatar.host.workspace import ApplicationPaths
 
 if TYPE_CHECKING:
     from alphaavatar.agents.configs import AvatarConfig

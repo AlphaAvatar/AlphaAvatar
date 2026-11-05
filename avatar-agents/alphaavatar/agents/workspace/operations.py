@@ -16,10 +16,8 @@ from __future__ import annotations
 import os
 import re
 import unicodedata
-from collections.abc import Iterable
 from pathlib import Path
 
-from .application import ApplicationPaths
 from .paths import SessionPath, UserPath, WorkspacePaths, path_key
 
 
@@ -51,37 +49,6 @@ def check_legacy_identity(parent: Path, identity: str) -> None:
                     f"Existing identity data at {parent / entry.name} cannot be silently rebound. "
                     "Back it up and explicitly migrate its identity references before continuing."
                 )
-
-
-def check_workspace_continuity(paths: WorkspacePaths, previous_roots: Iterable[Path]) -> None:
-    """Refuse to silently replace an existing default workspace with an empty one."""
-    for previous in previous_roots:
-        if previous.resolve() == paths.root.resolve():
-            continue
-        if any((previous / name).exists() for name in ("users", "data", "graph")):
-            raise WorkspaceMigrationRequired(
-                f"Existing workspace data was found at {previous}. Set avatar.workspace_root "
-                "to that complete directory, or explicitly back up and relocate it before "
-                "starting with a new workspace. No existing data has been moved or deleted."
-            )
-
-
-def prepare_application(paths: ApplicationPaths) -> None:
-    for directory in (
-        paths.root,
-        paths.configs.root,
-        paths.configs.profiles_dir,
-        paths.configs.bundles_dir,
-        paths.settings_dir,
-        paths.cache.root,
-        paths.cache.models_dir,
-        paths.cache.downloads_dir,
-        paths.cache.providers_dir,
-        paths.cache.diagnostics_dir,
-        paths.cache.avatars_dir,
-        paths.avatars_dir,
-    ):
-        directory.mkdir(parents=True, exist_ok=True)
 
 
 def prepare_workspace(paths: WorkspacePaths) -> None:

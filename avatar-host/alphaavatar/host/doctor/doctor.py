@@ -43,8 +43,8 @@ from .schemas import Check, CheckSpec, Evidence, Report
 if TYPE_CHECKING:
     from packaging.requirements import Requirement
 
-    from alphaavatar.core.workspace import ApplicationPaths
     from alphaavatar.host.configs import ApplicationConfig, ConfigSource
+    from alphaavatar.host.workspace import ApplicationPaths
 
 HOST = "alpha-avatar-host"
 MIN_FREE_BYTES = 1 << 30  # Less leaves little room for models, caches and Avatar data.

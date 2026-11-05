@@ -12,6 +12,7 @@ alphaavatar/host/
 ├── version.py
 ├── cli/                # dev/start, arguments, help and version.
 ├── configs/            # Strict Host/Avatar configuration loading.
+├── workspace/          # Application, config and cache paths; Workspace continuity.
 ├── application/        # Bootstrap, shared services, health and signals.
 ├── execution/          # Hosted execution ownership and end policies.
 ├── processes/          # Execution subprocesses, IPC and bounded cleanup.

@@ -201,7 +201,7 @@ Face 同样区分物理实体与用户身份快照。排队帧可能早于前一
 | `avatar_key`、`user_key`、`session_key`、`memory_key` 等路径键 | `path_key(logical_id)` 的文件系统投影。可直接使用的安全键保持原值，其余使用带前缀的 SHA-256，不做小写化或截断。逻辑 ID 保留原值，不能从哈希目录名反推用户。 |
 | `digest` | 内容校验摘要，不能代替记录身份或权限。 |
 
-目录的日期分层来自 Session 的 `created_at`，不应从 `session_id`、设备时间串或目录哈希猜测。应用级路径与 Workspace 路径分别由 [ApplicationPaths](../avatar-core/alphaavatar/core/workspace/application.py) 和 [WorkspacePaths](../avatar-core/alphaavatar/core/workspace/paths.py) 定义，显式目录创建位于 [operations.py](../avatar-core/alphaavatar/core/workspace/operations.py)。
+目录的日期分层来自 Session 的 `created_at`，不应从 `session_id`、设备时间串或目录哈希猜测。应用级路径由 Host 的 [ApplicationPaths](../avatar-host/alphaavatar/host/workspace/application.py) 定义，Workspace、用户和会话路径由 Agents 的 [WorkspacePaths](../avatar-agents/alphaavatar/agents/workspace/paths.py) 定义。显式目录创建分别位于 Host 的 [operations.py](../avatar-host/alphaavatar/host/workspace/operations.py)（应用目录和旧 Workspace 根目录的连续性检查）和 Agents 的 [operations.py](../avatar-agents/alphaavatar/agents/workspace/operations.py)（Workspace、用户和会话目录，以及旧身份目录检查）。
 
 ## 7. 接入边界与命名规则
 

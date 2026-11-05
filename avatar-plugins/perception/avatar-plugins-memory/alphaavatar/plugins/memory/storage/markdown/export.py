@@ -21,7 +21,7 @@ from typing import Any
 from alphaavatar.agents.memory.enums import MemoryScopeKind
 from alphaavatar.agents.memory.schemas import MemoryItem
 from alphaavatar.agents.utils.files.atomic import locked_directory, write_text_atomic
-from alphaavatar.core.workspace import path_key
+from alphaavatar.agents.workspace import path_key
 
 
 def _wrap_text(text: str) -> list[str]:

@@ -17,7 +17,7 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path
 
-from alphaavatar.core.workspace import ApplicationPaths
+from alphaavatar.host.workspace import ApplicationPaths
 
 
 def resolve_application_paths(

@@ -23,7 +23,7 @@ from alphaavatar.agents.persona.enums import VectorRunnerOP
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.agents.utils.vdb import lancedb
-from alphaavatar.core.workspace import WorkspacePaths
+from alphaavatar.agents.workspace import WorkspacePaths
 
 from ...processors.face.analysis_runner import FaceAnalysisRunner
 from ...processors.face.model_files import FACE_MODEL_CONFIG

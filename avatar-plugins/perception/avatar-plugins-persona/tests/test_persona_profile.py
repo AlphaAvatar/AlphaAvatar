@@ -26,9 +26,9 @@ import pytest
 
 from alphaavatar.agents.persona.schemas import UserProfile, UserRuntimeState
 from alphaavatar.agents.runtime.inference import RunnerLaunch
+from alphaavatar.agents.workspace import WorkspacePaths
 from alphaavatar.core.session import Participant
 from alphaavatar.core.time import RuntimeClock
-from alphaavatar.core.workspace import WorkspacePaths
 from alphaavatar.plugins.persona.cache import DefaultPersonaCache
 from alphaavatar.plugins.persona.processors.speaker.cache import SpeakerCache
 from alphaavatar.plugins.persona.profile import UserProfileDetails

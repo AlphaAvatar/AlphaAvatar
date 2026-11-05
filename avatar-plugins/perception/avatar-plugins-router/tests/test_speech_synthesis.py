@@ -28,6 +28,7 @@ from alphaavatar.agents.avatar.voice import TTSBase, TTSStreamBase
 from alphaavatar.agents.configs.runtime_config import RuntimeConfig
 from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
 from alphaavatar.agents.runtime.inference import InferenceExecutor
+from alphaavatar.agents.workspace import WorkspacePaths
 from alphaavatar.core.env import EnvOutput
 from alphaavatar.core.media import AudioFrame
 from alphaavatar.core.output import OutputRuntime
@@ -46,7 +47,6 @@ from alphaavatar.core.output.schemas import (
     OutputTextChunk,
 )
 from alphaavatar.core.session import SessionRuntime
-from alphaavatar.core.workspace import WorkspacePaths
 from alphaavatar.plugins.router.processors.speech import (
     SpeechSynthesisProcessor,
     TranscriptSynchronizationProcessor,

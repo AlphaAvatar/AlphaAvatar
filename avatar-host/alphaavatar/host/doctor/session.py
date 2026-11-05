@@ -144,7 +144,7 @@ def isolate(config: ApplicationConfig, workspace: str) -> tuple[ApplicationConfi
     """The snapshot on Doctor's storage: ``workspace`` as the Avatar workspace, and each
     explicit local vector store path moved inside it, where the default would be."""
     from alphaavatar.agents.utils.vdb.config import vdb_backend
-    from alphaavatar.core.workspace import WorkspacePaths
+    from alphaavatar.agents.workspace import WorkspacePaths
 
     changes: dict[str, object] = {"avatar.workspace_root": workspace}
     rebound = []

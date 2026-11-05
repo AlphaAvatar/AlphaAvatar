@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from .paths import WorkspacePaths, absolute_root, path_key
+from alphaavatar.agents.workspace.paths import WorkspacePaths, absolute_root, path_key
 
 
 @dataclass(frozen=True, slots=True)

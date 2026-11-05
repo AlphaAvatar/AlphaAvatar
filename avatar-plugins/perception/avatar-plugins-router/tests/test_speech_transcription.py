@@ -42,13 +42,13 @@ from alphaavatar.agents.router.schemas import (
 )
 from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
 from alphaavatar.agents.runtime.inference import InferenceExecutor
+from alphaavatar.agents.workspace import WorkspacePaths
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import AnnotationKind, ObservationKind, SpeechCancellationReason
 from alphaavatar.core.env.schemas import PerceptionSegmentRef, PerceptionSourceRef
 from alphaavatar.core.media import AudioFrame, AudioFramePayload
 from alphaavatar.core.session import SessionRuntime
 from alphaavatar.core.turn.enums import TurnInputModality
-from alphaavatar.core.workspace import WorkspacePaths
 from alphaavatar.plugins.router.processors.speech import SpeechTranscriptionProcessor
 from alphaavatar.plugins.router.processors.turn_taking import processor as turn_taking
 from alphaavatar.plugins.router.processors.turn_taking.config import TurnTakingConfig

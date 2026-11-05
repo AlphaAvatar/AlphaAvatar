@@ -11,12 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .application import ApplicationPaths, CachePaths, ConfigPaths
 from .operations import (
     WorkspaceMigrationRequired,
     check_legacy_identity,
-    check_workspace_continuity,
-    prepare_application,
     prepare_session_path,
     prepare_user_path,
     prepare_workspace,
@@ -45,9 +42,6 @@ from .paths import (
 )
 
 __all__ = [
-    "ApplicationPaths",
-    "CachePaths",
-    "ConfigPaths",
     "GraphNamespacePath",
     "ArtifactNamespacePath",
     "IndexBackendPath",
@@ -68,11 +62,9 @@ __all__ = [
     "DataPaths",
     "WorkspacePaths",
     "path_key",
-    "prepare_application",
     "prepare_workspace",
     "prepare_user_path",
     "prepare_session_path",
     "WorkspaceMigrationRequired",
     "check_legacy_identity",
-    "check_workspace_continuity",
 ]

@@ -18,7 +18,8 @@ alphaavatar/agents/
 ├── status/               # Status contracts.
 ├── tools/                # Tool abstractions and operation contracts.
 ├── reflection/           # Reflection contracts; not a completed feature.
-├── utils/                # Workspace, identity, time and shared utilities.
+├── workspace/            # Workspace, user and session paths and their preparation.
+├── utils/                # Identity, time and shared utilities.
 ├── env.py                # Environment initialization.
 ├── log.py                # Agent logging configuration.
 └── version.py            # Package version.
