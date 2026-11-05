@@ -4,6 +4,7 @@
 - 本阶段（T-10 起）的批次都记录在本文件，按时间顺序追加。
 - 2A 阶段及 T-1～T-9 的记录，以及统一的 KD/O 表，仍在 `docs/agent-logs/2026-10/2026-10-25/claude-code-2a-zh.md`；本文件不复制 KD 表。
 - Doctor（T-10B 起）的设计、实现、实验、测试、限制和后续 review 收尾记录在 [claude-code-doctor-zh.md](claude-code-doctor-zh.md)，本文件不再追加 Doctor 的实施过程。
+- 干净机器安装（安装与首次配置第 1 项，2026-11-05 起）的主日志是 [claude-code-install-zh.md](../2026-11-05/claude-code-install-zh.md)；本文件 T-10A 第 10 节、T-10A1 第 4 节中"安装器未做"的结论已合并过去。
 
 ## 批次总览
 

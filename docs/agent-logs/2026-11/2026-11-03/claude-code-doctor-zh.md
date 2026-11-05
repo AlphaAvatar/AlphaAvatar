@@ -3,6 +3,7 @@
 - 分支：`dev/v0.6.9`；日期均为 CST。
 - 从 T-10B 开始，Doctor 的设计、实现、实验、测试、限制以及后续 review 收尾都记录在本文件，按时间顺序追加。
 - 统一的 KD/O 表仍在 `docs/agent-logs/2026-10/2026-10-25/claude-code-2a-zh.md`；T-10A～T-10T3 记录在 [claude-code-t10-zh.md](claude-code-t10-zh.md)。
+- 干净机器安装的主日志是 [claude-code-install-zh.md](../2026-11-05/claude-code-install-zh.md)；T-10B 范围中"不做安装器"的结论和安装集合与 `packages.*` 检查的关系记录在那里。
 
 ## 批次总览
 
