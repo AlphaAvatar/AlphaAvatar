@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any, TypeVar
@@ -40,13 +41,28 @@ from alphaavatar.agents.avatar.provider.schemas import (
 from alphaavatar.agents.avatar.provider.schemas.stream import ModelStreamEvent
 from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
 from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.log.events import log_event
 
 from ..adapters.responses import ResponsesAdapter, continuation_scope
-from .client import ResponsesClient, observe_task
+from .client import ResponsesClient, observe_task, sending
 from .config import OpenAIClientConfig, ResponsesInputConfig
 from .stream import ResponsesDecoder
 
 T = TypeVar("T")
+
+
+logger = logging.getLogger(__name__)
+
+
+def _pictures(payload: dict[str, Any]) -> int:
+    """The pictures an encoded request carries: its ``input_image`` parts."""
+    return sum(
+        part.get("type") == "input_image"
+        for item in payload.get("input") or ()
+        if isinstance(item, dict)
+        for part in (item.get("content") if isinstance(item.get("content"), list) else ())
+        if isinstance(part, dict)
+    )
 
 
 def _diagnostic(value: Any) -> Any:
@@ -124,15 +140,31 @@ class OpenAIResponsesLLM(StreamingLLMBase):
                     self._options,
                     continuation_scope(self._client.scope, self._config.model),
                 )
+                began = asyncio.get_running_loop().time()
                 payload = await self._prepare(lambda: adapter.encode(request))
+                encode_ms = (asyncio.get_running_loop().time() - began) * 1000
                 self.validate_input()
                 try:
-                    raw = await client.responses.create(**payload)
+                    with sending() as sizes:
+                        raw = await client.responses.create(**payload)
                 except Exception as exc:
                     normalized = _sdk_error(exc)
                     if normalized is not None:
                         raise normalized from None
                     raise
+                finally:
+                    # The request as it went out, refused or not, in numbers only: how long
+                    # encoding it took here, the pictures it carries, the body sent.
+                    if sizes:
+                        log_event(
+                            logger,
+                            "model.request_sent",
+                            request_id=request.request_id,
+                            encode_ms=round(encode_ms, 3),
+                            frame_count=_pictures(payload),
+                            request_bytes=sizes[-1],
+                            attempts=len(sizes),
+                        )
             decoder = ResponsesDecoder(
                 request_id=request.request_id,
                 scope=continuation_scope(self._client.scope, self._config.model),

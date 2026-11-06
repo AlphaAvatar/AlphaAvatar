@@ -221,45 +221,77 @@ def test_a_stream_that_cannot_encode_the_separators_gets_ascii(color_capable: ob
     ]
 
 
-def metric(name: str, value: float | None, note: str | None = None) -> Metric:
-    return Metric(name, value, "ms", "start", "end", "boundary", note=note)
+def metric(name: str, value: float | None, note: str | None = None, unit: str = "ms") -> Metric:
+    return Metric(name, value, unit, "start", "end", "boundary", note=note)
 
 
 def diagnosis(*scenarios: ScenarioResult) -> Diagnosis:
-    """Every check passed but the media devices; the session ran these scenarios."""
+    """Every check passed but the media devices; the session ran these rounds."""
+    from alphaavatar.host.doctor.measure import summarize
+
     checks = []
     for spec in CHECKS:
         status = CheckStatus.SKIP if spec.id == "devices.media" else CheckStatus.PASS
         found = scenarios if spec.id == "session.scenarios" else ()
-        checks.append(Check(spec.id, status, f"{spec.id} summary", scenarios=found))
+        summaries = summarize(list(scenarios)) if found else ()
+        checks.append(
+            Check(spec.id, status, f"{spec.id} summary", scenarios=found, summaries=summaries)
+        )
     return Diagnosis(tuple(checks))
 
 
-VISION = ScenarioResult(
-    "voice_vision",
-    ScenarioOutcome.PASSED,
-    "Answered as the task expects",
-    "original",
-    metrics=(
-        metric("first_text", 712.4),
-        metric("first_audio_frame", 1108.0),
-        metric("response_final", 1840.2),
+def vision(at: int, first_text: float) -> ScenarioResult:
+    return ScenarioResult(
+        "voice_vision",
+        ScenarioOutcome.PASSED,
+        "Answered as the task expects",
+        "original",
+        metrics=(
+            metric("first_text", first_text),
+            metric("first_audio_frame", first_text + 400),
+            metric("response_final", first_text + 1100),
+        ),
+        segments=(
+            metric("vad_close", 210.0),
+            metric("tts_request_to_first_pcm", None, "this TTS plugin logs no first PCM"),
+            metric("model_request_frames", 2.0, unit="frames"),
+            metric("model_request_bytes", 1_350_000.0, unit="bytes"),
+        ),
+        round=at,
+    )
+
+
+ROUNDS = (
+    vision(1, 712.4),
+    # Stopped before any audio: what it measured stays, apart from the passed rounds.
+    ScenarioResult(
+        "text",
+        ScenarioOutcome.FAILED,
+        "Stopped at output.audio_frame",
+        "original",
+        blocked_stage="output.audio_frame",
+        cause="TTS refused the request",
+        metrics=(metric("first_text", 6.5), metric("first_audio_frame", None)),
+        round=1,
     ),
-    segments=(
-        metric("vad_close", 210.0),
-        metric("tts_request_to_first_pcm", None, "this TTS plugin logs no first PCM"),
-        metric("selected_frame_age", 92.0),
+    vision(2, 640.0),
+    ScenarioResult(
+        "text",
+        ScenarioOutcome.PASSED,
+        "Answered as the task expects",
+        "original",
+        metrics=(metric("first_text", 5.0), metric("first_audio_frame", 9.0)),
+        round=2,
     ),
-)
-# Stopped before any audio: what was measured stays, the rest is a dash.
-TEXT = ScenarioResult(
-    "text",
-    ScenarioOutcome.FAILED,
-    "Stopped at output.audio_frame",
-    "original",
-    blocked_stage="output.audio_frame",
-    cause="TTS refused the request",
-    metrics=(metric("first_text", 6.5), metric("first_audio_frame", None)),
+    vision(3, 690.0),
+    ScenarioResult(
+        "text",
+        ScenarioOutcome.PASSED,
+        "Answered as the task expects",
+        "original",
+        metrics=(metric("first_text", 7.0), metric("first_audio_frame", 11.0)),
+        round=3,
+    ),
 )
 
 
@@ -267,56 +299,52 @@ def text(width: int, *, interrupted: bool = False, overridden: bool = False) -> 
     out = io.StringIO()
     report = Report(out, width=width)
     prepared = SimpleNamespace(loaded=None)
-    doctor_command._text(
-        report, diagnosis(VISION, TEXT), prepared, "alpha", overridden, interrupted
-    )
+    doctor_command._text(report, diagnosis(*ROUNDS), prepared, "alpha", overridden, interrupted)
     return out.getvalue().splitlines()
 
 
-def test_doctor_shows_figures_side_by_side_or_one_scenario_after_another() -> None:
+def test_doctor_summarizes_each_scenarios_rounds_the_first_apart_the_failed_apart() -> None:
     wide = text(100)
     assert wide[0] == "OK    Diagnostics completed · 14 passed · 1 skipped"
-    start = wide.index("End-to-end latency")
-    assert wide[start + 1 : start + 7] == [
-        "  Metric              voice_vision     text",
-        "  First text                712 ms   6.5 ms",
-        "  First audio frame       1,108 ms        —",
-        "  Response complete       1,840 ms        —",
-        # A dash says why: where the scenario stopped.
-        "  — First audio frame · text: not reached: stopped at output.audio_frame",
-        "  — Response complete · text: not reached: stopped at output.audio_frame",
+    # Each scenario's rounds on one line; a failed round's reason below, once per reason.
+    start = wide.index("Scenarios · 3 rounds each, a session each")
+    assert wide[start + 1 : start + 4] == [
+        "  PASS  voice_vision           3/3 passed · Speech and screen frames in one model request",
+        "  FAIL  text                   2/3 passed · stopped: 1 at output.audio_frame",
+        "        Round 1: cause: TTS refused the request",
     ]
-    # Each scenario's stages, as measured: a stage observed nowhere is a dash, never 0 ms, and
-    # its note says why.
-    start = wide.index("Stage timing · voice_vision")
+    # Each figure: the runtime's first round apart, then the later rounds' samples, median
+    # and range; pictures counted and a size in bytes, as their units say; a figure no round
+    # observed is a dash, its reason below.
+    start = wide.index("Latency · voice_vision · 3 of 3 rounds passed")
     assert wide[start + 1 : start + 5] == [
-        "  Speech end → VAD close                210 ms",
-        "  TTS request → First PCM                    —",
-        "  Selected frame age at model request    92 ms",
-        "  — TTS request → First PCM: this TTS plugin logs no first PCM",
+        "  Metric                       Round 1   n     Median            Range",
+        "  End to end",
+        "    Host first text             712 ms   2     665 ms       640–690 ms",
+        "    First audio frame         1,112 ms   2   1,065 ms   1,040–1,090 ms",
     ]
-    assert "Stage timing · text" not in wide  # It measured no stage.
-    # The failed scenario: where it stopped and why.
-    assert "  FAIL  text                   Stopped at output.audio_frame" in wide
-    assert "        cause: TTS refused the request" in wide
-    assert "  PASS  voice_vision           Speech and screen frames in one model request" in wide
+    assert "    Pictures sent                    2   2          2                2" in wide
+    assert "    Request size                1.4 MB   2     1.4 MB           1.4 MB" in wide
+    assert "  — TTS request → First PCM: this TTS plugin logs no first PCM" in wide
+    # A failed first round is not a sample: its figures stand apart, what it measured kept.
+    start = wide.index("Latency · text · 2 of 3 rounds passed")
+    assert wide[start + 3] == "    Host first text           —   2   6.0 ms   5.0–7.0 ms"
+    start = wide.index("Failed rounds · text")
+    assert wide[start + 1] == (
+        "  Round 1 · stopped at output.audio_frame · measured: Host first text 6.5 ms"
+    )
+    assert "Latency" not in wide and all(line == line.rstrip() for line in wide)
     # The diagnosis run again as JSON; overrides never repeated, only said to be needed.
     assert wide[-3:] == ["Run again as JSON", "  alphaavatar doctor alpha --json", ""]
     assert text(100, overridden=True)[-2] == (
         "  With the same KEY=VALUE overrides, which are not repeated here."
     )
-
-    narrow = text(40)  # Too narrow for both side by side.
-    start = narrow.index("End-to-end latency")
-    assert narrow[start + 1 : start + 9] == [
-        "  voice_vision",
-        "    First text            712 ms",
-        "    First audio frame   1,108 ms",
-        "    Response complete   1,840 ms",
-        "  text",
-        "    First text          6.5 ms",
-        "    First audio frame        —",
-        "    Response complete        —",
+    # Too narrow for the table: each figure on its own lines, in the same words.
+    narrow = text(60)
+    start = narrow.index("Latency · voice_vision · 3 of 3 rounds passed")
+    assert narrow[start + 1 : start + 3] == [
+        "  End to end",
+        "    Host first text: round 1 712 ms · 2 later: median 665",
     ]
     assert text(100, interrupted=True)[0] == "WARN  Interrupted · 14 passed · 1 skipped"
 

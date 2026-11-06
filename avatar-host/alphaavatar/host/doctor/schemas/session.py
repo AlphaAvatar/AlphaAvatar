@@ -70,6 +70,38 @@ class ScenarioResult:
     # Frames Context selected and frames the request carries; published: one of Doctor's.
     frames: tuple[dict[str, str | int | float | bool], ...] = ()
     evidence: tuple[Evidence, ...] = ()
+    round: int | None = None  # 1 for the first after its runtime started, then 2, 3, ...
+    # Each sentence of a spoken prompt: heard, its span, its segment, and where it was lost.
+    sentences: tuple[dict[str, str | int | float | bool | None], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class FigureSummary:
+    """One figure over a scenario's passed rounds: the first round's apart, as its runtime's
+    first turn, then the later rounds' samples, median and range, and their 95th percentile
+    once there are ``P95_SAMPLES`` of them. Failed rounds are not in it."""
+
+    name: str
+    unit: str
+    first: float | None  # Round 1, when it passed and observed it
+    samples: int  # Later passed rounds that observed it
+    median: float | None = None
+    low: float | None = None
+    high: float | None = None
+    p95: float | None = None
+    note: str | None = None  # Why no round observed it
+
+
+@dataclass(frozen=True, slots=True)
+class ScenarioSummary:
+    """One scenario's rounds on one configuration."""
+
+    name: str
+    configuration: str
+    rounds: int
+    passed: int
+    stopped_at: dict[str, int] = field(default_factory=dict)  # Failed rounds, by stage
+    figures: tuple[FigureSummary, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +114,11 @@ class RunnerResult:
     details: tuple[str, ...] = ()
     startup_seconds: float | None = None
     configuration: str = "original"
+    # What it served during the session, as its process summarizes it: calls, and the peak
+    # wait in its queue and the peak execution, in milliseconds.
+    calls: int | None = None
+    queue_wait_max_ms: float | None = None
+    execution_max_ms: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

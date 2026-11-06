@@ -161,6 +161,41 @@ def test_an_existing_bundle_is_planned_from_its_settings_and_refused_what_none_i
     assert home_files() == before and not (package.prefix / "envs").exists()
 
 
+@pytest.mark.parametrize(
+    ("given", "why"),
+    [
+        ({}, "LIVEKIT_URL, LIVEKIT_API_KEY and LIVEKIT_API_SECRET are required"),
+        (
+            {"LIVEKIT_URL": "wss://lk.invalid"},
+            "LIVEKIT_API_KEY and LIVEKIT_API_SECRET are required",
+        ),
+        (
+            {**CREDENTIALS, "LIVEKIT_URL": "ws://lk.invalid"},
+            "Remote LiveKit connections require TLS",
+        ),
+    ],
+    ids=["none", "no key", "no TLS"],
+)
+def test_an_existing_bundle_is_refused_before_installing_without_its_session_credentials(
+    package: environment.Installation, capsys: pytest.CaptureFixture, given: dict, why: str
+) -> None:
+    assert main(["config", "init", "reference", "--avatar-id", "reference"]) == 0
+    capsys.readouterr()
+    before = home_files()
+    environ = {k: v for k, v in os.environ.items() if not k.startswith("LIVEKIT_")} | given
+    with (
+        mock.patch.object(environment.Installation, "running", return_value=package),
+        mock.patch("sys.stdin.isatty", return_value=False),
+        mock.patch.dict(os.environ, environ, clear=True),
+        mock.patch.object(environment, "install") as install,
+    ):
+        assert main(["setup", "reference", "--artifacts", "/ci/run"]) == 1
+    output = capsys.readouterr()
+    assert not install.called and home_files() == before  # Nothing installed nor enabled.
+    assert f"The session transport (livekit) cannot start: {why}" in output.err
+    assert "lk-fictional" not in output.err + output.out  # Named, never shown.
+
+
 def test_an_existing_bundle_is_enabled_only_by_a_successful_install(
     package: environment.Installation, capsys: pytest.CaptureFixture
 ) -> None:
@@ -184,6 +219,7 @@ def test_an_existing_bundle_is_enabled_only_by_a_successful_install(
     with (
         mock.patch.object(environment.Installation, "running", return_value=package),
         mock.patch("sys.stdin.isatty", return_value=False),
+        mock.patch.dict(os.environ, CREDENTIALS),  # As CI exports them
     ):
         with mock.patch.object(environment, "install", failed):
             assert main(["setup", "reference", "--artifacts", "/ci/run"]) == 1

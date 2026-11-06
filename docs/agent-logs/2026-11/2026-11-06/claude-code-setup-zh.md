@@ -9,7 +9,8 @@
 
 | 批次 | 内容 | 日期 | 基线 HEAD | 提交 | 状态 |
 |---|---|---|---|---|---|
-| 交互配置第一轮 | 去掉 `--preset`；`setup` 以 `config init` 的参考配置为起点逐项询问；新增 `setup <bundle>`，按已有 bundle（含编辑）的设置安装、校验、启用，不导入插件；基础包上 `config init` 的下一步改为 `setup <bundle>`；CI 与无人值守改走显式 bundle | 2026-11-06 | `2fc4f398` | 未提交（用户提交） | 待审查；真实服务验收中交互与无人值守 setup 都通过 |
+| 交互配置第一轮 | 去掉 `--preset`；`setup` 以 `config init` 的参考配置为起点逐项询问；新增 `setup <bundle>`，按已有 bundle（含编辑）的设置安装、校验、启用，不导入插件；基础包上 `config init` 的下一步改为 `setup <bundle>`；CI 与无人值守改走显式 bundle | 2026-11-06 | `2fc4f398` | 用户已提交（`38fad3c3`） | 部分被第二轮修正：只写模型名的 provider 任务、LiveKit 凭据 |
+| 交互配置第二轮 | `setup <bundle>` 的两处收尾：只写 `model` 的 provider 任务按 `ProviderTaskConfig` 默认的 `kind`、`backend` 计入安装计划；给定 bundle 在安装前离线校验所选 LiveKit 后端的凭据。都在只装基础包、空环境的子进程里验证 | 2026-11-07 | `38fad3c3` | 未提交（用户提交） | 待审查 |
 
 ## 历史记录（合并来源）
 
@@ -136,3 +137,31 @@
 1. **`setup <bundle>` 的确认**：有终端时仍列计划并确认；无终端（CI）时直接安装。如果希望有终端时也能免确认，需要另加选项，本轮没加。
 2. **默认开关按开启计**：设置里没写的开关算开启，规划可能多一个包，不会少。
 3. **`config check` 的提示**：缺包时仍写 `` `alphaavatar setup` installs it ``，没有带上 bundle 名；这一行由能力检查生成，不知道当前命令选的 bundle。
+
+---
+
+## 交互配置第二轮：schema 默认的 provider 任务与 LiveKit 凭据（基线 `38fad3c3`）
+
+依据：基于 `38fad3c3` 的要求，「`setup <bundle>` 的两个问题单独收尾」：安装计划要处理依赖 schema 默认 `backend` 和 `provider` 的模型任务；现有 bundle 启用前要离线校验所选 LiveKit 后端的必需凭据；用只装了基础包的环境验证，避免已有依赖和环境变量掩盖问题。所有改动在未暂存的工作区。
+
+### 1. 只写模型名的 provider 任务
+
+- `start` 按插件自己的 schema 找 `ProviderTaskConfig`；基础包里没有插件，`bundle_requirements` 只能读原始设置。原规则要求字典里写了 `provider` 或 `backend` 才算任务，于是 `loop.init_config.model: {model: gpt-4o}` 这类只写模型名、其余用默认值的任务被漏掉，计划里缺它的默认后端。
+- 现在：插件设置里带字符串 `model` 的字典就是 provider 任务（其他设置的模型都用 `name` 命名，不会误判），缺的 `kind`、`backend` 取 `ProviderTaskConfig` 自己的默认值（`llm`、`langchain`），不再写死。
+- 测试：
+  - `test_choices.py` 的 profile 编辑新增「a task on the schema's defaults」，与装好后 `start` 的解析结果对拍；
+  - 新增 `test_a_bare_base_plans_a_task_left_to_the_schemas_defaults`：在拦截全部 `alphaavatar.plugins.*` 导入、环境只有 `PATH` 和 `HOME` 的子进程里规划；catalog 去掉 `provider.llm 'langchain'` 后，必须报出 `loop.init_config.model: provider.llm 'langchain'`。默认后端的需求和向量库 embedding 的需求是同一个包，只比需求集合区分不出新旧规则，所以用这个方式。
+
+### 2. LiveKit 凭据
+
+- `sessions.factory.check_session_credentials(config, env)`：按 `start` 读取的方式离线检查所选会话后端的凭据，不联系服务器，错误里只出现变量名。LiveKit：三个变量都要有，远端地址必须是 `wss://`（本机除外）。`LiveKitCredentials.from_env` 改为接受显式环境，并逐个说出缺了哪些变量（原先 URL 为空时报的是「must not contain credentials…」，容易误解）。
+- `setup <bundle>` 在第 02 步、安装之前检查，环境里已合并 `.env` 与已存凭据；不通过就报 `The session transport (livekit) cannot start: …`，退出 1，什么都不装、不启用。
+- 测试：
+  - `test_setup.py`：缺三个、缺两个、远端非 TLS 三种情况都在安装前拒绝，输出里没有凭据值；原有「只有安装成功才启用」的测试补上虚构的 LiveKit 凭据（CI 会导出它们）；
+  - `test_choices.py` 的裸基础包子进程同时报告离线凭据检查：空环境时说出三个变量，给出虚构值后通过。
+
+### 3. 验证
+
+- 全量 511 项通过，拦截已移除的包后也是 511 项；静态检查同 Doctor 日志同一轮第 10 节。
+- 变异 H1（只写模型名的任务不计入）、H2（不校验 LiveKit 凭据）都被抓到（`scratchpad/evidence8/mutants9.log`）。
+- 构建自检不变：参考 bundle 105 个包、514 MB，本机无模型 85 个包、212 MB；沙箱里的 `config init` → `setup <bundle>` → `config check` 照常通过（录制使用虚构的 LiveKit 凭据）。

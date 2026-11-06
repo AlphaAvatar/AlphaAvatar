@@ -418,6 +418,7 @@ class LogTimings(logging.Handler):
             "model.started",
             "model.first_event",
             "model.first_text",
+            "model.request_sent",
             "run.finished",
         )
     )

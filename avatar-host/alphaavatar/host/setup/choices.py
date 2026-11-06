@@ -215,16 +215,23 @@ def _on(settings: Any, *path: str) -> bool:
 
 def _tasks(value: Any, location: str) -> Iterator[tuple[str, str, str]]:
     """Each provider task in a plugin's settings, as start finds them: its kind, its backend
-    and where it is; a part switched off has none."""
-    from alphaavatar.agents.configs.plugins.foundation.provider_config import DEFAULT_BACKEND
+    and where it is; a part switched off has none.
+
+    A task is a mapping with a model name, as ``ProviderTaskConfig`` requires it; what it
+    leaves out, its kind and backend, takes that schema's defaults. Other settings name a
+    model by ``name``, never by a string ``model``.
+    """
+    from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
 
     if isinstance(value, dict):
         if value.get("enabled") is False:
             return
-        if isinstance(value.get("model"), str) and ("provider" in value or "backend" in value):
+        if isinstance(value.get("model"), str):
+            fields = ProviderTaskConfig.model_fields
+            kind = value.get("kind", fields["kind"].default)
             yield (
-                str(value.get("kind", "llm")),
-                str(value.get("backend", DEFAULT_BACKEND)),
+                str(getattr(kind, "value", kind)),
+                str(value.get("backend", fields["backend"].default)),
                 location,
             )
             return

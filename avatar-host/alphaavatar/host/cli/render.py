@@ -251,7 +251,7 @@ class Report:
             cells = (" " * GAP).join(
                 value.rjust(width) for value, width in zip(values, widths, strict=True)
             )
-            return " " * indent + label.ljust(first) + cells
+            return (" " * indent + label.ljust(first) + cells).rstrip()
 
         if header:
             self.write(line(header[0], header[1:]))

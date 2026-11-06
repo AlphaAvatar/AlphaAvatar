@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import importlib
 import json
 import os
 import socket
@@ -98,30 +99,45 @@ class SpeechRunner(InferenceRunner):
 
 
 class EndpointRunner(InferenceRunner):
-    """Smart Turn's layout: every assessed window ends its turn. It starts only offline."""
+    """Smart Turn's layout: every assessed window ends its turn."""
 
     INFERENCE_METHOD = "alphaavatar.router.turn_taking.smart_turn_v3"
     REPLICABLE = True
-
-    def initialize(self) -> None:
-        from alphaavatar.agents.utils.files.model.model_files import models_offline
-
-        if not models_offline():
-            raise RuntimeError("Model downloads are allowed in this runner process")
 
     def run(self, data: bytes) -> bytes | None:
         return np.asarray([1.0], dtype=np.float32).tobytes()
 
 
-class DownloadRunner(EndpointRunner):
-    """Smart Turn's layout, its model in the cache only once downloads are allowed: missing
-    offline, fetched otherwise, as a first run finds it."""
+class CachedModelRunner(EndpointRunner):
+    """Smart Turn's layout, its weights a file in the configured model cache: loaded when it
+    is there, fetched into it when it is not, as start fetches a missing model, unless this
+    machine switches downloads off. Each start says which in the test's ``model.log``."""
+
+    WEIGHTS = 64_000  # Bytes a fetch adds to the cache
 
     def initialize(self) -> None:
-        from alphaavatar.agents.utils.files.model.model_files import models_offline
+        from alphaavatar.agents.utils.files.model.model_files import ModelNotCached, models_offline
 
-        if models_offline():
-            raise FileNotFoundError("The turn-taking model is not in the cache")
+        files = Path(json.loads(os.environ[SPEC])["files"])
+        target = Path(self.launch.models_dir) / "doctor" / "weights.bin"
+        if target.is_file():
+            fetched = "cache"
+        elif models_offline():
+            raise ModelNotCached("The turn-taking model is not in the cache")
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(bytes(self.WEIGHTS))
+            fetched = "download"
+        with (files / "model.log").open("a") as log:
+            log.write(f"{fetched}\n")
+
+
+class MissingFileRunner(EndpointRunner):
+    """Smart Turn's layout, reading a file its own settings name, which is not there: a missing
+    file that no model download would bring."""
+
+    def initialize(self) -> None:
+        raise FileNotFoundError("Turn-taking thresholds file not found: /nowhere/thresholds.json")
 
 
 class StuckRunner(InferenceRunner):
@@ -493,8 +509,8 @@ def child(*args: object) -> None:
     spec = json.loads(os.environ[SPEC])
     files = Path(spec["files"])
     (files / "pid").write_text(str(os.getpid()))
-    with open(files / "runs.jsonl", "a") as runs:  # Each run's bound on its runners' start
-        runs.write(json.dumps({"downloads": args[7], "runners": args[6].session}) + "\n")
+    with open(files / "runs.jsonl", "a") as runs:  # Each run's rounds and runtime start bound
+        runs.write(json.dumps({"rounds": args[7], "runners": args[6].runners}) + "\n")
     _deny_network(files / "network", spec.get("loopback"))
     install(spec, files)
     from alphaavatar.host.doctor import process
@@ -554,15 +570,19 @@ def install(spec: dict, files: Path) -> None:
 
         async def deaf(*args: object, limits: object, stop: object, **kwargs: object):
             print("stand-in session ignoring its stop", file=sys.stderr, flush=True)
-            endless = session.Budget(3600.0, 3600.0, 3600.0)
+            endless = session.Budget(3600.0, 3600.0, 3600.0, 3600.0)
             return await diagnose(*args, limits=endless, stop=asyncio.Event(), **kwargs)
 
         session.diagnose_session = deaf
 
 
 def _runner(name: str) -> type[InferenceRunner]:
+    """A runner by its name here or among the samples, or by ``module:name`` anywhere."""
     import inference_runner_samples
 
+    if ":" in name:
+        module, _, attribute = name.partition(":")
+        return getattr(importlib.import_module(module), attribute)
     return getattr(sys.modules[__name__], name, None) or getattr(inference_runner_samples, name)
 
 

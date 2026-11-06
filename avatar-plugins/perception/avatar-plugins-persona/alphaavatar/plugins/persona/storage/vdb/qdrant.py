@@ -34,6 +34,7 @@ from alphaavatar.agents.persona.enums import VectorRunnerOP
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import qdrant
 from alphaavatar.agents.utils.vdb.config import vdb_embeddings, vdb_requirement
+from alphaavatar.agents.utils.vdb.probe import probe_dimension
 
 from ...namespace import NAMESPACE
 from ...processors.face.analysis_runner import FaceAnalysisRunner
@@ -345,8 +346,7 @@ class QdrantRunner(InferenceRunner):
         # init profiler
         self._profiler_embeddings = self._get_profiler_embeddings(config)
         self._ensure_collection(
-            self._profiler_collection_name,
-            len(self._profiler_embeddings.embed_query("dimension-probe")),
+            self._profiler_collection_name, probe_dimension(self._profiler_embeddings)
         )
         self._profiler_vector_store = QdrantVectorStore(
             client=self._client,

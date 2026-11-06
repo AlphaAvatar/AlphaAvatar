@@ -212,8 +212,10 @@ def test_doctor_selects_and_loads_configurations_as_config_check_does(
         # Without authorization nothing external is reached, and nothing is shown as passing.
         assert [checks[check]["status"] for check in (*UNVERIFIED, *SESSION)] == ["SKIP"] * 7
         assert "host.doctor.external_services=true`" in checks["session.start"]["action"]
-        # Starting these runners would embed with the vector stores' provider: not started.
-        assert "vector store embeddings" in checks["models.runners"]["summary"]
+        # Not authorized: nothing started, not even a runner.
+        assert checks["models.runners"]["summary"] == (
+            "Not started: the diagnosis did not start; see session.start"
+        )
     # The file's remote vector store and MCP server are named, though not contacted; the
     # store also holds real Avatar data, which Doctor never writes, authorized or not.
     services = {s["name"]: s for s in checks["services.external"]["services"]}

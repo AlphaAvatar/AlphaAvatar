@@ -13,6 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from .config import SessionConfig
@@ -27,6 +28,15 @@ def validate_session_config(config: SessionConfig) -> None:
     from .livekit.config import LiveKitConfig
 
     LiveKitConfig.model_validate(config.init_config)
+
+
+def check_session_credentials(config: SessionConfig, env: Mapping[str, str]) -> None:
+    """The selected backend's credentials in ``env``, as start would read them: present and
+    well formed. Offline: nothing is contacted, and only their names appear in an error."""
+    validate_session_config(config)
+    from .livekit.config import LiveKitCredentials
+
+    LiveKitCredentials.from_env(env)
 
 
 def create_session_backend(config: SessionConfig) -> SessionBackend:

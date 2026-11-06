@@ -34,6 +34,11 @@ _TRUE_VALUES = {"1", "true", "yes", "on"}
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
 
+class ModelNotCached(FileNotFoundError):
+    """A model file the cache lacks, or holds invalid, while downloads are off: what a run
+    that may download fetches. Any other missing file is not one."""
+
+
 def models_offline() -> bool:
     return any(
         os.getenv(name, "").strip().lower() in _TRUE_VALUES
@@ -137,7 +142,7 @@ def resolve_hf_file(
             _atomic_json(marker, {"source": identity, "sha256": expected or sha256_file(path)})
             return str(path)
         if models_offline():
-            raise FileNotFoundError(
+            raise ModelNotCached(
                 f"Offline model is missing or invalid: {repo_id}@{revision}/{filename}"
             )
 
@@ -180,7 +185,7 @@ def resolve_url_file(
         if expected is not None and _valid(target, expected, size):
             return target
         if models_offline():
-            raise FileNotFoundError(f"Offline model is missing or invalid: {target}")
+            raise ModelNotCached(f"Offline model is missing or invalid: {target}")
 
         fd, name = tempfile.mkstemp(prefix=f".{filename}.", suffix=".part", dir=root)
         temporary = Path(name)

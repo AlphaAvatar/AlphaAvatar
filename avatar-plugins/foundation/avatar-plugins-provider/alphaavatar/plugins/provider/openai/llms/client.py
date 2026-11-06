@@ -17,6 +17,9 @@ import asyncio
 import hashlib
 import json
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
 import httpx
@@ -25,6 +28,28 @@ from alphaavatar.agents.avatar.provider.errors import ModelRequestError
 from alphaavatar.core.cleanup import wait_for_cleanup
 
 from .config import OpenAIClientConfig
+
+# The size of each request body the transport sends, for the caller in this context.
+_SENT: ContextVar[list[int | None] | None] = ContextVar("responses_sent", default=None)
+
+
+async def _record_sent(request: httpx.Request) -> None:
+    if (sizes := _SENT.get()) is not None:
+        try:
+            sizes.append(len(request.content))  # The body as the SDK encoded it, sent as is.
+        except httpx.RequestNotRead:
+            sizes.append(None)  # A streamed body: its size is not known up front.
+
+
+@contextmanager
+def sending() -> Iterator[list[int | None]]:
+    """The size of each request body sent within: one per attempt, the SDK's retries too."""
+    sizes: list[int | None] = []
+    token = _SENT.set(sizes)
+    try:
+        yield sizes
+    finally:
+        _SENT.reset(token)
 
 
 def observe_task(task: asyncio.Task[Any]) -> None:
@@ -63,7 +88,9 @@ class ResponsesClient:
             raise ModelRequestError("OpenAI API key is missing", code="missing_api_key")
         identity = [config.base_url, config.organization, config.project, key]
         self._scope = hashlib.sha256(json.dumps(identity).encode()).hexdigest()
-        self._transport = httpx.AsyncClient(proxy=config.proxy, timeout=self._timeout)
+        self._transport = httpx.AsyncClient(
+            proxy=config.proxy, timeout=self._timeout, event_hooks={"request": [_record_sent]}
+        )
         self._client = AsyncOpenAI(
             api_key=key,
             base_url=config.base_url,

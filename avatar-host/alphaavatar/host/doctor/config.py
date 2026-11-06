@@ -17,10 +17,15 @@ from pydantic import BaseModel, ConfigDict
 
 
 class DoctorConfig(BaseModel):
-    """What Doctor's diagnostic session may use beyond this machine."""
+    """What Doctor's runtime diagnosis may do, when no one at a terminal is asked."""
 
     model_config = ConfigDict(extra="forbid")
 
-    # The configured external services, some billed per call: model, speech, embeddings,
-    # vector stores and tools. Off: Doctor reports the stages that need them as untested.
+    # The runtime diagnosis: the runtime started as start starts it, missing model files
+    # downloaded, and the configured services called, some billed per call: model, speech,
+    # embeddings, vector stores and tools. Off: only the static checks run, unless a person
+    # at a terminal agrees.
     external_services: bool = False
+    # The remote vector stores this configuration names hold test data Doctor may write.
+    # Off: a configuration with one is not diagnosed at runtime, its real data unprotected.
+    test_stores: bool = False

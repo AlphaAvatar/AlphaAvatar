@@ -35,6 +35,8 @@ from alphaavatar.host.doctor import samples, session
 from alphaavatar.host.doctor.doctor import _external
 from alphaavatar.host.doctor.transport import LogRecord, SourceTimeline
 
+THIRD_PARTY = Path(__file__).parents[1] / "fixtures" / "thirdparty"
+
 
 def load(tmp_path: Path, **sections: object):
     value = {"application": {"home": str(tmp_path / "home")}, "avatar": {"id": "isolated"}}
@@ -71,7 +73,7 @@ def test_local_stores_move_into_the_workspace_and_remote_ones_are_never_written(
     assert not session.starts(config, names)
 
 
-def test_what_doctor_does_not_ship_needs_authorization(
+def test_nothing_starts_unauthorized_whatever_its_runners_and_their_calls_are_named(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from alphaavatar.plugins.voice.vad import SileroVADPlugin
@@ -79,12 +81,6 @@ def test_what_doctor_does_not_ship_needs_authorization(
     doubles.resolvable(
         monkeypatch, (AvatarModule.MEMORY, "custom"), (AvatarModule.PERSONA, "custom")
     )
-    config = load(tmp_path, memory={"plugin": "custom"}, persona={"plugin": "custom"})
-    found = dict(_external(config))
-    assert found["custom memory 'custom'"] == "custom"
-    names = list(found)
-    assert session.blocked(config, names).startswith("not authorized: ")
-    # A runner from elsewhere may reach anything while it starts: not started unauthorized.
     voice = {"vad": {"plugin": "silero"}, "stt": {"plugin": None}, "tts": {"plugin": None}}
     router = {"init_config": {"turn_taking": {"enabled": False}}}
     config = load(
@@ -93,14 +89,42 @@ def test_what_doctor_does_not_ship_needs_authorization(
         router=router,
         **{k: {"plugin": "custom"} for k in ("memory", "persona")},
     )
-    assert session.starts(config, names)  # Silero alone starts offline, unauthorized.
-    monkeypatch.setattr(
-        SileroVADPlugin, "inference_runners", lambda self, config: (doubles.SpeechRunner,)
-    )
-    assert session.start_services(config) == [
-        "custom runners (alphaavatar.voice.vad.silero), external access unknown"
-    ]
-    assert not session.starts(config, names)
+    found = dict(_external(config))
+    assert found["custom memory 'custom'"] == "custom"
+    names = list(found)
+    assert session.blocked(config, names).startswith("not authorized: ")
+    # Silero alone, a stand-in, or a third-party runner in the plugins' own namespace: none
+    # starts before the diagnosis is authorized, its module path vouching for nothing.
+    monkeypatch.syspath_prepend(str(THIRD_PARTY))
+    from alphaavatar.plugins.doctor_thirdparty.runner import ThirdPartyRunner
+
+    for runner in (None, doubles.SpeechRunner, ThirdPartyRunner):
+        if runner is not None:
+            monkeypatch.setattr(
+                SileroVADPlugin, "inference_runners", lambda self, config, r=runner: (r,)
+            )
+        assert not session.starts(config, names)
+        assert session.starts(
+            session.derive(config, {"host.doctor.external_services": True}), names
+        )
+    # What runners say they call as they start is listed for the one question: a vector
+    # store's embeddings, by the runner that sends its probe.
+    assert session.start_services(config) == []
+    stores = load(tmp_path)
+    assert "embeddings as alphaavatar.memory.vdb.lancedb starts" in session.start_services(stores)
+
+
+def test_a_remote_store_blocks_the_diagnosis_unless_the_configuration_names_it_a_test_store(
+    tmp_path: Path,
+) -> None:
+    qdrant = {"vdb_config": {"url": "http://qdrant.invalid:6333"}}
+    config = load(tmp_path, memory=qdrant, host={"doctor": {"external_services": True}})
+    assert session.unisolated(config) == ["memory's Qdrant store"]
+    assert session.blocked(config, []).startswith("real Avatar data cannot be isolated")
+    # Named a test store: written by the diagnosis, and said so in its report.
+    tested = session.derive(config, {"host.doctor.test_stores": True})
+    assert session.unisolated(tested) == [] and session.blocked(tested, []) is None
+    assert session.remote_stores(tested) == ["memory's Qdrant store"]
 
 
 def test_vision_off_is_a_camera_less_device_and_drops_what_only_vision_needs(

@@ -68,6 +68,8 @@ _BUILT_IN = {
 
 
 # Stable identifiers, in report order.
+ROUNDS = 5  # Each scenario's runs by default, each in a session of its own
+MAX_ROUNDS = 50
 CHECKS = (
     CheckSpec("system.platform", "Operating system and the POSIX local socket API"),
     CheckSpec("python.version", "Python interpreter against the versions AlphaAvatar supports"),
@@ -97,15 +99,19 @@ async def diagnose(
     *,
     read_env: Callable[[], Settings | None] | None = None,
     stop: asyncio.Event | None = None,
+    rounds: int = ROUNDS,
 ) -> Report:
     """Every check in ``CHECKS`` order; one that cannot complete is reported as FAIL.
 
     ``target`` and ``overrides`` mean what they mean for ``config check``. ``read_env``, if
     given, loads the environment file first, as ``start`` does; its failure is reported.
-    Setting ``stop`` interrupts the diagnostic session: what runs is closed and reported, and
-    the rest is reported as not run. Cancelling this call also closes what runs first.
+    Each scenario runs ``rounds`` times. Setting ``stop`` interrupts the diagnosis: what runs
+    is closed and reported, and the rest is reported as not run. Cancelling this call also
+    closes what runs first.
     """
-    diagnosis = await asyncio.to_thread(prepare, target, overrides, read_env=read_env)
+    diagnosis = await asyncio.to_thread(
+        prepare, target, overrides, read_env=read_env, rounds=rounds
+    )
     return await diagnosis.run(stop=stop) if diagnosis.starts else diagnosis.report()
 
 
@@ -114,10 +120,13 @@ def prepare(
     overrides: Sequence[str] = (),
     *,
     read_env: Callable[[], Settings | None] | None = None,
+    rounds: int = ROUNDS,
 ) -> Diagnosis:
     """The static checks, without an event loop: opening nothing, not even a local socket."""
+    if not 1 <= rounds <= MAX_ROUNDS:
+        raise ValueError(f"rounds must be between 1 and {MAX_ROUNDS}")
     checks, loaded = _static(target, overrides, read_env)
-    return Diagnosis(checks, loaded, tuple(overrides))
+    return Diagnosis(checks, loaded, tuple(overrides), rounds)
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +136,7 @@ class Diagnosis:
     checks: dict[str, Check]
     loaded: tuple[ApplicationConfig, ConfigSource] | None
     overrides: tuple[str, ...]
+    rounds: int = ROUNDS  # How many times each scenario runs, each in a session of its own
 
     @property
     def _planned(self) -> bool:
@@ -134,7 +144,7 @@ class Diagnosis:
 
     @property
     def starts(self) -> bool:
-        """Whether ``run`` starts a session or runners; ``report`` suffices otherwise."""
+        """Whether ``run`` starts the runtime; ``report`` suffices otherwise."""
         from .session import starts
 
         return self._planned and _safe_starts(
@@ -142,18 +152,32 @@ class Diagnosis:
         )
 
     @property
-    def unauthorized(self) -> tuple[str, ...]:
-        """What the runtime tests would reach beyond this machine without authorization:
-        empty when they reach nothing, are authorized, or cannot run for another reason."""
-        from .session import start_services, unisolated
+    def asks(self) -> bool:
+        """Whether the diagnosis waits for a person's consent: it could run, and the
+        configuration does not authorize it already."""
+        from .session import unisolated
 
         if not self._planned:
-            return ()
+            return False
         config = self.loaded[0]
-        if config.host.doctor.external_services or unisolated(config):
-            return ()
+        return not config.host.doctor.external_services and not unisolated(config)
+
+    @property
+    def services(self) -> tuple[str, ...]:
+        """What the diagnosis calls: the services the configuration names, and what its
+        runners call as they start."""
+        from .session import start_services
+
+        config = self.loaded[0]
         found = [name for name, _ in _external(config)]
-        return tuple(dict.fromkeys([*found, *start_services(config)]))
+        return tuple(dict.fromkeys([*found, *_safely_listed(lambda: start_services(config))]))
+
+    @property
+    def scenarios(self) -> tuple[tuple[str, str], ...]:
+        """The scenarios it runs, each ``rounds`` times: names, and what each shows."""
+        from .session import plan
+
+        return tuple((task.name, task.covers) for task in plan(self.loaded[0]).tasks)
 
     def authorized(self) -> Diagnosis:
         """The same configuration snapshot, its external services authorized: what a person
@@ -182,17 +206,16 @@ class Diagnosis:
                 )
         return self._finish(checks)
 
-    async def run(self, *, stop: asyncio.Event | None = None, downloads: bool = False) -> Report:
-        """The static checks with the diagnostic session's, from one configuration snapshot:
-        what was authorized is what the diagnostic process starts. Its runners start from the
-        model cache alone, unless ``downloads``."""
+    async def run(self, *, stop: asyncio.Event | None = None) -> Report:
+        """The static checks with the diagnosis's, from one configuration snapshot: what was
+        authorized is what the diagnostic process starts, as start would start it."""
         from . import process
 
         config, source = self.loaded
         checks = dict(self.checks)
         try:
             checks |= await process.diagnose(
-                config, source, _external(config), stop=stop or asyncio.Event(), downloads=downloads
+                config, source, _external(config), stop=stop or asyncio.Event(), rounds=self.rounds
             )
         except Exception as error:
             # Whatever ran is closed already; the report still names what could not complete.
@@ -222,19 +245,12 @@ class Diagnosis:
         return _report(checks, self.loaded)
 
 
-def missing_models(report: Report) -> tuple[str, ...]:
-    """The runners that did not start because their model files are not in the cache: what
-    a run allowed to download would fetch first."""
-    for check in report.checks:
-        if check.id == "models.runners":
-            return tuple(
-                runner.method
-                for runner in check.runners
-                # A runner process reports why it failed in its details: the start wraps it.
-                if runner.status == CheckStatus.FAIL
-                and any("FileNotFoundError" in line for line in runner.details)
-            )
-    return ()
+def _safely_listed(list_them: Callable[[], list[str]]) -> list[str]:
+    """What a listing finds, or nothing when it cannot plan; the report names why."""
+    try:
+        return list_them()
+    except Exception:
+        return []
 
 
 def _safe_starts(decide: Callable[[], bool]) -> bool:
@@ -261,6 +277,12 @@ def _static(
             CheckStatus.SKIP,
             "Not verified: the diagnostic session uses its own samples and opens no microphone, "
             "camera or player",
+            (
+                # Every figure ends at the Host's output: what comes after it is not measured.
+                "LiveKit transport: not measured; the samples end at the Host's output",
+                "client playback: not measured; no client takes part",
+                "physical devices: not opened; the samples stand in for them",
+            ),
             action="Join a dev session from a client to try its devices",
         ),
     }

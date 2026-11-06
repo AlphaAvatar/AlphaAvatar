@@ -292,3 +292,105 @@ def test_a_session_without_audio_output_says_so_for_each_audio_figure() -> None:
             None,
             "no audio output in this session",
         )
+
+
+def spoken(segments: list[tuple[int, int, str | None]], transcript: str, **extra) -> object:
+    """The two-sentence question's turn, from its segments: (start ms, end ms, STT outcome),
+    its committed transcript and any further trace records; its Turn chains the first."""
+    from alphaavatar.host.doctor.transport import SourceTimeline
+
+    records = []
+    for index, (start, end, outcome) in enumerate(segments):
+        segment = f"seg-{index}"
+        records.append(
+            trace(end, "perception.speech_closed", 10 * index + 1, segment_id=segment)
+            | {"start_time_ns": start * MS, "end_time_ns": end * MS}
+        )
+        if outcome is not None:
+            records.append(
+                trace(end + 50, "stt.terminal", 10 * index + 2, segment_id=segment, outcome=outcome)
+            )
+    # The Turn: its decision joins the first segment's candidate.
+    records += [
+        trace(4000, "candidate.segment", 90, candidate_id="cand-0", segment_id="seg-0"),
+        trace(4001, "candidate.decision", 91, candidate_id="cand-0", decision_id="d-0"),
+        trace(4002, "turn.committed", 92, turn_id="turn-1", decision_id="d-0", input_id="input-1"),
+        *extra.pop("trace", ()),
+    ]
+    logs = [
+        LogRecord(
+            4002 * MS, "input.committed", {"session_id": "s", "turn_id": "turn-1"}, transcript
+        )
+    ]
+    return TurnObservation(
+        task=samples.VOICE,
+        configuration="original",
+        session_id="s",
+        start_ns=3140 * MS,
+        timeline=SourceTimeline(started_ns=0, voiced_end_ns=3140 * MS),
+        turn_id="turn-1",
+        records=[],
+        logs=logs,
+        trace=records,
+        identity=identity,
+        audio_output=True,
+        **extra,
+    )
+
+
+FIRST = "What is two plus three?"
+
+
+def test_a_sentence_missing_from_the_transcript_is_placed_where_it_was_lost() -> None:
+    # The recording's two sentences: about 0.22–1.52 s and 1.76–3.14 s.
+    assert samples.speech("sum_question").spans == ((0.22, 1.52), (1.76, 3.14))
+
+    def lost(observation) -> list[tuple[int, str | None, str | None]]:
+        found = scenario(observation).sentences
+        return [(s["index"], s["lost"], s["why"]) for s in found if not s["heard"]]
+
+    # No segment closed over the second sentence's sound: VAD lost it.
+    assert lost(spoken([(200, 1600, "final_text")], FIRST)) == [
+        (2, "vad", "no speech segment covered its sound")
+    ]
+    # One segment held both, and its final the first alone: STT lost it.
+    [(index, layer, why)] = lost(spoken([(200, 3200, "final_text")], FIRST))
+    assert (index, layer) == (2, "stt") and "holds another sentence and leaves this one out" in why
+    # Its own segment closed, and got no final.
+    found = spoken([(200, 1600, "final_text"), (1700, 3200, "closed_without_final")], FIRST)
+    assert lost(found) == [(2, "stt", "its segment's STT ended closed_without_final")]
+    # Its own segment's final came after the Turn committed: the Turn left it out.
+    rejected = trace(
+        4100, "candidate.transcript_rejected", 95, segment_id="seg-1", reason="retired_segment"
+    )
+    found = spoken([(200, 1600, "final_text"), (1700, 3200, "final_text")], FIRST, trace=[rejected])
+    assert lost(found) == [
+        (2, "turn", "its STT final came for a retired segment: the Turn had committed")
+    ]
+    # Its final came, not rejected, but to another candidate than this Turn's.
+    found = spoken([(200, 1600, "final_text"), (1700, 3200, "final_text")], FIRST)
+    assert lost(found) == [(2, "turn", "its STT final went to another candidate, not this Turn")]
+    # Both heard: nothing lost, each sentence matched to a segment of its own.
+    both = spoken([(200, 1600, "final_text"), (1700, 3200, "final_text")], samples.VOICE.prompt)
+    found = scenario(both).sentences
+    assert [s["heard"] for s in found] == [True, True]
+    assert [s["span_ms"] for s in found] == [[220, 1520], [1760, 3140]]
+    assert all(s["segment"] and s["stt"] == "final_text" for s in found)
+
+
+def test_the_95th_percentile_waits_for_enough_samples() -> None:
+    from alphaavatar.host.doctor.enums import ScenarioOutcome
+    from alphaavatar.host.doctor.measure import P95_SAMPLES, summarize
+    from alphaavatar.host.doctor.schemas import Metric, ScenarioResult
+
+    def run(at: int, value: float) -> ScenarioResult:
+        metric = Metric("first_text", value, "ms", "a", "b", "c")
+        return ScenarioResult(
+            "text", ScenarioOutcome.PASSED, "ok", "original", metrics=(metric,), round=at
+        )
+
+    few = summarize([run(at, float(at)) for at in range(1, P95_SAMPLES + 1)])[0].figures[0]
+    # Round 1 apart: the later rounds are one short of the threshold.
+    assert (few.first, few.samples, few.p95) == (1.0, P95_SAMPLES - 1, None)
+    many = summarize([run(at, float(at)) for at in range(1, P95_SAMPLES + 2)])[0].figures[0]
+    assert (many.samples, many.low, many.high, many.p95) == (P95_SAMPLES, 2.0, 21.0, 20.0)

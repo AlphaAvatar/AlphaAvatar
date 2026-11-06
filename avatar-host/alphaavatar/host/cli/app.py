@@ -73,14 +73,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     doctor = commands.add_parser(
         "doctor",
         help="Diagnose the installation and a configuration: static checks, then the runtime "
-        "tests on fixed samples (external services only once agreed, or authorized)",
+        "diagnosis on fixed samples, each scenario in rounds (once agreed, or authorized)",
     )
     configured(doctor, json_output=True)
     doctor.add_argument("--list", action="store_true", help="List the checks without running")
     doctor.add_argument(
         "--no-metrics",
         action="store_true",
-        help="Static checks alone: no runtime test, no runner, nothing contacted",
+        help="Static checks alone: no runtime diagnosis, no runner, nothing contacted",
+    )
+    doctor.add_argument(
+        "--rounds",
+        type=int,
+        default=5,
+        metavar="N",
+        help="How many times each scenario runs, each in a session of its own (default 5)",
     )
 
     args = parser.parse_args(argv)
@@ -92,6 +99,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if "=" not in item or not item.partition("=")[0]:
             parser.error("Configuration overrides must use KEY=VALUE")
 
+    if args.command == "doctor" and not 1 <= args.rounds <= 50:
+        parser.error("--rounds takes 1 to 50")
     if args.command == "setup":
         if args.bundle is not None and (args.name or args.avatar_id):
             parser.error("--name and --avatar-id name a new bundle; an existing one has both")
@@ -113,6 +122,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             as_json=args.json,
             listing=args.list,
             metrics=not args.no_metrics,
+            rounds=args.rounds,
         )
 
     from .commands import config as configuration

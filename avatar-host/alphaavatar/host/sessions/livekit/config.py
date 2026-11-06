@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
@@ -71,9 +72,15 @@ class LiveKitCredentials:
     api_secret: str = field(repr=False)
 
     @classmethod
-    def from_env(cls) -> LiveKitCredentials:
-        url = websocket_url(os.getenv("LIVEKIT_URL", ""))
-        key, secret = os.getenv("LIVEKIT_API_KEY", ""), os.getenv("LIVEKIT_API_SECRET", "")
-        if not key.strip() or not secret.strip():
-            raise ValueError("LIVEKIT_API_KEY and LIVEKIT_API_SECRET are required")
-        return cls(url=url, api_key=key, api_secret=secret)
+    def from_env(cls, env: Mapping[str, str] | None = None) -> LiveKitCredentials:
+        """The credentials start reads, from ``env`` (the process environment by default);
+        checked offline, never contacting the server."""
+        env = os.environ if env is None else env
+        names = ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
+        if missing := [name for name in names if not env.get(name, "").strip()]:
+            listed = (
+                ", ".join(missing[:-1]) + " and " + missing[-1] if len(missing) > 1 else missing[0]
+            )
+            raise ValueError(f"{listed} {'are' if len(missing) > 1 else 'is'} required")
+        url = websocket_url(env["LIVEKIT_URL"])
+        return cls(url=url, api_key=env["LIVEKIT_API_KEY"], api_secret=env["LIVEKIT_API_SECRET"])

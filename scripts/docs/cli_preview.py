@@ -198,9 +198,10 @@ recording with the escape codes kept as colors (scripts/docs/cli_preview.py). Se
 and Doctor declined or with --no-metrics ran on a clean Ubuntu 24.04 root with the Linux
 package of this build. Doctor's measured runs used the offline test doubles of its tests,
 marked 离线测试替身: their services and model files are stand-ins and their timings are the
-doubles'. Every figure ends at the Host's output; LiveKit's transport and a client's playback
-are measured separately. Lines wider than a panel are diagnostics and commands, which print
-whole.</p>
+doubles', in rounds of their own. No panel here holds a real service's figures: those are
+recorded apart, in the acceptance log. Every figure ends at the Host's output; LiveKit's
+transport, a client's playback and the devices are measured separately. Lines wider than a
+panel are diagnostics and commands, which print whole.</p>
 <nav><ol>
 {index}
 </ol></nav>

@@ -28,6 +28,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import signal
 import socket
 import sys
@@ -63,7 +64,7 @@ def chain(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, socket_root: Path):
     files.mkdir()
     spec = {
         "files": str(files),
-        "stt": [CARD],
+        "stt": [CARD, SUM],  # The card question, then the two-sentence one
         "runners": {"voice": ["SpeechRunner"], "router": ["EndpointRunner"]},
     }
     monkeypatch.setattr(doctor_process, "_main", doubles.child)
@@ -113,16 +114,18 @@ def doctor(
     *argv: str,
     json_output: bool = True,
     online: bool = False,
+    rounds: int = 1,
 ) -> tuple[int, dict[str, dict]]:
-    """One run. ``online`` lets this process download models: only the diagnostic process
-    and its runners switch that off, and this process's environment stays as it was."""
+    """One run, ``rounds`` of each scenario. ``online`` lets its runners download models, as
+    on a machine that does not switch downloads off; this process's environment stays as it
+    was either way."""
     environ = {k: v for k, v in os.environ.items() if not online or k not in OFFLINE}
     environ[doubles.SPEC] = json.dumps(chain.spec)
     environ["COLUMNS"] = "100"  # The text as a 100-column terminal shows it.
     for name in ("requests.jsonl", "committed", "network", "runs.jsonl"):
         (chain.files / name).unlink(missing_ok=True)
     with mock.patch.dict(os.environ, environ, clear=True):
-        code = main(["doctor", *argv, *["--json"] * json_output])
+        code = main(["doctor", *argv, "--rounds", str(rounds), *["--json"] * json_output])
         assert dict(os.environ) == environ
     # The diagnostic process's own guard: nothing reached for the network, swallowed or not.
     assert not (chain.files / "network").exists()
@@ -147,8 +150,8 @@ def test_the_configured_chain_runs_fixed_samples_and_one_request_carries_speech_
 ) -> None:
     path = configuration(tmp_path)
     level = logging.getLogger("alphaavatar").level
-    # The runners still start offline, the stand-in turn-taking one only so; the endpoint,
-    # the offline switch and the log capture stay in the diagnostic process.
+    # The runtime starts as start starts it; the endpoint and the log capture stay in the
+    # diagnostic process.
     _, checks = doctor(capsys, chain, str(path), online=True)
     assert logging.getLogger("alphaavatar").level == level
     assert [
@@ -160,8 +163,18 @@ def test_the_configured_chain_runs_fixed_samples_and_one_request_carries_speech_
     }
     found = scenarios(checks)
     vision, text = found["voice_vision", "original"], found["text", "original"]
-    assert (vision["outcome"], text["outcome"]) == ("passed", "passed")
+    voice = found["voice", "original"]
+    assert (vision["outcome"], voice["outcome"], text["outcome"]) == ("passed",) * 3
     assert (vision["transcript"], vision["answer"], text["answer"]) == (CARD, "Green.", "5.")
+    # The two-sentence question as its own scenario: both sentences heard, in one segment.
+    assert (voice["transcript"], voice["answer"]) == (SUM, "5.")
+    assert [(x["index"], x["heard"], x["lost"]) for x in voice["sentences"]] == [
+        (1, True, None),
+        (2, True, None),
+    ]
+    # Each scenario in a session of its own, each a first round.
+    assert {vision["round"], voice["round"], text["round"]} == {1}
+    assert checks["session.start"]["metrics"][0]["samples"] == 3
     assert found["image_input", "original"]["outcome"] == "no_coverage"
     assert found["visual_output", "original"]["outcome"] == "not_enabled"
     assert checks["session.scenarios"]["status"] == "PASS"
@@ -212,9 +225,13 @@ def test_the_configured_chain_runs_fixed_samples_and_one_request_carries_speech_
     assert first["model.started"]["request"] == first["model.request_frame"]["request"]
     assert first["output.audio_frame"]["run"] == request["run"]
     assert {m["name"] for m in checks["models.runners"]["metrics"]} == {
+        "runtime_start",
         "queue_wait_max",
         "execution_max",
     }
+    # One runtime start, one sample: nothing fetched, every model file from the cache.
+    start = checks["models.runners"]["metrics"][0]
+    assert (start["name"], start["note"]) == ("runtime_start", "every model file from the cache")
 
     # One clock: the segments add up to the end-to-end figure they divide.
     metrics = {m["name"]: m for m in vision["metrics"] + vision["segments"]}
@@ -240,6 +257,12 @@ def test_the_configured_chain_runs_fixed_samples_and_one_request_carries_speech_
         metric["tts_request_to_first_audio_frame"],
     )
     assert metric["output_events_dropped"] == 0
+    # The stand-in model's provider logs no request it sends: each of those figures says so.
+    for name in ("model_request_encode", "model_request_frames", "model_request_bytes"):
+        assert (metric[name], metrics[name]["note"]) == (
+            None,
+            "no record of it sent: none went out, or its provider logs none",
+        )
 
     # Each external service: configured, authorized, reached and passed, or why not known.
     services = {s["name"]: s for s in checks["services.external"]["services"]}
@@ -251,36 +274,35 @@ def test_the_configured_chain_runs_fixed_samples_and_one_request_carries_speech_
     assert checks["services.external"]["status"] == "PASS"
 
     # The text shows each scenario; nothing was written outside the temporary workspace.
-    chain.spec["stt"] = [CARD]
     # The stand-ins resolve here as installed plugins would: every check passes.
     assert doctor(capsys, chain, str(path), json_output=False)[0] == 0
     shown = capsys.readouterr().out
     rows = {tuple(line.split()[:2]): line.split()[2:] for line in shown.splitlines()}
-    assert rows["PASS", "voice_vision"] == samples.VOICE_VISION.covers.split()
+    covers = samples.VOICE_VISION.covers.split()
+    assert rows["PASS", "voice_vision"] == ["1/1", "passed", "·", *covers]
     assert rows["SKIP", "image_input"] == found["image_input", "original"]["summary"].split()
-    # End to end, a column per measured scenario: the first text observed in both turns.
-    assert rows["Metric", "voice_vision"] == ["text"]
-    assert re.fullmatch(r"[\d,]+ ms [\d,]+ ms", " ".join(rows["First", "text"]))
-    # Then each scenario's stages: speech ones only where speech went in.
-    stages = {
-        block.split("\n")[0]: block.split("\n\n")[0]
-        for block in shown.split("\nStage timing · ")[1:]
+    # Each scenario's figures, grouped as a turn passes them: speech ones only where speech
+    # went in; one round, so only its own column holds a value.
+    tables = {
+        block.split(" · ")[0]: block.split("\n\n")[0] for block in shown.split("\nLatency · ")[1:]
     }
-    assert "Speech end → VAD close" in stages["voice_vision"]
-    assert "Model request → First text delta" in stages["text"]
-    assert "Speech end → VAD close" not in stages["text"]
+    assert "Speech end → VAD close" in tables["voice_vision"]
+    assert "Model request → First text delta" in tables["text"]
+    assert "Speech end → VAD close" not in tables["text"]
+    host = next(line for line in tables["text"].splitlines() if "Host first text" in line)
+    assert re.fullmatch(r"\s+Host first text\s+[\d,.]+ ms\s+0\s+—\s+—", host)
     assert not (tmp_path / "home" / "avatars").exists()
     assert list(chain.root.iterdir()) == []
 
     # What was checked and authorized is what starts: the file changing in between does not
     # reach the diagnostic process, which runs the snapshot loaded first.
-    diagnosis = prepare(str(path))
+    diagnosis = prepare(str(path), rounds=1)
     path.write_text(json.dumps(json.loads(path.read_text()) | {"vision": {"enabled": False}}))
-    environ = dict(os.environ) | {doubles.SPEC: json.dumps(chain.spec | {"stt": [CARD]})}
+    environ = dict(os.environ) | {doubles.SPEC: json.dumps(chain.spec | {"stt": [CARD, SUM]})}
     with mock.patch.dict(os.environ, environ, clear=True):
         report = asyncio.run(diagnosis.run()).to_dict()
     ran = {s["name"]: s["outcome"] for c in report["checks"] for s in c["scenarios"]}
-    assert (ran["voice_vision"], "voice" in ran) == ("passed", False)
+    assert ran["voice_vision"] == "passed"  # Vision on, as loaded and checked
 
 
 def test_degradations_follow_the_original_cause_and_both_configurations_are_reported(
@@ -305,13 +327,12 @@ def test_degradations_follow_the_original_cause_and_both_configurations_are_repo
     )
     # Context selected the frames and the request carried them: the model refused them.
     assert original["request"]["sample_frames"] > 0
-    degraded = found["voice", "degraded: vision off"]
-    assert (degraded["outcome"], degraded["transcript"], degraded["answer"]) == (
-        "passed",
-        SUM,
-        "5.",
-    )
-    assert not degraded["frames"] and not requests(chain)[-1]["images"]
+    # The spoken turn without a picture, in a session of its own, answered: the camera-less
+    # fallback would show nothing more, so it is not run.
+    voice = found["voice", "original"]
+    assert (voice["outcome"], voice["transcript"], voice["answer"]) == ("passed", SUM, "5.")
+    assert not voice["frames"] and not requests(chain)[1]["images"]
+    assert {configuration for _, configuration in found} == {"original"}
     model = next(
         s for s in checks["services.external"]["services"] if s["name"].startswith("model")
     )
@@ -342,7 +363,7 @@ def test_degradations_follow_the_original_cause_and_both_configurations_are_repo
     # Two outputs; the second's speech fails after its first frame. Each output is judged:
     # one completed, one failed, so nothing records a completion and audio is degraded to text.
     del chain.spec["vision_runners"]
-    chain.spec |= {"llm": {"messages": 2}, "stt": [CARD], "tts": {"fail_after": {"2": 1}}}
+    chain.spec |= {"llm": {"messages": 2}, "stt": [CARD, SUM], "tts": {"fail_after": {"2": 1}}}
     _, checks = doctor(capsys, chain, str(path))
     found = scenarios(checks)
     original = found["voice_vision", "original"]
@@ -368,7 +389,7 @@ def test_degradations_follow_the_original_cause_and_both_configurations_are_repo
     assert (tts["reached"], tts["passed"]) == (True, False)
 
     # The request keeps the Turn's input and the frames but not its speech: not one turn.
-    chain.spec |= {"drop_speech": True, "llm": {}, "tts": {}, "stt": [CARD]}
+    chain.spec |= {"drop_speech": True, "llm": {}, "tts": {}, "stt": [CARD, SUM]}
     _, checks = doctor(capsys, chain, str(path))
     original = scenarios(checks)["voice_vision", "original"]
     assert (original["outcome"], original["blocked_stage"]) == ("failed", "request.content")
@@ -380,13 +401,13 @@ def test_degradations_follow_the_original_cause_and_both_configurations_are_repo
     del chain.spec["drop_speech"]
 
     # Rejected credentials are the model's failure, named as such: no degradation is tried.
-    chain.spec |= {"llm": {"error": "invalid_api_key"}, "tts": {}, "stt": [CARD]}
+    chain.spec |= {"llm": {"error": "invalid_api_key"}, "tts": {}, "stt": [CARD, SUM]}
     _, checks = doctor(capsys, chain, str(path))
     found = scenarios(checks)
     assert found["voice_vision", "original"]["cause"] == "ModelRequestError: invalid_api_key"
     assert {configuration for _, configuration in found} == {"original"}
     # A capability the backend lacks that is not about pictures: no vision fallback either.
-    chain.spec |= {"llm": {"error": "capability"}, "stt": [CARD]}
+    chain.spec |= {"llm": {"error": "capability"}, "stt": [CARD, SUM]}
     _, checks = doctor(capsys, chain, str(path))
     found = scenarios(checks)
     assert found["voice_vision", "original"]["cause"] == "ModelCapabilityError"
@@ -394,16 +415,19 @@ def test_degradations_follow_the_original_cause_and_both_configurations_are_repo
     assert checks["session.cleanup"]["status"] == "PASS"
 
 
-def test_an_answer_passes_only_when_it_is_exactly_the_expected_one(
+def test_an_answer_passes_only_when_it_clearly_is_the_expected_one(
     tmp_path: Path, chain: SimpleNamespace, capsys: pytest.CaptureFixture
 ) -> None:
     card, total = samples.VOICE_VISION, samples.TEXT
-    for answer in ("Green.", "green", '"Green"', "绿色。"):
+    # The card's color, as a word or stated plainly in a short sentence.
+    for answer in ("Green.", "green", '"Green"', "绿色。", "The card is green.", "It's green."):
         assert card.answered(answer), answer
-    # Wrong, negated, hedged or questioning; a longer sentence is not a one-word answer.
+    # Wrong, negated, hedged, questioning, or naming another color beside it.
     for answer in ("Red.", "Not green.", "The card is not green. It is red.", "Maybe green."):
         assert not card.answered(answer), answer
-    for answer in ("Green?", "The card is green.", "I cannot tell."):
+    for answer in ("Green?", "I think it is green.", "It isn't green.", "Green or blue."):
+        assert not card.answered(answer), answer
+    for answer in ("The card is green and white.", "I cannot tell.", "It looks green."):
         assert not card.answered(answer), answer
     for answer in ("5", "5.", "Five!", "五"):
         assert total.answered(answer), answer
@@ -411,6 +435,10 @@ def test_an_answer_passes_only_when_it_is_exactly_the_expected_one(
     for answer in ("15", "25.", "5.5", "-5", "It is 5.", "five or six"):
         assert not total.answered(answer), answer
     assert samples.VOICE.heard(SUM) and not samples.VOICE.heard("What is 12 plus 13?")
+    # Two sentences: each is heard on its own, the second lost when only the first came.
+    assert samples.VOICE.heard_sentences("What is two plus three?") == (True, False)
+    # The card question is one sentence: it asks for the color, not for one word.
+    assert samples.VOICE_VISION.prompt == "What color is the card on my screen?"
 
     # The session judges with the same rule: a typed turn answered with the wrong number.
     text_only = {
@@ -466,19 +494,20 @@ def test_failed_starts_timeouts_and_spent_budgets_keep_their_state_and_are_recla
     assert (code, checks["session.cleanup"]["status"]) == (1, "PASS")
     assert "private" not in json.dumps(checks)
 
-    # A start that outlives its deadline is ended there, and its process reclaimed.
+    # A start that outlives the runtime's own initialize timeout fails there, as at start,
+    # with that error; its process is reclaimed.
     voice["voice"] = ["StuckRunner", "SpeechRunner"]
-    monkeypatch.setattr(doctor_session, "SESSION_SECONDS", 1.0)
-    _, checks = doctor(capsys, chain, str(path))
-    assert checks["models.runners"]["details"] == ["the runners did not start within 1 s"]
+    stuck = configuration(tmp_path, runtime={"inference": {"initialize_timeout": 1.0}})
+    _, checks = doctor(capsys, chain, str(stuck))
+    runners = {r["method"]: r for r in checks["models.runners"]["runners"]}
+    assert runners["test.doctor.stuck"]["summary"] == "failed: TimeoutError"
     assert (checks["session.start"]["status"], checks["session.cleanup"]["status"]) == (
         "FAIL",
         "PASS",
     )
-    monkeypatch.setattr(doctor_session, "SESSION_SECONDS", 180.0)
 
     # A turn still speaking at its deadline: its outputs timed out, its playback and outputs
-    # end with it, and the next turn gets a session of its own.
+    # end with it; each scenario has a session of its own anyway.
     voice["voice"] = ["SpeechRunner"]
     chain.spec["tts"] = {"frames": 200}  # Four seconds of speech per answer.
     monkeypatch.setattr(doctor_session, "TURN_SECONDS", 3.0)
@@ -491,10 +520,12 @@ def test_failed_starts_timeouts_and_spent_budgets_keep_their_state_and_are_recla
     assert {m["name"]: m["value"] for m in timed_out["metrics"]}["response_final"] is None
     assert text["evidence"] and text["request"]["turn"] != timed_out["request"]["turn"]
     assert checks["session.cleanup"]["status"] == "PASS"
-    assert checks["session.cleanup"]["summary"].startswith("3 owned parts closed")
+    # The runtime and each scenario's session: closed, each.
+    assert checks["session.cleanup"]["summary"].startswith("4 owned parts closed")
 
     # A spent budget starts nothing more, and says so rather than failing a runner.
-    monkeypatch.setattr(doctor_session, "TOTAL_SECONDS", 0.0)
+    spent = doctor_session.Budget(180.0, 60.0, 0.0)
+    monkeypatch.setattr(doctor_session, "budget", lambda *args: spent)
     _, checks = doctor(capsys, chain, str(path))
     assert checks["models.runners"]["summary"] == (
         "Not started: the diagnosis budget was spent before the runners started"
@@ -563,7 +594,7 @@ def test_ctrl_c_and_cancellation_end_the_diagnostic_process_and_what_it_started(
 
     # Cancelling the diagnosis itself: the process and its runners go before it returns.
     async def cancelled() -> None:
-        diagnosis = prepare(str(path))
+        diagnosis = prepare(str(path), rounds=1)
         task = asyncio.create_task(diagnosis.run())
         await asyncio.to_thread(wait_for, chain.files / "committed")
         task.cancel()
@@ -571,7 +602,7 @@ def test_ctrl_c_and_cancellation_end_the_diagnostic_process_and_what_it_started(
             await task
 
     (chain.files / "committed").unlink()
-    environ = dict(os.environ) | {doubles.SPEC: json.dumps(chain.spec | {"stt": [CARD]})}
+    environ = dict(os.environ) | {doubles.SPEC: json.dumps(chain.spec | {"stt": [CARD, SUM]})}
     with mock.patch.dict(os.environ, environ, clear=True):
         asyncio.run(cancelled())
         assert dict(os.environ) == environ
@@ -589,7 +620,8 @@ def test_a_diagnostic_process_that_does_not_stop_is_ended_with_its_group(
     # It ignores both the stop and its budget, with a runner whose start never ends.
     chain.spec |= {"deaf": True, "runners": {"voice": ["StuckRunner"]}}
     sockets = {*Path("/tmp").glob("alphaavatar-inference-*")}
-    monkeypatch.setattr(doctor_session, "TOTAL_SECONDS", 2.0)
+    short = doctor_session.Budget(1.0, 1.0, 2.0, 1.0)
+    monkeypatch.setattr(doctor_session, "budget", lambda *args: short)
     monkeypatch.setattr(doctor_process, "CLOSE_SECONDS", 1.0)
     began = time.monotonic()
     code, checks = doctor(capsys, chain, str(path))
@@ -623,11 +655,15 @@ def test_a_diagnostic_process_that_dies_on_its_own_is_named_by_its_last_line(
 
 @pytest.fixture
 def provider(socket_root: Path):
-    """An HTTP stand-in for the OpenAI API on loopback: it refuses every request."""
+    """An HTTP stand-in for the OpenAI API on loopback: it refuses every request, and keeps
+    the size of each body it received."""
     refusal = {"status": 401}
+    sizes: list[int] = []
 
     class Refuse(http.server.BaseHTTPRequestHandler):
         def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length", 0))
+            sizes.append(len(self.rfile.read(length)))
             body = json.dumps({"error": {"message": "refused", "type": "invalid_request_error"}})
             self.send_response(refusal["status"])
             self.send_header("Content-Type", "application/json")
@@ -642,7 +678,7 @@ def provider(socket_root: Path):
     thread = threading.Thread(target=server.serve_forever, name="openai_stand_in")
     thread.start()
     try:
-        yield SimpleNamespace(port=server.server_address[1], refusal=refusal)
+        yield SimpleNamespace(port=server.server_address[1], refusal=refusal, sizes=sizes)
     finally:
         server.shutdown()
         server.server_close()
@@ -660,16 +696,27 @@ def test_the_openai_adapter_refuses_pictures_as_such_and_other_refusals_keep_the
     url = f"http://127.0.0.1:{provider.port}/v1"
     model = {"backend": "openai", "provider": "openai", "model": "m"}
     model["extra"] = {"api_key": "sk-doctor-stand-in", "base_url": url}
-    chain.spec |= {"loopback": provider.port, "stt": [CARD, SUM]}
+    chain.spec |= {"loopback": provider.port, "stt": [CARD, SUM, SUM]}
 
     # The real Responses adapter cannot inline frames this large: it refuses the pictures
-    # itself, before any call. Doctor then tries the audio session, whose request goes out
-    # and is refused by the service, with that classification.
+    # itself, before any call. The spoken turn without them goes out and is refused by the
+    # service, with that classification; so is the camera-less fallback's.
     small = model | {"input_options": {"max_inline_bytes": 1024}}
     loop = {"plugin": "realtime", "init_config": {"model": small}}
     _, checks = doctor(capsys, chain, str(configuration(tmp_path, loop=loop)))
     found = scenarios(checks)
-    assert found["voice_vision", "original"]["cause"] == "ModelCapabilityError: image_input"
+    vision = found["voice_vision", "original"]
+    assert vision["cause"] == "ModelCapabilityError: image_input"
+    # Refused before a call: no request went out, and the figures say no more than that.
+    sent = {m["name"]: m for m in vision["segments"]}
+    assert sent["model_request_bytes"]["value"] is None
+    # The spoken turn's request did go out: its provider recorded it in numbers alone, the
+    # body as the transport sent it, no picture in it, encoded here once.
+    voice = found["voice", "original"]
+    assert voice["cause"] == "ModelRequestError: http_401"
+    sent = {m["name"]: m["value"] for m in voice["segments"]}
+    assert sent["model_request_frames"] == 0 and sent["model_request_encode"] >= 0
+    assert sent["model_request_bytes"] == provider.sizes[0] > 0
     degraded = found["voice", "degraded: vision off"]
     assert (degraded["blocked_stage"], degraded["cause"]) == (
         "model.first_event",
@@ -679,7 +726,7 @@ def test_the_openai_adapter_refuses_pictures_as_such_and_other_refusals_keep_the
     # A generic HTTP 400 for the request with pictures is the service's, as classified:
     # nothing shows it is about vision, so no fallback runs.
     provider.refusal["status"] = 400
-    chain.spec["stt"] = [CARD]
+    chain.spec["stt"] = [CARD, SUM]
     loop = {"plugin": "realtime", "init_config": {"model": model}}
     _, checks = doctor(capsys, chain, str(configuration(tmp_path, loop=loop)))
     found = scenarios(checks)
@@ -715,7 +762,7 @@ def test_the_diagnostic_process_leaves_a_calling_host_and_its_terminal_alone(
     environ = dict(os.environ) | host | {doubles.SPEC: json.dumps(chain.spec | {"stdout": True})}
     try:
         with mock.patch.dict(os.environ, environ, clear=True):
-            main(["doctor", str(configuration(tmp_path)), "--json"])
+            main(["doctor", str(configuration(tmp_path)), "--json", "--rounds", "1"])
             assert dict(os.environ) == environ
         out, err = capfd.readouterr()
         checks = {check["id"]: check for check in json.loads(out)["checks"]}  # Only the report.
@@ -751,9 +798,10 @@ def interactive(
     *argv: str,
     answers: tuple[str | BaseException, ...],
     online: bool = False,
+    rounds: int = 1,
 ):
-    """One run at a terminal; its exit code and the questions asked. ``online`` lets this
-    process download, as a person's own environment would."""
+    """One run at a terminal; its exit code and the questions asked. ``online`` lets its
+    runners download, as a person's own environment would."""
     questions, answer = asked(*answers)
     environ = {k: v for k, v in os.environ.items() if not online or k not in OFFLINE}
     environ |= {doubles.SPEC: json.dumps(chain.spec), "COLUMNS": "1000"}
@@ -764,13 +812,13 @@ def interactive(
         mock.patch("sys.stdin.isatty", return_value=True),
         mock.patch("builtins.input", answer),
     ):
-        code = main(["doctor", *argv])
+        code = main(["doctor", *argv, "--rounds", str(rounds)])
     assert not (chain.files / "network").exists()
     return code, questions
 
 
 @pytest.mark.parametrize("agreed", [True, False], ids=["agreed", "declined"])
-def test_runtime_tests_that_reach_external_services_run_only_once_a_person_agrees(
+def test_the_diagnosis_runs_only_once_a_person_agrees_to_all_it_does(
     tmp_path: Path, chain: SimpleNamespace, capsys: pytest.CaptureFixture, agreed: bool
 ) -> None:
     # Not authorized by the configuration: a person at the terminal decides.
@@ -779,8 +827,13 @@ def test_runtime_tests_that_reach_external_services_run_only_once_a_person_agree
     output = capsys.readouterr()
     report = json.loads(output.out)  # Asked on stderr: stdout is the JSON alone.
     checks = {check["id"]: check for check in report["checks"]}
-    assert questions == [""] and "    Run the runtime tests? [y/N]: " in output.err
-    # Before the question: each service the tests reach, and that the calls may be billed.
+    assert questions == [""] and "    Run the diagnosis? [y/N]: " in output.err
+    # Before the one question: each scenario and its rounds, the downloads it may make, each
+    # service it calls, and that the calls may be billed.
+    assert "then runs each scenario once, each time in a session of its own:" in output.err
+    for name in ("voice_vision", "voice", "text"):
+        assert f"\n    {name} " in output.err
+    assert "Model files the cache lacks are downloaded first, as start would." in output.err
     for name in ("model providers (scripted)", "speech recognition (openai_segment)"):
         assert f"    {name}\n" in output.err
     assert "Calls to these services may be billed." in output.err
@@ -793,7 +846,7 @@ def test_runtime_tests_that_reach_external_services_run_only_once_a_person_agree
         for check in ("session.start", "models.runners", "session.scenarios"):
             assert (checks[check]["status"], checks[check]["summary"]) == (
                 "SKIP",
-                "Not run: the external services it reaches were declined",
+                "Not run: the diagnosis was declined",
             )
     assert list(chain.root.iterdir()) == []
 
@@ -806,14 +859,14 @@ def test_ctrl_c_at_the_question_runs_nothing_and_says_so(
     shown = capsys.readouterr().out
     assert code == 130 and not (chain.files / "requests.jsonl").exists()
     # The question's line ends, then a blank line: the report stands apart from it.
-    assert "    Run the runtime tests? [y/N]: \n\n" in shown
+    assert "    Run the diagnosis? [y/N]: \n\n" in shown
     lines = shown.splitlines()
     start = lines.index("  SKIP  Session and services")
     assert lines[start + 1] == "        Not run: interrupted at a question"
     assert list(chain.root.iterdir()) == []
 
 
-def test_no_metrics_leaves_the_runtime_tests_out_without_asking(
+def test_no_metrics_leaves_the_diagnosis_out_without_asking(
     tmp_path: Path, chain: SimpleNamespace, capsys: pytest.CaptureFixture
 ) -> None:
     path = configuration(tmp_path, host={"doctor": {"external_services": False}})
@@ -824,40 +877,6 @@ def test_no_metrics_leaves_the_runtime_tests_out_without_asking(
     start = lines.index("  SKIP  Session and services")
     assert lines[start + 1] == "        Not run: left out with --no-metrics"
     assert "  Not measured · Not run: left out with --no-metrics" in lines
-
-
-@pytest.mark.parametrize("download", [True, False], ids=["downloaded", "declined"])
-def test_a_runner_missing_its_model_is_named_and_downloaded_only_once_a_person_agrees(
-    tmp_path: Path, chain: SimpleNamespace, capfd: pytest.CaptureFixture, download: bool
-) -> None:
-    chain.spec["runners"] = {"voice": ["SpeechRunner"], "router": ["DownloadRunner"]}
-    path = configuration(tmp_path)  # Authorized by the configuration: only the model is asked.
-    answers = ("y" if download else "n",)
-    code, questions = interactive(chain, str(path), answers=answers, online=True)
-    shown, err = capfd.readouterr()
-    assert questions == ["    Download and continue? [y/N]: "]
-    # The runner's own failure log stays off the terminal: the report names the runner.
-    assert "Inference runner failed" not in shown + err and "FileNotFoundError" not in err
-    # The download is part of its runners' start, given as long as start gives it.
-    runs = [json.loads(line) for line in (chain.files / "runs.jsonl").read_text().splitlines()]
-    assert (
-        runs
-        == [{"downloads": False, "runners": 180.0}]
-        + [{"downloads": True, "runners": 300.0}] * download
-    )
-    # Named before anything is downloaded: the runner, and where its files go.
-    assert f"    {doubles.DownloadRunner.INFERENCE_METHOD}\n" in shown
-    assert "into ~/" in shown or "into /" in shown
-    runners = next(line for line in shown.splitlines() if "Session and services" in line)
-    if download:
-        assert code == 0 and runners.startswith("  PASS  Session and services")
-    else:
-        # The first run's report: the runner did not start, its model not in the cache.
-        assert code == 1 and runners.startswith("  FAIL  Session and services")
-        assert "its model is not in the cache" in shown
-        # What to do next is this command's own offer first.
-        assert "→ Run doctor again in a terminal and agree to the download, or start" in shown
-    assert list(chain.root.iterdir()) == []
 
 
 def reference_run(tmp_path: Path, statuses) -> tuple[object, frozenset[str]]:
@@ -884,27 +903,235 @@ def reference_run(tmp_path: Path, statuses) -> tuple[object, frozenset[str]]:
     return run, embedding
 
 
+# What a vector store's start failure shows: its probe's own error, or one before it.
+PROBE = ("error: RuntimeError", "error: EmbeddingProbeError", "error: AuthenticationError")
+OPENING = ("error: RuntimeError", "error: OSError", "at lancedb:1 in connect")
+
+
 @pytest.mark.parametrize(
-    ("statuses", "expected"),
+    ("statuses", "error", "expected", "note"),
     [
         # An earlier runner failed: the vector stores never started, nor embedded.
-        ({False: "FAIL", True: "SKIP"}, (None, None)),
-        ({False: "PASS", True: "PASS"}, (True, True)),
-        ({False: "PASS", True: "FAIL"}, (None, False)),
+        (
+            {False: "FAIL", True: "SKIP"},
+            (),
+            (None, None),
+            "vector store embeddings: an earlier runner did not start",
+        ),
+        ({False: "PASS", True: "PASS"}, (), (True, True), "vector store embeddings"),
+        # Only the probe's own failure is the provider's.
+        ({False: "PASS", True: "FAIL"}, PROBE, (None, False), "the embedding probe failed"),
+        # A store that failed to open never sent it: the runner failed, the provider unseen.
+        ({False: "PASS", True: "FAIL"}, OPENING, (None, None), "failed before its probe"),
     ],
-    ids=["not reached", "started", "failed"],
+    ids=["not reached", "started", "probe failed", "failed before the probe"],
 )
-def test_the_model_provider_is_judged_by_the_starts_of_the_runners_that_embed(
-    tmp_path: Path, statuses: dict[bool, str], expected: tuple
+def test_the_model_provider_is_judged_by_the_probe_of_the_runners_that_embed(
+    tmp_path: Path, statuses: dict[bool, str], error: tuple, expected: tuple, note: str
 ) -> None:
     run, _ = reference_run(tmp_path, statuses)
+    run.runner_error["original"] = error
     result = run._service("model providers (openai)", "model", True, ())
     assert (result.reached, result.passed) == expected
-    assert result.note.startswith("vector store embeddings")
+    assert note in result.note
 
 
-def test_the_runners_summary_says_whether_downloads_were_allowed(tmp_path: Path) -> None:
-    run, _ = reference_run(tmp_path, {False: "PASS", True: "PASS"})
-    for offline, where in (("1", "from the cache, offline"), ("", "with downloads allowed")):
-        with mock.patch.dict(os.environ, dict.fromkeys(OFFLINE, offline)):
-            assert f"runners started {where}; slowest" in run._runner_check().summary
+THIRD_PARTY = Path(__file__).parents[1] / "fixtures" / "thirdparty"
+
+
+@pytest.mark.parametrize("asked", [None, "n", "y"], ids=["unattended", "declined", "agreed"])
+def test_nothing_starts_before_the_diagnosis_is_agreed_to_not_even_a_runner(
+    tmp_path: Path,
+    chain: SimpleNamespace,
+    capfd: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    asked: str | None,
+) -> None:
+    from alphaavatar.agents.runtime.plugin import AvatarModule
+
+    monkeypatch.syspath_prepend(str(THIRD_PARTY))  # This process, and those it spawns
+    from alphaavatar.plugins.doctor_thirdparty.runner import ThirdPartyRunner
+
+    # Planned by the persona the configuration names, here and in the diagnostic process.
+    persona = doubles.stand_in(
+        AvatarModule.PERSONA, "doctor", object, lambda c: (ThirdPartyRunner,)
+    )
+    monkeypatch.setitem(doubles.resolution._resolved, (AvatarModule.PERSONA, "doctor"), persona)
+    chain.spec["vision_runners"] = ["alphaavatar.plugins.doctor_thirdparty.runner:ThirdPartyRunner"]
+    path = configuration(tmp_path, host={"doctor": {"external_services": False}})
+    if asked is None:
+        _, checks = doctor(capfd, chain, str(path))
+        err = ""
+    else:
+        _, questions = interactive(chain, str(path), "--json", answers=(asked,))
+        out, err = capfd.readouterr()
+        checks = {check["id"]: check for check in json.loads(out)["checks"]}
+        assert questions == [""]  # Asked on stderr: stdout is the JSON alone.
+        assert "    Run the diagnosis? [y/N]: " in err
+    # A runner of any package, one in the plugins' own namespace too: its start runs only in
+    # a diagnosis agreed to, or authorized.
+    started = (chain.files / "thirdparty").exists()
+    assert started == (asked == "y")
+    if not started:
+        assert checks["models.runners"]["status"] == "SKIP"
+    assert list(chain.root.iterdir()) == []
+
+
+def test_a_missing_file_is_the_runners_failure_reported_as_it_is(
+    tmp_path: Path, chain: SimpleNamespace, capfd: pytest.CaptureFixture
+) -> None:
+    chain.spec["runners"] = {"voice": ["SpeechRunner"], "router": ["MissingFileRunner"]}
+    # Authorized, at a terminal: the start's own failure, its error and where it was raised.
+    code, questions = interactive(
+        chain, str(configuration(tmp_path)), "--json", answers=(), online=True
+    )
+    out, _ = capfd.readouterr()
+    checks = {check["id"]: check for check in json.loads(out)["checks"]}
+    assert code == 1 and questions == []
+    runs = [json.loads(line) for line in (chain.files / "runs.jsonl").read_text().splitlines()]
+    # One start, past its two runners' own initialize timeouts: theirs is what fails first.
+    assert runs == [{"rounds": 1, "runners": 2 * 300.0 + 30.0}]
+    runners = checks["models.runners"]
+    assert "not in the cache" not in runners["summary"]
+    assert "error: FileNotFoundError" in runners["details"]
+    assert any("in initialize" in line for line in runners["details"])  # Where it was raised
+    assert runners["action"].startswith("Fix what the error names")
+
+
+def test_the_input_ending_at_the_question_declines_and_the_report_follows(
+    tmp_path: Path, chain: SimpleNamespace, capfd: pytest.CaptureFixture
+) -> None:
+    path = configuration(tmp_path, host={"doctor": {"external_services": False}})
+    code, questions = interactive(chain, str(path), "--json", answers=(EOFError(),))
+    out, _ = capfd.readouterr()
+    checks = {check["id"]: check for check in json.loads(out)["checks"]}
+    assert questions == [""] and code == 0
+    assert checks["session.start"]["summary"] == "Not run: the diagnosis was declined"
+    assert not (chain.files / "requests.jsonl").exists()
+
+
+def wait_lines(path: Path, count: int, seconds: float = 60.0) -> None:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if path.exists() and len(path.read_text().splitlines()) >= count:
+            return
+        time.sleep(0.005)
+    raise AssertionError(f"{path.name} never had {count} lines")
+
+
+def test_each_scenario_runs_in_rounds_each_in_a_session_and_the_rounds_are_summarized(
+    tmp_path: Path, chain: SimpleNamespace, capsys: pytest.CaptureFixture
+) -> None:
+    import statistics
+
+    # Round 2 of the two-sentence question loses its second sentence in STT; the rest pass.
+    chain.spec["stt"] = [CARD, SUM, CARD, "What is two plus three?", CARD, SUM]
+    code, checks = doctor(capsys, chain, str(configuration(tmp_path)), rounds=3)
+    assert code == 1 and checks["session.scenarios"]["status"] == "FAIL"
+    summaries = {
+        (x["name"], x["configuration"]): x for x in checks["session.scenarios"]["summaries"]
+    }
+    assert set(summaries) == {
+        ("voice_vision", "original"),
+        ("voice", "original"),
+        ("text", "original"),
+    }
+    voice = summaries["voice", "original"]
+    assert (voice["rounds"], voice["passed"], voice["stopped_at"]) == (3, 2, {"stt.final": 1})
+    assert summaries["voice_vision", "original"]["passed"] == 3
+    assert summaries["text", "original"]["passed"] == 3
+    # The failed round: the sentence it lost, and the layer that lost it.
+    rounds = checks["session.scenarios"]["scenarios"]
+    failed = [r for r in rounds if r["outcome"] == "failed"]
+    assert [(r["name"], r["round"]) for r in failed] == [("voice", 2)]
+    lost = [(s["index"], s["lost"]) for s in failed[0]["sentences"] if not s["heard"]]
+    assert lost == [(2, "stt")]
+    assert any(
+        line.startswith("Sentence 2: its segment's STT final") for line in failed[0]["details"]
+    )
+    # Each figure over the passed rounds: the first round apart, then the later ones.
+    cards = [r for r in rounds if r["name"] == "voice_vision"]
+    values = {
+        r["round"]: {m["name"]: m["value"] for m in r["metrics"]}["first_text"] for r in cards
+    }
+    figure = {f["name"]: f for f in summaries["voice_vision", "original"]["figures"]}["first_text"]
+    later = sorted((values[2], values[3]))
+    assert (figure["first"], figure["samples"]) == (values[1], 2)
+    assert (figure["median"], figure["low"], figure["high"]) == (
+        round(statistics.median(later), 3),
+        later[0],
+        later[-1],
+    )
+    assert figure["p95"] is None  # Two samples: the range says it all.
+    # The failed round is no sample: of the voice question's later rounds, round 3 alone.
+    figure = {f["name"]: f for f in voice["figures"]}["first_text"]
+    assert figure["samples"] == 1
+    # One runtime start for every round; a session for each of the nine turns.
+    starts = [m for m in checks["models.runners"]["metrics"] if m["name"] == "runtime_start"]
+    assert len(starts) == 1 and checks["session.start"]["metrics"][0]["samples"] == 9
+    assert checks["session.cleanup"]["status"] == "PASS"
+    assert list(chain.root.iterdir()) == []
+
+
+def test_model_files_load_from_the_cache_and_one_missing_downloads_as_start_does(
+    tmp_path: Path, chain: SimpleNamespace, capsys: pytest.CaptureFixture
+) -> None:
+    chain.spec["runners"] = {"voice": ["SpeechRunner"], "router": ["CachedModelRunner"]}
+    path = configuration(tmp_path)
+
+    def start(checks: dict) -> dict:
+        return next(m for m in checks["models.runners"]["metrics"] if m["name"] == "runtime_start")
+
+    # A first start: the weights are not in the cache, so it fetches them as start would,
+    # and its one start sample says so.
+    _, checks = doctor(capsys, chain, str(path), online=True)
+    assert checks["session.start"]["status"] == "PASS"
+    assert start(checks)["note"] == "64.0 KB of model files downloaded first"
+    assert (chain.files / "model.log").read_text().splitlines() == ["download"]
+    # The next start loads them: a cached start, a sample of its own kind.
+    _, checks = doctor(capsys, chain, str(path), online=True)
+    assert start(checks)["note"] == "every model file from the cache"
+    assert (chain.files / "model.log").read_text().splitlines() == ["download", "cache"]
+    # This machine switches downloads off: the start fails as start's would, and says how.
+    shutil.rmtree(tmp_path / "home" / "cache" / "models" / "doctor")
+    with mock.patch.dict(os.environ, {"ALPHAAVATAR_MODEL_OFFLINE": "1"}):
+        code, checks = doctor(capsys, chain, str(path))
+    runners = checks["models.runners"]
+    assert code == 1 and runners["status"] == "FAIL"
+    assert runners["summary"].endswith(
+        "did not start: its model is not in the cache; 0 not reached"
+    )
+    assert runners["action"].startswith("Model downloads are switched off here")
+    assert list(chain.root.iterdir()) == []
+
+
+def test_ctrl_c_in_a_later_round_keeps_what_ran_and_reclaims_everything(
+    tmp_path: Path, chain: SimpleNamespace, capsys: pytest.CaptureFixture
+) -> None:
+    chain.spec["stt"] = [CARD, SUM, CARD, SUM]
+
+    def interrupt() -> None:
+        # The first round's two spoken segments, then the second round's first one.
+        wait_lines(chain.files / "committed", 3)
+        os.kill(os.getpid(), signal.SIGINT)
+
+    thread = threading.Thread(target=interrupt)
+    thread.start()
+    try:
+        code, checks = doctor(capsys, chain, str(configuration(tmp_path)), rounds=2)
+    finally:
+        thread.join()
+    assert code == 130
+    rounds = {
+        (r["name"], r["round"]): r["outcome"]
+        for r in checks["session.scenarios"]["scenarios"]
+        if r["round"]
+    }
+    # Round 1 ran whole; round 2 stopped in its first turn, and the rest of it did not run.
+    assert [rounds[name, 1] for name in ("voice_vision", "voice", "text")] == ["passed"] * 3
+    assert [rounds[name, 2] for name in ("voice_vision", "voice", "text")] == ["interrupted"] * 3
+    summaries = {x["name"]: x for x in checks["session.scenarios"]["summaries"]}
+    assert (summaries["voice_vision"]["passed"], summaries["voice_vision"]["rounds"]) == (1, 2)
+    assert checks["session.cleanup"]["status"] == "PASS"
+    assert gone(int((chain.files / "pid").read_text()))
+    assert list(chain.root.iterdir()) == []

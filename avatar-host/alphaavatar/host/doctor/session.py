@@ -30,9 +30,11 @@ from __future__ import annotations
 import asyncio
 import json
 import multiprocessing as mp
+import statistics
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -40,7 +42,7 @@ from alphaavatar.core.cleanup import wait_for_cleanup
 
 from . import samples
 from .enums import CheckStatus, ScenarioOutcome
-from .measure import TURN_ENDED, TurnObservation, scenario
+from .measure import TURN_ENDED, TurnObservation, scenario, summarize
 from .schemas import Check, Metric, RunnerResult, ScenarioResult, ServiceResult
 from .transport import DiagnosticSink, DiagnosticSource, LogTimings, SourceTimeline
 
@@ -50,6 +52,7 @@ if TYPE_CHECKING:
 SESSION_SECONDS = 180.0  # Runners from the cache, or a session's plugins and readiness
 TURN_SECONDS = 60.0  # One scenario turn, from its first input to its outputs' end
 TOTAL_SECONDS = 480.0  # Everything, closing excluded: each close has its own bounds
+START_MARGIN_SECONDS = 30.0  # Past the runners' own timeouts, so theirs is what is reported
 _DEVICE = "doctor-participant"
 _METHODS = "runtime.inference.methods"
 # How a provider says it cannot take the pictures: only this calls for the vision fallback.
@@ -59,23 +62,29 @@ _POLL = 0.02
 
 @dataclass(frozen=True, slots=True)
 class Budget:
-    session: float
+    session: float  # A session's assembly and readiness
     turn: float
     total: float
+    runners: float = SESSION_SECONDS  # The runtime's start, model downloads included
 
 
-def budget(initialize: float | None = None) -> Budget:
-    """The diagnosis's bounds. With the runners' ``initialize`` timeout, as a run that may
-    download gives it, their start has as long as start gives it, and the whole as much more."""
-    session = max(SESSION_SECONDS, initialize or 0.0)
-    return Budget(session, TURN_SECONDS, TOTAL_SECONDS + session - SESSION_SECONDS)
+def budget(initialize: float | None = None, turns: int = 3, runners: int = 1) -> Budget:
+    """The diagnosis's bounds. The runtime starts as start starts it: its runners one after
+    another, each within its ``initialize`` timeout, downloads included, so its own timeout
+    is the error reported; this bound only catches a start that keeps to none. The whole has
+    as much more, and a turn's bound for each turn past three."""
+    start = max(SESSION_SECONDS, (initialize or 0.0) * max(1, runners) + START_MARGIN_SECONDS)
+    extra = start - SESSION_SECONDS + max(0, turns - 3) * TURN_SECONDS
+    return Budget(SESSION_SECONDS, TURN_SECONDS, TOTAL_SECONDS + extra, start)
 
 
 @dataclass(frozen=True, slots=True)
 class Plan:
     """What the configuration enables, and the turns that exercise it."""
 
-    voice: samples.Task | None  # The spoken scenario, with the picture when vision is on
+    # The spoken scenarios: with vision on, the card question over the picture, then the
+    # two-sentence question that shows whether a sentence was lost; none without voice.
+    spoken: tuple[samples.Task, ...]
     audio_input: bool
     vision: bool
     audio_output: bool
@@ -83,8 +92,12 @@ class Plan:
     session_type: str
 
     @property
+    def voice(self) -> samples.Task | None:
+        return self.spoken[0] if self.spoken else None
+
+    @property
     def tasks(self) -> tuple[samples.Task, ...]:
-        return (*(self.voice,) * (self.voice is not None), samples.TEXT)
+        return (*self.spoken, samples.TEXT)
 
 
 def plan(config: ApplicationConfig) -> Plan:
@@ -94,10 +107,12 @@ def plan(config: ApplicationConfig) -> Plan:
     vision = avatar.vision.enabled and avatar.vision.input_mode.value != "text"
     # A voice session also speaks, so start refuses one without TTS; text sessions do not.
     voice = audio_input and audio_output
-    task = (samples.VOICE_VISION if vision else samples.VOICE) if voice else None
+    spoken = (
+        ((samples.VOICE_VISION, samples.VOICE) if vision else (samples.VOICE,)) if voice else ()
+    )
     session_type = ("video" if vision else "audio") if voice else "chat"
     return Plan(
-        task,
+        spoken,
         audio_input,
         vision,
         audio_output and voice,
@@ -143,13 +158,19 @@ def _stores(config: ApplicationConfig) -> list[tuple[str, str, dict[str, Any]]]:
     return stores
 
 
-def unisolated(config: ApplicationConfig) -> list[str]:
-    """Real Avatar data Doctor cannot keep apart from its own: remote vector stores."""
+def remote_stores(config: ApplicationConfig) -> list[str]:
+    """The remote vector stores the configuration names: Doctor cannot move them."""
     from alphaavatar.agents.utils.vdb.config import vdb_backend
 
     return [
         f"{name}'s Qdrant store" for name, _, vdb in _stores(config) if vdb_backend(vdb) == "qdrant"
     ]
+
+
+def unisolated(config: ApplicationConfig) -> list[str]:
+    """Real Avatar data Doctor cannot keep apart from its own: the remote vector stores,
+    unless the configuration says they are test stores."""
+    return [] if config.host.doctor.test_stores else remote_stores(config)
 
 
 def isolate(config: ApplicationConfig, workspace: str) -> tuple[ApplicationConfig, tuple[str, ...]]:
@@ -194,25 +215,55 @@ def vision_off(config: ApplicationConfig) -> ApplicationConfig:
 
 
 def start_services(config: ApplicationConfig) -> list[str]:
-    """What starting the runners reaches, or cannot be shown not to: vector stores embed a
-    probe text, and a runner Doctor does not ship may do anything."""
+    """What the runners call as they start, as they declare it (``PROVIDERS``): a vector
+    store embeds a probe text with its provider. Listed with the services the configuration
+    names, before the diagnosis runs."""
     from alphaavatar.agents.runtime.inference import plan_inference_runners
+    from alphaavatar.agents.runtime.plugin import AvatarModule
 
-    avatar, found = config.avatar, []
-    for name in ("memory", "persona"):
-        if getattr(avatar, name).plugin == "default":
-            found.append(f"{name} vector store embeddings")
-    mcp = avatar.tools.mcp
-    if mcp.enabled and mcp.plugin == "default" and mcp.servers:
-        found.append("mcp tool index embeddings")
-    custom = sorted(
-        method
-        for method, runner in plan_inference_runners(avatar).items()
-        if not runner.__module__.startswith("alphaavatar.plugins.")
-    )
-    if custom:
-        found.append(f"custom runners ({', '.join(custom)}), external access unknown")
+    found = []
+    for method, runner in sorted(plan_inference_runners(config.avatar).items()):
+        if runner.PROVIDERS:
+            kinds = {AvatarModule(module) for module, _ in runner.PROVIDERS}
+            what = "embeddings" if kinds == {AvatarModule.PROVIDER_EMBEDDING} else "model providers"
+            found.append(f"{what} as {method} starts")
     return found
+
+
+def _configured(configuration: str) -> str:
+    return "" if configuration == "original" else f" [{configuration.removeprefix('degraded: ')}]"
+
+
+def _cached_bytes(root: Any) -> int:
+    """The bytes of the model files under ``root``: what grows when a start downloads."""
+    total = 0
+    for path in Path(root).rglob("*") if Path(root).is_dir() else ():
+        try:
+            if path.is_file() and not path.is_symlink():
+                total += path.stat().st_size
+        except OSError:
+            continue  # Replaced as it was read: a download in progress.
+    return total
+
+
+def _size(count: int) -> str:
+    for unit in ("bytes", "KB", "MB"):
+        if count < 1000 or unit == "MB":
+            return f"{count:,} {unit}" if unit == "bytes" else f"{count:,.1f} {unit}"
+        count /= 1000
+    return f"{count:,.1f} GB"
+
+
+def model_not_cached(details: Sequence[str]) -> bool:
+    """Whether a runner's start failed for want of cached model files: the resolver's own
+    error type (``ModelNotCached``) in its diagnostic, which the runtime's start wraps."""
+    return any(line.strip() == "error: ModelNotCached" for line in details)
+
+
+def probe_failed(details: Sequence[str]) -> bool:
+    """Whether a vector store's start failed at its embedding probe, the provider's request:
+    the probe's own error type (``EmbeddingProbeError``) in the start's diagnostic."""
+    return any(line.strip() == "error: EmbeddingProbeError" for line in details)
 
 
 def embedding_runners(config: ApplicationConfig) -> frozenset[str]:
@@ -224,35 +275,27 @@ def embedding_runners(config: ApplicationConfig) -> frozenset[str]:
 
 
 def blocked(config: ApplicationConfig, services: Sequence[str]) -> str | None:
-    """Why the session may not start: data it cannot isolate, services it may not reach."""
+    """Why the diagnosis may not start: data it cannot isolate, or no authorization, which
+    starting the runtime needs whatever it reaches: it may download model files too."""
     reasons = []
     if stores := unisolated(config):
         reasons.append(f"real Avatar data cannot be isolated: {', '.join(stores)}")
-    if services and not config.host.doctor.external_services:
-        reasons.append(f"not authorized: {', '.join(services)}")
+    if not config.host.doctor.external_services:
+        reasons.append("not authorized" + (f": {', '.join(services)}" if services else ""))
     return "; ".join(reasons) or None
 
 
 def starts(config: ApplicationConfig, services: Sequence[str]) -> bool:
-    """Whether the session step starts anything: the session itself when it may, or else the
-    runners alone, when starting them reaches nothing beyond this machine."""
-    from alphaavatar.agents.runtime.inference import plan_inference_runners
-
-    if blocked(config, services) is None:
-        return True
-    return not start_services(config) and bool(plan_inference_runners(config.avatar))
+    """Whether the diagnosis starts anything: only once it is authorized and can isolate
+    what it writes. Nothing starts partly: not even runners, whatever they reach."""
+    return blocked(config, services) is None
 
 
 def unstarted(
     config: ApplicationConfig, source: ConfigSource, services: Sequence[tuple[str, str]]
 ) -> dict[str, Check]:
     """The session's checks when it starts nothing: why, and what would allow it."""
-    run = _Run(config, source, services, asyncio.Event(), budget())
-    if found := start_services(config):
-        run.unstarted = f"starting them reaches {', '.join(found)}, which needs authorization"
-    else:
-        run.unstarted = "no runner selected"
-    return run.checks()
+    return _Run(config, source, services, asyncio.Event(), budget()).checks()
 
 
 async def diagnose_session(
@@ -264,13 +307,15 @@ async def diagnose_session(
     limits: Budget,
     stop: asyncio.Event,
     logs: LogTimings,
+    rounds: int = 1,
 ) -> dict[str, Check]:
     """The session's checks, ``services.external`` with them, from the isolated snapshot.
 
     Runs in the diagnostic process; ``services`` names and kinds the external services the
-    configuration reaches, as ``doctor`` lists them.
+    configuration reaches, as ``doctor`` lists them. Each scenario runs ``rounds`` times, each
+    time in a session of its own.
     """
-    run = _Run(config, source, services, stop, limits, logs)
+    run = _Run(config, source, services, stop, limits, logs, rounds)
     run.rebound = tuple(rebound)
     run.deadline = asyncio.get_running_loop().time() + limits.total
     children = {process.pid for process in mp.active_children()}
@@ -292,8 +337,12 @@ class _Run:
         stop: asyncio.Event,
         limits: Budget,
         logs: LogTimings | None = None,
+        rounds: int = 1,
     ) -> None:
         self.config, self.source, self.stop, self.limits = config, source, stop, limits
+        self.rounds = rounds
+        self.ready: list[float] = []  # Each original session's readiness, in milliseconds
+        self.starts: dict[str, Metric] = {}  # Each runtime's one start, by configuration
         self.services = tuple(services)
         self.names = [name for name, _ in self.services]
         self.blocked = blocked(config, self.names)
@@ -306,7 +355,6 @@ class _Run:
         self.problems: list[str] = []
         self.runners: dict[str, list[RunnerResult]] = {}  # By configuration tried
         self.runner_error: dict[str, tuple[str, ...]] = {}
-        self.session: Metric | None = None  # Readiness of the original configuration's session
         self.session_error: tuple[str, tuple[str, ...]] | None = None
         self.results: list[ScenarioResult] = []
         self.closed = 0
@@ -354,14 +402,9 @@ class _Run:
     # Steps
 
     async def execute(self) -> None:
-        from alphaavatar.agents.runtime.inference import plan_inference_runners
-
         config = self.config
         if self.blocked is not None:
-            # Only runners that reach nothing beyond this machine, and only for their start.
-            if not start_services(config) and plan_inference_runners(config.avatar):
-                await self._attempt(config, "original", (), "chat")
-            return
+            return  # Nothing starts unauthorized, nor partly.
         await self._attempt(config, "original", self.plan.tasks, self.plan.session_type)
         for configuration, derived, session_type, tasks in self._degradations():
             if self.stop.is_set() or not self._remaining(self.limits.session):
@@ -377,7 +420,8 @@ class _Run:
         tasks: Sequence[samples.Task],
         session_type: str,
     ) -> None:
-        """One configuration: its own runners, then sessions until its turns are done."""
+        """One configuration: its runtime started once, as start starts it, then each
+        round of its scenarios, each scenario in a session of its own."""
         from alphaavatar.agents.runtime.inference import (
             InferenceRuntime,
             RunnerLaunch,
@@ -395,8 +439,25 @@ class _Run:
             ),
             config=config.avatar.runtime.inference,
         )
+        models = config.paths.cache.models_dir
+        cached = _cached_bytes(models)
+        began = time.monotonic_ns()
         try:
-            state, error = await self._bounded(runtime.start, self.limits.session)
+            state, error = await self._bounded(runtime.start, self.limits.runners)
+            if state != "budget":
+                # One start, one sample: a start that fetched model files is not a cached one.
+                fetched = _cached_bytes(models) - cached
+                self.starts[configuration] = Metric(
+                    "runtime_start",
+                    round((time.monotonic_ns() - began) / 1e6, 3),
+                    "ms",
+                    "runtime start began",
+                    "every runner ready, or the first failure",
+                    f"inference runtime ({configuration})",
+                    note=f"{_size(fetched)} of model files downloaded first"
+                    if fetched > 0
+                    else "every model file from the cache",
+                )
             if state == "budget":  # Nothing started: not a runner's failure.
                 if configuration == "original":
                     self.unstarted = "the diagnosis budget was spent before the runners started"
@@ -404,7 +465,7 @@ class _Run:
                 return
             started = state == "done" and error is None
             if state == "timeout":
-                failure = (f"the runners did not start within {self.limits.session:g} s",)
+                failure = (f"the runners did not start within {self.limits.runners:g} s",)
             else:
                 failure = _diagnostic(error) if error is not None else ()
             self.runner_error[configuration] = failure
@@ -418,13 +479,13 @@ class _Run:
                 stage = f"runner {failed} did not start" if failed else f"runners {state}"
                 self._unrun(tasks, configuration, stage, failure, blocked_stage="runners")
                 return
-            remaining = list(tasks)
-            while remaining:
-                if self.stop.is_set() or not self._remaining(self.limits.turn):
-                    reason = "interrupted" if self.stop.is_set() else "budget exhausted"
-                    self._unrun(remaining, configuration, f"not run: {reason}", ())
-                    break
-                remaining = await self._session(config, configuration, session_type, remaining)
+            for at in range(1, self.rounds + 1):
+                for task in tasks:
+                    if self.stop.is_set() or not self._remaining(self.limits.turn):
+                        reason = "interrupted" if self.stop.is_set() else "budget exhausted"
+                        self._unrun((task,), configuration, f"not run: {reason}", (), at=at)
+                        continue
+                    await self._session(config, configuration, session_type, task, at)
         finally:
             self.counters += runtime.snapshot()
             try:
@@ -438,10 +499,12 @@ class _Run:
         config: ApplicationConfig,
         configuration: str,
         session_type: str,
-        tasks: Sequence[samples.Task],
-    ) -> list[samples.Task]:
-        """Turns in one session; after a turn that did not end on its own, the rest are left
-        for a fresh session, so nothing of that turn reaches the next one."""
+        task: samples.Task,
+        at: int,
+    ) -> None:
+        """One round of one scenario, in a session of its own: nothing of another turn, or of
+        an earlier round, is in its history."""
+        tasks = (task,)
         from alphaavatar.host.application.bootstrap import create_execution
         from alphaavatar.host.execution.execution import HostExecution
         from alphaavatar.host.sessions.schemas import SessionContext
@@ -463,10 +526,10 @@ class _Run:
                 await self._close("session", execution.aclose)
             reason = state if state != "done" else "assembly failed"
             details = _diagnostic(built) if isinstance(built, BaseException) else ()
-            self._unrun(tasks, configuration, f"session {reason}", details)
+            self._unrun(tasks, configuration, f"session {reason}", details, at=at)
             if configuration == "original" and self.session_error is None:
                 self.session_error = (f"session {reason}", details)
-            return []
+            return
         runtime = execution.runtime
         sink = DiagnosticSink(runtime.output)
         timing = config.avatar.runtime.perception
@@ -483,41 +546,26 @@ class _Run:
             if state != "done" or error is not None:
                 details = _diagnostic(error) if error is not None else ()
                 stage = f"session start {state if state != 'done' else 'failed'}"
-                self._unrun(tasks, configuration, stage, details)
+                self._unrun(tasks, configuration, stage, details, at=at)
                 if configuration == "original" and self.session_error is None:
                     self.session_error = (stage, details)
-                return []
+                return
             source.start(audio=session_type != "chat", screen=session_type == "video")
             execution.engine.notify_ready()
-            if configuration == "original" and self.session is None:
-                self.session = Metric(
-                    "session_ready",
-                    round((time.monotonic_ns() - began) / 1e6, 3),
-                    "ms",
-                    "session assembly began",
-                    "Engine ready",
-                    "runtime, plugins and Engine of the diagnostic session",
-                )
+            if configuration == "original":
+                self.ready.append(round((time.monotonic_ns() - began) / 1e6, 3))
             failed = asyncio.create_task(execution.wait_failed(), name="doctor_session_failed")
-            for index, task in enumerate(tasks):
-                if self.stop.is_set() or not self._remaining(self.limits.turn):
-                    reason = "interrupted" if self.stop.is_set() else "budget exhausted"
-                    self._unrun(tasks[index:], configuration, f"not run: {reason}", ())
-                    return []
-                if task.speech is not None:
-                    try:
-                        samples.speech(task.speech)
-                    except Exception as error:
-                        stage = f"fixed sample {task.speech} unavailable"
-                        self._unrun((task,), configuration, stage, _diagnostic(error))
-                        continue
-                observation = await self._turn(
-                    execution, source, sink, task, configuration, failed, session_id
-                )
-                self.results.append(_measure(observation))
-                if observation.ended is not None:
-                    return list(tasks[index + 1 :])
-            return []
+            if task.speech is not None:
+                try:
+                    samples.speech(task.speech)
+                except Exception as error:
+                    stage = f"fixed sample {task.speech} unavailable"
+                    self._unrun(tasks, configuration, stage, _diagnostic(error), at=at)
+                    return
+            observation = await self._turn(
+                execution, source, sink, task, configuration, failed, session_id, at
+            )
+            self.results.append(_measure(observation))
         finally:
             if failed is not None:
                 failed.cancel()
@@ -542,6 +590,7 @@ class _Run:
         configuration: str,
         failed: asyncio.Task[None],
         session_id: str,
+        at: int = 1,
     ) -> TurnObservation:
         logs = self.logs
         perception = execution.runtime.perception
@@ -613,20 +662,27 @@ class _Run:
             ended=ended,
             dropped=sink.dropped,
             queues=dict(sink.queues),
+            round=at,
         )
 
     def _degradations(self) -> list[tuple[str, ApplicationConfig, str, tuple[samples.Task, ...]]]:
         """The existing fallbacks the original's own cause calls for, each tried on its own
         configuration: vision unavailable, then speech output unavailable."""
         original = [r for r in self.results if r.configuration == "original"]
-        found = {r.name: r for r in original}
+        found: dict[str, list[ScenarioResult]] = {}
+        for result in original:
+            found.setdefault(result.name, []).append(result)
         trials = []
-        if self.plan.vision and self._vision_unavailable(found.get("voice_vision")):
-            # Nothing ran when the original could not start: the typed turn goes along.
-            ran = "text" in found and found["text"].blocked_stage != "runners"
-            tasks = (samples.VOICE,) if ran else (samples.VOICE, samples.TEXT)
-            config = vision_off(self.config)
-            trials.append(("degraded: vision off", config, "audio", tasks))
+        cards = found.get("voice_vision") or [None]
+        if self.plan.vision and any(self._vision_unavailable(r) for r in cards):
+            # The spoken turn without the picture, unless every original round of it passed;
+            # the typed one too when the original could not start, so nothing of it ran.
+            voice = found.get("voice", [])
+            passed = bool(voice) and all(r.outcome == ScenarioOutcome.PASSED for r in voice)
+            ran = any(r.blocked_stage != "runners" for r in found.get("text", []))
+            tasks = (*((samples.VOICE,) * (not passed)), *((samples.TEXT,) * (not ran)))
+            if tasks:
+                trials.append(("degraded: vision off", vision_off(self.config), "audio", tasks))
         spoken = [r for r in original if r.name in ("voice", "voice_vision", "text")]
         if self.plan.audio_output and any(_speech_failed(r) for r in spoken):
             trials.append(("degraded: text output", self.config, "chat", (samples.TEXT,)))
@@ -654,7 +710,10 @@ class _Run:
         details: tuple[str, ...],
         *,
         blocked_stage: str | None = None,
+        at: int | None = None,
     ) -> None:
+        """Scenarios that did not run: in round ``at``, or at all when their runtime did not
+        start."""
         interrupted = "interrupted" in stage
         for task in tasks:
             self.results.append(
@@ -668,6 +727,7 @@ class _Run:
                     blocked_stage=blocked_stage or stage,
                     details=details,
                     task=task.prompt,
+                    round=at,
                 )
             )
 
@@ -690,23 +750,24 @@ class _Run:
 
         if self.blocked is not None:
             stores = unisolated(self.config)
-            authorize = bool(self.names) and not self.config.host.doctor.external_services
+            authorize = not self.config.host.doctor.external_services
             summary = (
-                "Not run: the session would reach external services, and "
+                f"Not run: Doctor cannot isolate {', '.join(stores)} from real Avatar data"
+                if stores
+                else "Not run: the runtime diagnosis is not authorized, and "
                 "host.doctor.external_services is false"
-                if authorize
-                else f"Not run: Doctor cannot isolate {', '.join(stores)} from real Avatar data"
             )
             actions = []
             if authorize:
                 actions.append(
-                    "To allow these calls, which may be billed: set "
-                    "host.doctor.external_services: true in the host profile, or run "
-                    f"`{doctor} host.doctor.external_services=true`"
+                    "Run it at a terminal and agree, or allow it, model downloads and calls "
+                    "that may be billed included: set host.doctor.external_services: true in "
+                    f"the host profile, or run `{doctor} host.doctor.external_services=true`"
                 )
             if stores:
                 actions.append(
-                    f"Doctor never writes to a remote vector store; `{_dev(self.source)}` uses it"
+                    f"Doctor writes no remote vector store unless the configuration says it "
+                    f"holds test data (host.doctor.test_stores: true); `{_dev(self.source)}` uses it"
                 )
             return Check(
                 "session.start",
@@ -716,6 +777,12 @@ class _Run:
                 "; ".join(actions),
             )
         rebound = tuple(f"moved into the temporary workspace: {item}" for item in self.rebound)
+        if self.config.host.doctor.test_stores:
+            # Written by the diagnosis, as the configuration allows: named, not hidden.
+            rebound += tuple(
+                f"a test store, as host.doctor.test_stores says: {store}"
+                for store in remote_stores(self.config)
+            )
         if self.unstarted is not None and not self.runners.get("original"):
             return Check("session.start", CheckStatus.SKIP, f"Not run: {self.unstarted}", rebound)
         # No runner at all is a valid plan: the session's own start decides then.
@@ -736,21 +803,33 @@ class _Run:
                 (*details, *rebound),
                 "Fix the reported component, then run doctor again",
             )
-        metrics = (self.session,) if self.session is not None else ()
-        ready = f"{self.session.value:.0f} ms" if self.session is not None else "unknown"
+        ready = sorted(self.ready)
+        metrics = ()
+        if ready:
+            metrics = (
+                Metric(
+                    "session_ready",
+                    round(statistics.median(ready), 3),
+                    "ms",
+                    "session assembly began",
+                    "Engine ready",
+                    "runtime, plugins and Engine of each diagnostic session, the median",
+                    len(ready),
+                    tuple(self.ready),
+                ),
+            )
+        shown = f"{statistics.median(ready):.0f} ms" if ready else "unknown"
+        count = f"{len(ready)} temporary sessions" if len(ready) > 1 else "A temporary session"
         return Check(
             "session.start",
             CheckStatus.PASS,
-            f"A temporary session with the configured plugins was ready in {ready}",
+            f"{count} with the configured plugins, ready in {shown}"
+            + (" at the median" if len(ready) > 1 else ""),
             rebound,
             metrics=metrics,
         )
 
     def _runner_check(self) -> Check:
-        from alphaavatar.agents.utils.files.model.model_files import models_offline
-
-        from .doctor import _dev
-
         runners = self.runners.get("original", [])
         # Each degradation started its own: shown apart, the original's result stands.
         degraded = [(c, found) for c, found in self.runners.items() if c != "original"]
@@ -758,55 +837,88 @@ class _Run:
             f"{configuration}: " + ", ".join(f"{r.method} {r.summary}" for r in found)
             for configuration, found in degraded
         ]
-        every = (*runners, *(runner for _, found in degraded for runner in found))
+        every = tuple(
+            self._served(runner)
+            for runner in (*runners, *(runner for _, found in degraded for runner in found))
+        )
+        starts = tuple(self.starts.values())
         if not runners:
-            if self.unstarted is not None:
+            if self.blocked is not None:
+                reason = "the diagnosis did not start; see session.start"
+            elif self.unstarted is not None:
                 reason = self.unstarted
             elif "original" in self.runners:
                 reason = "no runner selected"
             else:
                 reason = "not reached"
-            return Check("models.runners", CheckStatus.SKIP, f"Not started: {reason}")
+            return Check(
+                "models.runners", CheckStatus.SKIP, f"Not started: {reason}", metrics=starts
+            )
         failed = [runner for runner in runners if runner.status == CheckStatus.FAIL]
         pending = [runner for runner in runners if runner.status == CheckStatus.SKIP]
         error = self.runner_error.get("original", ())
-        where = "from the cache, offline" if models_offline() else "with downloads allowed"
+        start = self.starts.get("original")
+        began = (
+            f"the runtime started in {start.value / 1000:.2f} s, {start.note}"
+            if start is not None and start.value is not None
+            else "the runtime started"
+        )
         if not failed and not pending and not error:
             slowest = max(runners, key=lambda r: r.startup_seconds or 0.0)
             return Check(
                 "models.runners",
                 CheckStatus.PASS,
-                f"{len(runners)} runners started {where}; slowest "
+                f"{len(runners)} runners: {began}; slowest "
                 f"{slowest.method} in {slowest.startup_seconds or 0:.2f} s",
                 (*self._counted(), *others),
                 runners=every,
-                metrics=tuple(self._queues()),
+                metrics=(*starts, *self._queues()),
             )
-        missing = any("FileNotFoundError" in line for line in error)
-        status = CheckStatus.WARN if missing and not models_offline() else CheckStatus.FAIL
+        # Downloads are off only when this machine says so, for start as for Doctor.
+        missing = model_not_cached(error)
         first = failed[0].method if failed else "a runner"
         action = (
-            "Run doctor again in a terminal and agree to the download, or start "
-            f"`{_dev(self.source)}` once with network access"
+            "Model downloads are switched off here (ALPHAAVATAR_MODEL_OFFLINE or HF_HUB_OFFLINE): "
+            "unset them for start to download it, then run doctor again"
             if missing
             else "Fix what the error names (model file, package, device), then run doctor again"
         )
         return Check(
             "models.runners",
-            status,
+            CheckStatus.FAIL,
             f"{first} did not start{': its model is not in the cache' if missing else ''}; "
             f"{len(pending)} not reached",
             (*error, *others),
             action,
             runners=every,
+            metrics=starts,
         )
 
-    def _queues(self) -> list[Metric]:
-        """Each runner's queue wait and execution, as its process summarizes them."""
+    def _summaries(self) -> dict[str, list[dict]]:
+        """Each runner's summaries, by method, as its process logs them."""
         found: dict[str, list[dict]] = {}
         for record in self.logs.records if self.logs is not None else ():
             if record.name == "inference.summary":
                 found.setdefault(record.fields.get("method"), []).append(record.fields)
+        return found
+
+    def _served(self, runner: RunnerResult) -> RunnerResult:
+        """A runner with what it served, where its process summarized it."""
+        summaries = self._summaries().get(runner.method)
+        if not summaries:
+            return runner
+        return replace(
+            runner,
+            calls=sum(int(item.get("calls", 0)) for item in summaries),
+            queue_wait_max_ms=round(max(float(i.get("queue_max_ms", 0.0)) for i in summaries), 3),
+            execution_max_ms=round(
+                max(float(i.get("execution_max_ms", 0.0)) for i in summaries), 3
+            ),
+        )
+
+    def _queues(self) -> list[Metric]:
+        """Each runner's queue wait and execution, as its process summarizes them."""
+        found = self._summaries()
         metrics = []
         for method, summaries in found.items():
             calls = sum(int(item.get("calls", 0)) for item in summaries)
@@ -896,12 +1008,18 @@ class _Run:
         if kind == "tts":
             users = [r for r in users if r.configuration != "degraded: text output"]
         if kind == "model" and not users and self.runners.get("original"):
-            # Vector stores embed a probe text as their runners start: those starts show it.
+            # Vector stores probe their embedding provider as their runners start, after the
+            # store opened: a start shows the probe answered, and only the probe's own error
+            # is the provider's. A store that failed before it never reached the provider.
             embedding = embedding_runners(self.config)
-            starts = [r.status for r in self.runners["original"] if r.method in embedding]
-            if CheckStatus.FAIL in starts:
-                return ServiceResult(name, True, None, False, "vector store embeddings")
-            if starts and all(status == CheckStatus.PASS for status in starts):
+            starts = {r.method: r.status for r in self.runners["original"] if r.method in embedding}
+            failed = [method for method, status in starts.items() if status == CheckStatus.FAIL]
+            if failed and probe_failed(self.runner_error.get("original", ())):
+                return ServiceResult(name, True, None, False, "the embedding probe failed")
+            if failed:
+                note = f"vector store embeddings: {failed[0]} failed before its probe"
+                return ServiceResult(name, True, None, None, note)
+            if starts and all(status == CheckStatus.PASS for status in starts.values()):
                 return ServiceResult(name, True, True, True, "vector store embeddings")
             if starts:
                 note = "vector store embeddings: an earlier runner did not start"
@@ -973,11 +1091,8 @@ class _Run:
             )
         )
         original = [r for r in results if r.configuration == "original"]
-        measured = [
-            r for r in results if r.outcome in (ScenarioOutcome.PASSED, ScenarioOutcome.FAILED)
-        ]
         failed = [r for r in original if r.outcome == ScenarioOutcome.FAILED]
-        degraded = [r for r in measured if r.configuration != "original"]
+        summaries = summarize(results)
         # Enabled, but not verified: what the configuration selects and no sample covered.
         uncovered = [
             r
@@ -985,17 +1100,20 @@ class _Run:
             if r.outcome in (ScenarioOutcome.CONDITIONS_UNMET, ScenarioOutcome.INTERRUPTED)
             or (r.outcome == ScenarioOutcome.NO_COVERAGE and r.name == "visual_output")
         ]
-        count = {outcome: sum(r.outcome == outcome for r in results) for outcome in ScenarioOutcome}
+        rounds = [
+            f"{x.name}{_configured(x.configuration)} {x.passed}/{x.rounds} passed"
+            for x in summaries
+        ]
+        once = [r for r in results if r.round is None]
+        count = {outcome: sum(r.outcome == outcome for r in once) for outcome in ScenarioOutcome}
         summary = ", ".join(
-            f"{n} {outcome.value.replace('_', ' ')}" for outcome, n in count.items() if n
+            [
+                *rounds,
+                *(f"{n} {outcome.value.replace('_', ' ')}" for outcome, n in count.items() if n),
+            ]
         )
-        if degraded:
-            summary += f"; degraded: {', '.join(f'{r.name} {r.outcome.value}' for r in degraded)}"
         if failed:
-            status, action = (
-                CheckStatus.FAIL,
-                "See each failed scenario's blocked stage, cause and evidence",
-            )
+            status, action = (CheckStatus.FAIL, "See each failed round's stage, cause and evidence")
         elif any(r.outcome == ScenarioOutcome.PASSED for r in original):
             if uncovered:
                 status, action = CheckStatus.WARN, "See what each scenario not run was missing"
@@ -1008,7 +1126,14 @@ class _Run:
         else:
             status = CheckStatus.SKIP
             action = None if self.blocked is None else "See session.start"
-        return Check("session.scenarios", status, summary, action=action, scenarios=tuple(results))
+        return Check(
+            "session.scenarios",
+            status,
+            summary,
+            action=action,
+            scenarios=tuple(results),
+            summaries=summaries,
+        )
 
     def _cleanup_check(self, dev: str) -> Check:
         if self.problems:

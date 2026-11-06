@@ -1654,3 +1654,9 @@ glibc 下限（新脚本实测）：基础包 2.17；远端环境 2.28；默认�
 3. **录制工具的位置**：`scripts/docs/cli_preview.py` 不在测试里；它只生成文档，页面内容由录制决定。
 
 证据（会话临时目录，不入库）：`/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/evidence8/`（全量测试、拦截测试、变异、三次构建日志）和 `/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/accept8/`（沙箱脚本 `run8.sh`、离线驱动 `doctor_offline.py` 与 `offline.sh`、页面脚本 `html.sh`、`rec/` 下的 `.cast`／`.ansi`）；本轮制品在 `/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/out8/`。
+
+### 9. 追加：Doctor 多轮报告与页面重录（基线 `38fad3c3`）
+
+- 渲染器：表格行去掉尾随空格（多轮汇总表的分组行原先留着空单元格的填充）；`Report.table` 在终端放不下时，Doctor 的汇总表改为逐项分行。
+- `docs/cli/cli.html` 在命令行为稳定后重录：沙箱 11 个面板来自本轮构建，Doctor 的确认提示改为「Run the diagnosis?」；离线测试替身 7 个面板来自本轮代码：默认 5 轮、72 列 3 轮、关闭视觉、缓存缺权重按正常路径下载、第 2 轮丢句、模型不接受图片、提问处 Ctrl+C，每个都标「离线测试替身」。页面导语写明：这里没有真实服务的数据，真实对照记在验收日志里。
+- 页面检查：18 个面板，7 个离线面板带标签；没有临时目录路径、外部资源或凭据值；超宽的只有原样输出的诊断 `This release's setup installs nothing for: …`。

@@ -261,6 +261,7 @@ def _setup(args: argparse.Namespace) -> int:
     from alphaavatar.host.configs.bundles import bundle_path, check_bundle_name, read_settings
     from alphaavatar.host.configs.credentials import load_environment, stored_credentials
     from alphaavatar.host.configs.template import create_bundle, render_bundle, set_default_bundle
+    from alphaavatar.host.sessions.factory import check_session_credentials
     from alphaavatar.host.setup import choices
     from alphaavatar.host.setup.environment import (
         Installation,
@@ -342,6 +343,15 @@ def _setup(args: argparse.Namespace) -> int:
             out.step(2, "Credentials", f"Ready · {len(saved)} to store" if saved else "Ready")
         else:
             values, saved = {}, {}
+            # Start's session transport credentials, as start reads them, checked offline
+            # before anything is installed: a bundle setup enables can start.
+            try:
+                check_session_credentials(host.rtc, os.environ)
+            except ValueError as error:
+                raise SetupError(
+                    f"The session transport ({host.rtc.backend}) cannot start: {error}, in the "
+                    "environment, .env or the stored credentials"
+                ) from None
             out.step(2, "Credentials", "From the environment, .env or those stored")
 
         size = "installed already" if reused else _megabytes(plan.download_bytes)

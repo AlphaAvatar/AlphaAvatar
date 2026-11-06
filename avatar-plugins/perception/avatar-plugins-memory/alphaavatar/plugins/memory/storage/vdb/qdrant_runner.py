@@ -36,6 +36,7 @@ from alphaavatar.agents.memory.enums import VectorRunnerOP
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import qdrant
 from alphaavatar.agents.utils.vdb.config import vdb_embeddings, vdb_requirement
+from alphaavatar.agents.utils.vdb.probe import probe_dimension
 
 from ...namespace import NAMESPACE
 
@@ -530,7 +531,7 @@ class QdrantRunner(InferenceRunner):
 
         self._client = qdrant.get_client(**self._get_vdb_config(config))
         self._embeddings = self._get_memory_embeddings(config)
-        embedding_dim = len(self._embeddings.embed_query("dimension-probe"))
+        embedding_dim = probe_dimension(self._embeddings)
         self._ensure_collection(self._collection_name, embedding_dim)
 
     def close(self) -> None:

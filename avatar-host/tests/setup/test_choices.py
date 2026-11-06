@@ -535,18 +535,18 @@ def _drop(body: dict, *path: str) -> None:
 PROFILE_EDITS = {
     # A switch left out takes its default, on: its runner still starts.
     "switches left out": {
-        "router": lambda body: (
+        "perception/router": lambda body: (
             _drop(body, "init_config", "turn_taking", "enabled"),
             _drop(body, "init_config", "addressing", "semantic", "enabled"),
         ),
-        "persona": lambda body: (
+        "perception/persona": lambda body: (
             _drop(body, "init_config", "speaker", "enabled"),
             _drop(body, "init_config", "face", "enabled"),
         ),
     },
     # A part switched off creates nothing: a backend nothing installs is not needed for it.
     "off, on a backend nothing installs": {
-        "persona": lambda body: body["init_config"]["profiler"].update(
+        "perception/persona": lambda body: body["init_config"]["profiler"].update(
             enabled=False,
             provider={
                 "gateway": {
@@ -561,7 +561,25 @@ PROFILE_EDITS = {
             },
         )
     },
+    # A task that names its model alone: its kind and backend are the schema's defaults.
+    "a task on the schema's defaults": {
+        "foundation/loop": lambda body: body["init_config"].update(model={"model": "gpt-4o"})
+    },
 }
+
+
+def edited_bundle(home: Path, edit: str) -> ConfigSource:
+    """``config init``'s bundle with one of ``PROFILE_EDITS`` made in its profile files."""
+    from alphaavatar.host.configs.template import create_bundle
+
+    paths = ApplicationPaths.from_root(home)
+    create_bundle(paths, "edited", avatar_id="edited")
+    for profile, change in PROFILE_EDITS[edit].items():
+        path = paths.configs.profiles_dir / "edited" / "plugins" / f"{profile}.yaml"
+        body = yaml.safe_load(path.read_text())
+        change(body)
+        path.write_text(yaml.safe_dump(body))
+    return ConfigSource(paths.configs.bundles_dir / "edited.yaml", "edited", home=paths.root)
 
 
 @pytest.mark.parametrize("edit", PROFILE_EDITS)
@@ -569,16 +587,8 @@ def test_a_bundle_edited_in_its_profiles_plans_what_start_resolves(
     edit: str, tmp_path: Path
 ) -> None:
     from alphaavatar.host.configs import load_application
-    from alphaavatar.host.configs.template import create_bundle
 
-    paths = ApplicationPaths.from_root(tmp_path / "home")
-    create_bundle(paths, "edited", avatar_id="edited")
-    for profile, change in PROFILE_EDITS[edit].items():
-        path = paths.configs.profiles_dir / "edited" / "plugins" / "perception" / f"{profile}.yaml"
-        body = yaml.safe_load(path.read_text())
-        change(body)
-        path.write_text(yaml.safe_dump(body))
-    source = ConfigSource(paths.configs.bundles_dir / "edited.yaml", "edited", home=paths.root)
+    source = edited_bundle(tmp_path / "home", edit)
     config = load_application(source)
     needs, unserved = bundle_requirements(config.host, config.avatar, installed_plugins())
     resolved = {need.requirement for need in resolve_capabilities(config).needs}
@@ -602,7 +612,7 @@ def test_what_setup_does_not_install_is_named_by_the_setting_that_selects_it(
 
 
 BARE = """
-import importlib.abc, json, sys
+import importlib.abc, json, os, sys
 from pathlib import Path
 
 
@@ -614,36 +624,74 @@ class Bare(importlib.abc.MetaPathFinder):
 
 sys.meta_path.insert(0, Bare())
 from alphaavatar.host.configs import ConfigSource, load_selections
+from alphaavatar.host.sessions.factory import check_session_credentials
 from alphaavatar.host.setup.choices import bundle_requirements
 
 home, plugins, bundle = Path(sys.argv[1]), json.loads(sys.argv[2]), Path(sys.argv[3])
-needs, unserved = bundle_requirements(
-    *load_selections(ConfigSource(bundle, "reference", home=home)), plugins
-)
+host, avatar = load_selections(ConfigSource(bundle, bundle.stem, home=home))
+needs, unserved = bundle_requirements(host, avatar, plugins)
+try:
+    check_session_credentials(host.rtc, os.environ)
+    credentials = None
+except ValueError as error:
+    credentials = str(error)
 loaded = sorted(name for name in sys.modules if name.startswith("alphaavatar.plugins"))
-print(json.dumps({"needs": sorted(needs), "unserved": unserved, "plugins": loaded}))
+print(json.dumps({"needs": sorted(needs), "unserved": unserved, "plugins": loaded, "credentials": credentials}))
 """
+
+
+def bare(home: Path, bundle: Path, plugins: dict, env: dict[str, str] | None = None) -> dict:
+    """``BARE`` in a process of its own, with no plugin importable and an environment of
+    ``env`` alone: nothing installed or exported here stands in for what is missing."""
+    import json
+    import subprocess
+    import sys
+
+    argv = [sys.executable, "-c", BARE, str(home), json.dumps(plugins), str(bundle)]
+    environ = {"PATH": os.environ["PATH"], "HOME": str(home)} | (env or {})
+    result = subprocess.run(argv, capture_output=True, text=True, check=True, env=environ)
+    return json.loads(result.stdout)
 
 
 def test_a_bare_base_plans_a_bundle_without_importing_any_plugin(tmp_path: Path) -> None:
     """Before setup installs anything, no plugin is there to import: the plan comes from the
     bundle's settings and the catalog alone."""
-    import json
-    import subprocess
-    import sys
+    from alphaavatar.host.configs.template import create_bundle
 
+    paths = ApplicationPaths.from_root(tmp_path / "home")
+    create_bundle(paths, "reference", avatar_id="reference")
+    found = bare(paths.root, paths.configs.bundles_dir / "reference.yaml", installed_plugins())
+    assert (found["needs"], found["unserved"], found["plugins"]) == (
+        list(requirements(Selection())),
+        [],
+        [],
+    )
+
+
+def test_a_bare_base_plans_a_task_left_to_the_schemas_defaults(tmp_path: Path) -> None:
+    """The loop's task names its model alone: the plan needs the schema's default backend,
+    here one the catalog does not serve, so setup names it where it is."""
+    source = edited_bundle(tmp_path / "home", "a task on the schema's defaults")
+    plugins = installed_plugins()
+    del plugins["provider.llm"]["langchain"]
+    found = bare(source.home, source.path, plugins)
+    assert "loop.init_config.model: provider.llm 'langchain'" in found["unserved"]
+    assert found["plugins"] == []
+
+
+def test_a_bare_base_checks_the_session_transport_credentials_offline(tmp_path: Path) -> None:
     from alphaavatar.host.configs.template import create_bundle
 
     paths = ApplicationPaths.from_root(tmp_path / "home")
     create_bundle(paths, "reference", avatar_id="reference")
     bundle = paths.configs.bundles_dir / "reference.yaml"
-    argv = [
-        sys.executable,
-        "-c",
-        BARE,
-        str(paths.root),
-        json.dumps(installed_plugins()),
-        str(bundle),
-    ]
-    found = json.loads(subprocess.run(argv, capture_output=True, text=True, check=True).stdout)
-    assert found == {"needs": list(requirements(Selection())), "unserved": [], "plugins": []}
+    missing = bare(paths.root, bundle, installed_plugins())
+    assert missing["credentials"] == (
+        "LIVEKIT_URL, LIVEKIT_API_KEY and LIVEKIT_API_SECRET are required"
+    )
+    given = {
+        "LIVEKIT_URL": "wss://livekit.invalid",
+        "LIVEKIT_API_KEY": "lk-fictional",
+        "LIVEKIT_API_SECRET": "lk-fictional-secret",
+    }
+    assert bare(paths.root, bundle, installed_plugins(), given)["credentials"] is None

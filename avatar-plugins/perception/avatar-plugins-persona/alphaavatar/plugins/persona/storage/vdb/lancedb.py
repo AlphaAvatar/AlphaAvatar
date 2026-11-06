@@ -23,6 +23,7 @@ from alphaavatar.agents.persona.enums import VectorRunnerOP
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.utils.vdb import lancedb
 from alphaavatar.agents.utils.vdb.config import vdb_embeddings, vdb_requirement
+from alphaavatar.agents.utils.vdb.probe import probe_dimension
 from alphaavatar.agents.workspace import WorkspacePaths
 
 from ...namespace import NAMESPACE
@@ -384,7 +385,7 @@ class LanceDBRunner(InferenceRunner):
 
         # init embeddings for details_items
         self._profiler_embeddings = self._get_profiler_embeddings(config)
-        profiler_dim = len(self._profiler_embeddings.embed_query("dimension-probe"))
+        profiler_dim = probe_dimension(self._profiler_embeddings)
 
         # init profiler table
         profiler_seed = [

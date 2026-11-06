@@ -28,6 +28,7 @@ from alphaavatar.agents.tools.schemas import ToolError
 from alphaavatar.agents.utils.loop_thread import AsyncLoopThread
 from alphaavatar.agents.utils.vdb import lancedb
 from alphaavatar.agents.utils.vdb.config import vdb_embeddings, vdb_requirement
+from alphaavatar.agents.utils.vdb.probe import probe_dimension
 from alphaavatar.agents.workspace import WorkspacePaths
 from alphaavatar.core.cleanup import wait_for_cleanup
 
@@ -572,7 +573,7 @@ class LanceDBRunner(InferenceRunner):
                 extra=embedding.get("extra") or {},
             )
         )
-        dimension = len(self._embeddings.embed_query("dimension-probe"))
+        dimension = probe_dimension(self._embeddings)
         self._ensure_collection(self._collection_name, dimension)
         self._loop_thread = AsyncLoopThread(name="mcp-loop")
         try:

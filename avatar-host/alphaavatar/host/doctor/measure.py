@@ -33,9 +33,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import samples
 from .enums import ScenarioOutcome
 from .samples import Task
-from .schemas import Evidence, Metric, ScenarioResult
+from .schemas import Evidence, FigureSummary, Metric, ScenarioResult, ScenarioSummary
 from .transport import LogRecord, OutputRecord, SourceTimeline
 
 _EXCERPT = 200
@@ -58,6 +59,8 @@ _TERMINAL = frozenset(
     )
 )
 _UNFINISHED = {"timeout": "timed_out", "interrupted": "interrupted"}
+# Where a sentence that is not in the transcript was lost, as the stage the scenario stopped at.
+_LOST_AT = {"vad": "vad.closed", "stt": "stt.final", "turn": "turn.committed"}
 # Why Doctor ends the outputs of a turn that did not end on its own.
 TURN_ENDED = "doctor_turn_ended"
 
@@ -78,6 +81,65 @@ class TurnObservation:
     ended: str | None = None  # timeout, interrupted or session_failed, when not finished
     dropped: int = 0  # Output events the sink lost
     queues: dict[str, Any] = field(default_factory=dict)
+    round: int = 1  # 1 for the first turn after its runtime started, then 2, 3, ...
+
+
+# The 95th percentile is given from this many samples on: with fewer, it is one of the
+# largest two values, which the range already shows.
+P95_SAMPLES = 20
+
+
+def summarize(results: list[ScenarioResult]) -> tuple[ScenarioSummary, ...]:
+    """Each scenario's rounds on each configuration: how many passed, where the others
+    stopped, and each figure over the passed rounds, the first apart from the later."""
+    groups: dict[tuple[str, str], list[ScenarioResult]] = {}
+    for result in results:
+        if result.round is not None:
+            groups.setdefault((result.name, result.configuration), []).append(result)
+    found = []
+    for (name, configuration), rounds in groups.items():
+        passed = [r for r in rounds if r.outcome == ScenarioOutcome.PASSED]
+        stopped: dict[str, int] = {}
+        for r in rounds:
+            if r.outcome != ScenarioOutcome.PASSED:
+                stage = r.blocked_stage or r.outcome.value
+                stopped[stage] = stopped.get(stage, 0) + 1
+        figures: dict[str, list[tuple[int | None, Metric]]] = {}
+        for r in passed:
+            for metric in (*r.metrics, *r.segments):
+                figures.setdefault(metric.name, []).append((r.round, metric))
+        summaries = []
+        for figure, measured in figures.items():
+            unit = measured[0][1].unit
+            first = next((m.value for at, m in measured if at == 1), None)
+            later = sorted(m.value for at, m in measured if at != 1 and m.value is not None)
+            notes = [m.note for _, m in measured if m.value is None and m.note]
+            summaries.append(
+                FigureSummary(
+                    figure,
+                    unit,
+                    first,
+                    len(later),
+                    round(statistics.median(later), 3) if later else None,
+                    later[0] if later else None,
+                    later[-1] if later else None,
+                    _p95(later),
+                    notes[0] if notes and first is None and not later else None,
+                )
+            )
+        found.append(
+            ScenarioSummary(
+                name, configuration, len(rounds), len(passed), stopped, tuple(summaries)
+            )
+        )
+    return tuple(found)
+
+
+def _p95(values: list[float]) -> float | None:
+    """The nearest-rank 95th percentile, from ``P95_SAMPLES`` sorted samples on."""
+    if len(values) < P95_SAMPLES:
+        return None
+    return values[max(0, -(-95 * len(values) // 100) - 1)]
 
 
 def scenario(observation: TurnObservation) -> ScenarioResult:
@@ -87,10 +149,13 @@ def scenario(observation: TurnObservation) -> ScenarioResult:
     transcript, answer = turn.transcript(), turn.answer()
     task = observation.task
     details = turn.problems()
+    sentences = turn.sentences(transcript)
     if blocked is None:
-        if task.transcript_words and not task.heard(transcript):
-            blocked = "stt.final"
-            details.append("The transcript does not contain the sample's words")
+        if task.speech is not None and task.sentences and not task.heard(transcript):
+            lost = [sentence for sentence in sentences if not sentence["heard"]]
+            blocked = _LOST_AT.get(lost[0]["lost"] if lost else "stt", "stt.final")
+            details.append("The transcript does not hold every sentence of the sample")
+            details += [f"Sentence {s['index']}: {s['why']}" for s in lost]
         elif not task.answered(answer):
             blocked = "answer"
             details.append(f"The answer is not exactly one of: {', '.join(task.answers)}")
@@ -133,6 +198,8 @@ def scenario(observation: TurnObservation) -> ScenarioResult:
         reached=tuple(name for name, at in stages if at is not None),
         request=turn.request(),
         outputs=turn.outputs(),
+        round=observation.round,
+        sentences=tuple(sentences),
         metrics=metrics,
         segments=segments,
         frames=turn.frames(),
@@ -173,12 +240,19 @@ class _Turn:
             for r in session
             if r.name == "speech.request" and r.fields.get("output_id") in outputs
         }
+        # The provider's own record of its request carries the Loop's request, not the Turn.
+        loop_requests = {
+            r.fields.get("request_id")
+            for r in session
+            if r.name == "model.started" and r.fields.get("turn_id") == turn_id
+        }
         self.logs = [
             r
             for r in session
             if (turn_id is not None and r.fields.get("turn_id") == turn_id)
             or r.fields.get("output_id") in outputs
             or (r.name.startswith("tts.") and r.fields.get("request_id") in requests)
+            or (r.name == "model.request_sent" and r.fields.get("request_id") in loop_requests)
         ]
         self.trace = self._chain(observation.trace, observation.identity, turn_id)
         if turn_id is None and observation.timeline is not None:
@@ -473,6 +547,99 @@ class _Turn:
         committed = self._log("input.committed")
         return committed.text if committed is not None and self.o.task.speech else ""
 
+    def sentences(self, transcript: str) -> list[dict[str, Any]]:
+        """Each sentence of the spoken prompt, heard in the transcript or not; for one that is
+        not, the first layer that lost it, by what each recorded of its sound:
+
+        - ``vad``: no closed speech segment covers its sound;
+        - ``stt``: its segment has no final, or a final that leaves it out, as when one
+          segment holds it and a sentence that was heard;
+        - ``turn``: its own segment's final came, but not into this Turn: rejected for a
+          retired segment, or taken by another candidate.
+
+        A sentence's sound is the recording's voiced stretch of that order; where the stretches
+        do not match the sentences one to one, every segment is a candidate.
+        """
+        task, timeline = self.o.task, self.o.timeline
+        if task.speech is None or not task.sentences or timeline is None:
+            return []
+        heard = task.heard_sentences(transcript)
+        try:
+            spans = samples.speech(task.speech).spans
+        except Exception:
+            spans = ()
+        spans = spans if len(spans) == len(heard) else ()
+        started = timeline.started_ns
+        window = [r for r in self.o.trace if r["recorded_time_ns"] >= started]
+        closed = [
+            r for r in window if r["stage"] == "perception.speech_closed" and "segment_id" in r
+        ]
+        terminals = {
+            r["segment_id"]: r for r in window if r["stage"] == "stt.terminal" and "segment_id" in r
+        }
+        rejected = {
+            r["segment_id"]
+            for r in window
+            if r["stage"] == "candidate.transcript_rejected" and "segment_id" in r
+        }
+        ours = {r["segment_id"] for r in self.trace if "segment_id" in r}
+
+        def covering(index: int) -> list[dict]:
+            if not spans:
+                return closed
+            begin, end = (started + round(at * 1e9) for at in spans[index])
+            return [
+                r
+                for r in closed
+                if r.get("start_time_ns", end) < end and r.get("end_time_ns", begin) > begin
+            ]
+
+        found = []
+        for index, was_heard in enumerate(heard):
+            segments = covering(index)
+            segment = segments[0] if segments else None
+            key = segment["segment_id"] if segment is not None else None
+            terminal = terminals.get(key) if key is not None else None
+            entry: dict[str, Any] = {
+                "index": index + 1,
+                "heard": was_heard,
+                "span_ms": [round(at * 1000) for at in spans[index]] if spans else None,
+                "segment": key[3:15] if key else None,
+                "stt": terminal.get("outcome") if terminal is not None else None,
+                "text_chars": terminal.get("text_chars") if terminal is not None else None,
+                "lost": None,
+                "why": None,
+            }
+            if not was_heard:
+                # A segment that also holds a sentence that was heard, or the only one there is.
+                shared = any(
+                    other != index and heard[other] and segment in covering(other)
+                    for other in range(len(heard))
+                )
+                if segment is None:
+                    entry["lost"], entry["why"] = "vad", "no speech segment covered its sound"
+                elif terminal is None:
+                    entry["lost"], entry["why"] = "stt", "its segment had no STT result"
+                elif terminal.get("outcome") != "final_text":
+                    why = f"its segment's STT ended {terminal.get('outcome')}"
+                    entry["lost"], entry["why"] = "stt", why
+                elif shared:
+                    why = (
+                        f"its segment's STT final ({terminal.get('text_chars')} characters) holds "
+                        "another sentence and leaves this one out"
+                    )
+                    entry["lost"], entry["why"] = "stt", why
+                elif key in rejected:
+                    why = "its STT final came for a retired segment: the Turn had committed"
+                    entry["lost"], entry["why"] = "turn", why
+                elif key not in ours:
+                    why = "its STT final went to another candidate, not this Turn"
+                    entry["lost"], entry["why"] = "turn", why
+                else:
+                    entry["lost"], entry["why"] = "stt", "its STT final lacks its words"
+            found.append(entry)
+        return found
+
     def answer(self) -> str:
         return "".join(r.text for r in self.answers if r.kind == "text_chunk")
 
@@ -683,6 +850,8 @@ class _Turn:
                 )
         committed_at = self._at(self._trace("turn.committed"))
         request = self._at(self._log("model.started"))
+        first_event = self._log("model.first_event")
+        kind = first_event.fields.get("event_kind") if first_event is not None else None
         ready = self._log("context.ready")
         wait = ready.fields.get("wait_ms") if ready is not None else None
         held = "how long registered context work held the request back"
@@ -703,11 +872,14 @@ class _Turn:
                 ("model request", request),
                 "input trace and loop log",
             ),
+            *self._request_sent(),
             self._metric(
                 "model_first_event",
                 ("model request", request),
-                ("first model stream event", self._at(self._log("model.first_event"))),
+                ("first model stream event", self._at(first_event)),
                 "loop log",
+                # Possibly only that the response began: the first text delta says more.
+                note=f"its kind: {kind}" if kind else None,
             ),
             self._metric(
                 "model_first_text_delta",
@@ -783,6 +955,37 @@ class _Turn:
                 note="no wait is observed: Context selects among frames already in",
             ),
         ]
+
+    def _request_sent(self) -> list[Metric]:
+        """The model request as its provider sent it: encoding time here, the pictures it
+        carries and the body's size. Only providers that log it, the OpenAI Responses one."""
+        sent = self._log("model.request_sent")
+        fields = sent.fields if sent is not None else {}
+        missing = (
+            None
+            if sent is not None
+            else "no record of it sent: none went out, or its provider logs none"
+        )
+        found = []
+        for name, key, unit, what in (
+            ("model_request_encode", "encode_ms", "ms", "the request encoded here"),
+            ("model_request_frames", "frame_count", "frames", "pictures the request carries"),
+            ("model_request_bytes", "request_bytes", "bytes", "the body the transport sent"),
+        ):
+            value = fields.get(key)
+            found.append(
+                Metric(
+                    name,
+                    value,
+                    unit,
+                    "model request",
+                    what,
+                    "provider log",
+                    int(value is not None),
+                    note=missing if value is None else None,
+                )
+            )
+        return found
 
     def _speech(self) -> list[Metric]:
         output = self._output("audio_frame")

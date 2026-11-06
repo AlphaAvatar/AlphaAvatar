@@ -41,13 +41,15 @@ Without a terminal, setup refuses with exit code 1 and names `alphaavatar setup 
 
 `alphaavatar setup <bundle>` installs what the bundle's settings select, overrides and edits
 included, as `start` would resolve them: the plugins of each part, the providers' backends,
-the vector stores, and the local models the switches leave on. It imports no plugin to plan.
+the vector stores, and the local models the switches leave on. A model task that names its
+model alone takes its kind and backend from the provider schema's defaults, as `start` does.
+It imports no plugin to plan.
 A selection this release's setup installs nothing for, such as a plugin that is not in the
 catalog, fails before anything is installed and is named by its setting:
 
 ```text
 FAIL  Setup failed; nothing was enabled
-      This release's setup installs nothing for: tools.rag.plugin: tools 'default'
+      This release's setup installs nothing for: tools.rag.plugin: tools.rag 'default'
 ```
 
 This is the way for CI and unattended installs, after [`config init`](config.md#config-init)
@@ -59,10 +61,20 @@ alphaavatar setup my-avatar           # credentials from the environment
 alphaavatar config check my-avatar
 ```
 
-The credentials come from the environment, `.env` or those stored, and none is stored. Without
-a terminal, the plan's confirmation is not asked. The check after installing is
-`config check` of the bundle in the new environment, so a missing credential fails there and
-nothing is enabled.
+The credentials come from the environment, `.env` or those stored, and none is stored. Before
+anything is installed, the selected session transport's are checked offline, as `start` reads
+them, nothing contacted: LiveKit's three variables present, and its URL `wss://` unless the
+server is on this machine. One missing or malformed fails at once, named, never shown:
+
+```text
+FAIL  Setup failed; nothing was enabled
+      The session transport (livekit) cannot start: LIVEKIT_API_KEY and LIVEKIT_API_SECRET are
+      required, in the environment, .env or the stored credentials
+```
+
+Without a terminal, the plan's confirmation is not asked. The check after installing is
+`config check` of the bundle in the new environment, so a credential it needs and lacks fails
+there too, and nothing is enabled.
 
 ## Credentials
 
@@ -99,8 +111,8 @@ nothing is enabled.
   a killed setup leaves both as they were or both new.
 - Failing or interrupted before that, the current version, command, bundles, settings and
   credentials stay as they were, and the environment this run made is removed. Model weights
-  are not part of the plan: runners download them into the model cache when they start, and
-  [`doctor`](doctor.md#model-files) offers to before its runtime tests.
+  are not part of the plan: runners download them into the model cache when they start, at
+  `start` and in [`doctor`](doctor.md#runtime-start)'s runtime diagnosis alike.
 - Takes the lock `install.sh` takes, `<prefix>/.install.lock`: a second installation into the
   prefix is refused while one runs. A lock that is not a regular file, a link or a pipe, is
   refused and left as it is.

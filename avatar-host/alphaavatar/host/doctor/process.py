@@ -13,8 +13,9 @@
 # limitations under the License.
 """Doctor's diagnostic process: the session runs in a process of Doctor's own.
 
-Model downloads switched off, the inference endpoint and the captured logs all belong to
-that process, so the caller's environment, loggers and children stay as they were; the
+Its runtime starts as ``start`` starts one, model downloads included; the inference endpoint
+and the captured logs belong to that process, so the caller's environment, loggers and
+children stay as they were; the
 endpoints a Host caller exports are not inherited, and the caller's terminal shows its report
 alone: what the process and its runners print goes to a file beside the report, whose last line
 names why a process that ends without a report did. The
@@ -50,8 +51,6 @@ if TYPE_CHECKING:
     from alphaavatar.host.configs import ApplicationConfig, ConfigSource
 
 CLOSE_SECONDS = 60.0  # Past the session's budget: closing what ran, then the group goes.
-# Both switch off the model resolvers' downloads; the second also Hugging Face libraries'.
-_OFFLINE = ("ALPHAAVATAR_MODEL_OFFLINE", "HF_HUB_OFFLINE")
 _REPORT = "report.pickle"
 _OUTPUT = "output.log"
 
@@ -62,14 +61,14 @@ async def diagnose(
     services: Sequence[tuple[str, str]],
     *,
     stop: asyncio.Event,
-    downloads: bool = False,
+    rounds: int = 1,
 ) -> dict[str, Check]:
     """The session's checks from a diagnostic process; cancelling this ends that process too.
 
     The snapshot it runs is ``config`` moved onto a temporary workspace (``session.isolate``),
-    so the services it was authorized for are the ones it can reach. Its runners start from
-    the model cache alone unless ``downloads``, as a person agreed, lets them fetch what it
-    lacks there, as `start` does.
+    so the services it was authorized for are the ones it can reach. Its runtime starts as
+    `start` starts one: cached model files load, missing ones download. Each scenario runs
+    ``rounds`` times.
     """
     run = tempfile.mkdtemp(prefix="alphaavatar-doctor-")
     problems: list[str] = []  # What reclaiming found
@@ -77,11 +76,15 @@ async def diagnose(
     missing = "the diagnostic process left no report"
     try:
         snapshot, rebound = session.isolate(config, os.path.join(run, "workspace"))
-        # A download is part of its runners' start, bounded as start bounds it.
-        initialize = config.avatar.runtime.inference.initialize_timeout if downloads else None
-        limits = session.budget(initialize)
+        # Its runtime's start is bounded as start bounds it, downloads included.
+        from alphaavatar.agents.runtime.inference import plan_inference_runners
+
+        turns = rounds * len(session.plan(config).tasks)
+        count = len(plan_inference_runners(config.avatar))
+        initialize = config.avatar.runtime.inference.initialize_timeout
+        limits = session.budget(initialize, turns, count)
         checks, missing = await _supervise(
-            (snapshot.payload, source, tuple(services), rebound, run, limits, downloads),
+            (snapshot.payload, source, tuple(services), rebound, run, limits, rounds),
             limits.total + CLOSE_SECONDS,
             stop,
             problems,
@@ -204,10 +207,9 @@ def _main(
     rebound: tuple[str, ...],
     run: str,
     limits: session.Budget,
-    downloads: bool = False,
+    rounds: int = 1,
 ) -> None:
-    """The diagnostic process: its own group, downloads off unless allowed, the session, its
-    report."""
+    """The diagnostic process: its own group, the session, its report."""
     os.setsid()
     # The caller's terminal carries its report alone: what this process or its runners print,
     # a runner's failure its report names too, goes to the run's output file.
@@ -219,8 +221,6 @@ def _main(
     from alphaavatar.agents.runtime.inference.protocol import INFERENCE_ENDPOINT_ENV
     from alphaavatar.core.log.records import LOG_ENDPOINT_ENV
 
-    if not downloads:
-        os.environ.update(dict.fromkeys(_OFFLINE, "1"))
     # A Host running Doctor exports its own inference runtime and log receiver; this process
     # and its runners use their own, never the caller's.
     for name in (INFERENCE_ENDPOINT_ENV, INFERENCE_PLAN_ENV, LOG_ENDPOINT_ENV):
@@ -235,7 +235,7 @@ def _main(
 
     config = restore_application(payload)
     with LogTimings() as logs:
-        checks = asyncio.run(_serve(stop, config, source, services, rebound, limits, logs))
+        checks = asyncio.run(_serve(stop, config, source, services, rebound, limits, logs, rounds))
     with open(os.path.join(run, _REPORT), "wb") as stream:
         pickle.dump(checks, stream)
 
@@ -248,6 +248,7 @@ async def _serve(
     rebound: tuple[str, ...],
     limits: session.Budget,
     logs: object,
+    rounds: int,
 ) -> dict[str, Check]:
     asked = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -260,7 +261,7 @@ async def _serve(
     loop.add_reader(stop.fileno(), stopping)
     try:
         return await session.diagnose_session(
-            config, source, services, rebound, limits=limits, stop=asked, logs=logs
+            config, source, services, rebound, limits=limits, stop=asked, logs=logs, rounds=rounds
         )
     finally:
         loop.remove_reader(stop.fileno())

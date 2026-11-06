@@ -17,7 +17,7 @@
 on fixed samples (see ``session``).
 """
 
-from .doctor import CHECKS, Diagnosis, diagnose, missing_models, prepare
+from .doctor import CHECKS, MAX_ROUNDS, ROUNDS, Diagnosis, diagnose, prepare
 from .enums import CheckStatus, ScenarioOutcome
 from .schemas import (
     Check,
@@ -44,6 +44,7 @@ __all__ = [
     "ScenarioResult",
     "ServiceResult",
     "diagnose",
-    "missing_models",
+    "MAX_ROUNDS",
+    "ROUNDS",
     "prepare",
 ]
