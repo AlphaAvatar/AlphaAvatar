@@ -41,7 +41,24 @@ if TYPE_CHECKING:
 
 
 class MissingCapabilities(ConfigReferenceError):
-    """Selections the installed packages do not serve; each line says what would."""
+    """Selections the installed packages do not serve; each line says what would.
+
+    ``items`` hold each line and its parts: the setting, what is wrong, the package that
+    would serve it and what installs it, where known; a narrow terminal shows them apart.
+    """
+
+    def __init__(self, message: str, items: tuple[Missing, ...] = ()) -> None:
+        super().__init__(message)
+        self.items = items
+
+
+@dataclass(frozen=True, slots=True)
+class Missing:
+    line: str  # As the message has it
+    location: str
+    problem: str
+    package: str | None = None
+    action: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,22 +159,26 @@ def unavailable(error: UnavailablePlugins) -> MissingCapabilities:
     from packaging.requirements import Requirement
 
     setup = offered()
-    lines = []
+    items = []
     for location, problem in error.problems.items():
         module, name = error.selection.selected[location]
-        line = f"{location}: {problem}"
+        line, package, action = f"{location}: {problem}", None, None
         if problem.missing and setup is not None:
-            if needed := setup.get(module.value, {}).get(name):
-                line += f"; `alphaavatar setup` installs it ({needed})"
+            if package := setup.get(module.value, {}).get(name):
+                action = "`alphaavatar setup` installs it"
+                line += f"; {action} ({package})"
             else:
-                line += "; this release's `alphaavatar setup` does not offer it"
+                action = "this release's `alphaavatar setup` does not offer it"
+                line += f"; {action}"
         elif problem.distribution is not None:
             found = unmet(Requirement(with_extra(problem.distribution, name)), set())
             line += "".join(f"; {item}" for item in found)
-        lines.append(line)
+            package = with_extra(problem.distribution, name) if found else None
+        items.append(Missing(line, location, str(problem), package, action))
     return MissingCapabilities(
         "Selected plugins are not available; install them, or change the settings that "
-        "select them:" + "".join(f"\n      {line}" for line in lines)
+        "select them:" + "".join(f"\n      {item.line}" for item in items),
+        tuple(items),
     )
 
 
@@ -190,13 +211,17 @@ def check_capabilities(config: ApplicationConfig) -> Capabilities:
     from alphaavatar.host.setup.choices import requirements_offered
 
     installs = requirements_offered() if offered() is not None else frozenset()
-    lines = []
+    items: dict[str, Missing] = {}
     for need, problems in capabilities.missing().items():
-        suffix = " (`alphaavatar setup` installs it)" if need.requirement in installs else ""
-        lines += [f"{need.location}: {need.requirement}: {problem}{suffix}" for problem in problems]
-    if lines:
+        action = "`alphaavatar setup` installs it" if need.requirement in installs else None
+        suffix = f" ({action})" if action else ""
+        for problem in problems:
+            line = f"{need.location}: {need.requirement}: {problem}{suffix}"
+            items.setdefault(line, Missing(line, need.location, problem, need.requirement, action))
+    if items:
         raise MissingCapabilities(
             "Selected capabilities miss packages; install them, or change the settings that "
-            "select them:" + "".join(f"\n      {line}" for line in dict.fromkeys(lines))
+            "select them:" + "".join(f"\n      {line}" for line in items),
+            tuple(items.values()),
         )
     return capabilities

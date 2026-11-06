@@ -6,10 +6,10 @@ In a source checkout it is the command of the `alpha-avatar-host` package.
 
 | Command | Does |
 | --- | --- |
-| [`alphaavatar setup`](setup.md) | Choose capabilities, install what they need, then enable a bundle; in the Linux package |
-| [`alphaavatar config init`](config.md#config-init) | Create a minimal bundle and its profiles |
+| [`alphaavatar setup`](setup.md) | Install what a bundle needs, check it, then enable it: an existing bundle, or a new one asked from the reference configuration; in the Linux package |
+| [`alphaavatar config init`](config.md#config-init) | Create the reference bundle and its profiles |
 | [`alphaavatar config check`](config.md#config-check) | Validate a configuration without starting anything |
-| [`alphaavatar doctor`](doctor.md) | Diagnose the installation and a configuration |
+| [`alphaavatar doctor`](doctor.md) | Diagnose the installation and a configuration: static checks, then the runtime tests |
 | [`alphaavatar start`](start.md) | Run the Host as a long-running service |
 | [`alphaavatar dev`](dev.md) | Run the Host for development |
 | [`alphaavatar test`](test.md) | Planned: scenarios and benchmarks |
@@ -21,7 +21,9 @@ way: see [choosing a configuration](config.md#choosing-a-configuration) and
 
 ## Output
 
-`config init`, `config check`, `setup` and `doctor` print their text reports the same way:
+`config init`, `config check`, `setup` and `doctor` print their text reports the same way.
+[cli.html](cli.html), a page that opens offline, shows each one as a terminal shows it, colors
+and all:
 
 ```text
 AlphaAvatar / Doctor
@@ -45,8 +47,13 @@ Checks
 
 - Values share a column. On a narrow terminal, a value too long for its line goes below its
   label, indented and wrapped at spaces; a path stays whole. Diagnostics and commands print
-  whole too, so they can be searched for and copied.
+  whole too, so they can be searched for and copied. A missing package that does not fit its
+  line is split instead: the setting, what is wrong, the package and what installs it, a line
+  each.
 - The width is `COLUMNS`, else the terminal's, else 100 for a pipe or a file.
-- Colors appear only on a terminal: a pipe, `NO_COLOR` and `TERM=dumb` get the same lines,
-  plain. A stream that cannot encode `·`, `→` or `—` gets `-`, `->` and `-`.
-- `--json` and `setup --plan` print JSON alone on stdout; setup's questions then go to stderr.
+- Colors, and a line redrawn in place (setup's step in progress, Doctor's running tests), appear
+  only on a terminal: a pipe, `NO_COLOR` and `TERM=dumb` get the same lines, plain, each
+  progress line on a line of its own and nothing erased. A stream that cannot encode `·`, `→`
+  or `—` gets `-`, `->` and `-`.
+- `--json` and `setup --plan` print JSON alone on stdout; the steps and questions then go to
+  stderr.

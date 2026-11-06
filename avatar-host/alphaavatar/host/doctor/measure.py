@@ -484,12 +484,16 @@ class _Turn:
         start: tuple[str, int | None],
         end: tuple[str, int | None],
         boundary: str,
+        missing: str | None = None,
+        *,
         note: str | None = None,
     ) -> Metric:
+        """``missing`` says why there is no value, ``note`` what one is: a figure carries one."""
         value = None
         if start[1] is not None and end[1] is not None:
             value = round((end[1] - start[1]) / 1e6, 3)
         samples = int(value is not None)
+        note = missing if value is None else note
         return Metric(name, value, "ms", start[0], end[0], boundary, samples, note=note)
 
     def _origin(self) -> tuple[str, int | None]:
@@ -543,7 +547,7 @@ class _Turn:
                 origin,
                 ("last answer audio frame out", self._at(last_audio) if completed else None),
                 boundary,
-                unfinished,
+                unfinished if self.o.audio_output else "no audio output in this session",
             ),
             self._metric(
                 "response_final", origin, ("every output complete", completed), boundary, unfinished
@@ -681,6 +685,7 @@ class _Turn:
         request = self._at(self._log("model.started"))
         ready = self._log("context.ready")
         wait = ready.fields.get("wait_ms") if ready is not None else None
+        held = "how long registered context work held the request back"
         segments += [
             Metric(
                 "context_ready_wait",
@@ -690,7 +695,7 @@ class _Turn:
                 "context ready",
                 "Context manager log",
                 int(wait is not None),
-                note="how long registered context work held the request back",
+                note=None if wait is None else held,
             ),
             self._metric(
                 "cutoff_to_model_request",
@@ -709,7 +714,7 @@ class _Turn:
                 ("model request", request),
                 ("first nonempty text delta", self._at(self._log("model.first_text"))),
                 "loop log",
-                "the first token, as far as the stream shows it",
+                note="the first token, as far as the stream shows it",
             ),
             self._metric(
                 "first_displayable_text",
@@ -800,7 +805,8 @@ class _Turn:
                 ("TTS request", self._at(speech)),
                 ("first PCM", self._at(pcm)),
                 "speech synthesis and TTS logs",
-                None if pcm is not None else "this TTS plugin logs no first PCM",
+                # Without the request, where the scenario stopped says why.
+                None if speech is None else "this TTS plugin logs no first PCM",
             ),
             self._metric(
                 "first_pcm_to_first_audio_frame",

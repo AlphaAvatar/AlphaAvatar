@@ -15,7 +15,9 @@
 
 Model downloads switched off, the inference endpoint and the captured logs all belong to
 that process, so the caller's environment, loggers and children stay as they were; the
-endpoints a Host caller exports are not inherited, and the caller's stdout stays its report's. The
+endpoints a Host caller exports are not inherited, and the caller's terminal shows its report
+alone: what the process and its runners print goes to a file beside the report, whose last line
+names why a process that ends without a report did. The
 process leads its own process group, so the terminal's Ctrl+C reaches only the caller, which
 asks it to stop by closing a pipe; a caller that dies closes it too. The caller owns the
 temporary directory, which is also the process's temporary root (its runtime's socket goes
@@ -51,6 +53,7 @@ CLOSE_SECONDS = 60.0  # Past the session's budget: closing what ran, then the gr
 # Both switch off the model resolvers' downloads; the second also Hugging Face libraries'.
 _OFFLINE = ("ALPHAAVATAR_MODEL_OFFLINE", "HF_HUB_OFFLINE")
 _REPORT = "report.pickle"
+_OUTPUT = "output.log"
 
 
 async def diagnose(
@@ -59,11 +62,14 @@ async def diagnose(
     services: Sequence[tuple[str, str]],
     *,
     stop: asyncio.Event,
+    downloads: bool = False,
 ) -> dict[str, Check]:
     """The session's checks from a diagnostic process; cancelling this ends that process too.
 
     The snapshot it runs is ``config`` moved onto a temporary workspace (``session.isolate``),
-    so the services it was authorized for are the ones it can reach.
+    so the services it was authorized for are the ones it can reach. Its runners start from
+    the model cache alone unless ``downloads``, as a person agreed, lets them fetch what it
+    lacks there, as `start` does.
     """
     run = tempfile.mkdtemp(prefix="alphaavatar-doctor-")
     problems: list[str] = []  # What reclaiming found
@@ -71,9 +77,11 @@ async def diagnose(
     missing = "the diagnostic process left no report"
     try:
         snapshot, rebound = session.isolate(config, os.path.join(run, "workspace"))
-        limits = session.budget()
+        # A download is part of its runners' start, bounded as start bounds it.
+        initialize = config.avatar.runtime.inference.initialize_timeout if downloads else None
+        limits = session.budget(initialize)
         checks, missing = await _supervise(
-            (snapshot.payload, source, tuple(services), rebound, run, limits),
+            (snapshot.payload, source, tuple(services), rebound, run, limits, downloads),
             limits.total + CLOSE_SECONDS,
             stop,
             problems,
@@ -148,9 +156,22 @@ async def _supervise(
         _reclaim(process, problems)
     path = os.path.join(args[4], _REPORT)
     if process.exitcode != 0 or not os.path.exists(path):
-        return None, f"the diagnostic process exited with code {process.exitcode}"
+        why = f"the diagnostic process exited with code {process.exitcode}"
+        # Ended on its own, not killed: where an uncaught error ends, its output does.
+        last = _last_line(os.path.join(args[4], _OUTPUT)) if process.exitcode > 0 else ""
+        return None, f"{why}: {last}" if last else why
     with open(path, "rb") as stream:
         return pickle.load(stream), ""
+
+
+def _last_line(path: str) -> str:
+    try:
+        with open(path, "rb") as stream:
+            stream.seek(max(0, os.fstat(stream.fileno()).st_size - 4096))
+            lines = stream.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return ""
+    return next((line.strip()[:500] for line in reversed(lines) if line.strip()), "")
 
 
 def _reclaim(process: mp.process.BaseProcess, problems: list[str]) -> None:
@@ -183,17 +204,23 @@ def _main(
     rebound: tuple[str, ...],
     run: str,
     limits: session.Budget,
+    downloads: bool = False,
 ) -> None:
-    """The diagnostic process: its own group, downloads off, the session, its report."""
+    """The diagnostic process: its own group, downloads off unless allowed, the session, its
+    report."""
     os.setsid()
-    # The caller's stdout carries its report alone: what this process or its runners print
-    # goes to stderr.
-    os.dup2(2, 1)
+    # The caller's terminal carries its report alone: what this process or its runners print,
+    # a runner's failure its report names too, goes to the run's output file.
+    output = os.open(os.path.join(run, _OUTPUT), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    os.dup2(output, 1)
+    os.dup2(output, 2)
+    os.close(output)
     from alphaavatar.agents.runtime.inference.bootstrap import INFERENCE_PLAN_ENV
     from alphaavatar.agents.runtime.inference.protocol import INFERENCE_ENDPOINT_ENV
     from alphaavatar.core.log.records import LOG_ENDPOINT_ENV
 
-    os.environ.update(dict.fromkeys(_OFFLINE, "1"))
+    if not downloads:
+        os.environ.update(dict.fromkeys(_OFFLINE, "1"))
     # A Host running Doctor exports its own inference runtime and log receiver; this process
     # and its runners use their own, never the caller's.
     for name in (INFERENCE_ENDPOINT_ENV, INFERENCE_PLAN_ENV, LOG_ENDPOINT_ENV):

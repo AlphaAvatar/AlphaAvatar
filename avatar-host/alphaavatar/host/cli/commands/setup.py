@@ -11,13 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""`alphaavatar setup`: choose capabilities, install what they need, check it, then enable.
+"""`alphaavatar setup`: install what a bundle needs, check it, then enable it.
 
-Asked interactively, or given a preset for CI and unattended installs; both take the same
-path. With a preset, credentials come from the environment and stay there. Asked for, they are
-stored privately only if the person says so, a stored value other bundles may read replaced
-only on a yes, and only once everything they serve is installed and checked. Nothing here
-starts a session, runner or model.
+Asked in a terminal, setup starts from the reference configuration `config init` writes and
+asks for each part, the credentials, then whether to install the plan. Given an existing
+bundle, as `config init` makes it or as edited since, it installs what that bundle's settings
+need, with the credentials the environment holds: CI and unattended installs take this way.
+Asked for, credentials are stored privately only if the person says so, a stored value other
+bundles may read replaced only on a yes, and only once everything they serve is installed and
+checked. Nothing here starts a session, runner or model.
 """
 
 from __future__ import annotations
@@ -67,41 +69,16 @@ def _yes(out: Report, question: str, default: bool = True) -> bool:
             return answer.startswith("y")
 
 
-def _choose(args: argparse.Namespace, out: Report):
-    """The selection, and how it was chosen, in words."""
-    from alphaavatar.host.setup.choices import PRESETS, Selection
+def _choose(out: Report):
+    """Each part of the reference configuration, kept or changed; a server of one's own for
+    the models or speech, if chosen."""
+    from alphaavatar.host.setup.choices import Models, Selection, Speech
 
-    if args.preset is not None:
-        selection = PRESETS[args.preset]
-        chosen = Selection(
-            voice=selection.voice and not args.no_voice,
-            vision=selection.vision and not args.no_vision,
-            local_models=selection.local_models,
-            vector_store=args.vector_store or selection.vector_store,
-        )
-        return chosen, f"{args.preset.capitalize()} preset"
-    out.write("    What should this Avatar run with?")
-    for lead, text in (
-        (
-            "1  Default bundle    ",
-            "voice, vision, memory and persona, with turn taking, addressing, face and speaker "
-            "models on this machine",
-        ),
-        (
-            "2  Remote inference  ",
-            "the same, with no model on this machine but the voice activity detection speech "
-            "input needs",
-        ),
-        ("3  Choose each", ""),
-    ):
-        out.item(lead, text, indent=6)
-    while (choice := _ask(out, "Choice", "1")) not in ("1", "2", "3"):
-        pass
-    if choice != "3":
-        preset = "default" if choice == "1" else "remote"
-        return PRESETS[preset], f"{preset.capitalize()} preset"
-    from alphaavatar.host.setup.choices import Models, Speech
-
+    out.wrapped(
+        "From the reference configuration: voice and vision on, memory and persona, each "
+        "model from the backend chosen below.",
+        indent=4,
+    )
     voice = _yes(out, "Voice: speech in and out, voice activity detected on this machine?")
     vision = _yes(out, "Vision: camera frames reach the model?")
     local = _yes(
@@ -134,32 +111,48 @@ def _choose(args: argparse.Namespace, out: Report):
             _needed(out, "  Voice"),
         )
     store = "lancedb" if store == "1" else "qdrant"
-    return Selection(voice, vision, local, store, models, speech), "Chosen"
+    return Selection(voice, vision, local, store, models, speech)
 
 
-def _described(selection, chosen: str) -> str:
-    """The selection on one line: how it was chosen, then its switches."""
+def _described(*, voice: bool, vision: bool, local: bool, qdrant: bool, own: list[str]) -> str:
+    """What a bundle runs with, on one line."""
     on = {True: "on", False: "off"}
-    parts = [chosen, f"Voice {on[selection.voice]}", f"Vision {on[selection.vision]}"]
-    if chosen == "Chosen":
-        parts.append(f"Local models {on[selection.local_models]}")
-    if selection.vector_store == "qdrant":
-        parts.append("Qdrant")
-    if selection.models is not None:
-        parts.append("Models from your server")
+    parts = [f"Voice {on[voice]}", f"Vision {on[vision]}", f"Local models {on[local]}"]
+    return " · ".join([*parts, *(["Qdrant"] if qdrant else []), *own])
+
+
+def _selection_line(selection) -> str:
+    own = ["Models from your server"] if selection.models is not None else []
     if selection.voice and selection.speech is not None:
-        parts.append("Speech from your server")
-    return " · ".join(parts)
+        own.append("Speech from your server")
+    return _described(
+        voice=selection.voice,
+        vision=selection.vision,
+        local=selection.local_models,
+        qdrant=selection.vector_store == "qdrant",
+        own=own,
+    )
 
 
-def _credentials(
-    selection, interactive: bool, paths, out: Report
-) -> tuple[dict[str, str], dict[str, str]]:
-    """The values the check and the bundle read, and those to store.
+def _bundle_line(avatar, needs: dict[str, str]) -> str:
+    """An existing bundle's switches, as its settings and its plan have them."""
+    from alphaavatar.agents.runtime.plugin import plugin_requirement
+    from alphaavatar.agents.utils.vdb.config import vdb_requirement
 
-    A preset reads them from the environment and stores none. Asked for, they are stored only
-    on a yes, and a stored value, which other bundles may read, is replaced only on another.
-    """
+    local = ("router", "semantic"), ("router", "turn-taking"), ("persona", "speaker")
+    local += (("persona", "face"),)
+    return _described(
+        voice=avatar.voice.stt.plugin is not None or avatar.voice.tts.plugin is not None,
+        vision=bool(avatar.vision.enabled),
+        local=any(plugin_requirement(*part) in needs for part in local),
+        qdrant=vdb_requirement("qdrant") in needs,
+        own=[],
+    )
+
+
+def _credentials(selection, paths, out: Report) -> tuple[dict[str, str], dict[str, str]]:
+    """The values the check and the bundle read, asked for, and those to store: stored only on
+    a yes, and a stored value, which other bundles may read, replaced only on another."""
     import getpass
 
     from alphaavatar.host.configs.credentials import stored_credentials
@@ -169,15 +162,10 @@ def _credentials(
     values, missing = {}, []
     for credential in credentials(selection):
         present = os.environ.get(credential.name)
-        if interactive:
-            keep = " (set; Enter keeps it)" if present else ""
-            question = f"{credential.name}, for {credential.purpose}{keep}: "
-            answer = (
-                getpass.getpass(out.prompt(question)) if credential.secret else out.ask(question)
-            )
-            value = answer.strip() or present or ""
-        else:
-            value = present or ""
+        keep = " (set; Enter keeps it)" if present else ""
+        question = f"{credential.name}, for {credential.purpose}{keep}: "
+        answer = getpass.getpass(out.prompt(question)) if credential.secret else out.ask(question)
+        value = answer.strip() or present or ""
         if value:
             values[credential.name] = value
         elif credential.required:
@@ -186,7 +174,7 @@ def _credentials(
         raise SetupError(f"Missing credentials: {', '.join(missing)} (set them in the environment)")
     stored = stored_credentials(paths)
     new = {name: value for name, value in values.items() if stored.get(name) != value}
-    if not interactive or not new:
+    if not new:
         return values, {}
     where = clean(str(paths.settings_dir))
     if not _yes(out, f"Store {', '.join(new)} in {where}, readable only by you?", False):
@@ -240,6 +228,12 @@ def _megabytes(size: int) -> str:
     return f"{size / 1e6:,.0f} MB"
 
 
+def _apart(out: Report, started: int) -> None:
+    """A blank line after what the steps printed, before the result on stderr."""
+    if out.lines > started:
+        out.write()
+
+
 def _interrupt(signum: int, frame: Any) -> None:
     raise SystemExit(128 + signum)
 
@@ -257,10 +251,16 @@ def setup(args: argparse.Namespace) -> int:
 
 
 def _setup(args: argparse.Namespace) -> int:
-    from alphaavatar.host.configs import ConfigReferenceError, application_paths, format_failure
-    from alphaavatar.host.configs.bundles import bundle_path, read_settings
+    from alphaavatar.host.configs import (
+        ConfigReferenceError,
+        application_paths,
+        format_failure,
+        load_selections,
+        select_configuration,
+    )
+    from alphaavatar.host.configs.bundles import bundle_path, check_bundle_name, read_settings
     from alphaavatar.host.configs.credentials import load_environment, stored_credentials
-    from alphaavatar.host.configs.template import create_bundle, render_bundle
+    from alphaavatar.host.configs.template import create_bundle, render_bundle, set_default_bundle
     from alphaavatar.host.setup import choices
     from alphaavatar.host.setup.environment import (
         Installation,
@@ -271,39 +271,56 @@ def _setup(args: argparse.Namespace) -> int:
     )
     from alphaavatar.host.setup.plan import PlanError, plan_install
 
-    interactive = args.preset is None
+    existing = args.bundle  # Set up as its settings say; without one, each part is asked.
+    terminal = sys.stdin.isatty()
     # The steps, and the questions under them; with --plan, stdout holds the plan alone.
     out = Report(sys.stderr if args.plan else sys.stdout)
     errors = Report(sys.stderr)
     enabled: list[str] = []
     out.title("Setup")
     out.write()
+    started = out.lines
     try:
-        if interactive and not sys.stdin.isatty():
-            raise SetupError("No terminal to ask in: pass --preset (default or remote)")
-        load_environment()  # Credentials already set or stored count as given.
+        if existing is None and not terminal:
+            raise SetupError(
+                "No terminal to ask in: set up an existing bundle, `alphaavatar setup <bundle>`; "
+                "`alphaavatar config init <bundle> --avatar-id <id>` creates one"
+            )
+        settings = load_environment()  # Credentials already set or stored count as given.
         installation = Installation.running()
         manifest, catalog = installation.manifest, installation.catalog
-        if interactive:
-            out.begin(1, "Capabilities")
-        selection, chosen = _choose(args, out)
-        name = args.name or (_ask(out, "Bundle name", "avatar") if interactive else "avatar")
-        avatar_id = args.avatar_id or (_ask(out, "Avatar ID", name) if interactive else name)
         paths = application_paths()
         read_settings(paths)  # Unreadable settings refuse before anything happens.
-        if bundle_path(paths, name).exists():
-            raise ConfigReferenceError(
-                f"Bundle {name!r} exists: {bundle_path(paths, name)}; choose another --name"
-            )
-        out.step(1, "Capabilities", _described(selection, chosen))
-        sections = choices.sections(selection)
-        environment = [(c.name, c.purpose) for c in choices.credentials(selection)]
-        texts = render_bundle(name, avatar_id, sections=sections, environment=environment)
+        if existing is None:
+            out.begin(1, "Capabilities")
+            selection = _choose(out)
+            name = args.name or _ask(out, "Bundle name", "avatar")
+            avatar_id = args.avatar_id or _ask(out, "Avatar ID", name)
+            if bundle_path(paths, name).exists():
+                raise ConfigReferenceError(
+                    f"Bundle {name!r} exists: {bundle_path(paths, name)}; choose another name, "
+                    f"or set it up as it is: `alphaavatar setup {name}`"
+                )
+            out.step(1, "Capabilities", _selection_line(selection))
+            sections = choices.sections(selection)
+            environment = [(c.name, c.purpose) for c in choices.credentials(selection)]
+            texts = render_bundle(name, avatar_id, sections=sections, environment=environment)
+            needed = choices.requirements(selection)
+        else:
+            name = check_bundle_name(existing)
+            # Planned from the bundle's own settings, with no plugin installed yet.
+            host, avatar = load_selections(select_configuration(name, (), settings))
+            found, unserved = choices.bundle_requirements(host, avatar, catalog.get("plugins", {}))
+            if unserved:
+                raise SetupError(
+                    "This release's setup installs nothing for: " + "; ".join(unserved)
+                )
+            out.step(1, "Capabilities", f"Bundle {name} · {_bundle_line(avatar, found)}")
+            needed = tuple(sorted(found))
         # Installing for this bundle never takes from another: what the current environment
         # holds stays planned, and the same plan reuses it.
         kept = installation.installed_requirements()
-        requirements = {*choices.requirements(selection), *kept}
-        plan = plan_install(catalog, requirements, base=manifest["id"])
+        plan = plan_install(catalog, {*needed, *kept}, base=manifest["id"])
         if args.plan:
             document = plan.document() | {"id": plan.id, "download_bytes": plan.download_bytes}
             print(json.dumps(document, indent=1))
@@ -319,21 +336,24 @@ def _setup(args: argparse.Namespace) -> int:
                 f"{_megabytes(free.f_bavail * free.f_frsize)} free in {installation.prefix}; "
                 f"the plan downloads {_megabytes(plan.download_bytes)} and needs about four times"
             )
-        if interactive:
+        if existing is None:
             out.begin(2, "Credentials")
-        values, saved = _credentials(selection, interactive, paths, out)
-        out.step(2, "Credentials", f"Ready · {len(saved)} to store" if saved else "Ready")
+            values, saved = _credentials(selection, paths, out)
+            out.step(2, "Credentials", f"Ready · {len(saved)} to store" if saved else "Ready")
+        else:
+            values, saved = {}, {}
+            out.step(2, "Credentials", "From the environment, .env or those stored")
 
         size = "installed already" if reused else _megabytes(plan.download_bytes)
         planned = f"{len(plan.artifacts)} packages · {size}"
         out.begin(3, "Install")
-        if extra := sorted(set(kept) - set(choices.requirements(selection))):
+        if extra := sorted(set(kept) - set(needed)):
             out.wrapped(f"Kept from the current environment: {', '.join(extra)}", indent=4)
-        if interactive:
+        if terminal:
             # The plan, and what it downloads, before anything is installed.
             plan_lines = [
                 f"AlphaAvatar {plan.version} ({plan.platform}), plan {plan.id[:16]}",
-                *choices.capabilities(selection),
+                *(choices.capabilities(selection) if existing is None else ()),
                 f"{planned}{'' if reused else ' to download'}",
                 f"Environment {home_relative(target)}; bundle {name}, made the default",
             ]
@@ -349,7 +369,7 @@ def _setup(args: argparse.Namespace) -> int:
         def check(environment: Path) -> None:
             out.step(3, "Install", planned)
             out.begin(4, "Validate")
-            count = check_environment(environment, config, env)
+            count = check_environment(environment, config if existing is None else name, env)
             out.step(4, "Validate", "PASS" + (f" · {count} runners" if count is not None else ""))
 
         def progress(line: str) -> None:
@@ -362,15 +382,18 @@ def _setup(args: argparse.Namespace) -> int:
             # Signals wait meanwhile; one settings replacement makes the bundle the default
             # and names the credentials it stores, so even a kill leaves both or neither.
             try:
-                create_bundle(
-                    paths,
-                    name,
-                    avatar_id=avatar_id,
-                    sections=sections,
-                    environment=environment,
-                    make_default=True,
-                    credentials=saved,
-                )
+                if existing is not None:
+                    set_default_bundle(paths, name)
+                else:
+                    create_bundle(
+                        paths,
+                        name,
+                        avatar_id=avatar_id,
+                        sections=sections,
+                        environment=environment,
+                        make_default=True,
+                        credentials=saved,
+                    )
             except BaseException:
                 if read_settings(paths).get("default_bundle") != name:
                     raise
@@ -378,12 +401,12 @@ def _setup(args: argparse.Namespace) -> int:
             enabled.append(name)
 
         def replan(installed: tuple[str, ...]):
-            needed = {*choices.requirements(selection), *installed}
-            return plan_install(catalog, needed, base=manifest["id"])
+            return plan_install(catalog, {*needed, *installed}, base=manifest["id"])
 
         with tempfile.TemporaryDirectory() as scratch:
             config = Path(scratch) / f"{name}.yaml"
-            _single_file(texts, name, paths.root, config)
+            if existing is None:
+                _single_file(texts, name, paths.root, config)
             env = os.environ | values
             target = install(
                 installation,
@@ -396,34 +419,33 @@ def _setup(args: argparse.Namespace) -> int:
             )
     except (KeyboardInterrupt, SystemExit) as stop:
         done = f"bundle {enabled[0]} was enabled first" if enabled else "nothing was enabled"
-        out.write()
-        errors.status(
-            "WARN", f"{'Interrupted' if isinstance(stop, KeyboardInterrupt) else 'Stopped'}; {done}"
-        )
+        _apart(out, started)
+        stopped = "Interrupted" if isinstance(stop, KeyboardInterrupt) else "Stopped"
+        errors.status("WARN", f"{stopped}; {done}")
         errors.write()
         if isinstance(stop, KeyboardInterrupt):
             return 130
         return stop.code if isinstance(stop.code, int) else 1
     except (SetupError, PlanError) as error:
-        out.write()
+        _apart(out, started)
         errors.status("FAIL", "Setup failed; nothing was enabled")
         errors.verbatim(str(error), indent=STATUS)
         errors.write()
         return 1
     except Exception as error:
-        out.write()
+        _apart(out, started)
         errors.status("FAIL", "Setup failed; nothing was enabled")
         errors.verbatim(format_failure(error))
         errors.write()
         return 2
-    found = stored_credentials(paths)
+    found_stored = stored_credentials(paths)
     out.write()
     out.status("OK", "Bundle enabled")
     facts = {"Default": name, "Environment": home_relative(target)}
     column = out.column(list(facts))
     for key, value in facts.items():
         out.row(key, value, indent=STATUS, column=column)
-    if unstored := [key for key in values if found.get(key) is None]:
+    if unstored := [key for key in values if found_stored.get(key) is None]:
         out.note(f"Start reads {', '.join(unstored)} from the environment or .env.", indent=STATUS)
     out.heading("Next")
     out.command(f"alphaavatar doctor {name}")

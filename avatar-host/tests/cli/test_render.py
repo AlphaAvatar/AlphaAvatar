@@ -38,6 +38,7 @@ from alphaavatar.host.doctor import (
 from alphaavatar.host.log.format import BRAND_BLUE, GREEN, RESET, SIGNAL_CYAN
 
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+COLOR = re.compile(r"\x1b\[[0-9;]*m")  # Styles alone; line erases stay.
 REASON = (
     "Not run: the session would reach external services, and host.doctor.external_services is false"
 )
@@ -159,12 +160,13 @@ def test_a_step_in_progress_takes_one_terminal_line_and_a_pipe_gets_what_goes_be
         out.begin(4, "Validate")
         out.step(4, "Validate", "PASS · 8 runners")
 
-    terminal, pipe = Terminal(), io.StringIO()
-    with mock.patch.dict(os.environ, {"NO_COLOR": ""}):
-        steps(Report(terminal, width=72))
+    terminal, pipe, plain = Terminal(), io.StringIO(), Terminal()
+    steps(Report(terminal, width=72))
     steps(Report(pipe, width=72))
+    with mock.patch.dict(os.environ, {"NO_COLOR": ""}):
+        steps(Report(plain, width=72))
     # On a terminal each update replaces the step's line, and the result replaces them.
-    assert terminal.getvalue() == (
+    assert COLOR.sub("", terminal.getvalue()) == (
         "03  Install"
         "\r\x1b[K03  Install        [1/2] a.whl"
         "\r\x1b[K03  Install        [2/2] b.whl"
@@ -172,6 +174,8 @@ def test_a_step_in_progress_takes_one_terminal_line_and_a_pipe_gets_what_goes_be
         "04  Validate"
         "\r\x1b[K04  Validate       PASS · 8 runners\n"
     )
+    # NO_COLOR, on a terminal too: no line erased or redrawn, each line once, as a pipe has it.
+    assert plain.getvalue() == pipe.getvalue() and "\x1b" not in plain.getvalue()
     # A pipe or log: each line once, a step's name before what goes under it.
     assert pipe.getvalue().splitlines() == [
         "03  Install",
@@ -182,28 +186,43 @@ def test_a_step_in_progress_takes_one_terminal_line_and_a_pipe_gets_what_goes_be
     ]
     # A long progress line is cut to the terminal, so updating it never wraps.
     out = Terminal()
-    with mock.patch.dict(os.environ, {"NO_COLOR": ""}):
-        report = Report(out, width=40)
-        report.begin(3, "Install")
-        report.progress("[1/2] " + "a" * 60 + ".whl")
-    assert max(map(len, out.getvalue().split("\r\x1b[K"))) <= 40
+    report = Report(out, width=40)
+    report.begin(3, "Install")
+    report.progress("[1/2] " + "a" * 60 + ".whl")
+    assert max(map(len, COLOR.sub("", out.getvalue()).split("\r\x1b[K"))) <= 40
+    # Nothing to update in a pipe or with NO_COLOR: a long progress line wraps instead, a
+    # path whole; and a step's summary goes on at its own column, a part at a time.
+    pipe = io.StringIO()
+    report = Report(pipe, width=72)
+    report.begin(3, "Install")
+    envs = "/home/tester/.local/lib/alphaavatar/envs/5787e9bba63c388c"
+    report.progress(f"Environment {envs} is already installed; checking it")
+    report.step(1, "Capabilities", "Bundle reference · Voice on · Vision on · Local models on")
+    assert pipe.getvalue().splitlines() == [
+        "03  Install",
+        "    Environment",
+        f"    {envs} is already",
+        "    installed; checking it",
+        "01  Capabilities   Bundle reference · Voice on · Vision on",
+        "                   Local models on",
+    ]
 
 
 def test_a_stream_that_cannot_encode_the_separators_gets_ascii(color_capable: object) -> None:
     raw = io.BytesIO()
     stream = io.TextIOWrapper(raw, encoding="ascii")
     out = Report(stream, width=100)
-    out.status("OK", "Default preset · Voice on")
+    out.status("OK", "Bundle reference · Voice on")
     out.row("Speech end → STT final", "—")
     stream.flush()
     assert raw.getvalue().decode().splitlines() == [
-        "OK    Default preset - Voice on",
+        "OK    Bundle reference - Voice on",
         "  Speech end -> STT final   -",
     ]
 
 
-def metric(name: str, value: float | None) -> Metric:
-    return Metric(name, value, "ms", "start", "end", "boundary")
+def metric(name: str, value: float | None, note: str | None = None) -> Metric:
+    return Metric(name, value, "ms", "start", "end", "boundary", note=note)
 
 
 def diagnosis(*scenarios: ScenarioResult) -> Diagnosis:
@@ -228,7 +247,7 @@ VISION = ScenarioResult(
     ),
     segments=(
         metric("vad_close", 210.0),
-        metric("tts_request_to_first_pcm", None),  # This TTS logs no first PCM.
+        metric("tts_request_to_first_pcm", None, "this TTS plugin logs no first PCM"),
         metric("selected_frame_age", 92.0),
     ),
 )
@@ -244,38 +263,48 @@ TEXT = ScenarioResult(
 )
 
 
-def text(width: int, *, interrupted: bool = False) -> list[str]:
+def text(width: int, *, interrupted: bool = False, overridden: bool = False) -> list[str]:
     out = io.StringIO()
-    with mock.patch.object(doctor_command, "Report", lambda: Report(out, width=width)):
-        doctor_command._text(
-            diagnosis(VISION, TEXT), SimpleNamespace(loaded=None), ["alpha"], interrupted
-        )
+    report = Report(out, width=width)
+    prepared = SimpleNamespace(loaded=None)
+    doctor_command._text(
+        report, diagnosis(VISION, TEXT), prepared, "alpha", overridden, interrupted
+    )
     return out.getvalue().splitlines()
 
 
 def test_doctor_shows_figures_side_by_side_or_one_scenario_after_another() -> None:
     wide = text(100)
-    assert wide[2] == "OK    Diagnostics completed · 14 passed · 1 skipped"
+    assert wide[0] == "OK    Diagnostics completed · 14 passed · 1 skipped"
     start = wide.index("End-to-end latency")
-    assert wide[start + 1 : start + 5] == [
+    assert wide[start + 1 : start + 7] == [
         "  Metric              voice_vision     text",
         "  First text                712 ms   6.5 ms",
         "  First audio frame       1,108 ms        —",
         "  Response complete       1,840 ms        —",
+        # A dash says why: where the scenario stopped.
+        "  — First audio frame · text: not reached: stopped at output.audio_frame",
+        "  — Response complete · text: not reached: stopped at output.audio_frame",
     ]
-    # Each scenario's stages, as measured: a stage observed nowhere is a dash, never 0 ms.
+    # Each scenario's stages, as measured: a stage observed nowhere is a dash, never 0 ms, and
+    # its note says why.
     start = wide.index("Stage timing · voice_vision")
-    assert wide[start + 1 : start + 4] == [
+    assert wide[start + 1 : start + 5] == [
         "  Speech end → VAD close                210 ms",
         "  TTS request → First PCM                    —",
         "  Selected frame age at model request    92 ms",
+        "  — TTS request → First PCM: this TTS plugin logs no first PCM",
     ]
     assert "Stage timing · text" not in wide  # It measured no stage.
     # The failed scenario: where it stopped and why.
     assert "  FAIL  text                   Stopped at output.audio_frame" in wide
     assert "        cause: TTS refused the request" in wide
     assert "  PASS  voice_vision           Speech and screen frames in one model request" in wide
-    assert wide[-2:] == ["  alphaavatar doctor alpha --json", ""]
+    # The diagnosis run again as JSON; overrides never repeated, only said to be needed.
+    assert wide[-3:] == ["Run again as JSON", "  alphaavatar doctor alpha --json", ""]
+    assert text(100, overridden=True)[-2] == (
+        "  With the same KEY=VALUE overrides, which are not repeated here."
+    )
 
     narrow = text(40)  # Too narrow for both side by side.
     start = narrow.index("End-to-end latency")
@@ -289,7 +318,7 @@ def test_doctor_shows_figures_side_by_side_or_one_scenario_after_another() -> No
         "    First audio frame        —",
         "    Response complete        —",
     ]
-    assert text(100, interrupted=True)[2] == "WARN  Interrupted · 14 passed · 1 skipped"
+    assert text(100, interrupted=True)[0] == "WARN  Interrupted · 14 passed · 1 skipped"
 
 
 def test_a_question_too_long_for_the_line_is_wrapped_and_answered_on_its_last(
@@ -319,3 +348,29 @@ def test_the_width_is_columns_else_the_streams_own_terminal_else_100(color_capab
         assert Report(Sized()).width == 88
         with mock.patch.dict(os.environ, {"COLUMNS": "72"}):
             assert Report(Sized()).width == Report(io.StringIO()).width == 72
+
+
+def test_a_missing_package_too_long_for_the_line_shows_its_parts_apart(
+    color_capable: object,
+) -> None:
+    from alphaavatar.host.configs.capabilities import Missing
+
+    item = Missing(
+        "loop.plugin: no installed package provides loop 'realtime'; `alphaavatar setup` "
+        "installs it (alpha-avatar-plugins-loop)",
+        "loop.plugin",
+        "no installed package provides loop 'realtime'",
+        "alpha-avatar-plugins-loop",
+        "`alphaavatar setup` installs it",
+    )
+    wide, narrow = io.StringIO(), io.StringIO()
+    Report(wide, width=200).missing([item], indent=6)
+    Report(narrow, width=72).missing([item], indent=6)
+    assert wide.getvalue() == f"      {item.line}\n"  # Whole where it fits, as searched for.
+    # Narrow: the setting, then what is wrong, the package and what installs it, a line each.
+    assert narrow.getvalue().splitlines() == [
+        "      loop.plugin",
+        "        no installed package provides loop 'realtime'",
+        "        alpha-avatar-plugins-loop",
+        "        `alphaavatar setup` installs it",
+    ]

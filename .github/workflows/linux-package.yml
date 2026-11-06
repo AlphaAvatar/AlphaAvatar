@@ -111,26 +111,28 @@ jobs:
           alphaavatar --version
           alphaavatar --help > /dev/null
           alphaavatar config init reference --avatar-id reference > init.txt
-          grep -F 'alphaavatar setup' init.txt
-          # Nothing but the base: check names each implementation and what setup installs.
-          if alphaavatar config check 2> check.txt; then exit 1; fi
+          grep -F 'alphaavatar setup reference' init.txt
+          # Nothing but the base: check names each implementation and what setup installs; wide
+          # enough that each diagnostic is one line, as searched for here.
+          if COLUMNS=1000 alphaavatar config check 2> check.txt; then exit 1; fi
           grep -F "loop.plugin: no installed package provides loop 'realtime'; \`alphaavatar setup\` installs it" check.txt
-          if alphaavatar config check tools.rag.plugin=default 2> rag.txt; then exit 1; fi
+          if COLUMNS=1000 alphaavatar config check tools.rag.plugin=default 2> rag.txt; then exit 1; fi
           grep -F "\`alphaavatar setup\` does not offer it" rag.txt
-      - name: Remote inference plans no local model nor its accelerators
+      - name: Setup plans the reference bundle from its settings
         working-directory: /
         run: |
-          alphaavatar setup --preset remote --name remote --plan > remote-plan.json
-          for name in torch torchaudio llama-cpp-python insightface transformers onnx scipy; do
-            if grep -q "\"name\": \"$name\"" remote-plan.json; then
-              echo "The remote plan holds $name" >&2; exit 1
-            fi
+          alphaavatar setup reference --plan > plan.json 2> plan.err
+          # stdout is the plan alone; the steps went to stderr.
+          head -c 1 plan.json | grep -qx '{'
+          grep -F 'Bundle reference' plan.err
+          for name in torch llama-cpp-python insightface; do
+            grep -q "\"name\": \"$name\"" plan.json || { echo "The plan lacks $name" >&2; exit 1; }
           done
-          grep -c '"name":' remote-plan.json
-      - name: Setup's default preset installs, checks and enables
+          grep -c '"name":' plan.json
+      - name: Setup installs, checks and enables the reference bundle
         working-directory: /
         run: |
-          alphaavatar setup --preset default --artifacts /srv/alphaavatar
+          alphaavatar setup reference --artifacts /srv/alphaavatar
           alphaavatar config check
           alphaavatar config check \
             'runtime.inference.methods={"alphaavatar.voice.vad.silero": {"workers": 2}}' \

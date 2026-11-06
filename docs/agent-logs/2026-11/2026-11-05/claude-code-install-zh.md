@@ -3,6 +3,7 @@
 - 分支：`dev/v0.6.9`；日期均为 CST。
 - 本文件是安装与首次配置流程第 1 项（干净机器安装）的主日志，按时间顺序追加。第 2–5 项各有独立主日志。
 - 统一的 KD/O 表仍在 `docs/agent-logs/2026-10/2026-10-25/claude-code-2a-zh.md`。
+- 交互配置（`alphaavatar setup`、`setup <bundle>`、`config init` 的下一步）从 `2fc4f398` 那一轮起记在 [claude-code-setup-zh.md](../2026-11-06/claude-code-setup-zh.md)，本文件第二至第六轮和「CLI 展示统一」第 3 节中的 setup 记录已在那里汇总；同一轮的 Doctor 改动记在 [claude-code-doctor-zh.md](../2026-11-03/claude-code-doctor-zh.md)。CLI 渲染和 HTML 预览仍记在本文件。
 
 ## 批次总览
 
@@ -15,7 +16,8 @@
 | 第 1 项第四轮 | 自托管端点按服务器分开凭据并按后端规则校验地址；`install.sh --file` 先复制再校验；归属检查与凭据随设置一起提交；单一完整解析；修短句 TTS 测试 | 2026-11-06 | `eb2404a` | 用户已提交（`eee0c28`） | 部分被第五轮修正：自托管凭据绑定端点、设置一次读取、安装锁、Provider 级联与摘要 |
 | 第 1 项第五轮 | 自托管凭据绑定到端点；默认 bundle 与凭据取自同一次设置读取；安装锁不经链接、不截断；runner 的多个 Provider 与级联 Provider；自定义 Memory 的摘要；URL 端口与空用户名 | 2026-11-06 | `eee0c28` | 用户已提交（`c851cef`） | 部分被第六轮修正：端点绑定改按最终 URL 核对、特殊文件与锁文件保留、CI 超时 |
 | 第 1 项第六轮 | 密钥变量在加载时与最终生效的 URL 核对；安装锁、设置与凭据文件拒绝管道等非普通文件且不等待；锁文件永不删除；凭据文件缺失与并发更新分开报告；Quality 测试步骤上限 10 分钟；README 按设备分节的安装与使用 | 2026-11-06 | `c851cef` | 用户已提交（`0a85122`） | Codex 复核通过：Quality 全量 431 项，Linux 制品干净容器验收 |
-| 第 1 项 CLI 展示统一 | `config init`、`config check`、`setup`、`doctor` 共用终端渲染器 `cli/render.py`：品牌蓝标题、信号青步骤与命令、状态色、宽窄终端排版、无色与管道同结构；setup 四步展示；Doctor 分组、未验证原因、端到端与阶段耗时 | 2026-11-06 | `0a85122` | 未提交（用户提交） | 待审查 |
+| 第 1 项 CLI 展示统一 | `config init`、`config check`、`setup`、`doctor` 共用终端渲染器 `cli/render.py`：品牌蓝标题、信号青步骤与命令、状态色、宽窄终端排版、无色与管道同结构；setup 四步展示；Doctor 分组、未验证原因、端到端与阶段耗时 | 2026-11-06 | `0a85122` | 用户已提交（`2fc4f398`） | 部分被第二轮修正：窄终端缺包拆分、`NO_COLOR` 不重绘、`Full report` 改为 `Run again as JSON` |
+| 第 1 项 CLI 展示第二轮 | 窄终端上缺包诊断拆成设置、问题、包名、提示；`NO_COLOR` 不清行不重绘；步骤摘要和无色进度行换行；Doctor `Run again as JSON`、`—` 带原因；自包含可离线的 `docs/cli/cli.html`（录制生成，离线面板标「离线测试替身」）。交互配置与 Doctor 见各自日志 | 2026-11-06 | `2fc4f398` | 未提交（用户提交） | 待审查 |
 
 ## 历史记录（合并来源）
 
@@ -1586,3 +1588,69 @@ glibc 下限（新脚本实测）：基础包 2.17；远端环境 2.28；默认�
 4. **原有文案**：凭据用途「OpenAI's the model, embeddings…」语法有误，是原有文案，本轮没改。
 
 证据（会话临时目录，不入库）：`/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/evidence7/`（测试、变异、构建）和 `/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/accept7/`（录制器、驱动、沙箱脚本、`rec/` 下的 `.cast`／`.ansi`、`cli-output.html`）；本轮制品在 `/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/out7/`。
+
+---
+
+## 第 1 项 CLI 展示第二轮：窄终端、无色、Doctor 报告与 HTML 预览（基线 `2fc4f398`）
+
+依据：Codex 对 `2fc4f398` 复核的第三阶段。要求：保留颜色；窄终端上缺包诊断拆成设置、包名和操作提示，可复制的命令保持整行；`NO_COLOR` 关闭 ANSI 清行和原地重绘，逐行输出纯文本；Doctor 的「Full report」不再回显原始覆盖项，若保留重跑命令就明确标为「重跑并输出 JSON」；保留 `docs/cli/README.md` 和各命令文档，新增由录制流程生成、可离线打开的自包含 `docs/cli/cli.html`，并从 README 链接；行为稳定后重录，用普通 `setup` 替换旧的 remote 预设示例，补上 Doctor 计费确认、同意后运行和拒绝后跳过，每个离线实测面板标明「离线测试替身」。交互配置和 Doctor 的改动分别记在 [claude-code-setup-zh.md](../2026-11-06/claude-code-setup-zh.md) 和 [claude-code-doctor-zh.md](../2026-11-03/claude-code-doctor-zh.md)。所有改动在未暂存的工作区。
+
+### 1. 窄终端上的缺包诊断
+
+- `capabilities.MissingCapabilities` 带上逐项的 `Missing`：整行文本、设置位置、问题、包名、操作提示（`` `alphaavatar setup` installs it `` 或「this release's `alphaavatar setup` does not offer it」）。消息文本不变，CI 和测试按原文匹配的行照旧。
+- `Report.missing(items, indent)`：放得下就整行输出；放不下就先写设置位置，再把问题、包名、提示各占一行，缩进两格，经同一个 `Redactor`。
+- `config check` 的失败路径：标题行、说明（缩进换行）、逐项缺包。断言整行诊断的测试设 `COLUMNS=1000`，窄终端拆分另有测试。
+
+### 2. `NO_COLOR`
+
+- `Report` 分开 `tty`（流是终端）和 `live`（终端、`TERM` 不是 `dumb`、没有 `NO_COLOR`）。只有 `live` 时才清行和原地重绘；`NO_COLOR` 下与管道相同，进度逐行输出，不清除任何内容。
+- `pending(text)`：进行中提示（Doctor 的「Running the runtime tests…」），只在 `live` 时显示，下一次输出前擦掉。
+
+### 3. Doctor 报告
+
+- `Full report` 改为 `Run again as JSON`，命令是 `alphaavatar doctor [target] --json`；带过覆盖项时另起一行说明，原文不回显。
+- `—` 附原因；同意提示、拒绝后的 SKIP、下载提示见 Doctor 日志。
+
+### 4. HTML 预览 `docs/cli/cli.html`
+
+- 生成器 `scripts/docs/cli_preview.py`：
+  - `record OUT COLS [--answer TEXT …] [--interrupt-at TEXT] -- COMMAND…`：在指定列宽的伪终端里运行，按提示（以 `": "` 结尾，去掉 ANSI 后匹配）逐条作答，写出 asciinema v2 的 `.cast` 和原样字节 `.ansi`；
+  - `html OUT [--mask PATH=NAME …] PANEL…`：每个面板为 `名称|.ansi|标题|退出码[|标签]`，回放回车和清行，得到命令结束时终端上的画面，把转义码转成颜色；`--mask` 把录制机器上的目录显示成名字（离线面板的工作目录显示为 `$WORK`）。
+- 页面只用系统字体，没有任何外部资源，可离线打开；跟随系统深浅色；每个终端保持自己的列宽，在面板内横向滚动。导语写明：setup、config、拒绝和 `--no-metrics` 的 Doctor 在干净 Ubuntu 24.04 rootfs 上用本轮构建的安装包运行；Doctor 的实测面板用的是测试中的离线替身，标「离线测试替身」，耗时是替身的；所有指标止于 Host 输出，LiveKit 传输和客户端播放另测。
+- 17 个面板：
+  - 安装包（沙箱）：普通 `setup`（逐项询问、本机无模型）、基础包上的 `config init`、setup 前的 `config check`（72 列，缺包拆分）、`setup reference`、setup 后的 `config check`、本版本不安装的选择、拒绝计划、提问处 Ctrl+C、`NO_COLOR` 下的 `setup`、Doctor 拒绝运行时测试、`--no-metrics`；
+  - 离线测试替身：同意后运行（100 列、72 列）、关闭视觉的纯语音、缺模型同意后下载、模型不接受图片时的降级、提问处 Ctrl+C。
+- `docs/cli/README.md` 的「Output」一节链接 `cli.html`；`setup.md` 末尾也链接了它。旧的 remote 预设示例已换成普通 `setup` 和 `setup <bundle>` 的真实输出。
+
+### 5. 录制中发现并修复的展示问题
+
+- **步骤摘要超宽**：72 列下，`01  Capabilities   Bundle reference · Voice on · Vision on · Local models on` 超出列宽。步骤摘要放不下时，按 ` · ` 分段换行，续行对齐到摘要列。
+- **无色下的进度行**：`NO_COLOR` 时，`Environment … is already installed; checking it` 这类进度行整行输出、超出列宽。改为与其他文本一样在空格处换行，路径不拆。
+- **提问处 Ctrl+C**：提问行没有结束，结果行紧贴其后；`Report.ask` 先结束该行（Doctor 日志第 4 节第 4 条）。
+- **失败前的空行**：拒绝发生在任何步骤之前时，标题后出现两个空行（setup 日志第 8 节）。
+
+### 6. 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `avatar-host/.../cli/render.py` | `tty` 与 `live` 分开；`pending`；`missing`；步骤摘要和无色进度行换行；`ask` 中断时结束提问行 |
+| `avatar-host/.../configs/capabilities.py` | `MissingCapabilities.items`、`Missing` |
+| `avatar-host/.../cli/commands/config.py`、`doctor.py` | 缺包逐项输出；`Run again as JSON` |
+| `scripts/docs/cli_preview.py`（新增） | 录制与生成预览页 |
+| `docs/cli/cli.html`（新增） | 生成的预览页 |
+| 测试 | `test_render.py`：72 列缺包拆分、`NO_COLOR` 与管道逐字节相同且无转义、步骤摘要与无色进度换行、`Run again as JSON` 与覆盖项说明、`—` 的原因；`test_capabilities.py`、`test_discovery.py`、`test_doctor.py`：断言整行诊断时设 `COLUMNS=1000` |
+| `docs/cli/README.md` | 链接 `cli.html`；窄终端拆分、`NO_COLOR` 不重绘的规则 |
+
+### 7. 验证
+
+- 全量测试、静态检查、变异见 setup 日志和 Doctor 日志同一轮的验证节。本部分的变异 R1–R7（窄终端不拆分、`NO_COLOR` 仍重绘、不说明覆盖项、`—` 不写停在哪、缺包不写 setup 提示、步骤摘要不换行、无色进度不换行）全部被抓到。
+- 录制：沙箱里的 11 个面板来自本轮最终构建，6 个离线测试替身面板来自本轮最终代码。逐面板检查超出列宽的行：只剩原样输出的诊断 `This release's setup installs nothing for: tools.rag.plugin: tools.rag 'default'`，其余都在面板宽度内。
+- 页面检查：17 个面板，6 个带「离线测试替身」；没有临时目录路径，也没有外部资源（脚本、样式、字体、图片都没有）；不含任何凭据值（沙箱用的是虚构值，页面里一个都没有）；`<!doctype html>`，跟随系统深浅色。
+
+### 8. 待复核
+
+1. **诊断仍整行**：`setup` 拒绝时的 `This release's setup installs nothing for: …` 是诊断，按规则整行输出，72 列下超宽。
+2. **页面语言**：页面正文是英文，只有标签按要求写「离线测试替身」。
+3. **录制工具的位置**：`scripts/docs/cli_preview.py` 不在测试里；它只生成文档，页面内容由录制决定。
+
+证据（会话临时目录，不入库）：`/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/evidence8/`（全量测试、拦截测试、变异、三次构建日志）和 `/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/accept8/`（沙箱脚本 `run8.sh`、离线驱动 `doctor_offline.py` 与 `offline.sh`、页面脚本 `html.sh`、`rec/` 下的 `.cast`／`.ansi`）；本轮制品在 `/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/out8/`。

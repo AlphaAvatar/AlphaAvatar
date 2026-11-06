@@ -1,0 +1,767 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AlphaAvatar CLI Output</title>
+<style>
+/* One reading column; each terminal keeps its own width and scrolls inside. System fonts
+   only: the page opens offline. */
+:root {
+  --page: #f6f7f9; --ink: #1c2128; --muted: #5a6470; --accent: #2f6fb3; --tag: #7a4b00;
+  --tag-bg: #fdf1d8; --term: #0d1117; --term-ink: #e6edf3; --term-rule: #30363d;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --page: #0b0e12; --ink: #e3e8ee; --muted: #9aa5b1; --accent: #7cb4f0;
+    --tag: #f5c777; --tag-bg: #3a2c10; color-scheme: dark; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.55 var(--sans); }
+main { max-width: 1000px; margin: 0 auto; padding: 28px 16px 72px; }
+h1 { font-size: 24px; line-height: 1.25; margin: 0 0 6px; }
+.lead { color: var(--muted); max-width: 70ch; margin: 0 0 18px; }
+nav ol { columns: 2 280px; margin: 0; padding-left: 20px; color: var(--muted); font-size: 14px; }
+nav a { color: var(--accent); text-decoration: none; }
+nav a:hover, nav a:focus-visible { text-decoration: underline; }
+section { margin-top: 34px; }
+h2 { font-size: 16px; line-height: 1.35; margin: 0 0 4px; }
+.tag { display: inline-block; margin-left: 8px; padding: 0 7px; border-radius: 4px;
+  background: var(--tag-bg); color: var(--tag); font-size: 12px; font-weight: 600; }
+.meta { display: flex; gap: 14px; color: var(--muted); font-size: 13px; margin: 0 0 10px; }
+.term { background: var(--term); color: var(--term-ink); border: 1px solid var(--term-rule);
+  border-radius: 6px; padding: 14px 16px; overflow-x: auto; }
+.term pre { margin: 0; font: 13px/1.5 var(--mono); white-space: pre; min-width: max-content; }
+</style>
+</head>
+<body>
+<main>
+<h1>AlphaAvatar CLI output</h1>
+<p class="lead">What a terminal of each width shows once the command ends, rendered from its
+recording with the escape codes kept as colors (scripts/docs/cli_preview.py). Setup, config,
+and Doctor declined or with --no-metrics ran on a clean Ubuntu 24.04 root with the Linux
+package of this build. Doctor's measured runs used the offline test doubles of its tests,
+marked 离线测试替身: their services and model files are stand-ins and their timings are the
+doubles'. Every figure ends at the Host's output; LiveKit's transport and a client's playback
+are measured separately. Lines wider than a panel are diagnostics and commands, which print
+whole.</p>
+<nav><ol>
+<li><a href="#setup-first">alphaavatar setup — a new bundle, asked part by part, no model on this machine</a></li>
+<li><a href="#init-bare">alphaavatar config init reference --avatar-id reference — in the base package</a></li>
+<li><a href="#check-bare">alphaavatar config check reference — before setup</a></li>
+<li><a href="#setup-bundle">alphaavatar setup reference — the bundle config init made</a></li>
+<li><a href="#check">alphaavatar config check reference — after setup</a></li>
+<li><a href="#setup-unserved">alphaavatar setup ragged — a selection this release does not install</a></li>
+<li><a href="#setup-cancel">alphaavatar setup reference — the plan declined</a></li>
+<li><a href="#setup-interrupt">alphaavatar setup — Ctrl+C at a question</a></li>
+<li><a href="#setup-nocolor">NO_COLOR=1 alphaavatar setup reference — plain, a line each</a></li>
+<li><a href="#doctor-declined">alphaavatar doctor first — the runtime tests declined</a></li>
+<li><a href="#doctor-nometrics">alphaavatar doctor first --no-metrics</a></li>
+<li><a href="#doctor-agreed">alphaavatar doctor — the runtime tests agreed: voice and vision, then text</a><span class="tag">离线测试替身</span></li>
+<li><a href="#doctor-agreed-72">alphaavatar doctor — the same, 72 columns</a><span class="tag">离线测试替身</span></li>
+<li><a href="#doctor-voice">alphaavatar doctor — vision off: voice, then text</a><span class="tag">离线测试替身</span></li>
+<li><a href="#doctor-download">alphaavatar doctor — a model not in the cache, downloaded once agreed</a><span class="tag">离线测试替身</span></li>
+<li><a href="#doctor-degraded">alphaavatar doctor — a model that takes no images: the vision-off fallback</a><span class="tag">离线测试替身</span></li>
+<li><a href="#doctor-interrupt">alphaavatar doctor — Ctrl+C at the question</a><span class="tag">离线测试替身</span></li>
+</ol></nav>
+<section id="setup-first"><h2>alphaavatar setup — a new bundle, asked part by part, no model on this machine</h2><p class="meta"><span>100 columns</span><span>exit 0</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Setup</span>
+
+<span style="color:rgb(34,211,238)">01  Capabilities</span>
+    From the reference configuration: voice and vision on, memory and persona, each model from the
+    backend chosen below.
+    <span style="color:rgb(34,211,238)">Voice: speech in and out, voice activity detected on this machine? [Y/n]: </span>
+    <span style="color:rgb(34,211,238)">Vision: camera frames reach the model? [Y/n]: </span>
+    <span style="color:rgb(34,211,238)">Models on this machine: turn taking, addressing, face and speaker recognition? [Y/n]: </span>n
+    Vectors for memory and persona:
+      1  LanceDB in the Avatar workspace
+      2  your Qdrant
+    <span style="color:rgb(34,211,238)">Vector store [1]: </span>
+    <span style="color:rgb(34,211,238)">Models from OpenAI? No: a server of your own with OpenAI&#x27;s API, Responses included [Y/n]: </span>
+    <span style="color:rgb(34,211,238)">Speech from OpenAI? No: a server of your own with OpenAI&#x27;s audio API [Y/n]: </span>
+    <span style="color:rgb(34,211,238)">Bundle name [avatar]: </span>first
+    <span style="color:rgb(34,211,238)">Avatar ID [first]: </span>
+01  Capabilities   Voice on · Vision on · Local models off
+<span style="color:rgb(34,211,238)">02  Credentials</span>
+    <span style="color:rgb(34,211,238)">OPENAI_API_KEY, for the model, embeddings, memory/persona tasks and speech, from OpenAI (set;</span>
+    <span style="color:rgb(34,211,238)">Enter keeps it): </span>
+    <span style="color:rgb(34,211,238)">LIVEKIT_URL, for the LiveKit server sessions use (set; Enter keeps it): </span>
+    <span style="color:rgb(34,211,238)">LIVEKIT_API_KEY, for LiveKit (set; Enter keeps it): </span>
+    <span style="color:rgb(34,211,238)">LIVEKIT_API_SECRET, for LiveKit (set; Enter keeps it): </span>
+    <span style="color:rgb(34,211,238)">Store OPENAI_API_KEY, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET in</span>
+    <span style="color:rgb(34,211,238)">/home/tester/.local/share/alphaavatar/settings, readable only by you? [y/N]: </span>n
+    Not stored: start reads them from the environment or .env
+02  Credentials    Ready
+<span style="color:rgb(34,211,238)">03  Install</span>
+    AlphaAvatar 0.6.8 (linux-x86_64), plan e23bfaac738f4d3c
+    sessions through LiveKit
+    model and embeddings from OpenAI
+    speech from OpenAI
+    voice: speech in and out, voice activity detected on this machine
+    vision: camera frames reach the model
+    no other models on this machine
+    memory and persona: vectors in LanceDB in the Avatar workspace
+    85 packages · 212 MB to download
+    Environment ~/.local/lib/alphaavatar/envs/e23bfaac738f4d3c; bundle first, made the default
+    <span style="color:rgb(34,211,238)">Install and enable? [Y/n]: </span>y
+03  Install        85 packages · 212 MB
+04  Validate       PASS · 3 runners
+
+<span style="color:#4ade80">OK</span>    Bundle enabled
+      Default       first
+      Environment   ~/.local/lib/alphaavatar/envs/e23bfaac738f4d3c
+      <span style="color:#9ca3af">Start reads OPENAI_API_KEY, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET from the</span>
+      <span style="color:#9ca3af">environment or .env.</span>
+
+<span style="font-weight:700">Next</span>
+  <span style="color:rgb(34,211,238)">alphaavatar doctor first</span></pre></div></section>
+<section id="init-bare"><h2>alphaavatar config init reference --avatar-id reference — in the base package</h2><p class="meta"><span>100 columns</span><span>exit 0</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Config init</span>
+<span style="color:#4ade80">OK</span>    Bundle created
+
+<span style="font-weight:700">Configuration</span>
+  Bundle       reference
+  Profiles     ~/.local/share/alphaavatar/configs/profiles/reference
+  Default      reference
+
+<span style="font-weight:700">Required credentials</span>
+  OPENAI_API_KEY
+  LIVEKIT_URL · LIVEKIT_API_KEY · LIVEKIT_API_SECRET
+
+<span style="font-weight:700">Next</span>
+  <span style="color:rgb(34,211,238)">alphaavatar setup reference</span></pre></div></section>
+<section id="check-bare"><h2>alphaavatar config check reference — before setup</h2><p class="meta"><span>72 columns</span><span>exit 2</span></p><div class="term"><pre style="width:72ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Config check</span>
+<span style="color:#f87171">ERROR</span> Configuration and read-only path checks failed
+
+  error: MissingCapabilities
+    Selected plugins are not available; install them, or change the
+    settings that select them:
+      loop.plugin
+        no installed package provides loop &#x27;realtime&#x27;
+        alpha-avatar-plugins-loop
+        `alphaavatar setup` installs it
+      context.plugin
+        no installed package provides context &#x27;default&#x27;
+        alpha-avatar-plugins-context
+        `alphaavatar setup` installs it
+      voice.vad.plugin
+        no installed package provides voice.vad &#x27;silero&#x27;
+        alpha-avatar-plugins-voice[silero]
+        `alphaavatar setup` installs it
+      voice.stt.plugin
+        no installed package provides voice.stt &#x27;openai_segment&#x27;
+        alpha-avatar-plugins-voice
+        `alphaavatar setup` installs it
+      voice.tts.plugin
+        no installed package provides voice.tts &#x27;openai&#x27;
+        alpha-avatar-plugins-voice
+        `alphaavatar setup` installs it
+      status.plugin
+        no installed package provides status &#x27;default&#x27;
+        alpha-avatar-plugins-status
+        `alphaavatar setup` installs it
+      router.plugin
+        no installed package provides router &#x27;default&#x27;
+        alpha-avatar-plugins-router
+        `alphaavatar setup` installs it
+      memory.plugin
+        no installed package provides memory &#x27;default&#x27;
+        alpha-avatar-plugins-memory
+        `alphaavatar setup` installs it
+      persona.plugin
+        no installed package provides persona &#x27;default&#x27;
+        alpha-avatar-plugins-persona
+        `alphaavatar setup` installs it</pre></div></section>
+<section id="setup-bundle"><h2>alphaavatar setup reference — the bundle config init made</h2><p class="meta"><span>100 columns</span><span>exit 0</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Setup</span>
+
+01  Capabilities   Bundle reference · Voice on · Vision on · Local models on
+02  Credentials    From the environment, .env or those stored
+<span style="color:rgb(34,211,238)">03  Install</span>
+    AlphaAvatar 0.6.8 (linux-x86_64), plan 1b8886ab3dd8b71a
+    105 packages · 514 MB to download
+    Environment ~/.local/lib/alphaavatar/envs/1b8886ab3dd8b71a; bundle reference, made the default
+    <span style="color:rgb(34,211,238)">Install and enable? [Y/n]: </span>y
+03  Install        105 packages · 514 MB
+04  Validate       PASS · 8 runners
+
+<span style="color:#4ade80">OK</span>    Bundle enabled
+      Default       reference
+      Environment   ~/.local/lib/alphaavatar/envs/1b8886ab3dd8b71a
+
+<span style="font-weight:700">Next</span>
+  <span style="color:rgb(34,211,238)">alphaavatar doctor reference</span></pre></div></section>
+<section id="check"><h2>alphaavatar config check reference — after setup</h2><p class="meta"><span>72 columns</span><span>exit 0</span></p><div class="term"><pre style="width:72ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Config check</span>
+<span style="color:#4ade80">OK</span>    Configuration and read-only path checks passed
+
+<span style="font-weight:700">Configuration</span>
+  config         bundle reference
+  avatar_id      reference
+  home           /home/tester/.local/share/alphaavatar
+  workspace      /home/tester/.local/share/alphaavatar/avatars/reference
+
+<span style="font-weight:700">host</span>
+  rtc            livekit
+  health         127.0.0.1:8081 (dev: free port)
+
+<span style="font-weight:700">agent</span>
+  inference      8 runners, 1 worker each
+
+<span style="font-weight:700">plugins/foundation</span>
+  context        default
+  loop           realtime
+  voice          vad=silero  stt=openai_segment  tts=openai
+  vision         on  (input: vlm)
+
+<span style="font-weight:700">plugins/perception</span>
+  status         default
+  router
+    default  (audio activity on, semantic addressing on, visual
+    addressing on, turn taking on, interruption on)
+  character      none
+  memory
+    default  (vdb: lancedb; retrieval on, conversation on, tool on,
+    environment off)
+  persona
+    default  (vdb: lancedb; profiler on, speaker on, face on)
+
+<span style="font-weight:700">plugins/tools</span>
+  deepresearch   none
+  rag            none
+  mcp            none</pre></div></section>
+<section id="setup-unserved"><h2>alphaavatar setup ragged — a selection this release does not install</h2><p class="meta"><span>72 columns</span><span>exit 1</span></p><div class="term"><pre style="width:72ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Setup</span>
+
+<span style="color:#f87171">FAIL</span>  Setup failed; nothing was enabled
+      This release&#x27;s setup installs nothing for: tools.rag.plugin: tools.rag &#x27;default&#x27;</pre></div></section>
+<section id="setup-cancel"><h2>alphaavatar setup reference — the plan declined</h2><p class="meta"><span>72 columns</span><span>exit 1</span></p><div class="term"><pre style="width:72ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Setup</span>
+
+01  Capabilities   Bundle reference · Voice on · Vision on
+                   Local models on
+02  Credentials    From the environment, .env or those stored
+<span style="color:rgb(34,211,238)">03  Install</span>
+    AlphaAvatar 0.6.8 (linux-x86_64), plan 1b8886ab3dd8b71a
+    105 packages · installed already
+    Environment ~/.local/lib/alphaavatar/envs/1b8886ab3dd8b71a; bundle
+    reference, made the default
+    <span style="color:rgb(34,211,238)">Install and enable? [Y/n]: </span>n
+
+<span style="color:#facc15">WARN</span>  Cancelled; nothing was enabled</pre></div></section>
+<section id="setup-interrupt"><h2>alphaavatar setup — Ctrl+C at a question</h2><p class="meta"><span>72 columns</span><span>exit 130 (254 in the sandbox, its PID 1 interrupted too)</span></p><div class="term"><pre style="width:72ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Setup</span>
+
+<span style="color:rgb(34,211,238)">01  Capabilities</span>
+    From the reference configuration: voice and vision on, memory and
+    persona, each model from the backend chosen below.
+    <span style="color:rgb(34,211,238)">Voice: speech in and out, voice activity detected on this machine?</span>
+    <span style="color:rgb(34,211,238)">[Y/n]: </span>
+    <span style="color:rgb(34,211,238)">Vision: camera frames reach the model? [Y/n]: </span>
+    <span style="color:rgb(34,211,238)">Models on this machine: turn taking, addressing, face and speaker</span>
+    <span style="color:rgb(34,211,238)">recognition? [Y/n]: </span>
+    Vectors for memory and persona:
+      1  LanceDB in the Avatar workspace
+      2  your Qdrant
+    <span style="color:rgb(34,211,238)">Vector store [1]: </span>
+    <span style="color:rgb(34,211,238)">Models from OpenAI? No: a server of your own with OpenAI&#x27;s API,</span>
+    <span style="color:rgb(34,211,238)">Responses included [Y/n]: </span>
+    <span style="color:rgb(34,211,238)">Speech from OpenAI? No: a server of your own with OpenAI&#x27;s audio API</span>
+    <span style="color:rgb(34,211,238)">[Y/n]: </span>
+    <span style="color:rgb(34,211,238)">Bundle name [avatar]: </span>^C
+
+<span style="color:#facc15">WARN</span>  Interrupted; nothing was enabled</pre></div></section>
+<section id="setup-nocolor"><h2>NO_COLOR=1 alphaavatar setup reference — plain, a line each</h2><p class="meta"><span>100 columns</span><span>exit 0</span></p><div class="term"><pre style="width:100ch">AlphaAvatar / Setup
+
+01  Capabilities   Bundle reference · Voice on · Vision on · Local models on
+02  Credentials    From the environment, .env or those stored
+03  Install
+    AlphaAvatar 0.6.8 (linux-x86_64), plan 1b8886ab3dd8b71a
+    105 packages · installed already
+    Environment ~/.local/lib/alphaavatar/envs/1b8886ab3dd8b71a; bundle reference, made the default
+    Install and enable? [Y/n]: y
+03  Install
+    Environment /home/tester/.local/lib/alphaavatar/envs/1b8886ab3dd8b71a is already installed;
+    checking it
+03  Install        105 packages · installed already
+04  Validate       PASS · 8 runners
+
+OK    Bundle enabled
+      Default       reference
+      Environment   ~/.local/lib/alphaavatar/envs/1b8886ab3dd8b71a
+
+Next
+  alphaavatar doctor reference</pre></div></section>
+<section id="doctor-declined"><h2>alphaavatar doctor first — the runtime tests declined</h2><p class="meta"><span>72 columns</span><span>exit 0</span></p><div class="term"><pre style="width:72ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Doctor</span>
+
+<span style="font-weight:700">Runtime tests</span>
+  They run this configuration on fixed samples, through the services it
+  names:
+    model providers (langchain, openai)
+    speech recognition (openai_segment)
+    speech synthesis (openai)
+    memory vector store embeddings
+    persona vector store embeddings
+  Calls to these services may be billed.
+    <span style="color:rgb(34,211,238)">Run the runtime tests? [y/N]: </span>n
+
+<span style="color:#4ade80">OK</span>    9 passed · 6 skipped
+
+<span style="font-weight:700">Checks</span>
+  <span style="color:#4ade80">PASS</span>  Environment            3 checks passed
+  <span style="color:#4ade80">PASS</span>  Configuration          first · 3 runners
+  <span style="color:#4ade80">PASS</span>  Directories            3 checks passed
+
+<span style="font-weight:700">Not verified</span>
+  <span style="color:#9ca3af">SKIP</span>  Session and services
+        Not run: the external services it reaches were declined
+  <span style="color:#9ca3af">SKIP</span>  Media devices
+        Not verified: the diagnostic session uses its own samples and
+        opens no microphone, camera or player
+        → Join a dev session from a client to try its devices
+
+<span style="font-weight:700">End-to-end latency</span>
+  Not measured · Not run: the external services it reaches were declined
+
+<span style="font-weight:700">Run again as JSON</span>
+  <span style="color:rgb(34,211,238)">alphaavatar doctor first --json</span></pre></div></section>
+<section id="doctor-nometrics"><h2>alphaavatar doctor first --no-metrics</h2><p class="meta"><span>100 columns</span><span>exit 0</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Doctor</span>
+<span style="color:#4ade80">OK</span>    9 passed · 6 skipped
+
+<span style="font-weight:700">Checks</span>
+  <span style="color:#4ade80">PASS</span>  Environment            3 checks passed
+  <span style="color:#4ade80">PASS</span>  Configuration          first · 3 runners
+  <span style="color:#4ade80">PASS</span>  Directories            3 checks passed
+
+<span style="font-weight:700">Not verified</span>
+  <span style="color:#9ca3af">SKIP</span>  Session and services
+        Not run: left out with --no-metrics
+  <span style="color:#9ca3af">SKIP</span>  Media devices
+        Not verified: the diagnostic session uses its own samples and opens no microphone, camera or
+        player
+        → Join a dev session from a client to try its devices
+
+<span style="font-weight:700">End-to-end latency</span>
+  Not measured · Not run: left out with --no-metrics
+
+<span style="font-weight:700">Run again as JSON</span>
+  <span style="color:rgb(34,211,238)">alphaavatar doctor first --json</span></pre></div></section>
+<section id="doctor-agreed"><h2>alphaavatar doctor — the runtime tests agreed: voice and vision, then text<span class="tag">离线测试替身</span></h2><p class="meta"><span>100 columns</span><span>exit 0</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Doctor</span>
+
+<span style="font-weight:700">Runtime tests</span>
+  They run this configuration on fixed samples, through the services it names:
+    model providers (scripted)
+    speech recognition (openai_segment)
+    speech synthesis (openai)
+    custom memory &#x27;doctor&#x27;
+    custom persona &#x27;doctor&#x27;
+    custom provider backend &#x27;scripted&#x27;
+  Calls to these services may be billed.
+    <span style="color:rgb(34,211,238)">Run the runtime tests? [y/N]: </span>y
+
+<span style="color:#4ade80">OK</span>    Diagnostics completed · 14 passed · 1 skipped
+
+<span style="font-weight:700">Checks</span>
+  <span style="color:#4ade80">PASS</span>  Environment            3 checks passed
+  <span style="color:#4ade80">PASS</span>  Configuration          avatar.json · 2 runners
+  <span style="color:#4ade80">PASS</span>  Directories            3 checks passed
+  <span style="color:#4ade80">PASS</span>  Session and services   5 checks passed
+
+<span style="font-weight:700">Not verified</span>
+  <span style="color:#9ca3af">SKIP</span>  Media devices
+        Not verified: the diagnostic session uses its own samples and opens no microphone, camera or
+        player
+        → Join a dev session from a client to try its devices
+
+<span style="font-weight:700">Scenarios</span>
+  <span style="color:#4ade80">PASS</span>  voice_vision           Speech and screen frames in one model request
+  <span style="color:#4ade80">PASS</span>  text                   Typed input answered
+  <span style="color:#9ca3af">SKIP</span>  image_input            No input transport delivers images to a session yet
+  <span style="color:#9ca3af">SKIP</span>  visual_output          No Character is configured
+
+<span style="font-weight:700">Runners</span>
+  <span style="color:#4ade80">PASS</span>  alphaavatar.voice.vad.silero                   started in 0.39 s
+  <span style="color:#4ade80">PASS</span>  alphaavatar.router.turn_taking.smart_turn_v3   started in 0.39 s
+
+<span style="font-weight:700">End-to-end latency</span>
+  Metric              voice_vision     text
+  First text                707 ms    53 ms
+  First audio frame         730 ms    74 ms
+  Response complete         962 ms   299 ms
+  Text complete             707 ms    53 ms
+  Last audio frame          961 ms   298 ms
+
+<span style="font-weight:700">Stage timing · voice_vision</span>
+  Speech end → VAD close                600 ms
+  Speech end → STT final                651 ms
+  Speech end → Turn commit              653 ms
+  Speech end → Last required input      601 ms
+  Context ready wait                    0.0 ms
+  Turn commit → Model request           2.9 ms
+  Model request → First event           0.7 ms
+  Model request → First text delta       51 ms
+  Model request → First text out         51 ms
+  TTS request → First PCM                    —
+  TTS request → First audio frame        22 ms
+  Selected frame age at model request   757 ms
+  Newest selected frame → Turn commit    52 ms
+  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
+
+<span style="font-weight:700">Stage timing · text</span>
+  Context ready wait                    0.0 ms
+  Turn commit → Model request           2.1 ms
+  Model request → First event           0.5 ms
+  Model request → First text delta       51 ms
+  Model request → First text out         51 ms
+  TTS request → First PCM                    —
+  TTS request → First audio frame        21 ms
+  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
+
+<span style="font-weight:700">Run again as JSON</span>
+  <span style="color:rgb(34,211,238)">alphaavatar doctor $WORK/avatar.json --json</span></pre></div></section>
+<section id="doctor-agreed-72"><h2>alphaavatar doctor — the same, 72 columns<span class="tag">离线测试替身</span></h2><p class="meta"><span>72 columns</span><span>exit 0</span></p><div class="term"><pre style="width:72ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Doctor</span>
+
+<span style="font-weight:700">Runtime tests</span>
+  They run this configuration on fixed samples, through the services it
+  names:
+    model providers (scripted)
+    speech recognition (openai_segment)
+    speech synthesis (openai)
+    custom memory &#x27;doctor&#x27;
+    custom persona &#x27;doctor&#x27;
+    custom provider backend &#x27;scripted&#x27;
+  Calls to these services may be billed.
+    <span style="color:rgb(34,211,238)">Run the runtime tests? [y/N]: </span>y
+
+<span style="color:#4ade80">OK</span>    Diagnostics completed · 14 passed · 1 skipped
+
+<span style="font-weight:700">Checks</span>
+  <span style="color:#4ade80">PASS</span>  Environment            3 checks passed
+  <span style="color:#4ade80">PASS</span>  Configuration          avatar.json · 2 runners
+  <span style="color:#4ade80">PASS</span>  Directories            3 checks passed
+  <span style="color:#4ade80">PASS</span>  Session and services   5 checks passed
+
+<span style="font-weight:700">Not verified</span>
+  <span style="color:#9ca3af">SKIP</span>  Media devices
+        Not verified: the diagnostic session uses its own samples and
+        opens no microphone, camera or player
+        → Join a dev session from a client to try its devices
+
+<span style="font-weight:700">Scenarios</span>
+  <span style="color:#4ade80">PASS</span>  voice_vision
+        Speech and screen frames in one model request
+  <span style="color:#4ade80">PASS</span>  text                   Typed input answered
+  <span style="color:#9ca3af">SKIP</span>  image_input
+        No input transport delivers images to a session yet
+  <span style="color:#9ca3af">SKIP</span>  visual_output          No Character is configured
+
+<span style="font-weight:700">Runners</span>
+  <span style="color:#4ade80">PASS</span>  alphaavatar.voice.vad.silero                   started in 0.39 s
+  <span style="color:#4ade80">PASS</span>  alphaavatar.router.turn_taking.smart_turn_v3   started in 0.39 s
+
+<span style="font-weight:700">End-to-end latency</span>
+  Metric              voice_vision     text
+  First text                706 ms    52 ms
+  First audio frame         728 ms    74 ms
+  Response complete         958 ms   299 ms
+  Text complete             706 ms    53 ms
+  Last audio frame          957 ms   298 ms
+
+<span style="font-weight:700">Stage timing · voice_vision</span>
+  Speech end → VAD close                601 ms
+  Speech end → STT final                651 ms
+  Speech end → Turn commit              653 ms
+  Speech end → Last required input      601 ms
+  Context ready wait                    0.0 ms
+  Turn commit → Model request           2.3 ms
+  Model request → First event           0.6 ms
+  Model request → First text delta       51 ms
+  Model request → First text out         51 ms
+  TTS request → First PCM                    —
+  TTS request → First audio frame        21 ms
+  Selected frame age at model request   755 ms
+  Newest selected frame → Turn commit    51 ms
+  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
+
+<span style="font-weight:700">Stage timing · text</span>
+  Context ready wait                    0.0 ms
+  Turn commit → Model request           2.1 ms
+  Model request → First event           0.5 ms
+  Model request → First text delta       51 ms
+  Model request → First text out         51 ms
+  TTS request → First PCM                    —
+  TTS request → First audio frame        21 ms
+  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
+
+<span style="font-weight:700">Run again as JSON</span>
+  <span style="color:rgb(34,211,238)">alphaavatar doctor $WORK/avatar.json --json</span></pre></div></section>
+<section id="doctor-voice"><h2>alphaavatar doctor — vision off: voice, then text<span class="tag">离线测试替身</span></h2><p class="meta"><span>100 columns</span><span>exit 0</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Doctor</span>
+<span style="color:#4ade80">OK</span>    Diagnostics completed · 14 passed · 1 skipped
+
+<span style="font-weight:700">Checks</span>
+  <span style="color:#4ade80">PASS</span>  Environment            3 checks passed
+  <span style="color:#4ade80">PASS</span>  Configuration          avatar.json · 2 runners
+  <span style="color:#4ade80">PASS</span>  Directories            3 checks passed
+  <span style="color:#4ade80">PASS</span>  Session and services   5 checks passed
+
+<span style="font-weight:700">Not verified</span>
+  <span style="color:#9ca3af">SKIP</span>  Media devices
+        Not verified: the diagnostic session uses its own samples and opens no microphone, camera or
+        player
+        → Join a dev session from a client to try its devices
+
+<span style="font-weight:700">Scenarios</span>
+  <span style="color:#4ade80">PASS</span>  voice                  Speech transcribed and answered
+  <span style="color:#4ade80">PASS</span>  text                   Typed input answered
+  <span style="color:#9ca3af">SKIP</span>  voice_vision           Vision is off or text only
+  <span style="color:#9ca3af">SKIP</span>  image_input            No input transport delivers images to a session yet
+  <span style="color:#9ca3af">SKIP</span>  visual_output          No Character is configured
+
+<span style="font-weight:700">Runners</span>
+  <span style="color:#4ade80">PASS</span>  alphaavatar.voice.vad.silero                   started in 0.39 s
+  <span style="color:#4ade80">PASS</span>  alphaavatar.router.turn_taking.smart_turn_v3   started in 0.39 s
+
+<span style="font-weight:700">End-to-end latency</span>
+  Metric               voice     text
+  First text          707 ms    52 ms
+  First audio frame   728 ms    74 ms
+  Response complete   961 ms   298 ms
+  Text complete       707 ms    53 ms
+  Last audio frame    960 ms   298 ms
+
+<span style="font-weight:700">Stage timing · voice</span>
+  Speech end → VAD close             601 ms
+  Speech end → STT final             652 ms
+  Speech end → Turn commit           653 ms
+  Context ready wait                 0.0 ms
+  Turn commit → Model request        2.0 ms
+  Model request → First event        0.5 ms
+  Model request → First text delta    51 ms
+  Model request → First text out      51 ms
+  TTS request → First PCM                 —
+  TTS request → First audio frame     21 ms
+  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
+
+<span style="font-weight:700">Stage timing · text</span>
+  Context ready wait                 0.0 ms
+  Turn commit → Model request        2.0 ms
+  Model request → First event        0.5 ms
+  Model request → First text delta    51 ms
+  Model request → First text out      51 ms
+  TTS request → First PCM                 —
+  TTS request → First audio frame     21 ms
+  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
+
+<span style="font-weight:700">Run again as JSON</span>
+  <span style="color:rgb(34,211,238)">alphaavatar doctor $WORK/avatar.json --json</span></pre></div></section>
+<section id="doctor-download"><h2>alphaavatar doctor — a model not in the cache, downloaded once agreed<span class="tag">离线测试替身</span></h2><p class="meta"><span>100 columns</span><span>exit 0</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Doctor</span>
+
+<span style="font-weight:700">Model files</span>
+  These runners did not start: their model files are not in the cache yet.
+    alphaavatar.router.turn_taking.smart_turn_v3
+  Doctor downloads what the runners need into
+  $WORK/home/cache/models,
+  as start would, then runs the runtime tests again.
+    <span style="color:rgb(34,211,238)">Download and continue? [y/N]: </span>y
+
+<span style="color:#4ade80">OK</span>    Diagnostics completed · 14 passed · 1 skipped
+
+<span style="font-weight:700">Checks</span>
+  <span style="color:#4ade80">PASS</span>  Environment            3 checks passed
+  <span style="color:#4ade80">PASS</span>  Configuration          avatar.json · 2 runners
+  <span style="color:#4ade80">PASS</span>  Directories            3 checks passed
+  <span style="color:#4ade80">PASS</span>  Session and services   5 checks passed
+
+<span style="font-weight:700">Not verified</span>
+  <span style="color:#9ca3af">SKIP</span>  Media devices
+        Not verified: the diagnostic session uses its own samples and opens no microphone, camera or
+        player
+        → Join a dev session from a client to try its devices
+
+<span style="font-weight:700">Scenarios</span>
+  <span style="color:#4ade80">PASS</span>  voice_vision           Speech and screen frames in one model request
+  <span style="color:#4ade80">PASS</span>  text                   Typed input answered
+  <span style="color:#9ca3af">SKIP</span>  image_input            No input transport delivers images to a session yet
+  <span style="color:#9ca3af">SKIP</span>  visual_output          No Character is configured
+
+<span style="font-weight:700">Runners</span>
+  <span style="color:#4ade80">PASS</span>  alphaavatar.voice.vad.silero                   started in 0.39 s
+  <span style="color:#4ade80">PASS</span>  alphaavatar.router.turn_taking.smart_turn_v3   started in 0.39 s
+
+<span style="font-weight:700">End-to-end latency</span>
+  Metric              voice_vision     text
+  First text                706 ms    53 ms
+  First audio frame         728 ms    74 ms
+  Response complete         958 ms   299 ms
+  Text complete             706 ms    53 ms
+  Last audio frame          957 ms   298 ms
+
+<span style="font-weight:700">Stage timing · voice_vision</span>
+  Speech end → VAD close                601 ms
+  Speech end → STT final                652 ms
+  Speech end → Turn commit              653 ms
+  Speech end → Last required input      602 ms
+  Context ready wait                    0.0 ms
+  Turn commit → Model request           2.2 ms
+  Model request → First event           0.5 ms
+  Model request → First text delta       51 ms
+  Model request → First text out         51 ms
+  TTS request → First PCM                    —
+  TTS request → First audio frame        21 ms
+  Selected frame age at model request   655 ms
+  Newest selected frame → Turn commit    51 ms
+  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
+
+<span style="font-weight:700">Stage timing · text</span>
+  Context ready wait                    0.0 ms
+  Turn commit → Model request           2.2 ms
+  Model request → First event           0.5 ms
+  Model request → First text delta       51 ms
+  Model request → First text out         51 ms
+  TTS request → First PCM                    —
+  TTS request → First audio frame        21 ms
+  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
+
+<span style="font-weight:700">Run again as JSON</span>
+  <span style="color:rgb(34,211,238)">alphaavatar doctor $WORK/avatar.json --json</span></pre></div></section>
+<section id="doctor-degraded"><h2>alphaavatar doctor — a model that takes no images: the vision-off fallback<span class="tag">离线测试替身</span></h2><p class="meta"><span>100 columns</span><span>exit 1</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Doctor</span>
+<span style="color:#f87171">FAIL</span>  Diagnostics completed · 12 passed · 2 failed · 1 skipped
+
+<span style="font-weight:700">Checks</span>
+  <span style="color:#4ade80">PASS</span>  Environment            3 checks passed
+  <span style="color:#4ade80">PASS</span>  Configuration          avatar.json · 2 runners
+  <span style="color:#4ade80">PASS</span>  Directories            3 checks passed
+  <span style="color:#f87171">FAIL</span>  Session and services   3 passed · 2 failed
+        <span style="color:#f87171">FAIL</span>  services.external   2 passed, 1 failed, 3 not verified by the samples
+              <span style="color:#9ca3af">model providers (scripted): configured, authorized, reached, failed</span>
+              <span style="color:#9ca3af">(ModelCapabilityError: image_input)</span>
+              <span style="color:#9ca3af">speech recognition (openai_segment): configured, authorized, reached, passed</span>
+              <span style="color:#9ca3af">speech synthesis (openai): configured, authorized, reached, passed</span>
+              <span style="color:#9ca3af">custom memory &#x27;doctor&#x27;: configured, authorized, reached: not observed, passed: not</span>
+              <span style="color:#9ca3af">observed (external access unknown)</span>
+              <span style="color:#9ca3af">custom persona &#x27;doctor&#x27;: configured, authorized, reached: not observed, passed: not</span>
+              <span style="color:#9ca3af">observed (external access unknown)</span>
+              <span style="color:#9ca3af">custom provider backend &#x27;scripted&#x27;: configured, authorized, reached: not observed,</span>
+              <span style="color:#9ca3af">passed: not observed (external access unknown)</span>
+              <span style="color:#9ca3af">livekit RTC server: not contacted; `alphaavatar dev</span>
+              <span style="color:#9ca3af">$WORK/avatar.json`</span>
+              <span style="color:#9ca3af">connects to it</span>
+              → See the failed scenarios&#x27; blocked stages and causes
+        <span style="color:#f87171">FAIL</span>  session.scenarios
+              1 passed, 2 failed, 1 not enabled, 1 no coverage; degraded: voice passed
+              → See each failed scenario&#x27;s blocked stage, cause and evidence
+
+<span style="font-weight:700">Not verified</span>
+  <span style="color:#9ca3af">SKIP</span>  Media devices
+        Not verified: the diagnostic session uses its own samples and opens no microphone, camera or
+        player
+        → Join a dev session from a client to try its devices
+
+<span style="font-weight:700">Scenarios</span>
+  <span style="color:#f87171">FAIL</span>  voice_vision           Stopped at model.first_event
+        <span style="color:#9ca3af">The run ended failed: ModelCapabilityError: image_input</span>
+  <span style="color:#f87171">FAIL</span>  text                   Stopped at model.first_event
+        <span style="color:#9ca3af">The run ended failed: ModelCapabilityError: image_input</span>
+  <span style="color:#4ade80">PASS</span>  voice [vision off]     Speech transcribed and answered
+  <span style="color:#9ca3af">SKIP</span>  image_input            No input transport delivers images to a session yet
+  <span style="color:#9ca3af">SKIP</span>  visual_output          No Character is configured
+
+<span style="font-weight:700">Runners</span>
+  <span style="color:#4ade80">PASS</span>  alphaavatar.voice.vad.silero                   started in 0.39 s
+  <span style="color:#4ade80">PASS</span>  alphaavatar.router.turn_taking.smart_turn_v3   started in 0.39 s
+  <span style="color:#4ade80">PASS</span>  alphaavatar.voice.vad.silero                   started in 0.39 s · degraded: vision off
+  <span style="color:#4ade80">PASS</span>  alphaavatar.router.turn_taking.smart_turn_v3   started in 0.39 s · degraded: vision off
+
+<span style="font-weight:700">End-to-end latency</span>
+  Metric              voice_vision   text   voice [vision off]
+  First text                     —      —               705 ms
+  First audio frame              —      —               727 ms
+  Response complete              —      —               958 ms
+  Text complete                  —      —               705 ms
+  Last audio frame               —      —               957 ms
+  <span style="color:#9ca3af">— First text · voice_vision, text: not reached: stopped at model.first_event</span>
+  <span style="color:#9ca3af">— First audio frame · voice_vision, text: not reached: stopped at model.first_event</span>
+  <span style="color:#9ca3af">— Response complete · voice_vision, text: not recorded: an output ended otherwise</span>
+  <span style="color:#9ca3af">— Text complete · voice_vision, text: not recorded: an output ended otherwise</span>
+  <span style="color:#9ca3af">— Last audio frame · voice_vision, text: not recorded: an output ended otherwise</span>
+
+<span style="font-weight:700">Stage timing · voice_vision</span>
+  Speech end → VAD close                600 ms
+  Speech end → STT final                651 ms
+  Speech end → Turn commit              652 ms
+  Speech end → Last required input      601 ms
+  Context ready wait                    0.0 ms
+  Turn commit → Model request           2.1 ms
+  Model request → First event                —
+  Model request → First text delta           —
+  Model request → First text out             —
+  TTS request → First PCM                    —
+  TTS request → First audio frame            —
+  Selected frame age at model request   654 ms
+  Newest selected frame → Turn commit    51 ms
+  <span style="color:#9ca3af">— Model request → First event: not reached: stopped at model.first_event</span>
+  <span style="color:#9ca3af">— Model request → First text delta: not reached: stopped at model.first_event</span>
+  <span style="color:#9ca3af">— Model request → First text out: not reached: stopped at model.first_event</span>
+  <span style="color:#9ca3af">— TTS request → First PCM: not reached: stopped at model.first_event</span>
+  <span style="color:#9ca3af">— TTS request → First audio frame: not reached: stopped at model.first_event</span>
+
+<span style="font-weight:700">Stage timing · text</span>
+  Context ready wait                    0.0 ms
+  Turn commit → Model request           2.0 ms
+  Model request → First event                —
+  Model request → First text delta           —
+  Model request → First text out             —
+  TTS request → First PCM                    —
+  TTS request → First audio frame            —
+  <span style="color:#9ca3af">— Model request → First event: not reached: stopped at model.first_event</span>
+  <span style="color:#9ca3af">— Model request → First text delta: not reached: stopped at model.first_event</span>
+  <span style="color:#9ca3af">— Model request → First text out: not reached: stopped at model.first_event</span>
+  <span style="color:#9ca3af">— TTS request → First PCM: not reached: stopped at model.first_event</span>
+  <span style="color:#9ca3af">— TTS request → First audio frame: not reached: stopped at model.first_event</span>
+
+<span style="font-weight:700">Stage timing · voice [vision off]</span>
+  Speech end → VAD close                601 ms
+  Speech end → STT final                651 ms
+  Speech end → Turn commit              652 ms
+  Context ready wait                    0.0 ms
+  Turn commit → Model request           1.5 ms
+  Model request → First event           0.4 ms
+  Model request → First text delta       51 ms
+  Model request → First text out         51 ms
+  TTS request → First PCM                    —
+  TTS request → First audio frame        21 ms
+  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
+
+<span style="font-weight:700">Run again as JSON</span>
+  <span style="color:rgb(34,211,238)">alphaavatar doctor $WORK/avatar.json --json</span></pre></div></section>
+<section id="doctor-interrupt"><h2>alphaavatar doctor — Ctrl+C at the question<span class="tag">离线测试替身</span></h2><p class="meta"><span>72 columns</span><span>exit 130</span></p><div class="term"><pre style="width:72ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Doctor</span>
+
+<span style="font-weight:700">Runtime tests</span>
+  They run this configuration on fixed samples, through the services it
+  names:
+    model providers (scripted)
+    speech recognition (openai_segment)
+    speech synthesis (openai)
+    custom memory &#x27;doctor&#x27;
+    custom persona &#x27;doctor&#x27;
+    custom provider backend &#x27;scripted&#x27;
+  Calls to these services may be billed.
+    <span style="color:rgb(34,211,238)">Run the runtime tests? [y/N]: </span>^C
+
+<span style="color:#facc15">WARN</span>  Interrupted · 9 passed · 6 skipped
+
+<span style="font-weight:700">Checks</span>
+  <span style="color:#4ade80">PASS</span>  Environment            3 checks passed
+  <span style="color:#4ade80">PASS</span>  Configuration          avatar.json · 2 runners
+  <span style="color:#4ade80">PASS</span>  Directories            3 checks passed
+
+<span style="font-weight:700">Not verified</span>
+  <span style="color:#9ca3af">SKIP</span>  Session and services
+        Not run: interrupted at a question
+  <span style="color:#9ca3af">SKIP</span>  Media devices
+        Not verified: the diagnostic session uses its own samples and
+        opens no microphone, camera or player
+        → Join a dev session from a client to try its devices
+
+<span style="font-weight:700">End-to-end latency</span>
+  Not measured · Not run: interrupted at a question
+
+<span style="font-weight:700">Run again as JSON</span>
+  <span style="color:rgb(34,211,238)">alphaavatar doctor $WORK/avatar.json --json</span></pre></div></section>
+</main>
+</body>
+</html>

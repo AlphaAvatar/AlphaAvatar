@@ -19,7 +19,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from enum import Enum
 from pathlib import Path, PurePath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from pydantic import SecretStr
@@ -32,6 +32,9 @@ from alphaavatar.host.workspace import ApplicationPaths
 from .application import ApplicationConfig
 from .bundles import ConfigReferenceError, ConfigSource, compose_profiles
 from .paths import platform_application_root, resolve_application_paths
+
+if TYPE_CHECKING:
+    from alphaavatar.agents.configs import AvatarConfig
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -155,14 +158,11 @@ def validate_plugin_settings(config: ApplicationConfig) -> dict[str, Any]:
     return selection.settings
 
 
-def load_application(
-    source: str | Path | ConfigSource, overrides: Sequence[str] = ()
-) -> ApplicationConfig:
-    """Load a file, composing the profiles it references; overrides apply to the result.
-
-    ``profiles.<section>=<name>`` overrides choose references; every other override applies
-    after composition, as to a single file.
-    """
+def _composed(
+    source: str | Path | ConfigSource, overrides: Sequence[str]
+) -> tuple[dict[str, Any], ApplicationPaths]:
+    """The file with its profiles in place and the overrides applied, interpolated; and the
+    home it belongs to."""
     import yaml
     from omegaconf import OmegaConf
     from omegaconf.errors import OmegaConfBaseException
@@ -201,7 +201,31 @@ def load_application(
         data = _mapping(OmegaConf.to_container(OmegaConf.merge(data, changes), resolve=True))
     except OmegaConfBaseException:
         raise ValueError("Invalid YAML, configuration override, or interpolation") from None
+    return data, paths
 
+
+def load_selections(
+    source: str | Path | ConfigSource, overrides: Sequence[str] = ()
+) -> tuple[HostConfig, AvatarConfig]:
+    """A configuration's Host and Avatar settings, validated without resolving its plugins:
+    what setup plans a bundle's packages from before any of them is installed."""
+    from alphaavatar.agents.configs import AvatarConfig
+
+    data, _ = _composed(source, overrides)
+    data.pop("application", None)
+    host = HostConfig.model_validate(data.pop("host", {}))
+    return host, AvatarConfig.model_validate(data)
+
+
+def load_application(
+    source: str | Path | ConfigSource, overrides: Sequence[str] = ()
+) -> ApplicationConfig:
+    """Load a file, composing the profiles it references; overrides apply to the result.
+
+    ``profiles.<section>=<name>`` overrides choose references; every other override applies
+    after composition, as to a single file.
+    """
+    data, paths = _composed(source, overrides)
     duration = os.getenv("ALPHAAVATAR_MAX_SESSION_SECONDS")
     if duration is not None:
         host = _mapping(data.get("host", {}))

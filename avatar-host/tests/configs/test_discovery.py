@@ -126,7 +126,8 @@ def run(tmp_path: Path):
     entrypoint = Path(sys.executable).with_name("alphaavatar")
 
     def run(*argv: str) -> subprocess.CompletedProcess[str]:
-        env = os.environ | CREDENTIALS | {"PYTHONPATH": str(site)}
+        # Wide: each diagnostic on one line; where a narrow one splits is the renderer's test.
+        env = os.environ | CREDENTIALS | {"PYTHONPATH": str(site), "COLUMNS": "1000"}
         return subprocess.run(
             [str(entrypoint), *argv], capture_output=True, text=True, timeout=180, env=env
         )

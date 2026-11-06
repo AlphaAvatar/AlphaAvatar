@@ -64,21 +64,23 @@ def doctor(capsys: pytest.CaptureFixture, *argv: str) -> tuple[int, dict[str, di
     reports: list[Report] = []
     real = host_doctor.Diagnosis.report
 
-    def shown(diagnosis: host_doctor.Diagnosis) -> Report:
-        reports.append(real(diagnosis))
+    def shown(diagnosis: host_doctor.Diagnosis, skipped: str | None = None) -> Report:
+        reports.append(real(diagnosis, skipped))
         return reports[-1]
 
-    # Nothing starts here, so the report comes without an event loop or a local socket. Wide
-    # enough that nothing wraps: where a narrow terminal wraps is the renderer's own test.
+    # Nothing starts here, so the report comes without an event loop or a local socket; no
+    # terminal to ask in, as in CI. Wide enough that nothing wraps: where a narrow terminal
+    # wraps is the renderer's own test.
     with (
         mock.patch.object(host_doctor.Diagnosis, "report", shown),
         mock.patch.dict(os.environ, {"COLUMNS": "1000"}),
+        mock.patch("sys.stdin.isatty", return_value=False),
     ):
         code = main(["doctor", *argv])
-    text = capsys.readouterr().out
-    raw = json.dumps(reports[0].to_dict())
-    report = json.loads(raw)
-    assert main(["doctor", *argv, "--json"]) == code
+        text = capsys.readouterr().out
+        raw = json.dumps(reports[0].to_dict())
+        report = json.loads(raw)
+        assert main(["doctor", *argv, "--json"]) == code
     assert json.loads(capsys.readouterr().out) == report
     assert [check["id"] for check in report["checks"]] == IDS
     assert code == (1 if report["status"] == "FAIL" else 0)
@@ -114,8 +116,15 @@ def doctor(capsys: pytest.CaptureFixture, *argv: str) -> tuple[int, dict[str, di
         for result in scenarios:
             assert any(line.startswith(f"  {result['name'].ljust(column)}") for line in lines)
     # The same diagnosis in full, as a command to copy: through the same boundary.
-    command = clean(shlex.join(["alphaavatar", "doctor", *argv, "--json"]))
-    assert lines[-2:] == [f"  {command}", ""]
+    # The diagnosis run again as JSON: the target only, never the overrides' values.
+    target = [arg for arg in argv if "=" not in arg][:1]
+    command = clean(shlex.join(["alphaavatar", "doctor", *target, "--json"]))
+    overridden = any("=" in arg for arg in argv)
+    end = lines.index("Run again as JSON")
+    assert lines[end + 1 : end + 2] == [f"  {command}"] and lines[-1] == ""
+    assert (
+        "  With the same KEY=VALUE overrides, which are not repeated here." in lines
+    ) == overridden
     return code, {check["id"]: check for check in report["checks"]}, text + raw
 
 

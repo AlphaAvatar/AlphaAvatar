@@ -283,9 +283,9 @@ Linux x86_64 with glibc 2.28 or newer:
 ```bash
 curl -fsSLO https://github.com/AlphaAvatar/AlphaAvatar/releases/download/v0.6.9/install.sh
 bash install.sh --version 0.6.9
-alphaavatar setup    # choose what the Avatar runs with, or --preset default|remote
-alphaavatar doctor   # check the installation and the bundle
-alphaavatar start    # runs the bundle setup made
+alphaavatar setup    # choose what the Avatar runs with; or config init <bundle>, then setup <bundle>
+alphaavatar doctor   # static checks, then the runtime tests, once you agree to the services they call
+alphaavatar start    # runs the bundle setup enabled
 ```
 
 From source, for development:
@@ -299,7 +299,7 @@ ENV_FILE=.env.dev alphaavatar doctor
 ENV_FILE=.env.dev alphaavatar dev
 ```
 
-See [DEPLOY.md](DEPLOY.md#or-install-the-linux-package-then-choose-capabilities) for presets, credentials, upgrades and running as a service, [docs/cli](docs/cli/) for every command, [examples](examples/README.md) for complete configurations, and [CONTRIBUTING.md](CONTRIBUTING.md) for development environments.
+See [DEPLOY.md](DEPLOY.md#or-install-the-linux-package-then-choose-capabilities) for unattended installs, credentials, upgrades and running as a service, [docs/cli](docs/cli/) for every command, [examples](examples/README.md) for complete configurations, and [CONTRIBUTING.md](CONTRIBUTING.md) for development environments.
 
 <h3>💻 Laptop</h3>
 

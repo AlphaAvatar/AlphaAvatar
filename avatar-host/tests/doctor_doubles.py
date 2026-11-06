@@ -113,6 +113,17 @@ class EndpointRunner(InferenceRunner):
         return np.asarray([1.0], dtype=np.float32).tobytes()
 
 
+class DownloadRunner(EndpointRunner):
+    """Smart Turn's layout, its model in the cache only once downloads are allowed: missing
+    offline, fetched otherwise, as a first run finds it."""
+
+    def initialize(self) -> None:
+        from alphaavatar.agents.utils.files.model.model_files import models_offline
+
+        if models_offline():
+            raise FileNotFoundError("The turn-taking model is not in the cache")
+
+
 class StuckRunner(InferenceRunner):
     """A runner whose start never finishes on its own: a model load that hangs. Its process
     names itself in the test's ``files``, so the test can see that it went."""
@@ -482,6 +493,8 @@ def child(*args: object) -> None:
     spec = json.loads(os.environ[SPEC])
     files = Path(spec["files"])
     (files / "pid").write_text(str(os.getpid()))
+    with open(files / "runs.jsonl", "a") as runs:  # Each run's bound on its runners' start
+        runs.write(json.dumps({"downloads": args[7], "runners": args[6].session}) + "\n")
     _deny_network(files / "network", spec.get("loopback"))
     install(spec, files)
     from alphaavatar.host.doctor import process
@@ -528,12 +541,19 @@ def install(spec: dict, files: Path) -> None:
         ContextBuilder.build = lambda self, *, snapshot, **kwargs: build(
             self, snapshot=dataclasses.replace(snapshot, text=None), **kwargs
         )
+    if spec.get("crash"):
+        # A process that dies of an uncaught error, as a broken install would.
+        async def crash(*args: object, **kwargs: object):
+            raise RuntimeError("stand-in session crashed")
+
+        session.diagnose_session = crash
     if spec.get("deaf"):
         # A process that neither hears the stop nor keeps to its budget: only its group's
         # end reclaims it.
         diagnose = session.diagnose_session
 
         async def deaf(*args: object, limits: object, stop: object, **kwargs: object):
+            print("stand-in session ignoring its stop", file=sys.stderr, flush=True)
             endless = session.Budget(3600.0, 3600.0, 3600.0)
             return await diagnose(*args, limits=endless, stop=asyncio.Event(), **kwargs)
 

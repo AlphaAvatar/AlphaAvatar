@@ -140,6 +140,7 @@ def _load(target: str | None, overrides: Sequence[str]):
 
 def check(target: str | None, overrides: Sequence[str], *, as_json: bool) -> int:
     from alphaavatar.host.configs import describe_error, describe_summary, format_failure
+    from alphaavatar.host.configs.capabilities import MissingCapabilities
 
     try:
         summary = describe_summary(*_load(target, overrides))
@@ -151,7 +152,14 @@ def check(target: str | None, overrides: Sequence[str], *, as_json: bool) -> int
         report.title("Config check")
         report.status("ERROR", f"{SCOPE} failed")
         report.write()
-        report.verbatim(format_failure(error))  # The failing fields stay whole and prominent.
+        if isinstance(error, MissingCapabilities) and error.items:
+            # Each missing package by its setting, its parts apart on a narrow terminal.
+            heading, message = format_failure(error).splitlines()[:2]
+            report.verbatim(heading)
+            report.wrapped(message.strip(), indent=4)
+            report.missing(error.items, indent=6)
+        else:
+            report.verbatim(format_failure(error))  # The failing fields stay whole.
         report.write()
         return 2
     if as_json:
@@ -215,10 +223,8 @@ def init(name: str, *, avatar_id: str) -> int:
         report.row(" · ".join(names.split(", ")))
     report.heading("Next")
     if _bare_package():
-        # Setup installs the capabilities in a new bundle; this one stays as written, and
-        # config check names what it needs installed.
-        report.command("alphaavatar setup")
-        report.command(f"alphaavatar config check {name}")
+        # Setup installs what this bundle's settings need, then checks and enables it.
+        report.command(f"alphaavatar setup {name}")
     else:
         # Checked, then diagnosed, before anything starts.
         report.command(f"alphaavatar config check {name}")

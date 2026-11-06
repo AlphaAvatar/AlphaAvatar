@@ -30,6 +30,7 @@ import os
 import re
 import signal
 import socket
+import sys
 import threading
 import time
 from pathlib import Path
@@ -118,7 +119,7 @@ def doctor(
     environ = {k: v for k, v in os.environ.items() if not online or k not in OFFLINE}
     environ[doubles.SPEC] = json.dumps(chain.spec)
     environ["COLUMNS"] = "100"  # The text as a 100-column terminal shows it.
-    for name in ("requests.jsonl", "committed", "network"):
+    for name in ("requests.jsonl", "committed", "network", "runs.jsonl"):
         (chain.files / name).unlink(missing_ok=True)
     with mock.patch.dict(os.environ, environ, clear=True):
         code = main(["doctor", *argv, *["--json"] * json_output])
@@ -597,6 +598,7 @@ def test_a_diagnostic_process_that_does_not_stop_is_ended_with_its_group(
     cleanup = checks["session.cleanup"]
     assert cleanup["status"] == "FAIL"
     assert "the diagnostic process did not exit within 1 s: killed" in cleanup["details"]
+    # Killed: whatever it printed last is not why it ended.
     assert checks["session.start"]["details"] == ["the diagnostic process exited with code -9"]
     assert gone(int((chain.files / "pid").read_text()))
     with pytest.raises(ProcessLookupError):  # Its runner went with its group.
@@ -604,6 +606,19 @@ def test_a_diagnostic_process_that_does_not_stop_is_ended_with_its_group(
     # Its runtime's socket was under Doctor's directory, removed with it, not left in /tmp.
     assert list(chain.root.iterdir()) == []
     assert {*Path("/tmp").glob("alphaavatar-inference-*")} <= sockets
+
+
+def test_a_diagnostic_process_that_dies_on_its_own_is_named_by_its_last_line(
+    tmp_path: Path, chain: SimpleNamespace, capfd: pytest.CaptureFixture
+) -> None:
+    chain.spec["crash"] = True
+    code, checks = doctor(capfd, chain, str(configuration(tmp_path)))
+    assert code == 1
+    # Its traceback went to its own file: the last line, where it ends, says why.
+    why = "the diagnostic process exited with code 1: RuntimeError: stand-in session crashed"
+    assert checks["session.start"]["details"] == [why]
+    assert checks["session.cleanup"]["status"] == "SKIP"
+    assert list(chain.root.iterdir()) == []
 
 
 @pytest.fixture
@@ -673,7 +688,7 @@ def test_the_openai_adapter_refuses_pictures_as_such_and_other_refusals_keep_the
     assert checks["session.cleanup"]["status"] == "PASS"
 
 
-def test_the_diagnostic_process_leaves_a_calling_host_and_its_report_stdout_alone(
+def test_the_diagnostic_process_leaves_a_calling_host_and_its_terminal_alone(
     tmp_path: Path, chain: SimpleNamespace, capfd: pytest.CaptureFixture
 ) -> None:
     from alphaavatar.agents.runtime.inference.bootstrap import INFERENCE_PLAN_ENV
@@ -704,7 +719,8 @@ def test_the_diagnostic_process_leaves_a_calling_host_and_its_report_stdout_alon
             assert dict(os.environ) == environ
         out, err = capfd.readouterr()
         checks = {check["id"]: check for check in json.loads(out)["checks"]}  # Only the report.
-        assert "stand-in STT committed" in err and "stand-in VAD runner started" in err
+        # What it and its runner printed went to its own file, not stderr either.
+        assert "stand-in" not in out + err
         assert [checks[c]["status"] for c in ("session.start", "models.runners")] == ["PASS"] * 2
         assert scenarios(checks)["voice_vision", "original"]["outcome"] == "passed"
         with pytest.raises(BlockingIOError):  # Nothing of it reached the Host's receiver.
@@ -712,3 +728,183 @@ def test_the_diagnostic_process_leaves_a_calling_host_and_its_report_stdout_alon
     finally:
         receiver.close()
         (chain.root / "host-log.sock").unlink()
+
+
+def asked(*answers: str | BaseException):
+    """A terminal: input() answering in order, or raising, and recording each question, as it
+    shows them."""
+    questions: list[str] = []
+    queue = list(answers)
+
+    def answer(prompt: str = "") -> str:
+        questions.append(prompt)
+        sys.stdout.write(prompt)  # As input() shows its prompt.
+        if isinstance(reply := queue.pop(0), BaseException):
+            raise reply
+        return reply
+
+    return questions, answer
+
+
+def interactive(
+    chain: SimpleNamespace,
+    *argv: str,
+    answers: tuple[str | BaseException, ...],
+    online: bool = False,
+):
+    """One run at a terminal; its exit code and the questions asked. ``online`` lets this
+    process download, as a person's own environment would."""
+    questions, answer = asked(*answers)
+    environ = {k: v for k, v in os.environ.items() if not online or k not in OFFLINE}
+    environ |= {doubles.SPEC: json.dumps(chain.spec), "COLUMNS": "1000"}
+    for name in ("requests.jsonl", "committed", "network", "runs.jsonl"):
+        (chain.files / name).unlink(missing_ok=True)
+    with (
+        mock.patch.dict(os.environ, environ, clear=True),
+        mock.patch("sys.stdin.isatty", return_value=True),
+        mock.patch("builtins.input", answer),
+    ):
+        code = main(["doctor", *argv])
+    assert not (chain.files / "network").exists()
+    return code, questions
+
+
+@pytest.mark.parametrize("agreed", [True, False], ids=["agreed", "declined"])
+def test_runtime_tests_that_reach_external_services_run_only_once_a_person_agrees(
+    tmp_path: Path, chain: SimpleNamespace, capsys: pytest.CaptureFixture, agreed: bool
+) -> None:
+    # Not authorized by the configuration: a person at the terminal decides.
+    path = configuration(tmp_path, host={"doctor": {"external_services": False}})
+    code, questions = interactive(chain, str(path), "--json", answers=("y" if agreed else "",))
+    output = capsys.readouterr()
+    report = json.loads(output.out)  # Asked on stderr: stdout is the JSON alone.
+    checks = {check["id"]: check for check in report["checks"]}
+    assert questions == [""] and "    Run the runtime tests? [y/N]: " in output.err
+    # Before the question: each service the tests reach, and that the calls may be billed.
+    for name in ("model providers (scripted)", "speech recognition (openai_segment)"):
+        assert f"    {name}\n" in output.err
+    assert "Calls to these services may be billed." in output.err
+    found = scenarios(checks)
+    if agreed:
+        assert code == 0 and found["voice_vision", "original"]["outcome"] == "passed"
+        assert checks["services.external"]["services"][0]["authorized"] is True
+    else:
+        assert code == 0 and not (chain.files / "requests.jsonl").exists()  # Nothing ran.
+        for check in ("session.start", "models.runners", "session.scenarios"):
+            assert (checks[check]["status"], checks[check]["summary"]) == (
+                "SKIP",
+                "Not run: the external services it reaches were declined",
+            )
+    assert list(chain.root.iterdir()) == []
+
+
+def test_ctrl_c_at_the_question_runs_nothing_and_says_so(
+    tmp_path: Path, chain: SimpleNamespace, capsys: pytest.CaptureFixture
+) -> None:
+    path = configuration(tmp_path, host={"doctor": {"external_services": False}})
+    code, _ = interactive(chain, str(path), answers=(KeyboardInterrupt(),))
+    shown = capsys.readouterr().out
+    assert code == 130 and not (chain.files / "requests.jsonl").exists()
+    # The question's line ends, then a blank line: the report stands apart from it.
+    assert "    Run the runtime tests? [y/N]: \n\n" in shown
+    lines = shown.splitlines()
+    start = lines.index("  SKIP  Session and services")
+    assert lines[start + 1] == "        Not run: interrupted at a question"
+    assert list(chain.root.iterdir()) == []
+
+
+def test_no_metrics_leaves_the_runtime_tests_out_without_asking(
+    tmp_path: Path, chain: SimpleNamespace, capsys: pytest.CaptureFixture
+) -> None:
+    path = configuration(tmp_path, host={"doctor": {"external_services": False}})
+    code, questions = interactive(chain, str(path), "--no-metrics", answers=())
+    shown = capsys.readouterr().out
+    assert (code, questions) == (0, []) and not (chain.files / "requests.jsonl").exists()
+    lines = shown.splitlines()
+    start = lines.index("  SKIP  Session and services")
+    assert lines[start + 1] == "        Not run: left out with --no-metrics"
+    assert "  Not measured · Not run: left out with --no-metrics" in lines
+
+
+@pytest.mark.parametrize("download", [True, False], ids=["downloaded", "declined"])
+def test_a_runner_missing_its_model_is_named_and_downloaded_only_once_a_person_agrees(
+    tmp_path: Path, chain: SimpleNamespace, capfd: pytest.CaptureFixture, download: bool
+) -> None:
+    chain.spec["runners"] = {"voice": ["SpeechRunner"], "router": ["DownloadRunner"]}
+    path = configuration(tmp_path)  # Authorized by the configuration: only the model is asked.
+    answers = ("y" if download else "n",)
+    code, questions = interactive(chain, str(path), answers=answers, online=True)
+    shown, err = capfd.readouterr()
+    assert questions == ["    Download and continue? [y/N]: "]
+    # The runner's own failure log stays off the terminal: the report names the runner.
+    assert "Inference runner failed" not in shown + err and "FileNotFoundError" not in err
+    # The download is part of its runners' start, given as long as start gives it.
+    runs = [json.loads(line) for line in (chain.files / "runs.jsonl").read_text().splitlines()]
+    assert (
+        runs
+        == [{"downloads": False, "runners": 180.0}]
+        + [{"downloads": True, "runners": 300.0}] * download
+    )
+    # Named before anything is downloaded: the runner, and where its files go.
+    assert f"    {doubles.DownloadRunner.INFERENCE_METHOD}\n" in shown
+    assert "into ~/" in shown or "into /" in shown
+    runners = next(line for line in shown.splitlines() if "Session and services" in line)
+    if download:
+        assert code == 0 and runners.startswith("  PASS  Session and services")
+    else:
+        # The first run's report: the runner did not start, its model not in the cache.
+        assert code == 1 and runners.startswith("  FAIL  Session and services")
+        assert "its model is not in the cache" in shown
+        # What to do next is this command's own offer first.
+        assert "→ Run doctor again in a terminal and agree to the download, or start" in shown
+    assert list(chain.root.iterdir()) == []
+
+
+def reference_run(tmp_path: Path, statuses) -> tuple[object, frozenset[str]]:
+    """The reference bundle's diagnostic run, its runners as ``statuses`` has them: by
+    whether each embeds as it starts, as a vector store's does."""
+    from alphaavatar.agents.runtime.inference import plan_inference_runners
+    from alphaavatar.host.configs.paths import ApplicationPaths
+    from alphaavatar.host.configs.template import create_bundle
+    from alphaavatar.host.doctor import CheckStatus
+    from alphaavatar.host.doctor.schemas.session import RunnerResult
+
+    paths = ApplicationPaths.from_root(tmp_path / "home")
+    create_bundle(paths, "ref", avatar_id="ref")
+    source = ConfigSource(paths.configs.bundles_dir / "ref.yaml", "ref", home=paths.root)
+    config = load_application(source)
+    embedding = doctor_session.embedding_runners(config)
+    planned = list(plan_inference_runners(config.avatar))
+    assert embedding and set(planned) - embedding  # Both kinds, without naming either.
+    run = doctor_session._Run(config, source, [], asyncio.Event(), doctor_session.budget())
+    run.runners["original"] = [
+        RunnerResult(m, CheckStatus(statuses[m in embedding]), "", startup_seconds=1.0)
+        for m in planned
+    ]
+    return run, embedding
+
+
+@pytest.mark.parametrize(
+    ("statuses", "expected"),
+    [
+        # An earlier runner failed: the vector stores never started, nor embedded.
+        ({False: "FAIL", True: "SKIP"}, (None, None)),
+        ({False: "PASS", True: "PASS"}, (True, True)),
+        ({False: "PASS", True: "FAIL"}, (None, False)),
+    ],
+    ids=["not reached", "started", "failed"],
+)
+def test_the_model_provider_is_judged_by_the_starts_of_the_runners_that_embed(
+    tmp_path: Path, statuses: dict[bool, str], expected: tuple
+) -> None:
+    run, _ = reference_run(tmp_path, statuses)
+    result = run._service("model providers (openai)", "model", True, ())
+    assert (result.reached, result.passed) == expected
+    assert result.note.startswith("vector store embeddings")
+
+
+def test_the_runners_summary_says_whether_downloads_were_allowed(tmp_path: Path) -> None:
+    run, _ = reference_run(tmp_path, {False: "PASS", True: "PASS"})
+    for offline, where in (("1", "from the cache, offline"), ("", "with downloads allowed")):
+        with mock.patch.dict(os.environ, dict.fromkeys(OFFLINE, offline)):
+            assert f"runners started {where}; slowest" in run._runner_check().summary

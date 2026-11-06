@@ -87,7 +87,7 @@ def observation(records: list[OutputRecord], **extra: object) -> TurnObservation
         logs=logs,
         trace=records_,
         identity=identity,
-        audio_output=True,
+        audio_output=extra.pop("audio_output", True),
         **extra,
     )
 
@@ -244,3 +244,51 @@ def test_a_spoken_input_that_never_committed_shows_where_it_stopped() -> None:
     decisions = [e.detail["action"] for e in result.evidence if e.stage == "candidate.decision"]
     assert decisions == ["hold", "cancel"]
     assert "turn.committed" not in {e.stage for e in result.evidence}
+
+
+def test_a_figure_not_measured_carries_why_never_what_it_would_measure() -> None:
+    # The model's first event came, then the turn timed out: no text and no speech at all.
+    stopped = {m.name: m for m in scenario(observation([], ended="timeout")).segments}
+    assert stopped["model_first_text_delta"].value is None
+    # What a figure measures is no reason it is missing; where its scenario stopped is.
+    assert stopped["model_first_text_delta"].note is None
+    assert stopped["tts_request_to_first_pcm"].note is None  # Nor is a TTS never asked.
+    # A TTS request and its audio, without the first PCM only HTTP PCM providers log.
+    speech = [
+        output(40, "text_chunk", "out-a", text="5."),
+        output(45, "audio_frame", "out-a", audio_sec=0.02),
+        output(50, "control", "out-a", control="complete"),
+    ]
+    found = observation(speech)
+    found.logs.extend(
+        (
+            LogRecord(35 * MS, "model.first_text", {"session_id": "s", "turn_id": "turn-1"}),
+            LogRecord(38 * MS, "speech.segment", {"output_id": "out-a", "segment": 0}),
+            LogRecord(
+                39 * MS,
+                "speech.request",
+                {"output_id": "out-a", "segment": 0, "request_id": "tts-1"},
+            ),
+        )
+    )
+    spoken = {m.name: m for m in scenario(found).segments}
+    assert spoken["tts_request_to_first_pcm"].value is None
+    assert spoken["tts_request_to_first_pcm"].note == "this TTS plugin logs no first PCM"
+    # A measured figure keeps what describes it.
+    assert spoken["model_first_text_delta"].value == 15.0
+    assert spoken["model_first_text_delta"].note == "the first token, as far as the stream shows it"
+
+
+def test_a_session_without_audio_output_says_so_for_each_audio_figure() -> None:
+    records = [
+        output(40, "text_chunk", "out-a", text="5."),
+        output(42, "control", "out-a", control="text_complete"),
+        output(50, "control", "out-a", control="complete"),
+    ]
+    metrics = {m.name: m for m in scenario(observation(records, audio_output=False)).metrics}
+    assert metrics["response_final"].value is not None
+    for name in ("first_audio_frame", "audio_last_frame"):
+        assert (metrics[name].value, metrics[name].note) == (
+            None,
+            "no audio output in this session",
+        )

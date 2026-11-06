@@ -33,14 +33,14 @@ from pydantic import BaseModel
 # Imported at collection: the persona plugin's OpenCV adjusts process variables (O-2).
 import alphaavatar.plugins.persona.factory  # noqa: F401
 from alphaavatar.agents.runtime.inference import plan_inference_runners
-from alphaavatar.host.configs import resolve_capabilities, validate_application
+from alphaavatar.host.configs import ConfigSource, resolve_capabilities, validate_application
 from alphaavatar.host.configs.template import render_bundle
 from alphaavatar.host.setup.choices import (
     OPENAI_KEY,
-    PRESETS,
     Models,
     Selection,
     Speech,
+    bundle_requirements,
     credentials,
     requirements,
     sections,
@@ -414,12 +414,14 @@ def test_a_server_url_is_taken_where_the_backends_it_serves_take_it(url: str) ->
     assert accepts(lambda: Speech(url, "t", "s", "v")) == speech
 
 
-def test_the_presets_keep_vision_and_plan_their_runners(tmp_path: Path) -> None:
-    default = compose(PRESETS["default"], tmp_path / "default")
-    remote = compose(PRESETS["remote"], tmp_path / "remote")
-    assert default.avatar.vision.enabled and remote.avatar.vision.enabled
-    assert len(plan_inference_runners(default.avatar)) == 8
-    # Remote inference keeps the voice activity detection speech segments come from.
+def test_the_reference_keeps_vision_and_plans_its_runners_with_or_without_local_models(
+    tmp_path: Path,
+) -> None:
+    reference = compose(Selection(), tmp_path / "reference")
+    remote = compose(Selection(local_models=False), tmp_path / "remote")
+    assert reference.avatar.vision.enabled and remote.avatar.vision.enabled
+    assert len(plan_inference_runners(reference.avatar)) == 8
+    # With no model on this machine, the voice activity detection speech segments come from.
     assert sorted(plan_inference_runners(remote.avatar)) == [
         "alphaavatar.memory.vdb.lancedb",
         "alphaavatar.persona.vdb.lancedb",
@@ -449,7 +451,7 @@ def test_remote_inference_plans_no_local_model_nor_its_accelerators() -> None:
         plan = plan_install(document, requirements(selection), base="base")
         return {item.name for item in plan.artifacts}
 
-    default, remote = planned(PRESETS["default"]), planned(PRESETS["remote"])
+    default, remote = planned(Selection()), planned(Selection(local_models=False))
     silent = planned(Selection(voice=False, local_models=False))
     assert LOCAL <= default and "onnxruntime" in default
     assert not LOCAL & remote and "onnxruntime" in remote  # Silero VAD only.
@@ -458,3 +460,190 @@ def test_remote_inference_plans_no_local_model_nor_its_accelerators() -> None:
         # No CUDA library, and only the headless OpenCV.
         assert not {n for n in plan if n.startswith("nvidia-") or n in ("triton", "opencv-python")}
         assert not plan & set(document["base"])
+
+
+def installed_plugins() -> dict[str, dict[str, str]]:
+    """What installs each implementation, as the Linux build's catalog records it."""
+    from importlib import metadata
+
+    from alphaavatar.agents.runtime.plugin import AvatarModule
+    from alphaavatar.host.configs.capabilities import with_extra
+
+    found: dict[str, dict[str, str]] = {}
+    for module in AvatarModule:
+        for entry in metadata.entry_points(group=module.group):
+            found.setdefault(module.value, {})[entry.name] = with_extra(entry.dist.name, entry.name)
+    return found
+
+
+# A bundle as config init writes it, then edited a switch or a backend at a time.
+EDITS = {
+    "as written": (),
+    "no face": ("persona.init_config.face.enabled=false",),
+    "no speaker": ("persona.init_config.speaker.enabled=false",),
+    "no turn taking": ("router.init_config.turn_taking.enabled=false",),
+    "no semantic addressing": ("router.init_config.addressing.semantic.enabled=false",),
+    "no speech in": ("voice.stt.plugin=null",),
+    "no voice": ("voice.vad.plugin=null", "voice.stt.plugin=null", "voice.tts.plugin=null"),
+    "qdrant": ("memory.vdb_config.url=http://q.invalid:6333",),
+    "the loop by langchain": ("loop.init_config.model.backend=langchain",),
+    "environment memory": (
+        "memory.init_config.environment.enabled=true",
+        "memory.init_config.environment.provider.task=memory.env_delta",
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [*SELECTIONS, Selection(models=Models("http://m.invalid:8000/v1", "c", "t", "e"))],
+    ids=label,
+)
+def test_an_existing_bundle_plans_what_its_selection_does(
+    selection: Selection, tmp_path: Path
+) -> None:
+    with mock.patch.dict(os.environ, {"QDRANT_URL": "http://qdrant.invalid:6333"}):
+        config = compose(selection, tmp_path / "home")
+    needs, unserved = bundle_requirements(config.host, config.avatar, installed_plugins())
+    assert unserved == () and sorted(needs) == list(requirements(selection))
+
+
+@pytest.mark.parametrize("edit", EDITS)
+def test_an_edited_bundle_plans_what_start_resolves_once_installed(
+    edit: str, tmp_path: Path
+) -> None:
+    """Planned from the settings alone, as a bare base must; resolved as start resolves them."""
+    from alphaavatar.host.configs import load_application
+    from alphaavatar.host.configs.template import create_bundle
+
+    paths = ApplicationPaths.from_root(tmp_path / "home")
+    create_bundle(paths, "edited", avatar_id="edited")
+    source = ConfigSource(paths.configs.bundles_dir / "edited.yaml", "edited", home=paths.root)
+    config = load_application(source, EDITS[edit])
+    needs, unserved = bundle_requirements(config.host, config.avatar, installed_plugins())
+    resolved = {need.requirement for need in resolve_capabilities(config).needs}
+    assert unserved == () and set(needs) == resolved
+
+
+def _drop(body: dict, *path: str) -> None:
+    for key in path[:-1]:
+        body = body[key]
+    del body[path[-1]]
+
+
+# Edits made in the profiles themselves, by profile: what overrides cannot write.
+PROFILE_EDITS = {
+    # A switch left out takes its default, on: its runner still starts.
+    "switches left out": {
+        "router": lambda body: (
+            _drop(body, "init_config", "turn_taking", "enabled"),
+            _drop(body, "init_config", "addressing", "semantic", "enabled"),
+        ),
+        "persona": lambda body: (
+            _drop(body, "init_config", "speaker", "enabled"),
+            _drop(body, "init_config", "face", "enabled"),
+        ),
+    },
+    # A part switched off creates nothing: a backend nothing installs is not needed for it.
+    "off, on a backend nothing installs": {
+        "persona": lambda body: body["init_config"]["profiler"].update(
+            enabled=False,
+            provider={
+                "gateway": {
+                    "tasks": {
+                        "persona.profile_delta": {
+                            "backend": "nowhere",
+                            "provider": "openai",
+                            "model": "m",
+                        }
+                    }
+                }
+            },
+        )
+    },
+}
+
+
+@pytest.mark.parametrize("edit", PROFILE_EDITS)
+def test_a_bundle_edited_in_its_profiles_plans_what_start_resolves(
+    edit: str, tmp_path: Path
+) -> None:
+    from alphaavatar.host.configs import load_application
+    from alphaavatar.host.configs.template import create_bundle
+
+    paths = ApplicationPaths.from_root(tmp_path / "home")
+    create_bundle(paths, "edited", avatar_id="edited")
+    for profile, change in PROFILE_EDITS[edit].items():
+        path = paths.configs.profiles_dir / "edited" / "plugins" / "perception" / f"{profile}.yaml"
+        body = yaml.safe_load(path.read_text())
+        change(body)
+        path.write_text(yaml.safe_dump(body))
+    source = ConfigSource(paths.configs.bundles_dir / "edited.yaml", "edited", home=paths.root)
+    config = load_application(source)
+    needs, unserved = bundle_requirements(config.host, config.avatar, installed_plugins())
+    resolved = {need.requirement for need in resolve_capabilities(config).needs}
+    assert unserved == () and set(needs) == resolved
+
+
+def test_what_setup_does_not_install_is_named_by_the_setting_that_selects_it(
+    tmp_path: Path,
+) -> None:
+    from alphaavatar.host.configs import load_application
+    from alphaavatar.host.configs.template import create_bundle
+
+    plugins = installed_plugins()
+    del plugins["tools.rag"]  # A plugin the catalog has nothing for.
+    paths = ApplicationPaths.from_root(tmp_path / "home")
+    create_bundle(paths, "rag", avatar_id="rag")
+    source = ConfigSource(paths.configs.bundles_dir / "rag.yaml", "rag", home=paths.root)
+    config = load_application(source, ["tools.rag.plugin=default"])
+    _, unserved = bundle_requirements(config.host, config.avatar, plugins)
+    assert unserved == ("tools.rag.plugin: tools.rag 'default'",)
+
+
+BARE = """
+import importlib.abc, json, sys
+from pathlib import Path
+
+
+class Bare(importlib.abc.MetaPathFinder):
+    def find_spec(self, name, path, target=None):
+        if name.split(".")[:2] == ["alphaavatar", "plugins"]:
+            raise ModuleNotFoundError(f"No module named {name!r}", name=name)
+
+
+sys.meta_path.insert(0, Bare())
+from alphaavatar.host.configs import ConfigSource, load_selections
+from alphaavatar.host.setup.choices import bundle_requirements
+
+home, plugins, bundle = Path(sys.argv[1]), json.loads(sys.argv[2]), Path(sys.argv[3])
+needs, unserved = bundle_requirements(
+    *load_selections(ConfigSource(bundle, "reference", home=home)), plugins
+)
+loaded = sorted(name for name in sys.modules if name.startswith("alphaavatar.plugins"))
+print(json.dumps({"needs": sorted(needs), "unserved": unserved, "plugins": loaded}))
+"""
+
+
+def test_a_bare_base_plans_a_bundle_without_importing_any_plugin(tmp_path: Path) -> None:
+    """Before setup installs anything, no plugin is there to import: the plan comes from the
+    bundle's settings and the catalog alone."""
+    import json
+    import subprocess
+    import sys
+
+    from alphaavatar.host.configs.template import create_bundle
+
+    paths = ApplicationPaths.from_root(tmp_path / "home")
+    create_bundle(paths, "reference", avatar_id="reference")
+    bundle = paths.configs.bundles_dir / "reference.yaml"
+    argv = [
+        sys.executable,
+        "-c",
+        BARE,
+        str(paths.root),
+        json.dumps(installed_plugins()),
+        str(bundle),
+    ]
+    found = json.loads(subprocess.run(argv, capture_output=True, text=True, check=True).stdout)
+    assert found == {"needs": list(requirements(Selection())), "unserved": [], "plugins": []}

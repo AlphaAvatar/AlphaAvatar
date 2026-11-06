@@ -11,7 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""`alphaavatar setup` with a preset: refused early, or enabled only after installing."""
+"""`alphaavatar setup`, asked or given an existing bundle: refused early, or enabled only after
+installing."""
 
 from __future__ import annotations
 
@@ -31,7 +32,7 @@ import yaml
 import alphaavatar.plugins.persona.factory  # noqa: F401
 from alphaavatar.host.cli.app import main
 from alphaavatar.host.setup import environment
-from alphaavatar.host.setup.choices import PRESETS, requirements
+from alphaavatar.host.setup.choices import Selection, requirements, sections
 
 CREDENTIALS = {
     "OPENAI_API_KEY": "sk-fictional-0042",
@@ -41,13 +42,27 @@ CREDENTIALS = {
 }
 
 
+def installed_plugins() -> dict[str, dict[str, str]]:
+    """What installs each implementation, as the Linux build's catalog records it."""
+    from importlib import metadata
+
+    from alphaavatar.agents.runtime.plugin import AvatarModule
+    from alphaavatar.host.configs.capabilities import with_extra
+
+    found: dict[str, dict[str, str]] = {}
+    for module in AvatarModule:
+        for entry in metadata.entry_points(group=module.group):
+            found.setdefault(module.value, {})[entry.name] = with_extra(entry.dist.name, entry.name)
+    return found
+
+
 @pytest.fixture
 def package(tmp_path: Path) -> environment.Installation:
-    """An installed base whose catalog holds the default preset's requirements."""
+    """An installed base whose catalog holds what the reference configuration needs."""
     base = tmp_path / "prefix" / "versions" / "base-1"
     (base / "share" / "alphaavatar").mkdir(parents=True)
-    names = [text.split("[")[0] for text in requirements(PRESETS["default"])]
-    keys = {text: [text.split("[")[0]] for text in requirements(PRESETS["default"])}
+    names = [text.split("[")[0] for text in requirements(Selection())]
+    keys = {text: [text.split("[")[0]] for text in requirements(Selection())}
     keys |= {name: [name] for name in names}
     catalog = {
         "format": 1,
@@ -55,6 +70,11 @@ def package(tmp_path: Path) -> environment.Installation:
         "platform": "linux-x86_64",
         "base": [],
         "requirements": keys,
+        # As a build's catalog: the implementations of the wheels it plans.
+        "plugins": {
+            module: {name: need for name, need in names.items() if need in keys}
+            for module, names in installed_plugins().items()
+        },
         "distributions": {
             name: {
                 "version": "1",
@@ -76,49 +96,82 @@ def home_files() -> list[str]:
     return sorted(str(p.relative_to(home)) for p in home.rglob("*")) if home.exists() else []
 
 
-def test_setup_needs_a_package_and_a_terminal_or_a_preset(capsys: pytest.CaptureFixture) -> None:
-    assert main(["setup", "--preset", "default"]) == 1  # A checkout is no package.
+def test_setup_needs_a_package_and_a_terminal_or_a_bundle(capsys: pytest.CaptureFixture) -> None:
+    assert main(["setup", "reference"]) == 1  # A checkout is no package.
     assert "setup installs into an AlphaAvatar package" in capsys.readouterr().err
     with mock.patch("sys.stdin.isatty", return_value=False):
         assert main(["setup"]) == 1
-    assert "pass --preset" in capsys.readouterr().err
+    assert "`alphaavatar setup <bundle>`" in capsys.readouterr().err
     with pytest.raises(SystemExit):
-        main(["setup", "--no-voice"])  # Modifiers belong to a preset.
+        main(["setup", "reference", "--name", "other"])  # Names belong to a new bundle.
     assert home_files() == []
 
 
-def test_a_preset_is_refused_before_anything_without_its_credentials_or_with_a_taken_name(
+def profile(name: str, section: str) -> Path:
+    home = Path.home() / ".local/share/alphaavatar/configs/profiles"
+    return next(home.glob(f"{name}/**/{section}.yaml"))
+
+
+def edit(path: Path, *keys: str, value: object) -> None:
+    body = yaml.safe_load(path.read_text())
+    target = body
+    for key in keys[:-1]:
+        target = target.setdefault(key, {})
+    target[keys[-1]] = value
+    path.write_text(yaml.safe_dump(body))
+
+
+def test_an_existing_bundle_is_planned_from_its_settings_and_refused_what_none_installs(
     package: environment.Installation, capsys: pytest.CaptureFixture
 ) -> None:
     installed = mock.Mock(side_effect=AssertionError("nothing installs"))
     with (
         mock.patch.object(environment.Installation, "running", return_value=package),
         mock.patch.object(environment, "install", installed),
+        mock.patch("sys.stdin.isatty", return_value=False),
     ):
-        assert main(["setup", "--preset", "default"]) == 1
-        assert "Missing credentials: OPENAI_API_KEY, LIVEKIT_URL" in capsys.readouterr().err
-        assert main(["config", "init", "avatar", "--avatar-id", "avatar"]) == 0
-        before = home_files()
-        with mock.patch.dict(os.environ, CREDENTIALS):
-            assert main(["setup", "--preset", "default"]) == 2
-        assert "Bundle 'avatar' exists" in capsys.readouterr().err
-        assert home_files() == before
+        assert main(["setup", "reference", "--plan"]) == 2
+        assert "Bundle 'reference' does not exist" in capsys.readouterr().err
+        assert main(["config", "init", "reference", "--avatar-id", "reference"]) == 0
+        capsys.readouterr()
         # The plan alone changes nothing, and is the same plan each time.
-        assert main(["setup", "--preset", "remote", "--name", "remote", "--plan"]) == 0
-        first = json.loads(capsys.readouterr().out)
-        assert main(["setup", "--preset", "remote", "--name", "remote", "--plan"]) == 0
-        assert json.loads(capsys.readouterr().out) == first
-        assert first["base"] == "base-1" and first["requirements"] == list(
-            requirements(PRESETS["remote"])
+        assert main(["setup", "reference", "--plan"]) == 0
+        first = capsys.readouterr()
+        assert main(["setup", "reference", "--plan"]) == 0
+        assert json.loads(capsys.readouterr().out) == json.loads(first.out)
+        assert json.loads(first.out)["requirements"] == list(requirements(Selection()))
+        steps = "01  Capabilities   Bundle reference · Voice on · Vision on · Local models on\n"
+        assert steps in first.err
+        before = home_files()
+        # Edited, it is planned as edited: no face recognition, no package for it.
+        edit(profile("reference", "persona"), "init_config", "face", "enabled", value=False)
+        assert main(["setup", "reference", "--plan"]) == 0
+        planned = json.loads(capsys.readouterr().out)["requirements"]
+        assert planned == [
+            r for r in requirements(Selection()) if r != "alpha-avatar-plugins-persona[face]"
+        ]
+        # A selection this release's setup has nothing for: refused before anything installs.
+        edit(profile("reference", "tools"), "rag", "plugin", value="default")
+        assert main(["setup", "reference"]) == 1
+        refused = capsys.readouterr().err
+        assert (
+            "This release's setup installs nothing for: tools.rag.plugin: tools.rag 'default'"
+            in refused
         )
     assert home_files() == before and not (package.prefix / "envs").exists()
 
 
-def test_the_bundle_and_credentials_are_written_only_by_a_successful_install(
+def test_an_existing_bundle_is_enabled_only_by_a_successful_install(
     package: environment.Installation, capsys: pytest.CaptureFixture
 ) -> None:
     assert main(["config", "init", "earlier", "--avatar-id", "earlier"]) == 0
+    assert main(["config", "init", "reference", "--avatar-id", "reference"]) == 0
+    capsys.readouterr()
     before = home_files()
+    home = Path.home() / ".local/share/alphaavatar"
+
+    def default() -> str:
+        return yaml.safe_load((home / "settings/settings.yaml").read_text())["default_bundle"]
 
     def failed(*args, check, enable, **kwargs):
         raise environment.SetupError("the environment fails its check")
@@ -130,23 +183,23 @@ def test_the_bundle_and_credentials_are_written_only_by_a_successful_install(
 
     with (
         mock.patch.object(environment.Installation, "running", return_value=package),
-        mock.patch.dict(os.environ, CREDENTIALS),
+        mock.patch("sys.stdin.isatty", return_value=False),
     ):
         with mock.patch.object(environment, "install", failed):
-            assert main(["setup", "--preset", "default", "--artifacts", "/ci/run"]) == 1
+            assert main(["setup", "reference", "--artifacts", "/ci/run"]) == 1
         output = capsys.readouterr()
         assert "nothing was enabled" in output.err
         assert "Bundle enabled" not in output.out  # Said only once checked and enabled.
-        assert home_files() == before
+        assert (home_files(), default()) == (before, "earlier")
         with mock.patch.object(environment, "install", installed):
-            assert main(["setup", "--preset", "default", "--artifacts", "/ci/run"]) == 0
-    home = Path.home() / ".local/share/alphaavatar"
-    settings = yaml.safe_load((home / "settings/settings.yaml").read_text())
-    assert settings["default_bundle"] == "avatar"  # Enabled: the new default.
-    # A preset's credentials stay in the environment: nothing stores them.
-    assert "credentials" not in settings
+            assert main(["setup", "reference", "--artifacts", "/ci/run"]) == 0
+    assert default() == "reference"  # Enabled: the default now.
+    # The environment's credentials stay there: nothing stores them.
+    assert "credentials" not in yaml.safe_load((home / "settings/settings.yaml").read_text())
     assert not [path.name for path in (home / "settings").iterdir() if "credentials" in path.name]
-    assert "Start reads OPENAI_API_KEY, LIVEKIT_URL" in capsys.readouterr().out
+    shown = capsys.readouterr().out.splitlines()
+    assert "02  Credentials    From the environment, .env or those stored" in shown
+    assert shown[-4:] == ["", "Next", "  alphaavatar doctor reference", ""]
 
 
 def answers(*lines: str):
@@ -160,7 +213,8 @@ def answers(*lines: str):
 def test_the_plan_alone_goes_to_stdout_even_when_setup_asks(
     package: environment.Installation, capsys: pytest.CaptureFixture
 ) -> None:
-    queue = ["2", "remote", ""]  # Remote inference; the name; its Avatar ID.
+    # Voice, vision, no local models, LanceDB, OpenAI's models and speech; the name, its ID.
+    queue = ["", "", "n", "", "", "", "remote", ""]
 
     def typed(prompt: str = "") -> str:
         sys.stdout.write(prompt)  # As input() shows its prompt.
@@ -173,11 +227,12 @@ def test_the_plan_alone_goes_to_stdout_even_when_setup_asks(
     ):
         assert main(["setup", "--plan"]) == 0
     output = capsys.readouterr()
-    assert json.loads(output.out)["requirements"] == list(requirements(PRESETS["remote"]))
+    planned = json.loads(output.out)["requirements"]
+    assert planned == list(requirements(Selection(local_models=False)))
     # The step and its questions went to stderr: stdout is the plan for a tool to read.
-    assert "What should this Avatar run with?" in output.err
+    assert "From the reference configuration" in output.err
     # (Answered here without a terminal's echo, so a prompt and the next line share one.)
-    assert "01  Capabilities   Remote preset · Voice on · Vision on\n" in output.err
+    assert "01  Capabilities   Voice on · Vision on · Local models off\n" in output.err
     assert home_files() == []
 
 
@@ -185,8 +240,8 @@ def test_a_plan_declined_installs_and_enables_nothing(
     package: environment.Installation, capsys: pytest.CaptureFixture
 ) -> None:
     installed = mock.Mock(side_effect=AssertionError("nothing installs"))
-    # Remote inference, its name and ID, the credentials set already, not stored; then no.
-    asked, hidden = answers("2", "remote", "", "", "", "", "", "n", "n")
+    # No local models, its name and ID, the credentials set already, not stored; then no.
+    asked, hidden = answers("", "", "n", "", "", "", "remote", "", "", "", "", "", "n", "n")
     with (
         mock.patch.object(environment.Installation, "running", return_value=package),
         mock.patch.object(environment, "install", installed),
@@ -207,9 +262,10 @@ def test_ctrl_c_at_a_question_enables_nothing_and_says_so(
     package: environment.Installation, capsys: pytest.CaptureFixture
 ) -> None:
     def answer(prompt: str = "") -> str:
+        sys.stdout.write(prompt)  # As input() shows its prompt.
         if "Bundle name" in prompt:
             raise KeyboardInterrupt
-        return "2"
+        return ""  # Each part as the reference has it.
 
     with (
         mock.patch.object(environment.Installation, "running", return_value=package),
@@ -217,7 +273,10 @@ def test_ctrl_c_at_a_question_enables_nothing_and_says_so(
         mock.patch("builtins.input", answer),
     ):
         assert main(["setup"]) == 130
-    assert capsys.readouterr().err == "WARN  Interrupted; nothing was enabled\n\n"
+    output = capsys.readouterr()
+    assert output.err == "WARN  Interrupted; nothing was enabled\n\n"
+    # The question's line ends, then a blank line: the outcome stands apart from the steps.
+    assert output.out.endswith("    Bundle name [avatar]: \n\n")
     assert home_files() == []
 
 
@@ -237,7 +296,7 @@ def test_asked_credentials_are_stored_on_a_yes_and_a_stored_one_replaced_only_on
         return installation.environment(plan)
 
     typed = ("sk-new", "wss://livekit.invalid", "lk-key", "lk-secret")
-    asked, hidden = answers("1", "second", "", *typed, "y", "n", "y")
+    asked, hidden = answers("", "", "", "", "", "", "second", "", *typed, "y", "n", "y")
     with (
         mock.patch.object(environment.Installation, "running", return_value=package),
         mock.patch.object(environment, "install", installed),
@@ -271,9 +330,9 @@ def test_a_key_stored_for_one_server_of_ones_own_serves_no_other(
         return installation.environment(plan)
 
     def setup(name: str, server: str, *typed: str) -> int:
-        # Choose each: no voice, vision, no local models, LanceDB, the models from `server`;
-        # then the name, the Avatar ID, the server's key, LiveKit's (set: Enter keeps them).
-        queue = ["3", "n", "y", "n", "1", "n", server, "chat", "", "embed", name, "", *typed]
+        # No voice, vision, no local models, LanceDB, the models from `server`; then the
+        # name, the Avatar ID, the server's key, LiveKit's (set: Enter keeps them).
+        queue = ["n", "y", "n", "1", "n", server, "chat", "", "embed", name, "", *typed]
 
         def answer(prompt: str = "") -> str:
             prompts.append(prompt)
@@ -323,19 +382,24 @@ def test_a_new_bundle_keeps_what_the_current_environment_holds(
     current = package.prefix / "envs" / "installed"
     (current / environment.PLAN_FILE).parent.mkdir(parents=True)
     os.symlink("envs/installed", package.prefix / "current")
-    installed = {"base": "base-1", "requirements": list(requirements(PRESETS["default"]))}
+    installed = {"base": "base-1", "requirements": list(requirements(Selection()))}
     (current / environment.PLAN_FILE).write_text(json.dumps(installed))
+    from alphaavatar.host.configs import application_paths
+    from alphaavatar.host.configs.template import create_bundle
+
+    remote = Selection(local_models=False)
+    create_bundle(application_paths(), "remote", avatar_id="remote", sections=sections(remote))
 
     def plan() -> list[str]:
-        assert main(["setup", "--preset", "remote", "--name", "remote", "--plan"]) == 0
+        assert main(["setup", "remote", "--plan"]) == 0
         return json.loads(capsys.readouterr().out)["requirements"]
 
     with mock.patch.object(environment.Installation, "running", return_value=package):
-        # Remote inference alone would drop the default bundle's models; they stay.
+        # A bundle with no local model alone would drop the reference's models; they stay.
         assert plan() == installed["requirements"]
         # An environment over another base is not this version's to keep.
         (current / environment.PLAN_FILE).write_text(json.dumps(installed | {"base": "base-0"}))
-        assert plan() == list(requirements(PRESETS["remote"]))
+        assert plan() == list(requirements(remote))
 
 
 @pytest.mark.parametrize(
@@ -371,7 +435,7 @@ def test_what_ends_enabling_leaves_current_the_bundle_and_credentials_agreeing(
         return written
 
     typed = ("sk-new", "wss://livekit.invalid", "lk-key", "lk-secret")
-    asked, hidden = answers("1", "second", "", *typed, "y", "y")
+    asked, hidden = answers("", "", "", "", "", "", "second", "", *typed, "y", "y")
     with (
         mock.patch.object(environment.Installation, "running", return_value=package),
         mock.patch.object(environment, "check_environment", lambda *args: None),

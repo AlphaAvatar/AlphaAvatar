@@ -4,6 +4,7 @@
 - 从 T-10B 开始，Doctor 的设计、实现、实验、测试、限制以及后续 review 收尾都记录在本文件，按时间顺序追加。
 - 统一的 KD/O 表仍在 `docs/agent-logs/2026-10/2026-10-25/claude-code-2a-zh.md`；T-10A～T-10T3 记录在 [claude-code-t10-zh.md](claude-code-t10-zh.md)。
 - 干净机器安装的主日志是 [claude-code-install-zh.md](../2026-11-05/claude-code-install-zh.md)；T-10B 范围中"不做安装器"的结论和安装集合与 `packages.*` 检查的关系记录在那里。
+- T-10C `6a593f2` 第 6 节「`config init` 轻量交互入口」的方案已由交互配置日志 [claude-code-setup-zh.md](../2026-11-06/claude-code-setup-zh.md) 汇总并取代：交互配置由 `alphaavatar setup` 承担。
 
 ## 批次总览
 
@@ -11,6 +12,7 @@
 |---|---|---|---|---|---|
 | T-10B | 基础 Doctor：静态、只读、离线的安装与配置诊断（`doctor`、`doctor <bundle或文件> [KEY=VALUE...]`、`--list`、`--json`） | 2026-11-03 | `7c53c4a` | `0579d81`、`8a66b81`；第二轮收尾未提交 | `8a66b81` review：剩一处生产误报和一处测试断言，另要求把 loop 必填项纳入 check、Doctor 文本分组；已完成，待 review。本地全量 301 passed（CI 方式，检出前后一致） |
 | T-10C | 多模态 Doctor 自检：`alphaavatar doctor [配置]` 为唯一入口，静态检查后自行创建有期限的临时诊断会话，固定样本走生产链路，报告端到端指标、分段证据和降级结果 | 2026-11-04 | `8fdc2c2`（临时提交）；review 修复基线 `9993aad`；收尾基线 `bf79300`；真实验收基线 `6a593f2` | `9993aad`、`bf79300`、`6a593f2`；验收记录未提交 | 真实服务验收（`6a593f2`）：同一实际请求携带转录与样本帧、输出正常结束、指标齐全；视觉受阻时原配置阻塞原因与纯音频降级同时出现。严格答案校验未通过：真实 STT 丢掉样本第二句格式要求，待用户决定；另发现 KD-17（真实语音轮因 `transcript_timeout` 被丢弃）。第 9 条方案待 review。本地全量 322 passed，检出前后一致 |
+| Doctor 默认运行时测试 | 静态检查后默认运行运行时测试；外部服务先列出、提示计费、明确同意（同一快照），拒绝或 `--no-metrics` 只做静态检查；非交互只认配置授权；缺模型先说明、同意后下载重跑；`—` 带原因、`Run again as JSON`；诊断进程输出不进终端 | 2026-11-06 | `2fc4f398` | 未提交（用户提交） | 待审查。真实服务验收已跑（该节第 9 小节）：安装、setup、下载、文本、关闭视觉的纯语音、拒绝、非交互均通过；音画场景卡在严格答案校验（T-10C 2.4 遗留，待用户决定）；验收发现的 4 处报告问题已修并在真实环境复验 |
 
 ---
 
@@ -1350,3 +1352,208 @@ T-10B 首版的变异 D1–D10 在最终代码上重跑：
   - 不带参数时的输出与现在相同；
   - 已有的不覆盖、回滚测试保留。
 - **不做**：自动安装依赖、模型下载；凭据的写入或校验（只列出名称）。
+
+---
+
+## Doctor 默认运行时测试（基线 `2fc4f398`）
+
+依据：Codex 对 `2fc4f398` 复核的第二阶段。要求：Doctor 先做静态检查，再默认运行所有适用的运行时测试；纯本地测试直接运行；可能联系外部服务时先列服务、提示计费并要求明确同意，提问和运行用同一份已加载配置；拒绝或 `--no-metrics` 只做静态检查，运行时指标标 SKIP 并写原因；非交互时只有明确授权才调用外部服务；`--json` 的 stdout 保持纯 JSON，仍是同一个 `doctor` 入口；首次缺模型时先说明要下载什么，确认后继续；覆盖文本、音视频、关闭视觉的纯语音；显示首字、首音频帧、响应完成和收集到的所有阶段耗时，失败时保留已测值，未观测的显示 `—` 和原因；离线替身的耗时可用于验收；给出可复现的真实服务验收步骤；报告写明测量止于 Host 输出，LiveKit 传输和客户端播放另测。所有改动在未暂存的工作区。
+
+### 0. 历史记录（合并来源）
+
+| 原位置 | 原结论 | 现状 |
+|---|---|---|
+| 本文件 T-10C 各节 | 外部服务只凭配置授权（`host.doctor.external_services`，默认 false），未授权时跳过会话；缺模型只报告、不下载 | 配置授权保留，用于非交互；终端里多了由人同意这条路。缺模型在同意后下载 |
+| 安装日志「第 1 项第二轮」第 10 节 | 只装基础包时，Doctor 的缺包建议提示 `alphaavatar setup` | 不变；缺包行与 `config check` 共用，窄终端拆成设置、问题、包名、提示四行 |
+| 安装日志「第 1 项 CLI 展示统一」第 4 节 | Doctor 文本分组、未验证原因、端到端与阶段耗时；`Full report` 给出带同样参数的 `--json` 命令 | 展示规则仍记在那里。本轮 `Full report` 改为 `Run again as JSON`，`—` 带原因（第 3 节） |
+
+### 1. 先静态检查，再默认跑运行时测试
+
+- **纯本地**：配置不联系本机以外的服务时（`Diagnosis.unauthorized` 为空），静态检查后直接运行。
+- **外部服务**：在终端里，静态检查后先列出要联系的服务（`_external` 加上 runner 启动时就会联系的，如向量库的 embedding），写明「Calls to these services may be billed.」，再问 `Run the runtime tests? [y/N]`：
+  - 同意：`Diagnosis.authorized()` 在 Doctor 已加载、已校验的同一个快照上 `derive(config, {"host.doctor.external_services": True})`，问的和跑的是同一份配置，中间不重读；
+  - 拒绝、回车或 `--no-metrics`：`session.start`、`models.runners`、`session.scenarios` 为 SKIP，原因分别是 `Not run: the external services it reaches were declined` 和 `Not run: left out with --no-metrics`；`session.cleanup` 写明什么都没启动；`End-to-end latency` 为 `Not measured · Not run: …`。
+- **非交互**：不提问，只认配置或覆盖项 `host.doctor.external_services=true`；未授权时与之前相同，`session.start` 列出会联系的服务和放行方法。
+- **`--json`**：标题和提问写 stderr，stdout 只有 JSON。
+- **提问处 Ctrl+C**：退出 130，报告原因为 `interrupted at a question`，什么都不运行。
+- **`--no-metrics`**：只做静态检查，不起 runner，不联系任何服务，也不提问。
+
+### 2. 缺模型：先说明，同意后下载
+
+- 第一次运行时，runner 只从模型缓存启动，诊断进程里下载是关的。所有模型文件都经共用解析器 `agents/utils/files/model/model_files.py`，离线缺文件时抛 `FileNotFoundError`；`missing_models(report)` 找出因此失败的 runner。
+- 有终端、没有中断、下载也没被 `ALPHAAVATAR_MODEL_OFFLINE`／`HF_HUB_OFFLINE` 关掉时，Doctor 列出这些 runner 和下载位置（`<cache>/models`），问 `Download and continue? [y/N]`。同意后以 `downloads=True` 重跑，报告以重跑为准。
+- 重跑时，runner 启动的时限与 `start` 相同，取 `runtime.inference.initialize_timeout`（默认 300 s），总时限相应加长（第 4 节第 3 条）。
+- 拒绝或没有终端时，报告就是第一次的：这些 runner 失败，原因是模型不在缓存里。
+
+### 3. 文本报告
+
+- `End-to-end latency`：首字、首音频帧、响应完成，再列文本完成、最后一帧；`Stage timing · <场景>`：收集到的所有阶段耗时。失败的场景保留已测值。
+- 未观测的指标显示 `—`，表下逐条写原因：
+  - 指标自己知道的原因，如 `this TTS plugin logs no first PCM`、`not recorded: the turn ended by timeout`；
+  - 否则是场景停在哪里，如 `not reached: stopped at model.first_event`；
+  - 否则是 `not observed`。
+  - 多个场景同一原因时合并为一行，并列出场景名。
+- `Full report` 改为 `Run again as JSON`：`alphaavatar doctor [target] --json`。带过 `KEY=VALUE` 覆盖项时，另起一行说明需要带同样的覆盖项，原文不回显。
+- 测量终点：`docs/cli/doctor.md` 和预览页写明，所有指标止于 Host 的输出边界，LiveKit 传输和客户端播放另测。
+
+### 4. 录制中发现并修复
+
+1. **runner 日志打进终端**：下载场景的录制里，runner 失败时自己的日志（`Inference runner failed`、`error: FileNotFoundError`、调用栈）直接接在「Running the runtime tests…」那行后面。原因是诊断进程把 stdout 并到 stderr，而 stderr 就是终端；runner 没有日志接收端时，Python 的兜底处理器把 WARNING 以上的日志写到 stderr。
+   - 改为：诊断进程和它的 runner 的 stdout、stderr 都写到 Doctor 临时目录里的 `output.log`，随目录删除。runner 的失败本来就在 `models.runners` 的细节里。
+   - 诊断进程自己退出（退出码大于 0）而没有留下报告时，缺报告原因附上它输出的最后一行（例如 `RuntimeError: …`），之后与其他细节一样经过输出边界脱敏。被杀（负退出码）时不附，那一行不是它结束的原因。
+2. **`—` 的原因**：`model_first_text_delta` 的说明「the first token, as far as the stream shows it」被当成缺失原因显示出来。
+   - `_metric` 的第 5 个参数只作缺失原因；说明改用 `note=` 关键字，只在有值时保留。`context_ready_wait` 的说明同样只在有值时保留。
+   - `tts_request_to_first_pcm` 只在 TTS 请求已经发出时才写「this TTS plugin logs no first PCM」；请求没发出时，原因是场景停在哪里。
+3. **下载重跑的时限**：原先重跑时 runner 启动仍按 180 s 计，真实下载可能超时。改为 `session.budget(initialize)`：启动时限取 `max(180, initialize_timeout)`，总时限加上同样的差值。
+4. **提问处 Ctrl+C 的换行**：光标停在提问行末，报告紧贴其后。`Report.ask` 遇到 Ctrl+C 或输入结束时先结束该行；setup 同样受益。
+5. **下载重跑的提示**：进行中提示改为「Downloading the model files, then running the runtime tests…」。
+
+### 5. 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `avatar-host/.../doctor/doctor.py`、`doctor/__init__.py` | `Diagnosis.unauthorized`、`authorized()`、`report(skipped)`、`run(downloads)`；`missing_models` |
+| `avatar-host/.../doctor/process.py` | `diagnose(downloads)`，只在未同意下载时设离线；输出写入 `output.log`；无报告时附最后一行；下载时的时限 |
+| `avatar-host/.../doctor/session.py` | `budget(initialize)` |
+| `avatar-host/.../doctor/measure.py` | 缺失原因与说明分开 |
+| `avatar-host/.../cli/commands/doctor.py` | 同意、拒绝、下载、`--no-metrics`、提问处 Ctrl+C、`—` 的原因、`Run again as JSON` |
+| `avatar-host/.../cli/app.py` | `--no-metrics`；帮助文本 |
+| `avatar-host/.../cli/render.py` | `pending` 进行中提示；`ask` 中断时结束提问行 |
+| 测试 | `test_session.py`：同意与拒绝（`--json` 时提问在 stderr、stdout 是纯 JSON）、`--no-metrics`、下载同意与拒绝（终端里没有 runner 日志；两次运行的 runner 启动时限为 180 s 和 300 s）、提问处 Ctrl+C、诊断进程自己退出时附最后一行、Host 内运行时终端上没有诊断进程的输出；`test_measure.py`：缺失原因与说明；`test_render.py`、`test_doctor.py`：文本报告；`doctor_doubles.py`：`DownloadRunner`、`crash`、`runs.jsonl` |
+| `docs/cli/doctor.md` | 默认运行时测试、同意与计费、`--no-metrics`、模型文件、时限、`—` 的原因、`Run again as JSON`、测量终点、新的示例输出 |
+
+### 6. 验证
+
+**本地**
+- 全量测试 491 项通过；拦截已移除的包后再跑一遍，也是 491 项通过（含第 9 节验收后新增的 5 项）。静态检查（Ruff `--no-cache`、格式、`check_workspace.py`、`uv lock --check`、`git diff --check`、`bash -n`、pre-commit）全部通过。
+- 变异：本部分 D1–D10、F1–F7b 共 18 个，全部被抓到，每个都核对过失败的是预期断言。首轮 F3（被杀的诊断进程也附最后一行）存活：被杀的替身什么都没输出，断言证明不了这一点；替身改为先输出一行再挂起后被抓到。证据：`scratchpad/evidence8/mutants8.log`、`mutants8-b.log`。
+
+**离线测试替身（`doctor_doubles`：只替换外部服务和模型文件，Router、Context、Loop、Engine、输出运行时和推理运行时都是生产代码；本轮最终代码，伪终端录制）**
+
+| 录制 | 结果 |
+|---|---|
+| `doctor-offline-agreed-100`、`-72` | 列出 6 项服务和计费提示，答 y：`Diagnostics completed · 14 passed · 1 skipped`；voice_vision 首字约 704 ms、首音频帧约 726 ms、响应完成约 954 ms，text 约 53／74／299 ms（替身的耗时）；`TTS request → First PCM` 为 `—`，原因 `this TTS plugin logs no first PCM` |
+| `doctor-offline-voice-100` | 关闭视觉：`voice` 和 `text` 两列；`voice_vision` 为 SKIP |
+| `doctor-offline-download-100` | 缺模型的 runner 和下载位置列出，答 y 后重跑通过；终端里没有 runner 的失败日志 |
+| `doctor-offline-degraded-100` | 模型不接受图片：`voice_vision`、`text` 停在 `model.first_event` 并保留已测阶段，`voice [vision off]` 通过；`—` 的原因都是 `not reached: stopped at model.first_event` 或 `not recorded: an output ended otherwise` |
+| `doctor-offline-interrupt-72` | 提问处 Ctrl+C：退出 130，`Not run: interrupted at a question` |
+
+**干净沙箱（本轮最终构建）**
+
+| 录制 | 结果 |
+|---|---|
+| `doctor-declined-72`、`-100` | 列出 5 项服务和计费提示，答 n：`OK 9 passed · 6 skipped`，`Session and services` 为 SKIP，原因 `Not run: the external services it reaches were declined` |
+| `doctor-nometrics-100` | 不提问，SKIP 原因 `Not run: left out with --no-metrics` |
+| `doctor-unasked.txt`（stdin 为 `/dev/null`） | 不提问；未授权时按原样跳过，并给出放行方法 |
+| `doctor-unasked.json` | `--json`：stdout 第一个字符是 `{`，stderr 为空 |
+
+### 7. 真实服务验收步骤（用户已确认，实测结果见第 9 节）
+
+前提：Linux x86_64，glibc 2.28 或更新；真实的 `OPENAI_API_KEY`；三个 LiveKit 变量（Doctor 不连接 LiveKit，`config check` 只要求它们已设置）。下面全部放在 `$HOME/aa-accept`，不影响已有安装。
+
+```bash
+export ALPHAAVATAR_HOME=$HOME/aa-accept/home
+P=$HOME/aa-accept/prefix; B=$HOME/aa-accept/bin; OUT=$HOME/aa-accept/out
+
+# 1. 构建并安装本轮的基础包（推送后也可用 CI 制品）。在这台机器上构建要放宽到 glibc 2.32：
+#    本机编译的 llama-cpp-python 引用了 2.32 的符号；CI 在 manylinux_2_28 里构建，不需要
+packaging/linux/build.sh --allow-dirty --max-glibc 2.32 --out "$OUT"
+bash "$OUT/install.sh" --file "$OUT"/alphaavatar-*-linux-x86_64.tar.gz --prefix "$P" --bin-dir "$B"
+export PATH="$B:$PATH"
+
+# 2. 首次交互 setup：逐项回车保留参考配置（含本机模型），bundle 名填 accept；
+#    凭据回车保留环境里的值，Store …? 答 n；看完计划后 Install and enable? 答 y
+export OPENAI_API_KEY=… LIVEKIT_URL=… LIVEKIT_API_KEY=… LIVEKIT_API_SECRET=…
+alphaavatar setup --artifacts "$OUT"
+
+# 3. Doctor：先看列出的服务和计费提示，再在 Run the runtime tests? [y/N] 答 y；
+#    首次会出现 Model files：看清 runner 和下载位置后，在 Download and continue? [y/N] 答 y
+alphaavatar doctor accept
+
+# 4. 关闭视觉的纯语音；5. 纯文本（每次同样先确认）
+alphaavatar doctor accept vision.enabled=false
+alphaavatar doctor accept voice.vad.plugin=null voice.stt.plugin=null voice.tts.plugin=null
+
+# 6. 拒绝：在提问处直接回车，应只做静态检查、不产生调用
+alphaavatar doctor accept
+
+# 7. 非交互：不提问，stdout 为纯 JSON
+alphaavatar doctor accept host.doctor.external_services=true --json < /dev/null > report.json
+python3 -c 'import json; r = json.load(open("report.json")); print(r["status"], r["counts"])'
+
+# 8. 无人值守的 setup 路径（可选）
+alphaavatar config init ci --avatar-id ci
+alphaavatar setup ci --artifacts "$OUT" < /dev/null
+alphaavatar config check ci
+```
+
+- **预期**：
+  - 第 2 步：`Validate PASS · 8 runners`。
+  - 第 3 步：同意下载后 `voice_vision`、`text` 有结果（失败时给出阻塞阶段和原因），`End-to-end latency` 有首字、首音频帧、响应完成，`Stage timing` 有各阶段，每个 `—` 都带原因。
+  - 第 4 步：`voice`、`text`。第 5 步：只有 `text`。
+  - 第 6 步：`Not run: the external services it reaches were declined`。
+  - 第 7 步：模型已在第 3 步下载，不再提问。
+- **计费**：每次同意后的运行都会多次调用对话模型、记忆与画像任务、embedding、STT 和 TTS；第 3、4、5、7 步各运行一次，模型不接受图片时还会多跑一次降级配置。第 6 步不产生调用。
+- **下载**：只在第 3 步同意之后发生，位置是 `$ALPHAAVATAR_HOME/cache/models`。
+- **测量终点**：所有指标止于 Host 的输出边界。LiveKit 传输和客户端播放不在其中，留给第 4 项（真实手机浏览器 RTC）另测。
+- **清理**：`rm -rf $HOME/aa-accept`，只删本次验收的目录。
+
+### 8. 待复核
+
+1. **先跑一次再问下载**：第一次运行只从缓存启动 runner，失败后才知道缺哪些模型。runner 没有声明式的模型清单，不启动就列不出来。缺的若只是仅视觉用到的模型（例如人脸），第一次运行会先跑一遍关闭视觉的降级配置，这些调用已经过同意；同意下载后再整体重跑。参考配置下 turn taking 的模型也缺，降级配置同样起不来，第一次运行不会联系外部服务。
+2. **同意只对本次有效**：不会写回配置；下次运行还会再问。
+3. **列出的服务**：提问时列的是会话阶段和 runner 启动时会联系的全部服务；非交互跳过时，`session.start` 的细节只列会话阶段的服务（沿用原文本）。两处的列表可能不同。
+
+### 9. 真实服务验收（用户确认后运行，2026-11-06）
+
+用户确认后，按第 7 节在本机实测。凭据取自 `/home/ecs-user/AlphaAvatar/.env.dev`（T-10C 验收用过的同一文件），只取 `OPENAI_API_KEY` 和三个 LiveKit 变量，写进会话临时目录里一个只有本人可读的文件；每条命令都在空环境里运行，只带这四个变量、隔离的 `ALPHAAVATAR_HOME`、本轮的命令和 `PATH`。验收目录放在会话临时目录，而不是第 7 节示例的 `$HOME/aa-accept`。全部录制（伪终端，`.cast`／`.ansi`）和 JSON 报告都检查过，不含任何凭据值。
+
+**磁盘与模型缓存**：磁盘只剩 3.4 GB，装不下 1.7 GB 的参考环境再加约 2 GB 的模型全量下载。验收的模型缓存因此用硬链接从本机已有缓存（`~/.cache/alphaavatar/models`）建立，不占额外空间，并去掉 turn taking 的模型，让 Doctor 首次运行真的缺模型、真的去下载。模型解析从不原地改写缓存文件（都是写临时文件再 `os.replace`），小文件（锁文件、清单）另外复制断开链接；删除验收目录后核对过，原缓存字节数不变、链接数恢复为 1。所以「首次缺模型并下载」只覆盖了 turn taking（8.4 MB），其余模型没有在本次验收中重新下载。
+
+**结果**（第一轮用 `20261106133847` 构建；第 4 小节的修复后用 `20261106142425` 构建复验）
+
+| 步骤 | 命令 | 结果 |
+|---|---|---|
+| 安装 | `install.sh --file … --prefix … --bin-dir …` | 基础包 208 MB |
+| 交互 setup | `alphaavatar setup --artifacts …`：逐项回车（参考配置，含本机模型），bundle `accept`，凭据回车保留，不存 | 从真实索引下载 105 个包、514 MB；`Validate PASS · 8 runners`；环境 1.7 GB |
+| 拒绝下载 | `doctor accept`，同意测试、拒绝下载 | 只列出 `smart_turn_v3`；第一次的报告：该 runner 失败，其后 5 个 runner 未到达；向量库 runner 未启动，没有任何计费调用 |
+| 同意下载 | `doctor accept`，同意测试、同意下载 | turn taking 模型下载后 runner 3.07 s 启动；`text` 通过；`voice_vision` 各阶段都到达，卡在严格答案校验（见下） |
+| 非交互 | `doctor accept host.doctor.external_services=true --json < /dev/null` | 不提问；stdout 第一个字符是 `{`，stderr 为空；三项外部服务都是 reached、passed |
+| 关闭视觉 | `doctor accept vision.enabled=false` | `OK · 14 passed · 1 skipped`；`voice`、`text` 都通过 |
+| 纯文本 | `doctor accept voice.vad.plugin=null voice.stt.plugin=null voice.tts.plugin=null` | `OK`；`text` 通过；两个音频指标为 `—`（原因见第 4 小节第 4 条） |
+| 拒绝测试 | `doctor accept`，提问处回车 | 只做静态检查，`Not run: the external services it reaches were declined`，没有调用 |
+| 无人值守 | `config init ci` → `setup ci --artifacts … < /dev/null` → `config check ci` | 复用已装环境，不提问，`Validate PASS · 8 runners`；之后 `config init` 的下一步是 `config check`、`doctor`（已装完整环境） |
+
+**实测指标**（真实服务，单次样本；止于 Host 输出边界，不含 LiveKit 传输和客户端播放）
+
+| 指标 | voice_vision | text（同一次） | voice（关闭视觉） | text（同一次） | text（纯文本会话） |
+|---|---|---|---|---|---|
+| 首字 | 6,575 ms | 1,717 ms | 5,862 ms | 1,006 ms | 1,632 ms |
+| 首音频帧 | 8,330 ms | 3,745 ms | 6,629 ms | 2,519 ms | —（无音频输出） |
+| 响应完成 | 9,060 ms | 4,176 ms | 7,121 ms | 2,896 ms | 1,705 ms |
+| 语音结束 → STT 终稿 | 2,459 ms | | 1,664 ms | | |
+| 语音结束 → Turn 提交 | 2,462 ms | | 1,895 ms | | |
+| 模型请求 → 首个事件 | 3,610 ms | 1,055 ms | 3,550 ms | 542 ms | 1,098 ms |
+| TTS 请求 → 首段 PCM | 1,499 ms | 1,446 ms | 696 ms | 1,402 ms | |
+
+**`voice_vision` 未通过：严格答案校验（T-10C 2.4 遗留，待用户决定）**：非交互那次的 JSON 里，转录只有 `What color is the card on my screen?`，样本第二句「Answer in one word.」被 STT 丢掉，模型答 `The card is green.`，不是单个词，判为 `answer` 阶段失败。两次音画运行都是这样，与 T-10C 的发现相同；本轮没有改样本或判定。
+
+**KD-17 未复现**：三次有语音的运行里，turn taking 连续 HOLD（约 +825、+1,361、+1,861 ms），直到 STT 终稿到达（+1,901 ms）后才提交，没有出现 T-10C 那样在等待超时后 CANCEL。这只说明这几次 STT 来得够快或判定一直在 HOLD，不说明 KD-17 已修复；KD 表状态不变。
+
+**验收中发现并修复的报告问题**
+
+1. **`services.external` 的误报（T-10C 起就有）**：一个更早的 runner 启动失败时，向量库 runner 根本没启动，模型 provider 却显示 `not reached, failed (vector store embeddings)`，标题因此多算一项失败。原逻辑按整个运行时是否启动来判断。改为按启动时会嵌入的 runner 自己的结果判断：这些 runner 由 `InferenceRunner.PROVIDERS` 识别（`session.embedding_runners`），不写死插件名。全部启动为 passed，有一个失败为 failed，没轮到为 not observed，并写明「an earlier runner did not start」。
+2. **缺模型的处理建议过时**：`models.runners` 仍建议「Start `alphaavatar dev …` once with network access」。改为先说本命令自己的做法：「Run doctor again in a terminal and agree to the download, or start `alphaavatar dev …` once with network access」。
+3. **允许下载时仍写「offline」**：`models.runners` 通过时的摘要固定写「started from the cache, offline」。改为按诊断进程是否离线，写「from the cache, offline」或「with downloads allowed」。
+4. **纯文本会话的最后一帧**：首音频帧写「no audio output in this session」，最后一帧却写「not observed」。会话没有音频输出时，两项都写这个原因。
+
+复验（修复后的构建，重新安装；这次 setup 走无人值守路径 `config init accept` → `setup accept < /dev/null`，同样从真实索引下载 105 个包、514 MB）：
+- 拒绝下载：`services.external` 改为 SKIP，模型 provider「reached: not observed, passed: not observed (vector store embeddings: an earlier runner did not start)」，失败从 3 项降为 2 项；处理建议为新文本。
+- 纯文本加同意下载：turn taking 模型再次下载，runner 3.15 s 启动，`text` 通过；两项音频指标都写「no audio output in this session」。
+- 第 3 条由新的单元测试覆盖，文本报告里通过的分组不显示该摘要。
+
+新增测试：`test_session.py` 的 `test_the_model_provider_is_judged_by_the_starts_of_the_runners_that_embed`（参考 bundle：未到达、启动、失败三种）、`test_the_runners_summary_says_whether_downloads_were_allowed`；下载拒绝的测试加了处理建议的断言；`test_measure.py` 的 `test_a_session_without_audio_output_says_so_for_each_audio_figure`。变异 G1–G5 全部被抓到（`scratchpad/evidence8/mutants8-c.log`）。修复后全量 491 项通过，拦截已移除的包后也是 491 项通过；Ruff、格式、pre-commit 通过。改动文件：`doctor/session.py`（`embedding_runners`、`_service`、`_runner_check`）、`doctor/measure.py`、`docs/cli/doctor.md`（`services.external` 如何判断只在 runner 启动时用到的模型 provider），以及上述测试。修复后重新构建，沙箱录制和离线测试替身录制都在修复后的代码上重做，`docs/cli/cli.html` 随之重新生成。
+
+**计费调用**：同意下载那次、非交互那次、关闭视觉、纯文本，以及复验的纯文本，共 5 次运行调用了 OpenAI（对话、记忆与画像任务、embedding、STT、TTS；纯文本两次没有 STT 和 TTS）。两次拒绝下载、拒绝测试和无人值守 setup 都没有调用。
+
+**清理**：验收目录在复验后删除；凭据副本在复验后删除。

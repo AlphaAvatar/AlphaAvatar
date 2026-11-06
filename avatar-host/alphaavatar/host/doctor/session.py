@@ -64,8 +64,11 @@ class Budget:
     total: float
 
 
-def budget() -> Budget:
-    return Budget(SESSION_SECONDS, TURN_SECONDS, TOTAL_SECONDS)
+def budget(initialize: float | None = None) -> Budget:
+    """The diagnosis's bounds. With the runners' ``initialize`` timeout, as a run that may
+    download gives it, their start has as long as start gives it, and the whole as much more."""
+    session = max(SESSION_SECONDS, initialize or 0.0)
+    return Budget(session, TURN_SECONDS, TOTAL_SECONDS + session - SESSION_SECONDS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,6 +213,14 @@ def start_services(config: ApplicationConfig) -> list[str]:
     if custom:
         found.append(f"custom runners ({', '.join(custom)}), external access unknown")
     return found
+
+
+def embedding_runners(config: ApplicationConfig) -> frozenset[str]:
+    """The planned runners that reach providers as they start, such as a vector store's."""
+    from alphaavatar.agents.runtime.inference import plan_inference_runners
+
+    planned = plan_inference_runners(config.avatar)
+    return frozenset(method for method, runner in planned.items() if runner.PROVIDERS)
 
 
 def blocked(config: ApplicationConfig, services: Sequence[str]) -> str | None:
@@ -759,12 +770,13 @@ class _Run:
         failed = [runner for runner in runners if runner.status == CheckStatus.FAIL]
         pending = [runner for runner in runners if runner.status == CheckStatus.SKIP]
         error = self.runner_error.get("original", ())
+        where = "from the cache, offline" if models_offline() else "with downloads allowed"
         if not failed and not pending and not error:
             slowest = max(runners, key=lambda r: r.startup_seconds or 0.0)
             return Check(
                 "models.runners",
                 CheckStatus.PASS,
-                f"{len(runners)} runners started from the cache, offline; slowest "
+                f"{len(runners)} runners started {where}; slowest "
                 f"{slowest.method} in {slowest.startup_seconds or 0:.2f} s",
                 (*self._counted(), *others),
                 runners=every,
@@ -774,8 +786,8 @@ class _Run:
         status = CheckStatus.WARN if missing and not models_offline() else CheckStatus.FAIL
         first = failed[0].method if failed else "a runner"
         action = (
-            f"Start `{_dev(self.source)}` once with network access to download the missing "
-            "model, then run doctor again"
+            "Run doctor again in a terminal and agree to the download, or start "
+            f"`{_dev(self.source)}` once with network access"
             if missing
             else "Fix what the error names (model file, package, device), then run doctor again"
         )
@@ -884,10 +896,16 @@ class _Run:
         if kind == "tts":
             users = [r for r in users if r.configuration != "degraded: text output"]
         if kind == "model" and not users and self.runners.get("original"):
-            started = not self.runner_error.get("original")
-            embeds = any("embeddings" in item for item in start_services(self.config))
-            if embeds:
-                return ServiceResult(name, True, started, started, "vector store embeddings")
+            # Vector stores embed a probe text as their runners start: those starts show it.
+            embedding = embedding_runners(self.config)
+            starts = [r.status for r in self.runners["original"] if r.method in embedding]
+            if CheckStatus.FAIL in starts:
+                return ServiceResult(name, True, None, False, "vector store embeddings")
+            if starts and all(status == CheckStatus.PASS for status in starts):
+                return ServiceResult(name, True, True, True, "vector store embeddings")
+            if starts:
+                note = "vector store embeddings: an earlier runner did not start"
+                return ServiceResult(name, True, None, None, note)
         if kind not in _SERVICE_STAGES or not users:
             return ServiceResult(name, True, None, None, "no stage that needs it ran")
         # Reached once it answered; passed when it served and no turn stopped at it.

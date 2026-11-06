@@ -59,36 +59,48 @@ See [Avatar workspace](docs/avatar-workspace-layout.md) and
 
 On Linux x86_64, CI builds a small base package per release, and on `main` and `dev/**` for
 each push that changes what goes into it: its own Python with the CLI, `config init|check` and
-`alphaavatar setup`. Setup asks
-what the Avatar should run with, or takes a preset, then installs exactly what that needs,
-from a catalog in the package with each artifact's version and SHA-256. Neither needs Python,
-Node or a compiler:
+`alphaavatar setup`. Setup
+installs exactly what a bundle needs, from a catalog in the package with each artifact's
+version and SHA-256, checks it, then enables it. Neither needs Python, Node or a compiler:
 
 ```bash
 curl -fsSLO https://github.com/AlphaAvatar/AlphaAvatar/releases/download/v<version>/install.sh
 bash install.sh --version <version>     # or --file <package> for a downloaded CI build
-alphaavatar setup                       # questions; or --preset default|remote
-alphaavatar config check
+alphaavatar setup                       # a new bundle, asked part by part
+alphaavatar doctor
 ```
 
-`default` is `config init`'s reference bundle: voice, vision, memory and persona, with turn
-taking, addressing, face and speaker models on this machine (about 515 MB to download; the
-semantic addressing model needs an x86-64-v3 CPU). `remote` runs no model on the machine but
-the voice activity detection speech input needs (about 210 MB). Choosing each part, models
-and speech can also come from servers of your own with OpenAI's API (Responses for the
-conversation model); each server reads its own key from a variable named after its URL,
+Asked, setup starts from `config init`'s reference configuration: voice, vision, memory and
+persona, with turn taking, addressing, face and speaker models on this machine (about 515 MB
+to download; the semantic addressing model needs an x86-64-v3 CPU). Each part can be switched
+off; with no model on the machine but the voice activity detection speech input needs, about
+210 MB. The vectors go to LanceDB in the Avatar workspace or to your Qdrant, and models and
+speech come from OpenAI or from servers of your own with OpenAI's API (Responses for the
+conversation model). For CI and unattended installs, create or edit a bundle, then set up
+that bundle, credentials from the environment, with no question asked:
+
+```bash
+alphaavatar config init my-avatar --avatar-id my-avatar   # edit its profiles as needed
+alphaavatar setup my-avatar
+alphaavatar config check my-avatar
+```
+
+`setup <bundle>` installs what the bundle's settings select, edits included, and refuses a
+selection this release does not install before anything is installed. Each server of your own
+reads its own key from a variable named after its URL,
 `ALPHAAVATAR_SERVER_KEY_<hash>`, which setup shows when it asks: a key serves only the server it
 was given for, only the same server shares one, and a server of your own never receives
 `OPENAI_API_KEY`. Loading checks it against the URL in effect, overrides applied: a bundle
 whose `base_url` was moved to another server, or removed, is refused before any client is
-made; a variable you name yourself may point anywhere. Speech sends its key over HTTPS unless the server is on this machine. With a preset, setup reads credentials from the environment and stores none; asked
+made; a variable you name yourself may point anywhere. Speech sends its key over HTTPS unless the server is on this machine. Given a bundle, setup reads credentials from the environment, `.env` or those stored, and stores none; asked
 for, they are stored in a file of the application home's settings, readable only by you, only
 if you say so, and a value stored there already, which other bundles may read, is replaced
 only on a second yes. The settings replacement that makes the new bundle the default names
 the stored credentials too, so even a killed setup leaves both as they were or both new.
 `start`, `config check` and `doctor` read stored values where the environment does not set
 them, and the default bundle from the same read of the settings. Model weights are not part of the
-plan: runners fetch them into the model cache. `--plan` prints the plan and changes nothing; a
+plan: runners fetch them into the model cache, and `doctor` names what it lacks and downloads
+it once you agree. `--plan` prints the plan and changes nothing; a
 CI build's own wheels sit beside its package, so pass `--artifacts <directory>` for one.
 
 A configuration names each plugin by capability type and implementation, and the installed

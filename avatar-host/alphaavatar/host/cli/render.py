@@ -28,9 +28,9 @@ import sys
 import textwrap
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
-from alphaavatar.core.log.records import clean
+from alphaavatar.core.log.records import Redactor, clean
 from alphaavatar.host.log.format import (
     BOLD,
     BRAND_BLUE,
@@ -85,7 +85,9 @@ class Report:
         self.color = use_color("auto", self.stream)
         # A terminal updates a step's line in place; a pipe or log gets each line.
         tty = bool(getattr(self.stream, "isatty", lambda: False)())
-        self.live = tty and os.getenv("TERM") != "dumb"
+        # NO_COLOR and TERM=dumb ask for plain lines: none erased or redrawn either.
+        self.tty = tty
+        self.live = tty and os.getenv("TERM") != "dumb" and "NO_COLOR" not in os.environ
         self.width = width or _width(self.stream)
         encoding = getattr(self.stream, "encoding", None) or "utf-8"
         try:
@@ -96,16 +98,30 @@ class Report:
         # The step in progress: shown on a terminal, on a line not yet ended; elsewhere shown
         # only once something goes under it, as a question or progress does.
         self._open: tuple[int, str] | None = None
+        self._waiting = False  # A pending line a terminal shows until something follows.
+        self.lines = 0  # Lines written so far.
 
     # Output
 
     def _emit(self, text: str, *, flush: bool = False) -> None:
         self.stream.write(text.translate(_ASCII) if self._ascii else text)
-        if flush or self.live:  # Steps and questions show at once; a pipe buffers the rest.
+        self.lines += text.count("\n")
+        if flush or self.tty:  # Steps and questions show at once; a pipe buffers the rest.
             self.stream.flush()
 
+    def pending(self, text: str) -> None:
+        """What is under way, on a line a terminal erases once something follows."""
+        if self.live:
+            self._settle()
+            self._emit("\r\033[K" + self.paint(clean(text), SIGNAL_CYAN), flush=True)
+            self._waiting = True
+
     def _settle(self) -> None:
-        """End a step's line in progress, leaving it shown, before what goes below it."""
+        """End a step's line in progress, leaving it shown, before what goes below it; erase
+        a pending line."""
+        if self._waiting:
+            self._emit("\r\033[K")
+            self._waiting = False
         if self._open is not None:
             shown = "" if self.live else self.paint("{:02d}  {}".format(*self._open), SIGNAL_CYAN)
             self._emit(shown + "\n", flush=True)
@@ -191,6 +207,20 @@ class Report:
             auxiliary = line.lstrip().startswith(("at ", "additional"))
             self.write(" " * indent + (self.paint(line, DIM) if auxiliary else line))
 
+    def missing(self, items: Sequence[Any], *, indent: int) -> None:
+        """Each missing package's line, whole where the terminal holds it; else its parts on
+        lines of their own: the setting, what is wrong, the package, what installs it."""
+        redact = Redactor()
+        for item in items:
+            line = redact(clean(item.line), limit=None)
+            if indent + len(line) <= self.width:
+                self.write(" " * indent + line)
+                continue
+            self.write(" " * indent + redact(clean(item.location), limit=None))
+            for part in (item.problem, item.package, item.action):
+                if part:
+                    self.wrapped(redact(part, limit=None), indent=indent + 2)
+
     def command(self, text: str) -> None:
         """A command to copy, on a line of its own."""
         self.write("  " + self.paint(clean(text), SIGNAL_CYAN))
@@ -247,7 +277,10 @@ class Report:
         text = clean(text)
         if self._open is None or not self.live:
             self._settle()
-            self._emit(" " * 4 + text + "\n", flush=True)
+            width = max(self.width - 4, 24)
+            lines = textwrap.wrap(text, width, break_long_words=False, break_on_hyphens=False)
+            for line in lines or [""]:
+                self._emit(" " * 4 + line + "\n", flush=True)
             return
         line = self._step(*self._open, text)
         if len(line) >= self.width:
@@ -255,12 +288,22 @@ class Report:
         self._emit("\r\033[K" + self.paint(line, SIGNAL_CYAN), flush=True)
 
     def step(self, number: int, name: str, summary: str) -> None:
-        """A step done, taking the place of its line in progress."""
+        """A step done, taking the place of its line in progress. A summary the line cannot
+        hold goes on at its own column, a ``·`` part at a time."""
         if self._open == (number, name):
             self._emit("\r\033[K" if self.live else "")
             self._open = None
         self._settle()
-        self._emit(self._step(number, name, clean(summary)) + "\n", flush=True)
+        hang, lines = 4 + STEP, [""]
+        for part in clean(summary).split(" · "):
+            joined = f"{lines[-1]} · {part}" if lines[-1] else part
+            if lines[-1] and hang + len(joined) > self.width:
+                lines.append(part)
+            else:
+                lines[-1] = joined
+        self._emit(self._step(number, name, lines[0]) + "\n", flush=True)
+        for line in lines[1:]:
+            self._emit(" " * hang + line + "\n", flush=True)
 
     def prompt(self, question: str) -> str:
         """A question as it is asked: under the current step, in signal cyan. One too long
@@ -276,9 +319,14 @@ class Report:
         return " " * 4 + self.paint(last, SIGNAL_CYAN)
 
     def ask(self, question: str) -> str:
-        """The answer to a question asked on this report's stream."""
+        """The answer to a question asked on this report's stream. Left with Ctrl+C or at
+        the input's end, the question's line is ended: what follows starts on its own."""
         shown = self.prompt(question)
-        if self.stream is sys.stdout:
-            return input(shown)
-        self._emit(shown, flush=True)  # stdout is left to what the command prints there.
-        return input()
+        try:
+            if self.stream is sys.stdout:
+                return input(shown)
+            self._emit(shown, flush=True)  # stdout is left to what the command prints there.
+            return input()
+        except (KeyboardInterrupt, EOFError):
+            self._emit("\n", flush=True)
+            raise

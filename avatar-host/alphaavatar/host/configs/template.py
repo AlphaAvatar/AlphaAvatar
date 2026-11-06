@@ -25,7 +25,14 @@ from pathlib import Path
 
 from alphaavatar.host.workspace import ApplicationPaths
 
-from .bundles import LAYERS, ConfigReferenceError, check_bundle_name, check_inside, read_settings
+from .bundles import (
+    LAYERS,
+    ConfigReferenceError,
+    bundle_path,
+    check_bundle_name,
+    check_inside,
+    read_settings,
+)
 
 # Credentials stay in the environment (or the .env file named by ENV_FILE), never in the files.
 REQUIRED_ENVIRONMENT = (
@@ -309,6 +316,22 @@ def _set_default(
         if credentials:
             prune_credentials(paths)  # Those it replaced, and any a killed run wrote.
     return name
+
+
+def set_default_bundle(paths: ApplicationPaths, name: str) -> None:
+    """Make an existing bundle the default: one replacement of the settings, under their lock.
+    Before it commits, a failure leaves the settings as they were."""
+    path = bundle_path(paths, name)
+    if not path.is_file():
+        raise ConfigReferenceError(f"Bundle {name!r} does not exist: {path}")
+    created: list[Path] = []
+    staged: list[Path] = []
+    try:
+        _set_default(paths, name, created, staged, True)
+    except BaseException:
+        for temporary in staged:
+            temporary.unlink(missing_ok=True)  # Gone once the replacement committed.
+        raise
 
 
 def create_bundle(

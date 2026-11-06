@@ -194,21 +194,31 @@ run() { (cd / && env ALPHAAVATAR_HOME="$smoke/home" ENV_FILE="$smoke/absent.env"
 report="$(run "$tree/bin/alphaavatar" config check 2>&1)" && die "config check passed bare"
 grep -q "voice.vad.plugin: no installed package provides voice.vad 'silero'" <<< "$report" \
   || { echo "$report" >&2; die "config check does not name what is missing"; }
-# The catalog plans both presets offline (the base is not installed into a prefix here).
-for preset in default remote; do
-  run "$py" -I - "$tree" "$preset" <<'PY' || die "The catalog cannot plan $preset"
+# The catalog plans offline (the base is not installed into a prefix here) what setup installs:
+# the reference bundle config init wrote above, from its settings in this bare base as
+# `alphaavatar setup <bundle>` plans it, and the same with no model on this machine.
+run "$py" -I - "$tree" <<'PY' || die "The catalog cannot plan the reference bundle"
 import json, sys
 from pathlib import Path
-from alphaavatar.host.setup.choices import PRESETS, requirements
+from alphaavatar.host.configs import load_selections, select_configuration
+from alphaavatar.host.setup.choices import Selection, bundle_requirements, requirements
 from alphaavatar.host.setup.plan import plan_install
-tree, preset = Path(sys.argv[1]), sys.argv[2]
-catalog = json.loads((tree / "share/alphaavatar/catalog.json").read_text())
-plan = plan_install(catalog, requirements(PRESETS[preset]), base="build")
-print(f"    {preset}: {len(plan.artifacts)} packages, {plan.download_bytes / 1e6:,.0f} MB")
+catalog = json.loads((Path(sys.argv[1]) / "share/alphaavatar/catalog.json").read_text())
+host, avatar = load_selections(select_configuration("reference"))
+needs, unserved = bundle_requirements(host, avatar, catalog["plugins"])
+assert not unserved and sorted(needs) == list(requirements(Selection())), (sorted(needs), unserved)
+for label, needed in (
+    ("reference bundle", sorted(needs)),
+    ("no model on this machine", requirements(Selection(local_models=False))),
+):
+    plan = plan_install(catalog, needed, base="build")
+    print(f"    {label}: {len(plan.artifacts)} packages, {plan.download_bytes / 1e6:,.0f} MB")
+# With no model on this machine, no local model library nor its accelerators is planned.
+local = {"torch", "torchaudio", "llama-cpp-python", "insightface", "transformers", "onnx", "scipy"}
+assert not local & {artifact.name for artifact in plan.artifacts}, sorted(local & {a.name for a in plan.artifacts})
 # What config check says setup installs: the implementations this build's wheels declare.
 assert catalog["plugins"]["voice.vad"]["silero"] == "alpha-avatar-plugins-voice[silero]"
 PY
-done
 
 echo "==> Archive"
 tar -C "$work" --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner \

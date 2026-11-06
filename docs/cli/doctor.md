@@ -1,11 +1,13 @@
 # `alphaavatar doctor`
 
-Diagnose the installation and a configuration: static checks, then a temporary diagnostic
-session of the configuration on fixed samples. One command does both; nothing else to start.
+Diagnose the installation and a configuration: static checks first, then the runtime tests,
+a temporary diagnostic session of the configuration on fixed samples. One command does both;
+nothing else to start.
 
 ```bash
 alphaavatar doctor                                      # the default bundle, if there is one
 alphaavatar doctor [<bundle> | <file>] [KEY=VALUE ...]  # as config check selects them
+alphaavatar doctor --no-metrics                         # the static checks alone
 alphaavatar doctor --json                               # the same report as JSON
 alphaavatar doctor --list                               # the checks, without running any
 ```
@@ -14,9 +16,10 @@ The optional argument and the overrides follow [`config check`](config.md#choosi
 the same `.env` and stored [credentials](config.md#credentials), home, bundle or file selection,
 profiles, overrides, validation and read-only
 workspace checks. With no argument and no default bundle, Doctor says how to create one and
-still checks everything that needs no configuration. There are no other options: what the
-session runs follows from what the configuration enables, what is available here and what
-the configuration authorizes.
+still checks everything that needs no configuration. `--no-metrics` leaves the runtime tests
+out: no runner starts and nothing is contacted. Otherwise what they run follows from what the
+configuration enables, what is available here, and what the configuration or the person at
+the terminal [authorizes](#authorization).
 
 ## Checks
 
@@ -32,7 +35,7 @@ the configuration authorizes.
 | `paths.cache` | Cache root: state, write access, downloaded models, free space | |
 | `paths.workspace` | The Avatar's workspace: state, write access, free space | yes |
 | `session.start` | A temporary session of the configuration: assembled as `start` would, and ready | yes, session |
-| `models.runners` | The planned runners started from the model cache, offline: each one's start, queue and execution figures | yes, session |
+| `models.runners` | The planned runners started from the model cache, offline unless a [download](#model-files) was agreed: each one's start, queue and execution figures | yes, session |
 | `services.external` | Model, speech, vector store, tool and MCP services: reached by the session only when authorized; the RTC server is never contacted | yes |
 | `session.scenarios` | Fixed samples through each enabled modality chain, with figures and evidence | yes, session |
 | `session.cleanup` | Sessions, executor, runtime, runner processes, sockets and the temporary workspace reclaimed | yes, session |
@@ -51,12 +54,15 @@ the configured model cache, and the Engine, plugins and output runtime come from
 `create_execution`. What differs:
 
 - **Process.** The session runs in a process of Doctor's own, which leads its own process
-  group. Model downloads are switched off there and in its runners, its inference endpoint
-  and log capture stay there, and the caller's environment and loggers are left as they were.
-  Run from inside a Host, it does not inherit that Host's inference endpoint, runner plan or
-  log receiver (`ALPHAAVATAR_INFERENCE_ENDPOINT`, `ALPHAAVATAR_INFERENCE_PLAN`,
-  `ALPHAAVATAR_LOG_ENDPOINT`), and what it or its runners print goes to stderr: stdout carries
-  the report alone, so `--json` output is parseable as it is. Ctrl+C reaches only the `doctor`
+  group. Model downloads are switched off there and in its runners unless a person agreed to
+  them, its inference endpoint and log capture stay there, and the caller's environment and
+  loggers are left as they were. Run from inside a Host, it does not inherit that Host's
+  inference endpoint, runner plan or log receiver (`ALPHAAVATAR_INFERENCE_ENDPOINT`,
+  `ALPHAAVATAR_INFERENCE_PLAN`, `ALPHAAVATAR_LOG_ENDPOINT`). What it or its runners print goes
+  to a file in Doctor's temporary directory, not to the terminal: a runner that fails is named
+  in `models.runners`, and a process that dies without a report is named with the last line it
+  printed. stdout carries the report alone, so `--json` output is parseable as it is. Ctrl+C
+  reaches only the `doctor`
   command, which asks that process to stop; one that does not exit in time is ended with its
   whole group, runners included.
 - **Snapshot.** Authorization is decided on the configuration Doctor loaded and validated, and
@@ -66,8 +72,9 @@ the configured model cache, and the Engine, plugins and output runtime come from
   where the default would be inside it. A remote vector store (Qdrant) holds real Avatar data
   Doctor cannot keep apart, so whatever needs it is skipped and named. The directory is also
   the process's temporary root, so its runtime's socket goes there too, and it is removed
-  afterwards. A missing model is reported, never fetched; resolving cached models refreshes
-  their lock files and integrity manifests, as `start` does.
+  afterwards. A missing model is reported, and fetched only once a person agrees
+  ([model files](#model-files)); resolving cached models refreshes their lock files and
+  integrity manifests, as `start` does.
 - **Transport.** Doctor plays the RTC backend's part: it publishes the samples where the RTC
   input adapters publish media, at their cadence (20 ms microphone frames, screen frames at
   `runtime.perception.video_publish_interval_sec`, typed text through the Engine), and reads
@@ -79,7 +86,28 @@ skipped as having nothing to start, and `session.start` reports the session's ow
 
 ### Authorization
 
-External services, often billed per call, are reached only when the configuration allows it:
+The runtime tests run a configuration that reaches nothing beyond this machine directly. One
+that reaches external services, often billed per call, runs only once they are authorized. In
+a terminal, Doctor lists them after the static checks and asks:
+
+```text
+Runtime tests
+  They run this configuration on fixed samples, through the services it names:
+    model providers (openai)
+    speech recognition (openai_segment)
+    speech synthesis (openai)
+  Calls to these services may be billed.
+    Run the runtime tests? [y/N]:
+```
+
+A yes authorizes this run alone, of the configuration Doctor loaded and listed the services
+of: the run uses that same snapshot. A no or Enter gives the static checks alone, as
+`--no-metrics` does: `session.start`, `models.runners` and `session.scenarios` are `SKIP`,
+`Not run: the external services it reaches were declined` (or `left out with --no-metrics`),
+and `session.cleanup` says nothing was started. With `--json`, the question goes to stderr
+and stdout stays the JSON alone.
+
+Without a terminal, as in CI, nothing is asked: only the configuration authorizes.
 
 ```yaml
 # host profile (configs/profiles/<bundle>/host/host.yaml)
@@ -87,10 +115,10 @@ doctor:
   external_services: true   # default false
 ```
 
-or for one run: `alphaavatar doctor my-avatar host.doctor.external_services=true`.
-
-Without it the session does not run: `session.start` names the services it would reach and
-the scenarios are reported as not run for want of authorization. A plugin, provider backend or
+or for one run: `alphaavatar doctor my-avatar host.doctor.external_services=true`. A
+configuration that authorizes them is not asked about either. Without a terminal or that
+setting, the session does not run: `session.start` names the services it would reach and the scenarios are reported as not
+run for want of authorization. A plugin, provider backend or
 runner Doctor does not ship counts as one of those services: what it reaches cannot be
 confirmed. The runners still start, as an independent local check, when starting them reaches
 nothing beyond this machine; the default memory, persona and MCP vector stores embed a probe
@@ -100,7 +128,30 @@ bounds: authorization never lets Doctor write to a remote vector store.
 
 `services.external` lists each service the configuration names: configured, authorized,
 reached (it answered a stage of the session) and passed (it served that stage, and no turn
-stopped there), or which of those nothing Doctor ran could show.
+stopped there), or which of those nothing Doctor ran could show. A model provider no turn used
+is judged by the starts of the runners that embed with it as they start, a vector store's:
+passed when they all started, failed when one failed, not observed when an earlier runner kept
+them from starting.
+
+### Model files
+
+The runners start from the model cache alone first. When some lack their model files, as on a
+first run after `setup`, Doctor names those runners and where their files go, and asks in a
+terminal:
+
+```text
+Model files
+  These runners did not start: their model files are not in the cache yet.
+    alphaavatar.router.turn_taking.smart_turn_v3
+  Doctor downloads what the runners need into ~/.local/share/alphaavatar/cache/models, as start
+  would, then runs the runtime tests again.
+    Download and continue? [y/N]:
+```
+
+On a yes the runtime tests run again with downloads allowed, and the report is that run's. On a
+no, without a terminal, or with `ALPHAAVATAR_MODEL_OFFLINE` or `HF_HUB_OFFLINE` set, the report
+is the first run's: each such runner failed, its model not in the cache. `alphaavatar start`
+downloads the files too.
 
 ### Scenarios
 
@@ -180,8 +231,9 @@ decides the status.
 Every time is on one clock, the session's monotonic clock. A spoken turn's **response start**
 is the moment the frame carrying the sample's last voiced sample is published; the trailing
 silence follows as usual. A typed turn starts when the Engine accepts the input. Figures are
-server side, from diagnostic input to the output boundary: what a client shows or plays is not
-measured, since no client takes part.
+server side, from diagnostic input to the output boundary: every measurement ends at the Host's
+output. LiveKit's transport and what a client shows or plays are measured separately, since no
+RTC server or client takes part.
 
 | Figure | From | To |
 | --- | --- | --- |
@@ -208,7 +260,9 @@ measured, since no client takes part.
 | `queue_wait_max`, `execution_max` (`models.runners`) | each runner's own summary | |
 
 Each figure gives its value, unit, start and end events, sample count and boundary; an event
-not observed leaves the value `null` with 0 samples. Single samples on one machine describe
+not observed leaves the value `null` with 0 samples, and a `note` says why where the figure
+knows (`this TTS plugin logs no first PCM`, `not recorded: the turn ended by timeout`). A
+measured figure's `note` describes it instead. Single samples on one machine describe
 this run, not the voice pipeline's real-time behavior in general.
 
 ### Evidence
@@ -236,7 +290,9 @@ as the rest of the report.
 
 Starting the runners, assembling a session and its readiness take at most 180 s, one turn at
 most 60 s, everything at most 480 s, the model cache check included since it is part of the
-runners' start; closing has its own bounds. Nothing starts once a stop was asked or the
+runners' start; closing has its own bounds. A run with downloads agreed gives the runners'
+start as long as `start` gives it, `runtime.inference.initialize_timeout` (300 s by default),
+and everything as much more. Nothing starts once a stop was asked or the
 budget is spent, and a step keeps the state its wait ended in: one that returns after its
 deadline is still a timeout, and what it returned is closed. A turn that does not end on its
 own ends its sample playback and its outputs with it, and the scenarios after it get a fresh
@@ -262,8 +318,9 @@ process, or the diagnostic process itself had to be killed or left something beh
 | `2` | Invalid arguments |
 | `130` | Interrupted; the report still shows what ran |
 
-A run with stand-in services whose model accepts no images (CI's doubles; figures are theirs),
-from its checks on:
+A run with stand-in services whose model accepts no images (the offline test doubles of
+Doctor's tests; the figures are theirs), from its checks on. [cli.html](cli.html) shows it with
+the others, colors and all: the question and its answers, the download, vision off:
 
 ```text
 Checks
@@ -309,14 +366,19 @@ Runners
 
 End-to-end latency
   Metric              voice_vision   text   voice [vision off]
-  First text                     —      —               704 ms
-  First audio frame              —      —               726 ms
-  Response complete              —      —               955 ms
-  Text complete                  —      —               704 ms
-  Last audio frame               —      —               955 ms
+  First text                     —      —               705 ms
+  First audio frame              —      —               727 ms
+  Response complete              —      —               957 ms
+  Text complete                  —      —               705 ms
+  Last audio frame               —      —               956 ms
+  — First text · voice_vision, text: not reached: stopped at model.first_event
+  — First audio frame · voice_vision, text: not reached: stopped at model.first_event
+  — Response complete · voice_vision, text: not recorded: an output ended otherwise
+  — Text complete · voice_vision, text: not recorded: an output ended otherwise
+  — Last audio frame · voice_vision, text: not recorded: an output ended otherwise
 
 Stage timing · voice_vision
-  Speech end → VAD close                599 ms
+  Speech end → VAD close                600 ms
   Speech end → STT final                650 ms
   Speech end → Turn commit              651 ms
   Speech end → Last required input      600 ms
@@ -327,8 +389,13 @@ Stage timing · voice_vision
   Model request → First text out             —
   TTS request → First PCM                    —
   TTS request → First audio frame            —
-  Selected frame age at model request   754 ms
+  Selected frame age at model request   654 ms
   Newest selected frame → Turn commit    51 ms
+  — Model request → First event: not reached: stopped at model.first_event
+  — Model request → First text delta: not reached: stopped at model.first_event
+  — Model request → First text out: not reached: stopped at model.first_event
+  — TTS request → First PCM: not reached: stopped at model.first_event
+  — TTS request → First audio frame: not reached: stopped at model.first_event
 
 Stage timing · text
   Context ready wait                    0.0 ms
@@ -338,11 +405,16 @@ Stage timing · text
   Model request → First text out             —
   TTS request → First PCM                    —
   TTS request → First audio frame            —
+  — Model request → First event: not reached: stopped at model.first_event
+  — Model request → First text delta: not reached: stopped at model.first_event
+  — Model request → First text out: not reached: stopped at model.first_event
+  — TTS request → First PCM: not reached: stopped at model.first_event
+  — TTS request → First audio frame: not reached: stopped at model.first_event
 
 Stage timing · voice [vision off]
-  Speech end → VAD close                600 ms
-  Speech end → STT final                650 ms
-  Speech end → Turn commit              651 ms
+  Speech end → VAD close                601 ms
+  Speech end → STT final                651 ms
+  Speech end → Turn commit              652 ms
   Context ready wait                    0.0 ms
   Turn commit → Model request           1.4 ms
   Model request → First event           0.4 ms
@@ -350,8 +422,9 @@ Stage timing · voice [vision off]
   Model request → First text out         51 ms
   TTS request → First PCM                    —
   TTS request → First audio frame        21 ms
+  — TTS request → First PCM: this TTS plugin logs no first PCM
 
-Full report
+Run again as JSON
   alphaavatar doctor avatar.json --json
 ```
 
@@ -368,10 +441,13 @@ side by side where the terminal fits them and one after another where it does no
 scenario's `Stage timing`: speech (VAD close, STT final, the Turn's commit), Context's wait, the
 model (request, first event, first text delta, first text out), TTS (first PCM, first audio
 frame) and the frames vision selected (age at the model request, the newest one against the
-commit). A failed scenario keeps what it measured. A figure not observed is `—`, never `0 ms`;
-times under 10 ms keep one decimal. When the session did not run, `End-to-end latency` says so,
-`Not measured`. `Full report` is the same diagnosis as JSON: every event boundary, sample count,
-service and piece of evidence. `--list` lists the checks in the same groups.
+commit). A failed scenario keeps what it measured. A figure not observed is `—`, never `0 ms`,
+and a line under its table says why: the figure's own reason, else where its scenario stopped,
+else that it was not observed. Times under 10 ms keep one decimal. When the session did not
+run, `End-to-end latency` says so, `Not measured`, with why. `Run again as JSON` is the command
+that prints the same diagnosis as JSON: every event boundary, sample count, service and piece
+of evidence. Run with `KEY=VALUE` overrides, it says to give the same ones, and does not repeat
+them. `--list` lists the checks in the same groups.
 
 JSON keeps the flat list of checks, each with `id`, `status`,
 `summary`, `details`, `action`, `runners`, `scenarios`, `metrics` and `services`; a scenario
@@ -405,7 +481,8 @@ An App or TUI can call `alphaavatar.host.doctor.diagnose(target, overrides)` (as
 
 ## Not covered
 
-- Client devices, the RTC server and what a client shows or plays: Doctor uses no client.
+- Client devices, LiveKit's transport and what a client shows or plays: Doctor uses no RTC
+  server or client, and every figure ends at the Host's output; those are measured separately.
 - Image input and visual output: no transport delivers images to a session, and the Character's
   frames carry no Turn.
 - Camera addressing: the picture is shared as a screen, so visual addressing is not exercised.

@@ -86,7 +86,8 @@ profiles:
 
 ## `config init`
 
-Create a minimal bundle, its profiles and, if none is set, the default bundle.
+Create the reference bundle, its profiles and, if none is set, the default bundle: voice and
+vision on, memory and persona, the models from OpenAI.
 
 ```bash
 alphaavatar config init <name> --avatar-id <id>
@@ -112,7 +113,8 @@ Next
 
 - `Default` names another bundle, `(unchanged)`, when one is set already. The credentials are
   named only, never shown. In the Linux package before [`alphaavatar setup`](setup.md) has run,
-  `Next` names setup first, then `config check`.
+  `Next` is `alphaavatar setup my-avatar`, which installs what the bundle needs, checks it and
+  enables it.
 
 - Writes the given Avatar ID with OpenAI model, voice, Memory and Persona profiles; tools are
   disabled. Host, runtime, context, status, router and character profiles write out their
@@ -129,8 +131,9 @@ configs/profiles/my-avatar/
   plugins/tools/tools.yaml                     deepresearch, rag, mcp
 ```
 - Writes no credentials and no machine paths.
-- In the Linux package before `alphaavatar setup` has run, it names setup as the next step:
-  the bundle stays as written, and `config check` names what it needs installed.
+- In the Linux package before `alphaavatar setup` has run, it names `alphaavatar setup <name>`
+  as the next step: the bundle stays as written, edits included, and `config check` names
+  what it needs installed until setup has installed it.
 - Never overwrites an existing bundle or profile file; existing directories are reused.
   Checks each target as loading would: a bundle must stay in `configs/bundles`, a profile in
   `configs/profiles`, and the settings in `settings`, inside the real home.

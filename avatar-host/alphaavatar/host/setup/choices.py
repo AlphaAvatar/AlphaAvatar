@@ -13,22 +13,28 @@
 # limitations under the License.
 """What `alphaavatar setup` offers, independent of how a platform delivers it.
 
-A selection becomes the sections of a bundle, the requirements its capabilities need, and the
-credentials its backends read. Any device, the Linux CLI or an App, chooses with these; only
-installing the requirements is the platform's own. The requirements are what
-``resolve_capabilities`` finds for the configuration once installed: the tests hold the two
-to the same answer for every selection.
+A selection, made from the reference configuration `config init` writes, becomes the sections
+of a bundle, the requirements its capabilities need, and the credentials its backends read; an
+existing bundle's own settings give its requirements too. Any device, the Linux CLI or an App,
+chooses with these; only installing the requirements is the platform's own. The requirements
+are what ``resolve_capabilities`` finds for the configuration once installed: the tests hold the
+two to the same answer.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlsplit
 
 from alphaavatar.agents.runtime.plugin import plugin_requirement
 from alphaavatar.agents.utils.env_utils import server_key
 from alphaavatar.agents.utils.vdb.config import vdb_requirement
+
+if TYPE_CHECKING:
+    from alphaavatar.agents.configs import AvatarConfig
+    from alphaavatar.host.application.config import HostConfig
 
 VectorStore = Literal["lancedb", "qdrant"]
 OPENAI_KEY = "OPENAI_API_KEY"
@@ -96,11 +102,6 @@ class Selection:
     speech: Speech | None = None  # None: OpenAI's; with voice only.
 
 
-# The reference bundle, as `config init` writes it; and every inference remote except the
-# voice activity detection speech input needs.
-PRESETS = {"default": Selection(), "remote": Selection(local_models=False)}
-
-
 @dataclass(frozen=True, slots=True)
 class Credential:
     name: str
@@ -138,6 +139,102 @@ def requirements(selection: Selection) -> tuple[str, ...]:
     return tuple(sorted(needed))
 
 
+def bundle_requirements(
+    host: HostConfig, avatar: AvatarConfig, plugins: Mapping[str, Mapping[str, str]]
+) -> tuple[dict[str, str], tuple[str, ...]]:
+    """What an existing bundle's settings need, as ``requirements`` gives a selection's, each
+    with the first setting that needs it; and the selections nothing here installs.
+
+    Each selected implementation needs what ``plugins`` (the catalog's, by capability type and
+    name) says installs it; so do the provider backends its tasks name and its vector stores'
+    embeddings. Its vector stores need their backends, and the built-in router and persona
+    their runners' extras, by the switches that start those runners; a switch the settings
+    leave out counts as on, at worst one package more. Nothing is imported from the plugins:
+    a bare base plans with this before any of them is installed.
+    """
+    from alphaavatar.agents.runtime.plugin import AvatarModule
+    from alphaavatar.agents.utils.vdb.config import vdb_backend, vdb_embeddings
+    from alphaavatar.host.configs.capabilities import with_extra
+    from alphaavatar.host.version import DISTRIBUTION
+
+    needs: dict[str, str] = {}
+    unserved: list[str] = []
+
+    def install(location: str, module: AvatarModule, name: str) -> None:
+        if (found := plugins.get(module.value, {}).get(name)) is None:
+            unserved.append(f"{location}: {module.value} {name!r}")
+        else:
+            needs.setdefault(found, location)
+
+    needs[with_extra(DISTRIBUTION, host.rtc.backend)] = "host.rtc.backend"
+    selected = avatar.plugin_factories()
+    for location, (module, name) in selected.items():
+        install(location, module, name)
+        settings = getattr(avatar.section(location), "init_config", None)
+        for kind, backend, at in _tasks(settings, f"{location.rpartition('.')[0]}.init_config"):
+            llm = kind == "llm"
+            install(
+                at, AvatarModule.PROVIDER_LLM if llm else AvatarModule.PROVIDER_EMBEDDING, backend
+            )
+    stores = {
+        "memory.plugin": avatar.memory.vdb_config,
+        "persona.plugin": avatar.persona.vdb_config,
+    }
+    for location, vdb in (*stores.items(), ("tools.mcp.plugin", None)):
+        if selected.get(location, (None, None))[1] != "default":
+            continue
+        # The MCP catalog's runner keeps its own LanceDB; the others use what they configure.
+        needs.setdefault(
+            vdb_requirement(vdb_backend(vdb) if vdb is not None else "lancedb"), location
+        )
+        for module, backend in vdb_embeddings():
+            install(f"{location} (embeddings)", AvatarModule(module), backend)
+    if selected.get("router.plugin", (None, None))[1] == "default":
+        router = avatar.router.init_config
+        if _on(router, "addressing", "semantic") and avatar.voice.stt.plugin is not None:
+            needs.setdefault(
+                plugin_requirement("router", "semantic"), "router.init_config.addressing.semantic"
+            )
+        if _on(router, "turn_taking"):
+            needs.setdefault(
+                plugin_requirement("router", "turn-taking"), "router.init_config.turn_taking"
+            )
+    if selected.get("persona.plugin", (None, None))[1] == "default":
+        persona = avatar.persona.init_config
+        for part in ("speaker", "face"):
+            if _on(persona, part):
+                needs.setdefault(plugin_requirement("persona", part), f"persona.init_config.{part}")
+    return needs, tuple(unserved)
+
+
+def _on(settings: Any, *path: str) -> bool:
+    for key in path:
+        settings = settings.get(key, {}) if isinstance(settings, dict) else {}
+    return not isinstance(settings, dict) or settings.get("enabled", True) is not False
+
+
+def _tasks(value: Any, location: str) -> Iterator[tuple[str, str, str]]:
+    """Each provider task in a plugin's settings, as start finds them: its kind, its backend
+    and where it is; a part switched off has none."""
+    from alphaavatar.agents.configs.plugins.foundation.provider_config import DEFAULT_BACKEND
+
+    if isinstance(value, dict):
+        if value.get("enabled") is False:
+            return
+        if isinstance(value.get("model"), str) and ("provider" in value or "backend" in value):
+            yield (
+                str(value.get("kind", "llm")),
+                str(value.get("backend", DEFAULT_BACKEND)),
+                location,
+            )
+            return
+        for key, item in value.items():
+            yield from _tasks(item, f"{location}.{key}")
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            yield from _tasks(item, f"{location}.{index}")
+
+
 def requirements_offered() -> frozenset[str]:
     """Every requirement some selection installs."""
     stores: tuple[VectorStore, ...] = ("lancedb", "qdrant")
@@ -166,7 +263,7 @@ def credentials(selection: Selection) -> tuple[Credential, ...]:
         (True, False): "the model, embeddings and memory/persona tasks",
         (False, True): "speech",
     }.get((selection.models is None, speech_key(selection) == OPENAI_KEY))
-    found = [Credential(OPENAI_KEY, f"OpenAI's {official}")] if official else []
+    found = [Credential(OPENAI_KEY, f"{official}, from OpenAI")] if official else []
     servers = [selection.models.url] if selection.models else []
     if selection.voice and selection.speech:
         servers.append(selection.speech.url)

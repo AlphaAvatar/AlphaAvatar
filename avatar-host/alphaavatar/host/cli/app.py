@@ -51,19 +51,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     setup = commands.add_parser(
         "setup",
-        help="Choose capabilities, install what they need, check them, then enable a bundle",
+        help="Install what a bundle needs, check it, then enable it: an existing bundle, or "
+        "one asked for part by part from the reference configuration",
     )
     setup.add_argument(
-        "--preset",
-        choices=("default", "remote"),
-        help="No questions: default is the reference bundle; remote runs no model on this "
-        "machine but voice activity detection. Credentials come from the environment",
+        "bundle",
+        nargs="?",
+        help="An existing bundle, as config init makes it or as edited: no questions, the "
+        "credentials from the environment. Omitted: asked in a terminal",
     )
-    setup.add_argument("--no-voice", action="store_true", help="With --preset: no speech")
-    setup.add_argument("--no-vision", action="store_true", help="With --preset: no camera")
-    setup.add_argument("--vector-store", choices=("lancedb", "qdrant"), help="With --preset")
-    setup.add_argument("--name", help="Bundle name (default: avatar)")
-    setup.add_argument("--avatar-id", help="Stable Avatar identifier (default: the name)")
+    setup.add_argument("--name", help="The new bundle's name, when asked (default: avatar)")
+    setup.add_argument("--avatar-id", help="The new bundle's Avatar ID (default: the name)")
     setup.add_argument(
         "--artifacts",
         metavar="DIR|URL",
@@ -74,11 +72,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     doctor = commands.add_parser(
         "doctor",
-        help="Diagnose the installation and a configuration: static checks, then a temporary "
-        "session on fixed samples (external services only with host.doctor.external_services)",
+        help="Diagnose the installation and a configuration: static checks, then the runtime "
+        "tests on fixed samples (external services only once agreed, or authorized)",
     )
     configured(doctor, json_output=True)
     doctor.add_argument("--list", action="store_true", help="List the checks without running")
+    doctor.add_argument(
+        "--no-metrics",
+        action="store_true",
+        help="Static checks alone: no runtime test, no runner, nothing contacted",
+    )
 
     args = parser.parse_args(argv)
     if "=" in (getattr(args, "config", None) or ""):
@@ -90,8 +93,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("Configuration overrides must use KEY=VALUE")
 
     if args.command == "setup":
-        if args.preset is None and (args.no_voice or args.no_vision or args.vector_store):
-            parser.error("--no-voice, --no-vision and --vector-store go with --preset")
+        if args.bundle is not None and (args.name or args.avatar_id):
+            parser.error("--name and --avatar-id name a new bundle; an existing one has both")
         from .commands.setup import setup as run_setup
 
         return run_setup(args)
@@ -104,7 +107,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("--list takes no configuration")
         from .commands.doctor import doctor
 
-        return doctor(args.config, args.overrides, as_json=args.json, listing=args.list)
+        return doctor(
+            args.config,
+            args.overrides,
+            as_json=args.json,
+            listing=args.list,
+            metrics=not args.no_metrics,
+        )
 
     from .commands import config as configuration
 

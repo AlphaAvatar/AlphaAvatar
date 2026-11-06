@@ -141,8 +141,32 @@ class Diagnosis:
             lambda: starts(self.loaded[0], [name for name, _ in _external(self.loaded[0])])
         )
 
-    def report(self) -> Report:
-        """The report without running anything: the session's checks say why not."""
+    @property
+    def unauthorized(self) -> tuple[str, ...]:
+        """What the runtime tests would reach beyond this machine without authorization:
+        empty when they reach nothing, are authorized, or cannot run for another reason."""
+        from .session import start_services, unisolated
+
+        if not self._planned:
+            return ()
+        config = self.loaded[0]
+        if config.host.doctor.external_services or unisolated(config):
+            return ()
+        found = [name for name, _ in _external(config)]
+        return tuple(dict.fromkeys([*found, *start_services(config)]))
+
+    def authorized(self) -> Diagnosis:
+        """The same configuration snapshot, its external services authorized: what a person
+        agreed to is what starts."""
+        from .session import derive
+
+        config, source = self.loaded
+        changes = {"host.doctor.external_services": True}
+        return replace(self, loaded=(derive(config, changes), source))
+
+    def report(self, skipped: str | None = None) -> Report:
+        """The report without running anything: the session's checks say why not, or
+        ``skipped`` does, as a person decided."""
         checks = dict(self.checks)
         if self._planned:
             try:
@@ -150,18 +174,25 @@ class Diagnosis:
             except Exception as error:
                 for check_id in (spec.id for spec in CHECKS if spec.in_session):
                     checks[check_id] = _incomplete(check_id, error)
+            if skipped is not None:
+                for check_id in ("session.start", "models.runners", "session.scenarios"):
+                    checks[check_id] = Check(check_id, CheckStatus.SKIP, f"Not run: {skipped}")
+                checks["session.cleanup"] = Check(
+                    "session.cleanup", CheckStatus.SKIP, "Nothing started, so nothing to reclaim"
+                )
         return self._finish(checks)
 
-    async def run(self, *, stop: asyncio.Event | None = None) -> Report:
+    async def run(self, *, stop: asyncio.Event | None = None, downloads: bool = False) -> Report:
         """The static checks with the diagnostic session's, from one configuration snapshot:
-        what was authorized is what the diagnostic process starts."""
+        what was authorized is what the diagnostic process starts. Its runners start from the
+        model cache alone, unless ``downloads``."""
         from . import process
 
         config, source = self.loaded
         checks = dict(self.checks)
         try:
             checks |= await process.diagnose(
-                config, source, _external(config), stop=stop or asyncio.Event()
+                config, source, _external(config), stop=stop or asyncio.Event(), downloads=downloads
             )
         except Exception as error:
             # Whatever ran is closed already; the report still names what could not complete.
@@ -189,6 +220,21 @@ class Diagnosis:
         for spec in CHECKS:
             checks.setdefault(spec.id, Check(spec.id, CheckStatus.SKIP, f"{reason}; see {see}"))
         return _report(checks, self.loaded)
+
+
+def missing_models(report: Report) -> tuple[str, ...]:
+    """The runners that did not start because their model files are not in the cache: what
+    a run allowed to download would fetch first."""
+    for check in report.checks:
+        if check.id == "models.runners":
+            return tuple(
+                runner.method
+                for runner in check.runners
+                # A runner process reports why it failed in its details: the start wraps it.
+                if runner.status == CheckStatus.FAIL
+                and any("FileNotFoundError" in line for line in runner.details)
+            )
+    return ()
 
 
 def _safe_starts(decide: Callable[[], bool]) -> bool:

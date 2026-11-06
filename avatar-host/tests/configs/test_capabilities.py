@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import json
+import os
 from importlib import metadata
 from pathlib import Path
 from unittest import mock
@@ -33,7 +34,9 @@ FACE = (
 
 
 def check(capsys: pytest.CaptureFixture, *overrides: str) -> tuple[int, str]:
-    code = main(["config", "check", *overrides])
+    # Wide: each diagnostic on one line; where a narrow one splits is the renderer's test.
+    with mock.patch.dict(os.environ, {"COLUMNS": "1000"}):
+        code = main(["config", "check", *overrides])
     output = capsys.readouterr()
     return code, output.out + output.err
 

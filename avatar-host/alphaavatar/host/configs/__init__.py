@@ -27,6 +27,7 @@ from .capabilities import Capabilities, Need, check_capabilities, resolve_capabi
 from .loader import (
     check_application_paths,
     load_application,
+    load_selections,
     restore_application,
     validate_application,
     validate_plugin_settings,
@@ -52,6 +53,7 @@ __all__ = [
     "describe_summary",
     "format_failure",
     "load_application",
+    "load_selections",
     "output_scrubber",
     "read_settings",
     "render_bundle",

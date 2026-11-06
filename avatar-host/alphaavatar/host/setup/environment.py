@@ -450,9 +450,9 @@ def install(
     return environment
 
 
-def check_environment(environment: Path, config: Path, env: dict[str, str]) -> int:
-    """The environment's native code loads, and its command accepts the configuration; the
-    inference runners it plans, as config check counts them."""
+def check_environment(environment: Path, config: Path | str, env: dict[str, str]) -> int:
+    """The environment's native code loads, and its command accepts the configuration, a file
+    or a bundle's name; the inference runners it plans, as config check counts them."""
     probe = [environment / "bin" / "python", "-I", "-m", "alphaavatar.host.setup.probe"]
     check = [environment / "bin" / "alphaavatar", "config", "check", str(config), "--json"]
     for name, command in ((" ".join(probe[-2:]), probe), (f"check {config}", check)):

@@ -259,9 +259,9 @@ def test_init_reports_the_bundle_its_credentials_by_name_and_what_to_run_next(
         assert main(argv) == 0
     output = capsys.readouterr()
     profiles = Path.home() / ".local/share/alphaavatar/configs/profiles/my-avatar"
-    # What the installation can run next: setup first in a bare package; else check, then
-    # diagnose, before anything starts. Each command on a line of its own, to copy.
-    upcoming = ["alphaavatar setup", "alphaavatar config check my-avatar"]
+    # What the installation can run next: in a bare package, setting this bundle up; else
+    # checking, then diagnosing it, before anything starts. Each command on its own line.
+    upcoming = ["alphaavatar setup my-avatar"]
     if not bare:
         upcoming = ["alphaavatar config check my-avatar", "alphaavatar doctor my-avatar"]
     assert output.out.splitlines() == [
