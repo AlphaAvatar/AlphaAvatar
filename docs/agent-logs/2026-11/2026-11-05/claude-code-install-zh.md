@@ -13,7 +13,8 @@
 | 第 1 项第二轮 | 轻量基础包 → `alphaavatar setup` 选择 → 按能力补齐依赖 → 校验后启用；插件 extras 与 runner 依赖声明；开发分支 CI 制品与干净容器验收；发布草稿化 | 2026-11-05 | `124e012` | 用户已提交（`7c67240`） | 部分被第三轮修正：插件发现、激活事务、凭据保存、CI 三处失败 |
 | 第 1 项第三轮 | 统一插件发现（能力类型 + 实现名，entry point）；安装与激活事务修复；向导凭据与自托管端点；glibc 扫描、Doctor 导入和 CI 重跑修复；短句 TTS 失败复现 | 2026-11-06 | `7c67240` | 用户已提交（`eb2404a`） | 部分被第四轮修正：自托管凭据、基础包本地安装、归属与凭据提交点、Provider runner 规划 |
 | 第 1 项第四轮 | 自托管端点按服务器分开凭据并按后端规则校验地址；`install.sh --file` 先复制再校验；归属检查与凭据随设置一起提交；单一完整解析；修短句 TTS 测试 | 2026-11-06 | `eb2404a` | 用户已提交（`eee0c28`） | 部分被第五轮修正：自托管凭据绑定端点、设置一次读取、安装锁、Provider 级联与摘要 |
-| 第 1 项第五轮 | 自托管凭据绑定到端点；默认 bundle 与凭据取自同一次设置读取；安装锁不经链接、不截断；runner 的多个 Provider 与级联 Provider；自定义 Memory 的摘要；URL 端口与空用户名 | 2026-11-06 | `eee0c28` | 未提交（用户提交） | 待审查 |
+| 第 1 项第五轮 | 自托管凭据绑定到端点；默认 bundle 与凭据取自同一次设置读取；安装锁不经链接、不截断；runner 的多个 Provider 与级联 Provider；自定义 Memory 的摘要；URL 端口与空用户名 | 2026-11-06 | `eee0c28` | 用户已提交（`c851cef`） | 部分被第六轮修正：端点绑定改按最终 URL 核对、特殊文件与锁文件保留、CI 超时 |
+| 第 1 项第六轮 | 密钥变量在加载时与最终生效的 URL 核对；安装锁、设置与凭据文件拒绝管道等非普通文件且不等待；锁文件永不删除；凭据文件缺失与并发更新分开报告；Quality 测试步骤上限 10 分钟；README 按设备分节的安装与使用 | 2026-11-06 | `c851cef` | 未提交（用户提交） | 待审查 |
 
 ## 历史记录（合并来源）
 
@@ -1303,3 +1304,138 @@ glibc 下限（新脚本实测）：基础包 2.17；远端环境 2.28；默认�
 4. **仍按计划后移**：强杀后的完整恢复（第 5 项）；自托管 embedding 的实际请求和首次编码表下载（第 3 项）；无人值守的自托管参数与凭据来源（第 2 项）；Doctor 里按 `default` 名字判断的内置行为（第 3 项）。`config check` 摘要里的 `vdb` 也仍按 `plugin == "default"` 判断，同属这一类。
 
 证据（会话临时目录，不入库）：`/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/evidence5/`（测试、变异、构建）和 `/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/accept5/`（沙箱脚本与记录 `r5.log`）。
+
+## 第 1 项第六轮（基线 `c851cef`）
+
+依据：Codex 对 `c851cef` 的审查。同一提交的 Linux 制品在 Ubuntu 24.04 干净容器完成了基础安装、默认 `setup` 和 `config check`，基础包与默认环境的 ELF 扫描下限分别是 glibc 2.17 和 2.28（run 42190806340）。Quality 记录 418 项通过，但测试用了 301.33 秒，超过步骤的 5 分钟上限，工作流失败，后面的 CLI 检查没有运行（run 42190806551）。上轮的设置快照、同一 runner 的多个 Provider、下游 Provider 的解析和自定义 Memory 的摘要都已独立复核通过。
+
+还需修复：
+- **P1**：端点绑定只在生成配置时生效。为服务器 A 生成 profile 后只把 `base_url` 改成 B，配置校验通过，Responses 客户端把 A 的密钥和 B 的地址一起交给了 SDK。
+- **P2**：命名管道替代 `.install.lock` 或设置所引用的凭据文件时，两条 Python 路径都卡在打开文件；首次安装失败时删除锁文件，两个后续进程可以分别锁住旧、新文件，同时进入安装。
+- **CI**：测试步骤上限调到 10 分钟。
+
+审查对上轮待定项的结论：
+- 接受 `ALPHAAVATAR_SERVER_KEY_<12 位哈希>`；无人值守时怎么查询和提供变量名放第 2 项；真正的端点隔离以最终 URL 的校验为准；
+- 接受 `/v1` 和 `/openai/v1` 分开绑定；显式默认端口和末尾单个 `/` 可以归一成同一地址；
+- 接受最多 16 次读取；设置一直指向同一个缺失文件时，要报凭据文件缺失，和真正的并发更新区分开。
+
+收尾范围锁定在这两处代码问题和 CI 超时；另按用户要求更新了 README 的安装方式。所有改动在未暂存的工作区。
+
+### 1. 密钥变量与最终生效的 URL 核对（P1）
+
+- `server_key()` 从 `choices.py` 移到 `alphaavatar/agents/utils/env_utils.py`，向导和各后端共用同一个算法；新增 `check_server_key(api_key_env, base_url)`。
+- 规则：`api_key_env` 以 `ALPHAAVATAR_SERVER_KEY_` 开头时，`base_url` 必须正是这个变量名所对应的端点，否则校验失败。没写 `base_url` 也算不符，因为那时后端会用自己的默认地址。其他名字的变量是用户自己的，不受限制。
+- 核对放在配置模型的校验里，那时覆盖参数已经应用，客户端还没建立：
+  - `ProviderTaskConfig`：对话模型、记忆和画像任务、运行时构建的 embedding，各后端都从 `extra` 取地址和变量名；
+  - `STTConfig`、`TTSConfig`；
+  - `snapshot_vdb_config()`：记忆和画像的 `vdb_config.embedding.extra`，加载时就核对，不必等到 runner 初始化。
+- `config check` 按惯例只报出错的字段，不带原因：对话模型和记忆任务报到 `loop.init_config.model`、`memory.init_config.…tasks.memory.conversation_delta`；画像在规划 runner 时校验自己的设置，报在原因链里的 `profiler.provider.gateway.tasks.persona.profile_delta`，和画像的其他设置错误一样；embedding 报到 `memory`、`persona`，语音报到 `voice.stt`、`voice.tts`。报错信息不重复 URL，因为 URL 里可能嵌有凭据。
+- 末尾的多个 `/` 仍按一个处理，与 Responses 客户端自身对 `base_url` 的归一一致。若只去掉一个，向导接受的 `…/v1//` 会被生成的配置自己拒绝。
+
+### 2. 特殊文件与锁文件（P2）
+
+- **Python 安装锁**：打开时加 `O_NONBLOCK`。没有读者的管道直接返回 ENXIO，有读者的管道由 `fstat` 拒绝；目录（EISDIR）也报「is not a lock file」，不再抛原始的 OSError。
+- **Shell 安装锁**：打开前的检查已经拒绝链接和非普通文件。打开方式从 `>>` 改为读写 `<>`，在 Linux 上打开管道不会等待，打开后再用 `[[ -f /dev/fd/9 ]]` 核对打开的是什么。这样检查之后才被换上的管道也不会卡住。读写打开同样不截断。
+- **锁文件不再删除**：首次安装失败时，清理不再删除 `.install.lock`，前缀里只留下这一个文件。已经打开旧锁文件的进程，和之后启动的进程，锁的始终是同一个文件。setup 本来就不删除它。
+- **设置与凭据文件**：新增 `bundles.read_regular()`，以 `O_RDONLY|O_NONBLOCK` 打开，`fstat` 不是普通文件就拒绝。`settings.yaml` 和凭据文件都经它读取：管道替代 `settings.yaml` 时报「Settings cannot be read: … (not a regular file)」，替代凭据文件时报「Stored credentials cannot be read」，都不等待。
+- **凭据文件缺失**：凭据文件打不开时重读设置；如果设置仍然指向同一个文件，就报「Stored credentials are missing: …」，不再重读到 16 次后报「kept changing」。文件名是随机的，回收后不会再被使用，所以连续两次指向同一个缺失文件，说明它确实缺失，而不是正在并发更新。
+
+### 3. CI 与文档
+
+- `quality.yml` 的「Run deterministic offline tests」上限从 5 分钟改为 10 分钟，job 上限仍是 45 分钟。
+- README 按用户要求调整：
+  - 「Installation」改名为「Installation and Usage」，按设备分小节：Server、Laptop、Mobile；后两者还没有对应的安装方式，只留标题；
+  - Server 只留简短命令：安装包五行（`install.sh`、`setup`、`doctor`、`start`）；源码六行（克隆 v0.6.9 并同步，复制 `.env.template`，`config init`，`doctor`，`dev`）；再用一句话指向 DEPLOY.md、`docs/cli`、examples 和 CONTRIBUTING.md；
+  - 与之重复的「Quick Start」一节删除，启动方式并入上面的命令；
+  - 删除已过期的「Developer Playground」小节，Usage 开头不再提到它。截图 `.github/assets/playground-airi-screenshot.png` 已无引用，文件保留未删。
+- `docs/cli` 按用户要求更新：
+  - 新增 `setup.md`：选项、提问、凭据（端点命名的密钥变量与最终 URL 核对、保存规则）、安装与启用的步骤、锁、示例输出和退出码；
+  - 新增 `README.md` 作为命令索引，README 里「docs/cli」的链接落在这一页；
+  - `config.md` 的文件表加入 `credentials` 和凭据文件，新增「Credentials」一节：环境、`.env`、已存凭据的先后，默认 bundle 与凭据同一次读取，读不了时的行为，密钥变量核对；`config init` 在安装包里的下一步；`config check` 的加载步骤和退出码；
+  - `start.md`、`doctor.md` 补上凭据的读取。
+- DEPLOY.md 补一句：加载时按覆盖后的 URL 核对密钥变量。
+- `install.sh` 头部的布局说明加上保留的锁文件。
+
+### 4. 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `avatar-agents/.../utils/env_utils.py` | `server_key()`（从 Host 移来）、`check_server_key()` |
+| `avatar-agents/.../configs/plugins/foundation/provider_config.py`、`voice_config.py`，`.../utils/vdb/config.py` | 加载时核对密钥变量与 URL |
+| `avatar-host/.../setup/choices.py` | 改用共享的 `server_key()` |
+| `avatar-host/.../configs/bundles.py`、`credentials.py` | `read_regular()`；设置与凭据文件拒绝非普通文件；同一个缺失文件报缺失 |
+| `avatar-host/.../setup/environment.py` | 安装锁以 `O_NONBLOCK` 打开，管道、目录都拒绝 |
+| `packaging/linux/install.sh` | 锁以读写打开并核对；首次安装失败时保留锁文件 |
+| `.github/workflows/quality.yml` | 测试步骤上限 10 分钟 |
+| `README.md`、`DEPLOY.md` | 按设备分小节的安装与使用、删除 Developer Playground；最终 URL 核对 |
+| `docs/cli/setup.md`、`docs/cli/README.md`（新增），`config.md`、`start.md`、`doctor.md` | setup 的说明与命令索引；凭据的读取顺序与核对 |
+| 测试 | `test_choices`：七个位置的 `base_url` 被移走（换端口、换路径、去掉）都被拒绝，同一端点的另一种写法和自有变量名都放行；`test_credentials`：管道替代设置或凭据文件不等待，缺失文件报缺失；`test_environment`：管道和目录占住锁；`test_install_script`：管道占住锁，首次安装失败后保留锁文件 |
+
+### 5. 验证
+
+**本地实测**
+
+- 静态检查：Ruff（`--no-cache`）、格式、`check_workspace.py`（16 个成员）、`uv lock --check`（332 个包）、`git diff --check`、`bash -n`、pre-commit（17 个改动文件）全部通过。
+- 全量测试 431 项通过；拦截已移除的包后再跑一遍，也是 431 项通过。两次都在定稿的工作区上运行。
+- 变异 24 个（`evidence6/mutants6.log`）：23 个被抓到；F6 按设计应当通过，也确实通过了。
+
+  | 编号 | 变异 |
+  |---|---|
+  | K1–K4 | Provider 任务、STT、TTS、加载时的 embedding 分别不核对 |
+  | K5、K6 | 任何 URL 都算匹配；不写 `base_url`（用后端默认地址）也算匹配 |
+  | K7、K8 | 变量名只按主机和端口生成；末尾 `/` 算另一个端点 |
+  | K9 | 用户自己命名的变量也被核对 |
+  | F1–F3 | setup 的锁打开时会等待管道；没有读者的管道、目录原样抛出 |
+  | F4、F5 | Shell 不核对打开的文件；Shell 只写打开、等待读者（测试在 120 秒超时后失败） |
+  | F6 | 只去掉 Shell 打开前对管道的检查：打开后的核对单独就能拒绝，测试照常通过 |
+  | F7 | 首次安装失败时删除锁文件 |
+  | F8、F9 | Shell 打开时截断；Shell 经链接打开 |
+  | C1–C4 | 设置文件打开时会等待；不检查文件类型；`settings.yaml`、凭据文件分别按旧方式读取 |
+  | C5、C6 | 缺失的凭据文件当作设置在变；被回收的文件一次就报缺失 |
+
+- **本机构建**（`--max-glibc 2.32`，63 s）：基础包 65,847,169 字节，SHA-256 `93130ad4584b349ea9c34bb53ba70c3e6d64fbb3fbf8f6ca595e4bfe21984ac7`，glibc 2.17；12 个 wheel；制品里的 `install.sh` 与仓库一致。
+
+**干净沙箱（Ubuntu 24.04 rootfs，bubblewrap，本轮构建）**
+
+| 场景 | 结果 |
+|---|---|
+| `install.sh`：管道占住 `.install.lock` | 立即退出，退出码 1，报「is not a lock file this script or setup made」；管道原样保留 |
+| 首次安装，SHA-256 不符 | 退出码 1；前缀里只剩 `.install.lock`，没有命令入口 |
+| Codex 的复现：首次安装在校验 SHA-256 时（用 3 秒的 `sha256sum` 包装拖住），另一个进程打开锁文件；首次安装失败退出后，这个进程锁住它打开的文件，再启动一次安装 | 那个进程锁住了它打开的文件；下一次安装报「Another installation into … is running」，退出码 1 |
+| setup：管道占住 `.install.lock` | 0 秒内退出，退出码 1，报「Setup failed; nothing was enabled: … is not a lock file setup or install.sh made; left as it is」；没有新建 bundle，默认 bundle 不变 |
+| bundle a，服务器 A（127.0.0.1:18821），保存密钥 | 提问并保存 `ALPHAAVATAR_SERVER_KEY_C5CD10BDFB01` |
+| 把 bundle a 的 loop profile 改到服务器 B，保留变量名 | `config check a` 退出码 2，报 `fields: loop.init_config.model`；用安装好的环境发请求，加载时就失败，服务器 B 没有收到任何请求 |
+| 不改文件，用覆盖参数把 loop 或记忆 embedding 的 `base_url` 改到 B | 分别报 `loop.init_config.model` 和 `memory`，退出码 2 |
+| 覆盖参数改到 B，同时把变量名换成 `MY_SERVER_KEY` | 退出码 0 |
+| 不改动时，从 bundle a 发 loop 和记忆任务的请求 | 服务器 A 的 `/v1/responses` 和 `/v1/chat/completions` 各收到 1 次，都是 `key-a`；服务器 B 什么也没收到（应答是测试服务器的占位，客户端报的错与第五轮相同） |
+| 管道占住设置所指的凭据文件 | 默认 bundle：退出码 2，报「Stored credentials cannot be read」，不等待；显式指定 `a`：退出码 0 |
+| 凭据文件缺失 | 报「Stored credentials are missing: …」，退出码 2 |
+| 管道占住 `settings.yaml` | 报「Settings cannot be read: … (not a regular file)」，退出码 2；恢复后退出码 0 |
+
+远端环境 642 MB。沙箱根目录已删除。
+
+**推送后待 CI 验证**
+
+- Quality：测试步骤在 10 分钟上限内完成，后面的 CLI 检查也运行；
+- 同一提交的 Linux 制品在干净容器里的默认 `setup`；
+- 远端预设在 CI 里仍只检查安装计划；草稿发布要等第一次打正式 tag 才会实跑；
+- README 里 v0.6.9 的下载链接要等这个版本发布后才能用。
+
+### 6. 过程中的问题与更正
+
+- **注解**：`provider_config.py` 没有 `from __future__ import annotations`，校验器的返回注解先写成了类名，导入时报 NameError，改为字符串注解，与 `voice_config.py` 一致。
+- **测试构造**：
+  - setup 生成的 profile 里，同一服务器设置在多处是 YAML 别名，测试一开始原地修改，连带改了 embedding，报错位置变成 `memory`。改为只在被测位置换成新的映射。
+  - 画像在规划 runner 时就校验自己的设置，错误是 RuntimeError，原因链里才是 ValidationError，位置相对于它的 `init_config`。这是画像设置错误的现有行为，测试按原因链取位置。
+  - 锁的测试布局里本来就有 `current`，断言改为比较前后的指向。
+- **Shell 锁的窗口**：自查时发现先检查、后 `>>` 打开之间仍可能被换成管道而卡住，改为读写打开并在打开后核对。
+- **重跑**：第一次全量测试运行期间改过 `install.sh`，最终结果来自定稿工作区上的重跑。
+
+### 7. 待复核
+
+1. **Shell 的检查与打开之间**：如果检查之后路径被换成指向前缀外普通文件的链接，`<>` 会跟随链接打开（目标不存在时会创建它）并加锁，但不写也不截断。Bash 没有 `O_NOFOLLOW`，要彻底关闭这个窗口，只能改用基础包自带的 Python 加锁，而首次安装时基础包还没有解出来。
+2. **embedding 的报错位置**：记忆和画像的 `vdb_config` 在模型的 `model_post_init` 里处理，校验错误只能定位到 `memory`、`persona`，原因里写明了 `vdb_config.embedding.extra`。改成字段校验器就要让默认值也参与校验，影响面超出本轮范围。
+3. **生成的 profile 带 YAML 别名**：setup 在同一个 profile 里多处写入同一个服务器设置时，`yaml.safe_dump` 会生成 `&id001`／`*id001`，改其中一处的 `base_url` 会同时改到别名处。行为是一致的（同一文件里的这些位置一起改），只是读起来不直观；是否展开别名，留给第 2 项一起看生成文件的可读性。
+4. **仍按计划后移**：同上轮第 9 节第 4 条。
+
+证据（会话临时目录，不入库）：`/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/evidence6/`（测试、变异、构建）和 `/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/accept6/`（沙箱脚本与记录 `r6.log`）；本轮制品在 `/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/out6/`。

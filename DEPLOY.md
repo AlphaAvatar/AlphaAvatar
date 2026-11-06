@@ -79,7 +79,9 @@ and speech can also come from servers of your own with OpenAI's API (Responses f
 conversation model); each server reads its own key from a variable named after its URL,
 `ALPHAAVATAR_SERVER_KEY_<hash>`, which setup shows when it asks: a key serves only the server it
 was given for, only the same server shares one, and a server of your own never receives
-`OPENAI_API_KEY`. Speech sends its key over HTTPS unless the server is on this machine. With a preset, setup reads credentials from the environment and stores none; asked
+`OPENAI_API_KEY`. Loading checks it against the URL in effect, overrides applied: a bundle
+whose `base_url` was moved to another server, or removed, is refused before any client is
+made; a variable you name yourself may point anywhere. Speech sends its key over HTTPS unless the server is on this machine. With a preset, setup reads credentials from the environment and stores none; asked
 for, they are stored in a file of the application home's settings, readable only by you, only
 if you say so, and a value stored there already, which other bundles may read, is replaced
 only on a second yes. The settings replacement that makes the new bundle the default names

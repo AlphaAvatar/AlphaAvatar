@@ -22,12 +22,12 @@ to the same answer for every selection.
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from alphaavatar.agents.runtime.plugin import plugin_requirement
+from alphaavatar.agents.utils.env_utils import server_key
 from alphaavatar.agents.utils.vdb.config import vdb_requirement
 
 VectorStore = Literal["lancedb", "qdrant"]
@@ -55,15 +55,6 @@ def server_problem(url: str, *, speech: bool) -> str | None:
     if speech and parts.scheme == "http" and parts.hostname not in LOCAL_HOSTS:
         return "https:// for a speech server on another machine; http:// only on this one"
     return None
-
-
-def server_key(url: str) -> str:
-    """The variable a server of one's own reads its key from, named after that endpoint: a key
-    serves only the server it was given for, and only the same endpoint shares one."""
-    parts = urlsplit(url)
-    port = parts.port or {"http": 80, "https": 443}[parts.scheme]
-    endpoint = f"{parts.scheme}://[{parts.hostname}]:{port}{parts.path.rstrip('/')}"
-    return "ALPHAAVATAR_SERVER_KEY_" + hashlib.sha256(endpoint.encode()).hexdigest()[:12].upper()
 
 
 @dataclass(frozen=True, slots=True)

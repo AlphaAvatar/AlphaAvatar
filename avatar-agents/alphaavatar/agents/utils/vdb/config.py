@@ -17,13 +17,23 @@ import os
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
+from alphaavatar.agents.utils.env_utils import check_server_key
+
 if TYPE_CHECKING:
     from alphaavatar.agents.runtime.plugin import AvatarModule
 
 
 def snapshot_vdb_config(value: dict[str, Any]) -> dict[str, Any]:
-    """Capture environment defaults without opening clients or changing process state."""
+    """Capture environment defaults without opening clients or changing process state; the
+    embeddings' key variable checked against their URL, as their provider task checks it."""
     config = deepcopy(value)
+    embedding = config.get("embedding")
+    extra = embedding.get("extra") if isinstance(embedding, dict) else None
+    if isinstance(extra, dict):
+        try:
+            check_server_key(extra.get("api_key_env"), extra.get("base_url"))
+        except ValueError as error:
+            raise ValueError(f"vdb_config.embedding.extra: {error}") from None
     if not config.get("client_path"):
         # Explicit nulls preserve an absent default when a launch payload is restored later.
         if not config.get("host"):

@@ -20,8 +20,10 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
+import threading
 import zipfile
 from pathlib import Path
 
@@ -400,3 +402,30 @@ def test_the_lock_is_never_opened_through_a_link_nor_truncated(
     lock.write_text("held\n")
     install(installation, plan, sources, check=lambda env: None, enable=lambda: None)
     assert lock.read_text() == "held\n"
+
+
+@pytest.mark.parametrize("kind", ["pipe", "directory"])
+def test_a_lock_that_is_no_regular_file_is_refused_without_waiting(setup_layout, kind) -> None:
+    installation, plan, sources, wheels = setup_layout
+    lock = installation.prefix / ".install.lock"
+    os.mkfifo(lock) if kind == "pipe" else lock.mkdir()
+    current = os.readlink(installation.prefix / "current")
+    refused: list[str] = []
+
+    def attempt() -> None:
+        try:
+            install(installation, plan, sources, check=lambda env: None, enable=lambda: None)
+        except SetupError as error:
+            refused.append(str(error))
+
+    thread = threading.Thread(target=attempt, daemon=True)
+    thread.start()
+    thread.join(10)
+    waited = thread.is_alive()
+    if waited:  # Opening for writing waits for a reader: this one lets it finish.
+        os.close(os.open(lock, os.O_RDONLY | os.O_NONBLOCK))
+        thread.join(10)
+    assert not waited, "waited on the pipe in place of the lock"
+    assert len(refused) == 1 and "is not a lock file" in refused[0]
+    assert (stat.S_ISFIFO if kind == "pipe" else stat.S_ISDIR)(lock.lstat().st_mode)
+    assert os.readlink(installation.prefix / "current") == current

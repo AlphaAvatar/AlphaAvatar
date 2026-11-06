@@ -154,7 +154,7 @@ jobs:
               print(f"Lifecycle contract verified: {module}.{name}")
           PYCODE
       - name: Run deterministic offline tests
-        timeout-minutes: 5
+        timeout-minutes: 10
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: |

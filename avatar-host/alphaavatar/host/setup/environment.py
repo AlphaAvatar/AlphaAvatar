@@ -261,15 +261,17 @@ def fetch(artifact: Artifact, sources: Sources, stage: Path) -> Path:
 
 @contextmanager
 def locked(prefix: Path) -> Iterator[None]:
-    """The lock install.sh takes too: a regular file of the prefix, opened through no link and
-    never truncated."""
+    """The lock install.sh takes too: a regular file of the prefix, opened through no link,
+    waiting on no pipe put in its place, never truncated, and never removed, so every run locks
+    the same file."""
     prefix.mkdir(parents=True, exist_ok=True)
     path = prefix / ".install.lock"
-    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
     try:
         descriptor = os.open(path, flags, 0o644)
     except OSError as error:
-        if error.errno != errno.ELOOP:
+        # A link, a pipe no one reads, a directory.
+        if error.errno not in (errno.ELOOP, errno.ENXIO, errno.EISDIR):
             raise
         descriptor = -1
     if descriptor < 0 or not stat.S_ISREG(os.fstat(descriptor).st_mode):

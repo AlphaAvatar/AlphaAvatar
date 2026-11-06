@@ -11,7 +11,8 @@ alphaavatar doctor --list                               # the checks, without ru
 ```
 
 The optional argument and the overrides follow [`config check`](config.md#choosing-a-configuration):
-the same `.env`, home, bundle or file selection, profiles, overrides, validation and read-only
+the same `.env` and stored [credentials](config.md#credentials), home, bundle or file selection,
+profiles, overrides, validation and read-only
 workspace checks. With no argument and no default bundle, Doctor says how to create one and
 still checks everything that needs no configuration. There are no other options: what the
 session runs follows from what the configuration enables, what is available here and what
@@ -351,7 +352,9 @@ schema rejects, such as a realtime loop without `model`, fail `config.load` as t
 fail `session.start`.
 
 Unreadable settings do not stop a named bundle or a file: `paths.home` warns and names the file
-to fix, since `config init` and runs without a configuration argument read it.
+to fix, since `config init` and runs without a configuration argument read it. Without an
+argument, the default bundle comes from the same read of the settings as the stored
+credentials, and settings or stored credentials that cannot be read fail `config.load`.
 
 An App or TUI can call `alphaavatar.host.doctor.diagnose(target, overrides)` (async), or
 `prepare(...)` for the static checks and `Diagnosis.run()` for the session; the CLI reads

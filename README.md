@@ -274,70 +274,42 @@ See [Plugin Layout and Boundaries](avatar-plugins/README.md) for development det
 
 <br/>
 
-<h2>Installation ⚙️</h2>
+<h2>Installation and Usage ⚙️</h2>
 
-AlphaAvatar v0.6.8 uses an AlphaAvatar-owned native Host and targets standard **CPython 3.13**. Install from the matching release tag and its lockfile; older released packages may have different APIs.
+<h3>🖥️ Server</h3>
+
+Linux x86_64 with glibc 2.28 or newer:
 
 ```bash
-git clone --branch v0.6.8 --recurse-submodules https://github.com/AlphaAvatar/AlphaAvatar.git
-cd AlphaAvatar
-
-uv python install 3.13
-uv sync --all-packages --locked
-source .venv/bin/activate
+curl -fsSLO https://github.com/AlphaAvatar/AlphaAvatar/releases/download/v0.6.9/install.sh
+bash install.sh --version 0.6.9
+alphaavatar setup    # choose what the Avatar runs with, or --preset default|remote
+alphaavatar doctor   # diagnose the installation and the bundle, with a test session
+alphaavatar start    # runs the bundle setup made
 ```
 
-The `alphaavatar` command is provided by **alpha-avatar-host**. No LiveKit Agents installation or separate model-download command is required. Enabled model runners resolve their files during initialization. Native model backends may require additional platform-specific build tools.
-
-When upgrading a previous Python 3.11 checkout, create a new environment and follow the [development environment migration guidance](CONTRIBUTING.md#python-313-development-environment).
-
-<h2>Quick Start ⚡️</h2>
-
-Start the native Host in dev mode against your configured LiveKit deployment. Application and execution-process hosting belong to the native AvatarHost; foreground generation belongs to AvatarEngine and Loop.
-
----
-
-🧩 Step 1. Configuration
+From source, for development:
 
 ```bash
-cd AlphaAvatar
-
-# Credentials: copy the template
-cp .env.template .env.dev
-
-# Configuration: create a minimal bundle (the default one), or use an example file
+git clone --branch v0.6.9 --recurse-submodules https://github.com/AlphaAvatar/AlphaAvatar.git
+cd AlphaAvatar && uv sync --all-packages --locked && source .venv/bin/activate
+cp .env.template .env.dev    # then fill in the credentials
 ENV_FILE=.env.dev alphaavatar config init my-avatar --avatar-id my-avatar
-
-# Optional: validate without starting (start and dev validate it too)
-ENV_FILE=.env.dev alphaavatar config check my-avatar
-
-# Optional: diagnose the installation and the configuration: static checks, then a
-# temporary session on fixed samples (paid services only with host.doctor.external_services)
-ENV_FILE=.env.dev alphaavatar doctor my-avatar
+ENV_FILE=.env.dev alphaavatar doctor
+ENV_FILE=.env.dev alphaavatar dev
 ```
 
-`config init` writes a bundle and its profiles, layered as host, agent and plugins (foundation, perception, tools), under the application home; see [docs/cli/config.md](docs/cli/config.md) for the layout and how a bundle name, a file or the default bundle is chosen. Edit .env.dev and provide credentials for the selected RTC, model, embedding and tool services; keep credentials out of the YAML files. Example model/voice identifiers are deployment choices, not guarantees of account access. `config check` starts nothing and creates no directories.
+See [DEPLOY.md](DEPLOY.md#or-install-the-linux-package-then-choose-capabilities) for presets, credentials, upgrades and running as a service, [docs/cli](docs/cli/) for every command, [examples](examples/README.md) for complete configurations, and [CONTRIBUTING.md](CONTRIBUTING.md) for development environments.
 
-Set `ALPHAAVATAR_HOME` to choose the application home, or set top-level YAML `application.cache_root` to choose a separate application cache; downloaded models live in its `models/` directory. Host rejects the former `ALPHAAVATAR_MODEL_CACHE` setting. Set `ALPHAAVATAR_MODEL_OFFLINE=1` to require locally cached, validated files. See [Model cache](docs/models-cache-layout.md) for downloads and offline use, and [Avatar workspace](docs/avatar-workspace-layout.md) for personal data, backups and cleanup.
+<h3>💻 Laptop</h3>
 
-✅ Step 2. Run the Agent
-
-Enabled inference runners resolve their model files during initialization. Missing files are downloaded automatically; no separate download command is required.
-
-```bash
-ENV_FILE=.env.dev alphaavatar dev my-avatar   # or omit the name to run the default bundle
-# or an example file
-ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/voice/pipeline_openai_tools_minimal.yaml
-ENV_FILE=.env.dev alphaavatar dev examples/agent_configs/mm/pipeline_openai_tools.yaml
-```
-
-See the [Host README](avatar-host/README.md) for startup/lifecycle boundaries and [Examples README](examples/README.md) for complete configurations and their service requirements.
+<h3>📱 Mobile</h3>
 
 ---
 
 <h2>Usage 🚀</h2>
 
-AlphaAvatar focuses on first-party realtime interaction. The browser demo and Developer Playground provide client surfaces; dedicated App and OS experiences remain planned.
+AlphaAvatar focuses on first-party realtime interaction. The browser demo provides a client surface; dedicated App and OS experiences remain planned.
 
 External messaging bridges are not included in the current development scope. This does not remove native text chat or tool-based integrations with external services.
 
@@ -378,33 +350,6 @@ A dedicated AlphaAvatar mobile application providing:
 - 🎙️ Real-time voice communication
 - 😊 Live2D / Virtual character visualization
 - 🧠 Persistent memory & persona
-
----
-
-<h3>🧪 Developer Playground</h3>
-
-<img src="https://img.shields.io/badge/Available-28a745?style=flat" />
-
-Developers can immediately access AlphaAvatar via the **LiveKit Playground**.
-
-👉 https://agents-playground.livekit.io/
-
-After starting your AlphaAvatar server:
-
-1. Connect to your LiveKit instance
-2. Configure the Agent name to match `avatar.name` in the selected YAML (the supplied examples use `AlphaAvatar`) for Explicit Dispatch.
-3. Connect to the agent room
-4. Start testing real-time interaction
-
-Supported capabilities:
-
-- 🎙️ Voice interaction
-- 🧠 Memory extraction
-- 🔍 RAG retrieval
-- 🧰 MCP tool invocation
-- 😊 Character presentation is opt-in and requires the separate frontend setup; it is not enabled by the supplied configurations
-
-![playground airi screenshot](.github/assets/playground-airi-screenshot.png)
 
 ---
 

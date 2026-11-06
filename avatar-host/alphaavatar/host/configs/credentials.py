@@ -25,6 +25,7 @@ or written elsewhere.
 from __future__ import annotations
 
 import contextlib
+import io
 import os
 import re
 import secrets
@@ -71,21 +72,27 @@ def read_stored(paths: ApplicationPaths) -> Settings:
 
     A stored file is written whole before the settings name it, never changed, and removed
     only once they name another: one gone since the settings were read means they changed,
-    so they are read again. A file opened reads whole even if it is removed meanwhile.
+    so they are read again; named again, it is missing. A file opened reads whole even if it
+    is removed meanwhile.
     """
     from dotenv import dotenv_values
 
-    from .bundles import ConfigReferenceError, Settings, read_settings
+    from .bundles import ConfigReferenceError, Settings, read_regular, read_settings
 
+    missing: Path | None = None
     for _ in range(16):
+        path: Path | None = None
         try:
             settings = read_settings(paths)
             path = _named(paths, settings)
             if path is None:
                 return Settings(settings)
-            with path.open(encoding="utf-8") as stream:
-                stored = dotenv_values(stream=stream, interpolate=False)
+            text = read_regular(path)
         except FileNotFoundError:
+            if path == missing:
+                gone = ConfigReferenceError(f"Stored credentials are missing: {path}")
+                return Settings(error=gone)
+            missing = path
             continue
         except ConfigReferenceError as error:
             return Settings(error=error)
@@ -93,6 +100,7 @@ def read_stored(paths: ApplicationPaths) -> Settings:
             return Settings(
                 error=ConfigReferenceError(f"Stored credentials cannot be read: {path}")
             )
+        stored = dotenv_values(stream=io.StringIO(text), interpolate=False)
         values = {name: value for name, value in stored.items() if value is not None}
         return Settings(settings, values)
     changing = ConfigReferenceError(f"Settings in {paths.settings_dir} kept changing while read")

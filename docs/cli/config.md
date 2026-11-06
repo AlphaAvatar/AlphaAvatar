@@ -11,7 +11,8 @@ reference and may share. Both live in the application home:
 | --- | --- |
 | `<home>/configs/bundles/<name>.yaml` | `avatar` (and any section set inline), plus `profiles` |
 | `<home>/configs/profiles/<name>.yaml` | One section's body, for example `voice`; `<name>` may have `/` parts |
-| `<home>/settings/settings.yaml` | `default_bundle` and other user settings |
+| `<home>/settings/settings.yaml` | `default_bundle`, the stored credentials' file (`credentials`) and other user settings |
+| `<home>/settings/credentials-<id>.env` | Credentials [`alphaavatar setup`](setup.md) stored, readable only by you |
 
 ```yaml
 # configs/bundles/my-avatar.yaml
@@ -64,6 +65,25 @@ profiles:
 - After loading, the Host and its sessions use the accepted snapshot; later edits to profiles
   take effect at the next start.
 
+## Credentials
+
+`start`, `dev`, `config check` and [`doctor`](doctor.md) take each variable from the first of:
+
+1. the environment;
+2. the `.env` file `ENV_FILE` names (default `.env`);
+3. the credentials [`alphaavatar setup`](setup.md) stored, in the file the settings name.
+
+- The default bundle comes from the same read of the settings as the stored credentials: a
+  setup committing meanwhile changes neither.
+- Settings or stored credentials that cannot be read (invalid YAML or UTF-8, a stored file
+  missing, anything but a regular file) give no stored credentials: a named bundle or a file
+  still loads, and a run without a configuration argument fails, naming the file to fix.
+- YAML reads a variable as `${oc.env:NAME}`; credentials never go in bundle or profile files.
+- A key variable setup names after a server of your own, `ALPHAAVATAR_SERVER_KEY_<hash>`, is
+  checked against the `base_url` in effect: a bundle whose `base_url` was moved to another
+  server, or removed, fails at the setting that holds them, such as `loop.init_config.model`.
+  See [setup's credentials](setup.md#credentials).
+
 ## `config init`
 
 Create a minimal bundle, its profiles and, if none is set, the default bundle.
@@ -94,6 +114,8 @@ configs/profiles/my-avatar/
   plugins/tools/tools.yaml                     deepresearch, rag, mcp
 ```
 - Writes no credentials and no machine paths.
+- In the Linux package before `alphaavatar setup` has run, it names setup as the next step:
+  the bundle stays as written, and `config check` names what it needs installed.
 - Never overwrites an existing bundle or profile file; existing directories are reused.
   Checks each target as loading would: a bundle must stay in `configs/bundles`, a profile in
   `configs/profiles`, and the settings in `settings`, inside the real home.
@@ -127,7 +149,8 @@ validation before they start.
 alphaavatar config check [<bundle> | <file>] [KEY=VALUE ...] [--json]
 ```
 
-It runs the same loading steps as `start` — `.env`, selection, profiles, overrides, defaults,
+It runs the same loading steps as `start` — `.env` and the stored [credentials](#credentials),
+selection, profiles, overrides, defaults,
 path resolution, schema validation, read-only workspace checks, and the built-in plugins' own
 settings schemas (realtime loop, context, router, memory, persona; for example a loop without
 `model` fails at `loop.init_config.model`) — but starts no Host,
@@ -198,4 +221,4 @@ ERROR  configuration and read-only path checks failed
 | Code | `init` | `check` |
 | --- | --- | --- |
 | 0 | Created | Valid |
-| 2 | File exists, invalid name or ID, unreadable settings or write failure | Invalid configuration, selection or reference, or failed path check |
+| 2 | File exists, invalid name or ID, unreadable settings or write failure | Invalid configuration, selection or reference, failed path check, or unreadable settings or stored credentials with no configuration argument |

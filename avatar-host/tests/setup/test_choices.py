@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import importlib.util
 import itertools
 import os
@@ -71,13 +72,21 @@ LOCAL = {
 }
 
 
-def compose(selection: Selection, home: Path):
+def bundle_of(selection: Selection) -> dict:
     texts = render_bundle("chosen", "chosen", sections=sections(selection))
     bundle = yaml.safe_load(texts["bundles/chosen.yaml"])
     for section, reference in bundle.pop("profiles").items():
         bundle[section] = yaml.safe_load(texts[f"profiles/{reference}.yaml"])
+    return bundle
+
+
+def validated(bundle: dict, home: Path):
     resolved = OmegaConf.to_container(OmegaConf.create(bundle), resolve=True)
     return validate_application(resolved, paths=ApplicationPaths.from_root(home))
+
+
+def compose(selection: Selection, home: Path):
+    return validated(bundle_of(selection), home)
 
 
 def label(selection: Selection) -> str:
@@ -302,6 +311,66 @@ def test_a_server_of_ones_own_has_one_key_variable_for_its_endpoint_alone() -> N
     )
     assert len({server_key(url) for url in others}) == len(others)
     assert server_key("https://gpu.invalid/v1") == server_key("https://gpu.invalid:443/v1")
+
+
+# Each place setup names a server's key variable beside the URL it is sent to, and the
+# location validation gives when they disagree. Persona checks its own settings as it plans
+# its runners, from its init_config.
+TASK = ("provider", "gateway", "tasks")
+KEYED = {
+    "loop": (("loop", "init_config", "model", "extra"), "loop.init_config.model"),
+    "memory task": (
+        ("memory", "init_config", "conversation", *TASK, "memory.conversation_delta", "extra"),
+        "memory.init_config.conversation.provider.gateway.tasks.memory.conversation_delta",
+    ),
+    "persona task": (
+        ("persona", "init_config", "profiler", *TASK, "persona.profile_delta", "extra"),
+        "profiler.provider.gateway.tasks.persona.profile_delta",
+    ),
+    "memory embeddings": (("memory", "vdb_config", "embedding", "extra"), "memory"),
+    "persona embeddings": (("persona", "vdb_config", "embedding", "extra"), "persona"),
+    "transcription": (("voice", "stt"), "voice.stt"),
+    "synthesis": (("voice", "tts"), "voice.tts"),
+}
+
+
+@pytest.mark.parametrize("where", KEYED)
+def test_a_key_variable_named_after_a_server_is_sent_to_that_server_alone(
+    where: str, tmp_path: Path
+) -> None:
+    """A bundle made for one server, its base_url alone moved: validation, before any client
+    exists, refuses the variable for the URL in effect. A variable of one's own may go anywhere."""
+    from pydantic import ValidationError
+
+    from alphaavatar.core.log.diagnostics import error_fields
+
+    models = Models("http://gpu.invalid:8000/v1", "chat", "tasks", "embed")
+    speech = Speech("https://speech.invalid:8001/v1", "transcribe", "speak", "voice")
+    bundle = bundle_of(Selection(models=models, speech=speech))
+    (*parents, place), location = KEYED[where]
+    url = speech.url if parents[0] == "voice" else models.url
+
+    def moved(base_url: str | None, **changes: str):
+        document = copy.deepcopy(bundle)
+        parent = document
+        for key in parents:
+            parent = parent[key]
+        # A mapping of its own: setup's YAML aliases the one it wrote to several places.
+        parent[place] = {**parent[place], "base_url": base_url, **changes}
+        return validated(document, tmp_path / "home")
+
+    moved(url + "/")  # The same endpoint, however spelled.
+    moved(url.replace(".invalid", ".INVALID"))
+    # Another port, another path, or none: the backend's own default URL.
+    for other in (url.replace(":800", ":900"), url.replace("/v1", "/v2"), None):
+        with pytest.raises((ValidationError, RuntimeError)) as refused:
+            moved(other)
+        error = refused.value
+        error = error if isinstance(error, ValidationError) else error.__cause__
+        assert "holds the key of the server it is named after" in str(error)
+        assert error_fields(error) == (location,)
+        if other is not None:
+            moved(other, api_key_env="MY_SERVER_KEY")
 
 
 @pytest.mark.parametrize(

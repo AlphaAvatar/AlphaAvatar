@@ -15,6 +15,7 @@
 #   <bin-dir>/alphaavatar -> <prefix>/current/bin/alphaavatar   created before the switch,
 #                                                    never over anything already there
 #   <prefix>/current -> versions/... or envs/... switched last
+#   <prefix>/.install.lock                       the lock every run and setup take, kept
 # Installing the version current already runs keeps its setup environment. A failed or
 # interrupted run removes only what it created, judged by where current points when it ends;
 # the current version, the command and existing data stay as they were, and a path this script
@@ -89,11 +90,14 @@ fi
 made_prefix=""
 [[ -e "$prefix" ]] || made_prefix=1
 mkdir -p "$prefix"
-# The lock setup takes too: a regular file of the prefix, never through a link, never truncated.
+# The lock setup takes too: a regular file of the prefix, never through a link, never truncated,
+# never removed: every run locks the same file.
 lock="$prefix/.install.lock"
-[[ ! -L "$lock" && ( ! -e "$lock" || -f "$lock" ) ]] \
-  || die "$lock is not a lock file this script or setup made; it is left as it is"
-exec 9>> "$lock"
+refused="$lock is not a lock file this script or setup made; it is left as it is"
+[[ ! -L "$lock" && ( ! -e "$lock" || -f "$lock" ) ]] || die "$refused"
+# Read and write: opening waits on no pipe put there meanwhile, and what it opened is checked.
+exec 9<> "$lock"
+[[ -f /dev/fd/9 ]] || die "$refused"
 flock -n 9 || die "Another installation into $prefix is running"
 previous="$(readlink "$prefix/current" || true)"
 # What this script or setup made: versions/<name> or a marked envs/<name> of this prefix,
@@ -122,14 +126,14 @@ cleanup() {
   then
     rm -rf -- "$fresh"
   fi
-  # A first installation that ends without a current version leaves no command either, nor
-  # the prefix it made, if nothing else is in it: the link it made, if it still points here.
+  # A first installation that ends without a current version leaves no command either: the
+  # link it made, if it still points here. The prefix it made keeps the lock file alone, which
+  # another run may have opened already: removed, the next would lock a new one beside it.
   if [[ -n "$made_entry" && ! -e "$prefix/current" && "$(readlink "$entry")" == "$link" ]]; then
     rm -f -- "$entry"
   fi
   if [[ -n "$made_prefix" && ! -e "$prefix/current" ]]; then
-    rm -f -- "$prefix/.install.lock"
-    rmdir -- "$prefix/versions" "$prefix" 2>/dev/null || true
+    rmdir -- "$prefix/versions" 2>/dev/null || true
   fi
 }
 trap cleanup EXIT  # Also on SIGINT and SIGTERM: bash exits through the EXIT trap.

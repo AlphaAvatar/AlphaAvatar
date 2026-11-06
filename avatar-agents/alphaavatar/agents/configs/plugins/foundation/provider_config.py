@@ -13,9 +13,10 @@
 # limitations under the License.
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from alphaavatar.agents.avatar.provider.enums import ProviderKind
+from alphaavatar.agents.utils.env_utils import check_server_key
 
 DEFAULT_BACKEND = "langchain"
 
@@ -33,6 +34,12 @@ class ProviderTaskConfig(BaseModel):
     input_adapter: str | None = None
     input_options: dict[str, Any] = Field(default_factory=dict)
     extra: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def check_key_server(self) -> "ProviderTaskConfig":
+        # Every backend's client takes its URL and key variable from extra.
+        check_server_key(self.extra.get("api_key_env"), self.extra.get("base_url"))
+        return self
 
 
 class ProviderTraceConfig(BaseModel):

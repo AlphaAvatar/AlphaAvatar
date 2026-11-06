@@ -21,6 +21,7 @@ import json
 import os
 import platform
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -128,7 +129,7 @@ def test_a_current_this_script_cannot_tell_it_made_is_left_as_it_is(layout, curr
     assert (outside / "kept").read_text() == "someone's"
 
 
-def test_the_lock_is_never_opened_through_a_link_nor_truncated(layout) -> None:
+def test_the_lock_is_never_opened_through_a_link_or_pipe_nor_truncated(layout) -> None:
     tmp_path, _, _, run = layout
     prefix, outside = tmp_path / "prefix", tmp_path / "outside-file"
     outside.write_text("someone's data\n")
@@ -138,9 +139,25 @@ def test_the_lock_is_never_opened_through_a_link_nor_truncated(layout) -> None:
     assert refused.returncode == 1 and "is not a lock file" in refused.stderr
     assert outside.read_text() == "someone's data\n"
     assert os.readlink(prefix / ".install.lock") == str(outside)
+    # A pipe in its place, which opening for writing would wait on, is refused too.
+    (prefix / ".install.lock").unlink()
+    os.mkfifo(prefix / ".install.lock")
+    refused = run()
+    assert refused.returncode == 1 and "is not a lock file" in refused.stderr
+    assert stat.S_ISFIFO((prefix / ".install.lock").lstat().st_mode)
     # A lock file already there keeps what it holds: opening it truncates nothing.
     (prefix / ".install.lock").unlink()
     (prefix / ".install.lock").write_text("held\n")
     installed = run()
     assert installed.returncode == 0, installed.stderr
     assert (prefix / ".install.lock").read_text() == "held\n"
+
+
+def test_a_failed_first_installation_keeps_the_lock_every_run_takes(layout) -> None:
+    tmp_path, _, _, run = layout
+    failed = run("--sha256", "0" * 64)
+    assert failed.returncode == 1 and "does not match its SHA-256" in failed.stderr
+    # The prefix it made holds the lock alone. Removed, a run that had opened it already would
+    # lock the old file, the next a new one beside it, and both would install at once.
+    assert [path.name for path in (tmp_path / "prefix").iterdir()] == [".install.lock"]
+    assert not (tmp_path / "bin/alphaavatar").exists()

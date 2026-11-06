@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from alphaavatar.agents.avatar.voice import STTBase, TTSBase, VADBase, VoiceBundle
 from alphaavatar.agents.runtime.inference import InferenceExecutor
 from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
+from alphaavatar.agents.utils.env_utils import check_server_key
 
 
 class STTConfig(BaseModel):
@@ -41,6 +42,11 @@ class STTConfig(BaseModel):
         pattern=r"^[A-Z][A-Z0-9_]*$",
         description="The environment variable holding its API key; the plugin's own when unset.",
     )
+
+    @model_validator(mode="after")
+    def check_key_server(self) -> "STTConfig":
+        check_server_key(self.api_key_env, self.base_url)
+        return self
 
     def get_plugin(self) -> STTBase | None:
         if self.plugin is None:
@@ -103,6 +109,7 @@ class TTSConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_provider(self) -> "TTSConfig":
+        check_server_key(self.api_key_env, self.base_url)
         if self.first_audio_hedge_after is not None and (
             self.first_audio_hedge_after >= min(self.first_audio_timeout, self.timeout)
             or self.max_retries < 1

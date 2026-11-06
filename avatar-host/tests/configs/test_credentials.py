@@ -21,6 +21,7 @@ import signal
 import stat
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from unittest import mock
 
@@ -146,6 +147,48 @@ def test_settings_that_name_no_stored_file_load_none_and_setup_refuses_them(
         stored_credentials(paths)
     with pytest.raises(ConfigReferenceError):
         loaded.checked()  # Choosing the default refuses them.
+
+
+def without_waiting(read, pipe: Path):
+    """read(), failing if it waits on the pipe: opening the pipe's other end lets it finish."""
+    done: list = []
+    thread = threading.Thread(target=lambda: done.append(read()), daemon=True)
+    thread.start()
+    thread.join(10)
+    waited = thread.is_alive()
+    if waited:
+        os.close(os.open(pipe, os.O_RDWR | os.O_NONBLOCK))  # Both ends, so either wait ends.
+        thread.join(10)
+    assert not waited, f"waited on the pipe in place of {pipe.name}"
+    return done[0]
+
+
+@pytest.mark.parametrize("replaced", ["settings", "stored file"])
+def test_a_pipe_in_place_of_a_settings_file_is_refused_without_waiting(
+    tmp_path: Path, replaced: str
+) -> None:
+    paths = ApplicationPaths.from_root(tmp_path / "home")
+    create_bundle(paths, "alpha", avatar_id="alpha", make_default=True, credentials={"A": "1"})
+    pipe = paths.settings_file if replaced == "settings" else credentials_path(paths)
+    pipe.unlink()
+    os.mkfifo(pipe)
+    with mock.patch.dict(os.environ, clear=True):
+        loaded = without_waiting(lambda: load_credentials(paths), pipe)
+        assert "A" not in os.environ
+    reason = "Settings cannot be read" if replaced == "settings" else "Stored credentials cannot"
+    assert isinstance(loaded.error, ConfigReferenceError) and reason in str(loaded.error)
+    assert stat.S_ISFIFO(pipe.lstat().st_mode)  # Left as it is.
+
+
+def test_settings_naming_a_stored_file_that_is_gone_say_it_is_missing(tmp_path: Path) -> None:
+    paths = ApplicationPaths.from_root(tmp_path / "home")
+    create_bundle(paths, "alpha", avatar_id="alpha", make_default=True, credentials={"A": "1"})
+    gone = credentials_path(paths)
+    gone.unlink()
+    # Named again when the settings are read again: missing, not settings that keep changing.
+    with mock.patch.dict(os.environ, clear=True):
+        error = load_credentials(paths).error
+    assert str(error) == f"Stored credentials are missing: {gone}"
 
 
 def test_a_setup_committing_meanwhile_changes_neither_the_default_nor_the_credentials_read(

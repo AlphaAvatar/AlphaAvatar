@@ -29,8 +29,10 @@ variable.
 
 from __future__ import annotations
 
+import errno
 import os
 import re
+import stat
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -154,12 +156,22 @@ class Settings:
         return self.values
 
 
+def read_regular(path: Path) -> str:
+    """A regular file's UTF-8 text; anything else is refused before it can be waited on, such
+    as a pipe in its place."""
+    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+    with open(descriptor, encoding="utf-8") as stream:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file", str(path))
+        return stream.read()
+
+
 def read_settings(paths: ApplicationPaths) -> dict[str, Any]:
     """User application settings; only ``default_bundle`` is interpreted here."""
     import yaml
 
     try:
-        text = paths.settings_file.read_text(encoding="utf-8")
+        text = read_regular(paths.settings_file)
     except FileNotFoundError:
         return {}
     except UnicodeDecodeError:
