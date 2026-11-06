@@ -14,7 +14,8 @@
 | 第 1 项第三轮 | 统一插件发现（能力类型 + 实现名，entry point）；安装与激活事务修复；向导凭据与自托管端点；glibc 扫描、Doctor 导入和 CI 重跑修复；短句 TTS 失败复现 | 2026-11-06 | `7c67240` | 用户已提交（`eb2404a`） | 部分被第四轮修正：自托管凭据、基础包本地安装、归属与凭据提交点、Provider runner 规划 |
 | 第 1 项第四轮 | 自托管端点按服务器分开凭据并按后端规则校验地址；`install.sh --file` 先复制再校验；归属检查与凭据随设置一起提交；单一完整解析；修短句 TTS 测试 | 2026-11-06 | `eb2404a` | 用户已提交（`eee0c28`） | 部分被第五轮修正：自托管凭据绑定端点、设置一次读取、安装锁、Provider 级联与摘要 |
 | 第 1 项第五轮 | 自托管凭据绑定到端点；默认 bundle 与凭据取自同一次设置读取；安装锁不经链接、不截断；runner 的多个 Provider 与级联 Provider；自定义 Memory 的摘要；URL 端口与空用户名 | 2026-11-06 | `eee0c28` | 用户已提交（`c851cef`） | 部分被第六轮修正：端点绑定改按最终 URL 核对、特殊文件与锁文件保留、CI 超时 |
-| 第 1 项第六轮 | 密钥变量在加载时与最终生效的 URL 核对；安装锁、设置与凭据文件拒绝管道等非普通文件且不等待；锁文件永不删除；凭据文件缺失与并发更新分开报告；Quality 测试步骤上限 10 分钟；README 按设备分节的安装与使用 | 2026-11-06 | `c851cef` | 未提交（用户提交） | 待审查 |
+| 第 1 项第六轮 | 密钥变量在加载时与最终生效的 URL 核对；安装锁、设置与凭据文件拒绝管道等非普通文件且不等待；锁文件永不删除；凭据文件缺失与并发更新分开报告；Quality 测试步骤上限 10 分钟；README 按设备分节的安装与使用 | 2026-11-06 | `c851cef` | 用户已提交（`0a85122`） | Codex 复核通过：Quality 全量 431 项，Linux 制品干净容器验收 |
+| 第 1 项 CLI 展示统一 | `config init`、`config check`、`setup`、`doctor` 共用终端渲染器 `cli/render.py`：品牌蓝标题、信号青步骤与命令、状态色、宽窄终端排版、无色与管道同结构；setup 四步展示；Doctor 分组、未验证原因、端到端与阶段耗时 | 2026-11-06 | `0a85122` | 未提交（用户提交） | 待审查 |
 
 ## 历史记录（合并来源）
 
@@ -1439,3 +1440,149 @@ glibc 下限（新脚本实测）：基础包 2.17；远端环境 2.28；默认�
 4. **仍按计划后移**：同上轮第 9 节第 4 条。
 
 证据（会话临时目录，不入库）：`/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/evidence6/`（测试、变异、构建）和 `/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/accept6/`（沙箱脚本与记录 `r6.log`）；本轮制品在 `/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/out6/`。
+
+## 第 1 项 CLI 展示统一（基线 `0a85122`）
+
+依据：Codex 对 `0a85122` 的复核（远端 Quality 全量 431 项通过，Linux 制品通过干净容器安装验收），以及这一轮的要求：`config init`、`setup`、`doctor` 共用一套终端渲染器，并把已有着色的 `config check` 接进去；版式和配色以给定样稿为验收基准，样稿里的数值只作示意。指标采集和外部服务授权的逻辑不变，退出码、stdout／stderr 分工、凭据脱敏和 JSON 结构保持不变。所有改动在未暂存的工作区。
+
+### 1. 共用渲染器 `avatar-host/alphaavatar/host/cli/render.py`
+
+`Report` 绑定一条输出流，提供标题、状态行、分组标题、对齐的行、包装文本、可复制命令、表格、setup 步骤和提问。颜色取自 `host/log/format.py` 的现有色值，是否着色由 `use_color("auto", stream)` 决定：
+
+| 元素 | 样式 |
+|---|---|
+| `AlphaAvatar / …` 标题 | 品牌蓝 `BRAND_BLUE`（`#60a5fa`） |
+| setup 当前步骤、提问、可复制命令 | 信号青 `SIGNAL_CYAN`（`#22d3ee`） |
+| 分组标题 | 粗体，终端默认色 |
+| `OK`、`PASS` / `WARN` / `FAIL`、`ERROR` / `SKIP` | 绿 / 黄 / 红 / 灰 |
+| 其余：标签、值、路径、指标 | 终端默认色 |
+
+- **宽度**：取 `COLUMNS`，否则取这条流自己的终端宽度，否则 100。管道和文件不跟随启动进程的终端。
+- **宽窄**：值同列对齐；放不下时，值移到标签下方，缩进后在空格处换行，路径不拆开。诊断信息和命令整行输出，不换行，以便搜索和复制；CI 会 `grep` 这些行。
+- **无色**：管道、`NO_COLOR`、`TERM=dumb` 输出同样结构的纯文本。编码不了 `·`、`→`、`—` 的流改用 `-`、`->`、`-`。
+- **刷新**：在终端上，进行中的步骤原地更新；管道照常缓冲，进度和提问立即刷出。
+
+### 2. `config init` 与 `config check`
+
+- **`config init`**：
+  - 依次显示标题、`OK  Bundle created`、`Configuration`（Bundle、Profiles 和 Default；家目录下的路径写成 `~`）、`Required credentials`（只列变量名），以及 `Next`（每条命令单独一行）。
+  - `Next` 按安装环境给出：完整环境先 `config check` 再 `doctor`（用户在中途要求不再给 `dev`）；未运行 setup 的安装包先 `setup`，再 `config check`。
+  - 覆盖已有文件时，错误整行写到 stderr。
+- **`config check`**：
+  - 通过时，在标题和 `OK  Configuration and read-only path checks passed` 下列出 `Configuration` 和各 profile 层的分组。
+  - 失败时，标题和 `ERROR` 写到 stderr，诊断原样输出，stdout 为空。
+
+### 3. `setup`
+
+- **四步**：`01 Capabilities`、`02 Credentials`、`03 Install`、`04 Validate`。每一步完成后占一行；进行中的那一步用信号青显示。
+- **提问**：提问放在所属步骤下。过长的提问缩进换行，在最后一行输入；选项菜单按悬挂缩进换行。
+- **确认前**：先列出计划、能力、包数和下载量，再问 `Install and enable?`。
+- **安装中**：终端上，步骤行原地显示 `[i/n] 文件`，过长时截断；管道里每个文件一行。
+- **校验**：`Validate` 显示新环境 `config check --json` 规划的 runner 数（`check_environment` 现在返回这个数；失败时报告诊断文本，不报原始 JSON）。
+- **结果**：校验通过、bundle 也启用之后，才显示 `OK  Bundle enabled`，下一步是 `alphaavatar doctor <name>`。
+- **失败与中止**：分别写到 stderr：
+  - `FAIL  Setup failed; nothing was enabled`
+  - `WARN  Cancelled; nothing was enabled`（本轮新增：不确认安装时原先不提示，直接返回 1）
+  - `WARN  Interrupted; nothing was enabled`
+- **`--plan`**：步骤和提问都改到 stderr，stdout 只有计划 JSON。原先交互时，`--plan` 的提问会混进 stdout。
+
+### 4. `doctor`
+
+- **标题行**：`OK`、`WARN` 或 `FAIL`，后跟计数（如 `9 passed · 6 skipped`）；会话跑过时前面加 `Diagnostics completed`。被中断时为 `WARN  Interrupted · …`。
+- **`Checks`**：
+  - 每组一行：Environment、Configuration、Directories、Session and services。
+  - 全部通过的组显示 `N checks passed`；Configuration 显示 `<bundle 或文件> · N runners`。
+  - 未通过的检查列在所属组下，附细节和下一步。
+- **`Not verified`**：整组未运行时，给出该组第一项检查的原因、它涉及的服务和下一步，例如外部服务未授权，或媒体设备未测。
+- **`Scenarios`**：
+  - 通过的场景显示它验证了什么（新增 `samples.Task.covers`）。
+  - 失败的场景显示阻塞阶段和原因。
+  - 未运行的场景显示 `SKIP` 和原因。
+- **`Runners`**：保留现有终端里的启动耗时。
+- **`End-to-end latency`**：先列首字、首音频帧、响应完成，再列文本完成、最后一帧。宽终端按场景并列；放不下时按场景纵向排列。
+- **`Stage timing · <场景>`**：
+  - 内容：语音（VAD 关闭、STT 终态、Turn 提交）、Context 等待、模型（请求、首事件、首个文本增量、首段文本输出）、TTS（首段 PCM、首音频帧），以及视觉选帧（请求时帧龄、最新选中帧到提交）。
+  - 对齐：各场景的标签列对齐。
+  - 名称：首音频帧与视觉选帧指标用不同的名字。
+- **缺项**：没有观测到的指标显示 `—`，不显示 `0 ms`。失败的场景保留已测到的部分。会话没有运行时显示 `Not measured · Diagnostic session did not run.`。
+- **`Full report`**：给出带同样参数的 `--json` 命令，经过同一输出边界。
+- **`--list`**：按同样的分组列出检查。
+- **从文本中移除**：服务表、配置名表头这类信息留在 `--json` 里。
+
+### 5. 文档
+
+- **`docs/cli/README.md`**：新增「Output」一节，说明配色表、宽窄规则、无色和 JSON 的规则。
+- **`config.md`**：`config init` 和 `config check` 的示例换成新版式。
+- **`setup.md`**：换上真实的步骤输出，并说明失败、取消、中断和 `--plan` 时的输出。
+- **`doctor.md`**：示例换成真实的「模型不接受图片」运行（失败场景保留部分指标，另有降级配置一列），并重写文本说明。
+- **README**：doctor 的注释改为只说检查什么；补一句：bundle 用到外部服务时，默认跳过测试会话，因为这些调用可能计费；`host.doctor.external_services=true` 可放行。
+
+### 6. 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `avatar-host/.../cli/render.py`（新增） | 共用渲染器 |
+| `avatar-host/.../cli/commands/config.py`、`setup.py`、`doctor.py` | 接入渲染器；setup 四步与取消提示；Doctor 分组、场景、指标 |
+| `avatar-host/.../setup/environment.py` | `check_environment` 用 `config check --json`，返回 runner 数 |
+| `avatar-host/.../doctor/samples.py` | `Task.covers` |
+| 测试 | `test_render.py`（新增：72／100 列、终端／管道／`NO_COLOR`／`TERM=dumb`、步骤刷新、ASCII、宽度来源、提问换行、Doctor 指标并列与纵向、缺项、失败、中断）；`test_check.py`（`config init` 全文、错误只走 stderr）；`test_setup.py`（`--plan` stdout 纯 JSON、取消、Ctrl+C 退出 130、失败后不出现 `Bundle enabled`）；`test_environment.py`（runner 数与诊断）；`test_doctor.py`、`test_session.py`、`test_bundles.py`、`test_projection.py` 改为新版式 |
+| `README.md`、`docs/cli/README.md`、`config.md`、`setup.md`、`doctor.md` | 同上 |
+
+### 7. 验证
+
+**本地实测**
+- 全量测试 446 项通过；拦截已移除的包后再跑一遍，也是 446 项通过。
+- 静态检查：Ruff（`--no-cache`）、格式、`check_workspace.py`、`uv lock --check`、`git diff --check`、pre-commit 全部通过。
+- 变异 26 个，全部被抓到（`evidence7/mutants7.log`）。首轮有两个存活，都是测试缺口：
+  - W3（宽度取启动进程的终端）：补了「管道宽度为 100、`COLUMNS` 优先、取流自己的终端」的测试；
+  - P2（`--plan` 的提问写到 stdout）：测试里的 `input()` 原先不像真的那样把提示写到 stdout，改过之后被抓到。
+- 本机构建 63 s，基础包 glibc 下限 2.17，12 个 wheel。
+
+**录制（`accept7/record.py` 在指定列宽的伪终端里运行，保存 asciinema `.cast` 和保留 ANSI 的 `.ansi`）**
+
+| 录制 | 内容 |
+|---|---|
+| `init-bare-100`、`init-installed-100`、`init-bare-again-72` | `config init` 在安装包和完整环境中的输出；覆盖已有文件时被拒绝 |
+| `check-72`、`check-bare-72` | 长说明换到标签下方；安装包里缺插件时报失败 |
+| `setup-preset-100` | 真实下载、安装、校验、启用：85 个包，212 MB，3 个 runner |
+| `setup-interactive-72`、`setup-cancel-72`、`setup-interrupt-72`、`setup-fail-72`、`setup-nocolor-100` | 交互、取消、Ctrl+C、缺凭据、无色 |
+| `doctor-metrics-100`、`doctor-metrics-72` | 离线替身环境下音视频和文本场景的实测指标 |
+| `doctor-degraded-100`、`doctor-degraded-72` | 模型不接受图片：失败场景保留部分指标，降级的 `voice [vision off]` 通过 |
+| `doctor-skip-72`、`doctor-skip-100` | 干净沙箱里，外部服务未授权，会话被跳过 |
+
+- setup 和 config 的录制都在 Ubuntu 24.04 干净 rootfs（bubblewrap）上用本轮构建完成；Doctor 的实测指标来自测试使用的离线替身环境（`doctor_doubles`：只替换外部服务和模型文件）。
+- 逐行检查：超出列宽的只有原样输出的诊断信息和可复制的 `Full report` 命令。
+- 管道输出不含转义字符；`setup --plan` 的 stdout 只有 JSON。
+- `setup-interrupt-72` 的退出码在沙箱里是 254：Ctrl+C 同时结束了 bubblewrap 的 PID 命名空间 init。setup 自己的 130 由新测试确认。
+- 彩色截图页面（私有）：https://claude.ai/artifact/VdZgSEu8fb75G4h1CFmo5H
+
+**推送后待 CI 验证**
+- Quality 全量测试，以及 Linux 制品里的 CLI 检查。linux-package 的 `grep -F 'alphaavatar setup' init.txt`、缺插件时的诊断行、`alphaavatar.voice.vad.silero x2` 都沿用原文本，本地已确认格式不变。
+
+### 8. 过程中的问题与更正
+
+- **管道提前关闭**：每行都刷新会让 `| head` 报 `BrokenPipeError`，改为只在终端上、以及进度和提问时刷新。
+- **测试与终端宽度**：测试和管道原先可能取到启动进程的终端宽度，改为只认 `COLUMNS` 或流自己的终端；断言整段版式的测试都设了 `COLUMNS`。
+- **样例数值写错**：几处预期值的空格算错，对照实际输出逐行核对后才写入测试。
+- **录制驱动**：缺少 `if __name__ == "__main__":`，诊断进程以 spawn 启动时重新导入，又跑了一遍；另外缺 pytest 的 pythonpath。两处修好后才拿到实测指标。
+- **着色的提示**：提示着色后，录制器按 `": "` 结尾匹配提问失败，改为先去掉 ANSI 再匹配。`sandbox.sh` 会把 `TERM` 设为 `dumb`，录制时在沙箱内改回 `xterm-256color`。
+- **进度不再原地更新**：交互确认之后，进度变成了一行一行地追加，改为确认后重新打开步骤行。
+- **超宽的菜单**：72 列下，setup 菜单和向量库行超宽，改为悬挂缩进换行。
+
+### 9. 待复核
+
+1. **诊断信息和命令不换行**：窄终端上，`config check` 的缺插件诊断、`Missing credentials …` 和 `Full report` 的命令会超出 72 列。这些行要被 `grep` 和复制；CI 和测试按原文匹配，所以保持整行。
+2. **版式与样稿的差异**：
+   - Doctor 多了 `Runners` 一节，保留现有的启动耗时；
+   - 服务表从文本中移除，留在 `--json`；
+   - 标题行总是带计数；
+   - 阶段耗时即使在宽终端上也按场景分块，各块标签列对齐，样稿中的 `Stage timing · voice_vision` 就是这种形式；
+   - `Not verified` 的原因用检查自己的原话，而不是另写一句短句。
+3. **样式的取舍**：
+   - 状态标签只着色、不加粗；
+   - 标签和值都用终端默认色（原 `config check` 的标签是暗灰）；
+   - `config check` 的键名保持原样（`avatar_id` 等）；
+   - `config init` 不再显示 bundle 文件路径和 profile 分层，只保留样稿中的三项。
+4. **原有文案**：凭据用途「OpenAI's the model, embeddings…」语法有误，是原有文案，本轮没改。
+
+证据（会话临时目录，不入库）：`/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/evidence7/`（测试、变异、构建）和 `/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/accept7/`（录制器、驱动、沙箱脚本、`rec/` 下的 `.cast`／`.ansi`、`cli-output.html`）；本轮制品在 `/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/out7/`。

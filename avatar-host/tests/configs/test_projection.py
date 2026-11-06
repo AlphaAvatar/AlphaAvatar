@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from unittest import mock
 
 import pytest
 import yaml
@@ -76,12 +77,13 @@ def test_runner_parallelism_is_checked_against_the_selected_plan_and_survives_re
     turn = "alphaavatar.router.turn_taking.smart_turn_v3"
     override = f"runtime.inference.methods={{{turn}: {{workers: 2}}}}"
 
-    assert main(["config", "check", str(config), override]) == 0
+    with mock.patch.dict(os.environ, {"COLUMNS": "200"}):
+        assert main(["config", "check", str(config), override]) == 0
     lines = capsys.readouterr().out.splitlines()
     assert main(["config", "check", str(config), override, "--json"]) == 0
     report = json.loads(capsys.readouterr().out)
     runners = len(report["inference"])
-    assert f"      inference     {runners} runners  (workers: {turn} x2)" in lines
+    assert f"  inference      {runners} runners  (workers: {turn} x2)" in lines
     assert report["inference"][turn] == 2
     assert set(report["inference"].values()) == {1, 2}
 

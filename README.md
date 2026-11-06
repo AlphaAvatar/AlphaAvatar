@@ -284,7 +284,7 @@ Linux x86_64 with glibc 2.28 or newer:
 curl -fsSLO https://github.com/AlphaAvatar/AlphaAvatar/releases/download/v0.6.9/install.sh
 bash install.sh --version 0.6.9
 alphaavatar setup    # choose what the Avatar runs with, or --preset default|remote
-alphaavatar doctor   # diagnose the installation and the bundle, with a test session
+alphaavatar doctor   # check the installation and the bundle
 alphaavatar start    # runs the bundle setup made
 ```
 

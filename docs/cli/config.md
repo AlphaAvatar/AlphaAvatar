@@ -93,11 +93,26 @@ alphaavatar config init <name> --avatar-id <id>
 ```
 
 ```text
-Created bundle my-avatar
-  bundle    /home/me/.local/share/alphaavatar/configs/bundles/my-avatar.yaml
-  profiles  /home/me/.local/share/alphaavatar/configs/profiles/my-avatar  (host, agent, plugins/foundation, plugins/perception, plugins/tools)
-  default   my-avatar (set as the default bundle)
+AlphaAvatar / Config init
+OK    Bundle created
+
+Configuration
+  Bundle       my-avatar
+  Profiles     ~/.local/share/alphaavatar/configs/profiles/my-avatar
+  Default      my-avatar
+
+Required credentials
+  OPENAI_API_KEY
+  LIVEKIT_URL · LIVEKIT_API_KEY · LIVEKIT_API_SECRET
+
+Next
+  alphaavatar config check my-avatar
+  alphaavatar doctor my-avatar
 ```
+
+- `Default` names another bundle, `(unchanged)`, when one is set already. The credentials are
+  named only, never shown. In the Linux package before [`alphaavatar setup`](setup.md) has run,
+  `Next` names setup first, then `config check`.
 
 - Writes the given Avatar ID with OpenAI model, voice, Memory and Persona profiles; tools are
   disabled. Host, runtime, context, status, router and character profiles write out their
@@ -138,7 +153,8 @@ Set these in the environment or `.env`, never in the files:
 | `OPENAI_API_KEY` | Models, speech, embeddings, Memory and Persona |
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | Session transport |
 
-Then start it with [`alphaavatar dev my-avatar`](dev.md), or check it first.
+Check it, then diagnose it with [`alphaavatar doctor my-avatar`](doctor.md), before starting it
+with [`alphaavatar dev my-avatar`](dev.md).
 
 ## `config check`
 
@@ -158,31 +174,41 @@ runner or model, contacts no service, creates no directories or settings and nee
 log socket.
 
 ```text
-OK  configuration and read-only path checks passed
-    config          bundle my-avatar  (default)
-    avatar_id       my-avatar
-    home            /home/me/.local/share/alphaavatar
-    workspace       /home/me/.local/share/alphaavatar/avatars/my-avatar
-    host
-      rtc           livekit
-      health        127.0.0.1:8081 (dev: free port)
-    agent
-      inference     8 runners  (workers: alphaavatar.voice.vad.silero x2)
-    plugins/foundation
-      context       default
-      loop          realtime
-      voice         vad=silero  stt=openai_segment  tts=openai
-      vision        on  (input: vlm)
-    plugins/perception
-      status        default
-      router        default  (audio activity on, semantic addressing on, visual addressing on, turn taking on, interruption on)
-      character     none
-      memory        default  (vdb: lancedb; retrieval on, conversation on, tool on, environment off)
-      persona       default  (vdb: lancedb; profiler on, speaker on, face off)
-    plugins/tools
-      deepresearch  none
-      rag           default
-      mcp           default  (1 server)
+AlphaAvatar / Config check
+OK    Configuration and read-only path checks passed
+
+Configuration
+  config         bundle my-avatar  (default)
+  avatar_id      my-avatar
+  home           /home/me/.local/share/alphaavatar
+  workspace      /home/me/.local/share/alphaavatar/avatars/my-avatar
+
+host
+  rtc            livekit
+  health         127.0.0.1:8081 (dev: free port)
+
+agent
+  inference      8 runners  (workers: alphaavatar.voice.vad.silero x2)
+
+plugins/foundation
+  context        default
+  loop           realtime
+  voice          vad=silero  stt=openai_segment  tts=openai
+  vision         on  (input: vlm)
+
+plugins/perception
+  status         default
+  router
+    default  (audio activity on, semantic addressing on, visual addressing on, turn taking on,
+    interruption on)
+  character      none
+  memory         default  (vdb: lancedb; retrieval on, conversation on, tool on, environment off)
+  persona        default  (vdb: lancedb; profiler on, speaker on, face off)
+
+plugins/tools
+  deepresearch   none
+  rag            default
+  mcp            default  (1 server)
 ```
 
 The summary lists the checked file or bundle, then facts in the profile layers: plugin
@@ -197,24 +223,31 @@ strings before v0.6.9), and `memory` and `persona` carry their processor switche
 unselected or non-replicable `runtime.inference.methods` entry fails with its field location.
 
 ```text
-ERROR  configuration and read-only path checks failed
+AlphaAvatar / Config check
+ERROR Configuration and read-only path checks failed
+
   error: ValidationError
     fields: avatar.timezone
 ```
 
 ```text
-ERROR  configuration and read-only path checks failed
+AlphaAvatar / Config check
+ERROR Configuration and read-only path checks failed
+
   error: ConfigReferenceError
     Bundle 'my-avatar': profiles.voice references missing profile 'my-avatar/voice': /home/me/.local/share/alphaavatar/configs/profiles/my-avatar/voice.yaml
 ```
 
-- Errors go to stderr and name the failing fields, bundle or profile, never the rejected
-  values or file contents.
+- Errors go to stderr, stdout stays empty, and name the failing fields, bundle or profile,
+  never the rejected values or file contents. Their lines print whole, however narrow the
+  terminal, so they can be searched for.
 - `--json` prints `{"valid": true, "config", "avatar_id", "home", "workspace", "plugins",
   "inference", "health"}` (`config` is `{"bundle", "default", "file"}`; `inference` maps each
   runner method to its workers) or `{"valid": false, "error": {"type", "fields",
   "diagnostic"}}`, with credentials and control characters removed.
-- Colors appear only on a terminal; pipes, `NO_COLOR` and `TERM=dumb` get plain text.
+- The text follows the [commands' shared layout](README.md#output): a value too long for the
+  terminal goes below its label, as `router` does above at 100 columns. Colors appear only on
+  a terminal; pipes, `NO_COLOR` and `TERM=dumb` get the same text, plain.
 
 ## Exit codes
 

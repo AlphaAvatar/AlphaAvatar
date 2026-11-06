@@ -263,76 +263,117 @@ process, or the diagnostic process itself had to be killed or left something beh
 | `130` | Interrupted; the report still shows what ran |
 
 A run with stand-in services whose model accepts no images (CI's doubles; figures are theirs),
-from its session rows on:
+from its checks on:
 
 ```text
-    STATUS  CHECK                  SUMMARY
-    ------  ---------------------  ------------------------------------------------------------
-    ...
-    session
-    PASS    session.start          A temporary session with the configured plugins was ready in 38 ms
-    PASS    models.runners         2 runners started from the cache, offline; slowest alphaavatar.router.turn_taking.smart_turn_v3 in 0.53 s
-    FAIL    services.external      2 passed, 1 failed, 3 not verified by the samples
-                                   livekit RTC server: not contacted; `alphaavatar dev avatar.json` connects to it
-                                   -> See the failed scenarios' blocked stages and causes
-    FAIL    session.scenarios      1 passed, 2 failed, 1 not enabled, 1 no coverage; degraded: voice passed
-                                   -> See each failed scenario's blocked stage, cause and evidence
-    PASS    session.cleanup        4 owned parts closed: sessions and executor before each runtime; runner processes, sockets and the temporary workspace reclaimed
+Checks
+  ...
+  FAIL  Session and services   3 passed · 2 failed
+        FAIL  services.external   2 passed, 1 failed, 3 not verified by the samples
+              model providers (scripted): configured, authorized, reached, failed
+              (ModelCapabilityError: image_input)
+              speech recognition (openai_segment): configured, authorized, reached, passed
+              speech synthesis (openai): configured, authorized, reached, passed
+              custom memory 'doctor': configured, authorized, reached: not observed, passed: not
+              observed (external access unknown)
+              custom persona 'doctor': configured, authorized, reached: not observed, passed: not
+              observed (external access unknown)
+              custom provider backend 'scripted': configured, authorized, reached: not observed,
+              passed: not observed (external access unknown)
+              livekit RTC server: not contacted; `alphaavatar dev avatar.json` connects to it
+              → See the failed scenarios' blocked stages and causes
+        FAIL  session.scenarios
+              1 passed, 2 failed, 1 not enabled, 1 no coverage; degraded: voice passed
+              → See each failed scenario's blocked stage, cause and evidence
 
-    STATUS  RUNNER                                        CONFIGURATION         STARTUP  SUMMARY
-    ------  --------------------------------------------  --------------------  -------  -------
-    PASS    alphaavatar.voice.vad.silero                  original              0.28 s   started
-    PASS    alphaavatar.router.turn_taking.smart_turn_v3  original              0.53 s   started
-    PASS    alphaavatar.voice.vad.silero                  degraded: vision off  0.27 s   started
-    PASS    alphaavatar.router.turn_taking.smart_turn_v3  degraded: vision off  0.53 s   started
+Not verified
+  SKIP  Media devices
+        Not verified: the diagnostic session uses its own samples and opens no microphone, camera or
+        player
+        → Join a dev session from a client to try its devices
 
-    SERVICE                              AUTHORIZED  REACHED  PASSED  NOTE
-    -----------------------------------  ----------  -------  ------  ---------------------------------
-    model providers (scripted)           yes         yes      no      ModelCapabilityError: image_input
-    speech recognition (openai_segment)  yes         yes      yes
-    speech synthesis (openai)            yes         yes      yes
-    custom memory 'doctor'               yes         -        -       external access unknown
-    custom persona 'doctor'              yes         -        -       external access unknown
-    custom provider backend 'scripted'   yes         -        -       external access unknown
+Scenarios
+  FAIL  voice_vision           Stopped at model.first_event
+        The run ended failed: ModelCapabilityError: image_input
+  FAIL  text                   Stopped at model.first_event
+        The run ended failed: ModelCapabilityError: image_input
+  PASS  voice [vision off]     Speech transcribed and answered
+  SKIP  image_input            No input transport delivers images to a session yet
+  SKIP  visual_output          No Character is configured
 
-    OUTCOME      SCENARIO       CONFIGURATION         SUMMARY
-    -----------  -------------  --------------------  ------------------------------------------------------------
-    failed       voice_vision   original              Stopped at model.first_event
-                                                      The run ended failed: ModelCapabilityError: image_input
-    failed       text           original              Stopped at model.first_event
-                                                      The run ended failed: ModelCapabilityError: image_input
-    passed       voice          degraded: vision off  Answered as the task expects; first text 705 ms; first audio frame 727 ms; complete 958 ms
-    no coverage  image_input    original              No input transport delivers images to a session yet
-    not enabled  visual_output  original              No Character is configured
+Runners
+  PASS  alphaavatar.voice.vad.silero                   started in 0.39 s
+  PASS  alphaavatar.router.turn_taking.smart_turn_v3   started in 0.39 s
+  PASS  alphaavatar.voice.vad.silero                   started in 0.39 s · degraded: vision off
+  PASS  alphaavatar.router.turn_taking.smart_turn_v3   started in 0.39 s · degraded: vision off
 
-    FIGURE (ms)                       voice_vision  text  voice [vision off]
-    --------------------------------  ------------  ----  ------------------
-    first_text                        -             -     705
-    first_audio_frame                 -             -     727
-    text_complete                     -             -     706
-    audio_last_frame                  -             -     957
-    response_final                    -             -     958
-    last_required_input               601           -     -
-    vad_close                         601           -     601
-    stt_final                         651           -     651
-    turn_cutoff                       653           -     653
-    context_ready_wait                0.0           0.0   0.0
-    cutoff_to_model_request           3.2           1.9   1.4
-    model_first_event                 -             -     0.4
-    model_first_text_delta            -             -     51
-    first_displayable_text            -             -     51
-    tts_request_to_first_audio_frame  -             -     21
-    selected_frame_age                755           -     -
-    last_selected_frame_to_cutoff     52            -     -
+End-to-end latency
+  Metric              voice_vision   text   voice [vision off]
+  First text                     —      —               704 ms
+  First audio frame              —      —               726 ms
+  Response complete              —      —               955 ms
+  Text complete                  —      —               704 ms
+  Last audio frame               —      —               955 ms
+
+Stage timing · voice_vision
+  Speech end → VAD close                599 ms
+  Speech end → STT final                650 ms
+  Speech end → Turn commit              651 ms
+  Speech end → Last required input      600 ms
+  Context ready wait                    0.0 ms
+  Turn commit → Model request           2.2 ms
+  Model request → First event                —
+  Model request → First text delta           —
+  Model request → First text out             —
+  TTS request → First PCM                    —
+  TTS request → First audio frame            —
+  Selected frame age at model request   754 ms
+  Newest selected frame → Turn commit    51 ms
+
+Stage timing · text
+  Context ready wait                    0.0 ms
+  Turn commit → Model request           2.0 ms
+  Model request → First event                —
+  Model request → First text delta           —
+  Model request → First text out             —
+  TTS request → First PCM                    —
+  TTS request → First audio frame            —
+
+Stage timing · voice [vision off]
+  Speech end → VAD close                600 ms
+  Speech end → STT final                650 ms
+  Speech end → Turn commit              651 ms
+  Context ready wait                    0.0 ms
+  Turn commit → Model request           1.4 ms
+  Model request → First event           0.4 ms
+  Model request → First text delta       51 ms
+  Model request → First text out         51 ms
+  TTS request → First PCM                    —
+  TTS request → First audio frame        21 ms
+
+Full report
+  alphaavatar doctor avatar.json --json
 ```
 
-The text is a set of tables. The checks come first, grouped as environment, configuration,
-directories, session and not verified (`--list` is a table with the same groups): a passing
-check is one row, any other adds its details and next step below it. Then, once something ran,
-the runners of each configuration tried, the external services with what was shown of each,
-the scenarios (a failed one adds what stopped it), and the figures side by side, a column per
-measured scenario and a dash where a figure was not observed; times under 10 ms keep one
-decimal. JSON keeps the flat list of checks, each with `id`, `status`,
+The text is grouped, through the [commands' shared layout](README.md#output). The headline gives
+the report's status and its tally; `Diagnostics completed` once the session ran. `Checks` has a
+row per group, environment, configuration, directories, and session and services: a group that
+only passed is its row, and any check that did not pass is a row under it with its details and
+next step. A group that ran nothing is under `Not verified`, with why and what would allow it.
+Once the session ran come the scenarios (a passed one says what it showed; a failed one, where
+it stopped and why), the runners each configuration started, then the figures, in milliseconds
+as the session times them: `End-to-end latency` first (first text, first answer audio frame,
+response complete, then text complete and last audio frame), a column per measured scenario,
+side by side where the terminal fits them and one after another where it does not; then each
+scenario's `Stage timing`: speech (VAD close, STT final, the Turn's commit), Context's wait, the
+model (request, first event, first text delta, first text out), TTS (first PCM, first audio
+frame) and the frames vision selected (age at the model request, the newest one against the
+commit). A failed scenario keeps what it measured. A figure not observed is `—`, never `0 ms`;
+times under 10 ms keep one decimal. When the session did not run, `End-to-end latency` says so,
+`Not measured`. `Full report` is the same diagnosis as JSON: every event boundary, sample count,
+service and piece of evidence. `--list` lists the checks in the same groups.
+
+JSON keeps the flat list of checks, each with `id`, `status`,
 `summary`, `details`, `action`, `runners`, `scenarios`, `metrics` and `services`; a scenario
 has `name`, `outcome`, `summary`, `configuration`, `blocked_stage`, `cause`, `details`, `task`,
 `transcript`, `answer` (both bounded), `reached`, `request`, `outputs`, `metrics`, `segments`,

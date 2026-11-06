@@ -13,8 +13,8 @@
 # limitations under the License.
 """Configuration commands: no Host, runner, model, client, workspace or log socket.
 
-Styles only decorate already redacted, control-character cleaned text; JSON and redirected
-output stay plain.
+Text reports go through the shared renderer (``cli.render``), over already redacted text;
+JSON stays plain.
 """
 
 from __future__ import annotations
@@ -24,23 +24,12 @@ import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any
 
 from alphaavatar.core.log.records import clean
-from alphaavatar.host.log.format import BOLD, DIM, GREEN, RED, RESET, use_color
+from alphaavatar.host.cli.render import Report, home_relative
 
-SCOPE = "configuration and read-only path checks"
-
-
-def _paint(text: str, style: str, color: bool) -> str:
-    return f"{style}{text}{RESET}" if color else text
-
-
-def _status(label: str, style: str, message: str, stream: TextIO) -> bool:
-    color = use_color("auto", stream)
-    # Text reports stand apart from the command line: one blank line before and after.
-    print(f"\n{_paint(label, BOLD + style, color)}  {message}", file=stream)
-    return color
+SCOPE = "Configuration and read-only path checks"
 
 
 def _lines(summary: dict[str, Any]) -> dict[str, dict[str, str]]:
@@ -158,27 +147,27 @@ def check(target: str | None, overrides: Sequence[str], *, as_json: bool) -> int
         if as_json:
             print(json.dumps({"valid": False, "error": describe_error(error)}, indent=2))
             return 2
-        color = _status("ERROR", RED, f"{SCOPE} failed", sys.stderr)
-        for line in format_failure(error).splitlines():
-            # Code locations are auxiliary; the failing fields stay prominent.
-            auxiliary = line.lstrip().startswith(("at ", "additional"))
-            print(_paint(line, DIM, color) if auxiliary else line, file=sys.stderr)
-        print(file=sys.stderr)
+        report = Report(sys.stderr)
+        report.title("Config check")
+        report.status("ERROR", f"{SCOPE} failed")
+        report.write()
+        report.verbatim(format_failure(error))  # The failing fields stay whole and prominent.
+        report.write()
         return 2
     if as_json:
         print(json.dumps({"valid": True, **summary}, indent=2, ensure_ascii=False))
-    else:
-        layers = _lines(summary)  # Complete before printing anything.
-        color = _status("OK", GREEN, f"{SCOPE} passed", sys.stdout)
-        # Values share one column; facts of a layer are indented under its name.
-        width = max(len(key) + 2 * bool(layer) for layer, facts in layers.items() for key in facts)
-        for layer, facts in layers.items():
-            if layer:
-                print(f"    {_paint(layer, BOLD, color)}")
-            indent = 2 * bool(layer)
-            for key, value in facts.items():
-                print(f"    {' ' * indent}{_paint(key.ljust(width - indent), DIM, color)}  {value}")
-        print()
+        return 0
+    layers = _lines(summary)  # Complete before printing anything.
+    report = Report()
+    report.title("Config check")
+    report.status("OK", f"{SCOPE} passed")
+    # Values share one column; the selection, then the facts of each profile layer.
+    column = report.column([key for facts in layers.values() for key in facts])
+    for layer, facts in layers.items():
+        report.heading(layer or "Configuration")
+        for key, value in facts.items():
+            report.row(key, value, column=column)
+    report.write()
     return 0
 
 
@@ -195,37 +184,46 @@ def init(name: str, *, avatar_id: str) -> int:
         init_env()  # ALPHAAVATAR_HOME may come from the same .env that start reads.
         created = create_bundle(application_paths(), name, avatar_id=avatar_id)
     except FileExistsError as error:
-        print(
-            f"\nRefusing to overwrite an existing file: {clean(error.filename)}\n", file=sys.stderr
-        )
+        report = Report(sys.stderr)
+        report.title("Config init")
+        report.status("ERROR", f"Refusing to overwrite an existing file: {error.filename}")
+        report.write()
         return 2
     except Exception as error:
-        print(f"\nCannot create the configuration:\n{format_failure(error)}\n", file=sys.stderr)
+        report = Report(sys.stderr)
+        report.title("Config init")
+        report.status("ERROR", "Cannot create the configuration")
+        report.write()
+        report.verbatim(format_failure(error))
+        report.write()
         return 2
     root = Path(os.path.commonpath(created.profiles))
-    layers = ", ".join(
-        dict.fromkeys(str(path.parent.relative_to(root)) for path in created.profiles)
-    )
-    if created.default_bundle == name:
-        default = f"{name} (set as the default bundle)"
-    else:
+    default = name
+    if created.default_bundle != name:
         default = f"{clean(created.default_bundle)} (unchanged)"
-    print(f"\nCreated bundle {name}")
-    print(f"  bundle    {clean(str(created.bundle))}")
-    print(f"  profiles  {clean(str(root))}  ({layers})")
-    print(f"  default   {default}")
-    print("Set these in the environment or .env (never in the files):")
-    print("\n".join(f"  {key:<50} {use}" for key, use in REQUIRED_ENVIRONMENT))
-    print("Next:")
+    report = Report()
+    report.title("Config init")
+    report.status("OK", "Bundle created")
+    report.heading("Configuration")
+    facts = {"Bundle": name, "Profiles": home_relative(root), "Default": default}
+    column = report.column(list(facts))
+    for key, value in facts.items():
+        report.row(key, value, column=column)
+    # Their names only: they are set in the environment or .env, never in the files.
+    report.heading("Required credentials")
+    for names, _ in REQUIRED_ENVIRONMENT:
+        report.row(" · ".join(names.split(", ")))
+    report.heading("Next")
     if _bare_package():
-        print("  alphaavatar setup                 # installs capabilities; it creates a new")
-        print(
-            f"                                    # bundle with them, and {name} stays as written"
-        )
-        print(f"  alphaavatar config check {name}    # names what {name} needs installed\n")
-        return 0
-    print(f"  alphaavatar dev {name}             # start; validates the configuration first")
-    print(f"  alphaavatar config check {name}    # optional: validate without starting\n")
+        # Setup installs the capabilities in a new bundle; this one stays as written, and
+        # config check names what it needs installed.
+        report.command("alphaavatar setup")
+        report.command(f"alphaavatar config check {name}")
+    else:
+        # Checked, then diagnosed, before anything starts.
+        report.command(f"alphaavatar config check {name}")
+        report.command(f"alphaavatar doctor {name}")
+    report.write()
     return 0
 
 

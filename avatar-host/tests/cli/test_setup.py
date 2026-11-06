@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import stat
 import sys
@@ -133,7 +134,9 @@ def test_the_bundle_and_credentials_are_written_only_by_a_successful_install(
     ):
         with mock.patch.object(environment, "install", failed):
             assert main(["setup", "--preset", "default", "--artifacts", "/ci/run"]) == 1
-        assert "nothing was enabled" in capsys.readouterr().err
+        output = capsys.readouterr()
+        assert "nothing was enabled" in output.err
+        assert "Bundle enabled" not in output.out  # Said only once checked and enabled.
         assert home_files() == before
         with mock.patch.object(environment, "install", installed):
             assert main(["setup", "--preset", "default", "--artifacts", "/ci/run"]) == 0
@@ -152,6 +155,70 @@ def answers(*lines: str):
     return mock.patch("builtins.input", lambda prompt="": queue.pop(0)), mock.patch(
         "getpass.getpass", lambda prompt="": queue.pop(0)
     )
+
+
+def test_the_plan_alone_goes_to_stdout_even_when_setup_asks(
+    package: environment.Installation, capsys: pytest.CaptureFixture
+) -> None:
+    queue = ["2", "remote", ""]  # Remote inference; the name; its Avatar ID.
+
+    def typed(prompt: str = "") -> str:
+        sys.stdout.write(prompt)  # As input() shows its prompt.
+        return queue.pop(0)
+
+    with (
+        mock.patch.object(environment.Installation, "running", return_value=package),
+        mock.patch("sys.stdin.isatty", return_value=True),
+        mock.patch("builtins.input", typed),
+    ):
+        assert main(["setup", "--plan"]) == 0
+    output = capsys.readouterr()
+    assert json.loads(output.out)["requirements"] == list(requirements(PRESETS["remote"]))
+    # The step and its questions went to stderr: stdout is the plan for a tool to read.
+    assert "What should this Avatar run with?" in output.err
+    # (Answered here without a terminal's echo, so a prompt and the next line share one.)
+    assert "01  Capabilities   Remote preset · Voice on · Vision on\n" in output.err
+    assert home_files() == []
+
+
+def test_a_plan_declined_installs_and_enables_nothing(
+    package: environment.Installation, capsys: pytest.CaptureFixture
+) -> None:
+    installed = mock.Mock(side_effect=AssertionError("nothing installs"))
+    # Remote inference, its name and ID, the credentials set already, not stored; then no.
+    asked, hidden = answers("2", "remote", "", "", "", "", "", "n", "n")
+    with (
+        mock.patch.object(environment.Installation, "running", return_value=package),
+        mock.patch.object(environment, "install", installed),
+        mock.patch("sys.stdin.isatty", return_value=True),
+        mock.patch.dict(os.environ, CREDENTIALS),
+        asked,
+        hidden,
+    ):
+        assert main(["setup"]) == 1
+    output = capsys.readouterr()
+    # The plan and what it downloads were shown before the question; then nothing changed.
+    assert re.search(r"\n    \d+ packages · 0 MB to download\n", output.out)
+    assert output.err == "WARN  Cancelled; nothing was enabled\n\n"
+    assert home_files() == []
+
+
+def test_ctrl_c_at_a_question_enables_nothing_and_says_so(
+    package: environment.Installation, capsys: pytest.CaptureFixture
+) -> None:
+    def answer(prompt: str = "") -> str:
+        if "Bundle name" in prompt:
+            raise KeyboardInterrupt
+        return "2"
+
+    with (
+        mock.patch.object(environment.Installation, "running", return_value=package),
+        mock.patch("sys.stdin.isatty", return_value=True),
+        mock.patch("builtins.input", answer),
+    ):
+        assert main(["setup"]) == 130
+    assert capsys.readouterr().err == "WARN  Interrupted; nothing was enabled\n\n"
+    assert home_files() == []
 
 
 def test_asked_credentials_are_stored_on_a_yes_and_a_stored_one_replaced_only_on_another(
@@ -221,7 +288,8 @@ def test_a_key_stored_for_one_server_of_ones_own_serves_no_other(
             mock.patch.object(environment.Installation, "running", return_value=package),
             mock.patch.object(environment, "install", installed),
             mock.patch("sys.stdin.isatty", return_value=True),
-            mock.patch.dict(os.environ, livekit),
+            # Wide: each question is one prompt, as this test reads them.
+            mock.patch.dict(os.environ, livekit | {"COLUMNS": "200"}),
             mock.patch("builtins.input", answer),
             mock.patch("getpass.getpass", answer),
         ):
@@ -316,7 +384,7 @@ def test_what_ends_enabling_leaves_current_the_bundle_and_credentials_agreeing(
     ):
         assert main(["setup"]) == (0 if then == "OSError" else 128 + signal.SIGTERM)
     if then == "SIGTERM":
-        assert "Stopped; bundle second was enabled first." in capsys.readouterr().err
+        assert "WARN  Stopped; bundle second was enabled first\n" in capsys.readouterr().err
     # All of it new: current, the default bundle and the credentials it reads.
     assert os.readlink(package.prefix / "current").startswith("envs/")
     home = Path.home() / ".local/share/alphaavatar"

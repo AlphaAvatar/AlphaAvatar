@@ -429,3 +429,25 @@ def test_a_lock_that_is_no_regular_file_is_refused_without_waiting(setup_layout,
     assert len(refused) == 1 and "is not a lock file" in refused[0]
     assert (stat.S_ISFIFO if kind == "pipe" else stat.S_ISDIR)(lock.lstat().st_mode)
     assert os.readlink(installation.prefix / "current") == current
+
+
+def test_the_check_counts_the_runners_the_new_environment_plans_and_names_why_it_fails(
+    tmp_path: Path,
+) -> None:
+    """The environment's own commands: its native libraries load, and its config check plans
+    the bundle; what that check says when it refuses is what setup says."""
+    env_dir, config = tmp_path / "env", tmp_path / "avatar.yaml"
+    (env_dir / "bin").mkdir(parents=True)
+    (env_dir / "bin" / "python").write_text("#!/bin/sh\nexit 0\n")
+    checked = '{"valid": true, "inference": {"a": 1, "b": 2, "c": 1}}'
+    (env_dir / "bin" / "alphaavatar").write_text(f"#!/bin/sh\necho '{checked}'\n")
+    for command in ("python", "alphaavatar"):
+        (env_dir / "bin" / command).chmod(0o755)
+    assert environment.check_environment(env_dir, config, dict(os.environ)) == 3
+    refused = json.dumps({"valid": False, "error": {"diagnostic": "  error: ValidationError"}})
+    (env_dir / "bin" / "alphaavatar").write_text(f"#!/bin/sh\necho '{refused}'\nexit 2\n")
+    with pytest.raises(SetupError) as failed:
+        environment.check_environment(env_dir, config, dict(os.environ))
+    assert str(failed.value) == (
+        f"The new environment fails check {config}:\n  error: ValidationError"
+    )

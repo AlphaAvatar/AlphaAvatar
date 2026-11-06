@@ -27,6 +27,7 @@ import http.server
 import json
 import logging
 import os
+import re
 import signal
 import socket
 import threading
@@ -116,6 +117,7 @@ def doctor(
     and its runners switch that off, and this process's environment stays as it was."""
     environ = {k: v for k, v in os.environ.items() if not online or k not in OFFLINE}
     environ[doubles.SPEC] = json.dumps(chain.spec)
+    environ["COLUMNS"] = "100"  # The text as a 100-column terminal shows it.
     for name in ("requests.jsonl", "committed", "network"):
         (chain.files / name).unlink(missing_ok=True)
     with mock.patch.dict(os.environ, environ, clear=True):
@@ -252,12 +254,20 @@ def test_the_configured_chain_runs_fixed_samples_and_one_request_carries_speech_
     # The stand-ins resolve here as installed plugins would: every check passes.
     assert doctor(capsys, chain, str(path), json_output=False)[0] == 0
     shown = capsys.readouterr().out
-    assert "passed       voice_vision" in shown and "no coverage  image_input" in shown
-    # The figures table: a column per measured scenario, a dash where none was observed.
-    rows = {line.split()[0]: line.split()[1:] for line in shown.splitlines() if line.strip()}
-    assert rows["FIGURE"] == ["(ms)", "voice_vision", "text"]
-    assert all(value.isdigit() for value in rows["first_text"])  # Observed in both turns.
-    assert rows["vad_close"][1] == "-"
+    rows = {tuple(line.split()[:2]): line.split()[2:] for line in shown.splitlines()}
+    assert rows["PASS", "voice_vision"] == samples.VOICE_VISION.covers.split()
+    assert rows["SKIP", "image_input"] == found["image_input", "original"]["summary"].split()
+    # End to end, a column per measured scenario: the first text observed in both turns.
+    assert rows["Metric", "voice_vision"] == ["text"]
+    assert re.fullmatch(r"[\d,]+ ms [\d,]+ ms", " ".join(rows["First", "text"]))
+    # Then each scenario's stages: speech ones only where speech went in.
+    stages = {
+        block.split("\n")[0]: block.split("\n\n")[0]
+        for block in shown.split("\nStage timing · ")[1:]
+    }
+    assert "Speech end → VAD close" in stages["voice_vision"]
+    assert "Model request → First text delta" in stages["text"]
+    assert "Speech end → VAD close" not in stages["text"]
     assert not (tmp_path / "home" / "avatars").exists()
     assert list(chain.root.iterdir()) == []
 

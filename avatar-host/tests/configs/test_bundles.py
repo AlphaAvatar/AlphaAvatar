@@ -34,6 +34,7 @@ from config_samples import CONFIG, LAYOUT, LOOP, SECRETS, SECTIONS, files, write
 import alphaavatar.plugins.persona.factory  # noqa: F401
 from alphaavatar.agents.runtime.inference import plan_inference_runners
 from alphaavatar.host.cli.app import main
+from alphaavatar.host.cli.render import home_relative
 from alphaavatar.host.configs import (
     application_paths,
     create_bundle,
@@ -125,7 +126,8 @@ def contents(root: Path) -> dict[str, bytes | None]:
 
 
 def create(name: str, avatar_id: str) -> int:
-    return main(["config", "init", name, "--avatar-id", avatar_id])
+    with mock.patch.dict(os.environ, {"COLUMNS": "200"}):  # Wide: nothing goes below its label.
+        return main(["config", "init", name, "--avatar-id", avatar_id])
 
 
 def profile(home: Path, name: str) -> Path:
@@ -158,14 +160,14 @@ def test_init_splits_the_minimal_template_into_a_bundle_and_profiles_that_load_u
         if path.is_relative_to(home)
     }
     assert sorted(set(files(tmp_path)) - set(before)) == sorted(created)
-    # Locations and the default choice, never the configuration itself.
-    assert f"  bundle    {bundle}\n" in output
-    layers = "host, agent, plugins/foundation, plugins/perception, plugins/tools"
-    assert f"  profiles  {home / 'configs' / 'profiles' / 'my-avatar'}  ({layers})\n" in output
+    # The bundle, where its profiles are and the default choice, never the configuration.
+    assert "  Bundle       my-avatar\n" in output
+    root = home_relative(home / "configs" / "profiles" / "my-avatar")
+    assert f"  Profiles     {root}\n" in output
     # Every section a profile may fill has a layer, so init and check cover them all.
     assert set(LAYERS) == profile_sections() == set(SECTIONS)
-    assert "  default   my-avatar (set as the default bundle)\n" in output
-    assert "OPENAI_API_KEY" in output and "alphaavatar dev my-avatar" in output
+    assert "  Default      my-avatar\n" in output
+    assert "  OPENAI_API_KEY\n" in output and "  alphaavatar doctor my-avatar\n" in output
     assert "gpt-4o" not in output and "silero" not in output
 
     for path in (bundle, *profiles):
@@ -500,7 +502,7 @@ def test_init_never_overwrites_reuses_directories_and_keeps_an_existing_default(
     notes.parent.mkdir(parents=True)
     notes.write_text("keep")
     assert create("alpha", "alpha") == 0
-    assert "alpha (set as the default bundle)" in capsys.readouterr().out
+    assert "  Default      alpha\n" in capsys.readouterr().out
     # Appending keeps the other settings and their comments exactly.
     kept = "# Personal settings.\ntheme: dark\ndefault_bundle: alpha\n"
     assert (settings.read_text(), notes.read_text()) == (kept, "keep")
@@ -517,7 +519,7 @@ def test_init_never_overwrites_reuses_directories_and_keeps_an_existing_default(
 
     # Another bundle keeps the default and every settings byte; a non-ASCII ID survives.
     assert create("gamma", "助手-1") == 0
-    assert "alpha (unchanged)" in capsys.readouterr().out
+    assert "  Default      alpha (unchanged)\n" in capsys.readouterr().out
     assert settings.read_text() == kept
     assert load_application(select_configuration("gamma")).avatar.avatar.id == "助手-1"
 

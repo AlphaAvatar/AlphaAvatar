@@ -65,6 +65,7 @@ class Task:
     speech: str | None = None  # Recording name
     text: str | None = None  # Typed input
     screen: bool = False  # The card picture on a shared screen while the question is asked
+    covers: str = ""  # What it shows when it passes, in words
 
     def answered(self, answer: str) -> bool:
         return _plain(answer) in self.answers
@@ -83,6 +84,7 @@ VOICE_VISION = Task(
     transcript_words=(("color", "colour"), ("card",)),
     speech="card_question",
     screen=True,
+    covers="Speech and screen frames in one model request",
 )
 VOICE = Task(
     "voice",
@@ -90,12 +92,14 @@ VOICE = Task(
     answers=("5", "five", "五"),
     transcript_words=(("two", "2"), ("three", "3")),
     speech="sum_question",
+    covers="Speech transcribed and answered",
 )
 TEXT = Task(
     "text",
     "What is two plus three? Answer with just the number.",
     answers=("5", "five", "五"),
     text="What is two plus three? Answer with just the number.",
+    covers="Typed input answered",
 )
 
 

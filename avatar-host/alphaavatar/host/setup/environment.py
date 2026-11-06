@@ -48,7 +48,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -450,13 +450,16 @@ def install(
     return environment
 
 
-def check_environment(environment: Path, config: Path, env: dict[str, str]) -> None:
-    """The environment's native code loads, and its command accepts the configuration."""
-    for command in (
-        [environment / "bin" / "python", "-I", "-m", "alphaavatar.host.setup.probe"],
-        [environment / "bin" / "alphaavatar", "config", "check", str(config)],
-    ):
+def check_environment(environment: Path, config: Path, env: dict[str, str]) -> int:
+    """The environment's native code loads, and its command accepts the configuration; the
+    inference runners it plans, as config check counts them."""
+    probe = [environment / "bin" / "python", "-I", "-m", "alphaavatar.host.setup.probe"]
+    check = [environment / "bin" / "alphaavatar", "config", "check", str(config), "--json"]
+    for name, command in ((" ".join(probe[-2:]), probe), (f"check {config}", check)):
         result = subprocess.run(command, cwd="/", env=env, capture_output=True, text=True)
         if result.returncode != 0:
             output = (result.stdout + result.stderr).strip()
-            raise SetupError(f"The new environment fails {command[-2]} {command[-1]}:\n{output}")
+            with suppress(ValueError, KeyError, TypeError):
+                output = json.loads(result.stdout)["error"]["diagnostic"]  # As its text shows.
+            raise SetupError(f"The new environment fails {name}:\n{output}")
+    return len(json.loads(result.stdout)["inference"])

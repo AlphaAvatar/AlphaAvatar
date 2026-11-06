@@ -33,6 +33,9 @@ Without `--preset`, setup asks, in a terminal:
 3. The bundle name and Avatar ID.
 4. The credentials the choice needs, then whether to store them.
 
+Each question is in signal cyan under its step; on a narrow terminal a long one wraps, and the
+answer is typed on its last line.
+
 ## Credentials
 
 | Variable | Asked for |
@@ -73,24 +76,48 @@ Without `--preset`, setup asks, in a terminal:
   prefix is refused while one runs. A lock that is not a regular file, a link or a pipe, is
   refused and left as it is.
 
-With `--preset remote`:
+It reports in four steps, each on one line once done. On a terminal, the current step is in
+signal cyan, and its line shows the download in progress; a pipe or log gets each artifact on a
+line of its own. `Bundle enabled` comes only once the environment is checked and the bundle
+enabled. With `--preset remote`:
 
 ```text
-AlphaAvatar 0.6.9 (linux-x86_64), plan 0d4c1f7a9b2e5c63:
-  sessions through LiveKit
-  model and embeddings from OpenAI
-  speech from OpenAI
-  voice: speech in and out, voice activity detected on this machine
-  vision: camera frames reach the model
-  no other models on this machine
-  memory and persona: vectors in LanceDB in the Avatar workspace
-  85 packages, 210 MB to download
-  environment /home/me/.local/lib/alphaavatar/envs/ab714123b86b7b48; bundle avatar, made the default
+AlphaAvatar / Setup
 
-Enabled bundle avatar (default) in /home/me/.local/lib/alphaavatar/envs/ab714123b86b7b48.
+01  Capabilities   Remote preset · Voice on · Vision on
+02  Credentials    Ready
+03  Install        85 packages · 212 MB
+04  Validate       PASS · 3 runners
+
+OK    Bundle enabled
+      Default       remote
+      Environment   ~/.local/lib/alphaavatar/envs/70a6587ffcf369ec
+      Start reads OPENAI_API_KEY, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET from the
+      environment or .env.
+
+Next
+  alphaavatar doctor remote
 ```
 
-Then start it with [`alphaavatar start`](start.md), or [`alphaavatar dev`](dev.md).
+Asked, each step's questions go under it, and the plan comes before the confirmation:
+
+```text
+03  Install
+    AlphaAvatar 0.6.9 (linux-x86_64), plan 70a6587ffcf369ec
+    sessions through LiveKit
+    model and embeddings from OpenAI
+    …
+    85 packages · 212 MB to download
+    Environment ~/.local/lib/alphaavatar/envs/70a6587ffcf369ec; bundle alpha, made the default
+    Install and enable? [Y/n]:
+```
+
+`Validate` counts the inference runners the new environment's `config check` plans. A failure,
+a declined plan or Ctrl+C is reported on stderr, `FAIL  Setup failed; nothing was enabled`,
+`WARN  Cancelled; nothing was enabled` or `WARN  Interrupted; nothing was enabled`, with the
+reason below; with `--plan`, the steps and questions go to stderr too, leaving stdout to the
+plan's JSON. Then diagnose the bundle with [`alphaavatar doctor`](doctor.md), and start it with
+[`alphaavatar start`](start.md) or [`alphaavatar dev`](dev.md).
 
 ## Exit codes
 

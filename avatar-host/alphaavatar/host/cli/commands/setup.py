@@ -32,87 +32,129 @@ from pathlib import Path
 from typing import Any
 
 from alphaavatar.core.log.records import clean
+from alphaavatar.host.cli.render import STATUS, Report, home_relative
 
 
-def _ask(question: str, default: str) -> str:
-    answer = input(f"{question} [{default}]: ").strip()
+def _ask(out: Report, question: str, default: str) -> str:
+    answer = out.ask(f"{question} [{default}]: ").strip()
     return answer or default
 
 
-def _needed(question: str, default: str = "") -> str:
-    while not (answer := _ask(question, default) if default else input(f"{question}: ").strip()):
+def _needed(out: Report, question: str, default: str = "") -> str:
+    while not (
+        answer := _ask(out, question, default) if default else out.ask(f"{question}: ").strip()
+    ):
         pass
     return answer
 
 
-def _server(question: str, *, speech: bool) -> str:
+def _server(out: Report, question: str, *, speech: bool) -> str:
     from alphaavatar.host.setup.choices import server_problem
 
     while True:
-        url = _needed(question, "http://localhost:8000/v1").rstrip("/")
+        url = _needed(out, question, "http://localhost:8000/v1").rstrip("/")
         if (problem := server_problem(url, speech=speech)) is None:
             return url
-        print(f"  {problem.capitalize()}")
+        out.wrapped(problem.capitalize(), indent=6)
 
 
-def _yes(question: str, default: bool = True) -> bool:
+def _yes(out: Report, question: str, default: bool = True) -> bool:
     while True:
-        answer = input(f"{question} [{'Y/n' if default else 'y/N'}]: ").strip().lower()
+        answer = out.ask(f"{question} [{'Y/n' if default else 'y/N'}]: ").strip().lower()
         if not answer:
             return default
         if answer in ("y", "yes", "n", "no"):
             return answer.startswith("y")
 
 
-def _choose(args: argparse.Namespace):
+def _choose(args: argparse.Namespace, out: Report):
+    """The selection, and how it was chosen, in words."""
     from alphaavatar.host.setup.choices import PRESETS, Selection
 
     if args.preset is not None:
         selection = PRESETS[args.preset]
-        return Selection(
+        chosen = Selection(
             voice=selection.voice and not args.no_voice,
             vision=selection.vision and not args.no_vision,
             local_models=selection.local_models,
             vector_store=args.vector_store or selection.vector_store,
         )
-    print("\nWhat should this Avatar run with?")
-    print("  1  Default bundle    voice, vision, memory and persona, with turn taking,")
-    print("                       addressing, face and speaker models on this machine")
-    print("  2  Remote inference  the same, with no model on this machine but the voice")
-    print("                       activity detection speech input needs")
-    print("  3  Choose each")
-    while (choice := _ask("Choice", "1")) not in ("1", "2", "3"):
+        return chosen, f"{args.preset.capitalize()} preset"
+    out.write("    What should this Avatar run with?")
+    for lead, text in (
+        (
+            "1  Default bundle    ",
+            "voice, vision, memory and persona, with turn taking, addressing, face and speaker "
+            "models on this machine",
+        ),
+        (
+            "2  Remote inference  ",
+            "the same, with no model on this machine but the voice activity detection speech "
+            "input needs",
+        ),
+        ("3  Choose each", ""),
+    ):
+        out.item(lead, text, indent=6)
+    while (choice := _ask(out, "Choice", "1")) not in ("1", "2", "3"):
         pass
     if choice != "3":
-        return PRESETS["default" if choice == "1" else "remote"]
+        preset = "default" if choice == "1" else "remote"
+        return PRESETS[preset], f"{preset.capitalize()} preset"
     from alphaavatar.host.setup.choices import Models, Speech
 
-    voice = _yes("Voice: speech in and out, voice activity detected on this machine?")
-    vision = _yes("Vision: camera frames reach the model?")
-    local = _yes("Models on this machine: turn taking, addressing, face and speaker recognition?")
-    print("Vectors for memory and persona:  1  LanceDB in the Avatar workspace  2  your Qdrant")
-    while (store := _ask("Vector store", "1")) not in ("1", "2"):
+    voice = _yes(out, "Voice: speech in and out, voice activity detected on this machine?")
+    vision = _yes(out, "Vision: camera frames reach the model?")
+    local = _yes(
+        out, "Models on this machine: turn taking, addressing, face and speaker recognition?"
+    )
+    out.write("    Vectors for memory and persona:")
+    out.item("1  ", "LanceDB in the Avatar workspace", indent=6)
+    out.item("2  ", "your Qdrant", indent=6)
+    while (store := _ask(out, "Vector store", "1")) not in ("1", "2"):
         pass
     models = speech = None
     if not _yes(
-        "Models from OpenAI? No: a server of your own with OpenAI's API, Responses included"
+        out, "Models from OpenAI? No: a server of your own with OpenAI's API, Responses included"
     ):
-        url = _server("  Server URL", speech=False)
-        chat = _needed("  Conversation model")
+        url = _server(out, "  Server URL", speech=False)
+        chat = _needed(out, "  Conversation model")
         models = Models(
-            url, chat, _needed("  Memory and persona model", chat), _needed("  Embedding model")
+            url,
+            chat,
+            _needed(out, "  Memory and persona model", chat),
+            _needed(out, "  Embedding model"),
         )
-    if voice and not _yes("Speech from OpenAI? No: a server of your own with OpenAI's audio API"):
+    if voice and not _yes(
+        out, "Speech from OpenAI? No: a server of your own with OpenAI's audio API"
+    ):
         speech = Speech(
-            _server("  Server URL", speech=True),
-            _needed("  Transcription model"),
-            _needed("  Speech model"),
-            _needed("  Voice"),
+            _server(out, "  Server URL", speech=True),
+            _needed(out, "  Transcription model"),
+            _needed(out, "  Speech model"),
+            _needed(out, "  Voice"),
         )
-    return Selection(voice, vision, local, "lancedb" if store == "1" else "qdrant", models, speech)
+    store = "lancedb" if store == "1" else "qdrant"
+    return Selection(voice, vision, local, store, models, speech), "Chosen"
 
 
-def _credentials(selection, interactive: bool, paths) -> tuple[dict[str, str], dict[str, str]]:
+def _described(selection, chosen: str) -> str:
+    """The selection on one line: how it was chosen, then its switches."""
+    on = {True: "on", False: "off"}
+    parts = [chosen, f"Voice {on[selection.voice]}", f"Vision {on[selection.vision]}"]
+    if chosen == "Chosen":
+        parts.append(f"Local models {on[selection.local_models]}")
+    if selection.vector_store == "qdrant":
+        parts.append("Qdrant")
+    if selection.models is not None:
+        parts.append("Models from your server")
+    if selection.voice and selection.speech is not None:
+        parts.append("Speech from your server")
+    return " · ".join(parts)
+
+
+def _credentials(
+    selection, interactive: bool, paths, out: Report
+) -> tuple[dict[str, str], dict[str, str]]:
     """The values the check and the bundle read, and those to store.
 
     A preset reads them from the environment and stores none. Asked for, they are stored only
@@ -125,15 +167,15 @@ def _credentials(selection, interactive: bool, paths) -> tuple[dict[str, str], d
     from alphaavatar.host.setup.environment import SetupError
 
     values, missing = {}, []
-    if interactive:
-        print("\nCredentials:")
     for credential in credentials(selection):
         present = os.environ.get(credential.name)
         if interactive:
             keep = " (set; Enter keeps it)" if present else ""
-            prompt = f"  {credential.name}, for {credential.purpose}{keep}: "
-            value = (getpass.getpass(prompt) if credential.secret else input(prompt)).strip()
-            value = value or present or ""
+            question = f"{credential.name}, for {credential.purpose}{keep}: "
+            answer = (
+                getpass.getpass(out.prompt(question)) if credential.secret else out.ask(question)
+            )
+            value = answer.strip() or present or ""
         else:
             value = present or ""
         if value:
@@ -147,15 +189,20 @@ def _credentials(selection, interactive: bool, paths) -> tuple[dict[str, str], d
     if not interactive or not new:
         return values, {}
     where = clean(str(paths.settings_dir))
-    if not _yes(f"Store {', '.join(new)} in {where}, readable only by you?", False):
-        print("  Not stored: start reads them from the environment or .env")
+    if not _yes(out, f"Store {', '.join(new)} in {where}, readable only by you?", False):
+        out.write("    Not stored: start reads them from the environment or .env")
         return values, {}
     saved = {}
     for name, value in new.items():
         if stored.get(name) is not None and not _yes(
-            f"  {name} is stored already and other bundles may read it; replace it for all?", False
+            out,
+            f"  {name} is stored already and other bundles may read it; replace it for all?",
+            False,
         ):
-            print(f"  {name} stays as stored; this bundle reads it unless the environment sets it")
+            out.wrapped(
+                f"{name} stays as stored; this bundle reads it unless the environment sets it",
+                indent=4,
+            )
             continue
         saved[name] = value
     return values, saved
@@ -225,22 +272,30 @@ def _setup(args: argparse.Namespace) -> int:
     from alphaavatar.host.setup.plan import PlanError, plan_install
 
     interactive = args.preset is None
+    # The steps, and the questions under them; with --plan, stdout holds the plan alone.
+    out = Report(sys.stderr if args.plan else sys.stdout)
+    errors = Report(sys.stderr)
     enabled: list[str] = []
+    out.title("Setup")
+    out.write()
     try:
         if interactive and not sys.stdin.isatty():
             raise SetupError("No terminal to ask in: pass --preset (default or remote)")
         load_environment()  # Credentials already set or stored count as given.
         installation = Installation.running()
         manifest, catalog = installation.manifest, installation.catalog
-        selection = _choose(args)
-        name = args.name or (_ask("\nBundle name", "avatar") if interactive else "avatar")
-        avatar_id = args.avatar_id or (_ask("Avatar ID", name) if interactive else name)
+        if interactive:
+            out.begin(1, "Capabilities")
+        selection, chosen = _choose(args, out)
+        name = args.name or (_ask(out, "Bundle name", "avatar") if interactive else "avatar")
+        avatar_id = args.avatar_id or (_ask(out, "Avatar ID", name) if interactive else name)
         paths = application_paths()
         read_settings(paths)  # Unreadable settings refuse before anything happens.
         if bundle_path(paths, name).exists():
             raise ConfigReferenceError(
                 f"Bundle {name!r} exists: {bundle_path(paths, name)}; choose another --name"
             )
+        out.step(1, "Capabilities", _described(selection, chosen))
         sections = choices.sections(selection)
         environment = [(c.name, c.purpose) for c in choices.credentials(selection)]
         texts = render_bundle(name, avatar_id, sections=sections, environment=environment)
@@ -264,22 +319,44 @@ def _setup(args: argparse.Namespace) -> int:
                 f"{_megabytes(free.f_bavail * free.f_frsize)} free in {installation.prefix}; "
                 f"the plan downloads {_megabytes(plan.download_bytes)} and needs about four times"
             )
-        values, saved = _credentials(selection, interactive, paths)
+        if interactive:
+            out.begin(2, "Credentials")
+        values, saved = _credentials(selection, interactive, paths, out)
+        out.step(2, "Credentials", f"Ready · {len(saved)} to store" if saved else "Ready")
 
-        print(f"\nAlphaAvatar {plan.version} ({plan.platform}), plan {plan.id[:16]}:")
-        for line in choices.capabilities(selection):
-            print(f"  {line}")
+        size = "installed already" if reused else _megabytes(plan.download_bytes)
+        planned = f"{len(plan.artifacts)} packages · {size}"
+        out.begin(3, "Install")
         if extra := sorted(set(kept) - set(choices.requirements(selection))):
-            print(f"  kept from the current environment: {', '.join(extra)}")
-        if reused:
-            print(f"  {len(plan.artifacts)} packages, installed already: nothing to download")
-        else:
-            print(
-                f"  {len(plan.artifacts)} packages, {_megabytes(plan.download_bytes)} to download"
-            )
-        print(f"  environment {clean(str(target))}; bundle {name}, made the default")
-        if interactive and not _yes("Install and enable?"):
-            return 1
+            out.wrapped(f"Kept from the current environment: {', '.join(extra)}", indent=4)
+        if interactive:
+            # The plan, and what it downloads, before anything is installed.
+            plan_lines = [
+                f"AlphaAvatar {plan.version} ({plan.platform}), plan {plan.id[:16]}",
+                *choices.capabilities(selection),
+                f"{planned}{'' if reused else ' to download'}",
+                f"Environment {home_relative(target)}; bundle {name}, made the default",
+            ]
+            for line in plan_lines:
+                out.wrapped(line, indent=4)
+            if not _yes(out, "Install and enable?"):
+                out.write()
+                errors.status("WARN", "Cancelled; nothing was enabled")
+                errors.write()
+                return 1
+            out.begin(3, "Install")  # Its progress, on the step's line again.
+
+        def check(environment: Path) -> None:
+            out.step(3, "Install", planned)
+            out.begin(4, "Validate")
+            count = check_environment(environment, config, env)
+            out.step(4, "Validate", "PASS" + (f" · {count} runners" if count is not None else ""))
+
+        def progress(line: str) -> None:
+            # Each artifact, then the check: the step's line on a terminal shows the latest.
+            if line.startswith("Checking the environment"):
+                return
+            out.progress(line)
 
         def enable() -> None:
             # Signals wait meanwhile; one settings replacement makes the bundle the default
@@ -312,29 +389,43 @@ def _setup(args: argparse.Namespace) -> int:
                 installation,
                 plan,
                 Sources(args.artifacts, manifest.get("release")),
-                check=lambda environment: check_environment(environment, config, env),
+                check=check,
                 enable=enable,
                 replan=replan,
-                progress=lambda line: print(line, flush=True),
+                progress=progress,
             )
     except (KeyboardInterrupt, SystemExit) as stop:
         done = f"bundle {enabled[0]} was enabled first" if enabled else "nothing was enabled"
-        print(
-            f"\n{'Interrupted' if isinstance(stop, KeyboardInterrupt) else 'Stopped'}; {done}.",
-            file=sys.stderr,
+        out.write()
+        errors.status(
+            "WARN", f"{'Interrupted' if isinstance(stop, KeyboardInterrupt) else 'Stopped'}; {done}"
         )
+        errors.write()
         if isinstance(stop, KeyboardInterrupt):
             return 130
         return stop.code if isinstance(stop.code, int) else 1
     except (SetupError, PlanError) as error:
-        print(f"\nSetup failed; nothing was enabled:\n{clean(str(error))}\n", file=sys.stderr)
+        out.write()
+        errors.status("FAIL", "Setup failed; nothing was enabled")
+        errors.verbatim(str(error), indent=STATUS)
+        errors.write()
         return 1
     except Exception as error:
-        print(f"\nSetup failed; nothing was enabled:\n{format_failure(error)}\n", file=sys.stderr)
+        out.write()
+        errors.status("FAIL", "Setup failed; nothing was enabled")
+        errors.verbatim(format_failure(error))
+        errors.write()
         return 2
-    print(f"\nEnabled bundle {name} (default) in {clean(str(target))}.")
     found = stored_credentials(paths)
+    out.write()
+    out.status("OK", "Bundle enabled")
+    facts = {"Default": name, "Environment": home_relative(target)}
+    column = out.column(list(facts))
+    for key, value in facts.items():
+        out.row(key, value, indent=STATUS, column=column)
     if unstored := [key for key in values if found.get(key) is None]:
-        print(f"Start reads {', '.join(unstored)} from the environment or .env.")
-    print("Next:\n  alphaavatar dev        # start in development mode\n")
+        out.note(f"Start reads {', '.join(unstored)} from the environment or .env.", indent=STATUS)
+    out.heading("Next")
+    out.command(f"alphaavatar doctor {name}")
+    out.write()
     return 0

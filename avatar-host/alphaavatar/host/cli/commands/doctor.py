@@ -13,91 +13,94 @@
 # limitations under the License.
 """Doctor command: arguments and presentation; the checks live in ``alphaavatar.host.doctor``.
 
-Text and JSON show the same report, already through the configuration output boundary.
-Styles only decorate text on a terminal. Exit codes: 0 nothing failed, 1 a check failed,
-2 invalid arguments, 130 interrupted (the report still shows what ran).
+Text and JSON show the same report, already through the configuration output boundary; the
+text groups it through the shared renderer (``cli.render``), and ``--json`` keeps every event
+boundary, sample count and piece of evidence. Exit codes: 0 nothing failed, 1 a check
+failed, 2 invalid arguments, 130 interrupted (the report still shows what ran).
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import sys
+import shlex
 from collections.abc import Sequence
 from dataclasses import asdict
+from pathlib import Path
 
+from alphaavatar.host.cli.render import STATUS, Report
 from alphaavatar.host.doctor import CheckStatus, ScenarioOutcome
-from alphaavatar.host.log.format import BOLD, DIM, GREEN, RED, RESET, YELLOW, use_color
 
-_STYLES = {
-    CheckStatus.PASS: GREEN,
-    CheckStatus.WARN: YELLOW,
-    CheckStatus.FAIL: RED,
-    CheckStatus.SKIP: DIM,
-}
-_OUTCOMES = {
-    ScenarioOutcome.PASSED: GREEN,
-    ScenarioOutcome.FAILED: RED,
-    ScenarioOutcome.INTERRUPTED: YELLOW,
-}
-# The figures table: one row each, a column per measured scenario, in milliseconds.
-_FIGURES = (
-    "first_text",
-    "first_audio_frame",
-    "text_complete",
-    "audio_last_frame",
-    "response_final",
-    "last_required_input",
-    "vad_close",
-    "stt_final",
-    "turn_cutoff",
-    "context_ready_wait",
-    "cutoff_to_model_request",
-    "model_first_event",
-    "model_first_text_delta",
-    "first_displayable_text",
-    "tts_request_to_first_pcm",
-    "tts_request_to_first_audio_frame",
-    "selected_frame_age",
-    "last_selected_frame_to_cutoff",
-)
 # Text groups only; JSON keeps the flat list and the stable check IDs.
 GROUPS = {
-    "environment": ("system.platform", "python.version", "packages.alphaavatar"),
-    "configuration": ("config.load", "config.runners", "packages.capabilities"),
-    "directories": ("paths.home", "paths.cache", "paths.workspace"),
-    "session": (
+    "Environment": ("system.platform", "python.version", "packages.alphaavatar"),
+    "Configuration": ("config.load", "config.runners", "packages.capabilities"),
+    "Directories": ("paths.home", "paths.cache", "paths.workspace"),
+    "Session and services": (
         "session.start",
         "models.runners",
         "services.external",
         "session.scenarios",
         "session.cleanup",
     ),
-    "not verified": ("devices.media",),
+    "Media devices": ("devices.media",),
 }
+_OUTCOMES = {
+    ScenarioOutcome.PASSED: "PASS",
+    ScenarioOutcome.FAILED: "FAIL",
+    ScenarioOutcome.INTERRUPTED: "WARN",
+}  # Any other outcome was not run: SKIP.
+# The measured figures, in milliseconds as the session times them. End to end first: the
+# first text, the first answer audio frame and the response complete.
+LATENCY = (
+    ("first_text", "First text"),
+    ("first_audio_frame", "First audio frame"),
+    ("response_final", "Response complete"),
+    ("text_complete", "Text complete"),
+    ("audio_last_frame", "Last audio frame"),
+)
+# Then each stage: speech, the Turn, Context, the model, TTS and the frames vision selected.
+STAGES = (
+    ("vad_close", "Speech end → VAD close"),
+    ("stt_final", "Speech end → STT final"),
+    ("turn_cutoff", "Speech end → Turn commit"),
+    ("last_required_input", "Speech end → Last required input"),
+    ("context_ready_wait", "Context ready wait"),
+    ("cutoff_to_model_request", "Turn commit → Model request"),
+    ("model_first_event", "Model request → First event"),
+    ("model_first_text_delta", "Model request → First text delta"),
+    ("first_displayable_text", "Model request → First text out"),
+    ("tts_request_to_first_pcm", "TTS request → First PCM"),
+    ("tts_request_to_first_audio_frame", "TTS request → First audio frame"),
+    ("selected_frame_age", "Selected frame age at model request"),
+    ("last_selected_frame_to_cutoff", "Newest selected frame → Turn commit"),
+)
+_TALLY = (
+    (CheckStatus.PASS, "passed"),
+    (CheckStatus.WARN, "warned"),
+    (CheckStatus.FAIL, "failed"),
+    (CheckStatus.SKIP, "skipped"),
+)
 
 
 def doctor(target: str | None, overrides: Sequence[str], *, as_json: bool, listing: bool) -> int:
     from alphaavatar.host.doctor import CHECKS
 
-    color = use_color("auto", sys.stdout)
-
-    def paint(text: str, style: str) -> str:
-        return f"{style}{text}{RESET}" if color else text
-
     if listing:
         if as_json:
             print(json.dumps({"checks": [asdict(spec) for spec in CHECKS]}, indent=2))
             return 0
+        out = Report()
+        out.title("Doctor checks")
         specs = {spec.id: spec for spec in CHECKS}
-        print()
-        rows: list[tuple[object, ...]] = []
+        column = out.column(list(specs))
         for group, ids in GROUPS.items():
-            rows.append(((group, BOLD),))
+            out.heading(group)
             for spec in map(specs.__getitem__, ids):
-                needs = "session" if spec.in_session else "configuration"
-                rows.append((spec.id, needs if spec.needs_configuration else "-", spec.title))
-        _table(("CHECK", "NEEDS", "TITLE"), rows, paint)
+                needs = "the session" if spec.in_session else "a configuration"
+                needs = f" · needs {needs}" if spec.needs_configuration else ""
+                out.row(spec.id, spec.title + needs, column=column)
+        out.write()
         return 0
 
     from functools import partial
@@ -125,158 +128,182 @@ def doctor(target: str | None, overrides: Sequence[str], *, as_json: bool, listi
     if as_json:
         print(json.dumps(report.to_dict(), indent=2, ensure_ascii=False))
         return code
-
-    counts = report.counts()
-    # Interrupted: what ran is reported; the rest did not run.
-    style = _STYLES[CheckStatus.WARN if interrupted else report.status]
-    label = "OK" if report.status == CheckStatus.PASS else report.status
-    label = "STOPPED" if interrupted else label
-    print(
-        f"\n{paint(label, BOLD + style)}  doctor: {counts[CheckStatus.PASS]} passed, "
-        f"{counts[CheckStatus.WARN]} warned, {counts[CheckStatus.FAIL]} failed, "
-        f"{counts[CheckStatus.SKIP]} not verified or skipped"
-        f"{' (interrupted)' if interrupted else ''}\n"
-    )
-    checks = {check.id: check for check in report.checks}
-    _table(("STATUS", "CHECK", "SUMMARY"), _check_rows(checks), paint)
-    runners = checks["models.runners"].runners
-    if runners:
-        _table(
-            ("STATUS", "RUNNER", "CONFIGURATION", "STARTUP", "SUMMARY"),
-            [
-                (
-                    (runner.status, _STYLES[runner.status]),
-                    runner.method,
-                    runner.configuration,
-                    f"{runner.startup_seconds:.2f} s"
-                    if runner.startup_seconds is not None
-                    else "-",
-                    runner.summary,
-                )
-                for runner in runners
-            ],
-            paint,
-        )
-    services = checks["services.external"].services
-    if services:
-        _table(
-            ("SERVICE", "AUTHORIZED", "REACHED", "PASSED", "NOTE"),
-            [
-                (
-                    service.name,
-                    _state(service.authorized),
-                    _state(service.reached),
-                    _state(service.passed),
-                    service.note or "",
-                )
-                for service in services
-            ],
-            paint,
-        )
-    scenarios = checks["session.scenarios"].scenarios
-    if scenarios:
-        _table(
-            ("OUTCOME", "SCENARIO", "CONFIGURATION", "SUMMARY"), _scenario_rows(scenarios), paint
-        )
-        _figures(scenarios, paint)
+    _text(report, prepared, [*([target] if target is not None else []), *overrides], interrupted)
     return code
 
 
-def _table(header: Sequence[str], rows: Sequence[Sequence[object]], paint) -> None:
-    """Columns as wide as their widest cell, the last one free. A cell is text, or text and
-    its style; a row of one cell is a heading across the table."""
+def _text(report, prepared, argv: Sequence[str], interrupted: bool) -> None:
+    from alphaavatar.host.configs import output_scrubber
 
-    def text(cell: object) -> str:
-        return cell if isinstance(cell, str) else cell[0]
+    out = Report()
+    checks = {check.id: check for check in report.checks}
+    counts = report.counts()
+    ran = checks["session.start"].status != CheckStatus.SKIP
+    tally = " · ".join(
+        f"{counts[status]} {word}"
+        for status, word in _TALLY
+        if counts[status] or status == CheckStatus.PASS
+    )
+    out.title("Doctor")
+    if interrupted:  # What ran is reported; the rest did not run.
+        out.status("WARN", f"Interrupted · {tally}")
+    else:
+        status = "OK" if report.status == CheckStatus.PASS else str(report.status)
+        out.status(status, f"Diagnostics completed · {tally}" if ran else tally)
 
-    cells = [[text(cell) for cell in row] for row in rows if len(row) > 1]
-    widths = [max(len(row[i]) for row in (header, *cells)) for i in range(len(header) - 1)]
-    rule = max((len(row[-1]) for row in (header, *cells)), default=0)
+    groups = {title: [checks[i] for i in ids] for title, ids in GROUPS.items()}
+    tested = {
+        title: group
+        for title, group in groups.items()
+        if any(check.status != CheckStatus.SKIP for check in group)
+    }
+    scenarios = checks["session.scenarios"].scenarios
+    if checks["session.scenarios"].status == CheckStatus.SKIP:
+        scenarios = ()  # Not run: the session's reason says why.
+    names = {id(result): _name(result) for result in scenarios}
+    column = out.column([*groups, *names.values()])
 
-    def line(row: Sequence[object]) -> str:
-        parts = []
-        for index, cell in enumerate(row):
-            value, style = (cell, None) if isinstance(cell, str) else cell
-            padded = value.ljust(widths[index]) if index < len(widths) and len(row) > 1 else value
-            parts.append(paint(padded, style) if style and value else padded)
-        return f"    {'  '.join(parts)}".rstrip()
+    out.heading("Checks")
+    for title, group in tested.items():
+        out.row(title, _summary(title, group, prepared), status=_worst(group), column=column)
+        details = out.column([check.id for check in group])
+        for check in group:
+            if check.status != CheckStatus.PASS:  # A pass is its group's; details in --json.
+                _check(out, check, details)
+    if skipped := {title: group for title, group in groups.items() if title not in tested}:
+        out.heading("Not verified")
+        for title, group in skipped.items():
+            cause = group[0]  # What the rest of the group follows from.
+            out.row(title, status="SKIP")
+            _explained(out, cause, indent=2 + STATUS)
 
-    print(line([(name, BOLD) for name in header]))
-    print(f"    {'  '.join('-' * width for width in (*widths, min(rule, 60)))}".rstrip())
-    for row in rows:
-        print(line(row))
-    print()
+    if scenarios:
+        out.heading("Scenarios")
+        for result in scenarios:
+            status = _OUTCOMES.get(result.outcome, "SKIP")
+            shown = _covers(result) if status == "PASS" else result.summary
+            out.row(names[id(result)], shown, status=status, column=column)
+            if result.outcome == ScenarioOutcome.FAILED:
+                named = result.cause is None or any(result.cause in line for line in result.details)
+                for line in (*result.details, *(() if named else (f"cause: {result.cause}",))):
+                    out.note(line, indent=2 + STATUS)
 
+    if runners := checks["models.runners"].runners:
+        out.heading("Runners")
+        width = out.column([runner.method for runner in runners])
+        for runner in runners:
+            shown = runner.summary
+            if runner.status == CheckStatus.PASS and runner.startup_seconds is not None:
+                shown = f"started in {runner.startup_seconds:.2f} s"
+            if runner.configuration != "original":
+                shown += f" · {runner.configuration}"
+            out.row(runner.method, shown, status=str(runner.status), column=width)
+            if runner.status != CheckStatus.PASS:
+                for line in runner.details:
+                    out.note(line, indent=2 + STATUS)
 
-def _check_rows(checks) -> list[tuple[object, ...]]:
-    """Grouped; a pass is its row, anything else adds its details and next step below."""
-    rows: list[tuple[object, ...]] = []
-    for group, ids in GROUPS.items():
-        rows.append(((group, BOLD),))
-        for check in map(checks.__getitem__, ids):
-            rows.append(((check.status, _STYLES[check.status]), check.id, check.summary))
-            if check.status == CheckStatus.PASS:
-                continue  # A pass is its summary; the details stay in --json.
-            # The services table shows each service; the rest of the details stay here.
-            tabled = tuple(f"{service.name}:" for service in check.services)
-            for detail in check.details:
-                if not tabled or not detail.startswith(tabled):
-                    rows.append(("", "", (detail, DIM)))
-            if check.action is not None:
-                rows.append(("", "", f"-> {check.action}"))
-    return rows
-
-
-def _scenario_rows(scenarios) -> list[tuple[object, ...]]:
-    """Each scenario; a failed one adds what stopped it."""
-    rows: list[tuple[object, ...]] = []
-    for result in scenarios:
-        outcome = (result.outcome.value.replace("_", " "), _OUTCOMES.get(result.outcome, DIM))
-        rows.append((outcome, result.name, result.configuration, result.summary))
-        if result.outcome != ScenarioOutcome.FAILED:
-            continue
-        named = result.cause is None or any(result.cause in line for line in result.details)
-        cause = () if named else (f"cause: {result.cause}",)
-        for line in (*result.details, *cause):
-            rows.append(("", "", "", (line, DIM)))
-    return rows
-
-
-def _figures(scenarios, paint) -> None:
-    """Measured scenarios side by side: a figure not observed is a dash."""
     measured = [
         result
         for result in scenarios
         if result.outcome in (ScenarioOutcome.PASSED, ScenarioOutcome.FAILED)
     ]
+    out.heading("End-to-end latency")
     if not measured:
-        return
-    values = [
-        {metric.name: metric.value for metric in (*result.metrics, *result.segments)}
-        for result in measured
-    ]
+        why = "No scenario was measured." if ran else "Diagnostic session did not run."
+        out.write(f"  Not measured · {why}")
+    else:
+        _latency(out, [names[id(result)] for result in measured], measured)
+        # Each scenario's stages, aligned with the others'.
+        stages = [_figures(result) for result in measured]
+        column = out.column([label for name, label in STAGES if any(name in f for f in stages)])
+        for result, found in zip(measured, stages, strict=True):
+            rows = [(label, [_ms(found[name])]) for name, label in STAGES if name in found]
+            if rows:
+                out.heading(f"Stage timing · {names[id(result)]}")
+                out.table(None, rows, fit=False, column=column)
+
+    scrub = output_scrubber(prepared.loaded[0] if prepared.loaded is not None else None)
+    out.heading("Full report")
+    out.command(scrub(shlex.join(["alphaavatar", "doctor", *argv, "--json"])))
+    out.write()
+
+
+def _worst(group) -> str:
+    statuses = {check.status for check in group}
+    for status in (CheckStatus.FAIL, CheckStatus.WARN, CheckStatus.PASS):
+        if status in statuses:
+            return str(status)
+    return "SKIP"
+
+
+def _summary(title: str, group, prepared) -> str:
+    """A group on one line: what passed, or how many of each."""
+    if any(check.status != CheckStatus.PASS for check in group):
+        return " · ".join(
+            f"{count} {word}"
+            for status, word in _TALLY
+            if (count := sum(check.status == status for check in group))
+        )
+    if title == "Configuration" and prepared.loaded is not None:
+        from alphaavatar.agents.runtime.inference import plan_inference_runners
+
+        config, source = prepared.loaded
+        name = source.bundle if source.bundle is not None else Path(source.path).name
+        count = len(plan_inference_runners(config.avatar))
+        return f"{name} · {count} runner{'' if count == 1 else 's'}"
+    return f"{len(group)} checks passed"
+
+
+def _check(out: Report, check, column: int) -> None:
+    """A check that did not pass, under its group: its summary, details and next step."""
+    out.row(check.id, check.summary, status=str(check.status), indent=2 + STATUS, column=column)
+    _explained(out, check, indent=2 + 2 * STATUS, summary=False)
+
+
+def _explained(out: Report, check, *, indent: int, summary: bool = True) -> None:
+    if summary:
+        out.wrapped(check.summary, indent=indent)
+    for detail in check.details:
+        out.note(detail, indent=indent)
+    if check.action is not None:
+        out.wrapped(f"→ {check.action}", indent=indent)
+
+
+def _name(result) -> str:
+    if result.configuration == "original":
+        return result.name
+    return f"{result.name} [{result.configuration.removeprefix('degraded: ')}]"
+
+
+def _covers(result) -> str:
+    """What a scenario that passed showed, by its task."""
+    from alphaavatar.host.doctor import samples
+
+    tasks = (samples.VOICE_VISION, samples.VOICE, samples.TEXT)
+    return next((task.covers for task in tasks if task.name == result.name), result.summary)
+
+
+def _figures(result) -> dict[str, float | None]:
+    return {metric.name: metric.value for metric in (*result.metrics, *result.segments)}
+
+
+def _latency(out: Report, names: list[str], measured) -> None:
+    """Scenarios side by side where the terminal fits them, else one after another; a figure
+    not observed is a dash, never 0 ms."""
+    found = [_figures(result) for result in measured]
     rows = [
-        (name, *(_ms(found.get(name)) for found in values))
-        for name in _FIGURES
-        if any(found.get(name) is not None for found in values)
+        (label, [_ms(figures.get(name)) for figures in found])
+        for name, label in LATENCY
+        if any(name in figures for figures in found)
     ]
-    if not rows:
+    if not rows or out.table(("Metric", *names), rows):
         return
-    names = [
-        result.name
-        if result.configuration == "original"
-        else f"{result.name} [{result.configuration.removeprefix('degraded: ')}]"
-        for result in measured
-    ]
-    # The last column runs free; a figures table keeps every column aligned instead.
-    _table(("FIGURE (ms)", *names, ""), [(*row, "") for row in rows], paint)
+    for index, name in enumerate(names):
+        out.write(f"  {name}")
+        out.table(None, [(label, [values[index]]) for label, values in rows], indent=4, fit=False)
 
 
 def _ms(value: float | None) -> str:
     if value is None:
-        return "-"
-    return f"{value:.1f}" if abs(value) < 10 else f"{value:.0f}"
-
-
-def _state(value: bool | None) -> str:
-    return "yes" if value else "no" if value is False else "-"
+        return "—"
+    return f"{value:,.1f} ms" if abs(value) < 10 else f"{value:,.0f} ms"

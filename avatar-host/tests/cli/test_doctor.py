@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 from importlib import metadata
 from pathlib import Path
@@ -37,6 +38,8 @@ import alphaavatar.host.doctor as host_doctor
 # Imported at collection: the persona plugin's OpenCV adjusts process variables (O-2).
 import alphaavatar.plugins.persona.factory  # noqa: F401
 from alphaavatar.agents.runtime.plugin import AvatarModule
+from alphaavatar.core.log.records import clean
+from alphaavatar.host.cli import render
 from alphaavatar.host.cli.app import main
 from alphaavatar.host.cli.commands.doctor import GROUPS
 from alphaavatar.host.doctor import CHECKS, Check, CheckStatus, Report
@@ -65,8 +68,12 @@ def doctor(capsys: pytest.CaptureFixture, *argv: str) -> tuple[int, dict[str, di
         reports.append(real(diagnosis))
         return reports[-1]
 
-    # Nothing starts here, so the report comes without an event loop or a local socket.
-    with mock.patch.object(host_doctor.Diagnosis, "report", shown):
+    # Nothing starts here, so the report comes without an event loop or a local socket. Wide
+    # enough that nothing wraps: where a narrow terminal wraps is the renderer's own test.
+    with (
+        mock.patch.object(host_doctor.Diagnosis, "report", shown),
+        mock.patch.dict(os.environ, {"COLUMNS": "1000"}),
+    ):
         code = main(["doctor", *argv])
     text = capsys.readouterr().out
     raw = json.dumps(reports[0].to_dict())
@@ -76,23 +83,39 @@ def doctor(capsys: pytest.CaptureFixture, *argv: str) -> tuple[int, dict[str, di
     assert [check["id"] for check in report["checks"]] == IDS
     assert code == (1 if report["status"] == "FAIL" else 0)
     lines = text.splitlines()
-    # A table of checks under group headings: a pass is its row, anything else shows its
-    # details and next step below it.
-    assert ["STATUS", "CHECK", "SUMMARY"] in [line.split() for line in lines]
-    headings = [line.strip() for line in lines if line in {f"    {group}" for group in GROUPS}]
-    assert headings == list(GROUPS)
-    for check in report["checks"]:
-        row = f"    {check['status'].ljust(6)}  {check['id'].ljust(21)}  {check['summary']}"
-        assert row in lines
-        shown_lines = [line.strip() in check["details"] for line in lines]
-        assert any(shown_lines) == (check["status"] != "PASS" and bool(check["details"]))
-        # Each service and each scenario has a row of its own table.
-        for service in check["services"]:
-            assert any(line.startswith(f"    {service['name']}  ") for line in lines)
-        for result in check["scenarios"]:
-            outcome = result["outcome"].replace("_", " ")
-            cells = [result["name"], *result["configuration"].split(), *result["summary"].split()]
-            assert any(line.split() == [*outcome.split(), *cells] for line in lines)
+    status = "OK" if report["status"] == "PASS" else report["status"]
+    assert lines[1:3] == ["AlphaAvatar / Doctor", lines[2]]
+    assert lines[2].startswith(status.ljust(6)) and f"{report['counts']['PASS']} passed" in lines[2]
+    # The checks by group: a group with nothing but passes is its row; any other check is a
+    # row under its group, with its details and next step; a group that ran nothing is under
+    # Not verified, with the reason of its first check.
+    checks = {check["id"]: check for check in report["checks"]}
+    scenarios = checks["session.scenarios"]["scenarios"]
+    column = render.Report.column([*GROUPS, *(result["name"] for result in scenarios)])
+    for title, ids in GROUPS.items():
+        group = [checks[check] for check in ids]
+        if all(check["status"] == "SKIP" for check in group):
+            assert lines.index(f"  SKIP  {title}") > lines.index("Not verified")
+            cause = group[0]
+            assert f"        {cause['summary']}" in lines
+            assert all(f"        {detail}" in lines for detail in cause["details"])
+            continue
+        statuses = {check["status"] for check in group}
+        worst = next(s for s in ("FAIL", "WARN", "PASS") if s in statuses)
+        assert any(line.startswith(f"  {worst.ljust(6)}{title.ljust(column)}") for line in lines)
+        width = render.Report.column(ids)
+        for check in group:
+            row = f"        {check['status'].ljust(6)}{check['id'].ljust(width)}{check['summary']}"
+            assert (row in lines) == (check["status"] != "PASS")
+            if check["status"] != "PASS":
+                assert all(f"              {detail}" in lines for detail in check["details"])
+    # Scenarios once the session ran; what did not run says why under Not verified.
+    if checks["session.scenarios"]["status"] != "SKIP":
+        for result in scenarios:
+            assert any(line.startswith(f"  {result['name'].ljust(column)}") for line in lines)
+    # The same diagnosis in full, as a command to copy: through the same boundary.
+    command = clean(shlex.join(["alphaavatar", "doctor", *argv, "--json"]))
+    assert lines[-2:] == [f"  {command}", ""]
     return code, {check["id"]: check for check in report["checks"]}, text + raw
 
 
@@ -138,12 +161,15 @@ def test_without_a_configuration_doctor_says_how_to_create_one_and_checks_the_re
     specs = json.loads(capsys.readouterr().out)["checks"]
     assert [spec["id"] for spec in specs] == IDS
     assert tuple(spec["id"] for spec in specs if spec["in_session"]) == SESSION
-    assert main(["doctor", "--list"]) == 0
-    listed = [line.split()[:2] for line in capsys.readouterr().out.splitlines()]
-    assert ["CHECK", "NEEDS"] in listed
+    with mock.patch.dict(os.environ, {"COLUMNS": "1000"}):
+        assert main(["doctor", "--list"]) == 0
+    listed = capsys.readouterr().out.splitlines()
+    assert [line for line in listed if line in GROUPS] == list(GROUPS)
+    column = render.Report.column(IDS)
     for spec in specs:
-        needs = "session" if spec["in_session"] else "configuration"
-        assert [spec["id"], needs if spec["needs_configuration"] else "-"] in listed
+        needs = "the session" if spec["in_session"] else "a configuration"
+        needs = f" · needs {needs}" if spec["needs_configuration"] else ""
+        assert f"  {spec['id'].ljust(column)}{spec['title']}{needs}" in listed
     # One entry point: the session is chosen by the configuration, never by a flag.
     for argv in (["alpha"], ["--runtime"], ["--live"]):
         with pytest.raises(SystemExit) as invalid:
