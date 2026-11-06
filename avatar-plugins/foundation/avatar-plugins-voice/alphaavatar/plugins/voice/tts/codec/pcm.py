@@ -186,6 +186,12 @@ class PCMHTTPProvider(TTSBase):
             or parsed.fragment
         ):
             raise ValueError("TTS URL must omit credentials, query and fragment")
+        try:
+            port = parsed.port
+        except ValueError:
+            port = 0
+        if port == 0:
+            raise ValueError("TTS URL needs a port from 1 to 65535, or none")
         if parsed.scheme == "http" and parsed.hostname not in ("localhost", "127.0.0.1", "::1"):
             raise ValueError("Remote TTS endpoints require HTTPS")
         if not isinstance(api_key, str) or not api_key.strip() or any(c.isspace() for c in api_key):

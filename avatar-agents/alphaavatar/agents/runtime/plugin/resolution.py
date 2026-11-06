@@ -151,7 +151,8 @@ def resolve_plugins(config: AvatarConfig) -> PluginSelection:
     Each resolved plugin's settings are validated with its own schema, failing located under
     its section (``loop.init_config.model``), and the provider implementations resolve too:
     each ProviderTaskConfig in the settings outside a part switched off, and each a planned
-    runner names (``InferenceRunner.PROVIDERS``); their runners are planned with the rest.
+    runner names (``InferenceRunner.PROVIDERS``), those of their own runners in turn; their
+    runners are planned with the rest.
     Unserved selections are problems by location; runners that cannot be planned fail at once.
     """
     from alphaavatar.agents.runtime.inference.bootstrap import _add_runner
@@ -183,12 +184,20 @@ def resolve_plugins(config: AvatarConfig) -> PluginSelection:
 
     plan(dict(selection.plugins))
     tasks = _provider_tasks(config, selection)
-    for method, (location, runner) in list(selection.runners.items()):
-        for module, name in runner.PROVIDERS:
-            tasks.setdefault((AvatarModule(module), name), f"{location} (runner {method})")
-    sections = set(selection.plugins)
-    for (module, name), location in tasks.items():
-        resolve(location, module, name)
-    plan({loc: plugin for loc, plugin in selection.plugins.items() if loc not in sections})
-
-    return selection
+    named: set[str] = set()
+    while True:
+        # The providers each planned runner names, each at a setting of its own; and theirs in
+        # turn, until a round finds none new.
+        for method, (location, runner) in list(selection.runners.items()):
+            if method not in named:
+                named.add(method)
+                for module, name in runner.PROVIDERS:
+                    module = AvatarModule(module)
+                    needs = f"{location} (runner {method} needs {module.value} {name!r})"
+                    tasks.setdefault((module, name), needs)
+        new = [(key, at) for key, at in tasks.items() if at not in selection.selected]
+        if not new:
+            return selection
+        for (module, name), location in new:
+            resolve(location, module, name)
+        plan({at: selection.plugins[at] for _, at in new if at in selection.plugins})

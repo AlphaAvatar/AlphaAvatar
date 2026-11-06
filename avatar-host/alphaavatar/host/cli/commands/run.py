@@ -44,11 +44,12 @@ def run(target: str | None, overrides: Sequence[str], *, devmode: bool) -> int:
         describe = format_failure
 
         stage = "load environment"
-        load_environment(overrides)  # The .env file, then the credentials setup stored.
+        # The .env file, then the credentials setup stored, from one read of the settings.
+        settings = load_environment(overrides)
         logs.refresh_secrets()
 
         stage = "select application configuration"
-        source = select_configuration(target, overrides)
+        source = select_configuration(target, overrides, settings)  # The same read's default.
         stage = "load application configuration"
         config = load_application(source, overrides)
         stage = "validate plugin settings"

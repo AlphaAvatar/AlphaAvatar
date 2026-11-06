@@ -44,6 +44,7 @@ from .schemas import Check, CheckSpec, Evidence, Report
 
 if TYPE_CHECKING:
     from alphaavatar.host.configs import ApplicationConfig, ConfigSource
+    from alphaavatar.host.configs.bundles import Settings
     from alphaavatar.host.workspace import ApplicationPaths
 MIN_FREE_BYTES = 1 << 30  # Less leaves little room for models, caches and Avatar data.
 # The plugins and provider backends this release ships, whose reach Doctor knows. Any other
@@ -94,7 +95,7 @@ async def diagnose(
     target: str | None = None,
     overrides: Sequence[str] = (),
     *,
-    read_env: Callable[[], object] | None = None,
+    read_env: Callable[[], Settings | None] | None = None,
     stop: asyncio.Event | None = None,
 ) -> Report:
     """Every check in ``CHECKS`` order; one that cannot complete is reported as FAIL.
@@ -112,7 +113,7 @@ def prepare(
     target: str | None = None,
     overrides: Sequence[str] = (),
     *,
-    read_env: Callable[[], object] | None = None,
+    read_env: Callable[[], Settings | None] | None = None,
 ) -> Diagnosis:
     """The static checks, without an event loop: opening nothing, not even a local socket."""
     checks, loaded = _static(target, overrides, read_env)
@@ -198,7 +199,7 @@ def _safe_starts(decide: Callable[[], bool]) -> bool:
 
 
 def _static(
-    target: str | None, overrides: Sequence[str], read_env: Callable[[], object] | None
+    target: str | None, overrides: Sequence[str], read_env: Callable[[], Settings | None] | None
 ) -> tuple[dict[str, Check], tuple[ApplicationConfig, ConfigSource] | None]:
     from alphaavatar.host.configs import application_paths
 
@@ -317,7 +318,7 @@ _UNREADABLE_ENV = "The environment file could not be read"
 
 
 def _configuration(
-    target: str | None, overrides: Sequence[str], read_env: Callable[[], object] | None
+    target: str | None, overrides: Sequence[str], read_env: Callable[[], Settings | None] | None
 ) -> tuple[tuple[ApplicationConfig, ConfigSource] | None, Check]:
     from alphaavatar.host.configs import (
         application_paths,
@@ -335,9 +336,10 @@ def _configuration(
             "config.load", CheckStatus.FAIL, summary, tuple(line for line in lines if line), action
         )
 
+    settings = None
     if read_env is not None:
         try:
-            read_env()
+            settings = read_env()  # The settings read the stored credentials came from.
         except Exception as error:
             return None, failure(
                 _UNREADABLE_ENV,
@@ -347,7 +349,8 @@ def _configuration(
     try:
         if target is None:
             paths = application_paths(overrides)
-            if read_settings(paths).get("default_bundle") is None:
+            values = read_settings(paths) if settings is None else settings.checked()
+            if values.get("default_bundle") is None:
                 return None, Check(
                     "config.load",
                     CheckStatus.WARN,
@@ -355,7 +358,7 @@ def _configuration(
                     action="Create one with `alphaavatar config init <name> --avatar-id <id>`, "
                     "or pass a bundle name or a configuration file",
                 )
-        source = select_configuration(target, overrides)
+        source = select_configuration(target, overrides, settings)
         config = load_application(source, overrides)
         check_application_paths(config)
         validate_plugin_settings(config)  # The steps config check and start take, in order.

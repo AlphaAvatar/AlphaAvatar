@@ -152,13 +152,15 @@ def describe_summary(
         return {"plugin": section.plugin, "vdb": backend}
 
     def switches(options: BaseModel, **paths: str) -> dict[str, bool]:
-        # Each built-in plugin's own schema, as at start: omitted switches take its defaults.
+        # The plugin's own schema, as at start: omitted switches take its defaults, and one
+        # its schema lacks, another implementation's, is not reported.
         values = {}
         for name, path in paths.items():
-            section = options
+            section: Any = options
             for part in path.split("."):
-                section = getattr(section, part)
-            values[name] = section.enabled
+                section = getattr(section, part, None)
+            if isinstance(enabled := getattr(section, "enabled", None), bool):
+                values[name] = enabled
         return values
 
     from .loader import validate_plugin_settings

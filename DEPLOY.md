@@ -76,16 +76,16 @@ taking, addressing, face and speaker models on this machine (about 515 MB to dow
 semantic addressing model needs an x86-64-v3 CPU). `remote` runs no model on the machine but
 the voice activity detection speech input needs (about 210 MB). Choosing each part, models
 and speech can also come from servers of your own with OpenAI's API (Responses for the
-conversation model); each reads its own key, `ALPHAAVATAR_MODELS_API_KEY` and
-`ALPHAAVATAR_SPEECH_API_KEY` (one key when both are the same server), so a server of your own
-never receives `OPENAI_API_KEY`. Speech sends its key over HTTPS unless the server is on this
-machine. With a preset, setup reads credentials from the environment and stores none; asked
+conversation model); each server reads its own key from a variable named after its URL,
+`ALPHAAVATAR_SERVER_KEY_<hash>`, which setup shows when it asks: a key serves only the server it
+was given for, only the same server shares one, and a server of your own never receives
+`OPENAI_API_KEY`. Speech sends its key over HTTPS unless the server is on this machine. With a preset, setup reads credentials from the environment and stores none; asked
 for, they are stored in a file of the application home's settings, readable only by you, only
 if you say so, and a value stored there already, which other bundles may read, is replaced
 only on a second yes. The settings replacement that makes the new bundle the default names
 the stored credentials too, so even a killed setup leaves both as they were or both new.
 `start`, `config check` and `doctor` read stored values where the environment does not set
-them. Model weights are not part of the
+them, and the default bundle from the same read of the settings. Model weights are not part of the
 plan: runners fetch them into the model cache. `--plan` prints the plan and changes nothing; a
 CI build's own wheels sit beside its package, so pass `--artifacts <directory>` for one.
 

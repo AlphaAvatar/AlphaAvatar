@@ -12,7 +12,8 @@
 | 第 1 项返工 | 1A 整理 `scripts/`；1B CI 构建的 Linux 参考安装包、配置三段分离、默认开启视觉、薄安装脚本 | 2026-11-05 | `9f86a6a` | 用户已提交（`124e012`） | 部分被第二轮取代：完整参考包改为基础包加 `setup`；1A、配置分段、`NAMESPACE` 保留 |
 | 第 1 项第二轮 | 轻量基础包 → `alphaavatar setup` 选择 → 按能力补齐依赖 → 校验后启用；插件 extras 与 runner 依赖声明；开发分支 CI 制品与干净容器验收；发布草稿化 | 2026-11-05 | `124e012` | 用户已提交（`7c67240`） | 部分被第三轮修正：插件发现、激活事务、凭据保存、CI 三处失败 |
 | 第 1 项第三轮 | 统一插件发现（能力类型 + 实现名，entry point）；安装与激活事务修复；向导凭据与自托管端点；glibc 扫描、Doctor 导入和 CI 重跑修复；短句 TTS 失败复现 | 2026-11-06 | `7c67240` | 用户已提交（`eb2404a`） | 部分被第四轮修正：自托管凭据、基础包本地安装、归属与凭据提交点、Provider runner 规划 |
-| 第 1 项第四轮 | 自托管端点按服务器分开凭据并按后端规则校验地址；`install.sh --file` 先复制再校验；归属检查与凭据随设置一起提交；单一完整解析；修短句 TTS 测试 | 2026-11-06 | `eb2404a` | 未提交（用户提交） | 待审查 |
+| 第 1 项第四轮 | 自托管端点按服务器分开凭据并按后端规则校验地址；`install.sh --file` 先复制再校验；归属检查与凭据随设置一起提交；单一完整解析；修短句 TTS 测试 | 2026-11-06 | `eb2404a` | 用户已提交（`eee0c28`） | 部分被第五轮修正：自托管凭据绑定端点、设置一次读取、安装锁、Provider 级联与摘要 |
+| 第 1 项第五轮 | 自托管凭据绑定到端点；默认 bundle 与凭据取自同一次设置读取；安装锁不经链接、不截断；runner 的多个 Provider 与级联 Provider；自定义 Memory 的摘要；URL 端口与空用户名 | 2026-11-06 | `eee0c28` | 未提交（用户提交） | 待审查 |
 
 ## 历史记录（合并来源）
 
@@ -1170,3 +1171,135 @@ glibc 下限（新脚本实测）：基础包 2.17；远端环境 2.28；默认�
 7. **按计划后移**：无人值守的自托管参数和凭据来源（第 2 项）；setup 只增不减和旧环境清理（第 5 项）；Doctor 里按 `default` 名字判断的内置行为（第 3 项）；移动端的 App 构建清单来源；去掉 `ENV_FILE`（第 2 项）。
 
 证据（会话临时目录，不入库）：`/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/evidence4/`（测试、变异、构建、TTS）和 `/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/accept4/`（沙箱脚本与记录）。
+
+---
+
+## 第 1 项第五轮（基线 `eee0c28`）
+
+依据：Codex 对 `eee0c28` 的审查。远端 Quality（run 42182137448）和 Linux package（run 42182137506）都已通过，全量 400 项；同一提交的制品在 Ubuntu 24.04 干净容器完成了默认 `setup`，基础包与完整环境的 ELF 扫描下限分别是 glibc 2.17 和 2.28。默认安装路径已通过验收，但第 1 项还不能关闭：三处 P1、一处 P2。
+
+审查对上轮待定项的结论：
+- 接受加载时按 schema 校验插件设置；
+- 接受「设置损坏时跳过已存凭据、显式指定的 bundle 仍可选择」，但要补上非法 UTF-8 和读不了的设置文件这两种情况，同时保持选默认 bundle 和 `setup` 的严格校验；
+- 接受版本化凭据文件，旧 `credentials.env` 不做兼容；自托管的变量名要随端点绑定一起定；
+- 接受 SIGKILL 后暂时处于「新环境、旧默认 bundle、旧凭据」，但要如实记录残留的同名 bundle 文件；完整的强杀恢复放到第 5 项；
+- 自托管 embedding 的实际请求和编码表的首次下载留给第 3 项 Doctor；
+- URL 预检要补非法端口和空用户名。
+
+所有改动在未暂存的工作区。
+
+### 1. 自托管凭据绑定到端点（P1）
+
+- **问题**：所有自托管模型共用 `ALPHAAVATAR_MODELS_API_KEY`，所有自托管语音共用 `ALPHAAVATAR_SPEECH_API_KEY`。为服务器 B 建 bundle 时按 Enter 会沿用 A 的密钥；若保存了 B 的密钥，旧 bundle A 反过来会用 B 的密钥。
+- **改法**：每台自托管服务器的密钥变量由它的端点派生，`choices.server_key(url)` 生成 `ALPHAAVATAR_SERVER_KEY_<12 位十六进制>`。
+  - 端点按「协议 + 主机 + 端口 + 路径」规范化：主机大小写、默认端口、结尾斜杠都不影响结果。
+  - 只有同一个端点得到同一个变量，所以只有同一端点能沿用已存的值；端口、路径、协议或主机任何一处不同，变量就不同。
+  - 向导提问时写明变量名和对应地址；bundle 的 `api_key_env` 指向这个变量。原来的 `MODELS_KEY`、`SPEECH_KEY` 两个全局变量已删除。
+- **URL 预检**：`server_problem()` 现在拒绝任何用户信息（包括空用户名）和非法端口（越界、为 0、不是数字）。`OpenAIClientConfig` 和 TTS 的 `PCMHTTPProvider` 也加上同样的端口与用户信息判断；一致性测试新增 6 个 URL，向导与两个后端的判断逐个一致。
+
+### 2. 默认 bundle 与凭据取自同一次设置读取（P1）
+
+- **问题**：`start`、`config check` 和 Doctor 都是先 `load_environment()` 读一次设置（取凭据），再 `select_configuration()` 读一次（取默认 bundle）。两次之间若有 setup 提交，就会拿旧凭据配新 bundle；读取方拿到旧凭据的文件名后，若该文件被写入方回收，就读不到凭据。
+- **改法**：`credentials.read_stored()` 一次读出设置和它指定的凭据，返回快照 `bundles.Settings`。
+  - 快照包含 `values`、`credentials`（`repr=False`，不会出现在任何输出里）和 `error`。
+  - 凭据文件只写一次、从不修改，而且设置不再引用它之后才会被回收。所以打开时发现它已经不在了，就说明设置已被替换，重读一遍即可；已打开的文件在被删除之后仍能读完。
+  - `load_environment()` 返回这份快照，`select_configuration(target, overrides, settings)` 从同一份快照取默认 bundle。`start`、`config check` 和 Doctor 都这样传递。
+- **设置读不了时**：
+  - `read_settings` 把非法 UTF-8 和其他读取错误（权限不足、路径是目录等）都转成 `ConfigReferenceError`；
+  - 显式指定的 bundle 照常加载，只是不读已存凭据；
+  - 选默认 bundle（`Settings.checked()`）和 `setup` 照样严格报错。
+
+### 3. 安装锁不经链接、打开时不截断（P1）
+
+- **问题**：`install.sh` 用 `exec 9> "$prefix/.install.lock"` 打开锁，这一步在检查归属之前，会跟随链接并截断目标。Codex 把锁链接到前缀外的文件，即使安装以退出码 1 结束，那个文件也已被清成 0 字节。
+- **改法**：Shell 和 Python 用同一条规则。
+  - 锁必须是本前缀里的普通文件，是链接或不是普通文件就拒绝并原样保留。
+  - Shell 先检查再用 `>>` 打开：即使检查之后被换成链接，追加打开也不截断任何内容。
+  - Python 用 `O_APPEND | O_NOFOLLOW` 打开，打开时原子地拒绝链接，并用 `fstat` 确认是普通文件。
+  - 已经存在的锁文件，内容在打开前后不变。
+
+### 4. 自定义插件的两处缺口（P2）
+
+- **一个 runner 声明多个 Provider**：原先它们共用一个位置，后一个覆盖前一个。现在每个 Provider 的位置写明「哪个 runner 需要它」，例如 `loop.plugin (runner probe.two.providers needs provider.llm 'first')`。
+- **Provider 的 runner 再声明下游 Provider**：`resolve_plugins` 改为循环，直到不再出现新的 Provider；下游 Provider 被解析，它的 runner 也参与规划。
+- **自定义 Memory 有自己的 schema**：`config check` 的摘要只报告该 schema 里确实存在的开关，不再按内置字段取值。
+
+### 5. 强杀后的现状（如实记录）
+
+实测：在 `settings.yaml` 替换之前 SIGKILL setup，默认 bundle 和凭据保持旧值，但新 bundle 的文件（如 `configs/bundles/beta.yaml` 和它的 profile）会留在磁盘上。用同一个名字重试，setup 会报「Bundle 'beta' exists …; choose another --name」，`create_bundle` 抛 `FileExistsError`。只能换一个名字，或手工删除这些文件。按审查意见，完整的强杀恢复放到第 5 项。
+
+### 6. 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `avatar-host/.../setup/choices.py` | `server_key()`；按端点生成凭据；`server_problem()` 加端口与用户信息判断 |
+| `avatar-host/.../configs/bundles.py`、`credentials.py` | `Settings` 快照；`read_stored()` 在凭据文件被回收时重读；`read_settings` 的 UTF-8 与读取错误；`select_configuration` 接受快照 |
+| `avatar-host/.../cli/commands/run.py`、`config.py`、`doctor/doctor.py` | 默认 bundle 取自加载凭据的同一份快照 |
+| `packaging/linux/install.sh`、`avatar-host/.../setup/environment.py` | 安装锁不经链接、不截断 |
+| `avatar-agents/.../runtime/plugin/resolution.py` | runner 的 Provider 各有唯一位置；循环解析到不再出现新的 Provider |
+| `avatar-host/.../configs/view.py` | 摘要只读 schema 里存在的开关 |
+| `avatar-plugins-provider/.../openai/llms/config.py`、`avatar-plugins-voice/.../tts/codec/pcm.py` | 拒绝非法端口；Responses 客户端也拒绝空用户名 |
+| `DEPLOY.md` | 端点绑定的密钥变量；默认 bundle 与凭据同一次读取 |
+| 测试 | `test_setup`：两台服务器的四步复现；`test_credentials`：快照、回收重读、四种读不了的设置、三个命令在子进程里并发提交；`test_bundles`：非法 UTF-8 与读不了的设置；`test_install_script`、`test_environment`：锁；`test_discovery`：两个 Provider、级联 Provider、自定义 Memory schema；`test_choices`：端点变量与新增 URL |
+
+### 7. 验证
+
+**本地实测**
+
+- 静态检查：Ruff（`--no-cache`）、格式、`check_workspace.py`（16 个成员）、`uv lock --check`（332 个包）、`git diff --check`、`bash -n`、pre-commit（20 个改动和新增文件）全部通过。
+- 全量测试 418 项通过；拦截已移除的包后再跑一遍，也是 418 项通过。
+- 变异 20 个，全部被抓到（`evidence5/mutants5.log`）。
+
+  | 编号 | 变异 |
+  |---|---|
+  | S1、S2 | 所有服务器共用一个变量；变量只按主机生成 |
+  | R1–R6 | 选默认 bundle 时重读设置；凭据文件被回收时当作没有凭据；`config check`、`start`、Doctor 分别不传快照；快照的 repr 带出凭据 |
+  | B1、B2 | 非法 UTF-8、读不了的设置原样抛出 |
+  | L1–L3 | Shell 用 `>` 截断打开；Shell 不检查链接；Python 跟随链接打开 |
+  | P4、P5 | runner 的多个 Provider 共用位置；只解析一轮 Provider |
+  | V1 | 摘要按内置字段读取任何 schema |
+  | U1–U4 | 向导接受空用户名；向导、Responses 客户端、TTS 分别接受任意端口 |
+
+  首轮有两个变异存活：S2，因为路由测试里两台服务器只有端口不同，却没检查变量名；R6，因为断言用的密钥含引号，repr 会转义它。补了端点变量的规范化测试、改用不含特殊字符的值之后，两个都被抓到。
+- **本机构建**（`--max-glibc 2.32`，63 s）：基础包 65,812,841 字节，SHA-256 `5909ddcbcfdd4acf122171f8cdc030babba2d3a74a2b03af38ef62daaf6f8362`，glibc 2.17；12 个 wheel。
+
+**干净沙箱（Ubuntu 24.04 rootfs，bubblewrap，本轮构建）**
+
+| 场景 | 结果 |
+|---|---|
+| `.install.lock` 是指向前缀外文件的链接，安装一个不存在的包 | 退出码 1，报「…/.install.lock is not a lock file this script or setup made; it is left as it is」；外部文件仍是 15 字节，内容不变 |
+| 远端预设 | 实际安装，环境 642 MB；之后的自托管 bundle 都复用这个环境 |
+| bundle a，服务器 A（127.0.0.1:18821）：输入并保存密钥 | 提问 `ALPHAAVATAR_SERVER_KEY_C5CD10BDFB01`，不问 `OPENAI_API_KEY`；保存 |
+| bundle b，服务器 B（127.0.0.1:18822）：在密钥处按 Enter | 提问 `ALPHAAVATAR_SERVER_KEY_CEB85A8A1EBD`，提示里没有「Enter keeps」；退出码 1，报「Missing credentials: …CEB85A8A1EBD」 |
+| bundle b：输入并保存 B 的密钥 | 只保存 B 的变量，A 的不变 |
+| bundle c，服务器 A：按 Enter | 提示「(set; Enter keeps it)」，沿用 A 的密钥 |
+| 用安装好的环境，分别从 bundle a、b、c 发 loop 和记忆任务的请求 | 服务器 A 的 `/v1/responses` 和 `/v1/chat/completions` 各收到 2 次，都是 `key-a`（来自 a 和 c）；服务器 B 各收到 1 次，都是 `key-b` |
+| 安装包里，一个 runner 声明两个 Provider；某个 Provider 的 runner 声明下游 Provider | 两个缺失的 Provider 各自报在「…needs provider.llm 'first'」「…needs provider.embedding 'second'」；下游缺失报在「loop.init_config.model.backend (runner probe.provider.chain needs provider.embedding 'downstream')」 |
+| 安装包里，自定义 Memory 带自己的 schema | `config check` 摘要为 `{'plugin': 'schema', 'vdb': None}`，退出码 0 |
+
+实测 glibc 下限：基础包 2.17，远端环境 2.28。
+
+**推送后待 CI 验证**
+
+- 同一提交的制品在干净容器里的默认 `setup`，以及默认环境的 glibc 下限不超过 2.28；
+- Quality 里本轮新增的测试；
+- 远端预设在 CI 里仍只检查安装计划，实际安装只在本机沙箱做过；
+- 草稿发布要等第一次打正式 tag 才会实跑。
+
+### 8. 过程中的问题与更正
+
+- **快照的 repr 会带出凭据值**：断言失败的输出里已经能看到，改为 `repr=False` 并加了测试。
+- **测试构造错误**：
+  - 非法 UTF-8：`f"…\xff".encode()` 得到的是字符 ÿ 编码后的合法字节，改为拼接 `b"\xff"`。
+  - 读不了的设置：用目录占住 `settings.yaml` 的路径，不依赖是否以 root 运行。
+- **进程内跑 `start`**：报错走的是 HostLog 的日志，capsys 截不到，还触发了环境守卫。三个命令的并发用例都改在子进程里运行，替换 `load_environment` 后在读完凭据的那一刻提交新的默认 bundle。
+- **O-2 导入副作用**：`test_setup` 里调用 `load_application` 会导入 persona 的 OpenCV，它会改进程环境变量。改为在收集阶段先导入 `alphaavatar.plugins.persona.factory`，与其他 Host 测试一致。
+
+### 9. 待复核
+
+1. **变量名形式**：`ALPHAAVATAR_SERVER_KEY_<sha256(端点) 前 12 位，大写>`。名字本身看不出是哪台服务器，向导提问时写明了地址；无人值守时要知道这个名字，会和第 2 项的凭据来源一起设计。
+2. **端点的界定**：协议、主机、端口、路径任何一处不同都算另一台服务器。同一台机器换个路径，比如 `/v1` 换成 `/openai/v1`，也要单独的密钥。
+3. **重读的次数**：凭据文件被回收时最多重读 16 次；仍然在变就报「Settings … kept changing while read」。
+4. **仍按计划后移**：强杀后的完整恢复（第 5 项）；自托管 embedding 的实际请求和首次编码表下载（第 3 项）；无人值守的自托管参数与凭据来源（第 2 项）；Doctor 里按 `default` 名字判断的内置行为（第 3 项）。`config check` 摘要里的 `vdb` 也仍按 `plugin == "default"` 判断，同属这一类。
+
+证据（会话临时目录，不入库）：`/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/evidence5/`（测试、变异、构建）和 `/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/accept5/`（沙箱脚本与记录 `r5.log`）。

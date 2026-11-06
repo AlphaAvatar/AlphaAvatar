@@ -329,17 +329,31 @@ def test_without_a_default_bundle_selection_fails_clearly_and_settings_never_cho
     assert json.loads(capsys.readouterr().out)["home"] == str(home)
     assert not other.exists()
 
-    # A default naming a missing or malformed bundle fails without echoing the setting.
+    # A default naming a missing or malformed bundle fails without echoing the setting; a
+    # bundle named outright loads whatever the settings hold.
     for text, message in (
-        ("default_bundle: gone\n", "Default bundle 'gone' does not exist"),
-        (f"default_bundle: {SECRETS['vdb']}.Bad\n", f"default_bundle in {settings} is not"),
-        ("- a list\n", "Settings must be a mapping"),
-        (f"default_bundle: [{SECRETS['vdb']}\n", "Settings are not valid YAML"),
+        (b"default_bundle: gone\n", "Default bundle 'gone' does not exist"),
+        (
+            f"default_bundle: {SECRETS['vdb']}.Bad\n".encode(),
+            f"default_bundle in {settings} is not",
+        ),
+        (b"- a list\n", "Settings must be a mapping"),
+        (f"default_bundle: [{SECRETS['vdb']}\n".encode(), "Settings are not valid YAML"),
+        (f"default_bundle: {SECRETS['vdb']}".encode() + b"\xff\n", "Settings are not UTF-8 text"),
+        (None, "Settings cannot be read"),
     ):
-        settings.write_text(text)
+        if settings.is_dir():
+            settings.rmdir()
+        if text is None:
+            settings.unlink()
+            settings.mkdir()  # Unreadable as a file, whoever runs the test.
+        else:
+            settings.write_bytes(text)
         assert main(["config", "check"]) == 2
         error = capsys.readouterr().err
         assert message in error and SECRETS["vdb"] not in error
+        assert main(["config", "check", "alpha"]) == 0
+        capsys.readouterr()
 
 
 @pytest.mark.parametrize(

@@ -89,7 +89,11 @@ fi
 made_prefix=""
 [[ -e "$prefix" ]] || made_prefix=1
 mkdir -p "$prefix"
-exec 9> "$prefix/.install.lock"
+# The lock setup takes too: a regular file of the prefix, never through a link, never truncated.
+lock="$prefix/.install.lock"
+[[ ! -L "$lock" && ( ! -e "$lock" || -f "$lock" ) ]] \
+  || die "$lock is not a lock file this script or setup made; it is left as it is"
+exec 9>> "$lock"
 flock -n 9 || die "Another installation into $prefix is running"
 previous="$(readlink "$prefix/current" || true)"
 # What this script or setup made: versions/<name> or a marked envs/<name> of this prefix,

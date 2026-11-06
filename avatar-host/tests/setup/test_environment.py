@@ -384,3 +384,19 @@ def test_an_environment_reached_through_a_link_is_neither_reused_nor_switched_to
         install(installation, plan, sources, check=checked.append, enable=lambda: None)
     assert checked == [] and os.readlink(prefix / "current") == "versions/linked"
     assert sorted(str(path.relative_to(outside)) for path in outside.rglob("*")) == before
+
+
+def test_the_lock_is_never_opened_through_a_link_nor_truncated(
+    setup_layout, tmp_path: Path
+) -> None:
+    installation, plan, sources, wheels = setup_layout
+    lock, outside = installation.prefix / ".install.lock", tmp_path / "outside-file"
+    outside.write_text("someone's data\n")
+    lock.symlink_to(outside)
+    with pytest.raises(SetupError, match="is not a lock file"):
+        install(installation, plan, sources, check=lambda env: None, enable=lambda: None)
+    assert outside.read_text() == "someone's data\n" and lock.is_symlink()
+    lock.unlink()
+    lock.write_text("held\n")
+    install(installation, plan, sources, check=lambda env: None, enable=lambda: None)
+    assert lock.read_text() == "held\n"

@@ -35,16 +35,15 @@ from alphaavatar.agents.runtime.inference import plan_inference_runners
 from alphaavatar.host.configs import resolve_capabilities, validate_application
 from alphaavatar.host.configs.template import render_bundle
 from alphaavatar.host.setup.choices import (
-    MODELS_KEY,
     OPENAI_KEY,
     PRESETS,
-    SPEECH_KEY,
     Models,
     Selection,
     Speech,
     credentials,
     requirements,
     sections,
+    server_key,
     server_problem,
 )
 from alphaavatar.host.setup.plan import plan_install
@@ -106,7 +105,8 @@ def test_own_servers_take_what_the_installed_providers_send_there(tmp_path: Path
     speech = Speech("https://speech.invalid:8001/v1", "whisper-large-v3", "kokoro", "af_heart")
     own = Selection(models=models, speech=speech)
     config = compose(own, tmp_path / "home")
-    avatar, server = config.avatar, {"base_url": models.url, "api_key_env": MODELS_KEY}
+    models_key, speech_key = server_key(models.url), server_key(speech.url)
+    avatar, server = config.avatar, {"base_url": models.url, "api_key_env": models_key}
     loop = avatar.loop.init_config["model"]
     assert (loop["backend"], loop["model"], loop["extra"]) == ("openai", "qwen3-32b", server)
     # The loop's Responses client is pointed at the server; tasks and embeddings go there too.
@@ -131,14 +131,14 @@ def test_own_servers_take_what_the_installed_providers_send_there(tmp_path: Path
         "kokoro",
         "af_heart",
     )
-    assert voice.stt.api_key_env == voice.tts.api_key_env == SPEECH_KEY
+    assert voice.stt.api_key_env == voice.tts.api_key_env == speech_key != models_key
     # The same packages serve them; each server's key is whatever that server expects.
     found = sorted({need.requirement for need in resolve_capabilities(config).needs})
     assert found == list(requirements(own)) == list(requirements(Selection()))
     asked = {credential.name: credential.purpose for credential in credentials(own)}
     assert OPENAI_KEY not in asked
-    assert asked[MODELS_KEY] == f"your server {models.url}; any text if it needs none"
-    assert asked[SPEECH_KEY] == f"your server {speech.url}; any text if it needs none"
+    assert asked[models_key] == f"your server {models.url}; any text if it needs none"
+    assert asked[speech_key] == f"your server {speech.url}; any text if it needs none"
 
 
 class Server:
@@ -251,8 +251,10 @@ def check_keys(own: str, model_server: Server, speech_server: Server, tmp_path: 
     selection = Selection(
         models=models if own != "speech" else None, speech=speech if own != "models" else None
     )
+    MODELS_KEY, SPEECH_KEY = server_key(model_server.url), server_key(speech_server.url)
     keys = {OPENAI_KEY: "sk-openai-fictional", MODELS_KEY: "models-fictional"}
-    keys[SPEECH_KEY] = "speech-fictional"
+    if SPEECH_KEY != MODELS_KEY:
+        keys[SPEECH_KEY] = "speech-fictional"
     names = {credential.name for credential in credentials(selection)}
     proxies = dict.fromkeys(("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy"), "")
     with mock.patch.dict(os.environ, keys | proxies):
@@ -265,7 +267,7 @@ def check_keys(own: str, model_server: Server, speech_server: Server, tmp_path: 
     model_key = f"Bearer {keys[MODELS_KEY]}"
     if own == "one server":
         assert len(model_server.keys) == 4 and set(model_server.keys) == {model_key}
-        assert names >= {MODELS_KEY} and not names & {OPENAI_KEY, SPEECH_KEY}
+        assert SPEECH_KEY == MODELS_KEY and names >= {MODELS_KEY} and OPENAI_KEY not in names
     if own in ("models", "both"):
         # The loop's Responses request and a task's, each with the model server's key.
         assert len(model_server.keys) == 2 and set(model_server.keys) == {model_key}
@@ -283,6 +285,25 @@ def check_keys(own: str, model_server: Server, speech_server: Server, tmp_path: 
         assert avatar.voice.stt.api_key_env is avatar.voice.tts.api_key_env is None
 
 
+def test_a_server_of_ones_own_has_one_key_variable_for_its_endpoint_alone() -> None:
+    same = (
+        "http://gpu.invalid:8000/v1",
+        "http://GPU.invalid:8000/v1/",
+        "http://gpu.invalid:8000/v1/",
+    )
+    assert len({server_key(url) for url in same}) == 1
+    # Another port, path, scheme or host is another server: never the same variable.
+    others = (
+        "http://gpu.invalid:8000/v1",
+        "http://gpu.invalid:8001/v1",
+        "http://gpu.invalid:8000/v2",
+        "https://gpu.invalid:8000/v1",
+        "http://cpu.invalid:8000/v1",
+    )
+    assert len({server_key(url) for url in others}) == len(others)
+    assert server_key("https://gpu.invalid/v1") == server_key("https://gpu.invalid:443/v1")
+
+
 @pytest.mark.parametrize(
     "url",
     [
@@ -296,6 +317,12 @@ def check_keys(own: str, model_server: Server, speech_server: Server, tmp_path: 
         "https://gpu.invalid/v1#x",
         "ftp://gpu.invalid/v1",
         "gpu.invalid:8000/v1",
+        "https://@gpu.invalid/v1",
+        "https://:@gpu.invalid/v1",
+        "https://gpu.invalid:99999/v1",
+        "https://gpu.invalid:0/v1",
+        "https://gpu.invalid:port/v1",
+        "http://localhost:65535/v1",
     ],
 )
 def test_a_server_url_is_taken_where_the_backends_it_serves_take_it(url: str) -> None:

@@ -126,3 +126,21 @@ def test_a_current_this_script_cannot_tell_it_made_is_left_as_it_is(layout, curr
     # The lock file the run took is all it adds; nothing else is made, moved or removed.
     assert [path for path in after if path not in before] == ["prefix/.install.lock"]
     assert (outside / "kept").read_text() == "someone's"
+
+
+def test_the_lock_is_never_opened_through_a_link_nor_truncated(layout) -> None:
+    tmp_path, _, _, run = layout
+    prefix, outside = tmp_path / "prefix", tmp_path / "outside-file"
+    outside.write_text("someone's data\n")
+    prefix.mkdir()
+    (prefix / ".install.lock").symlink_to(outside)
+    refused = run()
+    assert refused.returncode == 1 and "is not a lock file" in refused.stderr
+    assert outside.read_text() == "someone's data\n"
+    assert os.readlink(prefix / ".install.lock") == str(outside)
+    # A lock file already there keeps what it holds: opening it truncates nothing.
+    (prefix / ".install.lock").unlink()
+    (prefix / ".install.lock").write_text("held\n")
+    installed = run()
+    assert installed.returncode == 0, installed.stderr
+    assert (prefix / ".install.lock").read_text() == "held\n"

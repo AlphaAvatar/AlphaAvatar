@@ -26,6 +26,8 @@ from unittest import mock
 import pytest
 import yaml
 
+# Imported at collection: the persona plugin's OpenCV adjusts process variables (O-2).
+import alphaavatar.plugins.persona.factory  # noqa: F401
 from alphaavatar.host.cli.app import main
 from alphaavatar.host.setup import environment
 from alphaavatar.host.setup.choices import PRESETS, requirements
@@ -185,6 +187,66 @@ def test_asked_credentials_are_stored_on_a_yes_and_a_stored_one_replaced_only_on
     assert 'LIVEKIT_API_SECRET="lk-secret"' in stored
     assert stat.S_IMODE(credentials_path(paths).stat().st_mode) == 0o600
     assert "OPENAI_API_KEY stays as stored" in output and "sk-new" not in output
+
+
+def test_a_key_stored_for_one_server_of_ones_own_serves_no_other(
+    package: environment.Installation, capsys: pytest.CaptureFixture
+) -> None:
+    from alphaavatar.host.configs import application_paths, load_application, select_configuration
+    from alphaavatar.host.configs.credentials import stored_credentials
+    from alphaavatar.host.setup.choices import server_key
+
+    a, b = "http://a.invalid:8000/v1", "http://b.invalid:8000/v1"
+    prompts: list[str] = []
+
+    def installed(installation, plan, sources, *, check, enable, **kwargs):
+        enable()
+        return installation.environment(plan)
+
+    def setup(name: str, server: str, *typed: str) -> int:
+        # Choose each: no voice, vision, no local models, LanceDB, the models from `server`;
+        # then the name, the Avatar ID, the server's key, LiveKit's (set: Enter keeps them).
+        queue = ["3", "n", "y", "n", "1", "n", server, "chat", "", "embed", name, "", *typed]
+
+        def answer(prompt: str = "") -> str:
+            prompts.append(prompt)
+            return queue.pop(0)
+
+        livekit = {
+            "LIVEKIT_URL": "wss://lk.invalid",
+            "LIVEKIT_API_KEY": "k",
+            "LIVEKIT_API_SECRET": "s",
+        }
+        with (
+            mock.patch.object(environment.Installation, "running", return_value=package),
+            mock.patch.object(environment, "install", installed),
+            mock.patch("sys.stdin.isatty", return_value=True),
+            mock.patch.dict(os.environ, livekit),
+            mock.patch("builtins.input", answer),
+            mock.patch("getpass.getpass", answer),
+        ):
+            return main(["setup"])
+
+    def asked(server: str) -> str:
+        return next(p for p in reversed(prompts) if p.strip().startswith(server_key(server)))
+
+    paths = application_paths()
+    assert setup("first", a, "key-a", "", "", "", "y", "y") == 0
+    # Another server's key is not this one's: Enter keeps nothing, and the key is missing.
+    assert setup("second", b, "", "", "", "") == 1
+    assert "Enter keeps" not in asked(b)
+    assert f"Missing credentials: {server_key(b)}" in capsys.readouterr().err
+    assert stored_credentials(paths)[server_key(a)] == "key-a"
+    # Storing the other server's key leaves the first server's, which the first bundle reads.
+    assert setup("third", b, "key-b", "", "", "", "y", "y") == 0
+    stored = stored_credentials(paths)
+    assert (stored[server_key(a)], stored[server_key(b)]) == ("key-a", "key-b")
+    first = load_application(select_configuration("first")).avatar.loop.init_config["model"]
+    assert first["extra"] == {"base_url": a, "api_key_env": server_key(a)}
+    # The same server again: its stored key serves it, kept with Enter.
+    assert setup("fourth", a, "", "", "", "", "y") == 0
+    assert "Enter keeps it" in asked(a)
+    assert stored_credentials(paths)[server_key(a)] == "key-a"
 
 
 def test_a_new_bundle_keeps_what_the_current_environment_holds(

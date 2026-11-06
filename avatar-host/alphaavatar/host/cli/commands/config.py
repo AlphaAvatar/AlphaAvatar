@@ -138,9 +138,10 @@ def _load(target: str | None, overrides: Sequence[str]):
     )
     from alphaavatar.host.configs.credentials import load_environment
 
-    # The same .env and stored credentials start reads, for interpolated values.
-    load_environment(overrides)
-    source = select_configuration(target, overrides)
+    # The same .env and stored credentials start reads, for interpolated values, and the
+    # default bundle from the same read of the settings.
+    settings = load_environment(overrides)
+    source = select_configuration(target, overrides, settings)
     config = load_application(source, overrides)
     check_application_paths(config)
     validate_plugin_settings(config)

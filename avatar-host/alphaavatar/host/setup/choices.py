@@ -22,6 +22,7 @@ to the same answer for every selection.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -30,27 +31,39 @@ from alphaavatar.agents.runtime.plugin import plugin_requirement
 from alphaavatar.agents.utils.vdb.config import vdb_requirement
 
 VectorStore = Literal["lancedb", "qdrant"]
-# Each server's key by its own name: one of one's own never receives OpenAI's.
 OPENAI_KEY = "OPENAI_API_KEY"
-MODELS_KEY = "ALPHAAVATAR_MODELS_API_KEY"
-SPEECH_KEY = "ALPHAAVATAR_SPEECH_API_KEY"
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
 
 
 def server_problem(url: str, *, speech: bool) -> str | None:
     """Why the backends a server's URL is for would refuse it, or None.
 
-    The OpenAI clients take an http(s) API root without credentials, query or fragment;
-    speech synthesis sends its key over HTTPS unless the server is on this machine.
+    The OpenAI clients take an http(s) API root without credentials, query or fragment, on a
+    valid port; speech synthesis sends its key over HTTPS unless the server is on this machine.
     """
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https") or not parts.hostname:
         return "an http:// or https:// API root, such as https://gpu-host:8000/v1"
-    if parts.username or parts.password or parts.query or parts.fragment:
+    if parts.username is not None or parts.password is not None or parts.query or parts.fragment:
         return "an API root without credentials, query or fragment"
+    try:
+        port = parts.port
+    except ValueError:
+        port = 0
+    if port == 0:
+        return "a port from 1 to 65535, or none"
     if speech and parts.scheme == "http" and parts.hostname not in LOCAL_HOSTS:
         return "https:// for a speech server on another machine; http:// only on this one"
     return None
+
+
+def server_key(url: str) -> str:
+    """The variable a server of one's own reads its key from, named after that endpoint: a key
+    serves only the server it was given for, and only the same endpoint shares one."""
+    parts = urlsplit(url)
+    port = parts.port or {"http": 80, "https": 443}[parts.scheme]
+    endpoint = f"{parts.scheme}://[{parts.hostname}]:{port}{parts.path.rstrip('/')}"
+    return "ALPHAAVATAR_SERVER_KEY_" + hashlib.sha256(endpoint.encode()).hexdigest()[:12].upper()
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,27 +162,25 @@ def requirements_offered() -> frozenset[str]:
 
 
 def speech_key(selection: Selection) -> str | None:
-    """The variable speech reads its key from: the model server's when it is the same one."""
+    """The variable speech reads its key from: OpenAI's, or its server's own."""
     if not selection.voice:
         return None
-    if (speech := selection.speech) is None:
-        return OPENAI_KEY
-    models = selection.models
-    return MODELS_KEY if models is not None and models.url == speech.url else SPEECH_KEY
+    return OPENAI_KEY if selection.speech is None else server_key(selection.speech.url)
 
 
 def credentials(selection: Selection) -> tuple[Credential, ...]:
-    """What the selection's services read, a key for each server by its own name."""
+    """What the selection's services read: OpenAI's key, and each own server's by its URL."""
     official = {
         (True, True): "the model, embeddings, memory/persona tasks and speech",
         (True, False): "the model, embeddings and memory/persona tasks",
         (False, True): "speech",
     }.get((selection.models is None, speech_key(selection) == OPENAI_KEY))
     found = [Credential(OPENAI_KEY, f"OpenAI's {official}")] if official else []
-    if models := selection.models:
-        found.append(Credential(MODELS_KEY, f"your server {models.url}; any text if it needs none"))
-    if speech_key(selection) == SPEECH_KEY and (speech := selection.speech):
-        found.append(Credential(SPEECH_KEY, f"your server {speech.url}; any text if it needs none"))
+    servers = [selection.models.url] if selection.models else []
+    if selection.voice and selection.speech:
+        servers.append(selection.speech.url)
+    for name, url in {server_key(url): url for url in servers}.items():
+        found.append(Credential(name, f"your server {url}; any text if it needs none"))
     found += [
         Credential("LIVEKIT_URL", "the LiveKit server sessions use", secret=False),
         Credential("LIVEKIT_API_KEY", "LiveKit"),
@@ -242,7 +253,7 @@ def sections(selection: Selection) -> dict[str, str]:
         edit("router", "init_config", "addressing", "visual", "enabled", value=False)
         edit("persona", "init_config", "face", "enabled", value=False)
     if models := selection.models:
-        server = {"base_url": models.url, "api_key_env": MODELS_KEY}
+        server = {"base_url": models.url, "api_key_env": server_key(models.url)}
         edit(
             "loop",
             "init_config",

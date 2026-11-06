@@ -31,8 +31,8 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -139,6 +139,21 @@ def application_paths(overrides: Sequence[str] = ()) -> ApplicationPaths:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class Settings:
+    """One read of the settings and the stored credentials they name, consistent with each
+    other; or why the settings could not be read."""
+
+    values: Mapping[str, Any] = field(default_factory=dict)
+    credentials: Mapping[str, str] = field(default_factory=dict, repr=False)  # Never shown.
+    error: ConfigReferenceError | None = None
+
+    def checked(self) -> Mapping[str, Any]:
+        if self.error is not None:
+            raise self.error
+        return self.values
+
+
 def read_settings(paths: ApplicationPaths) -> dict[str, Any]:
     """User application settings; only ``default_bundle`` is interpreted here."""
     import yaml
@@ -147,6 +162,13 @@ def read_settings(paths: ApplicationPaths) -> dict[str, Any]:
         text = paths.settings_file.read_text(encoding="utf-8")
     except FileNotFoundError:
         return {}
+    except UnicodeDecodeError:
+        raise ConfigReferenceError(f"Settings are not UTF-8 text: {paths.settings_file}") from None
+    except OSError as error:
+        reason = error.strerror or type(error).__name__
+        raise ConfigReferenceError(
+            f"Settings cannot be read: {paths.settings_file} ({reason})"
+        ) from None
     try:
         settings = yaml.safe_load(text)
     except yaml.YAMLError:
@@ -168,17 +190,22 @@ def is_file_argument(target: str) -> bool:
     )
 
 
-def select_configuration(target: str | None, overrides: Sequence[str] = ()) -> ConfigSource:
+def select_configuration(
+    target: str | None, overrides: Sequence[str] = (), settings: Settings | None = None
+) -> ConfigSource:
     """A path-like argument is a file, any other is a bundle name, none is the default bundle.
 
     The spelling alone decides: a missing bundle never falls back to a file, nor the reverse.
+    ``settings`` is the read the credentials were loaded from: the default comes from the
+    same one, whatever a setup commits meanwhile.
     """
     if target is not None and is_file_argument(target):
         return ConfigSource(Path(target).expanduser().absolute())
     paths = application_paths(overrides)
     default = target is None
     if default:
-        target = read_settings(paths).get("default_bundle")
+        values = read_settings(paths) if settings is None else settings.checked()
+        target = values.get("default_bundle")
         if target is None:
             raise ConfigReferenceError(
                 f"No configuration given and no default bundle in {paths.settings_file}; "

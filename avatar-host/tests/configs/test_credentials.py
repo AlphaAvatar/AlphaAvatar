@@ -52,7 +52,9 @@ def test_credentials_are_private_exact_and_never_override_the_environment(tmp_pa
     assert read_settings(paths) == {"default_bundle": "alpha", "credentials": path.name}
     with mock.patch.dict(os.environ, {"LIVEKIT_URL": "wss://set.invalid"}):
         os.environ.pop("OPENAI_API_KEY", None)
-        assert load_credentials(paths) == ("OPENAI_API_KEY",)
+        settings = load_credentials(paths)
+        assert settings.values == {"default_bundle": "alpha", "credentials": path.name}
+        assert "wss://a.invalid" not in repr(settings)  # A read never shows the values.
         assert os.environ["OPENAI_API_KEY"] == AWKWARD
         assert os.environ["LIVEKIT_URL"] == "wss://set.invalid"  # Set already: kept.
 
@@ -119,16 +121,111 @@ def test_a_kill_before_the_settings_replacement_leaves_every_bundle_reading_what
     assert stored_credentials(paths) == old | {"X": "1"}
 
 
-@pytest.mark.parametrize("settings", ["default_bundle: [\n", "credentials: ../outside.env\n"])
+@pytest.mark.parametrize(
+    "settings",
+    [b"default_bundle: [\n", b"credentials: ../outside.env\n", b"default_bundle: \xff\n", None],
+    ids=["invalid YAML", "a path", "not UTF-8", "unreadable"],
+)
 def test_settings_that_name_no_stored_file_load_none_and_setup_refuses_them(
-    tmp_path: Path, settings: str
+    tmp_path: Path, settings: bytes | None
 ) -> None:
     paths = ApplicationPaths.from_root(tmp_path / "home")
     create_bundle(paths, "alpha", avatar_id="alpha", make_default=True, credentials={"A": "1"})
     (paths.root / "outside.env").write_text('A="outside"\n')
-    paths.settings_file.write_text(settings)
+    paths.settings_file.unlink()
+    if settings is None:
+        paths.settings_file.mkdir()  # Cannot be read as a file, whoever runs the test.
+    else:
+        paths.settings_file.write_bytes(settings)
     # Loading reads no stored value, from settings' directory or beyond; storing refuses.
     with mock.patch.dict(os.environ, clear=True):
-        assert load_credentials(paths) == () and "A" not in os.environ
+        loaded = load_credentials(paths)
+        assert isinstance(loaded.error, ConfigReferenceError) and "A" not in os.environ
+    assert loaded.credentials == {}
     with pytest.raises(ConfigReferenceError):
         stored_credentials(paths)
+    with pytest.raises(ConfigReferenceError):
+        loaded.checked()  # Choosing the default refuses them.
+
+
+def test_a_setup_committing_meanwhile_changes_neither_the_default_nor_the_credentials_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from alphaavatar.host.configs import bundles
+    from alphaavatar.host.configs.bundles import select_configuration
+
+    paths = ApplicationPaths.from_root(tmp_path / "home")
+    first = {"A": "first"}
+    create_bundle(paths, "alpha", avatar_id="alpha", make_default=True, credentials=first)
+    original, committed = bundles.read_settings, []
+
+    def committing(paths_: ApplicationPaths):
+        settings = original(paths_)
+        if not committed:
+            committed.append(True)
+            create_bundle(
+                paths, "gamma", avatar_id="gamma", make_default=True, credentials={"A": "3"}
+            )
+        return settings
+
+    with mock.patch.dict(os.environ, {"ALPHAAVATAR_HOME": str(paths.root)}):
+        # A start reads the settings and their credentials; a setup then commits another
+        # default and removes the file the start read: the start keeps both from its one read.
+        os.environ.pop("A", None)
+        read = load_credentials(paths)
+        create_bundle(paths, "beta", avatar_id="beta", make_default=True, credentials={"A": "2"})
+        assert select_configuration(None, settings=read).bundle == "alpha"
+        assert os.environ["A"] == "first"
+        assert read_settings(paths)["default_bundle"] == "beta"
+
+        # A setup committing between reading the settings and opening the file they name: the
+        # file is gone, so the settings are read again, and both come from the new read.
+        monkeypatch.setattr(bundles, "read_settings", committing)
+        os.environ.pop("A")
+        again = load_credentials(paths)
+        assert committed and again.values["default_bundle"] == "gamma"
+        assert again.credentials == {"A": "3"} and os.environ["A"] == "3"
+
+
+COMMITTING = """
+import sys
+from alphaavatar.host.cli.app import main
+from alphaavatar.host.configs import application_paths, credentials
+from alphaavatar.host.configs.template import create_bundle
+
+load = credentials.load_environment
+
+
+def committing(overrides=()):
+    read = load(overrides)  # Then a setup commits another default, with its credentials.
+    create_bundle(
+        application_paths(), "beta", avatar_id="beta", make_default=True,
+        sections={"router": "plugin: absent\\n"}, credentials={"A": "2"},
+    )
+    return read
+
+
+credentials.load_environment = committing
+sys.exit(main(sys.argv[1:]))
+"""
+
+
+@pytest.mark.parametrize("command", [["config", "check"], ["start"], ["doctor"]])
+def test_each_command_takes_the_default_from_the_read_its_credentials_came_from(
+    command: list[str], home: Path
+) -> None:
+    from alphaavatar.host.configs import application_paths
+
+    paths = application_paths()
+    old = {"persona": "plugin: absent\n"}  # Each default fails where it is told apart.
+    create_bundle(paths, "alpha", avatar_id="alpha", make_default=True, sections=old)
+    ran = subprocess.run(
+        [sys.executable, "-c", COMMITTING, *command],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=os.environ | {"ALPHAAVATAR_HOME": str(home)},
+    )
+    assert read_settings(paths)["default_bundle"] == "beta"  # Committed meanwhile.
+    assert "persona.plugin" in ran.stdout + ran.stderr, ran.stderr
+    assert "router.plugin" not in ran.stdout + ran.stderr

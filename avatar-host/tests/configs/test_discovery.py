@@ -28,8 +28,10 @@ import pytest
 from alphaavatar.host.cli.app import main
 
 PROBES = """
+from pydantic import BaseModel, ConfigDict
+
 from alphaavatar.agents.runtime.inference import InferenceRunner
-from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
+from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
 
 
 class EchoRunner(InferenceRunner):
@@ -58,6 +60,46 @@ class ProviderRunner(InferenceRunner):
 class ProviderProbe(Probe):
     def inference_runners(self, config):
         return (ProviderRunner,)
+
+
+class TwoProvidersRunner(InferenceRunner):
+    INFERENCE_METHOD = "probe.two.providers"
+    PROVIDERS = ((AvatarModule.PROVIDER_LLM, "first"), (AvatarModule.PROVIDER_EMBEDDING, "second"))
+
+
+class TwoProvidersLoop(Probe):
+    def inference_runners(self, config):
+        return (TwoProvidersRunner,)
+
+
+class ChainRunner(InferenceRunner):
+    INFERENCE_METHOD = "probe.provider.chain"
+    PROVIDERS = ((AvatarModule.PROVIDER_EMBEDDING, "downstream"),)
+
+
+class ChainProvider(Probe):
+    def inference_runners(self, config):
+        return (ChainRunner,)
+
+
+class DownstreamRunner(InferenceRunner):
+    INFERENCE_METHOD = "probe.downstream.echo"
+    REPLICABLE = True
+
+
+class DownstreamProvider(Probe):
+    def inference_runners(self, config):
+        return (DownstreamRunner,)
+
+
+class MemorySettings(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    depth: int = 1
+
+
+class SchemaMemory(Probe):
+    def settings(self, init_config):
+        return MemorySettings.model_validate(init_config)
 """
 CREDENTIALS = {
     "OPENAI_API_KEY": "sk-fictional",
@@ -173,6 +215,50 @@ def test_a_provider_backend_plans_its_runners_with_the_rest_wherever_workers_are
         *selected,
     )
     assert restored.stdout.strip() == "2", restored.stderr
+
+
+def test_every_provider_a_runner_names_resolves_and_so_do_their_runners_providers(run) -> None:
+    distribution(
+        run.site,
+        "chain-probe",
+        "[alphaavatar.loop]\ntwo = MODULE:TwoProvidersLoop\n"
+        "[alphaavatar.provider.llm]\nchain = MODULE:ChainProvider\n",
+    )
+    # One runner naming two providers: each is resolved at a setting of its own.
+    checked = run("config", "check", "loop.plugin=two")
+    assert checked.returncode == 2
+    for module, name in (("provider.llm", "first"), ("provider.embedding", "second")):
+        assert (
+            f"loop.plugin (runner probe.two.providers needs {module} {name!r}): "
+            f"no installed package provides {module} {name!r}"
+        ) in checked.stderr
+    # A provider's own runner naming another provider: resolved too, then its runners planned.
+    chained = ("loop.init_config.model.backend=chain",)
+    checked = run("config", "check", *chained)
+    assert checked.returncode == 2
+    assert (
+        "loop.init_config.model.backend (runner probe.provider.chain needs provider.embedding "
+        "'downstream'): no installed package provides provider.embedding 'downstream'"
+    ) in checked.stderr
+    distribution(
+        run.site,
+        "downstream-probe",
+        "[alphaavatar.provider.embedding]\ndownstream = MODULE:DownstreamProvider\n",
+    )
+    workers = 'runtime.inference.methods={"probe.downstream.echo": {"workers": 2}}'
+    checked = run("config", "check", *chained, workers, "--json")
+    assert checked.returncode == 0, checked.stderr
+    planned = json.loads(checked.stdout)["inference"]
+    assert (planned["probe.provider.chain"], planned["probe.downstream.echo"]) == (1, 2)
+
+
+def test_another_memorys_own_schema_is_summarized_by_what_it_holds(run) -> None:
+    distribution(run.site, "schema-probe", "[alphaavatar.memory]\nschema = MODULE:SchemaMemory\n")
+    checked = run("config", "check", "memory.plugin=schema", "memory.init_config.depth=3", "--json")
+    assert checked.returncode == 0, checked.stderr
+    assert json.loads(checked.stdout)["plugins"]["memory"] == {"plugin": "schema", "vdb": None}
+    checked = run("config", "check", "memory.plugin=schema", "memory.init_config.depth=deep")
+    assert checked.returncode == 2 and "memory.init_config.depth" in checked.stderr
 
 
 def test_missing_and_duplicate_implementations_fail_where_selected_in_every_command(run) -> None:

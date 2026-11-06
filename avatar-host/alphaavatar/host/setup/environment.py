@@ -33,12 +33,14 @@ setup's mark and nothing references is ever removed.
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import hashlib
 import json
 import os
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -259,8 +261,22 @@ def fetch(artifact: Artifact, sources: Sources, stage: Path) -> Path:
 
 @contextmanager
 def locked(prefix: Path) -> Iterator[None]:
+    """The lock install.sh takes too: a regular file of the prefix, opened through no link and
+    never truncated."""
     prefix.mkdir(parents=True, exist_ok=True)
-    with (prefix / ".install.lock").open("a") as lock:
+    path = prefix / ".install.lock"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC
+    try:
+        descriptor = os.open(path, flags, 0o644)
+    except OSError as error:
+        if error.errno != errno.ELOOP:
+            raise
+        descriptor = -1
+    if descriptor < 0 or not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        if descriptor >= 0:
+            os.close(descriptor)
+        raise SetupError(f"{path} is not a lock file setup or install.sh made; left as it is")
+    with os.fdopen(descriptor, "a") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:

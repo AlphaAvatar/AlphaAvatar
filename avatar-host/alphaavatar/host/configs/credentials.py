@@ -30,8 +30,12 @@ import re
 import secrets
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from alphaavatar.host.workspace import ApplicationPaths
+
+if TYPE_CHECKING:
+    from .bundles import Settings
 
 NAME = re.compile(r"[A-Z][A-Z0-9_]*")
 FILE = re.compile(r"credentials-[0-9a-f]{16}\.env")
@@ -42,11 +46,10 @@ def _quoted(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def credentials_path(paths: ApplicationPaths) -> Path | None:
-    """The stored credentials the settings name, if they name any."""
-    from .bundles import ConfigReferenceError, read_settings
+def _named(paths: ApplicationPaths, settings: Mapping[str, Any]) -> Path | None:
+    from .bundles import ConfigReferenceError
 
-    name = read_settings(paths).get("credentials")
+    name = settings.get("credentials")
     if name is None:
         return None
     if not (isinstance(name, str) and FILE.fullmatch(name)):
@@ -56,44 +59,77 @@ def credentials_path(paths: ApplicationPaths) -> Path | None:
     return paths.settings_dir / name
 
 
-def stored_credentials(paths: ApplicationPaths) -> dict[str, str]:
+def credentials_path(paths: ApplicationPaths) -> Path | None:
+    """The stored credentials the settings name, if they name any."""
+    from .bundles import read_settings
+
+    return _named(paths, read_settings(paths))
+
+
+def read_stored(paths: ApplicationPaths) -> Settings:
+    """The settings and the stored credentials they name, as of one moment.
+
+    A stored file is written whole before the settings name it, never changed, and removed
+    only once they name another: one gone since the settings were read means they changed,
+    so they are read again. A file opened reads whole even if it is removed meanwhile.
+    """
     from dotenv import dotenv_values
 
-    path = credentials_path(paths)
-    if path is None or not path.is_file():
-        return {}
-    stored = dotenv_values(path, interpolate=False).items()
-    return {name: value for name, value in stored if value is not None}
+    from .bundles import ConfigReferenceError, Settings, read_settings
+
+    for _ in range(16):
+        try:
+            settings = read_settings(paths)
+            path = _named(paths, settings)
+            if path is None:
+                return Settings(settings)
+            with path.open(encoding="utf-8") as stream:
+                stored = dotenv_values(stream=stream, interpolate=False)
+        except FileNotFoundError:
+            continue
+        except ConfigReferenceError as error:
+            return Settings(error=error)
+        except (OSError, UnicodeDecodeError):
+            return Settings(
+                error=ConfigReferenceError(f"Stored credentials cannot be read: {path}")
+            )
+        values = {name: value for name, value in stored.items() if value is not None}
+        return Settings(settings, values)
+    changing = ConfigReferenceError(f"Settings in {paths.settings_dir} kept changing while read")
+    return Settings(error=changing)
 
 
-def load_credentials(paths: ApplicationPaths) -> tuple[str, ...]:
-    """Set each stored credential the environment lacks; the names set.
+def stored_credentials(paths: ApplicationPaths) -> dict[str, str]:
+    """The stored credentials, refusing settings that cannot be read."""
+    settings = read_stored(paths)
+    settings.checked()
+    return dict(settings.credentials)
 
-    Unreadable settings name none: a named bundle still loads, as it does without them, and
-    Doctor's home check says what to fix. Setup refuses such settings before it stores any.
+
+def load_credentials(paths: ApplicationPaths) -> Settings:
+    """Set each stored credential the environment lacks, from one read of the settings, which
+    is returned: the default bundle is chosen from it too.
+
+    Settings that cannot be read name none: a named bundle still loads, as it does without
+    them, and Doctor's home check says what to fix. Choosing the default, and setup, refuse
+    them.
     """
-    from .bundles import ConfigReferenceError
-
-    try:
-        stored = stored_credentials(paths)
-    except ConfigReferenceError:
-        return ()
-    loaded = []
-    for name, value in stored.items():
+    settings = read_stored(paths)
+    for name, value in settings.credentials.items():
         if name not in os.environ:
             os.environ[name] = value
-            loaded.append(name)
-    return tuple(loaded)
+    return settings
 
 
-def load_environment(overrides: Sequence[str] = ()) -> None:
-    """The .env file start reads (ENV_FILE), then the credentials stored for the home."""
+def load_environment(overrides: Sequence[str] = ()) -> Settings:
+    """The .env file start reads (ENV_FILE), then the credentials stored for the home; the
+    settings read, to choose the default bundle from."""
     from alphaavatar.agents.env import init_env
 
     from .bundles import application_paths
 
     init_env()  # It may set ALPHAAVATAR_HOME, which chooses the home.
-    load_credentials(application_paths(overrides))
+    return load_credentials(application_paths(overrides))
 
 
 def write_credentials(paths: ApplicationPaths, values: Mapping[str, str]) -> Path:
