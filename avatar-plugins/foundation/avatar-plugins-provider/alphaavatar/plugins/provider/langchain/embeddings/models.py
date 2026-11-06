@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
+
 from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
 
 
@@ -24,8 +26,13 @@ def _create_openai_embedding(config: ProviderTaskConfig):
         ) from e
 
     kwargs = dict(config.extra or {})
+    # Explicitly, as the LLMs read theirs: unset, the client would fall back to OPENAI_API_KEY.
+    env_name = kwargs.pop("api_key_env", "OPENAI_API_KEY")
+    key = kwargs.pop("api_key", None) or os.getenv(env_name)
+    if not key:
+        raise RuntimeError(f"Environment variable {env_name!r} is required")
 
-    return OpenAIEmbeddings(model=config.model, **kwargs)
+    return OpenAIEmbeddings(model=config.model, api_key=key, **kwargs)
 
 
 def _create_google_embedding(config: ProviderTaskConfig):

@@ -86,6 +86,7 @@ class OpenAITTS(PCMHTTPProvider):
         instructions: str | None = None,
         speed: float = 1.0,
         api_key: str | None = None,
+        api_key_env: str = "OPENAI_API_KEY",
         base_url: str | None = None,
         settings: PCMSettings | None = None,
     ) -> None:
@@ -110,7 +111,7 @@ class OpenAITTS(PCMHTTPProvider):
         super().__init__(
             provider="openai",
             url=f"{base.rstrip('/')}/audio/speech",
-            api_key=api_key if api_key is not None else os.getenv("OPENAI_API_KEY", ""),
+            api_key=api_key if api_key is not None else os.getenv(api_key_env, ""),
             sample_rate=24000,
             settings=settings or PCMSettings(),
         )

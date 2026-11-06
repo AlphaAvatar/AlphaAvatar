@@ -144,14 +144,15 @@ def _provider_tasks(
     return tasks
 
 
-def resolve_plugins(config: AvatarConfig, *, providers: bool = False) -> PluginSelection:
-    """Resolve each selected plugin, then the inference runners those plugins use.
+def resolve_plugins(config: AvatarConfig) -> PluginSelection:
+    """Resolve each selected plugin, then the inference runners those plugins use: the one
+    resolution loading, config check, Doctor and start all plan with.
 
-    With ``providers``, each resolved plugin's settings are validated with its own schema,
-    failing located under its section (``loop.init_config.model``), and the provider
-    implementations resolve too: each ProviderTaskConfig in the settings outside a part
-    switched off, and each a planned runner names (``InferenceRunner.PROVIDERS``). Unserved
-    selections are problems by location; runners that cannot be planned fail at once.
+    Each resolved plugin's settings are validated with its own schema, failing located under
+    its section (``loop.init_config.model``), and the provider implementations resolve too:
+    each ProviderTaskConfig in the settings outside a part switched off, and each a planned
+    runner names (``InferenceRunner.PROVIDERS``); their runners are planned with the rest.
+    Unserved selections are problems by location; runners that cannot be planned fail at once.
     """
     from alphaavatar.agents.runtime.inference.bootstrap import _add_runner
 
@@ -181,14 +182,13 @@ def resolve_plugins(config: AvatarConfig, *, providers: bool = False) -> PluginS
         resolve(location, module, name)
 
     plan(dict(selection.plugins))
-    if providers:
-        tasks = _provider_tasks(config, selection)
-        for method, (location, runner) in list(selection.runners.items()):
-            for module, name in runner.PROVIDERS:
-                tasks.setdefault((AvatarModule(module), name), f"{location} (runner {method})")
-        sections = set(selection.plugins)
-        for (module, name), location in tasks.items():
-            resolve(location, module, name)
-        plan({loc: plugin for loc, plugin in selection.plugins.items() if loc not in sections})
+    tasks = _provider_tasks(config, selection)
+    for method, (location, runner) in list(selection.runners.items()):
+        for module, name in runner.PROVIDERS:
+            tasks.setdefault((AvatarModule(module), name), f"{location} (runner {method})")
+    sections = set(selection.plugins)
+    for (module, name), location in tasks.items():
+        resolve(location, module, name)
+    plan({loc: plugin for loc, plugin in selection.plugins.items() if loc not in sections})
 
     return selection

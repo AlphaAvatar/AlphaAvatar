@@ -48,6 +48,16 @@ class Probe(AvatarModulePlugin):
 class LoopProbe(Probe):
     def inference_runners(self, config):
         return (EchoRunner,)
+
+
+class ProviderRunner(InferenceRunner):
+    INFERENCE_METHOD = "probe.provider.echo"
+    REPLICABLE = True
+
+
+class ProviderProbe(Probe):
+    def inference_runners(self, config):
+        return (ProviderRunner,)
 """
 CREDENTIALS = {
     "OPENAI_API_KEY": "sk-fictional",
@@ -79,7 +89,17 @@ def run(tmp_path: Path):
             [str(entrypoint), *argv], capture_output=True, text=True, timeout=180, env=env
         )
 
-    run.site = site
+    def python(script: str, *argv: str) -> subprocess.CompletedProcess[str]:
+        env = os.environ | CREDENTIALS | {"PYTHONPATH": str(site)}
+        return subprocess.run(
+            [sys.executable, "-c", script, *argv],
+            capture_output=True,
+            text=True,
+            timeout=180,
+            env=env,
+        )
+
+    run.site, run.python = site, python
     assert main(["config", "init", "alpha", "--avatar-id", "alpha"]) == 0
     return run
 
@@ -110,6 +130,49 @@ def test_selections_resolve_by_type_and_name_and_plan_the_runners_they_use(run) 
     assert (summary["plugins"]["loop"], summary["plugins"]["memory"]["plugin"]) == ("probe",) * 2
     assert summary["inference"]["probe.loop.echo"] == 2
     assert "alphaavatar.memory.vdb.lancedb" not in summary["inference"]  # The probe uses none.
+
+
+def test_a_provider_backend_plans_its_runners_with_the_rest_wherever_workers_are_planned(
+    run,
+) -> None:
+    # Another package's model provider, named by the loop's model settings, uses a runner;
+    # loading, config check, Doctor and start's plan all count it with two workers.
+    distribution(
+        run.site, "provider-probe", "[alphaavatar.provider.llm]\nprobe = MODULE:ProviderProbe\n"
+    )
+    selected = (
+        "loop.init_config.model.backend=probe",
+        'runtime.inference.methods={"probe.provider.echo": {"workers": 2}}',
+    )
+    checked = run("config", "check", *selected, "--json")
+    assert checked.returncode == 0, checked.stderr
+    assert json.loads(checked.stdout)["inference"]["probe.provider.echo"] == 2
+    doctored = run("doctor", *selected, "--json")
+    loaded = next(c for c in json.loads(doctored.stdout)["checks"] if c["id"] == "config.load")
+    assert loaded["status"] == "PASS", loaded
+    # What start launches: the plan prepare_inference_runners leaves for its workers.
+    planned = run.python(
+        "import json, os, sys\n"
+        "from alphaavatar.agents.runtime.inference.bootstrap import (\n"
+        "    INFERENCE_PLAN_ENV, prepare_inference_runners,\n"
+        ")\n"
+        "from alphaavatar.host.configs import load_application, select_configuration\n"
+        "config = load_application(select_configuration(None, sys.argv[1:]), sys.argv[1:])\n"
+        "prepare_inference_runners(config.avatar)\n"
+        "print(os.environ[INFERENCE_PLAN_ENV])",
+        *selected,
+    )
+    assert planned.returncode == 0, planned.stderr
+    plan = {item["method"]: item["name"] for item in json.loads(planned.stdout)}
+    assert plan["probe.provider.echo"] == "ProviderRunner"
+    restored = run.python(
+        "import sys\n"
+        "from alphaavatar.host.configs import load_application, restore_application, select_configuration\n"
+        "config = load_application(select_configuration(None, sys.argv[1:]), sys.argv[1:])\n"
+        "print(restore_application(config.payload).avatar.runtime.inference.workers('probe.provider.echo'))",
+        *selected,
+    )
+    assert restored.stdout.strip() == "2", restored.stderr
 
 
 def test_missing_and_duplicate_implementations_fail_where_selected_in_every_command(run) -> None:

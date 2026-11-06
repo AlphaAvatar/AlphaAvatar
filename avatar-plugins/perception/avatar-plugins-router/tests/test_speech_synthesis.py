@@ -162,6 +162,8 @@ class Player:
 
     async def _receipt(self, identity, kind: OutputPlaybackType) -> None:
         played = len(self.pcm.get(identity.output_id, ())) * SAMPLES / RATE
+        # Recorded first: publishing FINISHED finalizes the transcript, which wakes the test.
+        self.receipts.append((identity.output_id, kind))
         await self.output.publish(
             EnvOutput(
                 kind=OutputKind.PLAYBACK,
@@ -173,7 +175,6 @@ class Player:
                 metadata={"measurement": "local_audio_queue"},
             )
         )
-        self.receipts.append((identity.output_id, kind))
 
     async def _run(self, subscription) -> None:
         while True:

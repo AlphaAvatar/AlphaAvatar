@@ -91,7 +91,8 @@ also listing PCM output options. This implementation requires an actual PCM-comp
 content type; a mismatched live response fails, never guesses or plays MP3 as PCM.
 Vendor-account integration and listening tests remain required before release.
 
-Keys come from `OPENAI_API_KEY` and `VOICEAI_API_KEY`, not YAML key fields. OpenAI
+Keys come from `OPENAI_API_KEY` and `VOICEAI_API_KEY`, or the variable
+`voice.stt.api_key_env` / `voice.tts.api_key_env` names, never YAML key fields. OpenAI
 also honors `OPENAI_BASE_URL`; `voice.tts.base_url` explicitly overrides the endpoint
 base for either provider. Remote endpoints require HTTPS; loopback HTTP is permitted
 for local gateways/tests. Embedded URL credentials, query strings, fragments and

@@ -165,7 +165,7 @@ def resolve_capabilities(config: ApplicationConfig) -> Capabilities:
     """Every requirement the selections need, resolved as start resolves them."""
     from alphaavatar.agents.runtime.plugin import resolve_plugins
 
-    selection = resolve_plugins(config.avatar, providers=True)
+    selection = resolve_plugins(config.avatar)
     needs = [Need("host.rtc.backend", with_extra(HOST, config.host.rtc.backend))]
     for location, plugin in selection.plugins.items():
         if plugin.distribution is not None:

@@ -24,11 +24,33 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from alphaavatar.agents.runtime.plugin import plugin_requirement
 from alphaavatar.agents.utils.vdb.config import vdb_requirement
 
 VectorStore = Literal["lancedb", "qdrant"]
+# Each server's key by its own name: one of one's own never receives OpenAI's.
+OPENAI_KEY = "OPENAI_API_KEY"
+MODELS_KEY = "ALPHAAVATAR_MODELS_API_KEY"
+SPEECH_KEY = "ALPHAAVATAR_SPEECH_API_KEY"
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
+
+
+def server_problem(url: str, *, speech: bool) -> str | None:
+    """Why the backends a server's URL is for would refuse it, or None.
+
+    The OpenAI clients take an http(s) API root without credentials, query or fragment;
+    speech synthesis sends its key over HTTPS unless the server is on this machine.
+    """
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return "an http:// or https:// API root, such as https://gpu-host:8000/v1"
+    if parts.username or parts.password or parts.query or parts.fragment:
+        return "an API root without credentials, query or fragment"
+    if speech and parts.scheme == "http" and parts.hostname not in LOCAL_HOSTS:
+        return "https:// for a speech server on another machine; http:// only on this one"
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,15 +63,23 @@ class Models:
     tasks: str  # Memory and persona tasks
     embedding: str
 
+    def __post_init__(self) -> None:
+        if problem := server_problem(self.url, speech=False):
+            raise ValueError(f"Model server {self.url}: {problem}")
+
 
 @dataclass(frozen=True, slots=True)
 class Speech:
     """An OpenAI-compatible server of one's own for transcription and speech."""
 
-    url: str
+    url: str  # HTTPS unless on this machine, e.g. https://speech-host:8001/v1
     transcription: str
     synthesis: str
     voice: str
+
+    def __post_init__(self) -> None:
+        if problem := server_problem(self.url, speech=True):
+            raise ValueError(f"Speech server {self.url}: {problem}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,15 +148,29 @@ def requirements_offered() -> frozenset[str]:
     )
 
 
+def speech_key(selection: Selection) -> str | None:
+    """The variable speech reads its key from: the model server's when it is the same one."""
+    if not selection.voice:
+        return None
+    if (speech := selection.speech) is None:
+        return OPENAI_KEY
+    models = selection.models
+    return MODELS_KEY if models is not None and models.url == speech.url else SPEECH_KEY
+
+
 def credentials(selection: Selection) -> tuple[Credential, ...]:
-    own = selection.models is not None and (selection.speech is not None or not selection.voice)
-    found = [
-        Credential(
-            "OPENAI_API_KEY",
-            "the key your servers expect, any text if they need none"
-            if own
-            else "the model, speech, embeddings and memory/persona tasks",
-        ),
+    """What the selection's services read, a key for each server by its own name."""
+    official = {
+        (True, True): "the model, embeddings, memory/persona tasks and speech",
+        (True, False): "the model, embeddings and memory/persona tasks",
+        (False, True): "speech",
+    }.get((selection.models is None, speech_key(selection) == OPENAI_KEY))
+    found = [Credential(OPENAI_KEY, f"OpenAI's {official}")] if official else []
+    if models := selection.models:
+        found.append(Credential(MODELS_KEY, f"your server {models.url}; any text if it needs none"))
+    if speech_key(selection) == SPEECH_KEY and (speech := selection.speech):
+        found.append(Credential(SPEECH_KEY, f"your server {speech.url}; any text if it needs none"))
+    found += [
         Credential("LIVEKIT_URL", "the LiveKit server sessions use", secret=False),
         Credential("LIVEKIT_API_KEY", "LiveKit"),
         Credential("LIVEKIT_API_SECRET", "LiveKit"),
@@ -198,7 +242,7 @@ def sections(selection: Selection) -> dict[str, str]:
         edit("router", "init_config", "addressing", "visual", "enabled", value=False)
         edit("persona", "init_config", "face", "enabled", value=False)
     if models := selection.models:
-        server = {"base_url": models.url}
+        server = {"base_url": models.url, "api_key_env": MODELS_KEY}
         edit(
             "loop",
             "init_config",
@@ -235,6 +279,8 @@ def sections(selection: Selection) -> dict[str, str]:
         edit("voice", "tts", "model", value=speech.synthesis)
         edit("voice", "tts", "speaker", value=speech.voice)
         edit("voice", "tts", "base_url", value=speech.url)
+        for part in ("stt", "tts"):
+            edit("voice", part, "api_key_env", value=speech_key(selection))
     for section in ("memory", "persona"):
         if selection.vector_store == "qdrant":
             # Resolved from the environment, or the stored credentials, when the bundle loads.

@@ -36,6 +36,11 @@ class STTConfig(BaseModel):
         default="low", description="Realtime transcription latency/quality preference."
     )
     base_url: str | None = Field(default=None, description="Optional provider API base URL.")
+    api_key_env: str | None = Field(
+        default=None,
+        pattern=r"^[A-Z][A-Z0-9_]*$",
+        description="The environment variable holding its API key; the plugin's own when unset.",
+    )
 
     def get_plugin(self) -> STTBase | None:
         if self.plugin is None:
@@ -49,6 +54,8 @@ class STTConfig(BaseModel):
 
         if self.base_url is not None:
             kwargs["base_url"] = self.base_url
+        if self.api_key_env is not None:
+            kwargs["api_key_env"] = self.api_key_env
         return AvatarModulePlugin.create(AvatarModule.VOICE_STT, self.plugin, **kwargs)
 
 
@@ -68,6 +75,11 @@ class TTSConfig(BaseModel):
     speed: float = Field(default=1.0, ge=0.25, le=4.0, allow_inf_nan=False, strict=True)
 
     base_url: str | None = None
+    api_key_env: str | None = Field(
+        default=None,
+        pattern=r"^[A-Z][A-Z0-9_]*$",
+        description="The environment variable holding its API key; the plugin's own when unset.",
+    )
 
     # HTTP waits and retry backoff; queued audio and local playout do not use this budget.
     timeout: float = Field(default=30.0, gt=0, le=3600, allow_inf_nan=False)
@@ -126,6 +138,7 @@ class TTSConfig(BaseModel):
             instructions=self.instructions,
             speed=self.speed,
             base_url=self.base_url,
+            **({} if self.api_key_env is None else {"api_key_env": self.api_key_env}),
             timeout=self.timeout,
             first_audio_timeout=self.first_audio_timeout,
             read_timeout=self.read_timeout,

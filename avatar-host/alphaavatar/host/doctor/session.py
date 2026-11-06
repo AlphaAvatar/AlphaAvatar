@@ -132,10 +132,11 @@ def _stores(config: ApplicationConfig) -> list[tuple[str, str, dict[str, Any]]]:
     from alphaavatar.agents.runtime.plugin import resolve_plugins
 
     stores = []
-    for location, plugin in resolve_plugins(config.avatar).plugins.items():
+    plugins = resolve_plugins(config.avatar).plugins
+    for location in config.avatar.plugin_factories():
         section = config.avatar.section(location)
-        if (vdb := getattr(section, "vdb_config", None)) is not None:
-            stores.append((plugin.namespace, location.rpartition(".")[0], vdb))
+        if location in plugins and (vdb := getattr(section, "vdb_config", None)) is not None:
+            stores.append((plugins[location].namespace, location.rpartition(".")[0], vdb))
     return stores
 
 

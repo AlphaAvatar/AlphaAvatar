@@ -103,6 +103,24 @@ class Installation:
     def environment(self, plan: Plan) -> Path:
         return self.prefix / "envs" / plan.id[:16]
 
+    def reached(self, path: Path) -> bool:
+        """``path`` is versions/<name> or envs/<name> of this prefix itself: reached through
+        no symbolic link, so what it holds is this installation's to judge."""
+        try:
+            relative = path.relative_to(self.prefix)
+        except ValueError:
+            return False
+        return (
+            len(relative.parts) == 2
+            and relative.parts[0] in ("versions", "envs")
+            and path.resolve() == self.prefix.resolve() / relative
+        )
+
+    def reusable(self, plan: Plan) -> bool:
+        """The plan's environment is setup's own and holds the plan, checked."""
+        environment = self.environment(plan)
+        return self.reached(environment) and _marked(environment) and complete(environment, plan)
+
     def installed_requirements(self) -> tuple[str, ...]:
         """What the current setup environment over this base was planned for, if one is current."""
         plan = self._current_plan()
@@ -124,11 +142,8 @@ class Installation:
             if link.exists():
                 raise SetupError(f"{link} is not a link setup or install.sh made; left as it is")
             return None
-        target = (self.prefix / os.readlink(link)).resolve()
-        if target.parent not in (
-            (self.prefix / "versions").resolve(),
-            (self.prefix / "envs").resolve(),
-        ):
+        target = self.prefix / os.readlink(link)
+        if not self.reached(target):
             raise SetupError(f"{link} points outside this installation's versions and envs")
         return target
 
@@ -358,6 +373,8 @@ def install(
                 f"Another setup installed {', '.join(missing)} meanwhile; kept, plan {plan.id[:16]}"
             )
         environment = installation.environment(plan)
+        if (prefix / "envs").is_symlink():  # What is made through it would be elsewhere.
+            raise SetupError(f"{prefix / 'envs'} is not this installation's own directory")
         made_envs = not (prefix / "envs").exists()
         (prefix / "envs").mkdir(exist_ok=True)
         for stale in (prefix / "envs").glob(".setup-*"):
@@ -367,13 +384,13 @@ def install(
         (stage / OWNER).touch()
         created = enabled = False
         try:
-            if complete(environment, plan):
+            if installation.reusable(plan):
                 progress(f"Environment {environment} is already installed; checking it")
             else:
                 if environment.exists() or environment.is_symlink():
                     # This plan's own directory, left incomplete by a run that is gone, is
-                    # rebuilt; anything else there is not setup's to remove.
-                    if not _marked(environment) or environment.resolve() == previous:
+                    # rebuilt; anything else there, a link included, is not setup's to remove.
+                    if not _marked(environment) or environment == previous:
                         raise SetupError(f"{environment} exists and is not setup's; left as it is")
                     shutil.rmtree(environment)
                 files = []
@@ -402,12 +419,12 @@ def install(
         finally:
             # Whatever ends the run, the state on disk decides what to undo; signals wait.
             with _signals_wait():
-                if not enabled and installation.current() == environment.resolve():
+                if not enabled and installation.current() == environment:
                     if previous is not None:
                         _switch(prefix, previous, stage)
                     else:
                         (prefix / "current").unlink()
-                if created and not enabled and installation.current() != environment.resolve():
+                if created and not enabled and installation.current() != environment:
                     shutil.rmtree(environment, ignore_errors=True)
                 shutil.rmtree(stage, ignore_errors=True)
                 if made_envs and not enabled and not any((prefix / "envs").iterdir()):

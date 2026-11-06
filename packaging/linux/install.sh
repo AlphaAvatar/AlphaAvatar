@@ -92,10 +92,15 @@ mkdir -p "$prefix"
 exec 9> "$prefix/.install.lock"
 flock -n 9 || die "Another installation into $prefix is running"
 previous="$(readlink "$prefix/current" || true)"
+# What this script or setup made: versions/<name> or a marked envs/<name> of this prefix,
+# reached through no other link.
 if [[ -e "$prefix/current" || -L "$prefix/current" ]] \
-    && ! [[ "$previous" =~ ^(versions|envs)/[0-9A-Za-z][0-9A-Za-z._+-]*$ ]]; then
+    && ! { [[ "$previous" =~ ^(versions|envs)/[0-9A-Za-z][0-9A-Za-z._+-]*$ ]] \
+      && [[ "$(realpath -m "$prefix/$previous")" == "$prefix/$previous" ]] \
+      && [[ "$previous" == versions/* || -f "$prefix/$previous/.alphaavatar-setup" ]]; }; then
   die "$prefix/current is not a link this script or setup made; it is left as it is"
 fi
+[[ ! -L "$prefix/versions" ]] || die "$prefix/versions is a link; it is left as it is"
 mkdir -p "$prefix/versions"
 for dir in "$prefix/versions"/.install-*; do
   # A stage whose run was killed, marked as this script's: the lock is ours now.
@@ -125,23 +130,27 @@ cleanup() {
 }
 trap cleanup EXIT  # Also on SIGINT and SIGTERM: bash exits through the EXIT trap.
 
+# The package is this run's own copy: what is checked is what unpacks and runs, whatever
+# happens to the source meanwhile.
+package="$stage/package.tar.gz"
 if [[ -n "$url" ]]; then
-  file="$stage/${url##*/}"
   echo "Downloading $url"
-  curl -fL --retry 3 $([[ -t 2 ]] && echo --progress-bar || echo -sS) -o "$file" "$url"
+  curl -fL --retry 3 $([[ -t 2 ]] && echo --progress-bar || echo -sS) -o "$package" "$url"
   [[ -n "$sha256" ]] || sha256="$(curl -fsSL --retry 3 "$url.sha256" | cut -d' ' -f1)"
+else
+  [[ -f "$file" ]] || die "No package at $file"
+  if [[ -z "$sha256" ]]; then
+    [[ -f "$file.sha256" ]] || die "No SHA-256: pass --sha256 or keep $file.sha256 beside it"
+    sha256="$(cut -d' ' -f1 "$file.sha256")"
+  fi
+  cp -- "$file" "$package" || die "Cannot copy $file"
 fi
-[[ -f "$file" ]] || die "No package at $file"
-if [[ -z "$sha256" ]]; then
-  [[ -f "$file.sha256" ]] || die "No SHA-256: pass --sha256 or keep $file.sha256 beside it"
-  sha256="$(cut -d' ' -f1 "$file.sha256")"
-fi
-[[ "$(sha256sum < "$file" | cut -d' ' -f1)" == "$sha256" ]] \
-  || die "$file does not match its SHA-256: an incomplete download or another file"
+[[ "$(sha256sum < "$package" | cut -d' ' -f1)" == "$sha256" ]] \
+  || die "${url:-$file} does not match its SHA-256: an incomplete download or another file"
 
 # The manifest first: a version already installed is neither unpacked again nor given space.
 mkdir "$stage/tree"
-tar -xzf "$file" -C "$stage/tree" --no-same-owner --wildcards '*/share/alphaavatar/manifest.json' \
+tar -xzf "$package" -C "$stage/tree" --no-same-owner --wildcards '*/share/alphaavatar/manifest.json' \
   || die "Not an AlphaAvatar package: no manifest"
 unpacked=("$stage/tree"/*)
 [[ ${#unpacked[@]} -eq 1 && -d "${unpacked[0]}" && ! -L "${unpacked[0]}" ]] \
@@ -153,7 +162,7 @@ for dir in "$prefix/versions"/*; do
   [[ -d "$dir" && ! -L "$dir" ]] || continue
   if cmp -s "$manifest" "$dir/share/alphaavatar/manifest.json"; then installed="$dir"; fi
 done
-[[ -n "$installed" ]] || tar -xzf "$file" -C "$stage/tree" --no-same-owner
+[[ -n "$installed" ]] || tar -xzf "$package" -C "$stage/tree" --no-same-owner
 fields="$("${installed:-$candidate}/python/bin/python3" -I -c 'import json, sys
 m = json.load(open(sys.argv[1], encoding="utf-8"))
 print(m["id"], m["version"], m["glibc"], *m["cpu"])

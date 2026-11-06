@@ -22,6 +22,7 @@ from unittest import mock
 
 import pytest
 import yaml
+from config_samples import LOOP
 from pydantic import ValidationError
 
 import alphaavatar.plugins.mcp  # noqa: F401
@@ -43,6 +44,7 @@ def avatar(identity: str, *, vector_key: str | None = None, token: str = "<MCP_T
         memory |= {"url": f"https://{identity}.vectors.example", "api_key": vector_key}
     return {
         "avatar": {"id": identity},
+        "loop": LOOP,
         "memory": {"vdb_config": memory},
         "persona": {
             "vdb_config": {

@@ -27,6 +27,7 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
+from config_samples import LOOP
 from inference_runner_samples import JournalRunner
 
 import alphaavatar.plugins.context  # noqa: F401  Registers the real plugin this test substitutes.
@@ -210,6 +211,7 @@ def host(tmp_path: Path) -> AvatarHost:
         {
             "application": {"home": str(tmp_path / "application")},
             "avatar": {"id": "host-lifecycle"},
+            "loop": LOOP,
             "host": {
                 "processes": {"capacity": 1, "shutdown_timeout": 30.0, "ipc_timeout": 10.0},
                 "health": {"bind": "127.0.0.1"},

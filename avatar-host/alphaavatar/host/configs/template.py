@@ -249,12 +249,20 @@ def _directory(path: Path, created: list[Path]) -> None:
 
 
 def _set_default(
-    paths: ApplicationPaths, name: str, created: list[Path], staged: list[Path], replace: bool
+    paths: ApplicationPaths,
+    name: str,
+    created: list[Path],
+    staged: list[Path],
+    replace: bool,
+    credentials: Mapping[str, str] | None = None,
 ) -> str:
-    """Set the default, unless one is set and not ``replace``; replacing the file commits."""
+    """Set the default, unless one is set and not ``replace``; replacing the file commits it
+    and the stored credentials, with ``credentials`` merged in, together."""
     import yaml
 
     from alphaavatar.agents.utils.files.atomic import locked_directory
+
+    from .credentials import prune_credentials, write_credentials
 
     if (default := read_settings(paths).get("default_bundle")) is not None and not replace:
         return default
@@ -273,12 +281,18 @@ def _set_default(
             text, mode = target.read_text(encoding="utf-8"), target.stat().st_mode
         except FileNotFoundError:
             text, mode = "", None
-        expected = settings | {"default_bundle": name}
+        changes = {"default_bundle": name}
+        if credentials:
+            stored = write_credentials(paths, credentials)
+            created.append(stored)  # Named by the replacement below, or removed.
+            changes["credentials"] = stored.name
+        expected = settings | changes
         # Appending keeps every other setting and its comments, when the result still holds
         # the same values; otherwise the values are written again without comments.
-        text += ("\n" if text and not text.endswith("\n") else "") + f"default_bundle: {name}\n"
+        text += "\n" if text and not text.endswith("\n") else ""
+        text += "".join(f"{key}: {value}\n" for key, value in changes.items())
         try:
-            appended = "default_bundle" not in settings and yaml.safe_load(text) == expected
+            appended = not changes.keys() & settings.keys() and yaml.safe_load(text) == expected
         except yaml.YAMLError:
             appended = False
         if not appended:
@@ -292,6 +306,8 @@ def _set_default(
         if mode is not None:
             temporary.chmod(mode)
         os.replace(temporary, target)
+        if credentials:
+            prune_credentials(paths)  # Those it replaced, and any a killed run wrote.
     return name
 
 
@@ -303,14 +319,20 @@ def create_bundle(
     sections: Mapping[str, str] | None = None,
     environment: Sequence[tuple[str, str]] = REQUIRED_ENVIRONMENT,
     make_default: bool = False,
+    credentials: Mapping[str, str] | None = None,
 ) -> CreatedBundle:
     """Create the bundle and its profiles, then the default; never overwrite existing files.
+
+    ``credentials`` are stored with the default it becomes (``make_default``): one settings
+    replacement commits both.
 
     The bundle becomes the default when none is set, or always with ``make_default``. Every target stays inside the real application home. Until the settings replacement
     commits, a failure or cancellation removes only the files and empty directories this
     call created; existing files, shared profiles and settings stay as they were. After it,
     the complete bundle stays and the failure propagates.
     """
+    if credentials and not make_default:
+        raise ValueError("Credentials are stored with the default they belong to")
     texts = render_bundle(name, avatar_id, sections=sections, environment=environment)
     read_settings(paths)  # Unreadable settings refuse before any file exists.
     targets = {paths.configs.root / relative: text for relative, text in texts.items()}
@@ -333,7 +355,7 @@ def create_bundle(
             with target.open("x", encoding="utf-8", newline="\n") as stream:
                 created.append(target)
                 stream.write(text)
-        default = _set_default(paths, name, created, staged, make_default)
+        default = _set_default(paths, name, created, staged, make_default, credentials)
     except BaseException:
         if not staged or staged[0].exists():
             for path in reversed([*created, *staged]):

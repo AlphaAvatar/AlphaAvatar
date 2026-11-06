@@ -30,6 +30,7 @@ class VoiceAITTS(PCMHTTPProvider):
         speed: float = 1.0,
         language: str = "en",
         api_key: str | None = None,
+        api_key_env: str = "VOICEAI_API_KEY",
         base_url: str | None = None,
         settings: PCMSettings | None = None,
     ) -> None:
@@ -48,7 +49,7 @@ class VoiceAITTS(PCMHTTPProvider):
         super().__init__(
             provider="voiceai",
             url=f"{base.rstrip('/')}/api/v1/tts/speech/stream",
-            api_key=api_key if api_key is not None else os.getenv("VOICEAI_API_KEY", ""),
+            api_key=api_key if api_key is not None else os.getenv(api_key_env, ""),
             sample_rate=32000,
             settings=settings or PCMSettings(),
         )

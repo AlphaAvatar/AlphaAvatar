@@ -15,15 +15,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import itertools
 import os
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
 import pytest
 import yaml
 from omegaconf import OmegaConf
+from pydantic import BaseModel
 
 # Imported at collection: the persona plugin's OpenCV adjusts process variables (O-2).
 import alphaavatar.plugins.persona.factory  # noqa: F401
@@ -31,13 +35,17 @@ from alphaavatar.agents.runtime.inference import plan_inference_runners
 from alphaavatar.host.configs import resolve_capabilities, validate_application
 from alphaavatar.host.configs.template import render_bundle
 from alphaavatar.host.setup.choices import (
+    MODELS_KEY,
+    OPENAI_KEY,
     PRESETS,
+    SPEECH_KEY,
     Models,
     Selection,
     Speech,
     credentials,
     requirements,
     sections,
+    server_problem,
 )
 from alphaavatar.host.setup.plan import plan_install
 from alphaavatar.host.workspace import ApplicationPaths
@@ -95,10 +103,10 @@ def test_own_servers_take_what_the_installed_providers_send_there(tmp_path: Path
     from alphaavatar.plugins.provider.openai.llms.config import OpenAIClientConfig
 
     models = Models("http://gpu.invalid:8000/v1", "qwen3-32b", "qwen3-8b", "bge-m3")
-    speech = Speech("http://speech.invalid:8001/v1", "whisper-large-v3", "kokoro", "af_heart")
+    speech = Speech("https://speech.invalid:8001/v1", "whisper-large-v3", "kokoro", "af_heart")
     own = Selection(models=models, speech=speech)
     config = compose(own, tmp_path / "home")
-    avatar, server = config.avatar, {"base_url": models.url}
+    avatar, server = config.avatar, {"base_url": models.url, "api_key_env": MODELS_KEY}
     loop = avatar.loop.init_config["model"]
     assert (loop["backend"], loop["model"], loop["extra"]) == ("openai", "qwen3-32b", server)
     # The loop's Responses client is pointed at the server; tasks and embeddings go there too.
@@ -123,11 +131,191 @@ def test_own_servers_take_what_the_installed_providers_send_there(tmp_path: Path
         "kokoro",
         "af_heart",
     )
-    # The same packages serve them; the key is whatever the servers expect.
+    assert voice.stt.api_key_env == voice.tts.api_key_env == SPEECH_KEY
+    # The same packages serve them; each server's key is whatever that server expects.
     found = sorted({need.requirement for need in resolve_capabilities(config).needs})
     assert found == list(requirements(own)) == list(requirements(Selection()))
-    assert "any text if they need none" in credentials(own)[0].purpose
-    assert "any text" not in credentials(Selection(models=models))[0].purpose  # OpenAI speech.
+    asked = {credential.name: credential.purpose for credential in credentials(own)}
+    assert OPENAI_KEY not in asked
+    assert asked[MODELS_KEY] == f"your server {models.url}; any text if it needs none"
+    assert asked[SPEECH_KEY] == f"your server {speech.url}; any text if it needs none"
+
+
+class Server:
+    """A server of one's own: it refuses every request, keeping the key each one carried."""
+
+    def __init__(self) -> None:
+        keys = self.keys = []
+
+        class Refuse(BaseHTTPRequestHandler):
+            def do_POST(self) -> None:
+                keys.append(self.headers.get("Authorization"))
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                body = b'{"error": {"message": "refused", "type": "invalid_request_error"}}'
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                self.close_connection = True
+
+            def log_message(self, *args: object) -> None:
+                pass
+
+        self.http = ThreadingHTTPServer(("127.0.0.1", 0), Refuse)
+        self.url = f"http://127.0.0.1:{self.http.server_port}/v1"
+        threading.Thread(target=self.http.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        self.http.shutdown()
+        self.http.server_close()
+
+
+async def _request_each(avatar, models: bool, speech: bool) -> None:
+    """One request from each backend the session would point at a server of one's own."""
+    from alphaavatar.agents.avatar.provider.enums import ModelRole
+    from alphaavatar.agents.avatar.provider.factory import create_llm_model
+    from alphaavatar.agents.avatar.provider.schemas import (
+        ModelInput,
+        ModelInputMessage,
+        ModelRequest,
+        ModelTextPart,
+    )
+    from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
+    from alphaavatar.core.media import AudioFrame
+
+    class Answer(BaseModel):
+        text: str
+
+    said = ModelInput((ModelInputMessage("m", ModelRole.USER, (ModelTextPart("Hello"),)),))
+    attempts = []
+    if models:
+        loop = create_llm_model(ProviderTaskConfig.model_validate(avatar.loop.init_config["model"]))
+        tasks = avatar.persona.init_config["profiler"]["provider"]["gateway"]["tasks"]
+        task = create_llm_model(ProviderTaskConfig.model_validate(tasks["persona.profile_delta"]))
+
+        async def responses() -> None:
+            async with loop.stream(ModelRequest(said)) as events:
+                async for _ in events:
+                    pass
+
+        attempts += [responses(), task.ainvoke_structured(said, output_schema=Answer)]
+    if speech:
+        stt, tts = avatar.voice.stt.get_plugin(), avatar.voice.tts.get_plugin()
+
+        async def transcription() -> None:
+            async with stt.stream(source_id="probe") as stream:
+                stream.push_frame(AudioFrame(16000, 1, 8000, bytes(16000)), segment_id="s")
+                stream.commit_segment("s")
+                stream.end_input()
+                async for _ in stream:
+                    pass
+
+        async def synthesis() -> None:
+            async for _ in tts.synthesize("Hello."):
+                pass
+
+        attempts += [transcription(), synthesis()]
+    for attempt in attempts:
+        try:
+            await asyncio.wait_for(attempt, 30)
+        except Exception:
+            pass  # Refused: what matters is the key the request carried.
+    if speech:
+        await tts.aclose()
+
+
+@pytest.mark.parametrize("own", ["models", "speech", "both", "one server"])
+def test_each_server_of_ones_own_receives_its_own_key_and_never_openais(
+    own: str, tmp_path: Path, owned_endpoints: set[object]
+) -> None:
+    model_server, speech_server = Server(), Server()
+    if own == "one server":
+        speech_server.close()
+        speech_server = model_server
+    for server in (model_server, speech_server):
+        owned_endpoints.add(server.http.server_address[:2])
+    try:
+        check_keys(own, model_server, speech_server, tmp_path)
+    finally:
+        for server in {id(model_server): model_server, id(speech_server): speech_server}.values():
+            server.close()
+
+
+def check_keys(own: str, model_server: Server, speech_server: Server, tmp_path: Path) -> None:
+    from alphaavatar.agents.avatar.provider.factory import create_embedding_model
+    from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
+
+    models = Models(model_server.url, "chat", "tasks", "embed")
+    speech = Speech(speech_server.url, "transcribe", "speak", "voice")
+    selection = Selection(
+        models=models if own != "speech" else None, speech=speech if own != "models" else None
+    )
+    keys = {OPENAI_KEY: "sk-openai-fictional", MODELS_KEY: "models-fictional"}
+    keys[SPEECH_KEY] = "speech-fictional"
+    names = {credential.name for credential in credentials(selection)}
+    proxies = dict.fromkeys(("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy"), "")
+    with mock.patch.dict(os.environ, keys | proxies):
+        avatar = compose(selection, tmp_path / "home").avatar
+        asyncio.run(_request_each(avatar, own != "speech", own != "models"))
+        embedding = avatar.memory.vdb_config["embedding"]
+        embedder = create_embedding_model(
+            ProviderTaskConfig.model_validate(embedding | {"kind": "embedding"})
+        )
+    model_key = f"Bearer {keys[MODELS_KEY]}"
+    if own == "one server":
+        assert len(model_server.keys) == 4 and set(model_server.keys) == {model_key}
+        assert names >= {MODELS_KEY} and not names & {OPENAI_KEY, SPEECH_KEY}
+    if own in ("models", "both"):
+        # The loop's Responses request and a task's, each with the model server's key.
+        assert len(model_server.keys) == 2 and set(model_server.keys) == {model_key}
+        assert embedder._model.openai_api_key.get_secret_value() == keys[MODELS_KEY]
+    if own in ("speech", "both"):
+        # A transcription and a synthesis, each with the speech server's key.
+        assert len(speech_server.keys) == 2
+        assert set(speech_server.keys) == {f"Bearer {keys[SPEECH_KEY]}"}
+    # What goes to OpenAI reads OpenAI's key, and it is asked for only then.
+    assert (OPENAI_KEY in names) == (own in ("models", "speech"))
+    if own == "speech":
+        assert "api_key_env" not in avatar.loop.init_config["model"].get("extra", {})
+        assert embedder._model.openai_api_key.get_secret_value() == keys[OPENAI_KEY]
+    if own == "models":
+        assert avatar.voice.stt.api_key_env is avatar.voice.tts.api_key_env is None
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:8000/v1",
+        "http://localhost:8000/v1",
+        "http://[::1]:8000/v1",
+        "https://gpu.invalid/v1",
+        "http://gpu.invalid:8000/v1",
+        "https://user:pw@gpu.invalid/v1",
+        "https://gpu.invalid/v1?key=1",
+        "https://gpu.invalid/v1#x",
+        "ftp://gpu.invalid/v1",
+        "gpu.invalid:8000/v1",
+    ],
+)
+def test_a_server_url_is_taken_where_the_backends_it_serves_take_it(url: str) -> None:
+    """The wizard's rule is the backends' own: refused before setup enables anything."""
+    from alphaavatar.plugins.provider.openai.llms.config import OpenAIClientConfig
+    from alphaavatar.plugins.voice.tts.openai import OpenAITTS
+
+    def accepts(build) -> bool:
+        try:
+            build()
+        except ValueError:
+            return False
+        return True
+
+    models = accepts(lambda: OpenAIClientConfig(base_url=url))
+    speech = accepts(lambda: OpenAITTS(model="m", speaker="s", api_key="k", base_url=url))
+    assert (server_problem(url, speech=False) is None) == models
+    assert (server_problem(url, speech=True) is None) == speech
+    assert accepts(lambda: Models(url, "c", "t", "e")) == models
+    assert accepts(lambda: Speech(url, "t", "s", "v")) == speech
 
 
 def test_the_presets_keep_vision_and_plan_their_runners(tmp_path: Path) -> None:

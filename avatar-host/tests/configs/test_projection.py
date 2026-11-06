@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from config_samples import CONFIG, SECRETS, files, write
+from config_samples import CONFIG, LOOP, SECRETS, files, write
 
 # Imported at collection: the persona plugin's OpenCV adjusts process variables (O-2).
 import alphaavatar.plugins.persona.factory  # noqa: F401
@@ -42,7 +42,9 @@ def test_safe_projection_keeps_useful_settings_without_credentials(
     }
     value = CONFIG | {
         "avatar": {"id": "assistant", "introduction": f"{introduction} {SECRETS['vdb']}\x1b[31m"},
-        "context": {"init_config": {"key\x1b[2J": 1}},
+        "loop": {
+            "init_config": {"model": LOOP["init_config"]["model"] | {"extra": {"key\x1b[2J": 1}}}
+        },
         "tools": {"mcp": {"enabled": True, "servers": servers}},
     }
     config = load_application(
@@ -60,7 +62,7 @@ def test_safe_projection_keeps_useful_settings_without_credentials(
     assert view["host"]["health"]["bind"] == "127.0.0.1"
     # Complete text, a reused credential replaced and terminal escapes removed, keys included.
     assert view["avatar"]["introduction"] == f"{introduction} [redacted]"
-    assert view["context"]["init_config"] == {"key": 1}
+    assert view["loop"]["init_config"]["model"]["extra"] == {"key": 1}
     assert [name for name, secret in SECRETS.items() if secret in text] == []
     assert "\\u001b" not in text and yaml.safe_load(yaml.safe_dump(view)) == view
     assert sandbox == []

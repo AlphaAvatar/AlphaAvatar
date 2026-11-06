@@ -408,7 +408,7 @@ def test_bundles_share_profiles_and_an_accepted_snapshot_stays_frozen(
     assert create("alpha", "alpha") == 0
     capsys.readouterr()
     # Generation groups profiles by bundle; any bundle may reference them.
-    references = {section: f"alpha/{LAYOUT[section]}" for section in ("voice", "memory")}
+    references = {section: f"alpha/{LAYOUT[section]}" for section in ("loop", "voice", "memory")}
     write(
         home / "configs" / "bundles" / "beta.yaml", {"avatar": {"id": "b"}, "profiles": references}
     )

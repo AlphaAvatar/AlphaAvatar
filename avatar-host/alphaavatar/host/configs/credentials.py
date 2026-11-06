@@ -13,22 +13,28 @@
 # limitations under the License.
 """Credentials `alphaavatar setup` stores for the services it configured.
 
-They live in one private file in the application home's settings, read into the environment
-by the commands that load a configuration, after the .env file and never over a variable
-already set. Values are never printed, logged or written elsewhere.
+They live in a private file in the application home's settings, the one the settings name
+(``credentials``), read into the environment by the commands that load a configuration,
+after the .env file and never over a variable already set. Storing writes a new file beside
+it, which the settings replacement that makes the bundle the default then names: the
+default and the credentials it reads commit together, and a run killed before that leaves
+the settings, and so every bundle, reading what they read. Values are never printed, logged
+or written elsewhere.
 """
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import secrets
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from alphaavatar.host.workspace import ApplicationPaths
 
 NAME = re.compile(r"[A-Z][A-Z0-9_]*")
+FILE = re.compile(r"credentials-[0-9a-f]{16}\.env")
 
 
 def _quoted(value: str) -> str:
@@ -36,20 +42,45 @@ def _quoted(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def credentials_path(paths: ApplicationPaths) -> Path:
-    return paths.settings_dir / "credentials.env"
+def credentials_path(paths: ApplicationPaths) -> Path | None:
+    """The stored credentials the settings name, if they name any."""
+    from .bundles import ConfigReferenceError, read_settings
+
+    name = read_settings(paths).get("credentials")
+    if name is None:
+        return None
+    if not (isinstance(name, str) and FILE.fullmatch(name)):
+        raise ConfigReferenceError(
+            f"credentials in {paths.settings_file} is not a file setup stored"
+        )
+    return paths.settings_dir / name
 
 
-def load_credentials(paths: ApplicationPaths) -> tuple[str, ...]:
-    """Set each stored credential the environment lacks; the names set."""
+def stored_credentials(paths: ApplicationPaths) -> dict[str, str]:
     from dotenv import dotenv_values
 
     path = credentials_path(paths)
-    if not path.is_file():
+    if path is None or not path.is_file():
+        return {}
+    stored = dotenv_values(path, interpolate=False).items()
+    return {name: value for name, value in stored if value is not None}
+
+
+def load_credentials(paths: ApplicationPaths) -> tuple[str, ...]:
+    """Set each stored credential the environment lacks; the names set.
+
+    Unreadable settings name none: a named bundle still loads, as it does without them, and
+    Doctor's home check says what to fix. Setup refuses such settings before it stores any.
+    """
+    from .bundles import ConfigReferenceError
+
+    try:
+        stored = stored_credentials(paths)
+    except ConfigReferenceError:
         return ()
     loaded = []
-    for name, value in dotenv_values(path, interpolate=False).items():
-        if value is not None and name not in os.environ:
+    for name, value in stored.items():
+        if name not in os.environ:
             os.environ[name] = value
             loaded.append(name)
     return tuple(loaded)
@@ -65,45 +96,37 @@ def load_environment(overrides: Sequence[str] = ()) -> None:
     load_credentials(application_paths(overrides))
 
 
-def store_credentials(paths: ApplicationPaths, values: Mapping[str, str]) -> Callable[[], None]:
-    """Merge values into the private file by one replacement; returns the undo.
+def write_credentials(paths: ApplicationPaths, values: Mapping[str, str]) -> Path:
+    """The stored credentials merged with values, in a new private file nothing names yet.
 
-    Other stored names keep their values. The undo puts the previous file back, or removes
-    the file this call created.
+    Other stored names keep their values. Call it under the settings lock, then name the
+    file in the settings replacement, or remove it.
     """
-    from dotenv import dotenv_values
-
     for name, value in values.items():
         if not NAME.fullmatch(name) or not isinstance(value, str) or not value:
             raise ValueError(f"Invalid credential {name}")
         if any(character in value for character in "\r\n\x00"):
             raise ValueError(f"{name} holds a line break")
-    path = credentials_path(paths)
-    previous = path.read_bytes() if path.is_file() else None
-    stored = dotenv_values(path, interpolate=False) if previous is not None else {}
-    stored = {name: value for name, value in stored.items() if value is not None} | dict(values)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    stored = stored_credentials(paths) | dict(values)
     text = "".join(f"{name}={_quoted(value)}\n" for name, value in sorted(stored.items()))
-    temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    path = paths.settings_dir / f"credentials-{secrets.token_hex(8)}.env"
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
             stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
     except BaseException:
-        temporary.unlink(missing_ok=True)
+        path.unlink(missing_ok=True)
         raise
+    return path
 
-    def undo() -> None:
-        if previous is None:
-            path.unlink(missing_ok=True)
-            return
-        restored = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
-        descriptor = os.open(restored, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(previous)
-        os.replace(restored, path)
 
-    return undo
+def prune_credentials(paths: ApplicationPaths) -> None:
+    """Remove the stored credential files the settings no longer name: replaced ones, and
+    those a killed run wrote. Call it under the settings lock."""
+    named = credentials_path(paths)
+    for path in paths.settings_dir.glob("credentials-*.env"):
+        if FILE.fullmatch(path.name) and path != named:
+            with contextlib.suppress(OSError):
+                path.unlink()

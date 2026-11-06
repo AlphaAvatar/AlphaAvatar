@@ -60,6 +60,8 @@ from alphaavatar.plugins.persona.storage.vdb import (
 HANG_GUARD = 30
 PLAN = inference_bootstrap.INFERENCE_PLAN_ENV
 EMBEDDING = {"provider": "openai", "model": "text-embedding-3-small"}
+# The realtime loop's one required setting: its model.
+LOOP = {"init_config": {"model": {"provider": "openai", "model": "gpt-test"}}}
 PERSONA_TABLES = {
     "profiler_collection_name": "profiles",
     "speaker_collection_name": "speakers",
@@ -81,6 +83,7 @@ QUIET_MEMORY = {
 }
 LOCAL = {
     "avatar": {"id": "alphaavatar_demo"},
+    "loop": LOOP,
     "memory": {
         "vdb_config": {"collection_name": "memories", "embedding": EMBEDDING},
         "init_config": QUIET_MEMORY,
@@ -93,6 +96,7 @@ LOCAL = {
 }
 REMOTE = {
     "avatar": {"id": "alphaavatar_demo"},
+    "loop": LOOP,
     "memory": {
         "vdb_config": {
             "collection_name": "memories",

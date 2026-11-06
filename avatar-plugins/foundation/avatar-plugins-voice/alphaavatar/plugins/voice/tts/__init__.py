@@ -36,6 +36,7 @@ class OpenAITTSPlugin(AvatarModulePlugin):
         instructions: str | None = None,
         speed: float = 1.0,
         base_url: str | None = None,
+        api_key_env: str = "OPENAI_API_KEY",
         timeout: float = 30.0,
         first_audio_timeout: float = 5.0,
         read_timeout: float = 15.0,
@@ -61,6 +62,7 @@ class OpenAITTSPlugin(AvatarModulePlugin):
             instructions=instructions,
             speed=speed,
             base_url=base_url,
+            api_key_env=api_key_env,
             settings=PCMSettings(
                 timeout=timeout,
                 first_audio_timeout=first_audio_timeout,
@@ -90,6 +92,7 @@ class VoiceAITTSPlugin(AvatarModulePlugin):
         instructions: str | None = None,
         speed: float = 1.0,
         base_url: str | None = None,
+        api_key_env: str = "VOICEAI_API_KEY",
         timeout: float = 30.0,
         first_audio_timeout: float = 5.0,
         read_timeout: float = 15.0,
@@ -114,6 +117,7 @@ class VoiceAITTSPlugin(AvatarModulePlugin):
             speaker=speaker,
             speed=speed,
             base_url=base_url,
+            api_key_env=api_key_env,
             settings=PCMSettings(
                 timeout=timeout,
                 first_audio_timeout=first_audio_timeout,

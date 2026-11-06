@@ -24,6 +24,7 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
+from config_samples import LOOP
 from inference_runner_samples import EchoRunner
 
 # Imported at collection: the persona plugin's OpenCV adjusts process variables (O-2).
@@ -74,6 +75,7 @@ def application(root: Path, health: dict[str, object] | None = None):
         {
             "application": {"home": str(root / "application")},
             "avatar": {"id": "health"},
+            "loop": LOOP,
             "memory": {"vdb_config": {"url": "https://vectors.invalid", "api_key": SECRETS["vdb"]}},
             "tools": {
                 "mcp": {

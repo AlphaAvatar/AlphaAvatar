@@ -11,7 +11,8 @@
 | 第 1 项 | Linux x86_64 安装器：自带 Python，按 tag 或 commit 的锁文件安装 Host，版本目录验证后再切换稳定入口 | 2026-11-05 | `7564770` | 用户已提交（`9f86a6a`） | 已被返工取代：`scripts/install.sh` 已删除，第 7 节待复核的去向见返工第 8 节 |
 | 第 1 项返工 | 1A 整理 `scripts/`；1B CI 构建的 Linux 参考安装包、配置三段分离、默认开启视觉、薄安装脚本 | 2026-11-05 | `9f86a6a` | 用户已提交（`124e012`） | 部分被第二轮取代：完整参考包改为基础包加 `setup`；1A、配置分段、`NAMESPACE` 保留 |
 | 第 1 项第二轮 | 轻量基础包 → `alphaavatar setup` 选择 → 按能力补齐依赖 → 校验后启用；插件 extras 与 runner 依赖声明；开发分支 CI 制品与干净容器验收；发布草稿化 | 2026-11-05 | `124e012` | 用户已提交（`7c67240`） | 部分被第三轮修正：插件发现、激活事务、凭据保存、CI 三处失败 |
-| 第 1 项第三轮 | 统一插件发现（能力类型 + 实现名，entry point）；安装与激活事务修复；向导凭据与自托管端点；glibc 扫描、Doctor 导入和 CI 重跑修复；短句 TTS 失败复现 | 2026-11-06 | `7c67240` | 未提交（用户提交） | 待审查 |
+| 第 1 项第三轮 | 统一插件发现（能力类型 + 实现名，entry point）；安装与激活事务修复；向导凭据与自托管端点；glibc 扫描、Doctor 导入和 CI 重跑修复；短句 TTS 失败复现 | 2026-11-06 | `7c67240` | 用户已提交（`eb2404a`） | 部分被第四轮修正：自托管凭据、基础包本地安装、归属与凭据提交点、Provider runner 规划 |
+| 第 1 项第四轮 | 自托管端点按服务器分开凭据并按后端规则校验地址；`install.sh --file` 先复制再校验；归属检查与凭据随设置一起提交；单一完整解析；修短句 TTS 测试 | 2026-11-06 | `eb2404a` | 未提交（用户提交） | 待审查 |
 
 ## 历史记录（合并来源）
 
@@ -1026,3 +1027,146 @@ glibc 下限（新脚本实测）：基础包 2.17；远端环境 2.28；默认�
 7. **仍按原计划后移**：setup 只增不减和旧环境清理（第 5 项）；Doctor 里按 `default` 名字判断的内置行为（`vision_off`、`start_services`，第 3 项）；移动端的 App 构建清单来源；去掉 `ENV_FILE`（第 2 项）。
 
 证据（会话临时目录，不入库）：`/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/evidence3/`。
+
+---
+
+## 第 1 项第四轮（基线 `eb2404a`）
+
+依据：Codex 对 `eb2404a` 的审查。远端 Quality（run 42094128016）和 Linux package（run 42094127960）都已通过，制品在 Ubuntu 24.04 干净容器完成基础安装、默认 `setup` 和 `config check`（8 个 runner、Silero x2），但第 1 项尚未验收：三处 P1、一处 P2。审查同时定了第三轮的待定项：修 TTS 测试；接受 `AvatarModule` 的值改为能力类型；接受 embedding 缺失定位到 runner；无人值守的自托管参数放到第 2 项，与凭据来源一起设计；`check()` 的延迟导入和 `AvatarRuntime` 类级 `kw_only=True` 保留；其余按原计划。所有改动在未暂存的工作区。
+
+### 1. 自托管端点的凭据与地址（P1）
+
+- **问题**：向导可以分别把模型和语音指向自己的服务，却只收集 `OPENAI_API_KEY`，两种混搭都会把它发给自托管服务。此外，LangChain 的 embedding 不认 `api_key_env`，语音 STT/TTS 只读 `OPENAI_API_KEY`。
+- **每台服务器各用各的变量**：
+  - 自己的模型服务读 `ALPHAAVATAR_MODELS_API_KEY`，写进 loop、记忆和画像任务、embedding 的 `extra.api_key_env`；
+  - 自己的语音服务读 `ALPHAAVATAR_SPEECH_API_KEY`，写进 `voice.stt.api_key_env`、`voice.tts.api_key_env`；语音和模型是同一个地址时共用模型那一个；
+  - 只有用到 OpenAI 官方服务的部分才读、才问 `OPENAI_API_KEY`。
+- **后端支持指定变量**：
+  - 语音配置段新增 `api_key_env`，只在设置了时才传给插件，不影响第三方实现；
+  - OpenAI 的两种 STT、OpenAI 和 Voice.ai 的 TTS 都按它取密钥，默认仍是各自原来的变量；
+  - LangChain 的 OpenAI embedding 也按 `api_key_env` 取；变量缺失时直接报错，不再让客户端自己去读 `OPENAI_API_KEY`。
+- **地址校验与后端规则一致**：
+  - `choices.server_problem()` 用在交互提示和 `Models`/`Speech` 的构造上（以后 App 也会构造这两个类）；
+  - 规则：http(s) API 根地址，不得带凭据、查询串或片段；语音服务不在本机时必须用 HTTPS，这是 OpenAI TTS 的规则；
+  - 测试逐个 URL 检查向导规则与真实后端（`OpenAIClientConfig`、`OpenAITTS`）的判断一致；
+  - 结果：TTS 启动时会拒绝的地址，在启用配置之前就被拒绝。
+
+### 2. 基础包本地安装先复制再校验（P1）
+
+`install.sh --file` 先把包复制到本次独占的暂存区（`--url` 本来就下载到那里），再对这份副本校验 SHA-256、读 manifest 和解包。校验后源文件被替换，装上的仍是校验过的那份。
+
+### 3. 归属检查与凭据提交点（P1）
+
+- **复用和切换之前先确认归属**：
+  - `Installation.reached()`：路径必须正是本前缀的 `versions/<名>` 或 `envs/<名>`，途中不经过任何链接；
+  - `reusable(plan)` 还要求带 setup 标记且 plan.json 一致；
+  - `current()` 用同一条规则；`envs` 本身是链接时直接拒绝；
+  - 指向前缀外、带匹配 plan.json 的链接环境，不再被当作可复用，也不会被切换过去，提示「exists and is not setup's; left as it is」。
+- **install.sh 的同类检查**：`current` 必须不经链接落在本前缀内，`envs/` 下的还要带 setup 标记；`versions` 本身是链接时拒绝。
+- **凭据随设置一起提交**：
+  - 不再原地替换 `credentials.env`，改为在设置锁里把合并后的凭据写进新的私有文件 `credentials-<16 位十六进制>.env`；
+  - 同一次 `settings.yaml` 替换写入 `default_bundle` 和 `credentials: <文件名>`，提交后再删掉不再被引用的旧文件；
+  - 在这次替换之前被 SIGKILL：设置仍指向旧文件，所有 bundle 照旧读旧凭据；新写的文件没人引用，下次持锁时清掉；
+  - 用一个真实被 SIGKILL 的子进程验证过。
+- **设置文件不可读时**：设置里写的文件名不合规或 YAML 损坏时，`load_credentials` 一个已存值也不读。这样保住了「设置损坏不影响指定名字的 bundle」这一已有约定，Doctor 的 home 检查会报告要修什么；setup 一开始就会拒绝这样的设置。
+- **剩下的窗口**：SIGKILL 落在切换 `current` 之后、提交设置之前时，`current` 已是新环境，默认 bundle 和凭据都还是旧的。新环境包含旧环境的全部依赖，旧 bundle 照常可用。
+
+### 4. 单一完整解析（P2）
+
+- **问题**：`plan_inference_runners` 和 `snapshot_inference_config` 只解析配置段，能力检查却带上了 Provider。其他包的 Provider 声明的 runner 因此被能力检查看到，但启动规划看不到，合法的 `workers=2` 被报为 `unselected_runner`。
+- **只留一种解析**：
+  - `resolve_plugins` 去掉 `providers` 开关，始终完整解析：插件、插件设置、Provider 后端，以及所有 runner；
+  - 加载（含会话子进程恢复）、`config check` 的 worker 校验、能力检查、Doctor、start 的规划和快照都用它；
+  - 加载时就按插件 schema 校验设置，报错位置不变（如 `loop.init_config.model`）。
+- **只读配置段的地方**：快照和 Doctor 的向量库遍历只看 `plugin_factories()` 里的配置段位置；Provider 的位置不是配置段。
+
+### 5. 短句 TTS 测试
+
+按审查结论修：测试里的假播放器先记录回执，再发布 `FINISHED`，断言不变，产品代码不动。
+
+### 6. 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `avatar-host/.../setup/choices.py`、`cli/commands/setup.py` | 每台服务器各自的密钥变量；`server_problem()`；`Models`/`Speech` 构造时校验；交互提示用同一规则；凭据随 `create_bundle` 提交 |
+| `avatar-agents/.../configs/plugins/foundation/voice_config.py` | STT、TTS 配置段的 `api_key_env` |
+| `avatar-plugins-voice` 的 `stt/openai_segment.py`、`stt/openai_realtime.py`、`tts/openai.py`、`tts/voiceai.py`、`tts/__init__.py`、`README.md` | 按 `api_key_env` 取密钥 |
+| `avatar-plugins-provider/.../langchain/embeddings/models.py` | embedding 按 `api_key_env` 取密钥，缺失即报错 |
+| `avatar-host/.../configs/credentials.py`、`template.py` | 凭据文件由设置指定，写入新文件后由同一次设置替换提交，提交后清理；不可读的设置不读任何已存值 |
+| `avatar-host/.../setup/environment.py` | `reached()`、`reusable()`；`current()` 和复用前的归属检查；`envs` 不得是链接 |
+| `packaging/linux/install.sh` | `--file` 先复制再校验；`current` 的归属与链接检查；`versions` 不得是链接 |
+| `avatar-agents/.../runtime/plugin/resolution.py`、`runtime/inference/bootstrap.py`、`avatar-host/.../configs/loader.py`、`capabilities.py`、`doctor/doctor.py`、`doctor/session.py` | 单一完整解析；快照和 Doctor 的向量库只读配置段 |
+| `DEPLOY.md` | 每台服务器的密钥、语音的 HTTPS、凭据与设置一起提交、加载即完整解析 |
+| 测试 | 新增 `avatar-host/tests/setup/test_install_script.py`（用假包跑真实 install.sh）；`test_choices` 新增按 HTTP 请求核对密钥的四种组合和 URL 规则一致性；`test_credentials` 重写，含真实 SIGKILL；`test_environment` 新增链接环境；`test_discovery` 新增 Provider runner；`test_setup` 对应新提交点；router 的 TTS 测试；21 个用了「不可能启动」配置（缺 loop 模型）的测试补上模型；投影测试的恶意键名移到 Provider 的 `extra` |
+
+### 7. 验证
+
+**本地实测**
+
+- 静态检查（最终工作区）：Ruff（`--no-cache`）、格式、`check_workspace.py`（16 个成员）、`uv lock --check`（332 个包）、`git diff --check`、`bash -n`、工作流 YAML、pre-commit（34 个改动和新增文件）全部通过。
+- 全量测试 400 项通过；拦截已移除的包后再跑一遍，也是 400 项通过。
+- 变异：Python 20 个、install.sh 5 个，全部被抓到（`evidence4/mutants4.log`、`install-mutants.log`）。
+
+  | 编号 | 变异 |
+  |---|---|
+  | C1–C10 | 各处不写或不读 `api_key_env`；embedding 回落到 OpenAI 的密钥；接受远端 http 语音地址；总是问 `OPENAI_API_KEY`；同一台服务器用两个变量 |
+  | O1–O3 | 只凭 plan.json 复用；经链接的 `envs`；经链接的 `current` |
+  | K1–K3 | 提交前就删掉被替换的凭据；读最新的而不是设置指定的凭据文件；预设也保存凭据 |
+  | P1–P3 | 不规划 Provider 的 runner；worker 校验只看配置段的 runner；Doctor 把 Provider 位置当配置段 |
+  | T1 | 假播放器在发布后才记录回执 |
+  | E3、E3b | 校验副本却解包源文件；不复制直接校验并解包源文件 |
+  | E4a–E4c | 接受经链接的 `current`；接受未标记的环境；接受是链接的 `versions` |
+
+- **按请求核对密钥**（`test_choices`）：本机起假服务器，任何请求都返回 400，但记下请求带的密钥；然后让真实后端各发一个请求。四种组合（模型自托管、语音自托管、两者分开托管、两者同一台）里：
+  - loop 的 Responses 请求、画像任务的请求、转写和合成，各自只带所属服务器的密钥，从不带 `OPENAI_API_KEY`；
+  - embedding 拿到的是所属服务器的密钥；
+  - 用 `-W error::ResourceWarning` 跑也通过。
+- **TTS 测试**：
+  - 把回执记录推迟 20 ms 的确定性复现，修复前必定失败，修复后 5/5 通过；
+  - 16 核全部占满时自然运行 15 次，0 次失败；第三轮同样条件下是 13/15 失败。
+- **本机构建**（`--max-glibc 2.32`，63 s）：
+  - 基础包 65,806,052 字节，SHA-256 `f0eba72707cb92c3260d670070ab2964c1fbdf058e1cb38142149783f31e5473`，glibc 2.17；
+  - 12 个 wheel，glibc 2.32（本机编译的 llama-cpp）；
+  - 默认计划 105 个包、514 MB；远端计划 85 个包、212 MB。
+
+**干净沙箱（Ubuntu 24.04 rootfs，bubblewrap，本轮构建）**
+
+| 场景 | 结果 |
+|---|---|
+| 默认预设 | 53 s，105 个包，环境 1.7 GB；设置目录只有 `settings.yaml` 和锁文件，没有凭据文件；`config check` 8 个 runner；另装一个包含 `provider.llm` 的包，`loop.init_config.model.backend=probe` 加 `workers=2` 时 `config check` 显示 `probe.provider.echo x2`（9 个 runner），Doctor 的 `config.load` 为 PASS，`models.runners` 列出该 runner；Doctor 9 项通过、0 项失败 |
+| 交互式自托管（模型 127.0.0.1:18811，语音 127.0.0.1:18812） | 先输入的 `http://speech.invalid:8001/v1` 被拒绝并提示改用 https；只问两台服务器各自的密钥和 LiveKit，不问 `OPENAI_API_KEY`（环境里虽有）；确认后凭据存为权限 600 的 `credentials-c9a7….env`，`settings.yaml` 写着 `default_bundle: own` 和它；用安装好的环境让四个后端各发一个请求，模型服务器的 `/v1/responses` 和 `/v1/chat/completions` 只收到模型密钥，语音服务器的 `/v1/audio/transcriptions` 和 `/v1/audio/speech` 只收到语音密钥；embedding 拿到模型服务器的密钥 |
+| `install.sh --file`，校验后源文件被替换 | 用 PATH 上的 `sha256sum` 包装，算完就换成另一个会留下标记的包；安装成功，装上的是校验过的那份，替换包的命令没有运行 |
+| `current` 指向 `versions/linked`，而它是指向前缀外的链接 | 拒绝，退出码 1；`current`、外部目录和命令目录都没变 |
+| 远端预设，实际安装 | 23 s，环境 636 MB，本地推理库只有 onnxruntime，`config check` 3 个 runner |
+| setup 的计划环境是指向前缀外的链接，里面有匹配的 plan.json 和标记 | 拒绝（「exists and is not setup's; left as it is」），`current`、链接和外部目录都不变，没有新建 bundle，原默认 bundle 检查通过 |
+
+- **实测 glibc 下限**（用 `glibc-floor.sh`）：基础包 2.17，远端环境 2.28，默认环境 2.32。2.32 只来自本机编译的 llama-cpp（`libggml-cpu`、`libllama-common`），CI 在 manylinux_2_28 里编译。
+- **磁盘空间检查**：在默认沙箱里第一次做「链接环境」探针时，因为它不再算可复用，setup 先做了磁盘空间检查，报沙箱里空间不足，同样没有切换。修复前它会被当成已安装，跳过这项检查。远端沙箱下载量小，在那里走到了归属拒绝。
+
+**推送后待 CI 验证**
+
+- manylinux_2_28 构建，以及默认环境的实测 glibc 下限不超过 2.28；
+- Quality 里新增的 `test_install_script.py`（只在 Linux x86_64 运行）和按请求核对密钥的测试；
+- 远端预设在 CI 里仍只检查安装计划，实际安装只在本机沙箱做过；
+- 草稿发布的校验要等第一次打正式 tag。
+
+### 8. 过程中的问题与更正
+
+- **加载变严后的 22 个测试**：加载时完整解析，就会按插件 schema 校验设置。其中 21 个的配置缺 loop 模型，真实 start 本来就不会接受，改法是补上 `config_samples.LOOP`，断言不变；另 1 个是投影测试，它的恶意键名原本放在 context 设置里，现在会被 schema 拒绝，移到了 Provider 的 `extra`。
+- **Provider 位置不是配置段**：完整解析后，快照和 Doctor 的 `_stores` 对 Provider 位置调用 `config.section()`，抛出 AttributeError，Doctor 会话的 8 个测试因此失败。改为只遍历配置段位置。
+- **`current()` 不再返回解析后的路径**：回滚时的两处比较原先用 `environment.resolve()`，已改为直接比较。
+- **提示不准**：开头的检查起初把「环境路径本身是链接」也报成「envs 不是本安装的目录」，已改为只检查 `envs` 本身。
+- **凭据位置依赖设置**：Doctor 的「设置损坏不影响指定名字的 bundle」测试失败，于是定下第 3 节里不可读设置时的语义，并加了测试。
+- **测试工具**：本机假服务器要用 conftest 的 `owned_endpoints` 登记才能连；假包的 manifest 要列出至少一个要检查的模块，否则 install.sh 的第二个 `read` 读到 EOF。真实包总会列出。
+
+### 9. 待复核
+
+1. **加载变严**：插件设置在加载时就按 schema 校验，报错位置和文字不变，但现在由加载这一步报出，不再是后面单独的一步。
+2. **设置不可读时不读任何已存凭据**：指定名字的 bundle 照常加载；此时若缺密钥，会由 Provider 报「某变量 is required」。
+3. **变量名**：`ALPHAAVATAR_MODELS_API_KEY`、`ALPHAAVATAR_SPEECH_API_KEY`；同一个地址共用模型那一个。
+4. **凭据存储格式**：由 `settings.yaml` 的 `credentials:` 指定 `credentials-<16 位十六进制>.env`。旧的 `credentials.env` 只出现在 `7c67240`、`eb2404a` 的开发安装里，不再读取，没做兼容。
+5. **剩下的 SIGKILL 窗口**：落在切换 `current` 之后、设置提交之前时，`current` 是新环境，默认 bundle 和凭据都是旧的；旧 bundle 依靠新环境包含旧依赖照常可用。
+6. **未验证的观察**：LangChain 的 `OpenAIEmbeddings` 默认先用 tiktoken 切分文本，测试里没让它真正发请求。它是否在首次使用时联网下载编码表、自托管 embedding 服务是否接受它发的 token 数组，都没有验证，留给第 3 项 Doctor 实跑。
+7. **按计划后移**：无人值守的自托管参数和凭据来源（第 2 项）；setup 只增不减和旧环境清理（第 5 项）；Doctor 里按 `default` 名字判断的内置行为（第 3 项）；移动端的 App 构建清单来源；去掉 `ENV_FILE`（第 2 项）。
+
+证据（会话临时目录，不入库）：`/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/evidence4/`（测试、变异、构建、TTS）和 `/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/accept4/`（沙箱脚本与记录）。

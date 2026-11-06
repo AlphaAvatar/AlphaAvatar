@@ -28,7 +28,6 @@ import os
 import signal
 import sys
 import tempfile
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -46,15 +45,14 @@ def _needed(question: str, default: str = "") -> str:
     return answer
 
 
-def _server(question: str) -> str:
-    from urllib.parse import urlsplit
+def _server(question: str, *, speech: bool) -> str:
+    from alphaavatar.host.setup.choices import server_problem
 
     while True:
         url = _needed(question, "http://localhost:8000/v1").rstrip("/")
-        parts = urlsplit(url)
-        if parts.scheme in ("http", "https") and parts.hostname and not parts.query:
+        if (problem := server_problem(url, speech=speech)) is None:
             return url
-        print("  An http:// or https:// API root, such as http://gpu-host:8000/v1")
+        print(f"  {problem.capitalize()}")
 
 
 def _yes(question: str, default: bool = True) -> bool:
@@ -99,14 +97,14 @@ def _choose(args: argparse.Namespace):
     if not _yes(
         "Models from OpenAI? No: a server of your own with OpenAI's API, Responses included"
     ):
-        url = _server("  Server URL")
+        url = _server("  Server URL", speech=False)
         chat = _needed("  Conversation model")
         models = Models(
             url, chat, _needed("  Memory and persona model", chat), _needed("  Embedding model")
         )
     if voice and not _yes("Speech from OpenAI? No: a server of your own with OpenAI's audio API"):
         speech = Speech(
-            _server("  Server URL"),
+            _server("  Server URL", speech=True),
             _needed("  Transcription model"),
             _needed("  Speech model"),
             _needed("  Voice"),
@@ -114,7 +112,7 @@ def _choose(args: argparse.Namespace):
     return Selection(voice, vision, local, "lancedb" if store == "1" else "qdrant", models, speech)
 
 
-def _credentials(selection, interactive: bool, path: Path) -> tuple[dict[str, str], dict[str, str]]:
+def _credentials(selection, interactive: bool, paths) -> tuple[dict[str, str], dict[str, str]]:
     """The values the check and the bundle read, and those to store.
 
     A preset reads them from the environment and stores none. Asked for, they are stored only
@@ -122,8 +120,7 @@ def _credentials(selection, interactive: bool, path: Path) -> tuple[dict[str, st
     """
     import getpass
 
-    from dotenv import dotenv_values
-
+    from alphaavatar.host.configs.credentials import stored_credentials
     from alphaavatar.host.setup.choices import credentials
     from alphaavatar.host.setup.environment import SetupError
 
@@ -145,11 +142,12 @@ def _credentials(selection, interactive: bool, path: Path) -> tuple[dict[str, st
             missing.append(credential.name)
     if missing:
         raise SetupError(f"Missing credentials: {', '.join(missing)} (set them in the environment)")
-    stored = dotenv_values(path, interpolate=False) if path.is_file() else {}
+    stored = stored_credentials(paths)
     new = {name: value for name, value in values.items() if stored.get(name) != value}
     if not interactive or not new:
         return values, {}
-    if not _yes(f"Store {', '.join(new)} in {clean(str(path))}, readable only by you?", False):
+    where = clean(str(paths.settings_dir))
+    if not _yes(f"Store {', '.join(new)} in {where}, readable only by you?", False):
         print("  Not stored: start reads them from the environment or .env")
         return values, {}
     saved = {}
@@ -214,11 +212,7 @@ def setup(args: argparse.Namespace) -> int:
 def _setup(args: argparse.Namespace) -> int:
     from alphaavatar.host.configs import ConfigReferenceError, application_paths, format_failure
     from alphaavatar.host.configs.bundles import bundle_path, read_settings
-    from alphaavatar.host.configs.credentials import (
-        credentials_path,
-        load_environment,
-        store_credentials,
-    )
+    from alphaavatar.host.configs.credentials import load_environment, stored_credentials
     from alphaavatar.host.configs.template import create_bundle, render_bundle
     from alphaavatar.host.setup import choices
     from alphaavatar.host.setup.environment import (
@@ -226,7 +220,6 @@ def _setup(args: argparse.Namespace) -> int:
         SetupError,
         Sources,
         check_environment,
-        complete,
         install,
     )
     from alphaavatar.host.setup.plan import PlanError, plan_install
@@ -263,7 +256,7 @@ def _setup(args: argparse.Namespace) -> int:
         if problems := _machine(plan):
             raise SetupError("This machine lacks what the plan needs: " + "; ".join(problems))
         target = installation.environment(plan)
-        reused = complete(target, plan)
+        reused = installation.reusable(plan)
         free = os.statvfs(installation.prefix)
         # Installed packages take about three times their download; downloads go first.
         if not reused and free.f_bavail * free.f_frsize < 4 * plan.download_bytes:
@@ -271,7 +264,7 @@ def _setup(args: argparse.Namespace) -> int:
                 f"{_megabytes(free.f_bavail * free.f_frsize)} free in {installation.prefix}; "
                 f"the plan downloads {_megabytes(plan.download_bytes)} and needs about four times"
             )
-        values, saved = _credentials(selection, interactive, credentials_path(paths))
+        values, saved = _credentials(selection, interactive, paths)
 
         print(f"\nAlphaAvatar {plan.version} ({plan.platform}), plan {plan.id[:16]}:")
         for line in choices.capabilities(selection):
@@ -289,8 +282,8 @@ def _setup(args: argparse.Namespace) -> int:
             return 1
 
         def enable() -> None:
-            # Signals wait meanwhile: current, the bundle and its credentials agree at the end.
-            undo: Callable[[], None] = store_credentials(paths, saved) if saved else (lambda: None)
+            # Signals wait meanwhile; one settings replacement makes the bundle the default
+            # and names the credentials it stores, so even a kill leaves both or neither.
             try:
                 create_bundle(
                     paths,
@@ -299,10 +292,10 @@ def _setup(args: argparse.Namespace) -> int:
                     sections=sections,
                     environment=environment,
                     make_default=True,
+                    credentials=saved,
                 )
             except BaseException:
                 if read_settings(paths).get("default_bundle") != name:
-                    undo()
                     raise
                 # The settings replacement committed: the bundle is the default, enabled.
             enabled.append(name)
@@ -339,11 +332,8 @@ def _setup(args: argparse.Namespace) -> int:
     except Exception as error:
         print(f"\nSetup failed; nothing was enabled:\n{format_failure(error)}\n", file=sys.stderr)
         return 2
-    from dotenv import dotenv_values
-
     print(f"\nEnabled bundle {name} (default) in {clean(str(target))}.")
-    stored = credentials_path(paths)
-    found = dotenv_values(stored, interpolate=False) if stored.is_file() else {}
+    found = stored_credentials(paths)
     if unstored := [key for key in values if found.get(key) is None]:
         print(f"Start reads {', '.join(unstored)} from the environment or .env.")
     print("Next:\n  alphaavatar dev        # start in development mode\n")

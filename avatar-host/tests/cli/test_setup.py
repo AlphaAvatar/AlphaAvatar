@@ -139,7 +139,8 @@ def test_the_bundle_and_credentials_are_written_only_by_a_successful_install(
     settings = yaml.safe_load((home / "settings/settings.yaml").read_text())
     assert settings["default_bundle"] == "avatar"  # Enabled: the new default.
     # A preset's credentials stay in the environment: nothing stores them.
-    assert not (home / "settings/credentials.env").exists()
+    assert "credentials" not in settings
+    assert not [path.name for path in (home / "settings").iterdir() if "credentials" in path.name]
     assert "Start reads OPENAI_API_KEY, LIVEKIT_URL" in capsys.readouterr().out
 
 
@@ -155,10 +156,12 @@ def test_asked_credentials_are_stored_on_a_yes_and_a_stored_one_replaced_only_on
     package: environment.Installation, capsys: pytest.CaptureFixture
 ) -> None:
     from alphaavatar.host.configs import application_paths
-    from alphaavatar.host.configs.credentials import credentials_path, store_credentials
+    from alphaavatar.host.configs.credentials import credentials_path
+    from alphaavatar.host.configs.template import create_bundle
 
     paths = application_paths()
-    store_credentials(paths, {"OPENAI_API_KEY": "sk-earlier"})
+    earlier = {"OPENAI_API_KEY": "sk-earlier"}
+    create_bundle(paths, "first", avatar_id="first", make_default=True, credentials=earlier)
 
     def installed(installation, plan, sources, *, check, enable, **kwargs):
         enable()
@@ -207,11 +210,14 @@ def test_a_new_bundle_keeps_what_the_current_environment_holds(
 
 @pytest.mark.parametrize(
     ("replaced", "then"),
-    [("credentials.env", "SIGTERM"), ("settings.yaml", "SIGTERM"), ("settings.yaml", "OSError")],
+    [("credentials", "SIGTERM"), ("settings.yaml", "SIGTERM"), ("settings.yaml", "OSError")],
 )
 def test_what_ends_enabling_leaves_current_the_bundle_and_credentials_agreeing(
     package: environment.Installation, capsys: pytest.CaptureFixture, replaced: str, then: str
 ) -> None:
+    from alphaavatar.host.configs import application_paths, credentials as stored
+    from alphaavatar.host.configs.credentials import credentials_path
+
     # The base holds everything the plan needs: a real, empty environment installs.
     path = package.base / "share/alphaavatar/catalog.json"
     catalog = json.loads(path.read_text())
@@ -219,7 +225,7 @@ def test_what_ends_enabling_leaves_current_the_bundle_and_credentials_agreeing(
     (package.base / "python/bin").mkdir(parents=True)
     (package.base / "python/bin/python3").symlink_to(sys._base_executable)
     os.symlink("versions/base-1", package.prefix / "current")
-    replace = os.replace
+    replace, write = os.replace, stored.write_credentials
 
     def replacing(source: object, target: object) -> None:
         replace(source, target)
@@ -228,12 +234,19 @@ def test_what_ends_enabling_leaves_current_the_bundle_and_credentials_agreeing(
                 raise OSError("the settings lock cannot be released")
             os.kill(os.getpid(), signal.SIGTERM)
 
+    def writing(*args: object) -> Path:
+        written = write(*args)
+        if replaced == "credentials":  # Right after the new credentials are written.
+            os.kill(os.getpid(), signal.SIGTERM)
+        return written
+
     typed = ("sk-new", "wss://livekit.invalid", "lk-key", "lk-secret")
     asked, hidden = answers("1", "second", "", *typed, "y", "y")
     with (
         mock.patch.object(environment.Installation, "running", return_value=package),
         mock.patch.object(environment, "check_environment", lambda *args: None),
         mock.patch.object(os, "replace", replacing),
+        mock.patch.object(stored, "write_credentials", writing),
         mock.patch("sys.stdin.isatty", return_value=True),
         mock.patch.dict(os.environ),
         asked,
@@ -248,4 +261,4 @@ def test_what_ends_enabling_leaves_current_the_bundle_and_credentials_agreeing(
     assert (
         yaml.safe_load((home / "settings/settings.yaml").read_text())["default_bundle"] == "second"
     )
-    assert 'LIVEKIT_API_SECRET="lk-secret"' in (home / "settings/credentials.env").read_text()
+    assert 'LIVEKIT_API_SECRET="lk-secret"' in credentials_path(application_paths()).read_text()

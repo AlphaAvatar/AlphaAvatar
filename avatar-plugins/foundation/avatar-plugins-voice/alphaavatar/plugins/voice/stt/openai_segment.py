@@ -85,6 +85,7 @@ class OpenAISegmentSTT(STTBase):
         prompt: str | None = None,
         temperature: float | None = None,
         api_key: str | None = None,
+        api_key_env: str = "OPENAI_API_KEY",
         base_url: str = "https://api.openai.com/v1",
         client: openai.AsyncOpenAI | None = None,
         queue_size: int = 256,
@@ -105,7 +106,7 @@ class OpenAISegmentSTT(STTBase):
         self._language = language
         self._prompt = prompt
         self._temperature = temperature
-        self._api_key = api_key
+        self._api_key, self._api_key_env = api_key, api_key_env
         self._base_url = base_url.rstrip("/")
         self._client = client
         self._queue_size = queue_size
@@ -133,9 +134,9 @@ class OpenAISegmentSTT(STTBase):
         if not source_id:
             raise ValueError("OpenAI STT source_id cannot be empty")
 
-        api_key = self._api_key or os.getenv("OPENAI_API_KEY")
+        api_key = self._api_key or os.getenv(self._api_key_env)
         if self._client is None and not api_key:
-            raise RuntimeError("OPENAI_API_KEY is required for OpenAI STT")
+            raise RuntimeError(f"{self._api_key_env} is required for OpenAI STT")
 
         return OpenAISegmentSTTStream(
             source_id=source_id,

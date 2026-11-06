@@ -57,10 +57,11 @@ def snapshot_inference_config(config: AvatarConfig) -> str:
         raise TypeError("Inference configuration contains a non-JSON value")
 
     inputs = {}
-    for location, plugin in resolve_plugins(config).plugins.items():
+    plugins = resolve_plugins(config).plugins
+    for location in config.plugin_factories():
         section = config.section(location)
-        if hasattr(section, "runner_config"):
-            inputs[plugin.namespace] = section.runner_config()
+        if location in plugins and hasattr(section, "runner_config"):
+            inputs[plugins[location].namespace] = section.runner_config()
     return json.dumps(
         inputs, default=encode, ensure_ascii=False, allow_nan=False, separators=(",", ":")
     )
@@ -97,7 +98,8 @@ def check_inference_config(
 
 
 def plan_inference_runners(config: AvatarConfig) -> dict[str, type[InferenceRunner]]:
-    """The runners the selected plugins use, checked against runtime.inference.
+    """The runners the selected plugins and their providers use, checked against
+    runtime.inference: what loading accepts, config check reports and start launches.
 
     Pure: it never writes the environment, spawns a process or loads a model. The selected
     plugins resolve first, and every one unavailable fails by the setting selecting it.

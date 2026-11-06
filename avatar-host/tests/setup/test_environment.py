@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -344,3 +345,42 @@ def test_what_is_checked_is_what_installs_and_unknown_paths_are_left_alone(
     with pytest.raises(SetupError, match="points outside"):
         install(installation, plan, sources, check=lambda env: None, enable=lambda: None)
     assert os.readlink(current) == str(wheels)
+
+
+def test_an_environment_reached_through_a_link_is_neither_reused_nor_switched_to(
+    setup_layout, tmp_path: Path
+) -> None:
+    installation, plan, sources, wheels = setup_layout
+    prefix = installation.prefix
+    # Outside the prefix, the plan's environment as setup leaves one: marked, plan.json last.
+    outside = tmp_path / "outside"
+    (outside / environment.PLAN_FILE).parent.mkdir(parents=True)
+    (outside / environment.PLAN_FILE).write_text(json.dumps(plan.document()))
+    (outside / environment.OWNER).touch()
+    before = sorted(str(path.relative_to(outside)) for path in outside.rglob("*"))
+    checked: list[Path] = []
+    (prefix / "envs").mkdir()
+    installation.environment(plan).symlink_to(outside)
+    assert not installation.reusable(plan)
+    with pytest.raises(SetupError, match="exists and is not setup's"):
+        install(installation, plan, sources, check=checked.append, enable=lambda: None)
+    assert checked == [] and os.readlink(prefix / "current") == "versions/base"
+    assert installation.current() == installation.base
+    installation.environment(plan).unlink()
+
+    # envs itself a link elsewhere: nothing is made through it.
+    (prefix / "envs").rmdir()
+    (prefix / "envs").symlink_to(outside.parent)
+    with pytest.raises(SetupError, match="not this installation's own directory"):
+        install(installation, plan, sources, check=checked.append, enable=lambda: None)
+    (prefix / "envs").unlink()
+    assert checked == [] and os.readlink(prefix / "current") == "versions/base"
+
+    # A current spelled versions/<name> whose directory is a link out is no version of this one.
+    (prefix / "versions" / "linked").symlink_to(outside)
+    (prefix / "current").unlink()
+    (prefix / "current").symlink_to("versions/linked")
+    with pytest.raises(SetupError, match="points outside"):
+        install(installation, plan, sources, check=checked.append, enable=lambda: None)
+    assert checked == [] and os.readlink(prefix / "current") == "versions/linked"
+    assert sorted(str(path.relative_to(outside)) for path in outside.rglob("*")) == before

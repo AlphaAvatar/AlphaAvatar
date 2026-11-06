@@ -84,8 +84,8 @@ def _validate(value: Any, *, paths: ApplicationPaths | None = None) -> Applicati
 
     # AvatarConfig
     avatar = AvatarConfig.model_validate(avatar_data)
-    # The selected plugins resolve, then runtime.inference is checked against their runners:
-    # pure, no process, model or environment.
+    # The selected plugins resolve with their settings and providers, then runtime.inference
+    # is checked against all their runners: pure, no process, model or environment.
     try:
         plan_inference_runners(avatar)
     except UnavailablePlugins as error:
@@ -141,14 +141,15 @@ def validate_plugin_settings(config: ApplicationConfig) -> dict[str, Any]:
     """The selected plugins' settings, each validated with its own plugin's schema, by section.
 
     Pure: it reads only the accepted configuration, resolving the plugins and the provider
-    backends their settings name. Settings a plugin would reject fail here, located under
-    their section (``loop.init_config.model``); a plugin without a schema has none here.
+    backends their settings name as loading did. Settings a plugin would reject fail,
+    located under their section (``loop.init_config.model``); a plugin without a schema has
+    none here.
     """
     from alphaavatar.agents.runtime.plugin import UnavailablePlugins, resolve_plugins
 
     from .capabilities import unavailable
 
-    selection = resolve_plugins(config.avatar, providers=True)
+    selection = resolve_plugins(config.avatar)
     if selection.problems:
         raise unavailable(UnavailablePlugins(selection))
     return selection.settings

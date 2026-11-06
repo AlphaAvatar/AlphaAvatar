@@ -524,7 +524,7 @@ def _external(config: ApplicationConfig) -> list[tuple[str, str]]:
 
     services = []
     providers = (AvatarModule.PROVIDER_LLM, AvatarModule.PROVIDER_EMBEDDING)
-    plugins = resolve_plugins(avatar, providers=True).plugins.values()
+    plugins = resolve_plugins(avatar).plugins.values()
     backends = sorted({plugin.name for plugin in plugins if plugin.module in providers})
     if backends:
         services.append((f"model providers ({', '.join(backends)})", "model"))
