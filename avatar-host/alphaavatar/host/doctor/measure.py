@@ -297,6 +297,16 @@ class _Turn:
         self.trace = self._chain(observation.trace, observation.identity, turn_id)
         if turn_id is None:
             self.trace = self._uncommitted(observation.trace, observation.timeline.started_ns)
+        # The STT plugin times each request by its segment, which the trace names salted.
+        segments = {r["segment_id"] for r in self.trace if r.get("segment_id")}
+        self.logs += [
+            r
+            for r in session
+            if r.name == "stt.request"
+            and r.fields.get("segment_id")
+            and observation.identity(r.fields["segment_id"]) in segments
+        ]
+        self.logs.sort(key=lambda r: r.monotonic_ns)
         self.published = {
             observation.identity(frame.observation_id): frame
             for frame in observation.timeline.frames
@@ -884,6 +894,7 @@ class _Turn:
         )
         request = self._request()
         started = self._log("model.started", request_id=self.request_id)
+        built = self._log("context.built", request_id=self.request_id)
         sent = self._attempts()
         delta = self._log("model.first_text", request_id=self.request_id)
         # The outputs whose text the first request streamed, and the first audio of those.
@@ -923,7 +934,10 @@ class _Turn:
                 self._at(self._log("context.ready")),
                 "Context logged no readiness check for the Turn",
             ),
-            "context_built": (self._at(started), no_request),
+            "context_built": (
+                self._at(built),
+                no_request if started is None else "the loop logs no context built",
+            ),
             "request_sent": (
                 self._at(sent[0]) if sent else None,
                 no_request if started is None else "its provider logs no request sent",
@@ -1011,6 +1025,49 @@ class _Turn:
                     previous = key
         return found
 
+    def _stt(self, final: dict | None) -> list[Metric]:
+        """Where the STT request of the final the Turn's request took spent its time: its
+        wait in the plugin's queue, the connection it opened (none when reused), the upload,
+        the wait for the answer and the answer's stream to the final."""
+        timed = next(
+            (
+                r
+                for r in self.logs
+                if r.name == "stt.request"
+                and final is not None
+                and self.o.identity(r.fields.get("segment_id")) == final.get("segment_id")
+            ),
+            None,
+        )
+        why = "no STT final for the Turn" if final is None else "its STT plugin times no request"
+        boundary = "the STT request of the Turn's final, as its plugin times it"
+        rows = (
+            ("stt_queue", "queue_ms", "segment committed", "request started"),
+            ("stt_connect", "connect_ms", "connection opening", "connection open"),
+            ("stt_tls", "tls_ms", "TLS handshake started", "TLS handshake done"),
+            ("stt_upload", "upload_ms", "request headers sent", "audio sent"),
+            ("stt_wait", "wait_ms", "audio sent", "answer's headers"),
+            ("stt_first_event", "first_event_ms", "answer's headers", "first stream event"),
+            ("stt_stream", "final_ms", "answer's headers", "transcript done"),
+        )
+        found = []
+        for name, key, start, end in rows:
+            value = timed.fields.get(key) if timed is not None else None
+            if timed is None:
+                note = f"not measured: {why}"
+            elif value is None and key in ("connect_ms", "tls_ms") and timed.fields.get("reused"):
+                note = "none: the connection was reused"
+            elif value is None and key == "tls_ms":
+                note = "none: the connection has no TLS"
+            elif value is None:
+                note = "not measured: its STT plugin times no such step"
+            else:
+                note = None
+            found.append(
+                Metric(name, value, "ms", start, end, boundary, int(value is not None), note=note)
+            )
+        return found
+
     def segments(self) -> tuple[Metric, ...]:
         """The chain's stages and rows, then what the rows leave out: STT's own wait, the
         readiness wait, the request as sent, its first event, the frames."""
@@ -1030,6 +1087,7 @@ class _Turn:
                 "input trace",
                 "the commit of the request's last final was not recorded",
             ),
+            *self._stt(final),
             Metric(
                 "input_lateness",
                 round(self.o.timeline.max_lateness_ms, 3),
@@ -1269,7 +1327,9 @@ class _Turn:
             if turn is not None and record.fields.get("turn_id") == self.o.turn_id:
                 detail["turn"] = turn
             for name in ("run_id", "request_id"):
-                if record.name.startswith(("model.", "run.")) and record.fields.get(name):
+                if record.name.startswith(("model.", "run.", "context.")) and record.fields.get(
+                    name
+                ):
                     detail[name.removesuffix("_id")] = self._token(record.fields[name])
             items.append((record.monotonic_ns, record.name, "log", detail))
         firsts: set[tuple[str, str | None]] = set()

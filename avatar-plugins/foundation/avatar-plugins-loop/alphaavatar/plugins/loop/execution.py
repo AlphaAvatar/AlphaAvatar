@@ -408,8 +408,13 @@ class LoopExecution(LoopHandle):
                 update={"max_output_tokens": self._request.limits.final_output_tokens}
             )
 
+        request_id = uuid4().hex
+        built = self._context_manager.build(self._context, continuation=tuple(self._items))
+        # Where the build returns, by the request it starts: what follows is assembly.
+        self._log("context.built", request_id=request_id)
         request = ModelRequest(
-            input=self._context_manager.build(self._context, continuation=tuple(self._items)),
+            request_id=request_id,
+            input=built,
             # Preserve schemas/order even when tool use is disabled for finalization.
             tools=self._definitions,
             tool_choice="auto" if tools_allowed and self._definitions else "none",

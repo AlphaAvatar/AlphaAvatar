@@ -1,0 +1,42 @@
+voice: median [range] ×n of the later rounds (round 1), ms
+                                                                         kd19-probed
+Rounds passed                                                    0/5; 5 at stt.final
+Passed rounds
+Every round, failed included
+  Runtime first text                                  2,523 [2,452–2,643] ×4 (3,035)
+  First audio frame                                   3,369 [3,153–3,483] ×4 (3,931)
+  Response complete                                   4,141 [3,813–4,340] ×4 (4,848)
+  Input                                               1,342 [1,281–1,394] ×4 (1,738)
+    Final speech → VAD close                                  681 [680–682] ×4 (682)
+    VAD close → Final transcript                            660 [601–712] ×4 (1,056)
+  Context                                                     298 [293–412] ×4 (363)
+    Final transcript → Turn commit                               71 [70–72] ×4 (2.3)
+    Turn commit → Context readiness check complete            217 [213–329] ×4 (313)
+    Context readiness check complete → Context built          1.6 [1.6–1.8] ×4 (1.7)
+    Context built → Model request sent                          8.6 [8.5–10] ×4 (46)
+  Output                                              1,663 [1,578–1,808] ×4 (1,830)
+    Model request sent → First text delta                     907 [699–968] ×4 (934)
+    First text delta → TTS request                            136 [113–149] ×4 (119)
+    TTS request → First PCM                                   690 [577–741] ×4 (776)
+    First PCM → First audio frame                             0.6 [0.5–0.6] ×4 (0.7)
+  STT commit → Final transcript                             660 [601–712] ×4 (1,056)
+    STT queue (commit → request started)                       0.3 [0.2–0.3] ×4 (98)
+    STT connect (TCP)                                         6.6 [6.4–8.5] ×4 (4.1)
+    STT TLS handshake                                         6.5 [5.9–9.7] ×4 (9.6)
+    STT upload (headers → audio sent)                         4.2 [3.7–6.2] ×4 (6.8)
+    STT wait (audio sent → answer's headers)                  578 [532–617] ×4 (867)
+    STT first event (headers → first event)                   584 [536–622] ×4 (875)
+    STT stream (headers → transcript done)                    644 [580–696] ×4 (941)
+  Context readiness wait                                      216 [211–326] ×4 (311)
+  Model request sent → First event                            486 [448–526] ×4 (876)
+  Request encoding                                                      0.1 ×4 (0.1)
+  Pictures sent                                                             0 ×4 (0)
+  Request size                                                    19,289 ×4 (19,133)
+  Request attempts                                                          1 ×4 (1)
+Events
+  Holds                                                                           10
+  Cancels                                                                          0
+  Retired finals                                                                   0
+  Retried requests                                                                 0
+  Sentences lost in stt                                                            5
+kd19-probed: model gpt-5.6-luna · stt openai_segment gpt-4o-transcribe · tts openai gpt-4o-mini-tts · vision off · sum_question sha256:7792b2508854

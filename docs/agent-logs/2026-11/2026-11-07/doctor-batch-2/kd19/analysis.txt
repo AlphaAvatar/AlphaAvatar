@@ -1,0 +1,35 @@
+segment 1 (1158ef95230d): WAV 16000 Hz, 1 ch, 16-bit, 61120 frames, 3.820 s; pushed = job: True; job = WAV: True; WAV = upload: True
+  sample's voiced spans in the uploaded audio: 0.22–1.52s at 0.220s, 1.76–3.14s at 1.760s
+  form: {'model': 'gpt-4o-transcribe', 'response_format': 'json', 'stream': 'true'}
+  deltas joined: 'What is two plus three?'
+  transcript.text.done: 'What is two plus three?'
+  published FINAL_TRANSCRIPT: ['What is two plus three?']
+  Turn took: 'What is two plus three?'
+segment 2 (125e17276abf): WAV 16000 Hz, 1 ch, 16-bit, 61120 frames, 3.820 s; pushed = job: True; job = WAV: True; WAV = upload: True
+  sample's voiced spans in the uploaded audio: 0.22–1.52s at 0.220s, 1.76–3.14s at 1.760s
+  form: {'model': 'gpt-4o-transcribe', 'response_format': 'json', 'stream': 'true'}
+  deltas joined: 'What is two plus three?'
+  transcript.text.done: 'What is two plus three?'
+  published FINAL_TRANSCRIPT: ['What is two plus three?']
+  Turn took: 'What is two plus three?'
+segment 3 (716d0541b7da): WAV 16000 Hz, 1 ch, 16-bit, 61120 frames, 3.820 s; pushed = job: True; job = WAV: True; WAV = upload: True
+  sample's voiced spans in the uploaded audio: 0.22–1.52s at 0.220s, 1.76–3.14s at 1.760s
+  form: {'model': 'gpt-4o-transcribe', 'response_format': 'json', 'stream': 'true'}
+  deltas joined: 'What is two plus three?'
+  transcript.text.done: 'What is two plus three?'
+  published FINAL_TRANSCRIPT: ['What is two plus three?']
+  Turn took: 'What is two plus three?'
+segment 4 (fce4c838fc48): WAV 16000 Hz, 1 ch, 16-bit, 61120 frames, 3.820 s; pushed = job: True; job = WAV: True; WAV = upload: True
+  sample's voiced spans in the uploaded audio: 0.22–1.52s at 0.220s, 1.76–3.14s at 1.760s
+  form: {'model': 'gpt-4o-transcribe', 'response_format': 'json', 'stream': 'true'}
+  deltas joined: 'What is two plus three?'
+  transcript.text.done: 'What is two plus three?'
+  published FINAL_TRANSCRIPT: ['What is two plus three?']
+  Turn took: 'What is two plus three?'
+segment 5 (d4240811eb35): WAV 16000 Hz, 1 ch, 16-bit, 61120 frames, 3.820 s; pushed = job: True; job = WAV: True; WAV = upload: True
+  sample's voiced spans in the uploaded audio: 0.22–1.52s at 0.220s, 1.76–3.14s at 1.760s
+  form: {'model': 'gpt-4o-transcribe', 'response_format': 'json', 'stream': 'true'}
+  deltas joined: 'What is two plus three?'
+  transcript.text.done: 'What is two plus three?'
+  published FINAL_TRANSCRIPT: ['What is two plus three?']
+  Turn took: 'What is two plus three?'

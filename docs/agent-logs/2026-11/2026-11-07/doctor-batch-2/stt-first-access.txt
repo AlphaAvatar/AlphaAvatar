@@ -1,0 +1,7 @@
+The SDK's first access to client.audio.transcriptions, timed offline in the installed environment (openai 2.7.2), 3 processes:
+  python -I -c "import time, openai; c = openai.AsyncOpenAI(api_key=...); t = time.perf_counter(); c.audio.transcriptions; ..."
+  first access 168.2 ms, again 0.000 ms
+  first access 94.3 ms, again 0.000 ms
+  first access 93.0 ms, again 0.001 ms
+Round 1's STT time no span covers (commit -> final minus queue, connect, TLS, upload, wait and done after headers):
+  vision-segment 99.0, blind-segment 97.5, kd19-unprobed 97.8; kd19-probed 3.9 (the probe touched the property before the timed span); later rounds 1.7-3.0 ms

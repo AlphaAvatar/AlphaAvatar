@@ -19,6 +19,7 @@ import os
 import time
 import wave
 from collections import OrderedDict
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -33,6 +34,7 @@ from alphaavatar.agents.avatar.voice import (
     TranscriptionEvent,
     TranscriptionEventType,
 )
+from alphaavatar.core.log.events import log_event
 from alphaavatar.core.media import AudioFrame, AudioSampleFormat
 
 from ..log import logger
@@ -42,6 +44,28 @@ _FLUSH = object()
 _END_INPUT = object()
 _END_JOBS = object()
 _END_EVENTS = object()
+
+# The transport's own events for the request sent in this context, each first time seen:
+# httpcore's trace names (``connection.connect_tcp.complete``, ``http11.send_request_body
+# .complete``, ...) to ``time.monotonic_ns``. A reused connection traces no connect.
+_TRACE: ContextVar[dict[str, int] | None] = ContextVar("segment_stt_trace", default=None)
+
+
+async def _traced(request: httpx.Request) -> None:
+    if (marks := _TRACE.get()) is not None:
+
+        async def trace(name: str, info: dict[str, Any]) -> None:
+            marks.setdefault(name, time.monotonic_ns())
+
+        request.extensions["trace"] = trace
+
+
+def _between(marks: dict[str, int], start: str, end: str) -> float | None:
+    """Milliseconds from the first event named ``start`` to ``end``, by suffix: the same for
+    HTTP/1.1 and HTTP/2."""
+    first = next((at for name, at in marks.items() if name.endswith(start)), None)
+    last = next((at for name, at in marks.items() if name.endswith(end)), None)
+    return None if first is None or last is None else round((last - first) / 1e6, 3)
 
 
 @dataclass(slots=True, frozen=True)
@@ -66,6 +90,7 @@ class _SegmentJob:
     segment_id: str
     pcm: bytes
     sample_rate: int
+    committed_ns: int = field(default_factory=time.monotonic_ns)
 
     @property
     def duration_sec(self) -> float:
@@ -185,6 +210,8 @@ class OpenAISegmentSTTStream(STTStreamBase):
             base_url=base_url,
             max_retries=0,
             timeout=httpx.Timeout(request_timeout_sec),
+            # The SDK's own transport, each request's connect and exchange timed.
+            http_client=openai.DefaultAsyncHttpxClient(event_hooks={"request": [_traced]}),
         )
 
         self._input_q: asyncio.Queue[_FrameCommand | _CommitCommand | object] = asyncio.Queue(
@@ -442,12 +469,54 @@ class OpenAISegmentSTTStream(STTStreamBase):
         return kwargs
 
     async def _transcribe(self, job: _SegmentJob) -> None:
-        response = await self._client.audio.transcriptions.create(**self._request_kwargs(job))
+        started, marks, done = time.monotonic_ns(), {}, {}
+        try:
+            await self._exchange(job, marks, done)
+        finally:
+            # Where the segment's time went: its wait in the request queue, the connection
+            # (none when reused), the upload, the server's answer and its stream to the final.
+            headers = next((at for n, at in marks.items() if n.endswith("headers.complete")), None)
+            log_event(
+                logger,
+                "stt.request",
+                segment_id=job.segment_id,
+                outcome="final" if "final" in done else "no_final",
+                queue_ms=round((started - job.committed_ns) / 1e6, 3),
+                reused=not any(name.endswith("connect_tcp.started") for name in marks),
+                connect_ms=_between(marks, "connect_tcp.started", "connect_tcp.complete"),
+                tls_ms=_between(marks, "start_tls.started", "start_tls.complete"),
+                upload_ms=_between(
+                    marks, "send_request_headers.started", "send_request_body.complete"
+                ),
+                wait_ms=_between(
+                    marks, "send_request_body.complete", "receive_response_headers.complete"
+                ),
+                first_event_ms=(
+                    None
+                    if headers is None or "first" not in done
+                    else round((done["first"] - headers) / 1e6, 3)
+                ),
+                final_ms=(
+                    None
+                    if headers is None or "final" not in done
+                    else round((done["final"] - headers) / 1e6, 3)
+                ),
+            )
+
+    async def _exchange(
+        self, job: _SegmentJob, marks: dict[str, int], done: dict[str, int]
+    ) -> None:
+        token = _TRACE.set(marks)
+        try:
+            response = await self._client.audio.transcriptions.create(**self._request_kwargs(job))
+        finally:
+            _TRACE.reset(token)
 
         # whisper-1 ignores stream=True and returns a complete response.
         if not hasattr(response, "__aiter__"):
             final_text = getattr(response, "text", None)
             if isinstance(final_text, str):
+                done["first"] = done["final"] = time.monotonic_ns()
                 self._emit_transcript(
                     event_type=TranscriptionEventType.FINAL_TRANSCRIPT,
                     segment_id=job.segment_id,
@@ -468,6 +537,7 @@ class OpenAISegmentSTTStream(STTStreamBase):
 
         try:
             async for event in response:
+                done.setdefault("first", time.monotonic_ns())
                 event_type = getattr(event, "type", "")
 
                 if event_type == "transcript.text.delta":
@@ -488,6 +558,7 @@ class OpenAISegmentSTTStream(STTStreamBase):
                 if event_type == "transcript.text.done":
                     final_text = getattr(event, "text", None)
                     if isinstance(final_text, str):
+                        done["final"] = time.monotonic_ns()
                         self._emit_transcript(
                             event_type=TranscriptionEventType.FINAL_TRANSCRIPT,
                             segment_id=job.segment_id,

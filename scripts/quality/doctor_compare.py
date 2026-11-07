@@ -53,6 +53,13 @@ FIGURES = (
     ("output.first_pcm", "  TTS request → First PCM"),
     ("output.first_audio_frame", "  First PCM → First audio frame"),
     ("stt_request_to_final", "STT commit → Final transcript"),
+    ("stt_queue", "  STT queue (commit → request started)"),
+    ("stt_connect", "  STT connect (TCP)"),
+    ("stt_tls", "  STT TLS handshake"),
+    ("stt_upload", "  STT upload (headers → audio sent)"),
+    ("stt_wait", "  STT wait (audio sent → answer's headers)"),
+    ("stt_first_event", "  STT first event (headers → first event)"),
+    ("stt_stream", "  STT stream (headers → transcript done)"),
     ("context_ready_wait", "Context readiness wait"),
     ("model_first_event", "Model request sent → First event"),
     ("model_request_encode", "Request encoding"),
@@ -106,12 +113,32 @@ def mismatches(label: str, report: dict) -> list[str]:
     """Where the report's own summaries differ from its rounds, recomputed."""
     found = []
     rounds = groups(report)
+    # Each scenario's rounds, by configuration, have one summary, and no summary is without.
+    keys = [(summary["name"], summary["configuration"]) for summary in report["summaries"]]
+    for name, configuration in sorted(set(rounds) ^ set(keys)):
+        which = "no summary" if (name, configuration) in rounds else "no rounds"
+        found.append(f"{label} {name} ({configuration}): {which}")
+    for name, configuration in sorted({key for key in keys if keys.count(key) > 1}):
+        found.append(f"{label} {name} ({configuration}): more than one summary")
     for summary in report["summaries"]:
         key = (summary["name"], summary["configuration"])
         mine = rounds.get(key, [])
         passed = sum(r["outcome"] == "passed" for r in mine)
         if (summary["rounds"], summary["passed"]) != (len(mine), passed):
             found.append(f"{label} {key[0]}: rounds passed {summary['passed']}/{summary['rounds']}")
+        stopped: dict[str, int] = {}
+        for result in mine:
+            if result["outcome"] != "passed":
+                stage = result.get("blocked_stage") or result["outcome"]
+                stopped[stage] = stopped.get(stage, 0) + 1
+        if summary.get("stopped_at", {}) != stopped:
+            found.append(f"{label} {key[0]}: stopped at {summary.get('stopped_at')} != {stopped}")
+        # The figures summarized are the ones its rounds hold, none left out, none added.
+        names = {m["name"] for r in mine for m in (*r.get("metrics", ()), *r.get("segments", ()))}
+        held = {figure["name"] for figure in summary["figures"]}
+        if held != names:
+            missing, extra = sorted(names - held), sorted(held - names)
+            found.append(f"{label} {key[0]}: figures missing {missing}, not in its rounds {extra}")
         for figure in summary["figures"]:
             for every, prefix in ((False, ""), (True, "all_")):
                 held = {k: figure.get(f"{prefix}{k}") for k in ("first", "samples", "median")}

@@ -328,6 +328,22 @@ def test_the_configured_chain_runs_fixed_samples_and_one_request_carries_speech_
     assert not voice["frames"] and not requests(chain)[0]["images"]
 
 
+def test_what_follows_the_context_build_is_the_requests_assembly_not_the_build(
+    tmp_path: Path, chain: SimpleNamespace, capsys: pytest.CaptureFixture
+) -> None:
+    # The real loop: the Context build returns, then the request's assembly awaits 300 ms.
+    chain.spec["slow_assembly"] = 0.3
+    _, checks = doctor(capsys, chain, str(configuration(tmp_path)))
+    vision = scenarios(checks)["voice_vision", LABEL]
+    shown = {m["name"]: m["value"] for m in (*vision["metrics"], *vision["segments"])}
+    assert shown["context.request_sent"] >= 300 > shown["context.context_built"]
+    # The stages still add up to the first audio frame, on one clock.
+    total = shown["input"] + shown["context"] + shown["output"]
+    assert total == pytest.approx(shown["first_audio_frame"], abs=0.01)
+    built = [e for e in vision["evidence"] if e["stage"] == "context.built"]
+    assert len(built) == 1 and built[0]["detail"]["request"] == vision["request"]["request"]
+
+
 def test_a_failure_is_reported_as_it_is_and_nothing_else_is_tried(
     tmp_path: Path,
     chain: SimpleNamespace,

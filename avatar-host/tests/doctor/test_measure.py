@@ -90,6 +90,7 @@ def observation(records: list[OutputRecord] | None = None, **extra: object) -> T
     logs = [
         log(1600, "input.committed", turn_id="turn-1"),
         log(1800, "context.ready", turn_id="turn-1", ready=True, wait_ms=180.0),
+        log(1850, "context.built", **turn, request_id="req-1"),
         log(1850, "model.started", **turn, request_id="req-1"),
         log(1900, "model.request_sent", request_id="req-1", attempt=1, request_bytes=20_000),
         log(2100, "model.first_event", **turn, request_id="req-1"),
@@ -227,6 +228,18 @@ def test_a_stage_missing_a_boundary_is_not_measured_and_says_why() -> None:
     )
     assert (shown["input"].note, shown["context"].note) == (why, why)
     assert shown["input.vad_close"].note.startswith("merged into the next row: VAD close")
+    # A loop that logs no Context build: the readiness check runs on to the request sent.
+    shown = figures(scenario(without(observation(), "context.built")))
+    built, sent = shown["context.context_built"], shown["context.request_sent"]
+    assert (
+        built.note
+        == "merged into the next row: Context built not observed: the loop logs no context built"
+    )
+    assert (sent.value, sent.start, sent.merged) == (
+        100.0,
+        "Context readiness check complete",
+        ("context_built",),
+    )
     # A model that refuses the pictures answers nothing: the rows before First audio frame
     # merge forward, and that last row is not measured, not merged: no round ran from earlier.
     refused = without(observation([]), "model.first_text", "speech.request", "tts.first_pcm")
@@ -241,6 +254,44 @@ def test_a_stage_missing_a_boundary_is_not_measured_and_says_why() -> None:
     ]
     figure = {f.name: f for f in summarize(failed)[0].figures}["output.first_audio_frame"]
     assert (figure.all_samples, figure.merged) == (0, 0)
+
+
+def test_the_finals_stt_request_is_parted_into_queue_connection_and_exchange() -> None:
+    timing = {"outcome": "final", "queue_ms": 1.5, "upload_ms": 4.0, "wait_ms": 90.0}
+    timing |= {"first_event_ms": 20.0, "final_ms": 50.0}
+    # The Turn's other segment, timed by its own request: not the final's.
+    other = log(1200, "stt.request", segment_id="seg-1", reused=False, connect_ms=1.0, **timing)
+    opened = log(
+        1450,
+        "stt.request",
+        segment_id="seg-0",
+        reused=False,
+        connect_ms=40.0,
+        tls_ms=60.0,
+        **timing,
+    )
+    joined = trace(1501.5, "candidate.segment", 30, candidate_id="cand-0", segment_id="seg-1")
+    shown = figures(scenario(observation(trace=[joined], logs=[other, opened])))
+    rows = (
+        "stt_queue",
+        "stt_connect",
+        "stt_tls",
+        "stt_upload",
+        "stt_wait",
+        "stt_first_event",
+        "stt_stream",
+    )
+    assert [shown[name].value for name in rows] == [1.5, 40.0, 60.0, 4.0, 90.0, 20.0, 50.0]
+    # A reused connection opens nothing: no connect, no handshake, and says why.
+    reused = log(1450, "stt.request", segment_id="seg-0", reused=True, **timing)
+    shown = figures(scenario(observation(logs=[reused])))
+    assert [(shown[n].value, shown[n].note) for n in ("stt_connect", "stt_tls")] == [
+        (None, "none: the connection was reused")
+    ] * 2
+    assert shown["stt_wait"].value == 90.0
+    # An STT plugin that times nothing: every row says so.
+    shown = figures(scenario(observation()))
+    assert {shown[n].note for n in rows} == {"not measured: its STT plugin times no request"}
 
 
 def test_a_retry_is_an_attempt_of_its_own_and_the_first_is_when_the_request_went_out() -> None:

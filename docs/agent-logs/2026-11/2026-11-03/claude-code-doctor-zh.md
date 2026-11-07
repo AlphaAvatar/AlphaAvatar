@@ -14,7 +14,8 @@
 | T-10C | 多模态 Doctor 自检：`alphaavatar doctor [配置]` 为唯一入口，静态检查后自行创建有期限的临时诊断会话，固定样本走生产链路，报告端到端指标、分段证据和降级结果 | 2026-11-04 | `8fdc2c2`（临时提交）；review 修复基线 `9993aad`；收尾基线 `bf79300`；真实验收基线 `6a593f2` | `9993aad`、`bf79300`、`6a593f2`；验收记录未提交 | 真实服务验收（`6a593f2`）：同一实际请求携带转录与样本帧、输出正常结束、指标齐全；视觉受阻时原配置阻塞原因与纯音频降级同时出现。严格答案校验未通过：真实 STT 丢掉样本第二句格式要求，待用户决定；另发现 KD-17（真实语音轮因 `transcript_timeout` 被丢弃）。第 9 条方案待 review。本地全量 322 passed，检出前后一致 |
 | Doctor 默认运行时测试 | 静态检查后默认运行运行时测试；外部服务先列出、提示计费、明确同意（同一快照），拒绝或 `--no-metrics` 只做静态检查；非交互只认配置授权；缺模型先说明、同意后下载重跑；`—` 带原因、`Run again as JSON`；诊断进程输出不进终端 | 2026-11-06 | `2fc4f398` | 用户已提交（`38fad3c3`） | 部分被下一批取代：下载另行确认、先离线试启动、按 runner 判断外部访问，改为一次确认、按 start 启动；真实服务验收结果见该节第 9 小节 |
 | Doctor 运行时诊断：一次确认、按 start 启动、多轮统计 | 一次确认整批诊断（场景、轮数、可能下载与计费服务），同意后按 `start` 的启动逻辑运行；每个场景默认 5 轮、每轮独立会话，汇总成功数、失败阶段、样本数、中位数和范围，首轮单列；颜色与多句转录分开验收，丢句按 VAD/STT/Turn 定位；模型请求记录本地编码耗时、发送图片数和实发正文大小；Provider 状态按探测结果；外部测试库须配置声明；LiveKit 传输、客户端播放与物理设备标为未测 | 2026-11-07 | `38fad3c3` | 用户已提交（`d5080d5`） | `d5080d5` 审查：执行范围与确认不一致、部分计时与归因口径有缺口，由下一批处理；真实服务对照见该节第 11 小节，默认值未改 |
-| Doctor 第一批：执行范围、指标口径、漏句归因 | 视觉开只跑 `voice_vision`、关只跑 `voice`，去掉 `text` 和降级试跑，确认、预算和执行读同一计划，runtime 与 `start` 共用构造；指标改为 Final speech 到 First audio frame 的节点链（Input、Context、Output 三段相加等于首音频帧），`Model request sent` 在交给传输层时逐次记录；漏句分覆盖、终稿、采用、内容四项；汇总另给全体已观测轮，对照脚本重算并核对 | 2026-11-07 | `d5080d5` | 未提交（用户提交） | 待审查；离线验证见该节第 6 小节；真实服务复验（4 份 × 5 轮）与 KD-17 见第 7 小节；`cli.html` 重录与合并标注修复见第 9 小节 |
+| Doctor 第一批：执行范围、指标口径、漏句归因 | 视觉开只跑 `voice_vision`、关只跑 `voice`，去掉 `text` 和降级试跑，确认、预算和执行读同一计划，runtime 与 `start` 共用构造；指标改为 Final speech 到 First audio frame 的节点链（Input、Context、Output 三段相加等于首音频帧），`Model request sent` 在交给传输层时逐次记录；漏句分覆盖、终稿、采用、内容四项；汇总另给全体已观测轮，对照脚本重算并核对 | 2026-11-07 | `d5080d5` | 用户已提交（`64a9de7`） | 离线验证见该节第 6 小节；真实服务复验（4 份 × 5 轮）与 KD-17 见第 7 小节；`cli.html` 重录与合并标注修复见第 9 小节 |
+| Doctor 第二批：Context 构建时刻、报告完整性、KD-19 定位、KD-17 恢复、证据与 STT 拆解 | `context.built` 在 Context build 返回处记录并由 Doctor 读取；`doctor_compare.py` 核对场景分组、指标集合和 `stopped_at`；KD-19 探针（进入 STT 的 PCM 到 Turn 采用文字）与直连对照脚本；KD-17 硬期限后的恢复回归；真实报告的脱敏证据入库；分段 STT 按请求计时（排队、建连、TLS、上传、等待、流），发现 KD-20 | 2026-11-07 | `64a9de7` | 未提交（用户提交） | 待审查；真实服务见该节第 8 小节（KD-19 定位到端点返回的文字；新基线 2 份 × 5 轮；发现 STT 首事件起点取错） |
 
 ---
 
@@ -1732,7 +1733,7 @@ python3 scripts/quality/doctor_compare.py frames4=segment.json frames2=frames2.j
 
 **STT 对照**（只改 STT 后端：`openai_segment`／`gpt-4o-transcribe` 对 `openai_realtime`／`gpt-realtime-whisper`）
 
-- **分段 STT 丢第二句**：在两句样本上，两份报告共 10 轮，有 9 轮丢了第二句「Answer with just a number.」（segment 4 轮，frames2 5 轮）。
+- **分段 STT 丢第二句**：在两句样本上，两份报告共 10 轮，有 9 轮丢了第二句「Answer with just the number.」（segment 4 轮，frames2 5 轮）。
   - 证据链：VAD 把两句合成一个段（191 帧），STT 终稿只有第一句（23 个字符），Doctor 把它定位在 STT 层。
   - 唯一通过的一轮，终稿 50 个字符，两句都在。
   - 和 T-10C、上一批的发现一致；被丢的都是那句指令。
@@ -2127,7 +2128,7 @@ python3 scripts/quality/doctor_compare.py segment=… realtime=…             #
 - **复现**：`doctor_compare.py` 对四份单独重算、两张对照，全部退出 0，stderr 为空，即通过轮、全体轮、合并计数和事件计数与报告自带汇总逐项一致。文本报告用 CLI 自己的渲染器从 JSON 重建，与重算结果逐格相同。
 
 **漏句归因**（逐句，四项证据）
-- **blind-segment**：第 1、2、4、5 轮的第 2 句（"Answer with just a number."）丢在 `stt`：覆盖 full，STT 返回终稿，终稿被 Turn 采用，但只有 23 个字符（"What is two plus three?"），缺这一句。第 3 轮两句都在。上一轮（`38fad3c3` 构建）为 10 轮丢 9 轮，结论相同。
+- **blind-segment**：第 1、2、4、5 轮的第 2 句（"Answer with just the number."）丢在 `stt`：覆盖 full，STT 返回终稿，终稿被 Turn 采用，但只有 23 个字符（"What is two plus three?"），缺这一句。第 3 轮两句都在。上一轮（`38fad3c3` 构建）为 10 轮丢 9 轮，结论相同。
 - **vision-realtime**：5 轮的唯一一句都丢在 `stt`：覆盖 full，已采用，终稿 31～32 个字符（"Color is the color on my screen"），缺词。上一轮同样 5/5。
 - 分段 STT 的 `voice_vision`、实时 STT 的 `voice` 全部通过。20 轮里没有 `unknown`，也没有丢在 `vad` 或 `turn` 的句子。
 
@@ -2155,7 +2156,7 @@ python3 scripts/quality/doctor_compare.py segment=… realtime=…             #
 - **STT**：实时 STT 的 VAD close → Final transcript 中位数比分段低 78～183 ms（`voice` 618 对 801，`voice_vision` 732 对 810），但听错卡片问题 5/5；分段 STT 丢求和样本第二句 4/5。两个后端各有一个样本过不了。
 - **Context**：Turn commit → Context readiness check complete 在每一轮都是 190～440 ms（vision-segment 第 4 轮 876 ms），是 Context 段的主要部分，与上一轮（200～320 ms）一致。Context built → Model request sent 后续轮约 9 ms，每份的第 1 轮 93～212 ms（每个 runtime 的第一个模型请求）。
 - **Final transcript → Turn commit**：`voice_vision` 约 2 ms（vision-realtime 第 4 轮 113 ms），因为终稿到达时轮次判定已经在等转录；`voice` 为 66～540 ms，因为终稿先于轮次判定到达，commit 要等下一次判定。
-- **Output**：Model request sent → First text delta 后续轮中位数 817～871 ms。vision-segment 第 1、2 轮为 3,139 ms、2,750 ms，慢在服务端（Model request sent → First event 3,116 ms、2,495 ms）；其余 18 轮的 First event 为 451～1,112 ms。TTS request → First PCM 中位数 566～758 ms，最长 1,616 ms。
+- **Output**：Model request sent → First text delta 后续轮中位数 817～871 ms。vision-segment 第 1、2 轮为 3,139 ms、2,750 ms，慢在请求交给传输层之后（Model request sent → First event 3,116 ms、2,495 ms）。这段包含建连、网络往返和服务端处理，报告不再细分，不能单独归因于服务端；其余 18 轮的 First event 为 451～1,112 ms。TTS request → First PCM 中位数 566～758 ms，最长 1,616 ms。
 
 **完整指标：分段 STT 的两份报告**（实时 STT 之后不再跑，见第 8 节）
 
@@ -2241,12 +2242,7 @@ python3 scripts/quality/doctor_compare.py segment=… realtime=…             #
   - 20 轮都没有 `transcript_timeout`、cancel 或退役终稿。3 s 硬期限在真实服务中没有触发，只有离线复现。
 - **修复与状态**：修复是用户提交的 `b791572a`（2026-11-04）：0.75 s 只报告，3 s 才退役候选。真实服务已命中 0.75 s 分支，2A 日志 KD-17 的状态据此更新为「已修复，待复核」；3 s 分支只有离线证据。
 
-**保存的证据**（会话临时目录 `real3/`；只有临时路径，没有凭据）：
-- 四份 JSON 和各自的 stderr；
-- `compare-*.txt`：四份单独重算，加两张分段对实时的对照；
-- 文本渲染 `*.txt`，用 CLI 自己的渲染器从 JSON 重建；
-- `kd17-real.txt`：20 轮的转录等待与终稿时刻；
-- `rec/`：安装、setup、`config check` 的输出。
+**保存的证据**：仓库内 [`2026-11/2026-11-07/doctor-baseline/`](../2026-11-07/doctor-baseline/)，见「Doctor 第二批」第 5 节。四份脱敏 JSON（临时目录替换为 `$RUN`，没有凭据），每份的 `doctor_compare.py` 重算、分段两份的对照与完整表格，以及 `kd17-real.txt`（20 轮的转录等待与终稿时刻）。安装、setup 和 `config check` 的输出只留在会话临时目录。
 
 复验结束后，已删除隔离前缀、home（含 1.7 GB 模型缓存）和凭据副本，只保留上述证据。
 
@@ -2291,3 +2287,325 @@ python3 scripts/quality/doctor_compare.py segment=… realtime=…             #
   - Input、Context、Output 的分组行带阶段合计；
   - 分组之间不空行，窄布局保持现在的折行；
   - 任何一行缺值都照常显示为 `—`，原因写在表下。
+
+## Doctor 第二批：Context 构建时刻、报告完整性、KD-19 定位、KD-17 恢复、证据与 STT 拆解（基线 `64a9de7`）
+
+依据：`64a9de7` 审查的第 2～5 项（第 1 项 Setup 脱敏记在交互配置日志「交互配置第四轮」）。所有改动在未暂存的工作区。`64a9de7` 的 CI：Quality 成功（run 42355038363），Linux package 成功（run 42355038522）。
+
+### 1. Context built 取 Context build 实际返回的时刻
+
+- **问题**：上一批把 `model.started` 当作 Context built。但 Loop 在 `build()` 返回之后、记录 `model.started` 之前，还要组装请求并 `await self._feedback.change(...)`。这段组装时间被算进了「Context readiness check complete → Context built」。
+- **修复**（`plugins/loop/execution.py`）：请求号在 build 之前生成，`build()` 一返回就记 `context.built`（带同一个 `request_id`、`turn_id`、`run_id`），再用这个请求号构造 `ModelRequest`。`core/log/events.py` 登记该事件。Doctor 的 `LogTimings` 收这个事件，`measure` 按首个请求的 `request_id` 取它作 Context built 节点；缺失时按合并规则写明 "the loop logs no context built"。证据里的 `context.built` 带请求令牌。
+- **回归**：`test_session.py::test_what_follows_the_context_build_is_the_requests_assembly_not_the_build`。替身规格 `slow_assembly` 让真实 Loop 在 build 返回后、请求交出前等 300 ms。断言这 300 ms 落在 `Context built → Model request sent`，不在 `Context built` 那一行；三段之和仍等于首音频帧；证据里只有一条 `context.built`，属于同一个请求。
+- **变异 C1**：把 `context.built` 移回 `model.started` 的位置，用例失败（`Context built → Model request sent` 只有 0.5 ms）。
+- 终端布局不变。
+
+### 2. 报告完整性检查（`doctor_compare.py`）
+
+- 新增三项核对，任何一项不符都写进 stderr，退出 1：
+  - 每个场景和配置的轮次正好有一个汇总，汇总都有对应的轮次；
+  - 每个汇总的指标集合等于其轮次里出现的指标；
+  - `stopped_at` 等于按各轮未通过的停止层重算的计数。
+- **用例**：`test_compare.py::test_a_report_whose_summaries_do_not_cover_its_rounds_is_refused`，覆盖删除汇总、重复汇总、删除一个指标、写入矛盾的停止计数四种。
+- **变异 CMP1～CMP3**：分别关掉三项核对，用例都失败。
+- 2026-11-07 的四份真实报告在新核对下都退出 0。
+
+### 3. KD-19：两句样本，逐个边界定位（离线部分）
+
+**固定条件**
+- **录音**：`avatar-host/alphaavatar/host/doctor/samples/sum_question.wav`，文件 sha256 `93ac1590…68d2d18f`，16 kHz、单声道、16 位，52,102 个样本点（3.256 s），PCM 标识 `sum_question sha256:7792b2508854`。内容是 "What is two plus three? Answer with just the number."，两段有声分别在 0.22–1.52 s 和 1.76–3.14 s，中间只停 0.24 s。
+- **配置**：`accept` bundle 的 `voice.stt`，`openai_segment` / `gpt-4o-transcribe`，不设 language、prompt、temperature。请求参数为 `file`、`model`、`response_format=json`、`stream=true`。
+- **SDK**：openai 2.7.2、httpx 0.28.1、httpcore 1.0.9，与 `uv.lock` 一致。
+
+**探针**：`scratchpad/kd19/probe/sitecustomize.py`，只在临时目录里，不进仓库。`PYTHONPATH` 指向它并设置 `KD19_PROBE_DIR` 时，它在导入 `openai_segment` 时包住插件，逐段记录：
+- 推入 STT 流的 PCM（摘要与长度），以及 `_SegmentJob` 的 PCM、采样率、时长；
+- 编码出的 WAV（另存一份，供直连重发），以及 httpx 实际发出的 multipart 里文件部分的摘要和表单字段；
+- 每个流事件，以及 delta 拼接、`transcript.text.done.text` 和发布的 FINAL_TRANSCRIPT。
+
+Turn 采用的文字取自 Doctor 报告。探针不记录请求头和凭据。
+
+**离线自检**：`scratchpad/kd19/selfcheck.py` 用真实插件、求和样本按 10 ms 一帧推入，端点换成只返回第一句的 `MockTransport`。`analyze.py` 的结论：
+- 推入的 PCM、job、WAV 和上传文件逐字节一致，16 kHz、单声道、16 位，52,102 帧；
+- 两段有声都在上传的音频里，位置分别为 0.220 s 和 1.760 s；
+- delta 拼接、done 和发布的终稿都是 "What is two plus three?"。
+
+也就是说，探针能把丢失定位到具体某一个边界。
+
+**直连对照**（`scratchpad/kd19/direct.py`，计费，待确认）：用探针保存的同一个 WAV、同一模型和参数，直接调用 transcription 端点，流式与非流式各若干次；原始样本文件作对照。
+
+真实部分见第 8 节：丢失发生在端点返回的文字里，插件的各个边界都如实传递了结果。真实安装里探针要经 `.pth` 加载，因为启动器用 `-I` 运行。两句样本和严格判定保留。
+
+### 4. KD-17：硬期限之后的恢复
+
+- 保留默认 0.75 s / 3 s 的两项用例。
+- 新增 `test_speech_transcription.py::test_after_the_deadline_the_source_speaks_again_and_the_late_final_stays_its_own`，在同一个会话里：
+  - 第一段在 3 s 硬期限被取消；
+  - 同一输入源的第二段按时出终稿并提交；
+  - 第一段的终稿晚到，以 `retired_segment` 拒收，归属第一段的片段，不进入第二段的提交；
+  - 全程只有一次取消。
+- **变异**：
+  - 不记住退役片段：迟到终稿未被拒收，用例失败；
+  - 硬期限后把该输入源标为已取消：第二段无法提交，用例失败。
+  - 另试过「不恢复同源的其他候选」，在这个场景里等价（取消时没有其他候选），不计入。
+- **状态同步**（`docs/bugs-zh.md` 与 2A 日志）：
+  - KD-17：软观察点已真实复验，硬期限离线通过，硬期限的真实链路待验证。
+  - KD-19：改为「可重复的多句转录遗漏，待定位的边界」。
+  - KD-20：新增，见第 6 节。
+
+### 5. 证据入库与归因修正
+
+- **位置**：`docs/agent-logs/2026-11/2026-11-07/doctor-baseline/`，共 908 KB：
+  - 2026-11-07 四份真实报告的脱敏 JSON：临时目录替换为 `$RUN`，按值检索四个凭据都不在；
+  - 每份的 `doctor_compare.py` 重算，退出 0、stderr 为空；
+  - 分段两份的对照 `compare-segment.txt` 和完整表格 `full-tables-segment.md`；
+  - `kd17-real.txt`。
+- **独立复算**：`python3 scripts/quality/doctor_compare.py vision=…/vision-segment.json blind=…/blind-segment.json`。
+- **配置标识**：在每份报告的 `configuration` 与 `sample` 字段里。构建为 `alphaavatar-0.6.8-d5080d5f168b-dirty.20261107072333`（tar 包 sha256 前缀 `096d2fda98c98df4`）。
+- **归因修正**：第一批第 7 节「慢在服务端」改为「慢在请求交给传输层之后，包含建连、网络往返和服务端处理，不能单独归因于服务端」。样本第二句的原文改正为 "Answer with just the number."。
+
+### 6. 分段 STT 按请求计时；发现 KD-20
+
+- **计时**（`plugins/voice/stt/openai_segment.py`）：
+  - 插件自建的客户端换成 SDK 默认的 `DefaultAsyncHttpxClient`，加一个请求钩子，通过 ContextVar 给本次请求挂上 httpcore 的 trace 回调；
+  - 每个 job 记录提交时刻；
+  - 每次请求结束记一条 `stt.request`，字段有 `segment_id`、`outcome`、`queue_ms`（提交到请求开始）、`reused`、`connect_ms`、`tls_ms`、`upload_ms`（请求头到音频发完）、`wait_ms`（音频发完到应答头）、`first_event_ms` 和 `final_ms`（应答头到首个流事件、到 done）。
+  - 复用连接时没有建连可计，相应字段不出现。
+  - 真实运行发现 `first_event_ms` 和 `final_ms` 的起点取错了，取成了请求头写完的时刻，见第 8 节「新发现」。
+- **Doctor**：
+  - 取 Turn 所用终稿所在片段的那条 `stt.request`，按 trace 里的加盐片段号对应，同一 Turn 的其他片段不会混入；
+  - 给出 `stt_queue`、`stt_connect`、`stt_tls`、`stt_upload`、`stt_wait`、`stt_first_event`、`stt_stream`，只在 JSON 和 `doctor_compare.py` 里出现；
+  - 复用连接写 "none: the connection was reused"，插件不计时写 "not measured: its STT plugin times no request"。
+- **用例**：
+  - `avatar-plugins-voice/tests/test_openai_segment.py`：本机回环端点，经 `owned_endpoints` 放行。两个片段连续提交，端点每次先等 200 ms。断言首个请求新建连接并有 `connect_ms`、没有 TLS；两次的 `wait_ms` ≥ 200 ms；第二段在队列里等了第一段的应答（`queue_ms` ≥ 200 ms）。
+  - `test_measure.py::test_the_finals_stt_request_is_parted_into_queue_connection_and_exchange`：同一 Turn 另一个片段的计时不被取用；复用连接；不计时。
+- **变异**：
+  - T1：队列不计时；T2：不挂 trace。`test_openai_segment.py` 失败。
+  - D1：不按片段取；D2：不并入 Turn 的日志。`test_measure.py` 失败。
+- **KD-20**（写这个用例时发现，未修复，待决定）：插件读到 `transcript.text.done` 就 `break` 并关闭响应流，响应体没读完，httpx 因此丢弃连接。本地端点上连续 3 次请求：中断读取时 3 次都新建连接，读完响应后只有第 1 次新建。对真实端点来说，同一会话里每个语音段都要重新做 TCP 和 TLS。用例只断言计时与 trace 一致，不断言复用。
+
+### 7. 离线验证
+
+| 项目 | 命令 | 结果 |
+|---|---|---|
+| 工作区全量 | `PYTHONDONTWRITEBYTECODE=1 ALPHAAVATAR_MODEL_OFFLINE=1 pytest -p no:cacheprovider`，前后各取一次 `git status --porcelain --ignored` 对比 | **532 passed**，退出 0（上一批 525 + 本批 7）；没有新增 ignored 文件。对比命令退出 1，唯一的差异是测试期间我手动编辑的 Setup 日志 |
+| lint | `scripts/quality/check_workspace.py`、`ruff check .`、`ruff format --check .`、`uv lock --check --offline`、`pre-commit validate-config`、对全部改动和新增文件的 `pre-commit run --files`、`git diff --check` | 全部退出 0；pre-commit 第一次修正了 5 个文件末尾的空行，第二次通过 |
+| 受影响的套件 | Doctor、CLI、voice、loop、router、core | 186 passed |
+| 变异 | `scratchpad/mutate11.py`：S3、C1、CMP1～CMP3、T1、T2、D1、D2；`scratchpad/mutate_kd17b.py`：两项 | 全部被抓到。D1 第一次漏掉：用例里另一个片段不属于这个 Turn，在并入日志时就被滤掉了；改成同一 Turn 的第二个片段后被抓到 |
+| 证据复算 | 对 `doctor-baseline/` 里的每份 JSON 运行 `doctor_compare.py`，与保存的输出 `diff -B` | 5 份都一致（`-B` 只忽略 pre-commit 去掉的末尾空行）；`SHA256SUMS` 列出 11 个文件 |
+| KD-19 探针自检 | `KD19_PROBE_DIR=… PYTHONPATH=probe python selfcheck.py`，再运行 `analyze.py` | 均退出 0；结论见第 3 节 |
+
+### 8. 真实服务（用户确认后运行，2026-11-07）
+
+**构建与安装**
+- 构建：本批工作区，`alphaavatar-0.6.8-64a9de7610af-dirty.20261107101729`，tar 包 sha256 前缀 `9020f331421c45d0`。
+- 安装到会话临时目录的隔离前缀：
+  - `install.sh` 退出 0；
+  - `config init accept --avatar-id doctor-accept` 退出 0；
+  - `setup accept --artifacts <构建目录>` 退出 0：105 个包、514 MB，Validate PASS，8 个 runner。
+- 每条命令只带隔离 home、`PATH` 和四个凭据，从没有 `.env` 的目录运行。
+- 安装和 setup 的输出按值检索，三个凭据都不在。
+
+**运行清单**
+
+每份报告的命令都是 `alphaavatar doctor accept host.doctor.external_services=true <覆盖项> --rounds 5 --json`。
+
+| 报告 | 覆盖项 | 时间 | 退出 | 结果 |
+|---|---|---|---|---|
+| `kd19-unprobed` | `vision.enabled=false`；环境带 `PYTHONPATH` 与 `KD19_PROBE_DIR` | 18:20–18:24 | 1 | `voice` 0/5，5 轮都停在 `stt.final`，第二句丢在 STT。探针没有加载，见下 |
+| `kd19-probed` | `vision.enabled=false`；探针经 `.pth` 加载 | 18:25–18:27 | 1 | `voice` 0/5，同上；探针记下 5 段 |
+| `vision-segment` | 无 | 18:28–18:30 | 0 | `voice_vision` 5/5 |
+| `blind-segment` | `vision.enabled=false` | 18:29–18:31 | 1 | `voice` 1/5（第 3 轮通过），另 4 轮停在 `stt.final` |
+
+- 退出 1 都是因为场景未通过：`session.scenarios` 为 FAIL，`services.external` 里语音识别样本也是 FAIL（"stopped at stt.final"）。四份的 stderr 都为空。
+- 此外还有 20 次直连 STT 调用。
+- 比计划多跑了一组 5 轮，因为第一组的探针没有加载。
+
+**第一组探针为什么没加载**
+- 安装后的 `alphaavatar` 启动器用 `python -I` 运行，`-I` 会忽略 `PYTHONPATH`。结果是 STT 所在的进程没有导入探针，也没有生成 `probe.jsonl`。
+- 第二组在临时安装环境的 site-packages 里放了一个 `kd19_probe.pth`。只有设置了 `KD19_PROBE_DIR`，它才把探针目录放到 `sys.path` 最前面，`site` 随后就会导入探针。
+- 没设这个变量时，`.pth` 什么也不做；已核对此时 `sitecustomize` 没有加载。
+- 跑基线前已删除该文件。
+- 第一组仍是一份有效的视觉关报告（探针没有生效），一并保存。
+
+**KD-19：定位结果**
+
+固定条件同第 3 节。安装环境里核对过 SDK 版本：openai 2.7.2、httpx 0.28.1、httpcore 1.0.9。
+
+探针（`kd19-probed` 的 5 段，见 `kd19/analysis.txt`）：
+- **上传的音频**：每段的 WAV 都是 16 kHz、单声道、16 位，61,120 帧（3.820 s，即样本加上前后的静音）。5 段逐字节相同，sha256 `a707eb1e…6c4bc135`，存为 `kd19/uploaded-segment.wav`。
+- **逐边界一致**：5 段都满足推入的 PCM = job 的 PCM = WAV 里的 PCM，且 WAV = multipart 里实际上传的文件部分。
+- **两句都在**：样本的两段有声都在上传的音频里，分别位于 0.220 s 和 1.760 s。
+- **表单**：只有 `model=gpt-4o-transcribe`、`response_format=json`、`stream=true`。
+- **文字**：5 段的端点 delta 拼接、`transcript.text.done`、发布的 FINAL_TRANSCRIPT 和 Turn 采用的文字，都是 "What is two plus three?"。
+
+直连（`kd19/direct.json`）：同一 SDK、同一模型和参数，每种 5 次；按 Doctor 自己的 `samples.VOICE.heard_sentences` 判定（`kd19/direct-scored.txt`）：
+
+| 输入 | 流式：两句都在 | 非流式：两句都在 |
+|---|---|---|
+| 上传的 WAV（`a707eb1e…`） | 1/5 | 2/5 |
+| 原始样本文件（`93ac1590…`，不经插件） | 1/5 | 1/5 |
+
+- 其余 15 次都只有第一句。
+- 10 次流式调用里，delta 拼接都等于 done，事件只有 `transcript.text.delta` 和 `transcript.text.done` 两种。
+- 同一份字节，每次的输出会在「两句」和「只有第一句」之间变化。
+
+**结论**
+- 第二句在端点对这段音频返回的文字里就已经缺失。
+- 插件如实传递了端点的结果：音频路径（PCM、job、WAV 编码、上传）、流的解析（delta、done、读到 done 即中断）、终稿发布和 Turn 采用都没有丢内容。
+- 非流式同样会丢；不经插件、直接发原始样本文件也会丢。
+- 所以修复点不在这些边界，而在请求本身：模型的选择，或请求参数，例如 `language`、`prompt`、`chunking_strategy`、`temperature`。
+- 具体选哪一项，要用同一 WAV 做一组固定输入的对照，每种若干次。这会计费，待用户决定。
+- 样本和严格判定不变。本批分段 STT 共 15 轮 `voice`，只有 1 轮通过。
+
+**新基线：本批构建，分段 STT**
+
+单元格是后续轮的中位数 [最小–最大] ×轮数，括号里是第 1 轮；单位为 ms，另有注明的除外。`voice` 只有第 3 轮通过，所以另列全体轮（†，含未通过的 4 轮）。STT 首个事件和流这两行的起点取错了，见下文「新发现」，表里保留报告的原值。
+
+| Metric | `voice_vision` · 5/5 passed | `voice` · passed rounds (1/5) | `voice` · every round † |
+|---|---|---|---|
+| **端到端（自最后一个有声样本输入起）** | | | |
+| Runtime first text | 2,589 [2,547–2,766] ×4 (3,369) | 2,708 ×1 (—) | 2,747 [2,681–2,832] ×4 (2,603) |
+| First audio frame | 3,461 [3,392–3,615] ×4 (4,360) | 3,603 ×1 (—) | 3,612 [3,415–3,662] ×4 (3,313) |
+| Text complete | 2,798 [2,749–2,944] ×4 (3,536) | 3,006 ×1 (—) | 2,935 [2,859–3,006] ×4 (2,736) |
+| Last audio frame | 4,180 [4,120–4,349] ×4 (5,174) | 4,031 ×1 (—) | 4,331 [4,031–4,368] ×4 (3,835) |
+| Response complete | 4,180 [4,120–4,350] ×4 (5,174) | 4,031 ×1 (—) | 4,331 [4,031–4,369] ×4 (3,835) |
+| Last required input (frame or voice) | 1,361 [1,261–1,461] ×4 (1,562) | n/a | n/a |
+| **Input** | 1,446 [1,351–1,483] ×4 (1,616) | 1,392 ×1 (—) | 1,408 [1,336–1,483] ×4 (1,327) |
+| &nbsp;&nbsp;· Final speech → VAD close | 721 [721–721] ×4 (721) | 680 ×1 (—) | 681 [680–682] ×4 (680) |
+| &nbsp;&nbsp;· VAD close → Final transcript | 725 [630–762] ×4 (895) | 712 ×1 (—) | 727 [655–803] ×4 (647) |
+| **Context** | 240 [224–364] ×4 (513) | 380 ×1 (—) | 347 [297–380] ×4 (535) |
+| &nbsp;&nbsp;· Final transcript → Turn commit | 2.0 [1.9–2.2] ×4 (2.3) | 151 ×1 (—) | 93 [69–151] ×4 (221) |
+| &nbsp;&nbsp;· Turn commit → Context readiness check complete | 226 [211–350] ×4 (417) | 219 ×1 (—) | 230 [217–246] ×4 (219) |
+| &nbsp;&nbsp;· Context readiness check complete → Context built | 1.5 [1.4–1.7] ×4 (1.7) | 1.6 ×1 (—) | 1.7 [1.6–1.9] ×4 (1.7) |
+| &nbsp;&nbsp;· Context built → Model request sent | 9.9 [9.8–11] ×4 (92) | 8.5 ×1 (—) | 8.5 [8.4–8.9] ×4 (92) |
+| **Output** | 1,763 [1,719–1,888] ×4 (2,231) | 1,831 ×1 (—) | 1,871 [1,635–1,918] ×4 (1,451) |
+| &nbsp;&nbsp;· Model request sent → First text delta | 894 [866–1,039] ×4 (1,240) | 936 ×1 (—) | 989 [901–1,122] ×4 (741) |
+| &nbsp;&nbsp;· First text delta → TTS request | 203 [179–216] ×4 (168) | 298 ×1 (—) | 153 [126–298] ×4 (134) |
+| &nbsp;&nbsp;· TTS request → First PCM | 660 [601–714] ×4 (823) | 597 ×1 (—) | 630 [555–747] ×4 (576) |
+| &nbsp;&nbsp;· First PCM → First audio frame | 0.7 [0.5–0.8] ×4 (0.7) | 0.6 ×1 (—) | 0.6 [0.6–0.7] ×4 (0.7) |
+| **STT 与输入** | | | |
+| STT commit → Final transcript | 725 [630–762] ×4 (895) | 712 ×1 (—) | 726 [655–803] ×4 (647) |
+| STT queue (commit → request started) | 0.0 [0.0–0.0] ×4 (0.0) | 0.0 ×1 (—) | 0.0 [0.0–0.1] ×4 (0.1) |
+| STT connect (TCP) | 3.2 [3.0–3.3] ×4 (3.8) | 6.5 ×1 (—) | 6.6 [6.5–6.8] ×4 (4.1) |
+| STT TLS handshake | 5.9 [5.3–6.8] ×4 (5.7) | 6.5 ×1 (—) | 6.6 [5.8–7.1] ×4 (9.5) |
+| STT upload (headers → audio sent) | 5.1 [4.5–6.1] ×4 (4.6) | 6.1 ×1 (—) | 5.7 [4.2–8.4] ×4 (7.0) |
+| STT wait (audio sent → answer's headers) | 638 [531–669] ×4 (649) | 602 ×1 (—) | 633 [593–748] ×4 (481) |
+| STT first event（标注为 headers 起，实为请求头写完起，见下） | 643 [536–676] ×4 (655) | 608 ×1 (—) | 641 [598–754] ×4 (490) |
+| STT stream（同上） | 714 [619–750] ×4 (786) | 696 ×1 (—) | 711 [640–789] ×4 (536) |
+| Input frame lateness (due → published) | 2.1 [2.0–3.2] ×4 (165) | 2.0 ×1 (—) | 3.1 [2.0–4.5] ×4 (152) |
+| **Context 与模型请求** | | | |
+| Context readiness wait | 225 [210–349] ×4 (415) | 218 ×1 (—) | 229 [216–244] ×4 (218) |
+| Request encoding | 0.2 [0.2–0.3] ×4 (0.2) | 0.1 ×1 (—) | 0.1 [0.1–0.3] ×4 (0.1) |
+| Pictures sent | 4 ×4 (4) | 0 ×1 (—) | 0 ×4 (0) |
+| Request size (B) | 63,997 ×4 (63,997) | 19,316 ×1 (—) | 19,289 [19,289–19,316] ×4 (19,133) |
+| Request attempts | 1 ×4 (1) | 1 ×1 (—) | 1 ×4 (1) |
+| Model request sent → First event | 611 [597–720] ×4 (1,156) | 470 ×1 (—) | 565 [444–870] ×4 (648) |
+| **视觉** | | | |
+| Frame arrived → published (median) | 0.8 [0.8–0.8] ×4 (0.8) | n/a | n/a |
+| Oldest selected frame age at request | 2,728 [2,703–2,755] ×4 (3,076) | n/a | n/a |
+| Newest selected frame → Turn commit | 85 [24–98] ×4 (56) | n/a | n/a |
+| Vision wait | — (no wait is observed: Context selects among frames already in) | n/a | n/a |
+| First visual output frame | — (no visual output reaches the output boundary) | — (no visual output reaches the output boundary) | — |
+| **音频供给** | | | |
+| Audio duration (s) | 2.58 [1.80–3.10] ×4 (2.30) | 1.65 ×1 (—) | 3.08 [1.65–3.60] ×4 (3.60) |
+| Frame interval (median) | 0.1 [0.1–0.2] ×4 (0.1) | 0.2 ×1 (—) | 0.2 [0.2–0.2] ×4 (0.2) |
+| Largest frame gap | 303 [293–314] ×4 (428) | 206 ×1 (—) | 286 [206–329] ×4 (300) |
+| Underruns (count) | 1 ×4 (1) | 1 ×1 (—) | 1 ×4 (1) |
+| Starved in total | 105 [95–116] ×4 (231) | 8.0 ×1 (—) | 88 [8.0–131] ×4 (102) |
+| Production time / audio duration | 0.29 [0.24–0.39] ×4 (0.35) | 0.26 ×1 (—) | 0.26 [0.21–0.26] ×4 (0.14) |
+| Output events dropped | 0 ×4 (0) | 0 ×1 (—) | 0 ×4 (0) |
+
+会话与 runner：
+
+| | 视觉开（`voice_vision`） | 视觉关（`voice`） |
+|---|---|---|
+| runtime 启动 | 17.73 s，模型缓存没有增长 | 16.34 s，模型缓存没有增长 |
+| 会话就绪（5 个会话） | 中位数 10.2 ms，第一个 204 ms | 中位数 10.9 ms，第一个 117 ms |
+
+（本次安装的第一组 `kd19-unprobed` 是空缓存：runtime 启动 134.27 s，模型缓存净增 1,731.9 MB。）
+
+| runner | 视觉开：启动 · 调用 · 排队峰值 · 执行峰值 | 视觉关：启动 · 调用 · 排队峰值 · 执行峰值 |
+|---|---|---|
+| `voice.vad.silero` | 0.24 s · 1040 · 0.03 ms · 1.5 ms | 0.24 s · 1145 · 0.6 ms · 2.4 ms |
+| `router.addressing.semantic.qwen3_0_6b` | 1.96 s · 5 · 0.0 ms · 206 ms | 1.97 s · 5 · 0.0 ms · 184 ms |
+| `router.turn_taking.smart_turn_v3` | 1.60 s · 5 · 0.0 ms · 37 ms | 1.61 s · 20 · 0.0 ms · 60 ms |
+| `memory.vdb.lancedb` | 6.15 s · 5 · 0.0 ms · 414 ms | 5.58 s · 5 · 0.0 ms · 243 ms |
+| `persona.speaker.attribute` | 1.08 s · — | 1.04 s · 5 · 0.0 ms · 104 ms |
+| `persona.speaker.vector` | 1.37 s · — | 1.29 s · 10 · 0.0 ms · 89 ms |
+| `persona.face.analysis` | 1.67 s · — | 1.50 s · — |
+| `persona.vdb.lancedb` | 3.66 s · 5 · 0.0 ms · 10 ms | 3.12 s · 19 · 0.0 ms · 309 ms |
+
+**读数**
+- **Context built**：时刻改到 build 返回处之后，真实数据里 readiness → built 是 1.5～1.7 ms，built → 请求发出是 8.5～9.9 ms；每份的第 1 轮约 92 ms。
+  - 上一批按 `model.started` 取这个时刻，两者只差约 0.2 ms：真实运行里，Loop 在 build 返回到 `model.started` 之间的组装很短。
+  - 这次修复的意义在于归因正确（见第 1 节的注入延迟回归），当前的数字基本不变。
+- **与上一批对照**（`compare-batches-vision.txt`、`compare-batches-blind.txt`）：
+  - 视觉开：首音频帧中位数 4,055 → 3,461 ms；
+  - 视觉关（全体轮）：3,643 → 3,612 ms；
+  - 每份只有 5 轮，不把这些差异当作代码改动的效果。
+- **STT 拆解**：视觉开取后续 4 轮的中位数，括号里是视觉关全体轮。首个事件和 done 用下文的换算值。
+  - commit → final：725（726）ms；
+  - 排队：0.0（0.0）；TCP 建连：3.2（6.6）；TLS：5.9（6.6）；上传：5.1（5.7）；
+  - 音频发完 → 应答头：638（633）；
+  - 应答头 → 首个事件：约 0.3（0.3）；应答头 → done：约 88（48）。
+  - 逐轮来看，这几段相加等于 commit → final（例如视觉开第 2 轮：约 3 + 5 + 5.2 + 530.9 + 82.9 ≈ 629.8）。
+- **等待应答头占 commit → final 的 85%～90%**。
+  - TCP 建连大约是到 API 接入点的一次网络往返（3～7 ms）。
+  - 由此推断，等待的绝大部分发生在接入点之后，即接入点到服务端的网络加上服务端处理，客户端无法再往下拆。
+- **建连的代价**：KD-20 在本机网络下让每段多花约 9～13 ms（建连 + TLS）。
+- **首段多出约 98 ms**：
+  - 三份没挂探针的报告里，第 1 轮 STT 各段之和比 commit → final 少约 98 ms（97.5～99.0），后续轮只差约 2 ms。
+  - 原因：SDK 在第一次访问 `client.audio.transcriptions` 时才导入音频资源模块。在安装环境里离线计时：保存的 3 次（`stt-first-access.txt`）首次访问为 168、94、93 ms，之前另测的 3 次为 93～101 ms；再次访问都是 0 ms。
+  - 挂探针的那份第 1 轮只差 3.9 ms：探针在计时开始前就访问过这个属性，正好构成对照。
+- **STT warmup 能省多少**：
+  - 每个进程的第一段约 95 ms：提前访问 SDK 资源即可；
+  - 预先建连每段约 9～13 ms，而且要先修好 KD-20，连接才能复用。
+
+**新发现：`stt_first_event` 与 `stt_stream` 的起点取错了（本批代码，未修复，待决定）**
+- **原因**：`openai_segment.py` 的 `_transcribe` 按后缀 `headers.complete` 找第一个 trace 标记作起点。先命中的是 `http11.send_request_headers.complete`（请求头写完），而不是 `receive_response_headers.complete`（收到应答头）。
+- **影响**：
+  - 这两项比文档和 Doctor 标注的「应答头 → 首个事件 / done」多出了上传和等待两段，例如视觉开的中位数是 643 / 714 ms。
+  - 排队、建连、TLS、上传、等待这五项不受影响。
+- **换算**：首个事件 = `first_event_ms − upload_ms − wait_ms`，done 同理（`stt-derived.txt`）。换算值是下界，误差是请求头本身的写出时间，不到 1 ms。上文用的就是换算值。
+- **为什么没被抓到**：离线用例只断言了 `final_ms ≥ first_event_ms ≥ 0`，没有约束起点。
+- **修复方向**：
+  - 起点改用 `receive_response_headers.complete`；
+  - 用例加一条断言：首个事件早于端点的等待时长。
+  - 修复后需要重跑基线，才能直接读出这两项。
+
+**另一处观察（未改动）**
+- 启动器用 `-I` 运行，注释说它与调用方的设置隔离。
+- 但 `processes/process.py` 用 `sys.executable -m …` 启动执行子进程，不带 `-I`，子进程会继承 `os.environ`。
+- 已用安装环境的 Python 核对：`-I` 父进程的环境里仍有 `PYTHONPATH`，不带 `-I` 的子进程会把它放进 `sys.path`。
+- 也就是说，调用方的 `PYTHONPATH` 等 `PYTHON*` 变量能影响执行子进程。是否修改由用户决定。
+
+**KD-17**
+- 本批 20 轮里，0.75 s 观察点触发了 1 次：`kd19-unprobed` 第 1 轮，STT 用时 2.29 s。终稿随后到达并提交，没有取消。
+- 没有一轮到达 3 s 硬期限，所以硬期限的真实链路仍待验证。
+
+**证据**
+
+位置：[`2026-11/2026-11-07/doctor-batch-2/`](../2026-11-07/doctor-batch-2/)，1.2 MB，`SHA256SUMS` 列出 19 个文件。
+- **报告**：四份脱敏 JSON。临时目录替换为 `$RUN`；按值检索四个凭据和 LiveKit URL，都不在。
+- **复算**：
+  - 每份的 `doctor_compare.py` 重算 `compare-*.txt`，都退出 0、stderr 为空；
+  - 视觉开与视觉关的对照 `compare-segment.txt`；
+  - 与上一批的对照 `compare-batches-vision.txt` 和 `compare-batches-blind.txt`。
+- **表格与换算**：`full-tables-segment.md`、`stt-derived.txt`、`stt-first-access.txt`。
+- **KD-19**（`kd19/`）：`probe.jsonl`、`analysis.txt`、`uploaded-segment.wav`、`direct.json`、`direct-scored.txt`。
+- **独立复算**：`python scripts/quality/doctor_compare.py vision=…/vision-segment.json blind=…/blind-segment.json`。
+
+复验结束后，已删除隔离前缀、home（含 1.7 GB 模型缓存）和凭据副本；`.pth` 在跑基线前已删除。探针、分析脚本和直连脚本留在会话临时目录。
+
+### 9. 仍待复验与延期
+
+- **KD-19 修复点**：在同一 WAV 上对照模型与请求参数。计费，待决定。
+- **`stt_first_event` / `stt_stream` 的起点**：待决定是否修复；修复后需重跑基线。
+- **KD-20**：待决定。本机实测代价约每段 9～13 ms。
+- **STT warmup**：已拆出两部分，每个进程首段的 SDK 懒加载约 95 ms，每段建连 9～13 ms（依赖 KD-20）。做不做、做哪一部分，待决定。
+- **执行子进程不带 `-I`**：待决定。
+- **VAD 550/300/200 ms**：作为另一组固定输入的对照，没有开始。
+- **KD-17 硬期限的真实链路**：本批没有触发。
+- **未拆解的两项**：
+  - 每份第 1 轮「Context built → Model request sent」约 92 ms（其后各轮约 9 ms）。量级与 SDK 懒加载相近，但模型走的是另一条路径（langchain），没有核对；
+  - 视觉关「Final transcript → Turn commit」69～221 ms（视觉开约 2 ms），两批都有。

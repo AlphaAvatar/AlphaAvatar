@@ -583,6 +583,20 @@ def install(spec: dict, files: Path) -> None:
         ContextBuilder.build = lambda self, *, snapshot, **kwargs: build(
             self, snapshot=dataclasses.replace(snapshot, text=None), **kwargs
         )
+    if spec.get("slow_assembly"):
+        # The Context build has returned; the loop then awaits this long before the request
+        # goes on: that wait is the request's assembly, not the build.
+        from alphaavatar.agents.avatar.loop.enums import LoopState
+        from alphaavatar.plugins.loop.feedback import LoopFeedback
+
+        change = LoopFeedback.change
+
+        async def assembling(self: object, state: LoopState, **kwargs: object) -> None:
+            if state in (LoopState.MODEL, LoopState.FINALIZING):
+                await asyncio.sleep(spec["slow_assembly"])
+            await change(self, state, **kwargs)
+
+        LoopFeedback.change = assembling
     if spec.get("slow_scan"):
         # A model cache that takes this long to scan: the start's own time must not hold it.
         import time

@@ -11,7 +11,8 @@
 |---|---|---|---|---|---|
 | 交互配置第一轮 | 去掉 `--preset`；`setup` 以 `config init` 的参考配置为起点逐项询问；新增 `setup <bundle>`，按已有 bundle（含编辑）的设置安装、校验、启用，不导入插件；基础包上 `config init` 的下一步改为 `setup <bundle>`；CI 与无人值守改走显式 bundle | 2026-11-06 | `2fc4f398` | 用户已提交（`38fad3c3`） | 部分被第二轮修正：只写模型名的 provider 任务、LiveKit 凭据 |
 | 交互配置第二轮 | `setup <bundle>` 的两处收尾：只写 `model` 的 provider 任务按 `ProviderTaskConfig` 默认的 `kind`、`backend` 计入安装计划；给定 bundle 在安装前离线校验所选 LiveKit 后端的凭据。都在只装基础包、空环境的子进程里验证 | 2026-11-07 | `38fad3c3` | 用户已提交（`d5080d5`） | `d5080d5` 审查：URL 解析异常会带出原值（第三轮修复）；Quality 因字节码目录失败（第三轮修复） |
-| 交互配置第三轮 | LiveKit URL 校验的错误不再带出原值，交互首配对最终生效值做同一校验；Quality 的裸基础包子进程不再写字节码 | 2026-11-07 | `d5080d5` | 未提交（用户提交） | 待审查；干净检出的 Quality 同等命令见 Doctor 日志同一轮第 6 节 |
+| 交互配置第三轮 | LiveKit URL 校验的错误不再带出原值，交互首配对最终生效值做同一校验；Quality 的裸基础包子进程不再写字节码 | 2026-11-07 | `d5080d5` | 用户已提交（`64a9de7`） | `64a9de7` 审查：bundle 的传输设置无效时，Pydantic 错误原样带出 `input_value`（第四轮修复） |
+| 交互配置第四轮 | `setup <bundle>` 对 bundle 自身传输设置（`host.rtc.init_config`）的校验错误只列字段，不带出原值 | 2026-11-07 | `64a9de7` | 未提交（用户提交） | 待审查 |
 
 ## 历史记录（合并来源）
 
@@ -192,3 +193,25 @@
 - 变异：换回旧的 `websocket_url`，`port`、`IPv6` 和交互用例失败（输出里出现 `lk-fictional-secret`）；去掉交互路径的检查，交互用例失败。
 - 字节码：干净克隆里修复前 70 个、修复后 0 个（同一组 3 个用例）；套用本轮全部改动后，干净克隆的 Quality 同等命令 524 项通过、ignored 状态前后一致（Doctor 日志「Doctor 第一批」第 6 节）。
 - `docs/cli/cli.html` 的 Setup 面板已用本批构建在干净根目录重录，见 Doctor 日志「Doctor 第一批」第 9 节。
+
+## 交互配置第四轮：传输设置的校验错误不带出原值（基线 `64a9de7`）
+
+依据：`64a9de7` 审查第 1 项。上一轮修了 URL 解析，但 `_session_credentials()` 把 Pydantic 的 `ValidationError` 原样拼进 `SetupError`，错误文字里有 `input_value=…`。bundle 的 host 档案里，`host.rtc.init_config` 写了未知键（例如有人把 secret 写在这里），或者写了类型错误的值，`setup <bundle>` 都会把这个值打到 stderr。所有改动在未暂存的工作区。
+
+### 1. 复现
+
+新用例在修复前失败：stderr 是 `The session transport (livekit) cannot start: 1 validation error for LiveKitConfig … input_value='TEST_CONFIG_SECRET' …`，后面还拼上了凭据来源的说明。
+
+### 2. 修复
+
+- `cli/commands/setup.py` `_session_credentials()`：先单独捕获 `ValidationError`，用已有的安全格式化 `alphaavatar.core.log.error_fields`（`config check` 的 `fields` 用的也是它）只列出字段位置：`The session transport (livekit) cannot start: its settings are not valid (fields: host.rtc.init_config.api_secret); fix them in the bundle's host profile`。不链接原异常（`from None`）。
+- 其他 `ValueError`（URL、缺凭据、TLS）仍走原来那条，文字不变。交互首配走同一个函数。
+
+### 3. 测试与变异
+
+- `test_setup.py::test_a_session_setting_the_transport_refuses_is_named_never_shown`，参数化两种：
+  - `host.rtc.init_config.api_secret: TEST_CONFIG_SECRET`（未知键）；
+  - `connect_timeout: TEST_CONFIG_SECRET`（类型错误）。
+  - 两种都走真实的 `main(["setup", "reference", ...])`：退出 1，`install` 未调用，home 下文件不变（没有安装、存储凭据或启用 bundle）。stderr 写出对应字段，stdout、stderr 和 DEBUG 日志里都没有 `TEST_CONFIG_SECRET`。
+- 已有的非法 URL 用例（`userinfo`、`port`、`IPv6` 等 6 种）和交互用例照旧通过，`test_setup.py` 共 21 项。
+- 变异 S3：让 `ValidationError` 不进新分支（改成捕获别的异常），新用例失败。

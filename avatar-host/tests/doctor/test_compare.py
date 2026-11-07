@@ -117,3 +117,41 @@ def test_a_summary_that_its_rounds_do_not_give_is_named(tmp_path: Path, capsys) 
     assert compare.main([f"segment={path}"]) == 1
     err = capsys.readouterr().err
     assert "Differs from its summary: segment voice first_text:" in err
+
+
+def test_a_report_whose_summaries_do_not_cover_its_rounds_is_refused(
+    tmp_path: Path, capsys
+) -> None:
+    compare = script()
+    rounds = [result(1, "failed", 900.0, blocked_stage="stt.final"), result(2, "passed", 800.0)]
+    path = Path(saved(tmp_path, "segment", rounds).split("=")[1])
+    original = json.loads(path.read_text())
+    assert original["checks"][0]["summaries"][0]["stopped_at"] == {"stt.final": 1}
+
+    def refused(edit) -> str:
+        report = json.loads(json.dumps(original))
+        edit(report["checks"][0])
+        path.write_text(json.dumps(report))
+        assert compare.main([f"segment={path}"]) == 1
+        return capsys.readouterr().err
+
+    def no_summary(scenarios: dict) -> None:
+        scenarios["summaries"] = []
+
+    def twice(scenarios: dict) -> None:
+        scenarios["summaries"] *= 2
+
+    def no_figure(scenarios: dict) -> None:
+        scenarios["summaries"][0]["figures"] = [
+            f for f in scenarios["summaries"][0]["figures"] if f["name"] != "input"
+        ]
+
+    def stopped_elsewhere(scenarios: dict) -> None:
+        scenarios["summaries"][0]["stopped_at"] = {"stt.final": 1, "turn": 1}
+
+    assert "voice (stt openai_segment m): no summary" in refused(no_summary)
+    assert "more than one summary" in refused(twice)
+    assert "figures missing ['input'], not in its rounds []" in refused(no_figure)
+    assert "stopped at {'stt.final': 1, 'turn': 1} != {'stt.final': 1}" in refused(
+        stopped_elsewhere
+    )

@@ -28,7 +28,9 @@ LABELS = {
     "engine.ready": "READY",
     "input.committed": "USER INPUT",
     "run.started": "RUN START",
+    "context.built": "CONTEXT BUILT",
     "model.started": "MODEL START",
+    "stt.request": "STT REQUEST",
     "model.first_text": "FIRST TEXT",
     "model.first_event": "FIRST MODEL EVENT",
     "model.request_sent": "MODEL REQUEST SENT",
@@ -56,7 +58,8 @@ _FIELDS = frozenset(
         "measurement requested_reasoning_effort query_difficulty reasoning_output_tokens "
         "cached_input_tokens first_event_ms first_visible_text_ms "
         "start_seconds end_seconds timing_source chunk_id source_chunk_id source_chunk_count "
-        "encode_ms frame_count request_bytes attempt"
+        "encode_ms frame_count request_bytes attempt "
+        "segment_id queue_ms reused connect_ms tls_ms upload_ms wait_ms final_ms"
     ).split()
 )
 MAX_FIELDS = 24

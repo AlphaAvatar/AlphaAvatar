@@ -211,6 +211,36 @@ def test_an_existing_bundle_is_refused_before_installing_without_its_session_cre
     assert "lk-fictional" not in output.err + output.out + caplog.text
 
 
+@pytest.mark.parametrize(
+    "setting", ["api_secret", "connect_timeout"], ids=["unknown key", "wrong type"]
+)
+def test_a_session_setting_the_transport_refuses_is_named_never_shown(
+    package: environment.Installation,
+    capsys: pytest.CaptureFixture,
+    caplog: pytest.LogCaptureFixture,
+    setting: str,
+) -> None:
+    # A secret written into the bundle's transport settings, where no credential belongs, or
+    # as a value of the wrong type: the validator quotes either; setup names the field only.
+    assert main(["config", "init", "reference", "--avatar-id", "reference"]) == 0
+    edit(profile("reference", "host"), "rtc", "init_config", setting, value="TEST_CONFIG_SECRET")
+    capsys.readouterr()
+    before = home_files()
+    caplog.set_level(logging.DEBUG)
+    with (
+        mock.patch.object(environment.Installation, "running", return_value=package),
+        mock.patch("sys.stdin.isatty", return_value=False),
+        mock.patch.dict(os.environ, CREDENTIALS),
+        mock.patch.object(environment, "install") as install,
+    ):
+        assert main(["setup", "reference", "--artifacts", "/ci/run"]) == 1
+    output = capsys.readouterr()
+    assert not install.called and home_files() == before  # Nothing installed nor enabled.
+    assert "The session transport (livekit) cannot start: " in output.err
+    assert f"host.rtc.init_config.{setting}" in output.err
+    assert "TEST_CONFIG_SECRET" not in output.err + output.out + caplog.text
+
+
 def test_typed_session_credentials_are_checked_before_anything_is_stored_or_installed(
     package: environment.Installation,
     capsys: pytest.CaptureFixture,

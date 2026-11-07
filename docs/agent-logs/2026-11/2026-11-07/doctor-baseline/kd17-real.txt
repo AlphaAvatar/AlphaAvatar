@@ -1,0 +1,21 @@
+vision-segment   r1 passed wait began 1359 (last hold 1357), pending at 2109, final at 2481 = wait +1122 ms, commit 2482
+vision-segment   r2 passed wait began 1260 (last hold 1259), pending at 2010, final at 2173 = wait +913 ms, commit 2174
+vision-segment   r3 passed no pending: last hold 1256, final 1600 (+344 after the last hold), commit 1601
+vision-segment   r4 passed no pending: last hold 1257, final 1461 (+205 after the last hold), commit 1462
+vision-segment   r5 passed no pending: last hold 1256, final 1401 (+144 after the last hold), commit 1401
+blind-segment    r1 failed no pending: last hold 1531, final 1483 (+-48 after the last hold), commit 1666
+blind-segment    r2 failed no pending: last hold 1279, final 1307 (+28 after the last hold), commit 1376
+blind-segment    r3 passed no pending: last hold 1529, final 1481 (+-47 after the last hold), commit 1614
+blind-segment    r4 failed no pending: last hold 1695, final 1647 (+-48 after the last hold), commit 1765
+blind-segment    r5 failed no pending: last hold 1251, final 1482 (+231 after the last hold), commit 1552
+vision-realtime  r1 failed no pending: last hold 1261, final 1355 (+95 after the last hold), commit 1356
+vision-realtime  r2 failed no pending: last hold 1256, final 1473 (+217 after the last hold), commit 1474
+vision-realtime  r3 failed no pending: last hold 1254, final 1445 (+191 after the last hold), commit 1446
+vision-realtime  r4 failed no pending: last hold 1296, final 1246 (+-49 after the last hold), commit 1358
+vision-realtime  r5 failed no pending: last hold 1255, final 1460 (+205 after the last hold), commit 1461
+blind-realtime   r1 passed no pending: last hold 1374, final 1335 (+-38 after the last hold), commit 1874
+blind-realtime   r2 passed no pending: last hold 1257, final 1349 (+93 after the last hold), commit 1415
+blind-realtime   r3 passed no pending: last hold 1277, final 1345 (+68 after the last hold), commit 1410
+blind-realtime   r4 passed no pending: last hold 1249, final 1253 (+4 after the last hold), commit 1319
+blind-realtime   r5 passed no pending: last hold 715, final 1180 (+465 after the last hold), commit 1247
+rounds 20; 0.75 s observation reached in 2; transcript_timeout/cancel in 0

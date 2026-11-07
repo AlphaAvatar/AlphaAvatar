@@ -373,6 +373,44 @@ async def test_late_stt_final_after_transcript_timeout_never_revives_the_candida
     assert listening.runtime.turn.latest is None
 
 
+@pytest.mark.parametrize("listening", [WAIT], indirect=True)
+async def test_after_the_deadline_the_source_speaks_again_and_the_late_final_stays_its_own(
+    listening: Listening,
+) -> None:
+    # KD-17 recovery in one session: the first utterance is retired at the hard deadline;
+    # the same source speaks again and that turn commits, while the first one's final,
+    # arriving late, is refused as its own retired segment's and joins nothing.
+    source = listening.speech()
+    listening.utter(source, "segment-a")
+    await wait_until(
+        lambda: any(d.reason == "transcript_timeout" for _, d in listening.decisions()),
+        "the untranscribed candidate was never cancelled",
+    )
+    listening.utter(source, "segment-b")
+    (stream,) = listening.stt.streams
+    await wait_until(lambda: stream.committed == ["segment-a", "segment-b"], "no second commit")
+    stream.emit(TranscriptionEventType.FINAL_TRANSCRIPT, "segment-a", "too late")
+    stream.emit(TranscriptionEventType.FINAL_TRANSCRIPT, "segment-b", "second words")
+    await wait_until(
+        lambda: any(d.action == TurnTakingAction.COMMIT for _, d in listening.decisions()),
+        "the second utterance never committed",
+    )
+
+    first, second = listening.records("speech.close")
+    (rejected,) = listening.records("candidate.transcript_rejected")
+    assert (rejected["reason"], rejected["segment_id"]) == ("retired_segment", first["segment_id"])
+    late, own = sorted(listening.transcripts(), key=lambda o: o.segment.segment_id)
+    assert (late.segment.segment_id, own.segment.segment_id) == ("segment-a", "segment-b")
+    (_, commit), *more = [item for item in listening.decisions() if item[1].action == "commit"]
+    # The commit carries the second utterance's own final, never the late one.
+    assert not more and own.observation_id in commit.input_observation_ids
+    assert late.observation_id not in commit.input_observation_ids
+    accepted = [r for r in listening.records() if r.get("state") == "accepted"]
+    assert [r["segment_id"] for r in accepted] == [second["segment_id"]]
+    actions = [d.action for _, d in listening.decisions()]
+    assert actions.count(TurnTakingAction.CANCEL) == 1
+
+
 async def test_stale_source_generation_retires_its_stream_frames_and_late_results(
     listening: Listening,
 ) -> None:

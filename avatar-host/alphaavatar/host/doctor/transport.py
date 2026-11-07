@@ -398,11 +398,13 @@ class LogTimings(logging.Handler):
     _EVENTS = frozenset(
         (
             "input.committed",
+            "context.built",
             "model.started",
             "model.first_event",
             "model.first_text",
             "model.request_sent",
             "run.finished",
+            "stt.request",
         )
     )
     _MESSAGES = {

@@ -277,8 +277,8 @@ before it:
 | | `input.final_transcript` | VAD close | Final transcript: the last STT final the request carries |
 | `context` | `context.turn_commit` | Final transcript | Turn commit |
 | | `context.context_ready` | Turn commit | Context readiness check complete |
-| | `context.context_built` | Context readiness check complete | Context built: the request's input assembled |
-| | `context.request_sent` | Context built | Model request sent: encoded and handed to the transport, the first attempt |
+| | `context.context_built` | Context readiness check complete | Context built: the loop logs `context.built` where the Context build returns, by the request it starts |
+| | `context.request_sent` | Context built | Model request sent: encoded and handed to the transport, the first attempt; the request's assembly in between is this row's |
 | `output` | `output.first_text_delta` | Model request sent | First text delta of that request |
 | | `output.tts_request` | First text delta | TTS request for its answer |
 | | `output.first_pcm` | TTS request | First PCM (HTTP PCM providers log it) |
@@ -301,6 +301,7 @@ its first audio frame answers a later request.
 | `audio_underruns` | first answer frame | last: where a real-time queue started at the first frame would starve |
 | `audio_rtf` | first answer frame | last: producing time over audio duration, both given |
 | `stt_request_to_final` | segment committed to STT | the request's last final |
+| `stt_queue`, `stt_connect`, `stt_tls`, `stt_upload`, `stt_wait`, `stt_first_event`, `stt_stream` | the STT request of that final, as its plugin times it (`stt.request`) | its wait in the plugin's queue; the TCP connect and TLS handshake it opened (none, and says so, when the connection was reused); the upload; the wait from the audio sent to the answer's headers, network and service together; from those headers to the first stream event and to the transcript done. A plugin that times nothing leaves them not measured |
 | `context_ready_wait` | Context asks for the Turn's context | ready (the Context manager's own figure) |
 | `model_request_encode`, `model_request_frames`, `model_request_bytes`, `model_request_attempts` | first attempt sent | encoded here (ms), pictures it carries, body sent (bytes), attempts: the provider's own record |
 | `model_first_event` | model request sent | first stream event, which may only say the response began |
@@ -332,7 +333,9 @@ describe this machine and these services today, not the pipeline's behavior in g
 `scripts/quality/doctor_compare.py NAME=REPORT.json ...` puts saved reports side by side,
 recomputing each figure from the rounds the same way, checking it against the report's own
 summary (a difference is named, exit code 1), and counting holds, cancels, finals for a
-retired segment, retried requests and sentences lost by layer.
+retired segment, retried requests and sentences lost by layer. It also checks that the
+summaries cover the rounds: one summary for each scenario and configuration the rounds ran,
+none without rounds, each with the figures its rounds hold and the `stopped_at` they give.
 
 ### Evidence
 
@@ -340,7 +343,7 @@ Each measured scenario lists what was observed, in order, with times relative to
 start: Doctor's input (`input.voiced_end`, `input.screen_first`), the input trace's stages
 (`perception.speech_closed`, `stt.terminal`, `candidate.decision`, `turn.committed`,
 `context.frame_selected`, `model.request`, `model.request_frame`, …), the loop and speech logs
-(`model.started`, `model.first_event`, `speech.request`, …) and the output events
+(`context.built`, `model.started`, `model.first_event`, `stt.request`, `speech.request`, …) and the output events
 (`output.text_chunk`, `output.audio_frame`, `output.control`, `output.playback`). The trace
 keeps identities salted per session; the evidence shows their shortened tokens (`turn`,
 `decision`, `candidate`, `segment`, `input`, `run`, `request`, `observation`), and equal tokens

@@ -1,0 +1,27 @@
+Doctor's own judge: samples.VOICE.heard_sentences, word groups ((('two', '2'), ('three', '3')), (('answer',), ('number',)))
+input   mode    try   ms  sentence 1  sentence 2  text
+uploadedstream    1   785  True        False       'What is two plus three?'  (deltas = done)
+uploadedplain     1   730  True        False       'What is two plus three?'
+uploadedstream    2   837  True        True        'What is two plus three? Answer with just a number.'  (deltas = done)
+uploadedplain     2   641  True        True        'What is two plus three? Answer with just the number.'
+uploadedstream    3   697  True        False       'What is two plus three?'  (deltas = done)
+uploadedplain     3   718  True        False       'What is two plus three?'
+uploadedstream    4  1016  True        False       'What is two plus three?'  (deltas = done)
+uploadedplain     4   815  True        True        'What is two plus three? Answer with just a number.'
+uploadedstream    5   571  True        False       'What is two plus three?'  (deltas = done)
+uploadedplain     5   743  True        False       'What is two plus three?'
+sample  stream    1  1270  True        True        'What is two plus three? Answer with just the number.'  (deltas = done)
+sample  plain     1   841  True        True        'What is 2 plus 3? Answer with just a number.'
+sample  stream    2   777  True        False       'What is two plus three?'  (deltas = done)
+sample  plain     2   716  True        False       'What is two plus three?'
+sample  stream    3   621  True        False       'What is two plus three?'  (deltas = done)
+sample  plain     3   677  True        False       'What is two plus three?'
+sample  stream    4   785  True        False       'What is two plus three?'  (deltas = done)
+sample  plain     4   703  True        False       'What is two plus three?'
+sample  stream    5   580  True        False       'What is two plus three?'  (deltas = done)
+sample  plain     5   627  True        False       'What is two plus three?'
+
+uploaded stream: both sentences 1/5, first only 4/5
+uploaded plain: both sentences 2/5, first only 3/5
+sample stream: both sentences 1/5, first only 4/5
+sample plain: both sentences 1/5, first only 4/5

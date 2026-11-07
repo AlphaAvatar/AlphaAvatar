@@ -154,11 +154,22 @@ def _session_credentials(rtc, env, *, typed: bool = False) -> None:
     """Start's session transport credentials, as start reads them, checked offline before
     anything is stored or installed: a bundle setup enables can start. The error names the
     variables, never their values."""
+    from pydantic import ValidationError
+
+    from alphaavatar.core.log import error_fields
     from alphaavatar.host.sessions.factory import check_session_credentials
     from alphaavatar.host.setup.environment import SetupError
 
     try:
         check_session_credentials(rtc, env)
+    except ValidationError as error:
+        # The bundle's own transport settings: the validator quotes their values, which may
+        # be a secret written where none belongs, so only the fields are named.
+        fields = ", ".join(f"host.rtc.init_config.{field}" for field in error_fields(error))
+        raise SetupError(
+            f"The session transport ({rtc.backend}) cannot start: its settings are not valid "
+            f"(fields: {fields or 'host.rtc.init_config'}); fix them in the bundle's host profile"
+        ) from None
     except ValueError as error:
         raise SetupError(
             f"The session transport ({rtc.backend}) cannot start: {error}, "

@@ -1,0 +1,57 @@
+voice_vision: median [range] ×n of the later rounds (round 1), ms
+                                                                          vision-segment
+Rounds passed                                                                        5/5
+Passed rounds
+  Runtime first text                                      2,907 [2,439–5,180] ×4 (5,984)
+  First audio frame                                       4,055 [3,573–5,909] ×4 (7,521)
+  Response complete                                       4,707 [4,213–6,653] ×4 (8,244)
+  Input                                                   1,531 [1,401–2,173] ×4 (2,481)
+    Final speech → VAD close                                      720 [719–722] ×4 (720)
+    VAD close → Final transcript                              810 [680–1,454] ×4 (1,761)
+  Context                                                         255 [235–889] ×4 (365)
+    Final transcript → Turn commit                                2.0 [1.9–2.2] ×4 (2.3)
+    Turn commit → Context readiness check complete                241 [222–876] ×4 (255)
+    Context readiness check complete → Context built              1.7 [1.5–2.0] ×4 (2.0)
+    Context built → Model request sent                            9.6 [9.5–9.7] ×4 (105)
+  Output                                                  2,153 [1,538–3,479] ×4 (4,675)
+    Model request sent → First text delta                     817 [780–2,750] ×4 (3,139)
+    First text delta → TTS request                                174 [146–189] ×4 (185)
+    TTS request → First PCM                                   641 [576–1,616] ×4 (1,351)
+    First PCM → First audio frame                                 0.6 [0.5–1.0] ×4 (0.6)
+  STT commit → Final transcript                               809 [680–1,454] ×4 (1,761)
+  Context readiness wait                                          240 [221–875] ×4 (249)
+  Model request sent → First event                            556 [525–2,495] ×4 (3,116)
+  Request encoding                                                          0.2 ×4 (0.2)
+  Pictures sent                                                                 4 ×4 (4)
+  Request size                                        63,996 [63,996–64,140] ×4 (64,140)
+  Request attempts                                                              1 ×4 (1)
+Every round, failed included
+  Runtime first text                                      2,907 [2,439–5,180] ×4 (5,984)
+  First audio frame                                       4,055 [3,573–5,909] ×4 (7,521)
+  Response complete                                       4,707 [4,213–6,653] ×4 (8,244)
+  Input                                                   1,531 [1,401–2,173] ×4 (2,481)
+    Final speech → VAD close                                      720 [719–722] ×4 (720)
+    VAD close → Final transcript                              810 [680–1,454] ×4 (1,761)
+  Context                                                         255 [235–889] ×4 (365)
+    Final transcript → Turn commit                                2.0 [1.9–2.2] ×4 (2.3)
+    Turn commit → Context readiness check complete                241 [222–876] ×4 (255)
+    Context readiness check complete → Context built              1.7 [1.5–2.0] ×4 (2.0)
+    Context built → Model request sent                            9.6 [9.5–9.7] ×4 (105)
+  Output                                                  2,153 [1,538–3,479] ×4 (4,675)
+    Model request sent → First text delta                     817 [780–2,750] ×4 (3,139)
+    First text delta → TTS request                                174 [146–189] ×4 (185)
+    TTS request → First PCM                                   641 [576–1,616] ×4 (1,351)
+    First PCM → First audio frame                                 0.6 [0.5–1.0] ×4 (0.6)
+  STT commit → Final transcript                               809 [680–1,454] ×4 (1,761)
+  Context readiness wait                                          240 [221–875] ×4 (249)
+  Model request sent → First event                            556 [525–2,495] ×4 (3,116)
+  Request encoding                                                          0.2 ×4 (0.2)
+  Pictures sent                                                                 4 ×4 (4)
+  Request size                                        63,996 [63,996–64,140] ×4 (64,140)
+  Request attempts                                                              1 ×4 (1)
+Events
+  Holds                                                                               10
+  Cancels                                                                              0
+  Retired finals                                                                       0
+  Retried requests                                                                     0
+vision-segment: model gpt-5.6-luna · stt openai_segment gpt-4o-transcribe · tts openai gpt-4o-mini-tts · vision vlm, max_frames 4 · card_question sha256:9fce6c24e50f
