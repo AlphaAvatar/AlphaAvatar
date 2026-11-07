@@ -73,6 +73,7 @@ class SensorInference:
     def __init__(self) -> None:
         self.searches: list[str] = []
         self.hold: str | None = None
+        self.fail: str | None = None  # A user whose speaker vector request fails
         self.held, self.release = asyncio.Event(), asyncio.Event()
         # Vector searches answer in order: "matched" or a SEARCH_REPLIES miss.
         self.replies: deque[str] = deque()
@@ -89,6 +90,8 @@ class SensorInference:
     async def do_inference(self, method: str, data: bytes) -> bytes | None:
         if method == SpeakerVectorRunner.INFERENCE_METHOD:
             user = LEVELS[round(np.frombuffer(data, dtype=np.float32)[0] * 32768)]
+            if user == self.fail:
+                raise RuntimeError("speaker vector runner failed")
             await self._maybe_hold(user)
             return embedding(user, 192).tobytes()
         if method == SpeakerAttributeRunner.INFERENCE_METHOD:
@@ -183,15 +186,17 @@ def speak(
     user: str,
     *,
     end: bool = True,
+    explicit: bool = True,
 ) -> None:
-    """Publish one entity's 3 s utterance: exactly one model window, then the segment end."""
+    """Publish one entity's 3 s utterance: exactly one model window, then the segment end;
+    ``explicit``: its subject named on each frame, or known by its voice alone."""
     level = next(level for level, name in LEVELS.items() if name == user)
     pcm = np.full(16000, level, dtype="<i2").tobytes()
     common = {
         "source": source,
         "segment": PerceptionSegmentRef(source, segment),
         "device_id": source.source_id,
-        "entity": PerceptionEntityRef(f"voice-{user}"),
+        **({"entity": PerceptionEntityRef(f"voice-{user}")} if explicit else {}),
     }
     for index in range(3):
         frame = AudioFrame(sample_rate=16000, num_channels=1, samples_per_channel=16000, data=pcm)
@@ -281,29 +286,75 @@ async def test_sensor_evidence_and_attributes_stay_with_each_participant(
     await runtime.aclose()
 
 
-async def test_the_speaker_association_records_when_its_windows_ran_and_when_it_settled(
-    tmp_path: Path,
+@pytest.mark.parametrize("explicit", [True, False], ids=["named-subject", "by-voice"])
+async def test_the_association_is_ready_when_it_is_known_and_each_step_keeps_its_span(
+    explicit: bool, tmp_path: Path
 ) -> None:
     runtime = avatar_runtime(tmp_path, SensorInference())
     persona = persona_for(runtime, "speaker")
     await persona.on_start()
-    speak(runtime, PerceptionSourceRef("device", 1), "a", "alice")
+    speak(runtime, PerceptionSourceRef("device", 1), "a", "alice", explicit=explicit)
 
     def records(stage: str) -> list[dict]:
         found = runtime.perception.input_trace.snapshot().to_dict()["records"]
         return [record for record in found if record["stage"] == stage]
 
-    await wait_until(lambda: records("speaker.association"), "the association never settled")
+    await wait_until(lambda: records("speaker.attribute"), "the speaker was never profiled")
     (window,) = records("speaker.window")
-    (association,) = records("speaker.association")
-    # One window, queued, run and done; the association settled from the speech's close,
-    # once that window was done: what a Turn's commit waits for (O-16).
-    assert (window["sequence"], window["outcome"]) == (1, "done")
+    (settled,) = records("participant.segment_ready")  # Once: no later unbound
+    assert (window["sequence"], window["outcome"], settled["outcome"]) == (1, "done", "bound")
     assert window["event_time_ns"] <= window["start_time_ns"] <= window["end_time_ns"]
-    assert (association["outcome"], association["evidence_count"]) == ("bound", 1)
-    assert association["start_time_ns"] <= association["end_time_ns"]
-    assert association["end_time_ns"] >= window["end_time_ns"]
-    assert window["segment_id"] == association["segment_id"]
+    if explicit:
+        # Its subject came with its first frame: bound then, before any window ran.
+        assert settled["end_time_ns"] <= window["start_time_ns"]
+    else:
+        # Known by its voice alone: ready once the window that gave it was done.
+        assert settled["end_time_ns"] >= window["end_time_ns"]
+    # The identity match and the attributes follow the association, on the same queue.
+    (identity,) = records("speaker.identity")
+    (attribute,) = records("speaker.attribute")
+    assert settled["end_time_ns"] <= identity["start_time_ns"] <= identity["end_time_ns"]
+    assert identity["end_time_ns"] <= attribute["start_time_ns"] <= attribute["end_time_ns"]
+    assert {identity["outcome"], attribute["outcome"]} == {"done"}
+    await persona.on_stop()
+    await runtime.aclose()
+
+
+@pytest.mark.parametrize("ending", ["timeout", "failed"])
+async def test_a_window_that_times_out_or_fails_releases_its_association_and_says_so(
+    ending: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from alphaavatar.plugins.persona.processors.speaker import model_files
+
+    key = SpeakerVectorRunner.MODEL_TYPE
+    vector = replace(model_files.SPEAKER_MODEL_CONFIG[key], inference_timeout_sec=0.1)
+    monkeypatch.setitem(model_files.SPEAKER_MODEL_CONFIG, key, vector)
+    inference = SensorInference()
+    if ending == "timeout":
+        inference.hold = "alice"  # Never released: the request outlives its bound.
+    else:
+        inference.fail = "alice"
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "speaker")
+    await persona.on_start()
+    speak(runtime, PerceptionSourceRef("device", 1), "a", "alice", explicit=False)
+
+    def records(stage: str) -> list[dict]:
+        found = runtime.perception.input_trace.snapshot().to_dict()["records"]
+        return [record for record in found if record["stage"] == stage]
+
+    await wait_until(lambda: records("participant.segment_ready"), "the association was held")
+    (window,) = records("speaker.window")
+    (settled,) = records("participant.segment_ready")
+    # Known by its voice alone, which the window never gave: released unbound, at once after
+    # the window ended, its ending said; a commit waiting on it waits no longer.
+    assert (window["outcome"], settled["outcome"]) == (ending, "unbound")
+    assert window["end_time_ns"] <= settled["end_time_ns"] <= window["end_time_ns"] + 50_000_000
+    if ending == "timeout":
+        assert window["end_time_ns"] - window["start_time_ns"] >= 100_000_000
+    inference.release.set()
     await persona.on_stop()
     await runtime.aclose()
 

@@ -1,0 +1,86 @@
+{
+ "mode": {
+  "tail": "on",
+  "prepare": "on"
+ },
+ "wav": "uploaded-segment.wav",
+ "rows": [
+  {
+   "segment": "seg-1",
+   "event": "FINAL_TRANSCRIPT",
+   "text": "What is two plus three?",
+   "commit_to_final_ms": 940.565,
+   "segment_id": "seg-1",
+   "outcome": "final",
+   "queue_ms": 0.013,
+   "reused": false,
+   "connect_ms": 3.837,
+   "tls_ms": 7.29,
+   "upload_ms": 7.603,
+   "wait_ms": 765.176,
+   "first_event_ms": 1.025,
+   "final_ms": 148.443,
+   "final_to_request_end_ms": 0.816
+  },
+  {
+   "segment": "seg-2",
+   "event": "FINAL_TRANSCRIPT",
+   "text": "What is two plus three?",
+   "commit_to_final_ms": 666.657,
+   "segment_id": "seg-2",
+   "outcome": "final",
+   "queue_ms": 0.009,
+   "reused": true,
+   "upload_ms": 0.682,
+   "wait_ms": 617.269,
+   "first_event_ms": 0.407,
+   "final_ms": 47.581,
+   "final_to_request_end_ms": 3.181
+  },
+  {
+   "segment": "seg-3",
+   "event": "FINAL_TRANSCRIPT",
+   "text": "What is two plus three?",
+   "commit_to_final_ms": 1156.614,
+   "segment_id": "seg-3",
+   "outcome": "final",
+   "queue_ms": 0.008,
+   "reused": true,
+   "upload_ms": 0.61,
+   "wait_ms": 1106.507,
+   "first_event_ms": 0.293,
+   "final_ms": 48.513,
+   "final_to_request_end_ms": 3.893
+  },
+  {
+   "segment": "seg-4",
+   "event": "FINAL_TRANSCRIPT",
+   "text": "What is two plus three?",
+   "commit_to_final_ms": 692.052,
+   "segment_id": "seg-4",
+   "outcome": "final",
+   "queue_ms": 0.007,
+   "reused": true,
+   "upload_ms": 0.611,
+   "wait_ms": 626.363,
+   "first_event_ms": 0.345,
+   "final_ms": 64.169,
+   "final_to_request_end_ms": 0.278
+  },
+  {
+   "segment": "seg-5",
+   "event": "FINAL_TRANSCRIPT",
+   "text": "What is two plus three? Answer with just a number.",
+   "commit_to_final_ms": 1016.084,
+   "segment_id": "seg-5",
+   "outcome": "final",
+   "queue_ms": 0.008,
+   "reused": true,
+   "upload_ms": 0.645,
+   "wait_ms": 834.23,
+   "first_event_ms": 0.348,
+   "final_ms": 180.228,
+   "final_to_request_end_ms": 0.289
+  }
+ ]
+}

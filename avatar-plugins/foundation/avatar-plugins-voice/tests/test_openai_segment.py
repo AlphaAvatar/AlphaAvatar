@@ -65,7 +65,7 @@ class Endpoint:
     a body end that comes late, never or not at all (a cut), a JSON answer, a stream error, or
     a [DONE] with no done before it."""
 
-    def __init__(self, *answers: str) -> None:
+    def __init__(self, *answers: str | dict | list[bytes]) -> None:
         self.answers, self.connections = list(answers), 0
         self.received: list[int] = []
         self.bodies: list[bytes] = []  # Each request's body, as sent
@@ -87,8 +87,9 @@ class Endpoint:
             self.received.append(time.monotonic_ns())
             answer = self.answers.pop(0) if self.answers else "end"
             await asyncio.sleep(ANSWER_AFTER)
-            if answer == "json":
-                body = json.dumps({"text": "Hello"}).encode()
+            if answer == "json" or isinstance(answer, dict):  # A whole transcript at once
+                body = json.dumps(answer if isinstance(answer, dict) else {"text": "Hello"})
+                body = body.encode()
                 writer.write(
                     b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n"
                     + f"content-length: {len(body)}\r\n\r\n".encode()
@@ -97,6 +98,15 @@ class Endpoint:
                 await writer.drain()
                 continue
             writer.write(STREAM)
+            if isinstance(answer, list):  # The body's bytes as given, chunk by chunk
+                for data in answer:
+                    await writer.drain()
+                    await asyncio.sleep(0.005)
+                    writer.write(chunk(data))
+                writer.write(LAST)
+                await writer.drain()
+                self.ended.append(time.monotonic())
+                continue
             if answer == "failed":
                 writer.write(chunk(FAILED) + chunk(END) + LAST)
                 await writer.drain()
@@ -303,19 +313,38 @@ async def test_closing_the_stream_in_a_tail_cancels_it_and_releases_its_connecti
     assert closed[0] < openai_segment._TAIL_SEC
 
 
+NULL_DONE = line({"type": "transcript.text.done", "text": None})
+# The real endpoint's line ends in another form: CR alone, a BOM before them, and a Chinese
+# final whose UTF-8 bytes are cut between chunks.
+CHINESE = "data: " + json.dumps(
+    {"type": "transcript.text.done", "text": "你好"}, ensure_ascii=False
+)
+CR_STREAM = [
+    "\ufeff".encode(),
+    CHINESE.encode()[:-7],  # Within the UTF-8 of 你
+    CHINESE.encode()[-7:] + b"\r\rdata: [DONE]\r\r",
+]
+
+
 @pytest.mark.parametrize(
-    ("answer", "expected", "kept"),
+    ("answer", "expected", "kept", "logged"),
     [
-        ("json", ("FINAL_TRANSCRIPT", "Hello", None), True),  # whisper-1 ignores stream=True.
-        ("unfinished", ("ERROR", "", "missing_final"), True),
+        ("json", ("FINAL_TRANSCRIPT", "Hello", None), True, "final"),  # whisper-1: no stream
+        (CR_STREAM, ("FINAL_TRANSCRIPT", "你好", None), True, "final"),
+        ("unfinished", ("ERROR", "", "missing_final"), True, "missing_final"),
+        # A final without text is an invalid one, and logged as such: no final time.
+        ([DELTA, NULL_DONE + END], ("ERROR", "", "invalid_final"), True, "invalid_final"),
+        ({"text": None}, ("ERROR", "", "invalid_final"), True, "invalid_final"),
         # A stream error ends the request there, its body unread: that connection goes.
-        ("failed", ("ERROR", "", "provider_error"), False),
+        ("failed", ("ERROR", "", "provider_error"), False, "no_final"),
     ],
+    ids=["json", "cr-bom-utf8", "unfinished", "null-final", "json-null-final", "failed"],
 )
 async def test_each_answer_settles_its_segment_once_and_the_next_goes_on(
-    answer: str,
+    answer: str | dict | list[bytes],
     expected: tuple,
     kept: bool,
+    logged: str,
     caplog: pytest.LogCaptureFixture,
     owned_endpoints: set[object],
 ) -> None:
@@ -345,6 +374,15 @@ async def test_each_answer_settles_its_segment_once_and_the_next_goes_on(
     assert (seen[0][2], seen[0][3]) == (text, reason)
     # Read to its end, the answer kept its connection for the next segment.
     assert (endpoint.connections, requests(caplog)[1]["reused"]) == (2 - kept, kept)
+    # The request's log says what its consumer got: a final time for a valid final alone.
+    first = requests(caplog)[0]
+    assert first["outcome"] == logged
+    assert ("final_ms" in first) is (logged == "final")
+    # A first event when the endpoint sent one before its outcome: none before a bare [DONE].
+    if logged in ("final", "invalid_final"):
+        assert first["first_event_ms"] >= 0
+    if logged == "missing_final":
+        assert "first_event_ms" not in first
 
 
 async def test_a_request_the_transport_did_not_trace_is_not_counted_as_reused(
@@ -471,3 +509,47 @@ def test_a_setting_its_stt_does_not_take_is_refused_before_it_is_built() -> None
     segment = STTConfig(plugin="openai_segment", model="gpt-4o-transcribe", delay="high")
     with pytest.raises(ValueError, match="voice.stt.delay: .*'openai_segment' does not take"):
         segment.get_plugin()
+
+
+async def events(*chunks: str) -> list[str]:
+    async def text():
+        for piece in chunks:
+            yield piece
+
+    return [data async for data in openai_segment._sse(text())]
+
+
+@pytest.mark.parametrize(
+    ("chunks", "found"),
+    [
+        (["data: a\n\n", "data: b\n\n"], ["a", "b"]),
+        (["data: a\r\n\r\ndata: b\r\n\r\n"], ["a", "b"]),
+        (["data: a\r\rdata: b\r\r"], ["a", "b"]),
+        # A CR at a chunk's end, its LF at the next one's start: one line end, not two.
+        (['data: {"x":\r', "\ndata: 1}\r", "\n\r", "\n"], ['{"x":\n1}']),
+        (['data: {"x":\n', "data: 1}\n\n"], ['{"x":\n1}']),
+        ([": keep-alive\n", "event: message\nid: 7\nretry: 10\ndata:a\n\n"], ["a"]),
+        (["\ufeffdata: a\n\n"], ["a"]),
+        # The body's end closes the event it holds, without its blank line.
+        (["data: a\n\ndata: [DONE]"], ["a", "[DONE]"]),
+        (["data: a\n\ndata: [DONE]\r"], ["a", "[DONE]"]),
+        # A line separator inside a JSON string is no line end of the stream's.
+        (['data: {"text": "x\u2028y\x85z"}\n\n'], ['{"text": "x\u2028y\x85z"}']),
+    ],
+    ids=[
+        "lf",
+        "crlf",
+        "cr",
+        "crlf-across-chunks",
+        "data-lines",
+        "comments-fields",
+        "bom",
+        "end",
+        "end-cr",
+        "u2028",
+    ],
+)
+async def test_server_sent_events_are_read_at_each_line_end_the_stream_may_use(
+    chunks: list[str], found: list[str]
+) -> None:
+    assert await events(*chunks) == found

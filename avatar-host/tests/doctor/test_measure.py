@@ -36,10 +36,12 @@ def identity(value: str) -> str:
     return f"id_{value:>16}"
 
 
-def trace(at: float, stage: str, sequence: int, **fields: str | int) -> dict:
+def trace(at: float, stage: str, trace_sequence: int, **fields: str | int) -> dict:
+    """A trace record: ``trace_sequence`` is the trace's own order; ``fields`` the record's,
+    a ``sequence`` among them (a window's index) another number."""
     hashed = {k: identity(v) if k.endswith("_id") else v for k, v in fields.items()}
     return {
-        "trace_sequence": sequence,
+        "trace_sequence": trace_sequence,
         "recorded_time_ns": round(at * MS),
         "stage": stage,
         **hashed,
@@ -320,6 +322,32 @@ def test_a_speaker_window_and_the_association_carry_when_their_spans_began() -> 
     assert evidence["speaker.window"].at_ms == 700.0
     assert evidence["speaker.association"].detail["started_ms"] == 300.0
     assert evidence["speaker.association"].at_ms == 720.0
+
+
+@pytest.mark.parametrize(
+    ("ready_at", "asked_at", "values", "wait_note"),
+    [
+        # Known only after the commit asked: the commit waited for it.
+        (1720, 1600, (420.0, 120.0), None),
+        # Its subject came with the speech: ready before it closed, no wait needed.
+        (1200, 1600, (-100.0, 0.2), "none needed: ready before the commit asked"),
+    ],
+)
+def test_the_association_ready_and_the_commits_own_wait_are_two_figures(
+    ready_at: float, asked_at: float, values: tuple, wait_note: str | None
+) -> None:
+    settled = trace(1800, "participant.segment_ready", 40, segment_id="seg-0", outcome="bound")
+    settled |= {"start_time_ns": 1100 * MS, "end_time_ns": round(ready_at * MS)}
+    waited = trace(1801, "candidate.association", 41, candidate_id="cand-0", outcome="ready")
+    end = max(ready_at, asked_at + 0.2)
+    waited |= {"start_time_ns": asked_at * MS, "end_time_ns": round(end * MS)}
+    shown = figures(scenario(observation(trace=[settled, waited])))
+    assert (shown["association_ready"].value, shown["association_wait"].value) == values
+    assert shown["association_wait"].note == wait_note
+    # No resolver recorded one, and the commit waited for none: neither is measured.
+    shown = figures(scenario(observation()))
+    assert shown["association_ready"].value is shown["association_wait"].value is None
+    assert shown["association_ready"].note.startswith("not measured")
 
 
 def test_a_retry_is_an_attempt_of_its_own_and_the_first_is_when_the_request_went_out() -> None:

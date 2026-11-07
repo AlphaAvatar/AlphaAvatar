@@ -60,6 +60,8 @@ FIGURES = (
     ("stt_wait", "  STT wait (audio sent → answer's headers)"),
     ("stt_first_event", "  STT first event (headers → first event)"),
     ("stt_stream", "  STT stream (headers → transcript done)"),
+    ("association_ready", "Speech closed → speaker association ready"),
+    ("association_wait", "Turn commit's wait for the association"),
     ("context_ready_wait", "Context readiness wait"),
     ("model_first_event", "Model request sent → First event"),
     ("model_request_client", "Provider client ready"),

@@ -81,7 +81,7 @@ class STTConfig(BaseModel):
         return [
             (name, f"voice.stt.plugin {self.plugin!r} does not take {name}")
             for name in self.options()
-            if not factory.accepts(name)
+            if not factory.supports(name)
         ]
 
     def get_plugin(self) -> STTBase | None:
@@ -95,7 +95,7 @@ class STTConfig(BaseModel):
             raise ValueError("; ".join(f"voice.stt.{name}: {why}" for name, why in problems))
 
         kwargs: dict[str, object] = {"model": self.model, **self.options()}
-        if "delay" not in kwargs and factory.accepts("delay"):
+        if "delay" not in kwargs and factory.supports("delay"):
             kwargs["delay"] = self.delay
         if self.base_url is not None:
             kwargs["base_url"] = self.base_url

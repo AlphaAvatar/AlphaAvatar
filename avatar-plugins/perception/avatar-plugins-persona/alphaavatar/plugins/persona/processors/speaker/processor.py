@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+import contextlib
 import logging
 import time
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -67,7 +68,6 @@ class SpeakerSegmentState:
     last_window_end: int = 0
     pending: int = 0
     closed: bool = False
-    closed_ns: int | None = None  # When its speech closed, on the runtime clock
     invalid: bool = False
     inference_failed: bool = False
     vector: np.ndarray | None = None
@@ -326,13 +326,12 @@ class SpeakerProcessor(PersonaProcessorBase):
         ):
             self._enqueue_pcm(state, bytes(state.recent))
 
-        state.closed, state.closed_ns = True, self.runtime.clock.now().monotonic_ns
+        state.closed = True
         state.pcm.clear()
         state.recent.clear()
         if state.pending == 0:
             if state.invalid or state.inference_failed or state.vector is None:
                 # Short speech has no vector job to wait for; finish without joining the queue.
-                self._associated(state, "invalid" if state.invalid else "unbound")
                 self._retire(state)
             else:
                 self._enqueue(state)
@@ -350,43 +349,50 @@ class SpeakerProcessor(PersonaProcessorBase):
             if self._inference_job is not None:
                 self._inference_job.cancel()
 
+    @contextlib.asynccontextmanager
+    async def _timed(
+        self, stage: str, state: SpeakerSegmentState, **fields: int | None
+    ) -> AsyncIterator[None]:
+        """A step's span on the serial queue, in the trace: done, timed out, cancelled or
+        failed; bounded, metadata only, never waited on."""
+        started, outcome = self.runtime.clock.now().monotonic_ns, "failed"
+        try:
+            yield
+            outcome = "done"
+        except BaseException as error:
+            if isinstance(error, asyncio.CancelledError):
+                outcome = "cancelled"
+            elif isinstance(error, TimeoutError):
+                outcome = "timeout"
+            raise
+        finally:
+            segment = state.segment
+            self.perception_runtime.input_trace.record(
+                stage,
+                source_id=segment.source.source_id,
+                source_generation=segment.source.source_generation,
+                segment_id=segment.segment_id,
+                outcome=outcome,
+                start_time_ns=started,
+                end_time_ns=self.runtime.clock.now().monotonic_ns,
+                **fields,
+            )
+
     async def _infer_window(self, job: SpeakerWindow) -> None:
         state = job.state
         if not self._is_current(state) or state.invalid or state.inference_failed:
             return
 
-        started, outcome = self.runtime.clock.now().monotonic_ns, "failed"
-        try:
+        # Each window's wait in the queue and its inference, for the association (O-16).
+        timed = self._timed(
+            "speaker.window", state, sequence=job.index, event_time_ns=job.queued_ns or None
+        )
+        async with timed:
             result = await asyncio.wait_for(
                 self.inference_executor.do_inference(
                     SpeakerVectorRunner.INFERENCE_METHOD, job.audio_f32
                 ),
                 timeout=self._vector_config.inference_timeout_sec,
-            )
-            outcome = "done"
-        except BaseException as error:
-            timed_out = isinstance(error, TimeoutError)
-            outcome = (
-                "cancelled"
-                if isinstance(error, asyncio.CancelledError)
-                else "timeout"
-                if timed_out
-                else "failed"
-            )
-            raise
-        finally:
-            # Each window's wait in the queue and its inference, for the association (O-16).
-            segment = state.segment
-            self.perception_runtime.input_trace.record(
-                "speaker.window",
-                source_id=segment.source.source_id,
-                source_generation=segment.source.source_generation,
-                segment_id=segment.segment_id,
-                sequence=job.index,
-                outcome=outcome,
-                event_time_ns=job.queued_ns or None,
-                start_time_ns=started,
-                end_time_ns=self.runtime.clock.now().monotonic_ns,
             )
         if not self._is_current(state) or state.invalid or state.inference_failed:
             return
@@ -513,10 +519,8 @@ class SpeakerProcessor(PersonaProcessorBase):
         if not self._is_current(state) or not state.closed or state.pending:
             return
 
-        outcome: str | None = "unbound"  # Settled as retired, with no speaker bound
         try:
             if state.invalid:
-                outcome = "invalid"
                 return
 
             if state.entity is None:
@@ -542,13 +546,9 @@ class SpeakerProcessor(PersonaProcessorBase):
                     else associated
                 )
 
-            bound = self.runtime.participants.bind_segment(
+            if not self.runtime.participants.bind_segment(
                 state.segment, state.entity, token=state.token
-            )
-            # Settled here, before the identity and attributes that follow it.
-            self._associated(state, "bound" if bound else "refused")
-            outcome = None
-            if not bound:
+            ):
                 return
 
             if self.runtime.participants.resolve(segment=state.segment) is None:
@@ -558,27 +558,14 @@ class SpeakerProcessor(PersonaProcessorBase):
             if participant is None or state.vector is None or state.inference_failed:
                 return
 
-            participant = await self._resolve_identity(state, participant)
+            # After the association, on the same serial queue the next windows wait on.
+            async with self._timed("speaker.identity", state):
+                participant = await self._resolve_identity(state, participant)
             if participant is not None:
-                await self._infer_attribute(state, participant)
+                async with self._timed("speaker.attribute", state):
+                    await self._infer_attribute(state, participant)
         finally:
-            if outcome is not None:
-                self._associated(state, outcome)
             self._retire(state)
-
-    def _associated(self, state: SpeakerSegmentState, outcome: str) -> None:
-        """When the segment's speaker association settled, from its speech closed (O-16)."""
-        segment = state.segment
-        self.perception_runtime.input_trace.record(
-            "speaker.association",
-            source_id=segment.source.source_id,
-            source_generation=segment.source.source_generation,
-            segment_id=segment.segment_id,
-            outcome=outcome,
-            evidence_count=state.window_index,
-            start_time_ns=state.closed_ns,
-            end_time_ns=self.runtime.clock.now().monotonic_ns,
-        )
 
     async def _process(self, job: SpeakerWindow | SpeakerSegmentState) -> None:
         state = job.state if isinstance(job, SpeakerWindow) else job

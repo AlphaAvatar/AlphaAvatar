@@ -179,6 +179,10 @@ uv sync --all-packages --locked
 
 Update the root plugin catalog with a concise capability description and accurate status. Existing plugins link to their README; planned plugins must not use placeholder links or imply that an implementation is available.
 
+## Code conventions
+
+Follow [Coding conventions](docs/coding-conventions.md): how modules and classes are ordered, and the names they use.
+
 ---
 
 ## 🧩 Release Process

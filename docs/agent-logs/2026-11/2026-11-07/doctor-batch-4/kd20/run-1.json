@@ -1,0 +1,86 @@
+{
+ "mode": {
+  "tail": "on",
+  "prepare": "on"
+ },
+ "wav": "uploaded-segment.wav",
+ "rows": [
+  {
+   "segment": "seg-1",
+   "event": "FINAL_TRANSCRIPT",
+   "text": "What is two plus three?",
+   "commit_to_final_ms": 1538.65,
+   "segment_id": "seg-1",
+   "outcome": "final",
+   "queue_ms": 0.011,
+   "reused": false,
+   "connect_ms": 3.434,
+   "tls_ms": 11.106,
+   "upload_ms": 4.8,
+   "wait_ms": 1468.988,
+   "first_event_ms": 0.751,
+   "final_ms": 44.444,
+   "final_to_request_end_ms": 1.446
+  },
+  {
+   "segment": "seg-2",
+   "event": "FINAL_TRANSCRIPT",
+   "text": "What is two plus three?",
+   "commit_to_final_ms": 1054.169,
+   "segment_id": "seg-2",
+   "outcome": "final",
+   "queue_ms": 0.01,
+   "reused": true,
+   "upload_ms": 0.664,
+   "wait_ms": 962.877,
+   "first_event_ms": 0.342,
+   "final_ms": 89.512,
+   "final_to_request_end_ms": 2.713
+  },
+  {
+   "segment": "seg-3",
+   "event": "FINAL_TRANSCRIPT",
+   "text": "What is two plus three? Answer with just a number.",
+   "commit_to_final_ms": 986.072,
+   "segment_id": "seg-3",
+   "outcome": "final",
+   "queue_ms": 0.008,
+   "reused": true,
+   "upload_ms": 0.602,
+   "wait_ms": 781.152,
+   "first_event_ms": 0.307,
+   "final_ms": 203.292,
+   "final_to_request_end_ms": 0.439
+  },
+  {
+   "segment": "seg-4",
+   "event": "FINAL_TRANSCRIPT",
+   "text": "What is two plus three?",
+   "commit_to_final_ms": 885.855,
+   "segment_id": "seg-4",
+   "outcome": "final",
+   "queue_ms": 0.008,
+   "reused": true,
+   "upload_ms": 0.639,
+   "wait_ms": 846.426,
+   "first_event_ms": 0.381,
+   "final_ms": 37.897,
+   "final_to_request_end_ms": 2.626
+  },
+  {
+   "segment": "seg-5",
+   "event": "FINAL_TRANSCRIPT",
+   "text": "What is two plus three?",
+   "commit_to_final_ms": 1426.475,
+   "segment_id": "seg-5",
+   "outcome": "final",
+   "queue_ms": 0.009,
+   "reused": true,
+   "upload_ms": 0.584,
+   "wait_ms": 1371.107,
+   "first_event_ms": 0.371,
+   "final_ms": 53.812,
+   "final_to_request_end_ms": 2.076
+  }
+ ]
+}

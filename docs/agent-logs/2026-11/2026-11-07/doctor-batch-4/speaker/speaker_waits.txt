@@ -1,0 +1,5 @@
+slow window 0.0 {'window_ms': 0.061826, 'ready_after_close_ms': 1.090331, 'outcome': 'bound'}
+slow window 0.3 {'window_ms': 301.039836, 'ready_after_close_ms': 301.819438, 'outcome': 'bound'}
+slow window 0.6 {'window_ms': 600.397601, 'ready_after_close_ms': 601.593526, 'outcome': 'bound'}
+identity search holds the queue 0.0 {'b_ready_after_close_ms': 1.576403, 'b_window_queued_ms': 1.050634, 'outcome': 'bound'}
+identity search holds the queue 0.4 {'b_ready_after_close_ms': 402.033064, 'b_window_queued_ms': 401.584271, 'outcome': 'bound'}

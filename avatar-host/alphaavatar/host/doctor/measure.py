@@ -1073,6 +1073,45 @@ class _Turn:
             )
         return found
 
+    def _association(self, final: dict | None) -> list[Metric]:
+        """The speaker association of the Turn's final segment (O-16): when it was first
+        ready, from its speech closed (before it, when its subject came with the speech),
+        and how long the Turn's commit actually waited for it. Ready is not recognized: a
+        failure or a retirement releases it too, which the evidence says."""
+        segment = final.get("segment_id") if final is not None else None
+        closed = self._trace("perception.speech_closed", segment_id=segment) if segment else None
+        ready = self._trace("participant.segment_ready", segment_id=segment) if segment else None
+        waits = [r for r in self.trace if r["stage"] == "candidate.association"]
+        wait = waits[-1] if waits else None
+        boundary = "the speaker association of the Turn's final segment"
+        closed_at = closed["recorded_time_ns"] if closed is not None else None  # When it closed
+        settled = (
+            "speaker association ready",
+            ready.get("end_time_ns") if ready is not None else None,
+        )
+        before = (
+            wait is not None
+            and ready is not None
+            and ready.get("end_time_ns", 0) <= wait.get("start_time_ns", 0)
+        )
+        return [
+            self._metric(
+                "association_ready",
+                ("speech closed", closed_at),
+                settled,
+                boundary,
+                "not measured: no association asked for the segment, or no resolver records one",
+            ),
+            self._metric(
+                "association_wait",
+                ("commit asked", wait.get("start_time_ns") if wait is not None else None),
+                ("association ready to the commit", wait.get("end_time_ns") if wait else None),
+                boundary,
+                "not measured: the Turn's commit recorded no association wait",
+                note="none needed: ready before the commit asked" if before else None,
+            ),
+        ]
+
     def segments(self) -> tuple[Metric, ...]:
         """The chain's stages and rows, then what the rows leave out: STT's own wait, the
         readiness wait, the request as sent, its first event, the frames."""
@@ -1093,6 +1132,7 @@ class _Turn:
                 "the commit of the request's last final was not recorded",
             ),
             *self._stt(final),
+            *self._association(final),
             Metric(
                 "input_lateness",
                 round(self.o.timeline.max_lateness_ms, 3),

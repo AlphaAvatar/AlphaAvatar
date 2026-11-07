@@ -115,12 +115,16 @@ class AvatarModulePlugin(ABC):
         when it takes none or checks its own when created."""
         return None
 
-    def accepts(self, option: str) -> bool:
-        """Whether ``get_plugin`` takes ``option`` by name: a setting implementations of one
-        kind may or may not have, checked before anything starts. Its signature says, unless
-        it takes any keyword; an implementation that passes them on says for itself."""
-        parameters = inspect.signature(self.get_plugin).parameters
-        return option in parameters or any(p.kind is p.VAR_KEYWORD for p in parameters.values())
+    def supports(self, option: str) -> bool:
+        """Whether its implementation takes ``option``, a setting implementations of one kind
+        may or may not have, checked before anything starts: a parameter ``get_plugin`` names.
+        Taking any keyword is not supporting each: a factory that passes them on to what it
+        creates says for itself which it supports."""
+        parameter = inspect.signature(self.get_plugin).parameters.get(option)
+        return parameter is not None and parameter.kind in (
+            parameter.POSITIONAL_OR_KEYWORD,
+            parameter.KEYWORD_ONLY,
+        )
 
     def inference_runners(self, config: AvatarConfig) -> tuple[type[InferenceRunner], ...]:
         """The runners this implementation uses under ``config``, planned before any starts."""

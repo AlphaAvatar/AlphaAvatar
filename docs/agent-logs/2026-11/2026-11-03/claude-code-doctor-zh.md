@@ -16,7 +16,8 @@
 | Doctor 运行时诊断：一次确认、按 start 启动、多轮统计 | 一次确认整批诊断（场景、轮数、可能下载与计费服务），同意后按 `start` 的启动逻辑运行；每个场景默认 5 轮、每轮独立会话，汇总成功数、失败阶段、样本数、中位数和范围，首轮单列；颜色与多句转录分开验收，丢句按 VAD/STT/Turn 定位；模型请求记录本地编码耗时、发送图片数和实发正文大小；Provider 状态按探测结果；外部测试库须配置声明；LiveKit 传输、客户端播放与物理设备标为未测 | 2026-11-07 | `38fad3c3` | 用户已提交（`d5080d5`） | `d5080d5` 审查：执行范围与确认不一致、部分计时与归因口径有缺口，由下一批处理；真实服务对照见该节第 11 小节，默认值未改 |
 | Doctor 第一批：执行范围、指标口径、漏句归因 | 视觉开只跑 `voice_vision`、关只跑 `voice`，去掉 `text` 和降级试跑，确认、预算和执行读同一计划，runtime 与 `start` 共用构造；指标改为 Final speech 到 First audio frame 的节点链（Input、Context、Output 三段相加等于首音频帧），`Model request sent` 在交给传输层时逐次记录；漏句分覆盖、终稿、采用、内容四项；汇总另给全体已观测轮，对照脚本重算并核对 | 2026-11-07 | `d5080d5` | 用户已提交（`64a9de7`） | 离线验证见该节第 6 小节；真实服务复验（4 份 × 5 轮）与 KD-17 见第 7 小节；`cli.html` 重录与合并标注修复见第 9 小节 |
 | Doctor 第二批：Context 构建时刻、报告完整性、KD-19 定位、KD-17 恢复、证据与 STT 拆解 | `context.built` 在 Context build 返回处记录并由 Doctor 读取；`doctor_compare.py` 核对场景分组、指标集合和 `stopped_at`；KD-19 探针（进入 STT 的 PCM 到 Turn 采用文字）与直连对照脚本；KD-17 硬期限后的恢复回归；真实报告的脱敏证据入库；分段 STT 按请求计时（排队、建连、TLS、上传、等待、流），发现 KD-20 | 2026-11-07 | `64a9de7` | 用户已提交（`b1cc485`） | 已审查：三项修复接受，KD-19 定位有证据支持；计时与进程隔离的收尾见第三批 |
-| Doctor 第三批：STT 计时与连接收尾、SDK 预备、执行子进程隔离 | STT 首事件与终稿从应答头起算；未 trace 的请求不记复用，Doctor 写未观测；KD-20 终稿立即发布一次、流在 0.25 s 内读完再复用连接；STT stream 打开时在线程里预备 SDK 资源；Host 以 `-I` 运行时执行子进程也加 `-I`；视觉关 Turn commit 等待与首轮请求准备的来源离线定位；KD-19、KD-20、KD-17 状态与上一批估算更正 | 2026-11-07 | `b1cc485` | 未提交（用户提交） | 待审查；真实服务见该节第 10 小节（KD-20 在真实端点上未生效：SDK 读到 `[DONE]` 即关闭；预备在请求路径上省约 97 ms；KD-19 提示 1/10→8/10） |
+| Doctor 第三批：STT 计时与连接收尾、SDK 预备、执行子进程隔离 | STT 首事件与终稿从应答头起算；未 trace 的请求不记复用，Doctor 写未观测；KD-20 终稿立即发布一次、流在 0.25 s 内读完再复用连接；STT stream 打开时在线程里预备 SDK 资源；Host 以 `-I` 运行时执行子进程也加 `-I`；视觉关 Turn commit 等待与首轮请求准备的来源离线定位；KD-19、KD-20、KD-17 状态与上一批估算更正 | 2026-11-07 | `b1cc485` | 用户已提交（`d43cc4c`） | 已审查，收尾见第四批 |
+| Doctor 第四批：CI、STT 三处 P2、说话人关联观测、多语言与 KD-19、LID 核实 | 见该节 | 2026-11-07 | `d43cc4c` | 未提交（用户提交） | 待审查 |
 
 ---
 
@@ -2159,74 +2160,7 @@ python3 scripts/quality/doctor_compare.py segment=… realtime=…             #
 - **Final transcript → Turn commit**：`voice_vision` 约 2 ms（vision-realtime 第 4 轮 113 ms），因为终稿到达时轮次判定已经在等转录；`voice` 为 66～540 ms，因为终稿先于轮次判定到达，commit 要等下一次判定。
 - **Output**：Model request sent → First text delta 后续轮中位数 817～871 ms。vision-segment 第 1、2 轮为 3,139 ms、2,750 ms，慢在请求交给传输层之后（Model request sent → First event 3,116 ms、2,495 ms）。这段包含建连、网络往返和服务端处理，报告不再细分，不能单独归因于服务端；其余 18 轮的 First event 为 451～1,112 ms。TTS request → First PCM 中位数 566～758 ms，最长 1,616 ms。
 
-**完整指标：分段 STT 的两份报告**（实时 STT 之后不再跑，见第 8 节）
-
-单元格是后续轮的中位数 [最小–最大] ×轮数，括号里是第 1 轮；单位 ms，另有注明的除外。`voice_vision` 5/5 通过，通过轮就是全体轮。`voice` 只有第 3 轮通过，所以另列全体轮（†，含未通过的 4 轮）：这 4 轮在 STT 终稿后才判失败，后面的阶段都真实走完了，但模型拿到的问题少了一句，答案和音频时长不能与通过轮直接比。「累计饥饿」取自每轮欠载那一项的说明。
-
-| Metric | `voice_vision` · 5/5 passed | `voice` · passed rounds (1/5) | `voice` · every round † |
-|---|---|---|---|
-| **端到端（自最后一个有声样本输入起）** | | | |
-| Runtime first text | 2,907 [2,439–5,180] ×4 (5,984) | 2,605 ×1 (—) | 2,635 [2,574–2,851] ×4 (3,293) |
-| First audio frame | 4,055 [3,573–5,909] ×4 (7,521) | 3,771 ×1 (—) | 3,643 [3,492–3,771] ×4 (4,039) |
-| Text complete | 3,092 [2,602–5,325] ×4 (6,168) | 2,689 ×1 (—) | 2,857 [2,689–2,991] ×4 (3,435) |
-| Last audio frame | 4,706 [4,212–6,653] ×4 (8,243) | 4,186 ×1 (—) | 4,247 [4,186–4,502] ×4 (4,751) |
-| Response complete | 4,707 [4,213–6,653] ×4 (8,244) | 4,187 ×1 (—) | 4,248 [4,187–4,503] ×4 (4,752) |
-| Last required input (frame or voice) | 1,511 [1,360–2,160] ×4 (2,460) | n/a | n/a |
-| **Input** | 1,531 [1,401–2,173] ×4 (2,481) | 1,481 ×1 (—) | 1,482 [1,307–1,647] ×4 (1,483) |
-| &nbsp;&nbsp;· Final speech → VAD close | 720 [719–722] ×4 (720) | 679 ×1 (—) | 680 [679–681] ×4 (681) |
-| &nbsp;&nbsp;· VAD close → Final transcript | 810 [680–1,454] ×4 (1,761) | 802 ×1 (—) | 801 [626–967] ×4 (803) |
-| **Context** | 255 [235–889] ×4 (365) | 457 ×1 (—) | 346 [272–457] ×4 (525) |
-| &nbsp;&nbsp;· Final transcript → Turn commit | 2.0 [1.9–2.2] ×4 (2.3) | 134 ×1 (—) | 95 [70–134] ×4 (184) |
-| &nbsp;&nbsp;· Turn commit → Context readiness check complete | 241 [222–876] ×4 (255) | 313 ×1 (—) | 241 [191–313] ×4 (245) |
-| &nbsp;&nbsp;· Context readiness check complete → Context built | 1.7 [1.5–2.0] ×4 (2.0) | 1.8 ×1 (—) | 1.8 [1.6–1.9] ×4 (1.8) |
-| &nbsp;&nbsp;· Context built → Model request sent | 9.6 [9.5–9.7] ×4 (105) | 8.6 ×1 (—) | 8.5 [8.2–8.6] ×4 (93) |
-| **Output** | 2,153 [1,538–3,479] ×4 (4,675) | 1,832 ×1 (—) | 1,785 [1,649–1,992] ×4 (2,031) |
-| &nbsp;&nbsp;· Model request sent → First text delta | 817 [780–2,750] ×4 (3,139) | 667 ×1 (—) | 825 [667–1,038] ×4 (1,285) |
-| &nbsp;&nbsp;· First text delta → TTS request | 174 [146–189] ×4 (185) | 85 ×1 (—) | 137 [85–346] ×4 (143) |
-| &nbsp;&nbsp;· TTS request → First PCM | 641 [576–1,616] ×4 (1,351) | 1,081 ×1 (—) | 749 [572–1,081] ×4 (603) |
-| &nbsp;&nbsp;· First PCM → First audio frame | 0.6 [0.5–1.0] ×4 (0.6) | 0.5 ×1 (—) | 0.6 [0.5–0.7] ×4 (0.7) |
-| **STT 与输入** | | | |
-| STT commit → Final transcript | 809 [680–1,454] ×4 (1,761) | 802 ×1 (—) | 801 [626–967] ×4 (802) |
-| Input frame lateness (due → published) | 2.1 [2.1–2.1] ×4 (163) | 2.9 ×1 (—) | 2.5 [2.1–6.0] ×4 (160) |
-| **Context 与模型请求** | | | |
-| Context readiness wait | 240 [221–875] ×4 (249) | 312 ×1 (—) | 239 [190–312] ×4 (244) |
-| Request encoding | 0.2 [0.2–0.2] ×4 (0.2) | 0.1 ×1 (—) | 0.1 [0.1–0.1] ×4 (0.2) |
-| Pictures sent | 4 ×4 (4) | 0 ×1 (—) | 0 ×4 (0) |
-| Request size (B) | 63,996 [63,996–64,140] ×4 (64,140) | 19,311 ×1 (—) | 19,284 [19,284–19,311] ×4 (19,129) |
-| Request attempts | 1 ×4 (1) | 1 ×1 (—) | 1 ×4 (1) |
-| Model request sent → First event | 556 [525–2,495] ×4 (3,116) | 463 ×1 (—) | 557 [463–679] ×4 (1,112) |
-| **视觉** | | | |
-| Frame arrived → published (median) | 0.8 [0.8–0.8] ×4 (0.8) | n/a | n/a |
-| Oldest selected frame age at request | 2,775 [2,461–3,381] ×4 (2,781) | n/a | n/a |
-| Newest selected frame → Turn commit | 28 [2.7–43] ×4 (23) | n/a | n/a |
-| Vision wait | — (no wait is observed: Context selects among frames already in) | n/a | n/a |
-| First visual output frame | — (no visual output reaches the output boundary) | — (no visual output reaches the output boundary) | — |
-| **音频供给** | | | |
-| Audio duration (s) | 2.70 [2.15–3.00] ×4 (2.60) | 1.10 ×1 (—) | 3.00 [1.10–3.20] ×4 (3.05) |
-| Frame interval (median) | 0.1 [0.1–0.1] ×4 (0.1) | 0.2 ×1 (—) | 0.2 [0.2–0.2] ×4 (0.2) |
-| Largest frame gap | 230 [206–638] ×4 (340) | 232 ×1 (—) | 284 [232–464] ×4 (297) |
-| Underruns (count) | 1 ×4 (1) | 1 ×1 (—) | 1 ×4 (1) |
-| Starved in total | 32 [7.5–440] ×4 (142) | 33 ×1 (—) | 86 [33–265] ×4 (99) |
-| Production time / audio duration | 0.26 [0.21–0.30] ×4 (0.28) | 0.38 ×1 (—) | 0.26 [0.21–0.38] ×4 (0.23) |
-| Output events dropped | 0 ×4 (0) | 0 ×1 (—) | 0 ×4 (0) |
-
-会话与 runner：
-
-| | 视觉开（`voice_vision`） | 视觉关（`voice`） |
-|---|---|---|
-| runtime 启动 | 135.10 s，模型缓存净增 1,731.9 MB（空缓存） | 16.74 s，缓存没有增长 |
-| 会话就绪（5 个会话） | 中位数 10.5 ms，第一个 203 ms | 中位数 10.7 ms，第一个 125 ms |
-
-| runner | 视觉开：启动 · 调用 · 排队峰值 · 执行峰值 | 视觉关：启动 · 调用 · 排队峰值 · 执行峰值 |
-|---|---|---|
-| `voice.vad.silero` | 0.72 s · 1242 · 0.3 ms · 1.5 ms | 0.24 s · 1176 · 0.6 ms · 4.6 ms |
-| `router.addressing.semantic.qwen3_0_6b` | 56.36 s · 5 · 0.0 ms · 134 ms | 1.98 s · 5 · 0.0 ms · 148 ms |
-| `router.turn_taking.smart_turn_v3` | 3.29 s · 5 · 0.0 ms · 39 ms | 1.62 s · 20 · 0.0 ms · 64 ms |
-| `memory.vdb.lancedb` | 7.83 s · 5 · 0.0 ms · 874 ms | 5.69 s · 5 · 0.0 ms · 311 ms |
-| `persona.speaker.attribute` | 29.76 s · 未调用 | 1.07 s · 5 · 0.0 ms · 104 ms |
-| `persona.speaker.vector` | 8.71 s · 未调用 | 1.32 s · 10 · 0.0 ms · 133 ms |
-| `persona.face.analysis` | 25.12 s · 未调用 | 1.53 s · 未调用 |
-| `persona.vdb.lancedb` | 3.31 s · 5 · 0.0 ms · 5.1 ms | 3.30 s · 19 · 0.0 ms · 535 ms |
+完整指标表见证据 [`doctor-baseline/full-tables-segment.md`](../2026-11-07/doctor-baseline/full-tables-segment.md)，会话与 runner 的数字见各份 JSON 的 `session.start` 和 `models.runners`。
 
 视觉开那份的启动是空缓存首次下载，所以 runner 启动远长于视觉关那份（缓存命中）。`voice_vision` 的样本没有触发说话人分析的两个 runner，上一轮也只有 `voice` 触发过，原因没有查。
 
@@ -2461,81 +2395,7 @@ Turn 采用的文字取自 Doctor 报告。探针不记录请求头和凭据。
 
 **新基线：本批构建，分段 STT**
 
-单元格是后续轮的中位数 [最小–最大] ×轮数，括号里是第 1 轮；单位为 ms，另有注明的除外。`voice` 只有第 3 轮通过，所以另列全体轮（†，含未通过的 4 轮）。STT 首个事件和流这两行的起点取错了，见下文「新发现」，表里保留报告的原值。
-
-| Metric | `voice_vision` · 5/5 passed | `voice` · passed rounds (1/5) | `voice` · every round † |
-|---|---|---|---|
-| **端到端（自最后一个有声样本输入起）** | | | |
-| Runtime first text | 2,589 [2,547–2,766] ×4 (3,369) | 2,708 ×1 (—) | 2,747 [2,681–2,832] ×4 (2,603) |
-| First audio frame | 3,461 [3,392–3,615] ×4 (4,360) | 3,603 ×1 (—) | 3,612 [3,415–3,662] ×4 (3,313) |
-| Text complete | 2,798 [2,749–2,944] ×4 (3,536) | 3,006 ×1 (—) | 2,935 [2,859–3,006] ×4 (2,736) |
-| Last audio frame | 4,180 [4,120–4,349] ×4 (5,174) | 4,031 ×1 (—) | 4,331 [4,031–4,368] ×4 (3,835) |
-| Response complete | 4,180 [4,120–4,350] ×4 (5,174) | 4,031 ×1 (—) | 4,331 [4,031–4,369] ×4 (3,835) |
-| Last required input (frame or voice) | 1,361 [1,261–1,461] ×4 (1,562) | n/a | n/a |
-| **Input** | 1,446 [1,351–1,483] ×4 (1,616) | 1,392 ×1 (—) | 1,408 [1,336–1,483] ×4 (1,327) |
-| &nbsp;&nbsp;· Final speech → VAD close | 721 [721–721] ×4 (721) | 680 ×1 (—) | 681 [680–682] ×4 (680) |
-| &nbsp;&nbsp;· VAD close → Final transcript | 725 [630–762] ×4 (895) | 712 ×1 (—) | 727 [655–803] ×4 (647) |
-| **Context** | 240 [224–364] ×4 (513) | 380 ×1 (—) | 347 [297–380] ×4 (535) |
-| &nbsp;&nbsp;· Final transcript → Turn commit | 2.0 [1.9–2.2] ×4 (2.3) | 151 ×1 (—) | 93 [69–151] ×4 (221) |
-| &nbsp;&nbsp;· Turn commit → Context readiness check complete | 226 [211–350] ×4 (417) | 219 ×1 (—) | 230 [217–246] ×4 (219) |
-| &nbsp;&nbsp;· Context readiness check complete → Context built | 1.5 [1.4–1.7] ×4 (1.7) | 1.6 ×1 (—) | 1.7 [1.6–1.9] ×4 (1.7) |
-| &nbsp;&nbsp;· Context built → Model request sent | 9.9 [9.8–11] ×4 (92) | 8.5 ×1 (—) | 8.5 [8.4–8.9] ×4 (92) |
-| **Output** | 1,763 [1,719–1,888] ×4 (2,231) | 1,831 ×1 (—) | 1,871 [1,635–1,918] ×4 (1,451) |
-| &nbsp;&nbsp;· Model request sent → First text delta | 894 [866–1,039] ×4 (1,240) | 936 ×1 (—) | 989 [901–1,122] ×4 (741) |
-| &nbsp;&nbsp;· First text delta → TTS request | 203 [179–216] ×4 (168) | 298 ×1 (—) | 153 [126–298] ×4 (134) |
-| &nbsp;&nbsp;· TTS request → First PCM | 660 [601–714] ×4 (823) | 597 ×1 (—) | 630 [555–747] ×4 (576) |
-| &nbsp;&nbsp;· First PCM → First audio frame | 0.7 [0.5–0.8] ×4 (0.7) | 0.6 ×1 (—) | 0.6 [0.6–0.7] ×4 (0.7) |
-| **STT 与输入** | | | |
-| STT commit → Final transcript | 725 [630–762] ×4 (895) | 712 ×1 (—) | 726 [655–803] ×4 (647) |
-| STT queue (commit → request started) | 0.0 [0.0–0.0] ×4 (0.0) | 0.0 ×1 (—) | 0.0 [0.0–0.1] ×4 (0.1) |
-| STT connect (TCP) | 3.2 [3.0–3.3] ×4 (3.8) | 6.5 ×1 (—) | 6.6 [6.5–6.8] ×4 (4.1) |
-| STT TLS handshake | 5.9 [5.3–6.8] ×4 (5.7) | 6.5 ×1 (—) | 6.6 [5.8–7.1] ×4 (9.5) |
-| STT upload (headers → audio sent) | 5.1 [4.5–6.1] ×4 (4.6) | 6.1 ×1 (—) | 5.7 [4.2–8.4] ×4 (7.0) |
-| STT wait (audio sent → answer's headers) | 638 [531–669] ×4 (649) | 602 ×1 (—) | 633 [593–748] ×4 (481) |
-| STT first event（标注为 headers 起，实为请求头写完起，见下） | 643 [536–676] ×4 (655) | 608 ×1 (—) | 641 [598–754] ×4 (490) |
-| STT stream（同上） | 714 [619–750] ×4 (786) | 696 ×1 (—) | 711 [640–789] ×4 (536) |
-| Input frame lateness (due → published) | 2.1 [2.0–3.2] ×4 (165) | 2.0 ×1 (—) | 3.1 [2.0–4.5] ×4 (152) |
-| **Context 与模型请求** | | | |
-| Context readiness wait | 225 [210–349] ×4 (415) | 218 ×1 (—) | 229 [216–244] ×4 (218) |
-| Request encoding | 0.2 [0.2–0.3] ×4 (0.2) | 0.1 ×1 (—) | 0.1 [0.1–0.3] ×4 (0.1) |
-| Pictures sent | 4 ×4 (4) | 0 ×1 (—) | 0 ×4 (0) |
-| Request size (B) | 63,997 ×4 (63,997) | 19,316 ×1 (—) | 19,289 [19,289–19,316] ×4 (19,133) |
-| Request attempts | 1 ×4 (1) | 1 ×1 (—) | 1 ×4 (1) |
-| Model request sent → First event | 611 [597–720] ×4 (1,156) | 470 ×1 (—) | 565 [444–870] ×4 (648) |
-| **视觉** | | | |
-| Frame arrived → published (median) | 0.8 [0.8–0.8] ×4 (0.8) | n/a | n/a |
-| Oldest selected frame age at request | 2,728 [2,703–2,755] ×4 (3,076) | n/a | n/a |
-| Newest selected frame → Turn commit | 85 [24–98] ×4 (56) | n/a | n/a |
-| Vision wait | — (no wait is observed: Context selects among frames already in) | n/a | n/a |
-| First visual output frame | — (no visual output reaches the output boundary) | — (no visual output reaches the output boundary) | — |
-| **音频供给** | | | |
-| Audio duration (s) | 2.58 [1.80–3.10] ×4 (2.30) | 1.65 ×1 (—) | 3.08 [1.65–3.60] ×4 (3.60) |
-| Frame interval (median) | 0.1 [0.1–0.2] ×4 (0.1) | 0.2 ×1 (—) | 0.2 [0.2–0.2] ×4 (0.2) |
-| Largest frame gap | 303 [293–314] ×4 (428) | 206 ×1 (—) | 286 [206–329] ×4 (300) |
-| Underruns (count) | 1 ×4 (1) | 1 ×1 (—) | 1 ×4 (1) |
-| Starved in total | 105 [95–116] ×4 (231) | 8.0 ×1 (—) | 88 [8.0–131] ×4 (102) |
-| Production time / audio duration | 0.29 [0.24–0.39] ×4 (0.35) | 0.26 ×1 (—) | 0.26 [0.21–0.26] ×4 (0.14) |
-| Output events dropped | 0 ×4 (0) | 0 ×1 (—) | 0 ×4 (0) |
-
-会话与 runner：
-
-| | 视觉开（`voice_vision`） | 视觉关（`voice`） |
-|---|---|---|
-| runtime 启动 | 17.73 s，模型缓存没有增长 | 16.34 s，模型缓存没有增长 |
-| 会话就绪（5 个会话） | 中位数 10.2 ms，第一个 204 ms | 中位数 10.9 ms，第一个 117 ms |
-
-（本次安装的第一组 `kd19-unprobed` 是空缓存：runtime 启动 134.27 s，模型缓存净增 1,731.9 MB。）
-
-| runner | 视觉开：启动 · 调用 · 排队峰值 · 执行峰值 | 视觉关：启动 · 调用 · 排队峰值 · 执行峰值 |
-|---|---|---|
-| `voice.vad.silero` | 0.24 s · 1040 · 0.03 ms · 1.5 ms | 0.24 s · 1145 · 0.6 ms · 2.4 ms |
-| `router.addressing.semantic.qwen3_0_6b` | 1.96 s · 5 · 0.0 ms · 206 ms | 1.97 s · 5 · 0.0 ms · 184 ms |
-| `router.turn_taking.smart_turn_v3` | 1.60 s · 5 · 0.0 ms · 37 ms | 1.61 s · 20 · 0.0 ms · 60 ms |
-| `memory.vdb.lancedb` | 6.15 s · 5 · 0.0 ms · 414 ms | 5.58 s · 5 · 0.0 ms · 243 ms |
-| `persona.speaker.attribute` | 1.08 s · — | 1.04 s · 5 · 0.0 ms · 104 ms |
-| `persona.speaker.vector` | 1.37 s · — | 1.29 s · 10 · 0.0 ms · 89 ms |
-| `persona.face.analysis` | 1.67 s · — | 1.50 s · — |
-| `persona.vdb.lancedb` | 3.66 s · 5 · 0.0 ms · 10 ms | 3.12 s · 19 · 0.0 ms · 309 ms |
+完整指标表见证据 [`doctor-batch-2/full-tables-segment.md`](../2026-11-07/doctor-batch-2/full-tables-segment.md)，会话与 runner 的数字见各份 JSON 的 `session.start` 和 `models.runners`。
 
 **读数**
 - **Context built**：时刻改到 build 返回处之后，真实数据里 readiness → built 是 1.5～1.7 ms，built → 请求发出是 8.5～9.9 ms；每份的第 1 轮约 92 ms。
@@ -2757,79 +2617,7 @@ Turn 采用的文字取自 Doctor 报告。探针不记录请求头和凭据。
 | `blind-segment` | `vision.enabled=false` | 20:05–20:06 | 1 | `voice` 1/5（第 3 轮通过），另 4 轮停在 `stt.final`，第二句丢在 STT |
 
 - 两份都由 `doctor_compare.py` 重算，退出 0，stderr 为空。`session.cleanup` 都是 PASS。
-- 单元格是后续轮的中位数 [最小–最大] ×轮数，括号里是第 1 轮；单位为 ms，另有注明的除外。† 表示含未通过的轮。
-
-| Metric | `voice_vision` · 5/5 passed | `voice` · passed rounds (1/5) | `voice` · every round † |
-|---|---|---|---|
-| **端到端（自最后一个有声样本输入起）** | | | |
-| Runtime first text | 3,323 [3,063–3,609] ×4 (5,365) | 2,598 ×1 (—) | 2,608 [2,508–2,949] ×4 (2,637) |
-| First audio frame | 4,511 [3,930–5,159] ×4 (6,218) | 3,307 ×1 (—) | 3,401 [3,298–4,097] ×4 (3,564) |
-| Text complete | 3,508 [3,279–3,767] ×4 (5,646) | 2,733 ×1 (—) | 2,743 [2,630–3,096] ×4 (2,794) |
-| Last audio frame | 5,262 [4,643–5,844] ×4 (6,971) | 3,844 ×1 (—) | 4,193 [3,844–4,987] ×4 (4,368) |
-| Response complete | 5,263 [4,644–5,845] ×4 (6,972) | 3,858 ×1 (—) | 4,194 [3,858–4,987] ×4 (4,368) |
-| Last required input (frame or voice) | 1,861 [1,460–2,162] ×4 (1,961) | n/a | n/a |
-| **Input** | 1,894 [1,492–2,179] ×4 (2,023) | 1,421 ×1 (—) | 1,435 [1,334–1,491] ×4 (1,308) |
-| &nbsp;&nbsp;· Final speech → VAD close | 721 [721–722] ×4 (721) | 682 ×1 (—) | 682 [680–682] ×4 (682) |
-| &nbsp;&nbsp;· VAD close → Final transcript | 1,173 [771–1,458] ×4 (1,302) | 739 ×1 (—) | 753 [654–809] ×4 (626) |
-| **Context** | 284 [230–356] ×4 (970) | 389 ×1 (—) | 376 [293–526] ×4 (535) |
-| &nbsp;&nbsp;· Final transcript → Turn commit | 2.3 [2.1–2.6] ×4 (2.4) | 157 ×1 (—) | 96 [68–157] ×4 (218) |
-| &nbsp;&nbsp;· Turn commit → Context readiness check complete | 270 [216–341] ×4 (858) | 221 ×1 (—) | 228 [213–439] ×4 (217) |
-| &nbsp;&nbsp;· Context readiness check complete → Context built | 1.5 [1.5–1.7] ×4 (1.8) | 2.0 ×1 (—) | 1.8 [1.6–2.0] ×4 (1.7) |
-| &nbsp;&nbsp;· Context built → Model request sent | 10 [9.8–11] ×4 (108) | 8.8 ×1 (—) | 9.3 [8.8–10] ×4 (98) |
-| **Output** | 2,277 [2,208–2,736] ×4 (3,225) | 1,497 ×1 (—) | 1,677 [1,497–2,081] ×4 (1,722) |
-| &nbsp;&nbsp;· Model request sent → First text delta | 1,171 [1,020–1,341] ×4 (2,371) | 788 ×1 (—) | 843 [788–933] ×4 (794) |
-| &nbsp;&nbsp;· First text delta → TTS request | 186 [159–217] ×4 (282) | 135 ×1 (—) | 135 [123–147] ×4 (158) |
-| &nbsp;&nbsp;· TTS request → First PCM | 1,002 [649–1,390] ×4 (571) | 573 ×1 (—) | 704 [573–1,000] ×4 (769) |
-| &nbsp;&nbsp;· First PCM → First audio frame | 0.6 [0.5–0.7] ×4 (0.6) | 0.6 ×1 (—) | 0.6 [0.5–0.7] ×4 (0.6) |
-| **STT 与输入** | | | |
-| STT commit → Final transcript | 1,173 [771–1,458] ×4 (1,302) | 739 ×1 (—) | 753 [653–808] ×4 (626) |
-| STT queue (commit → request started) | 0.0 [0.0–0.0] ×4 (0.0) | 0.1 ×1 (—) | 0.0 [0.0–0.1] ×4 (0.0) |
-| STT connect (TCP) | 3.3 [3.2–4.1] ×4 (3.6) | 6.4 ×1 (—) | 6.4 [6.4–13] ×4 (3.9) |
-| STT TLS handshake | 6.1 [5.8–6.5] ×4 (7.6) | 5.2 ×1 (—) | 5.6 [5.2–8.5] ×4 (12) |
-| STT upload (headers → audio sent) | 5.4 [4.6–5.6] ×4 (8.2) | 5.2 ×1 (—) | 5.4 [4.7–6.1] ×4 (5.5) |
-| STT wait (audio sent → answer's headers) | 1,032 [654–1,227] ×4 (1,157) | 517 ×1 (—) | 636 [517–760] ×4 (531) |
-| STT first event (answer's headers → first event) | 0.4 [0.4–0.5] ×4 (1.8) | 0.5 ×1 (—) | 0.5 [0.5–0.5] ×4 (3.0) |
-| STT stream (answer's headers → transcript done) | 133 [84–208] ×4 (123) | 203 ×1 (—) | 54 [20–203] ×4 (71) |
-| Input frame lateness (due → published) | 2.4 [2.0–3.3] ×4 (162) | 2.1 ×1 (—) | 2.1 [2.0–2.8] ×4 (154) |
-| **Context 与模型请求** | | | |
-| Context readiness wait | 268 [215–340] ×4 (856) | 220 ×1 (—) | 227 [212–438] ×4 (215) |
-| Request encoding | 0.2 [0.2–0.3] ×4 (0.2) | 0.1 ×1 (—) | 0.1 [0.1–0.2] ×4 (0.1) |
-| Pictures sent | 4 ×4 (4) | 0 ×1 (—) | 0 ×4 (0) |
-| Request size (B) | 64,141 [63,997–64,141] ×4 (64,141) | 19,318 ×1 (—) | 19,289 [19,289–19,318] ×4 (19,133) |
-| Request attempts | 1 ×4 (1) | 1 ×1 (—) | 1 ×4 (1) |
-| Model request sent → First event | 833 [753–859] ×4 (2,229) | 483 ×1 (—) | 485 [475–560] ×4 (612) |
-| **视觉** | | | |
-| Frame arrived → published (median) | 0.8 [0.8–0.8] ×4 (0.8) | n/a | n/a |
-| Oldest selected frame age at request | 2,404 [2,174–2,753] ×4 (2,925) | n/a | n/a |
-| Newest selected frame → Turn commit | 27 [11–59] ×4 (65) | n/a | n/a |
-| Vision wait | — (no wait is observed: Context selects among frames already in) | n/a | n/a |
-| First visual output frame | — (no visual output reaches the output boundary) | — (no visual output reaches the output boundary) | — |
-| **音频供给** | | | |
-| Audio duration (s) | 2.38 [1.90–2.80] ×4 (3.00) | 1.20 ×1 (—) | 2.90 [1.20–4.55] ×4 (3.10) |
-| Frame interval (median) | 0.1 [0.1–0.2] ×4 (0.1) | 0.2 ×1 (—) | 0.2 [0.1–0.2] ×4 (0.2) |
-| Largest frame gap | 306 [280–338] ×4 (316) | 334 ×1 (—) | 330 [327–367] ×4 (437) |
-| Underruns (count) | 1 ×4 (1) | 1 ×1 (—) | 1 ×4 (1) |
-| Starved in total | 108 [82–148] ×4 (118) | 135 ×1 (—) | 129 [85–135] ×4 (239) |
-| Production time / audio duration | 0.31 [0.26–0.36] ×4 (0.25) | 0.45 ×1 (—) | 0.28 [0.20–0.45] ×4 (0.26) |
-| Output events dropped | 0 ×4 (0) | 0 ×1 (—) | 0 ×4 (0) |
-
-会话与 runner：
-
-| | 视觉开（`voice_vision`） | 视觉关（`voice`） |
-|---|---|---|
-| runtime 启动 | 365.12 s，模型缓存净增 1,731.9 MB（空缓存；qwen runner 启动 288.87 s） | 16.58 s，缓存没有增长 |
-| 会话就绪（5 个会话） | 中位数 10.8 ms，第一个 219 ms | 中位数 10.5 ms，第一个 161 ms |
-
-| runner | 视觉开：启动 · 调用 · 排队峰值 · 执行峰值 | 视觉关：启动 · 调用 · 排队峰值 · 执行峰值 |
-|---|---|---|
-| `voice.vad.silero` | 0.49 s · 1225 · 0.3 ms · 2.4 ms | 0.24 s · 1167 · 0.7 ms · 4.1 ms |
-| `router.addressing.semantic.qwen3_0_6b` | 288.87 s · 5 · 0.0 ms · 141 ms | 1.98 s · 5 · 0.0 ms · 182 ms |
-| `router.turn_taking.smart_turn_v3` | 3.24 s · 5 · 0.0 ms · 43 ms | 1.61 s · 20 · 0.0 ms · 54 ms |
-| `memory.vdb.lancedb` | 7.13 s · 5 · 0.0 ms · 855 ms | 5.40 s · 5 · 0.0 ms · 436 ms |
-| `persona.speaker.attribute` | 29.44 s · — | 1.06 s · 5 · 0.0 ms · 134 ms |
-| `persona.speaker.vector` | 7.26 s · — | 1.31 s · 10 · 0.0 ms · 124 ms |
-| `persona.face.analysis` | 25.28 s · — | 1.53 s · — |
-| `persona.vdb.lancedb` | 3.40 s · 5 · 0.0 ms · 25 ms | 3.45 s · 19 · 0.0 ms · 393 ms |
+完整指标表见证据 [`doctor-batch-3/full-tables-segment.md`](../2026-11-07/doctor-batch-3/full-tables-segment.md)，会话与 runner 的数字见各份 JSON 的 `session.start` 和 `models.runners`。
 
 **读数**
 - **首事件与终稿两行**：从应答头起算后，首事件是 0.4～3.0 ms，应答头到 done 是 20～208 ms。逐轮相加后，与 commit → final 只差 1.5～6.9 ms。
@@ -2917,3 +2705,104 @@ Turn 采用的文字取自 Doctor 报告。探针不记录请求头和凭据。
 - `kd19/`：三份 matrix 结果、`scored.txt`、`independent/`（两段 16 kHz WAV 和 `samples.json`）。
 
 脚本留在会话临时目录（`batch3/`）。复验结束后，已删除隔离前缀、home（含模型缓存）和凭据副本。
+
+## Doctor 第四批：CI、STT 三处 P2、说话人关联观测、多语言与 KD-19、LID 核实（基线 `d43cc4c`）
+
+改动都在未暂存的工作区。测试脚本、样本音频和隔离安装放在会话临时目录（`scratchpad/batch4/`、`scratchpad/real6/`），仓库里只留 `doctor-batch-4/` 下的结果数据和校验和。
+
+### 1. CI
+
+- **`d43cc4c` 的 Quality 失败**：run 42380285226，558 passed、1 failed。测试辅助函数 `trace()` 的第三个参数 `sequence`，和调用时传入的窗口序号重名。参数改名为 `trace_sequence`，只改了测试。
+- 上一批 `490451b` 的失败是 `-I` 下字节码问题，已经修复；O-17 仍未定位。三件事分开记录。
+
+### 2. STT 与配置的三处 P2
+
+- **默认 delay**：`accepts()` 改为 `supports()`，只认构造参数里明确写出名字的选项。转发型第三方工厂不再被塞入 `delay`；它没声明支持的选项，在构造前报错。
+- **SSE 换行**：用 `iter_text()` 解码字符，按 CR、LF、CRLF 分行。没有用 `iter_lines()`，因为它会在 ` `、`\x85` 等字符处断行，而 JSON 字符串里允许出现这些字符。BOM、注释、多行 data、没有结尾空行、UTF-8 跨块都有用例覆盖。读取仍然到 body 结束。
+- **无效终稿**：只有有效终稿发出后才记录终稿时刻。请求日志的 `outcome` 与消费者收到的终态一致（`final`、`invalid_final`、`missing_final`、`no_final`）。
+- **变异 S1～S6**：全部被抓到。S4 第一次漏掉，改了用例后被抓到。
+
+### 3. 说话人关联的观测
+
+- **`participant.segment_ready`**：`ParticipantRuntime` 的 10 处释放路径都经过 `_settle()`，只在首次就绪时记录，带结果、原因，以及从登记到就绪的时刻；显式实体时可以早于语音段结束。
+- **persona**：删掉旧的 `speaker.association`，保留 `speaker.window`，新增 `speaker.identity`、`speaker.attribute` 两个区间。
+- **Doctor**：新增 `association_ready`、`association_wait` 两项；关联已提前就绪时注明 "none needed"。证据带 `started_ms` 和 `queued_ms`。
+- **变异 A1～A3、P1、D1、D2**：全部被抓到。
+
+### 4. 说话人处理的依赖边界（证据，策略未改）
+
+| 事项 | 在哪里做 | 谁在等 |
+|---|---|---|
+| 物理归属 | 显式实体时在首帧绑定；否则在最后一个窗口推理之后 | Router 提交前最多等 0.15 s，就绪后再核对 |
+| 身份匹配、属性提取 | 绑定之后，在同一串行队列上 | 无人等待 |
+| 声纹缓存与画像、annotation | 之后 | 各消费者自己读 |
+
+- **就绪不等于识别成功**：失败、超时、逐出、退役也会释放等待。
+- **离线证据**（真实处理器加推理替身）：
+  - 窗口推理慢 0.3 s 或 0.6 s，关联就晚 302 ms 或 602 ms；
+  - 前一段的身份检索占住队列 0.4 s，后一段的关联晚 402 ms；
+  - 两者都超过 0.15 s，提交会在没有关联的情况下放行。
+  - 真实运行里，关联在语音段结束后 73～89 ms 就已就绪，提交等待为 0（第 6 节）。
+- **建议**（待决定）：
+  - 窗口推理不要和身份匹配、属性推理共用一个串行队列；
+  - 本轮 LLM 只需要物理归属和已确认的身份，在 Context 冻结前就绪或明确超时；
+  - 属性和画像在记录收尾时有界汇合，迟到的结果不改写已冻结的 Context 和历史。
+
+### 5. LID：Whisper tiny int8 的核实（仓库内原型未实现）
+
+- **模型**：`csukuangfj/sherpa-onnx-whisper-tiny`（`65176e2d`），编码器 12.9 MB，解码器 89.9 MB。模型元数据里没有许可证，Whisper 权重本身是 MIT。
+- **语言检测**：解码器只跑一步 `sot`，在 99 个语言 token 上做 softmax，就得到全部语言的分布，不需要生成转录。分数没有校准。
+- **一致性**：log-mel 与 transformers 的最大差 2e-5；int8 与 fp32 相比，前三名一致，概率最大差 0.028。
+- **多语言样本**（补齐到 30 s）：
+  - 纯中文、纯英文 ≥ 0.997；
+  - 混说时只给主导语言，中文夹英文 zh 0.996、英文夹中文 en 0.90；
+  - 短句 0.81～0.91；
+  - 静音、噪声的分布很平（最高 0.24～0.47）。
+- **按原长截取**：快到 25～64 ms，但短句和「OK.」会判错。
+- **资源**：单线程约 220 ms；RSS 载入后 236 MB，峰值约 500 MB。
+- **方案**：voice 插件负责模型和 runner，router 负责按语音段调度推理并发布语言 annotation；默认关闭，只依赖 onnxruntime 和 numpy。契约待确认后再写。
+
+### 6. 真实服务
+
+费用估计约 2 美元：直接调用 STT 1,289 次（含误跑的 900 次），TTS 16 次，Doctor 30 轮（另有它自己的调用）。授权依据是本批审查第 7 项。记录来自 dirty 构建 `0.6.8-d43cc4c4d807-dirty.20261107150502` 和本地工作区，与提交后的 CI 分开。证据在 [`doctor-batch-4/`](../2026-11-07/doctor-batch-4/)。
+
+| 项 | 次数 | 结果 |
+|---|---|---|
+| KD-20 复用 | 2 次 × 5 段 | 后 4 段都复用（8/8）；第 1 段建连 3.4～3.8 ms、TLS 7.3～11.1 ms；收尾 0.3～3.9 ms（`kd20/`） |
+| KD-17 | 3 次 × 3 段 | 3/3：+0.75 s 触发观察点；+1.5 s 的终稿并入原轮；+4 s 的终稿在 3 s 时被取消、按退役片段拒收，且在同源下一轮等待期间到达，没有串入（`kd17/`） |
+| 多语言矩阵 | 6 组配置 × 15 段 × 3 次（另有误跑的 10 次，见下） | 语音样本几乎全部完整：固定 `zh` 或 `en` 都没有翻译，混说保留两种文字，切换各轮都正确；唯一例外是固定 `zh` 的短停顿中文 8/10（「等」→「抖」）。静音和噪声全部编出文字（O-18）。加 prompt 后中位延迟多约 90～100 ms（`stt/`） |
+| KD-19 探针 | 10 种变体 × 10 次 | 只延长停顿 2/1/0/0，只换声线 0～2；被丢的总是第二句（`kd19/`） |
+| Doctor 基线与 VAD | 6 份 × 5 轮 | 下表（`doctor/`） |
+
+| VAD 静音阈值 | 视觉开通过 | 视觉关通过 | Final speech → VAD close（开／关） |
+|---|---|---|---|
+| 550 ms | 4/5（1 轮答案带了「white」） | 2/5（KD-19） | 721 / 681 |
+| 300 ms | 5/5 | 0/5（KD-19） | 462 / 421 |
+| 200 ms | 4/5（同上） | 0/5（KD-19） | 361 / 322 |
+
+- 三种阈值下，两句话都落在同一个语音段里。
+- **O-15**：第 1 轮请求准备 94～168 ms，其中 client 就绪 5～59 ms、编码约 0.2 ms，其余 62～162 ms 在 SDK 交给传输层之前；之后各轮约 8～9 ms。
+- **O-16**：视觉关时，关联在语音段结束后 73～89 ms 就已就绪，提交实际等关联的时间是 0.0 ms。终稿到提交之间的 36～155 ms 落在 hold 到 commit 的再判定上，不是说话人关联。第三批对这一段的定位有误，现予更正（`doctor/o15-o16.txt`）。
+- **误跑**：KD-19 探针脚本在导入矩阵脚本时，把整个矩阵按 10 次重复多跑了一遍，多出 900 次调用。数据保留为 `stt/matrix-10reps.json`，脚本已修正。
+
+### 7. 离线验证
+
+| 命令 | 结果 |
+|---|---|
+| 全量 `pytest`（`PYTHONDONTWRITEBYTECODE=1 ALPHAAVATAR_MODEL_OFFLINE=1`） | 587 passed，退出 0；ignored 文件前后没有变化 |
+| 干净克隆（`d43cc4c` 加本批改动，`uv sync --locked --offline`）里按 CI 命令跑全量 | 587 passed；测试前后 `git status --porcelain --ignored` 完全一致 |
+| `check_workspace`、`uv lock --check`、`ruff check`、`ruff format --check`、pre-commit、`git diff --check` | 都是 0 |
+| 变异（S1～S6、A1～A3、P1、D1、D2，以及 KD-20 的 M1～M9） | 全部被抓到 |
+
+### 8. 待复验与延期
+
+- **待决定**：
+  - 说话人处理的队列与收尾契约（第 4 节）；
+  - LID 仓库内原型的契约（第 5 节）；
+  - 是否采用 KD-19 的通用提示；
+  - O-15 的修法：是否在 provider 初始化时预先访问 `client.responses`。
+- **待定位**：
+  - O-16 的再判定：语义 addressing 还是轮次再评估，需要先补计时；
+  - KD-19：只改内容的对照；
+  - O-17：仍未定位。
+- **延期**：warmup 的端到端收益；静音和噪声幻觉（O-18）的处理。

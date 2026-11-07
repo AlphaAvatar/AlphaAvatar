@@ -45,6 +45,8 @@ from .schemas import ParticipantInput
 @dataclass(slots=True)
 class _SegmentState:
     token: int
+    segment: PerceptionSegmentRef
+    observed_ns: int  # When its association was asked for, on the runtime clock
     entity: PerceptionEntityRef | None = None
     invalid: bool = False
     ready: asyncio.Event = field(default_factory=asyncio.Event)
@@ -130,11 +132,30 @@ class ParticipantRuntime:
             self._drop_source(PerceptionSourceRef(source.source_id, current[0]))
         self._generations[source.source_id] = (source.source_generation, True)
 
+    def _settle(self, current: _SegmentState, outcome: str, reason: str | None = None) -> None:
+        """Release the association's waiters, once: the first time it is ready, and how, is
+        what the trace keeps (bound, unbound, invalid, released or unresolved). Ready is not
+        recognized: a failure, an eviction or a retirement releases it too."""
+        if current.ready.is_set():
+            return
+        current.ready.set()
+        segment, perception = current.segment, self.turn.perception
+        perception.input_trace.record(
+            "participant.segment_ready",
+            source_id=segment.source.source_id,
+            source_generation=segment.source.source_generation,
+            segment_id=segment.segment_id,
+            outcome=outcome,
+            reason=reason,
+            start_time_ns=current.observed_ns,
+            end_time_ns=perception.clock.now().monotonic_ns,
+        )
+
     def _drop_source(self, source: PerceptionSourceRef) -> None:
         removed = self._bindings.release_source(source)
         for segment in tuple(self._segments):
             if segment.source == source:
-                self._segments.pop(segment).ready.set()
+                self._settle(self._segments.pop(segment), "released", "source_retired")
         for participant_id in removed:
             self._release_participant(participant_id)
 
@@ -293,7 +314,7 @@ class ParticipantRuntime:
                 and current.entity.entity_id == entity.entity_id
             ):
                 current.invalid = True
-                current.ready.set()
+                self._settle(current, "invalid", "entity_released")
         if participant_id is not None:
             self._release_participant(participant_id)
 
@@ -331,25 +352,30 @@ class ParticipantRuntime:
         elif self._segment_resolver == consumer_id:
             self._segment_resolver = None
             for current in self._segments.values():
-                current.ready.set()
+                self._settle(current, "released", "resolver_stopped")
 
     def observe_segment(self, segment: PerceptionSegmentRef) -> int:
         self._activate(segment.source)
         current = self._segments.get(segment)
         if current is None:
             self._next_segment_token += 1
-            current = self._segments[segment] = _SegmentState(self._next_segment_token)
+            current = self._segments[segment] = _SegmentState(
+                self._next_segment_token, segment, self.turn.perception.clock.now().monotonic_ns
+            )
             if self._segment_resolver is None:
-                current.ready.set()
+                self._settle(current, "unresolved", "no_resolver")
             while len(self._segments) > self._max_segments:
                 _, removed = self._segments.popitem(last=False)
-                removed.ready.set()
+                self._settle(removed, "released", "evicted")
         return current.token
 
     def finish_segment_resolution(self, segment: PerceptionSegmentRef, *, token: int) -> None:
         current = self._segments.get(segment)
         if current is not None and current.token == token:
-            current.ready.set()
+            outcome = (
+                "invalid" if current.invalid else "unbound" if current.entity is None else "bound"
+            )
+            self._settle(current, outcome)
 
     async def wait_for_segments(self, segments: Iterable[PerceptionSegmentRef]) -> None:
         """Wait for physical associations; the caller owns the deadline and rechecks identities."""
@@ -374,7 +400,7 @@ class ParticipantRuntime:
         current = self._segments.get(segment)
         if current is not None:
             current.invalid = True
-            current.ready.set()
+            self._settle(current, "invalid", "invalidated")
 
     def bind_segment(
         self, segment: PerceptionSegmentRef, entity: PerceptionEntityRef | None, *, token: int
@@ -394,11 +420,11 @@ class ParticipantRuntime:
             current.entity is not None and current.entity.entity_id != entity.entity_id
         ):
             current.invalid = True
-            current.ready.set()
+            self._settle(current, "invalid", "no_entity" if entity is None else "entity_conflict")
             return False
 
         current.entity = entity
-        current.ready.set()
+        self._settle(current, "bound")
         return True
 
     def entity_for_segment(self, segment: PerceptionSegmentRef) -> PerceptionEntityRef | None:
@@ -522,7 +548,7 @@ class ParticipantRuntime:
         self._closed = True
         self._segment_resolver = None
         for current in self._segments.values():
-            current.ready.set()
+            self._settle(current, "released", "closed")
         self._bindings.clear()
         self._active_participants.clear()
         self._association_kinds.clear()

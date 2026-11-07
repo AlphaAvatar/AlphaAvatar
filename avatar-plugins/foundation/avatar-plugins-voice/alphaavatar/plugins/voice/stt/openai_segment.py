@@ -18,6 +18,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import time
 import wave
 from collections import OrderedDict
@@ -73,21 +74,40 @@ def _prepare(client: openai.AsyncOpenAI) -> None:
     _ = client.audio.transcriptions
 
 
-async def _sse(chunks: AsyncIterator[bytes]) -> AsyncIterator[str]:
-    """Each server-sent event's data, its ``data:`` lines joined, an event split across chunks
-    put back together; the body read to its end."""
-    pending, data = b"", []
-    async for chunk in chunks:
-        *lines, pending = (pending + chunk).split(b"\n")
+# A server-sent event stream's line ends, and only these: str.splitlines (and so httpx's
+# iter_lines) also breaks at U+2028, U+0085 and others, which a JSON string may hold as is.
+_LINE_END = re.compile("\r\n|\r|\n")
+
+
+async def _sse(text: AsyncIterator[str]) -> AsyncIterator[str]:
+    """Each server-sent event's data, its ``data:`` lines joined: the body's text as the
+    response decodes it (a character split across chunks whole again), split at CR, LF or
+    CRLF, a leading BOM dropped, comments and other fields skipped; read to the body's end.
+    An event the body ends without its blank line is still given."""
+    pending, data, begun = "", [], False
+
+    def field(line: str) -> None:
+        name, _, value = line.partition(":")
+        if name == "data":
+            data.append(value.removeprefix(" "))
+
+    async for chunk in text:
+        if not begun:
+            chunk, begun = chunk.removeprefix("\ufeff"), True
+        pending += chunk
+        held = pending.endswith("\r")  # Perhaps the first half of a CRLF
+        *lines, pending = _LINE_END.split(pending[:-1] if held else pending)
+        pending += "\r" if held else ""
         for line in lines:
-            line = line.removesuffix(b"\r")
-            if not line and data:
+            if line:
+                if not line.startswith(":"):
+                    field(line)
+            elif data:
                 yield "\n".join(data)
                 data = []
-            elif line.startswith(b"data:"):
-                data.append(line[5:].removeprefix(b" ").decode())
-    if pending.startswith(b"data:"):
-        data.append(pending[5:].removeprefix(b" ").removesuffix(b"\r").decode())
+    for line in _LINE_END.split(pending):
+        if line and not line.startswith(":"):
+            field(line)
     if data:
         yield "\n".join(data)
 
@@ -504,50 +524,27 @@ class OpenAISegmentSTTStream(STTStreamBase):
 
         return kwargs
 
-    async def _transcribe(self, job: _SegmentJob) -> None:
-        started, marks, done = time.monotonic_ns(), {}, {}
-        try:
-            await self._exchange(job, marks, done)
-        finally:
-            # Where the segment's time went: its wait in the request queue, the connection
-            # (none when reused), the upload, the server's answer and its stream to the final.
-            # Reuse is known from a traced request only: a client of the caller's own, or a
-            # request that failed before the transport sent it, traces nothing.
-            sent = any(name.endswith("send_request_headers.started") for name in marks)
-            opened = any(name.endswith("connect_tcp.started") for name in marks)
-            answered = next(
-                (at for n, at in marks.items() if n.endswith("receive_response_headers.complete")),
-                None,
+    def _emit_final(self, job: _SegmentJob, text: object, done: dict[str, Any]) -> None:
+        """The segment's final, or invalid_final when it has no text: ``done`` marks which
+        went out, and when a valid one did."""
+        if not isinstance(text, str):
+            done["outcome"] = "invalid_final"
+            self._emit_error(
+                job.segment_id,
+                "OpenAI transcription final has no text field",
+                reason_code="invalid_final",
             )
-            log_event(
-                logger,
-                "stt.request",
-                segment_id=job.segment_id,
-                outcome="final" if "final" in done else "no_final",
-                queue_ms=round((started - job.committed_ns) / 1e6, 3),
-                reused=False if opened else True if sent else None,
-                connect_ms=_between(marks, "connect_tcp.started", "connect_tcp.complete"),
-                tls_ms=_between(marks, "start_tls.started", "start_tls.complete"),
-                upload_ms=_between(
-                    marks, "send_request_headers.started", "send_request_body.complete"
-                ),
-                wait_ms=_between(
-                    marks, "send_request_body.complete", "receive_response_headers.complete"
-                ),
-                first_event_ms=(
-                    None
-                    if answered is None or "first" not in done
-                    else round((done["first"] - answered) / 1e6, 3)
-                ),
-                final_ms=(
-                    None
-                    if answered is None or "final" not in done
-                    else round((done["final"] - answered) / 1e6, 3)
-                ),
-            )
+            return
+        done["final"], done["outcome"] = time.monotonic_ns(), "final"
+        self._emit_transcript(
+            event_type=TranscriptionEventType.FINAL_TRANSCRIPT,
+            segment_id=job.segment_id,
+            text=text,
+            duration_sec=job.duration_sec,
+        )
 
     async def _exchange(
-        self, job: _SegmentJob, marks: dict[str, int], done: dict[str, int]
+        self, job: _SegmentJob, marks: dict[str, int], done: dict[str, Any]
     ) -> None:
         # The raw response, read here to the body's end: the SDK's own stream closes it at
         # ``data: [DONE]``, before the chunked body ends, and the connection goes with it.
@@ -578,14 +575,15 @@ class OpenAISegmentSTTStream(STTStreamBase):
                     # whisper-1 ignores stream=True and answers with the whole transcript.
                     body = await response.json()
                     final_text = body.get("text") if isinstance(body, dict) else None
-                    done["first"] = done["final"] = time.monotonic_ns()
-                    self._emit_final(job, final_text)
+                    done["first"] = time.monotonic_ns()
+                    self._emit_final(job, final_text, done)
                     settle(tail)
                 else:
-                    async for data in _sse(response.iter_bytes()):
+                    async for data in _sse(response.iter_text()):
                         if settled:
                             continue  # Past the outcome: read for the connection, not handled
                         if data == "[DONE]":
+                            done["outcome"] = "missing_final"
                             self._emit_error(
                                 job.segment_id,
                                 "OpenAI transcription stream closed without a final result",
@@ -622,8 +620,7 @@ class OpenAISegmentSTTStream(STTStreamBase):
                                 last_interim_at = now
 
                         elif event_type == "transcript.text.done":
-                            done["final"] = time.monotonic_ns()
-                            self._emit_final(job, event.get("text"))
+                            self._emit_final(job, event.get("text"), done)
                             settle(tail)
 
                 await response.close()
@@ -644,26 +641,54 @@ class OpenAISegmentSTTStream(STTStreamBase):
                         await response.close()
 
         if not settled:
+            done["outcome"] = "missing_final"
             self._emit_error(
                 job.segment_id,
                 "OpenAI transcription stream closed without a final result",
                 reason_code="missing_final",
             )
 
-    def _emit_final(self, job: _SegmentJob, text: object) -> None:
-        if not isinstance(text, str):
-            self._emit_error(
-                job.segment_id,
-                "OpenAI transcription final has no text field",
-                reason_code="invalid_final",
+    async def _transcribe(self, job: _SegmentJob) -> None:
+        started, marks, done = time.monotonic_ns(), {}, {}
+        try:
+            await self._exchange(job, marks, done)
+        finally:
+            # Where the segment's time went: its wait in the request queue, the connection
+            # (none when reused), the upload, the server's answer and its stream to the final.
+            # Reuse is known from a traced request only: a client of the caller's own, or a
+            # request that failed before the transport sent it, traces nothing.
+            sent = any(name.endswith("send_request_headers.started") for name in marks)
+            opened = any(name.endswith("connect_tcp.started") for name in marks)
+            answered = next(
+                (at for n, at in marks.items() if n.endswith("receive_response_headers.complete")),
+                None,
             )
-            return
-        self._emit_transcript(
-            event_type=TranscriptionEventType.FINAL_TRANSCRIPT,
-            segment_id=job.segment_id,
-            text=text,
-            duration_sec=job.duration_sec,
-        )
+            log_event(
+                logger,
+                "stt.request",
+                segment_id=job.segment_id,
+                outcome=done.get("outcome", "no_final"),
+                queue_ms=round((started - job.committed_ns) / 1e6, 3),
+                reused=False if opened else True if sent else None,
+                connect_ms=_between(marks, "connect_tcp.started", "connect_tcp.complete"),
+                tls_ms=_between(marks, "start_tls.started", "start_tls.complete"),
+                upload_ms=_between(
+                    marks, "send_request_headers.started", "send_request_body.complete"
+                ),
+                wait_ms=_between(
+                    marks, "send_request_body.complete", "receive_response_headers.complete"
+                ),
+                first_event_ms=(
+                    None
+                    if answered is None or "first" not in done
+                    else round((done["first"] - answered) / 1e6, 3)
+                ),
+                final_ms=(
+                    None
+                    if answered is None or "final" not in done
+                    else round((done["final"] - answered) / 1e6, 3)
+                ),
+            )
 
     @staticmethod
     def _api_error_reason(error: BaseException) -> str:

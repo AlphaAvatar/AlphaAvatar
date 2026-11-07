@@ -193,3 +193,55 @@ def test_rejected_mcp_input_never_reaches_error_output(
         "json": error.json(include_input=False),
     }
     assert [name for name, text in outputs.items() if SECRET in text] == []
+
+
+class ModelOnlySTT:
+    """A third party's STT: it takes a model and nothing else."""
+
+    def __init__(self, *, model: str) -> None:
+        self.model = model
+
+
+def third_party(supported: frozenset[str] = frozenset()) -> object:
+    from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
+
+    class Forwarding(AvatarModulePlugin):
+        """Passes every keyword on, as factories do: taking any is not supporting each."""
+
+        def __init__(self) -> None:
+            super().__init__("third", "1.0", "third_party_stt")
+
+        def supports(self, option: str) -> bool:
+            return option in supported or super().supports(option)
+
+        def get_plugin(self, *args, **kwargs):
+            return ModelOnlySTT(*args, **kwargs)
+
+    return Forwarding()
+
+
+@pytest.mark.parametrize("supported", [frozenset(), frozenset({"language"})])
+def test_a_forwarding_stt_factory_gets_only_the_settings_set_that_it_supports(
+    supported: frozenset[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from alphaavatar.agents.configs.plugins.foundation.voice_config import STTConfig
+    from alphaavatar.agents.runtime.plugin import AvatarModule, ResolvedPlugin, resolution
+
+    factory = third_party(supported)
+    key = (AvatarModule.VOICE_STT, "third")
+    monkeypatch.setitem(resolution._resolved, key, ResolvedPlugin(*key, factory, "third_party_stt"))
+    # No delay forced on it: the default asks for nothing, and it never named one.
+    built = STTConfig(plugin="third", model="whisper").get_plugin()
+    assert isinstance(built, ModelOnlySTT) and built.model == "whisper"
+    hinted = STTConfig(plugin="third", model="whisper", language="zh")
+    if not supported:
+        # A setting it does not say it supports is refused before it is built.
+        assert hinted.unsupported(factory) == [
+            ("language", "voice.stt.plugin 'third' does not take language")
+        ]
+        with pytest.raises(ValueError, match="voice.stt.language"):
+            hinted.get_plugin()
+        return
+    assert hinted.unsupported(factory) == []
+    with pytest.raises(TypeError, match="language"):  # Passed on as it said it would be
+        hinted.get_plugin()

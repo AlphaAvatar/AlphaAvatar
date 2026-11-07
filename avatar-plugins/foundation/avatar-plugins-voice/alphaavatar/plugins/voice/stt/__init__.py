@@ -25,7 +25,7 @@ class OpenAIRealtimeSTTPlugin(AvatarModulePlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)
 
-    def accepts(self, option: str) -> bool:
+    def supports(self, option: str) -> bool:
         return option in inspect.signature(OpenAIRealtimeSTT).parameters
 
     def get_plugin(self, *args, **kwargs):
@@ -36,7 +36,7 @@ class OpenAISegmentSTTPlugin(AvatarModulePlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)
 
-    def accepts(self, option: str) -> bool:
+    def supports(self, option: str) -> bool:
         return option in inspect.signature(OpenAISegmentSTT).parameters
 
     def get_plugin(self, *args, **kwargs):

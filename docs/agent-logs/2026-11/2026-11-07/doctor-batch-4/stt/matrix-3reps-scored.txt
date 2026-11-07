@@ -1,0 +1,40 @@
+complete / repetitions (every key word there, each language in its own script); errors in brackets
+sample              auto  auto+prompt           zh    zh+prompt           en    en+prompt
+zh                   3/3          3/3          3/3          3/3          3/3          3/3
+en                   3/3          3/3          3/3          3/3          3/3          3/3
+zh_en                3/3          3/3          3/3          3/3          3/3          3/3
+en_zh                3/3          3/3          3/3          3/3          3/3          3/3
+short_zh             3/3          3/3          3/3          3/3          3/3          3/3
+short_en             3/3          3/3          3/3          3/3          3/3          3/3
+ambiguous            3/3          3/3          3/3          3/3          3/3          3/3
+pause_zh             3/3          3/3          2/3          3/3          3/3          3/3
+pause_en             3/3          3/3          3/3          3/3          3/3          3/3
+switch_1             3/3          3/3          3/3          3/3          3/3          3/3
+switch_2             3/3          3/3          3/3          3/3          3/3          3/3
+switch_3             3/3          3/3          3/3          3/3          3/3          3/3
+switch_4             3/3          3/3          3/3          3/3          3/3          3/3
+silence              0/3          0/3          0/3          0/3          0/3          0/3
+noise                0/3          0/3          0/3          0/3          0/3          0/3
+
+latency, commit -> final (ms): median per config, every sample but silence and noise
+  auto: commit->final median 730 [491-1307] x39; first event after headers median 0.4
+  auto+prompt: commit->final median 808 [596-1040] x39; first event after headers median 0.3
+  zh: commit->final median 735 [537-1358] x39; first event after headers median 0.3
+  zh+prompt: commit->final median 778 [621-1097] x39; first event after headers median 0.3
+  en: commit->final median 721 [544-1139] x39; first event after headers median 0.4
+  en+prompt: commit->final median 816 [595-1160] x39; first event after headers median 0.4
+
+what went wrong, sample by sample (first of each kind)
+  pause_zh   zh         '抖一下，好了。'                                                              {'missing': ['等一下'], 'lost_zh': ['等']}
+  silence    auto         'Mein Name'                                                            {'made_up': True}
+  silence    auto+prompt  'context:'                                                             {'made_up': True}
+  silence    en         'उसने कहा।'                                                            {'made_up': True}
+  silence    en+prompt  'context:'                                                             {'made_up': True}
+  silence    zh         'Mutluyum.'                                                            {'made_up': True}
+  silence    zh+prompt  'context:'                                                             {'made_up': True}
+  noise      auto         'بالتالي'                                                              {'made_up': True}
+  noise      auto+prompt  'context:'                                                             {'made_up': True}
+  noise      en         '사랑해.'                                                                 {'made_up': True}
+  noise      en+prompt  '###'                                                                  {'made_up': True}
+  noise      zh         'Polaire'                                                              {'made_up': True}
+  noise      zh+prompt  'context:'                                                             {'made_up': True}

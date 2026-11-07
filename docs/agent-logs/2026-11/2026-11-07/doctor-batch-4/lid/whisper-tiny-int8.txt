@@ -1,0 +1,26 @@
+load 0.41 s, max RSS 45 -> 236 MB
+zh.wav                    5.55 s  30 s  zh 0.999, th 0.000, ko 0.000              237 ms
+zh.wav                    5.55 s  own   zh 1.000, ko 0.000, th 0.000               44 ms
+en.wav                    5.45 s  30 s  en 0.997, la 0.000, ja 0.000              227 ms
+en.wav                    5.45 s  own   en 0.998, la 0.000, hi 0.000               40 ms
+zh_en.wav                 8.45 s  30 s  zh 0.996, th 0.002, en 0.001              220 ms
+zh_en.wav                 8.45 s  own   zh 0.998, en 0.001, th 0.000               64 ms
+en_zh.wav                 8.15 s  30 s  en 0.900, zh 0.058, th 0.011              218 ms
+en_zh.wav                 8.15 s  own   en 0.930, zh 0.044, th 0.014               51 ms
+short_zh.wav              0.95 s  30 s  zh 0.908, sv 0.018, ko 0.011              217 ms
+short_zh.wav              0.95 s  own   zh 0.715, ar 0.173, sv 0.072               25 ms
+short_en.wav              1.25 s  30 s  en 0.806, es 0.038, de 0.022              220 ms
+short_en.wav              1.25 s  own   en 0.302, es 0.199, la 0.097               25 ms
+ambiguous.wav             1.00 s  30 s  en 0.894, hi 0.021, ja 0.009              219 ms
+ambiguous.wav             1.00 s  own   zh 0.612, ko 0.111, vi 0.083               25 ms
+switch_1.wav              5.10 s  30 s  zh 0.995, ko 0.001, th 0.001              216 ms
+switch_1.wav              5.10 s  own   zh 0.990, en 0.003, th 0.003               37 ms
+switch_2.wav              3.90 s  30 s  en 0.989, ja 0.004, cy 0.001              218 ms
+switch_2.wav              3.90 s  own   en 0.987, ja 0.009, id 0.001               34 ms
+silence.wav               2.00 s  30 s  cy 0.438, en 0.202, nn 0.084              218 ms
+silence.wav               2.00 s  own   nn 0.352, ru 0.183, cy 0.059               27 ms
+noise.wav                 2.00 s  30 s  nn 0.239, en 0.232, ko 0.096              216 ms
+noise.wav                 2.00 s  own   nn 0.472, en 0.161, ja 0.105               28 ms
+sum_question.wav          3.26 s  30 s  en 0.988, nn 0.002, la 0.001              218 ms
+sum_question.wav          3.26 s  own   en 0.990, nn 0.001, la 0.001               31 ms
+max RSS after 497 MB
