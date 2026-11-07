@@ -11,50 +11,109 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""``scripts/quality/doctor_compare.py``: Doctor's JSON reports side by side."""
+"""``scripts/quality/doctor_compare.py``: Doctor's JSON reports side by side, recomputed."""
 
 from __future__ import annotations
 
 import importlib.util
 import json
+from dataclasses import asdict
 from pathlib import Path
+
+from alphaavatar.host.doctor.enums import ScenarioOutcome
+from alphaavatar.host.doctor.measure import summarize
+from alphaavatar.host.doctor.schemas import Evidence, Metric, ScenarioResult
 
 SCRIPT = Path(__file__).parents[3] / "scripts" / "quality" / "doctor_compare.py"
 
 
-def report(passed: int, stopped: dict[str, int], median: float, lost: str | None) -> dict:
-    figure = {"name": "stt_final", "unit": "ms", "first": 900.0, "samples": 4, "median": median}
-    encode = {"name": "model_request_encode", "unit": "ms", "first": 0.223, "samples": 4}
-    rounds = [
-        {
-            "name": "voice",
-            "round": 2,
-            "evidence": [{"stage": "candidate.decision", "detail": {"action": "cancel"}}],
-            "sentences": [{"index": 2, "heard": lost is None, "lost": lost}],
-        }
-    ]
-    summary = {"name": "voice", "configuration": "original", "rounds": 5, "passed": passed}
-    summary |= {"stopped_at": stopped, "figures": [figure, encode | {"median": 0.106}]}
-    scenarios = {"id": "session.scenarios", "summaries": [summary], "scenarios": rounds}
-    return {"status": "PASS", "checks": [scenarios]}
-
-
-def test_reports_compare_by_scenario_figure_and_turn_taking(tmp_path: Path) -> None:
+def script():
     spec = importlib.util.spec_from_file_location("doctor_compare", SCRIPT)
-    compare = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(compare)
-    paths = []
-    for name, data in (
-        ("segment", report(4, {"stt.final": 1}, 2459.0, "stt")),
-        ("realtime", report(5, {}, 812.0, None)),
-    ):
-        path = tmp_path / f"{name}.json"
-        path.write_text(json.dumps(data))
-        paths.append(f"{name}={path}")
-    lines = compare.compare([(arg.split("=")[0], compare.load(arg.split("=")[1])) for arg in paths])
-    rows = {line.split("  ")[0].strip(): line.split()[-2:] for line in lines[2:] if line}
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def result(at: int, outcome: str, first_text: float | None, **fields) -> ScenarioResult:
+    metrics = (Metric("first_text", first_text, "ms", "a", "b", "c"),)
+    merged = fields.pop("merged", ())
+    segments = (
+        Metric("input", 500.0 + at, "ms", "a", "b", "c"),
+        Metric("input.final_transcript", 200.0 + at, "ms", "a", "b", "c", merged=merged),
+        Metric("model_request_encode", 0.2 + at / 100, "ms", "a", "b", "c"),
+    )
+    return ScenarioResult(
+        "voice",
+        ScenarioOutcome(outcome),
+        "",
+        "stt openai_segment m",
+        metrics=metrics,
+        segments=segments,
+        round=at,
+        **fields,
+    )
+
+
+def saved(tmp_path: Path, name: str, results: list[ScenarioResult]) -> str:
+    """A report as Doctor saves it: the rounds, and the summary Doctor made of them."""
+    scenarios = {
+        "id": "session.scenarios",
+        "scenarios": [asdict(r) for r in results],
+        "summaries": [asdict(s) for s in summarize(results)],
+    }
+    path = tmp_path / f"{name}.json"
+    path.write_text(json.dumps({"status": "FAIL", "checks": [scenarios]}))
+    return f"{name}={path}"
+
+
+def test_figures_and_events_are_recomputed_from_the_rounds_as_doctor_summarizes_them(
+    tmp_path: Path, capsys
+) -> None:
+    compare = script()
+    lost = {"index": 2, "heard": False, "lost": "stt"}
+    cancel = Evidence(0.0, "candidate.decision", "trace", {"action": "cancel"})
+    segment = [
+        # The first round failed, a later one too; one merged its row; one lost a sentence.
+        result(1, "failed", 900.0, sentences=(lost,)),
+        result(2, "passed", 810.0, evidence=(cancel,)),
+        result(3, "failed", 700.0, request={"attempts": 2}),
+        result(4, "passed", None),  # Passed, the figure missing
+        result(5, "passed", 830.0, merged=("vad_close",)),
+    ]
+    realtime = [result(at, "failed", None) for at in (1, 2)]  # Every round failed, unobserved
+    paths = [saved(tmp_path, "segment", segment), saved(tmp_path, "realtime", realtime)]
+    assert compare.main(paths) == 0  # Every figure as the report's own summary has it.
+    lines = capsys.readouterr().out.splitlines()
     assert lines[1].split() == ["segment", "realtime"]
-    assert rows["Rounds passed"][-1] == "5/5" and "4/5; 1 at stt.final" in lines[2]
-    assert "2,459 (900)" in lines[3] and "812 (900)" in lines[3]
-    assert rows["Request encoding"] == ["0.1", "(0.2)"]
-    assert rows["Cancels"] == ["1", "1"] and rows["Sentences lost in stt"] == ["1", "0"]
+
+    def row(label: str, which: int = 0) -> list[str]:
+        found = [line for line in lines if line.strip().startswith(label)]
+        return [cell.strip() for cell in found[which].split("  ") if cell.strip()][1:]
+
+    assert row("Rounds passed") == ["3/5; 2 at failed", "0/2; 2 at failed"]
+    # Passed rounds: 2 and 5 observed it; round 1 failed, so no Round 1 value. Every round:
+    # 2, 3 and 5 later, round 1 apart. The report that observed nothing shows nothing.
+    assert row("Runtime first text") == ["820 [810–830] ×2 (—)", "—"]
+    assert row("Runtime first text", 1) == ["810 [700–830] ×3 (900)", "—"]
+    # The merged round is a sample of neither; sub-millisecond figures keep a decimal.
+    assert row("VAD close → Final transcript") == ["203 [202–204] ×2 (—)", "—"]
+    assert row("Request encoding") == ["0.2 ×3 (—)", "—"]
+    assert row("Cancels") == ["1", "0"] and row("Retried requests") == ["1", "0"]
+    assert row("Sentences lost in stt") == ["1", "0"]
+    assert "segment: stt openai_segment m" in lines
+
+
+def test_a_summary_that_its_rounds_do_not_give_is_named(tmp_path: Path, capsys) -> None:
+    compare = script()
+    path = Path(
+        saved(tmp_path, "segment", [result(1, "passed", 900.0), result(2, "passed", 800.0)]).split(
+            "="
+        )[1]
+    )
+    report = json.loads(path.read_text())
+    figure = report["checks"][0]["summaries"][0]["figures"][0]
+    figure["median"] = 799.0  # A summary edited, or computed another way
+    path.write_text(json.dumps(report))
+    assert compare.main([f"segment={path}"]) == 1
+    err = capsys.readouterr().err
+    assert "Differs from its summary: segment voice first_text:" in err

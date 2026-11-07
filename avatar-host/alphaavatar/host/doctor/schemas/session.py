@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from ..enums import CheckStatus, ScenarioOutcome
 
@@ -34,6 +35,9 @@ class Metric:
     samples: int = 1
     values: tuple[float, ...] = ()
     note: str | None = None
+    # Nodes of the chain not observed in order, so this interval runs from the one before
+    # them: not the interval its name gives, and no sample of it.
+    merged: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,12 +52,12 @@ class Evidence:
 
 @dataclass(frozen=True, slots=True)
 class ScenarioResult:
-    """One modality scenario run on the original or a degraded configuration."""
+    """One round of a modality scenario, or a scenario that did not run."""
 
     name: str
     outcome: ScenarioOutcome
     summary: str
-    configuration: str  # "original", or the degradation applied
+    configuration: str  # What it ran with: the selections its figures depend on
     blocked_stage: str | None = None
     cause: str | None = None  # What stopped it, as its producer names it
     details: tuple[str, ...] = ()
@@ -71,37 +75,48 @@ class ScenarioResult:
     frames: tuple[dict[str, str | int | float | bool], ...] = ()
     evidence: tuple[Evidence, ...] = ()
     round: int | None = None  # 1 for the first after its runtime started, then 2, 3, ...
-    # Each sentence of a spoken prompt: heard, its span, its segment, and where it was lost.
-    sentences: tuple[dict[str, str | int | float | bool | None], ...] = ()
+    # Each sentence of a spoken prompt: heard, its span and segments, each layer's evidence,
+    # and where it was lost.
+    sentences: tuple[dict[str, Any], ...] = ()
+    sample: str | None = None  # The recording asked, by name and content digest
 
 
 @dataclass(frozen=True, slots=True)
 class FigureSummary:
     """One figure over a scenario's passed rounds: the first round's apart, as its runtime's
     first turn, then the later rounds' samples, median and range, and their 95th percentile
-    once there are ``P95_SAMPLES`` of them. Failed rounds are not in it."""
+    once there are ``P95_SAMPLES`` of them. Failed rounds are not in it; the ``all_`` fields
+    take every round that observed it, failed ones included, the same way. A merged value
+    is a sample of neither."""
 
     name: str
     unit: str
     first: float | None  # Round 1, when it passed and observed it
-    samples: int  # Later passed rounds that observed it
+    samples: int  # Later rounds that passed and observed it
     median: float | None = None
     low: float | None = None
     high: float | None = None
     p95: float | None = None
     note: str | None = None  # Why no round observed it
+    all_first: float | None = None  # Round 1, whatever its outcome
+    all_samples: int = 0  # Later rounds that observed it, whatever their outcome
+    all_median: float | None = None
+    all_low: float | None = None
+    all_high: float | None = None
+    merged: int = 0  # Rounds whose interval ran from an earlier node instead
 
 
 @dataclass(frozen=True, slots=True)
 class ScenarioSummary:
-    """One scenario's rounds on one configuration."""
+    """One scenario's rounds, on the configuration they ran with."""
 
     name: str
     configuration: str
     rounds: int
     passed: int
-    stopped_at: dict[str, int] = field(default_factory=dict)  # Failed rounds, by stage
+    stopped_at: dict[str, int] = field(default_factory=dict)  # Rounds not passed, by stage
     figures: tuple[FigureSummary, ...] = ()
+    sample: str | None = None  # The recording asked, by name and content digest
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,7 +128,6 @@ class RunnerResult:
     summary: str
     details: tuple[str, ...] = ()
     startup_seconds: float | None = None
-    configuration: str = "original"
     # What it served during the session, as its process summarizes it: calls, and the peak
     # wait in its queue and the peak execution, in milliseconds.
     calls: int | None = None

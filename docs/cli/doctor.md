@@ -1,16 +1,16 @@
 # `alphaavatar doctor`
 
 Diagnose the installation and a configuration: static checks first, then the runtime
-diagnosis. Doctor starts the bundle's runtime as `start` does, feeds it fixed samples at a real
-input's pace, measures what comes out, and runs each scenario several times, each time in a
-session of its own, to report each figure over the rounds. The runtime does its own work as it
+diagnosis. Doctor starts the bundle's runtime as `start` does, feeds it a fixed spoken sample
+at a real input's pace, measures what comes out, and runs its one scenario several times, each
+time in a session of its own, to report each figure over the rounds. The runtime does its own work as it
 would for a person; Doctor only provides the input, observes, judges and cleans up. One
 command does both; nothing else to start.
 
 ```bash
 alphaavatar doctor                                      # the default bundle, if there is one
 alphaavatar doctor [<bundle> | <file>] [KEY=VALUE ...]  # as config check selects them
-alphaavatar doctor --rounds 10                          # each scenario 10 times (default 5)
+alphaavatar doctor --rounds 10                          # the scenario 10 times (default 5)
 alphaavatar doctor --no-metrics                         # the static checks alone
 alphaavatar doctor --json                               # the same report as JSON
 alphaavatar doctor --list                               # the checks, without running any
@@ -85,12 +85,14 @@ all work as the configuration says. What differs:
   as `start` uses it.
 - **Transport.** Doctor plays the RTC backend's part: it publishes the samples where the RTC
   input adapters publish media, at their cadence (20 ms microphone frames, screen frames at
-  `runtime.perception.video_publish_interval_sec`, typed text through the Engine), and reads
+  `runtime.perception.video_publish_interval_sec`), and reads
   the output boundary as the RTC transport does, acting as the local audio queue. No RTC
   server, client or device is involved.
 
-A configuration that plans no runner, such as a text-only one, is valid: `models.runners` is
-skipped as having nothing to start, and `session.start` reports the session's own start.
+A configuration that plans no runner is valid: `models.runners` is skipped as having nothing
+to start, and `session.start` reports the session's own start. A configuration without voice
+(VAD, STT and TTS) has no scenario Doctor can run: nothing is asked or started, and
+`session.start` says what is missing.
 
 ### Authorization
 
@@ -101,11 +103,9 @@ asks once:
 
 ```text
 Runtime diagnosis
-  It starts this bundle's runtime as start does, then runs each scenario 5 times, each time
+  It starts this bundle's runtime as start does, then runs this scenario 5 times, each time
   in a session of its own:
-    voice_vision   Speech and screen frames in one model request
-    voice          Both sentences transcribed, the sum answered
-    text           Typed input answered
+    voice_vision  Speech and screen frames in one model request
   Model files the cache lacks are downloaded first, as start would.
   It calls the services this configuration names:
     model providers (langchain, openai)
@@ -118,7 +118,8 @@ Runtime diagnosis
 ```
 
 A yes authorizes this run alone, of the configuration Doctor loaded and checked: the run uses
-that same snapshot. A no, Enter, the input ending, or `--no-metrics` gives the static checks
+that same snapshot, and the same plan: the scenario and rounds listed are the ones its budget
+is made for and the ones that run. A no, Enter, the input ending, or `--no-metrics` gives the static checks
 alone: `session.start`, `models.runners` and `session.scenarios` are `SKIP`, `Not run: the
 diagnosis was declined` (or `left out with --no-metrics`), and `session.cleanup` says nothing
 was started. Nothing starts before that, not even a runner, whatever package it comes from.
@@ -148,45 +149,54 @@ runner kept them from starting; the runner's own failure is in `models.runners`.
 
 ### Runtime start
 
-The runtime starts once per configuration, its runners one after another, each within its
+The runtime starts once, its runners one after another, each within its
 `runtime.inference.initialize_timeout`, downloads included, as at `start`; a runner that fails
 fails the start with its own error and where it was raised, and nothing else runs. That one
-start is one sample, `runtime_start` in `models.runners`: its time, and whether model files
-were downloaded first (`8.4 MB of model files downloaded first`) or every one came from the
-cache, so a first start's download is never taken for a cached start. A runner that cannot
-load its model while this machine switches downloads off (`ALPHAAVATAR_MODEL_OFFLINE` or
-`HF_HUB_OFFLINE`) fails as at `start`, and the action says so. Each runner's own start time, the
-calls it served, and its peak queue wait and execution follow.
+start is one sample, `runtime_start` in `models.runners`: its time, from the start's beginning
+to its own end (every runner ready, or the first failure), and how the model cache changed
+meanwhile, a net change only (`the model cache grew by 8.4 MB (net)`, or `did not grow`): a
+cache scan cannot tell a download from a file replaced, so it never claims either, and a first
+start's growth is never taken for a cached start. A runner that cannot load its model while
+this machine switches downloads off (`ALPHAAVATAR_MODEL_OFFLINE` or `HF_HUB_OFFLINE`) fails as
+at `start`, and the action says so. Each runner's own start time, the calls it served, and its
+peak queue wait and execution follow.
 
 ### Scenarios
 
 | Scenario | When | Input | The whole answer must be |
 | --- | --- | --- | --- |
 | `voice_vision` | VAD, STT and TTS configured, vision on (`vlm` or `realtime`) | "What color is the card on my screen?" spoken, one sentence, with a picture of a green card shared as a screen | `green`, or a short sentence stating it: `The card is green.` |
-| `voice` | VAD, STT and TTS configured | "What is two plus three? Answer with just the number." spoken: two sentences, each to be in the transcript | `5` or `five` |
-| `text` | always | the same sum, typed | `5` or `five` |
+| `voice` | VAD, STT and TTS configured, vision off or text only | "What is two plus three? Answer with just the number." spoken: two sentences, each to be in the transcript | `5` or `five` |
 | `image_input` | — | no input transport delivers images to a session yet | |
 | `visual_output` | a Character is configured | its frames render in a browser participant and carry no Turn | |
 
-Each of `voice_vision`, `voice` and `text` that applies runs `--rounds` times, 5 by default,
-round after round, each time in a session of its own: no turn has another's history. The
-runtime starts once for all of them; round 1 is the first after it started, and is shown apart
-from the later rounds.
+One scenario runs: `voice_vision` when vision is on, `voice` when it is off; the other is
+`not_enabled`. To diagnose both, run Doctor twice, once with `vision.enabled=false`. It runs
+`--rounds` times, 5 by default, each time in a session of its own: no turn has another's
+history. The runtime starts once for all of them; round 1 is the first after it started, and
+is shown apart from the later rounds. The text figures (first text, text complete) are the
+spoken scenario's own; no typed scenario runs.
 
 The color is checked over one sentence, so that it checks the picture; whether a sentence is
-lost is checked over two. For `voice`, each sentence must be in the committed transcript; one
-that is not is placed where it was lost, from what each layer recorded of its sound:
+lost is checked over two. For `voice`, each sentence must be in the committed transcript. For
+each sentence, `sentences` in JSON keeps what each layer recorded of its sound, apart:
 
-- `vad`: no closed speech segment covers it;
-- `stt`: its segment has no STT final, or a final that leaves it out, as when one segment
-  holds both sentences;
-- `turn`: its own segment's final came, but not into this Turn: rejected for a retired
-  segment once the Turn had committed, or taken by another candidate.
+- `coverage`: how much of its sound closed speech segments hold (`full`, `partial` with
+  `covered_ms`, or `none`), and the `segments`; `null` when its sound cannot be placed, as
+  when the recording's voiced stretches do not match its sentences;
+- `stt`: whether STT returned a final for a segment holding it in time (`final`), none
+  (`no_final`, or how its segments ended), or only after the Turn committed (`late`);
+- `adopted`: whether the Turn took that final, as its first request names it;
+- `content`: whether the final the Turn took holds its words; `null` when no final was taken,
+  since its text is not seen.
 
-The round stops at `vad.closed`, `stt.final` or `turn.committed`, with the sentence's span in
-the recording, its segment, the STT outcome and its length in characters (`sentences` in
-JSON). KD-17, a turn cancelled while waiting for a slow final, stays open; these show where a
-round loses a sentence, not why turn taking did.
+A sentence that is not heard is placed in the first layer that lost it: `vad` when no segment,
+or only part of one, holds its sound; `stt` when no final came for it, or the final the Turn
+took leaves its words out (one segment holding both sentences, its final the first alone, is
+this case); `turn` when its final came, after the Turn committed or in time but not taken; and
+`unknown` when the evidence cannot place it. The round stops at `vad.closed`, `stt.final`,
+`turn.committed`, or `transcript` for `unknown`. KD-17, a turn cancelled while waiting for a
+slow final, stays open; these show where a round loses a sentence, not why turn taking did.
 
 The spoken samples are recordings shipped in the Host package (`alphaavatar/host/doctor/
 samples/`, 16 kHz mono PCM16, about 2.4 s and 3.3 s), made offline with FFmpeg's flite voice
@@ -221,98 +231,108 @@ The spoken and the selected frames must meet in one model request. The Loop reco
 request actually carries: the input the Turn committed, whether each of the Turn's input
 observations is in it (as its words, or as an audio part), and its frames. `request.input`
 passes when the Turn's first request carries the Turn's committed input, `request.content`
-when it carries the observation of the sample's STT final (for typed text, the typed
-observation), and `request.frames` when it carries frames Doctor published. Each output of the
+when it carries the observation of the sample's STT final, and `request.frames` when it carries frames Doctor published. Each output of the
 Turn's run is judged on its own (`outputs`): `completed`, `failed`, `interrupted`, `timed_out`
 or `not_ended`, with its reason; `outputs.complete` passes only when all of them completed. A
 turn that ended by timeout, interruption or a failed session keeps that end even if its
 outputs complete afterwards: what arrives late stays as evidence, and completion times are
 given only for a turn that completed.
 
-When text passes and a selected scenario could not run, such as voice without TTS, the summary
-says partial coverage and `session.scenarios` warns. A scenario that failed in any round fails
-`session.scenarios`: one round in five is a failure worth knowing.
+A scenario that failed in any round fails `session.scenarios`: one round in five is a failure
+worth knowing; one that did not run warns as partial coverage.
 
-### Fallbacks
+### Failures are reported as they are
 
-When the original configuration fails for a reason an existing fallback answers, Doctor tries
-that fallback on its own configuration, with its own runners and sessions, and reports both:
-
-- **Vision unavailable** — the provider refused the pictures as such
-  (`ModelCapabilityError: image_input`; the OpenAI adapter does when it cannot encode or
-  inline them), or a runner only vision needs could not start: the snapshot runs as a
-  camera-less device, with vision off and the default persona's face analysis and the
-  router's visual addressing off with it. Its runners are planned anew, and the
-  `runtime.inference.methods` settings of runners only vision used go with them while the
-  others stay; `voice` runs, in rounds, as an audio session unless every original round of it
-  passed, which already shows the spoken turn without a picture, and `text` too when the
-  original never ran.
-- **Speech output unavailable** — a spoken or typed turn had no audio, or an output's audio
-  failed after it began: `text` runs as a chat session, without audio output.
-
-Any other cause is reported as it is, without a fallback: rejected credentials, a generic HTTP
-400 (`ModelRequestError: http_400`; nothing in it shows it is about vision), a failing
-service, or a capability the backend lacks that is not about images. A degraded result carries its `configuration` (`degraded: vision off`,
-`degraded: text output`); the original keeps its own outcome, blocked stage and cause, and
-decides the status.
+Doctor runs the configuration it was given and nothing else: no fallback configuration, no
+second runtime, no typed turn. A model that refuses the pictures
+(`ModelCapabilityError: image_input`; the OpenAI adapter does when it cannot encode or inline
+them) fails `voice_vision` at the model, and the next step says to choose a model that takes
+images or to turn vision off; a runner that cannot start fails the start; a speech output that
+fails fails the round, its outputs judged one by one. Rejected credentials, a generic HTTP 400
+(`ModelRequestError: http_400`), a failing service: each keeps its own cause.
 
 ### Figures
 
-Every time is on one clock, the session's monotonic clock. A spoken turn's **response start**
-is the moment the frame carrying the sample's last voiced sample is published; the trailing
-silence follows as usual. A typed turn starts when the Engine accepts the input. Figures are
-server side, from diagnostic input to the output boundary: every measurement ends at the Host's
-output. LiveKit's transport, what a client shows or plays, and the physical devices are not
-measured, since no RTC server, client or device takes part; `devices.media` says so, and they
-are measured separately.
+Every time is on one clock, the session's monotonic clock, and every figure runs from the
+**final speech**: the moment the frame carrying the sample's last voiced sample is published;
+the trailing silence follows as usual. Figures are server side, from diagnostic input to the
+output boundary: every measurement ends at the Host's output. LiveKit's transport, what a
+client shows or plays, and the physical devices are not measured, since no RTC server, client
+or device takes part; `devices.media` says so, and they are measured separately.
 
-The model's figures are told apart: its first stream event, which may only say that the
-response began (its kind is the figure's note), its first nonempty text delta, then the Host's
-first answer text out; then the first answer audio frame, and the response complete. The
-request itself, where its provider records it (the OpenAI Responses provider does), adds what
-explains the wait for it, from the encoding already made, nothing encoded again and nothing
-of its content kept: the time encoding it took here, the pictures it carries, and the size of
-the body the transport sent, refused or not.
+End to end, in this order: `first_text` (Runtime first text, the first answer text chunk out),
+`first_audio_frame` (the runtime's first answer audio frame out), `response_final` (every
+output complete), `text_complete` and `audio_last_frame`; the last three only when every output
+completed.
+
+From the final speech to the first audio frame, a round passes a chain of nodes, all for the
+Turn's first model request and the outputs whose text it streamed. Its stages, `input`,
+`context` and `output`, each run from the node that ends the one before, so for a round with
+every boundary the three add up to `first_audio_frame` exactly; each row runs from the node
+before it:
+
+| Stage | Row (`<stage>.<node>`) | From | To |
+| --- | --- | --- | --- |
+| `input` | `input.vad_close` | Final speech | VAD close: the segment of the final below closed |
+| | `input.final_transcript` | VAD close | Final transcript: the last STT final the request carries |
+| `context` | `context.turn_commit` | Final transcript | Turn commit |
+| | `context.context_ready` | Turn commit | Context readiness check complete |
+| | `context.context_built` | Context readiness check complete | Context built: the request's input assembled |
+| | `context.request_sent` | Context built | Model request sent: encoded and handed to the transport, the first attempt |
+| `output` | `output.first_text_delta` | Model request sent | First text delta of that request |
+| | `output.tts_request` | First text delta | TTS request for its answer |
+| | `output.first_pcm` | TTS request | First PCM (HTTP PCM providers log it) |
+| | `output.first_audio_frame` | First PCM | First audio frame |
+
+A node inside a stage that is missing, or came out of order, is merged into the next row: that
+row runs from the last node observed in order (its `start` names it, `merged` the nodes left
+out), and is no sample of either row. A stage missing a boundary is not measured, and says
+which node and why (`Model request sent not observed: its provider logs no request sent`);
+rows that do not touch it still are. A retry of the request is an attempt of its own:
+`model_request_attempts` counts them, the evidence lists each, and the first is the node. When
+the first request streams no text and a later one answers, the output stage is not measured:
+its first audio frame answers a later request.
 
 | Figure | From | To |
 | --- | --- | --- |
-| `first_text` | response start | first answer text chunk out |
-| `first_audio_frame` | response start | first answer audio frame out |
 | `first_visual_output_frame` | — | none: no visual output reaches the output boundary |
-| `text_complete`, `audio_last_frame`, `response_final` | response start | last text complete, last answer audio frame, every output complete: only when every output completed |
-| `last_required_input` | response start | the last selected frame or voiced sample in (`voice_vision`) |
+| `last_required_input` | final speech | the last selected frame or voiced sample in (`voice_vision`) |
 | `audio_duration`, `audio_frame_interval`, `audio_max_gap` | answer audio frames out | |
 | `audio_underruns` | first answer frame | last: where a real-time queue started at the first frame would starve |
 | `audio_rtf` | first answer frame | last: producing time over audio duration, both given |
-| `vad_close`, `stt_final`, `turn_cutoff` | response start | segment closed, STT final, Turn committed |
-| `stt_request_to_final` | segment committed to STT | STT final |
+| `stt_request_to_final` | segment committed to STT | the request's last final |
 | `context_ready_wait` | Context asks for the Turn's context | ready (the Context manager's own figure) |
-| `cutoff_to_model_request` | Turn committed | model request |
-| `model_request_encode`, `model_request_frames`, `model_request_bytes` | model request | encoded here (ms), pictures it carries, body sent (bytes): the provider's own record, by the Loop's request id |
-| `model_first_event`, `model_first_text_delta`, `first_displayable_text` | model request | first stream event, first nonempty text delta, first answer text out |
-| `tts_text_ready_to_request` | first speakable segment ready | TTS request |
-| `tts_request_to_first_pcm`, `first_pcm_to_first_audio_frame` | TTS request, first PCM | first PCM, first answer audio frame out (HTTP PCM providers log the first PCM) |
-| `tts_request_to_first_audio_frame` | TTS request | first answer audio frame out |
+| `model_request_encode`, `model_request_frames`, `model_request_bytes`, `model_request_attempts` | first attempt sent | encoded here (ms), pictures it carries, body sent (bytes), attempts: the provider's own record |
+| `model_first_event` | model request sent | first stream event, which may only say the response began |
 | `frame_input_to_available`, `selected_frame_age` | frame arrival | published to perception, model request |
 | `last_selected_frame_to_cutoff` | newest selected frame in | Turn committed (negative: it arrived after the cutoff) |
 | `vision_wait` | Turn committed | frames available: only when a wait is observed, so far never |
 | `session_ready` (`session.start`) | session assembly | Engine ready: the median over every session, each in `values` |
-| `runtime_start` (`models.runners`) | runtime start began | every runner ready, or the first failure: one per start, its note saying whether model files were downloaded first |
+| `runtime_start` (`models.runners`) | runtime start began | every runner ready, or the first failure: its note the model cache's net change |
 | `queue_wait_max`, `execution_max` (`models.runners`) | each runner's own summary | |
 
 Each figure gives its value, unit, start and end events, sample count and boundary; an event
 not observed leaves the value `null` with 0 samples, and a `note` says why where the figure
-knows (`this TTS plugin logs no first PCM`, `not recorded: the turn ended by timeout`). A
-measured figure's `note` describes it instead.
+knows (`not recorded: the turn ended by timeout`). A measured figure's `note` describes it
+instead.
 
-`session.scenarios` sums the rounds up in `summaries`, one per scenario and configuration:
-the rounds run and passed, where the others stopped (`stopped_at`), and for each figure, over
-the passed rounds, the first round's value apart (`first`), then the later rounds' sample
-count, median and range (`samples`, `median`, `low`, `high`), and their 95th percentile
-(`p95`) from 20 samples on: with fewer, it would be one of the two largest values, which the
-range already shows. A failed round is in none of them: its figures stay with it, in
-`scenarios`, each round with its `round`. A few rounds on one machine describe this machine and
-these services today, not the pipeline's behavior in general.
+`session.scenarios` sums the rounds up in `summaries`, one per scenario, with the
+`configuration` its rounds ran with (model, STT and TTS backends and models, vision) and the
+`sample` they heard, by name and content digest: the rounds run and passed, where the others
+stopped (`stopped_at`), and for each figure, over the passed rounds, the first round's value
+apart (`first`), then the later rounds that passed and observed it: their count, median and
+range (`samples`, `median`, `low`, `high`), and their 95th percentile (`p95`) from 20 samples
+on. The `all_` fields give the same over every round that observed it, failed ones included,
+round 1 apart (`all_first`, `all_samples`, `all_median`, `all_low`, `all_high`); `merged`
+counts the rounds whose value ran from an earlier node. The text shows the passed rounds'
+table, and every round's when any did not pass; `n` is the later rounds counted. Each round's
+own figures stay with it, in `scenarios`, with its `round`. A few rounds on one machine
+describe this machine and these services today, not the pipeline's behavior in general.
+
+`scripts/quality/doctor_compare.py NAME=REPORT.json ...` puts saved reports side by side,
+recomputing each figure from the rounds the same way, checking it against the report's own
+summary (a difference is named, exit code 1), and counting holds, cancels, finals for a
+retired segment, retried requests and sentences lost by layer.
 
 ### Evidence
 
@@ -348,7 +368,7 @@ returns after its deadline is still a timeout, and what it returned is closed. A
 not end on its own ends its sample playback and its outputs with it. Ctrl+C stops the
 diagnosis: what runs is closed, the rounds not run are reported as such, and the exit code is
 130; cancelling `Diagnosis.run()` closes the same way before it raises. After
-success, failure, timeout or interruption, sessions and their executors close before each
+success, failure, timeout or interruption, sessions and their executors close before the
 runtime, then the temporary directory goes; `session.cleanup` fails if any of it, a runner
 process, or the diagnostic process itself had to be killed or left something behind.
 
@@ -368,74 +388,93 @@ process, or the diagnostic process itself had to be killed or left something beh
 | `2` | Invalid arguments |
 | `130` | Interrupted; the report still shows what ran |
 
-Three rounds on the offline test doubles of Doctor's tests (their figures are theirs, not a
-service's), in which the second round's STT gives the sum question's first sentence alone; from
-the sessions on. [cli.html](cli.html) shows it with the others, colors and all: the question,
-the download, vision off, a model that takes no images:
+Three rounds of `voice`, vision off, on the offline test doubles of Doctor's tests (their
+figures are theirs, not a service's; their TTS logs no first PCM), in which the second round's
+STT gives the sum question's first sentence alone; from the sessions on. [cli.html](cli.html)
+shows earlier runs with the others, colors and all; its Doctor panels predate this layout:
 
 ```text
 Session
-  Ready                  2.2 ms at the median of 9, 2.2–17 ms
+  Ready                  2.5 ms at the median of 3, 2.2–18 ms
 
 Runners
-  Runtime start          783 ms · every model file from the cache
+  Runtime start          648 ms · the model cache did not grow (net)
   PASS  alphaavatar.voice.vad.silero
-        started in 0.39 s · 366 calls, queue ≤ 0.0 ms, run ≤ 0.2 ms
+        started in 0.32 s · 183 calls, queue ≤ 0.0 ms, run ≤ 0.2 ms
   PASS  alphaavatar.router.turn_taking.smart_turn_v3
-        started in 0.39 s · 6 calls, queue ≤ 0.0 ms, run ≤ 0.1 ms
+        started in 0.32 s · 3 calls, queue ≤ 0.0 ms, run ≤ 0.2 ms
 
-Scenarios · 3 rounds each, a session each
-  PASS  voice_vision           3/3 passed · Speech and screen frames in one model request
+Scenarios · 3 rounds, a session each
   FAIL  voice                  2/3 passed · stopped: 1 at stt.final
         Round 2: The transcript does not hold every sentence of the sample
-        Round 2: Sentence 2: its segment's STT final (23 characters) holds another sentence and
+        Round 2: Sentence 2: the final the Turn took (23 characters) holds another sentence too, and
         leaves this one out
         → See the transcript and each sentence in --json; another STT model or plugin compares
-  PASS  text                   3/3 passed · Typed input answered
+  SKIP  voice_vision           Vision is off or text only: voice runs instead
   SKIP  image_input            No input transport delivers images to a session yet
   SKIP  visual_output          No Character is configured
-
-Latency · voice_vision · 3 of 3 rounds passed
-  ...
+  With model m · stt openai_segment m · tts openai m · vision off
+  Sample sum_question sha256:0f72883c4ad4
 
 Latency · voice · 2 of 3 rounds passed
-  Metric                               Round 1   n   Median    Range
+  Metric                                               Round 1   n   Median    Range
   End to end
-    Host first text                     706 ms   1   705 ms   705 ms
-    First audio frame                   727 ms   1   726 ms   726 ms
-    Response complete                   957 ms   1   957 ms   957 ms
-    Text complete                       706 ms   1   705 ms   705 ms
-    Last audio frame                    957 ms   1   957 ms   957 ms
-  Input
-    Speech end → VAD close              601 ms   1   601 ms   601 ms
-    Speech end → STT final              652 ms   1   651 ms   651 ms
-    Speech end → Turn commit            653 ms   1   652 ms   652 ms
-  Context and model request
-    Context ready wait                  0.0 ms   1   0.0 ms   0.0 ms
-    Turn commit → Model request         1.7 ms   1   1.5 ms   1.5 ms
-    Request encoding                         —   0        —        —
-    Pictures sent                            —   0        —        —
-    Request size                             —   0        —        —
-    Model request → First event         0.5 ms   1   0.5 ms   0.5 ms
-    Model request → First text delta     51 ms   1    51 ms    51 ms
-  Output
-    Model request → Host first text      51 ms   1    51 ms    51 ms
-    TTS request → First PCM                  —   0        —        —
-    TTS request → First audio frame      21 ms   1    21 ms    21 ms
-  — Request encoding, Pictures sent, Request size: no record of it sent: none went out, or its
-  provider logs none
-  — TTS request → First PCM: this TTS plugin logs no first PCM
+    Runtime first text                                  706 ms   1   706 ms   706 ms
+    First audio frame                                   727 ms   1   727 ms   727 ms
+    Response complete                                   958 ms   1   957 ms   957 ms
+    Text complete                                       706 ms   1   706 ms   706 ms
+    Last audio frame                                    958 ms   1   956 ms   956 ms
+  Input                                                 652 ms   1   652 ms   652 ms
+    Final speech → VAD close                            601 ms   1   601 ms   601 ms
+    VAD close → Final transcript                         51 ms   1    51 ms    51 ms
+  Context                                               3.4 ms   1   2.8 ms   2.8 ms
+    Final transcript → Turn commit                      1.0 ms   1   0.9 ms   0.9 ms
+    Turn commit → Context readiness check complete      0.7 ms   1   0.5 ms   0.5 ms
+    Context readiness check complete → Context built    1.2 ms   1   1.1 ms   1.1 ms
+    Context built → Model request sent                  0.5 ms   1   0.4 ms   0.4 ms
+  Output                                                 72 ms   1    72 ms    72 ms
+    Model request sent → First text delta                51 ms   1    51 ms    51 ms
+    First text delta → TTS request                      0.9 ms   1   0.6 ms   0.6 ms
+    TTS request → First PCM                                  —   0        —        —
+    First PCM → First audio frame                            —   0        —        —
+  n: later rounds that passed and observed it; the stages add up to First audio frame
+  — First PCM → First audio frame: from an earlier node in 3 rounds, so no sample of it
+  — TTS request → First PCM: merged into the next row: First PCM not observed: this TTS plugin logs
+  no first PCM
 
-Latency · text · 3 of 3 rounds passed
-  ...
+Latency · voice · every round, the 1 not passed included
+  Metric                                               Round 1   n   Median        Range
+  End to end
+    Runtime first text                                  706 ms   2   705 ms   705–706 ms
+    First audio frame                                   727 ms   2   727 ms   726–727 ms
+    Response complete                                   958 ms   2   957 ms       957 ms
+    Text complete                                       706 ms   2   706 ms   705–706 ms
+    Last audio frame                                    958 ms   2   957 ms   956–957 ms
+  Input                                                 652 ms   2   652 ms   651–652 ms
+    Final speech → VAD close                            601 ms   2   601 ms       601 ms
+    VAD close → Final transcript                         51 ms   2    51 ms     50–51 ms
+  Context                                               3.4 ms   2   2.9 ms   2.8–3.0 ms
+    Final transcript → Turn commit                      1.0 ms   2   1.0 ms   0.9–1.0 ms
+    Turn commit → Context readiness check complete      0.7 ms   2   0.5 ms   0.5–0.6 ms
+    Context readiness check complete → Context built    1.2 ms   2   1.1 ms       1.1 ms
+    Context built → Model request sent                  0.5 ms   2   0.4 ms       0.4 ms
+  Output                                                 72 ms   2    72 ms        72 ms
+    Model request sent → First text delta                51 ms   2    51 ms        51 ms
+    First text delta → TTS request                      0.9 ms   2   0.6 ms       0.6 ms
+    TTS request → First PCM                                  —   0        —            —
+    First PCM → First audio frame                            —   0        —            —
+  n: later rounds that observed it; the stages add up to First audio frame
+  — First PCM → First audio frame: from an earlier node in 3 rounds, so no sample of it
+  — TTS request → First PCM: merged into the next row: First PCM not observed: this TTS plugin logs
+  no first PCM
 
 Failed rounds · voice
-  Round 2 · stopped at stt.final · measured: Host first text 706 ms; First audio frame 727 ms;
-  Response complete 957 ms; Text complete 706 ms; Last audio frame 957 ms; Speech end → VAD close
-  601 ms
+  Round 2 · stopped at stt.final · measured: Runtime first text 705 ms; First audio frame 726 ms;
+  Response complete 957 ms; Text complete 705 ms; Last audio frame 957 ms; Input 651 ms; Context 3.0
+  ms; Output 72 ms
 
 Run again as JSON
-  alphaavatar doctor avatar.json --json
+  alphaavatar doctor avatar.json --rounds 3 --json
 ```
 
 The text is grouped, through the [commands' shared layout](README.md#output). The headline gives
@@ -444,35 +483,36 @@ row per group, environment, configuration, directories, and session and services
 only passed is its row, and any check that did not pass is a row under it with its details and
 next step. A group that ran nothing is under `Not verified`, with why and what would allow it.
 Once the diagnosis ran, the report follows the order a turn depends on: `Session`, each
-session's readiness at the median over all of them; `Runners`, the runtime's one start and
-whether it downloaded model files first, then each runner's start, the calls it served, and
-its peak queue wait and execution; `Scenarios`, each with its rounds passed of run and where
-the others stopped, a failed round's reasons below it, each once with the rounds that share
-it, and the next step. Then a `Latency` table per scenario over its passed rounds, its figures
-grouped as a turn passes them: end to end (Host first text, first audio frame, response
-complete, text complete, last audio frame), input (VAD close, STT final, Turn commit), Context
-and the model request (Context's wait, the request, the frames vision selected, the request's
-encoding, pictures and size, the model's first event and first text delta), and the output
-(Host first text from the request, TTS first PCM and first audio frame). Each row gives round
-1, then the later rounds' sample count, median and range, and P95 once there are 20 samples;
-where the terminal is too narrow, each figure takes lines of its own. A figure no round
-observed is `—`, never `0 ms`, and a line under its table says why. `Failed rounds` lists each
-failed round with the stage it stopped at and what it did measure. Times under 10 ms keep one
-decimal, sizes are in KB or MB, pictures are counted. When the diagnosis did not run, `Latency`
-says so, `Not measured`, with why. `Run again as JSON` is the command that prints the same
-diagnosis as JSON: every round, event boundary, sample count, service and piece of evidence.
-Run with `KEY=VALUE` overrides, it says to give the same ones, and does not repeat them.
+session's readiness at the median over all of them; `Runners`, the runtime's one start and how
+the model cache changed meanwhile, then each runner's start, the calls it served, and its peak
+queue wait and execution; `Scenarios`, the scenario with its rounds passed of run and where the
+others stopped, a failed round's reasons below it, each once with the rounds that share it, and
+the next step; then what its rounds ran with and the sample they heard. Then the `Latency`
+table over its passed rounds: end to end (Runtime first text, First audio frame, Response
+complete, Text complete, Last audio frame), then `Input`, `Context` and `Output`, each stage's
+total on its own line and its rows under it, each from the node before it (see
+[Figures](#figures)). When a round did not pass, a second table follows over every round that
+observed each figure, failed ones included, said so in its heading. Each row gives round 1,
+then the later rounds' count (`n`, said under the table), median and range, and P95 once there
+are 20 samples; where the terminal is too narrow, each figure takes lines of its own. A figure
+no round observed is `—`, never `0 ms`, and a line under its table says why; a row merged in
+some rounds says in how many. `Failed rounds` lists each failed round with the stage it stopped
+at and what it did measure: end to end and each stage. Times under 10 ms keep one decimal.
+When the diagnosis did not run, `Latency` says so, `Not measured`, with why. `Run again as
+JSON` is the command that prints the same diagnosis as JSON, with the same `--rounds`: every
+round, event boundary, sample count, service and piece of evidence. Run with `KEY=VALUE`
+overrides, it says to give the same ones, and does not repeat them.
 `--list` lists the checks in the same groups.
 
 JSON keeps the flat list of checks, each with `id`, `status`,
 `summary`, `details`, `action`, `runners`, `scenarios`, `metrics`, `services` and `summaries`; a
 scenario, one per round, has `name`, `outcome`, `summary`, `configuration`, `round`,
 `blocked_stage`, `cause`, `details`, `task`, `transcript`, `answer` (both bounded), `reached`,
-`request`, `outputs`, `metrics`, `segments`, `frames`, `sentences` and `evidence`; a runner has
-`method`, `status`, `summary`, `details`, `startup_seconds`, `configuration`, `calls`,
-`queue_wait_max_ms` and `execution_max_ms`; a summary has `name`, `configuration`, `rounds`,
-`passed`, `stopped_at` and `figures`; a service has `name`, `authorized`, `reached`, `passed`
-and `note`.
+`request`, `outputs`, `metrics`, `segments`, `frames`, `sentences`, `evidence` and `sample`; a
+figure has `merged` besides its value and boundaries; a runner has `method`, `status`,
+`summary`, `details`, `startup_seconds`, `calls`, `queue_wait_max_ms` and `execution_max_ms`; a
+summary has `name`, `configuration`, `rounds`, `passed`, `stopped_at`, `figures` and `sample`;
+a service has `name`, `authorized`, `reached`, `passed` and `note`.
 Text, JSON and details pass the same output boundary as `config check`: credentials from the
 configuration and the environment are replaced and control characters removed. `--list --json` prints each check's `id`, `title`,
 `needs_configuration` and `in_session`.

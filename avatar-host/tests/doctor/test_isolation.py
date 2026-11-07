@@ -27,7 +27,6 @@ from config_samples import LOOP, write
 
 # Imported at collection: the persona plugin's OpenCV adjusts process variables (O-2).
 import alphaavatar.plugins.persona.factory  # noqa: F401
-from alphaavatar.agents.runtime.inference import plan_inference_runners
 from alphaavatar.agents.runtime.plugin import AvatarModule
 from alphaavatar.core.log.trace import InputTrace
 from alphaavatar.host.configs import load_application
@@ -38,9 +37,18 @@ from alphaavatar.host.doctor.transport import LogRecord, SourceTimeline
 THIRD_PARTY = Path(__file__).parents[1] / "fixtures" / "thirdparty"
 
 
+# A voice session, as Doctor's spoken scenarios need.
+VOICE = {
+    "vad": {"plugin": "silero"},
+    "stt": {"plugin": "openai_segment", "model": "m"},
+    "tts": {"plugin": "openai", "model": "m", "speaker": "ash"},
+}
+
+
 def load(tmp_path: Path, **sections: object):
     value = {"application": {"home": str(tmp_path / "home")}, "avatar": {"id": "isolated"}}
-    return load_application(write(tmp_path / "avatar.json", value | {"loop": LOOP} | sections))
+    value |= {"loop": LOOP, "voice": VOICE}
+    return load_application(write(tmp_path / "avatar.json", value | sections))
 
 
 def test_local_stores_move_into_the_workspace_and_remote_ones_are_never_written(
@@ -81,13 +89,9 @@ def test_nothing_starts_unauthorized_whatever_its_runners_and_their_calls_are_na
     doubles.resolvable(
         monkeypatch, (AvatarModule.MEMORY, "custom"), (AvatarModule.PERSONA, "custom")
     )
-    voice = {"vad": {"plugin": "silero"}, "stt": {"plugin": None}, "tts": {"plugin": None}}
     router = {"init_config": {"turn_taking": {"enabled": False}}}
     config = load(
-        tmp_path,
-        voice=voice,
-        router=router,
-        **{k: {"plugin": "custom"} for k in ("memory", "persona")},
+        tmp_path, router=router, **{k: {"plugin": "custom"} for k in ("memory", "persona")}
     )
     found = dict(_external(config))
     assert found["custom memory 'custom'"] == "custom"
@@ -127,31 +131,20 @@ def test_a_remote_store_blocks_the_diagnosis_unless_the_configuration_names_it_a
     assert session.remote_stores(tested) == ["memory's Qdrant store"]
 
 
-def test_vision_off_is_a_camera_less_device_and_drops_what_only_vision_needs(
-    tmp_path: Path,
-) -> None:
-    from alphaavatar.plugins.persona.processors.face.analysis_runner import FaceAnalysisRunner
-
-    config = load(tmp_path, vision={"enabled": True, "input_mode": "vlm"})
-    without = session.vision_off(config)
-    assert not without.avatar.vision.enabled
-    assert without.avatar.router.init_config["addressing"]["visual"]["enabled"] is False
-    vision_only = set(plan_inference_runners(config.avatar)) - set(
-        plan_inference_runners(without.avatar)
-    )
-    assert vision_only == {FaceAnalysisRunner.INFERENCE_METHOD}
-
-    # Settings of the runner only vision used go with it; those still planned stay.
-    kept = next(iter(set(plan_inference_runners(config.avatar)) - vision_only))
-    methods = {FaceAnalysisRunner.INFERENCE_METHOD: {"workers": 1}, kept: {"workers": 1}}
-    tuned = load(
-        tmp_path,
-        vision={"enabled": True, "input_mode": "vlm"},
-        runtime={"inference": {"methods": methods}},
-    )
-    without = session.vision_off(tuned)
-    assert set(without.avatar.runtime.inference.methods) == {kept}
-    assert set(tuned.avatar.runtime.inference.methods) == set(methods)
+def test_the_plan_is_one_spoken_scenario_by_vision_and_none_without_voice(tmp_path: Path) -> None:
+    seen = session.plan(load(tmp_path, vision={"enabled": True, "input_mode": "vlm"}))
+    assert (seen.tasks, seen.session_type) == ((samples.VOICE_VISION,), "video")
+    assert seen.configuration.endswith("vision vlm, max_frames 4")
+    # Vision off, or frames as text: the two-sentence question, on audio alone.
+    for vision in ({"enabled": False}, {"enabled": True, "input_mode": "text"}):
+        blind = session.plan(load(tmp_path, vision=vision))
+        assert (blind.tasks, blind.session_type, blind.missing) == ((samples.VOICE,), "audio", None)
+        assert blind.configuration.endswith("vision off")
+    # A voice session needs all three; without them there is nothing to run, and why.
+    mute = load(tmp_path, voice=VOICE | {"tts": {"plugin": None}})
+    assert session.plan(mute).tasks == ()
+    assert session.plan(mute).missing.endswith("this configuration has no voice.tts")
+    assert session.blocked(mute, []).startswith("no scenario to run: its scenarios are spoken")
 
 
 def test_a_turn_is_the_one_whose_cutoff_covers_this_input_in_this_session() -> None:
@@ -161,8 +154,8 @@ def test_a_turn_is_the_one_whose_cutoff_covers_this_input_in_this_session() -> N
             "turn.committed", turn_id=turn, start_cutoff_sequence=start, cutoff_sequence=end
         )
 
-    def committed(turn: str, session_id: str = "s", text: str = "") -> LogRecord:
-        return LogRecord(0, "input.committed", {"session_id": session_id, "turn_id": turn}, text)
+    def committed(turn: str, session_id: str = "s") -> LogRecord:
+        return LogRecord(0, "input.committed", {"session_id": session_id, "turn_id": turn})
 
     # The frame with the last voiced sample is event 25: only one Turn's range holds it.
     spoken = SourceTimeline(voiced_end_sequence=25)
@@ -172,15 +165,6 @@ def test_a_turn_is_the_one_whose_cutoff_covers_this_input_in_this_session() -> N
         committed("other"),
         committed("ours"),
     ]
-    assert session._find_turn(samples.VOICE, "s", logs, trace, 0, spoken) == "ours"
-    assert session._find_turn(samples.VOICE, "s", logs[:3], trace, 0, spoken) is None
-    assert session._find_turn(samples.VOICE, "s", logs, trace, 0, SourceTimeline()) is None
-    # A typed turn commits this very text after the turn began.
-    typed = samples.TEXT.text
-    logs = [
-        committed("stale", text=typed),
-        committed("ours", text="else"),
-        committed("other", text=typed),
-    ]
-    assert session._find_turn(samples.TEXT, "s", logs, trace, 12, None) == "other"
-    assert session._find_turn(samples.TEXT, "s", logs, trace, 25, None) is None
+    assert session._find_turn("s", logs, trace, spoken) == "ours"
+    assert session._find_turn("s", logs[:3], trace, spoken) is None
+    assert session._find_turn("s", logs, trace, SourceTimeline()) is None

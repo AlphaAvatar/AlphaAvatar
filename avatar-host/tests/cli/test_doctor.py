@@ -118,7 +118,7 @@ def doctor(capsys: pytest.CaptureFixture, *argv: str) -> tuple[int, dict[str, di
     # The same diagnosis in full, as a command to copy: through the same boundary.
     # The diagnosis run again as JSON: the target only, never the overrides' values.
     target = [arg for arg in argv if "=" not in arg][:1]
-    command = clean(shlex.join(["alphaavatar", "doctor", *target, "--json"]))
+    command = clean(shlex.join(["alphaavatar", "doctor", *target, "--rounds", "5", "--json"]))
     overridden = any("=" in arg for arg in argv)
     end = lines.index("Run again as JSON")
     assert lines[end + 1 : end + 2] == [f"  {command}"] and lines[-1] == ""
@@ -195,7 +195,13 @@ def test_doctor_selects_and_loads_configurations_as_config_check_does(
     capsys: pytest.CaptureFixture,
 ) -> None:
     assert main(["config", "init", "alpha", "--avatar-id", "alpha"]) == 0
-    single = write(tmp_path / "single.json", CONFIG | {"avatar": {"id": "single"}})
+    # With voice, as Doctor's spoken scenario needs: what blocks it is authorization.
+    voice = {
+        "vad": {"plugin": "silero"},
+        "stt": {"plugin": "openai_segment", "model": "m"},
+        "tts": {"plugin": "openai", "model": "m", "speaker": "ash"},
+    }
+    single = write(tmp_path / "single.json", CONFIG | {"avatar": {"id": "single"}, "voice": voice})
     capsys.readouterr()
     before = files(tmp_path)
     # The default bundle, a named one, an override alone (default bundle) and a file.

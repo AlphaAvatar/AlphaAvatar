@@ -11,99 +11,291 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""A turn's measurement from what its edges recorded: each output, the request, the bound.
+"""A turn's measurement from what its edges recorded: each output, the request, the chain.
 
-These build the records a turn leaves directly, for cases the chain cannot be steered into
-deterministically; ``test_session`` runs the same measurement over the production chain.
+These build the records a turn leaves directly, on controlled timelines, for cases the chain
+cannot be steered into deterministically; ``test_session`` runs the same measurement over the
+production chain.
 """
 
 from __future__ import annotations
 
+import pytest
+
 from alphaavatar.host.doctor import samples
-from alphaavatar.host.doctor.measure import TurnObservation, scenario
-from alphaavatar.host.doctor.transport import LogRecord, OutputRecord
+from alphaavatar.host.doctor.enums import ScenarioOutcome
+from alphaavatar.host.doctor.measure import TurnObservation, scenario, summarize
+from alphaavatar.host.doctor.schemas import Metric, ScenarioResult
+from alphaavatar.host.doctor.transport import LogRecord, OutputRecord, SourceTimeline
 
 MS = 1_000_000
+START = 1000  # The frame with the last voiced sample, in ms
 
 
 def identity(value: str) -> str:
     return f"id_{value:>16}"
 
 
-def trace(at: int, stage: str, sequence: int, **fields: str | int) -> dict:
+def trace(at: float, stage: str, sequence: int, **fields: str | int) -> dict:
     hashed = {k: identity(v) if k.endswith("_id") else v for k, v in fields.items()}
-    return {"trace_sequence": sequence, "recorded_time_ns": at * MS, "stage": stage, **hashed}
+    return {
+        "trace_sequence": sequence,
+        "recorded_time_ns": round(at * MS),
+        "stage": stage,
+        **hashed,
+    }
 
 
-def output(at: int, kind: str, output_id: str | None, **fields: object) -> OutputRecord:
+def log(at: float, name: str, **fields: object) -> LogRecord:
+    return LogRecord(round(at * MS), name, {"session_id": "s", **fields})
+
+
+def output(at: float, kind: str, output_id: str | None, **fields: object) -> OutputRecord:
     turn = None if fields.get("control") == "interrupt" else "turn-1"
-    return OutputRecord(at * MS, kind, "assistant", turn, "run-1", output_id, **fields)
+    fields.setdefault("request_id", "req-1" if kind == "text_chunk" else None)
+    return OutputRecord(round(at * MS), kind, "assistant", turn, "run-1", output_id, **fields)
 
 
-def observation(records: list[OutputRecord], **extra: object) -> TurnObservation:
-    logs = [
-        LogRecord(10 * MS, "input.committed", {"session_id": "s", "turn_id": "turn-1"}, "x"),
-        LogRecord(
-            20 * MS,
-            "model.started",
-            {"session_id": "s", "turn_id": "turn-1", "run_id": "run-1", "request_id": "req-1"},
-        ),
-        LogRecord(30 * MS, "model.first_event", {"session_id": "s", "turn_id": "turn-1"}),
-        LogRecord(
-            60 * MS, "run.finished", {"session_id": "s", "turn_id": "turn-1", "state": "completed"}
-        ),
+def answered(text: str = "5.", at: float = 2210, **times: float) -> list[OutputRecord]:
+    """One output answering the first request, in text and speech, then completing."""
+    audio, done = times.get("audio", 2600), times.get("complete", 3000)
+    return [
+        output(at, "text_chunk", "out-a", text=text),
+        output(audio, "audio_frame", "out-a", audio_sec=0.02),
+        output(audio + 10, "control", "out-a", control="text_complete"),
+        output(done, "control", "out-a", control="complete"),
     ]
-    records_ = [
-        trace(10, "turn.committed", 1, turn_id="turn-1", input_id="input-1"),
-        trace(
-            21,
-            "model.request",
-            2,
-            turn_id="turn-1",
-            run_id="run-1",
-            request_id="req-1",
-            input_id="input-1",
-            frame_count=0,
-        ),
-        # The typed text itself is in the request.
-        trace(
-            21,
-            "model.request_input",
-            3,
-            request_id="req-1",
-            observation_id="typed-1",
-            outcome="carried",
-        ),
+
+
+def observation(records: list[OutputRecord] | None = None, **extra: object) -> TurnObservation:
+    """The two-sentence question's turn, every node of its chain observed, at round
+    milliseconds (``extra`` replaces or adds): one segment, its final carried by the first
+    request; that request's text, then its speech."""
+    steps = [
+        trace(1300, "perception.speech_closed", 1, segment_id="seg-0")
+        | {"start_time_ns": 200 * MS, "end_time_ns": 3200 * MS},
+        trace(1300, "stt.commit", 2, segment_id="seg-0", outcome="accepted"),
+        trace(1500, "stt.terminal", 3, segment_id="seg-0", observation_id="final-0")
+        | {"outcome": "final_text", "text_chars": 52},
+        trace(1501, "candidate.segment", 4, candidate_id="cand-0", segment_id="seg-0"),
+        trace(1502, "candidate.decision", 5, candidate_id="cand-0", decision_id="d-0"),
+        trace(1600, "turn.committed", 6, turn_id="turn-1", decision_id="d-0", input_id="input-1"),
+        trace(1851, "model.request", 7, turn_id="turn-1", run_id="run-1", request_id="req-1")
+        | {"input_id": identity("input-1"), "frame_count": 0},
+        trace(1851, "model.request_input", 8, request_id="req-1", observation_id="final-0")
+        | {"outcome": "carried"},
         *extra.pop("trace", ()),
     ]
+    turn = {"turn_id": "turn-1", "run_id": "run-1"}
+    logs = [
+        log(1600, "input.committed", turn_id="turn-1"),
+        log(1800, "context.ready", turn_id="turn-1", ready=True, wait_ms=180.0),
+        log(1850, "model.started", **turn, request_id="req-1"),
+        log(1900, "model.request_sent", request_id="req-1", attempt=1, request_bytes=20_000),
+        log(2100, "model.first_event", **turn, request_id="req-1"),
+        log(2200, "model.first_text", **turn, request_id="req-1"),
+        log(2300, "speech.request", output_id="out-a", segment=0, request_id="tts-1"),
+        log(2500, "tts.first_pcm", request_id="tts-1", attempt=1),
+        log(3000, "run.finished", **turn, state="completed"),
+        *extra.pop("logs", ()),
+    ]
+    heard = extra.pop("heard", samples.VOICE.prompt)
+    logs[0] = LogRecord(logs[0].monotonic_ns, logs[0].name, logs[0].fields, heard)
     return TurnObservation(
-        task=samples.TEXT,
-        configuration="original",
+        task=extra.pop("task", samples.VOICE),
+        configuration="stt scripted",
         session_id="s",
-        start_ns=0,
-        timeline=extra.pop("timeline", None),
+        start_ns=START * MS,
+        timeline=extra.pop("timeline", SourceTimeline(started_ns=1, voiced_end_ns=START * MS)),
         turn_id="turn-1",
-        records=records,
-        logs=logs,
-        trace=records_,
+        records=answered() if records is None else records,
+        logs=sorted(logs, key=lambda r: r.monotonic_ns),
+        trace=steps,
         identity=identity,
-        audio_output=extra.pop("audio_output", True),
         **extra,
     )
 
 
+def without(found: TurnObservation, *names: str) -> TurnObservation:
+    """The observation without the logs or trace records of these names."""
+    found.logs = [r for r in found.logs if r.name not in names]
+    found.trace = [r for r in found.trace if r["stage"] not in names]
+    return found
+
+
+def figures(result) -> dict[str, Metric]:
+    return {m.name: m for m in (*result.metrics, *result.segments)}
+
+
+def test_the_stages_add_up_to_the_first_audio_frame_on_one_clock() -> None:
+    # Nodes off the millisecond, so each figure is rounded on its own.
+    found = observation(answered(at=2210.0004, audio=2600.000_777))
+    # Two finals came for the Turn: the request carries the earlier and a later one; a
+    # third, later still, it does not carry. Final transcript is the last it carries.
+    found.trace += [
+        trace(1550.000_31, "stt.terminal", 20, segment_id="seg-1", observation_id="final-1")
+        | {"outcome": "final_text"},
+        trace(1851, "model.request_input", 21, request_id="req-1", observation_id="final-1")
+        | {"outcome": "carried"},
+        trace(1590, "stt.terminal", 22, segment_id="seg-2", observation_id="final-2")
+        | {"outcome": "final_text"},
+        trace(1400.000_1, "perception.speech_closed", 23, segment_id="seg-1")
+        | {"start_time_ns": 200 * MS, "end_time_ns": 3200 * MS},
+        trace(1555, "candidate.segment", 24, candidate_id="cand-0", segment_id="seg-1"),
+        trace(1595, "candidate.segment", 25, candidate_id="cand-0", segment_id="seg-2"),
+    ]
+    result = scenario(found)
+    assert result.outcome == ScenarioOutcome.PASSED
+    shown = figures(result)
+    # From the raw timestamps: each stage from the node that ends the one before.
+    raw = {
+        "input": (START * MS, round(1550.000_31 * MS)),
+        "context": (round(1550.000_31 * MS), 1900 * MS),
+        "output": (1900 * MS, round(2600.000_777 * MS)),
+    }
+    for stage, (begin, end) in raw.items():
+        assert shown[stage].value == round((end - begin) / 1e6, 3), stage
+    assert sum(end - begin for begin, end in raw.values()) == round(2600.000_777 * MS) - START * MS
+    assert abs(sum(shown[s].value for s in raw) - shown["first_audio_frame"].value) < 0.002
+    # Each row from the node before it: VAD close is the last carried final's segment's.
+    assert [shown[f"input.{k}"].value for k in ("vad_close", "final_transcript")] == [400, 150]
+    assert (shown["context.turn_commit"].start, shown["context.turn_commit"].value) == (
+        "Final transcript",
+        50.0,
+    )
+    assert [shown[f"context.{k}"].value for k in ("context_ready", "context_built")] == [200, 50]
+    assert shown["context.request_sent"].value == 50
+    output_rows = ("first_text_delta", "tts_request", "first_pcm", "first_audio_frame")
+    assert [shown[f"output.{k}"].value for k in output_rows] == [300, 100, 200, 100.001]
+    assert result.request["finals"] == 2 and result.request["attempts"] == 1
+
+
+def test_a_node_missing_or_out_of_order_inside_a_stage_is_merged_into_the_next_row() -> None:
+    # No first PCM, as a TTS plugin that logs none: the next row runs from the TTS request.
+    result = scenario(without(observation(), "tts.first_pcm"))
+    shown = figures(result)
+    pcm, audio = shown["output.first_pcm"], shown["output.first_audio_frame"]
+    assert (pcm.value, pcm.note) == (
+        None,
+        "merged into the next row: First PCM not observed: this TTS plugin logs no first PCM",
+    )
+    assert (audio.value, audio.start, audio.merged, audio.samples) == (
+        300.0,
+        "TTS request",
+        ("first_pcm",),
+        0,
+    )
+    assert shown["output"].value == 700  # The stage itself is whole.
+    # VAD close recorded before the final speech, as for an earlier segment: out of order.
+    early = observation()
+    early.trace[0] = early.trace[0] | {"recorded_time_ns": 900 * MS}
+    shown = figures(scenario(early))
+    assert shown["input.vad_close"].note == "merged into the next row: VAD close came out of order"
+    final = shown["input.final_transcript"]
+    assert (final.value, final.start, final.merged) == (500.0, "Final speech", ("vad_close",))
+    # A merged value is a sample of neither row: the summary leaves it out and counts it.
+    rounds = [
+        ScenarioResult(
+            "voice",
+            ScenarioOutcome.PASSED,
+            "",
+            "c",
+            segments=scenario(observation() if at != 2 else early).segments,
+            round=at,
+        )
+        for at in (1, 2, 3)
+    ]
+    figure = {f.name: f for f in summarize(rounds)[0].figures}["input.final_transcript"]
+    assert (figure.first, figure.samples, figure.median, figure.merged) == (200.0, 1, 200.0, 1)
+
+
+def test_a_stage_missing_a_boundary_is_not_measured_and_says_why() -> None:
+    # A provider that logs no request sent: Context and Output have no shared boundary.
+    shown = figures(scenario(without(observation(), "model.request_sent")))
+    why = "not measured: Model request sent not observed: its provider logs no request sent"
+    for name in ("context", "context.request_sent", "output", "output.first_text_delta"):
+        assert (shown[name].value, shown[name].note) == (None, why), name
+    # The rows inside that do not touch it are still measured, and Input is whole.
+    assert shown["context.context_ready"].value == 200 and shown["input"].value == 500
+    assert shown["output.tts_request"].value == 100
+    # The request carries no final of the sample: Input and Context lose their boundary.
+    lost = observation()
+    lost.trace = [r for r in lost.trace if r["stage"] != "model.request_input"]
+    shown = figures(scenario(lost))
+    why = (
+        "not measured: Final transcript not observed: the first model request carries no STT final"
+    )
+    assert (shown["input"].note, shown["context"].note) == (why, why)
+    assert shown["input.vad_close"].note.startswith("merged into the next row: VAD close")
+    # A model that refuses the pictures answers nothing: the rows before First audio frame
+    # merge forward, and that last row is not measured, not merged: no round ran from earlier.
+    refused = without(observation([]), "model.first_text", "speech.request", "tts.first_pcm")
+    segments = scenario(refused).segments
+    last = figures(scenario(refused))["output.first_audio_frame"]
+    assert (last.value, last.merged) == (None, ())
+    assert last.note.startswith("not measured: First audio frame not observed")
+    assert figures(scenario(refused))["output"].note == last.note
+    failed = [
+        ScenarioResult("voice", ScenarioOutcome.FAILED, "", "c", segments=segments, round=at)
+        for at in (1, 2)
+    ]
+    figure = {f.name: f for f in summarize(failed)[0].figures}["output.first_audio_frame"]
+    assert (figure.all_samples, figure.merged) == (0, 0)
+
+
+def test_a_retry_is_an_attempt_of_its_own_and_the_first_is_when_the_request_went_out() -> None:
+    retry = log(1950, "model.request_sent", request_id="req-1", attempt=2, request_bytes=20_000)
+    result = scenario(observation(logs=[retry]))
+    shown = figures(result)
+    assert shown["context.request_sent"].value == 50  # The first attempt, encoded, sent
+    assert shown["output.first_text_delta"].value == 300  # Its wait holds the retry.
+    assert result.request["attempts"] == 2 and shown["model_request_attempts"].value == 2
+    sent = [e.detail["attempt"] for e in result.evidence if e.stage == "model.request_sent"]
+    assert sent == [1, 2]
+
+
+def test_with_several_requests_in_a_turn_the_first_is_measured_with_its_own_outputs() -> None:
+    # The first request calls a tool and says nothing; the second answers, text and speech.
+    second = [
+        log(2400, "model.started", turn_id="turn-1", run_id="run-1", request_id="req-2"),
+        log(2410, "model.request_sent", request_id="req-2", attempt=1),
+        log(2450, "model.first_text", turn_id="turn-1", run_id="run-1", request_id="req-2"),
+    ]
+    found = observation(answered(at=2460), logs=second)
+    found.logs = [
+        r
+        for r in found.logs
+        if not (r.name == "model.first_text" and r.fields["request_id"] == "req-1")
+    ]
+    for record in found.records:
+        record.request_id = "req-2" if record.kind == "text_chunk" else None
+    found.trace.append(
+        trace(2401, "model.request", 30, turn_id="turn-1", run_id="run-1", request_id="req-2")
+    )
+    result = scenario(found)
+    shown = figures(result)
+    assert result.request["requests"] == 2
+    assert shown["output.first_text_delta"].note == (
+        "merged into the next row: First text delta not observed: "
+        "the first model request streamed no text"
+    )
+    assert shown["output"].note == (
+        "not measured: First audio frame not observed: "
+        "no audio frame answers the first model request"
+    )
+    assert shown["context"].value == 400  # Up to the first request sent
+    assert shown["first_audio_frame"].value == 1600  # End to end, whichever request it answers
+
+
 def test_every_output_of_the_run_must_end_normally_before_the_turn_completes() -> None:
-    # The review's case: one output completes, the other is interrupted after its first
-    # audio frame, later than the first one's completion.
+    # One output completes; the other is interrupted after its first audio frame, later
+    # than the first one's completion.
     records = [
-        output(40, "text_chunk", "out-a", text="5."),
-        output(41, "audio_frame", "out-a", audio_sec=0.02),
-        output(42, "control", "out-a", control="text_complete"),
-        output(50, "control", "out-a", control="complete"),
-        output(45, "text_chunk", "out-b", text=""),
-        output(70, "audio_frame", "out-b", audio_sec=0.02),
+        *answered(),
+        output(2450, "text_chunk", "out-b", text=""),
+        output(3070, "audio_frame", "out-b", audio_sec=0.02),
         output(
-            80,
+            3080,
             "control",
             None,
             control="interrupt",
@@ -125,11 +317,11 @@ def test_every_output_of_the_run_must_end_normally_before_the_turn_completes() -
     assert any("interrupted: avatar_directed_barge_in" in line for line in result.details)
 
     # Both complete: the last completion is the response's, after every frame.
-    records[-1] = output(80, "control", "out-b", control="complete")
+    records[-1] = output(3100, "control", "out-b", control="complete")
     result = scenario(observation(sorted(records, key=lambda r: r.monotonic_ns)))
     assert result.outcome == "passed"
     metrics = {m.name: m.value for m in result.metrics}
-    assert metrics["audio_last_frame"] == 70 <= metrics["response_final"] == 80
+    assert metrics["audio_last_frame"] == 2070 <= metrics["response_final"] == 2100
 
     # Never ended: the turn's own end names how, here a timeout.
     del records[-1]
@@ -138,39 +330,32 @@ def test_every_output_of_the_run_must_end_normally_before_the_turn_completes() -
 
 
 def test_a_request_without_the_turns_input_does_not_pass_and_evidence_keeps_its_end() -> None:
-    records = [
-        output(40, "text_chunk", "out-a", text="5."),
-        output(41, "audio_frame", "out-a", audio_sec=0.02),
-        output(42, "control", "out-a", control="text_complete"),
-        output(50, "control", "out-a", control="complete"),
-    ]
     # Many steps on the way: the bound keeps where the chain began, turned and ended.
-    noise = [trace(15, "turn.admission", 3 + i, turn_id="turn-1") for i in range(100)]
-    result = scenario(observation(records, trace=noise))
+    noise = [trace(1550, "turn.admission", 100 + i, turn_id="turn-1") for i in range(100)]
+    result = scenario(observation(trace=noise))
     stages = [item.stage for item in result.evidence]
     assert len(stages) == 64
     assert {"turn.committed", "model.request", "model.started", "run.finished"} <= set(stages)
 
     # The request names another input than the Turn committed: not this Turn's request.
-    other = observation(records)
-    other.trace[1]["input_id"] = identity("input-2")
+    other = observation()
+    other.trace[6]["input_id"] = identity("input-2")
     result = scenario(other)
     assert (result.outcome, result.blocked_stage) == ("failed", "request.input")
     assert result.request["carries_turn_input"] is False
 
 
 def test_frames_context_selected_are_told_apart_from_frames_the_request_carried() -> None:
-    from alphaavatar.host.doctor.transport import Frame, SourceTimeline
+    from alphaavatar.host.doctor.transport import Frame
 
-    timeline = SourceTimeline(started_ns=0, voiced_end_ns=5 * MS, voiced_end_sequence=3)
+    timeline = SourceTimeline(started_ns=1, voiced_end_ns=START * MS, voiced_end_sequence=3)
     timeline.frames = [Frame("screen", n, f"frame-{n}", n * MS, n * MS) for n in (1, 2)]
     steps = [
-        trace(15, "context.frame_selected", 3, turn_id="turn-1", observation_id="frame-1"),
-        trace(15, "context.frame_selected", 4, turn_id="turn-1", observation_id="frame-2"),
-        trace(21, "model.request_frame", 5, request_id="req-1", observation_id="frame-2"),
+        trace(1700, "context.frame_selected", 30, turn_id="turn-1", observation_id="frame-1"),
+        trace(1700, "context.frame_selected", 31, turn_id="turn-1", observation_id="frame-2"),
+        trace(1851, "model.request_frame", 32, request_id="req-1", observation_id="frame-2"),
     ]
-    found = observation([], trace=steps, timeline=timeline)
-    found.task = samples.VOICE_VISION
+    found = observation(trace=steps, timeline=timeline, task=samples.VOICE_VISION)
     result = scenario(found)
     assert [(f["sequence"], f["selected"], f["requested"]) for f in result.frames] == [
         (1, True, False),
@@ -181,18 +366,12 @@ def test_frames_context_selected_are_told_apart_from_frames_the_request_carried(
 
 def test_a_turn_that_ended_otherwise_keeps_that_end_whatever_completed_after_it() -> None:
     # Every output completes, but inside the trailing window after the turn had ended.
-    records = [
-        output(40, "text_chunk", "out-a", text="5."),
-        output(41, "audio_frame", "out-a", audio_sec=0.02),
-        output(42, "control", "out-a", control="text_complete"),
-        output(50, "control", "out-a", control="complete"),
-    ]
     for ended, outcome in (
         ("timeout", "failed"),
         ("session_failed", "failed"),
         ("interrupted", "interrupted"),
     ):
-        result = scenario(observation(list(records), ended=ended))
+        result = scenario(observation(ended=ended))
         assert (result.outcome, result.blocked_stage) == (outcome, f"turn.{ended}")
         metrics = {m.name: m for m in result.metrics}
         for name in ("text_complete", "audio_last_frame", "response_final"):
@@ -203,12 +382,9 @@ def test_a_turn_that_ended_otherwise_keeps_that_end_whatever_completed_after_it(
         )
         # What arrived late stays as evidence.
         assert [o["terminal"] for o in result.outputs] == ["completed"]
-        assert "output.control" in {item.stage for item in result.evidence}
 
 
 def test_a_spoken_input_that_never_committed_shows_where_it_stopped() -> None:
-    from alphaavatar.host.doctor.transport import SourceTimeline
-
     # The real chain's case: the segment closed and went to STT, turn-taking held, then
     # cancelled for want of a transcript, and the transcript came after that.
     timeline = SourceTimeline(started_ns=0, voiced_end_ns=5 * MS, voiced_end_sequence=3)
@@ -226,7 +402,7 @@ def test_a_spoken_input_that_never_committed_shows_where_it_stopped() -> None:
     ]
     found = TurnObservation(
         task=samples.VOICE,
-        configuration="original",
+        configuration="c",
         session_id="s",
         start_ns=5 * MS,
         timeline=timeline,
@@ -235,7 +411,6 @@ def test_a_spoken_input_that_never_committed_shows_where_it_stopped() -> None:
         logs=[],
         trace=steps,
         identity=identity,
-        audio_output=True,
         ended="timeout",
     )
     result = scenario(found)
@@ -246,59 +421,11 @@ def test_a_spoken_input_that_never_committed_shows_where_it_stopped() -> None:
     assert "turn.committed" not in {e.stage for e in result.evidence}
 
 
-def test_a_figure_not_measured_carries_why_never_what_it_would_measure() -> None:
-    # The model's first event came, then the turn timed out: no text and no speech at all.
-    stopped = {m.name: m for m in scenario(observation([], ended="timeout")).segments}
-    assert stopped["model_first_text_delta"].value is None
-    # What a figure measures is no reason it is missing; where its scenario stopped is.
-    assert stopped["model_first_text_delta"].note is None
-    assert stopped["tts_request_to_first_pcm"].note is None  # Nor is a TTS never asked.
-    # A TTS request and its audio, without the first PCM only HTTP PCM providers log.
-    speech = [
-        output(40, "text_chunk", "out-a", text="5."),
-        output(45, "audio_frame", "out-a", audio_sec=0.02),
-        output(50, "control", "out-a", control="complete"),
-    ]
-    found = observation(speech)
-    found.logs.extend(
-        (
-            LogRecord(35 * MS, "model.first_text", {"session_id": "s", "turn_id": "turn-1"}),
-            LogRecord(38 * MS, "speech.segment", {"output_id": "out-a", "segment": 0}),
-            LogRecord(
-                39 * MS,
-                "speech.request",
-                {"output_id": "out-a", "segment": 0, "request_id": "tts-1"},
-            ),
-        )
-    )
-    spoken = {m.name: m for m in scenario(found).segments}
-    assert spoken["tts_request_to_first_pcm"].value is None
-    assert spoken["tts_request_to_first_pcm"].note == "this TTS plugin logs no first PCM"
-    # A measured figure keeps what describes it.
-    assert spoken["model_first_text_delta"].value == 15.0
-    assert spoken["model_first_text_delta"].note == "the first token, as far as the stream shows it"
-
-
-def test_a_session_without_audio_output_says_so_for_each_audio_figure() -> None:
-    records = [
-        output(40, "text_chunk", "out-a", text="5."),
-        output(42, "control", "out-a", control="text_complete"),
-        output(50, "control", "out-a", control="complete"),
-    ]
-    metrics = {m.name: m for m in scenario(observation(records, audio_output=False)).metrics}
-    assert metrics["response_final"].value is not None
-    for name in ("first_audio_frame", "audio_last_frame"):
-        assert (metrics[name].value, metrics[name].note) == (
-            None,
-            "no audio output in this session",
-        )
-
-
-def spoken(segments: list[tuple[int, int, str | None]], transcript: str, **extra) -> object:
-    """The two-sentence question's turn, from its segments: (start ms, end ms, STT outcome),
-    its committed transcript and any further trace records; its Turn chains the first."""
-    from alphaavatar.host.doctor.transport import SourceTimeline
-
+def spoken(segments: list[tuple[int, int, str | None]], heard: str, **extra) -> TurnObservation:
+    """The two-sentence question's turn, from its segments: (start ms, end ms, STT outcome).
+    Each final comes 50 ms after its segment closes; the Turn takes the first segment, its
+    final and any of ``taken``, and commits at 4002 ms."""
+    taken = extra.pop("taken", ())
     records = []
     for index, (start, end, outcome) in enumerate(segments):
         segment = f"seg-{index}"
@@ -307,33 +434,36 @@ def spoken(segments: list[tuple[int, int, str | None]], transcript: str, **extra
             | {"start_time_ns": start * MS, "end_time_ns": end * MS}
         )
         if outcome is not None:
-            records.append(
-                trace(end + 50, "stt.terminal", 10 * index + 2, segment_id=segment, outcome=outcome)
-            )
-    # The Turn: its decision joins the first segment's candidate.
+            final = trace(end + 50, "stt.terminal", 10 * index + 2, segment_id=segment)
+            final |= {"outcome": outcome, "observation_id": identity(f"final-{index}")}
+            records.append(final | {"text_chars": 23})
     records += [
         trace(4000, "candidate.segment", 90, candidate_id="cand-0", segment_id="seg-0"),
         trace(4001, "candidate.decision", 91, candidate_id="cand-0", decision_id="d-0"),
         trace(4002, "turn.committed", 92, turn_id="turn-1", decision_id="d-0", input_id="input-1"),
+        trace(4003, "model.request", 93, turn_id="turn-1", run_id="run-1", request_id="req-1"),
+        *(
+            trace(4003, "model.request_input", 94, request_id="req-1", observation_id=f"final-{i}")
+            | {"outcome": "carried"}
+            for i in (0, *taken)
+        ),
         *extra.pop("trace", ()),
     ]
     logs = [
-        LogRecord(
-            4002 * MS, "input.committed", {"session_id": "s", "turn_id": "turn-1"}, transcript
-        )
+        LogRecord(4002 * MS, "input.committed", {"session_id": "s", "turn_id": "turn-1"}, heard),
+        log(4003, "model.started", turn_id="turn-1", run_id="run-1", request_id="req-1"),
     ]
     return TurnObservation(
         task=samples.VOICE,
-        configuration="original",
+        configuration="c",
         session_id="s",
         start_ns=3140 * MS,
-        timeline=SourceTimeline(started_ns=0, voiced_end_ns=3140 * MS),
+        timeline=SourceTimeline(started_ns=1, voiced_end_ns=3140 * MS),
         turn_id="turn-1",
         records=[],
         logs=logs,
         trace=records,
         identity=identity,
-        audio_output=True,
         **extra,
     )
 
@@ -341,56 +471,139 @@ def spoken(segments: list[tuple[int, int, str | None]], transcript: str, **extra
 FIRST = "What is two plus three?"
 
 
+def lost(found: TurnObservation) -> list[tuple[int, str | None, str | None]]:
+    sentences = scenario(found).sentences
+    return [(s["index"], s["lost"], s["why"]) for s in sentences if not s["heard"]]
+
+
 def test_a_sentence_missing_from_the_transcript_is_placed_where_it_was_lost() -> None:
     # The recording's two sentences: about 0.22–1.52 s and 1.76–3.14 s.
     assert samples.speech("sum_question").spans == ((0.22, 1.52), (1.76, 3.14))
-
-    def lost(observation) -> list[tuple[int, str | None, str | None]]:
-        found = scenario(observation).sentences
-        return [(s["index"], s["lost"], s["why"]) for s in found if not s["heard"]]
+    # Both heard, a segment each: the two-sentence regression's passing case.
+    found = scenario(
+        spoken(
+            [(200, 1600, "final_text"), (1700, 3200, "final_text")],
+            samples.VOICE.prompt,
+            taken=(1,),
+        )
+    ).sentences
+    assert [(s["heard"], s["coverage"], s["stt"], s["adopted"]) for s in found] == [
+        (True, "full", "final", True)
+    ] * 2
+    assert [s["content"] for s in found] == ["holds_its_words"] * 2
 
     # No segment closed over the second sentence's sound: VAD lost it.
     assert lost(spoken([(200, 1600, "final_text")], FIRST)) == [
         (2, "vad", "no speech segment covered its sound")
     ]
-    # One segment held both, and its final the first alone: STT lost it.
-    [(index, layer, why)] = lost(spoken([(200, 3200, "final_text")], FIRST))
-    assert (index, layer) == (2, "stt") and "holds another sentence and leaves this one out" in why
-    # Its own segment closed, and got no final.
-    found = spoken([(200, 1600, "final_text"), (1700, 3200, "closed_without_final")], FIRST)
-    assert lost(found) == [(2, "stt", "its segment's STT ended closed_without_final")]
-    # Its own segment's final came after the Turn committed: the Turn left it out.
-    rejected = trace(
-        4100, "candidate.transcript_rejected", 95, segment_id="seg-1", reason="retired_segment"
+    # A segment over only part of it: VAD cut it short.
+    [(index, layer, why)] = lost(
+        spoken([(200, 1600, "final_text"), (1700, 2500, "final_text")], FIRST, taken=(1,))
     )
-    found = spoken([(200, 1600, "final_text"), (1700, 3200, "final_text")], FIRST, trace=[rejected])
+    assert (index, layer) == (2, "vad") and why.startswith("speech segments held 740 ms")
+    # One segment held both, and the final the Turn took left the second out: STT.
+    [(index, layer, why)] = lost(spoken([(200, 3200, "final_text")], FIRST))
+    assert (index, layer) == (2, "stt") and "holds another sentence too" in why
+    # Several segments over it, none of them with a final.
+    found = spoken(
+        [
+            (200, 1600, "final_text"),
+            (1700, 2400, "closed_without_final"),
+            (2400, 3200, "final_empty"),
+        ],
+        FIRST,
+    )
     assert lost(found) == [
-        (2, "turn", "its STT final came for a retired segment: the Turn had committed")
+        (2, "stt", "no STT final for its segment: closed_without_final, final_empty")
     ]
-    # Its final came, not rejected, but to another candidate than this Turn's.
+    # Its own segment's final came after the Turn committed, for a segment it had retired.
+    rejected = trace(4100, "candidate.transcript_rejected", 95, segment_id="seg-1")
+    found = spoken(
+        [(200, 1600, "final_text"), (1700, 3200, "final_text")],
+        FIRST,
+        trace=[rejected | {"reason": "retired_segment"}],
+    )
+    assert lost(found)[0][1] == "turn"
+    assert scenario(found).sentences[1]["stt"] == "late"
+    # Its final came in time, but the Turn did not take it.
     found = spoken([(200, 1600, "final_text"), (1700, 3200, "final_text")], FIRST)
-    assert lost(found) == [(2, "turn", "its STT final went to another candidate, not this Turn")]
-    # Both heard: nothing lost, each sentence matched to a segment of its own.
-    both = spoken([(200, 1600, "final_text"), (1700, 3200, "final_text")], samples.VOICE.prompt)
-    found = scenario(both).sentences
-    assert [s["heard"] for s in found] == [True, True]
-    assert [s["span_ms"] for s in found] == [[220, 1520], [1760, 3140]]
-    assert all(s["segment"] and s["stt"] == "final_text" for s in found)
+    assert lost(found) == [(2, "turn", "its STT final came in time, but the Turn did not take it")]
+    # The Turn took it, and it lacks the words: what STT heard, not where the sound went.
+    [(index, layer, why)] = lost(
+        spoken([(200, 1600, "final_text"), (1700, 3200, "final_text")], FIRST, taken=(1,))
+    )
+    assert (layer, why) == ("stt", "the final the Turn took (23 characters) lacks its words")
+
+
+def test_where_the_evidence_cannot_place_a_sentence_it_is_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The recording's stretches no longer match its sentences: their sound cannot be placed.
+    monkeypatch.setattr(samples, "speech", lambda name: samples.Speech(name, bytes(32_000), 1.0))
+    found = scenario(spoken([(200, 3200, "final_text")], FIRST)).sentences
+    assert [(s["coverage"], s["covered_ms"], s["lost"]) for s in found if not s["heard"]] == [
+        (None, None, "unknown")
+    ]
+
+
+def test_a_figure_not_measured_carries_why_never_what_it_would_measure() -> None:
+    # The model's first event came, then the turn timed out: no text and no speech at all.
+    stopped = observation([], ended="timeout")
+    stopped = figures(
+        scenario(without(stopped, "model.first_text", "speech.request", "tts.first_pcm"))
+    )
+    delta = stopped["output.first_text_delta"]
+    assert delta.note == (
+        "merged into the next row: First text delta not observed: "
+        "the first model request streamed no text"
+    )
+    assert stopped["output"].note == (
+        "not measured: First audio frame not observed: "
+        "no audio frame answers the first model request"
+    )
+    # A measured figure keeps what describes it.
+    shown = figures(scenario(observation()))
+    assert shown["context_ready_wait"].note == "how long registered context work held it back"
+    assert shown["model_first_event"].value == 200
+
+
+def run(at: int, value: float | None, outcome: str = "passed", **fields) -> ScenarioResult:
+    metric = Metric("first_text", value, "ms", "a", "b", "c", note=None if value else "why")
+    return ScenarioResult(
+        "voice", ScenarioOutcome(outcome), "", "c", metrics=(metric,), round=at, **fields
+    )
 
 
 def test_the_95th_percentile_waits_for_enough_samples() -> None:
-    from alphaavatar.host.doctor.enums import ScenarioOutcome
-    from alphaavatar.host.doctor.measure import P95_SAMPLES, summarize
-    from alphaavatar.host.doctor.schemas import Metric, ScenarioResult
-
-    def run(at: int, value: float) -> ScenarioResult:
-        metric = Metric("first_text", value, "ms", "a", "b", "c")
-        return ScenarioResult(
-            "text", ScenarioOutcome.PASSED, "ok", "original", metrics=(metric,), round=at
-        )
+    from alphaavatar.host.doctor.measure import P95_SAMPLES
 
     few = summarize([run(at, float(at)) for at in range(1, P95_SAMPLES + 1)])[0].figures[0]
     # Round 1 apart: the later rounds are one short of the threshold.
     assert (few.first, few.samples, few.p95) == (1.0, P95_SAMPLES - 1, None)
     many = summarize([run(at, float(at)) for at in range(1, P95_SAMPLES + 2)])[0].figures[0]
     assert (many.samples, many.low, many.high, many.p95) == (P95_SAMPLES, 2.0, 21.0, 20.0)
+
+
+def test_the_summary_keeps_passed_rounds_apart_from_every_round_observed() -> None:
+    # Every round failed: nothing passed, every value observed still counted apart.
+    failed = summarize([run(at, 100.0 * at, "failed") for at in (1, 2, 3)])[0]
+    figure = failed.figures[0]
+    assert (failed.passed, figure.first, figure.samples, figure.median) == (0, None, 0, None)
+    assert (figure.all_first, figure.all_samples, figure.all_median) == (100.0, 2, 250.0)
+    assert (figure.all_low, figure.all_high) == (200.0, 300.0)
+    # The first round failed: no Round 1 value; the later passed ones are the samples.
+    first = summarize([run(1, 50.0, "failed"), run(2, 20.0), run(3, 40.0)])[0].figures[0]
+    assert (first.first, first.samples, first.median, first.all_first) == (None, 2, 30.0, 50.0)
+    # A value missing in some rounds: n counts the rounds that observed it.
+    partial = summarize([run(1, 10.0), run(2, None), run(3, 30.0), run(4, 50.0)])[0].figures[0]
+    assert (partial.samples, partial.median, partial.note) == (2, 40.0, None)
+    # Observed in no round: no value anywhere, and why.
+    none = summarize([run(1, None), run(2, None, "failed")])[0]
+    assert (none.figures[0].all_samples, none.figures[0].note, none.stopped_at) == (
+        0,
+        "why",
+        {"failed": 1},
+    )
+    assert summarize([run(1, 1.0, sample="sum_question sha256:abc")])[0].sample == (
+        "sum_question sha256:abc"
+    )

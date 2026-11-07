@@ -17,7 +17,7 @@ import asyncio
 import hashlib
 import json
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
@@ -29,25 +29,27 @@ from alphaavatar.core.cleanup import wait_for_cleanup
 
 from .config import OpenAIClientConfig
 
-# The size of each request body the transport sends, for the caller in this context.
-_SENT: ContextVar[list[int | None] | None] = ContextVar("responses_sent", default=None)
+# Who hears of each request body as it goes to the transport, in this context: called with
+# the body's size, once per attempt.
+_SENT: ContextVar[Callable[[int | None], None] | None] = ContextVar("responses_sent", default=None)
 
 
 async def _record_sent(request: httpx.Request) -> None:
-    if (sizes := _SENT.get()) is not None:
+    if (sent := _SENT.get()) is not None:
         try:
-            sizes.append(len(request.content))  # The body as the SDK encoded it, sent as is.
+            size = len(request.content)  # The body as the SDK encoded it, sent as is.
         except httpx.RequestNotRead:
-            sizes.append(None)  # A streamed body: its size is not known up front.
+            size = None  # A streamed body: its size is not known up front.
+        sent(size)
 
 
 @contextmanager
-def sending() -> Iterator[list[int | None]]:
-    """The size of each request body sent within: one per attempt, the SDK's retries too."""
-    sizes: list[int | None] = []
-    token = _SENT.set(sizes)
+def sending(sent: Callable[[int | None], None]) -> Iterator[None]:
+    """``sent`` called as each request body within goes to the transport, with its size: once
+    per attempt, the SDK's retries too, before the server sees it."""
+    token = _SENT.set(sent)
     try:
-        yield sizes
+        yield
     finally:
         _SENT.reset(token)
 

@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 
 import httpx
+import pytest
 
 from alphaavatar.plugins.provider.openai.llms.client import _record_sent, sending
 from alphaavatar.plugins.provider.openai.llms.responses import _pictures
@@ -40,23 +42,82 @@ def test_the_pictures_a_request_carries_are_counted_from_its_encoded_input() -> 
 
 
 def test_the_size_recorded_is_the_body_the_transport_sends() -> None:
-    received = []
+    received, sizes = [], []
 
     def answer(request: httpx.Request) -> httpx.Response:
         received.append(len(request.content))
         return httpx.Response(200, json={})
 
-    async def send() -> list[int | None]:
+    async def send() -> None:
         transport = httpx.MockTransport(answer)
         hooks = {"request": [_record_sent]}
         async with httpx.AsyncClient(transport=transport, event_hooks=hooks) as client:
             body = {"input": "x" * 1000, "model": "m"}
-            with sending() as sizes:
+            with sending(sizes.append):
                 await client.post("https://api.invalid/v1/responses", json=body)
-            # Outside, nothing is recorded: the hook keeps sizes for the caller that asked.
+            # Outside, nothing is recorded: the hook tells the caller that asked.
             await client.post("https://api.invalid/v1/responses", json=body)
-            return sizes
 
-    sizes = asyncio.run(send())
+    asyncio.run(send())
     assert sizes == received[:1] and sizes[0] > len(json.dumps({"input": "x" * 1000}))
     assert len(received) == 2
+
+
+def test_each_attempt_is_logged_as_it_goes_to_the_transport_before_any_answer(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Model request sent is when the encoded body reaches the transport, not when the
+    response or the error comes back; a retry is logged as its own attempt."""
+    from alphaavatar.agents.avatar.provider.enums import ModelRole
+    from alphaavatar.agents.avatar.provider.errors import ModelRequestError
+    from alphaavatar.agents.avatar.provider.schemas import (
+        ModelInput,
+        ModelInputMessage,
+        ModelRequest,
+        ModelTextPart,
+    )
+    from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
+    from alphaavatar.plugins.provider.openai.llms import client as module
+    from alphaavatar.plugins.provider.openai.llms.responses import OpenAIResponsesLLM
+
+    def logged() -> list[dict]:
+        return [
+            r.msg.fields
+            for r in caplog.records
+            if getattr(r.msg, "name", "") == "model.request_sent"
+        ]
+
+    seen = []  # The attempts already logged as each one reached the server
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append([fields["attempt"] for fields in logged()])
+        return httpx.Response(500 if len(seen) == 1 else 401, json={"error": {"message": "no"}})
+
+    import openai  # noqa: F401  # Its client subclasses httpx's: imported before the swap.
+
+    class Answering(httpx.AsyncClient):
+        def __init__(self, **kwargs: object) -> None:
+            super().__init__(transport=httpx.MockTransport(answer), **kwargs)
+
+    monkeypatch.setattr(module.httpx, "AsyncClient", Answering)
+    caplog.set_level(logging.DEBUG, logger="alphaavatar")
+    extra = {"api_key": "sk-fictional", "base_url": "https://api.invalid/v1", "max_retries": 1}
+    llm = OpenAIResponsesLLM(ProviderTaskConfig(backend="openai", model="m", extra=extra))
+    message = ModelInputMessage(id="m1", role=ModelRole.USER, parts=(ModelTextPart("Hello"),))
+    request = ModelRequest(input=ModelInput(items=(message,)))
+
+    async def run() -> None:
+        try:
+            async with llm.stream(request) as events:
+                async for _ in events:
+                    pass
+        finally:
+            await llm.aclose()
+
+    with pytest.raises(ModelRequestError) as refused:
+        asyncio.run(run())
+    assert refused.value.code == "http_401"
+    assert seen == [[1], [1, 2]]  # Each attempt logged before the server saw it.
+    first, retry = logged()
+    assert (first["request_id"], retry["request_id"]) == (request.request_id,) * 2
+    assert first["request_bytes"] == retry["request_bytes"] > 0 and first["frame_count"] == 0

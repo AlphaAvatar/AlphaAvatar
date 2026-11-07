@@ -221,8 +221,8 @@ def test_a_stream_that_cannot_encode_the_separators_gets_ascii(color_capable: ob
     ]
 
 
-def metric(name: str, value: float | None, note: str | None = None, unit: str = "ms") -> Metric:
-    return Metric(name, value, unit, "start", "end", "boundary", note=note)
+def metric(name: str, value: float | None, note: str | None = None, **fields) -> Metric:
+    return Metric(name, value, "ms", "start", "end", "boundary", note=note, **fields)
 
 
 def diagnosis(*scenarios: ScenarioResult) -> Diagnosis:
@@ -240,65 +240,55 @@ def diagnosis(*scenarios: ScenarioResult) -> Diagnosis:
     return Diagnosis(tuple(checks))
 
 
-def vision(at: int, first_text: float) -> ScenarioResult:
+def voice(at: int, first_text: float, **fields) -> ScenarioResult:
+    """A round of the two-sentence question; the third's VAD close came out of order."""
+    merged = at == 3
     return ScenarioResult(
-        "voice_vision",
-        ScenarioOutcome.PASSED,
+        "voice",
+        fields.pop("outcome", ScenarioOutcome.PASSED),
         "Answered as the task expects",
-        "original",
+        "stt openai_segment m · vision off",
         metrics=(
             metric("first_text", first_text),
             metric("first_audio_frame", first_text + 400),
             metric("response_final", first_text + 1100),
         ),
         segments=(
-            metric("vad_close", 210.0),
-            metric("tts_request_to_first_pcm", None, "this TTS plugin logs no first PCM"),
-            metric("model_request_frames", 2.0, unit="frames"),
-            metric("model_request_bytes", 1_350_000.0, unit="bytes"),
+            metric("input", 640.0 + at),
+            metric("input.vad_close", None if merged else 600.0 + at, merged=()),
+            metric(
+                "input.final_transcript",
+                40.0 if not merged else 643.0,
+                merged=("vad_close",) * merged,
+            ),
+            metric("output", 330.0),
+            metric("output.first_pcm", None, "merged into the next row: First PCM not observed"),
+            metric("output.first_audio_frame", 21.0, merged=("first_pcm",)),
         ),
         round=at,
+        sample="sum_question sha256:0123456789ab",
+        **fields,
     )
 
 
 ROUNDS = (
-    vision(1, 712.4),
     # Stopped before any audio: what it measured stays, apart from the passed rounds.
-    ScenarioResult(
-        "text",
-        ScenarioOutcome.FAILED,
-        "Stopped at output.audio_frame",
-        "original",
-        blocked_stage="output.audio_frame",
+    voice(
+        1,
+        712.4,
+        outcome=ScenarioOutcome.FAILED,
+        blocked_stage="audio.first",
         cause="TTS refused the request",
-        metrics=(metric("first_text", 6.5), metric("first_audio_frame", None)),
-        round=1,
     ),
-    vision(2, 640.0),
-    ScenarioResult(
-        "text",
-        ScenarioOutcome.PASSED,
-        "Answered as the task expects",
-        "original",
-        metrics=(metric("first_text", 5.0), metric("first_audio_frame", 9.0)),
-        round=2,
-    ),
-    vision(3, 690.0),
-    ScenarioResult(
-        "text",
-        ScenarioOutcome.PASSED,
-        "Answered as the task expects",
-        "original",
-        metrics=(metric("first_text", 7.0), metric("first_audio_frame", 11.0)),
-        round=3,
-    ),
+    voice(2, 640.0),
+    voice(3, 690.0),
 )
 
 
 def text(width: int, *, interrupted: bool = False, overridden: bool = False) -> list[str]:
     out = io.StringIO()
     report = Report(out, width=width)
-    prepared = SimpleNamespace(loaded=None)
+    prepared = SimpleNamespace(loaded=None, rounds=3)
     doctor_command._text(report, diagnosis(*ROUNDS), prepared, "alpha", overridden, interrupted)
     return out.getvalue().splitlines()
 
@@ -306,46 +296,67 @@ def text(width: int, *, interrupted: bool = False, overridden: bool = False) -> 
 def test_doctor_summarizes_each_scenarios_rounds_the_first_apart_the_failed_apart() -> None:
     wide = text(100)
     assert wide[0] == "OK    Diagnostics completed · 14 passed · 1 skipped"
-    # Each scenario's rounds on one line; a failed round's reason below, once per reason.
-    start = wide.index("Scenarios · 3 rounds each, a session each")
-    assert wide[start + 1 : start + 4] == [
-        "  PASS  voice_vision           3/3 passed · Speech and screen frames in one model request",
-        "  FAIL  text                   2/3 passed · stopped: 1 at output.audio_frame",
-        "        Round 1: cause: TTS refused the request",
-    ]
-    # Each figure: the runtime's first round apart, then the later rounds' samples, median
-    # and range; pictures counted and a size in bytes, as their units say; a figure no round
-    # observed is a dash, its reason below.
-    start = wide.index("Latency · voice_vision · 3 of 3 rounds passed")
+    # The scenario's rounds on one line; a failed round's reason below, once per reason; what
+    # the rounds ran with, and the sample they heard.
+    start = wide.index("Scenarios · 3 rounds, a session each")
     assert wide[start + 1 : start + 5] == [
-        "  Metric                       Round 1   n     Median            Range",
-        "  End to end",
-        "    Host first text             712 ms   2     665 ms       640–690 ms",
-        "    First audio frame         1,112 ms   2   1,065 ms   1,040–1,090 ms",
+        "  FAIL  voice                  2/3 passed · stopped: 1 at audio.first",
+        "        Round 1: cause: TTS refused the request",
+        "  With stt openai_segment m · vision off",
+        "  Sample sum_question sha256:0123456789ab",
     ]
-    assert "    Pictures sent                    2   2          2                2" in wide
-    assert "    Request size                1.4 MB   2     1.4 MB           1.4 MB" in wide
-    assert "  — TTS request → First PCM: this TTS plugin logs no first PCM" in wide
-    # A failed first round is not a sample: its figures stand apart, what it measured kept.
-    start = wide.index("Latency · text · 2 of 3 rounds passed")
-    assert wide[start + 3] == "    Host first text           —   2   6.0 ms   5.0–7.0 ms"
-    start = wide.index("Failed rounds · text")
-    assert wide[start + 1] == (
-        "  Round 1 · stopped at output.audio_frame · measured: Host first text 6.5 ms"
+    # Each figure over the passed rounds: the first round, failed, is no sample of them; each
+    # stage's total on its line, its rows under it; a merged value is no sample of its row.
+    start = wide.index("Latency · voice · 2 of 3 rounds passed")
+    assert wide[start + 1 : start + 13] == [
+        "  Metric                            Round 1   n     Median            Range",
+        "  End to end",
+        "    Runtime first text                    —   2     665 ms       640–690 ms",
+        "    First audio frame                     —   2   1,065 ms   1,040–1,090 ms",
+        "    Response complete                     —   2   1,765 ms   1,740–1,790 ms",
+        "  Input                                   —   2     642 ms       642–643 ms",
+        "    Final speech → VAD close              —   1     602 ms           602 ms",
+        "    VAD close → Final transcript          —   1      40 ms            40 ms",
+        "  Output                                  —   2     330 ms           330 ms",
+        "    TTS request → First PCM               —   0          —                —",
+        "    First PCM → First audio frame         —   0          —                —",
+        "  n: later rounds that passed and observed it; the stages add up to First audio frame",
+    ]
+    merged = "  — VAD close → Final transcript: from an earlier node in 1 round, so no sample of it"
+    assert merged in wide
+    assert "  — TTS request → First PCM: merged into the next row: First PCM not observed" in wide
+    # Every round, the failed one included: its figures counted apart, its Round 1 shown.
+    start = wide.index("Latency · voice · every round, the 1 not passed included")
+    assert wide[start + 3] == (
+        "    Runtime first text                712 ms   2     665 ms       640–690 ms"
     )
-    assert "Latency" not in wide and all(line == line.rstrip() for line in wide)
-    # The diagnosis run again as JSON; overrides never repeated, only said to be needed.
-    assert wide[-3:] == ["Run again as JSON", "  alphaavatar doctor alpha --json", ""]
+    assert wide[start + 6] == (
+        "  Input                               641 ms   2     642 ms       642–643 ms"
+    )
+    assert wide[start + 12] == (
+        "  n: later rounds that observed it; the stages add up to First audio frame"
+    )
+    start = wide.index("Failed rounds · voice")
+    assert wide[start + 1 : start + 3] == [
+        "  Round 1 · stopped at audio.first · measured: Runtime first text 712 ms; First audio "
+        "frame 1,112",
+        "  ms; Response complete 1,812 ms; Input 641 ms; Output 330 ms",
+    ]
+    assert all(line == line.rstrip() for line in wide)
+    # The diagnosis run again as JSON, as many rounds; overrides never repeated, only said to
+    # be needed.
+    assert wide[-3:] == ["Run again as JSON", "  alphaavatar doctor alpha --rounds 3 --json", ""]
     assert text(100, overridden=True)[-2] == (
         "  With the same KEY=VALUE overrides, which are not repeated here."
     )
     # Too narrow for the table: each figure on its own lines, in the same words.
     narrow = text(60)
-    start = narrow.index("Latency · voice_vision · 3 of 3 rounds passed")
+    start = narrow.index("Latency · voice · 2 of 3 rounds passed")
     assert narrow[start + 1 : start + 3] == [
         "  End to end",
-        "    Host first text: round 1 712 ms · 2 later: median 665",
+        "    Runtime first text: round 1 — · 2 later: median 665 ms,",
     ]
+    assert "  Input: round 1 — · 2 later: median 642 ms, 642–643 ms" in narrow
     assert text(100, interrupted=True)[0] == "WARN  Interrupted · 14 passed · 1 skipped"
 
 

@@ -59,12 +59,12 @@ panel are diagnostics and commands, which print whole.</p>
 <li><a href="#setup-nocolor">NO_COLOR=1 alphaavatar setup reference — plain, a line each</a></li>
 <li><a href="#doctor-declined">alphaavatar doctor first — the diagnosis declined</a></li>
 <li><a href="#doctor-nometrics">alphaavatar doctor first --no-metrics</a></li>
-<li><a href="#doctor-agreed">alphaavatar doctor — agreed: 5 rounds of each scenario</a><span class="tag">离线测试替身</span></li>
+<li><a href="#doctor-agreed">alphaavatar doctor — agreed: 5 rounds of its one scenario</a><span class="tag">离线测试替身</span></li>
 <li><a href="#doctor-agreed-72">alphaavatar doctor --rounds 3 — the same, 72 columns</a><span class="tag">离线测试替身</span></li>
-<li><a href="#doctor-voice">alphaavatar doctor --rounds 3 — vision off: voice, then text</a><span class="tag">离线测试替身</span></li>
+<li><a href="#doctor-voice">alphaavatar doctor --rounds 3 — vision off: voice instead of voice_vision</a><span class="tag">离线测试替身</span></li>
 <li><a href="#doctor-fetch">alphaavatar doctor --rounds 2 — weights not in the cache, fetched as start would</a><span class="tag">离线测试替身</span></li>
-<li><a href="#doctor-partial">alphaavatar doctor --rounds 3 — a sentence lost in round 2</a><span class="tag">离线测试替身</span></li>
-<li><a href="#doctor-noimages">alphaavatar doctor --rounds 3 — a model that takes no images</a><span class="tag">离线测试替身</span></li>
+<li><a href="#doctor-partial">alphaavatar doctor --rounds 3 — vision off, a sentence lost in round 2</a><span class="tag">离线测试替身</span></li>
+<li><a href="#doctor-noimages">alphaavatar doctor --rounds 3 — a model that refuses images, reported as it is</a><span class="tag">离线测试替身</span></li>
 <li><a href="#doctor-interrupt">alphaavatar doctor — Ctrl+C at the question</a><span class="tag">离线测试替身</span></li>
 </ol></nav>
 <section id="setup-first"><h2>alphaavatar setup — a new bundle, asked part by part, no model on this machine</h2><p class="meta"><span>100 columns</span><span>exit 0</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Setup</span>
@@ -95,7 +95,7 @@ panel are diagnostics and commands, which print whole.</p>
     Not stored: start reads them from the environment or .env
 02  Credentials    Ready
 <span style="color:rgb(34,211,238)">03  Install</span>
-    AlphaAvatar 0.6.8 (linux-x86_64), plan 8f4e48ec07eb1e4a
+    AlphaAvatar 0.6.8 (linux-x86_64), plan bca648278143bd12
     sessions through LiveKit
     model and embeddings from OpenAI
     speech from OpenAI
@@ -104,14 +104,14 @@ panel are diagnostics and commands, which print whole.</p>
     no other models on this machine
     memory and persona: vectors in LanceDB in the Avatar workspace
     85 packages · 212 MB to download
-    Environment ~/.local/lib/alphaavatar/envs/8f4e48ec07eb1e4a; bundle first, made the default
+    Environment ~/.local/lib/alphaavatar/envs/bca648278143bd12; bundle first, made the default
     <span style="color:rgb(34,211,238)">Install and enable? [Y/n]: </span>y
 03  Install        85 packages · 212 MB
 04  Validate       PASS · 3 runners
 
 <span style="color:#4ade80">OK</span>    Bundle enabled
       Default       first
-      Environment   ~/.local/lib/alphaavatar/envs/8f4e48ec07eb1e4a
+      Environment   ~/.local/lib/alphaavatar/envs/bca648278143bd12
       <span style="color:#9ca3af">Start reads OPENAI_API_KEY, LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET from the</span>
       <span style="color:#9ca3af">environment or .env.</span>
 
@@ -178,16 +178,16 @@ panel are diagnostics and commands, which print whole.</p>
 01  Capabilities   Bundle reference · Voice on · Vision on · Local models on
 02  Credentials    From the environment, .env or those stored
 <span style="color:rgb(34,211,238)">03  Install</span>
-    AlphaAvatar 0.6.8 (linux-x86_64), plan 2328efcda41657bf
+    AlphaAvatar 0.6.8 (linux-x86_64), plan a3eb35a11ba6ab36
     105 packages · 514 MB to download
-    Environment ~/.local/lib/alphaavatar/envs/2328efcda41657bf; bundle reference, made the default
+    Environment ~/.local/lib/alphaavatar/envs/a3eb35a11ba6ab36; bundle reference, made the default
     <span style="color:rgb(34,211,238)">Install and enable? [Y/n]: </span>y
 03  Install        105 packages · 514 MB
 04  Validate       PASS · 8 runners
 
 <span style="color:#4ade80">OK</span>    Bundle enabled
       Default       reference
-      Environment   ~/.local/lib/alphaavatar/envs/2328efcda41657bf
+      Environment   ~/.local/lib/alphaavatar/envs/a3eb35a11ba6ab36
 
 <span style="font-weight:700">Next</span>
   <span style="color:rgb(34,211,238)">alphaavatar doctor reference</span></pre></div></section>
@@ -239,9 +239,9 @@ panel are diagnostics and commands, which print whole.</p>
                    Local models on
 02  Credentials    From the environment, .env or those stored
 <span style="color:rgb(34,211,238)">03  Install</span>
-    AlphaAvatar 0.6.8 (linux-x86_64), plan 2328efcda41657bf
+    AlphaAvatar 0.6.8 (linux-x86_64), plan a3eb35a11ba6ab36
     105 packages · installed already
-    Environment ~/.local/lib/alphaavatar/envs/2328efcda41657bf; bundle
+    Environment ~/.local/lib/alphaavatar/envs/a3eb35a11ba6ab36; bundle
     reference, made the default
     <span style="color:rgb(34,211,238)">Install and enable? [Y/n]: </span>n
 
@@ -272,30 +272,28 @@ panel are diagnostics and commands, which print whole.</p>
 01  Capabilities   Bundle reference · Voice on · Vision on · Local models on
 02  Credentials    From the environment, .env or those stored
 03  Install
-    AlphaAvatar 0.6.8 (linux-x86_64), plan 2328efcda41657bf
+    AlphaAvatar 0.6.8 (linux-x86_64), plan a3eb35a11ba6ab36
     105 packages · installed already
-    Environment ~/.local/lib/alphaavatar/envs/2328efcda41657bf; bundle reference, made the default
+    Environment ~/.local/lib/alphaavatar/envs/a3eb35a11ba6ab36; bundle reference, made the default
     Install and enable? [Y/n]: y
 03  Install
-    Environment /home/tester/.local/lib/alphaavatar/envs/2328efcda41657bf is already installed;
+    Environment /home/tester/.local/lib/alphaavatar/envs/a3eb35a11ba6ab36 is already installed;
     checking it
 03  Install        105 packages · installed already
 04  Validate       PASS · 8 runners
 
 OK    Bundle enabled
       Default       reference
-      Environment   ~/.local/lib/alphaavatar/envs/2328efcda41657bf
+      Environment   ~/.local/lib/alphaavatar/envs/a3eb35a11ba6ab36
 
 Next
   alphaavatar doctor reference</pre></div></section>
 <section id="doctor-declined"><h2>alphaavatar doctor first — the diagnosis declined</h2><p class="meta"><span>72 columns</span><span>exit 0</span></p><div class="term"><pre style="width:72ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Doctor</span>
 
 <span style="font-weight:700">Runtime diagnosis</span>
-  It starts this bundle&#x27;s runtime as start does, then runs each scenario
+  It starts this bundle&#x27;s runtime as start does, then runs this scenario
   5 times, each time in a session of its own:
     voice_vision   Speech and screen frames in one model request
-    voice          Both sentences transcribed, the sum answered
-    text           Typed input answered
   Model files the cache lacks are downloaded first, as start would.
   It calls the services this configuration names:
     model providers (langchain, openai)
@@ -329,7 +327,7 @@ Next
   Not measured · Not run: the diagnosis was declined
 
 <span style="font-weight:700">Run again as JSON</span>
-  <span style="color:rgb(34,211,238)">alphaavatar doctor first --json</span></pre></div></section>
+  <span style="color:rgb(34,211,238)">alphaavatar doctor first --rounds 5 --json</span></pre></div></section>
 <section id="doctor-nometrics"><h2>alphaavatar doctor first --no-metrics</h2><p class="meta"><span>100 columns</span><span>exit 0</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Doctor</span>
 <span style="color:#4ade80">OK</span>    9 passed · 6 skipped
 
@@ -353,15 +351,13 @@ Next
   Not measured · Not run: left out with --no-metrics
 
 <span style="font-weight:700">Run again as JSON</span>
-  <span style="color:rgb(34,211,238)">alphaavatar doctor first --json</span></pre></div></section>
-<section id="doctor-agreed"><h2>alphaavatar doctor — agreed: 5 rounds of each scenario<span class="tag">离线测试替身</span></h2><p class="meta"><span>100 columns</span><span>exit 0</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Doctor</span>
+  <span style="color:rgb(34,211,238)">alphaavatar doctor first --rounds 5 --json</span></pre></div></section>
+<section id="doctor-agreed"><h2>alphaavatar doctor — agreed: 5 rounds of its one scenario<span class="tag">离线测试替身</span></h2><p class="meta"><span>100 columns</span><span>exit 0</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Doctor</span>
 
 <span style="font-weight:700">Runtime diagnosis</span>
-  It starts this bundle&#x27;s runtime as start does, then runs each scenario 5 times, each time in a
+  It starts this bundle&#x27;s runtime as start does, then runs this scenario 5 times, each time in a
   session of its own:
     voice_vision   Speech and screen frames in one model request
-    voice          Both sentences transcribed, the sum answered
-    text           Typed input answered
   Model files the cache lacks are downloaded first, as start would.
   It calls the services this configuration names:
     model providers (scripted)
@@ -391,115 +387,57 @@ Next
         → Join a dev session from a client to try its devices
 
 <span style="font-weight:700">Session</span>
-  Ready                  2.2 ms at the median of 15, 2.2–32 ms
+  Ready                  2.3 ms at the median of 5, 2.2–18 ms
 
 <span style="font-weight:700">Runners</span>
-  Runtime start          788 ms · every model file from the cache
+  Runtime start          781 ms · the model cache did not grow (net)
   <span style="color:#4ade80">PASS</span>  alphaavatar.voice.vad.silero
-        started in 0.39 s · 610 calls, queue ≤ 0.0 ms, run ≤ 0.4 ms
+        started in 0.39 s · 305 calls, queue ≤ 0.0 ms, run ≤ 0.2 ms
   <span style="color:#4ade80">PASS</span>  alphaavatar.router.turn_taking.smart_turn_v3
-        started in 0.39 s · 10 calls, queue ≤ 0.0 ms, run ≤ 0.1 ms
+        started in 0.39 s · 5 calls, queue ≤ 0.0 ms, run ≤ 0.1 ms
 
-<span style="font-weight:700">Scenarios · 5 rounds each, a session each</span>
+<span style="font-weight:700">Scenarios · 5 rounds, a session each</span>
   <span style="color:#4ade80">PASS</span>  voice_vision           5/5 passed · Speech and screen frames in one model request
-  <span style="color:#4ade80">PASS</span>  voice                  5/5 passed · Both sentences transcribed, the sum answered
-  <span style="color:#4ade80">PASS</span>  text                   5/5 passed · Typed input answered
+  <span style="color:#9ca3af">SKIP</span>  voice                  Vision is on: voice_vision speaks to it; voice runs with vision off
   <span style="color:#9ca3af">SKIP</span>  image_input            No input transport delivers images to a session yet
   <span style="color:#9ca3af">SKIP</span>  visual_output          No Character is configured
+  With model m · stt openai_segment m · tts openai m · vision vlm, max_frames 4
+  Sample card_question sha256:0f72883c4ad4
 
 <span style="font-weight:700">Latency · voice_vision · 5 of 5 rounds passed</span>
-  Metric                                  Round 1   n   Median        Range
+  Metric                                               Round 1   n   Median        Range
   End to end
-    Host first text                        705 ms   4   705 ms   704–706 ms
-    First audio frame                      727 ms   4   727 ms   725–728 ms
-    Response complete                      957 ms   4   957 ms   955–958 ms
-    Text complete                          706 ms   4   705 ms   704–707 ms
-    Last audio frame                       957 ms   4   957 ms   955–957 ms
-  Input
-    Speech end → VAD close                 600 ms   4   601 ms   599–602 ms
-    Speech end → STT final                 651 ms   4   651 ms   650–652 ms
-    Speech end → Turn commit               652 ms   4   652 ms   651–653 ms
-    Speech end → Last required input       601 ms   4   601 ms   599–602 ms
-  Context and model request
-    Context ready wait                     0.0 ms   4   0.0 ms       0.0 ms
-    Turn commit → Model request            2.3 ms   4   1.7 ms   1.7–1.8 ms
-    Selected frame age at model request    755 ms   4   704 ms   654–755 ms
-    Newest selected frame → Turn commit     51 ms   4    51 ms     51–52 ms
-    Request encoding                            —   0        —            —
-    Pictures sent                               —   0        —            —
-    Request size                                —   0        —            —
-    Model request → First event            0.5 ms   4   0.5 ms       0.5 ms
-    Model request → First text delta        51 ms   4    51 ms     51–52 ms
-  Output
-    Model request → Host first text         51 ms   4    51 ms     51–52 ms
-    TTS request → First PCM                     —   0        —            —
-    TTS request → First audio frame         21 ms   4    21 ms        21 ms
-  <span style="color:#9ca3af">— Request encoding, Pictures sent, Request size: no record of it sent: none went out, or its</span>
-  <span style="color:#9ca3af">provider logs none</span>
-  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
-
-<span style="font-weight:700">Latency · voice · 5 of 5 rounds passed</span>
-  Metric                               Round 1   n   Median        Range
-  End to end
-    Host first text                     706 ms   4   705 ms   704–706 ms
-    First audio frame                   728 ms   4   726 ms   726–728 ms
-    Response complete                   958 ms   4   957 ms   956–959 ms
-    Text complete                       706 ms   4   705 ms   704–706 ms
-    Last audio frame                    958 ms   4   956 ms   955–958 ms
-  Input
-    Speech end → VAD close              601 ms   4   600 ms   599–601 ms
-    Speech end → STT final              652 ms   4   651 ms   651–652 ms
-    Speech end → Turn commit            653 ms   4   652 ms   652–653 ms
-  Context and model request
-    Context ready wait                  0.0 ms   4   0.0 ms       0.0 ms
-    Turn commit → Model request         1.7 ms   4   1.5 ms   1.5–1.6 ms
-    Request encoding                         —   0        —            —
-    Pictures sent                            —   0        —            —
-    Request size                             —   0        —            —
-    Model request → First event         0.4 ms   4   0.5 ms   0.4–0.5 ms
-    Model request → First text delta     51 ms   4    51 ms        51 ms
-  Output
-    Model request → Host first text      51 ms   4    51 ms        51 ms
-    TTS request → First PCM                  —   0        —            —
-    TTS request → First audio frame      21 ms   4    21 ms        21 ms
-  <span style="color:#9ca3af">— Request encoding, Pictures sent, Request size: no record of it sent: none went out, or its</span>
-  <span style="color:#9ca3af">provider logs none</span>
-  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
-
-<span style="font-weight:700">Latency · text · 5 of 5 rounds passed</span>
-  Metric                               Round 1   n   Median        Range
-  End to end
-    Host first text                      52 ms   4    52 ms        52 ms
-    First audio frame                    73 ms   4    73 ms        73 ms
-    Response complete                   299 ms   4   298 ms   298–337 ms
-    Text complete                        52 ms   4    52 ms        52 ms
-    Last audio frame                    298 ms   4   297 ms   297–336 ms
-  Context and model request
-    Context ready wait                  0.0 ms   4   0.0 ms       0.0 ms
-    Turn commit → Model request         1.5 ms   4   1.5 ms   1.4–1.5 ms
-    Request encoding                         —   0        —            —
-    Pictures sent                            —   0        —            —
-    Request size                             —   0        —            —
-    Model request → First event         0.4 ms   4   0.4 ms       0.4 ms
-    Model request → First text delta     51 ms   4    51 ms        51 ms
-  Output
-    Model request → Host first text      51 ms   4    51 ms        51 ms
-    TTS request → First PCM                  —   0        —            —
-    TTS request → First audio frame      21 ms   4    21 ms        21 ms
-  <span style="color:#9ca3af">— Request encoding, Pictures sent, Request size: no record of it sent: none went out, or its</span>
-  <span style="color:#9ca3af">provider logs none</span>
-  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
+    Runtime first text                                  704 ms   4   706 ms   705–711 ms
+    First audio frame                                   726 ms   4   727 ms   726–732 ms
+    Response complete                                   953 ms   4   957 ms   954–963 ms
+    Text complete                                       705 ms   4   706 ms   705–711 ms
+    Last audio frame                                    953 ms   4   957 ms   953–962 ms
+  Input                                                 650 ms   4   651 ms   651–652 ms
+    Final speech → VAD close                            599 ms   4   601 ms   600–601 ms
+    VAD close → Final transcript                         51 ms   4    51 ms     50–51 ms
+  Context                                               4.0 ms   4   3.4 ms   3.1–7.6 ms
+    Final transcript → Turn commit                      1.1 ms   4   1.0 ms       1.0 ms
+    Turn commit → Context readiness check complete      0.7 ms   4   0.5 ms   0.5–0.6 ms
+    Context readiness check complete → Context built    1.8 ms   4   1.4 ms   1.2–5.7 ms
+    Context built → Model request sent                  0.5 ms   4   0.4 ms       0.4 ms
+  Output                                                 72 ms   4    73 ms     72–74 ms
+    Model request sent → First text delta                50 ms   4    51 ms     50–52 ms
+    First text delta → TTS request                      0.9 ms   4   0.6 ms       0.6 ms
+    TTS request → First PCM                                  —   0        —            —
+    First PCM → First audio frame                            —   0        —            —
+  <span style="color:#9ca3af">n: later rounds that passed and observed it; the stages add up to First audio frame</span>
+  <span style="color:#9ca3af">— First PCM → First audio frame: from an earlier node in 5 rounds, so no sample of it</span>
+  <span style="color:#9ca3af">— TTS request → First PCM: merged into the next row: First PCM not observed: this TTS plugin logs</span>
+  <span style="color:#9ca3af">no first PCM</span>
 
 <span style="font-weight:700">Run again as JSON</span>
-  <span style="color:rgb(34,211,238)">alphaavatar doctor $WORK/avatar.json --json</span></pre></div></section>
+  <span style="color:rgb(34,211,238)">alphaavatar doctor $WORK/avatar.json --rounds 5 --json</span></pre></div></section>
 <section id="doctor-agreed-72"><h2>alphaavatar doctor --rounds 3 — the same, 72 columns<span class="tag">离线测试替身</span></h2><p class="meta"><span>72 columns</span><span>exit 0</span></p><div class="term"><pre style="width:72ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Doctor</span>
 
 <span style="font-weight:700">Runtime diagnosis</span>
-  It starts this bundle&#x27;s runtime as start does, then runs each scenario
+  It starts this bundle&#x27;s runtime as start does, then runs this scenario
   3 times, each time in a session of its own:
     voice_vision   Speech and screen frames in one model request
-    voice          Both sentences transcribed, the sum answered
-    text           Typed input answered
   Model files the cache lacks are downloaded first, as start would.
   It calls the services this configuration names:
     model providers (scripted)
@@ -530,123 +468,70 @@ Next
         → Join a dev session from a client to try its devices
 
 <span style="font-weight:700">Session</span>
-  Ready                  2.2 ms at the median of 9, 2.1–17 ms
+  Ready                  2.3 ms at the median of 3, 2.3–18 ms
 
 <span style="font-weight:700">Runners</span>
-  Runtime start          785 ms · every model file from the cache
+  Runtime start          781 ms · the model cache did not grow (net)
   <span style="color:#4ade80">PASS</span>  alphaavatar.voice.vad.silero
-        started in 0.39 s · 366 calls, queue ≤ 0.0 ms, run ≤ 0.2 ms
+        started in 0.39 s · 183 calls, queue ≤ 0.0 ms, run ≤ 0.2 ms
   <span style="color:#4ade80">PASS</span>  alphaavatar.router.turn_taking.smart_turn_v3
-        started in 0.39 s · 6 calls, queue ≤ 0.0 ms, run ≤ 0.2 ms
+        started in 0.39 s · 3 calls, queue ≤ 0.0 ms, run ≤ 0.1 ms
 
-<span style="font-weight:700">Scenarios · 3 rounds each, a session each</span>
+<span style="font-weight:700">Scenarios · 3 rounds, a session each</span>
   <span style="color:#4ade80">PASS</span>  voice_vision
         3/3 passed · Speech and screen frames in one model request
-  <span style="color:#4ade80">PASS</span>  voice
-        3/3 passed · Both sentences transcribed, the sum answered
-  <span style="color:#4ade80">PASS</span>  text                   3/3 passed · Typed input answered
+  <span style="color:#9ca3af">SKIP</span>  voice
+        Vision is on: voice_vision speaks to it; voice runs with vision
+        off
   <span style="color:#9ca3af">SKIP</span>  image_input
         No input transport delivers images to a session yet
   <span style="color:#9ca3af">SKIP</span>  visual_output          No Character is configured
+  With model m · stt openai_segment m · tts openai m · vision vlm,
+  max_frames 4
+  Sample card_question sha256:0f72883c4ad4
 
 <span style="font-weight:700">Latency · voice_vision · 3 of 3 rounds passed</span>
   End to end
-    Host first text: round 1 705 ms · 2 later: median 705 ms, 705 ms
-    First audio frame: round 1 727 ms · 2 later: median 726 ms, 726 ms
-    Response complete: round 1 957 ms · 2 later: median 957 ms, 956–957
+    Runtime first text: round 1 706 ms · 2 later: median 705 ms, 705–706
     ms
-    Text complete: round 1 706 ms · 2 later: median 705 ms, 705 ms
-    Last audio frame: round 1 956 ms · 2 later: median 956 ms, 956–957
+    First audio frame: round 1 728 ms · 2 later: median 727 ms, 726–728
     ms
-  Input
-    Speech end → VAD close: round 1 600 ms · 2 later: median 600 ms, 600
+    Response complete: round 1 957 ms · 2 later: median 957 ms, 955–958
     ms
-    Speech end → STT final: round 1 651 ms · 2 later: median 651 ms,
-    650–651 ms
-    Speech end → Turn commit: round 1 652 ms · 2 later: median 652 ms,
-    651–652 ms
-    Speech end → Last required input: round 1 601 ms · 2 later: median
-    600 ms, 600 ms
-  Context and model request
-    Context ready wait: round 1 0.0 ms · 2 later: median 0.0 ms, 0.0 ms
-    Turn commit → Model request: round 1 2.1 ms · 2 later: median 1.7
-    ms, 1.6–1.7 ms
-    Selected frame age at model request: round 1 754 ms · 2 later:
-    median 753 ms, 753–754 ms
-    Newest selected frame → Turn commit: round 1 51 ms · 2 later: median
-    51 ms, 51 ms
-    Request encoding: round 1 —
-    Pictures sent: round 1 —
-    Request size: round 1 —
-    Model request → First event: round 1 0.6 ms · 2 later: median 0.5
-    ms, 0.5 ms
-    Model request → First text delta: round 1 51 ms · 2 later: median 51
-    ms, 51–52 ms
-  Output
-    Model request → Host first text: round 1 51 ms · 2 later: median 51
-    ms, 51–52 ms
+    Text complete: round 1 706 ms · 2 later: median 706 ms, 705–707 ms
+    Last audio frame: round 1 956 ms · 2 later: median 956 ms, 955–958
+    ms
+  Input: round 1 651 ms · 2 later: median 651 ms, 650–652 ms
+    Final speech → VAD close: round 1 601 ms · 2 later: median 600 ms,
+    599–601 ms
+    VAD close → Final transcript: round 1 51 ms · 2 later: median 51 ms,
+    51 ms
+  Context: round 1 4.0 ms · 2 later: median 3.3 ms, 3.0–3.6 ms
+    Final transcript → Turn commit: round 1 1.0 ms · 2 later: median 1.0
+    ms, 1.0–1.1 ms
+    Turn commit → Context readiness check complete: round 1 0.7 ms · 2
+    later: median 0.5 ms, 0.5–0.6 ms
+    Context readiness check complete → Context built: round 1 1.8 ms · 2
+    later: median 1.4 ms, 1.2–1.5 ms
+    Context built → Model request sent: round 1 0.5 ms · 2 later: median
+    0.4 ms, 0.4 ms
+  Output: round 1 72 ms · 2 later: median 72 ms, 72–73 ms
+    Model request sent → First text delta: round 1 50 ms · 2 later:
+    median 51 ms, 51 ms
+    First text delta → TTS request: round 1 0.9 ms · 2 later: median 0.6
+    ms, 0.5–0.7 ms
     TTS request → First PCM: round 1 —
-    TTS request → First audio frame: round 1 21 ms · 2 later: median 21
-    ms, 21 ms
-  <span style="color:#9ca3af">— Request encoding, Pictures sent, Request size: no record of it sent:</span>
-  <span style="color:#9ca3af">none went out, or its provider logs none</span>
-  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
-
-<span style="font-weight:700">Latency · voice · 3 of 3 rounds passed</span>
-  Metric                               Round 1   n   Median        Range
-  End to end
-    Host first text                     707 ms   2   705 ms   705–706 ms
-    First audio frame                   728 ms   2   727 ms       727 ms
-    Response complete                   960 ms   2   957 ms       957 ms
-    Text complete                       707 ms   2   706 ms   705–706 ms
-    Last audio frame                    959 ms   2   956 ms       956 ms
-  Input
-    Speech end → VAD close              602 ms   2   600 ms   600–601 ms
-    Speech end → STT final              653 ms   2   652 ms   651–652 ms
-    Speech end → Turn commit            654 ms   2   653 ms   652–653 ms
-  Context and model request
-    Context ready wait                  0.0 ms   2   0.0 ms       0.0 ms
-    Turn commit → Model request         1.6 ms   2   1.5 ms       1.5 ms
-    Request encoding                         —   0        —            —
-    Pictures sent                            —   0        —            —
-    Request size                             —   0        —            —
-    Model request → First event         0.5 ms   2   0.4 ms   0.4–0.5 ms
-    Model request → First text delta     51 ms   2    51 ms        51 ms
-  Output
-    Model request → Host first text      51 ms   2    51 ms        51 ms
-    TTS request → First PCM                  —   0        —            —
-    TTS request → First audio frame      21 ms   2    21 ms        21 ms
-  <span style="color:#9ca3af">— Request encoding, Pictures sent, Request size: no record of it sent:</span>
-  <span style="color:#9ca3af">none went out, or its provider logs none</span>
-  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
-
-<span style="font-weight:700">Latency · text · 3 of 3 rounds passed</span>
-  Metric                               Round 1   n   Median        Range
-  End to end
-    Host first text                      52 ms   2    52 ms        52 ms
-    First audio frame                    73 ms   2    73 ms        73 ms
-    Response complete                   298 ms   2   298 ms       298 ms
-    Text complete                        52 ms   2    52 ms        52 ms
-    Last audio frame                    297 ms   2   297 ms       297 ms
-  Context and model request
-    Context ready wait                  0.0 ms   2   0.0 ms       0.0 ms
-    Turn commit → Model request         1.5 ms   2   1.5 ms   1.4–1.5 ms
-    Request encoding                         —   0        —            —
-    Pictures sent                            —   0        —            —
-    Request size                             —   0        —            —
-    Model request → First event         0.4 ms   2   0.4 ms       0.4 ms
-    Model request → First text delta     51 ms   2    51 ms        51 ms
-  Output
-    Model request → Host first text      51 ms   2    51 ms        51 ms
-    TTS request → First PCM                  —   0        —            —
-    TTS request → First audio frame      21 ms   2    21 ms        21 ms
-  <span style="color:#9ca3af">— Request encoding, Pictures sent, Request size: no record of it sent:</span>
-  <span style="color:#9ca3af">none went out, or its provider logs none</span>
-  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
+    First PCM → First audio frame: round 1 —
+  <span style="color:#9ca3af">n: later rounds that passed and observed it; the stages add up to</span>
+  <span style="color:#9ca3af">First audio frame</span>
+  <span style="color:#9ca3af">— First PCM → First audio frame: from an earlier node in 3 rounds, so</span>
+  <span style="color:#9ca3af">no sample of it</span>
+  <span style="color:#9ca3af">— TTS request → First PCM: merged into the next row: First PCM not</span>
+  <span style="color:#9ca3af">observed: this TTS plugin logs no first PCM</span>
 
 <span style="font-weight:700">Run again as JSON</span>
-  <span style="color:rgb(34,211,238)">alphaavatar doctor $WORK/avatar.json --json</span></pre></div></section>
-<section id="doctor-voice"><h2>alphaavatar doctor --rounds 3 — vision off: voice, then text<span class="tag">离线测试替身</span></h2><p class="meta"><span>100 columns</span><span>exit 0</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Doctor</span>
+  <span style="color:rgb(34,211,238)">alphaavatar doctor $WORK/avatar.json --rounds 3 --json</span></pre></div></section>
+<section id="doctor-voice"><h2>alphaavatar doctor --rounds 3 — vision off: voice instead of voice_vision<span class="tag">离线测试替身</span></h2><p class="meta"><span>100 columns</span><span>exit 0</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Doctor</span>
 <span style="color:#4ade80">OK</span>    Diagnostics completed · 14 passed · 1 skipped
 
 <span style="font-weight:700">Checks</span>
@@ -665,76 +550,51 @@ Next
         → Join a dev session from a client to try its devices
 
 <span style="font-weight:700">Session</span>
-  Ready                  2.3 ms at the median of 6, 2.2–17 ms
+  Ready                  2.4 ms at the median of 3, 2.2–18 ms
 
 <span style="font-weight:700">Runners</span>
-  Runtime start          784 ms · every model file from the cache
+  Runtime start          782 ms · the model cache did not grow (net)
   <span style="color:#4ade80">PASS</span>  alphaavatar.voice.vad.silero
-        started in 0.39 s · 183 calls, queue ≤ 0.0 ms, run ≤ 0.2 ms
+        started in 0.39 s · 184 calls, queue ≤ 0.0 ms, run ≤ 0.2 ms
   <span style="color:#4ade80">PASS</span>  alphaavatar.router.turn_taking.smart_turn_v3
         started in 0.39 s · 3 calls, queue ≤ 0.0 ms, run ≤ 0.1 ms
 
-<span style="font-weight:700">Scenarios · 3 rounds each, a session each</span>
+<span style="font-weight:700">Scenarios · 3 rounds, a session each</span>
   <span style="color:#4ade80">PASS</span>  voice                  3/3 passed · Both sentences transcribed, the sum answered
-  <span style="color:#4ade80">PASS</span>  text                   3/3 passed · Typed input answered
-  <span style="color:#9ca3af">SKIP</span>  voice_vision           Vision is off or text only
+  <span style="color:#9ca3af">SKIP</span>  voice_vision           Vision is off or text only: voice runs instead
   <span style="color:#9ca3af">SKIP</span>  image_input            No input transport delivers images to a session yet
   <span style="color:#9ca3af">SKIP</span>  visual_output          No Character is configured
+  With model m · stt openai_segment m · tts openai m · vision off
+  Sample sum_question sha256:0f72883c4ad4
 
 <span style="font-weight:700">Latency · voice · 3 of 3 rounds passed</span>
-  Metric                               Round 1   n   Median        Range
+  Metric                                               Round 1   n   Median        Range
   End to end
-    Host first text                     705 ms   2   705 ms   703–706 ms
-    First audio frame                   726 ms   2   726 ms   725–727 ms
-    Response complete                   959 ms   2   957 ms   955–959 ms
-    Text complete                       705 ms   2   705 ms   704–706 ms
-    Last audio frame                    958 ms   2   956 ms   954–958 ms
-  Input
-    Speech end → VAD close              600 ms   2   600 ms   599–601 ms
-    Speech end → STT final              650 ms   2   651 ms   650–652 ms
-    Speech end → Turn commit            651 ms   2   652 ms   651–653 ms
-  Context and model request
-    Context ready wait                  0.0 ms   2   0.0 ms       0.0 ms
-    Turn commit → Model request         1.9 ms   2   1.5 ms   1.4–1.5 ms
-    Request encoding                         —   0        —            —
-    Pictures sent                            —   0        —            —
-    Request size                             —   0        —            —
-    Model request → First event         0.5 ms   2   0.4 ms       0.4 ms
-    Model request → First text delta     51 ms   2    51 ms        51 ms
-  Output
-    Model request → Host first text      51 ms   2    51 ms        51 ms
-    TTS request → First PCM                  —   0        —            —
-    TTS request → First audio frame      21 ms   2    21 ms        21 ms
-  <span style="color:#9ca3af">— Request encoding, Pictures sent, Request size: no record of it sent: none went out, or its</span>
-  <span style="color:#9ca3af">provider logs none</span>
-  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
-
-<span style="font-weight:700">Latency · text · 3 of 3 rounds passed</span>
-  Metric                               Round 1   n   Median        Range
-  End to end
-    Host first text                      52 ms   2    52 ms        52 ms
-    First audio frame                    73 ms   2    73 ms        73 ms
-    Response complete                   298 ms   2   298 ms   297–298 ms
-    Text complete                        52 ms   2    52 ms        52 ms
-    Last audio frame                    298 ms   2   297 ms       297 ms
-  Context and model request
-    Context ready wait                  0.0 ms   2   0.0 ms       0.0 ms
-    Turn commit → Model request         1.6 ms   2   1.4 ms       1.4 ms
-    Request encoding                         —   0        —            —
-    Pictures sent                            —   0        —            —
-    Request size                             —   0        —            —
-    Model request → First event         0.4 ms   2   0.4 ms       0.4 ms
-    Model request → First text delta     51 ms   2    51 ms        51 ms
-  Output
-    Model request → Host first text      51 ms   2    51 ms        51 ms
-    TTS request → First PCM                  —   0        —            —
-    TTS request → First audio frame      21 ms   2    21 ms        21 ms
-  <span style="color:#9ca3af">— Request encoding, Pictures sent, Request size: no record of it sent: none went out, or its</span>
-  <span style="color:#9ca3af">provider logs none</span>
-  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
+    Runtime first text                                  704 ms   2   705 ms   703–706 ms
+    First audio frame                                   726 ms   2   726 ms   725–727 ms
+    Response complete                                   955 ms   2   958 ms   954–962 ms
+    Text complete                                       705 ms   2   705 ms   703–706 ms
+    Last audio frame                                    955 ms   2   957 ms   953–961 ms
+  Input                                                 650 ms   2   650 ms   650–651 ms
+    Final speech → VAD close                            600 ms   2   600 ms   599–600 ms
+    VAD close → Final transcript                         51 ms   2    51 ms     50–51 ms
+  Context                                               3.5 ms   2   3.1 ms   2.8–3.3 ms
+    Final transcript → Turn commit                      1.0 ms   2   1.0 ms   1.0–1.1 ms
+    Turn commit → Context readiness check complete      0.8 ms   2   0.6 ms   0.5–0.6 ms
+    Context readiness check complete → Context built    1.3 ms   2   1.1 ms   1.0–1.2 ms
+    Context built → Model request sent                  0.4 ms   2   0.4 ms       0.4 ms
+  Output                                                 72 ms   2    73 ms     72–73 ms
+    Model request sent → First text delta                51 ms   2    51 ms        51 ms
+    First text delta → TTS request                      0.9 ms   2   0.6 ms   0.6–0.7 ms
+    TTS request → First PCM                                  —   0        —            —
+    First PCM → First audio frame                            —   0        —            —
+  <span style="color:#9ca3af">n: later rounds that passed and observed it; the stages add up to First audio frame</span>
+  <span style="color:#9ca3af">— First PCM → First audio frame: from an earlier node in 3 rounds, so no sample of it</span>
+  <span style="color:#9ca3af">— TTS request → First PCM: merged into the next row: First PCM not observed: this TTS plugin logs</span>
+  <span style="color:#9ca3af">no first PCM</span>
 
 <span style="font-weight:700">Run again as JSON</span>
-  <span style="color:rgb(34,211,238)">alphaavatar doctor $WORK/avatar.json --json</span></pre></div></section>
+  <span style="color:rgb(34,211,238)">alphaavatar doctor $WORK/avatar.json --rounds 3 --json</span></pre></div></section>
 <section id="doctor-fetch"><h2>alphaavatar doctor --rounds 2 — weights not in the cache, fetched as start would<span class="tag">离线测试替身</span></h2><p class="meta"><span>100 columns</span><span>exit 0</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Doctor</span>
 <span style="color:#4ade80">OK</span>    Diagnostics completed · 14 passed · 1 skipped
 
@@ -754,108 +614,52 @@ Next
         → Join a dev session from a client to try its devices
 
 <span style="font-weight:700">Session</span>
-  Ready                  2.2 ms at the median of 6, 2.2–17 ms
+  Ready                  10 ms at the median of 2, 2.4–18 ms
 
 <span style="font-weight:700">Runners</span>
-  Runtime start          790 ms · 64.0 KB of model files downloaded first
+  Runtime start          778 ms · the model cache grew by 64.0 KB (net)
   <span style="color:#4ade80">PASS</span>  alphaavatar.voice.vad.silero
-        started in 0.40 s · 245 calls, queue ≤ 0.0 ms, run ≤ 0.2 ms
+        started in 0.39 s · 122 calls, queue ≤ 0.0 ms, run ≤ 0.2 ms
   <span style="color:#4ade80">PASS</span>  alphaavatar.router.turn_taking.smart_turn_v3
-        started in 0.39 s · 4 calls, queue ≤ 0.0 ms, run ≤ 0.1 ms
+        started in 0.39 s · 2 calls, queue ≤ 0.0 ms, run ≤ 0.1 ms
 
-<span style="font-weight:700">Scenarios · 2 rounds each, a session each</span>
+<span style="font-weight:700">Scenarios · 2 rounds, a session each</span>
   <span style="color:#4ade80">PASS</span>  voice_vision           2/2 passed · Speech and screen frames in one model request
-  <span style="color:#4ade80">PASS</span>  voice                  2/2 passed · Both sentences transcribed, the sum answered
-  <span style="color:#4ade80">PASS</span>  text                   2/2 passed · Typed input answered
+  <span style="color:#9ca3af">SKIP</span>  voice                  Vision is on: voice_vision speaks to it; voice runs with vision off
   <span style="color:#9ca3af">SKIP</span>  image_input            No input transport delivers images to a session yet
   <span style="color:#9ca3af">SKIP</span>  visual_output          No Character is configured
+  With model m · stt openai_segment m · tts openai m · vision vlm, max_frames 4
+  Sample card_question sha256:0f72883c4ad4
 
 <span style="font-weight:700">Latency · voice_vision · 2 of 2 rounds passed</span>
-  Metric                                  Round 1   n   Median    Range
+  Metric                                               Round 1   n   Median    Range
   End to end
-    Host first text                        705 ms   1   703 ms   703 ms
-    First audio frame                      727 ms   1   725 ms   725 ms
-    Response complete                      957 ms   1   956 ms   956 ms
-    Text complete                          706 ms   1   703 ms   703 ms
-    Last audio frame                       957 ms   1   955 ms   955 ms
-  Input
-    Speech end → VAD close                 600 ms   1   599 ms   599 ms
-    Speech end → STT final                 651 ms   1   650 ms   650 ms
-    Speech end → Turn commit               652 ms   1   651 ms   651 ms
-    Speech end → Last required input       601 ms   1   600 ms   600 ms
-  Context and model request
-    Context ready wait                     0.0 ms   1   0.0 ms   0.0 ms
-    Turn commit → Model request            2.2 ms   1   1.6 ms   1.6 ms
-    Selected frame age at model request    756 ms   1   754 ms   754 ms
-    Newest selected frame → Turn commit     51 ms   1    51 ms    51 ms
-    Request encoding                            —   0        —        —
-    Pictures sent                               —   0        —        —
-    Request size                                —   0        —        —
-    Model request → First event            0.5 ms   1   0.5 ms   0.5 ms
-    Model request → First text delta        51 ms   1    51 ms    51 ms
-  Output
-    Model request → Host first text         51 ms   1    51 ms    51 ms
-    TTS request → First PCM                     —   0        —        —
-    TTS request → First audio frame         21 ms   1    21 ms    21 ms
-  <span style="color:#9ca3af">— Request encoding, Pictures sent, Request size: no record of it sent: none went out, or its</span>
-  <span style="color:#9ca3af">provider logs none</span>
-  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
-
-<span style="font-weight:700">Latency · voice · 2 of 2 rounds passed</span>
-  Metric                               Round 1   n   Median    Range
-  End to end
-    Host first text                     704 ms   1   705 ms   705 ms
-    First audio frame                   726 ms   1   726 ms   726 ms
-    Response complete                   956 ms   1   963 ms   963 ms
-    Text complete                       705 ms   1   705 ms   705 ms
-    Last audio frame                    955 ms   1   957 ms   957 ms
-  Input
-    Speech end → VAD close              600 ms   1   601 ms   601 ms
-    Speech end → STT final              651 ms   1   651 ms   651 ms
-    Speech end → Turn commit            652 ms   1   652 ms   652 ms
-  Context and model request
-    Context ready wait                  0.0 ms   1   0.0 ms   0.0 ms
-    Turn commit → Model request         1.7 ms   1   1.5 ms   1.5 ms
-    Request encoding                         —   0        —        —
-    Pictures sent                            —   0        —        —
-    Request size                             —   0        —        —
-    Model request → First event         0.5 ms   1   0.4 ms   0.4 ms
-    Model request → First text delta     51 ms   1    51 ms    51 ms
-  Output
-    Model request → Host first text      51 ms   1    51 ms    51 ms
-    TTS request → First PCM                  —   0        —        —
-    TTS request → First audio frame      21 ms   1    21 ms    21 ms
-  <span style="color:#9ca3af">— Request encoding, Pictures sent, Request size: no record of it sent: none went out, or its</span>
-  <span style="color:#9ca3af">provider logs none</span>
-  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
-
-<span style="font-weight:700">Latency · text · 2 of 2 rounds passed</span>
-  Metric                               Round 1   n   Median    Range
-  End to end
-    Host first text                      52 ms   1    52 ms    52 ms
-    First audio frame                    73 ms   1    73 ms    73 ms
-    Response complete                   299 ms   1   298 ms   298 ms
-    Text complete                        52 ms   1    52 ms    52 ms
-    Last audio frame                    298 ms   1   297 ms   297 ms
-  Context and model request
-    Context ready wait                  0.0 ms   1   0.0 ms   0.0 ms
-    Turn commit → Model request         1.5 ms   1   1.4 ms   1.4 ms
-    Request encoding                         —   0        —        —
-    Pictures sent                            —   0        —        —
-    Request size                             —   0        —        —
-    Model request → First event         0.4 ms   1   0.4 ms   0.4 ms
-    Model request → First text delta     51 ms   1    51 ms    51 ms
-  Output
-    Model request → Host first text      51 ms   1    51 ms    51 ms
-    TTS request → First PCM                  —   0        —        —
-    TTS request → First audio frame      21 ms   1    21 ms    21 ms
-  <span style="color:#9ca3af">— Request encoding, Pictures sent, Request size: no record of it sent: none went out, or its</span>
-  <span style="color:#9ca3af">provider logs none</span>
-  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
+    Runtime first text                                  706 ms   1   704 ms   704 ms
+    First audio frame                                   729 ms   1   725 ms   725 ms
+    Response complete                                   958 ms   1   956 ms   956 ms
+    Text complete                                       707 ms   1   704 ms   704 ms
+    Last audio frame                                    957 ms   1   956 ms   956 ms
+  Input                                                 652 ms   1   650 ms   650 ms
+    Final speech → VAD close                            601 ms   1   599 ms   599 ms
+    VAD close → Final transcript                         51 ms   1    51 ms    51 ms
+  Context                                               4.1 ms   1   3.5 ms   3.5 ms
+    Final transcript → Turn commit                      1.1 ms   1   1.1 ms   1.1 ms
+    Turn commit → Context readiness check complete      0.7 ms   1   0.5 ms   0.5 ms
+    Context readiness check complete → Context built    1.8 ms   1   1.5 ms   1.5 ms
+    Context built → Model request sent                  0.5 ms   1   0.4 ms   0.4 ms
+  Output                                                 74 ms   1    72 ms    72 ms
+    Model request sent → First text delta                50 ms   1    50 ms    50 ms
+    First text delta → TTS request                      1.0 ms   1   0.6 ms   0.6 ms
+    TTS request → First PCM                                  —   0        —        —
+    First PCM → First audio frame                            —   0        —        —
+  <span style="color:#9ca3af">n: later rounds that passed and observed it; the stages add up to First audio frame</span>
+  <span style="color:#9ca3af">— First PCM → First audio frame: from an earlier node in 2 rounds, so no sample of it</span>
+  <span style="color:#9ca3af">— TTS request → First PCM: merged into the next row: First PCM not observed: this TTS plugin logs</span>
+  <span style="color:#9ca3af">no first PCM</span>
 
 <span style="font-weight:700">Run again as JSON</span>
-  <span style="color:rgb(34,211,238)">alphaavatar doctor $WORK/avatar.json --json</span></pre></div></section>
-<section id="doctor-partial"><h2>alphaavatar doctor --rounds 3 — a sentence lost in round 2<span class="tag">离线测试替身</span></h2><p class="meta"><span>100 columns</span><span>exit 1</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Doctor</span>
+  <span style="color:rgb(34,211,238)">alphaavatar doctor $WORK/avatar.json --rounds 2 --json</span></pre></div></section>
+<section id="doctor-partial"><h2>alphaavatar doctor --rounds 3 — vision off, a sentence lost in round 2<span class="tag">离线测试替身</span></h2><p class="meta"><span>100 columns</span><span>exit 1</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Doctor</span>
 <span style="color:#f87171">FAIL</span>  Diagnostics completed · 12 passed · 2 failed · 1 skipped
 
 <span style="font-weight:700">Checks</span>
@@ -878,9 +682,7 @@ Next
               <span style="color:#9ca3af">$WORK/avatar.json`</span>
               <span style="color:#9ca3af">connects to it</span>
               → See the failed scenarios&#x27; blocked stages and causes
-        <span style="color:#f87171">FAIL</span>  session.scenarios
-              voice_vision 3/3 passed, voice 2/3 passed, text 3/3 passed, 1 not enabled, 1 no
-              coverage
+        <span style="color:#f87171">FAIL</span>  session.scenarios   voice 2/3 passed, 2 not enabled, 1 no coverage
               → See each failed round&#x27;s stage, cause and evidence
 
 <span style="font-weight:700">Not verified</span>
@@ -893,117 +695,87 @@ Next
         → Join a dev session from a client to try its devices
 
 <span style="font-weight:700">Session</span>
-  Ready                  2.2 ms at the median of 9, 2.1–17 ms
+  Ready                  2.4 ms at the median of 3, 2.3–18 ms
 
 <span style="font-weight:700">Runners</span>
-  Runtime start          788 ms · every model file from the cache
+  Runtime start          817 ms · the model cache did not grow (net)
   <span style="color:#4ade80">PASS</span>  alphaavatar.voice.vad.silero
-        started in 0.40 s · 366 calls, queue ≤ 0.0 ms, run ≤ 0.2 ms
+        started in 0.43 s · 183 calls, queue ≤ 0.0 ms, run ≤ 0.2 ms
   <span style="color:#4ade80">PASS</span>  alphaavatar.router.turn_taking.smart_turn_v3
-        started in 0.39 s · 6 calls, queue ≤ 0.0 ms, run ≤ 0.1 ms
+        started in 0.39 s · 3 calls, queue ≤ 0.0 ms, run ≤ 0.1 ms
 
-<span style="font-weight:700">Scenarios · 3 rounds each, a session each</span>
-  <span style="color:#4ade80">PASS</span>  voice_vision           3/3 passed · Speech and screen frames in one model request
+<span style="font-weight:700">Scenarios · 3 rounds, a session each</span>
   <span style="color:#f87171">FAIL</span>  voice                  2/3 passed · stopped: 1 at stt.final
         <span style="color:#9ca3af">Round 2: The transcript does not hold every sentence of the sample</span>
-        <span style="color:#9ca3af">Round 2: Sentence 2: its segment&#x27;s STT final (23 characters) holds another sentence and</span>
+        <span style="color:#9ca3af">Round 2: Sentence 2: the final the Turn took (23 characters) holds another sentence too, and</span>
         <span style="color:#9ca3af">leaves this one out</span>
         → See the transcript and each sentence in --json; another STT model or plugin compares
-  <span style="color:#4ade80">PASS</span>  text                   3/3 passed · Typed input answered
+  <span style="color:#9ca3af">SKIP</span>  voice_vision           Vision is off or text only: voice runs instead
   <span style="color:#9ca3af">SKIP</span>  image_input            No input transport delivers images to a session yet
   <span style="color:#9ca3af">SKIP</span>  visual_output          No Character is configured
-
-<span style="font-weight:700">Latency · voice_vision · 3 of 3 rounds passed</span>
-  Metric                                  Round 1   n   Median        Range
-  End to end
-    Host first text                        707 ms   2   705 ms   705–706 ms
-    First audio frame                      729 ms   2   727 ms   726–727 ms
-    Response complete                      958 ms   2   957 ms       957 ms
-    Text complete                          707 ms   2   706 ms   705–706 ms
-    Last audio frame                       958 ms   2   956 ms       956 ms
-  Input
-    Speech end → VAD close                 602 ms   2   600 ms   600–601 ms
-    Speech end → STT final                 652 ms   2   651 ms       651 ms
-    Speech end → Turn commit               653 ms   2   652 ms       652 ms
-    Speech end → Last required input       602 ms   2   601 ms   600–601 ms
-  Context and model request
-    Context ready wait                     0.0 ms   2   0.0 ms       0.0 ms
-    Turn commit → Model request            2.2 ms   2   1.8 ms   1.7–1.9 ms
-    Selected frame age at model request    656 ms   2   654 ms       654 ms
-    Newest selected frame → Turn commit     51 ms   2    51 ms        51 ms
-    Request encoding                            —   0        —            —
-    Pictures sent                               —   0        —            —
-    Request size                                —   0        —            —
-    Model request → First event            0.6 ms   2   0.5 ms       0.5 ms
-    Model request → First text delta        51 ms   2    52 ms        52 ms
-  Output
-    Model request → Host first text         51 ms   2    52 ms        52 ms
-    TTS request → First PCM                     —   0        —            —
-    TTS request → First audio frame         21 ms   2    21 ms        21 ms
-  <span style="color:#9ca3af">— Request encoding, Pictures sent, Request size: no record of it sent: none went out, or its</span>
-  <span style="color:#9ca3af">provider logs none</span>
-  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
+  With model m · stt openai_segment m · tts openai m · vision off
+  Sample sum_question sha256:0f72883c4ad4
 
 <span style="font-weight:700">Latency · voice · 2 of 3 rounds passed</span>
-  Metric                               Round 1   n   Median    Range
+  Metric                                               Round 1   n   Median    Range
   End to end
-    Host first text                     706 ms   1   706 ms   706 ms
-    First audio frame                   727 ms   1   727 ms   727 ms
-    Response complete                   959 ms   1   957 ms   957 ms
-    Text complete                       706 ms   1   706 ms   706 ms
-    Last audio frame                    958 ms   1   957 ms   957 ms
-  Input
-    Speech end → VAD close              601 ms   1   601 ms   601 ms
-    Speech end → STT final              652 ms   1   652 ms   652 ms
-    Speech end → Turn commit            653 ms   1   653 ms   653 ms
-  Context and model request
-    Context ready wait                  0.0 ms   1   0.0 ms   0.0 ms
-    Turn commit → Model request         1.7 ms   1   1.4 ms   1.4 ms
-    Request encoding                         —   0        —        —
-    Pictures sent                            —   0        —        —
-    Request size                             —   0        —        —
-    Model request → First event         0.5 ms   1   0.5 ms   0.5 ms
-    Model request → First text delta     51 ms   1    51 ms    51 ms
-  Output
-    Model request → Host first text      51 ms   1    51 ms    51 ms
-    TTS request → First PCM                  —   0        —        —
-    TTS request → First audio frame      21 ms   1    21 ms    21 ms
-  <span style="color:#9ca3af">— Request encoding, Pictures sent, Request size: no record of it sent: none went out, or its</span>
-  <span style="color:#9ca3af">provider logs none</span>
-  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
+    Runtime first text                                  706 ms   1   704 ms   704 ms
+    First audio frame                                   727 ms   1   726 ms   726 ms
+    Response complete                                   957 ms   1   957 ms   957 ms
+    Text complete                                       706 ms   1   704 ms   704 ms
+    Last audio frame                                    957 ms   1   957 ms   957 ms
+  Input                                                 652 ms   1   650 ms   650 ms
+    Final speech → VAD close                            601 ms   1   600 ms   600 ms
+    VAD close → Final transcript                         51 ms   1    50 ms    50 ms
+  Context                                               3.5 ms   1   2.8 ms   2.8 ms
+    Final transcript → Turn commit                      1.0 ms   1   1.0 ms   1.0 ms
+    Turn commit → Context readiness check complete      0.7 ms   1   0.5 ms   0.5 ms
+    Context readiness check complete → Context built    1.3 ms   1   1.0 ms   1.0 ms
+    Context built → Model request sent                  0.5 ms   1   0.4 ms   0.4 ms
+  Output                                                 72 ms   1    72 ms    72 ms
+    Model request sent → First text delta                51 ms   1    51 ms    51 ms
+    First text delta → TTS request                      0.9 ms   1   0.6 ms   0.6 ms
+    TTS request → First PCM                                  —   0        —        —
+    First PCM → First audio frame                            —   0        —        —
+  <span style="color:#9ca3af">n: later rounds that passed and observed it; the stages add up to First audio frame</span>
+  <span style="color:#9ca3af">— First PCM → First audio frame: from an earlier node in 3 rounds, so no sample of it</span>
+  <span style="color:#9ca3af">— TTS request → First PCM: merged into the next row: First PCM not observed: this TTS plugin logs</span>
+  <span style="color:#9ca3af">no first PCM</span>
 
-<span style="font-weight:700">Latency · text · 3 of 3 rounds passed</span>
-  Metric                               Round 1   n   Median        Range
+<span style="font-weight:700">Latency · voice · every round, the 1 not passed included</span>
+  Metric                                               Round 1   n   Median        Range
   End to end
-    Host first text                      52 ms   2    52 ms        52 ms
-    First audio frame                    73 ms   2    73 ms        73 ms
-    Response complete                   299 ms   2   298 ms       298 ms
-    Text complete                        52 ms   2    52 ms        52 ms
-    Last audio frame                    298 ms   2   297 ms   297–298 ms
-  Context and model request
-    Context ready wait                  0.0 ms   2   0.0 ms       0.0 ms
-    Turn commit → Model request         1.5 ms   2   1.5 ms   1.4–1.5 ms
-    Request encoding                         —   0        —            —
-    Pictures sent                            —   0        —            —
-    Request size                             —   0        —            —
-    Model request → First event         0.4 ms   2   0.4 ms       0.4 ms
-    Model request → First text delta     51 ms   2    51 ms        51 ms
-  Output
-    Model request → Host first text      51 ms   2    51 ms        51 ms
-    TTS request → First PCM                  —   0        —            —
-    TTS request → First audio frame      21 ms   2    21 ms        21 ms
-  <span style="color:#9ca3af">— Request encoding, Pictures sent, Request size: no record of it sent: none went out, or its</span>
-  <span style="color:#9ca3af">provider logs none</span>
-  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
+    Runtime first text                                  706 ms   2   705 ms   704–705 ms
+    First audio frame                                   727 ms   2   726 ms   726–727 ms
+    Response complete                                   957 ms   2   958 ms   957–958 ms
+    Text complete                                       706 ms   2   705 ms   704–706 ms
+    Last audio frame                                    957 ms   2   957 ms   957–958 ms
+  Input                                                 652 ms   2   651 ms   650–651 ms
+    Final speech → VAD close                            601 ms   2   600 ms   600–601 ms
+    VAD close → Final transcript                         51 ms   2    50 ms     50–51 ms
+  Context                                               3.5 ms   2   3.0 ms   2.8–3.1 ms
+    Final transcript → Turn commit                      1.0 ms   2   1.0 ms       1.0 ms
+    Turn commit → Context readiness check complete      0.7 ms   2   0.5 ms       0.5 ms
+    Context readiness check complete → Context built    1.3 ms   2   1.1 ms   1.0–1.2 ms
+    Context built → Model request sent                  0.5 ms   2   0.4 ms       0.4 ms
+  Output                                                 72 ms   2    72 ms     72–73 ms
+    Model request sent → First text delta                51 ms   2    51 ms        51 ms
+    First text delta → TTS request                      0.9 ms   2   0.6 ms   0.6–0.7 ms
+    TTS request → First PCM                                  —   0        —            —
+    First PCM → First audio frame                            —   0        —            —
+  <span style="color:#9ca3af">n: later rounds that observed it; the stages add up to First audio frame</span>
+  <span style="color:#9ca3af">— First PCM → First audio frame: from an earlier node in 3 rounds, so no sample of it</span>
+  <span style="color:#9ca3af">— TTS request → First PCM: merged into the next row: First PCM not observed: this TTS plugin logs</span>
+  <span style="color:#9ca3af">no first PCM</span>
 
 <span style="font-weight:700">Failed rounds · voice</span>
-  Round 2 · stopped at stt.final · measured: Host first text 705 ms; First audio frame 727 ms;
-  Response complete 957 ms; Text complete 705 ms; Last audio frame 957 ms; Speech end → VAD close
-  601 ms
+  Round 2 · stopped at stt.final · measured: Runtime first text 705 ms; First audio frame 727 ms;
+  Response complete 958 ms; Text complete 706 ms; Last audio frame 958 ms; Input 651 ms; Context 3.1
+  ms; Output 73 ms
 
 <span style="font-weight:700">Run again as JSON</span>
-  <span style="color:rgb(34,211,238)">alphaavatar doctor $WORK/avatar.json --json</span></pre></div></section>
-<section id="doctor-noimages"><h2>alphaavatar doctor --rounds 3 — a model that takes no images<span class="tag">离线测试替身</span></h2><p class="meta"><span>100 columns</span><span>exit 1</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Doctor</span>
+  <span style="color:rgb(34,211,238)">alphaavatar doctor $WORK/avatar.json --rounds 3 --json</span></pre></div></section>
+<section id="doctor-noimages"><h2>alphaavatar doctor --rounds 3 — a model that refuses images, reported as it is<span class="tag">离线测试替身</span></h2><p class="meta"><span>100 columns</span><span>exit 1</span></p><div class="term"><pre style="width:100ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Doctor</span>
 <span style="color:#f87171">FAIL</span>  Diagnostics completed · 12 passed · 2 failed · 1 skipped
 
 <span style="font-weight:700">Checks</span>
@@ -1011,11 +783,12 @@ Next
   <span style="color:#4ade80">PASS</span>  Configuration          avatar.json · 2 runners
   <span style="color:#4ade80">PASS</span>  Directories            3 checks passed
   <span style="color:#f87171">FAIL</span>  Session and services   3 passed · 2 failed
-        <span style="color:#f87171">FAIL</span>  services.external   2 passed, 1 failed, 3 not verified by the samples
-              <span style="color:#9ca3af">model providers (scripted): configured, authorized, reached, failed</span>
+        <span style="color:#f87171">FAIL</span>  services.external   1 passed, 1 failed, 4 not verified by the samples
+              <span style="color:#9ca3af">model providers (scripted): configured, authorized, reached: not observed, failed</span>
               <span style="color:#9ca3af">(ModelCapabilityError: image_input)</span>
               <span style="color:#9ca3af">speech recognition (openai_segment): configured, authorized, reached, passed</span>
-              <span style="color:#9ca3af">speech synthesis (openai): configured, authorized, reached, passed</span>
+              <span style="color:#9ca3af">speech synthesis (openai): configured, authorized, reached: not observed, passed: not</span>
+              <span style="color:#9ca3af">observed</span>
               <span style="color:#9ca3af">custom memory &#x27;doctor&#x27;: configured, authorized, reached: not observed, passed: not</span>
               <span style="color:#9ca3af">observed (external access unknown)</span>
               <span style="color:#9ca3af">custom persona &#x27;doctor&#x27;: configured, authorized, reached: not observed, passed: not</span>
@@ -1026,9 +799,7 @@ Next
               <span style="color:#9ca3af">$WORK/avatar.json`</span>
               <span style="color:#9ca3af">connects to it</span>
               → See the failed scenarios&#x27; blocked stages and causes
-        <span style="color:#f87171">FAIL</span>  session.scenarios
-              voice_vision 0/3 passed, voice 3/3 passed, text 3/3 passed, 1 not enabled, 1 no
-              coverage
+        <span style="color:#f87171">FAIL</span>  session.scenarios   voice_vision 0/3 passed, 2 not enabled, 1 no coverage
               → See each failed round&#x27;s stage, cause and evidence
 
 <span style="font-weight:700">Not verified</span>
@@ -1041,97 +812,70 @@ Next
         → Join a dev session from a client to try its devices
 
 <span style="font-weight:700">Session</span>
-  Ready                  2.2 ms at the median of 9, 2.1–17 ms
+  Ready                  2.4 ms at the median of 3, 2.2–18 ms
 
 <span style="font-weight:700">Runners</span>
-  Runtime start          789 ms · every model file from the cache
+  Runtime start          786 ms · the model cache did not grow (net)
   <span style="color:#4ade80">PASS</span>  alphaavatar.voice.vad.silero
-        started in 0.39 s · 336 calls, queue ≤ 0.0 ms, run ≤ 0.3 ms
+        started in 0.39 s · 156 calls, queue ≤ 0.0 ms, run ≤ 0.2 ms
   <span style="color:#4ade80">PASS</span>  alphaavatar.router.turn_taking.smart_turn_v3
-        started in 0.39 s · 6 calls, queue ≤ 0.0 ms, run ≤ 0.1 ms
+        started in 0.39 s · 3 calls, queue ≤ 0.0 ms, run ≤ 0.1 ms
 
-<span style="font-weight:700">Scenarios · 3 rounds each, a session each</span>
+<span style="font-weight:700">Scenarios · 3 rounds, a session each</span>
   <span style="color:#f87171">FAIL</span>  voice_vision           0/3 passed · stopped: 3 at model.first_event
         <span style="color:#9ca3af">Rounds 1, 2, 3: The run ended failed: ModelCapabilityError: image_input</span>
-        → The model request failed: see its cause above
-  <span style="color:#4ade80">PASS</span>  voice                  3/3 passed · Both sentences transcribed, the sum answered
-  <span style="color:#4ade80">PASS</span>  text                   3/3 passed · Typed input answered
+        → The model takes no pictures: choose one that does, or turn vision off
+  <span style="color:#9ca3af">SKIP</span>  voice                  Vision is on: voice_vision speaks to it; voice runs with vision off
   <span style="color:#9ca3af">SKIP</span>  image_input            No input transport delivers images to a session yet
   <span style="color:#9ca3af">SKIP</span>  visual_output          No Character is configured
+  With model m · stt openai_segment m · tts openai m · vision vlm, max_frames 4
+  Sample card_question sha256:0f72883c4ad4
 
-<span style="font-weight:700">Latency · voice · 3 of 3 rounds passed</span>
-  Metric                               Round 1   n   Median        Range
+<span style="font-weight:700">Latency · voice_vision · every round, the 3 not passed included</span>
+  Metric                                               Round 1   n   Median        Range
   End to end
-    Host first text                     706 ms   2   705 ms   705–706 ms
-    First audio frame                   727 ms   2   727 ms   726–727 ms
-    Response complete                   958 ms   2   957 ms   956–958 ms
-    Text complete                       706 ms   2   706 ms   705–706 ms
-    Last audio frame                    958 ms   2   956 ms   955–957 ms
-  Input
-    Speech end → VAD close              601 ms   2   600 ms   600–601 ms
-    Speech end → STT final              652 ms   2   652 ms   651–652 ms
-    Speech end → Turn commit            653 ms   2   653 ms   652–653 ms
-  Context and model request
-    Context ready wait                  0.0 ms   2   0.0 ms       0.0 ms
-    Turn commit → Model request         1.8 ms   2   1.5 ms       1.5 ms
-    Request encoding                         —   0        —            —
-    Pictures sent                            —   0        —            —
-    Request size                             —   0        —            —
-    Model request → First event         0.5 ms   2   0.5 ms   0.4–0.5 ms
-    Model request → First text delta     51 ms   2    51 ms        51 ms
-  Output
-    Model request → Host first text      51 ms   2    51 ms        51 ms
-    TTS request → First PCM                  —   0        —            —
-    TTS request → First audio frame      21 ms   2    21 ms        21 ms
-  <span style="color:#9ca3af">— Request encoding, Pictures sent, Request size: no record of it sent: none went out, or its</span>
-  <span style="color:#9ca3af">provider logs none</span>
-  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
-
-<span style="font-weight:700">Latency · text · 3 of 3 rounds passed</span>
-  Metric                               Round 1   n   Median    Range
-  End to end
-    Host first text                      52 ms   2    52 ms    52 ms
-    First audio frame                    73 ms   2    73 ms    73 ms
-    Response complete                   298 ms   2   298 ms   298 ms
-    Text complete                        52 ms   2    52 ms    52 ms
-    Last audio frame                    297 ms   2   297 ms   297 ms
-  Context and model request
-    Context ready wait                  0.0 ms   2   0.0 ms   0.0 ms
-    Turn commit → Model request         1.6 ms   2   1.5 ms   1.5 ms
-    Request encoding                         —   0        —        —
-    Pictures sent                            —   0        —        —
-    Request size                             —   0        —        —
-    Model request → First event         0.4 ms   2   0.4 ms   0.4 ms
-    Model request → First text delta     51 ms   2    51 ms    51 ms
-  Output
-    Model request → Host first text      51 ms   2    51 ms    51 ms
-    TTS request → First PCM                  —   0        —        —
-    TTS request → First audio frame      21 ms   2    21 ms    21 ms
-  <span style="color:#9ca3af">— Request encoding, Pictures sent, Request size: no record of it sent: none went out, or its</span>
-  <span style="color:#9ca3af">provider logs none</span>
-  <span style="color:#9ca3af">— TTS request → First PCM: this TTS plugin logs no first PCM</span>
+    Runtime first text                                       —   0        —            —
+    First audio frame                                        —   0        —            —
+    Response complete                                        —   0        —            —
+    Text complete                                            —   0        —            —
+    Last audio frame                                         —   0        —            —
+  Input                                                 652 ms   2   652 ms   651–652 ms
+    Final speech → VAD close                            601 ms   2   601 ms   601–602 ms
+    VAD close → Final transcript                         51 ms   2    51 ms     50–51 ms
+  Context                                               4.4 ms   2   3.2 ms   3.1–3.3 ms
+    Final transcript → Turn commit                      1.1 ms   2   1.0 ms       1.0 ms
+    Turn commit → Context readiness check complete      0.7 ms   2   0.5 ms   0.5–0.6 ms
+    Context readiness check complete → Context built    2.1 ms   2   1.3 ms   1.2–1.3 ms
+    Context built → Model request sent                  0.5 ms   2   0.4 ms       0.4 ms
+  Output                                                     —   0        —            —
+    Model request sent → First text delta                    —   0        —            —
+    First text delta → TTS request                           —   0        —            —
+    TTS request → First PCM                                  —   0        —            —
+    First PCM → First audio frame                            —   0        —            —
+  <span style="color:#9ca3af">n: later rounds that observed it; the stages add up to First audio frame</span>
+  <span style="color:#9ca3af">— Runtime first text, First audio frame: not observed in any such round</span>
+  <span style="color:#9ca3af">— Response complete, Text complete, Last audio frame: not recorded: an output ended otherwise</span>
+  <span style="color:#9ca3af">— Model request sent → First text delta: merged into the next row: First text delta not observed:</span>
+  <span style="color:#9ca3af">the first model request streamed no text</span>
+  <span style="color:#9ca3af">— First text delta → TTS request: merged into the next row: TTS request not observed: no TTS</span>
+  <span style="color:#9ca3af">request for the first request&#x27;s answer</span>
+  <span style="color:#9ca3af">— TTS request → First PCM: merged into the next row: First PCM not observed: no TTS request</span>
+  <span style="color:#9ca3af">— First PCM → First audio frame: not measured: First audio frame not observed: no audio frame</span>
+  <span style="color:#9ca3af">answers the first model request</span>
 
 <span style="font-weight:700">Failed rounds · voice_vision</span>
-  Round 1 · stopped at model.first_event · measured: Speech end → VAD close 601 ms; Speech end → STT
-  final 652 ms; Speech end → Turn commit 653 ms; Speech end → Last required input 602 ms; Context
-  ready wait 0.0 ms; Turn commit → Model request 2.2 ms
-  Round 2 · stopped at model.first_event · measured: Speech end → VAD close 600 ms; Speech end → STT
-  final 651 ms; Speech end → Turn commit 652 ms; Speech end → Last required input 600 ms; Context
-  ready wait 0.0 ms; Turn commit → Model request 1.7 ms
-  Round 3 · stopped at model.first_event · measured: Speech end → VAD close 601 ms; Speech end → STT
-  final 651 ms; Speech end → Turn commit 652 ms; Speech end → Last required input 601 ms; Context
-  ready wait 0.0 ms; Turn commit → Model request 1.7 ms
+  Round 1 · stopped at model.first_event · measured: Input 652 ms; Context 4.4 ms
+  Round 2 · stopped at model.first_event · measured: Input 652 ms; Context 3.3 ms
+  Round 3 · stopped at model.first_event · measured: Input 651 ms; Context 3.1 ms
 
 <span style="font-weight:700">Run again as JSON</span>
-  <span style="color:rgb(34,211,238)">alphaavatar doctor $WORK/avatar.json --json</span></pre></div></section>
+  <span style="color:rgb(34,211,238)">alphaavatar doctor $WORK/avatar.json --rounds 3 --json</span></pre></div></section>
 <section id="doctor-interrupt"><h2>alphaavatar doctor — Ctrl+C at the question<span class="tag">离线测试替身</span></h2><p class="meta"><span>72 columns</span><span>exit 130</span></p><div class="term"><pre style="width:72ch"><span style="color:rgb(96,165,250)">AlphaAvatar / Doctor</span>
 
 <span style="font-weight:700">Runtime diagnosis</span>
-  It starts this bundle&#x27;s runtime as start does, then runs each scenario
+  It starts this bundle&#x27;s runtime as start does, then runs this scenario
   5 times, each time in a session of its own:
     voice_vision   Speech and screen frames in one model request
-    voice          Both sentences transcribed, the sum answered
-    text           Typed input answered
   Model files the cache lacks are downloaded first, as start would.
   It calls the services this configuration names:
     model providers (scripted)
@@ -1166,7 +910,7 @@ Next
   Not measured · Not run: interrupted at a question
 
 <span style="font-weight:700">Run again as JSON</span>
-  <span style="color:rgb(34,211,238)">alphaavatar doctor $WORK/avatar.json --json</span></pre></div></section>
+  <span style="color:rgb(34,211,238)">alphaavatar doctor $WORK/avatar.json --rounds 5 --json</span></pre></div></section>
 </main>
 </body>
 </html>

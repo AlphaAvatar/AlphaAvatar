@@ -142,29 +142,33 @@ class OpenAIResponsesLLM(StreamingLLMBase):
                 )
                 began = asyncio.get_running_loop().time()
                 payload = await self._prepare(lambda: adapter.encode(request))
-                encode_ms = (asyncio.get_running_loop().time() - began) * 1000
+                encode_ms = round((asyncio.get_running_loop().time() - began) * 1000, 3)
                 self.validate_input()
+                frames, attempts = _pictures(payload), 0
+
+                def sent(size: int | None) -> None:
+                    # Each attempt as it goes to the transport, encoded, in numbers only: how
+                    # long encoding took here, the pictures it carries, the body sent.
+                    nonlocal attempts
+                    attempts += 1
+                    log_event(
+                        logger,
+                        "model.request_sent",
+                        request_id=request.request_id,
+                        encode_ms=encode_ms,
+                        frame_count=frames,
+                        request_bytes=size,
+                        attempt=attempts,
+                    )
+
                 try:
-                    with sending() as sizes:
+                    with sending(sent):
                         raw = await client.responses.create(**payload)
                 except Exception as exc:
                     normalized = _sdk_error(exc)
                     if normalized is not None:
                         raise normalized from None
                     raise
-                finally:
-                    # The request as it went out, refused or not, in numbers only: how long
-                    # encoding it took here, the pictures it carries, the body sent.
-                    if sizes:
-                        log_event(
-                            logger,
-                            "model.request_sent",
-                            request_id=request.request_id,
-                            encode_ms=round(encode_ms, 3),
-                            frame_count=_pictures(payload),
-                            request_bytes=sizes[-1],
-                            attempts=len(sizes),
-                        )
             decoder = ResponsesDecoder(
                 request_id=request.request_id,
                 scope=continuation_scope(self._client.scope, self._config.model),

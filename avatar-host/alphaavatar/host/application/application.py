@@ -34,6 +34,31 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def create_inference_runtime(config: ApplicationConfig) -> InferenceRuntime:
+    """The shared inference runtime of ``config``, unstarted: its runners as the plan names
+    them, model files from the cache or downloaded as each starts. Start and Doctor both
+    start theirs from here."""
+    from alphaavatar.agents.runtime.inference import (
+        InferenceRuntime,
+        RunnerLaunch,
+        bootstrap_inference_runners,
+        prepare_inference_runners,
+        snapshot_inference_config,
+    )
+
+    prepare_inference_runners(config.avatar)
+    return InferenceRuntime(
+        bootstrap_inference_runners(),
+        mp_ctx=mp.get_context("spawn"),
+        launch=RunnerLaunch(
+            str(config.workspace.root),
+            str(config.paths.cache.models_dir),
+            config=snapshot_inference_config(config.avatar),
+        ),
+        config=config.avatar.runtime.inference,
+    )
+
+
 class AvatarHost:
     """Coordinate application services; backend, execution and process owners stay separate."""
 
@@ -111,13 +136,6 @@ class AvatarHost:
             await asyncio.sleep(self.config.host.inference_check_interval)
 
     async def _serve(self) -> None:
-        from alphaavatar.agents.runtime.inference import (
-            InferenceRuntime,
-            RunnerLaunch,
-            bootstrap_inference_runners,
-            prepare_inference_runners,
-            snapshot_inference_config,
-        )
         from alphaavatar.agents.workspace import check_legacy_identity, prepare_workspace
         from alphaavatar.host.workspace import check_workspace_continuity, prepare_application
 
@@ -138,17 +156,7 @@ class AvatarHost:
         logger.info("Host health started port=%d", self._health.port)
 
         # Inference: one shared pool from runtime.inference; sessions only connect to it.
-        prepare_inference_runners(self.config.avatar)
-        self._inference = InferenceRuntime(
-            bootstrap_inference_runners(),
-            mp_ctx=mp.get_context("spawn"),
-            launch=RunnerLaunch(
-                str(self.config.workspace.root),
-                str(self.config.paths.cache.models_dir),
-                config=snapshot_inference_config(self.config.avatar),
-            ),
-            config=self.config.avatar.runtime.inference,
-        )
+        self._inference = create_inference_runtime(self.config)
         self._inference_start = asyncio.create_task(
             self._inference.start(), name="host_inference_start"
         )

@@ -26,6 +26,7 @@ two, so that the transcript shows whether a sentence was lost, and where.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import re
 import wave
@@ -76,12 +77,11 @@ class Speech:
 @dataclass(frozen=True, slots=True)
 class Task:
     name: str
-    prompt: str  # What is asked, word for word: the recording says it, or it is typed
+    prompt: str  # What the recording asks, word for word
     answers: tuple[str, ...]  # The whole answer must be one of these, or state ``stated``
     # Each sentence of the prompt, as word groups: one word of each group in the transcript.
-    sentences: tuple[tuple[tuple[str, ...], ...], ...] = ()
-    speech: str | None = None  # Recording name
-    text: str | None = None  # Typed input
+    sentences: tuple[tuple[tuple[str, ...], ...], ...]
+    speech: str  # Recording name
     screen: bool = False  # The card picture on a shared screen while the question is asked
     covers: str = ""  # What it shows when it passes, in words
     stated: str | None = None  # A short sentence may state this answer, as no rival does
@@ -135,13 +135,11 @@ VOICE = Task(
     speech="sum_question",
     covers="Both sentences transcribed, the sum answered",
 )
-TEXT = Task(
-    "text",
-    "What is two plus three? Answer with just the number.",
-    answers=("5", "five", "五"),
-    text="What is two plus three? Answer with just the number.",
-    covers="Typed input answered",
-)
+
+
+def identity(name: str) -> str:
+    """A recording by name and content, so reports made with different samples tell apart."""
+    return f"{name} sha256:{hashlib.sha256(speech(name).pcm).hexdigest()[:12]}"
 
 
 @cache

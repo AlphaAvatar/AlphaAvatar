@@ -150,9 +150,27 @@ def _bundle_line(avatar, needs: dict[str, str]) -> str:
     )
 
 
-def _credentials(selection, paths, out: Report) -> tuple[dict[str, str], dict[str, str]]:
+def _session_credentials(rtc, env, *, typed: bool = False) -> None:
+    """Start's session transport credentials, as start reads them, checked offline before
+    anything is stored or installed: a bundle setup enables can start. The error names the
+    variables, never their values."""
+    from alphaavatar.host.sessions.factory import check_session_credentials
+    from alphaavatar.host.setup.environment import SetupError
+
+    try:
+        check_session_credentials(rtc, env)
+    except ValueError as error:
+        raise SetupError(
+            f"The session transport ({rtc.backend}) cannot start: {error}, "
+            + ("as typed or " * typed)
+            + "in the environment, .env or the stored credentials"
+        ) from None
+
+
+def _credentials(selection, paths, out: Report, rtc) -> tuple[dict[str, str], dict[str, str]]:
     """The values the check and the bundle read, asked for, and those to store: stored only on
-    a yes, and a stored value, which other bundles may read, replaced only on another."""
+    a yes, and a stored value, which other bundles may read, replaced only on another. The
+    values that take effect, typed or set already, are checked before either."""
     import getpass
 
     from alphaavatar.host.configs.credentials import stored_credentials
@@ -172,6 +190,7 @@ def _credentials(selection, paths, out: Report) -> tuple[dict[str, str], dict[st
             missing.append(credential.name)
     if missing:
         raise SetupError(f"Missing credentials: {', '.join(missing)} (set them in the environment)")
+    _session_credentials(rtc, os.environ | values, typed=True)
     stored = stored_credentials(paths)
     new = {name: value for name, value in values.items() if stored.get(name) != value}
     if not new:
@@ -261,7 +280,6 @@ def _setup(args: argparse.Namespace) -> int:
     from alphaavatar.host.configs.bundles import bundle_path, check_bundle_name, read_settings
     from alphaavatar.host.configs.credentials import load_environment, stored_credentials
     from alphaavatar.host.configs.template import create_bundle, render_bundle, set_default_bundle
-    from alphaavatar.host.sessions.factory import check_session_credentials
     from alphaavatar.host.setup import choices
     from alphaavatar.host.setup.environment import (
         Installation,
@@ -339,19 +357,14 @@ def _setup(args: argparse.Namespace) -> int:
             )
         if existing is None:
             out.begin(2, "Credentials")
-            values, saved = _credentials(selection, paths, out)
+            with tempfile.TemporaryDirectory() as scratch:
+                _single_file(texts, name, paths.root, Path(scratch) / f"{name}.yaml")
+                host, _ = load_selections(Path(scratch) / f"{name}.yaml")
+            values, saved = _credentials(selection, paths, out, host.rtc)
             out.step(2, "Credentials", f"Ready · {len(saved)} to store" if saved else "Ready")
         else:
             values, saved = {}, {}
-            # Start's session transport credentials, as start reads them, checked offline
-            # before anything is installed: a bundle setup enables can start.
-            try:
-                check_session_credentials(host.rtc, os.environ)
-            except ValueError as error:
-                raise SetupError(
-                    f"The session transport ({host.rtc.backend}) cannot start: {error}, in the "
-                    "environment, .env or the stored credentials"
-                ) from None
+            _session_credentials(host.rtc, os.environ)
             out.step(2, "Credentials", "From the environment, .env or those stored")
 
         size = "installed already" if reused else _megabytes(plan.download_bytes)

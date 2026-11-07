@@ -17,6 +17,7 @@ installing."""
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import signal
@@ -173,16 +174,29 @@ def test_an_existing_bundle_is_planned_from_its_settings_and_refused_what_none_i
             {**CREDENTIALS, "LIVEKIT_URL": "ws://lk.invalid"},
             "Remote LiveKit connections require TLS",
         ),
+        # Credentials typed into the URL: as userinfo, as host and port (the parser quotes a
+        # port it cannot read), in IPv6 brackets (it quotes what they hold).
+        (
+            {**CREDENTIALS, "LIVEKIT_URL": "wss://lk-fictional:lk-fictional-secret@lk.invalid"},
+            "LiveKit URL must not contain credentials",
+        ),
+        ({**CREDENTIALS, "LIVEKIT_URL": "wss://lk-fictional:lk-fictional-secret"}, "not valid"),
+        ({**CREDENTIALS, "LIVEKIT_URL": "wss://[lk-fictional-secret]:7880"}, "not valid"),
     ],
-    ids=["none", "no key", "no TLS"],
+    ids=["none", "no key", "no TLS", "userinfo", "port", "IPv6"],
 )
 def test_an_existing_bundle_is_refused_before_installing_without_its_session_credentials(
-    package: environment.Installation, capsys: pytest.CaptureFixture, given: dict, why: str
+    package: environment.Installation,
+    capsys: pytest.CaptureFixture,
+    caplog: pytest.LogCaptureFixture,
+    given: dict,
+    why: str,
 ) -> None:
     assert main(["config", "init", "reference", "--avatar-id", "reference"]) == 0
     capsys.readouterr()
     before = home_files()
     environ = {k: v for k, v in os.environ.items() if not k.startswith("LIVEKIT_")} | given
+    caplog.set_level(logging.DEBUG)
     with (
         mock.patch.object(environment.Installation, "running", return_value=package),
         mock.patch("sys.stdin.isatty", return_value=False),
@@ -192,8 +206,36 @@ def test_an_existing_bundle_is_refused_before_installing_without_its_session_cre
         assert main(["setup", "reference", "--artifacts", "/ci/run"]) == 1
     output = capsys.readouterr()
     assert not install.called and home_files() == before  # Nothing installed nor enabled.
-    assert f"The session transport (livekit) cannot start: {why}" in output.err
-    assert "lk-fictional" not in output.err + output.out  # Named, never shown.
+    assert "The session transport (livekit) cannot start: " in output.err and why in output.err
+    # Named, never shown: not on either stream, not in a log record.
+    assert "lk-fictional" not in output.err + output.out + caplog.text
+
+
+def test_typed_session_credentials_are_checked_before_anything_is_stored_or_installed(
+    package: environment.Installation,
+    capsys: pytest.CaptureFixture,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The key and secret typed as the URL, as a host and a port: the values that take
+    # effect, typed over what the environment holds, are the ones checked.
+    typed = ("sk-new", "wss://lk-key:lk-fictional-secret", "lk-key", "lk-fictional-secret")
+    asked, hidden = answers("", "", "", "", "", "", "second", "", *typed)
+    caplog.set_level(logging.DEBUG)
+    with (
+        mock.patch.object(environment.Installation, "running", return_value=package),
+        mock.patch.object(environment, "install") as install,
+        mock.patch("sys.stdin.isatty", return_value=True),
+        mock.patch.dict(os.environ, CREDENTIALS),
+        asked,
+        hidden,
+    ):
+        assert main(["setup"]) == 1
+    output = capsys.readouterr()
+    assert "The session transport (livekit) cannot start: LiveKit URL is not valid" in output.err
+    assert "as typed or in the environment" in output.err
+    assert "lk-fictional-secret" not in output.err + output.out + caplog.text
+    assert "Store " not in output.out  # Refused before the question to store them.
+    assert not install.called and home_files() == []  # Nothing stored, nothing written.
 
 
 def test_an_existing_bundle_is_enabled_only_by_a_successful_install(

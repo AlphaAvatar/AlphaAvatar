@@ -54,6 +54,7 @@ from alphaavatar.plugins.router.processors.turn_taking import processor as turn_
 from alphaavatar.plugins.router.processors.turn_taking.config import TurnTakingConfig
 
 HANG_GUARD = 10
+WAIT, DEADLINE = 0.75, 3.0  # Turn taking's transcript wait and hard deadline, by default
 MICROPHONE = {"source_id": "microphone", "source_generation": 1}
 
 
@@ -311,7 +312,41 @@ async def test_stt_final_joins_segment_candidate_decision_and_turn_cutoff_eviden
     assert len(records) <= runtime.perception.input_trace.policy.max_records
 
 
-@pytest.mark.parametrize("listening", [0.05], indirect=True)
+def waited(listening: Listening, record: dict) -> float:
+    """Seconds from the hold that began the candidate's transcript wait to the record."""
+    (hold,) = (r for r in listening.records("candidate.decision") if r["action"] == "hold")
+    return (record["recorded_time_ns"] - hold["recorded_time_ns"]) / 1e9
+
+
+@pytest.mark.parametrize("listening", [WAIT], indirect=True)
+async def test_a_final_later_than_the_transcript_wait_still_commits_before_the_deadline(
+    listening: Listening,
+) -> None:
+    # KD-17: the wait is a point of observation, not a cutoff. Real segment STT finals came
+    # 0.9-1.1 s after it began; the candidate must keep waiting and commit with them.
+    defaults = TurnTakingConfig()
+    assert (defaults.transcript_wait_sec, defaults.transcript_timeout_sec) == (WAIT, DEADLINE)
+    listening.utter(listening.speech(), "segment-a")
+    await wait_until(lambda: listening.records("candidate.transcript_wait"), "no wait observed")
+    (stream,) = listening.stt.streams
+    stream.emit(TranscriptionEventType.FINAL_TRANSCRIPT, "segment-a", "slow words")
+    await wait_until(
+        lambda: any(d.action == TurnTakingAction.COMMIT for _, d in listening.decisions()),
+        "the slowly transcribed candidate never committed",
+    )
+
+    (pending,) = listening.records("candidate.transcript_wait")
+    assert (pending["outcome"], pending["missing_count"]) == ("pending", 1)
+    commit = next(r for r in listening.records("candidate.decision") if r["action"] == "commit")
+    assert WAIT <= waited(listening, pending) < waited(listening, commit) < DEADLINE
+    (transcript,) = listening.transcripts()
+    _, decision = next(item for item in listening.decisions() if item[1].action == "commit")
+    assert transcript.observation_id in decision.input_observation_ids
+    assert TurnTakingAction.CANCEL not in [d.action for _, d in listening.decisions()]
+    assert not listening.records("candidate.transcript_rejected")
+
+
+@pytest.mark.parametrize("listening", [WAIT], indirect=True)
 async def test_late_stt_final_after_transcript_timeout_never_revives_the_candidate(
     listening: Listening,
 ) -> None:
@@ -324,6 +359,10 @@ async def test_late_stt_final_after_transcript_timeout_never_revives_the_candida
     stream.emit(TranscriptionEventType.FINAL_TRANSCRIPT, "segment-a", "too late")
     await wait_until(lambda: listening.records("candidate.transcript_rejected"), "no rejection")
 
+    # Only the hard deadline cancels: the wait was observed first, then the deadline passed.
+    (pending,) = listening.records("candidate.transcript_wait")
+    cancel = next(r for r in listening.records("candidate.decision") if r["action"] == "cancel")
+    assert WAIT <= waited(listening, pending) < DEADLINE <= waited(listening, cancel)
     # The recognition result is real evidence, but its retired candidate stays cancelled.
     assert len(listening.transcripts()) == 1
     actions = [decision.action for _, decision in listening.decisions()]

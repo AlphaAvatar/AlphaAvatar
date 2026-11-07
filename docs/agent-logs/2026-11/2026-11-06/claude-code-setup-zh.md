@@ -10,7 +10,8 @@
 | 批次 | 内容 | 日期 | 基线 HEAD | 提交 | 状态 |
 |---|---|---|---|---|---|
 | 交互配置第一轮 | 去掉 `--preset`；`setup` 以 `config init` 的参考配置为起点逐项询问；新增 `setup <bundle>`，按已有 bundle（含编辑）的设置安装、校验、启用，不导入插件；基础包上 `config init` 的下一步改为 `setup <bundle>`；CI 与无人值守改走显式 bundle | 2026-11-06 | `2fc4f398` | 用户已提交（`38fad3c3`） | 部分被第二轮修正：只写模型名的 provider 任务、LiveKit 凭据 |
-| 交互配置第二轮 | `setup <bundle>` 的两处收尾：只写 `model` 的 provider 任务按 `ProviderTaskConfig` 默认的 `kind`、`backend` 计入安装计划；给定 bundle 在安装前离线校验所选 LiveKit 后端的凭据。都在只装基础包、空环境的子进程里验证 | 2026-11-07 | `38fad3c3` | 未提交（用户提交） | 待审查 |
+| 交互配置第二轮 | `setup <bundle>` 的两处收尾：只写 `model` 的 provider 任务按 `ProviderTaskConfig` 默认的 `kind`、`backend` 计入安装计划；给定 bundle 在安装前离线校验所选 LiveKit 后端的凭据。都在只装基础包、空环境的子进程里验证 | 2026-11-07 | `38fad3c3` | 用户已提交（`d5080d5`） | `d5080d5` 审查：URL 解析异常会带出原值（第三轮修复）；Quality 因字节码目录失败（第三轮修复） |
+| 交互配置第三轮 | LiveKit URL 校验的错误不再带出原值，交互首配对最终生效值做同一校验；Quality 的裸基础包子进程不再写字节码 | 2026-11-07 | `d5080d5` | 未提交（用户提交） | 待审查；干净检出的 Quality 同等命令见 Doctor 日志同一轮第 6 节 |
 
 ## 历史记录（合并来源）
 
@@ -165,3 +166,29 @@
 - 全量 511 项通过，拦截已移除的包后也是 511 项；静态检查同 Doctor 日志同一轮第 10 节。
 - 变异 H1（只写模型名的任务不计入）、H2（不校验 LiveKit 凭据）都被抓到（`scratchpad/evidence8/mutants9.log`）。
 - 构建自检不变：参考 bundle 105 个包、514 MB，本机无模型 85 个包、212 MB；沙箱里的 `config init` → `setup <bundle>` → `config check` 照常通过（录制使用虚构的 LiveKit 凭据）。
+
+## 交互配置第三轮：LiveKit URL 不带出原值；Quality 的字节码泄漏（基线 `d5080d5`）
+
+依据：`d5080d5` 审查的第一批第 1 项。`urlsplit` 或 `.port` 的异常文字会带出 `LIVEKIT_URL` 里的原始片段，`setup <bundle>` 把它拼进 `SetupError` 直接打印；Quality 在 511 项全过之后，被新增的 ignored `__pycache__` 卡在工作区前后对比。所有改动在未暂存的工作区。
+
+### 1. 复现
+
+- 旧 `websocket_url`：`wss://apikey:fakesecret`（把 key 和 secret 填进 URL）报 `Port could not be cast to integer value as 'fakesecret'`；`wss://[fakesecret]:1` 报 `'fakesecret' does not appear to be an IPv4 or IPv6 address`。两条都经 `setup <bundle>` 原样打到 stderr。带 userinfo 的 `wss://u:p@host` 原本就被拒且不带值。
+- Quality：在干净克隆（`git clone` 到 scratchpad，`uv sync --all-packages --locked --offline`）里照 `quality.yml` 的 install 任务执行，pytest 之后 `git status --porcelain --ignored` 多出 70 个 `__pycache__` 目录，`diff` 退出 1。单跑 `test_choices.py -k bare` 的 3 个用例就能多出全部 70 个：`bare()` 用只含 `PATH`、`HOME` 的环境起子进程，丢掉了 `PYTHONDONTWRITEBYTECODE=1`。
+
+### 2. 修复
+
+- `host/sessions/livekit/config.py` `websocket_url`：解析和读端口放在 `try` 里，失败时在 `except` 之外抛出，错误文字固定为 `LiveKit URL is not valid: give wss://host[:port][/path] (ws:// only on this machine), the port a number and an IPv6 address in brackets`，不引用原值，也不链接解析器的异常（`__context__` 为空）。scheme、主机缺失和空白字符归到这一条；userinfo、query、fragment 仍是原来那条。`connection.py`、`dispatch.py` 和 `start` 用的是同一个函数。
+- `cli/commands/setup.py`：两条路径共用 `_session_credentials(rtc, env)`。
+  - `setup <bundle>`：照旧在第 02 步、安装前检查合并了 `.env` 和已存凭据的环境。
+  - 首次交互：先把参考 bundle 写成单文件读出 `host.rtc`，再在 `_credentials` 收齐答案后、问是否保存之前，用最终生效值（`os.environ | 输入值`：输入优先，回车沿用已设置的值）检查。不通过就报 `… cannot start: …, as typed or in the environment, .env or the stored credentials`，退出 1：不问保存、不写文件、不安装。
+  - `--plan` 在第 02 步之前就返回，仍然只读。
+- `tests/setup/test_choices.py` `bare()`：子进程加 `-B`。工作区检查保留。
+
+### 3. 测试
+
+- `test_setup.py` 参数化新增 `userinfo`、`port`（key:secret 写成 host:port）、`IPv6`（括号里是 secret）三种 URL，走真实的 `main(["setup", "reference", ...])`：安装前拒绝，home 下文件不变，stdout、stderr 和 DEBUG 级别的日志记录里都没有虚构凭据。
+- 新增 `test_typed_session_credentials_are_checked_before_anything_is_stored_or_installed`：交互输入的 URL 是 `wss://lk-key:lk-fictional-secret`，覆盖环境里的有效值；在问是否保存之前拒绝，三处输出都没有 secret，home 为空，`install` 未调用。
+- 变异：换回旧的 `websocket_url`，`port`、`IPv6` 和交互用例失败（输出里出现 `lk-fictional-secret`）；去掉交互路径的检查，交互用例失败。
+- 字节码：干净克隆里修复前 70 个、修复后 0 个（同一组 3 个用例）；套用本轮全部改动后，干净克隆的 Quality 同等命令 524 项通过、ignored 状态前后一致（Doctor 日志「Doctor 第一批」第 6 节）。
+- `docs/cli/cli.html` 的 Setup 面板已用本批构建在干净根目录重录，见 Doctor 日志「Doctor 第一批」第 9 节。

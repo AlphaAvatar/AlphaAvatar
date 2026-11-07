@@ -28,6 +28,7 @@ import asyncio
 import dataclasses
 import importlib
 import json
+import logging
 import os
 import socket
 import sys
@@ -70,9 +71,11 @@ from alphaavatar.agents.runtime.plugin import (
     ResolvedPlugin,
     resolution,
 )
+from alphaavatar.core.log.events import log_event
 from alphaavatar.core.media import AudioFrame
 
 SPEC = "DOCTOR_DOUBLES"
+_logger = logging.getLogger("alphaavatar.plugins.provider.doctor")
 TTS_RATE = 24_000
 TTS_FRAME = TTS_RATE // 50  # 20 ms
 ANSWERS = {"card": "Green.", "sum": "5.", "blind": "I cannot tell."}
@@ -111,16 +114,18 @@ class EndpointRunner(InferenceRunner):
 class CachedModelRunner(EndpointRunner):
     """Smart Turn's layout, its weights a file in the configured model cache: loaded when it
     is there, fetched into it when it is not, as start fetches a missing model, unless this
-    machine switches downloads off. Each start says which in the test's ``model.log``."""
+    machine switches downloads off; with ``refetch``, fetched again over the one there. Each
+    start says which in the test's ``model.log``."""
 
     WEIGHTS = 64_000  # Bytes a fetch adds to the cache
 
     def initialize(self) -> None:
         from alphaavatar.agents.utils.files.model.model_files import ModelNotCached, models_offline
 
-        files = Path(json.loads(os.environ[SPEC])["files"])
+        spec = json.loads(os.environ[SPEC])
+        files = Path(spec["files"])
         target = Path(self.launch.models_dir) / "doctor" / "weights.bin"
-        if target.is_file():
+        if target.is_file() and not spec.get("refetch"):
             fetched = "cache"
         elif models_offline():
             raise ModelNotCached("The turn-taking model is not in the cache")
@@ -170,7 +175,9 @@ class ScriptedLLM(StreamingLLMBase):
     ``images`` False refuses images, as a model without vision input does; ``error`` names a
     request failure to raise instead, such as rejected credentials, or ``capability`` for a
     capability the backend lacks that is not about images. ``messages`` above one
-    precedes the card's answer with remarks, each an output of its own.
+    precedes the card's answer with remarks, each an output of its own. Each request is
+    logged as sent, as the OpenAI Responses provider logs it, ``attempts`` times, each
+    ``retry`` seconds apart; ``attempts`` 0 logs none, as a provider that logs nothing.
     """
 
     def __init__(
@@ -181,9 +188,12 @@ class ScriptedLLM(StreamingLLMBase):
         answers: dict[str, str] | None = None,
         messages: int = 1,
         error: str | None = None,
+        attempts: int = 1,
+        retry: float = 0.03,
     ) -> None:
         self.files, self.images, self.messages, self.error = files, images, messages, error
         self.answers = ANSWERS | (answers or {})
+        self.attempts, self.retry = attempts, retry
 
     def validate_input(self, *, require_input_adapter: bool = False) -> None:
         pass
@@ -211,6 +221,18 @@ class ScriptedLLM(StreamingLLMBase):
         }
         with (self.files / "requests.jsonl").open("a") as stream:
             stream.write(json.dumps(seen) + "\n")
+        for attempt in range(1, self.attempts + 1):
+            if attempt > 1:
+                await asyncio.sleep(self.retry)  # The first attempt failed in transit.
+            log_event(
+                _logger,
+                "model.request_sent",
+                request_id=request.request_id,
+                encode_ms=0.25,
+                frame_count=len(images),
+                request_bytes=20_000 + 11_000 * len(images),
+                attempt=attempt,
+            )
         if self.error == "capability":
             raise ModelCapabilityError("This backend cannot represent strict tool schemas")
         if self.error is not None:
@@ -509,8 +531,10 @@ def child(*args: object) -> None:
     spec = json.loads(os.environ[SPEC])
     files = Path(spec["files"])
     (files / "pid").write_text(str(os.getpid()))
-    with open(files / "runs.jsonl", "a") as runs:  # Each run's rounds and runtime start bound
-        runs.write(json.dumps({"rounds": args[7], "runners": args[6].runners}) + "\n")
+    with open(files / "runs.jsonl", "a") as runs:  # Each run's plan, rounds and start bound
+        tasks = [task.name for task in args[8].tasks] if args[8] is not None else None
+        line = {"rounds": args[7], "runners": args[6].runners, "tasks": tasks}
+        runs.write(json.dumps(line) + "\n")
     _deny_network(files / "network", spec.get("loopback"))
     install(spec, files)
     from alphaavatar.host.doctor import process
@@ -542,8 +566,10 @@ def install(spec: dict, files: Path) -> None:
         found = tuple(map(_runner, runners))
         for factory in _factories(name):
             factory.inference_runners = lambda self, config, f=found: f
-    # A second of loud noise is speech to the stand-in VAD; silence follows, as from a mic.
+    # A second of loud noise is speech to the stand-in VAD, in two stretches, as two sentences
+    # 0.2 s apart, too short a pause to close a segment; silence follows, as from a mic.
     noise = np.random.default_rng(7).standard_normal(samples.SAMPLE_RATE) * 6000
+    noise[round(0.45 * samples.SAMPLE_RATE) : round(0.65 * samples.SAMPLE_RATE)] = 0
     voiced = noise.astype("<i2").tobytes()
     samples.speech = lambda name: samples.Speech(name, voiced, 1.0)
     if spec.get("drop_speech"):
@@ -557,6 +583,17 @@ def install(spec: dict, files: Path) -> None:
         ContextBuilder.build = lambda self, *, snapshot, **kwargs: build(
             self, snapshot=dataclasses.replace(snapshot, text=None), **kwargs
         )
+    if spec.get("slow_scan"):
+        # A model cache that takes this long to scan: the start's own time must not hold it.
+        import time
+
+        scan = session._cached_bytes
+
+        def slow(root: object) -> int:
+            time.sleep(spec["slow_scan"])
+            return scan(root)
+
+        session._cached_bytes = slow
     if spec.get("crash"):
         # A process that dies of an uncaught error, as a broken install would.
         async def crash(*args: object, **kwargs: object):

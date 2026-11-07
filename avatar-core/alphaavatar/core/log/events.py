@@ -56,7 +56,7 @@ _FIELDS = frozenset(
         "measurement requested_reasoning_effort query_difficulty reasoning_output_tokens "
         "cached_input_tokens first_event_ms first_visible_text_ms "
         "start_seconds end_seconds timing_source chunk_id source_chunk_id source_chunk_count "
-        "encode_ms frame_count request_bytes attempts"
+        "encode_ms frame_count request_bytes attempt"
     ).split()
 )
 MAX_FIELDS = 24

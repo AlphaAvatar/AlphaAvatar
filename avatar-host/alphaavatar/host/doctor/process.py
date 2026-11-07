@@ -62,14 +62,16 @@ async def diagnose(
     *,
     stop: asyncio.Event,
     rounds: int = 1,
+    planned: session.Plan | None = None,
 ) -> dict[str, Check]:
     """The session's checks from a diagnostic process; cancelling this ends that process too.
 
     The snapshot it runs is ``config`` moved onto a temporary workspace (``session.isolate``),
     so the services it was authorized for are the ones it can reach. Its runtime starts as
-    `start` starts one: cached model files load, missing ones download. Each scenario runs
-    ``rounds`` times.
+    `start` starts one: cached model files load, missing ones download. The scenario
+    ``planned``, as the person agreed to it, runs ``rounds`` times, within a budget for them.
     """
+    planned = planned or session.plan(config)
     run = tempfile.mkdtemp(prefix="alphaavatar-doctor-")
     problems: list[str] = []  # What reclaiming found
     checks: dict[str, Check] | None = None
@@ -79,12 +81,12 @@ async def diagnose(
         # Its runtime's start is bounded as start bounds it, downloads included.
         from alphaavatar.agents.runtime.inference import plan_inference_runners
 
-        turns = rounds * len(session.plan(config).tasks)
+        turns = rounds * len(planned.tasks)
         count = len(plan_inference_runners(config.avatar))
         initialize = config.avatar.runtime.inference.initialize_timeout
         limits = session.budget(initialize, turns, count)
         checks, missing = await _supervise(
-            (snapshot.payload, source, tuple(services), rebound, run, limits, rounds),
+            (snapshot.payload, source, tuple(services), rebound, run, limits, rounds, planned),
             limits.total + CLOSE_SECONDS,
             stop,
             problems,
@@ -208,6 +210,7 @@ def _main(
     run: str,
     limits: session.Budget,
     rounds: int = 1,
+    planned: session.Plan | None = None,
 ) -> None:
     """The diagnostic process: its own group, the session, its report."""
     os.setsid()
@@ -235,7 +238,9 @@ def _main(
 
     config = restore_application(payload)
     with LogTimings() as logs:
-        checks = asyncio.run(_serve(stop, config, source, services, rebound, limits, logs, rounds))
+        checks = asyncio.run(
+            _serve(stop, config, source, services, rebound, limits, logs, rounds, planned)
+        )
     with open(os.path.join(run, _REPORT), "wb") as stream:
         pickle.dump(checks, stream)
 
@@ -249,6 +254,7 @@ async def _serve(
     limits: session.Budget,
     logs: object,
     rounds: int,
+    planned: session.Plan | None,
 ) -> dict[str, Check]:
     asked = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -261,7 +267,15 @@ async def _serve(
     loop.add_reader(stop.fileno(), stopping)
     try:
         return await session.diagnose_session(
-            config, source, services, rebound, limits=limits, stop=asked, logs=logs, rounds=rounds
+            config,
+            source,
+            services,
+            rebound,
+            limits=limits,
+            stop=asked,
+            logs=logs,
+            rounds=rounds,
+            planned=planned,
         )
     finally:
         loop.remove_reader(stop.fileno())

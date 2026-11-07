@@ -642,12 +642,13 @@ print(json.dumps({"needs": sorted(needs), "unserved": unserved, "plugins": loade
 
 def bare(home: Path, bundle: Path, plugins: dict, env: dict[str, str] | None = None) -> dict:
     """``BARE`` in a process of its own, with no plugin importable and an environment of
-    ``env`` alone: nothing installed or exported here stands in for what is missing."""
+    ``env`` alone: nothing installed or exported here stands in for what is missing. That
+    environment drops PYTHONDONTWRITEBYTECODE too, so ``-B`` keeps the checkout unwritten."""
     import json
     import subprocess
     import sys
 
-    argv = [sys.executable, "-c", BARE, str(home), json.dumps(plugins), str(bundle)]
+    argv = [sys.executable, "-B", "-c", BARE, str(home), json.dumps(plugins), str(bundle)]
     environ = {"PATH": os.environ["PATH"], "HOME": str(home)} | (env or {})
     result = subprocess.run(argv, capture_output=True, text=True, check=True, env=environ)
     return json.loads(result.stdout)

@@ -47,18 +47,30 @@ class LiveKitConfig(BaseModel):
 
 
 def websocket_url(value: str) -> str:
-    parsed = urlsplit(value)
+    """The LiveKit server's WebSocket URL. Errors never quote the value, which may hold
+    credentials typed into the wrong field; nor do they chain the parser's, which do."""
+    try:
+        parsed = urlsplit(value)
+        _ = parsed.port  # A port that is not a number in range raises, quoting it.
+    except ValueError:
+        parsed = None
     if (
-        parsed.scheme not in ("ws", "wss", "http", "https")
+        parsed is None
+        or parsed.scheme not in ("ws", "wss", "http", "https")
         or not parsed.hostname
-        or parsed.username is not None
+        or any(character.isspace() for character in value)
+    ):
+        raise ValueError(
+            "LiveKit URL is not valid: give wss://host[:port][/path] (ws:// only on this "
+            "machine), the port a number and an IPv6 address in brackets"
+        )
+    if (
+        parsed.username is not None
         or parsed.password is not None
         or parsed.query
         or parsed.fragment
-        or any(character.isspace() for character in value)
     ):
         raise ValueError("LiveKit URL must not contain credentials, query, or fragment")
-    _ = parsed.port
     if parsed.scheme in ("ws", "http") and parsed.hostname not in ("localhost", "127.0.0.1", "::1"):
         raise ValueError("Remote LiveKit connections require TLS")
     scheme = {"http": "ws", "https": "wss"}.get(parsed.scheme, parsed.scheme)

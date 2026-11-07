@@ -9,7 +9,7 @@ In a source checkout it is the command of the `alpha-avatar-host` package.
 | [`alphaavatar setup`](setup.md) | Install what a bundle needs, check it, then enable it: an existing bundle, or a new one asked from the reference configuration; in the Linux package |
 | [`alphaavatar config init`](config.md#config-init) | Create the reference bundle and its profiles |
 | [`alphaavatar config check`](config.md#config-check) | Validate a configuration without starting anything |
-| [`alphaavatar doctor`](doctor.md) | Diagnose the installation and a configuration: static checks, then the runtime diagnosis, each scenario in rounds |
+| [`alphaavatar doctor`](doctor.md) | Diagnose the installation and a configuration: static checks, then the runtime diagnosis, its spoken scenario in rounds |
 | [`alphaavatar start`](start.md) | Run the Host as a long-running service |
 | [`alphaavatar dev`](dev.md) | Run the Host for development |
 | [`alphaavatar test`](test.md) | Planned: scenarios and benchmarks |

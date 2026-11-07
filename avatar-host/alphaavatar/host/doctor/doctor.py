@@ -46,6 +46,8 @@ if TYPE_CHECKING:
     from alphaavatar.host.configs import ApplicationConfig, ConfigSource
     from alphaavatar.host.configs.bundles import Settings
     from alphaavatar.host.workspace import ApplicationPaths
+
+    from .session import Plan
 MIN_FREE_BYTES = 1 << 30  # Less leaves little room for models, caches and Avatar data.
 # The plugins and provider backends this release ships, whose reach Doctor knows. Any other
 # name is a custom plugin: what it reaches cannot be confirmed, so it needs authorization.
@@ -126,7 +128,14 @@ def prepare(
     if not 1 <= rounds <= MAX_ROUNDS:
         raise ValueError(f"rounds must be between 1 and {MAX_ROUNDS}")
     checks, loaded = _static(target, overrides, read_env)
-    return Diagnosis(checks, loaded, tuple(overrides), rounds)
+    return Diagnosis(checks, loaded, tuple(overrides), rounds, _scenario_plan(loaded))
+
+
+def _scenario_plan(loaded: tuple[ApplicationConfig, ConfigSource] | None) -> Plan | None:
+    """The one plan the question, the budget and the run read; none when nothing loaded."""
+    from .session import plan
+
+    return plan(loaded[0]) if loaded is not None else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,7 +145,8 @@ class Diagnosis:
     checks: dict[str, Check]
     loaded: tuple[ApplicationConfig, ConfigSource] | None
     overrides: tuple[str, ...]
-    rounds: int = ROUNDS  # How many times each scenario runs, each in a session of its own
+    rounds: int = ROUNDS  # How many times the scenario runs, each time in a session of its own
+    plan: Plan | None = None
 
     @property
     def _planned(self) -> bool:
@@ -157,7 +167,7 @@ class Diagnosis:
         configuration does not authorize it already."""
         from .session import unisolated
 
-        if not self._planned:
+        if not self._planned or self.plan.task is None:
             return False
         config = self.loaded[0]
         return not config.host.doctor.external_services and not unisolated(config)
@@ -175,9 +185,7 @@ class Diagnosis:
     @property
     def scenarios(self) -> tuple[tuple[str, str], ...]:
         """The scenarios it runs, each ``rounds`` times: names, and what each shows."""
-        from .session import plan
-
-        return tuple((task.name, task.covers) for task in plan(self.loaded[0]).tasks)
+        return tuple((task.name, task.covers) for task in self.plan.tasks)
 
     def authorized(self) -> Diagnosis:
         """The same configuration snapshot, its external services authorized: what a person
@@ -215,7 +223,12 @@ class Diagnosis:
         checks = dict(self.checks)
         try:
             checks |= await process.diagnose(
-                config, source, _external(config), stop=stop or asyncio.Event(), rounds=self.rounds
+                config,
+                source,
+                _external(config),
+                stop=stop or asyncio.Event(),
+                rounds=self.rounds,
+                planned=self.plan,
             )
         except Exception as error:
             # Whatever ran is closed already; the report still names what could not complete.

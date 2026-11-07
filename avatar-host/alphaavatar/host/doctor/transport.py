@@ -14,8 +14,7 @@
 """The diagnostic session's transport: where an RTC backend would carry media.
 
 ``DiagnosticSource`` publishes samples as the RTC input adapters publish media: microphone
-frames at their own cadence, screen frames at the configured interval, typed text through
-the Engine. ``DiagnosticSink`` reads the output boundary as an RTC transport does and acts as
+frames at their own cadence, screen frames at the configured interval. ``DiagnosticSink`` reads the output boundary as an RTC transport does and acts as
 the local audio queue, acknowledging playback; it plays to no device. ``LogTimings`` keeps
 the timing events the session already logs. Every time is ``time.monotonic_ns``, the
 session clock's monotonic part.
@@ -262,24 +261,6 @@ class DiagnosticSource:
                     )
                 )
 
-    async def type(self, engine: Any, text: str) -> int:
-        """Typed input as the RTC text input submits it; returns when the Engine accepted it."""
-        from alphaavatar.core.env import EnvObservation
-        from alphaavatar.core.env.schemas import PerceptionSourceRef
-        from alphaavatar.core.media import TextPayload
-        from alphaavatar.core.time import RuntimeTimeRange
-
-        await engine.submit_input(
-            EnvObservation.text_input(
-                time_range=RuntimeTimeRange.point(self._perception.clock.now()),
-                source=PerceptionSourceRef(f"env:text:{self._device_id}", 1),
-                device_id=self._device_id,
-                payload=TextPayload.create(text=text),
-                metadata={"rtc_backend": _SOURCE},
-            )
-        )
-        return time.monotonic_ns()
-
 
 @dataclass(slots=True)
 class OutputRecord:
@@ -297,6 +278,7 @@ class OutputRecord:
     reason: str | None = None  # Controls: why, as the producer states it
     playback: str | None = None
     targets: tuple[str, ...] = ()  # The outputs an interruption ends
+    request_id: str | None = None  # The model request a model's output came from
 
 
 @dataclass(slots=True)
@@ -365,6 +347,7 @@ class DiagnosticSink:
                 output.scope.turn_id if output.scope is not None else None,
                 output.scope.run_id if output.scope is not None else None,
                 output.output_id,
+                request_id=output.source.request_id if output.source is not None else None,
             )
             self.records.append(record)
             if output.kind == OutputKind.TEXT_CHUNK:
