@@ -121,3 +121,76 @@ def test_each_attempt_is_logged_as_it_goes_to_the_transport_before_any_answer(
     first, retry = logged()
     assert (first["request_id"], retry["request_id"]) == (request.request_id,) * 2
     assert first["request_bytes"] == retry["request_bytes"] > 0 and first["frame_count"] == 0
+
+
+def test_prepared_its_client_and_responses_resource_load_off_the_loop_before_the_request(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """O-15: the SDK's first load, its client and its Responses resource, prepared in a thread
+    while the session starts, the loop running on; the first request finds it ready."""
+    import functools
+    import threading
+    import time
+
+    import openai
+
+    from alphaavatar.agents.avatar.provider.enums import ModelRole
+    from alphaavatar.agents.avatar.provider.errors import ModelRequestError
+    from alphaavatar.agents.avatar.provider.schemas import (
+        ModelInput,
+        ModelInputMessage,
+        ModelRequest,
+        ModelTextPart,
+    )
+    from alphaavatar.agents.configs.plugins.foundation.provider_config import ProviderTaskConfig
+    from alphaavatar.plugins.provider.openai.llms import client as module
+    from alphaavatar.plugins.provider.openai.llms.responses import OpenAIResponsesLLM
+
+    loaded = []  # Whether each load ran on the event loop's thread
+    real = openai.AsyncOpenAI.__dict__["responses"].func
+
+    def slow(self: openai.AsyncOpenAI) -> object:  # A first import that takes its time
+        time.sleep(0.3)
+        loaded.append(threading.current_thread() is threading.main_thread())
+        return real(self)
+
+    resource = functools.cached_property(slow)
+    resource.__set_name__(openai.AsyncOpenAI, "responses")
+    monkeypatch.setattr(openai.AsyncOpenAI, "responses", resource)
+
+    class Refusing(httpx.AsyncClient):
+        def __init__(self, **kwargs: object) -> None:
+            transport = httpx.MockTransport(lambda request: httpx.Response(401, json={}))
+            super().__init__(transport=transport, **kwargs)
+
+    monkeypatch.setattr(module.httpx, "AsyncClient", Refusing)
+    caplog.set_level(logging.DEBUG, logger="alphaavatar")
+    extra = {"api_key": "sk-fictional", "base_url": "https://api.invalid/v1", "max_retries": 0}
+    llm = OpenAIResponsesLLM(ProviderTaskConfig(backend="openai", model="m", extra=extra))
+    message = ModelInputMessage(id="m1", role=ModelRole.USER, parts=(ModelTextPart("Hello"),))
+    ticks: list[float] = []
+
+    async def run() -> None:
+        async def heartbeat() -> None:
+            while True:
+                ticks.append(time.monotonic())
+                await asyncio.sleep(0.01)
+
+        beating = asyncio.create_task(heartbeat())
+        try:
+            llm.prepare()
+            await asyncio.sleep(0.4)  # The session goes on starting.
+            with pytest.raises(ModelRequestError):
+                async with llm.stream(ModelRequest(input=ModelInput(items=(message,)))):
+                    pass
+        finally:
+            beating.cancel()
+            await llm.aclose()
+
+    asyncio.run(run())
+    assert loaded == [False]
+    assert max(later - earlier for earlier, later in zip(ticks, ticks[1:], strict=False)) < 0.1
+    (sent,) = [
+        r.msg.fields for r in caplog.records if getattr(r.msg, "name", "") == "model.request_sent"
+    ]
+    assert sent["client_ms"] < 50  # Ready before the request: none of its own time

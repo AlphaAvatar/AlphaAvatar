@@ -62,8 +62,8 @@ class Endpoint:
     """A transcription endpoint, keep-alive: each request answered after its wait, its events
     spaced, as the real one answers; ``answers`` says, request by request, how the answer goes
     on or ends: ``end`` (the default), an event and [DONE] split across chunks, a second done,
-    a body end that comes late, never or not at all (a cut), a JSON answer, a stream error, or
-    a [DONE] with no done before it."""
+    a body end that comes late, never or not at all (a cut), a done whose lines CR alone ends
+    and nothing after it, a JSON answer, a stream error, or a [DONE] with no done before it."""
 
     def __init__(self, *answers: str | dict | list[bytes]) -> None:
         self.answers, self.connections = list(answers), 0
@@ -123,14 +123,18 @@ class Endpoint:
                     writer.write(chunk(body[slice(*cut)]))
             else:
                 first = b"" if answer == "unfinished" else DELTA
-                for gap, data in ((FIRST_AFTER, first), (DONE_AFTER, DONE if first else b"")):
+                done = DONE if first else b""
+                if answer == "stall-cr":  # The done's last CR ends its chunk; nothing follows.
+                    first, done = first.replace(b"\n", b"\r"), done.replace(b"\n", b"\r")
+                for gap, data in ((FIRST_AFTER, first), (DONE_AFTER, done)):
                     await writer.drain()
                     await asyncio.sleep(gap)
                     if data:
                         writer.write(chunk(data))
-                writer.write(chunk(AGAIN + END if answer == "again" else END))
+                if answer != "stall-cr":
+                    writer.write(chunk(AGAIN + END if answer == "again" else END))
             await writer.drain()
-            if answer == "stall":
+            if answer in ("stall", "stall-cr"):
                 await reader.read()  # Until the client gives the connection up
                 break
             if answer == "cut":
@@ -217,7 +221,7 @@ async def test_each_segment_request_is_timed_by_its_queue_connection_and_exchang
     assert first["queue_ms"] < ANSWER_AFTER * 1000 <= rest[0]["queue_ms"] + 5
 
 
-@pytest.mark.parametrize("answer", ["split", "again", "late", "stall", "cut"])
+@pytest.mark.parametrize("answer", ["split", "again", "late", "stall", "stall-cr", "cut"])
 async def test_the_final_goes_out_once_and_the_bodys_rest_never_holds_the_next_segment(
     answer: str, caplog: pytest.LogCaptureFixture, owned_endpoints: set[object]
 ) -> None:
@@ -247,8 +251,9 @@ async def test_the_final_goes_out_once_and_the_bodys_rest_never_holds_the_next_s
     # held by the tail no longer than its bound.
     assert endpoint.connections == 2 and second["reused"] is False
     assert second["queue_ms"] < answered + openai_segment._TAIL_SEC * 1000 + 150
-    if answer == "stall":
+    if answer in ("stall", "stall-cr"):
         # The final went out as it arrived, the bound's length before its request ended.
+        assert seen[0][3] - endpoint.received[0] / 1e9 < answered / 1000 + 0.1
         logged = next(
             r.created for r in caplog.records if getattr(r.msg, "name", "") == "stt.request"
         )
@@ -527,6 +532,7 @@ async def events(*chunks: str) -> list[str]:
         (["data: a\r\rdata: b\r\r"], ["a", "b"]),
         # A CR at a chunk's end, its LF at the next one's start: one line end, not two.
         (['data: {"x":\r', "\ndata: 1}\r", "\n\r", "\n"], ['{"x":\n1}']),
+        (["data: a\r", "", "\ndata: b\r", "", "\n\r"], ["a\nb"]),
         (['data: {"x":\n', "data: 1}\n\n"], ['{"x":\n1}']),
         ([": keep-alive\n", "event: message\nid: 7\nretry: 10\ndata:a\n\n"], ["a"]),
         (["\ufeffdata: a\n\n"], ["a"]),
@@ -541,6 +547,7 @@ async def events(*chunks: str) -> list[str]:
         "crlf",
         "cr",
         "crlf-across-chunks",
+        "crlf-across-an-empty-chunk",
         "data-lines",
         "comments-fields",
         "bom",

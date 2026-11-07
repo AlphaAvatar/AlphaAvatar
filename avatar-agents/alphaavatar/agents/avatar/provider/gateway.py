@@ -68,6 +68,11 @@ class ProviderGateway:
                 raise ModelCapabilityError(f"Task {task_name!r} requires a streaming model")
             model.validate_input(require_input_adapter=require_input_adapter)
 
+    def prepare(self, task_names: Iterable[str]) -> None:
+        """Start each task model's own preparation, before its first request (O-15)."""
+        for task_name in task_names:
+            self._model(task_name).prepare()
+
     async def _invoke_structured(
         self,
         *,

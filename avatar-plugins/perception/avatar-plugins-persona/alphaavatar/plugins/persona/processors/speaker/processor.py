@@ -16,7 +16,7 @@ import contextlib
 import logging
 import time
 from collections import deque
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -39,6 +39,7 @@ from alphaavatar.core.media.enums import PayloadFormat, PayloadView
 from alphaavatar.core.perception.enums import PerceptionStreamKind
 from alphaavatar.core.session.enums import IdentityOutcome, IdentitySource
 from alphaavatar.core.session.schemas import IdentityRequest, Participant
+from alphaavatar.core.turn.schemas import TurnSnapshot
 
 from ...runtime import PersonaRuntime
 from .attribute_runner import SpeakerAttributeRunner
@@ -72,6 +73,7 @@ class SpeakerSegmentState:
     inference_failed: bool = False
     vector: np.ndarray | None = None
     last_audio: bytes | None = None
+    identified: asyncio.Event = field(default_factory=asyncio.Event)  # Matched, or never will be
 
 
 @dataclass(slots=True, frozen=True)
@@ -121,14 +123,18 @@ class SpeakerProcessor(PersonaProcessorBase):
             max_tracks=config.max_speakers,
             ttl_sec=config.track_ttl_sec,
         )
+        # Two lanes: windows and the association a commit waits for; then, off that lane, each
+        # bound segment's identity and its speaker's attributes.
         self._inference_queue: asyncio.Queue[SpeakerWindow | SpeakerSegmentState] = asyncio.Queue(
+            maxsize=config.inference_queue_size
+        )
+        self._identity_queue: asyncio.Queue[SpeakerSegmentState] = asyncio.Queue(
             maxsize=config.inference_queue_size
         )
 
         self._consume_task: asyncio.Task[None] | None = None
-        self._inference_task: asyncio.Task[None] | None = None
-        self._inference_job: asyncio.Task[None] | None = None
-        self._active_state: SpeakerSegmentState | None = None
+        self._lanes: tuple[asyncio.Task[None], ...] = ()
+        self._running: dict[str, tuple[SpeakerSegmentState, asyncio.Task[None]]] = {}
 
     @property
     def name(self) -> str:
@@ -160,6 +166,7 @@ class SpeakerProcessor(PersonaProcessorBase):
         state.last_audio = None
         state.seen.clear()
         state.seen_order.clear()
+        state.identified.set()
         self._retired_segments[state.segment] = None
         if len(self._retired_segments) > self.MAX_RETIRED_SEGMENTS:
             self._retired_segments.pop(next(iter(self._retired_segments)))
@@ -186,6 +193,11 @@ class SpeakerProcessor(PersonaProcessorBase):
         if self._inference_queue.full():
             self._discard_job(self._inference_queue.get_nowait())
         self._inference_queue.put_nowait(job)
+
+    def _enqueue_identity(self, state: SpeakerSegmentState) -> None:
+        if self._identity_queue.full():
+            self._retire(self._identity_queue.get_nowait())  # Bound, never identified
+        self._identity_queue.put_nowait(state)
 
     def _enqueue_pcm(self, state: SpeakerSegmentState, pcm16: bytes) -> None:
         audio = np.frombuffer(pcm16, dtype="<i2").astype(np.float32) / 32768.0
@@ -345,16 +357,16 @@ class SpeakerProcessor(PersonaProcessorBase):
         self.runtime.participants.retire_source(source)
         self._tracks.clear(source)
         self._release_tracks()
-        if self._active_state is not None and self._active_state.segment.source == source:
-            if self._inference_job is not None:
-                self._inference_job.cancel()
+        for state, job in self._running.values():
+            if state.segment.source == source:
+                job.cancel()
 
     @contextlib.asynccontextmanager
     async def _timed(
         self, stage: str, state: SpeakerSegmentState, **fields: int | None
     ) -> AsyncIterator[None]:
-        """A step's span on the serial queue, in the trace: done, timed out, cancelled or
-        failed; bounded, metadata only, never waited on."""
+        """A step's span on its lane, in the trace: done, timed out, cancelled or failed;
+        bounded, metadata only, never waited on."""
         started, outcome = self.runtime.clock.now().monotonic_ns, "failed"
         try:
             yield
@@ -519,6 +531,7 @@ class SpeakerProcessor(PersonaProcessorBase):
         if not self._is_current(state) or not state.closed or state.pending:
             return
 
+        identifying = False
         try:
             if state.invalid:
                 return
@@ -554,13 +567,27 @@ class SpeakerProcessor(PersonaProcessorBase):
             if self.runtime.participants.resolve(segment=state.segment) is None:
                 return
 
-            participant = state.participant
-            if participant is None or state.vector is None or state.inference_failed:
+            if state.participant is None or state.vector is None or state.inference_failed:
                 return
 
-            # After the association, on the same serial queue the next windows wait on.
+            # Off this lane: the next segment's windows and association never wait on it.
+            self._enqueue_identity(state)
+            identifying = True
+        finally:
+            if not identifying:
+                self._retire(state)
+
+    async def _identify(self, state: SpeakerSegmentState) -> None:
+        """A bound segment's identity, then its speaker's attributes; the Turn its speech is
+        in waits for the identity alone, within its bound."""
+        try:
+            if not self._is_current(state) or state.participant is None:
+                return
+
             async with self._timed("speaker.identity", state):
-                participant = await self._resolve_identity(state, participant)
+                participant = await self._resolve_identity(state, state.participant)
+
+            state.identified.set()
             if participant is not None:
                 async with self._timed("speaker.attribute", state):
                     await self._infer_attribute(state, participant)
@@ -593,28 +620,30 @@ class SpeakerProcessor(PersonaProcessorBase):
 
         await self._finish_segment(state)
 
-    async def _inference_loop(self) -> None:
+    async def _serve(
+        self, lane: str, queue: asyncio.Queue, process: Callable[..., Awaitable[None]]
+    ) -> None:
+        """One lane's jobs, one at a time: a cancelled source cancels the one it runs."""
         while True:
-            job = await self._inference_queue.get()
+            job = await queue.get()
             state = job.state if isinstance(job, SpeakerWindow) else job
-            self._active_state = state
-            self._inference_job = asyncio.create_task(
-                self._process(job), name="persona_speaker_segment"
-            )
+            running = asyncio.create_task(process(job), name=f"persona_speaker_{lane}")
+            self._running[lane] = (state, running)
 
             try:
-                await self._inference_job
+                await running
             except asyncio.CancelledError:
                 if asyncio.current_task().cancelling():
                     raise
             except Exception:
                 logger.exception(
-                    "Speaker inference failed source=%s segment=%s",
+                    "Speaker %s failed source=%s segment=%s",
+                    lane,
                     state.segment.source,
                     state.segment.segment_id,
                 )
             finally:
-                self._active_state = self._inference_job = None
+                self._running.pop(lane, None)
 
     async def _consume_loop(self) -> None:
         stream = self.perception_runtime.speech
@@ -643,12 +672,42 @@ class SpeakerProcessor(PersonaProcessorBase):
                 logger.exception("Persona Speaker failed to consume speech observations")
                 await asyncio.sleep(0.05)
 
+    async def _await_identities(self, snapshot: TurnSnapshot) -> None:
+        """What a Turn's answer needs of its speech before Context freezes: each segment's
+        speaker identity, settled within the bound or left as it is. Attributes go on unwaited,
+        reaching later Turns only."""
+        owned = set(snapshot.input_observation_ids)
+        segments = {
+            observation.segment
+            for event in snapshot.perception_events
+            if (observation := event.observation) is not None
+            and observation.observation_id in owned
+            and observation.segment is not None
+        }
+        pending = [
+            state.identified.wait()
+            for state in self._segments.values()
+            if state.segment in segments
+        ]
+        if pending:
+            with contextlib.suppress(TimeoutError):
+                async with asyncio.timeout(self._config.identity_wait_sec):
+                    await asyncio.gather(*pending)
+
     """Runtime operations"""
 
     async def _start(self) -> None:
         self.runtime.participants.set_segment_resolver(self.CONSUMER_ID, enabled=True)
-        self._inference_task = asyncio.create_task(
-            self._inference_loop(), name="persona_speaker_inference"
+        self.runtime.turn.register_context_consumer(self.CONSUMER_ID, waiter=self._await_identities)
+        self._lanes = (
+            asyncio.create_task(
+                self._serve("window", self._inference_queue, self._process),
+                name="persona_speaker_inference",
+            ),
+            asyncio.create_task(
+                self._serve("identity", self._identity_queue, self._identify),
+                name="persona_speaker_identity",
+            ),
         )
         self._consume_task = asyncio.create_task(
             self._consume_loop(), name="persona_speaker_consumer"
@@ -661,17 +720,17 @@ class SpeakerProcessor(PersonaProcessorBase):
 
     async def _stop(self, *, finalize: bool) -> None:
         self.runtime.participants.set_segment_resolver(self.CONSUMER_ID, enabled=False)
-        for task in (self._consume_task, self._inference_task):
-            if task is not None:
-                task.cancel()
+        self.runtime.turn.unregister_context_consumer(self.CONSUMER_ID)
+        tasks = tuple(task for task in (self._consume_task, *self._lanes) if task is not None)
+        for task in tasks:
+            task.cancel()
 
-        await asyncio.gather(
-            *(task for task in (self._consume_task, self._inference_task) if task is not None),
-            return_exceptions=True,
-        )
-        self._consume_task = self._inference_task = None
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._consume_task, self._lanes = None, ()
         while not self._inference_queue.empty():
             self._discard_job(self._inference_queue.get_nowait())
+        while not self._identity_queue.empty():
+            self._retire(self._identity_queue.get_nowait())
 
         self._segments.clear()
         self._retired_segments.clear()

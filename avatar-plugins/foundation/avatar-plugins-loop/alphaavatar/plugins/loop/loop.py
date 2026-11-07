@@ -64,6 +64,7 @@ class AvatarLoop(Loop):
             ProvidersConfig(trace=self._config.trace, tasks={"avatar.loop": self._config.model})
         )
         gateway.validate_tasks(("avatar.loop",), require_streaming=True)
+        gateway.prepare(("avatar.loop",))  # Its client builds while the session starts.
         # No await occurs during service binding; publish readiness only after validation succeeds.
         self._gateway = gateway
 

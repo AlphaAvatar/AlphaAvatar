@@ -82,9 +82,10 @@ _LINE_END = re.compile("\r\n|\r|\n")
 async def _sse(text: AsyncIterator[str]) -> AsyncIterator[str]:
     """Each server-sent event's data, its ``data:`` lines joined: the body's text as the
     response decodes it (a character split across chunks whole again), split at CR, LF or
-    CRLF, a leading BOM dropped, comments and other fields skipped; read to the body's end.
-    An event the body ends without its blank line is still given."""
-    pending, data, begun = "", [], False
+    CRLF, a CR ending its line as it arrives, a leading BOM dropped, comments and other fields
+    skipped; read to the body's end. An event the body ends without its blank line is still
+    given."""
+    pending, data, begun, cr = "", [], False, False
 
     def field(line: str) -> None:
         name, _, value = line.partition(":")
@@ -94,10 +95,9 @@ async def _sse(text: AsyncIterator[str]) -> AsyncIterator[str]:
     async for chunk in text:
         if not begun:
             chunk, begun = chunk.removeprefix("\ufeff"), True
-        pending += chunk
-        held = pending.endswith("\r")  # Perhaps the first half of a CRLF
-        *lines, pending = _LINE_END.split(pending[:-1] if held else pending)
-        pending += "\r" if held else ""
+        lf = cr and chunk.startswith("\n")  # A CRLF split across chunks: its CR ended the line
+        cr = chunk.endswith("\r") if chunk else cr
+        *lines, pending = _LINE_END.split(pending + chunk[lf:])
         for line in lines:
             if line:
                 if not line.startswith(":"):
@@ -105,9 +105,8 @@ async def _sse(text: AsyncIterator[str]) -> AsyncIterator[str]:
             elif data:
                 yield "\n".join(data)
                 data = []
-    for line in _LINE_END.split(pending):
-        if line and not line.startswith(":"):
-            field(line)
+    if pending and not pending.startswith(":"):
+        field(pending)
     if data:
         yield "\n".join(data)
 

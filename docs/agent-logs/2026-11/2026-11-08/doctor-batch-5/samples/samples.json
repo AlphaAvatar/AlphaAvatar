@@ -1,0 +1,88 @@
+{
+ "model": "gpt-4o-mini-tts",
+ "voice": "coral",
+ "calls": 9,
+ "expected": 9,
+ "samples": {
+  "pause_in": {
+   "text": "What is two plus... three? Answer with just the number.",
+   "natural_first_gap": 0.3,
+   "file": "pause_in.wav",
+   "seconds": 4.27,
+   "gaps": [
+    0.42,
+    0.4
+   ],
+   "sha256": "42fdd264ce21a680a034f6675b7b2afdb47c102b499f117aa00f1020afb98c66",
+   "second_gap_natural": 1.0
+  },
+  "hesitate": {
+   "text": "Um... what is two plus three? Answer with just the number.",
+   "natural_first_gap": 0.72,
+   "file": "hesitate.wav",
+   "seconds": 5.05,
+   "gaps": [
+    0.42,
+    0.4
+   ],
+   "sha256": "855bdd6cce57416b71682c34e5dc73c155136d57c9ce41c40ea490bd81aab658"
+  },
+  "multi": {
+   "text": "I have a quick question. What is two plus three? Answer with just the number.",
+   "natural_first_gap": 0.32,
+   "file": "multi.wav",
+   "seconds": 5.55,
+   "gaps": [
+    0.42,
+    0.48
+   ],
+   "sha256": "1dcd86c56a9a438a3b228e03f08d11fb5926b5694c8cad8f08a9d56fbc724340"
+  },
+  "c_orig": {
+   "text": "What is two plus three? Answer with just the number.",
+   "file": "c_orig.wav",
+   "seconds": 4.6,
+   "gaps": [
+    0.24
+   ],
+   "sha256": "c42694ae9ebf9748a141d97a05e55a8660ece846733ad3311bfe47c72366deff"
+  },
+  "c_please": {
+   "text": "What is two plus three? Please answer with just the number.",
+   "file": "c_please.wav",
+   "seconds": 4.26,
+   "gaps": [
+    0.24,
+    0.16
+   ],
+   "sha256": "1bfb06903d04dcde819ac8316fa90a4d76ecfe3ecacbf1c7a2625c930fdf5d26"
+  },
+  "c_reply": {
+   "text": "What is two plus three? Reply with the number only.",
+   "file": "c_reply.wav",
+   "seconds": 4.9,
+   "gaps": [
+    0.24
+   ],
+   "sha256": "59b325756dc003aaf5d06632ab085f1577bcdf133f47ce78bd74d6adf31d8abc"
+  },
+  "c_statement": {
+   "text": "What is two plus three? I am curious about the result.",
+   "file": "c_statement.wav",
+   "seconds": 4.77,
+   "gaps": [
+    0.24
+   ],
+   "sha256": "d98ebf01e06ec4fced53217b9f67f050c90769fce44534b2efc2dac434490aac"
+  },
+  "c_question": {
+   "text": "What is two plus three? Can you tell me the result?",
+   "file": "c_question.wav",
+   "seconds": 5.81,
+   "gaps": [
+    0.24
+   ],
+   "sha256": "e66a07d6ec7b59b78ebfcab64f1bb0629975b395d77ef6a96e8c894d1d079a12"
+  }
+ }
+}

@@ -1,0 +1,49 @@
+e1-blind-sum.json
+  r1 {"stretch": 203.1, "model": 79.8, "runs": [[47.5, "done"], [32.3, "done"]], "waits": 122.6, "wait_spans": [[0.6, "cancelled"], [122.0, "cancelled"]], "association": 0.0, "rest": 0.7}
+  r2 {"stretch": 126.1, "model": 66.0, "runs": [[33.4, "done"], [32.6, "done"]], "waits": 59.5, "wait_spans": [[0.7, "cancelled"], [58.8, "cancelled"]], "association": 0.0, "rest": 0.6}
+  r3 {"stretch": 69.8, "model": 68.9, "runs": [[24.6, "cancelled"], [44.3, "done"]], "waits": 0.6, "wait_spans": [[0.6, "cancelled"]], "association": 0.0, "rest": 0.3}
+  r4 {"stretch": 70.1, "model": 69.1, "runs": [[18.9, "cancelled"], [50.2, "done"]], "waits": 0.6, "wait_spans": [[0.6, "cancelled"]], "association": 0.0, "rest": 0.4}
+  r5 {"stretch": 66.0, "model": 65.0, "runs": [[18.6, "cancelled"], [46.4, "done"]], "waits": 0.6, "wait_spans": [[0.6, "cancelled"]], "association": 0.0, "rest": 0.4}
+  stretch      later median   69.9 [66.0–126.1] ×4
+  model        later median   67.5 [65.0–69.1] ×4
+  waits        later median    0.6 [0.6–59.5] ×4
+  association  later median    0.0 [0.0–0.0] ×4
+  rest         later median    0.4 [0.3–0.6] ×4
+e1-vision-sum.json
+  r1 {"stretch": 203.1, "model": 81.4, "runs": [[48.3, "done"], [33.1, "done"]], "waits": 121.1, "wait_spans": [[0.9, "cancelled"], [120.2, "cancelled"]], "association": 0.0, "rest": 0.6}
+  r2 {"stretch": 112.3, "model": 80.0, "runs": [[48.5, "done"], [31.5, "done"]], "waits": 31.6, "wait_spans": [[0.6, "cancelled"], [31.0, "cancelled"]], "association": 0.0, "rest": 0.7}
+  r3 {"stretch": 69.7, "model": 68.7, "runs": [[18.7, "cancelled"], [50.0, "done"]], "waits": 0.6, "wait_spans": [[0.6, "cancelled"]], "association": 0.0, "rest": 0.4}
+  r4 {"stretch": 69.7, "model": 68.7, "runs": [[18.8, "cancelled"], [49.9, "done"]], "waits": 0.6, "wait_spans": [[0.6, "cancelled"]], "association": 0.0, "rest": 0.4}
+  r5 {"stretch": 129.7, "model": 79.6, "runs": [[47.8, "done"], [31.8, "done"]], "waits": 49.5, "wait_spans": [[0.9, "cancelled"], [48.6, "cancelled"]], "association": 0.0, "rest": 0.6}
+  stretch      later median   91.0 [69.7–129.7] ×4
+  model        later median   74.2 [68.7–80.0] ×4
+  waits        later median   16.1 [0.6–49.5] ×4
+  association  later median    0.0 [0.0–0.0] ×4
+  rest         later median    0.5 [0.4–0.7] ×4
+e2-pause_in-550.json
+  r1 {"stretch": 217.3, "model": 81.0, "runs": [[48.3, "done"], [32.7, "done"]], "waits": 135.6, "wait_spans": [[1.1, "cancelled"], [134.5, "cancelled"]], "association": 0.0, "rest": 0.7}
+  r2 {"stretch": 169.0, "model": 80.0, "runs": [[46.8, "done"], [33.2, "done"]], "waits": 88.3, "wait_spans": [[0.9, "cancelled"], [87.4, "cancelled"]], "association": 0.0, "rest": 0.7}
+  r3 {"stretch": 142.3, "model": 79.4, "runs": [[47.1, "done"], [32.3, "done"]], "waits": 62.4, "wait_spans": [[0.6, "cancelled"], [61.8, "cancelled"]], "association": 0.0, "rest": 0.5}
+  stretch      later median  155.7 [142.3–169.0] ×2
+  model        later median   79.7 [79.4–80.0] ×2
+  waits        later median   75.3 [62.4–88.3] ×2
+  association  later median    0.0 [0.0–0.0] ×2
+  rest         later median    0.6 [0.5–0.7] ×2
+e2-hesitate-550.json
+  r1 {"stretch": 356.6, "model": 71.3, "runs": [[37.8, "done"], [33.5, "done"]], "waits": 284.7, "wait_spans": [[1.0, "cancelled"], [283.7, "cancelled"]], "association": 0.0, "rest": 0.6}
+  r2 {"stretch": 67.1, "model": 65.8, "runs": [[19.6, "cancelled"], [46.2, "done"]], "waits": 1.0, "wait_spans": [[1.0, "cancelled"]], "association": 0.0, "rest": 0.3}
+  r3 {"stretch": 150.6, "model": 79.9, "runs": [[47.5, "done"], [32.4, "done"]], "waits": 70.1, "wait_spans": [[0.9, "cancelled"], [69.2, "cancelled"]], "association": 0.0, "rest": 0.6}
+  stretch      later median  108.8 [67.1–150.6] ×2
+  model        later median   72.8 [65.8–79.9] ×2
+  waits        later median   35.5 [1.0–70.1] ×2
+  association  later median    0.0 [0.0–0.0] ×2
+  rest         later median    0.4 [0.3–0.6] ×2
+e2-multi-550.json
+  r1 {"stretch": 412.8, "model": 72.0, "runs": [[38.3, "done"], [33.7, "done"]], "waits": 340.1, "wait_spans": [[0.6, "cancelled"], [339.5, "cancelled"]], "association": 0.0, "rest": 0.7}
+  r2 {"stretch": 72.2, "model": 70.9, "runs": [[23.1, "cancelled"], [47.8, "done"]], "waits": 0.8, "wait_spans": [[0.8, "cancelled"]], "association": 0.0, "rest": 0.5}
+  r3 {"stretch": 71.9, "model": 70.5, "runs": [[20.2, "cancelled"], [50.3, "done"]], "waits": 1.1, "wait_spans": [[1.1, "cancelled"]], "association": 0.0, "rest": 0.3}
+  stretch      later median   72.1 [71.9–72.2] ×2
+  model        later median   70.7 [70.5–70.9] ×2
+  waits        later median    1.0 [0.8–1.1] ×2
+  association  later median    0.0 [0.0–0.0] ×2
+  rest         later median    0.4 [0.3–0.5] ×2

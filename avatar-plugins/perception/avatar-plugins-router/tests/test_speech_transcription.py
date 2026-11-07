@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import date
@@ -138,7 +139,14 @@ class OfflineSTT(STTBase):
 
 
 class EndpointModel(TurnTakingModelBase):
-    """Offline endpoint detector: every complete, transcribed candidate ends its turn."""
+    """Offline endpoint detector: every complete, transcribed candidate ends its turn, with
+    ``end`` as its probability; or it ``fails``, or assesses without the ``transcript``. Asked
+    what it can do, it holds the loop ``lag`` seconds: an assessment that starts late."""
+
+    def __init__(
+        self, end: float = 1.0, *, fails: bool = False, transcript: bool = True, lag: float = 0.0
+    ) -> None:
+        self.end, self.fails, self.transcript, self.lag = end, fails, transcript, lag
 
     @property
     def name(self) -> str:
@@ -146,17 +154,20 @@ class EndpointModel(TurnTakingModelBase):
 
     @property
     def capabilities(self) -> TurnTakingModelCapabilities:
+        time.sleep(self.lag)
         return TurnTakingModelCapabilities(
-            modes=frozenset({TurnTakingMode.AUDIO_ONLY}), uses_transcript=True
+            modes=frozenset({TurnTakingMode.AUDIO_ONLY}), uses_transcript=self.transcript
         )
 
     async def assess(self, evidence: TurnTakingEvidence) -> TurnTakingAssessment:
+        if self.fails:
+            raise RuntimeError("the endpoint model failed")
         return TurnTakingAssessment(
             turn_candidate_id=evidence.turn_candidate_id,
             candidate_revision=evidence.candidate_revision,
             turn_mode=evidence.turn_mode,
             confidence=1.0,
-            end_of_turn_probability=1.0,
+            end_of_turn_probability=self.end,
         )
 
 
@@ -221,17 +232,21 @@ class Listening:
 async def listening(
     request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> AsyncIterator[Listening]:
+    """The chain; ``request.param`` may name its endpoint ``model`` (every complete candidate
+    ends its turn), turn taking's ``settings`` and the ``addressing`` it requires."""
+    param = getattr(request, "param", {})
+    model = param.get("model", EndpointModel())
     monkeypatch.setattr(
-        turn_taking, "create_turn_taking_model", lambda name, inference_executor: EndpointModel()
+        turn_taking, "create_turn_taking_model", lambda name, inference_executor: model
     )
     runtime, stt = avatar_runtime(tmp_path / "workspace"), OfflineSTT()
     transcription = SpeechTranscriptionProcessor(runtime=runtime, stt=stt, close_timeout_sec=1)
+    # A generous transcript budget unless a test exercises its expiry deliberately.
+    settings = {"transcript_wait_sec": HANG_GUARD, "association_wait_sec": 0.0}
     turns = turn_taking.TurnTakingProcessor(
         runtime=runtime,
-        # A generous transcript budget unless a test exercises its expiry deliberately.
-        config=TurnTakingConfig(
-            transcript_wait_sec=getattr(request, "param", HANG_GUARD), association_wait_sec=0.0
-        ),
+        config=TurnTakingConfig(**settings | param.get("settings", {})),
+        required_addressing_sources=param.get("addressing", ()),
     )
     for component in (transcription, turns):
         await component.start()
@@ -318,7 +333,7 @@ def waited(listening: Listening, record: dict) -> float:
     return (record["recorded_time_ns"] - hold["recorded_time_ns"]) / 1e9
 
 
-@pytest.mark.parametrize("listening", [WAIT], indirect=True)
+@pytest.mark.parametrize("listening", [{"settings": {"transcript_wait_sec": WAIT}}], indirect=True)
 async def test_a_final_later_than_the_transcript_wait_still_commits_before_the_deadline(
     listening: Listening,
 ) -> None:
@@ -346,7 +361,7 @@ async def test_a_final_later_than_the_transcript_wait_still_commits_before_the_d
     assert not listening.records("candidate.transcript_rejected")
 
 
-@pytest.mark.parametrize("listening", [WAIT], indirect=True)
+@pytest.mark.parametrize("listening", [{"settings": {"transcript_wait_sec": WAIT}}], indirect=True)
 async def test_late_stt_final_after_transcript_timeout_never_revives_the_candidate(
     listening: Listening,
 ) -> None:
@@ -373,7 +388,7 @@ async def test_late_stt_final_after_transcript_timeout_never_revives_the_candida
     assert listening.runtime.turn.latest is None
 
 
-@pytest.mark.parametrize("listening", [WAIT], indirect=True)
+@pytest.mark.parametrize("listening", [{"settings": {"transcript_wait_sec": WAIT}}], indirect=True)
 async def test_after_the_deadline_the_source_speaks_again_and_the_late_final_stays_its_own(
     listening: Listening,
 ) -> None:
@@ -409,6 +424,91 @@ async def test_after_the_deadline_the_source_speaks_again_and_the_late_final_sta
     assert [r["segment_id"] for r in accepted] == [second["segment_id"]]
     actions = [d.action for _, d in listening.decisions()]
     assert actions.count(TurnTakingAction.CANCEL) == 1
+
+
+SPAN, LAG = 0.2, 0.05  # A hold or addressing wait short enough for a test; a late start
+
+
+def terminal(listening: Listening) -> dict:
+    (record,) = (
+        r for r in listening.records("candidate.decision") if r["action"] in ("commit", "cancel")
+    )
+    return record
+
+
+@pytest.mark.parametrize(
+    ("listening", "stage", "reason"),
+    [
+        (
+            {"model": EndpointModel(0.0, lag=LAG), "settings": {"max_hold_sec": SPAN}},
+            "candidate.hold",
+            "turn_hold_timeout",
+        ),
+        (
+            {"model": EndpointModel(fails=True, lag=LAG), "settings": {"max_hold_sec": SPAN}},
+            "candidate.hold",
+            "assessment_error_timeout",
+        ),
+        (
+            {
+                "model": EndpointModel(lag=LAG),
+                "addressing": ("semantic",),
+                "settings": {"addressing_wait_sec": SPAN},
+            },
+            "candidate.addressing_wait",
+            None,
+        ),
+    ],
+    indirect=["listening"],
+    ids=["hold", "assessment-failed", "addressing"],
+)
+async def test_each_wait_between_a_transcript_and_its_turns_decision_is_traced_as_a_span(
+    listening: Listening, stage: str, reason: str | None
+) -> None:
+    # O-16: the endpoint model's assessment, queued when the transcript came, then the hold
+    # or addressing wait it led to, each with its span, all before the decision.
+    listening.utter(listening.speech(), "segment-a")
+    await wait_until(lambda: listening.stt.streams, "the source never opened")
+    (stream,) = listening.stt.streams
+    stream.emit(TranscriptionEventType.FINAL_TRANSCRIPT, "segment-a", "words")
+    await wait_until(lambda: listening.records(stage), "the wait was never traced")
+    await wait_until(
+        lambda: any(d.action == TurnTakingAction.COMMIT for _, d in listening.decisions()),
+        "the candidate never committed",
+    )
+
+    (accepted,) = listening.records("candidate.transcript")
+    (assessed,) = listening.records("candidate.assessment")
+    (waited,) = listening.records(stage)
+    # Queued as its transcript came, it started once the loop let it.
+    assert accepted["recorded_time_ns"] <= assessed["event_time_ns"]
+    assert assessed["start_time_ns"] - assessed["event_time_ns"] >= LAG * 1e9
+    assert assessed["end_time_ns"] <= waited["start_time_ns"]
+    assert waited["end_time_ns"] - waited["start_time_ns"] >= SPAN * 1e9
+    assert waited["end_time_ns"] <= terminal(listening)["recorded_time_ns"]
+    assert assessed["outcome"] == ("failed" if reason == "assessment_error_timeout" else "done")
+    assert (waited["outcome"], waited.get("reason")) == ("done", reason)
+
+
+@pytest.mark.parametrize(
+    "listening",
+    [{"model": EndpointModel(0.0, transcript=False), "settings": {"max_hold_sec": HANG_GUARD}}],
+    indirect=True,
+)
+async def test_a_hold_its_speaker_ends_by_speaking_on_is_traced_as_cancelled(
+    listening: Listening,
+) -> None:
+    source = listening.speech()
+    listening.utter(source, "segment-a")
+    await wait_until(
+        lambda: any(d.reason == "endpoint_incomplete" for _, d in listening.decisions()),
+        "the candidate never held",
+    )
+    listening.frame(source, "segment-b", 1)  # The speaker goes on.
+    await wait_until(lambda: listening.records("candidate.hold"), "the hold never ended")
+    (hold,) = listening.records("candidate.hold")
+    assert (hold["outcome"], hold["reason"]) == ("cancelled", "turn_hold_timeout")
+    assert hold["end_time_ns"] - hold["start_time_ns"] < HANG_GUARD * 1e9
 
 
 async def test_stale_source_generation_retires_its_stream_frames_and_late_results(

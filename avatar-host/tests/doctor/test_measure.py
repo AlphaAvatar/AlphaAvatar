@@ -330,7 +330,12 @@ def test_a_speaker_window_and_the_association_carry_when_their_spans_began() -> 
         # Known only after the commit asked: the commit waited for it.
         (1720, 1600, (420.0, 120.0), None),
         # Its subject came with the speech: ready before it closed, no wait needed.
-        (1200, 1600, (-100.0, 0.2), "none needed: ready before the commit asked"),
+        (
+            1200,
+            1600,
+            (-100.0, 0.2),
+            "none needed: every segment of its candidate was ready before the commit asked",
+        ),
     ],
 )
 def test_the_association_ready_and_the_commits_own_wait_are_two_figures(
@@ -348,6 +353,113 @@ def test_the_association_ready_and_the_commits_own_wait_are_two_figures(
     shown = figures(scenario(observation()))
     assert shown["association_ready"].value is shown["association_wait"].value is None
     assert shown["association_ready"].note.startswith("not measured")
+
+
+def ready_at(at: float, segment: str, trace_sequence: int) -> dict:
+    record = trace(at, "participant.segment_ready", trace_sequence, segment_id=segment)
+    return record | {"outcome": "bound", "start_time_ns": 1100 * MS, "end_time_ns": at * MS}
+
+
+def check(asked: float, answered: float, trace_sequence: int, revision: int) -> dict:
+    record = trace(answered, "candidate.association", trace_sequence, candidate_id="cand-0")
+    record |= {"candidate_revision": revision, "outcome": "ready"}
+    return record | {"start_time_ns": asked * MS, "end_time_ns": round(answered * MS)}
+
+
+def test_the_commits_wait_is_every_check_of_its_candidate_a_re_decisions_too() -> None:
+    # Waited for the association, which, once ready, changed the evidence: re-decided and
+    # checked again at once. The last check alone would say the commit never waited.
+    steps = [ready_at(1720, "seg-0", 40), check(1600, 1720, 41, 1), check(1760, 1760.2, 42, 2)]
+    shown = figures(scenario(observation(trace=steps)))["association_wait"]
+    assert (shown.value, shown.samples, shown.values) == (120.2, 2, (120.0, 0.2))
+    assert shown.note == "2 checks, a re-decision's too, summed"
+
+
+@pytest.mark.parametrize(
+    ("earlier", "answered", "note"),
+    [
+        (None, 1750, None),  # Never ready: the check timed out on it.
+        (1720, 1720, None),  # Ready while the check waited.
+        (
+            1500,
+            1600,
+            "none needed: every segment of its candidate was ready before the commit asked",
+        ),
+    ],
+    ids=["never", "during", "before"],
+)
+def test_no_wait_is_needed_only_when_every_segment_of_the_candidate_was_ready(
+    earlier: float | None, answered: float, note: str | None
+) -> None:
+    # The commit checks each segment of its candidate: its last one, the final's, ready
+    # before it asked says nothing of an earlier one.
+    joined = trace(1290, "candidate.segment", 38, candidate_id="cand-0", segment_id="seg-a")
+    steps = [joined, ready_at(1200, "seg-0", 39), check(1600, answered, 41, 1)]
+    if earlier is not None:
+        steps.append(ready_at(earlier, "seg-a", 40))
+    shown = figures(scenario(observation(trace=steps)))["association_wait"]
+    assert (shown.value, shown.note) == (answered - 1600, note)
+
+
+def span(at: float, stage: str, trace_sequence: int, outcome: str, **times: float) -> dict:
+    record = trace(at, stage, trace_sequence, candidate_id="cand-0") | {"outcome": outcome}
+    return record | {f"{name}_time_ns": round(value * MS) for name, value in times.items()}
+
+
+@pytest.mark.parametrize(
+    ("assessed", "values", "note"),
+    [
+        # Replaced as the addressing came, then run again: both in the stretch.
+        ([(1500, 1500, 1520, "cancelled"), (1525, 1530, 1590, "done")], 80.0, "2 runs, 1 replaced"),
+        ([(1525, 1530, 1590, "failed")], 60.0, "1 run, 1 failed"),
+        # Assessed before the final: the commit kept that decision.
+        (
+            [(1400, 1410, 1470, "done")],
+            0.0,
+            "none: the commit kept the decision it made before the final",
+        ),
+    ],
+    ids=["replaced", "failed", "before-the-final"],
+)
+def test_between_the_final_and_the_commit_the_assessments_and_waits_are_figures(
+    assessed: list[tuple[float, float, float, str]], values: float, note: str
+) -> None:
+    # O-16, from the final (1500 ms) to the commit (1600): what the endpoint model ran and the
+    # router waited for in that stretch, each span its part within it alone.
+    steps = [
+        span(1320, "candidate.assessment", 30, "done", event=1300, start=1310, end=1320),
+        span(1470, "candidate.hold", 31, "cancelled", start=1320, end=1470),  # Before it
+        span(1510, "candidate.addressing_wait", 32, "cancelled", start=1450, end=1510),
+        *(
+            span(end, "candidate.assessment", 33 + i, outcome, event=queued, start=begun, end=end)
+            for i, (queued, begun, end, outcome) in enumerate(assessed)
+        ),
+        span(1600, "candidate.addressing_wait", 40, "done", start=1590, end=1599.5),
+        trace(1600, "candidate.decision", 41, candidate_id="cand-0") | {"action": "commit"},
+        span(1700, "candidate.hold", 42, "done", start=1600, end=1700),  # After it: not its
+        span(1750, "candidate.assessment", 43, "done", event=1700, start=1710, end=1750),
+    ]
+    result = scenario(observation(trace=steps))
+    shown = figures(result)
+    queued, begun = assessed[-1][:2]
+    assert shown["assessment_queue"].value == begun - queued
+    assessments = shown["endpoint_assessment"]
+    assert (assessments.value, assessments.note) == (values, note)
+    held = shown["decision_holds"]
+    assert (held.value, held.samples, held.values, held.note) == (
+        19.5,
+        2,
+        (10.0, 9.5),
+        "addressing_wait",
+    )
+    queued_at = [
+        e.detail["queued_ms"] for e in result.evidence if e.stage == "candidate.assessment"
+    ]
+    assert queued_at == [300.0, *(q - START for q, *_ in assessed), 700.0]
+    # No commit decision: nothing to measure between the final and it.
+    uncommitted = [r for r in steps if r["stage"] != "candidate.decision"]
+    shown = figures(scenario(observation(trace=uncommitted)))
+    assert shown["endpoint_assessment"].value is shown["decision_holds"].value is None
 
 
 def test_a_retry_is_an_attempt_of_its_own_and_the_first_is_when_the_request_went_out() -> None:

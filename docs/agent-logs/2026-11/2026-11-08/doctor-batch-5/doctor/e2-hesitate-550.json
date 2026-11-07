@@ -1,0 +1,5329 @@
+{
+  "status": "PASS",
+  "counts": {
+    "PASS": 14,
+    "WARN": 0,
+    "FAIL": 0,
+    "SKIP": 1
+  },
+  "checks": [
+    {
+      "id": "system.platform",
+      "status": "PASS",
+      "summary": "Linux 5.10.134-19.2.al8.x86_64 x86_64; AF_UNIX socket API present, not opened",
+      "details": [],
+      "action": null,
+      "runners": [],
+      "scenarios": [],
+      "metrics": [],
+      "services": [],
+      "summaries": []
+    },
+    {
+      "id": "python.version",
+      "status": "PASS",
+      "summary": "Python 3.13.12 (CPython) at $RUN/prefix/current/bin/python; supported (<3.14,>=3.13)",
+      "details": [],
+      "action": null,
+      "runners": [],
+      "scenarios": [],
+      "metrics": [],
+      "services": [],
+      "summaries": []
+    },
+    {
+      "id": "packages.alphaavatar",
+      "status": "PASS",
+      "summary": "12 AlphaAvatar packages, release 0.6.8; Host requirements installed",
+      "details": [],
+      "action": null,
+      "runners": [],
+      "scenarios": [],
+      "metrics": [],
+      "services": [],
+      "summaries": []
+    },
+    {
+      "id": "config.load",
+      "status": "PASS",
+      "summary": "bundle accept loaded and validated",
+      "details": [
+        "avatar doctor-accept"
+      ],
+      "action": null,
+      "runners": [],
+      "scenarios": [],
+      "metrics": [],
+      "services": [],
+      "summaries": []
+    },
+    {
+      "id": "config.runners",
+      "status": "PASS",
+      "summary": "8 runners (1 worker each); plan is valid",
+      "details": [],
+      "action": null,
+      "runners": [],
+      "scenarios": [],
+      "metrics": [],
+      "services": [],
+      "summaries": []
+    },
+    {
+      "id": "packages.capabilities",
+      "status": "PASS",
+      "summary": "Requirements installed for 21 selections",
+      "details": [],
+      "action": null,
+      "runners": [],
+      "scenarios": [],
+      "metrics": [],
+      "services": [],
+      "summaries": []
+    },
+    {
+      "id": "paths.home",
+      "status": "PASS",
+      "summary": "$RUN/home  (drwxrwxr-x, owned by this user)",
+      "details": [
+        "chosen by ALPHAAVATAR_HOME; settings: default bundle accept; 1 bundle; 3.1 GiB free"
+      ],
+      "action": null,
+      "runners": [],
+      "scenarios": [],
+      "metrics": [],
+      "services": [],
+      "summaries": []
+    },
+    {
+      "id": "paths.cache",
+      "status": "PASS",
+      "summary": "$RUN/home/cache  (drwxrwxr-x, owned by this user)",
+      "details": [
+        "downloaded models: present; 3.1 GiB free"
+      ],
+      "action": null,
+      "runners": [],
+      "scenarios": [],
+      "metrics": [],
+      "services": [],
+      "summaries": []
+    },
+    {
+      "id": "paths.workspace",
+      "status": "PASS",
+      "summary": "$RUN/home/avatars/doctor-accept  (not created yet; created when first needed)",
+      "details": [
+        "3.1 GiB free"
+      ],
+      "action": null,
+      "runners": [],
+      "scenarios": [],
+      "metrics": [],
+      "services": [],
+      "summaries": []
+    },
+    {
+      "id": "session.start",
+      "status": "PASS",
+      "summary": "3 temporary sessions with the configured plugins, ready in 12 ms at the median",
+      "details": [],
+      "action": null,
+      "runners": [],
+      "scenarios": [],
+      "metrics": [
+        {
+          "name": "session_ready",
+          "value": 11.733,
+          "unit": "ms",
+          "start": "session assembly began",
+          "end": "Engine ready",
+          "boundary": "runtime, plugins and Engine of each diagnostic session, the median",
+          "samples": 3,
+          "values": [
+            161.906,
+            11.733,
+            10.663
+          ],
+          "note": null,
+          "merged": []
+        }
+      ],
+      "services": [],
+      "summaries": []
+    },
+    {
+      "id": "models.runners",
+      "status": "PASS",
+      "summary": "8 runners: the runtime started in 18.14 s, the model cache did not grow (net); slowest alphaavatar.memory.vdb.lancedb in 5.54 s",
+      "details": [],
+      "action": null,
+      "runners": [
+        {
+          "method": "alphaavatar.voice.vad.silero",
+          "status": "PASS",
+          "summary": "started",
+          "details": [],
+          "startup_seconds": 0.24994241073727608,
+          "calls": 793,
+          "queue_wait_max_ms": 0.401,
+          "execution_max_ms": 5.243
+        },
+        {
+          "method": "alphaavatar.router.addressing.semantic.qwen3_0_6b",
+          "status": "PASS",
+          "summary": "started",
+          "details": [],
+          "startup_seconds": 2.3043539077043533,
+          "calls": 3,
+          "queue_wait_max_ms": 0.004,
+          "execution_max_ms": 320.707
+        },
+        {
+          "method": "alphaavatar.router.turn_taking.smart_turn_v3",
+          "status": "PASS",
+          "summary": "started",
+          "details": [],
+          "startup_seconds": 1.828578069806099,
+          "calls": 12,
+          "queue_wait_max_ms": 0.016,
+          "execution_max_ms": 52.765
+        },
+        {
+          "method": "alphaavatar.memory.vdb.lancedb",
+          "status": "PASS",
+          "summary": "started",
+          "details": [],
+          "startup_seconds": 5.537801165133715,
+          "calls": 3,
+          "queue_wait_max_ms": 0.005,
+          "execution_max_ms": 211.994
+        },
+        {
+          "method": "alphaavatar.persona.speaker.attribute",
+          "status": "PASS",
+          "summary": "started",
+          "details": [],
+          "startup_seconds": 1.4272300712764263,
+          "calls": 3,
+          "queue_wait_max_ms": 0.006,
+          "execution_max_ms": 104.712
+        },
+        {
+          "method": "alphaavatar.persona.speaker.vector",
+          "status": "PASS",
+          "summary": "started",
+          "details": [],
+          "startup_seconds": 1.384591018781066,
+          "calls": 12,
+          "queue_wait_max_ms": 0.006,
+          "execution_max_ms": 133.956
+        },
+        {
+          "method": "alphaavatar.persona.face.analysis",
+          "status": "PASS",
+          "summary": "started",
+          "details": [],
+          "startup_seconds": 1.5978546310216188,
+          "calls": null,
+          "queue_wait_max_ms": null,
+          "execution_max_ms": null
+        },
+        {
+          "method": "alphaavatar.persona.vdb.lancedb",
+          "status": "PASS",
+          "summary": "started",
+          "details": [],
+          "startup_seconds": 3.8027428910136223,
+          "calls": 11,
+          "queue_wait_max_ms": 0.018,
+          "execution_max_ms": 298.66
+        }
+      ],
+      "scenarios": [],
+      "metrics": [
+        {
+          "name": "runtime_start",
+          "value": 18135.28,
+          "unit": "ms",
+          "start": "runtime start began",
+          "end": "every runner ready, or the first failure",
+          "boundary": "inference runtime",
+          "samples": 1,
+          "values": [],
+          "note": "the model cache did not grow (net)",
+          "merged": []
+        },
+        {
+          "name": "queue_wait_max",
+          "value": 0.401,
+          "unit": "ms",
+          "start": "request queued",
+          "end": "request dispatched",
+          "boundary": "runner alphaavatar.voice.vad.silero, as its process summarizes it",
+          "samples": 793,
+          "values": [],
+          "note": "peak queue depth is not observed",
+          "merged": []
+        },
+        {
+          "name": "execution_max",
+          "value": 5.243,
+          "unit": "ms",
+          "start": "request dispatched",
+          "end": "result returned",
+          "boundary": "runner alphaavatar.voice.vad.silero, as its process summarizes it",
+          "samples": 793,
+          "values": [],
+          "note": "peak queue depth is not observed",
+          "merged": []
+        },
+        {
+          "name": "queue_wait_max",
+          "value": 0.006,
+          "unit": "ms",
+          "start": "request queued",
+          "end": "request dispatched",
+          "boundary": "runner alphaavatar.persona.speaker.vector, as its process summarizes it",
+          "samples": 12,
+          "values": [],
+          "note": "peak queue depth is not observed",
+          "merged": []
+        },
+        {
+          "name": "execution_max",
+          "value": 133.956,
+          "unit": "ms",
+          "start": "request dispatched",
+          "end": "result returned",
+          "boundary": "runner alphaavatar.persona.speaker.vector, as its process summarizes it",
+          "samples": 12,
+          "values": [],
+          "note": "peak queue depth is not observed",
+          "merged": []
+        },
+        {
+          "name": "queue_wait_max",
+          "value": 0.016,
+          "unit": "ms",
+          "start": "request queued",
+          "end": "request dispatched",
+          "boundary": "runner alphaavatar.router.turn_taking.smart_turn_v3, as its process summarizes it",
+          "samples": 12,
+          "values": [],
+          "note": "peak queue depth is not observed",
+          "merged": []
+        },
+        {
+          "name": "execution_max",
+          "value": 52.765,
+          "unit": "ms",
+          "start": "request dispatched",
+          "end": "result returned",
+          "boundary": "runner alphaavatar.router.turn_taking.smart_turn_v3, as its process summarizes it",
+          "samples": 12,
+          "values": [],
+          "note": "peak queue depth is not observed",
+          "merged": []
+        },
+        {
+          "name": "queue_wait_max",
+          "value": 0.006,
+          "unit": "ms",
+          "start": "request queued",
+          "end": "request dispatched",
+          "boundary": "runner alphaavatar.persona.speaker.attribute, as its process summarizes it",
+          "samples": 3,
+          "values": [],
+          "note": "peak queue depth is not observed",
+          "merged": []
+        },
+        {
+          "name": "execution_max",
+          "value": 104.712,
+          "unit": "ms",
+          "start": "request dispatched",
+          "end": "result returned",
+          "boundary": "runner alphaavatar.persona.speaker.attribute, as its process summarizes it",
+          "samples": 3,
+          "values": [],
+          "note": "peak queue depth is not observed",
+          "merged": []
+        },
+        {
+          "name": "queue_wait_max",
+          "value": 0.004,
+          "unit": "ms",
+          "start": "request queued",
+          "end": "request dispatched",
+          "boundary": "runner alphaavatar.router.addressing.semantic.qwen3_0_6b, as its process summarizes it",
+          "samples": 3,
+          "values": [],
+          "note": "peak queue depth is not observed",
+          "merged": []
+        },
+        {
+          "name": "execution_max",
+          "value": 320.707,
+          "unit": "ms",
+          "start": "request dispatched",
+          "end": "result returned",
+          "boundary": "runner alphaavatar.router.addressing.semantic.qwen3_0_6b, as its process summarizes it",
+          "samples": 3,
+          "values": [],
+          "note": "peak queue depth is not observed",
+          "merged": []
+        },
+        {
+          "name": "queue_wait_max",
+          "value": 0.005,
+          "unit": "ms",
+          "start": "request queued",
+          "end": "request dispatched",
+          "boundary": "runner alphaavatar.memory.vdb.lancedb, as its process summarizes it",
+          "samples": 3,
+          "values": [],
+          "note": "peak queue depth is not observed",
+          "merged": []
+        },
+        {
+          "name": "execution_max",
+          "value": 211.994,
+          "unit": "ms",
+          "start": "request dispatched",
+          "end": "result returned",
+          "boundary": "runner alphaavatar.memory.vdb.lancedb, as its process summarizes it",
+          "samples": 3,
+          "values": [],
+          "note": "peak queue depth is not observed",
+          "merged": []
+        },
+        {
+          "name": "queue_wait_max",
+          "value": 0.018,
+          "unit": "ms",
+          "start": "request queued",
+          "end": "request dispatched",
+          "boundary": "runner alphaavatar.persona.vdb.lancedb, as its process summarizes it",
+          "samples": 11,
+          "values": [],
+          "note": "peak queue depth is not observed",
+          "merged": []
+        },
+        {
+          "name": "execution_max",
+          "value": 298.66,
+          "unit": "ms",
+          "start": "request dispatched",
+          "end": "result returned",
+          "boundary": "runner alphaavatar.persona.vdb.lancedb, as its process summarizes it",
+          "samples": 11,
+          "values": [],
+          "note": "peak queue depth is not observed",
+          "merged": []
+        }
+      ],
+      "services": [],
+      "summaries": []
+    },
+    {
+      "id": "services.external",
+      "status": "PASS",
+      "summary": "3 passed, 0 failed, 0 not verified by the samples",
+      "details": [
+        "model providers (langchain, openai): configured, authorized, reached, passed",
+        "speech recognition (openai_segment): configured, authorized, reached, passed",
+        "speech synthesis (openai): configured, authorized, reached, passed",
+        "livekit RTC server: not contacted; `alphaavatar dev accept` connects to it"
+      ],
+      "action": null,
+      "runners": [],
+      "scenarios": [],
+      "metrics": [],
+      "services": [
+        {
+          "name": "model providers (langchain, openai)",
+          "authorized": true,
+          "reached": true,
+          "passed": true,
+          "note": null
+        },
+        {
+          "name": "speech recognition (openai_segment)",
+          "authorized": true,
+          "reached": true,
+          "passed": true,
+          "note": null
+        },
+        {
+          "name": "speech synthesis (openai)",
+          "authorized": true,
+          "reached": true,
+          "passed": true,
+          "note": null
+        }
+      ],
+      "summaries": []
+    },
+    {
+      "id": "session.scenarios",
+      "status": "PASS",
+      "summary": "hesitate 3/3 passed, 2 not enabled, 1 no coverage",
+      "details": [],
+      "action": null,
+      "runners": [],
+      "scenarios": [
+        {
+          "name": "hesitate",
+          "outcome": "passed",
+          "summary": "Answered as the task expects; first text 2694 ms; first audio frame 3317 ms; complete 3684 ms",
+          "configuration": "model gpt-5.6-luna · stt openai_segment gpt-4o-transcribe · tts openai gpt-4o-mini-tts · vision off",
+          "blocked_stage": null,
+          "cause": null,
+          "details": [],
+          "task": "What is two plus three? Answer with just the number.",
+          "transcript": "What is two plus three? Answer with just the number.",
+          "answer": "5",
+          "reached": [
+            "input",
+            "vad.closed",
+            "stt.final",
+            "turn.committed",
+            "model.request",
+            "request.input",
+            "request.content",
+            "model.first_event",
+            "text.first",
+            "text.complete",
+            "audio.first",
+            "outputs.complete",
+            "run.completed"
+          ],
+          "request": {
+            "turn": "e55b3b54690f",
+            "run": "9a904a9bc09b",
+            "request": "4160b3dc08bc",
+            "carries_turn_input": true,
+            "carries_turn_content": true,
+            "frames": 0,
+            "sample_frames": 0,
+            "requests": 1,
+            "attempts": 1,
+            "finals": 1
+          },
+          "outputs": [
+            {
+              "output": "67f028979978",
+              "modalities": "text+audio",
+              "terminal": "completed",
+              "reason": null,
+              "at_ms": 3683.564
+            }
+          ],
+          "metrics": [
+            {
+              "name": "first_text",
+              "value": 2693.977,
+              "unit": "ms",
+              "start": "last voiced sample in",
+              "end": "first answer text out",
+              "boundary": "diagnostic input to the output boundary, server side",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "first_audio_frame",
+              "value": 3316.56,
+              "unit": "ms",
+              "start": "last voiced sample in",
+              "end": "first answer audio frame out",
+              "boundary": "diagnostic input to the output boundary, server side",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "first_visual_output_frame",
+              "value": null,
+              "unit": "ms",
+              "start": "last voiced sample in",
+              "end": "first visual output frame out",
+              "boundary": "diagnostic input to the output boundary, server side",
+              "samples": 0,
+              "values": [],
+              "note": "no visual output reaches the output boundary",
+              "merged": []
+            },
+            {
+              "name": "text_complete",
+              "value": 2776.395,
+              "unit": "ms",
+              "start": "last voiced sample in",
+              "end": "last text complete",
+              "boundary": "diagnostic input to the output boundary, server side",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "audio_last_frame",
+              "value": 3682.874,
+              "unit": "ms",
+              "start": "last voiced sample in",
+              "end": "last answer audio frame out",
+              "boundary": "diagnostic input to the output boundary, server side",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "response_final",
+              "value": 3683.564,
+              "unit": "ms",
+              "start": "last voiced sample in",
+              "end": "every output complete",
+              "boundary": "diagnostic input to the output boundary, server side",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "audio_duration",
+              "value": 1.65,
+              "unit": "s",
+              "start": "first frame",
+              "end": "last frame",
+              "boundary": "answer audio frames at the output boundary",
+              "samples": 83,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "audio_frame_interval",
+              "value": 0.161,
+              "unit": "ms",
+              "start": "frame out",
+              "end": "next frame out",
+              "boundary": "answer audio frames at the output boundary",
+              "samples": 82,
+              "values": [],
+              "note": "median",
+              "merged": []
+            },
+            {
+              "name": "audio_max_gap",
+              "value": 313.797,
+              "unit": "ms",
+              "start": "frame out",
+              "end": "next frame out",
+              "boundary": "answer audio frames at the output boundary",
+              "samples": 82,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "audio_underruns",
+              "value": 1.0,
+              "unit": "count",
+              "start": "first frame out",
+              "end": "last frame out",
+              "boundary": "a real-time queue started at the first frame, without startup buffering",
+              "samples": 83,
+              "values": [],
+              "note": "115.6 ms starved in total",
+              "merged": []
+            },
+            {
+              "name": "audio_rtf",
+              "value": 0.222,
+              "unit": "ratio",
+              "start": "first frame out",
+              "end": "last frame out",
+              "boundary": "answer audio frames at the output boundary",
+              "samples": 83,
+              "values": [],
+              "note": "0.366 s producing over 1.650 s of audio",
+              "merged": []
+            },
+            {
+              "name": "output_events_dropped",
+              "value": 0.0,
+              "unit": "count",
+              "start": "session ready",
+              "end": "turn end",
+              "boundary": "the diagnostic sink's subscription",
+              "samples": 1,
+              "values": [],
+              "note": "a reliable subscription: a slow sink holds producers back, it drops nothing",
+              "merged": []
+            }
+          ],
+          "segments": [
+            {
+              "name": "input",
+              "value": 1462.681,
+              "unit": "ms",
+              "start": "Final speech",
+              "end": "Final transcript",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "input.vad_close",
+              "value": 701.347,
+              "unit": "ms",
+              "start": "Final speech",
+              "end": "VAD close",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "input.final_transcript",
+              "value": 761.335,
+              "unit": "ms",
+              "start": "VAD close",
+              "end": "Final transcript",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "context",
+              "value": 581.137,
+              "unit": "ms",
+              "start": "Final transcript",
+              "end": "Model request sent",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "context.turn_commit",
+              "value": 357.947,
+              "unit": "ms",
+              "start": "Final transcript",
+              "end": "Turn commit",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "context.context_ready",
+              "value": 214.581,
+              "unit": "ms",
+              "start": "Turn commit",
+              "end": "Context readiness check complete",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "context.context_built",
+              "value": 1.692,
+              "unit": "ms",
+              "start": "Context readiness check complete",
+              "end": "Context built",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "context.request_sent",
+              "value": 6.917,
+              "unit": "ms",
+              "start": "Context built",
+              "end": "Model request sent",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "output",
+              "value": 1272.742,
+              "unit": "ms",
+              "start": "Model request sent",
+              "end": "First audio frame",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "output.first_text_delta",
+              "value": 650.011,
+              "unit": "ms",
+              "start": "Model request sent",
+              "end": "First text delta",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "output.tts_request",
+              "value": 83.03,
+              "unit": "ms",
+              "start": "First text delta",
+              "end": "TTS request",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "output.first_pcm",
+              "value": 539.043,
+              "unit": "ms",
+              "start": "TTS request",
+              "end": "First PCM",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "output.first_audio_frame",
+              "value": 0.658,
+              "unit": "ms",
+              "start": "First PCM",
+              "end": "First audio frame",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "stt_request_to_final",
+              "value": 761.001,
+              "unit": "ms",
+              "start": "segment committed to STT",
+              "end": "STT final",
+              "boundary": "input trace",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "stt_queue",
+              "value": 0.06,
+              "unit": "ms",
+              "start": "segment committed",
+              "end": "request started",
+              "boundary": "the STT request of the Turn's final, as its plugin times it",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "stt_connect",
+              "value": 3.557,
+              "unit": "ms",
+              "start": "connection opening",
+              "end": "connection open",
+              "boundary": "the STT request of the Turn's final, as its plugin times it",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "stt_tls",
+              "value": 5.367,
+              "unit": "ms",
+              "start": "TLS handshake started",
+              "end": "TLS handshake done",
+              "boundary": "the STT request of the Turn's final, as its plugin times it",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "stt_upload",
+              "value": 5.689,
+              "unit": "ms",
+              "start": "request headers sent",
+              "end": "audio sent",
+              "boundary": "the STT request of the Turn's final, as its plugin times it",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "stt_wait",
+              "value": 540.318,
+              "unit": "ms",
+              "start": "audio sent",
+              "end": "answer's headers",
+              "boundary": "the STT request of the Turn's final, as its plugin times it",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "stt_first_event",
+              "value": 0.573,
+              "unit": "ms",
+              "start": "answer's headers",
+              "end": "first stream event",
+              "boundary": "the STT request of the Turn's final, as its plugin times it",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "stt_stream",
+              "value": 203.491,
+              "unit": "ms",
+              "start": "answer's headers",
+              "end": "transcript done",
+              "boundary": "the STT request of the Turn's final, as its plugin times it",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "association_ready",
+              "value": 74.112,
+              "unit": "ms",
+              "start": "speech closed",
+              "end": "speaker association ready",
+              "boundary": "the speaker association of the Turn's final segment",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "association_wait",
+              "value": 0.016,
+              "unit": "ms",
+              "start": "commit asked",
+              "end": "association ready to the commit",
+              "boundary": "the commit's association checks of the Turn's candidate",
+              "samples": 1,
+              "values": [
+                0.016
+              ],
+              "note": "none needed: every segment of its candidate was ready before the commit asked",
+              "merged": []
+            },
+            {
+              "name": "assessment_queue",
+              "value": 0.146,
+              "unit": "ms",
+              "start": "assessment queued",
+              "end": "assessment started",
+              "boundary": "the endpoint model's last assessment before the Turn's commit",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "endpoint_assessment",
+              "value": 71.31,
+              "unit": "ms",
+              "start": "final transcript",
+              "end": "commit decision",
+              "boundary": "the endpoint model's assessments between the Turn's final and its commit",
+              "samples": 2,
+              "values": [
+                37.791,
+                33.519
+              ],
+              "note": "2 runs",
+              "merged": []
+            },
+            {
+              "name": "decision_holds",
+              "value": 284.649,
+              "unit": "ms",
+              "start": "final transcript",
+              "end": "commit decision",
+              "boundary": "timed waits between the Turn's final and its commit",
+              "samples": 2,
+              "values": [
+                0.948,
+                283.701
+              ],
+              "note": "addressing_wait",
+              "merged": []
+            },
+            {
+              "name": "input_lateness",
+              "value": 160.737,
+              "unit": "ms",
+              "start": "frame due",
+              "end": "frame published",
+              "boundary": "the diagnostic source's cadence, at worst",
+              "samples": 406,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "context_ready_wait",
+              "value": 212.837,
+              "unit": "ms",
+              "start": "Context asked for the Turn's context",
+              "end": "context ready",
+              "boundary": "Context manager log",
+              "samples": 1,
+              "values": [],
+              "note": "how long registered context work held it back",
+              "merged": []
+            },
+            {
+              "name": "model_request_client",
+              "value": 0.007,
+              "unit": "ms",
+              "start": "model request",
+              "end": "the provider's client ready",
+              "boundary": "provider log",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "model_request_prepare",
+              "value": 6.36,
+              "unit": "ms",
+              "start": "model request",
+              "end": "the request taken to its first attempt sent",
+              "boundary": "provider log",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "model_request_encode",
+              "value": 0.479,
+              "unit": "ms",
+              "start": "model request",
+              "end": "the request encoded here",
+              "boundary": "provider log",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "model_request_frames",
+              "value": 0,
+              "unit": "frames",
+              "start": "model request",
+              "end": "pictures the request carries",
+              "boundary": "provider log",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "model_request_bytes",
+              "value": 19063,
+              "unit": "bytes",
+              "start": "model request",
+              "end": "the body the transport sent",
+              "boundary": "provider log",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "model_request_attempts",
+              "value": 1.0,
+              "unit": "count",
+              "start": "first attempt sent",
+              "end": "last attempt sent",
+              "boundary": "provider log",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "model_first_event",
+              "value": 596.623,
+              "unit": "ms",
+              "start": "model request sent",
+              "end": "first model stream event",
+              "boundary": "provider and loop logs",
+              "samples": 1,
+              "values": [],
+              "note": "its kind: ModelResponseStarted",
+              "merged": []
+            }
+          ],
+          "frames": [],
+          "evidence": [
+            {
+              "at_ms": -4420.569,
+              "stage": "input.audio_started",
+              "source": "input",
+              "detail": {}
+            },
+            {
+              "at_ms": -4373.618,
+              "stage": "inference.summary",
+              "source": "log",
+              "detail": {}
+            },
+            {
+              "at_ms": -4309.17,
+              "stage": "speech.start",
+              "source": "trace",
+              "detail": {
+                "frame_count": 1,
+                "segment": "24a3ec6f5bfd",
+                "observation": "d70f3b78e1c1"
+              }
+            },
+            {
+              "at_ms": -4303.094,
+              "stage": "candidate.segment",
+              "source": "trace",
+              "detail": {
+                "candidate": "bbd88922e690",
+                "segment": "24a3ec6f5bfd",
+                "observation": "d70f3b78e1c1"
+              }
+            },
+            {
+              "at_ms": -4297.759,
+              "stage": "candidate.decision",
+              "source": "trace",
+              "detail": {
+                "sequence": 9,
+                "action": "interrupt",
+                "outcome": "published",
+                "decision": "2be52d8122e8",
+                "candidate": "bbd88922e690",
+                "observation": "d70f3b78e1c1"
+              }
+            },
+            {
+              "at_ms": -1285.284,
+              "stage": "speaker.window",
+              "source": "trace",
+              "detail": {
+                "sequence": 1,
+                "outcome": "done",
+                "segment": "24a3ec6f5bfd",
+                "started_ms": -1419.904,
+                "queued_ms": -1420.074
+              }
+            },
+            {
+              "at_ms": -350.123,
+              "stage": "speaker.window",
+              "source": "trace",
+              "detail": {
+                "sequence": 2,
+                "outcome": "done",
+                "segment": "24a3ec6f5bfd",
+                "started_ms": -419.566,
+                "queued_ms": -419.714
+              }
+            },
+            {
+              "at_ms": 0.0,
+              "stage": "input.voiced_end",
+              "source": "input",
+              "detail": {}
+            },
+            {
+              "at_ms": 649.399,
+              "stage": "speaker.window",
+              "source": "trace",
+              "detail": {
+                "sequence": 3,
+                "outcome": "done",
+                "segment": "24a3ec6f5bfd",
+                "started_ms": 580.26,
+                "queued_ms": 580.091
+              }
+            },
+            {
+              "at_ms": 701.347,
+              "stage": "perception.speech_closed",
+              "source": "trace",
+              "detail": {
+                "sequence": 261,
+                "segment": "24a3ec6f5bfd",
+                "observation": "804647d16835",
+                "started_ms": -4388.204
+              }
+            },
+            {
+              "at_ms": 701.636,
+              "stage": "speech.close",
+              "source": "trace",
+              "detail": {
+                "frame_count": 256,
+                "segment": "24a3ec6f5bfd",
+                "observation": "804647d16835"
+              }
+            },
+            {
+              "at_ms": 701.68,
+              "stage": "stt.commit",
+              "source": "trace",
+              "detail": {
+                "frame_count": 256,
+                "outcome": "accepted",
+                "segment": "24a3ec6f5bfd"
+              }
+            },
+            {
+              "at_ms": 703.707,
+              "stage": "candidate.segment",
+              "source": "trace",
+              "detail": {
+                "candidate": "bbd88922e690",
+                "segment": "24a3ec6f5bfd",
+                "observation": "804647d16835"
+              }
+            },
+            {
+              "at_ms": 757.595,
+              "stage": "candidate.assessment",
+              "source": "trace",
+              "detail": {
+                "outcome": "done",
+                "candidate": "bbd88922e690",
+                "started_ms": 704.075,
+                "queued_ms": 703.824
+              }
+            },
+            {
+              "at_ms": 757.735,
+              "stage": "candidate.decision",
+              "source": "trace",
+              "detail": {
+                "sequence": 264,
+                "action": "hold",
+                "outcome": "published",
+                "decision": "c4b3a14ba747",
+                "candidate": "bbd88922e690",
+                "observation": "804647d16835"
+              }
+            },
+            {
+              "at_ms": 775.276,
+              "stage": "speaker.window",
+              "source": "trace",
+              "detail": {
+                "sequence": 4,
+                "outcome": "done",
+                "segment": "24a3ec6f5bfd",
+                "started_ms": 701.823,
+                "queued_ms": 701.576
+              }
+            },
+            {
+              "at_ms": 775.461,
+              "stage": "participant.segment_ready",
+              "source": "trace",
+              "detail": {
+                "outcome": "bound",
+                "segment": "24a3ec6f5bfd",
+                "started_ms": -4309.028
+              }
+            },
+            {
+              "at_ms": 777.199,
+              "stage": "speaker.identity",
+              "source": "trace",
+              "detail": {
+                "outcome": "done",
+                "segment": "24a3ec6f5bfd",
+                "started_ms": 775.512
+              }
+            },
+            {
+              "at_ms": 880.811,
+              "stage": "speaker.attribute",
+              "source": "trace",
+              "detail": {
+                "outcome": "done",
+                "segment": "24a3ec6f5bfd",
+                "started_ms": 777.226
+              }
+            },
+            {
+              "at_ms": 1258.291,
+              "stage": "candidate.addressing_wait",
+              "source": "trace",
+              "detail": {
+                "outcome": "done",
+                "candidate": "bbd88922e690",
+                "started_ms": 757.793
+              }
+            },
+            {
+              "at_ms": 1297.908,
+              "stage": "candidate.assessment",
+              "source": "trace",
+              "detail": {
+                "outcome": "done",
+                "candidate": "bbd88922e690",
+                "started_ms": 1258.422,
+                "queued_ms": 1258.361
+              }
+            },
+            {
+              "at_ms": 1298.055,
+              "stage": "candidate.decision",
+              "source": "trace",
+              "detail": {
+                "sequence": 292,
+                "action": "hold",
+                "outcome": "published",
+                "decision": "05c4e5067a0c",
+                "candidate": "bbd88922e690",
+                "observation": "804647d16835"
+              }
+            },
+            {
+              "at_ms": 1462.62,
+              "stage": "perception.transcript_final",
+              "source": "trace",
+              "detail": {
+                "sequence": 302,
+                "segment": "24a3ec6f5bfd",
+                "observation": "049922ad5528",
+                "started_ms": -4388.204
+              }
+            },
+            {
+              "at_ms": 1462.681,
+              "stage": "stt.terminal",
+              "source": "trace",
+              "detail": {
+                "sequence": 302,
+                "frame_count": 256,
+                "outcome": "final_text",
+                "reason": "provider_final",
+                "text_chars": 52,
+                "segment": "24a3ec6f5bfd",
+                "observation": "049922ad5528"
+              }
+            },
+            {
+              "at_ms": 1463.239,
+              "stage": "stt.request",
+              "source": "log",
+              "detail": {}
+            },
+            {
+              "at_ms": 1463.494,
+              "stage": "candidate.transcript",
+              "source": "trace",
+              "detail": {
+                "candidate": "bbd88922e690",
+                "segment": "24a3ec6f5bfd",
+                "observation": "049922ad5528"
+              }
+            },
+            {
+              "at_ms": 1463.633,
+              "stage": "candidate.addressing_wait",
+              "source": "trace",
+              "detail": {
+                "outcome": "cancelled",
+                "candidate": "bbd88922e690",
+                "started_ms": 1298.129
+              }
+            },
+            {
+              "at_ms": 1501.481,
+              "stage": "candidate.assessment",
+              "source": "trace",
+              "detail": {
+                "outcome": "done",
+                "candidate": "bbd88922e690",
+                "started_ms": 1463.685,
+                "queued_ms": 1463.555
+              }
+            },
+            {
+              "at_ms": 1501.608,
+              "stage": "candidate.decision",
+              "source": "trace",
+              "detail": {
+                "sequence": 305,
+                "action": "hold",
+                "outcome": "published",
+                "decision": "c4b85f30d5cf",
+                "candidate": "bbd88922e690",
+                "observation": "804647d16835"
+              }
+            },
+            {
+              "at_ms": 1785.383,
+              "stage": "candidate.addressing_wait",
+              "source": "trace",
+              "detail": {
+                "outcome": "cancelled",
+                "candidate": "bbd88922e690",
+                "started_ms": 1501.678
+              }
+            },
+            {
+              "at_ms": 1818.989,
+              "stage": "candidate.assessment",
+              "source": "trace",
+              "detail": {
+                "outcome": "done",
+                "candidate": "bbd88922e690",
+                "started_ms": 1785.465,
+                "queued_ms": 1785.319
+              }
+            },
+            {
+              "at_ms": 1819.138,
+              "stage": "candidate.association",
+              "source": "trace",
+              "detail": {
+                "outcome": "ready",
+                "candidate": "bbd88922e690",
+                "started_ms": 1819.117
+              }
+            },
+            {
+              "at_ms": 1819.253,
+              "stage": "candidate.decision",
+              "source": "trace",
+              "detail": {
+                "sequence": 323,
+                "action": "commit",
+                "outcome": "published",
+                "decision": "fba2a08fb423",
+                "candidate": "bbd88922e690",
+                "observation": "804647d16835"
+              }
+            },
+            {
+              "at_ms": 1819.326,
+              "stage": "candidate.retired",
+              "source": "trace",
+              "detail": {
+                "candidate": "bbd88922e690"
+              }
+            },
+            {
+              "at_ms": 1820.628,
+              "stage": "turn.committed",
+              "source": "trace",
+              "detail": {
+                "sequence": 323,
+                "cutoff_sequence": 323,
+                "text_chars": 52,
+                "turn": "e55b3b54690f",
+                "decision": "fba2a08fb423",
+                "input": "bbd88922e690"
+              }
+            },
+            {
+              "at_ms": 1820.651,
+              "stage": "turn.admission",
+              "source": "trace",
+              "detail": {
+                "sequence": 323,
+                "outcome": "accepted",
+                "reason": "committed",
+                "decision": "fba2a08fb423",
+                "candidate": "bbd88922e690"
+              }
+            },
+            {
+              "at_ms": 1820.706,
+              "stage": "input.committed",
+              "source": "log",
+              "detail": {
+                "turn": "e55b3b54690f"
+              }
+            },
+            {
+              "at_ms": 1821.714,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "e55b3b54690f"
+              }
+            },
+            {
+              "at_ms": 1822.488,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "e55b3b54690f",
+                "run": "9a904a9bc09b"
+              }
+            },
+            {
+              "at_ms": 1822.916,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "e55b3b54690f",
+                "run": "9a904a9bc09b"
+              }
+            },
+            {
+              "at_ms": 2035.039,
+              "stage": "memory.recall",
+              "source": "trace",
+              "detail": {
+                "outcome": "empty",
+                "turn": "e55b3b54690f"
+              }
+            },
+            {
+              "at_ms": 2035.209,
+              "stage": "context.ready",
+              "source": "log",
+              "detail": {
+                "turn": "e55b3b54690f"
+              }
+            },
+            {
+              "at_ms": 2036.901,
+              "stage": "context.built",
+              "source": "log",
+              "detail": {
+                "turn": "e55b3b54690f",
+                "run": "9a904a9bc09b",
+                "request": "4160b3dc08bc"
+              }
+            },
+            {
+              "at_ms": 2037.061,
+              "stage": "model.started",
+              "source": "log",
+              "detail": {
+                "state": "model",
+                "turn": "e55b3b54690f",
+                "run": "9a904a9bc09b",
+                "request": "4160b3dc08bc"
+              }
+            },
+            {
+              "at_ms": 2037.09,
+              "stage": "model.request",
+              "source": "trace",
+              "detail": {
+                "frame_count": 0,
+                "turn": "e55b3b54690f",
+                "input": "bbd88922e690",
+                "run": "9a904a9bc09b",
+                "request": "4160b3dc08bc"
+              }
+            },
+            {
+              "at_ms": 2037.121,
+              "stage": "model.request_input",
+              "source": "trace",
+              "detail": {
+                "outcome": "missing",
+                "request": "4160b3dc08bc",
+                "observation": "804647d16835"
+              }
+            },
+            {
+              "at_ms": 2037.139,
+              "stage": "model.request_input",
+              "source": "trace",
+              "detail": {
+                "outcome": "carried",
+                "request": "4160b3dc08bc",
+                "observation": "049922ad5528"
+              }
+            },
+            {
+              "at_ms": 2037.497,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "e55b3b54690f",
+                "run": "9a904a9bc09b"
+              }
+            },
+            {
+              "at_ms": 2037.668,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "e55b3b54690f",
+                "run": "9a904a9bc09b"
+              }
+            },
+            {
+              "at_ms": 2043.818,
+              "stage": "model.request_sent",
+              "source": "log",
+              "detail": {
+                "attempt": 1,
+                "request": "4160b3dc08bc"
+              }
+            },
+            {
+              "at_ms": 2640.441,
+              "stage": "model.first_event",
+              "source": "log",
+              "detail": {
+                "event_kind": "ModelResponseStarted",
+                "turn": "e55b3b54690f",
+                "run": "9a904a9bc09b",
+                "request": "4160b3dc08bc"
+              }
+            },
+            {
+              "at_ms": 2693.829,
+              "stage": "model.first_text",
+              "source": "log",
+              "detail": {
+                "turn": "e55b3b54690f",
+                "run": "9a904a9bc09b",
+                "request": "4160b3dc08bc"
+              }
+            },
+            {
+              "at_ms": 2693.977,
+              "stage": "output.text_chunk",
+              "source": "output",
+              "detail": {
+                "lane": "assistant",
+                "turn": "e55b3b54690f",
+                "run": "9a904a9bc09b",
+                "request": "4160b3dc08bc"
+              }
+            },
+            {
+              "at_ms": 2694.296,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "e55b3b54690f",
+                "run": "9a904a9bc09b"
+              }
+            },
+            {
+              "at_ms": 2694.615,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "e55b3b54690f",
+                "run": "9a904a9bc09b"
+              }
+            },
+            {
+              "at_ms": 2776.395,
+              "stage": "output.control",
+              "source": "output",
+              "detail": {
+                "lane": "assistant",
+                "turn": "e55b3b54690f",
+                "run": "9a904a9bc09b",
+                "type": "text_complete"
+              }
+            },
+            {
+              "at_ms": 2776.811,
+              "stage": "speech.segment",
+              "source": "log",
+              "detail": {
+                "segment": 1
+              }
+            },
+            {
+              "at_ms": 2776.859,
+              "stage": "speech.request",
+              "source": "log",
+              "detail": {
+                "segment": 1
+              }
+            },
+            {
+              "at_ms": 2779.056,
+              "stage": "run.finished",
+              "source": "log",
+              "detail": {
+                "state": "completed",
+                "turn": "e55b3b54690f",
+                "run": "9a904a9bc09b"
+              }
+            },
+            {
+              "at_ms": 2779.169,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "e55b3b54690f",
+                "run": "9a904a9bc09b"
+              }
+            },
+            {
+              "at_ms": 2779.301,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "e55b3b54690f",
+                "run": "9a904a9bc09b"
+              }
+            },
+            {
+              "at_ms": 3682.874,
+              "stage": "output.audio_frame_last",
+              "source": "output",
+              "detail": {
+                "lane": "assistant"
+              }
+            },
+            {
+              "at_ms": 3683.412,
+              "stage": "output.control",
+              "source": "output",
+              "detail": {
+                "lane": "assistant",
+                "turn": "e55b3b54690f",
+                "run": "9a904a9bc09b",
+                "type": "audio_complete"
+              }
+            },
+            {
+              "at_ms": 3683.564,
+              "stage": "output.control",
+              "source": "output",
+              "detail": {
+                "lane": "assistant",
+                "turn": "e55b3b54690f",
+                "run": "9a904a9bc09b",
+                "type": "complete"
+              }
+            }
+          ],
+          "round": 1,
+          "sentences": [
+            {
+              "index": 1,
+              "heard": true,
+              "span_ms": null,
+              "segments": [
+                "24a3ec6f5bfd"
+              ],
+              "coverage": null,
+              "covered_ms": null,
+              "stt": "final",
+              "adopted": true,
+              "content": "holds_its_words",
+              "lost": null,
+              "why": null
+            },
+            {
+              "index": 2,
+              "heard": true,
+              "span_ms": null,
+              "segments": [
+                "24a3ec6f5bfd"
+              ],
+              "coverage": null,
+              "covered_ms": null,
+              "stt": "final",
+              "adopted": true,
+              "content": "holds_its_words",
+              "lost": null,
+              "why": null
+            }
+          ],
+          "sample": "hesitate sha256:dd8f345419d9"
+        },
+        {
+          "name": "hesitate",
+          "outcome": "passed",
+          "summary": "Answered as the task expects; first text 2722 ms; first audio frame 3518 ms; complete 4286 ms",
+          "configuration": "model gpt-5.6-luna · stt openai_segment gpt-4o-transcribe · tts openai gpt-4o-mini-tts · vision off",
+          "blocked_stage": null,
+          "cause": null,
+          "details": [],
+          "task": "What is two plus three? Answer with just the number.",
+          "transcript": "What is two plus three? Answer with just the number.",
+          "answer": "5",
+          "reached": [
+            "input",
+            "vad.closed",
+            "stt.final",
+            "turn.committed",
+            "model.request",
+            "request.input",
+            "request.content",
+            "model.first_event",
+            "text.first",
+            "text.complete",
+            "audio.first",
+            "outputs.complete",
+            "run.completed"
+          ],
+          "request": {
+            "turn": "e9e930ac3703",
+            "run": "51c09bb0a450",
+            "request": "28cdeda727e6",
+            "carries_turn_input": true,
+            "carries_turn_content": true,
+            "frames": 0,
+            "sample_frames": 0,
+            "requests": 1,
+            "attempts": 1,
+            "finals": 1
+          },
+          "outputs": [
+            {
+              "output": "669cb26f7e6a",
+              "modalities": "text+audio",
+              "terminal": "completed",
+              "reason": null,
+              "at_ms": 4285.639
+            }
+          ],
+          "metrics": [
+            {
+              "name": "first_text",
+              "value": 2722.304,
+              "unit": "ms",
+              "start": "last voiced sample in",
+              "end": "first answer text out",
+              "boundary": "diagnostic input to the output boundary, server side",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "first_audio_frame",
+              "value": 3517.829,
+              "unit": "ms",
+              "start": "last voiced sample in",
+              "end": "first answer audio frame out",
+              "boundary": "diagnostic input to the output boundary, server side",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "first_visual_output_frame",
+              "value": null,
+              "unit": "ms",
+              "start": "last voiced sample in",
+              "end": "first visual output frame out",
+              "boundary": "diagnostic input to the output boundary, server side",
+              "samples": 0,
+              "values": [],
+              "note": "no visual output reaches the output boundary",
+              "merged": []
+            },
+            {
+              "name": "text_complete",
+              "value": 2820.669,
+              "unit": "ms",
+              "start": "last voiced sample in",
+              "end": "last text complete",
+              "boundary": "diagnostic input to the output boundary, server side",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "audio_last_frame",
+              "value": 4284.974,
+              "unit": "ms",
+              "start": "last voiced sample in",
+              "end": "last answer audio frame out",
+              "boundary": "diagnostic input to the output boundary, server side",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "response_final",
+              "value": 4285.639,
+              "unit": "ms",
+              "start": "last voiced sample in",
+              "end": "every output complete",
+              "boundary": "diagnostic input to the output boundary, server side",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "audio_duration",
+              "value": 2.65,
+              "unit": "s",
+              "start": "first frame",
+              "end": "last frame",
+              "boundary": "answer audio frames at the output boundary",
+              "samples": 133,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "audio_frame_interval",
+              "value": 0.152,
+              "unit": "ms",
+              "start": "frame out",
+              "end": "next frame out",
+              "boundary": "answer audio frames at the output boundary",
+              "samples": 132,
+              "values": [],
+              "note": "median",
+              "merged": []
+            },
+            {
+              "name": "audio_max_gap",
+              "value": 338.9,
+              "unit": "ms",
+              "start": "frame out",
+              "end": "next frame out",
+              "boundary": "answer audio frames at the output boundary",
+              "samples": 132,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "audio_underruns",
+              "value": 1.0,
+              "unit": "count",
+              "start": "first frame out",
+              "end": "last frame out",
+              "boundary": "a real-time queue started at the first frame, without startup buffering",
+              "samples": 133,
+              "values": [],
+              "note": "140.6 ms starved in total",
+              "merged": []
+            },
+            {
+              "name": "audio_rtf",
+              "value": 0.2895,
+              "unit": "ratio",
+              "start": "first frame out",
+              "end": "last frame out",
+              "boundary": "answer audio frames at the output boundary",
+              "samples": 133,
+              "values": [],
+              "note": "0.767 s producing over 2.650 s of audio",
+              "merged": []
+            },
+            {
+              "name": "output_events_dropped",
+              "value": 0.0,
+              "unit": "count",
+              "start": "session ready",
+              "end": "turn end",
+              "boundary": "the diagnostic sink's subscription",
+              "samples": 1,
+              "values": [],
+              "note": "a reliable subscription: a slow sink holds producers back, it drops nothing",
+              "merged": []
+            }
+          ],
+          "segments": [
+            {
+              "name": "input",
+              "value": 1525.757,
+              "unit": "ms",
+              "start": "Final speech",
+              "end": "Final transcript",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "input.vad_close",
+              "value": 700.62,
+              "unit": "ms",
+              "start": "Final speech",
+              "end": "VAD close",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "input.final_transcript",
+              "value": 825.136,
+              "unit": "ms",
+              "start": "VAD close",
+              "end": "Final transcript",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "context",
+              "value": 274.615,
+              "unit": "ms",
+              "start": "Final transcript",
+              "end": "Model request sent",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "context.turn_commit",
+              "value": 68.467,
+              "unit": "ms",
+              "start": "Final transcript",
+              "end": "Turn commit",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "context.context_ready",
+              "value": 200.348,
+              "unit": "ms",
+              "start": "Turn commit",
+              "end": "Context readiness check complete",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "context.context_built",
+              "value": 1.67,
+              "unit": "ms",
+              "start": "Context readiness check complete",
+              "end": "Context built",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "context.request_sent",
+              "value": 4.131,
+              "unit": "ms",
+              "start": "Context built",
+              "end": "Model request sent",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "output",
+              "value": 1717.457,
+              "unit": "ms",
+              "start": "Model request sent",
+              "end": "First audio frame",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "output.first_text_delta",
+              "value": 921.789,
+              "unit": "ms",
+              "start": "Model request sent",
+              "end": "First text delta",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "output.tts_request",
+              "value": 98.911,
+              "unit": "ms",
+              "start": "First text delta",
+              "end": "TTS request",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "output.first_pcm",
+              "value": 696.203,
+              "unit": "ms",
+              "start": "TTS request",
+              "end": "First PCM",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "output.first_audio_frame",
+              "value": 0.554,
+              "unit": "ms",
+              "start": "First PCM",
+              "end": "First audio frame",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "stt_request_to_final",
+              "value": 824.846,
+              "unit": "ms",
+              "start": "segment committed to STT",
+              "end": "STT final",
+              "boundary": "input trace",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "stt_queue",
+              "value": 0.07,
+              "unit": "ms",
+              "start": "segment committed",
+              "end": "request started",
+              "boundary": "the STT request of the Turn's final, as its plugin times it",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "stt_connect",
+              "value": 6.671,
+              "unit": "ms",
+              "start": "connection opening",
+              "end": "connection open",
+              "boundary": "the STT request of the Turn's final, as its plugin times it",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "stt_tls",
+              "value": 6.014,
+              "unit": "ms",
+              "start": "TLS handshake started",
+              "end": "TLS handshake done",
+              "boundary": "the STT request of the Turn's final, as its plugin times it",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "stt_upload",
+              "value": 5.588,
+              "unit": "ms",
+              "start": "request headers sent",
+              "end": "audio sent",
+              "boundary": "the STT request of the Turn's final, as its plugin times it",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "stt_wait",
+              "value": 621.54,
+              "unit": "ms",
+              "start": "audio sent",
+              "end": "answer's headers",
+              "boundary": "the STT request of the Turn's final, as its plugin times it",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "stt_first_event",
+              "value": 0.442,
+              "unit": "ms",
+              "start": "answer's headers",
+              "end": "first stream event",
+              "boundary": "the STT request of the Turn's final, as its plugin times it",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "stt_stream",
+              "value": 182.754,
+              "unit": "ms",
+              "start": "answer's headers",
+              "end": "transcript done",
+              "boundary": "the STT request of the Turn's final, as its plugin times it",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "association_ready",
+              "value": 71.674,
+              "unit": "ms",
+              "start": "speech closed",
+              "end": "speaker association ready",
+              "boundary": "the speaker association of the Turn's final segment",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "association_wait",
+              "value": 0.018,
+              "unit": "ms",
+              "start": "commit asked",
+              "end": "association ready to the commit",
+              "boundary": "the commit's association checks of the Turn's candidate",
+              "samples": 1,
+              "values": [
+                0.018
+              ],
+              "note": "none needed: every segment of its candidate was ready before the commit asked",
+              "merged": []
+            },
+            {
+              "name": "assessment_queue",
+              "value": 0.138,
+              "unit": "ms",
+              "start": "assessment queued",
+              "end": "assessment started",
+              "boundary": "the endpoint model's last assessment before the Turn's commit",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "endpoint_assessment",
+              "value": 65.777,
+              "unit": "ms",
+              "start": "final transcript",
+              "end": "commit decision",
+              "boundary": "the endpoint model's assessments between the Turn's final and its commit",
+              "samples": 2,
+              "values": [
+                19.551,
+                46.226
+              ],
+              "note": "2 runs, 1 replaced",
+              "merged": []
+            },
+            {
+              "name": "decision_holds",
+              "value": 0.957,
+              "unit": "ms",
+              "start": "final transcript",
+              "end": "commit decision",
+              "boundary": "timed waits between the Turn's final and its commit",
+              "samples": 1,
+              "values": [
+                0.957
+              ],
+              "note": "addressing_wait",
+              "merged": []
+            },
+            {
+              "name": "input_lateness",
+              "value": 2.047,
+              "unit": "ms",
+              "start": "frame due",
+              "end": "frame published",
+              "boundary": "the diagnostic source's cadence, at worst",
+              "samples": 436,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "context_ready_wait",
+              "value": 198.876,
+              "unit": "ms",
+              "start": "Context asked for the Turn's context",
+              "end": "context ready",
+              "boundary": "Context manager log",
+              "samples": 1,
+              "values": [],
+              "note": "how long registered context work held it back",
+              "merged": []
+            },
+            {
+              "name": "model_request_client",
+              "value": 0.007,
+              "unit": "ms",
+              "start": "model request",
+              "end": "the provider's client ready",
+              "boundary": "provider log",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "model_request_prepare",
+              "value": 3.627,
+              "unit": "ms",
+              "start": "model request",
+              "end": "the request taken to its first attempt sent",
+              "boundary": "provider log",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "model_request_encode",
+              "value": 0.505,
+              "unit": "ms",
+              "start": "model request",
+              "end": "the request encoded here",
+              "boundary": "provider log",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "model_request_frames",
+              "value": 0,
+              "unit": "frames",
+              "start": "model request",
+              "end": "pictures the request carries",
+              "boundary": "provider log",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "model_request_bytes",
+              "value": 19218,
+              "unit": "bytes",
+              "start": "model request",
+              "end": "the body the transport sent",
+              "boundary": "provider log",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "model_request_attempts",
+              "value": 1.0,
+              "unit": "count",
+              "start": "first attempt sent",
+              "end": "last attempt sent",
+              "boundary": "provider log",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "model_first_event",
+              "value": 536.961,
+              "unit": "ms",
+              "start": "model request sent",
+              "end": "first model stream event",
+              "boundary": "provider and loop logs",
+              "samples": 1,
+              "values": [],
+              "note": "its kind: ModelResponseStarted",
+              "merged": []
+            }
+          ],
+          "frames": [],
+          "evidence": [
+            {
+              "at_ms": -4420.598,
+              "stage": "input.audio_started",
+              "source": "input",
+              "detail": {}
+            },
+            {
+              "at_ms": -4378.701,
+              "stage": "inference.summary",
+              "source": "log",
+              "detail": {}
+            },
+            {
+              "at_ms": -4314.584,
+              "stage": "speech.start",
+              "source": "trace",
+              "detail": {
+                "frame_count": 1,
+                "segment": "28a3545ed331",
+                "observation": "7d229fdf9453"
+              }
+            },
+            {
+              "at_ms": -4314.304,
+              "stage": "candidate.segment",
+              "source": "trace",
+              "detail": {
+                "candidate": "195a5ff0a1be",
+                "segment": "28a3545ed331",
+                "observation": "7d229fdf9453"
+              }
+            },
+            {
+              "at_ms": -4312.956,
+              "stage": "candidate.decision",
+              "source": "trace",
+              "detail": {
+                "sequence": 9,
+                "action": "interrupt",
+                "outcome": "published",
+                "decision": "db1a78d0f5f6",
+                "candidate": "195a5ff0a1be",
+                "observation": "7d229fdf9453"
+              }
+            },
+            {
+              "at_ms": -1350.884,
+              "stage": "speaker.window",
+              "source": "trace",
+              "detail": {
+                "sequence": 1,
+                "outcome": "done",
+                "segment": "28a3545ed331",
+                "started_ms": -1420.001,
+                "queued_ms": -1420.136
+              }
+            },
+            {
+              "at_ms": -350.433,
+              "stage": "speaker.window",
+              "source": "trace",
+              "detail": {
+                "sequence": 2,
+                "outcome": "done",
+                "segment": "28a3545ed331",
+                "started_ms": -419.536,
+                "queued_ms": -419.68
+              }
+            },
+            {
+              "at_ms": 0.0,
+              "stage": "input.voiced_end",
+              "source": "input",
+              "detail": {}
+            },
+            {
+              "at_ms": 648.586,
+              "stage": "speaker.window",
+              "source": "trace",
+              "detail": {
+                "sequence": 3,
+                "outcome": "done",
+                "segment": "28a3545ed331",
+                "started_ms": 580.143,
+                "queued_ms": 580.017
+              }
+            },
+            {
+              "at_ms": 700.62,
+              "stage": "perception.speech_closed",
+              "source": "trace",
+              "detail": {
+                "sequence": 261,
+                "segment": "28a3545ed331",
+                "observation": "cfbad500acb4",
+                "started_ms": -4387.783
+              }
+            },
+            {
+              "at_ms": 700.867,
+              "stage": "speech.close",
+              "source": "trace",
+              "detail": {
+                "frame_count": 256,
+                "segment": "28a3545ed331",
+                "observation": "cfbad500acb4"
+              }
+            },
+            {
+              "at_ms": 700.911,
+              "stage": "stt.commit",
+              "source": "trace",
+              "detail": {
+                "frame_count": 256,
+                "outcome": "accepted",
+                "segment": "28a3545ed331"
+              }
+            },
+            {
+              "at_ms": 702.664,
+              "stage": "candidate.segment",
+              "source": "trace",
+              "detail": {
+                "candidate": "195a5ff0a1be",
+                "segment": "28a3545ed331",
+                "observation": "cfbad500acb4"
+              }
+            },
+            {
+              "at_ms": 740.873,
+              "stage": "candidate.assessment",
+              "source": "trace",
+              "detail": {
+                "outcome": "done",
+                "candidate": "195a5ff0a1be",
+                "started_ms": 703.232,
+                "queued_ms": 702.778
+              }
+            },
+            {
+              "at_ms": 740.999,
+              "stage": "candidate.decision",
+              "source": "trace",
+              "detail": {
+                "sequence": 264,
+                "action": "hold",
+                "outcome": "published",
+                "decision": "f0a0676a60bb",
+                "candidate": "195a5ff0a1be",
+                "observation": "cfbad500acb4"
+              }
+            },
+            {
+              "at_ms": 772.106,
+              "stage": "speaker.window",
+              "source": "trace",
+              "detail": {
+                "sequence": 4,
+                "outcome": "done",
+                "segment": "28a3545ed331",
+                "started_ms": 701.023,
+                "queued_ms": 700.8
+              }
+            },
+            {
+              "at_ms": 772.297,
+              "stage": "participant.segment_ready",
+              "source": "trace",
+              "detail": {
+                "outcome": "bound",
+                "segment": "28a3545ed331",
+                "started_ms": -4319.333
+              }
+            },
+            {
+              "at_ms": 781.485,
+              "stage": "speaker.identity",
+              "source": "trace",
+              "detail": {
+                "outcome": "done",
+                "segment": "28a3545ed331",
+                "started_ms": 772.348
+              }
+            },
+            {
+              "at_ms": 888.083,
+              "stage": "speaker.attribute",
+              "source": "trace",
+              "detail": {
+                "outcome": "done",
+                "segment": "28a3545ed331",
+                "started_ms": 781.519
+              }
+            },
+            {
+              "at_ms": 1241.215,
+              "stage": "candidate.addressing_wait",
+              "source": "trace",
+              "detail": {
+                "outcome": "done",
+                "candidate": "195a5ff0a1be",
+                "started_ms": 741.044
+              }
+            },
+            {
+              "at_ms": 1274.401,
+              "stage": "candidate.assessment",
+              "source": "trace",
+              "detail": {
+                "outcome": "done",
+                "candidate": "195a5ff0a1be",
+                "started_ms": 1241.335,
+                "queued_ms": 1241.281
+              }
+            },
+            {
+              "at_ms": 1274.541,
+              "stage": "candidate.decision",
+              "source": "trace",
+              "detail": {
+                "sequence": 291,
+                "action": "hold",
+                "outcome": "published",
+                "decision": "181af478dde8",
+                "candidate": "195a5ff0a1be",
+                "observation": "cfbad500acb4"
+              }
+            },
+            {
+              "at_ms": 1525.685,
+              "stage": "perception.transcript_final",
+              "source": "trace",
+              "detail": {
+                "sequence": 305,
+                "segment": "28a3545ed331",
+                "observation": "4c64da24cd5d",
+                "started_ms": -4387.783
+              }
+            },
+            {
+              "at_ms": 1525.757,
+              "stage": "stt.terminal",
+              "source": "trace",
+              "detail": {
+                "sequence": 305,
+                "frame_count": 256,
+                "outcome": "final_text",
+                "reason": "provider_final",
+                "text_chars": 52,
+                "segment": "28a3545ed331",
+                "observation": "4c64da24cd5d"
+              }
+            },
+            {
+              "at_ms": 1526.253,
+              "stage": "stt.request",
+              "source": "log",
+              "detail": {}
+            },
+            {
+              "at_ms": 1526.577,
+              "stage": "candidate.transcript",
+              "source": "trace",
+              "detail": {
+                "candidate": "195a5ff0a1be",
+                "segment": "28a3545ed331",
+                "observation": "4c64da24cd5d"
+              }
+            },
+            {
+              "at_ms": 1526.717,
+              "stage": "candidate.addressing_wait",
+              "source": "trace",
+              "detail": {
+                "outcome": "cancelled",
+                "candidate": "195a5ff0a1be",
+                "started_ms": 1274.631
+              }
+            },
+            {
+              "at_ms": 1546.342,
+              "stage": "candidate.assessment",
+              "source": "trace",
+              "detail": {
+                "outcome": "cancelled",
+                "candidate": "195a5ff0a1be",
+                "started_ms": 1526.786,
+                "queued_ms": 1526.637
+              }
+            },
+            {
+              "at_ms": 1592.648,
+              "stage": "candidate.assessment",
+              "source": "trace",
+              "detail": {
+                "outcome": "done",
+                "candidate": "195a5ff0a1be",
+                "started_ms": 1546.418,
+                "queued_ms": 1546.28
+              }
+            },
+            {
+              "at_ms": 1592.791,
+              "stage": "candidate.association",
+              "source": "trace",
+              "detail": {
+                "outcome": "ready",
+                "candidate": "195a5ff0a1be",
+                "started_ms": 1592.768
+              }
+            },
+            {
+              "at_ms": 1592.898,
+              "stage": "candidate.decision",
+              "source": "trace",
+              "detail": {
+                "sequence": 311,
+                "action": "commit",
+                "outcome": "published",
+                "decision": "6e9f98b97d0f",
+                "candidate": "195a5ff0a1be",
+                "observation": "cfbad500acb4"
+              }
+            },
+            {
+              "at_ms": 1592.965,
+              "stage": "candidate.retired",
+              "source": "trace",
+              "detail": {
+                "candidate": "195a5ff0a1be"
+              }
+            },
+            {
+              "at_ms": 1594.223,
+              "stage": "turn.committed",
+              "source": "trace",
+              "detail": {
+                "sequence": 311,
+                "cutoff_sequence": 311,
+                "text_chars": 52,
+                "turn": "e9e930ac3703",
+                "decision": "6e9f98b97d0f",
+                "input": "195a5ff0a1be"
+              }
+            },
+            {
+              "at_ms": 1594.252,
+              "stage": "turn.admission",
+              "source": "trace",
+              "detail": {
+                "sequence": 311,
+                "outcome": "accepted",
+                "reason": "committed",
+                "decision": "6e9f98b97d0f",
+                "candidate": "195a5ff0a1be"
+              }
+            },
+            {
+              "at_ms": 1594.307,
+              "stage": "input.committed",
+              "source": "log",
+              "detail": {
+                "turn": "e9e930ac3703"
+              }
+            },
+            {
+              "at_ms": 1595.196,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "e9e930ac3703"
+              }
+            },
+            {
+              "at_ms": 1595.794,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "e9e930ac3703",
+                "run": "51c09bb0a450"
+              }
+            },
+            {
+              "at_ms": 1596.076,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "e9e930ac3703",
+                "run": "51c09bb0a450"
+              }
+            },
+            {
+              "at_ms": 1794.412,
+              "stage": "memory.recall",
+              "source": "trace",
+              "detail": {
+                "outcome": "empty",
+                "turn": "e9e930ac3703"
+              }
+            },
+            {
+              "at_ms": 1794.571,
+              "stage": "context.ready",
+              "source": "log",
+              "detail": {
+                "turn": "e9e930ac3703"
+              }
+            },
+            {
+              "at_ms": 1796.241,
+              "stage": "context.built",
+              "source": "log",
+              "detail": {
+                "turn": "e9e930ac3703",
+                "run": "51c09bb0a450",
+                "request": "28cdeda727e6"
+              }
+            },
+            {
+              "at_ms": 1796.388,
+              "stage": "model.started",
+              "source": "log",
+              "detail": {
+                "state": "model",
+                "turn": "e9e930ac3703",
+                "run": "51c09bb0a450",
+                "request": "28cdeda727e6"
+              }
+            },
+            {
+              "at_ms": 1796.415,
+              "stage": "model.request",
+              "source": "trace",
+              "detail": {
+                "frame_count": 0,
+                "turn": "e9e930ac3703",
+                "input": "195a5ff0a1be",
+                "run": "51c09bb0a450",
+                "request": "28cdeda727e6"
+              }
+            },
+            {
+              "at_ms": 1796.444,
+              "stage": "model.request_input",
+              "source": "trace",
+              "detail": {
+                "outcome": "missing",
+                "request": "28cdeda727e6",
+                "observation": "cfbad500acb4"
+              }
+            },
+            {
+              "at_ms": 1796.461,
+              "stage": "model.request_input",
+              "source": "trace",
+              "detail": {
+                "outcome": "carried",
+                "request": "28cdeda727e6",
+                "observation": "4c64da24cd5d"
+              }
+            },
+            {
+              "at_ms": 1796.813,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "e9e930ac3703",
+                "run": "51c09bb0a450"
+              }
+            },
+            {
+              "at_ms": 1796.982,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "e9e930ac3703",
+                "run": "51c09bb0a450"
+              }
+            },
+            {
+              "at_ms": 1800.372,
+              "stage": "model.request_sent",
+              "source": "log",
+              "detail": {
+                "attempt": 1,
+                "request": "28cdeda727e6"
+              }
+            },
+            {
+              "at_ms": 2337.333,
+              "stage": "model.first_event",
+              "source": "log",
+              "detail": {
+                "event_kind": "ModelResponseStarted",
+                "turn": "e9e930ac3703",
+                "run": "51c09bb0a450",
+                "request": "28cdeda727e6"
+              }
+            },
+            {
+              "at_ms": 2722.161,
+              "stage": "model.first_text",
+              "source": "log",
+              "detail": {
+                "turn": "e9e930ac3703",
+                "run": "51c09bb0a450",
+                "request": "28cdeda727e6"
+              }
+            },
+            {
+              "at_ms": 2722.304,
+              "stage": "output.text_chunk",
+              "source": "output",
+              "detail": {
+                "lane": "assistant",
+                "turn": "e9e930ac3703",
+                "run": "51c09bb0a450",
+                "request": "28cdeda727e6"
+              }
+            },
+            {
+              "at_ms": 2722.62,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "e9e930ac3703",
+                "run": "51c09bb0a450"
+              }
+            },
+            {
+              "at_ms": 2722.842,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "e9e930ac3703",
+                "run": "51c09bb0a450"
+              }
+            },
+            {
+              "at_ms": 2820.669,
+              "stage": "output.control",
+              "source": "output",
+              "detail": {
+                "lane": "assistant",
+                "turn": "e9e930ac3703",
+                "run": "51c09bb0a450",
+                "type": "text_complete"
+              }
+            },
+            {
+              "at_ms": 2821.024,
+              "stage": "speech.segment",
+              "source": "log",
+              "detail": {
+                "segment": 1
+              }
+            },
+            {
+              "at_ms": 2821.072,
+              "stage": "speech.request",
+              "source": "log",
+              "detail": {
+                "segment": 1
+              }
+            },
+            {
+              "at_ms": 2825.429,
+              "stage": "run.finished",
+              "source": "log",
+              "detail": {
+                "state": "completed",
+                "turn": "e9e930ac3703",
+                "run": "51c09bb0a450"
+              }
+            },
+            {
+              "at_ms": 2825.564,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "e9e930ac3703",
+                "run": "51c09bb0a450"
+              }
+            },
+            {
+              "at_ms": 2825.705,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "e9e930ac3703",
+                "run": "51c09bb0a450"
+              }
+            },
+            {
+              "at_ms": 3517.275,
+              "stage": "tts.first_pcm",
+              "source": "log",
+              "detail": {
+                "attempt": 1
+              }
+            },
+            {
+              "at_ms": 3517.829,
+              "stage": "output.audio_frame",
+              "source": "output",
+              "detail": {
+                "lane": "assistant",
+                "turn": "e9e930ac3703",
+                "run": "51c09bb0a450",
+                "request": "28cdeda727e6"
+              }
+            },
+            {
+              "at_ms": 4284.974,
+              "stage": "output.audio_frame_last",
+              "source": "output",
+              "detail": {
+                "lane": "assistant"
+              }
+            },
+            {
+              "at_ms": 4285.488,
+              "stage": "output.control",
+              "source": "output",
+              "detail": {
+                "lane": "assistant",
+                "turn": "e9e930ac3703",
+                "run": "51c09bb0a450",
+                "type": "audio_complete"
+              }
+            },
+            {
+              "at_ms": 4285.639,
+              "stage": "output.control",
+              "source": "output",
+              "detail": {
+                "lane": "assistant",
+                "turn": "e9e930ac3703",
+                "run": "51c09bb0a450",
+                "type": "complete"
+              }
+            }
+          ],
+          "round": 2,
+          "sentences": [
+            {
+              "index": 1,
+              "heard": true,
+              "span_ms": null,
+              "segments": [
+                "28a3545ed331"
+              ],
+              "coverage": null,
+              "covered_ms": null,
+              "stt": "final",
+              "adopted": true,
+              "content": "holds_its_words",
+              "lost": null,
+              "why": null
+            },
+            {
+              "index": 2,
+              "heard": true,
+              "span_ms": null,
+              "segments": [
+                "28a3545ed331"
+              ],
+              "coverage": null,
+              "covered_ms": null,
+              "stt": "final",
+              "adopted": true,
+              "content": "holds_its_words",
+              "lost": null,
+              "why": null
+            }
+          ],
+          "sample": "hesitate sha256:dd8f345419d9"
+        },
+        {
+          "name": "hesitate",
+          "outcome": "passed",
+          "summary": "Answered as the task expects; first text 2847 ms; first audio frame 3566 ms; complete 4155 ms",
+          "configuration": "model gpt-5.6-luna · stt openai_segment gpt-4o-transcribe · tts openai gpt-4o-mini-tts · vision off",
+          "blocked_stage": null,
+          "cause": null,
+          "details": [],
+          "task": "What is two plus three? Answer with just the number.",
+          "transcript": "Um, what is two plus three? Answer with just the number.",
+          "answer": "5",
+          "reached": [
+            "input",
+            "vad.closed",
+            "stt.final",
+            "turn.committed",
+            "model.request",
+            "request.input",
+            "request.content",
+            "model.first_event",
+            "text.first",
+            "text.complete",
+            "audio.first",
+            "outputs.complete",
+            "run.completed"
+          ],
+          "request": {
+            "turn": "da08e126dcaf",
+            "run": "447591ab5f70",
+            "request": "2ff176aeda99",
+            "carries_turn_input": true,
+            "carries_turn_content": true,
+            "frames": 0,
+            "sample_frames": 0,
+            "requests": 1,
+            "attempts": 1,
+            "finals": 1
+          },
+          "outputs": [
+            {
+              "output": "f604ef741b25",
+              "modalities": "text+audio",
+              "terminal": "completed",
+              "reason": null,
+              "at_ms": 4154.58
+            }
+          ],
+          "metrics": [
+            {
+              "name": "first_text",
+              "value": 2847.463,
+              "unit": "ms",
+              "start": "last voiced sample in",
+              "end": "first answer text out",
+              "boundary": "diagnostic input to the output boundary, server side",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "first_audio_frame",
+              "value": 3566.326,
+              "unit": "ms",
+              "start": "last voiced sample in",
+              "end": "first answer audio frame out",
+              "boundary": "diagnostic input to the output boundary, server side",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "first_visual_output_frame",
+              "value": null,
+              "unit": "ms",
+              "start": "last voiced sample in",
+              "end": "first visual output frame out",
+              "boundary": "diagnostic input to the output boundary, server side",
+              "samples": 0,
+              "values": [],
+              "note": "no visual output reaches the output boundary",
+              "merged": []
+            },
+            {
+              "name": "text_complete",
+              "value": 3009.314,
+              "unit": "ms",
+              "start": "last voiced sample in",
+              "end": "last text complete",
+              "boundary": "diagnostic input to the output boundary, server side",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "audio_last_frame",
+              "value": 4153.981,
+              "unit": "ms",
+              "start": "last voiced sample in",
+              "end": "last answer audio frame out",
+              "boundary": "diagnostic input to the output boundary, server side",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "response_final",
+              "value": 4154.58,
+              "unit": "ms",
+              "start": "last voiced sample in",
+              "end": "every output complete",
+              "boundary": "diagnostic input to the output boundary, server side",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "audio_duration",
+              "value": 2.15,
+              "unit": "s",
+              "start": "first frame",
+              "end": "last frame",
+              "boundary": "answer audio frames at the output boundary",
+              "samples": 108,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "audio_frame_interval",
+              "value": 0.152,
+              "unit": "ms",
+              "start": "frame out",
+              "end": "next frame out",
+              "boundary": "answer audio frames at the output boundary",
+              "samples": 107,
+              "values": [],
+              "note": "median",
+              "merged": []
+            },
+            {
+              "name": "audio_max_gap",
+              "value": 214.694,
+              "unit": "ms",
+              "start": "frame out",
+              "end": "next frame out",
+              "boundary": "answer audio frames at the output boundary",
+              "samples": 107,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "audio_underruns",
+              "value": 1.0,
+              "unit": "count",
+              "start": "first frame out",
+              "end": "last frame out",
+              "boundary": "a real-time queue started at the first frame, without startup buffering",
+              "samples": 108,
+              "values": [],
+              "note": "16.4 ms starved in total",
+              "merged": []
+            },
+            {
+              "name": "audio_rtf",
+              "value": 0.2733,
+              "unit": "ratio",
+              "start": "first frame out",
+              "end": "last frame out",
+              "boundary": "answer audio frames at the output boundary",
+              "samples": 108,
+              "values": [],
+              "note": "0.588 s producing over 2.150 s of audio",
+              "merged": []
+            },
+            {
+              "name": "output_events_dropped",
+              "value": 0.0,
+              "unit": "count",
+              "start": "session ready",
+              "end": "turn end",
+              "boundary": "the diagnostic sink's subscription",
+              "samples": 1,
+              "values": [],
+              "note": "a reliable subscription: a slow sink holds producers back, it drops nothing",
+              "merged": []
+            }
+          ],
+          "segments": [
+            {
+              "name": "input",
+              "value": 1586.962,
+              "unit": "ms",
+              "start": "Final speech",
+              "end": "Final transcript",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "input.vad_close",
+              "value": 700.837,
+              "unit": "ms",
+              "start": "Final speech",
+              "end": "VAD close",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "input.final_transcript",
+              "value": 886.125,
+              "unit": "ms",
+              "start": "VAD close",
+              "end": "Final transcript",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "context",
+              "value": 371.906,
+              "unit": "ms",
+              "start": "Final transcript",
+              "end": "Model request sent",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "context.turn_commit",
+              "value": 151.89,
+              "unit": "ms",
+              "start": "Final transcript",
+              "end": "Turn commit",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "context.context_ready",
+              "value": 214.565,
+              "unit": "ms",
+              "start": "Turn commit",
+              "end": "Context readiness check complete",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "context.context_built",
+              "value": 1.536,
+              "unit": "ms",
+              "start": "Context readiness check complete",
+              "end": "Context built",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "context.request_sent",
+              "value": 3.915,
+              "unit": "ms",
+              "start": "Context built",
+              "end": "Model request sent",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "output",
+              "value": 1607.458,
+              "unit": "ms",
+              "start": "Model request sent",
+              "end": "First audio frame",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "output.first_text_delta",
+              "value": 888.471,
+              "unit": "ms",
+              "start": "Model request sent",
+              "end": "First text delta",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "output.tts_request",
+              "value": 162.423,
+              "unit": "ms",
+              "start": "First text delta",
+              "end": "TTS request",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "output.first_pcm",
+              "value": 556.065,
+              "unit": "ms",
+              "start": "TTS request",
+              "end": "First PCM",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "output.first_audio_frame",
+              "value": 0.499,
+              "unit": "ms",
+              "start": "First PCM",
+              "end": "First audio frame",
+              "boundary": "the Turn's first model request, one clock",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "stt_request_to_final",
+              "value": 885.987,
+              "unit": "ms",
+              "start": "segment committed to STT",
+              "end": "STT final",
+              "boundary": "input trace",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "stt_queue",
+              "value": 0.026,
+              "unit": "ms",
+              "start": "segment committed",
+              "end": "request started",
+              "boundary": "the STT request of the Turn's final, as its plugin times it",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "stt_connect",
+              "value": 6.297,
+              "unit": "ms",
+              "start": "connection opening",
+              "end": "connection open",
+              "boundary": "the STT request of the Turn's final, as its plugin times it",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "stt_tls",
+              "value": 5.361,
+              "unit": "ms",
+              "start": "TLS handshake started",
+              "end": "TLS handshake done",
+              "boundary": "the STT request of the Turn's final, as its plugin times it",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "stt_upload",
+              "value": 6.01,
+              "unit": "ms",
+              "start": "request headers sent",
+              "end": "audio sent",
+              "boundary": "the STT request of the Turn's final, as its plugin times it",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "stt_wait",
+              "value": 685.547,
+              "unit": "ms",
+              "start": "audio sent",
+              "end": "answer's headers",
+              "boundary": "the STT request of the Turn's final, as its plugin times it",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "stt_first_event",
+              "value": 0.428,
+              "unit": "ms",
+              "start": "answer's headers",
+              "end": "first stream event",
+              "boundary": "the STT request of the Turn's final, as its plugin times it",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "stt_stream",
+              "value": 180.8,
+              "unit": "ms",
+              "start": "answer's headers",
+              "end": "transcript done",
+              "boundary": "the STT request of the Turn's final, as its plugin times it",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "association_ready",
+              "value": 70.509,
+              "unit": "ms",
+              "start": "speech closed",
+              "end": "speaker association ready",
+              "boundary": "the speaker association of the Turn's final segment",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "association_wait",
+              "value": 0.011,
+              "unit": "ms",
+              "start": "commit asked",
+              "end": "association ready to the commit",
+              "boundary": "the commit's association checks of the Turn's candidate",
+              "samples": 1,
+              "values": [
+                0.011
+              ],
+              "note": "none needed: every segment of its candidate was ready before the commit asked",
+              "merged": []
+            },
+            {
+              "name": "assessment_queue",
+              "value": 0.132,
+              "unit": "ms",
+              "start": "assessment queued",
+              "end": "assessment started",
+              "boundary": "the endpoint model's last assessment before the Turn's commit",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "endpoint_assessment",
+              "value": 79.835,
+              "unit": "ms",
+              "start": "final transcript",
+              "end": "commit decision",
+              "boundary": "the endpoint model's assessments between the Turn's final and its commit",
+              "samples": 2,
+              "values": [
+                47.477,
+                32.358
+              ],
+              "note": "2 runs",
+              "merged": []
+            },
+            {
+              "name": "decision_holds",
+              "value": 70.121,
+              "unit": "ms",
+              "start": "final transcript",
+              "end": "commit decision",
+              "boundary": "timed waits between the Turn's final and its commit",
+              "samples": 2,
+              "values": [
+                0.897,
+                69.224
+              ],
+              "note": "addressing_wait",
+              "merged": []
+            },
+            {
+              "name": "input_lateness",
+              "value": 2.062,
+              "unit": "ms",
+              "start": "frame due",
+              "end": "frame published",
+              "boundary": "the diagnostic source's cadence, at worst",
+              "samples": 430,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "context_ready_wait",
+              "value": 213.11,
+              "unit": "ms",
+              "start": "Context asked for the Turn's context",
+              "end": "context ready",
+              "boundary": "Context manager log",
+              "samples": 1,
+              "values": [],
+              "note": "how long registered context work held it back",
+              "merged": []
+            },
+            {
+              "name": "model_request_client",
+              "value": 0.003,
+              "unit": "ms",
+              "start": "model request",
+              "end": "the provider's client ready",
+              "boundary": "provider log",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "model_request_prepare",
+              "value": 3.45,
+              "unit": "ms",
+              "start": "model request",
+              "end": "the request taken to its first attempt sent",
+              "boundary": "provider log",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "model_request_encode",
+              "value": 0.429,
+              "unit": "ms",
+              "start": "model request",
+              "end": "the request encoded here",
+              "boundary": "provider log",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "model_request_frames",
+              "value": 0,
+              "unit": "frames",
+              "start": "model request",
+              "end": "pictures the request carries",
+              "boundary": "provider log",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "model_request_bytes",
+              "value": 19222,
+              "unit": "bytes",
+              "start": "model request",
+              "end": "the body the transport sent",
+              "boundary": "provider log",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "model_request_attempts",
+              "value": 1.0,
+              "unit": "count",
+              "start": "first attempt sent",
+              "end": "last attempt sent",
+              "boundary": "provider log",
+              "samples": 1,
+              "values": [],
+              "note": null,
+              "merged": []
+            },
+            {
+              "name": "model_first_event",
+              "value": 488.194,
+              "unit": "ms",
+              "start": "model request sent",
+              "end": "first model stream event",
+              "boundary": "provider and loop logs",
+              "samples": 1,
+              "values": [],
+              "note": "its kind: ModelResponseStarted",
+              "merged": []
+            }
+          ],
+          "frames": [],
+          "evidence": [
+            {
+              "at_ms": -4420.777,
+              "stage": "input.audio_started",
+              "source": "input",
+              "detail": {}
+            },
+            {
+              "at_ms": -4378.439,
+              "stage": "inference.summary",
+              "source": "log",
+              "detail": {}
+            },
+            {
+              "at_ms": -4315.06,
+              "stage": "speech.start",
+              "source": "trace",
+              "detail": {
+                "frame_count": 1,
+                "segment": "dafca51b1b42",
+                "observation": "8bf5c87d285d"
+              }
+            },
+            {
+              "at_ms": -4314.774,
+              "stage": "candidate.segment",
+              "source": "trace",
+              "detail": {
+                "candidate": "53afe994067b",
+                "segment": "dafca51b1b42",
+                "observation": "8bf5c87d285d"
+              }
+            },
+            {
+              "at_ms": -4314.56,
+              "stage": "candidate.decision",
+              "source": "trace",
+              "detail": {
+                "sequence": 9,
+                "action": "interrupt",
+                "outcome": "published",
+                "decision": "b5e9b768de83",
+                "candidate": "53afe994067b",
+                "observation": "8bf5c87d285d"
+              }
+            },
+            {
+              "at_ms": -1350.15,
+              "stage": "speaker.window",
+              "source": "trace",
+              "detail": {
+                "sequence": 1,
+                "outcome": "done",
+                "segment": "dafca51b1b42",
+                "started_ms": -1419.253,
+                "queued_ms": -1419.438
+              }
+            },
+            {
+              "at_ms": -350.013,
+              "stage": "speaker.window",
+              "source": "trace",
+              "detail": {
+                "sequence": 2,
+                "outcome": "done",
+                "segment": "dafca51b1b42",
+                "started_ms": -419.302,
+                "queued_ms": -419.457
+              }
+            },
+            {
+              "at_ms": 0.0,
+              "stage": "input.voiced_end",
+              "source": "input",
+              "detail": {}
+            },
+            {
+              "at_ms": 649.025,
+              "stage": "speaker.window",
+              "source": "trace",
+              "detail": {
+                "sequence": 3,
+                "outcome": "done",
+                "segment": "dafca51b1b42",
+                "started_ms": 579.818,
+                "queued_ms": 579.715
+              }
+            },
+            {
+              "at_ms": 700.837,
+              "stage": "perception.speech_closed",
+              "source": "trace",
+              "detail": {
+                "sequence": 261,
+                "segment": "dafca51b1b42",
+                "observation": "bb649a13c966",
+                "started_ms": -4387.454
+              }
+            },
+            {
+              "at_ms": 700.945,
+              "stage": "speech.close",
+              "source": "trace",
+              "detail": {
+                "frame_count": 256,
+                "segment": "dafca51b1b42",
+                "observation": "bb649a13c966"
+              }
+            },
+            {
+              "at_ms": 700.975,
+              "stage": "stt.commit",
+              "source": "trace",
+              "detail": {
+                "frame_count": 256,
+                "outcome": "accepted",
+                "segment": "dafca51b1b42"
+              }
+            },
+            {
+              "at_ms": 701.915,
+              "stage": "candidate.segment",
+              "source": "trace",
+              "detail": {
+                "candidate": "53afe994067b",
+                "segment": "dafca51b1b42",
+                "observation": "bb649a13c966"
+              }
+            },
+            {
+              "at_ms": 740.347,
+              "stage": "candidate.assessment",
+              "source": "trace",
+              "detail": {
+                "outcome": "done",
+                "candidate": "53afe994067b",
+                "started_ms": 702.586,
+                "queued_ms": 702.011
+              }
+            },
+            {
+              "at_ms": 740.472,
+              "stage": "candidate.decision",
+              "source": "trace",
+              "detail": {
+                "sequence": 264,
+                "action": "hold",
+                "outcome": "published",
+                "decision": "cbce12d9198c",
+                "candidate": "53afe994067b",
+                "observation": "bb649a13c966"
+              }
+            },
+            {
+              "at_ms": 771.148,
+              "stage": "speaker.window",
+              "source": "trace",
+              "detail": {
+                "sequence": 4,
+                "outcome": "done",
+                "segment": "dafca51b1b42",
+                "started_ms": 701.629,
+                "queued_ms": 701.096
+              }
+            },
+            {
+              "at_ms": 771.348,
+              "stage": "participant.segment_ready",
+              "source": "trace",
+              "detail": {
+                "outcome": "bound",
+                "segment": "dafca51b1b42",
+                "started_ms": -4314.975
+              }
+            },
+            {
+              "at_ms": 774.999,
+              "stage": "speaker.identity",
+              "source": "trace",
+              "detail": {
+                "outcome": "done",
+                "segment": "dafca51b1b42",
+                "started_ms": 771.401
+              }
+            },
+            {
+              "at_ms": 873.288,
+              "stage": "speaker.attribute",
+              "source": "trace",
+              "detail": {
+                "outcome": "done",
+                "segment": "dafca51b1b42",
+                "started_ms": 775.038
+              }
+            },
+            {
+              "at_ms": 1240.894,
+              "stage": "candidate.addressing_wait",
+              "source": "trace",
+              "detail": {
+                "outcome": "done",
+                "candidate": "53afe994067b",
+                "started_ms": 740.521
+              }
+            },
+            {
+              "at_ms": 1276.226,
+              "stage": "candidate.assessment",
+              "source": "trace",
+              "detail": {
+                "outcome": "done",
+                "candidate": "53afe994067b",
+                "started_ms": 1241.012,
+                "queued_ms": 1240.956
+              }
+            },
+            {
+              "at_ms": 1276.356,
+              "stage": "candidate.decision",
+              "source": "trace",
+              "detail": {
+                "sequence": 291,
+                "action": "hold",
+                "outcome": "published",
+                "decision": "62fd7790eb15",
+                "candidate": "53afe994067b",
+                "observation": "bb649a13c966"
+              }
+            },
+            {
+              "at_ms": 1586.903,
+              "stage": "perception.transcript_final",
+              "source": "trace",
+              "detail": {
+                "sequence": 308,
+                "segment": "dafca51b1b42",
+                "observation": "72bffe3164b6",
+                "started_ms": -4387.454
+              }
+            },
+            {
+              "at_ms": 1586.962,
+              "stage": "stt.terminal",
+              "source": "trace",
+              "detail": {
+                "sequence": 308,
+                "frame_count": 256,
+                "outcome": "final_text",
+                "reason": "provider_final",
+                "text_chars": 56,
+                "segment": "dafca51b1b42",
+                "observation": "72bffe3164b6"
+              }
+            },
+            {
+              "at_ms": 1587.429,
+              "stage": "stt.request",
+              "source": "log",
+              "detail": {}
+            },
+            {
+              "at_ms": 1587.742,
+              "stage": "candidate.transcript",
+              "source": "trace",
+              "detail": {
+                "candidate": "53afe994067b",
+                "segment": "dafca51b1b42",
+                "observation": "72bffe3164b6"
+              }
+            },
+            {
+              "at_ms": 1587.862,
+              "stage": "candidate.addressing_wait",
+              "source": "trace",
+              "detail": {
+                "outcome": "cancelled",
+                "candidate": "53afe994067b",
+                "started_ms": 1276.431
+              }
+            },
+            {
+              "at_ms": 1635.401,
+              "stage": "candidate.assessment",
+              "source": "trace",
+              "detail": {
+                "outcome": "done",
+                "candidate": "53afe994067b",
+                "started_ms": 1587.917,
+                "queued_ms": 1587.798
+              }
+            },
+            {
+              "at_ms": 1635.571,
+              "stage": "candidate.decision",
+              "source": "trace",
+              "detail": {
+                "sequence": 311,
+                "action": "hold",
+                "outcome": "published",
+                "decision": "f67e636a567c",
+                "candidate": "53afe994067b",
+                "observation": "bb649a13c966"
+              }
+            },
+            {
+              "at_ms": 1704.901,
+              "stage": "candidate.addressing_wait",
+              "source": "trace",
+              "detail": {
+                "outcome": "cancelled",
+                "candidate": "53afe994067b",
+                "started_ms": 1635.673
+              }
+            },
+            {
+              "at_ms": 1737.34,
+              "stage": "candidate.assessment",
+              "source": "trace",
+              "detail": {
+                "outcome": "done",
+                "candidate": "53afe994067b",
+                "started_ms": 1704.977,
+                "queued_ms": 1704.844
+              }
+            },
+            {
+              "at_ms": 1737.457,
+              "stage": "candidate.association",
+              "source": "trace",
+              "detail": {
+                "outcome": "ready",
+                "candidate": "53afe994067b",
+                "started_ms": 1737.442
+              }
+            },
+            {
+              "at_ms": 1737.56,
+              "stage": "candidate.decision",
+              "source": "trace",
+              "detail": {
+                "sequence": 319,
+                "action": "commit",
+                "outcome": "published",
+                "decision": "c578ec2f82db",
+                "candidate": "53afe994067b",
+                "observation": "bb649a13c966"
+              }
+            },
+            {
+              "at_ms": 1737.636,
+              "stage": "candidate.retired",
+              "source": "trace",
+              "detail": {
+                "candidate": "53afe994067b"
+              }
+            },
+            {
+              "at_ms": 1738.852,
+              "stage": "turn.committed",
+              "source": "trace",
+              "detail": {
+                "sequence": 319,
+                "cutoff_sequence": 319,
+                "text_chars": 56,
+                "turn": "da08e126dcaf",
+                "decision": "c578ec2f82db",
+                "input": "53afe994067b"
+              }
+            },
+            {
+              "at_ms": 1738.875,
+              "stage": "turn.admission",
+              "source": "trace",
+              "detail": {
+                "sequence": 319,
+                "outcome": "accepted",
+                "reason": "committed",
+                "decision": "c578ec2f82db",
+                "candidate": "53afe994067b"
+              }
+            },
+            {
+              "at_ms": 1738.93,
+              "stage": "input.committed",
+              "source": "log",
+              "detail": {
+                "turn": "da08e126dcaf"
+              }
+            },
+            {
+              "at_ms": 1739.737,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "da08e126dcaf"
+              }
+            },
+            {
+              "at_ms": 1740.435,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "da08e126dcaf",
+                "run": "447591ab5f70"
+              }
+            },
+            {
+              "at_ms": 1740.832,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "da08e126dcaf",
+                "run": "447591ab5f70"
+              }
+            },
+            {
+              "at_ms": 1953.285,
+              "stage": "memory.recall",
+              "source": "trace",
+              "detail": {
+                "outcome": "empty",
+                "turn": "da08e126dcaf"
+              }
+            },
+            {
+              "at_ms": 1953.418,
+              "stage": "context.ready",
+              "source": "log",
+              "detail": {
+                "turn": "da08e126dcaf"
+              }
+            },
+            {
+              "at_ms": 1954.954,
+              "stage": "context.built",
+              "source": "log",
+              "detail": {
+                "turn": "da08e126dcaf",
+                "run": "447591ab5f70",
+                "request": "2ff176aeda99"
+              }
+            },
+            {
+              "at_ms": 1955.101,
+              "stage": "model.started",
+              "source": "log",
+              "detail": {
+                "state": "model",
+                "turn": "da08e126dcaf",
+                "run": "447591ab5f70",
+                "request": "2ff176aeda99"
+              }
+            },
+            {
+              "at_ms": 1955.123,
+              "stage": "model.request",
+              "source": "trace",
+              "detail": {
+                "frame_count": 0,
+                "turn": "da08e126dcaf",
+                "input": "53afe994067b",
+                "run": "447591ab5f70",
+                "request": "2ff176aeda99"
+              }
+            },
+            {
+              "at_ms": 1955.151,
+              "stage": "model.request_input",
+              "source": "trace",
+              "detail": {
+                "outcome": "missing",
+                "request": "2ff176aeda99",
+                "observation": "bb649a13c966"
+              }
+            },
+            {
+              "at_ms": 1955.167,
+              "stage": "model.request_input",
+              "source": "trace",
+              "detail": {
+                "outcome": "carried",
+                "request": "2ff176aeda99",
+                "observation": "72bffe3164b6"
+              }
+            },
+            {
+              "at_ms": 1955.468,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "da08e126dcaf",
+                "run": "447591ab5f70"
+              }
+            },
+            {
+              "at_ms": 1955.763,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "da08e126dcaf",
+                "run": "447591ab5f70"
+              }
+            },
+            {
+              "at_ms": 1958.868,
+              "stage": "model.request_sent",
+              "source": "log",
+              "detail": {
+                "attempt": 1,
+                "request": "2ff176aeda99"
+              }
+            },
+            {
+              "at_ms": 2447.062,
+              "stage": "model.first_event",
+              "source": "log",
+              "detail": {
+                "event_kind": "ModelResponseStarted",
+                "turn": "da08e126dcaf",
+                "run": "447591ab5f70",
+                "request": "2ff176aeda99"
+              }
+            },
+            {
+              "at_ms": 2847.339,
+              "stage": "model.first_text",
+              "source": "log",
+              "detail": {
+                "turn": "da08e126dcaf",
+                "run": "447591ab5f70",
+                "request": "2ff176aeda99"
+              }
+            },
+            {
+              "at_ms": 2847.463,
+              "stage": "output.text_chunk",
+              "source": "output",
+              "detail": {
+                "lane": "assistant",
+                "turn": "da08e126dcaf",
+                "run": "447591ab5f70",
+                "request": "2ff176aeda99"
+              }
+            },
+            {
+              "at_ms": 2847.752,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "da08e126dcaf",
+                "run": "447591ab5f70"
+              }
+            },
+            {
+              "at_ms": 2847.938,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "da08e126dcaf",
+                "run": "447591ab5f70"
+              }
+            },
+            {
+              "at_ms": 3009.314,
+              "stage": "output.control",
+              "source": "output",
+              "detail": {
+                "lane": "assistant",
+                "turn": "da08e126dcaf",
+                "run": "447591ab5f70",
+                "type": "text_complete"
+              }
+            },
+            {
+              "at_ms": 3009.723,
+              "stage": "speech.segment",
+              "source": "log",
+              "detail": {
+                "segment": 1
+              }
+            },
+            {
+              "at_ms": 3009.762,
+              "stage": "speech.request",
+              "source": "log",
+              "detail": {
+                "segment": 1
+              }
+            },
+            {
+              "at_ms": 3011.496,
+              "stage": "run.finished",
+              "source": "log",
+              "detail": {
+                "state": "completed",
+                "turn": "da08e126dcaf",
+                "run": "447591ab5f70"
+              }
+            },
+            {
+              "at_ms": 3011.608,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "da08e126dcaf",
+                "run": "447591ab5f70"
+              }
+            },
+            {
+              "at_ms": 3011.762,
+              "stage": "output.status",
+              "source": "output",
+              "detail": {
+                "lane": "status",
+                "turn": "da08e126dcaf",
+                "run": "447591ab5f70"
+              }
+            },
+            {
+              "at_ms": 4153.981,
+              "stage": "output.audio_frame_last",
+              "source": "output",
+              "detail": {
+                "lane": "assistant"
+              }
+            },
+            {
+              "at_ms": 4154.441,
+              "stage": "output.control",
+              "source": "output",
+              "detail": {
+                "lane": "assistant",
+                "turn": "da08e126dcaf",
+                "run": "447591ab5f70",
+                "type": "audio_complete"
+              }
+            },
+            {
+              "at_ms": 4154.58,
+              "stage": "output.control",
+              "source": "output",
+              "detail": {
+                "lane": "assistant",
+                "turn": "da08e126dcaf",
+                "run": "447591ab5f70",
+                "type": "complete"
+              }
+            }
+          ],
+          "round": 3,
+          "sentences": [
+            {
+              "index": 1,
+              "heard": true,
+              "span_ms": null,
+              "segments": [
+                "dafca51b1b42"
+              ],
+              "coverage": null,
+              "covered_ms": null,
+              "stt": "final",
+              "adopted": true,
+              "content": "holds_its_words",
+              "lost": null,
+              "why": null
+            },
+            {
+              "index": 2,
+              "heard": true,
+              "span_ms": null,
+              "segments": [
+                "dafca51b1b42"
+              ],
+              "coverage": null,
+              "covered_ms": null,
+              "stt": "final",
+              "adopted": true,
+              "content": "holds_its_words",
+              "lost": null,
+              "why": null
+            }
+          ],
+          "sample": "hesitate sha256:dd8f345419d9"
+        },
+        {
+          "name": "voice_vision",
+          "outcome": "not_enabled",
+          "summary": "Vision is off or text only: voice runs instead",
+          "configuration": "model gpt-5.6-luna · stt openai_segment gpt-4o-transcribe · tts openai gpt-4o-mini-tts · vision off",
+          "blocked_stage": null,
+          "cause": null,
+          "details": [],
+          "task": null,
+          "transcript": null,
+          "answer": null,
+          "reached": [],
+          "request": {},
+          "outputs": [],
+          "metrics": [],
+          "segments": [],
+          "frames": [],
+          "evidence": [],
+          "round": null,
+          "sentences": [],
+          "sample": null
+        },
+        {
+          "name": "image_input",
+          "outcome": "no_coverage",
+          "summary": "No input transport delivers images to a session yet",
+          "configuration": "model gpt-5.6-luna · stt openai_segment gpt-4o-transcribe · tts openai gpt-4o-mini-tts · vision off",
+          "blocked_stage": null,
+          "cause": null,
+          "details": [],
+          "task": null,
+          "transcript": null,
+          "answer": null,
+          "reached": [],
+          "request": {},
+          "outputs": [],
+          "metrics": [],
+          "segments": [],
+          "frames": [],
+          "evidence": [],
+          "round": null,
+          "sentences": [],
+          "sample": null
+        },
+        {
+          "name": "visual_output",
+          "outcome": "not_enabled",
+          "summary": "No Character is configured",
+          "configuration": "model gpt-5.6-luna · stt openai_segment gpt-4o-transcribe · tts openai gpt-4o-mini-tts · vision off",
+          "blocked_stage": null,
+          "cause": null,
+          "details": [],
+          "task": null,
+          "transcript": null,
+          "answer": null,
+          "reached": [],
+          "request": {},
+          "outputs": [],
+          "metrics": [],
+          "segments": [],
+          "frames": [],
+          "evidence": [],
+          "round": null,
+          "sentences": [],
+          "sample": null
+        }
+      ],
+      "metrics": [],
+      "services": [],
+      "summaries": [
+        {
+          "name": "hesitate",
+          "configuration": "model gpt-5.6-luna · stt openai_segment gpt-4o-transcribe · tts openai gpt-4o-mini-tts · vision off",
+          "rounds": 3,
+          "passed": 3,
+          "stopped_at": {},
+          "figures": [
+            {
+              "name": "first_text",
+              "unit": "ms",
+              "first": 2693.977,
+              "samples": 2,
+              "median": 2784.883,
+              "low": 2722.304,
+              "high": 2847.463,
+              "p95": null,
+              "note": null,
+              "all_first": 2693.977,
+              "all_samples": 2,
+              "all_median": 2784.883,
+              "all_low": 2722.304,
+              "all_high": 2847.463,
+              "merged": 0
+            },
+            {
+              "name": "first_audio_frame",
+              "unit": "ms",
+              "first": 3316.56,
+              "samples": 2,
+              "median": 3542.078,
+              "low": 3517.829,
+              "high": 3566.326,
+              "p95": null,
+              "note": null,
+              "all_first": 3316.56,
+              "all_samples": 2,
+              "all_median": 3542.078,
+              "all_low": 3517.829,
+              "all_high": 3566.326,
+              "merged": 0
+            },
+            {
+              "name": "first_visual_output_frame",
+              "unit": "ms",
+              "first": null,
+              "samples": 0,
+              "median": null,
+              "low": null,
+              "high": null,
+              "p95": null,
+              "note": "no visual output reaches the output boundary",
+              "all_first": null,
+              "all_samples": 0,
+              "all_median": null,
+              "all_low": null,
+              "all_high": null,
+              "merged": 0
+            },
+            {
+              "name": "text_complete",
+              "unit": "ms",
+              "first": 2776.395,
+              "samples": 2,
+              "median": 2914.992,
+              "low": 2820.669,
+              "high": 3009.314,
+              "p95": null,
+              "note": null,
+              "all_first": 2776.395,
+              "all_samples": 2,
+              "all_median": 2914.992,
+              "all_low": 2820.669,
+              "all_high": 3009.314,
+              "merged": 0
+            },
+            {
+              "name": "audio_last_frame",
+              "unit": "ms",
+              "first": 3682.874,
+              "samples": 2,
+              "median": 4219.477,
+              "low": 4153.981,
+              "high": 4284.974,
+              "p95": null,
+              "note": null,
+              "all_first": 3682.874,
+              "all_samples": 2,
+              "all_median": 4219.477,
+              "all_low": 4153.981,
+              "all_high": 4284.974,
+              "merged": 0
+            },
+            {
+              "name": "response_final",
+              "unit": "ms",
+              "first": 3683.564,
+              "samples": 2,
+              "median": 4220.11,
+              "low": 4154.58,
+              "high": 4285.639,
+              "p95": null,
+              "note": null,
+              "all_first": 3683.564,
+              "all_samples": 2,
+              "all_median": 4220.11,
+              "all_low": 4154.58,
+              "all_high": 4285.639,
+              "merged": 0
+            },
+            {
+              "name": "audio_duration",
+              "unit": "s",
+              "first": 1.65,
+              "samples": 2,
+              "median": 2.4,
+              "low": 2.15,
+              "high": 2.65,
+              "p95": null,
+              "note": null,
+              "all_first": 1.65,
+              "all_samples": 2,
+              "all_median": 2.4,
+              "all_low": 2.15,
+              "all_high": 2.65,
+              "merged": 0
+            },
+            {
+              "name": "audio_frame_interval",
+              "unit": "ms",
+              "first": 0.161,
+              "samples": 2,
+              "median": 0.152,
+              "low": 0.152,
+              "high": 0.152,
+              "p95": null,
+              "note": null,
+              "all_first": 0.161,
+              "all_samples": 2,
+              "all_median": 0.152,
+              "all_low": 0.152,
+              "all_high": 0.152,
+              "merged": 0
+            },
+            {
+              "name": "audio_max_gap",
+              "unit": "ms",
+              "first": 313.797,
+              "samples": 2,
+              "median": 276.797,
+              "low": 214.694,
+              "high": 338.9,
+              "p95": null,
+              "note": null,
+              "all_first": 313.797,
+              "all_samples": 2,
+              "all_median": 276.797,
+              "all_low": 214.694,
+              "all_high": 338.9,
+              "merged": 0
+            },
+            {
+              "name": "audio_underruns",
+              "unit": "count",
+              "first": 1.0,
+              "samples": 2,
+              "median": 1.0,
+              "low": 1.0,
+              "high": 1.0,
+              "p95": null,
+              "note": null,
+              "all_first": 1.0,
+              "all_samples": 2,
+              "all_median": 1.0,
+              "all_low": 1.0,
+              "all_high": 1.0,
+              "merged": 0
+            },
+            {
+              "name": "audio_rtf",
+              "unit": "ratio",
+              "first": 0.222,
+              "samples": 2,
+              "median": 0.281,
+              "low": 0.2733,
+              "high": 0.2895,
+              "p95": null,
+              "note": null,
+              "all_first": 0.222,
+              "all_samples": 2,
+              "all_median": 0.281,
+              "all_low": 0.2733,
+              "all_high": 0.2895,
+              "merged": 0
+            },
+            {
+              "name": "output_events_dropped",
+              "unit": "count",
+              "first": 0.0,
+              "samples": 2,
+              "median": 0.0,
+              "low": 0.0,
+              "high": 0.0,
+              "p95": null,
+              "note": null,
+              "all_first": 0.0,
+              "all_samples": 2,
+              "all_median": 0.0,
+              "all_low": 0.0,
+              "all_high": 0.0,
+              "merged": 0
+            },
+            {
+              "name": "input",
+              "unit": "ms",
+              "first": 1462.681,
+              "samples": 2,
+              "median": 1556.36,
+              "low": 1525.757,
+              "high": 1586.962,
+              "p95": null,
+              "note": null,
+              "all_first": 1462.681,
+              "all_samples": 2,
+              "all_median": 1556.36,
+              "all_low": 1525.757,
+              "all_high": 1586.962,
+              "merged": 0
+            },
+            {
+              "name": "input.vad_close",
+              "unit": "ms",
+              "first": 701.347,
+              "samples": 2,
+              "median": 700.728,
+              "low": 700.62,
+              "high": 700.837,
+              "p95": null,
+              "note": null,
+              "all_first": 701.347,
+              "all_samples": 2,
+              "all_median": 700.728,
+              "all_low": 700.62,
+              "all_high": 700.837,
+              "merged": 0
+            },
+            {
+              "name": "input.final_transcript",
+              "unit": "ms",
+              "first": 761.335,
+              "samples": 2,
+              "median": 855.63,
+              "low": 825.136,
+              "high": 886.125,
+              "p95": null,
+              "note": null,
+              "all_first": 761.335,
+              "all_samples": 2,
+              "all_median": 855.63,
+              "all_low": 825.136,
+              "all_high": 886.125,
+              "merged": 0
+            },
+            {
+              "name": "context",
+              "unit": "ms",
+              "first": 581.137,
+              "samples": 2,
+              "median": 323.26,
+              "low": 274.615,
+              "high": 371.906,
+              "p95": null,
+              "note": null,
+              "all_first": 581.137,
+              "all_samples": 2,
+              "all_median": 323.26,
+              "all_low": 274.615,
+              "all_high": 371.906,
+              "merged": 0
+            },
+            {
+              "name": "context.turn_commit",
+              "unit": "ms",
+              "first": 357.947,
+              "samples": 2,
+              "median": 110.178,
+              "low": 68.467,
+              "high": 151.89,
+              "p95": null,
+              "note": null,
+              "all_first": 357.947,
+              "all_samples": 2,
+              "all_median": 110.178,
+              "all_low": 68.467,
+              "all_high": 151.89,
+              "merged": 0
+            },
+            {
+              "name": "context.context_ready",
+              "unit": "ms",
+              "first": 214.581,
+              "samples": 2,
+              "median": 207.457,
+              "low": 200.348,
+              "high": 214.565,
+              "p95": null,
+              "note": null,
+              "all_first": 214.581,
+              "all_samples": 2,
+              "all_median": 207.457,
+              "all_low": 200.348,
+              "all_high": 214.565,
+              "merged": 0
+            },
+            {
+              "name": "context.context_built",
+              "unit": "ms",
+              "first": 1.692,
+              "samples": 2,
+              "median": 1.603,
+              "low": 1.536,
+              "high": 1.67,
+              "p95": null,
+              "note": null,
+              "all_first": 1.692,
+              "all_samples": 2,
+              "all_median": 1.603,
+              "all_low": 1.536,
+              "all_high": 1.67,
+              "merged": 0
+            },
+            {
+              "name": "context.request_sent",
+              "unit": "ms",
+              "first": 6.917,
+              "samples": 2,
+              "median": 4.023,
+              "low": 3.915,
+              "high": 4.131,
+              "p95": null,
+              "note": null,
+              "all_first": 6.917,
+              "all_samples": 2,
+              "all_median": 4.023,
+              "all_low": 3.915,
+              "all_high": 4.131,
+              "merged": 0
+            },
+            {
+              "name": "output",
+              "unit": "ms",
+              "first": 1272.742,
+              "samples": 2,
+              "median": 1662.457,
+              "low": 1607.458,
+              "high": 1717.457,
+              "p95": null,
+              "note": null,
+              "all_first": 1272.742,
+              "all_samples": 2,
+              "all_median": 1662.457,
+              "all_low": 1607.458,
+              "all_high": 1717.457,
+              "merged": 0
+            },
+            {
+              "name": "output.first_text_delta",
+              "unit": "ms",
+              "first": 650.011,
+              "samples": 2,
+              "median": 905.13,
+              "low": 888.471,
+              "high": 921.789,
+              "p95": null,
+              "note": null,
+              "all_first": 650.011,
+              "all_samples": 2,
+              "all_median": 905.13,
+              "all_low": 888.471,
+              "all_high": 921.789,
+              "merged": 0
+            },
+            {
+              "name": "output.tts_request",
+              "unit": "ms",
+              "first": 83.03,
+              "samples": 2,
+              "median": 130.667,
+              "low": 98.911,
+              "high": 162.423,
+              "p95": null,
+              "note": null,
+              "all_first": 83.03,
+              "all_samples": 2,
+              "all_median": 130.667,
+              "all_low": 98.911,
+              "all_high": 162.423,
+              "merged": 0
+            },
+            {
+              "name": "output.first_pcm",
+              "unit": "ms",
+              "first": 539.043,
+              "samples": 2,
+              "median": 626.134,
+              "low": 556.065,
+              "high": 696.203,
+              "p95": null,
+              "note": null,
+              "all_first": 539.043,
+              "all_samples": 2,
+              "all_median": 626.134,
+              "all_low": 556.065,
+              "all_high": 696.203,
+              "merged": 0
+            },
+            {
+              "name": "output.first_audio_frame",
+              "unit": "ms",
+              "first": 0.658,
+              "samples": 2,
+              "median": 0.526,
+              "low": 0.499,
+              "high": 0.554,
+              "p95": null,
+              "note": null,
+              "all_first": 0.658,
+              "all_samples": 2,
+              "all_median": 0.526,
+              "all_low": 0.499,
+              "all_high": 0.554,
+              "merged": 0
+            },
+            {
+              "name": "stt_request_to_final",
+              "unit": "ms",
+              "first": 761.001,
+              "samples": 2,
+              "median": 855.417,
+              "low": 824.846,
+              "high": 885.987,
+              "p95": null,
+              "note": null,
+              "all_first": 761.001,
+              "all_samples": 2,
+              "all_median": 855.417,
+              "all_low": 824.846,
+              "all_high": 885.987,
+              "merged": 0
+            },
+            {
+              "name": "stt_queue",
+              "unit": "ms",
+              "first": 0.06,
+              "samples": 2,
+              "median": 0.048,
+              "low": 0.026,
+              "high": 0.07,
+              "p95": null,
+              "note": null,
+              "all_first": 0.06,
+              "all_samples": 2,
+              "all_median": 0.048,
+              "all_low": 0.026,
+              "all_high": 0.07,
+              "merged": 0
+            },
+            {
+              "name": "stt_connect",
+              "unit": "ms",
+              "first": 3.557,
+              "samples": 2,
+              "median": 6.484,
+              "low": 6.297,
+              "high": 6.671,
+              "p95": null,
+              "note": null,
+              "all_first": 3.557,
+              "all_samples": 2,
+              "all_median": 6.484,
+              "all_low": 6.297,
+              "all_high": 6.671,
+              "merged": 0
+            },
+            {
+              "name": "stt_tls",
+              "unit": "ms",
+              "first": 5.367,
+              "samples": 2,
+              "median": 5.688,
+              "low": 5.361,
+              "high": 6.014,
+              "p95": null,
+              "note": null,
+              "all_first": 5.367,
+              "all_samples": 2,
+              "all_median": 5.688,
+              "all_low": 5.361,
+              "all_high": 6.014,
+              "merged": 0
+            },
+            {
+              "name": "stt_upload",
+              "unit": "ms",
+              "first": 5.689,
+              "samples": 2,
+              "median": 5.799,
+              "low": 5.588,
+              "high": 6.01,
+              "p95": null,
+              "note": null,
+              "all_first": 5.689,
+              "all_samples": 2,
+              "all_median": 5.799,
+              "all_low": 5.588,
+              "all_high": 6.01,
+              "merged": 0
+            },
+            {
+              "name": "stt_wait",
+              "unit": "ms",
+              "first": 540.318,
+              "samples": 2,
+              "median": 653.543,
+              "low": 621.54,
+              "high": 685.547,
+              "p95": null,
+              "note": null,
+              "all_first": 540.318,
+              "all_samples": 2,
+              "all_median": 653.543,
+              "all_low": 621.54,
+              "all_high": 685.547,
+              "merged": 0
+            },
+            {
+              "name": "stt_first_event",
+              "unit": "ms",
+              "first": 0.573,
+              "samples": 2,
+              "median": 0.435,
+              "low": 0.428,
+              "high": 0.442,
+              "p95": null,
+              "note": null,
+              "all_first": 0.573,
+              "all_samples": 2,
+              "all_median": 0.435,
+              "all_low": 0.428,
+              "all_high": 0.442,
+              "merged": 0
+            },
+            {
+              "name": "stt_stream",
+              "unit": "ms",
+              "first": 203.491,
+              "samples": 2,
+              "median": 181.777,
+              "low": 180.8,
+              "high": 182.754,
+              "p95": null,
+              "note": null,
+              "all_first": 203.491,
+              "all_samples": 2,
+              "all_median": 181.777,
+              "all_low": 180.8,
+              "all_high": 182.754,
+              "merged": 0
+            },
+            {
+              "name": "association_ready",
+              "unit": "ms",
+              "first": 74.112,
+              "samples": 2,
+              "median": 71.091,
+              "low": 70.509,
+              "high": 71.674,
+              "p95": null,
+              "note": null,
+              "all_first": 74.112,
+              "all_samples": 2,
+              "all_median": 71.091,
+              "all_low": 70.509,
+              "all_high": 71.674,
+              "merged": 0
+            },
+            {
+              "name": "association_wait",
+              "unit": "ms",
+              "first": 0.016,
+              "samples": 2,
+              "median": 0.014,
+              "low": 0.011,
+              "high": 0.018,
+              "p95": null,
+              "note": null,
+              "all_first": 0.016,
+              "all_samples": 2,
+              "all_median": 0.014,
+              "all_low": 0.011,
+              "all_high": 0.018,
+              "merged": 0
+            },
+            {
+              "name": "assessment_queue",
+              "unit": "ms",
+              "first": 0.146,
+              "samples": 2,
+              "median": 0.135,
+              "low": 0.132,
+              "high": 0.138,
+              "p95": null,
+              "note": null,
+              "all_first": 0.146,
+              "all_samples": 2,
+              "all_median": 0.135,
+              "all_low": 0.132,
+              "all_high": 0.138,
+              "merged": 0
+            },
+            {
+              "name": "endpoint_assessment",
+              "unit": "ms",
+              "first": 71.31,
+              "samples": 2,
+              "median": 72.806,
+              "low": 65.777,
+              "high": 79.835,
+              "p95": null,
+              "note": null,
+              "all_first": 71.31,
+              "all_samples": 2,
+              "all_median": 72.806,
+              "all_low": 65.777,
+              "all_high": 79.835,
+              "merged": 0
+            },
+            {
+              "name": "decision_holds",
+              "unit": "ms",
+              "first": 284.649,
+              "samples": 2,
+              "median": 35.539,
+              "low": 0.957,
+              "high": 70.121,
+              "p95": null,
+              "note": null,
+              "all_first": 284.649,
+              "all_samples": 2,
+              "all_median": 35.539,
+              "all_low": 0.957,
+              "all_high": 70.121,
+              "merged": 0
+            },
+            {
+              "name": "input_lateness",
+              "unit": "ms",
+              "first": 160.737,
+              "samples": 2,
+              "median": 2.054,
+              "low": 2.047,
+              "high": 2.062,
+              "p95": null,
+              "note": null,
+              "all_first": 160.737,
+              "all_samples": 2,
+              "all_median": 2.054,
+              "all_low": 2.047,
+              "all_high": 2.062,
+              "merged": 0
+            },
+            {
+              "name": "context_ready_wait",
+              "unit": "ms",
+              "first": 212.837,
+              "samples": 2,
+              "median": 205.993,
+              "low": 198.876,
+              "high": 213.11,
+              "p95": null,
+              "note": null,
+              "all_first": 212.837,
+              "all_samples": 2,
+              "all_median": 205.993,
+              "all_low": 198.876,
+              "all_high": 213.11,
+              "merged": 0
+            },
+            {
+              "name": "model_request_client",
+              "unit": "ms",
+              "first": 0.007,
+              "samples": 2,
+              "median": 0.005,
+              "low": 0.003,
+              "high": 0.007,
+              "p95": null,
+              "note": null,
+              "all_first": 0.007,
+              "all_samples": 2,
+              "all_median": 0.005,
+              "all_low": 0.003,
+              "all_high": 0.007,
+              "merged": 0
+            },
+            {
+              "name": "model_request_prepare",
+              "unit": "ms",
+              "first": 6.36,
+              "samples": 2,
+              "median": 3.538,
+              "low": 3.45,
+              "high": 3.627,
+              "p95": null,
+              "note": null,
+              "all_first": 6.36,
+              "all_samples": 2,
+              "all_median": 3.538,
+              "all_low": 3.45,
+              "all_high": 3.627,
+              "merged": 0
+            },
+            {
+              "name": "model_request_encode",
+              "unit": "ms",
+              "first": 0.479,
+              "samples": 2,
+              "median": 0.467,
+              "low": 0.429,
+              "high": 0.505,
+              "p95": null,
+              "note": null,
+              "all_first": 0.479,
+              "all_samples": 2,
+              "all_median": 0.467,
+              "all_low": 0.429,
+              "all_high": 0.505,
+              "merged": 0
+            },
+            {
+              "name": "model_request_frames",
+              "unit": "frames",
+              "first": 0,
+              "samples": 2,
+              "median": 0.0,
+              "low": 0,
+              "high": 0,
+              "p95": null,
+              "note": null,
+              "all_first": 0,
+              "all_samples": 2,
+              "all_median": 0.0,
+              "all_low": 0,
+              "all_high": 0,
+              "merged": 0
+            },
+            {
+              "name": "model_request_bytes",
+              "unit": "bytes",
+              "first": 19063,
+              "samples": 2,
+              "median": 19220.0,
+              "low": 19218,
+              "high": 19222,
+              "p95": null,
+              "note": null,
+              "all_first": 19063,
+              "all_samples": 2,
+              "all_median": 19220.0,
+              "all_low": 19218,
+              "all_high": 19222,
+              "merged": 0
+            },
+            {
+              "name": "model_request_attempts",
+              "unit": "count",
+              "first": 1.0,
+              "samples": 2,
+              "median": 1.0,
+              "low": 1.0,
+              "high": 1.0,
+              "p95": null,
+              "note": null,
+              "all_first": 1.0,
+              "all_samples": 2,
+              "all_median": 1.0,
+              "all_low": 1.0,
+              "all_high": 1.0,
+              "merged": 0
+            },
+            {
+              "name": "model_first_event",
+              "unit": "ms",
+              "first": 596.623,
+              "samples": 2,
+              "median": 512.577,
+              "low": 488.194,
+              "high": 536.961,
+              "p95": null,
+              "note": null,
+              "all_first": 596.623,
+              "all_samples": 2,
+              "all_median": 512.577,
+              "all_low": 488.194,
+              "all_high": 536.961,
+              "merged": 0
+            }
+          ],
+          "sample": "hesitate sha256:dd8f345419d9"
+        }
+      ]
+    },
+    {
+      "id": "session.cleanup",
+      "status": "PASS",
+      "summary": "4 owned parts closed: sessions and executor before the runtime; runner processes, sockets and the temporary workspace reclaimed",
+      "details": [],
+      "action": null,
+      "runners": [],
+      "scenarios": [],
+      "metrics": [],
+      "services": [],
+      "summaries": []
+    },
+    {
+      "id": "devices.media",
+      "status": "SKIP",
+      "summary": "Not verified: the diagnostic session uses its own samples and opens no microphone, camera or player",
+      "details": [
+        "LiveKit transport: not measured; the samples end at the Host's output",
+        "client playback: not measured; no client takes part",
+        "physical devices: not opened; the samples stand in for them"
+      ],
+      "action": "Join a dev session from a client to try its devices",
+      "runners": [],
+      "scenarios": [],
+      "metrics": [],
+      "services": [],
+      "summaries": []
+    }
+  ]
+}

@@ -80,9 +80,11 @@ class PassiveRecall:
     def _finish(self, entry: _Recall, status: str, *, count: int = 0) -> None:
         if entry.result.done():
             return
+
         if entry.timer is not None:
             entry.timer.cancel()
             entry.timer = None
+
         entry.result.set_result(status)
         self._trace(entry.turn_id, status, count)
         elapsed = (

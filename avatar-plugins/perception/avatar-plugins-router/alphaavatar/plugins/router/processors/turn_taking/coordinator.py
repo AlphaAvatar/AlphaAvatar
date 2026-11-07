@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from math import isfinite
 
@@ -479,10 +481,35 @@ class TurnTakingCoordinator:
             )
         )
 
+    @contextmanager
+    def _span(self, stage: str, evidence: TurnTakingEvidence, **fields: object) -> Iterator[None]:
+        """Trace the awaited step it holds once it ends, done, cancelled or failed: where a
+        candidate's decision waits (O-16)."""
+        started_at, outcome = self._runtime.clock.now().monotonic_ns, "done"
+        try:
+            yield
+        except asyncio.CancelledError:
+            outcome = "cancelled"
+            raise
+        except Exception:
+            outcome = "failed"
+            raise
+        finally:
+            self._runtime.perception.input_trace.record(
+                stage,
+                candidate_id=evidence.turn_candidate_id,
+                candidate_revision=evidence.candidate_revision,
+                outcome=outcome,
+                start_time_ns=started_at,
+                end_time_ns=self._runtime.clock.now().monotonic_ns,
+                **fields,
+            )
+
     async def _hold_then_resolve(
         self, key: SpeakerKey, evidence: TurnTakingEvidence, *, timeout_sec: float, reason: str
     ) -> None:
-        await asyncio.sleep(timeout_sec)
+        with self._span("candidate.hold", evidence, reason=reason):
+            await asyncio.sleep(timeout_sec)
 
         if not self._is_current(key, evidence):
             return
@@ -560,7 +587,9 @@ class TurnTakingCoordinator:
         # A successful association changes the evidence and schedules a fresh assessment.
         return self._is_current(key, evidence)
 
-    async def _assess_candidate(self, key: SpeakerKey, turn_candidate_id: str) -> None:
+    async def _assess_candidate(
+        self, key: SpeakerKey, turn_candidate_id: str, scheduled_ns: int
+    ) -> None:
         try:
             candidate = self._candidate(key, turn_candidate_id)
             if candidate is None or self._speech_active(candidate):
@@ -615,7 +644,9 @@ class TurnTakingCoordinator:
                     return
 
             try:
-                assessment = await self._model.assess(evidence)
+                # Queued when scheduled: after its speech closed, or its transcript came.
+                with self._span("candidate.assessment", evidence, event_time_ns=scheduled_ns):
+                    assessment = await self._model.assess(evidence)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -655,7 +686,8 @@ class TurnTakingCoordinator:
                     ),
                 )
 
-                await asyncio.sleep(self._addressing_wait_sec)
+                with self._span("candidate.addressing_wait", evidence):
+                    await asyncio.sleep(self._addressing_wait_sec)
                 if not self._is_current(key, evidence):
                     return
 
@@ -712,7 +744,7 @@ class TurnTakingCoordinator:
             return
 
         task = asyncio.create_task(
-            self._assess_candidate(key, turn_candidate_id),
+            self._assess_candidate(key, turn_candidate_id, self._runtime.clock.now().monotonic_ns),
             name=f"router_turn_assessment:{turn_candidate_id}",
         )
         self._assessment_tasks[key] = task

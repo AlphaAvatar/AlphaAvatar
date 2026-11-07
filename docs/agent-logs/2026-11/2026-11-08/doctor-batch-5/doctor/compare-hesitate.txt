@@ -1,0 +1,87 @@
+hesitate: median [range] ×n of the later rounds (round 1), ms
+                                                                                  vad550                              vad300
+Rounds passed                                                                        3/3         0/3; 3 at model.first_event
+Passed rounds
+  Runtime first text                                      2,785 [2,722–2,847] ×2 (2,694)                                   —
+  First audio frame                                       3,542 [3,518–3,566] ×2 (3,317)                                   —
+  Response complete                                       4,220 [4,155–4,286] ×2 (3,684)                                   —
+  Input                                                   1,556 [1,526–1,587] ×2 (1,463)                                   —
+    Final speech → VAD close                                                701 ×2 (701)                                   —
+    VAD close → Final transcript                                  856 [825–886] ×2 (761)                                   —
+  Context                                                         323 [275–372] ×2 (581)                                   —
+    Final transcript → Turn commit                                 110 [68–152] ×2 (358)                                   —
+    Turn commit → Context readiness check complete                207 [200–215] ×2 (215)                                   —
+    Context readiness check complete → Context built              1.6 [1.5–1.7] ×2 (1.7)                                   —
+    Context built → Model request sent                            4.0 [3.9–4.1] ×2 (6.9)                                   —
+  Output                                                  1,662 [1,607–1,717] ×2 (1,273)                                   —
+    Model request sent → First text delta                         905 [888–922] ×2 (650)                                   —
+    First text delta → TTS request                                  131 [99–162] ×2 (83)                                   —
+    TTS request → First PCM                                       626 [556–696] ×2 (539)                                   —
+    First PCM → First audio frame                                 0.5 [0.5–0.6] ×2 (0.7)                                   —
+  STT commit → Final transcript                                   855 [825–886] ×2 (761)                                   —
+    STT queue (commit → request started)                          0.0 [0.0–0.1] ×2 (0.1)                                   —
+    STT connect (TCP)                                             6.5 [6.3–6.7] ×2 (3.6)                                   —
+    STT TLS handshake                                             5.7 [5.4–6.0] ×2 (5.4)                                   —
+    STT upload (headers → audio sent)                             5.8 [5.6–6.0] ×2 (5.7)                                   —
+    STT wait (audio sent → answer's headers)                      654 [622–686] ×2 (540)                                   —
+    STT first event (headers → first event)                                 0.4 ×2 (0.6)                                   —
+    STT stream (headers → transcript done)                        182 [181–183] ×2 (203)                                   —
+  Speech closed → speaker association ready                           71 [71–72] ×2 (74)                                   —
+  Turn commit's wait for the association                                    0.0 ×2 (0.0)                                   —
+  Endpoint assessment queued → started                                      0.1 ×2 (0.1)                                   —
+  Endpoint assessments, final → commit                                73 [66–80] ×2 (71)                                   —
+  Holds and addressing waits, final → commit                        36 [1.0–70] ×2 (285)                                   —
+  Context readiness wait                                          206 [199–213] ×2 (213)                                   —
+  Model request sent → First event                                513 [488–537] ×2 (597)                                   —
+  Provider client ready                                                     0.0 ×2 (0.0)                                   —
+  Request taken → first attempt sent                              3.5 [3.5–3.6] ×2 (6.4)                                   —
+  Request encoding                                                0.5 [0.4–0.5] ×2 (0.5)                                   —
+  Pictures sent                                                                 0 ×2 (0)                                   —
+  Request size                                        19,220 [19,218–19,222] ×2 (19,063)                                   —
+  Request attempts                                                              1 ×2 (1)                                   —
+Every round, failed included
+  Runtime first text                                      2,785 [2,722–2,847] ×2 (2,694)                                   —
+  First audio frame                                       3,542 [3,518–3,566] ×2 (3,317)                                   —
+  Response complete                                       4,220 [4,155–4,286] ×2 (3,684)                                   —
+  Input                                                   1,556 [1,526–1,587] ×2 (1,463)                                   —
+    Final speech → VAD close                                                701 ×2 (701)                                   —
+    VAD close → Final transcript                                  856 [825–886] ×2 (761)                                   —
+  Context                                                         323 [275–372] ×2 (581)      1,302 [1,271–1,332] ×2 (1,739)
+    Final transcript → Turn commit                                 110 [68–152] ×2 (358)      1,077 [1,041–1,112] ×2 (1,268)
+    Turn commit → Context readiness check complete                207 [200–215] ×2 (215)              219 [214–225] ×2 (463)
+    Context readiness check complete → Context built              1.6 [1.5–1.7] ×2 (1.7)              1.7 [1.6–1.8] ×2 (1.6)
+    Context built → Model request sent                            4.0 [3.9–4.1] ×2 (6.9)                        4.0 ×2 (7.1)
+  Output                                                  1,662 [1,607–1,717] ×2 (1,273)                                   —
+    Model request sent → First text delta                         905 [888–922] ×2 (650)                                   —
+    First text delta → TTS request                                  131 [99–162] ×2 (83)                                   —
+    TTS request → First PCM                                       626 [556–696] ×2 (539)                                   —
+    First PCM → First audio frame                                 0.5 [0.5–0.6] ×2 (0.7)                                   —
+  STT commit → Final transcript                                   855 [825–886] ×2 (761)              731 [696–766] ×2 (544)
+    STT queue (commit → request started)                          0.0 [0.0–0.1] ×2 (0.1)                        0.0 ×2 (0.1)
+    STT connect (TCP)                                             6.5 [6.3–6.7] ×2 (3.6)                        6.5 ×2 (3.7)
+    STT TLS handshake                                             5.7 [5.4–6.0] ×2 (5.4)              6.1 [5.7–6.5] ×2 (6.6)
+    STT upload (headers → audio sent)                             5.8 [5.6–6.0] ×2 (5.7)              5.6 [5.1–6.1] ×2 (5.1)
+    STT wait (audio sent → answer's headers)                      654 [622–686] ×2 (540)              656 [629–683] ×2 (473)
+    STT first event (headers → first event)                                 0.4 ×2 (0.6)                        0.4 ×2 (0.6)
+    STT stream (headers → transcript done)                        182 [181–183] ×2 (203)                  55 [47–63] ×2 (53)
+  Speech closed → speaker association ready                           71 [71–72] ×2 (74)                  71 [71–72] ×2 (75)
+  Turn commit's wait for the association                                    0.0 ×2 (0.0)                        0.0 ×2 (0.0)
+  Endpoint assessment queued → started                                      0.1 ×2 (0.1)              0.2 [0.1–0.2] ×2 (0.2)
+  Endpoint assessments, final → commit                                73 [66–80] ×2 (71)                          66 ×2 (69)
+  Holds and addressing waits, final → commit                        36 [1.0–70] ×2 (285)                        0.0 ×2 (0.0)
+  Context readiness wait                                          206 [199–213] ×2 (213)              218 [213–223] ×2 (461)
+  Model request sent → First event                                513 [488–537] ×2 (597)                                   —
+  Provider client ready                                                     0.0 ×2 (0.0)                        0.0 ×2 (0.0)
+  Request taken → first attempt sent                              3.5 [3.5–3.6] ×2 (6.4)                        3.5 ×2 (6.6)
+  Request encoding                                                0.5 [0.4–0.5] ×2 (0.5)                        0.5 ×2 (0.5)
+  Pictures sent                                                                 0 ×2 (0)                            0 ×2 (0)
+  Request size                                        19,220 [19,218–19,222] ×2 (19,063)  19,191 [19,189–19,193] ×2 (19,034)
+  Request attempts                                                              1 ×2 (1)                            1 ×2 (1)
+Events
+  Holds                                                                                8                                   3
+  Cancels                                                                              0                                   0
+  Retired finals                                                                       0                                   0
+  Retried requests                                                                     0                                   0
+  Sentences lost in unknown                                                            0                                   3
+vad550: model gpt-5.6-luna · stt openai_segment gpt-4o-transcribe · tts openai gpt-4o-mini-tts · vision off · hesitate sha256:dd8f345419d9
+vad300: model gpt-5.6-luna · stt openai_segment gpt-4o-transcribe · tts openai gpt-4o-mini-tts · vision off · hesitate sha256:dd8f345419d9

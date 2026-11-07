@@ -102,6 +102,9 @@ class ResponsesClient:
             timeout=self._timeout,
             http_client=self._transport,
         )
+        # The SDK imports its Responses resource on first use, about 0.1 s (O-15): here, in
+        # this thread, not on the event loop within the first request.
+        _ = self._client.responses
         return self._client
 
     async def _initialize(self) -> Any:
@@ -112,11 +115,16 @@ class ResponsesClient:
                 await self._transport.aclose()
             raise
 
-    async def get(self) -> Any:
+    def prepare(self) -> None:
+        """Start building the client, off the event loop, before a request needs it; a build
+        that fails says so to the request that asks for it."""
         self._ensure_open()
         if self._init_task is None:
             self._init_task = asyncio.create_task(self._initialize(), name="responses_client_init")
             self._init_task.add_done_callback(observe_task)
+
+    async def get(self) -> Any:
+        self.prepare()
         client = await asyncio.shield(self._init_task)
         self._ensure_open()
         return client

@@ -19,6 +19,8 @@ class SpeakerConfig(BaseModel):
 
     enabled: bool = True
     inference_queue_size: int = Field(default=1, ge=1)
+    # How long a Turn's Context waits for its speech's speaker identity (a search took 1-8 ms).
+    identity_wait_sec: float = Field(default=0.1, ge=0.0, allow_inf_nan=False)
     max_segments: int = Field(default=32, ge=1, le=256)
     max_speakers: int = Field(default=64, ge=1, le=512)
     track_ttl_sec: float = Field(default=300.0, gt=0)

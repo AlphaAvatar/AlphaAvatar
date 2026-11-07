@@ -2806,3 +2806,99 @@ Turn 采用的文字取自 Doctor 报告。探针不记录请求头和凭据。
   - KD-19：只改内容的对照；
   - O-17：仍未定位。
 - **延期**：warmup 的端到端收益；静音和噪声幻觉（O-18）的处理。
+
+## Doctor 第五批：两处 P2、KD-17 正常配置验收、O-16 定位、说话人调度、O-15、VAD 300、KD-19 内容对照（基线 `cd5ad32`）
+
+改动都在未暂存的工作区。脚本、样本音频和隔离安装放在会话临时目录（`scratchpad/batch5/`、`scratchpad/real7/`），仓库里只留 [`doctor-batch-5/`](../2026-11-08/doctor-batch-5/) 的结果数据和校验和。LID 按审查暂缓，本批没有动。
+
+### 1. 代码修复
+
+- **SSE 的 CR**（KD-32）：`_sse()` 不再暂存块末尾的 `\r`，CR 立即结束一行；下一块以 `\n` 开头时跳过这个 LF，空块不改变这一状态。回归用例：终稿事件以 `\r\r` 结束，之后 body 挂起，终稿在应答后立即发出，请求在 0.25 s 收尾期限后结束，下一段不受影响。
+- **Doctor 关联等待**（KD-36）：汇总同一候选的全部 `candidate.association` 检查；候选的每段都在首次检查前就绪，才写 "none needed"。
+- **O-16 计时**：router 给三处等待各记一个区间，结果为 done、cancelled 或 failed：
+  - 端点模型评估（`candidate.assessment`，带排队时刻）；
+  - addressing 等待（`candidate.addressing_wait`）；
+  - hold 定时器（`candidate.hold`）。
+
+  Doctor 相应新增三项：评估从排队到开始的等待、终稿到提交之间的端点模型时间、同一段里的 hold 与 addressing 等待。每个区间只计落在这一段里的部分。
+- **说话人调度**（KD-35）：
+  - 窗口与关联一条队列，身份与属性另一条；
+  - Context 经 TurnRuntime 的 waiter 只等本轮语音段的身份，上限 `speaker.identity_wait_sec`（默认 0.1 s）；
+  - 属性不等，迟到的结果只进之后的轮；已构建的输入和历史不变，历史按构建时保存；
+  - 来源取消时，两条队列上正在跑的任务都取消；停止时两条都回收。
+- **O-15**：`ResponsesClient._build()` 本来就在线程里，现在同时访问一次 `client.responses`。Loop 的 `initialize()` 经 `ProviderGateway.prepare()` 提前启动这个任务，不等它完成；请求等同一个任务。`LLMBase.prepare()` 默认什么也不做。
+
+### 2. KD-17 正常配置验收（离线）
+
+`avatar-host/tests/test_transcript_deadline.py`，3 个用例：
+
+- **装配**：
+  - 配置文件经 `load_application`，会话经 `create_execution`；
+  - 真实的 Router（自己的 factory 传入 STT 的 `fallback_code`）、分段 STT（`openai_segment`，经 HTTP 到回环地址）、Context、Loop、Engine；
+  - 默认期限（0.75 s 观察点，3 s 硬期限）。
+- **替身**：
+  - 回环转写服务，按请求延迟给出终稿；
+  - VAD 输出，按 Audio Activity 的形式发布语音帧和段；
+  - 端点模型；
+  - 模型 provider，记录每个请求；
+  - TTS（实时静音）、Memory、Persona。
+- **结果**：
+  - 1.5 s 的终稿在观察点之后、期限之前提交，进入本轮输入。
+  - 4.5 s 的终稿：
+    - 3 s 时提交提示轮（`SYSTEM`），模型输入带 `voice.transcription_unavailable` 和「请对方重说」的指令；
+    - 下一轮的历史里有这条提示；
+    - 迟到的终稿按退役片段拒收，不出现在任何请求里；
+    - 下一轮的 STT 请求排在迟到请求之后，照常提交。
+  - 带说话人实体的两段轮：保留第一段文字，第二段标为 `<unavailable_speech segment_id="segment-b" position="2" />`。
+  - 不带实体的两段：成为两个 Turn，先回答第一段，期限到后再提交提示（O-20）。
+- **发现**：
+  - 提示在历史里仍是 `current="true"`（O-19）；
+  - 关会话时正在发布的终态输出会让关闭抛错（O-21）。测试改为等最后的转录 final 再关，之后 40/40 通过。
+- **变异 K1～K7** 全部被抓到：factory 不传提示码、Engine 丢掉提示、Context 不渲染、历史丢掉提示、不标缺失段、接收退役段的终稿、期限加长。
+
+### 3. 真实服务
+
+费用估计约 1.5 美元：TTS 9 次、STT 50 次、Doctor 两组各 28 轮，另有 1 轮冒烟。第一组跑完后，Doctor 的两项新指标改成只计终稿到提交这一段，于是重新构建，再跑一组；第一组只保留 VAD 结果（`doctor/vad-first-build.txt`）。表中其余数字来自构建 `0.6.8-cd5ad32094e1-dirty.20261107173958`。授权依据是本批审查第 5～7 项。
+
+| 项 | 次数 | 结果 |
+|---|---|---|
+| O-16 拆分 | 5 份 × 3～5 轮 | 后续轮终稿到提交 66～169 ms。端点模型在终稿后对同一段音频再跑 1～2 次，合计 65～80 ms；等 addressing 证据 0.6～88 ms；关联 0 ms；没有区间覆盖的 0.3～0.7 ms（`doctor/o16.txt`） |
+| 同一 WAV 视觉开关 | 2 × 5 轮 | 终稿到提交中位数 71 ms（关）对 92 ms（开）；首音频 3,534 对 3,704 ms；通过 1/5 和 2/5，其余都丢第二句（KD-19） |
+| O-15 | 第 1 轮 | built → sent 6.7 ms（第四批 122 ms），client 就绪 0.0 ms；第 1 轮首音频 4,276 ms，没有下降 |
+| 说话人 | 5 份 | 关联在段结束后 72～92 ms 就绪，提交等待为 0；身份在提交前 0.6～1.0 s 已完成。Context 就绪等待：关 271 [204–341] ms、开 205 [194–222] ms（第四批关 231 [219–239] ms），组成未单独计时，不在身份等待上 |
+| VAD 550 对 300 | 3 种样本 × 3 轮 × 2 组 | 550 ms 通过 17/18，300 ms 通过 1/18（`doctor/vad.txt`），见下 |
+| KD-19 只改内容 | 5 种 × 10 次 | 指令式第二句丢 4～10 次，陈述句 1 次，问句 0 次（`kd19/`） |
+
+- **VAD 300 ms 的失败方式**：0.40～0.48 s 的停顿把一句话切成几段、几个 Turn。
+  - `hesitate`：被下一轮取代；
+  - `multi`：只答了 "I have a quick question."，就被后续语音打断；
+  - `pause_in`：第三句到来之前就作答了。
+- **VAD 结论更正**：第四批视觉开时，300、200 ms 的首音频中位数比 550 ms 低约 603、583 ms，VAD close 本身提前约 259、360 ms。这是端到端改善的初步证据，但不能全部归于 VAD，也不能说明 200 优于 300。本批的自然停顿样本表明，这个改善只在句内停顿都短于 300 ms 时成立。默认仍为 550 ms。
+- **样本**：用 `gpt-4o-mini-tts`（coral）合成（`samples/samples.json`，不含 WAV）。
+  - VAD 样本只把第一处停顿调成 0.42 s；`pause_in` 的第二处停顿原为 1.0 s，调成 0.40 s。
+  - KD-19 样本共用同一个第一句和 0.24 s 停顿。
+- **O-16 第 1 轮**：addressing 等待另有 120～340 ms，第一组 5 份中 3 份等满了 0.5 s。
+
+### 4. 离线验证
+
+| 命令 | 结果 |
+|---|---|
+| 全量 `pytest`（`PYTHONDONTWRITEBYTECODE=1 ALPHAAVATAR_MODEL_OFFLINE=1`，短 `--basetemp`） | 610 passed，退出 0；ignored 文件前后没有变化 |
+| 干净克隆（`cd5ad32` 加本批改动，`uv sync --locked --offline`）里按 CI 命令跑全量 | 610 passed；测试前后 `git status --porcelain --ignored` 完全一致 |
+| `check_workspace`、`uv lock --check`、`ruff check`、`ruff format --check`、`pre-commit validate-config`、`git diff --check` | 都是 0 |
+| `pre-commit run --all-files` | 只有 end-of-file-fixer 失败，改的是本批没动的 4 个文件：两个 `__init__.py` 多一个空行，两张 banner SVG 缺末尾换行，自 v0.6.8 起就这样。已还原，留待决定；CI 不跑这些 hook |
+| KD-17 验收重复运行 | 等输出完成再关之前约 2/58 次关闭报错（O-21），之后 40/40 |
+| 变异 | 全部被抓到：SSE C1～C3、关联 W1～W4、KD-17 K1～K7、router 区间 O1～O6、Doctor 区段指标 R1～R5 与 A4、说话人 P1～P7、O-15 Q1～Q3。C3、P5 第一次漏掉，改了用例后被抓到 |
+
+- 长临时目录下，`test_check` 的一个用例因 workspace 一行折行而失败，默认和短路径下通过（O-22）。
+
+### 5. 待决定与待定位
+
+- **待决定**：
+  - KD-19 的修法；
+  - O-16 的修法：复用未变音频的端点评估、addressing 证据到达时不重跑模型、预热语义 addressing；
+  - O-19：历史里的提示是否改为重放 `current="false"`；
+  - O-20：同一来源的短停顿是否合并成一个候选（定了之后才能再评估 VAD 300）；
+  - O-21：关会话时取消终态发布，是否算正常关闭。
+- **待定位**：O-16 第 1 轮的 addressing 等待；O-17。
+- **延期**：LID。

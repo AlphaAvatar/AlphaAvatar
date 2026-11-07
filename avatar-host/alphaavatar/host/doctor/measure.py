@@ -1075,41 +1075,124 @@ class _Turn:
 
     def _association(self, final: dict | None) -> list[Metric]:
         """The speaker association of the Turn's final segment (O-16): when it was first
-        ready, from its speech closed (before it, when its subject came with the speech),
-        and how long the Turn's commit actually waited for it. Ready is not recognized: a
-        failure or a retirement releases it too, which the evidence says."""
+        ready, from its speech closed (before it, when its subject came with the speech).
+        Then how long the Turn's commit actually waited for its candidate's: every check the
+        chain holds, a re-decision's too, summed (a candidate's checks run one after another),
+        none needed only when every segment of the candidate was ready before the first. Ready
+        is not recognized: a failure or a retirement releases it too, which the evidence says."""
         segment = final.get("segment_id") if final is not None else None
         closed = self._trace("perception.speech_closed", segment_id=segment) if segment else None
         ready = self._trace("participant.segment_ready", segment_id=segment) if segment else None
-        waits = [r for r in self.trace if r["stage"] == "candidate.association"]
-        wait = waits[-1] if waits else None
-        boundary = "the speaker association of the Turn's final segment"
-        closed_at = closed["recorded_time_ns"] if closed is not None else None  # When it closed
-        settled = (
-            "speaker association ready",
-            ready.get("end_time_ns") if ready is not None else None,
+        spans = [
+            (r["start_time_ns"], r["end_time_ns"])
+            for r in self.trace
+            if r["stage"] == "candidate.association" and "start_time_ns" in r and "end_time_ns" in r
+        ]
+        readies = {
+            r.get("segment_id"): r.get("end_time_ns")
+            for r in self.trace
+            if r["stage"] == "participant.segment_ready"
+        }
+        joined = {r.get("segment_id") for r in self.trace if r["stage"] == "candidate.segment"}
+        before = bool(spans and joined) and all(
+            readies.get(s) is not None and readies[s] <= spans[0][0] for s in joined
         )
-        before = (
-            wait is not None
-            and ready is not None
-            and ready.get("end_time_ns", 0) <= wait.get("start_time_ns", 0)
-        )
+        waited = tuple(round((end - start) / 1e6, 3) for start, end in spans)
+        if not spans:
+            note = "not measured: the Turn's commit recorded no association wait"
+        elif before:
+            note = "none needed: every segment of its candidate was ready before the commit asked"
+        else:
+            note = f"{len(spans)} checks, a re-decision's too, summed" if len(spans) > 1 else None
         return [
             self._metric(
                 "association_ready",
-                ("speech closed", closed_at),
-                settled,
-                boundary,
+                ("speech closed", closed["recorded_time_ns"] if closed is not None else None),
+                ("speaker association ready", ready.get("end_time_ns") if ready else None),
+                "the speaker association of the Turn's final segment",
                 "not measured: no association asked for the segment, or no resolver records one",
             ),
-            self._metric(
+            Metric(
                 "association_wait",
-                ("commit asked", wait.get("start_time_ns") if wait is not None else None),
-                ("association ready to the commit", wait.get("end_time_ns") if wait else None),
-                boundary,
-                "not measured: the Turn's commit recorded no association wait",
-                note="none needed: ready before the commit asked" if before else None,
+                round(sum(end - start for start, end in spans) / 1e6, 3) if spans else None,
+                "ms",
+                "commit asked",
+                "association ready to the commit",
+                "the commit's association checks of the Turn's candidate",
+                len(spans),
+                waited,
+                note=note,
             ),
+        ]
+
+    def _assessment(self, final: dict | None) -> list[Metric]:
+        """Between the final and the commit (O-16), what the router spent it on: the endpoint
+        model's assessments in that stretch, one another replaced included, summed; the timed
+        holds and addressing waits in it, summed; and the last assessment's wait to start from
+        when it was queued. Each span counts its part within the stretch alone: a wait that
+        overlapped STT's is not the commit's."""
+        commit = self._trace("candidate.decision", action="commit")
+        before = [
+            r for r in self.trace if commit and r["trace_sequence"] < commit["trace_sequence"]
+        ]
+        assessed = [r for r in before if r["stage"] == "candidate.assessment"]
+        last = assessed[-1] if assessed else {}
+        stretch = (
+            (final["recorded_time_ns"], commit["recorded_time_ns"]) if final and commit else None
+        )
+
+        def within(*stages: str) -> list[tuple[float, dict]]:
+            spans = [
+                (min(r["end_time_ns"], stretch[1]) - max(r["start_time_ns"], stretch[0]), r)
+                for r in before
+                if r["stage"] in stages and "start_time_ns" in r and "end_time_ns" in r
+            ]
+            return [(round(ns / 1e6, 3), r) for ns, r in spans if ns > 0]
+
+        missing = "not measured: no final or no commit decision for the Turn"
+        figures = []
+        for name, stages, boundary in (
+            ("endpoint_assessment", ("candidate.assessment",), "the endpoint model's assessments"),
+            ("decision_holds", ("candidate.hold", "candidate.addressing_wait"), "timed waits"),
+        ):
+            spans = within(*stages) if stretch else []
+            if stretch is None:
+                note = missing
+            elif name == "endpoint_assessment":
+                replaced = sum(r.get("outcome") == "cancelled" for _, r in spans)
+                failed = sum(r.get("outcome") == "failed" for _, r in spans)
+                note = f"{len(spans)} run{'s' * (len(spans) != 1)}"
+                note += f", {replaced} replaced" if replaced else ""
+                note += f", {failed} failed" if failed else ""
+                if not spans and last:
+                    note = "none: the commit kept the decision it made before the final"
+            else:
+                reasons = sorted(
+                    {r.get("reason") or r["stage"].removeprefix("candidate.") for _, r in spans}
+                )
+                note = ", ".join(reasons) if spans else "none"
+            figures.append(
+                Metric(
+                    name,
+                    round(sum(ms for ms, _ in spans), 3) if stretch else None,
+                    "ms",
+                    "final transcript",
+                    "commit decision",
+                    f"{boundary} between the Turn's final and its commit",
+                    len(spans),
+                    tuple(ms for ms, _ in spans),
+                    note=note,
+                )
+            )
+        return [
+            self._metric(
+                "assessment_queue",
+                ("assessment queued", last.get("event_time_ns")),
+                ("assessment started", last.get("start_time_ns")),
+                "the endpoint model's last assessment before the Turn's commit",
+                "not measured: no assessment before the Turn's commit, or its router traces none",
+            ),
+            *figures,
         ]
 
     def segments(self) -> tuple[Metric, ...]:
@@ -1133,6 +1216,7 @@ class _Turn:
             ),
             *self._stt(final),
             *self._association(final),
+            *self._assessment(final),
             Metric(
                 "input_lateness",
                 round(self.o.timeline.max_lateness_ms, 3),
@@ -1358,9 +1442,9 @@ class _Turn:
                 if key in record:
                     detail[key.removesuffix("_id")] = record[key][3:15]
             # When a span it records began, on the report's clock: a wait, an inference; and,
-            # for a speaker window, when it was queued for it.
+            # for a speaker window or a turn assessment, when it was queued for it.
             spans = [("start_time_ns", "started_ms")]
-            if record["stage"] == "speaker.window":
+            if record["stage"] in ("speaker.window", "candidate.assessment"):
                 spans.append(("event_time_ns", "queued_ms"))
             for key, name in spans:
                 if isinstance(record.get(key), int):

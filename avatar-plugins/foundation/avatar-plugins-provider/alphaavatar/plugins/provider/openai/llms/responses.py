@@ -117,6 +117,10 @@ class OpenAIResponsesLLM(StreamingLLMBase):
         if not self._config.model.strip():
             raise ValueError("Responses model name cannot be empty")
 
+    def prepare(self) -> None:
+        self.validate_input()
+        self._client.prepare()
+
     async def _prepare(self, operation: Callable[[], T]) -> T:
         task = asyncio.create_task(asyncio.to_thread(operation), name="responses_prepare")
         self._preparations.add(task)

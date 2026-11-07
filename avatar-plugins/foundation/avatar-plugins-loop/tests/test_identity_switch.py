@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterable
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
@@ -70,12 +70,16 @@ class ScriptedProvider:
     def __init__(self, *scripts: Script) -> None:
         self._scripts = list(scripts)
         self.requests: list[ModelRequest] = []
+        self.prepared: list[tuple[str, ...]] = []  # The tasks each preparation named
 
     def gateway(self, config: object) -> ScriptedProvider:
         return self
 
     def validate_tasks(self, names: tuple[str, ...], *, require_streaming: bool = False) -> None:
         pass
+
+    def prepare(self, names: Iterable[str]) -> None:
+        self.prepared.append(tuple(names))
 
     @asynccontextmanager
     async def stream(self, *, task_name: str, request: ModelRequest) -> AsyncIterator[object]:
@@ -395,5 +399,15 @@ async def test_cache_updates_do_not_rewrite_a_captured_prefix(tmp_path: Path) ->
         # Without an identity change, the second step reuses the exact captured prefix.
         assert "profile-of-user-a@0" in second and "@1" not in second
         assert second.startswith(first)
+    finally:
+        await runtime.aclose()
+
+
+async def test_initialization_prepares_the_loops_model_before_any_request(tmp_path: Path) -> None:
+    # O-15: the provider builds its client while the session starts, not in the first request.
+    provider = ScriptedProvider(answer("Hello."))
+    runtime, _ = await start(tmp_path, provider)
+    try:
+        assert provider.prepared == [("avatar.loop",)] and provider.requests == []
     finally:
         await runtime.aclose()
