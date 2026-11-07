@@ -20,6 +20,8 @@ import json
 import multiprocessing as mp
 import os
 import socket
+import subprocess
+import sys
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import date
@@ -49,10 +51,13 @@ from alphaavatar.agents.runtime.plugin import (
     resolution as plugin_resolution,
 )
 from alphaavatar.agents.workspace import WorkspacePaths
+from alphaavatar.core.log.records import LOG_ENDPOINT_ENV
 from alphaavatar.core.session import SessionRuntime
 from alphaavatar.host.application.application import AvatarHost
 from alphaavatar.host.application.bootstrap import create_avatar_runtime
 from alphaavatar.host.configs.loader import validate_application
+from alphaavatar.host.processes import process as execution_process
+from alphaavatar.host.processes.config import ProcessConfig
 from alphaavatar.host.processes.supervisor import ProcessSupervisor
 from alphaavatar.host.sessions.schemas import SessionRequest
 
@@ -350,6 +355,82 @@ async def test_host_reaps_execution_children_before_releasing_shared_inference(
         assert journal(tmp_path) == [f"final:{child.pid}"]
         assert not service.is_alive and INFERENCE_ENDPOINT_ENV not in os.environ
     assert not pid_exists(child.pid)
+
+
+# What reaches an execution child: its isolation, the caller's site customization, the
+# environment the Host passes on, and where it finds its entrypoint.
+CHILD_REPORT = f"""
+import json, os, sys
+from importlib.util import find_spec
+
+print(json.dumps({{
+    "isolated": sys.flags.isolated,
+    "caller_site": getattr(sys.modules.get("sitecustomize"), "CALLER", False),
+    "environment": [os.environ.get(name) for name in
+                    ("OPENAI_API_KEY", {LOG_ENDPOINT_ENV!r}, {INFERENCE_ENDPOINT_ENV!r})],
+    "entrypoint": find_spec("alphaavatar.host.processes.entrypoint").origin,
+}}))
+"""
+# The Host's side: the child started by the interpreter the Host starts it with.
+HOST_START = f"""
+import subprocess, sys
+from alphaavatar.host.processes.process import _interpreter
+
+sys.exit(subprocess.run([*_interpreter(), "-c", {CHILD_REPORT!r}]).returncode)
+"""
+
+
+@pytest.mark.parametrize("isolated", [True, False], ids=["installed", "development"])
+def test_an_execution_child_is_isolated_exactly_when_its_host_is(
+    tmp_path: Path, isolated: bool
+) -> None:
+    site = tmp_path / "caller-site"
+    site.mkdir()
+    (site / "sitecustomize.py").write_text("CALLER = True\n")
+    passed = ["sk-fictional", "127.0.0.1:1", "/run/inference.sock"]
+    environment = os.environ | dict(
+        zip(("OPENAI_API_KEY", LOG_ENDPOINT_ENV, INFERENCE_ENDPOINT_ENV), passed, strict=True)
+    )
+    # An installed command runs the Host with -I; this workspace's editable environment
+    # runs it either way, the caller's PYTHONPATH set.
+    host_python = [sys.executable, *(["-I"] if isolated else []), "-c", HOST_START]
+    done = subprocess.run(
+        host_python,
+        env=environment | {"PYTHONPATH": str(site)},
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    report = json.loads(done.stdout)
+    # Isolated, the caller's site customization reaches the child no more than the Host;
+    # in development it still does, as the execution tests' own child site needs.
+    assert (report["isolated"], report["caller_site"]) == (int(isolated), not isolated)
+    assert report["environment"] == passed
+    entrypoint = Path(__file__).parents[1] / "alphaavatar/host/processes/entrypoint.py"
+    assert report["entrypoint"] == str(entrypoint)
+
+
+async def test_the_execution_child_starts_with_the_hosts_interpreter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started: list[tuple[str, ...]] = []
+
+    async def spawn(*command: str, **options: object) -> asyncio.subprocess.Process:
+        started.append(command)
+        raise OSError("not started")
+
+    monkeypatch.setattr(execution_process, "_interpreter", lambda: ("/installed/python", "-I"))
+    monkeypatch.setattr(execution_process.asyncio, "create_subprocess_exec", spawn)
+    request = SessionRequest(
+        attachment_id="attachment-1", backend="livekit", source_id="session", connection={}
+    )
+    child = execution_process.ExecutionProcess(
+        execution_id="execution-1", application="app", request=request, config=ProcessConfig()
+    )
+    with pytest.raises(OSError, match="not started"):
+        await child.on_start()
+    assert started == [("/installed/python", "-I", "-m", "alphaavatar.host.processes.entrypoint")]
 
 
 async def test_host_keeps_shared_inference_while_execution_children_remain(

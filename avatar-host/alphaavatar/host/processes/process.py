@@ -35,6 +35,14 @@ from .schemas import (
 )
 
 
+def _interpreter() -> tuple[str, ...]:
+    """This Python as the execution child runs it: isolated when the Host is, as an installed
+    command runs it (``python -I``), so the caller's PYTHONPATH, site customization and user
+    site reach the child no more than the Host; the environment itself (credentials, the log
+    and inference endpoints) passes either way."""
+    return (sys.executable, "-I") if sys.flags.isolated else (sys.executable,)
+
+
 class ExecutionProcess(LifecycleComponent):
     """Own one execution group and its authenticated IPC; never respawn an execution."""
 
@@ -207,7 +215,7 @@ class ExecutionProcess(LifecycleComponent):
             # Caller cancellation cannot abandon a child acquired by the owned spawn task.
             self._spawn_task = asyncio.create_task(
                 asyncio.create_subprocess_exec(
-                    sys.executable,
+                    *_interpreter(),
                     "-m",
                     "alphaavatar.host.processes.entrypoint",
                     stdin=asyncio.subprocess.PIPE,

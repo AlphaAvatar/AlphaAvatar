@@ -69,15 +69,18 @@ def memory_message(item: ModelInputItem) -> MemoryMessage | None:
         if not isinstance(item.metadata, Mapping):
             raise TypeError("Memory record metadata must be a mapping")
         changes["metadata"] = MappingProxyType({})
+
     if isinstance(item, ModelInputMessage | ModelFunctionOutput):
         parts = []
         for part in item.parts:
             if isinstance(part, ModelReasoningPart):
                 continue
+
             if isinstance(part, ModelTextPart | ModelRefusalPart) and not isinstance(
                 part.text, str
             ):
                 raise TypeError("Memory text parts must contain strings")
+
             if isinstance(part, ModelTextPart):
                 part = replace(part, annotations=())
             elif not isinstance(
@@ -89,6 +92,7 @@ def memory_message(item: ModelInputItem) -> MemoryMessage | None:
                 | ModelMediaPart,
             ):
                 raise TypeError("Unsupported memory content part")
+
             if isinstance(part, ModelImagePart | ModelAudioPart):
                 part = ModelTextPart(
                     f"[media evidence: observation={part.observation.observation_id}]"
@@ -106,6 +110,7 @@ def memory_message(item: ModelInputItem) -> MemoryMessage | None:
                 part = ModelTextPart(
                     f"[media evidence: {part.kind.value}, {part.mime_type}; not decoded here]"
                 )
+
             parts.append(part)
         if not parts and isinstance(item, ModelInputMessage):
             return None

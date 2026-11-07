@@ -1,0 +1,217 @@
+{
+ "model": "gpt-4o-transcribe",
+ "prompt": "The speaker may say more than one sentence; transcribe every sentence in full.",
+ "wav": "uploaded-segment.wav",
+ "results": [
+  {
+   "variant": "default",
+   "try": 1,
+   "deltas": "What is two plus three?",
+   "done": "What is two plus three?",
+   "ms": 941
+  },
+  {
+   "variant": "language=en",
+   "try": 1,
+   "deltas": "What is two plus three? Answer with just a number.",
+   "done": "What is two plus three? Answer with just a number.",
+   "ms": 836
+  },
+  {
+   "variant": "prompt",
+   "try": 1,
+   "deltas": "What is two plus three? Answer with just a number.",
+   "done": "What is two plus three? Answer with just a number.",
+   "ms": 856
+  },
+  {
+   "variant": "default",
+   "try": 2,
+   "deltas": "What is two plus three?",
+   "done": "What is two plus three?",
+   "ms": 753
+  },
+  {
+   "variant": "language=en",
+   "try": 2,
+   "deltas": "What is two plus three? Answer with just the number.",
+   "done": "What is two plus three? Answer with just the number.",
+   "ms": 703
+  },
+  {
+   "variant": "prompt",
+   "try": 2,
+   "deltas": "What is two plus three? Answer with just a number.",
+   "done": "What is two plus three? Answer with just a number.",
+   "ms": 798
+  },
+  {
+   "variant": "default",
+   "try": 3,
+   "deltas": "What is two plus three?",
+   "done": "What is two plus three?",
+   "ms": 710
+  },
+  {
+   "variant": "language=en",
+   "try": 3,
+   "deltas": "What is two plus three?",
+   "done": "What is two plus three?",
+   "ms": 709
+  },
+  {
+   "variant": "prompt",
+   "try": 3,
+   "deltas": "What is two plus three? Answer with just a number.",
+   "done": "What is two plus three? Answer with just a number.",
+   "ms": 977
+  },
+  {
+   "variant": "default",
+   "try": 4,
+   "deltas": "What is two plus three? Answer with just a number.",
+   "done": "What is two plus three? Answer with just a number.",
+   "ms": 941
+  },
+  {
+   "variant": "language=en",
+   "try": 4,
+   "deltas": "What is two plus three? Answer with just the number.",
+   "done": "What is two plus three? Answer with just the number.",
+   "ms": 721
+  },
+  {
+   "variant": "prompt",
+   "try": 4,
+   "deltas": "What is two plus three? Answer with just a number.",
+   "done": "What is two plus three? Answer with just a number.",
+   "ms": 926
+  },
+  {
+   "variant": "default",
+   "try": 5,
+   "deltas": "What is two plus three?",
+   "done": "What is two plus three?",
+   "ms": 717
+  },
+  {
+   "variant": "language=en",
+   "try": 5,
+   "deltas": "What is two plus three?",
+   "done": "What is two plus three?",
+   "ms": 711
+  },
+  {
+   "variant": "prompt",
+   "try": 5,
+   "deltas": "What is two plus three?",
+   "done": "What is two plus three?",
+   "ms": 688
+  },
+  {
+   "variant": "default",
+   "try": 6,
+   "deltas": "What is two plus three?",
+   "done": "What is two plus three?",
+   "ms": 688
+  },
+  {
+   "variant": "language=en",
+   "try": 6,
+   "deltas": "What is two plus three?",
+   "done": "What is two plus three?",
+   "ms": 801
+  },
+  {
+   "variant": "prompt",
+   "try": 6,
+   "deltas": "What is two plus three? Answer with just a number.",
+   "done": "What is two plus three? Answer with just a number.",
+   "ms": 1002
+  },
+  {
+   "variant": "default",
+   "try": 7,
+   "deltas": "What is two plus three?",
+   "done": "What is two plus three?",
+   "ms": 1305
+  },
+  {
+   "variant": "language=en",
+   "try": 7,
+   "deltas": "What is two plus three?",
+   "done": "What is two plus three?",
+   "ms": 714
+  },
+  {
+   "variant": "prompt",
+   "try": 7,
+   "deltas": "What is two plus three?",
+   "done": "What is two plus three?",
+   "ms": 690
+  },
+  {
+   "variant": "default",
+   "try": 8,
+   "deltas": "What is two plus three?",
+   "done": "What is two plus three?",
+   "ms": 812
+  },
+  {
+   "variant": "language=en",
+   "try": 8,
+   "deltas": "What is two plus three?",
+   "done": "What is two plus three?",
+   "ms": 662
+  },
+  {
+   "variant": "prompt",
+   "try": 8,
+   "deltas": "What is 2 plus 3? Answer with just a number.",
+   "done": "What is 2 plus 3? Answer with just a number.",
+   "ms": 896
+  },
+  {
+   "variant": "default",
+   "try": 9,
+   "deltas": "What is two plus three?",
+   "done": "What is two plus three?",
+   "ms": 762
+  },
+  {
+   "variant": "language=en",
+   "try": 9,
+   "deltas": "What is two plus three? Answer with just a number.",
+   "done": "What is two plus three? Answer with just a number.",
+   "ms": 987
+  },
+  {
+   "variant": "prompt",
+   "try": 9,
+   "deltas": "What is two plus three? Answer with just a number.",
+   "done": "What is two plus three? Answer with just a number.",
+   "ms": 869
+  },
+  {
+   "variant": "default",
+   "try": 10,
+   "deltas": "What is two plus three?",
+   "done": "What is two plus three?",
+   "ms": 773
+  },
+  {
+   "variant": "language=en",
+   "try": 10,
+   "deltas": "What is two plus three? Answer with just a number.",
+   "done": "What is two plus three? Answer with just a number.",
+   "ms": 872
+  },
+  {
+   "variant": "prompt",
+   "try": 10,
+   "deltas": "What is two plus three? Answer with just a number.",
+   "done": "What is two plus three? Answer with just a number.",
+   "ms": 848
+  }
+ ]
+}

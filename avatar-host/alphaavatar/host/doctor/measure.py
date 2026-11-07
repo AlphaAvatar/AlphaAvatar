@@ -1028,7 +1028,8 @@ class _Turn:
     def _stt(self, final: dict | None) -> list[Metric]:
         """Where the STT request of the final the Turn's request took spent its time: its
         wait in the plugin's queue, the connection it opened (none when reused), the upload,
-        the wait for the answer and the answer's stream to the final."""
+        the wait for the answer and the answer's stream to the final. A request its transport
+        did not trace has its queue alone; the rest is not observed, reuse included."""
         timed = next(
             (
                 r
@@ -1053,16 +1054,20 @@ class _Turn:
         found = []
         for name, key, start, end in rows:
             value = timed.fields.get(key) if timed is not None else None
+            # Reuse is known from a request its transport traced; one it did not is neither.
+            reused = timed.fields.get("reused") if timed is not None else None
             if timed is None:
                 note = f"not measured: {why}"
-            elif value is None and key in ("connect_ms", "tls_ms") and timed.fields.get("reused"):
-                note = "none: the connection was reused"
-            elif value is None and key == "tls_ms":
-                note = "none: the connection has no TLS"
-            elif value is None:
-                note = "not measured: its STT plugin times no such step"
-            else:
+            elif value is not None:
                 note = None
+            elif key in ("connect_ms", "tls_ms") and reused is True:
+                note = "none: the connection was reused"
+            elif key == "tls_ms" and reused is False:
+                note = "none: the connection has no TLS"
+            elif reused is None:
+                note = "not observed: its transport traced no request"
+            else:
+                note = "not measured: its STT plugin times no such step"
             found.append(
                 Metric(name, value, "ms", start, end, boundary, int(value is not None), note=note)
             )

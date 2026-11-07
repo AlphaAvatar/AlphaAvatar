@@ -1,0 +1,57 @@
+{
+ "mode": {
+  "tail": "on",
+  "prepare": "on"
+ },
+ "wav": "uploaded-segment.wav",
+ "rows": [
+  {
+   "segment": "seg-1",
+   "event": "FINAL_TRANSCRIPT",
+   "text": "What is two plus three? Answer with just a number.",
+   "commit_to_final_ms": 850.489,
+   "segment_id": "seg-1",
+   "outcome": "final",
+   "queue_ms": 0.009,
+   "reused": false,
+   "connect_ms": 3.644,
+   "tls_ms": 7.025,
+   "upload_ms": 4.747,
+   "wait_ms": 667.586,
+   "first_event_ms": 2.076,
+   "final_ms": 161.552
+  },
+  {
+   "segment": "seg-2",
+   "event": "FINAL_TRANSCRIPT",
+   "text": "What is two plus three? Answer with just a number.",
+   "commit_to_final_ms": 1132.742,
+   "segment_id": "seg-2",
+   "outcome": "final",
+   "queue_ms": 0.01,
+   "reused": false,
+   "connect_ms": 3.609,
+   "tls_ms": 6.743,
+   "upload_ms": 5.313,
+   "wait_ms": 913.734,
+   "first_event_ms": 0.417,
+   "final_ms": 202.018
+  },
+  {
+   "segment": "seg-3",
+   "event": "FINAL_TRANSCRIPT",
+   "text": "What is two plus three? Answer with just a number.",
+   "commit_to_final_ms": 857.437,
+   "segment_id": "seg-3",
+   "outcome": "final",
+   "queue_ms": 0.008,
+   "reused": false,
+   "connect_ms": 3.415,
+   "tls_ms": 8.261,
+   "upload_ms": 6.554,
+   "wait_ms": 655.888,
+   "first_event_ms": 0.418,
+   "final_ms": 182.21
+  }
+ ]
+}

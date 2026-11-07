@@ -1,0 +1,49 @@
+[
+ {
+  "request": 1,
+  "opened_connection": true,
+  "answer": {
+   "connection": "keep-alive",
+   "keep-alive": null,
+   "transfer-encoding": "chunked",
+   "content-length": null,
+   "content-type": "text/event-stream; charset=utf-8",
+   "http_version": "HTTP/1.1",
+   "status": 200
+  },
+  "events_after_done": [],
+  "done_to_stream_end_ms": 0.192,
+  "stream_consumed": true,
+  "response_closed": true,
+  "pool_after": [],
+  "trace_after_headers": [
+   "http11.receive_response_body.started",
+   "http11.response_closed.started",
+   "http11.response_closed.complete"
+  ]
+ },
+ {
+  "request": 2,
+  "opened_connection": true,
+  "answer": {
+   "connection": "keep-alive",
+   "keep-alive": null,
+   "transfer-encoding": "chunked",
+   "content-length": null,
+   "content-type": "text/event-stream; charset=utf-8",
+   "http_version": "HTTP/1.1",
+   "status": 200
+  },
+  "events_after_done": [],
+  "done_to_stream_end_ms": 0.155,
+  "stream_consumed": true,
+  "response_closed": true,
+  "pool_after": [],
+  "trace_after_headers": [
+   "http11.receive_response_body.failed",
+   "http11.receive_response_body.started",
+   "http11.response_closed.started",
+   "http11.response_closed.complete"
+  ]
+ }
+]

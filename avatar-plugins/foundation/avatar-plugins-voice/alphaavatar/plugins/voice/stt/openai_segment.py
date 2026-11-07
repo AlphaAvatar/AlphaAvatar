@@ -49,6 +49,9 @@ _END_EVENTS = object()
 # httpcore's trace names (``connection.connect_tcp.complete``, ``http11.send_request_body
 # .complete``, ...) to ``time.monotonic_ns``. A reused connection traces no connect.
 _TRACE: ContextVar[dict[str, int] | None] = ContextVar("segment_stt_trace", default=None)
+# How long the rest of a stream may take once its final is out: read to its end, the
+# connection is kept for the next segment; past this, it is closed and the next opens anew.
+_TAIL_SEC = 0.25
 
 
 async def _traced(request: httpx.Request) -> None:
@@ -58,6 +61,12 @@ async def _traced(request: httpx.Request) -> None:
             marks.setdefault(name, time.monotonic_ns())
 
         request.extensions["trace"] = trace
+
+
+def _prepare(client: openai.AsyncOpenAI) -> None:
+    """The SDK's transcription resource, which it imports on first use: about 0.1 s that
+    would otherwise fall on the first segment's request, on the event loop."""
+    _ = client.audio.transcriptions
 
 
 def _between(marks: dict[str, int], start: str, end: str) -> float | None:
@@ -229,6 +238,10 @@ class OpenAISegmentSTTStream(STTStreamBase):
         self._closed = False
         self._error: BaseException | None = None
 
+        # Off the event loop, while the segment is still spoken.
+        self._prepared = asyncio.create_task(
+            asyncio.to_thread(_prepare, self._client), name=f"openai_segment_prepare:{source_id}"
+        )
         self._worker_task = asyncio.create_task(self._run(), name=f"openai_segment_stt:{source_id}")
 
     def _put_input(self, item: _FrameCommand | _CommitCommand | object) -> bool:
@@ -475,14 +488,21 @@ class OpenAISegmentSTTStream(STTStreamBase):
         finally:
             # Where the segment's time went: its wait in the request queue, the connection
             # (none when reused), the upload, the server's answer and its stream to the final.
-            headers = next((at for n, at in marks.items() if n.endswith("headers.complete")), None)
+            # Reuse is known from a traced request only: a client of the caller's own, or a
+            # request that failed before the transport sent it, traces nothing.
+            sent = any(name.endswith("send_request_headers.started") for name in marks)
+            opened = any(name.endswith("connect_tcp.started") for name in marks)
+            answered = next(
+                (at for n, at in marks.items() if n.endswith("receive_response_headers.complete")),
+                None,
+            )
             log_event(
                 logger,
                 "stt.request",
                 segment_id=job.segment_id,
                 outcome="final" if "final" in done else "no_final",
                 queue_ms=round((started - job.committed_ns) / 1e6, 3),
-                reused=not any(name.endswith("connect_tcp.started") for name in marks),
+                reused=False if opened else True if sent else None,
                 connect_ms=_between(marks, "connect_tcp.started", "connect_tcp.complete"),
                 tls_ms=_between(marks, "start_tls.started", "start_tls.complete"),
                 upload_ms=_between(
@@ -493,13 +513,13 @@ class OpenAISegmentSTTStream(STTStreamBase):
                 ),
                 first_event_ms=(
                     None
-                    if headers is None or "first" not in done
-                    else round((done["first"] - headers) / 1e6, 3)
+                    if answered is None or "first" not in done
+                    else round((done["first"] - answered) / 1e6, 3)
                 ),
                 final_ms=(
                     None
-                    if headers is None or "final" not in done
-                    else round((done["final"] - headers) / 1e6, 3)
+                    if answered is None or "final" not in done
+                    else round((done["final"] - answered) / 1e6, 3)
                 ),
             )
 
@@ -536,43 +556,53 @@ class OpenAISegmentSTTStream(STTStreamBase):
         last_interim_at = 0.0
 
         try:
-            async for event in response:
-                done.setdefault("first", time.monotonic_ns())
-                event_type = getattr(event, "type", "")
+            # The final goes out once, as it arrives; the rest of the stream is then read
+            # for the connection to be reused, within _TAIL_SEC. A tail that fails or
+            # stalls costs that connection only: the segment's outcome is already out.
+            async with asyncio.timeout(None) as tail:
+                async for event in response:
+                    if final_emitted:
+                        continue
+                    done.setdefault("first", time.monotonic_ns())
+                    event_type = getattr(event, "type", "")
 
-                if event_type == "transcript.text.delta":
-                    text += str(getattr(event, "delta", ""))
-                    now = time.monotonic()
+                    if event_type == "transcript.text.delta":
+                        text += str(getattr(event, "delta", ""))
+                        now = time.monotonic()
 
-                    if text and now - last_interim_at >= self._interim_interval_sec:
-                        self._emit_transcript(
-                            event_type=TranscriptionEventType.INTERIM_TRANSCRIPT,
-                            segment_id=job.segment_id,
-                            text=text,
-                            duration_sec=job.duration_sec,
-                        )
-                        last_interim_at = now
+                        if text and now - last_interim_at >= self._interim_interval_sec:
+                            self._emit_transcript(
+                                event_type=TranscriptionEventType.INTERIM_TRANSCRIPT,
+                                segment_id=job.segment_id,
+                                text=text,
+                                duration_sec=job.duration_sec,
+                            )
+                            last_interim_at = now
 
-                    continue
+                        continue
 
-                if event_type == "transcript.text.done":
-                    final_text = getattr(event, "text", None)
-                    if isinstance(final_text, str):
-                        done["final"] = time.monotonic_ns()
-                        self._emit_transcript(
-                            event_type=TranscriptionEventType.FINAL_TRANSCRIPT,
-                            segment_id=job.segment_id,
-                            text=final_text,
-                            duration_sec=job.duration_sec,
-                        )
-                    else:
-                        self._emit_error(
-                            job.segment_id,
-                            "OpenAI transcription final has no text field",
-                            reason_code="invalid_final",
-                        )
-                    final_emitted = True
-                    break
+                    if event_type == "transcript.text.done":
+                        final_text = getattr(event, "text", None)
+                        if isinstance(final_text, str):
+                            done["final"] = time.monotonic_ns()
+                            self._emit_transcript(
+                                event_type=TranscriptionEventType.FINAL_TRANSCRIPT,
+                                segment_id=job.segment_id,
+                                text=final_text,
+                                duration_sec=job.duration_sec,
+                            )
+                        else:
+                            self._emit_error(
+                                job.segment_id,
+                                "OpenAI transcription final has no text field",
+                                reason_code="invalid_final",
+                            )
+                        final_emitted = True
+                        tail.reschedule(asyncio.get_running_loop().time() + _TAIL_SEC)
+        except Exception:
+            if not final_emitted:
+                raise
+            logger.debug("OpenAI STT stream after its final was not read to the end", exc_info=True)
         finally:
             if (close := getattr(response, "close", None)) is not None:
                 try:
@@ -603,6 +633,9 @@ class OpenAISegmentSTTStream(STTStreamBase):
         return str(error) or error.__class__.__name__
 
     async def _request_loop(self) -> None:
+        # A request waits for the SDK's preparation rather than import it on the event loop;
+        # a preparation that failed leaves the import to the request, as without it.
+        await asyncio.gather(self._prepared, return_exceptions=True)
         while True:
             item = await self._job_q.get()
 
@@ -671,12 +704,12 @@ class OpenAISegmentSTTStream(STTStreamBase):
             self._emit_error("unknown", str(error), reason_code="stream_error")
 
         finally:
-            for task in (ingest_task, request_task):
+            for task in (ingest_task, request_task, self._prepared):
                 if task is not None and not task.done():
                     task.cancel()
 
             await asyncio.gather(
-                *(task for task in (ingest_task, request_task) if task is not None),
+                *(task for task in (ingest_task, request_task, self._prepared) if task is not None),
                 return_exceptions=True,
             )
 

@@ -1,0 +1,39 @@
+{
+ "model": "gpt-4o-mini-tts",
+ "voice": "coral",
+ "samples": {
+  "timer_oven": {
+   "text": "Please set a timer for ten minutes. Then remind me to check the oven.",
+   "rate": 24000,
+   "channels": 1,
+   "bits": 16,
+   "tts_wav_sha256": "ef20e0b7c9feed44d74cb0c25dae9b0853a9d256b2ceb5b2672b21bea885a756",
+   "tts_wav_header_frames": 2147483647,
+   "kept": {
+    "file": "timer_oven-16k.wav",
+    "rate": 16000,
+    "frames": 94400,
+    "seconds": 5.9,
+    "sha256": "362b49fa5edd3bc94622e309c362e67a9f6d4170f6cef8b3b353dcc11d98620f",
+    "made_by": "scipy resample_poly 2/3 from the TTS WAV's PCM"
+   }
+  },
+  "lisbon_visit": {
+   "text": "My sister lives in Lisbon. She is visiting next week. Can you suggest a good restaurant?",
+   "rate": 24000,
+   "channels": 1,
+   "bits": 16,
+   "tts_wav_sha256": "65fcc7e13abf2829667351072dbbabb5539d49329f7ca5ed56ebed6e8f4b423f",
+   "tts_wav_header_frames": 2147483647,
+   "kept": {
+    "file": "lisbon_visit-16k.wav",
+    "rate": 16000,
+    "frames": 104800,
+    "seconds": 6.55,
+    "sha256": "c76130dace5cf2b18761dd1360d6af9db9db75592fd8f19c2ec323dd619fbf4a",
+    "made_by": "scipy resample_poly 2/3 from the TTS WAV's PCM"
+   }
+  }
+ },
+ "note": "Independent of Doctor's flite samples: other words, voice and engine. Kept at 16 kHz mono PCM16, as the pipeline feeds STT."
+}

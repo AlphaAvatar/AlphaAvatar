@@ -289,6 +289,14 @@ def test_the_finals_stt_request_is_parted_into_queue_connection_and_exchange() -
         (None, "none: the connection was reused")
     ] * 2
     assert shown["stt_wait"].value == 90.0
+    # A request its transport did not trace: its queue alone, the rest not observed, and
+    # neither reused nor without TLS.
+    untraced = log(1450, "stt.request", segment_id="seg-0", outcome="final", queue_ms=1.5)
+    shown = figures(scenario(observation(logs=[untraced])))
+    assert shown["stt_queue"].value == 1.5
+    assert {(shown[n].value, shown[n].note) for n in rows[1:]} == {
+        (None, "not observed: its transport traced no request")
+    }
     # An STT plugin that times nothing: every row says so.
     shown = figures(scenario(observation()))
     assert {shown[n].note for n in rows} == {"not measured: its STT plugin times no request"}

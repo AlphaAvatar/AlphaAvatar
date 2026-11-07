@@ -1,0 +1,25 @@
+{
+ "mode": {
+  "tail": "on",
+  "prepare": "on"
+ },
+ "wav": "uploaded-segment.wav",
+ "rows": [
+  {
+   "segment": "seg-1",
+   "event": "FINAL_TRANSCRIPT",
+   "text": "What is two plus three?",
+   "commit_to_final_ms": 762.214,
+   "segment_id": "seg-1",
+   "outcome": "final",
+   "queue_ms": 0.008,
+   "reused": false,
+   "connect_ms": 3.631,
+   "tls_ms": 10.714,
+   "upload_ms": 6.503,
+   "wait_ms": 636.847,
+   "first_event_ms": 2.078,
+   "final_ms": 98.608
+  }
+ ]
+}
