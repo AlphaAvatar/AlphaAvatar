@@ -59,7 +59,8 @@ _FIELDS = frozenset(
         "cached_input_tokens first_event_ms first_visible_text_ms "
         "start_seconds end_seconds timing_source chunk_id source_chunk_id source_chunk_count "
         "encode_ms frame_count request_bytes attempt "
-        "segment_id queue_ms reused connect_ms tls_ms upload_ms wait_ms final_ms"
+        "segment_id queue_ms reused connect_ms tls_ms upload_ms wait_ms final_ms "
+        "client_ms prepare_ms"
     ).split()
 )
 MAX_FIELDS = 24

@@ -14,11 +14,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import io
+import json
 import os
 import time
 import wave
 from collections import OrderedDict
+from collections.abc import AsyncIterator
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
@@ -49,8 +52,9 @@ _END_EVENTS = object()
 # httpcore's trace names (``connection.connect_tcp.complete``, ``http11.send_request_body
 # .complete``, ...) to ``time.monotonic_ns``. A reused connection traces no connect.
 _TRACE: ContextVar[dict[str, int] | None] = ContextVar("segment_stt_trace", default=None)
-# How long the rest of a stream may take once its final is out: read to its end, the
-# connection is kept for the next segment; past this, it is closed and the next opens anew.
+# How long the rest of a response may take once the segment's outcome is out, its reading
+# and closing together: read to its end, the connection is kept for the next segment; past
+# this, it is given up and the next opens anew.
 _TAIL_SEC = 0.25
 
 
@@ -67,6 +71,25 @@ def _prepare(client: openai.AsyncOpenAI) -> None:
     """The SDK's transcription resource, which it imports on first use: about 0.1 s that
     would otherwise fall on the first segment's request, on the event loop."""
     _ = client.audio.transcriptions
+
+
+async def _sse(chunks: AsyncIterator[bytes]) -> AsyncIterator[str]:
+    """Each server-sent event's data, its ``data:`` lines joined, an event split across chunks
+    put back together; the body read to its end."""
+    pending, data = b"", []
+    async for chunk in chunks:
+        *lines, pending = (pending + chunk).split(b"\n")
+        for line in lines:
+            line = line.removesuffix(b"\r")
+            if not line and data:
+                yield "\n".join(data)
+                data = []
+            elif line.startswith(b"data:"):
+                data.append(line[5:].removeprefix(b" ").decode())
+    if pending.startswith(b"data:"):
+        data.append(pending[5:].removeprefix(b" ").removesuffix(b"\r").decode())
+    if data:
+        yield "\n".join(data)
 
 
 def _between(marks: dict[str, int], start: str, end: str) -> float | None:
@@ -526,98 +549,121 @@ class OpenAISegmentSTTStream(STTStreamBase):
     async def _exchange(
         self, job: _SegmentJob, marks: dict[str, int], done: dict[str, int]
     ) -> None:
+        # The raw response, read here to the body's end: the SDK's own stream closes it at
+        # ``data: [DONE]``, before the chunked body ends, and the connection goes with it.
+        request = self._client.audio.transcriptions.with_streaming_response.create(
+            **self._request_kwargs(job)
+        )
         token = _TRACE.set(marks)
         try:
-            response = await self._client.audio.transcriptions.create(**self._request_kwargs(job))
+            response = await request.__aenter__()  # Closed below, within the tail's bound
         finally:
             _TRACE.reset(token)
 
-        # whisper-1 ignores stream=True and returns a complete response.
-        if not hasattr(response, "__aiter__"):
-            final_text = getattr(response, "text", None)
-            if isinstance(final_text, str):
-                done["first"] = done["final"] = time.monotonic_ns()
-                self._emit_transcript(
-                    event_type=TranscriptionEventType.FINAL_TRANSCRIPT,
-                    segment_id=job.segment_id,
-                    text=final_text,
-                    duration_sec=job.duration_sec,
-                )
-            else:
-                self._emit_error(
-                    job.segment_id,
-                    "OpenAI transcription final has no text field",
-                    reason_code="invalid_final",
-                )
-            return
+        settled = closed = False  # The segment's outcome is out; the response is released
+        bound: float | None = None  # When the tail's reading and closing must be done
+        text, last_interim_at = "", 0.0
 
-        text = ""
-        final_emitted = False
-        last_interim_at = 0.0
+        def settle(tail: asyncio.Timeout) -> None:
+            nonlocal settled, bound
+            settled, bound = True, asyncio.get_running_loop().time() + _TAIL_SEC
+            tail.reschedule(bound)
 
         try:
-            # The final goes out once, as it arrives; the rest of the stream is then read
-            # for the connection to be reused, within _TAIL_SEC. A tail that fails or
-            # stalls costs that connection only: the segment's outcome is already out.
+            # The outcome goes out once, as it arrives; the rest of the body is then read and
+            # the response closed within _TAIL_SEC. A tail that fails, stalls or will not
+            # close costs that connection only.
             async with asyncio.timeout(None) as tail:
-                async for event in response:
-                    if final_emitted:
-                        continue
-                    done.setdefault("first", time.monotonic_ns())
-                    event_type = getattr(event, "type", "")
-
-                    if event_type == "transcript.text.delta":
-                        text += str(getattr(event, "delta", ""))
-                        now = time.monotonic()
-
-                        if text and now - last_interim_at >= self._interim_interval_sec:
-                            self._emit_transcript(
-                                event_type=TranscriptionEventType.INTERIM_TRANSCRIPT,
-                                segment_id=job.segment_id,
-                                text=text,
-                                duration_sec=job.duration_sec,
-                            )
-                            last_interim_at = now
-
-                        continue
-
-                    if event_type == "transcript.text.done":
-                        final_text = getattr(event, "text", None)
-                        if isinstance(final_text, str):
-                            done["final"] = time.monotonic_ns()
-                            self._emit_transcript(
-                                event_type=TranscriptionEventType.FINAL_TRANSCRIPT,
-                                segment_id=job.segment_id,
-                                text=final_text,
-                                duration_sec=job.duration_sec,
-                            )
-                        else:
+                if "text/event-stream" not in response.headers.get("content-type", ""):
+                    # whisper-1 ignores stream=True and answers with the whole transcript.
+                    body = await response.json()
+                    final_text = body.get("text") if isinstance(body, dict) else None
+                    done["first"] = done["final"] = time.monotonic_ns()
+                    self._emit_final(job, final_text)
+                    settle(tail)
+                else:
+                    async for data in _sse(response.iter_bytes()):
+                        if settled:
+                            continue  # Past the outcome: read for the connection, not handled
+                        if data == "[DONE]":
                             self._emit_error(
                                 job.segment_id,
-                                "OpenAI transcription final has no text field",
-                                reason_code="invalid_final",
+                                "OpenAI transcription stream closed without a final result",
+                                reason_code="missing_final",
                             )
-                        final_emitted = True
-                        tail.reschedule(asyncio.get_running_loop().time() + _TAIL_SEC)
-        except Exception:
-            if not final_emitted:
-                raise
-            logger.debug("OpenAI STT stream after its final was not read to the end", exc_info=True)
-        finally:
-            if (close := getattr(response, "close", None)) is not None:
-                try:
-                    await close()
-                except Exception:
-                    if not final_emitted:
-                        raise
-                    logger.warning("OpenAI STT response cleanup failed after final", exc_info=True)
+                            settle(tail)
+                            continue
 
-        if not final_emitted:
+                        done.setdefault("first", time.monotonic_ns())
+                        event = json.loads(data)
+                        if isinstance(event, dict) and event.get("error"):
+                            error = event["error"]
+                            message = error.get("message") if isinstance(error, dict) else None
+                            raise openai.APIError(
+                                message
+                                if isinstance(message, str) and message
+                                else "An error occurred during streaming",
+                                response.http_response.request,
+                                body=error,
+                            )
+                        event_type = event.get("type") if isinstance(event, dict) else None
+
+                        if event_type == "transcript.text.delta":
+                            text += str(event.get("delta", ""))
+                            now = time.monotonic()
+
+                            if text and now - last_interim_at >= self._interim_interval_sec:
+                                self._emit_transcript(
+                                    event_type=TranscriptionEventType.INTERIM_TRANSCRIPT,
+                                    segment_id=job.segment_id,
+                                    text=text,
+                                    duration_sec=job.duration_sec,
+                                )
+                                last_interim_at = now
+
+                        elif event_type == "transcript.text.done":
+                            done["final"] = time.monotonic_ns()
+                            self._emit_final(job, event.get("text"))
+                            settle(tail)
+
+                await response.close()
+                closed = True
+        except Exception:
+            if not settled:
+                raise
+            logger.debug(
+                "OpenAI STT response after its outcome was not read to its end", exc_info=True
+            )
+        finally:
+            if not closed:
+                # Cut short by a failure, a cancellation or the bound: closed within the same
+                # bound, or one of its own when the outcome never went out.
+                with contextlib.suppress(Exception):
+                    loop = asyncio.get_running_loop()
+                    async with asyncio.timeout_at(bound or loop.time() + _TAIL_SEC):
+                        await response.close()
+
+        if not settled:
             self._emit_error(
                 job.segment_id,
                 "OpenAI transcription stream closed without a final result",
                 reason_code="missing_final",
             )
+
+    def _emit_final(self, job: _SegmentJob, text: object) -> None:
+        if not isinstance(text, str):
+            self._emit_error(
+                job.segment_id,
+                "OpenAI transcription final has no text field",
+                reason_code="invalid_final",
+            )
+            return
+        self._emit_transcript(
+            event_type=TranscriptionEventType.FINAL_TRANSCRIPT,
+            segment_id=job.segment_id,
+            text=text,
+            duration_sec=job.duration_sec,
+        )
 
     @staticmethod
     def _api_error_reason(error: BaseException) -> str:

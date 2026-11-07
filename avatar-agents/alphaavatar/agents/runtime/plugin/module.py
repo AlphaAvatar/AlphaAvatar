@@ -13,6 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+import inspect
 from abc import ABC, abstractmethod
 from enum import Enum
 from logging import Logger
@@ -113,6 +114,13 @@ class AvatarModulePlugin(ABC):
         """Its init_config validated as ``get_plugin`` reads it, before anything starts; None
         when it takes none or checks its own when created."""
         return None
+
+    def accepts(self, option: str) -> bool:
+        """Whether ``get_plugin`` takes ``option`` by name: a setting implementations of one
+        kind may or may not have, checked before anything starts. Its signature says, unless
+        it takes any keyword; an implementation that passes them on says for itself."""
+        parameters = inspect.signature(self.get_plugin).parameters
+        return option in parameters or any(p.kind is p.VAR_KEYWORD for p in parameters.values())
 
     def inference_runners(self, config: AvatarConfig) -> tuple[type[InferenceRunner], ...]:
         """The runners this implementation uses under ``config``, planned before any starts."""

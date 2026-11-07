@@ -521,6 +521,30 @@ def wait_for(path: Path, seconds: float = 30.0) -> None:
     assert path.exists(), f"{path.name} never appeared"
 
 
+def reclaimed(code: int | None, checks: dict[str, dict] | None, chain: SimpleNamespace) -> str:
+    """What a failed cleanup leaves to look at (O-17): the exit code, the whole cleanup check,
+    and the diagnostic process group's own state, as JSON."""
+    group = int((chain.files / "pid").read_text())
+    try:
+        os.killpg(group, 0)
+        alive = True
+    except ProcessLookupError:
+        alive = False
+    try:
+        pgid: int | None = os.getpgid(group)
+    except ProcessLookupError:
+        pgid = None
+    found = {
+        "exit_code": code,
+        "cleanup": (checks or {}).get("session.cleanup"),
+        "group": group,
+        "group_alive": alive,
+        "pgid": pgid,
+        "left_in_root": sorted(entry.name for entry in chain.root.iterdir()),
+    }
+    return json.dumps(found, default=str)
+
+
 def gone(group: int) -> bool:
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
@@ -641,8 +665,8 @@ def test_ctrl_c_and_cancellation_end_the_diagnostic_process_and_what_it_started(
     found = scenarios(checks)
     assert code == 130
     assert found["voice_vision", LABEL]["outcome"] == "interrupted"
-    assert checks["session.cleanup"]["status"] == "PASS"
-    assert gone(int((chain.files / "pid").read_text()))
+    assert checks["session.cleanup"]["status"] == "PASS", reclaimed(code, checks, chain)
+    assert gone(int((chain.files / "pid").read_text())), reclaimed(code, checks, chain)
 
     # Cancelling the diagnosis itself: the process and its runners go before it returns.
     async def cancelled() -> None:
@@ -658,8 +682,8 @@ def test_ctrl_c_and_cancellation_end_the_diagnostic_process_and_what_it_started(
     with mock.patch.dict(os.environ, environ, clear=True):
         asyncio.run(cancelled())
         assert dict(os.environ) == environ
-    assert gone(int((chain.files / "pid").read_text()))
-    assert list(chain.root.iterdir()) == []
+    assert gone(int((chain.files / "pid").read_text())), reclaimed(None, None, chain)
+    assert list(chain.root.iterdir()) == [], reclaimed(None, None, chain)
 
 
 def test_a_diagnostic_process_that_does_not_stop_is_ended_with_its_group(
@@ -775,6 +799,12 @@ def test_the_openai_adapter_refuses_pictures_as_such_and_other_refusals_keep_the
     assert voice["cause"] == "ModelRequestError: http_401"
     sent = {m["name"]: m["value"] for m in voice["segments"]}
     assert sent["model_request_frames"] == 0 and sent["model_request_encode"] >= 0
+    # From the request taken to its first attempt sent: the client made ready and the
+    # encoding are parts of it (O-15).
+    assert sent["model_request_client"] >= 0
+    assert (
+        sent["model_request_prepare"] >= sent["model_request_client"] + sent["model_request_encode"]
+    )
     assert sent["model_request_bytes"] == provider.sizes[0] == provider.sizes[1] > 0
     assert sent["model_request_attempts"] == 2 and voice["request"]["attempts"] == 2
     attempts = [e for e in voice["evidence"] if e["stage"] == "model.request_sent"]

@@ -302,6 +302,26 @@ def test_the_finals_stt_request_is_parted_into_queue_connection_and_exchange() -
     assert {shown[n].note for n in rows} == {"not measured: its STT plugin times no request"}
 
 
+def test_a_speaker_window_and_the_association_carry_when_their_spans_began() -> None:
+    # The speaker association a Turn's commit waits for (O-16): each window's queueing and
+    # inference, and the association's settling from its speech closed, on the report's clock.
+    window = trace(1700, "speaker.window", 30, segment_id="seg-0", sequence=1, outcome="done")
+    window |= {"event_time_ns": 1100 * MS, "start_time_ns": 1400 * MS, "end_time_ns": 1700 * MS}
+    settled = trace(1720, "speaker.association", 31, segment_id="seg-0", outcome="bound")
+    settled |= {"start_time_ns": 1300 * MS, "end_time_ns": 1720 * MS}
+    evidence = {e.stage: e for e in scenario(observation(trace=[window, settled])).evidence}
+    assert evidence["speaker.window"].detail | {"segment": None} == {
+        "sequence": 1,
+        "outcome": "done",
+        "segment": None,
+        "started_ms": 400.0,
+        "queued_ms": 100.0,
+    }
+    assert evidence["speaker.window"].at_ms == 700.0
+    assert evidence["speaker.association"].detail["started_ms"] == 300.0
+    assert evidence["speaker.association"].at_ms == 720.0
+
+
 def test_a_retry_is_an_attempt_of_its_own_and_the_first_is_when_the_request_went_out() -> None:
     retry = log(1950, "model.request_sent", request_id="req-1", attempt=2, request_bytes=20_000)
     result = scenario(observation(logs=[retry]))

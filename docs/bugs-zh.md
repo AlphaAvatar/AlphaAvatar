@@ -24,7 +24,7 @@
 | KD-22 | provider：OpenAI Responses 的 `model.request_sent` 在 `create()` 返回或抛错后才记，晚于请求真正交给传输层，Doctor 据此算的发送时刻偏晚。 | 发送时刻改由 httpx 请求钩子在交给传输层时逐次记录，每次尝试一条。 |
 | KD-27 | voice：分段 STT 请求计时（`stt.request`）的首事件和终稿两项，起点取成请求头写完，而不是收到应答头，多算了上传和服务等待。 | 两项改从 `receive_response_headers.complete` 起算，真实基线里首事件为 0.4～3.0 ms。 |
 | KD-28 | voice：没有 trace 的 STT 请求（调用方自带 `client=`，或在交给传输层之前就失败）被记成 `reused=True`。 | 只有 trace 看到请求头发出且没有建连才记复用，未观测时不记；Doctor 对这类请求只给排队一行，其余写 "not observed"。只有离线验证。 |
-| KD-30 | voice：每个进程第一段 STT 请求要在事件循环上做 openai SDK 的懒加载（首次访问 `client.audio.transcriptions`），约 95～103 ms 落在首段的请求路径上。 | STT stream 打开时在线程里预先访问，请求等它完成，不在事件循环上导入。真实运行里，首段没有落在任何网络段的时间从约 98 ms 降到约 3～6 ms，输入延迟没有变差；端到端收益还需要更多轮次。 |
+| KD-30 | voice：每个进程第一段 STT 请求要在事件循环上做 openai SDK 的懒加载（首次访问 `client.audio.transcriptions`），约 95～103 ms 落在首段的请求路径上。 | STT stream 打开时在线程里预先访问，请求等它完成，不在事件循环上导入。真实运行里，首段没有落在任何网络段的时间从约 98 ms 降到约 3～6 ms，本次未观察到输入延迟增加；约 97 ms 的首次加载已移出请求关键路径，端到端收益仍待验证。 |
 
 ### 插件 · perception（memory、persona、router）
 

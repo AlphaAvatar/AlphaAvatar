@@ -1197,6 +1197,13 @@ class _Turn:
         )
         found = []
         for name, key, unit, what in (
+            ("model_request_client", "client_ms", "ms", "the provider's client ready"),
+            (
+                "model_request_prepare",
+                "prepare_ms",
+                "ms",
+                "the request taken to its first attempt sent",
+            ),
             ("model_request_encode", "encode_ms", "ms", "the request encoded here"),
             ("model_request_frames", "frame_count", "frames", "pictures the request carries"),
             ("model_request_bytes", "request_bytes", "bytes", "the body the transport sent"),
@@ -1310,6 +1317,14 @@ class _Turn:
             ):
                 if key in record:
                     detail[key.removesuffix("_id")] = record[key][3:15]
+            # When a span it records began, on the report's clock: a wait, an inference; and,
+            # for a speaker window, when it was queued for it.
+            spans = [("start_time_ns", "started_ms")]
+            if record["stage"] == "speaker.window":
+                spans.append(("event_time_ns", "queued_ms"))
+            for key, name in spans:
+                if isinstance(record.get(key), int):
+                    detail[name] = round((record[key] - self.start) / 1e6, 3)
             items.append((record["recorded_time_ns"], record["stage"], "trace", detail))
         # Outputs and logs carry raw identities; the trace's tokens for them join them up.
         turn = self._token(self.o.turn_id)

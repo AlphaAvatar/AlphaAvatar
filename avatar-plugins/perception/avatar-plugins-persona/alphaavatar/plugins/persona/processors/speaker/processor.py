@@ -67,6 +67,7 @@ class SpeakerSegmentState:
     last_window_end: int = 0
     pending: int = 0
     closed: bool = False
+    closed_ns: int | None = None  # When its speech closed, on the runtime clock
     invalid: bool = False
     inference_failed: bool = False
     vector: np.ndarray | None = None
@@ -77,6 +78,8 @@ class SpeakerSegmentState:
 class SpeakerWindow:
     state: SpeakerSegmentState
     audio_f32: bytes
+    index: int = 0
+    queued_ns: int = 0  # When it joined the inference queue, on the runtime clock
 
     @property
     def source(self) -> PerceptionSourceRef:
@@ -151,6 +154,7 @@ class SpeakerProcessor(PersonaProcessorBase):
         self.runtime.participants.finish_segment_resolution(state.segment, token=state.token)
         if self._segments.get(state.segment) is state:
             self._segments.pop(state.segment)
+
         state.pcm.clear()
         state.recent.clear()
         state.last_audio = None
@@ -187,7 +191,8 @@ class SpeakerProcessor(PersonaProcessorBase):
         audio = np.frombuffer(pcm16, dtype="<i2").astype(np.float32) / 32768.0
         state.window_index += 1
         state.pending += 1
-        self._enqueue(SpeakerWindow(state=state, audio_f32=audio.tobytes()))
+        queued = self.runtime.clock.now().monotonic_ns
+        self._enqueue(SpeakerWindow(state, audio.tobytes(), state.window_index, queued))
 
     def _state(self, observation: EnvObservation) -> SpeakerSegmentState | None:
         segment = observation.segment
@@ -213,6 +218,7 @@ class SpeakerProcessor(PersonaProcessorBase):
                 self._invalidate(state)
                 self._retire(state)
                 return None
+
         if state is not None and not self.runtime.participants.segment_is_current(
             segment, state.token
         ):
@@ -238,6 +244,7 @@ class SpeakerProcessor(PersonaProcessorBase):
             except Exception:
                 self.runtime.participants.finish_segment_resolution(segment, token=token)
                 raise
+
             state = SpeakerSegmentState(
                 segment=segment,
                 entity=entity,
@@ -309,6 +316,7 @@ class SpeakerProcessor(PersonaProcessorBase):
         state = self._state(observation)
         if state is None or state.closed:
             return
+
         # Include the final tail in a full window; no zero-padding of short utterances.
         if (
             not state.invalid
@@ -317,12 +325,14 @@ class SpeakerProcessor(PersonaProcessorBase):
             and state.last_window_end != state.samples
         ):
             self._enqueue_pcm(state, bytes(state.recent))
-        state.closed = True
+
+        state.closed, state.closed_ns = True, self.runtime.clock.now().monotonic_ns
         state.pcm.clear()
         state.recent.clear()
         if state.pending == 0:
             if state.invalid or state.inference_failed or state.vector is None:
                 # Short speech has no vector job to wait for; finish without joining the queue.
+                self._associated(state, "invalid" if state.invalid else "unbound")
                 self._retire(state)
             else:
                 self._enqueue(state)
@@ -345,12 +355,39 @@ class SpeakerProcessor(PersonaProcessorBase):
         if not self._is_current(state) or state.invalid or state.inference_failed:
             return
 
-        result = await asyncio.wait_for(
-            self.inference_executor.do_inference(
-                SpeakerVectorRunner.INFERENCE_METHOD, job.audio_f32
-            ),
-            timeout=self._vector_config.inference_timeout_sec,
-        )
+        started, outcome = self.runtime.clock.now().monotonic_ns, "failed"
+        try:
+            result = await asyncio.wait_for(
+                self.inference_executor.do_inference(
+                    SpeakerVectorRunner.INFERENCE_METHOD, job.audio_f32
+                ),
+                timeout=self._vector_config.inference_timeout_sec,
+            )
+            outcome = "done"
+        except BaseException as error:
+            timed_out = isinstance(error, TimeoutError)
+            outcome = (
+                "cancelled"
+                if isinstance(error, asyncio.CancelledError)
+                else "timeout"
+                if timed_out
+                else "failed"
+            )
+            raise
+        finally:
+            # Each window's wait in the queue and its inference, for the association (O-16).
+            segment = state.segment
+            self.perception_runtime.input_trace.record(
+                "speaker.window",
+                source_id=segment.source.source_id,
+                source_generation=segment.source.source_generation,
+                segment_id=segment.segment_id,
+                sequence=job.index,
+                outcome=outcome,
+                event_time_ns=job.queued_ns or None,
+                start_time_ns=started,
+                end_time_ns=self.runtime.clock.now().monotonic_ns,
+            )
         if not self._is_current(state) or state.invalid or state.inference_failed:
             return
 
@@ -476,8 +513,10 @@ class SpeakerProcessor(PersonaProcessorBase):
         if not self._is_current(state) or not state.closed or state.pending:
             return
 
+        outcome: str | None = "unbound"  # Settled as retired, with no speaker bound
         try:
             if state.invalid:
+                outcome = "invalid"
                 return
 
             if state.entity is None:
@@ -503,9 +542,13 @@ class SpeakerProcessor(PersonaProcessorBase):
                     else associated
                 )
 
-            if not self.runtime.participants.bind_segment(
+            bound = self.runtime.participants.bind_segment(
                 state.segment, state.entity, token=state.token
-            ):
+            )
+            # Settled here, before the identity and attributes that follow it.
+            self._associated(state, "bound" if bound else "refused")
+            outcome = None
+            if not bound:
                 return
 
             if self.runtime.participants.resolve(segment=state.segment) is None:
@@ -519,7 +562,23 @@ class SpeakerProcessor(PersonaProcessorBase):
             if participant is not None:
                 await self._infer_attribute(state, participant)
         finally:
+            if outcome is not None:
+                self._associated(state, outcome)
             self._retire(state)
+
+    def _associated(self, state: SpeakerSegmentState, outcome: str) -> None:
+        """When the segment's speaker association settled, from its speech closed (O-16)."""
+        segment = state.segment
+        self.perception_runtime.input_trace.record(
+            "speaker.association",
+            source_id=segment.source.source_id,
+            source_generation=segment.source.source_generation,
+            segment_id=segment.segment_id,
+            outcome=outcome,
+            evidence_count=state.window_index,
+            start_time_ns=state.closed_ns,
+            end_time_ns=self.runtime.clock.now().monotonic_ns,
+        )
 
     async def _process(self, job: SpeakerWindow | SpeakerSegmentState) -> None:
         state = job.state if isinstance(job, SpeakerWindow) else job

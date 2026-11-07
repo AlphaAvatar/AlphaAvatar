@@ -281,6 +281,33 @@ async def test_sensor_evidence_and_attributes_stay_with_each_participant(
     await runtime.aclose()
 
 
+async def test_the_speaker_association_records_when_its_windows_ran_and_when_it_settled(
+    tmp_path: Path,
+) -> None:
+    runtime = avatar_runtime(tmp_path, SensorInference())
+    persona = persona_for(runtime, "speaker")
+    await persona.on_start()
+    speak(runtime, PerceptionSourceRef("device", 1), "a", "alice")
+
+    def records(stage: str) -> list[dict]:
+        found = runtime.perception.input_trace.snapshot().to_dict()["records"]
+        return [record for record in found if record["stage"] == stage]
+
+    await wait_until(lambda: records("speaker.association"), "the association never settled")
+    (window,) = records("speaker.window")
+    (association,) = records("speaker.association")
+    # One window, queued, run and done; the association settled from the speech's close,
+    # once that window was done: what a Turn's commit waits for (O-16).
+    assert (window["sequence"], window["outcome"]) == (1, "done")
+    assert window["event_time_ns"] <= window["start_time_ns"] <= window["end_time_ns"]
+    assert (association["outcome"], association["evidence_count"]) == ("bound", 1)
+    assert association["start_time_ns"] <= association["end_time_ns"]
+    assert association["end_time_ns"] >= window["end_time_ns"]
+    assert window["segment_id"] == association["segment_id"]
+    await persona.on_stop()
+    await runtime.aclose()
+
+
 @pytest.mark.parametrize(
     ("sensor", "how"),
     [("speaker", "new-generation"), ("speaker", "cancelled-source"), ("face", "new-generation")],

@@ -223,6 +223,7 @@ class TurnRuntime:
             raise ValueError("consumer_id cannot be empty")
         if waiter is not None and not callable(waiter):
             raise TypeError("context waiter must be callable")
+
         self._context_consumers.add(consumer_id)
         if waiter is None:
             self._context_waiters.pop(consumer_id, None)

@@ -28,6 +28,11 @@ voice:
 
 This is a configuration fragment; full examples also select Loop and Context. Model availability and credentials are deployment-specific.
 
+`voice.stt.language` and `voice.stt.prompt` are optional; both are unset by default.
+- `language` is an ISO-639-1 code (`zh`, `en`) the model takes as given. Unset, or `auto`, sends none: the model detects the language itself, which is what speech that mixes or switches languages needs. A fixed language is a hint, not detected evidence; `TranscriptionEvent.language` repeats this setting and is never a detection.
+- `prompt` guides the transcription (names, style, keeping every sentence).
+- `openai_segment` takes both; `openai_realtime` takes `language` and `delay` but no `prompt`. A setting the selected implementation does not take is refused by `config check`, at its location (`voice.stt.prompt`), as any unknown setting is.
+
 Interruption policy belongs to `router.init_config.turn_taking.interruption`. The unused `voice.allow_interruptions` field is removed and rejected; it is not a second interruption switch.
 
 Selecting Silero selects its inference runner. Models are resolved during runner initialization, not plugin import. See [Model cache](../../../docs/models-cache-layout.md) and [Plugin Layout and Boundaries](../../README.md).

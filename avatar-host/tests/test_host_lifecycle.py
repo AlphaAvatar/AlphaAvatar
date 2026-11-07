@@ -371,12 +371,13 @@ print(json.dumps({{
     "entrypoint": find_spec("alphaavatar.host.processes.entrypoint").origin,
 }}))
 """
-# The Host's side: the child started by the interpreter the Host starts it with.
+# The Host's side: the child started by the interpreter the Host starts it with. Both run
+# with -B: -I ignores PYTHONDONTWRITEBYTECODE, and the checkout must stay as it was.
 HOST_START = f"""
 import subprocess, sys
 from alphaavatar.host.processes.process import _interpreter
 
-sys.exit(subprocess.run([*_interpreter(), "-c", {CHILD_REPORT!r}]).returncode)
+sys.exit(subprocess.run([*_interpreter(), "-B", "-c", {CHILD_REPORT!r}]).returncode)
 """
 
 
@@ -393,7 +394,7 @@ def test_an_execution_child_is_isolated_exactly_when_its_host_is(
     )
     # An installed command runs the Host with -I; this workspace's editable environment
     # runs it either way, the caller's PYTHONPATH set.
-    host_python = [sys.executable, *(["-I"] if isolated else []), "-c", HOST_START]
+    host_python = [sys.executable, "-B", *(["-I"] if isolated else []), "-c", HOST_START]
     done = subprocess.run(
         host_python,
         env=environment | {"PYTHONPATH": str(site)},

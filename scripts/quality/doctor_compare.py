@@ -62,6 +62,8 @@ FIGURES = (
     ("stt_stream", "  STT stream (headers → transcript done)"),
     ("context_ready_wait", "Context readiness wait"),
     ("model_first_event", "Model request sent → First event"),
+    ("model_request_client", "Provider client ready"),
+    ("model_request_prepare", "Request taken → first attempt sent"),
     ("model_request_encode", "Request encoding"),
     ("model_request_frames", "Pictures sent"),
     ("model_request_bytes", "Request size"),

@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from alphaavatar.agents.avatar.voice import STTBase, TTSBase, VADBase, VoiceBundle
 from alphaavatar.agents.runtime.inference import InferenceExecutor
-from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin
+from alphaavatar.agents.runtime.plugin import AvatarModule, AvatarModulePlugin, resolve_plugin
 from alphaavatar.agents.utils.env_utils import check_server_key
 
 
@@ -36,6 +36,21 @@ class STTConfig(BaseModel):
     delay: Literal["minimal", "low", "medium", "high", "xhigh"] = Field(
         default="low", description="Realtime transcription latency/quality preference."
     )
+    language: str | None = Field(
+        default=None,
+        pattern=r"^(auto|[a-z]{2,3})$",
+        description=(
+            "The language the speech is in, as an ISO-639-1 code (zh, en): a hint the model "
+            "takes as given. Unset or auto: the model detects it, as for speech that mixes or "
+            "switches languages."
+        ),
+    )
+    prompt: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=1024,
+        description="Text that guides the transcription (its names, its style); none when unset.",
+    )
     base_url: str | None = Field(default=None, description="Optional provider API base URL.")
     api_key_env: str | None = Field(
         default=None,
@@ -48,21 +63,46 @@ class STTConfig(BaseModel):
         check_server_key(self.api_key_env, self.base_url)
         return self
 
+    def options(self) -> dict[str, object]:
+        """The settings implementations may or may not take, as the plugin is given them: the
+        ones that ask for something; ``language: auto`` and the default delay ask for nothing,
+        detection being what the model does unasked. An accepted snapshot holds every default."""
+        found: dict[str, object] = {}
+        if self.delay != type(self).model_fields["delay"].default:
+            found["delay"] = self.delay
+        if self.language not in (None, "auto"):
+            found["language"] = self.language
+        if self.prompt is not None:
+            found["prompt"] = self.prompt
+        return found
+
+    def unsupported(self, factory: AvatarModulePlugin) -> list[tuple[str, str]]:
+        """Each setting here its implementation does not take, by field, with why."""
+        return [
+            (name, f"voice.stt.plugin {self.plugin!r} does not take {name}")
+            for name in self.options()
+            if not factory.accepts(name)
+        ]
+
     def get_plugin(self) -> STTBase | None:
         if self.plugin is None:
             return None
         if self.model is None:
             raise ValueError(f"voice.stt.model is required when voice.stt.plugin={self.plugin!r}")
 
-        kwargs = {"model": self.model}
-        if self.plugin == "openai_realtime":
-            kwargs["delay"] = self.delay
+        factory = resolve_plugin(AvatarModule.VOICE_STT, self.plugin).factory
+        if problems := self.unsupported(factory):
+            raise ValueError("; ".join(f"voice.stt.{name}: {why}" for name, why in problems))
 
+        kwargs: dict[str, object] = {"model": self.model, **self.options()}
+        if "delay" not in kwargs and factory.accepts("delay"):
+            kwargs["delay"] = self.delay
         if self.base_url is not None:
             kwargs["base_url"] = self.base_url
         if self.api_key_env is not None:
             kwargs["api_key_env"] = self.api_key_env
-        return AvatarModulePlugin.create(AvatarModule.VOICE_STT, self.plugin, **kwargs)
+
+        return factory.get_plugin(**kwargs)
 
 
 class TTSConfig(BaseModel):

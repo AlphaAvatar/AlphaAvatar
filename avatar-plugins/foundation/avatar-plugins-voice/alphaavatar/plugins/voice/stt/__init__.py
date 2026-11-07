@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import inspect
+
 from alphaavatar.agents.runtime.plugin import AvatarModulePlugin
 
 from ..log import logger
@@ -23,6 +25,9 @@ class OpenAIRealtimeSTTPlugin(AvatarModulePlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)
 
+    def accepts(self, option: str) -> bool:
+        return option in inspect.signature(OpenAIRealtimeSTT).parameters
+
     def get_plugin(self, *args, **kwargs):
         return OpenAIRealtimeSTT(*args, **kwargs)
 
@@ -30,6 +35,9 @@ class OpenAIRealtimeSTTPlugin(AvatarModulePlugin):
 class OpenAISegmentSTTPlugin(AvatarModulePlugin):
     def __init__(self) -> None:
         super().__init__(__name__, __version__, __package__, logger)
+
+    def accepts(self, option: str) -> bool:
+        return option in inspect.signature(OpenAISegmentSTT).parameters
 
     def get_plugin(self, *args, **kwargs):
         return OpenAISegmentSTT(*args, **kwargs)

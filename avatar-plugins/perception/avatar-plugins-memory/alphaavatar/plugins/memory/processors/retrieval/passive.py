@@ -165,6 +165,7 @@ class PassiveRecall:
                 if not self._memory.identity_is_current(identity):
                     self._finish(entry, "identity_changed")
                     return
+
                 owners = list(
                     {
                         ref.key: ref
@@ -178,6 +179,7 @@ class PassiveRecall:
                 if remaining <= 0:
                     self._finish(entry, "timeout")
                     return
+
                 items = await self._memory.store.recall_by_context(
                     context_str=query,
                     owner_refs=owners,
@@ -236,6 +238,7 @@ class PassiveRecall:
             if entry is not None and entry.task is None:
                 self._inflight.discard(entry.turn_id)
             return
+
         try:
             if snapshot.modality == TurnInputModality.SYSTEM or not (snapshot.text or "").strip():
                 self._finish(entry, "empty")
@@ -250,6 +253,7 @@ class PassiveRecall:
             if context_id is None:
                 self._finish(entry, "unavailable")
                 return
+
             query = "\n\n".join(f"### user:\n{text}" for text in self._history[context_id])
             entry.task = asyncio.create_task(
                 self._run(entry, context_id, query[-self._config.max_query_chars :], snapshot),
@@ -297,13 +301,16 @@ class PassiveRecall:
             raise ValueError("Memory readiness requires a Turn owned by this runtime")
         if not self._accepting:
             return
+
         entry = self._entries.get(snapshot.turn_id)
         if entry is None:
             batch = self._runtime.turn.events.read_pending(consumer_id=self.CONSUMER_ID)
             event = next((event for event in batch.items if event.snapshot is snapshot), None)
             if event is None:
                 return
+
             entry = self._entry(snapshot, event.sequence)
+
         if entry is not None:
             await asyncio.shield(entry.result)
 
@@ -314,6 +321,7 @@ class PassiveRecall:
     async def start(self) -> None:
         if self._stop_task is not None:
             raise RuntimeError("Passive recall cannot restart after stopping")
+
         self._accepting = True
         self._runtime.turn.register_context_consumer(
             self.CONSUMER_ID, waiter=self.wait_context_ready

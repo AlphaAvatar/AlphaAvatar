@@ -95,6 +95,18 @@ def _provider_tasks(
     errors: list[Any] = []
     for location, plugin in selection.plugins.items():
         section = location.rpartition(".")[0]
+        # Settings of the section that implementations of its kind may or may not take.
+        if (unsupported := getattr(config.section(location), "unsupported", None)) is not None:
+            errors += [
+                {
+                    "type": PydanticCustomError(
+                        "unsupported_setting", "{message}", {"message": why}
+                    ),
+                    "loc": (*section.split("."), name),
+                    "input": getattr(config.section(location), name),
+                }
+                for name, why in unsupported(plugin.factory)
+            ]
         if (init_config := getattr(config.section(location), "init_config", None)) is None:
             continue
         try:

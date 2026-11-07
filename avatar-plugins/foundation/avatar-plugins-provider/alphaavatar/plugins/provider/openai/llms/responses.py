@@ -134,7 +134,9 @@ class OpenAIResponsesLLM(StreamingLLMBase):
         events = None
         try:
             async with asyncio.timeout_at(deadline):
+                taken = asyncio.get_running_loop().time()
                 client = await self._client.get()
+                client_ms = round((asyncio.get_running_loop().time() - taken) * 1000, 3)
                 adapter = ResponsesAdapter(
                     self._config,
                     self._options,
@@ -148,13 +150,17 @@ class OpenAIResponsesLLM(StreamingLLMBase):
 
                 def sent(size: int | None) -> None:
                     # Each attempt as it goes to the transport, encoded, in numbers only: how
-                    # long encoding took here, the pictures it carries, the body sent.
+                    # long the client took to be ready and encoding took here, all of it from
+                    # the request taken to this attempt sent, the pictures, the body sent.
                     nonlocal attempts
                     attempts += 1
+                    prepare_ms = round((asyncio.get_running_loop().time() - taken) * 1000, 3)
                     log_event(
                         logger,
                         "model.request_sent",
                         request_id=request.request_id,
+                        client_ms=client_ms,
+                        prepare_ms=prepare_ms,
                         encode_ms=encode_ms,
                         frame_count=frames,
                         request_bytes=size,

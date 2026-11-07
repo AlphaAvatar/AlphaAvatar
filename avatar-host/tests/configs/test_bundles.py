@@ -463,6 +463,46 @@ def test_a_context_profile_with_the_removed_history_limits_still_loads(
     assert error["fields"] == ["context.init_config.history_max_tokens"]
 
 
+@pytest.mark.parametrize(
+    ("stt", "fields"),
+    [
+        # The segment STT takes a language and a prompt; auto is the model's own detection.
+        ("plugin: openai_segment\nmodel: gpt-4o-transcribe\nlanguage: zh\nprompt: Keep all.\n", []),
+        ("plugin: openai_segment\nmodel: gpt-4o-transcribe\nlanguage: auto\n", []),
+        ("plugin: openai_realtime\nmodel: gpt-realtime-whisper\nlanguage: zh\ndelay: high\n", []),
+        # What an implementation does not take is refused where it is set, before any start.
+        (
+            "plugin: openai_realtime\nmodel: gpt-realtime-whisper\nprompt: Keep all.\n",
+            ["voice.stt.prompt"],
+        ),
+        ("plugin: openai_segment\nmodel: gpt-4o-transcribe\ndelay: high\n", ["voice.stt.delay"]),
+        (
+            "plugin: openai_segment\nmodel: gpt-4o-transcribe\ndialect: en-GB\n",
+            ["voice.stt.dialect"],
+        ),
+    ],
+)
+def test_an_stt_setting_its_implementation_does_not_take_is_refused_where_it_is_set(
+    stt: str, fields: list[str], home: Path, capsys: pytest.CaptureFixture
+) -> None:
+    assert create("alpha", "alpha") == 0
+    voice = profile(home, VOICE)
+    block = "stt:\n  plugin: openai_segment\n  model: gpt-4o-transcribe\n"
+    assert block in voice.read_text()
+    voice.write_text(
+        voice.read_text().replace(
+            block, "stt:\n" + "".join(f"  {line}\n" for line in stt.splitlines())
+        )
+    )
+    capsys.readouterr()
+    code = main(["config", "check", "alpha", "--json"])
+    report = json.loads(capsys.readouterr().out)
+    if not fields:
+        assert (code, report["valid"]) == (0, True)
+        return
+    assert (code, report["error"]["fields"]) == (2, fields)
+
+
 def test_checking_a_bundle_reads_only_and_hides_profile_credentials(
     tmp_path: Path,
     home: Path,
