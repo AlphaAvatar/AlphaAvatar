@@ -79,8 +79,8 @@ def observation(records: list[OutputRecord] | None = None, **extra: object) -> T
         trace(1300, "stt.commit", 2, segment_id="seg-0", outcome="accepted"),
         trace(1500, "stt.terminal", 3, segment_id="seg-0", observation_id="final-0")
         | {"outcome": "final_text", "text_chars": 52},
-        trace(1501, "candidate.segment", 4, candidate_id="cand-0", segment_id="seg-0"),
-        trace(1502, "candidate.decision", 5, candidate_id="cand-0", decision_id="d-0"),
+        trace(1501, "input.segment", 4, input_id="input-1", segment_id="seg-0"),
+        trace(1502, "input.decision", 5, input_id="input-1", decision_id="d-0"),
         trace(1600, "turn.committed", 6, turn_id="turn-1", decision_id="d-0", input_id="input-1"),
         trace(1851, "model.request", 7, turn_id="turn-1", run_id="run-1", request_id="req-1")
         | {"input_id": identity("input-1"), "frame_count": 0},
@@ -144,8 +144,8 @@ def test_the_stages_add_up_to_the_first_audio_frame_on_one_clock() -> None:
         | {"outcome": "final_text"},
         trace(1400.000_1, "perception.speech_closed", 23, segment_id="seg-1")
         | {"start_time_ns": 200 * MS, "end_time_ns": 3200 * MS},
-        trace(1555, "candidate.segment", 24, candidate_id="cand-0", segment_id="seg-1"),
-        trace(1595, "candidate.segment", 25, candidate_id="cand-0", segment_id="seg-2"),
+        trace(1555, "input.segment", 24, input_id="input-1", segment_id="seg-1"),
+        trace(1595, "input.segment", 25, input_id="input-1", segment_id="seg-2"),
     ]
     result = scenario(found)
     assert result.outcome == ScenarioOutcome.PASSED
@@ -272,7 +272,7 @@ def test_the_finals_stt_request_is_parted_into_queue_connection_and_exchange() -
         tls_ms=60.0,
         **timing,
     )
-    joined = trace(1501.5, "candidate.segment", 30, candidate_id="cand-0", segment_id="seg-1")
+    joined = trace(1501.5, "input.segment", 30, input_id="input-1", segment_id="seg-1")
     shown = figures(scenario(observation(trace=[joined], logs=[other, opened])))
     rows = (
         "stt_queue",
@@ -324,85 +324,65 @@ def test_a_speaker_window_and_the_association_carry_when_their_spans_began() -> 
     assert evidence["speaker.association"].at_ms == 720.0
 
 
-@pytest.mark.parametrize(
-    ("ready_at", "asked_at", "values", "wait_note"),
-    [
-        # Known only after the commit asked: the commit waited for it.
-        (1720, 1600, (420.0, 120.0), None),
-        # Its subject came with the speech: ready before it closed, no wait needed.
-        (
-            1200,
-            1600,
-            (-100.0, 0.2),
-            "none needed: every segment of its candidate was ready before the commit asked",
-        ),
-    ],
-)
-def test_the_association_ready_and_the_commits_own_wait_are_two_figures(
-    ready_at: float, asked_at: float, values: tuple, wait_note: str | None
-) -> None:
-    settled = trace(1800, "participant.segment_ready", 40, segment_id="seg-0", outcome="bound")
-    settled |= {"start_time_ns": 1100 * MS, "end_time_ns": round(ready_at * MS)}
-    waited = trace(1801, "candidate.association", 41, candidate_id="cand-0", outcome="ready")
-    end = max(ready_at, asked_at + 0.2)
-    waited |= {"start_time_ns": asked_at * MS, "end_time_ns": round(end * MS)}
-    shown = figures(scenario(observation(trace=[settled, waited])))
-    assert (shown["association_ready"].value, shown["association_wait"].value) == values
-    assert shown["association_wait"].note == wait_note
-    # No resolver recorded one, and the commit waited for none: neither is measured.
-    shown = figures(scenario(observation()))
-    assert shown["association_ready"].value is shown["association_wait"].value is None
-    assert shown["association_ready"].note.startswith("not measured")
-
-
 def ready_at(at: float, segment: str, trace_sequence: int) -> dict:
     record = trace(at, "participant.segment_ready", trace_sequence, segment_id=segment)
     return record | {"outcome": "bound", "start_time_ns": 1100 * MS, "end_time_ns": at * MS}
 
 
-def check(asked: float, answered: float, trace_sequence: int, revision: int) -> dict:
-    record = trace(answered, "candidate.association", trace_sequence, candidate_id="cand-0")
-    record |= {"candidate_revision": revision, "outcome": "ready"}
-    return record | {"start_time_ns": asked * MS, "end_time_ns": round(answered * MS)}
-
-
-def test_the_commits_wait_is_every_check_of_its_candidate_a_re_decisions_too() -> None:
-    # Waited for the association, which, once ready, changed the evidence: re-decided and
-    # checked again at once. The last check alone would say the commit never waited.
-    steps = [ready_at(1720, "seg-0", 40), check(1600, 1720, 41, 1), check(1760, 1760.2, 42, 2)]
-    shown = figures(scenario(observation(trace=steps)))["association_wait"]
-    assert (shown.value, shown.samples, shown.values) == (120.2, 2, (120.0, 0.2))
-    assert shown.note == "2 checks, a re-decision's too, summed"
-
-
 @pytest.mark.parametrize(
-    ("earlier", "answered", "note"),
+    ("ready", "value", "note"),
     [
-        (None, 1750, None),  # Never ready: the check timed out on it.
-        (1720, 1720, None),  # Ready while the check waited.
-        (
-            1500,
-            1600,
-            "none needed: every segment of its candidate was ready before the commit asked",
-        ),
+        # Its subject came with the speech: ready before it closed.
+        (1200, -100.0, None),
+        # Ready only after Engine admitted the Turn: its actors were resolved without it.
+        (1720, 420.0, "ready after the Turn's admission: its segment stayed unattributed"),
     ],
-    ids=["never", "during", "before"],
+    ids=["before-the-admission", "after-the-admission"],
 )
-def test_no_wait_is_needed_only_when_every_segment_of_the_candidate_was_ready(
-    earlier: float | None, answered: float, note: str | None
+def test_the_association_is_timed_from_its_speech_and_one_late_for_the_admission_says_so(
+    ready: float, value: float, note: str | None
 ) -> None:
-    # The commit checks each segment of its candidate: its last one, the final's, ready
-    # before it asked says nothing of an earlier one.
-    joined = trace(1290, "candidate.segment", 38, candidate_id="cand-0", segment_id="seg-a")
-    steps = [joined, ready_at(1200, "seg-0", 39), check(1600, answered, 41, 1)]
-    if earlier is not None:
-        steps.append(ready_at(earlier, "seg-a", 40))
-    shown = figures(scenario(observation(trace=steps)))["association_wait"]
-    assert (shown.value, shown.note) == (answered - 1600, note)
+    # Nothing waits for the association: Engine resolves the Turn's actors as it admits it.
+    admitted = trace(1601, "turn.admission", 40, decision_id="d-0", input_id="input-1")
+    steps = [ready_at(ready, "seg-0", 41), admitted | {"outcome": "accepted"}]
+    shown = figures(scenario(observation(trace=steps)))["association_ready"]
+    assert (shown.value, shown.note) == (value, note)
+    assert "association_wait" not in figures(scenario(observation(trace=steps)))
+    # No resolver recorded one: it is not measured.
+    shown = figures(scenario(observation()))["association_ready"]
+    assert shown.value is None and shown.note.startswith("not measured")
+
+
+def test_the_finals_semantic_addressing_is_its_wait_in_queue_then_its_inference() -> None:
+    # O-16: the evidence the router waits for after the final, queued as the final came.
+    def job(observation: str, outcome: str, queued: float, begun: float, end: float) -> dict:
+        record = trace(
+            end, "addressing.semantic", 30, segment_id="seg-0", observation_id=observation
+        )
+        return record | {
+            "outcome": outcome,
+            "event_time_ns": round(queued * MS),
+            "start_time_ns": round(begun * MS),
+            "end_time_ns": round(end * MS),
+        }
+
+    steps = [
+        job("final-9", "done", 1400, 1400, 1450),  # Another transcript's
+        job("final-0", "cancelled", 1500, 1500, 1510),  # Replaced, never answered
+        job("final-0", "done", 1500, 1530, 1620),
+    ]
+    result = scenario(observation(trace=steps))
+    shown = figures(result)
+    assert (shown["addressing_queue"].value, shown["addressing_inference"].value) == (30.0, 90.0)
+    queued = [e.detail["queued_ms"] for e in result.evidence if e.stage == "addressing.semantic"]
+    assert queued == [400.0, 500.0, 500.0]
+    shown = figures(scenario(observation()))
+    assert shown["addressing_queue"].value is shown["addressing_inference"].value is None
+    assert shown["addressing_inference"].note.startswith("not measured")
 
 
 def span(at: float, stage: str, trace_sequence: int, outcome: str, **times: float) -> dict:
-    record = trace(at, stage, trace_sequence, candidate_id="cand-0") | {"outcome": outcome}
+    record = trace(at, stage, trace_sequence, input_id="input-1") | {"outcome": outcome}
     return record | {f"{name}_time_ns": round(value * MS) for name, value in times.items()}
 
 
@@ -427,17 +407,17 @@ def test_between_the_final_and_the_commit_the_assessments_and_waits_are_figures(
     # O-16, from the final (1500 ms) to the commit (1600): what the endpoint model ran and the
     # router waited for in that stretch, each span its part within it alone.
     steps = [
-        span(1320, "candidate.assessment", 30, "done", event=1300, start=1310, end=1320),
-        span(1470, "candidate.hold", 31, "cancelled", start=1320, end=1470),  # Before it
-        span(1510, "candidate.addressing_wait", 32, "cancelled", start=1450, end=1510),
+        span(1320, "input.assessment", 30, "done", event=1300, start=1310, end=1320),
+        span(1470, "input.hold", 31, "cancelled", start=1320, end=1470),  # Before it
+        span(1510, "input.addressing_wait", 32, "cancelled", start=1450, end=1510),
         *(
-            span(end, "candidate.assessment", 33 + i, outcome, event=queued, start=begun, end=end)
+            span(end, "input.assessment", 33 + i, outcome, event=queued, start=begun, end=end)
             for i, (queued, begun, end, outcome) in enumerate(assessed)
         ),
-        span(1600, "candidate.addressing_wait", 40, "done", start=1590, end=1599.5),
-        trace(1600, "candidate.decision", 41, candidate_id="cand-0") | {"action": "commit"},
-        span(1700, "candidate.hold", 42, "done", start=1600, end=1700),  # After it: not its
-        span(1750, "candidate.assessment", 43, "done", event=1700, start=1710, end=1750),
+        span(1600, "input.addressing_wait", 40, "done", start=1590, end=1599.5),
+        trace(1600, "input.decision", 41, input_id="input-1") | {"action": "commit"},
+        span(1700, "input.hold", 42, "done", start=1600, end=1700),  # After it: not its
+        span(1750, "input.assessment", 43, "done", event=1700, start=1710, end=1750),
     ]
     result = scenario(observation(trace=steps))
     shown = figures(result)
@@ -452,12 +432,10 @@ def test_between_the_final_and_the_commit_the_assessments_and_waits_are_figures(
         (10.0, 9.5),
         "addressing_wait",
     )
-    queued_at = [
-        e.detail["queued_ms"] for e in result.evidence if e.stage == "candidate.assessment"
-    ]
+    queued_at = [e.detail["queued_ms"] for e in result.evidence if e.stage == "input.assessment"]
     assert queued_at == [300.0, *(q - START for q, *_ in assessed), 700.0]
     # No commit decision: nothing to measure between the final and it.
-    uncommitted = [r for r in steps if r["stage"] != "candidate.decision"]
+    uncommitted = [r for r in steps if r["stage"] != "input.decision"]
     shown = figures(scenario(observation(trace=uncommitted)))
     assert shown["endpoint_assessment"].value is shown["decision_holds"].value is None
 
@@ -611,10 +589,8 @@ def test_a_spoken_input_that_never_committed_shows_where_it_stopped() -> None:
         trace(1, "turn.committed", 1, turn_id="earlier", input_id="input-0"),  # Before: not ours.
         trace(6, "perception.speech_closed", 2, segment_id="seg-1", observation_id="speech-1"),
         trace(6, "stt.commit", 3, segment_id="seg-1", outcome="accepted"),
-        trace(7, "candidate.decision", 4, candidate_id="cand-1", decision_id="d-1", action="hold"),
-        trace(
-            8, "candidate.decision", 5, candidate_id="cand-1", decision_id="d-2", action="cancel"
-        ),
+        trace(7, "input.decision", 4, input_id="input-2", decision_id="d-1", action="hold"),
+        trace(8, "input.decision", 5, input_id="input-2", decision_id="d-2", action="cancel"),
         trace(
             9, "stt.terminal", 6, segment_id="seg-1", observation_id="final-1", outcome="final_text"
         ),
@@ -635,7 +611,7 @@ def test_a_spoken_input_that_never_committed_shows_where_it_stopped() -> None:
     result = scenario(found)
     assert result.reached == ("input", "vad.closed", "stt.final")
     assert (result.outcome, result.blocked_stage) == ("failed", "turn.committed")
-    decisions = [e.detail["action"] for e in result.evidence if e.stage == "candidate.decision"]
+    decisions = [e.detail["action"] for e in result.evidence if e.stage == "input.decision"]
     assert decisions == ["hold", "cancel"]
     assert "turn.committed" not in {e.stage for e in result.evidence}
 
@@ -657,8 +633,8 @@ def spoken(segments: list[tuple[int, int, str | None]], heard: str, **extra) -> 
             final |= {"outcome": outcome, "observation_id": identity(f"final-{index}")}
             records.append(final | {"text_chars": 23})
     records += [
-        trace(4000, "candidate.segment", 90, candidate_id="cand-0", segment_id="seg-0"),
-        trace(4001, "candidate.decision", 91, candidate_id="cand-0", decision_id="d-0"),
+        trace(4000, "input.segment", 90, input_id="input-1", segment_id="seg-0"),
+        trace(4001, "input.decision", 91, input_id="input-1", decision_id="d-0"),
         trace(4002, "turn.committed", 92, turn_id="turn-1", decision_id="d-0", input_id="input-1"),
         trace(4003, "model.request", 93, turn_id="turn-1", run_id="run-1", request_id="req-1"),
         *(
@@ -736,7 +712,7 @@ def test_a_sentence_missing_from_the_transcript_is_placed_where_it_was_lost() ->
         (2, "stt", "no STT final for its segment: closed_without_final, final_empty")
     ]
     # Its own segment's final came after the Turn committed, for a segment it had retired.
-    rejected = trace(4100, "candidate.transcript_rejected", 95, segment_id="seg-1")
+    rejected = trace(4100, "input.transcript_rejected", 95, segment_id="seg-1")
     found = spoken(
         [(200, 1600, "final_text"), (1700, 3200, "final_text")],
         FIRST,

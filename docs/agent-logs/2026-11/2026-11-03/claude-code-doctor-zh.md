@@ -17,7 +17,9 @@
 | Doctor 第一批：执行范围、指标口径、漏句归因 | 视觉开只跑 `voice_vision`、关只跑 `voice`，去掉 `text` 和降级试跑，确认、预算和执行读同一计划，runtime 与 `start` 共用构造；指标改为 Final speech 到 First audio frame 的节点链（Input、Context、Output 三段相加等于首音频帧），`Model request sent` 在交给传输层时逐次记录；漏句分覆盖、终稿、采用、内容四项；汇总另给全体已观测轮，对照脚本重算并核对 | 2026-11-07 | `d5080d5` | 用户已提交（`64a9de7`） | 离线验证见该节第 6 小节；真实服务复验（4 份 × 5 轮）与 KD-17 见第 7 小节；`cli.html` 重录与合并标注修复见第 9 小节 |
 | Doctor 第二批：Context 构建时刻、报告完整性、KD-19 定位、KD-17 恢复、证据与 STT 拆解 | `context.built` 在 Context build 返回处记录并由 Doctor 读取；`doctor_compare.py` 核对场景分组、指标集合和 `stopped_at`；KD-19 探针（进入 STT 的 PCM 到 Turn 采用文字）与直连对照脚本；KD-17 硬期限后的恢复回归；真实报告的脱敏证据入库；分段 STT 按请求计时（排队、建连、TLS、上传、等待、流），发现 KD-20 | 2026-11-07 | `64a9de7` | 用户已提交（`b1cc485`） | 已审查：三项修复接受，KD-19 定位有证据支持；计时与进程隔离的收尾见第三批 |
 | Doctor 第三批：STT 计时与连接收尾、SDK 预备、执行子进程隔离 | STT 首事件与终稿从应答头起算；未 trace 的请求不记复用，Doctor 写未观测；KD-20 终稿立即发布一次、流在 0.25 s 内读完再复用连接；STT stream 打开时在线程里预备 SDK 资源；Host 以 `-I` 运行时执行子进程也加 `-I`；视觉关 Turn commit 等待与首轮请求准备的来源离线定位；KD-19、KD-20、KD-17 状态与上一批估算更正 | 2026-11-07 | `b1cc485` | 用户已提交（`d43cc4c`） | 已审查，收尾见第四批 |
-| Doctor 第四批：CI、STT 三处 P2、说话人关联观测、多语言与 KD-19、LID 核实 | 见该节 | 2026-11-07 | `d43cc4c` | 未提交（用户提交） | 待审查 |
+| Doctor 第四批：CI、STT 三处 P2、说话人关联观测、多语言与 KD-19、LID 核实 | 见该节 | 2026-11-07 | `d43cc4c` | 用户已提交（`cd5ad32`） | 已审查，收尾见第五批 |
+| Doctor 第五批：两处 P2、KD-17 正常配置验收、O-16 定位、说话人调度、O-15、VAD 300、KD-19 内容对照 | 见该节 | 2026-11-08 | `cd5ad32` | 用户已提交（`b4f074ab`） | 已审查；其后合入 turn-taking 重构（`45ecf28`）与双语 AGENTS 导航（`69b69ff`） |
+| Doctor 第六批：重构后的测试迁移、O-21、O-17、说话人属性队列、语义 addressing 时序窗口、O-16/VAD 复验、KD-19 模型对照、O-19、证据目录清理 | 见该节 | 2026-11-08 | `69b69ff` | 未提交（用户提交） | 待审查 |
 
 ---
 
@@ -2160,7 +2162,7 @@ python3 scripts/quality/doctor_compare.py segment=… realtime=…             #
 - **Final transcript → Turn commit**：`voice_vision` 约 2 ms（vision-realtime 第 4 轮 113 ms），因为终稿到达时轮次判定已经在等转录；`voice` 为 66～540 ms，因为终稿先于轮次判定到达，commit 要等下一次判定。
 - **Output**：Model request sent → First text delta 后续轮中位数 817～871 ms。vision-segment 第 1、2 轮为 3,139 ms、2,750 ms，慢在请求交给传输层之后（Model request sent → First event 3,116 ms、2,495 ms）。这段包含建连、网络往返和服务端处理，报告不再细分，不能单独归因于服务端；其余 18 轮的 First event 为 451～1,112 ms。TTS request → First PCM 中位数 566～758 ms，最长 1,616 ms。
 
-完整指标表见证据 [`doctor-baseline/full-tables-segment.md`](../2026-11-07/doctor-baseline/full-tables-segment.md)，会话与 runner 的数字见各份 JSON 的 `session.start` 和 `models.runners`。
+完整指标表原在证据 `doctor-baseline/full-tables-segment.md`，会话与 runner 的数字在各份 JSON 的 `session.start` 和 `models.runners`（第六批已移出仓库，见文末「证据目录清理」）。
 
 视觉开那份的启动是空缓存首次下载，所以 runner 启动远长于视觉关那份（缓存命中）。`voice_vision` 的样本没有触发说话人分析的两个 runner，上一轮也只有 `voice` 触发过，原因没有查。
 
@@ -2177,7 +2179,7 @@ python3 scripts/quality/doctor_compare.py segment=… realtime=…             #
   - 20 轮都没有 `transcript_timeout`、cancel 或退役终稿。3 s 硬期限在真实服务中没有触发，只有离线复现。
 - **修复与状态**：修复是用户提交的 `b791572a`（2026-11-04）：0.75 s 只报告，3 s 才退役候选。真实服务已命中 0.75 s 分支，2A 日志 KD-17 的状态据此更新为「已修复，待复核」；3 s 分支只有离线证据。
 
-**保存的证据**：仓库内 [`2026-11/2026-11-07/doctor-baseline/`](../2026-11-07/doctor-baseline/)，见「Doctor 第二批」第 5 节。四份脱敏 JSON（临时目录替换为 `$RUN`，没有凭据），每份的 `doctor_compare.py` 重算、分段两份的对照与完整表格，以及 `kd17-real.txt`（20 轮的转录等待与终稿时刻）。安装、setup 和 `config check` 的输出只留在会话临时目录。
+**保存的证据**：当时存于仓库内 `2026-11/2026-11-07/doctor-baseline/`（第六批已移出仓库，见文末「证据目录清理」），见「Doctor 第二批」第 5 节。四份脱敏 JSON（临时目录替换为 `$RUN`，没有凭据），每份的 `doctor_compare.py` 重算、分段两份的对照与完整表格，以及 `kd17-real.txt`（20 轮的转录等待与终稿时刻）。安装、setup 和 `config check` 的输出只留在会话临时目录。
 
 复验结束后，已删除隔离前缀、home（含 1.7 GB 模型缓存）和凭据副本，只保留上述证据。
 
@@ -2289,7 +2291,7 @@ Turn 采用的文字取自 Doctor 报告。探针不记录请求头和凭据。
 
 ### 5. 证据入库与归因修正
 
-- **位置**：`docs/agent-logs/2026-11/2026-11-07/doctor-baseline/`，共 908 KB：
+- **位置**：`docs/agent-logs/2026-11/2026-11-07/doctor-baseline/`，共 908 KB（第六批已移出仓库，见文末「证据目录清理」）：
   - 2026-11-07 四份真实报告的脱敏 JSON：临时目录替换为 `$RUN`，按值检索四个凭据都不在；
   - 每份的 `doctor_compare.py` 重算，退出 0、stderr 为空；
   - 分段两份的对照 `compare-segment.txt` 和完整表格 `full-tables-segment.md`；
@@ -2395,7 +2397,7 @@ Turn 采用的文字取自 Doctor 报告。探针不记录请求头和凭据。
 
 **新基线：本批构建，分段 STT**
 
-完整指标表见证据 [`doctor-batch-2/full-tables-segment.md`](../2026-11-07/doctor-batch-2/full-tables-segment.md)，会话与 runner 的数字见各份 JSON 的 `session.start` 和 `models.runners`。
+完整指标表原在证据 `doctor-batch-2/full-tables-segment.md`，会话与 runner 的数字在各份 JSON 的 `session.start` 和 `models.runners`（第六批已移出仓库，见文末「证据目录清理」）。
 
 **读数**
 - **Context built**：时刻改到 build 返回处之后，真实数据里 readiness → built 是 1.5～1.7 ms，built → 请求发出是 8.5～9.9 ms；每份的第 1 轮约 92 ms。
@@ -2447,7 +2449,7 @@ Turn 采用的文字取自 Doctor 报告。探针不记录请求头和凭据。
 
 **证据**
 
-位置：[`2026-11/2026-11-07/doctor-batch-2/`](../2026-11-07/doctor-batch-2/)，1.2 MB，`SHA256SUMS` 列出 19 个文件。
+位置：`2026-11/2026-11-07/doctor-batch-2/`，1.2 MB，`SHA256SUMS` 列出 19 个文件（第六批已移出仓库，见文末「证据目录清理」）。
 - **报告**：四份脱敏 JSON。临时目录替换为 `$RUN`；按值检索四个凭据和 LiveKit URL，都不在。
 - **复算**：
   - 每份的 `doctor_compare.py` 重算 `compare-*.txt`，都退出 0、stderr 为空；
@@ -2617,7 +2619,7 @@ Turn 采用的文字取自 Doctor 报告。探针不记录请求头和凭据。
 | `blind-segment` | `vision.enabled=false` | 20:05–20:06 | 1 | `voice` 1/5（第 3 轮通过），另 4 轮停在 `stt.final`，第二句丢在 STT |
 
 - 两份都由 `doctor_compare.py` 重算，退出 0，stderr 为空。`session.cleanup` 都是 PASS。
-完整指标表见证据 [`doctor-batch-3/full-tables-segment.md`](../2026-11-07/doctor-batch-3/full-tables-segment.md)，会话与 runner 的数字见各份 JSON 的 `session.start` 和 `models.runners`。
+完整指标表原在证据 `doctor-batch-3/full-tables-segment.md`，会话与 runner 的数字在各份 JSON 的 `session.start` 和 `models.runners`（第六批已移出仓库，见文末「证据目录清理」）。
 
 **读数**
 - **首事件与终稿两行**：从应答头起算后，首事件是 0.4～3.0 ms，应答头到 done 是 20～208 ms。逐轮相加后，与 commit → final 只差 1.5～6.9 ms。
@@ -2697,7 +2699,7 @@ Turn 采用的文字取自 Doctor 报告。探针不记录请求头和凭据。
 
 **证据**
 
-位置：[`2026-11/2026-11-07/doctor-batch-3/`](../2026-11-07/doctor-batch-3/)，约 1.1 MB，附 `SHA256SUMS`。
+位置：`2026-11/2026-11-07/doctor-batch-3/`，约 1.1 MB，附 `SHA256SUMS`（第六批已移出仓库，见文末「证据目录清理」）。
 - 两份脱敏 JSON，临时目录替换为 `$RUN`；
 - 每份的重算、视觉开与关的对照、与上一批的对照、完整表格；
 - `kd20/`：4 份 stream 结果、`tail.json`、`raw.json`、`summary.txt`；
@@ -2708,7 +2710,7 @@ Turn 采用的文字取自 Doctor 报告。探针不记录请求头和凭据。
 
 ## Doctor 第四批：CI、STT 三处 P2、说话人关联观测、多语言与 KD-19、LID 核实（基线 `d43cc4c`）
 
-改动都在未暂存的工作区。测试脚本、样本音频和隔离安装放在会话临时目录（`scratchpad/batch4/`、`scratchpad/real6/`），仓库里只留 `doctor-batch-4/` 下的结果数据和校验和。
+改动都在未暂存的工作区。测试脚本、样本音频和隔离安装放在会话临时目录（`scratchpad/batch4/`、`scratchpad/real6/`），仓库里只留 `doctor-batch-4/` 下的结果数据和校验和（第六批已移出仓库，见文末「证据目录清理」）。
 
 ### 1. CI
 
@@ -2764,7 +2766,7 @@ Turn 采用的文字取自 Doctor 报告。探针不记录请求头和凭据。
 
 ### 6. 真实服务
 
-费用估计约 2 美元：直接调用 STT 1,289 次（含误跑的 900 次），TTS 16 次，Doctor 30 轮（另有它自己的调用）。授权依据是本批审查第 7 项。记录来自 dirty 构建 `0.6.8-d43cc4c4d807-dirty.20261107150502` 和本地工作区，与提交后的 CI 分开。证据在 [`doctor-batch-4/`](../2026-11-07/doctor-batch-4/)。
+费用估计约 2 美元：直接调用 STT 1,289 次（含误跑的 900 次），TTS 16 次，Doctor 30 轮（另有它自己的调用）。授权依据是本批审查第 7 项。记录来自 dirty 构建 `0.6.8-d43cc4c4d807-dirty.20261107150502` 和本地工作区，与提交后的 CI 分开。证据在 `doctor-batch-4/`（第六批已移出仓库，见文末「证据目录清理」）。
 
 | 项 | 次数 | 结果 |
 |---|---|---|
@@ -2809,7 +2811,7 @@ Turn 采用的文字取自 Doctor 报告。探针不记录请求头和凭据。
 
 ## Doctor 第五批：两处 P2、KD-17 正常配置验收、O-16 定位、说话人调度、O-15、VAD 300、KD-19 内容对照（基线 `cd5ad32`）
 
-改动都在未暂存的工作区。脚本、样本音频和隔离安装放在会话临时目录（`scratchpad/batch5/`、`scratchpad/real7/`），仓库里只留 [`doctor-batch-5/`](../2026-11-08/doctor-batch-5/) 的结果数据和校验和。LID 按审查暂缓，本批没有动。
+改动都在未暂存的工作区。脚本、样本音频和隔离安装放在会话临时目录（`scratchpad/batch5/`、`scratchpad/real7/`），仓库里只留 `doctor-batch-5/` 的结果数据和校验和（第六批已移出仓库，见文末「证据目录清理」）。LID 按审查暂缓，本批没有动。
 
 ### 1. 代码修复
 
@@ -2902,3 +2904,94 @@ Turn 采用的文字取自 Doctor 报告。探针不记录请求头和凭据。
   - O-21：关会话时取消终态发布，是否算正常关闭。
 - **待定位**：O-16 第 1 轮的 addressing 等待；O-17。
 - **延期**：LID。
+
+## Doctor 第六批：重构后的测试迁移、O-21、O-17、说话人属性队列、语义 addressing 时序窗口、O-16/VAD 复验（基线 `69b69ff`）
+
+基线 `69b69ff704c6`：在第五批（`b4f074ab`）之上合入了 ChatGPT 的 turn-taking 重构（`45ecf28`，开放的时序输入窗口、`input_id`/`revision`/`actors` 契约、真实 `TurnSnapshot` 推进、`AssessmentWork`、Smart Turn 复用）和双语 AGENTS 导航（`69b69ff`）。改动都在未暂存的工作区。脚本、样本和隔离安装在会话临时目录（`scratchpad/batch6/`、`scratchpad/real8/`），仓库里不再放证据目录。LID 继续暂缓。
+
+### 1. 测试迁移与新增覆盖
+
+`45ecf28` 的 Quality 为 27 failed、12 errors、571 passed（本地同样复现）。迁移到新契约后补了按新语义写的用例，不靠字符串替换让旧断言通过：
+
+- **router**：
+  - `test_turn_taking.py` 直接驱动 `TurnTakingCoordinator`（观测经 `take_pending_observations` 交给它，顺序由用例决定），覆盖：
+    - HOLD 后跨匿名、同一实体、不同实体的续接；
+    - 封闭输入等 STT 时，下一输入照常判定；
+    - 取消后仍返回的旧评估；
+    - 期限已过、定时回调还没跑时到达的终稿；
+    - 后来的片段有自己的转录预算；
+    - 来源取消、换代、感知缺口、容量回收；
+    - 提议被拒、确认延迟、过期后才确认；
+    - `AssessmentWork` 的替换与回收；
+    - Smart Turn 与 coordinator 合跑：转写和 addressing 更新不重跑模型，新音频才重跑。
+  - `test_smart_turn.py`：真实媒体时间、重叠混音、镜像轨只计一次、相隔一小时只取尾部、同一 PCM 单飞、取消后推理照常完成供下一次复用、关闭。
+- **Engine 与 Persona**：
+  - host 的 `test_turn_actors.py`：沿用 KD-17 的正常装配链路，共用 `configured_chain.py`。验证 actor 来自各段的关联，不来自设备或 primary participant：两人、已知加未知、标签与关联冲突、只有设备。另验证迟到的关联不改已提交的 Turn。
+  - `test_persona_runtime.py`：私有画像只给每个 actor 都是同一已接受用户的 Turn。
+- **Doctor**：trace 改为 `input.*`。router 已不再等关联，`association_wait` 删除，没有改名保留；`association_ready` 在关联晚于准入时注明。新增 `addressing_queue`、`addressing_inference`，来源是新的 `addressing.semantic` 区间。
+- **KD-17**：三种说话人标注的两段轮都并入同一 Turn，提交落在第二段关闭后 3 s 的期限处。
+- **O-22**：该用例改用 `COLUMNS=10000`，约 330 字符的临时路径下通过。
+- **Linux package**：在 `69b69ff` 上重新触发（run 42475439877），build 与 verify 都通过。上次失败是下载 CPython 时的 HTTP/2 `REFUSED_STREAM`。
+
+### 2. 代码修复
+
+- **O-21**（字幕同步）：
+  - 原因：关闭时 worker 被取消，如果它正在发布 final，取消会传进输出运行时的终态发布，实时投递随之失败；之后对同一输出再发 `transcript_stopping` 也失败。
+  - 修复：final 改由处理器自己的任务发布，每个输出只发一次。关闭时先回收 worker，再在输出运行时的终态期限内等已开始的 final；真实的超时和未送达照常报错。
+- **说话人**（KD-35）：拆成三条有界队列，窗口与关联、身份、属性各一条。身份完成即释放 Context 的等待，到期的属性才入队，队满只丢属性工作；迟到的属性只写回推理时的那个身份。
+- **O-17**（loop）：
+  - 复现：两个 Ctrl+C 用例 20 次中失败 3 次。诊断显示进程组已回收，失败在 Engine 关闭：run 的 watcher 收到 CancelledError，位置是 `execution.py` 的 `wait`。
+  - 原因：取消落在 `_run` 的 `finally` 回收身份监视任务那一步，run 自己以取消结束，没有给出结果。确定性用例复现了这一点。
+  - 修复：这一步的取消与其他收尾步骤一样处理。修复后 40/40 通过。
+- **语义 addressing**（KD-37，用户中途确定的方向）：
+  - 改为与 turn-taking 一致的时序窗口：上一次实际提交覆盖的输入之后的全部转录，按媒体时间排列，匿名、同一实体、不同实体同在。
+  - 每个转录一到即异步重评，读取到它为止的窗口；结果只标注它自己的 observation，证据记录实际读到的上下文，主体用它自己的实体或段关联；完成时校验上下文未变。
+  - 只在真实 `TurnSnapshot` 到达时回收其覆盖的片段，转为有界历史。
+  - 模型输入协议不变；不读取 coordinator 的私有状态。
+- **Smart Turn 预热**：本机直接计时 runner 后撤回。第一次请求慢是因为 KV 缓存只到常量前缀，Avatar 身份及其之后的部分要重新评估，用默认请求预热无效（见第 4 节）。
+
+### 3. 离线验证
+
+| 项 | 结果 |
+|---|---|
+| 全量 `pytest`（`PYTHONDONTWRITEBYTECODE=1 ALPHAAVATAR_MODEL_OFFLINE=1`） | 669 passed；`git status --ignored` 前后一致 |
+| `uv lock --check`、`check_workspace`、`ruff check`、`ruff format --check`、`git diff --check`、`pre-commit validate-config` | 都通过 |
+| 变异 | 全部被抓到：turn-taking 15、Smart Turn 10、Doctor/processor 5、Engine 4、Persona 2、O-21 4、说话人 7、Smart Turn 复用与 addressing 区间 4、语义窗口 17、O-17 1。O-21 的 O1、区间的 N1、语义窗口的 M14 第一次漏掉，补强用例后被抓到；语义窗口的 M10 漏掉，证明 `epoch` 多余，已删除 |
+
+### 4. 真实服务
+
+构建 `0.6.8-69b69ff704c6-dirty.20261108121757`（tar sha256 前缀 `e5e2ef2bfa5f9f89`），以及语义窗口改写之后的 `…20261108131849`（`90b0141beaa570e3`）。安装到会话临时目录的 prefix，`accept` bundle 由 `config init` 加 `setup --artifacts` 建立。模型为 `gpt-5.6-luna`，STT 为 `gpt-4o-transcribe`。样本沿用第五批（哈希见文末），另用第三、四批的多语言样本。
+
+| 项 | 规模 | 结果 |
+|---|---|---|
+| O-16 | 两轮，共 80 轮 | 终稿到提交中位数约 2 ms（1.7～3.3），终稿后的端点评估和等待为 0；第五批是 66～169 ms |
+| O-23（新） | 同上 | addressing 等待在 VAD 关闭时开始，0.5 s 后超时，这时还没有转写；终稿一到就提交，终稿所在段的语义判断两轮分别是 0/43、0/37 赶在提交之前 |
+| 第 1 轮 addressing | 真实首任务；本机 runner | 首个语义任务 131～191 ms，之后中位数 76～89 ms，排队 0.05～0.3 ms。本机首个请求 135～150 ms，同内容放在后面约 80 ms；用相同身份先请求一次，之后的首轮请求为 92～111 ms |
+| VAD | 550/300/200 × pause_in、hesitate、multi（视觉关开）× 3 轮，两轮 | 300 与 200 下 hesitate、multi 切成 2～3 段，都并入同一输入，30 轮没有边界错误（O-20 真实通过）。失败只有 pause_in 和求和样本的 STT 丢句（KD-19）。300 相比 550：输入段少 394～937 ms，首音频快 277～608 ms（第二轮 pause_in 慢 100 ms，原因是 STT 等待波动）。200 ms 有一次 "Um." 单独成段被转成 "Tom" |
+| O-18 | 静音、噪声各 1 轮 | 经真实 Silero VAD 都没有形成语音段，STT 没有被调用 |
+| KD-19 | 4 个模型 × 4 个样本 × 5 次；验证 3 种配置 × 9 段 × 3 次 | 默认 7/20，其余三个 20/20；验证中默认 27/27，`gpt-transcribe` 24/27，mini 21/27；`whisper-1` 慢约一倍。默认不变 |
+| O-19 | 3 个场景 × 3 次 | 9 次正常输入都直接作答，没有再要求重说 |
+| O-17 | 离线 20 + 40 次 | 修复前 3/20 失败，修复后 0/40 |
+
+费用约 2.5 美元：Doctor 84 轮，STT 直连 161 次，模型 21 次，外加 1 次模型列表。凭据只取 `.env.dev` 里的四个变量，所有输出都做了按值的泄漏检查，没有发现。
+
+### 5. 待决定与仍待定位
+
+- **待决定**：
+  - O-23：addressing 等待改为从所需转写到达后开始计时（终稿到提交约多一次语义推理），还是把语义 addressing 从必需来源中拿掉；
+  - VAD 默认值：本批数据支持把 300 ms 作为下一个默认候选，200 ms 样本太少，且有短段误识；
+  - KD-19 的修法：没有候选全部通过；
+  - 按会话身份预热语义 runner：先等 O-23 决定。
+- **仍待跟踪**：说话人短段（不足 3 s）没有声纹结果的问题另行跟踪；LID 暂缓。
+
+### 证据目录清理（第六批）
+
+按本批审查要求，下面五个 Doctor 临时证据目录（共 115 个文件，约 6.6 MB）已从工作区删除，没有移到仓库的其他目录。结论、命令、版本和验证边界以各批正文为准；原始报告、表格和音频不再随仓库提供。表中是删除前摘出的身份信息。
+
+| 目录 | 批次 | 文件 | 构建 | 样本 |
+|---|---|---|---|---|
+| `2026-11-07/doctor-baseline/` | 第一批真实基线（第二批入库） | 12，912 KB | `0.6.8-d5080d5f168b-dirty.20261107072333`（`096d2fda98c98df4`） | Doctor 自带的 flite 样本 |
+| `2026-11-07/doctor-batch-2/` | 第二批 | 20，1.2 MB | `0.6.8-64a9de7610af-dirty.20261107101729`（`9020f331421c45d0`） | KD-19 上传段 `a707eb1e961fcfb4` |
+| `2026-11-07/doctor-batch-3/` | 第三批 | 34，1.1 MB | `0.6.8-b1cc485ec870-dirty.20261107113657`（`aa120810a14dfc10`） | `gpt-4o-mini-tts` coral：`timer_oven` `362b49fa5edd3bc9`、`lisbon_visit` `c76130dace5cf2b1` |
+| `2026-11-07/doctor-batch-4/` | 第四批 | 29，2.1 MB | `0.6.8-d43cc4c4d807-dirty.20261107150502` | `gpt-4o-mini-tts`，24→16 kHz：`zh` `54249d8d9e283ca3`、`en` `f177aeae25cddc53`、`zh_en` `c15a63bf225cfd81`、`en_zh` `94bb0286193b33ae`、`switch_1`～`4` `440ef15d73507908`/`d0f29921149a024c`/`f9b272b4aa38a9ce`/`d337a65005b672d0`、`silence` `20eaebffe1816e0f`、`noise` `e78e248159646518`、`sum_onyx`/`nova`/`coral` `2ac7cbd5e3b01ef5`/`3242d2dde94f1562`/`d5ba1a0faddc44b4`；flite 变体 `flite_gap_0.24`/`0.5`/`0.8`/`1.2` `93ac159096acaf89`/`f278aa564e54c1b4`/`e44b64f3898a902c`/`df6e01ea983b4e38` |
+| `2026-11-08/doctor-batch-5/` | 第五批 | 20，1.6 MB | `0.6.8-cd5ad32094e1-dirty.20261107173958` | `gpt-4o-mini-tts` coral：`pause_in` `42fdd264ce21a680`、`hesitate` `855bdd6cce57416b`、`multi` `1dcd86c56a9a438a`、`c_orig` `c42694ae9ebf9748`、`c_please` `1bfb06903d04dcde`、`c_reply` `59b325756dc003aa`、`c_statement` `d98ebf01e06ec4fc`、`c_question` `e66a07d6ec7b59b7` |

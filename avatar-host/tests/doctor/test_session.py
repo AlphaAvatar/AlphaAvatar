@@ -214,7 +214,7 @@ def test_the_configured_chain_runs_fixed_samples_and_one_request_carries_speech_
     commit = next(
         item["detail"]
         for item in vision["evidence"]
-        if item["stage"] == "candidate.decision" and item["detail"]["action"] == "commit"
+        if item["stage"] == "input.decision" and item["detail"]["action"] == "commit"
     )
     # One segment closed, transcribed and committed; one Turn selected, requested, answered.
     assert first["perception.speech_closed"]["segment"] == first["stt.terminal"]["segment"]
@@ -1268,6 +1268,6 @@ def test_ctrl_c_in_a_later_round_keeps_what_ran_and_reclaims_everything(
     assert [rounds["voice_vision", at] for at in (1, 2, 3)] == ["passed"] + ["interrupted"] * 2
     (summary,) = checks["session.scenarios"]["summaries"]
     assert (summary["passed"], summary["rounds"]) == (1, 3)
-    assert checks["session.cleanup"]["status"] == "PASS"
-    assert gone(int((chain.files / "pid").read_text()))
-    assert list(chain.root.iterdir()) == []
+    assert checks["session.cleanup"]["status"] == "PASS", reclaimed(code, checks, chain)
+    assert gone(int((chain.files / "pid").read_text())), reclaimed(code, checks, chain)
+    assert list(chain.root.iterdir()) == [], reclaimed(code, checks, chain)

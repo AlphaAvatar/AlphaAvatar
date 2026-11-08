@@ -506,3 +506,140 @@ async def test_back_to_back_answers_keep_pcm_and_alignment_under_slow_presentati
         f"synthetic speech stress: answers={rounds} phrases={len(tts.streams)} "
         f"frames={frames} answers_per_second={rounds / elapsed:.1f}"
     )
+
+
+@dataclass
+class Captions:
+    """Transcript synchronization alone, fed the facts synthesis and playback would give it."""
+
+    runtime: AvatarRuntime
+    processor: TranscriptSynchronizationProcessor
+
+    async def answer(self, output_id: str, *, spoken: bool = True) -> None:
+        """An answer captioned as its audio plays, its audio ``spoken`` to its end (no frames,
+        so the final is its first caption), or only begun."""
+        output, scope = self.runtime.output, OutputScope("context", "turn", "run")
+        await output.publish(
+            EnvOutput(
+                kind=OutputKind.TEXT_CHUNK,
+                lane=OutputLane.ASSISTANT,
+                scope=scope,
+                source=OutputSource("test.agent"),
+                output_id=output_id,
+                payload=OutputTextChunk(
+                    text="Hello.", mode=OutputTextMode.AUDIO_SYNCED, replace_lane=False
+                ),
+            )
+        )
+        await output.finish_text(output_id=output_id, turn_id="turn", run_id="run")
+        if spoken:
+            await output.finish_audio(
+                output_id=output_id, lane=OutputLane.ASSISTANT, turn_id="turn"
+            )
+        else:
+            await output.publish(
+                EnvOutput(
+                    kind=OutputKind.PLAYBACK,
+                    lane=OutputLane.ASSISTANT,
+                    scope=scope,
+                    source=OutputSource("test.player"),
+                    output_id=output_id,
+                    payload=OutputPlayback(OutputPlaybackType.STARTED, 0.0, 0.0, 0.0),
+                    metadata={"measurement": "local_audio_queue"},
+                )
+            )
+
+
+@pytest.fixture
+async def captions(tmp_path: Path) -> AsyncIterator[Captions]:
+    runtime = avatar_runtime(tmp_path / "workspace")
+    runtime.output.activate_run("run")
+    processor = TranscriptSynchronizationProcessor(runtime=runtime)
+    await processor.start()
+    yield Captions(runtime, processor)
+    await processor.stop()
+    await runtime.aclose()
+
+
+async def finals(subscription, count: int) -> list[EnvOutput]:
+    found = []
+    while len(found) < count:
+        event = (await asyncio.wait_for(subscription.get(), HANG_GUARD)).output
+        if event.payload.is_final:
+            found.append(event)
+    return found
+
+
+@pytest.mark.parametrize("closer", ["one", "two-at-once", "cancelled-then-again"])
+async def test_closing_lets_a_final_it_began_finish_once_and_never_sends_it_again(
+    captions: Captions, closer: str
+) -> None:
+    # O-21: a final already published to one subscriber, blocked at another, when it closes.
+    output = captions.runtime.output
+    kinds = (OutputKind.TRANSCRIPT_CHUNK,)
+    watcher = await output.stream.subscribe("watcher", kinds=kinds, max_pending=64)
+    presentation = await output.stream.subscribe("presentation", kinds=kinds, max_pending=1)
+    await captions.answer("answer-0")  # Its final fills the presentation's queue, unread.
+    await finals(watcher, 1)
+    await captions.answer("answer-1")
+    (received,) = await finals(watcher, 1)  # Delivered here; the presentation is still full.
+    assert received.output_id == "answer-1"
+
+    stops = [asyncio.create_task(captions.processor.stop())]
+    if closer == "two-at-once":
+        stops.append(asyncio.create_task(captions.processor.stop()))
+    await asyncio.sleep(0.05)
+    assert not any(stop.done() for stop in stops)  # It waits for the final it had begun.
+    if closer == "cancelled-then-again":
+        stops[0].cancel()  # Its caller gives up; the close it began goes on.
+        await asyncio.sleep(0.05)
+        assert not stops[0].done()
+
+    delivered = await finals(presentation, 2)
+    if closer == "cancelled-then-again":
+        with pytest.raises(asyncio.CancelledError):
+            await stops.pop(0)
+        stops.append(asyncio.create_task(captions.processor.stop()))
+    await asyncio.wait_for(asyncio.gather(*stops), HANG_GUARD)
+    assert [event.output_id for event in delivered] == ["answer-0", "answer-1"]
+    assert delivered[1].payload.reason is None  # The answer's own final, not a stopping one.
+    assert output.transcript_finalized("answer-1")
+    # Nothing more went out: neither subscriber has another final queued.
+    for subscription in (watcher, presentation):
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(subscription.get(), 0.05)
+
+
+async def test_closing_settles_a_final_not_yet_begun_with_its_stopping_reason(
+    captions: Captions,
+) -> None:
+    output = captions.runtime.output
+    watcher = await output.stream.subscribe(
+        "watcher", kinds=(OutputKind.TRANSCRIPT_CHUNK,), max_pending=64
+    )
+    await captions.answer("answer-0", spoken=False)  # Playing: its final is not due yet.
+    await captions.processor.stop()
+    (final,) = await finals(watcher, 1)
+    assert (final.output_id, final.payload.reason) == ("answer-0", "transcript_stopping")
+
+
+async def test_a_final_that_cannot_be_delivered_in_time_still_fails_the_close(
+    tmp_path: Path,
+) -> None:
+    runtime = avatar_runtime(tmp_path / "workspace")
+    runtime.output.activate_run("run")
+    captions = Captions(runtime, TranscriptSynchronizationProcessor(runtime=runtime))
+    await captions.processor.start()
+    await runtime.output.stream.subscribe(
+        "presentation", kinds=(OutputKind.TRANSCRIPT_CHUNK,), max_pending=1
+    )
+    await captions.answer("answer-0")
+    await asyncio.sleep(0.05)
+    await captions.answer("answer-1")  # Its final waits on a presentation that never reads.
+    with pytest.raises(ExceptionGroup) as stopped:
+        await asyncio.wait_for(captions.processor.stop(), HANG_GUARD)
+    # Past the output's terminal deadline it is not delivered, and both closes say so: once,
+    # the final never sent again.
+    assert [type(error) for error in stopped.value.exceptions] == [TimeoutError]
+    with pytest.raises(ExceptionGroup, match="AvatarRuntime cleanup failed"):
+        await runtime.aclose()

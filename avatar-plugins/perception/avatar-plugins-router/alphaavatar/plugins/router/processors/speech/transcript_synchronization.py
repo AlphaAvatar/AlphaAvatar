@@ -64,6 +64,7 @@ class _Transcript:
     expected_alignment_sequence: int = 0
     alignment_sequence: int = 0
     playback_complete: bool = False
+    final_started: bool = False
 
 
 class TranscriptSynchronizationProcessor(RouterProcessorBase):
@@ -91,6 +92,7 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
         self._close_task: asyncio.Task | None = None
         self._start_task: asyncio.Task | None = None
         self._worker_failures: list[Exception] = []
+        self._finals: set[asyncio.Task] = set()
         self._observed_tasks: set[asyncio.Task] = set()
         self._stopped_tasks: set[asyncio.Task] = set()
         self._externally_cancelled_tasks: set[asyncio.Task] = set()
@@ -131,6 +133,13 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
             error = RuntimeError(f"{self.CONSUMER_ID} worker exited unexpectedly")
         self._remember_failure(error, task.get_name())
         self._ensure_close()
+
+    def _final_done(self, task: asyncio.Task) -> None:
+        self._finals.discard(task)
+        if task.cancelled() or task.exception() is not None:
+            self._remember_failure(
+                asyncio.CancelledError() if task.cancelled() else task.exception(), task.get_name()
+            )
 
     def _stop_worker(self, task: asyncio.Task) -> None:
         if task.done():
@@ -243,7 +252,7 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
             if target < len(timing.units):
                 break
 
-    async def _final(self, state: _Transcript, *, reason: str | None = None) -> None:
+    async def _publish_final(self, state: _Transcript, reason: str | None) -> None:
         identity = state.identity
         await self._runtime.output.publish(
             EnvOutput(
@@ -263,6 +272,20 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
                 metadata={"measurement": "local_audio_queue", "timing_granularity": "unit"},
             )
         )
+
+    async def _final(self, state: _Transcript, *, reason: str | None = None) -> None:
+        """Publish the transcript's final once. Once started it is this processor's, not its
+        caller's: a terminal fact cancelled part way, perhaps delivered to some subscribers,
+        fails the output's delivery (O-21). The output runtime bounds how long it may take."""
+        if state.final_started:
+            return
+        state.final_started = True
+        task = asyncio.create_task(
+            self._publish_final(state, reason), name=f"{self.CONSUMER_ID}:final"
+        )
+        self._finals.add(task)
+        task.add_done_callback(self._final_done)
+        await asyncio.shield(task)
 
     async def _finish(self, state: _Transcript) -> None:
         await self._emit(state)
@@ -385,6 +408,8 @@ class TranscriptSynchronizationProcessor(RouterProcessorBase):
         if worker is not None:
             await asyncio.gather(worker, return_exceptions=True)
             self._observe(worker)
+        # The worker takes no more events; a final it had begun finishes, its failure kept.
+        await asyncio.gather(*tuple(self._finals), return_exceptions=True)
 
         try:
             results = await asyncio.gather(

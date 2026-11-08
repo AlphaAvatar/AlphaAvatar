@@ -1,7 +1,0 @@
-KD-19 content only: gpt-4o-transcribe, auto language, no prompt; coral voice, one first sentence, 0.24 s pause; 10 reps each, interleaved
-sample        both  2nd lost  final ms (median)  transcripts
-c_orig         6/10      4/10           163.9885  6x 'What is two plus three? Answer with just the number.'; 3x 'What is two plus three?'; 1x 'What is 2 plus 3?'
-c_please       2/10      8/10            74.8175  7x 'What is two plus three?'; 2x 'What is two plus three? Please answer with just the number.'; 1x 'What is 2 plus 3?'
-c_reply        0/10     10/10            49.5875  10x 'What is two plus three?'
-c_statement    9/10      1/10           190.3345  9x 'What is two plus three? I am curious about the result.'; 1x 'What is two plus three?'
-c_question    10/10      0/10 193.95499999999998  10x 'What is two plus three? Can you tell me the result?'

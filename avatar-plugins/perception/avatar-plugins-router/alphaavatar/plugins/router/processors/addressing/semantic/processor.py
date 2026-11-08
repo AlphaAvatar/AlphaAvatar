@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import OrderedDict, deque
-from collections.abc import Iterable
-from dataclasses import dataclass, field
+from collections import deque
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 
 from alphaavatar.agents.router import RouterProcessorBase
 from alphaavatar.agents.router.enums import (
@@ -25,7 +26,6 @@ from alphaavatar.agents.router.enums import (
     AddressingMode,
     InteractionEntityKind,
     SemanticAddressingLabel,
-    TurnTakingAction,
 )
 from alphaavatar.agents.router.schemas import (
     InteractionAddressingEvidence,
@@ -33,67 +33,64 @@ from alphaavatar.agents.router.schemas import (
     SemanticAddressingRequest,
     SemanticAddressingResult,
     SemanticAddressingTranscript,
-    TurnTakingDecision,
 )
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.core.env import EnvObservation
-from alphaavatar.core.env.enums import AnnotationKind, ObservationKind
-from alphaavatar.core.env.schemas import PerceptionSegmentRef
+from alphaavatar.core.env.enums import ObservationKind
+from alphaavatar.core.env.schemas import PerceptionEntityRef, PerceptionSegmentRef
 from alphaavatar.core.media import TextPayload
 from alphaavatar.core.perception.enums import PerceptionStreamKind
-from alphaavatar.core.perception.schemas import PerceptionEvent
+from alphaavatar.core.time import RuntimeTimeRange
+from alphaavatar.core.turn.schemas import TurnSnapshot
 
 from .config import SemanticAddressingConfig
 from .factory import create_semantic_addressing_model
 
 logger = logging.getLogger(__name__)
 
-SpeakerKey = tuple[str, int, str, str]
-
-_TERMINAL_ACTIONS = {
-    TurnTakingAction.COMMIT,
-    TurnTakingAction.CANCEL,
-    TurnTakingAction.PASSIVE,
-    TurnTakingAction.PROACTIVE_CHECK,
-}
-
 
 @dataclass(frozen=True, slots=True)
-class _TranscriptRecord:
+class _Transcript:
+    """A segment's final transcript as perception gave it: what was said, when, through which
+    segment, and by whom if its speech named them. Structured here; the model reads the text."""
+
     segment: PerceptionSegmentRef
-    transcript: SemanticAddressingTranscript
     observation_id: str
+    time_range: RuntimeTimeRange
+    text: str
+    entity: PerceptionEntityRef | None = None
+    device_id: str | None = None
+
+    @property
+    def order(self) -> tuple[int, int, str]:
+        return (
+            self.time_range.start.monotonic_ns,
+            self.time_range.end.monotonic_ns,
+            self.observation_id,
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class _AssessmentJob:
-    generation: int
+    target: _Transcript
+    context: tuple[str, ...]  # The transcripts its request read, in media order, target last
     request: SemanticAddressingRequest
-    speaker: InteractionEntityRef
-    observation_id: str
-    evidence_observation_ids: tuple[str, ...]
-
-
-@dataclass(slots=True)
-class _SpeakerState:
-    speaker: InteractionEntityRef
-    history: deque[tuple[SemanticAddressingTranscript, ...]]
-    current: OrderedDict[PerceptionSegmentRef, _TranscriptRecord] = field(
-        default_factory=OrderedDict
-    )
-    pending: deque[_AssessmentJob] = field(default_factory=deque)
-    focus: tuple[SemanticAddressingLabel, float] | None = None
-    focus_at_turn_start: str | None = None
-    generation: int = 0
-    assessing: _AssessmentJob | None = None
-    worker: asyncio.Task[None] | None = None
+    speaker: InteractionEntityRef  # The target's own subject, never one of its context's
+    queued_ns: int  # When it was queued, on the runtime clock
 
 
 class SemanticAddressingProcessor(RouterProcessorBase):
+    """Judge whom each transcript addresses, in the temporal input since the last committed
+    Turn: everyone's speech is one window; each result is its own transcript's alone."""
+
     OBSERVATION_CONSUMER_ID = "router.addressing.semantic.observations"
-    ANNOTATION_CONSUMER_ID = "router.addressing.semantic.annotations"
+    TURN_CONSUMER_ID = "router.addressing.semantic.commits"
     SEMANTIC_SOURCE = "router.addressing.semantic"
     FOCUS_SOURCE = "router.addressing.focus"
+
+    _MAX_WINDOW = 64
+    _MAX_RETIRED = 256
+    _MAX_PENDING = 2
 
     def __init__(self, *, runtime: AvatarRuntime, config: SemanticAddressingConfig) -> None:
         super().__init__(runtime=runtime)
@@ -103,8 +100,21 @@ class SemanticAddressingProcessor(RouterProcessorBase):
         )
         self._avatar_identities = config.avatar_identities
         self._history_turns = config.history_turns
-        self._states: dict[SpeakerKey, _SpeakerState] = {}
-        self._retired_segments: dict[PerceptionSegmentRef, None] = {}
+
+        # The window: uncommitted transcripts by segment, since the last committed Turn began.
+        self._window: dict[PerceptionSegmentRef, _Transcript] = {}
+        self._retired: dict[PerceptionSegmentRef, None] = {}
+        self._boundary_ns = 0
+        self._context_id: str | None = None
+
+        # Bounded history: committed Turns' words and the focus as the last one committed.
+        self._history: deque[tuple[str, ...]] = deque(maxlen=config.history_turns)
+        self._focus: tuple[SemanticAddressingLabel, float] | None = None
+        self._previous_focus: str | None = None
+
+        self._pending: deque[_AssessmentJob] = deque()
+        self._assessing: _AssessmentJob | None = None
+        self._worker: asyncio.Task[None] | None = None
         self._workers: set[asyncio.Task[None]] = set()
         self._tasks: tuple[asyncio.Task[None], ...] = ()
         self._started = False
@@ -119,16 +129,6 @@ class SemanticAddressingProcessor(RouterProcessorBase):
         if not isinstance(payload, TextPayload):
             return None
         return payload.text.strip() or None
-
-    @staticmethod
-    def _history_segments(state: _SpeakerState) -> tuple[SemanticAddressingTranscript, ...]:
-        return tuple(
-            SemanticAddressingTranscript(
-                text=" ".join(segment.text for segment in turn).strip(), final=True
-            )
-            for turn in state.history
-            if any(segment.text.strip() for segment in turn)
-        )
 
     @staticmethod
     def _target(
@@ -150,96 +150,59 @@ class SemanticAddressingProcessor(RouterProcessorBase):
             return 1.0 - p_avatar
         return 0.0
 
-    @staticmethod
-    def _cancel_worker(state: _SpeakerState) -> None:
-        worker = state.worker
-        state.worker = None
-        state.assessing = None
-        if worker is not None:
-            worker.cancel()
+    """Window operations"""
 
-    def _speaker(self, observation: EnvObservation) -> InteractionEntityRef:
-        entity = observation.entity
-        if entity is None and observation.segment is not None:
-            entity = self._runtime.participants.entity_for_segment(observation.segment)
+    def _ordered(self) -> list[_Transcript]:
+        return sorted(self._window.values(), key=lambda entry: entry.order)
 
+    def _context(self, target: _Transcript) -> tuple[_Transcript, ...]:
+        """What a judgment of the target reads: the window up to it in media time, whoever
+        spoke, the target last. Speech after it is not its context."""
+        earlier = tuple(e for e in self._ordered() if e is not target and e.order <= target.order)
+        return (*earlier, target)
+
+    def _retire(self, segments: Iterable[PerceptionSegmentRef]) -> list[_Transcript]:
+        removed = []
+        for segment in segments:
+            if (entry := self._window.pop(segment, None)) is not None:
+                removed.append(entry)
+            self._retired[segment] = None
+        while len(self._retired) > self._MAX_RETIRED:
+            self._retired.pop(next(iter(self._retired)))
+        return sorted(removed, key=lambda entry: entry.order)
+
+    """Assessment operations"""
+
+    def _speaker(self, entry: _Transcript) -> InteractionEntityRef:
+        # Its own speech's subject, or the association settled for its segment since.
+        entity = entry.entity or self._runtime.participants.entity_for_segment(entry.segment)
         return InteractionEntityRef(
             kind=InteractionEntityKind.PERSON,
             entity=entity,
-            device_id=observation.device_id,
-            source=observation.segment.source if observation.segment else observation.source,
+            device_id=entry.device_id,
+            source=entry.segment.source,
         )
 
-    def _key_from_observation(self, observation: EnvObservation) -> SpeakerKey:
-        speaker = self._speaker(observation)
-        source = observation.segment.source if observation.segment else observation.source
-        if speaker.entity is not None:
-            return (source.source_id, source.source_generation, "entity", speaker.entity.entity_id)
-
-        if observation.segment is not None:
-            return (
-                source.source_id,
-                source.source_generation,
-                "segment",
-                observation.segment.segment_id,
-            )
-
-        return source.source_id, source.source_generation, "observation", observation.observation_id
-
-    def _state(self, observation: EnvObservation) -> tuple[SpeakerKey, _SpeakerState]:
-        key = self._key_from_observation(observation)
-        speaker = self._speaker(observation)
-        state = self._states.get(key)
-
-        if state is None:
-            # Shared endpoints may expose many transient subjects; retain bounded histories.
-            if len(self._states) >= 128:
-                removed = self._states.pop(next(iter(self._states)))
-                removed.generation += 1
-                removed.pending.clear()
-                self._remember_retired(removed.current)
-                self._cancel_worker(removed)
-
-            state = _SpeakerState(speaker=speaker, history=deque(maxlen=self._history_turns))
-            self._states[key] = state
-        else:
-            state.speaker = speaker
-
-        return key, state
-
-    def _request(self, state: _SpeakerState) -> SemanticAddressingRequest:
-        current = tuple(record.transcript for record in state.current.values())
+    def _request(self, context: tuple[_Transcript, ...]) -> SemanticAddressingRequest:
+        # The model's text protocol: each earlier Turn one line, then each transcript.
+        history = tuple(
+            SemanticAddressingTranscript(text=" ".join(turn), final=True) for turn in self._history
+        )
+        current = tuple(SemanticAddressingTranscript(text=e.text, final=True) for e in context)
         return SemanticAddressingRequest(
             avatar_identities=self._avatar_identities,
-            previous_focus=state.focus_at_turn_start,
-            transcript_segments=(*self._history_segments(state), *current),
+            previous_focus=self._previous_focus,
+            transcript_segments=(*history, *current),
         )
 
-    def _start_worker(self, key: SpeakerKey, state: _SpeakerState) -> None:
-        if state.pending and (state.worker is None or state.worker.done()):
-            state.worker = asyncio.create_task(
-                self._run_jobs(key, state), name=f"router_semantic_addressing:{key[0]}:{key[1]}"
-            )
-            self._workers.add(state.worker)
-            state.worker.add_done_callback(self._workers.discard)
-
-    def _enqueue(self, key: SpeakerKey, state: _SpeakerState, observation_id: str) -> None:
-        if len(state.pending) >= 2:
-            state.pending.popleft()
-
-        state.pending.append(
-            _AssessmentJob(
-                generation=state.generation,
-                request=self._request(state),
-                speaker=state.speaker,
-                observation_id=observation_id,
-                evidence_observation_ids=tuple(
-                    record.observation_id for record in state.current.values()
-                ),
-            )
+    def _valid(self, job: _AssessmentJob) -> bool:
+        """The window still holds its target and the context it read, unchanged."""
+        target = job.target
+        return (
+            self._window.get(target.segment) is target
+            and self._runtime.perception.speech_source_is_current(target.segment.source)
+            and tuple(entry.observation_id for entry in self._context(target)) == job.context
         )
-
-        self._start_worker(key, state)
 
     def _evidence(
         self,
@@ -263,216 +226,232 @@ class SemanticAddressingProcessor(RouterProcessorBase):
             evidence_observation_ids=observation_ids,
         )
 
-    def _publish(
-        self, state: _SpeakerState, job: _AssessmentJob, result: SemanticAddressingResult
-    ) -> None:
+    def _publish(self, job: _AssessmentJob, result: SemanticAddressingResult) -> None:
+        # The target observation alone is annotated; the context is only what it was read with.
         confidence = self._confidence(result.label, result.p_avatar)
-
+        target = job.target.observation_id
         semantic = self._evidence(
             kind=AddressingEvidenceKind.SEMANTIC,
             label=result.label,
             confidence=confidence,
             speaker=job.speaker,
-            observation_ids=job.evidence_observation_ids,
+            observation_ids=job.context,
             raw_score=result.p_avatar,
         )
         self._runtime.perception.publish_annotation(
-            semantic.to_annotation(source=self.SEMANTIC_SOURCE, observation_id=job.observation_id)
+            semantic.to_annotation(source=self.SEMANTIC_SOURCE, observation_id=target)
         )
 
         if result.label != SemanticAddressingLabel.UNKNOWN:
-            state.focus = result.label, confidence
-        elif state.focus is not None:
-            focus_label, focus_confidence = state.focus
+            self._focus = result.label, confidence
+        elif self._focus is not None:
+            focus_label, focus_confidence = self._focus
             focus = self._evidence(
                 kind=AddressingEvidenceKind.CONVERSATION_FOCUS,
                 label=focus_label,
                 confidence=focus_confidence,
                 speaker=job.speaker,
-                observation_ids=job.evidence_observation_ids,
+                observation_ids=job.context,
             )
             self._runtime.perception.publish_annotation(
-                focus.to_annotation(source=self.FOCUS_SOURCE, observation_id=job.observation_id)
+                focus.to_annotation(source=self.FOCUS_SOURCE, observation_id=target)
             )
 
         logger.debug(
-            "Semantic Addressing label=%s p_avatar=%.4f focus=%s observation_id=%s",
+            "Semantic Addressing label=%s p_avatar=%.4f focus=%s observation_id=%s context=%d",
             result.label.value,
             result.p_avatar,
-            state.focus[0].value if state.focus else None,
-            job.observation_id,
+            self._focus[0].value if self._focus else None,
+            target,
+            len(job.context),
         )
 
-    async def _run_jobs(self, key: SpeakerKey, state: _SpeakerState) -> None:
+    @contextmanager
+    def _timed(self, job: _AssessmentJob) -> Iterator[None]:
+        """The job's inference, from when it was queued: when its turn's addressing evidence
+        could be known (O-16). Metadata only, in the input trace."""
+        started, outcome = self._runtime.clock.now().monotonic_ns, "done"
+        try:
+            yield
+        except asyncio.CancelledError:
+            outcome = "cancelled"
+            raise
+        except Exception:
+            outcome = "failed"
+            raise
+        finally:
+            segment = job.target.segment
+            self._runtime.perception.input_trace.record(
+                "addressing.semantic",
+                source_id=segment.source.source_id,
+                source_generation=segment.source.source_generation,
+                segment_id=segment.segment_id,
+                observation_id=job.target.observation_id,
+                outcome=outcome,
+                event_time_ns=job.queued_ns,
+                start_time_ns=started,
+                end_time_ns=self._runtime.clock.now().monotonic_ns,
+            )
+
+    def _cancel_worker(self) -> None:
+        # A model may ignore cancellation: transfer ownership without delaying new speech.
+        worker, self._worker, self._assessing = self._worker, None, None
+        if worker is not None:
+            worker.cancel()
+
+    async def _run_jobs(self) -> None:
         worker = asyncio.current_task()
         try:
-            while state.worker is worker and state.pending:
-                job = state.pending.popleft()
-                state.assessing = job
-
+            while self._worker is worker and self._pending:
+                job = self._pending.popleft()
+                if not self._valid(job):
+                    continue
+                self._assessing = job
                 try:
-                    result = await self._model.assess(job.request)
+                    with self._timed(job):
+                        result = await self._model.assess(job.request)
                 except asyncio.CancelledError:
                     raise
                 except Exception:
                     logger.exception(
                         "Semantic Addressing inference failed observation_id=%s model=%s",
-                        job.observation_id,
+                        job.target.observation_id,
                         self._model.name,
                     )
                 else:
-                    if (
-                        state.worker is worker
-                        and state.assessing is job
-                        and self._states.get(key) is state
-                        and state.generation == job.generation
-                        and job.speaker.source is not None
-                        and self._runtime.participants.source_is_current(job.speaker.source)
-                    ):
-                        self._publish(state, job, result)
+                    # Only a judgment of the window as it still is: never a late, older one.
+                    if self._worker is worker and self._valid(job):
+                        self._publish(job, result)
                 finally:
-                    if state.worker is worker and state.assessing is job:
-                        state.assessing = None
-
+                    if self._worker is worker and self._assessing is job:
+                        self._assessing = None
         finally:
-            if state.worker is worker:
-                state.worker = None
-                state.assessing = None
+            if self._worker is worker:
+                self._worker = self._assessing = None
+
+    def _start_worker(self) -> None:
+        if self._pending and (self._worker is None or self._worker.done()):
+            self._worker = asyncio.create_task(self._run_jobs(), name="router_semantic_addressing")
+            self._workers.add(self._worker)
+            self._worker.add_done_callback(self._workers.discard)
+
+    def _enqueue(self, target: _Transcript) -> None:
+        context = self._context(target)
+        self._pending = deque(job for job in self._pending if job.target.segment != target.segment)
+        while len(self._pending) >= self._MAX_PENDING:
+            self._pending.popleft()
+        self._pending.append(
+            _AssessmentJob(
+                target=target,
+                context=tuple(entry.observation_id for entry in context),
+                request=self._request(context),
+                speaker=self._speaker(target),
+                queued_ns=self._runtime.clock.now().monotonic_ns,
+            )
+        )
+        self._start_worker()
+
+    def _settle(self) -> None:
+        """After the window changed: drop the judgments it outdated, and judge its newest
+        transcript on it as it is, unless that is already queued or running."""
+        self._pending = deque(job for job in self._pending if self._valid(job))
+        if self._assessing is not None and not self._valid(self._assessing):
+            self._cancel_worker()
+        if self._window:
+            latest = self._ordered()[-1]
+            context = tuple(entry.observation_id for entry in self._context(latest))
+            jobs = (*self._pending, *((self._assessing,) if self._assessing else ()))
+            if not any(job.target is latest and job.context == context for job in jobs):
+                self._enqueue(latest)
+        self._start_worker()
+
+    """Input event operations"""
+
+    def _clear(self) -> None:
+        self._retire(tuple(self._window))
+        self._pending.clear()
+        self._cancel_worker()
+
+    def _follow_context(self) -> None:
+        """A new conversation context: none of the old one's speech, history or focus."""
+        context_id = self._runtime.state.context_id
+        if self._context_id is not None and self._context_id != context_id:
+            self._clear()
+            self._history.clear()
+            self._focus = self._previous_focus = None
+        self._context_id = context_id
+
+    def _prune(self) -> None:
+        # A cancelled or replaced source generation takes its transcripts with it.
+        perception = self._runtime.perception
+        self._retire(
+            tuple(s for s in self._window if not perception.speech_source_is_current(s.source))
+        )
 
     def _consume_transcript(self, observation: EnvObservation) -> None:
-        if observation.kind != ObservationKind.TRANSCRIPT_SEGMENT or observation.segment is None:
+        segment = observation.segment
+        if observation.kind != ObservationKind.TRANSCRIPT_SEGMENT or segment is None:
+            return
+        if not self._runtime.participants.observe_source(segment.source):
             return
 
-        source = observation.segment.source
-        if not self._runtime.participants.observe_source(source):
-            return
-
-        for key, previous in tuple(self._states.items()):
-            if key[0] == source.source_id and key[1] < source.source_generation:
-                previous.generation += 1
-                previous.pending.clear()
-                self._cancel_worker(previous)
-                self._states.pop(key, None)
-
-        if observation.segment in self._retired_segments:
-            return
-
+        self._follow_context()
+        self._prune()
         text = self._text(observation)
-        if text is None:
+        if (
+            text is None
+            or segment in self._retired
+            # Speech that ended before the last committed Turn began was superseded by it.
+            or observation.time_range.end.monotonic_ns <= self._boundary_ns
+            or not self._runtime.perception.speech_source_is_current(segment.source)
+        ):
             return
 
-        key, state = self._state(observation)
-        if not state.current:
-            state.focus_at_turn_start = state.focus[0].value if state.focus else None
+        previous = self._window.get(segment)
+        if previous is not None and previous.text == text:
+            return  # The same words again: nothing new to judge.
 
-        transcript = SemanticAddressingTranscript(text=text, final=True)
-        previous = state.current.get(observation.segment)
-        if previous is not None and previous.transcript == transcript:
-            return
-
-        state.current[observation.segment] = _TranscriptRecord(
-            segment=observation.segment,
-            transcript=transcript,
+        entry = _Transcript(
+            segment=segment,
             observation_id=observation.observation_id,
+            time_range=observation.time_range,
+            text=text,
+            entity=observation.entity,
+            device_id=observation.device_id,
         )
-        self._enqueue(key, state, observation.observation_id)
+        self._window[segment] = entry
+        while len(self._window) > self._MAX_WINDOW:
+            self._retire((self._ordered()[0].segment,))
+        # Judged at once, identity or no; a transcript out of order changes the newest's context.
+        self._enqueue(entry)
+        self._settle()
 
-    def _remember_retired(self, segments: Iterable[PerceptionSegmentRef]) -> None:
-        for segment in segments:
-            self._retired_segments[segment] = None
-        while len(self._retired_segments) > 256:
-            self._retired_segments.pop(next(iter(self._retired_segments)))
-
-    def _finish_turn(
-        self, decision: TurnTakingDecision, *, observation_id: str | None = None
-    ) -> None:
-        observation_ids = set(decision.input_observation_ids)
-        if observation_id is not None:
-            observation_ids.add(observation_id)
-
-        timeline = self._runtime.perception.timeline
-        segments = {
+    def _acknowledge(self, snapshot: TurnSnapshot) -> None:
+        """A committed Turn: the input it owns leaves the window and becomes history; speech
+        that ended before it began was superseded. A proposed decision never does this."""
+        self._follow_context()
+        owned = set(snapshot.input_observation_ids)
+        covered = {
             observation.segment
-            for observation_id in observation_ids
-            if (observation := timeline.get_observation(observation_id=observation_id)) is not None
+            for event in snapshot.perception_events
+            if (observation := event.observation) is not None
+            and observation.observation_id in owned
             and observation.segment is not None
         }
-        segments.update(
-            record.segment
-            for state in self._states.values()
-            for record in state.current.values()
-            if record.observation_id in observation_ids
-        )
-        observation_ids.update(
-            record.observation_id
-            for state in self._states.values()
-            for record in state.current.values()
-            if record.segment in segments
-        )
-        self._remember_retired(segments)
+        committed = self._retire(covered)
+        if committed and self._history_turns:
+            self._history.append(tuple(entry.text for entry in committed))
 
-        def uses_retired(job: _AssessmentJob) -> bool:
-            return any(
-                observation_id in observation_ids
-                or (
-                    (observation := timeline.get_observation(observation_id=observation_id))
-                    is not None
-                    and observation.segment in segments
-                )
-                for observation_id in job.evidence_observation_ids
+        self._boundary_ns = max(self._boundary_ns, snapshot.started_at.monotonic_ns)
+        self._retire(
+            tuple(
+                entry.segment
+                for entry in self._window.values()
+                if entry.time_range.end.monotonic_ns <= self._boundary_ns
             )
-
-        for key, state in tuple(self._states.items()):
-            retired = tuple(
-                state.current.pop(segment)
-                for segment in tuple(state.current)
-                if segment in segments
-            )
-            pending = deque(job for job in state.pending if not uses_retired(job))
-            affected = state.assessing is not None and uses_retired(state.assessing)
-            if not retired and len(pending) == len(state.pending) and not affected:
-                continue
-
-            if retired and decision.action != TurnTakingAction.CANCEL and self._history_turns:
-                state.history.append(tuple(record.transcript for record in retired))
-
-            state.pending = pending
-            if affected:
-                # A model may ignore cancellation; transfer ownership without delaying new speech.
-                self._cancel_worker(state)
-
-            if state.current:
-                current_ids = {record.observation_id for record in state.current.values()}
-                jobs = tuple(state.pending)
-                if state.assessing is not None:
-                    jobs += (state.assessing,)
-                if not any(current_ids.issubset(job.evidence_observation_ids) for job in jobs):
-                    self._enqueue(key, state, next(reversed(state.current.values())).observation_id)
-                else:
-                    self._start_worker(key, state)
-            else:
-                state.focus_at_turn_start = None
-                # Unknown speakers never inherit the previous occupant's conversation focus.
-                if key[2] != "entity":
-                    self._states.pop(key, None)
-
-    def _consume_turn_annotation(self, event: PerceptionEvent) -> None:
-        annotation = event.annotation
-        if annotation is None or annotation.kind != AnnotationKind.INTERACTION_TURN:
-            return
-
-        decision = TurnTakingDecision.from_annotation(annotation)
-        if decision.action in _TERMINAL_ACTIONS:
-            self._finish_turn(decision, observation_id=annotation.observation_id)
-
-    def _clear_context(self) -> None:
-        for state in self._states.values():
-            state.generation += 1
-            state.pending.clear()
-            self._remember_retired(state.current)
-            self._cancel_worker(state)
-
-        self._states.clear()
+        )
+        self._previous_focus = self._focus[0].value if self._focus else None
+        self._settle()
 
     """Processor Loop"""
 
@@ -492,7 +471,7 @@ class SemanticAddressingProcessor(RouterProcessorBase):
                     logger.warning(
                         "Semantic Addressing observed transcript gap missed=%s", window.missed_count
                     )
-                    self._clear_context()
+                    self._clear()
 
                 for observation in window.observations:
                     try:
@@ -511,42 +490,22 @@ class SemanticAddressingProcessor(RouterProcessorBase):
                 logger.exception("Semantic Addressing observation consumer failed")
                 await asyncio.sleep(0.05)
 
-    async def _consume_annotations(self) -> None:
-        while True:
-            try:
-                await self._runtime.perception.wait_for_pending_annotations(
-                    consumer_id=self.ANNOTATION_CONSUMER_ID
-                )
-                batch = self._runtime.perception.take_pending_annotations(
-                    consumer_id=self.ANNOTATION_CONSUMER_ID,
-                    predicate=lambda annotation: annotation.kind == AnnotationKind.INTERACTION_TURN,
-                    limit=32,
-                )
-
-                if batch.has_gap:
-                    logger.warning(
-                        "Semantic Addressing observed turn annotation gap missed=%s",
-                        batch.missed_count,
+    async def _consume_turns(self) -> None:
+        stream = self._runtime.turn.events
+        while await stream.wait_for_pending(consumer_id=self.TURN_CONSUMER_ID):
+            batch = stream.read_pending(consumer_id=self.TURN_CONSUMER_ID)
+            if batch.has_gap:
+                # Which input those Turns owned is unknown: none of the window can be trusted.
+                logger.warning("Semantic Addressing missed committed Turns")
+                self._clear()
+            for event in batch.items:
+                try:
+                    self._acknowledge(event.snapshot)
+                except Exception:
+                    logger.exception(
+                        "Semantic Addressing failed turn_id=%s", event.snapshot.turn_id
                     )
-                    self._clear_context()
-
-                for event in batch.items:
-                    try:
-                        self._consume_turn_annotation(event)
-                    except Exception:
-                        logger.exception(
-                            "Semantic Addressing failed turn annotation event_id=%s", event.event_id
-                        )
-
-                self._runtime.perception.commit_annotations(
-                    consumer_id=self.ANNOTATION_CONSUMER_ID, cursor_seq=batch.cursor_seq
-                )
-
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("Semantic Addressing annotation consumer failed")
-                await asyncio.sleep(0.05)
+            stream.commit(consumer_id=self.TURN_CONSUMER_ID, cursor_seq=batch.cursor_seq)
 
     """Runtime operations"""
 
@@ -555,13 +514,12 @@ class SemanticAddressingProcessor(RouterProcessorBase):
             return
 
         self._started = True
+        self._context_id = self._runtime.state.context_id
         self._tasks = (
             asyncio.create_task(
                 self._consume_observations(), name="router_semantic_addressing_observations"
             ),
-            asyncio.create_task(
-                self._consume_annotations(), name="router_semantic_addressing_annotations"
-            ),
+            asyncio.create_task(self._consume_turns(), name="router_semantic_addressing_commits"),
         )
 
         logger.info(
@@ -576,7 +534,7 @@ class SemanticAddressingProcessor(RouterProcessorBase):
             return
 
         self._started = False
-        self._clear_context()
+        self._clear()
 
         tasks = (*self._tasks, *self._workers)
         for task in tasks:
@@ -586,11 +544,13 @@ class SemanticAddressingProcessor(RouterProcessorBase):
 
         self._tasks = ()
         self._workers.clear()
-        self._retired_segments.clear()
+        self._retired.clear()
+        self._history.clear()
+        self._focus = self._previous_focus = None
 
         self._runtime.perception.clear_observation_consumer(
             self.OBSERVATION_CONSUMER_ID, streams={PerceptionStreamKind.TEXT}
         )
-        self._runtime.perception.clear_annotation_consumer(self.ANNOTATION_CONSUMER_ID)
+        self._runtime.turn.events.clear_consumer(self.TURN_CONSUMER_ID)
 
         logger.info("Semantic Addressing stopped")

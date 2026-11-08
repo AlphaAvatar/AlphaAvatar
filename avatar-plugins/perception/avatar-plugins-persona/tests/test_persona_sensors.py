@@ -56,16 +56,17 @@ from alphaavatar.plugins.persona.processors.speaker.vector_runner import Speaker
 
 HANG_GUARD = 30
 VDB = "alphaavatar.persona.vdb.lancedb"
-USERS = ("alice", "bob")
+PEOPLE = ("alice", "bob", "carol")  # Each a vector of its own
+USERS = PEOPLE[:2]
 # Constant PCM levels identify each physical speaker's audio inside the offline model double.
-LEVELS = {8192: "alice", 16384: "bob"}
+LEVELS = {8192: "alice", 16384: "bob", 24576: "carol"}
 # The Persona VDB runner answers a miss with no result, or with a row that has no user.
 SEARCH_REPLIES = {"none": None, "empty-user": {"user_id": "", "score": 0.99}}
 
 
 def embedding(user: str, size: int) -> np.ndarray:
     vector = np.zeros(size, dtype=np.float32)
-    vector[USERS.index(user)] = 1.0
+    vector[PEOPLE.index(user)] = 1.0
     return vector
 
 
@@ -82,6 +83,9 @@ class SensorInference:
         self.hold_search = False
         self.search_held, self.search_release = asyncio.Event(), asyncio.Event()
         self.attribute_delay = 0.0  # A speaker attribute inference that takes its time
+        self.hold_attribute = False
+        self.attribute_held, self.attribute_release = asyncio.Event(), asyncio.Event()
+        self.attributes: list[str] = []  # Whose speech each attribute inference heard
         self.saves: list[str] = []
 
     async def _maybe_hold(self, user: str) -> None:
@@ -98,6 +102,11 @@ class SensorInference:
             await self._maybe_hold(user)
             return embedding(user, 192).tobytes()
         if method == SpeakerAttributeRunner.INFERENCE_METHOD:
+            self.attributes.append(LEVELS[round(np.frombuffer(data, dtype=np.float32)[0] * 32768)])
+            if self.hold_attribute:
+                self.hold_attribute = False
+                self.attribute_held.set()
+                await self.attribute_release.wait()
             await asyncio.sleep(self.attribute_delay)
             attributes = {
                 "logits_age": np.array([[0.3]], dtype=np.float32),
@@ -124,7 +133,7 @@ class SensorInference:
         request = json.loads(data)
         if request["op"] in ("search_speaker_vector", "search_face_vector"):
             kind = request["op"].split("_")[1]
-            user = USERS[int(np.argmax(request["param"][f"{kind}_vector"]))]
+            user = PEOPLE[int(np.argmax(request["param"][f"{kind}_vector"]))]
             self.searches.append(f"{kind}:{user}")
             if self.hold_search:
                 self.hold_search = False
@@ -509,6 +518,142 @@ async def test_a_cancelled_source_cancels_the_identity_its_segment_waits_on(tmp_
         await asyncio.sleep(0)
     (identity,) = traced(runtime, "speaker.identity")
     assert identity["outcome"] == "cancelled" and participant_of(runtime, "alice") is None
+    await persona.on_stop()
+    await runtime.aclose()
+
+
+def described(runtime: AvatarRuntime, persona, user: str):
+    """The speaker attributes Persona holds for the user's participant, if any."""
+    participant = participant_of(runtime, user)
+    cache = persona.persona_cache.get(participant.participant_id) if participant else None
+    return cache.profile_details if cache is not None else None
+
+
+async def test_a_slow_attribute_never_holds_the_next_segments_association_or_identity(
+    tmp_path: Path,
+) -> None:
+    # Attributes have their own lane: while Alice's are inferred, Bob's window, association
+    # and identity complete, and his Turn's Context stops waiting as soon as he is known.
+    inference = SensorInference()
+    inference.hold_attribute = True
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "speaker", identity_wait_sec=HANG_GUARD)
+    await persona.on_start()
+    source = PerceptionSourceRef("device", 1)
+    speak(runtime, source, "a", "alice", explicit=False)
+    async with asyncio.timeout(HANG_GUARD):
+        await inference.attribute_held.wait()
+    speak(runtime, source, "b", "bob", explicit=False)
+    await wait_until(lambda: len(traced(runtime, "participant.segment_ready")) == 2, "unbound")
+    ready = await asyncio.wait_for(runtime.turn.wait_context_ready(spoken_turn(runtime, "b")), 2)
+
+    assert ready is True and participant_of(runtime, "bob") is not None
+    assert described(runtime, persona, "alice") is None  # Still being inferred
+    inference.attribute_release.set()
+    await wait_until(lambda: described(runtime, persona, "bob"), "Bob was never described")
+    assert inference.attributes == ["alice", "bob"] and described(runtime, persona, "alice")
+    await persona.on_stop()
+    await runtime.aclose()
+
+
+async def test_a_full_attribute_lane_gives_way_without_holding_any_identity(tmp_path: Path) -> None:
+    inference = SensorInference()
+    inference.hold_attribute = True
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "speaker", inference_queue_size=1)
+    await persona.on_start()
+    source = PerceptionSourceRef("device", 1)
+    for segment, user in (("a", "alice"), ("b", "bob"), ("c", "carol")):
+        speak(runtime, source, segment, user, explicit=False)
+        await wait_until(lambda user=user: participant_of(runtime, user), f"{user} unknown")
+        if segment == "a":
+            async with asyncio.timeout(HANG_GUARD):
+                await inference.attribute_held.wait()
+    # Every identity settled while Alice's attributes held; Bob's waited, then gave way.
+    inference.attribute_release.set()
+    await wait_until(lambda: described(runtime, persona, "carol"), "Carol never described")
+    assert inference.searches == ["speaker:alice", "speaker:bob", "speaker:carol"]
+    assert inference.attributes == ["alice", "carol"] and described(runtime, persona, "bob") is None
+    await persona.on_stop()
+    await runtime.aclose()
+
+
+@pytest.mark.parametrize("how", ["cancelled-source", "new-generation", "stop"])
+async def test_an_attribute_of_a_retired_segment_is_reaped_and_writes_nothing(
+    how: str, tmp_path: Path
+) -> None:
+    inference = SensorInference()
+    inference.hold_attribute = True
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "speaker")
+    await persona.on_start()
+    source = PerceptionSourceRef("device", 1)
+    speak(runtime, source, "a", "alice", explicit=False)
+    async with asyncio.timeout(HANG_GUARD):
+        await inference.attribute_held.wait()
+    alice = participant_of(runtime, "alice")
+    cache = persona.cache_for(alice.participant_id)
+    if how == "cancelled-source":
+        speak(runtime, source, "b", "bob", end=False, explicit=False)
+        runtime.perception.publish_observation(
+            EnvObservation(
+                kind=ObservationKind.SPEECH_CANCELLED,
+                time_range=RuntimeTimeRange.point(runtime.clock.now()),
+                source=source,
+                segment=PerceptionSegmentRef(source, "b"),
+                metadata={"reason_code": "source_ended"},
+            )
+        )
+        await wait_until(lambda: traced(runtime, "speaker.attribute"), "it was never reaped")
+    elif how == "new-generation":
+        # The device reopened: its old generation's segments are retired as the new speaks.
+        speak(runtime, PerceptionSourceRef("device", 2), "c", "bob", end=False, explicit=False)
+        await wait_until(
+            lambda: any(
+                r["outcome"] == "released" for r in traced(runtime, "participant.segment_ready")
+            )
+            or not runtime.participants.source_is_current(source),
+            "the old generation was never retired",
+        )
+    else:
+        await asyncio.wait_for(persona.on_stop(), 2)  # Not held by the inference in flight
+    inference.attribute_release.set()
+    if how == "new-generation":
+        await wait_until(lambda: traced(runtime, "speaker.attribute"), "it never ended")
+    (attribute,) = traced(runtime, "speaker.attribute")
+    expected = "done" if how == "new-generation" else "cancelled"  # Ran out, its segment gone
+    assert attribute["outcome"] == expected and cache.profile_details is None
+    if how != "stop":
+        await persona.on_stop()
+    await runtime.aclose()
+
+
+async def test_a_late_attribute_never_describes_the_identity_that_replaced_its_own(
+    tmp_path: Path,
+) -> None:
+    inference = SensorInference()
+    inference.hold_attribute = True
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "speaker")
+    await persona.on_start()
+    speak(runtime, PerceptionSourceRef("device", 1), "a", "alice", explicit=False)
+    async with asyncio.timeout(HANG_GUARD):
+        await inference.attribute_held.wait()
+    alice = participant_of(runtime, "alice")
+    corrected = runtime.participants.bind_user(
+        IdentityRequest(
+            participant_id=alice.participant_id,
+            user_id="carol",
+            source=IdentitySource.AGENT,
+            basis_sequence=alice.identity_sequence,
+            reason="The speaker said they are Carol",
+        )
+    )
+    assert corrected == IdentityOutcome.APPLIED
+    inference.attribute_release.set()
+    await wait_until(lambda: traced(runtime, "speaker.attribute"), "it never ended")
+    # Inferred for Alice's identity, it describes nobody now that the participant is Carol.
+    assert persona.cache_for(alice.participant_id).profile_details is None
     await persona.on_stop()
     await runtime.aclose()
 

@@ -366,6 +366,40 @@ async def test_turn_committed_before_identity_resolution_is_profiled_for_the_res
 
 
 @pytest.mark.parametrize(
+    "people",
+    [("alice",), ("alice", "alice"), ("alice", "bob"), ("alice", None)],
+    ids=["one-user", "one-user-twice", "two-users", "known-and-unknown"],
+)
+async def test_a_turns_private_profile_needs_its_every_actor_to_be_one_accepted_user(
+    people: tuple[str | None, ...], tmp_path: Path
+) -> None:
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(name_ally), PersonaInference())
+    persona, _ = persona_for(runtime)
+    actors = []
+    for user in people:
+        if user is None:  # An unattributed segment: heard through the device, nobody's.
+            actors.append(TurnEntityRef(kind="person", device_id="phone-1"))
+            continue
+        participant = runtime.participants.join(user_id=user)
+        actors.append(
+            TurnEntityRef(
+                participant_id=participant.participant_id,
+                user_id=participant.user_id,
+                identity_sequence=participant.identity_sequence,
+            )
+        )
+    snapshot = runtime.turn.commit_input(
+        input_id="input-0", modality=TurnInputModality.TEXT, text="hello", actors=tuple(actors)
+    )
+
+    shown = persona.content_for(snapshot)
+    # One user, if across two participants: theirs. Anyone else in the Turn: nobody's.
+    assert ("alice" in shown) == (set(people) == {"alice"})
+    assert "bob" not in shown
+    await runtime.aclose()
+
+
+@pytest.mark.parametrize(
     "result",
     [b'{"user_id":"alice","inserted":0,"error":"disk full"}', b"", None],
     ids=["error-field", "empty", "none"],

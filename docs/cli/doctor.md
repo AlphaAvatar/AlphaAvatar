@@ -303,8 +303,9 @@ its first audio frame answers a later request.
 | `stt_request_to_final` | segment committed to STT | the request's last final |
 | `stt_queue`, `stt_connect`, `stt_tls`, `stt_upload`, `stt_wait`, `stt_first_event`, `stt_stream` | the STT request of that final, as its plugin times it (`stt.request`) | its wait in the plugin's queue; the TCP connect and TLS handshake it opened (none, and says so, when the connection was reused); the upload; the wait from the audio sent to the answer's headers, network and service together; from those headers to the first stream event and to the transcript done. A request its transport did not trace (a client of the caller's own, or one that failed before it was sent) has its queue alone: the rest is not observed, neither reused nor opened. A plugin that times nothing leaves them not measured |
 | `context_ready_wait` | Context asks for the Turn's context | ready (the Context manager's own figure) |
-| `association_ready`, `association_wait` | the final segment's association; the commit's checks of its candidate | speech closed to association first ready (negative: ready before); the commit's wait summed over every check of the candidate, re-decisions included ("none needed" only when all its segments were ready first). Ready is not recognized; the evidence names how it was released (`participant.segment_ready`) |
-| `assessment_queue`, `endpoint_assessment`, `decision_holds` | the router's trace (`candidate.assessment`, `candidate.hold`, `candidate.addressing_wait`) | the last endpoint assessment's wait from queued (its speech closed or its transcript came) to started; then, between the Turn's final and its commit, the endpoint model's runs (one replaced counted too) and the holds and addressing waits, each only its part within that stretch. With the association wait they part the final → commit row |
+| `association_ready` | the final segment's speech closed | its association first ready (negative: ready before). Nothing waits for it: Engine resolves the Turn's actors as it admits it, and the note says when it was ready only after that admission, the segment left unattributed. Ready is not recognized; the evidence names how it was released (`participant.segment_ready`) |
+| `addressing_queue`, `addressing_inference` | the semantic addressing of the Turn's final transcript (`addressing.semantic`) | its wait from queued (the transcript came) to started, then its inference, the model's run and its request to the inference service together. A judgment cancelled before it answered, as when the Turn commits first, is evidence only: not measured |
+| `assessment_queue`, `endpoint_assessment`, `decision_holds` | the router's trace (`input.assessment`, `input.hold`, `input.addressing_wait`) | the last endpoint assessment's wait from queued (its speech closed or its transcript came) to started; then, between the Turn's final and its commit, the endpoint model's runs (one replaced counted too) and the holds and addressing waits, each only its part within that stretch. What they leave of the final → commit row is the router's own handling |
 | `model_request_client`, `model_request_prepare`, `model_request_encode`, `model_request_frames`, `model_request_bytes`, `model_request_attempts` | first attempt sent | client made ready (ms), request taken to first attempt sent (ms), encoded here (ms), pictures, body sent (bytes), attempts: the provider's own record |
 | `model_first_event` | model request sent | first stream event, which may only say the response began |
 | `frame_input_to_available`, `selected_frame_age` | frame arrival | published to perception, model request |
@@ -343,19 +344,19 @@ none without rounds, each with the figures its rounds hold and the `stopped_at` 
 
 Each measured scenario lists what was observed, in order, with times relative to the response
 start: Doctor's input (`input.voiced_end`, `input.screen_first`), the input trace's stages
-(`perception.speech_closed`, `stt.terminal`, `candidate.decision`, `turn.committed`,
+(`perception.speech_closed`, `stt.terminal`, `input.decision`, `turn.committed`,
 `context.frame_selected`, `model.request`, `model.request_frame`, …), the loop and speech logs
 (`context.built`, `model.started`, `model.first_event`, `stt.request`, `speech.request`, …) and the output events
 (`output.text_chunk`, `output.audio_frame`, `output.control`, `output.playback`). The trace
 keeps identities salted per session; the evidence shows their shortened tokens (`turn`,
-`decision`, `candidate`, `segment`, `input`, `run`, `request`, `observation`), and equal tokens
-are one identity: a segment joins its candidate, decision and Turn; the Turn joins its input,
-its model request with that request's frames, and its run's outputs. `request` sums that up,
+`decision`, `input`, `segment`, `run`, `request`, `observation`), and equal tokens are one
+identity: a segment joins its input, decision and Turn (the router's input is the Turn's);
+the Turn joins its model request with that request's frames, and its run's outputs. `request` sums that up,
 and `frames` tells the frames Context selected from those the request carried, each matched
 to one Doctor published. The Turn is the one committed in this session whose perception range
 holds this input, so a late event of another turn or session is never counted. When no Turn
 commits, the evidence follows the spoken input from its own sound on (its segment, STT and
-turn-taking decisions), so the report names the stage it stopped at, such as a candidate
+turn-taking decisions), so the report names the stage it stopped at, such as an input
 cancelled for want of a transcript before the STT final arrived. Evidence is
 bounded, keeping where the chain began, turned and ended, and passes the same output boundary
 as the rest of the report.

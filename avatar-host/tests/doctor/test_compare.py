@@ -71,7 +71,7 @@ def test_figures_and_events_are_recomputed_from_the_rounds_as_doctor_summarizes_
 ) -> None:
     compare = script()
     lost = {"index": 2, "heard": False, "lost": "stt"}
-    cancel = Evidence(0.0, "candidate.decision", "trace", {"action": "cancel"})
+    cancel = Evidence(0.0, "input.decision", "trace", {"action": "cancel"})
     segment = [
         # The first round failed, a later one too; one merged its row; one lost a sentence.
         result(1, "failed", 900.0, sentences=(lost,)),

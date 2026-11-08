@@ -56,8 +56,8 @@ def test_check_reports_valid_and_invalid_configurations_with_effective_overrides
     config = write(tmp_path / "avatar.json", CONFIG)
     before = files(tmp_path)
 
-    # Wide enough for every line: where a narrow terminal wraps is the renderer's own test.
-    with mock.patch.dict(os.environ, {"COLUMNS": "200"}):
+    # Wider than any path can be (O-22): where a narrow terminal wraps is the renderer's own test.
+    with mock.patch.dict(os.environ, {"COLUMNS": "10000"}):
         assert main(["config", "check", str(config), "avatar.id=renamed"]) == 0
     text = capsys.readouterr().out
     assert main(["config", "check", str(config), "avatar.id=renamed", "--json"]) == 0

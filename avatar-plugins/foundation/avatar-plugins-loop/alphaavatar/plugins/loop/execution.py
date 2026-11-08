@@ -675,7 +675,13 @@ class LoopExecution(LoopHandle):
         finally:
             if identity_watch is not None:
                 identity_watch.cancel()
-                await asyncio.gather(identity_watch, return_exceptions=True)
+                try:
+                    # A cancellation of this run while its watch is reaped settles like any
+                    # other (O-17): the watch finishes, and the run still reports its result.
+                    await asyncio.shield(asyncio.gather(identity_watch, return_exceptions=True))
+                except asyncio.CancelledError:
+                    state, reason = LoopState.CANCELLED, self._cancel_reason or "cancelled"
+                    await asyncio.gather(identity_watch, return_exceptions=True)
             try:
                 await self._settle_pending(
                     reason=self._cancel_reason or reason or "execution_stopped"

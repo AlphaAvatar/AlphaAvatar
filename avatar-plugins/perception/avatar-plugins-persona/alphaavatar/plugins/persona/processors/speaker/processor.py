@@ -74,6 +74,7 @@ class SpeakerSegmentState:
     vector: np.ndarray | None = None
     last_audio: bytes | None = None
     identified: asyncio.Event = field(default_factory=asyncio.Event)  # Matched, or never will be
+    speaker: Participant | None = None  # Its identified participant, for its attributes
 
 
 @dataclass(slots=True, frozen=True)
@@ -123,12 +124,16 @@ class SpeakerProcessor(PersonaProcessorBase):
             max_tracks=config.max_speakers,
             ttl_sec=config.track_ttl_sec,
         )
-        # Two lanes: windows and the association a commit waits for; then, off that lane, each
-        # bound segment's identity and its speaker's attributes.
+        # Three lanes: windows and the association Engine resolves a Turn's actors from; each
+        # bound segment's identity, which its Turn's Context waits for within its bound; and
+        # its speaker's attributes, which nothing waits for.
         self._inference_queue: asyncio.Queue[SpeakerWindow | SpeakerSegmentState] = asyncio.Queue(
             maxsize=config.inference_queue_size
         )
         self._identity_queue: asyncio.Queue[SpeakerSegmentState] = asyncio.Queue(
+            maxsize=config.inference_queue_size
+        )
+        self._attribute_queue: asyncio.Queue[SpeakerSegmentState] = asyncio.Queue(
             maxsize=config.inference_queue_size
         )
 
@@ -198,6 +203,11 @@ class SpeakerProcessor(PersonaProcessorBase):
         if self._identity_queue.full():
             self._retire(self._identity_queue.get_nowait())  # Bound, never identified
         self._identity_queue.put_nowait(state)
+
+    def _enqueue_attribute(self, state: SpeakerSegmentState) -> None:
+        if self._attribute_queue.full():
+            self._retire(self._attribute_queue.get_nowait())  # Identified, never described
+        self._attribute_queue.put_nowait(state)
 
     def _enqueue_pcm(self, state: SpeakerSegmentState, pcm16: bytes) -> None:
         audio = np.frombuffer(pcm16, dtype="<i2").astype(np.float32) / 32768.0
@@ -474,16 +484,17 @@ class SpeakerProcessor(PersonaProcessorBase):
         cache.speaker_vector = state.vector.copy()
         return cache.participant
 
+    def _attribute_due(self, state: SpeakerSegmentState, participant: Participant) -> bool:
+        last = self._attribute_times.get(participant.participant_id, -float("inf"))
+        return (
+            state.last_audio is not None and time.monotonic() - last >= self.ATTRIBUTE_INTERVAL_SEC
+        )
+
     async def _infer_attribute(self, state: SpeakerSegmentState, participant: Participant) -> None:
-        if state.last_audio is None:
+        if not self._attribute_due(state, participant):
             return
 
         now = time.monotonic()
-        if (
-            now - self._attribute_times.get(participant.participant_id, -float("inf"))
-            < self.ATTRIBUTE_INTERVAL_SEC
-        ):
-            return
 
         result = await asyncio.wait_for(
             self.inference_executor.do_inference(
@@ -578,8 +589,9 @@ class SpeakerProcessor(PersonaProcessorBase):
                 self._retire(state)
 
     async def _identify(self, state: SpeakerSegmentState) -> None:
-        """A bound segment's identity, then its speaker's attributes; the Turn its speech is
-        in waits for the identity alone, within its bound."""
+        """A bound segment's identity, which the Turn its speech is in waits for within its
+        bound; its speaker's attributes, when due, go to their own lane."""
+        describing = False
         try:
             if not self._is_current(state) or state.participant is None:
                 return
@@ -587,10 +599,22 @@ class SpeakerProcessor(PersonaProcessorBase):
             async with self._timed("speaker.identity", state):
                 participant = await self._resolve_identity(state, state.participant)
 
+            if participant is not None and self._attribute_due(state, participant):
+                state.speaker = participant
+                self._enqueue_attribute(state)
+                describing = True
+        finally:
             state.identified.set()
-            if participant is not None:
+            if not describing:
+                self._retire(state)
+
+    async def _describe(self, state: SpeakerSegmentState) -> None:
+        """An identified segment's speaker attributes: they reach later Turns, never a Turn's
+        wait, and only the identity they were inferred for."""
+        try:
+            if self._is_current(state) and state.speaker is not None:
                 async with self._timed("speaker.attribute", state):
-                    await self._infer_attribute(state, participant)
+                    await self._infer_attribute(state, state.speaker)
         finally:
             self._retire(state)
 
@@ -708,6 +732,10 @@ class SpeakerProcessor(PersonaProcessorBase):
                 self._serve("identity", self._identity_queue, self._identify),
                 name="persona_speaker_identity",
             ),
+            asyncio.create_task(
+                self._serve("attribute", self._attribute_queue, self._describe),
+                name="persona_speaker_attribute",
+            ),
         )
         self._consume_task = asyncio.create_task(
             self._consume_loop(), name="persona_speaker_consumer"
@@ -729,8 +757,9 @@ class SpeakerProcessor(PersonaProcessorBase):
         self._consume_task, self._lanes = None, ()
         while not self._inference_queue.empty():
             self._discard_job(self._inference_queue.get_nowait())
-        while not self._identity_queue.empty():
-            self._retire(self._identity_queue.get_nowait())
+        for queue in (self._identity_queue, self._attribute_queue):
+            while not queue.empty():
+                self._retire(queue.get_nowait())
 
         self._segments.clear()
         self._retired_segments.clear()

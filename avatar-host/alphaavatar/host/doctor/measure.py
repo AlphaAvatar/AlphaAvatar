@@ -15,7 +15,7 @@
 
 Evidence joins by identity. The session names the Turn its own input started; the input
 trace hashes identities per session, so that Turn's records are found through
-``InputTrace.identity`` and the decision, candidate, segment and request identities they
+``InputTrace.identity`` and the decision, input, segment and request identities they
 share. The Turn's first model request is the one measured: its records name the committed
 input, which of the Turn's input observations it carries (the STT finals of the sample's
 speech among them) and the frames it carries, matched to the ones Doctor published and told
@@ -326,18 +326,18 @@ class _Turn:
         turn = [r for r in trace if r.get("turn_id") == key]
         decisions = {r["decision_id"] for r in turn if "decision_id" in r}
         requests = {r["request_id"] for r in turn if "request_id" in r}
-        candidates = {
+        inputs = {
             r["input_id"] for r in trace if r.get("decision_id") in decisions and "input_id" in r
         }
         segments = {
-            r["segment_id"] for r in trace if r.get("input_id") in candidates and "segment_id" in r
+            r["segment_id"] for r in trace if r.get("input_id") in inputs and "segment_id" in r
         }
         chained = [
             r
             for r in trace
             if r.get("turn_id") == key
             or r.get("decision_id") in decisions
-            or r.get("input_id") in candidates
+            or r.get("input_id") in inputs
             or r.get("segment_id") in segments
             or r.get("request_id") in requests
         ]
@@ -1069,55 +1069,58 @@ class _Turn:
             )
         return found
 
-    def _association(self, final: dict | None) -> list[Metric]:
-        """The speaker association of the Turn's final segment (O-16): when it was first
-        ready, from its speech closed (before it, when its subject came with the speech).
-        Then how long the Turn's commit actually waited for its candidate's: every check the
-        chain holds, a re-decision's too, summed (a candidate's checks run one after another),
-        none needed only when every segment of the candidate was ready before the first. Ready
-        is not recognized: a failure or a retirement releases it too, which the evidence says."""
+    def _association(self, final: dict | None) -> Metric:
+        """The speaker association of the Turn's final segment: when it was first ready, from
+        its speech closed (before it, when its subject came with the speech). Nothing waits
+        for it: Engine resolves the Turn's actors as it admits it, so one ready after that
+        left its segment unattributed in the Turn. Ready is not recognized: a failure or a
+        retirement releases it too, which the evidence says."""
         segment = final.get("segment_id") if final is not None else None
         closed = self._trace("perception.speech_closed", segment_id=segment) if segment else None
         ready = self._trace("participant.segment_ready", segment_id=segment) if segment else None
-        spans = [
-            (r["start_time_ns"], r["end_time_ns"])
-            for r in self.trace
-            if r["stage"] == "input.association" and "start_time_ns" in r and "end_time_ns" in r
-        ]
-        readies = {
-            r.get("segment_id"): r.get("end_time_ns")
-            for r in self.trace
-            if r["stage"] == "participant.segment_ready"
-        }
-        joined = {r.get("segment_id") for r in self.trace if r["stage"] == "input.segment"}
-        before = bool(spans and joined) and all(
-            readies.get(s) is not None and readies[s] <= spans[0][0] for s in joined
+        admitted = self._trace("turn.admission", outcome="accepted")
+        late = ready and admitted and ready.get("end_time_ns", 0) > admitted["recorded_time_ns"]
+        return self._metric(
+            "association_ready",
+            ("speech closed", closed["recorded_time_ns"] if closed is not None else None),
+            ("speaker association ready", ready.get("end_time_ns") if ready else None),
+            "the speaker association of the Turn's final segment",
+            "not measured: no association asked for the segment, or no resolver records one",
+            note="ready after the Turn's admission: its segment stayed unattributed"
+            if late
+            else None,
         )
-        waited = tuple(round((end - start) / 1e6, 3) for start, end in spans)
-        if not spans:
-            note = "not measured: the Turn's commit recorded no association wait"
-        elif before:
-            note = "none needed: every segment of its candidate was ready before the commit asked"
-        else:
-            note = f"{len(spans)} checks, a re-decision's too, summed" if len(spans) > 1 else None
+
+    def _addressing(self, final: dict | None) -> list[Metric]:
+        """The semantic addressing of the Turn's final transcript (O-16), the evidence the
+        router waits for after it: its wait in its speaker's queue, then its inference (the
+        model's run and its request to the inference service, together)."""
+        job = next(
+            (
+                r
+                for r in self.trace
+                if final is not None
+                and r["stage"] == "addressing.semantic"
+                and r.get("observation_id") == final.get("observation_id")
+                and r.get("outcome") == "done"
+            ),
+            {},
+        )
+        missing = "not measured: no semantic addressing ran for the final, or none is traced"
         return [
             self._metric(
-                "association_ready",
-                ("speech closed", closed["recorded_time_ns"] if closed is not None else None),
-                ("speaker association ready", ready.get("end_time_ns") if ready else None),
-                "the speaker association of the Turn's final segment",
-                "not measured: no association asked for the segment, or no resolver records one",
+                "addressing_queue",
+                ("addressing queued", job.get("event_time_ns")),
+                ("addressing started", job.get("start_time_ns")),
+                "the semantic addressing of the Turn's final transcript",
+                missing,
             ),
-            Metric(
-                "association_wait",
-                round(sum(end - start for start, end in spans) / 1e6, 3) if spans else None,
-                "ms",
-                "commit asked",
-                "association ready to the commit",
-                "the commit's association checks of the Turn's candidate",
-                len(spans),
-                waited,
-                note=note,
+            self._metric(
+                "addressing_inference",
+                ("addressing started", job.get("start_time_ns")),
+                ("addressing evidence ready", job.get("end_time_ns")),
+                "the semantic addressing of the Turn's final transcript",
+                missing,
             ),
         ]
 
@@ -1126,7 +1129,8 @@ class _Turn:
         model's assessments in that stretch, one another replaced included, summed; the timed
         holds and addressing waits in it, summed; and the last assessment's wait to start from
         when it was queued. Each span counts its part within the stretch alone: a wait that
-        overlapped STT's is not the commit's."""
+        overlapped STT's is not the commit's. With nothing else timed, the rest of that
+        stretch is the router's own handling."""
         commit = self._trace("input.decision", action="commit")
         before = [
             r for r in self.trace if commit and r["trace_sequence"] < commit["trace_sequence"]
@@ -1211,7 +1215,8 @@ class _Turn:
                 "the commit of the request's last final was not recorded",
             ),
             *self._stt(final),
-            *self._association(final),
+            self._association(final),
+            *self._addressing(final),
             *self._assessment(final),
             Metric(
                 "input_lateness",
@@ -1430,7 +1435,6 @@ class _Turn:
                 "decision_id",
                 "input_id",
                 "segment_id",
-                "input_id",
                 "run_id",
                 "request_id",
                 "observation_id",
@@ -1438,9 +1442,9 @@ class _Turn:
                 if key in record:
                     detail[key.removesuffix("_id")] = record[key][3:15]
             # When a span it records began, on the report's clock: a wait, an inference; and,
-            # for a speaker window or a turn assessment, when it was queued for it.
+            # for a speaker window, a turn assessment or an addressing, when it was queued.
             spans = [("start_time_ns", "started_ms")]
-            if record["stage"] in ("speaker.window", "input.assessment"):
+            if record["stage"] in ("speaker.window", "input.assessment", "addressing.semantic"):
                 spans.append(("event_time_ns", "queued_ms"))
             for key, name in spans:
                 if isinstance(record.get(key), int):

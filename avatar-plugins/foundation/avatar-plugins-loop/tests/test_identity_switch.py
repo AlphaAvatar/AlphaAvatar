@@ -22,6 +22,7 @@ from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
 
+import pytest
 from pydantic import BaseModel
 
 from alphaavatar.agents.avatar.loop.enums import LoopState, ToolOutcome
@@ -58,6 +59,7 @@ from alphaavatar.core.session import (
 from alphaavatar.core.turn.enums import TurnInputModality
 from alphaavatar.core.turn.schemas import TurnEntityRef, TurnSnapshot
 from alphaavatar.plugins.loop.config import RealtimeLoopConfig
+from alphaavatar.plugins.loop.execution import LoopExecution
 from alphaavatar.plugins.loop.loop import AvatarLoop
 
 HANG_GUARD = 30
@@ -409,5 +411,36 @@ async def test_initialization_prepares_the_loops_model_before_any_request(tmp_pa
     runtime, _ = await start(tmp_path, provider)
     try:
         assert provider.prepared == [("avatar.loop",)] and provider.requests == []
+    finally:
+        await runtime.aclose()
+
+
+async def test_a_run_cancelled_while_it_reaps_its_identity_watch_still_reports_its_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # O-17: Engine closing interrupts a run that has just answered and is reaping its
+    # identity watch. The run must still settle into a result, not end cancelled itself, or
+    # the run's watcher fails the Engine's close.
+    reaping, release = asyncio.Event(), asyncio.Event()
+
+    async def watch(self: LoopExecution) -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            reaping.set()
+            await release.wait()  # Its reaping takes a turn of the loop, or several.
+            raise
+
+    monkeypatch.setattr(LoopExecution, "_watch_identity", watch)
+    runtime, _ = await start(tmp_path, ScriptedProvider(answer("Hello.")))
+    try:
+        _, _, handle = await submit(runtime, "user-a")
+        async with asyncio.timeout(HANG_GUARD):
+            await reaping.wait()
+        runtime.foundation.loop.interrupt(run_id=handle.identity.run_id, reason="engine_closed")
+        await asyncio.sleep(0)
+        release.set()
+        result = await finish(handle)
+        assert (result.state, result.reason) == (LoopState.CANCELLED, "engine_closed")
     finally:
         await runtime.aclose()

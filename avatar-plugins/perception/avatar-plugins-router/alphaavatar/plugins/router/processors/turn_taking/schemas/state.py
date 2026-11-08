@@ -76,6 +76,7 @@ class InputWindow:
     has_perception_gap: bool = False
     wait: TranscriptWait | None = None
     transcript_failure: str | None = None
+
     segments: list[PerceptionSegmentRef] = field(default_factory=list)
     active_segments: set[PerceptionSegmentRef] = field(default_factory=set)
     closed_segments: set[PerceptionSegmentRef] = field(default_factory=set)

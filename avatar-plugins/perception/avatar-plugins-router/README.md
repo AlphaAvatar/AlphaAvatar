@@ -30,9 +30,9 @@ Each source owns independent VAD/segmentation state. Pre-roll and bounded queues
 
 ## 🎯 Addressing and conversation focus
 
-Semantic Addressing uses configured Avatar aliases, accumulated transcript context and per-speaker focus to classify AVATAR, NON_AVATAR or UNKNOWN. UNKNOWN is abstention, not evidence of another addressee.
+Semantic Addressing uses configured Avatar aliases and the temporal transcript window since the last committed Turn (every speaker's segments in media order, with a bounded history of committed Turns) to classify AVATAR, NON_AVATAR or UNKNOWN. Each result annotates its own transcript and cites the context it read; only a committed `TurnSnapshot` retires the input it owns. UNKNOWN is abstention, not evidence of another addressee.
 
-Explicit AVATAR/NON_AVATAR evidence updates the speaker's focus; UNKNOWN preserves it. Audio-only interaction can start with an Avatar-directed conversational prior, which explicit non-Avatar evidence overrides. Model implementation stays behind the SemanticAddressingModelBase contract.
+Explicit AVATAR/NON_AVATAR evidence updates the conversation focus; UNKNOWN preserves it. Audio-only interaction can start with an Avatar-directed conversational prior, which explicit non-Avatar evidence overrides. Model implementation stays behind the SemanticAddressingModelBase contract.
 
 VisualAddressingProcessor consumes FACE_DETECTION annotations, smooths orientation scores and publishes subject-scoped evidence. Ambiguous multi-face observations are skipped when the subject cannot be resolved. Face orientation is a heuristic, not a measurement of eye gaze. Gaze, gesture and other future evidence producers can use the same annotation contract.
 
@@ -40,7 +40,7 @@ Addressing fusion preserves provenance, detects conflicting targets and prioriti
 
 ## 🔀 Turn decisions and Engine admission
 
-TurnTakingProcessor coordinates candidate state, transcript/addressing readiness, asynchronous assessments, stale-result rejection and bounded evidence waits. It publishes COMMIT, HOLD, PASSIVE, INTERRUPT or CANCEL decisions according to its policy.
+TurnTakingProcessor coordinates one open temporal input window and the sealed inputs awaiting STT or admission, transcript/addressing readiness, asynchronous assessments, stale-result rejection and bounded evidence waits. Speaker labels are actors of an input, never its boundary. It publishes COMMIT, HOLD, PASSIVE, INTERRUPT or CANCEL decisions according to its policy.
 
 ```text
 Speech + transcripts + addressing

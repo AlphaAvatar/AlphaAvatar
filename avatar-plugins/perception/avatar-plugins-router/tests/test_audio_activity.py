@@ -606,7 +606,7 @@ class FinalizingSTT(STTBase):
 
 
 class EndpointModel(TurnTakingModelBase):
-    """Offline endpoint detector: every complete, transcribed candidate ends its turn."""
+    """Offline endpoint detector: every complete, transcribed input ends its turn."""
 
     @property
     def name(self) -> str:
@@ -620,8 +620,8 @@ class EndpointModel(TurnTakingModelBase):
 
     async def assess(self, evidence: TurnTakingEvidence) -> TurnTakingAssessment:
         return TurnTakingAssessment(
-            turn_candidate_id=evidence.turn_candidate_id,
-            candidate_revision=evidence.candidate_revision,
+            input_id=evidence.input_id,
+            revision=evidence.revision,
             turn_mode=evidence.turn_mode,
             confidence=1.0,
             end_of_turn_probability=1.0,
@@ -651,8 +651,7 @@ async def test_snapshot_newer_than_a_gap_keeps_the_boundary_requirement(
     listeners = (
         SpeechTranscriptionProcessor(runtime=runtime, stt=stt, close_timeout_sec=1),
         turn_taking.TurnTakingProcessor(
-            runtime=runtime,
-            config=TurnTakingConfig(transcript_wait_sec=HANG_GUARD, association_wait_sec=0.0),
+            runtime=runtime, config=TurnTakingConfig(transcript_wait_sec=HANG_GUARD)
         ),
     )
     for listener in listeners:

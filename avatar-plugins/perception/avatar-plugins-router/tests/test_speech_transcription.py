@@ -139,7 +139,7 @@ class OfflineSTT(STTBase):
 
 
 class EndpointModel(TurnTakingModelBase):
-    """Offline endpoint detector: every complete, transcribed candidate ends its turn, with
+    """Offline endpoint detector: every complete, transcribed input ends its turn, with
     ``end`` as its probability; or it ``fails``, or assesses without the ``transcript``. Asked
     what it can do, it holds the loop ``lag`` seconds: an assessment that starts late."""
 
@@ -163,8 +163,8 @@ class EndpointModel(TurnTakingModelBase):
         if self.fails:
             raise RuntimeError("the endpoint model failed")
         return TurnTakingAssessment(
-            turn_candidate_id=evidence.turn_candidate_id,
-            candidate_revision=evidence.candidate_revision,
+            input_id=evidence.input_id,
+            revision=evidence.revision,
             turn_mode=evidence.turn_mode,
             confidence=1.0,
             end_of_turn_probability=self.end,
@@ -232,7 +232,7 @@ class Listening:
 async def listening(
     request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> AsyncIterator[Listening]:
-    """The chain; ``request.param`` may name its endpoint ``model`` (every complete candidate
+    """The chain; ``request.param`` may name its endpoint ``model`` (every complete input
     ends its turn), turn taking's ``settings`` and the ``addressing`` it requires."""
     param = getattr(request, "param", {})
     model = param.get("model", EndpointModel())
@@ -242,7 +242,7 @@ async def listening(
     runtime, stt = avatar_runtime(tmp_path / "workspace"), OfflineSTT()
     transcription = SpeechTranscriptionProcessor(runtime=runtime, stt=stt, close_timeout_sec=1)
     # A generous transcript budget unless a test exercises its expiry deliberately.
-    settings = {"transcript_wait_sec": HANG_GUARD, "association_wait_sec": 0.0}
+    settings = {"transcript_wait_sec": HANG_GUARD}
     turns = turn_taking.TurnTakingProcessor(
         runtime=runtime,
         config=TurnTakingConfig(**settings | param.get("settings", {})),
@@ -256,7 +256,7 @@ async def listening(
     await runtime.aclose()
 
 
-async def test_stt_final_joins_segment_candidate_decision_and_turn_cutoff_evidence(
+async def test_stt_final_joins_segment_input_decision_and_turn_cutoff_evidence(
     listening: Listening,
 ) -> None:
     runtime, source = listening.runtime, listening.speech()
@@ -270,14 +270,14 @@ async def test_stt_final_joins_segment_candidate_decision_and_turn_cutoff_eviden
 
     await wait_until(
         lambda: any(d.action == TurnTakingAction.COMMIT for _, d in listening.decisions()),
-        "the transcribed candidate never committed",
+        "the transcribed input never committed",
     )
     (transcript,) = listening.transcripts()
     event, decision = next(item for item in listening.decisions() if item[1].action == "commit")
     assert transcript.observation_id in decision.input_observation_ids
     # Engine's admission step: freeze the Turn at the decision's own perception cutoff.
     snapshot = runtime.turn.commit_event_input(
-        input_id=decision.turn_candidate_id,
+        input_id=decision.input_id,
         modality=TurnInputModality.AUDIO,
         text="private words",
         started_at=transcript.time_range.start,
@@ -285,7 +285,7 @@ async def test_stt_final_joins_segment_candidate_decision_and_turn_cutoff_eviden
         cutoff_sequence=event.sequence,
         input_observation_ids=decision.input_observation_ids,
         metadata={
-            "candidate_revision": decision.candidate_revision,
+            "revision": decision.revision,
             "decision_event_id": event.event_id,
             "decision_event_sequence": event.sequence,
             "decision_annotation_id": event.annotation.annotation_id,
@@ -307,20 +307,26 @@ async def test_stt_final_joins_segment_candidate_decision_and_turn_cutoff_eviden
         final["observation_id"],
         final["sequence"],
     )
-    accepted = next(r for r in records if r.get("state") == "accepted")
+    accepted = next(r for r in records if r.get("state") == "final")
     assert (
         accepted["segment_id"] == segment and accepted["observation_id"] == final["observation_id"]
     )
     committed = next(
-        r for r in records if r["stage"] == "candidate.decision" and r["action"] == "commit"
+        r for r in records if r["stage"] == "input.decision" and r["action"] == "commit"
     )
     turn = by_stage["turn.committed"]
-    assert committed["candidate_id"] == accepted["candidate_id"] == turn["input_id"]
+    assert committed["input_id"] == accepted["input_id"] == turn["input_id"]
     assert (turn["decision_id"], turn["sequence"]) == (
         committed["decision_id"],
         committed["sequence"],
     )
     assert turn["cutoff_sequence"] == committed["sequence"] > final["sequence"]
+    # The Turn's acknowledgement, not its admission deadline, retires the input it owns.
+    await wait_until(lambda: listening.records("input.retired"), "the input was never retired")
+    (retired,) = listening.records("input.retired")
+    assert retired["input_id"] == turn["input_id"] and not listening.records(
+        "input.admission_expired"
+    )
     # Bounded metadata only: neither raw identities nor recognized text leave the process.
     serialized = json.dumps(runtime.perception.input_trace.snapshot().to_dict())
     assert "segment-a" not in serialized and "private words" not in serialized
@@ -328,8 +334,8 @@ async def test_stt_final_joins_segment_candidate_decision_and_turn_cutoff_eviden
 
 
 def waited(listening: Listening, record: dict) -> float:
-    """Seconds from the hold that began the candidate's transcript wait to the record."""
-    (hold,) = (r for r in listening.records("candidate.decision") if r["action"] == "hold")
+    """Seconds from the hold that began the input's transcript wait to the record."""
+    (hold,) = (r for r in listening.records("input.decision") if r["action"] == "hold")
     return (record["recorded_time_ns"] - hold["recorded_time_ns"]) / 1e9
 
 
@@ -338,51 +344,51 @@ async def test_a_final_later_than_the_transcript_wait_still_commits_before_the_d
     listening: Listening,
 ) -> None:
     # KD-17: the wait is a point of observation, not a cutoff. Real segment STT finals came
-    # 0.9-1.1 s after it began; the candidate must keep waiting and commit with them.
+    # 0.9-1.1 s after it began; the input must keep waiting and commit with them.
     defaults = TurnTakingConfig()
     assert (defaults.transcript_wait_sec, defaults.transcript_timeout_sec) == (WAIT, DEADLINE)
     listening.utter(listening.speech(), "segment-a")
-    await wait_until(lambda: listening.records("candidate.transcript_wait"), "no wait observed")
+    await wait_until(lambda: listening.records("input.transcript_wait"), "no wait observed")
     (stream,) = listening.stt.streams
     stream.emit(TranscriptionEventType.FINAL_TRANSCRIPT, "segment-a", "slow words")
     await wait_until(
         lambda: any(d.action == TurnTakingAction.COMMIT for _, d in listening.decisions()),
-        "the slowly transcribed candidate never committed",
+        "the slowly transcribed input never committed",
     )
 
-    (pending,) = listening.records("candidate.transcript_wait")
+    (pending,) = listening.records("input.transcript_wait")
     assert (pending["outcome"], pending["missing_count"]) == ("pending", 1)
-    commit = next(r for r in listening.records("candidate.decision") if r["action"] == "commit")
+    commit = next(r for r in listening.records("input.decision") if r["action"] == "commit")
     assert WAIT <= waited(listening, pending) < waited(listening, commit) < DEADLINE
     (transcript,) = listening.transcripts()
     _, decision = next(item for item in listening.decisions() if item[1].action == "commit")
     assert transcript.observation_id in decision.input_observation_ids
     assert TurnTakingAction.CANCEL not in [d.action for _, d in listening.decisions()]
-    assert not listening.records("candidate.transcript_rejected")
+    assert not listening.records("input.transcript_rejected")
 
 
 @pytest.mark.parametrize("listening", [{"settings": {"transcript_wait_sec": WAIT}}], indirect=True)
-async def test_late_stt_final_after_transcript_timeout_never_revives_the_candidate(
+async def test_late_stt_final_after_transcript_timeout_never_revives_the_input(
     listening: Listening,
 ) -> None:
     listening.utter(listening.speech(), "segment-a")
     await wait_until(
         lambda: any(d.reason == "transcript_timeout" for _, d in listening.decisions()),
-        "the untranscribed candidate was never cancelled",
+        "the untranscribed input was never cancelled",
     )
     (stream,) = listening.stt.streams
     stream.emit(TranscriptionEventType.FINAL_TRANSCRIPT, "segment-a", "too late")
-    await wait_until(lambda: listening.records("candidate.transcript_rejected"), "no rejection")
+    await wait_until(lambda: listening.records("input.transcript_rejected"), "no rejection")
 
     # Only the hard deadline cancels: the wait was observed first, then the deadline passed.
-    (pending,) = listening.records("candidate.transcript_wait")
-    cancel = next(r for r in listening.records("candidate.decision") if r["action"] == "cancel")
+    (pending,) = listening.records("input.transcript_wait")
+    cancel = next(r for r in listening.records("input.decision") if r["action"] == "cancel")
     assert WAIT <= waited(listening, pending) < DEADLINE <= waited(listening, cancel)
-    # The recognition result is real evidence, but its retired candidate stays cancelled.
+    # The recognition result is real evidence, but its retired input stays cancelled.
     assert len(listening.transcripts()) == 1
     actions = [decision.action for _, decision in listening.decisions()]
     assert TurnTakingAction.COMMIT not in actions and actions[-1] == TurnTakingAction.CANCEL
-    (rejected,) = listening.records("candidate.transcript_rejected")
+    (rejected,) = listening.records("input.transcript_rejected")
     (closed,) = listening.records("speech.close")
     assert (rejected["reason"], rejected["segment_id"]) == ("retired_segment", closed["segment_id"])
     assert listening.runtime.turn.latest is None
@@ -399,7 +405,7 @@ async def test_after_the_deadline_the_source_speaks_again_and_the_late_final_sta
     listening.utter(source, "segment-a")
     await wait_until(
         lambda: any(d.reason == "transcript_timeout" for _, d in listening.decisions()),
-        "the untranscribed candidate was never cancelled",
+        "the untranscribed input was never cancelled",
     )
     listening.utter(source, "segment-b")
     (stream,) = listening.stt.streams
@@ -412,7 +418,7 @@ async def test_after_the_deadline_the_source_speaks_again_and_the_late_final_sta
     )
 
     first, second = listening.records("speech.close")
-    (rejected,) = listening.records("candidate.transcript_rejected")
+    (rejected,) = listening.records("input.transcript_rejected")
     assert (rejected["reason"], rejected["segment_id"]) == ("retired_segment", first["segment_id"])
     late, own = sorted(listening.transcripts(), key=lambda o: o.segment.segment_id)
     assert (late.segment.segment_id, own.segment.segment_id) == ("segment-a", "segment-b")
@@ -420,7 +426,7 @@ async def test_after_the_deadline_the_source_speaks_again_and_the_late_final_sta
     # The commit carries the second utterance's own final, never the late one.
     assert not more and own.observation_id in commit.input_observation_ids
     assert late.observation_id not in commit.input_observation_ids
-    accepted = [r for r in listening.records() if r.get("state") == "accepted"]
+    accepted = [r for r in listening.records() if r.get("state") == "final"]
     assert [r["segment_id"] for r in accepted] == [second["segment_id"]]
     actions = [d.action for _, d in listening.decisions()]
     assert actions.count(TurnTakingAction.CANCEL) == 1
@@ -431,7 +437,7 @@ SPAN, LAG = 0.2, 0.05  # A hold or addressing wait short enough for a test; a la
 
 def terminal(listening: Listening) -> dict:
     (record,) = (
-        r for r in listening.records("candidate.decision") if r["action"] in ("commit", "cancel")
+        r for r in listening.records("input.decision") if r["action"] in ("commit", "cancel")
     )
     return record
 
@@ -441,12 +447,12 @@ def terminal(listening: Listening) -> dict:
     [
         (
             {"model": EndpointModel(0.0, lag=LAG), "settings": {"max_hold_sec": SPAN}},
-            "candidate.hold",
+            "input.hold",
             "turn_hold_timeout",
         ),
         (
             {"model": EndpointModel(fails=True, lag=LAG), "settings": {"max_hold_sec": SPAN}},
-            "candidate.hold",
+            "input.hold",
             "assessment_error_timeout",
         ),
         (
@@ -455,7 +461,7 @@ def terminal(listening: Listening) -> dict:
                 "addressing": ("semantic",),
                 "settings": {"addressing_wait_sec": SPAN},
             },
-            "candidate.addressing_wait",
+            "input.addressing_wait",
             None,
         ),
     ],
@@ -474,11 +480,11 @@ async def test_each_wait_between_a_transcript_and_its_turns_decision_is_traced_a
     await wait_until(lambda: listening.records(stage), "the wait was never traced")
     await wait_until(
         lambda: any(d.action == TurnTakingAction.COMMIT for _, d in listening.decisions()),
-        "the candidate never committed",
+        "the input never committed",
     )
 
-    (accepted,) = listening.records("candidate.transcript")
-    (assessed,) = listening.records("candidate.assessment")
+    (accepted,) = listening.records("input.transcript")
+    (assessed,) = listening.records("input.assessment")
     (waited,) = listening.records(stage)
     # Queued as its transcript came, it started once the loop let it.
     assert accepted["recorded_time_ns"] <= assessed["event_time_ns"]
@@ -502,11 +508,11 @@ async def test_a_hold_its_speaker_ends_by_speaking_on_is_traced_as_cancelled(
     listening.utter(source, "segment-a")
     await wait_until(
         lambda: any(d.reason == "endpoint_incomplete" for _, d in listening.decisions()),
-        "the candidate never held",
+        "the input never held",
     )
     listening.frame(source, "segment-b", 1)  # The speaker goes on.
-    await wait_until(lambda: listening.records("candidate.hold"), "the hold never ended")
-    (hold,) = listening.records("candidate.hold")
+    await wait_until(lambda: listening.records("input.hold"), "the hold never ended")
+    (hold,) = listening.records("input.hold")
     assert (hold["outcome"], hold["reason"]) == ("cancelled", "turn_hold_timeout")
     assert hold["end_time_ns"] - hold["start_time_ns"] < HANG_GUARD * 1e9
 
@@ -585,7 +591,7 @@ async def test_recognition_after_its_segment_retired_is_stale_on_a_live_stream(
     assert not stream.closed
 
 
-async def test_cancelled_speech_epoch_cancels_its_candidate_and_ignores_later_frames(
+async def test_cancelled_speech_epoch_cancels_its_input_and_ignores_later_frames(
     listening: Listening,
 ) -> None:
     runtime, source = listening.runtime, listening.speech()
@@ -603,7 +609,7 @@ async def test_cancelled_speech_epoch_cancels_its_candidate_and_ignores_later_fr
     )
     await wait_until(
         lambda: any(d.reason == "source_muted" for _, d in listening.decisions()),
-        "the open candidate was not cancelled",
+        "the open input was not cancelled",
     )
     (stream,) = listening.stt.streams
     await wait_until(lambda: stream.closed, "the cancelled epoch kept its provider stream")
