@@ -34,11 +34,11 @@ from ..enums import (
 )
 
 
-def _validate_candidate(turn_candidate_id: str, candidate_revision: int, confidence: float) -> None:
-    if not turn_candidate_id:
-        raise ValueError("turn_candidate_id cannot be empty")
-    if candidate_revision <= 0:
-        raise ValueError("candidate_revision must be positive")
+def _validate_input(input_id: str, revision: int, confidence: float) -> None:
+    if not input_id:
+        raise ValueError("input_id cannot be empty")
+    if revision <= 0:
+        raise ValueError("revision must be positive")
     if not 0.0 <= confidence <= 1.0:
         raise ValueError("confidence must be between 0 and 1")
 
@@ -185,22 +185,22 @@ class InteractionAddressingEvidence:
 
 @dataclass(frozen=True, slots=True)
 class InteractionAddressing:
-    turn_candidate_id: str
-    candidate_revision: int
-    speaker: InteractionEntityRef
+    input_id: str
+    revision: int
+    actors: tuple[InteractionEntityRef, ...]
     addressees: tuple[InteractionEntityRef, ...]
     addressing_mode: AddressingMode
     confidence: float
     evidence_observation_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        _validate_candidate(self.turn_candidate_id, self.candidate_revision, self.confidence)
+        _validate_input(self.input_id, self.revision, self.confidence)
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "turn_candidate_id": self.turn_candidate_id,
-            "candidate_revision": self.candidate_revision,
-            "speaker": self.speaker.to_dict(),
+            "input_id": self.input_id,
+            "revision": self.revision,
+            "actors": [actor.to_dict() for actor in self.actors],
             "addressees": [entity.to_dict() for entity in self.addressees],
             "addressing_mode": self.addressing_mode.value,
             "confidence": self.confidence,
@@ -210,9 +210,9 @@ class InteractionAddressing:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> InteractionAddressing:
         return cls(
-            turn_candidate_id=data["turn_candidate_id"],
-            candidate_revision=int(data["candidate_revision"]),
-            speaker=InteractionEntityRef.from_dict(data["speaker"]),
+            input_id=data["input_id"],
+            revision=int(data["revision"]),
+            actors=tuple(InteractionEntityRef.from_dict(actor) for actor in data["actors"]),
             addressees=tuple(
                 InteractionEntityRef.from_dict(entity) for entity in data.get("addressees", ())
             ),
@@ -244,13 +244,13 @@ class InteractionAddressing:
 
 @dataclass(frozen=True, slots=True)
 class TurnTakingDecision:
-    turn_candidate_id: str
-    candidate_revision: int
+    input_id: str
+    revision: int
     turn_mode: TurnTakingMode
     action: TurnTakingAction
     confidence: float
 
-    actor: InteractionEntityRef | None = None
+    actors: tuple[InteractionEntityRef, ...] = ()
     addressees: tuple[InteractionEntityRef, ...] = ()
     input_observation_ids: tuple[str, ...] = ()
 
@@ -260,7 +260,7 @@ class TurnTakingDecision:
     reason: str | None = None
 
     def __post_init__(self) -> None:
-        _validate_candidate(self.turn_candidate_id, self.candidate_revision, self.confidence)
+        _validate_input(self.input_id, self.revision, self.confidence)
         if self.system_notice_code is not None and (
             self.action != TurnTakingAction.COMMIT
             or not isinstance(self.system_notice_code, str)
@@ -277,17 +277,15 @@ class TurnTakingDecision:
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {
-            "turn_candidate_id": self.turn_candidate_id,
-            "candidate_revision": self.candidate_revision,
+            "input_id": self.input_id,
+            "revision": self.revision,
             "turn_mode": self.turn_mode.value,
             "action": self.action.value,
             "confidence": self.confidence,
+            "actors": [actor.to_dict() for actor in self.actors],
             "addressees": [entity.to_dict() for entity in self.addressees],
             "input_observation_ids": list(self.input_observation_ids),
         }
-
-        if self.actor is not None:
-            data["actor"] = self.actor.to_dict()
 
         if self.reason is not None:
             data["reason"] = self.reason
@@ -300,14 +298,13 @@ class TurnTakingDecision:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TurnTakingDecision:
-        actor = data.get("actor")
         return cls(
-            turn_candidate_id=data["turn_candidate_id"],
-            candidate_revision=int(data["candidate_revision"]),
+            input_id=data["input_id"],
+            revision=int(data["revision"]),
             turn_mode=TurnTakingMode(data["turn_mode"]),
             action=TurnTakingAction(data["action"]),
             confidence=float(data["confidence"]),
-            actor=InteractionEntityRef.from_dict(actor) if actor else None,
+            actors=tuple(InteractionEntityRef.from_dict(actor) for actor in data["actors"]),
             addressees=tuple(
                 InteractionEntityRef.from_dict(entity) for entity in data.get("addressees", ())
             ),
@@ -365,17 +362,17 @@ class TurnTakingAudioEvidence:
 
 @dataclass(frozen=True, slots=True)
 class TurnTakingEvidence:
-    turn_candidate_id: str
-    candidate_revision: int
+    input_id: str
+    revision: int
     turn_mode: TurnTakingMode
 
-    speaker: InteractionEntityRef
     started_at: RuntimeTime
     updated_at: RuntimeTime
 
     segments: tuple[PerceptionSegmentRef, ...]
     input_observation_ids: tuple[str, ...]
 
+    actors: tuple[InteractionEntityRef, ...] = ()
     transcript: str | None = None
     audio: tuple[TurnTakingAudioEvidence, ...] = ()
 
@@ -383,16 +380,16 @@ class TurnTakingEvidence:
     has_perception_gap: bool = False
 
     def __post_init__(self) -> None:
-        if not self.turn_candidate_id:
-            raise ValueError("turn_candidate_id cannot be empty")
-        if self.candidate_revision <= 0:
-            raise ValueError("candidate_revision must be positive")
+        if not self.input_id:
+            raise ValueError("input_id cannot be empty")
+        if self.revision <= 0:
+            raise ValueError("revision must be positive")
 
 
 @dataclass(frozen=True, slots=True)
 class TurnTakingAssessment:
-    turn_candidate_id: str
-    candidate_revision: int
+    input_id: str
+    revision: int
     turn_mode: TurnTakingMode
 
     confidence: float
@@ -408,10 +405,10 @@ class TurnTakingAssessment:
     reason: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.turn_candidate_id:
-            raise ValueError("turn_candidate_id cannot be empty")
-        if self.candidate_revision <= 0:
-            raise ValueError("candidate_revision must be positive")
+        if not self.input_id:
+            raise ValueError("input_id cannot be empty")
+        if self.revision <= 0:
+            raise ValueError("revision must be positive")
 
         for name, value in (
             ("confidence", self.confidence),

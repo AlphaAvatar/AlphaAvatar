@@ -122,7 +122,7 @@ class AvatarEngine(LifecycleComponent):
         self._watchers: set[asyncio.Task[None]] = set()
 
         # Session-bounded tombstones are not evicted while an input can be replayed.
-        self._candidates: dict[str, set[TurnTakingAction]] = {}
+        self._inputs: dict[str, set[TurnTakingAction]] = {}
         self._foreground: _Foreground | None = None
         self._intake: asyncio.Task[None] | None = None
         self._start_task: asyncio.Task[None] | None = None
@@ -206,16 +206,16 @@ class AvatarEngine(LifecycleComponent):
             if task is self._intake and not self._intake_stopping:
                 self._fail(RuntimeError("Turn consumer exited unexpectedly"), task.get_name())
 
-    def _candidate(self, input_id: str) -> set[TurnTakingAction]:
+    def _input_flags(self, input_id: str) -> set[TurnTakingAction]:
         if not isinstance(input_id, str) or not input_id.strip() or len(input_id) > 512:
             raise ValueError("Turn input identity must contain 1..512 characters")
 
-        flags = self._candidates.get(input_id)
+        flags = self._inputs.get(input_id)
         if flags is None:
-            if len(self._candidates) >= self._config.max_turn_candidates:
+            if len(self._inputs) >= self._config.max_turn_inputs:
                 raise RuntimeError("Session turn admission capacity exhausted")
 
-            flags = self._candidates[input_id] = set()
+            flags = self._inputs[input_id] = set()
         return flags
 
     def _schedule_admission(self, operation: Coroutine[Any, Any, object]) -> asyncio.Task[object]:
@@ -285,43 +285,62 @@ class AvatarEngine(LifecycleComponent):
             segment=segment,
         )
 
-    def _decision_actor(
-        self, ref: InteractionEntityRef, observations: tuple[EnvObservation, ...]
-    ) -> TurnEntityRef:
-        sources = {
-            value.segment.source if value.segment is not None else value.source
-            for value in observations
-        }
-        actor = self._entity(ref, source=next(iter(sources)) if len(sources) == 1 else None)
-        segments = {value.segment for value in observations if value.segment is not None}
-        if not segments:
-            return actor
+    def _decision_actors(
+        self, observations: tuple[EnvObservation, ...]
+    ) -> tuple[TurnEntityRef, ...]:
+        """Resolve only owned inputs; router actor labels cannot grant a user identity."""
+        by_segment: dict[PerceptionSegmentRef, list[EnvObservation]] = {}
+        for observation in observations:
+            if observation.segment is not None:
+                by_segment.setdefault(observation.segment, []).append(observation)
 
-        participants = [self._runtime.participants.resolve(segment=segment) for segment in segments]
-        first = participants[0]
-        if (
-            first is None
-            or any(
-                value is None or value.participant_id != first.participant_id
-                for value in participants
-            )
-            or (actor.participant_id is not None and actor.participant_id != first.participant_id)
-            or (ref.entity is not None and actor.participant_id is None)
-        ):
-            # A merged Turn cannot discard an unknown/conflicting segment's ownership constraint.
-            return replace(actor, participant_id=None, user_id=None, identity_sequence=None)
+        actors: dict[tuple[object, ...], TurnEntityRef] = {}
+        visited: set[PerceptionSegmentRef] = set()
+        for observation in observations:
+            segment = observation.segment
+            source = segment.source if segment is not None else observation.source
+            if segment is not None:
+                if segment in visited:
+                    continue
+                visited.add(segment)
+                owned = by_segment[segment]
+                labels = {item.entity for item in owned if item.entity is not None}
+                devices = {item.device_id for item in owned if item.device_id is not None}
+                device_id = next(iter(devices)) if len(devices) == 1 else None
+                entity = next(iter(labels)) if len(labels) == 1 else None
+                associated = self._runtime.participants.entity_for_segment(segment)
+                conflict = (
+                    len(labels) > 1
+                    or entity is not None
+                    and associated is not None
+                    and entity != associated
+                )
+                if conflict or not self._runtime.perception.speech_source_is_current(source):
+                    actor = TurnEntityRef(kind="person", device_id=device_id)
+                else:
+                    # A shared microphone or primary participant is never proof of a speaker.
+                    actor = self._participant_entity(
+                        device_id, source=source, entity=entity, segment=segment
+                    )
+            else:
+                actor = self._participant_entity(
+                    observation.device_id,
+                    source=source,
+                    entity=observation.entity,
+                    endpoint=observation.kind
+                    in (ObservationKind.TEXT_INPUT, ObservationKind.IMAGE_INPUT),
+                )
 
-        entity = actor.entity
-        if entity is None and len(segments) == 1:
-            entity = self._runtime.participants.entity_for_segment(next(iter(segments)))
+            if actor.participant_id is not None:
+                key = ("participant", actor.participant_id)
+            elif actor.entity is not None:
+                key = ("entity", source, actor.entity)
+            else:
+                # Keep anonymous inputs visible alongside recognized people in this Turn.
+                key = ("unattributed", segment or observation.observation_id)
+            actors.setdefault(key, actor)
 
-        return replace(
-            actor,
-            participant_id=first.participant_id,
-            user_id=first.user_id,
-            identity_sequence=first.identity_sequence,
-            entity=entity,
-        )
+        return tuple(actors.values())
 
     async def _own_admission(self, operation: Coroutine[Any, Any, object]) -> object:
         return await wait_for_cleanup(self._schedule_admission(operation))
@@ -415,8 +434,8 @@ class AvatarEngine(LifecycleComponent):
         trace = self._runtime.perception.input_trace
         trace.record(
             "turn.admission",
-            candidate_id=decision.turn_candidate_id,
-            candidate_revision=decision.candidate_revision,
+            input_id=decision.input_id,
+            revision=decision.revision,
             decision_id=event.annotation.annotation_id,
             event_id=event.event_id,
             sequence=event.sequence,
@@ -428,16 +447,33 @@ class AvatarEngine(LifecycleComponent):
         if outcome == "rejected":
             trace.freeze(reason=reason)
 
+    def _admission_expired(
+        self, event: PerceptionEvent, decision: TurnTakingDecision, flags: set[TurnTakingAction]
+    ) -> bool:
+        deadline = event.annotation.data.get("admission_deadline_ns")
+        if deadline is None:
+            return False
+        if type(deadline) is int and self._runtime.clock.now().monotonic_ns < deadline:
+            return False
+        flags.add(TurnTakingAction.CANCEL)
+        self._trace_admission(
+            event,
+            decision,
+            outcome="ignored",
+            reason="admission_expired" if type(deadline) is int else "admission_deadline_invalid",
+        )
+        return True
+
     async def _admit_decision(self, event: PerceptionEvent, decision: TurnTakingDecision) -> None:
         async with self._admission_lock:
             if self._close_task is not None:
                 raise TurnAdmissionRejected("Engine closed before Turn admission")
 
-            flags = self._candidate(decision.turn_candidate_id)
+            flags = self._input_flags(decision.input_id)
             if flags.intersection((TurnTakingAction.COMMIT, TurnTakingAction.CANCEL)):
-                self._trace_admission(
-                    event, decision, outcome="ignored", reason="candidate_terminal"
-                )
+                self._trace_admission(event, decision, outcome="ignored", reason="input_terminal")
+                return
+            if self._admission_expired(event, decision, flags):
                 return
 
             context_id = event.annotation.data.get("context_id", self._runtime.state.context_id)
@@ -449,9 +485,7 @@ class AvatarEngine(LifecycleComponent):
             latest = self._runtime.turn.latest
             if latest is not None and event.sequence <= latest.cutoff.sequence:
                 flags.add(TurnTakingAction.COMMIT)
-                logger.info(
-                    "Skipped superseded turn decision input_id=%s", decision.turn_candidate_id
-                )
+                logger.info("Skipped superseded turn decision input_id=%s", decision.input_id)
                 self._trace_admission(event, decision, outcome="ignored", reason="superseded")
                 return
 
@@ -460,13 +494,13 @@ class AvatarEngine(LifecycleComponent):
                 for value in dict.fromkeys(decision.input_observation_ids)
             )
             if not observations or any(value is None for value in observations):
-                # This is a proposed Turn, not an admitted one. Reject the entire candidate;
+                # This is a proposed Turn, not an admitted one. Reject the proposed input;
                 # never substitute newer evidence or kill a healthy session after retention loss.
                 flags.add(TurnTakingAction.CANCEL)
                 logger.warning(
                     "Turn admission rejected input_id=%s reason=evidence_unavailable "
                     "decision_sequence=%s evidence_count=%s missing_count=%s",
-                    decision.turn_candidate_id,
+                    decision.input_id,
                     event.sequence,
                     len(observations),
                     sum(value is None for value in observations),
@@ -484,6 +518,17 @@ class AvatarEngine(LifecycleComponent):
             observations = tuple(
                 sorted(observations, key=lambda value: value.time_range.start.monotonic_ns)
             )
+            if any(
+                item.segment is not None
+                and not self._runtime.perception.speech_source_is_current(item.segment.source)
+                for item in observations
+            ):
+                flags.add(TurnTakingAction.CANCEL)
+                self._trace_admission(
+                    event, decision, outcome="ignored", reason="speech_source_retired"
+                )
+                return
+
             started_at = observations[0].time_range.start
             if (
                 latest is not None
@@ -534,8 +579,7 @@ class AvatarEngine(LifecycleComponent):
             if not notice_only and not has_input:
                 flags.add(TurnTakingAction.CANCEL)
                 logger.info(
-                    "Turn admission rejected input_id=%s reason=no_usable_input",
-                    decision.turn_candidate_id,
+                    "Turn admission rejected input_id=%s reason=no_usable_input", decision.input_id
                 )
                 self._trace_admission(
                     event,
@@ -556,22 +600,25 @@ class AvatarEngine(LifecycleComponent):
                 if mode == TurnTakingMode.VISUAL_ONLY
                 else TurnInputModality.MULTIMODAL
             )
+            actors = self._decision_actors(observations)
+            addressees = tuple(self._entity(ref) for ref in decision.addressees)
+            if self._admission_expired(event, decision, flags):
+                return
+
             flags.add(TurnTakingAction.COMMIT)
             snapshot = self._runtime.turn.commit_event_input(
-                input_id=decision.turn_candidate_id,
+                input_id=decision.input_id,
                 modality=modality,
                 text=text,
                 started_at=started_at,
                 committed_at=event.time_range.end,
                 cutoff_sequence=event.sequence,
                 input_observation_ids=decision.input_observation_ids,
-                actors=(self._decision_actor(decision.actor, observations),)
-                if decision.actor is not None
-                else (),
-                addressees=tuple(self._entity(ref) for ref in decision.addressees),
+                actors=actors,
+                addressees=addressees,
                 context_ids=(context_id,),
                 metadata={
-                    "candidate_revision": decision.candidate_revision,
+                    "revision": decision.revision,
                     "decision_event_id": event.event_id,
                     "decision_event_sequence": event.sequence,
                     "decision_annotation_id": event.annotation.annotation_id,
@@ -594,7 +641,7 @@ class AvatarEngine(LifecycleComponent):
             if self._close_task is not None:
                 raise TurnAdmissionRejected("Engine closed before Turn admission")
 
-            flags = self._candidate(observation.observation_id)
+            flags = self._input_flags(observation.observation_id)
             if TurnTakingAction.COMMIT in flags:
                 return
 
@@ -667,7 +714,7 @@ class AvatarEngine(LifecycleComponent):
             ):
                 return
 
-            flags = self._candidate(decision.turn_candidate_id)
+            flags = self._input_flags(decision.input_id)
             if flags.intersection((TurnTakingAction.COMMIT, TurnTakingAction.INTERRUPT)):
                 return
 

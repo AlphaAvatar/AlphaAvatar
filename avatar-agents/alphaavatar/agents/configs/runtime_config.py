@@ -91,7 +91,7 @@ class TurnConfig(BaseModel):
 class EngineConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    max_turn_candidates: int = Field(default=4096, ge=1)
+    max_turn_inputs: int = Field(default=4096, ge=1)
     max_pending_admissions: int = Field(default=32, ge=1)
     max_input_bytes: int = Field(default=262144, ge=1)
     loop_limits: LoopLimits = Field(default_factory=LoopLimits)

@@ -43,8 +43,12 @@ class TurnTakingModelBase(ABC):
     @abstractmethod
     async def assess(self, evidence: TurnTakingEvidence) -> TurnTakingAssessment:
         """
-        Assess one immutable candidate revision.
+        Assess one immutable temporal input window.
 
         Implementations must not mutate evidence or trigger interaction
         side effects.
         """
+
+    async def aclose(self) -> None:
+        """Release model-owned background work at processor shutdown."""
+        return None

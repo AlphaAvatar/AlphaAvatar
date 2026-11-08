@@ -48,6 +48,8 @@ def _target_key(evidence: InteractionAddressingEvidence) -> _TargetKey:
 
 
 class AddressingFusion:
+    """Fuse addressees only: an evidence record's speaker never identifies the whole input."""
+
     def __init__(self, *, conflict_margin: float = 0.1) -> None:
         if not 0.0 <= conflict_margin <= 1.0:
             raise ValueError("conflict_margin must be between 0 and 1")

@@ -14,13 +14,20 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+from itertools import groupby
 
 import numpy as np
 
 from alphaavatar.agents.router.enums import AddressingMode, TurnTakingMode
 from alphaavatar.agents.router.models import TurnTakingModelBase, TurnTakingModelCapabilities
-from alphaavatar.agents.router.schemas import TurnTakingAssessment, TurnTakingEvidence
+from alphaavatar.agents.router.schemas import (
+    TurnTakingAssessment,
+    TurnTakingAudioEvidence,
+    TurnTakingEvidence,
+)
 from alphaavatar.agents.runtime.inference import InferenceExecutor
+from alphaavatar.core.cleanup import wait_for_cleanup
 
 from ..runner import SmartTurnV3Runner
 from .model_files import SMART_TURN_V3_CONFIG
@@ -29,7 +36,10 @@ from .model_files import SMART_TURN_V3_CONFIG
 class SmartTurnV3Model(TurnTakingModelBase):
     def __init__(self, *, inference_executor: InferenceExecutor) -> None:
         self._executor = inference_executor
-        self._inflight: set[asyncio.Task[bytes | None]] = set()
+        self._inflight: tuple[bytes, asyncio.Task[float]] | None = None
+        self._cached: tuple[bytes, float] | None = None
+        self._closing = False
+        self._close_task: asyncio.Task[None] | None = None
 
     @property
     def name(self) -> str:
@@ -47,12 +57,9 @@ class SmartTurnV3Model(TurnTakingModelBase):
     @staticmethod
     def _build_pcm(evidence: TurnTakingEvidence) -> bytes:
         config = SMART_TURN_V3_CONFIG
-        audio = sorted(evidence.audio, key=lambda item: item.time_range.start.monotonic_ns)
+        audio = evidence.audio
         if not audio:
             return b""
-
-        parts: list[bytes] = []
-        previous_end_ns: int | None = None
 
         for item in audio:
             if item.sample_rate != config.sample_rate:
@@ -65,42 +72,143 @@ class SmartTurnV3Model(TurnTakingModelBase):
                     f"got {item.num_channels}"
                 )
 
-            if previous_end_ns is not None:
-                gap_ns = item.time_range.start.monotonic_ns - previous_end_ns
-                if gap_ns > 0:
-                    gap_samples = round(gap_ns * config.sample_rate / 1_000_000_000)
-                    parts.append(bytes(gap_samples * 2))
+        end_ns = max(item.time_range.end.monotonic_ns for item in audio)
+        start_ns = max(
+            min(item.time_range.start.monotonic_ns for item in audio),
+            end_ns - round(config.max_audio_sec * 1_000_000_000),
+        )
+        samples = min(
+            config.max_samples, round((end_ns - start_ns) * config.sample_rate / 1_000_000_000)
+        )
+        if samples <= 0:
+            return b""
 
-            parts.append(item.pcm16_bytes)
-            previous_end_ns = max(previous_end_ns or 0, item.time_range.end.monotonic_ns)
+        # Allocate only the selected tail, even when two observations are hours apart.
+        # Sources overlap in media time; concatenating their recordings would invent time.
+        mixed = np.zeros(samples, dtype=np.float64)
+        contributors = np.zeros(samples, dtype=np.int64)
+        seen: set[bytes] = set()
 
-        return b"".join(parts)[-(config.max_samples * 2) :]
+        def source_key(item: TurnTakingAudioEvidence) -> tuple[str, int]:
+            source = item.segment.source
+            return source.source_id, source.source_generation
 
-    def _track_inference(self, task: asyncio.Task[bytes | None]) -> None:
-        self._inflight.add(task)
+        ordered = sorted(
+            audio,
+            key=lambda item: (
+                *source_key(item),
+                item.time_range.start.monotonic_ns,
+                item.time_range.end.monotonic_ns,
+                item.segment.segment_id,
+            ),
+        )
+        for _, items in groupby(ordered, key=source_key):
+            track = np.zeros(samples, dtype="<i2")
+            present = np.zeros(samples, dtype=np.bool_)
+            for item in items:
+                if item.time_range.end.monotonic_ns <= start_ns:
+                    continue
+                offset = round(
+                    (item.time_range.start.monotonic_ns - start_ns)
+                    * config.sample_rate
+                    / 1_000_000_000
+                )
+                first = max(0, offset)
+                source_first = max(0, -offset)
+                last = min(
+                    samples,
+                    round(
+                        (item.time_range.end.monotonic_ns - start_ns)
+                        * config.sample_rate
+                        / 1_000_000_000
+                    ),
+                    offset + item.samples_per_channel,
+                )
+                if last <= first:
+                    continue
+                # Overlapping segments from one source carry the same media samples. The
+                # later segment replaces their overlap, rather than playing it twice.
+                track[first:last] = np.frombuffer(
+                    item.pcm16_bytes, dtype="<i2", count=last - first, offset=source_first * 2
+                )
+                present[first:last] = True
+            if not present.any():
+                continue
+            # Mirrored tracks with identical, aligned PCM contribute only once. Entity
+            # labels do not select or exclude audio from the temporal input window.
+            digest = hashlib.blake2b(digest_size=32)
+            digest.update(track)
+            digest.update(present)
+            key = digest.digest()
+            if key in seen:
+                continue
+            seen.add(key)
+            mixed += track
+            contributors += present
 
-        def done(completed: asyncio.Task[bytes | None]) -> None:
-            self._inflight.discard(completed)
-            if completed.cancelled():
-                return
+        # Average the sources present at each sample to keep simultaneous audio bounded.
+        mixed /= np.maximum(contributors, 1)
+        return np.clip(np.rint(mixed), -32768, 32767).astype("<i2").tobytes()
 
+    async def _run_inference(self, pcm16_bytes: bytes) -> float:
+        try:
+            result = await self._executor.do_inference(
+                SmartTurnV3Runner.INFERENCE_METHOD, pcm16_bytes
+            )
+            if result is None:
+                raise RuntimeError("Smart Turn runner returned no inference result")
+            values = np.frombuffer(result, dtype=np.float32)
+            if values.size != 1 or not np.isfinite(values[0]):
+                raise RuntimeError("Smart Turn runner must return one finite probability")
+            probability = float(np.clip(values[0], 0.0, 1.0))
+            if not self._closing:
+                self._cached = pcm16_bytes, probability
+            return probability
+        finally:
+            if self._inflight is not None and self._inflight[1] is asyncio.current_task():
+                self._inflight = None
+
+    async def _infer(self, pcm16_bytes: bytes) -> float:
+        while True:
+            if self._closing:
+                raise RuntimeError("Smart Turn model is closing")
+            if self._cached is not None and self._cached[0] == pcm16_bytes:
+                return self._cached[1]
+            if self._inflight is None:
+                task = asyncio.create_task(
+                    self._run_inference(pcm16_bytes), name="smart_turn_v3_inference"
+                )
+                self._inflight = pcm16_bytes, task
+                # A cancelled assessment may leave no waiter to retrieve a runner failure.
+                task.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+            previous_pcm, task = self._inflight
+            if previous_pcm == pcm16_bytes:
+                # Assessment cancellation must not break the runtime's inference connection.
+                return await asyncio.shield(task)
             try:
-                completed.exception()
+                await asyncio.shield(task)
             except Exception:
+                # A different window does not inherit the previous window's failure.
                 pass
 
-        task.add_done_callback(done)
+    async def _close(self) -> None:
+        self._cached = None
+        if self._inflight is not None:
+            task = self._inflight[1]
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
-    async def _infer(self, pcm16_bytes: bytes) -> bytes | None:
-        task = asyncio.create_task(
-            self._executor.do_inference(SmartTurnV3Runner.INFERENCE_METHOD, pcm16_bytes),
-            name="smart_turn_v3_inference",
-        )
-        self._track_inference(task)
-
-        # Cancelling a TurnTaking assessment must not cancel an already-running
-        # inference request and drop its runtime connection.
-        return await asyncio.shield(task)
+    async def aclose(self) -> None:
+        if self._close_task is None:
+            self._closing = True
+            self._close_task = asyncio.create_task(self._close(), name="smart_turn_v3_close")
+        task = self._close_task
+        try:
+            await wait_for_cleanup(task)
+        finally:
+            if task.done() and self._close_task is task:
+                self._close_task = None
+                self._closing = False
 
     async def assess(self, evidence: TurnTakingEvidence) -> TurnTakingAssessment:
         if not self.capabilities.supports(evidence.turn_mode):
@@ -109,8 +217,8 @@ class SmartTurnV3Model(TurnTakingModelBase):
         pcm16_bytes = self._build_pcm(evidence)
         if not pcm16_bytes:
             return TurnTakingAssessment(
-                turn_candidate_id=evidence.turn_candidate_id,
-                candidate_revision=evidence.candidate_revision,
+                input_id=evidence.input_id,
+                revision=evidence.revision,
                 turn_mode=evidence.turn_mode,
                 confidence=1.0,
                 end_of_turn_probability=0.0,
@@ -118,19 +226,11 @@ class SmartTurnV3Model(TurnTakingModelBase):
                 reason="smart_turn_missing_audio",
             )
 
-        result = await self._infer(pcm16_bytes)
-        if result is None:
-            raise RuntimeError("Smart Turn runner returned no inference result")
-
-        values = np.frombuffer(result, dtype=np.float32)
-        if values.size != 1:
-            raise RuntimeError(f"Invalid Smart Turn response size: values={values.size}")
-
-        probability = float(np.clip(values[0], 0.0, 1.0))
+        probability = await self._infer(pcm16_bytes)
 
         return TurnTakingAssessment(
-            turn_candidate_id=evidence.turn_candidate_id,
-            candidate_revision=evidence.candidate_revision,
+            input_id=evidence.input_id,
+            revision=evidence.revision,
             turn_mode=evidence.turn_mode,
             confidence=max(probability, 1.0 - probability),
             end_of_turn_probability=probability,

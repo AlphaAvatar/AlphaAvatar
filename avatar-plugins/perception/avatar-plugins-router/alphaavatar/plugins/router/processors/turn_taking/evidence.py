@@ -22,7 +22,7 @@ from alphaavatar.core.media import AudioSegmentPayload, PayloadFormatUnavailable
 from alphaavatar.core.media.enums import PayloadFormat, PayloadView
 from alphaavatar.core.perception.enums import MediaModality, MediaSourceKind
 
-from .schemas.state import TurnCandidate
+from .schemas.state import InputWindow
 
 
 class TurnEvidenceBuilder:
@@ -67,36 +67,33 @@ class TurnEvidenceBuilder:
             samples_per_channel=payload.samples_per_channel,
         )
 
-    def mode(self, candidate: TurnCandidate) -> TurnTakingMode:
-        device_id = candidate.speaker.device_id
-        if device_id is None:
-            return TurnTakingMode.AUDIO_ONLY
-
+    def mode(self, window: InputWindow) -> TurnTakingMode:
+        devices = {actor.device_id for actor in window.actors if actor.device_id is not None}
         cameras = self._runtime.perception.get_source_states(
             modality=MediaModality.VIDEO, source_kind=MediaSourceKind.CAMERA
         )
         return (
             TurnTakingMode.AUDIO_VISUAL
-            if any(source.available and source.device_id == device_id for source in cameras)
+            if any(source.available and source.device_id in devices for source in cameras)
             else TurnTakingMode.AUDIO_ONLY
         )
 
-    def build(self, candidate: TurnCandidate) -> TurnTakingEvidence:
+    def build(
+        self, window: InputWindow, *, audio: tuple[TurnTakingAudioEvidence, ...] | None = None
+    ) -> TurnTakingEvidence:
         return TurnTakingEvidence(
-            turn_candidate_id=candidate.turn_candidate_id,
-            candidate_revision=candidate.revision,
-            turn_mode=self.mode(candidate),
-            speaker=candidate.speaker,
-            started_at=candidate.started_at,
-            updated_at=candidate.updated_at,
-            segments=tuple(candidate.segments),
-            input_observation_ids=tuple(candidate.input_observation_ids),
-            transcript=candidate.text or None,
-            audio=tuple(
-                candidate.audio[segment]
-                for segment in candidate.segments
-                if segment in candidate.audio
-            ),
-            speech_active=bool(candidate.active_segments),
-            has_perception_gap=candidate.has_perception_gap,
+            input_id=window.input_id,
+            revision=window.revision,
+            turn_mode=self.mode(window),
+            actors=window.actors,
+            started_at=window.started_at,
+            updated_at=window.updated_at,
+            segments=tuple(window.segments),
+            input_observation_ids=tuple(window.input_observation_ids),
+            transcript=window.text or None,
+            audio=audio
+            if audio is not None
+            else tuple(window.audio[s] for s in window.segments if s in window.audio),
+            speech_active=bool(window.active_segments),
+            has_perception_gap=window.has_perception_gap,
         )

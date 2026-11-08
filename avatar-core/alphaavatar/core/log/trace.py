@@ -34,7 +34,7 @@ _FIELDS = frozenset(
     (
         "source_id source_generation input_source_id input_source_generation "
         "segment_id observation_id event_id annotation_id "
-        "candidate_id candidate_revision decision_id turn_id input_id run_id request_id "
+        "revision decision_id turn_id input_id run_id request_id "
         "provider_item_id stream_id "
         "sequence stream_sequence first_stream_sequence last_stream_sequence frame_count "
         "text_chars evidence_count missing_count missed_count cutoff_sequence "

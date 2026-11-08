@@ -87,7 +87,7 @@ class TurnRuntime:
             "turn.committed",
             turn_id=snapshot.turn_id,
             input_id=snapshot.input_id,
-            candidate_revision=snapshot.metadata.get("candidate_revision"),
+            revision=snapshot.metadata.get("revision"),
             decision_id=snapshot.metadata.get("decision_annotation_id"),
             event_id=snapshot.metadata.get("decision_event_id"),
             sequence=snapshot.metadata.get("decision_event_sequence"),

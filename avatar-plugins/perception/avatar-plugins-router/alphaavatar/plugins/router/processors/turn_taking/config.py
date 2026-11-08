@@ -51,10 +51,11 @@ class TurnTakingConfig(BaseModel):
     transcript_wait_sec: float = Field(default=0.75, ge=0.0, allow_inf_nan=False)
     transcript_timeout_sec: float = Field(default=3.0, gt=0.0, allow_inf_nan=False)
 
-    association_wait_sec: float = Field(default=0.15, ge=0.0, allow_inf_nan=False)
     unsegmented_alignment_sec: float = Field(default=0.75, gt=0.0)
     max_hold_sec: float = Field(default=1.5, gt=0.0)
-    max_active_candidates: int = Field(default=128, ge=1, le=4096)
+    commit_timeout_sec: float = Field(default=3.0, gt=0.0, allow_inf_nan=False)
+    max_pending_inputs: int = Field(default=128, ge=1, le=4096)
+    max_window_segments: int = Field(default=128, ge=1, le=4096)
 
     fusion: AddressingFusionConfig = Field(default_factory=AddressingFusionConfig)
     model: TurnTakingModelConfig = Field(default_factory=TurnTakingModelConfig)

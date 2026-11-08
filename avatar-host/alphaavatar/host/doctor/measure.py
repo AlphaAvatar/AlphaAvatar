@@ -327,21 +327,17 @@ class _Turn:
         decisions = {r["decision_id"] for r in turn if "decision_id" in r}
         requests = {r["request_id"] for r in turn if "request_id" in r}
         candidates = {
-            r["candidate_id"]
-            for r in trace
-            if r.get("decision_id") in decisions and "candidate_id" in r
+            r["input_id"] for r in trace if r.get("decision_id") in decisions and "input_id" in r
         }
         segments = {
-            r["segment_id"]
-            for r in trace
-            if r.get("candidate_id") in candidates and "segment_id" in r
+            r["segment_id"] for r in trace if r.get("input_id") in candidates and "segment_id" in r
         }
         chained = [
             r
             for r in trace
             if r.get("turn_id") == key
             or r.get("decision_id") in decisions
-            or r.get("candidate_id") in candidates
+            or r.get("input_id") in candidates
             or r.get("segment_id") in segments
             or r.get("request_id") in requests
         ]
@@ -351,7 +347,7 @@ class _Turn:
     def _uncommitted(trace: list[dict], since_ns: int) -> list:
         """No Turn committed: this input as far as it went, from its own sound on, so the
         report names the stage it stopped at rather than the first after the input."""
-        stages = ("perception.speech", "audio.", "stt.", "candidate.")
+        stages = ("perception.speech", "audio.", "stt.", "input.")
         return [
             r for r in trace if r["recorded_time_ns"] >= since_ns and r["stage"].startswith(stages)
         ]
@@ -659,7 +655,7 @@ class _Turn:
             for r in window
             if "segment_id" in r
             and (
-                r["stage"] == "candidate.transcript_rejected"
+                r["stage"] == "input.transcript_rejected"
                 or (r["stage"] == "stt.stale" and r.get("reason") == "segment_retired")
             )
         }
@@ -1086,14 +1082,14 @@ class _Turn:
         spans = [
             (r["start_time_ns"], r["end_time_ns"])
             for r in self.trace
-            if r["stage"] == "candidate.association" and "start_time_ns" in r and "end_time_ns" in r
+            if r["stage"] == "input.association" and "start_time_ns" in r and "end_time_ns" in r
         ]
         readies = {
             r.get("segment_id"): r.get("end_time_ns")
             for r in self.trace
             if r["stage"] == "participant.segment_ready"
         }
-        joined = {r.get("segment_id") for r in self.trace if r["stage"] == "candidate.segment"}
+        joined = {r.get("segment_id") for r in self.trace if r["stage"] == "input.segment"}
         before = bool(spans and joined) and all(
             readies.get(s) is not None and readies[s] <= spans[0][0] for s in joined
         )
@@ -1131,11 +1127,11 @@ class _Turn:
         holds and addressing waits in it, summed; and the last assessment's wait to start from
         when it was queued. Each span counts its part within the stretch alone: a wait that
         overlapped STT's is not the commit's."""
-        commit = self._trace("candidate.decision", action="commit")
+        commit = self._trace("input.decision", action="commit")
         before = [
             r for r in self.trace if commit and r["trace_sequence"] < commit["trace_sequence"]
         ]
-        assessed = [r for r in before if r["stage"] == "candidate.assessment"]
+        assessed = [r for r in before if r["stage"] == "input.assessment"]
         last = assessed[-1] if assessed else {}
         stretch = (
             (final["recorded_time_ns"], commit["recorded_time_ns"]) if final and commit else None
@@ -1152,8 +1148,8 @@ class _Turn:
         missing = "not measured: no final or no commit decision for the Turn"
         figures = []
         for name, stages, boundary in (
-            ("endpoint_assessment", ("candidate.assessment",), "the endpoint model's assessments"),
-            ("decision_holds", ("candidate.hold", "candidate.addressing_wait"), "timed waits"),
+            ("endpoint_assessment", ("input.assessment",), "the endpoint model's assessments"),
+            ("decision_holds", ("input.hold", "input.addressing_wait"), "timed waits"),
         ):
             spans = within(*stages) if stretch else []
             if stretch is None:
@@ -1168,7 +1164,7 @@ class _Turn:
                     note = "none: the commit kept the decision it made before the final"
             else:
                 reasons = sorted(
-                    {r.get("reason") or r["stage"].removeprefix("candidate.") for _, r in spans}
+                    {r.get("reason") or r["stage"].removeprefix("input.") for _, r in spans}
                 )
                 note = ", ".join(reasons) if spans else "none"
             figures.append(
@@ -1432,7 +1428,7 @@ class _Turn:
             for key in (
                 "turn_id",
                 "decision_id",
-                "candidate_id",
+                "input_id",
                 "segment_id",
                 "input_id",
                 "run_id",
@@ -1444,7 +1440,7 @@ class _Turn:
             # When a span it records began, on the report's clock: a wait, an inference; and,
             # for a speaker window or a turn assessment, when it was queued for it.
             spans = [("start_time_ns", "started_ms")]
-            if record["stage"] in ("speaker.window", "candidate.assessment"):
+            if record["stage"] in ("speaker.window", "input.assessment"):
                 spans.append(("event_time_ns", "queued_ms"))
             for key, name in spans:
                 if isinstance(record.get(key), int):

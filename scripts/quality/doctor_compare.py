@@ -162,9 +162,9 @@ def events(rounds: list[dict]) -> dict[str, int]:
     for result in rounds:
         for item in result.get("evidence") or ():
             action = (item.get("detail") or {}).get("action")
-            if item["stage"] == "candidate.decision" and action in ("hold", "cancel"):
+            if item["stage"] == "input.decision" and action in ("hold", "cancel"):
                 found["holds" if action == "hold" else "cancels"] += 1
-            if item["stage"] == "candidate.transcript_rejected":
+            if item["stage"] == "input.transcript_rejected":
                 found["retired finals"] += 1
         found["retried requests"] += (result.get("request") or {}).get("attempts", 0) > 1
         for sentence in result.get("sentences") or ():

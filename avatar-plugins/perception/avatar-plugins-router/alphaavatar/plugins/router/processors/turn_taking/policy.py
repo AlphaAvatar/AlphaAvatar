@@ -91,9 +91,9 @@ class TurnTakingPolicy:
         addressing = None
         if addressees:
             addressing = InteractionAddressing(
-                turn_candidate_id=evidence.turn_candidate_id,
-                candidate_revision=evidence.candidate_revision,
-                speaker=evidence.speaker,
+                input_id=evidence.input_id,
+                revision=evidence.revision,
+                actors=evidence.actors,
                 addressees=addressees,
                 addressing_mode=addressing_mode,
                 confidence=(confidence if addressing_confidence is None else addressing_confidence),
@@ -103,12 +103,12 @@ class TurnTakingPolicy:
         return TurnTakingPolicyResult(
             addressing=addressing,
             decision=TurnTakingDecision(
-                turn_candidate_id=evidence.turn_candidate_id,
-                candidate_revision=evidence.candidate_revision,
+                input_id=evidence.input_id,
+                revision=evidence.revision,
                 turn_mode=evidence.turn_mode,
                 action=action,
                 confidence=confidence,
-                actor=evidence.speaker,
+                actors=evidence.actors,
                 addressees=addressees,
                 input_observation_ids=evidence.input_observation_ids,
                 reason=reason,
