@@ -1,7 +1,7 @@
 # `alphaavatar setup`
 
 Install what a bundle needs, check it, then make it the default bundle. Part of the Linux
-x86_64 package: [install it](../../DEPLOY.md#or-install-the-linux-package-then-choose-capabilities)
+x86_64 package: [install it](../DEPLOY.md#or-install-the-linux-package-then-choose-capabilities)
 with `install.sh` first.
 
 ```bash

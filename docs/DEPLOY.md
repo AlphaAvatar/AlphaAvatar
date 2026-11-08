@@ -1,11 +1,13 @@
 # AlphaAvatar Deployment Guide
 
 Run the native AlphaAvatar Host on a Linux server and connect a browser client through
-LiveKit. Install a tested source revision using the [README](README.md) before following
+LiveKit. Install a tested source revision using the [README](../README.md) before following
 this guide. This development line targets standard CPython 3.13 on Linux. Complete the
-[Python migration checks](CONTRIBUTING.md#python-313-development-environment), including
+[Python migration checks](../CONTRIBUTING.md#python-313-development-environment), including
 a newly resolved and reviewed Python 3.13 lockfile, before deploying. Changing package
 metadata alone is not an installation or model-compatibility result.
+
+Run checkout commands from the repository root (`/path/to/AlphaAvatar`).
 
 ## Prepare the deployment
 
@@ -52,8 +54,8 @@ overrides the environment-selected application home. For an existing workspace, 
 `avatar.workspace_root` to its complete absolute directory; no Avatar ID is appended.
 Remove legacy `AVATAR_WORK_DIR` and `ALPHAAVATAR_MODEL_CACHE` values from the service
 environment and `.env` file: Host rejects both rather than relocating existing data.
-See [Avatar workspace](docs/avatar-workspace-layout.md) and
-[Model cache](docs/models-cache-layout.md) for locating, backing up and moving data.
+See [Avatar workspace](avatar-workspace-layout.md) and
+[Model cache](models-cache-layout.md) for locating, backing up and moving data.
 
 ### Or install the Linux package, then choose capabilities
 

@@ -31,7 +31,7 @@ Learnable, configurable, and pluggable Omni Personal Assistant for everyone
   <a href="https://www.alphaavatar.ai/demo">
     <img src="https://img.shields.io/badge/Demo-Live-7C3AED?style=flat-square&logo=vercel&logoColor=white" alt="Demo">
   </a>
-  <a href="https://github.com/AlphaAvatar/AlphaAvatar/blob/main/ROADMAP.md">
+  <a href="docs/ROADMAP.md">
     <img src="https://img.shields.io/badge/Roadmap-Project%20Plan-F97316?style=flat-square&logo=github&logoColor=white" alt="Roadmap">
   </a>
 </p>
@@ -204,7 +204,7 @@ Integrations for research, document access, and external actions.
 | [**RAG**][plugin-rag] | Ingests documents and retrieves relevant knowledge for model responses.<br>Connects uploaded content to retrieval-augmented workflows. | ![Available][status-available] |
 | **Sandbox** | Will provide isolated execution for external actions.<br>Will support controlled interaction with tools and other agents. | ![Planned][status-planned] |
 
-See [Plugin Layout and Boundaries](avatar-plugins/README.md) for development details and the [Roadmap](ROADMAP.md) for planned work.
+See [Plugin Layout and Boundaries](avatar-plugins/README.md) for development details and the [Roadmap](docs/ROADMAP.md) for planned work.
 
 [plugin-voice]: avatar-plugins/foundation/avatar-plugins-voice/README.md
 [plugin-provider]: avatar-plugins/foundation/avatar-plugins-provider/README.md
@@ -299,7 +299,7 @@ ENV_FILE=.env.dev alphaavatar doctor
 ENV_FILE=.env.dev alphaavatar dev
 ```
 
-See [DEPLOY.md](DEPLOY.md#or-install-the-linux-package-then-choose-capabilities) for unattended installs, credentials, upgrades and running as a service, [docs/cli](docs/cli/) for every command, [examples](examples/README.md) for complete configurations, and [CONTRIBUTING.md](CONTRIBUTING.md) for development environments.
+See [DEPLOY.md](docs/DEPLOY.md#or-install-the-linux-package-then-choose-capabilities) for unattended installs, credentials, upgrades and running as a service, [docs/cli](docs/cli/) for every command, [examples](examples/README.md) for complete configurations, and [CONTRIBUTING.md](CONTRIBUTING.md) for development environments.
 
 <h3>💻 Laptop</h3>
 

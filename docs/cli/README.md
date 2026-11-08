@@ -1,7 +1,7 @@
 # `alphaavatar` commands
 
 `alphaavatar` runs and configures an AlphaAvatar Host. On Linux x86_64, `install.sh` installs it
-with its own Python; see [DEPLOY.md](../../DEPLOY.md#or-install-the-linux-package-then-choose-capabilities).
+with its own Python; see [DEPLOY.md](../DEPLOY.md#or-install-the-linux-package-then-choose-capabilities).
 In a source checkout it is the command of the `alpha-avatar-host` package.
 
 | Command | Does |

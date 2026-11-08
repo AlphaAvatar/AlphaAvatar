@@ -123,7 +123,7 @@ it does not replay model or tool work. Disconnecting does not delete the room.
 
 ## More information
 
-[Deployment](../DEPLOY.md) · [Development](../CONTRIBUTING.md) ·
+[Deployment](../docs/DEPLOY.md) · [Development](../CONTRIBUTING.md) ·
 [Avatar workspace](../docs/avatar-workspace-layout.md) ·
 [Model cache](../docs/models-cache-layout.md) ·
 [Character setup](../avatar-plugins/perception/avatar-plugins-character/README.md)
