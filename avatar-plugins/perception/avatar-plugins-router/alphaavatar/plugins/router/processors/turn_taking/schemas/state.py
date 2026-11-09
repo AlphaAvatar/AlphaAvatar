@@ -26,7 +26,6 @@ from alphaavatar.agents.router.schemas import (
 )
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.schemas import PerceptionSegmentRef, PerceptionSourceRef
-from alphaavatar.core.perception.schemas import PerceptionCutoff
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
 
 
@@ -62,7 +61,6 @@ class InputWindow:
 
     started_at: RuntimeTime
     updated_at: RuntimeTime
-    start_cutoff: PerceptionCutoff
 
     context_id: str
     input_id: str = field(default_factory=lambda: uuid4().hex)
@@ -76,6 +74,8 @@ class InputWindow:
     has_perception_gap: bool = False
     wait: TranscriptWait | None = None
     transcript_failure: str | None = None
+    completion_deadline: float | None = None
+    addressing_deadline: float | None = None
 
     segments: list[PerceptionSegmentRef] = field(default_factory=list)
     active_segments: set[PerceptionSegmentRef] = field(default_factory=set)
@@ -138,6 +138,7 @@ class InputWindow:
         added = segment not in self.segments
         if added:
             self.segments.append(segment)
+            self.completion_deadline = self.addressing_deadline = None
         self._subject(segment, observation)
         if added or segment not in self.active_segments:
             self._touch(observation.time_range.end)
@@ -172,9 +173,6 @@ class InputWindow:
         self.add_input_observation(observation.observation_id)
         self._touch(observation.time_range.end)
         return True
-
-    def mark_addressing_changed(self) -> None:
-        self.revision += 1
 
     def mark_annotation_gap(self) -> bool:
         if self.has_perception_gap and not self.addressing_evidence:

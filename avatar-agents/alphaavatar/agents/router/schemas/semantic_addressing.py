@@ -17,7 +17,7 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-from ..enums import SemanticAddressingLabel
+from ..enums import AssessmentLabel
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,12 +68,14 @@ class SemanticAddressingRequest:
 
 @dataclass(frozen=True, slots=True)
 class SemanticAddressingResult:
-    label: SemanticAddressingLabel
+    label: AssessmentLabel
     label_0_logit: float
     label_1_logit: float
     p_avatar: float
 
     def __post_init__(self) -> None:
+        if not isinstance(self.label, AssessmentLabel):
+            raise TypeError("Semantic addressing label must be an AssessmentLabel")
         if not all(
             math.isfinite(value)
             for value in (self.label_0_logit, self.label_1_logit, self.p_avatar)
@@ -93,7 +95,7 @@ class SemanticAddressingResult:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SemanticAddressingResult:
         return cls(
-            label=SemanticAddressingLabel(data["label"]),
+            label=AssessmentLabel(data["label"]),
             label_0_logit=float(data["label_0_logit"]),
             label_1_logit=float(data["label_1_logit"]),
             p_avatar=float(data["p_avatar"]),

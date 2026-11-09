@@ -22,6 +22,7 @@ from alphaavatar.core.perception.schemas import PerceptionCutoff, PerceptionEven
 from alphaavatar.core.time import RuntimeTime
 
 from ..enums import TurnInputModality
+from .notice import TurnNotice, normalize_turn_notices
 from .reference import TurnEntityRef
 
 
@@ -47,8 +48,7 @@ class TurnSnapshot:
     addressees: tuple[TurnEntityRef, ...] = ()
     context_ids: tuple[str, ...] = ()
 
-    system_notice_code: str | None = None
-    system_notice_segment_ids: tuple[str, ...] = ()
+    system_notices: tuple[TurnNotice, ...] = ()
 
     metadata: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
 
@@ -57,21 +57,13 @@ class TurnSnapshot:
             raise ValueError("turn_id cannot be empty")
         if not self.input_id:
             raise ValueError("input_id cannot be empty")
-        if self.system_notice_code is not None and (
-            not isinstance(self.system_notice_code, str)
-            or not 0 < len(self.system_notice_code) <= 64
-            or (self.modality == TurnInputModality.SYSTEM and self.text is not None)
+        object.__setattr__(self, "system_notices", normalize_turn_notices(self.system_notices))
+        if (
+            self.system_notices
+            and self.modality == TurnInputModality.SYSTEM
+            and self.text is not None
         ):
-            raise ValueError(
-                "System notices require a bounded code; SYSTEM inputs carry no user text"
-            )
-        if self.system_notice_segment_ids and (
-            self.system_notice_code is None
-            or any(
-                not isinstance(value, str) or not value for value in self.system_notice_segment_ids
-            )
-        ):
-            raise ValueError("System notice segments require a notice code and segment identities")
+            raise ValueError("SYSTEM inputs carry no user text")
 
     @property
     def start_sequence(self) -> int:

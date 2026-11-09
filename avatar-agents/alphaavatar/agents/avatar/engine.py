@@ -51,6 +51,10 @@ if TYPE_CHECKING:
     from .loop import LoopHandle
     from .loop.base import ToolAuthorizer
 
+_UNCERTAINTY_NOTICES = frozenset(
+    ("router.speech_completion_uncertain", "router.addressing_uncertain")
+)
+
 
 @dataclass(slots=True)
 class _Foreground:
@@ -539,7 +543,7 @@ class AvatarEngine(LifecycleComponent):
                 self._trace_admission(event, decision, outcome="ignored", reason="superseded")
                 return
 
-            notice = decision.system_notice_code
+            notices = decision.system_notices
             text = self._text(observations)
             has_input = text is not None or any(
                 value.kind
@@ -550,15 +554,29 @@ class AvatarEngine(LifecycleComponent):
                 )
                 for value in observations
             )
-            notice_only = notice is not None and not has_input
+            speech_segments = {
+                item.segment.segment_id
+                for item in observations
+                if item.kind == ObservationKind.SPEECH_SEGMENT and item.segment is not None
+            }
+            transcription_missing = any(
+                notice.code not in _UNCERTAINTY_NOTICES
+                and (notice.code == "voice.transcription_unavailable" or notice.segment_ids)
+                and set(notice.segment_ids) <= speech_segments
+                for notice in notices
+            )
+            notice_only = not has_input and bool(speech_segments) and transcription_missing
             if notice_only:
                 perception = self._runtime.perception
                 interaction = self._runtime.state.interaction_method
                 if (
                     not (interaction.text_output or interaction.audio_output)
                     or perception.has_active_speech
-                    or not any(
-                        ref.kind == InteractionEntityKind.AVATAR for ref in decision.addressees
+                    or (
+                        not any(notice.code == "router.addressing_uncertain" for notice in notices)
+                        and not any(
+                            ref.kind == InteractionEntityKind.AVATAR for ref in decision.addressees
+                        )
                     )
                     or any(
                         item.kind == ObservationKind.SPEECH_SEGMENT
@@ -624,8 +642,7 @@ class AvatarEngine(LifecycleComponent):
                     "decision_annotation_id": event.annotation.annotation_id,
                     "reason": decision.reason,
                 },
-                system_notice_code=notice,
-                system_notice_segment_ids=decision.system_notice_segment_ids,
+                system_notices=notices,
             )
             self._trace_admission(
                 event,

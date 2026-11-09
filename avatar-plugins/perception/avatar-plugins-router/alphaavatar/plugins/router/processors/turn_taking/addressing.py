@@ -18,7 +18,18 @@ from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import replace
 from typing import TypeVar
 
-from alphaavatar.agents.router.schemas import InteractionAddressingEvidence, TurnTakingAssessment
+from alphaavatar.agents.router.enums import (
+    AddressingEvidenceKind,
+    AddressingMode,
+    AssessmentLabel,
+    InteractionEntityKind,
+    TurnTakingMode,
+)
+from alphaavatar.agents.router.schemas import (
+    InteractionAddressingEvidence,
+    InteractionEntityRef,
+    TurnTakingAssessment,
+)
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.core.env import EnvObservation
 from alphaavatar.core.env.enums import AnnotationKind
@@ -210,8 +221,20 @@ class TurnAddressing:
             for source in self._required_addressing_sources
         )
 
+    def _records(self, window: InputWindow) -> tuple[AddressingEvidenceRecord, ...]:
+        # Semantic judgments include the accumulated window up to their target. An older
+        # segment's result cannot stand in for a judgment of newly appended speech.
+        last = window.segments[-1] if window.segments else None
+        return tuple(
+            record
+            for record in window.addressing_evidence.values()
+            if record.evidence.evidence_kind
+            not in {AddressingEvidenceKind.SEMANTIC, AddressingEvidenceKind.CONVERSATION_FOCUS}
+            or record.target_segment == last
+        )
+
     def resolve(self, window: InputWindow) -> InteractionAddressingEvidence | None:
-        return self._fusion.resolve(window.addressing_evidence.values())
+        return self._fusion.resolve(self._records(window))
 
     def update(self, window: InputWindow, record: AddressingEvidenceRecord) -> bool:
         if not self.matches(window, record):
@@ -229,6 +252,17 @@ class TurnAddressing:
         return True
 
     def apply(self, assessment: TurnTakingAssessment, window: InputWindow) -> TurnTakingAssessment:
-        return self._fusion.apply(
-            assessment=assessment, records=window.addressing_evidence.values()
-        )
+        if (
+            assessment.turn_mode == TurnTakingMode.AUDIO_ONLY
+            and not self._required_addressing_sources
+            and not window.addressing_evidence
+        ):
+            return replace(
+                assessment,
+                addressing=AssessmentLabel.POSITIVE,
+                addressees=(InteractionEntityRef(kind=InteractionEntityKind.AVATAR),),
+                addressing_mode=AddressingMode.DIRECT,
+                addressing_confidence=1.0,
+            )
+
+        return self._fusion.apply(assessment=assessment, records=self._records(window))

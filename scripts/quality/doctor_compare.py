@@ -64,7 +64,7 @@ FIGURES = (
     ("addressing_queue", "Semantic addressing queued → started"),
     ("addressing_inference", "Semantic addressing inference"),
     ("assessment_queue", "Endpoint assessment queued → started"),
-    ("endpoint_assessment", "Endpoint assessments, final → commit"),
+    ("speech_completion_assessment", "Speech completion assessments, final → commit"),
     ("decision_holds", "Holds and addressing waits, final → commit"),
     ("context_ready_wait", "Context readiness wait"),
     ("model_first_event", "Model request sent → First event"),

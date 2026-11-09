@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from .event import TurnEvent
+from .notice import TurnNotice, normalize_turn_notices
 from .reference import TurnEntityRef
 from .snapshot import TurnSnapshot
 
-__all__ = ["TurnEntityRef", "TurnEvent", "TurnSnapshot"]
+__all__ = ["TurnEntityRef", "TurnEvent", "TurnNotice", "TurnSnapshot", "normalize_turn_notices"]

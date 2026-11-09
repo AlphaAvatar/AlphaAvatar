@@ -130,16 +130,17 @@ router:
       addressing_wait_sec: 0.5
       transcript_wait_sec: 3.0
       unsegmented_alignment_sec: 0.75
-      max_hold_sec: 1.5
+      completion_wait_sec: 1.5
 
       fusion:
         conflict_margin: 0.1
 
       model:
         name: smart_turn_v3
+        incomplete_threshold: 0.3
+        complete_threshold: 0.7
 
       policy:
-        commit_threshold: 0.5
         respond_to_group: false
 
       interruption:

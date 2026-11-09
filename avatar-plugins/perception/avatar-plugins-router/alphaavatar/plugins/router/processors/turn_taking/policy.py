@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 from alphaavatar.agents.router.enums import (
     AddressingMode,
+    AssessmentLabel,
     InteractionEntityKind,
     TurnTakingAction,
     TurnTakingMode,
@@ -29,6 +30,7 @@ from alphaavatar.agents.router.schemas import (
     TurnTakingDecision,
     TurnTakingEvidence,
 )
+from alphaavatar.core.turn.schemas import TurnNotice
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,15 +43,10 @@ class TurnTakingPolicy:
     def __init__(
         self,
         *,
-        commit_threshold: float = 0.5,
         interruption_enabled: bool = True,
         audio_only_speech_start_interrupt: bool = True,
         respond_to_group: bool = False,
     ) -> None:
-        if not 0.0 <= commit_threshold <= 1.0:
-            raise ValueError("commit_threshold must be between 0 and 1")
-
-        self._commit_threshold = commit_threshold
         self._interruption_enabled = interruption_enabled
         self._audio_only_speech_start_interrupt = audio_only_speech_start_interrupt
         self._respond_to_group = respond_to_group
@@ -87,6 +84,7 @@ class TurnTakingPolicy:
         addressing_confidence: float | None = None,
         addressing_evidence_ids: tuple[str, ...] = (),
         reason: str | None = None,
+        notices: tuple[TurnNotice, ...] = (),
     ) -> TurnTakingPolicyResult:
         addressing = None
         if addressees:
@@ -112,48 +110,59 @@ class TurnTakingPolicy:
                 addressees=addressees,
                 input_observation_ids=evidence.input_observation_ids,
                 reason=reason,
+                system_notices=notices,
             ),
         )
 
     def decide(
-        self, *, evidence: TurnTakingEvidence, assessment: TurnTakingAssessment
+        self,
+        *,
+        evidence: TurnTakingEvidence,
+        assessment: TurnTakingAssessment,
+        completion_expired: bool = False,
+        addressing_expired: bool = False,
     ) -> TurnTakingPolicyResult:
-        end_probability = assessment.end_of_turn_probability or 0.0
-        addressees = assessment.addressees
-        addressing_mode = assessment.addressing_mode
+        completion, addressing = assessment.speech_completion, assessment.addressing
+        addressees, mode = assessment.addressees, assessment.addressing_mode
+        notices: tuple[TurnNotice, ...] = ()
 
-        if evidence.turn_mode == TurnTakingMode.AUDIO_ONLY and not addressees:
-            addressees = (self._avatar(),)
-            addressing_mode = AddressingMode.DIRECT
-
-        if end_probability < self._commit_threshold:
-            action = TurnTakingAction.HOLD
-            reason = assessment.reason or "endpoint_incomplete"
-        elif evidence.turn_mode == TurnTakingMode.AUDIO_VISUAL and (
-            not addressees or addressing_mode == AddressingMode.UNKNOWN
+        # A deadline settles uncertainty; it never reverses a clear model conclusion.
+        if completion == AssessmentLabel.NEGATIVE:
+            action, reason = TurnTakingAction.HOLD, "speech_incomplete"
+        elif addressing == AssessmentLabel.NEGATIVE:
+            action, reason = TurnTakingAction.PASSIVE, "addressed_to_other"
+        elif completion == AssessmentLabel.UNKNOWN and not completion_expired:
+            action, reason = TurnTakingAction.HOLD, "speech_completion_unknown"
+        elif addressing == AssessmentLabel.UNKNOWN and not addressing_expired:
+            action, reason = TurnTakingAction.HOLD, "addressing_unknown"
+        elif addressing == AssessmentLabel.POSITIVE and not (
+            self._addresses_avatar(addressees)
+            or mode == AddressingMode.GROUP
+            and self._respond_to_group
         ):
-            action = TurnTakingAction.HOLD
-            reason = "addressing_unknown"
-        elif self._addresses_avatar(addressees):
-            action = TurnTakingAction.COMMIT
-            reason = assessment.reason
-        elif addressing_mode == AddressingMode.GROUP and self._respond_to_group:
-            action = TurnTakingAction.COMMIT
-            reason = "group_addressing"
+            action, reason = TurnTakingAction.PASSIVE, "addressed_to_other"
         else:
-            action = TurnTakingAction.PASSIVE
-            reason = "addressed_to_other"
+            action = TurnTakingAction.COMMIT
+            notices = tuple(
+                TurnNotice(code)
+                for label, code in (
+                    (completion, "router.speech_completion_uncertain"),
+                    (addressing, "router.addressing_uncertain"),
+                )
+                if label == AssessmentLabel.UNKNOWN
+            )
+            reason = "uncertainty_timeout" if notices else "speech_complete"
 
-        confidence = self._confidence(assessment)
         return self._result(
             evidence=evidence,
             action=action,
-            confidence=confidence,
+            confidence=0.0 if notices else self._confidence(assessment),
             addressees=addressees,
-            addressing_mode=addressing_mode,
+            addressing_mode=mode,
             addressing_confidence=assessment.addressing_confidence,
             addressing_evidence_ids=assessment.addressing_evidence_observation_ids,
             reason=reason,
+            notices=notices,
         )
 
     def decide_interruption(
@@ -194,45 +203,4 @@ class TurnTakingPolicy:
             addressing_confidence=confidence,
             addressing_evidence_ids=addressing_ids,
             reason="avatar_directed_speech_started",
-        )
-
-    def resolve_timeout(
-        self,
-        *,
-        evidence: TurnTakingEvidence,
-        addressing: InteractionAddressingEvidence | None,
-        reason: str,
-    ) -> TurnTakingPolicyResult:
-        if addressing is not None and addressing.addressees:
-            addressees = addressing.addressees
-            addressing_mode = addressing.addressing_mode
-
-            if self._addresses_avatar(addressees):
-                action = TurnTakingAction.COMMIT
-            elif addressing_mode == AddressingMode.GROUP and self._respond_to_group:
-                action = TurnTakingAction.COMMIT
-            else:
-                action = TurnTakingAction.PASSIVE
-
-        elif evidence.turn_mode == TurnTakingMode.AUDIO_ONLY:
-            addressees = (self._avatar(),)
-            addressing_mode = AddressingMode.DIRECT
-            action = TurnTakingAction.COMMIT
-
-        else:
-            addressees = ()
-            addressing_mode = AddressingMode.UNKNOWN
-            action = TurnTakingAction.PASSIVE
-
-        return self._result(
-            evidence=evidence,
-            action=action,
-            confidence=0.0,
-            addressees=addressees,
-            addressing_mode=addressing_mode,
-            addressing_confidence=addressing.confidence if addressing is not None else None,
-            addressing_evidence_ids=(
-                addressing.evidence_observation_ids if addressing is not None else ()
-            ),
-            reason=reason,
         )

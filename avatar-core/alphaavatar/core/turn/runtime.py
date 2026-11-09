@@ -27,7 +27,7 @@ from alphaavatar.core.perception import PerceptionRuntime
 from alphaavatar.core.time import RuntimeTime
 
 from .enums import TurnInputModality
-from .schemas import TurnEntityRef, TurnSnapshot
+from .schemas import TurnEntityRef, TurnNotice, TurnSnapshot, normalize_turn_notices
 from .stream import TurnStream
 
 logger = logging.getLogger(__name__)
@@ -168,8 +168,7 @@ class TurnRuntime:
         addressees: Sequence[TurnEntityRef] = (),
         context_ids: Sequence[str] = (),
         metadata: Mapping[str, Any] | None = None,
-        system_notice_code: str | None = None,
-        system_notice_segment_ids: Sequence[str] = (),
+        system_notices: Sequence[TurnNotice] = (),
     ) -> TurnSnapshot:
         if not input_id:
             raise ValueError("input_id cannot be empty")
@@ -202,8 +201,7 @@ class TurnRuntime:
             addressees=tuple(addressees),
             context_ids=tuple(dict.fromkeys(context_ids)),
             metadata=MappingProxyType(dict(metadata or {})),
-            system_notice_code=system_notice_code,
-            system_notice_segment_ids=tuple(dict.fromkeys(system_notice_segment_ids)),
+            system_notices=normalize_turn_notices(system_notices),
         )
 
         self._record(snapshot)

@@ -59,6 +59,9 @@ class AssessmentWork:
                 **fields,
             )
 
+    def owns(self, input_id: str) -> bool:
+        return self._current.get(input_id) is asyncio.current_task()
+
     def cancel(self, input_id: str) -> None:
         task = self._current.pop(input_id, None)
         if (

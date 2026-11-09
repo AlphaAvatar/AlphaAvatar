@@ -19,7 +19,7 @@ from itertools import groupby
 
 import numpy as np
 
-from alphaavatar.agents.router.enums import AddressingMode, TurnTakingMode
+from alphaavatar.agents.router.enums import AddressingMode, AssessmentLabel, TurnTakingMode
 from alphaavatar.agents.router.models import TurnTakingModelBase, TurnTakingModelCapabilities
 from alphaavatar.agents.router.schemas import (
     TurnTakingAssessment,
@@ -34,8 +34,20 @@ from .model_files import SMART_TURN_V3_CONFIG
 
 
 class SmartTurnV3Model(TurnTakingModelBase):
-    def __init__(self, *, inference_executor: InferenceExecutor) -> None:
+    def __init__(
+        self,
+        *,
+        inference_executor: InferenceExecutor,
+        incomplete_threshold: float,
+        complete_threshold: float,
+    ) -> None:
+        if not 0.0 <= incomplete_threshold < complete_threshold <= 1.0:
+            raise ValueError("Smart Turn thresholds must satisfy 0 <= incomplete < complete <= 1")
+
         self._executor = inference_executor
+        self._incomplete_threshold = incomplete_threshold
+        self._complete_threshold = complete_threshold
+
         self._inflight: tuple[bytes, asyncio.Task[float]] | None = None
         self._cached: tuple[bytes, float] | None = None
         self._closing = False
@@ -191,6 +203,42 @@ class SmartTurnV3Model(TurnTakingModelBase):
                 # A different window does not inherit the previous window's failure.
                 pass
 
+    async def assess(self, evidence: TurnTakingEvidence) -> TurnTakingAssessment:
+        if not self.capabilities.supports(evidence.turn_mode):
+            raise ValueError(f"Smart Turn does not support mode={evidence.turn_mode.value}")
+
+        pcm16_bytes = self._build_pcm(evidence)
+        if not pcm16_bytes:
+            return TurnTakingAssessment(
+                input_id=evidence.input_id,
+                revision=evidence.revision,
+                turn_mode=evidence.turn_mode,
+                confidence=0.0,
+                speech_completion=AssessmentLabel.UNKNOWN,
+                speech_completion_probability=None,
+                addressing_mode=AddressingMode.UNKNOWN,
+                reason="smart_turn_missing_audio",
+            )
+
+        probability = await self._infer(pcm16_bytes)
+        if probability <= self._incomplete_threshold:
+            completion = AssessmentLabel.NEGATIVE
+        elif probability >= self._complete_threshold:
+            completion = AssessmentLabel.POSITIVE
+        else:
+            completion = AssessmentLabel.UNKNOWN
+
+        return TurnTakingAssessment(
+            input_id=evidence.input_id,
+            revision=evidence.revision,
+            turn_mode=evidence.turn_mode,
+            confidence=max(probability, 1.0 - probability),
+            speech_completion=completion,
+            speech_completion_probability=probability,
+            addressing_mode=AddressingMode.UNKNOWN,
+            reason="smart_turn_v3.2",
+        )
+
     async def _close(self) -> None:
         self._cached = None
         if self._inflight is not None:
@@ -209,31 +257,3 @@ class SmartTurnV3Model(TurnTakingModelBase):
             if task.done() and self._close_task is task:
                 self._close_task = None
                 self._closing = False
-
-    async def assess(self, evidence: TurnTakingEvidence) -> TurnTakingAssessment:
-        if not self.capabilities.supports(evidence.turn_mode):
-            raise ValueError(f"Smart Turn does not support mode={evidence.turn_mode.value}")
-
-        pcm16_bytes = self._build_pcm(evidence)
-        if not pcm16_bytes:
-            return TurnTakingAssessment(
-                input_id=evidence.input_id,
-                revision=evidence.revision,
-                turn_mode=evidence.turn_mode,
-                confidence=1.0,
-                end_of_turn_probability=0.0,
-                addressing_mode=AddressingMode.UNKNOWN,
-                reason="smart_turn_missing_audio",
-            )
-
-        probability = await self._infer(pcm16_bytes)
-
-        return TurnTakingAssessment(
-            input_id=evidence.input_id,
-            revision=evidence.revision,
-            turn_mode=evidence.turn_mode,
-            confidence=max(probability, 1.0 - probability),
-            end_of_turn_probability=probability,
-            addressing_mode=AddressingMode.UNKNOWN,
-            reason="smart_turn_v3.2",
-        )

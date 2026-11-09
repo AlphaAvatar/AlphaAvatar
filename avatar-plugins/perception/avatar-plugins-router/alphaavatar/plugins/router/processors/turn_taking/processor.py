@@ -47,14 +47,11 @@ class TurnTakingProcessor(RouterProcessorBase):
 
         self._config = config
 
-        self._model = create_turn_taking_model(
-            config.model.name, inference_executor=runtime.inference
-        )
+        self._model = create_turn_taking_model(config.model, inference_executor=runtime.inference)
         self._coordinator = TurnTakingCoordinator(
             runtime=runtime,
             model=self._model,
             policy=TurnTakingPolicy(
-                commit_threshold=config.policy.commit_threshold,
                 interruption_enabled=config.interruption.enabled,
                 audio_only_speech_start_interrupt=config.interruption.audio_only_speech_start,
                 respond_to_group=config.policy.respond_to_group,

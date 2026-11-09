@@ -11,7 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from pydantic import BaseModel, ConfigDict, Field
+from __future__ import annotations
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class AddressingFusionConfig(BaseModel):
@@ -24,12 +26,19 @@ class TurnTakingModelConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = "smart_turn_v3"
+    incomplete_threshold: float = Field(default=0.3, ge=0.0, le=1.0, allow_inf_nan=False)
+    complete_threshold: float = Field(default=0.7, ge=0.0, le=1.0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def _validate_thresholds(self) -> TurnTakingModelConfig:
+        if self.incomplete_threshold >= self.complete_threshold:
+            raise ValueError("incomplete_threshold must be less than complete_threshold")
+        return self
 
 
 class TurnTakingPolicyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    commit_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     respond_to_group: bool = False
 
 
@@ -45,14 +54,14 @@ class TurnTakingConfig(BaseModel):
 
     enabled: bool = True
 
-    addressing_wait_sec: float = Field(default=0.5, gt=0.0)
+    addressing_wait_sec: float = Field(default=0.5, gt=0.0, allow_inf_nan=False)
 
     # Report a pending transcript after the soft threshold; only the hard deadline retires it.
     transcript_wait_sec: float = Field(default=0.75, ge=0.0, allow_inf_nan=False)
     transcript_timeout_sec: float = Field(default=3.0, gt=0.0, allow_inf_nan=False)
 
     unsegmented_alignment_sec: float = Field(default=0.75, gt=0.0)
-    max_hold_sec: float = Field(default=1.5, gt=0.0)
+    completion_wait_sec: float = Field(default=1.5, gt=0.0, allow_inf_nan=False)
     commit_timeout_sec: float = Field(default=3.0, gt=0.0, allow_inf_nan=False)
     max_pending_inputs: int = Field(default=128, ge=1, le=4096)
     max_window_segments: int = Field(default=128, ge=1, le=4096)

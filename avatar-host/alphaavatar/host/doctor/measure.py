@@ -1092,9 +1092,10 @@ class _Turn:
         )
 
     def _addressing(self, final: dict | None) -> list[Metric]:
-        """The semantic addressing of the Turn's final transcript (O-16), the evidence the
-        router waits for after it: its wait in its speaker's queue, then its inference (the
-        model's run and its request to the inference service, together)."""
+        """Semantic inference for the final transcript: its queue and model execution.
+
+        A successful model return is not proof that its evidence was published or adopted.
+        """
         job = next(
             (
                 r
@@ -1118,15 +1119,15 @@ class _Turn:
             self._metric(
                 "addressing_inference",
                 ("addressing started", job.get("start_time_ns")),
-                ("addressing evidence ready", job.get("end_time_ns")),
+                ("addressing inference finished", job.get("end_time_ns")),
                 "the semantic addressing of the Turn's final transcript",
                 missing,
             ),
         ]
 
     def _assessment(self, final: dict | None) -> list[Metric]:
-        """Between the final and the commit (O-16), what the router spent it on: the endpoint
-        model's assessments in that stretch, one another replaced included, summed; the timed
+        """Between the final and the commit (O-16), what the router spent it on: speech completion
+        assessments in that stretch, one another replaced included, summed; the timed
         holds and addressing waits in it, summed; and the last assessment's wait to start from
         when it was queued. Each span counts its part within the stretch alone: a wait that
         overlapped STT's is not the commit's. With nothing else timed, the rest of that
@@ -1152,13 +1153,17 @@ class _Turn:
         missing = "not measured: no final or no commit decision for the Turn"
         figures = []
         for name, stages, boundary in (
-            ("endpoint_assessment", ("input.assessment",), "the endpoint model's assessments"),
+            (
+                "speech_completion_assessment",
+                ("input.assessment",),
+                "the speech completion model's assessments",
+            ),
             ("decision_holds", ("input.hold", "input.addressing_wait"), "timed waits"),
         ):
             spans = within(*stages) if stretch else []
             if stretch is None:
                 note = missing
-            elif name == "endpoint_assessment":
+            elif name == "speech_completion_assessment":
                 replaced = sum(r.get("outcome") == "cancelled" for _, r in spans)
                 failed = sum(r.get("outcome") == "failed" for _, r in spans)
                 note = f"{len(spans)} run{'s' * (len(spans) != 1)}"
@@ -1189,7 +1194,7 @@ class _Turn:
                 "assessment_queue",
                 ("assessment queued", last.get("event_time_ns")),
                 ("assessment started", last.get("start_time_ns")),
-                "the endpoint model's last assessment before the Turn's commit",
+                "the speech completion model's last assessment before the Turn's commit",
                 "not measured: no assessment before the Turn's commit, or its router traces none",
             ),
             *figures,

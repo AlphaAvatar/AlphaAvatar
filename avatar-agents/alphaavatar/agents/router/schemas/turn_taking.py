@@ -24,10 +24,12 @@ from alphaavatar.core.env.schemas import (
     PerceptionSourceRef,
 )
 from alphaavatar.core.time import RuntimeTime, RuntimeTimeRange
+from alphaavatar.core.turn.schemas import TurnNotice, normalize_turn_notices
 
 from ..enums import (
     AddressingEvidenceKind,
     AddressingMode,
+    AssessmentLabel,
     InteractionEntityKind,
     TurnTakingAction,
     TurnTakingMode,
@@ -105,11 +107,14 @@ class InteractionAddressingEvidence:
     addressing_mode: AddressingMode
     confidence: float
 
+    label: AssessmentLabel = AssessmentLabel.UNKNOWN
     evidence_label: str | None = None
     raw_score: float | None = None
     evidence_observation_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        if not isinstance(self.label, AssessmentLabel):
+            raise TypeError("Addressing evidence label must be an AssessmentLabel")
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError("confidence must be between 0 and 1")
 
@@ -124,7 +129,7 @@ class InteractionAddressingEvidence:
 
     @property
     def abstains(self) -> bool:
-        return self.addressing_mode == AddressingMode.UNKNOWN
+        return self.label == AssessmentLabel.UNKNOWN
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -133,6 +138,7 @@ class InteractionAddressingEvidence:
             "addressees": [addressee.to_dict() for addressee in self.addressees],
             "addressing_mode": self.addressing_mode.value,
             "confidence": self.confidence,
+            "label": self.label.value,
             "evidence_observation_ids": list(self.evidence_observation_ids),
         }
 
@@ -155,6 +161,7 @@ class InteractionAddressingEvidence:
             ),
             addressing_mode=AddressingMode(data["addressing_mode"]),
             confidence=float(data["confidence"]),
+            label=AssessmentLabel(data["label"]),
             evidence_label=data.get("evidence_label"),
             raw_score=(float(data["raw_score"]) if data.get("raw_score") is not None else None),
             evidence_observation_ids=tuple(data.get("evidence_observation_ids", ())),
@@ -254,26 +261,16 @@ class TurnTakingDecision:
     addressees: tuple[InteractionEntityRef, ...] = ()
     input_observation_ids: tuple[str, ...] = ()
 
-    system_notice_code: str | None = None
-    system_notice_segment_ids: tuple[str, ...] = ()
+    system_notices: tuple[TurnNotice, ...] = ()
 
     reason: str | None = None
 
     def __post_init__(self) -> None:
         _validate_input(self.input_id, self.revision, self.confidence)
-        if self.system_notice_code is not None and (
-            self.action != TurnTakingAction.COMMIT
-            or not isinstance(self.system_notice_code, str)
-            or not 0 < len(self.system_notice_code) <= 64
-        ):
-            raise ValueError("System notices require a commit decision and a bounded code")
-        if self.system_notice_segment_ids and (
-            self.system_notice_code is None
-            or any(
-                not isinstance(value, str) or not value for value in self.system_notice_segment_ids
-            )
-        ):
-            raise ValueError("System notice segments require a notice code and segment identities")
+        notices = normalize_turn_notices(self.system_notices)
+        if notices and self.action != TurnTakingAction.COMMIT:
+            raise ValueError("System notices require a commit decision")
+        object.__setattr__(self, "system_notices", notices)
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -285,15 +282,11 @@ class TurnTakingDecision:
             "actors": [actor.to_dict() for actor in self.actors],
             "addressees": [entity.to_dict() for entity in self.addressees],
             "input_observation_ids": list(self.input_observation_ids),
+            "system_notices": [notice.to_dict() for notice in self.system_notices],
         }
 
         if self.reason is not None:
             data["reason"] = self.reason
-        if self.system_notice_code is not None:
-            data["system_notice_code"] = self.system_notice_code
-        if self.system_notice_segment_ids:
-            data["system_notice_segment_ids"] = list(self.system_notice_segment_ids)
-
         return data
 
     @classmethod
@@ -310,8 +303,9 @@ class TurnTakingDecision:
             ),
             input_observation_ids=tuple(data.get("input_observation_ids", ())),
             reason=data.get("reason"),
-            system_notice_code=data.get("system_notice_code"),
-            system_notice_segment_ids=tuple(data.get("system_notice_segment_ids", ())),
+            system_notices=tuple(
+                TurnNotice.from_dict(notice) for notice in data.get("system_notices", ())
+            ),
         )
 
     @classmethod
@@ -395,7 +389,9 @@ class TurnTakingAssessment:
     confidence: float
     addressing_confidence: float | None = None
 
-    end_of_turn_probability: float | None = None
+    speech_completion: AssessmentLabel = AssessmentLabel.UNKNOWN
+    speech_completion_probability: float | None = None
+    addressing: AssessmentLabel = AssessmentLabel.UNKNOWN
     interruption_probability: float | None = None
     proactive_probability: float | None = None
 
@@ -405,6 +401,10 @@ class TurnTakingAssessment:
     reason: str | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.speech_completion, AssessmentLabel) or not isinstance(
+            self.addressing, AssessmentLabel
+        ):
+            raise TypeError("Assessment judgments must be AssessmentLabel values")
         if not self.input_id:
             raise ValueError("input_id cannot be empty")
         if self.revision <= 0:
@@ -413,7 +413,7 @@ class TurnTakingAssessment:
         for name, value in (
             ("confidence", self.confidence),
             ("addressing_confidence", self.addressing_confidence),
-            ("end_of_turn_probability", self.end_of_turn_probability),
+            ("speech_completion_probability", self.speech_completion_probability),
             ("interruption_probability", self.interruption_probability),
             ("proactive_probability", self.proactive_probability),
         ):
