@@ -36,8 +36,8 @@ from alphaavatar.core.time import RuntimeTimeRange
 from alphaavatar.core.turn.enums import TurnInputModality
 
 from .builder import ContextBuilder
-from .builder.renderer.prompt.runtime import render_runtime_context
-from .builder.renderer.prompt.system import render_avatar_instructions
+from .builder.renderer.template.runtime import render_runtime_context
+from .builder.renderer.template.system import render_avatar_instructions
 from .compressor import ContextCompressor
 from .config import ContextConfig
 from .history import ContextHistory
@@ -167,10 +167,7 @@ class AvatarContextManager(ContextManager):
         request: ContextPrepareRequest,
     ) -> ModelInput:
         events = snapshot.perception_events
-        if (
-            snapshot.system_notice_code is not None
-            and snapshot.modality == TurnInputModality.SYSTEM
-        ):
+        if snapshot.system_notices and snapshot.modality == TurnInputModality.SYSTEM:
             events = ()
         elif snapshot.input_observation_ids:
             # A candidate waiting for STT may overlap the next turn's speech.

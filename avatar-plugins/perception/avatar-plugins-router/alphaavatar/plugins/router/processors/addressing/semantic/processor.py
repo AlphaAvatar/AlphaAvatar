@@ -24,8 +24,8 @@ from alphaavatar.agents.router import RouterProcessorBase
 from alphaavatar.agents.router.enums import (
     AddressingEvidenceKind,
     AddressingMode,
+    AssessmentLabel,
     InteractionEntityKind,
-    SemanticAddressingLabel,
 )
 from alphaavatar.agents.router.schemas import (
     InteractionAddressingEvidence,
@@ -109,7 +109,7 @@ class SemanticAddressingProcessor(RouterProcessorBase):
 
         # Bounded history: committed Turns' words and the focus as the last one committed.
         self._history: deque[tuple[str, ...]] = deque(maxlen=config.history_turns)
-        self._focus: tuple[SemanticAddressingLabel, float] | None = None
+        self._focus: tuple[AssessmentLabel, float] | None = None
         self._previous_focus: str | None = None
 
         self._pending: deque[_AssessmentJob] = deque()
@@ -131,22 +131,20 @@ class SemanticAddressingProcessor(RouterProcessorBase):
         return payload.text.strip() or None
 
     @staticmethod
-    def _target(
-        label: SemanticAddressingLabel,
-    ) -> tuple[tuple[InteractionEntityRef, ...], AddressingMode]:
-        if label == SemanticAddressingLabel.AVATAR:
+    def _target(label: AssessmentLabel) -> tuple[tuple[InteractionEntityRef, ...], AddressingMode]:
+        if label == AssessmentLabel.POSITIVE:
             return (InteractionEntityRef(kind=InteractionEntityKind.AVATAR),), AddressingMode.DIRECT
-        if label == SemanticAddressingLabel.NON_AVATAR:
+        if label == AssessmentLabel.NEGATIVE:
             return (
                 InteractionEntityRef(kind=InteractionEntityKind.UNKNOWN),
             ), AddressingMode.DIRECT
         return (), AddressingMode.UNKNOWN
 
     @staticmethod
-    def _confidence(label: SemanticAddressingLabel, p_avatar: float) -> float:
-        if label == SemanticAddressingLabel.AVATAR:
+    def _confidence(label: AssessmentLabel, p_avatar: float) -> float:
+        if label == AssessmentLabel.POSITIVE:
             return p_avatar
-        if label == SemanticAddressingLabel.NON_AVATAR:
+        if label == AssessmentLabel.NEGATIVE:
             return 1.0 - p_avatar
         return 0.0
 
@@ -208,7 +206,7 @@ class SemanticAddressingProcessor(RouterProcessorBase):
         self,
         *,
         kind: AddressingEvidenceKind,
-        label: SemanticAddressingLabel,
+        label: AssessmentLabel,
         confidence: float,
         speaker: InteractionEntityRef,
         observation_ids: tuple[str, ...],
@@ -221,6 +219,7 @@ class SemanticAddressingProcessor(RouterProcessorBase):
             addressees=addressees,
             addressing_mode=mode,
             confidence=confidence,
+            label=label,
             evidence_label=label.value,
             raw_score=raw_score,
             evidence_observation_ids=observation_ids,
@@ -242,7 +241,7 @@ class SemanticAddressingProcessor(RouterProcessorBase):
             semantic.to_annotation(source=self.SEMANTIC_SOURCE, observation_id=target)
         )
 
-        if result.label != SemanticAddressingLabel.UNKNOWN:
+        if result.label != AssessmentLabel.UNKNOWN:
             self._focus = result.label, confidence
         elif self._focus is not None:
             focus_label, focus_confidence = self._focus
@@ -450,7 +449,12 @@ class SemanticAddressingProcessor(RouterProcessorBase):
                 if entry.time_range.end.monotonic_ns <= self._boundary_ns
             )
         )
-        self._previous_focus = self._focus[0].value if self._focus else None
+        # This model's prompt names its focus, rather than the framework's judgment label.
+        self._previous_focus = (
+            ("avatar" if self._focus[0] == AssessmentLabel.POSITIVE else "non_avatar")
+            if self._focus
+            else None
+        )
         self._settle()
 
     """Processor Loop"""

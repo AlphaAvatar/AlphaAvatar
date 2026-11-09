@@ -23,6 +23,7 @@ from alphaavatar.agents.router import RouterProcessorBase
 from alphaavatar.agents.router.enums import (
     AddressingEvidenceKind,
     AddressingMode,
+    AssessmentLabel,
     InteractionEntityKind,
 )
 from alphaavatar.agents.router.schemas import InteractionAddressingEvidence, InteractionEntityRef
@@ -48,7 +49,7 @@ class VisualSubjectKey:
 class VisualOrientationState:
     score: float | None = None
     samples: int = 0
-    last_target: str | None = None
+    last_label: AssessmentLabel | None = None
     last_published_ns: int = 0
     last_logged_at: float = 0.0
     suppressed_logs: int = 0
@@ -71,8 +72,6 @@ class VisualAddressingProcessor(RouterProcessorBase):
         self._ema_alpha = config.ema_alpha
         self._min_samples = config.min_samples
         self._republish_interval_ns = int(config.republish_interval_sec * 1_000_000_000)
-        self._publish_away_evidence = config.publish_away_evidence
-
         self._states: dict[VisualSubjectKey, VisualOrientationState] = {}
 
         self._task: asyncio.Task[None] | None = None
@@ -110,17 +109,22 @@ class VisualAddressingProcessor(RouterProcessorBase):
             if face.entity is not None and counts[face.entity.entity_id] == 1
         )
 
-    def _target(self, score: float) -> str | None:
+    def _label(self, score: float) -> AssessmentLabel:
         if score >= self._toward_threshold:
-            return "avatar"
+            return AssessmentLabel.POSITIVE
 
-        if self._publish_away_evidence and score <= self._away_threshold:
-            return "away"
+        if score <= self._away_threshold:
+            return AssessmentLabel.NEGATIVE
 
-        return None
+        return AssessmentLabel.UNKNOWN
 
     def _publish(
-        self, *, observation: EnvObservation, face: FaceDetection, score: float, target: str
+        self,
+        *,
+        observation: EnvObservation,
+        face: FaceDetection,
+        score: float,
+        label: AssessmentLabel,
     ) -> None:
         entity = self._entity(observation, face)
 
@@ -131,16 +135,14 @@ class VisualAddressingProcessor(RouterProcessorBase):
             source=observation.source,
         )
 
-        if target == "avatar":
+        if label == AssessmentLabel.POSITIVE:
             addressees = (InteractionEntityRef(kind=InteractionEntityKind.AVATAR),)
             addressing_mode = AddressingMode.DIRECT
             confidence = score
-            label = "camera_facing"
         else:
             addressees = ()
             addressing_mode = AddressingMode.UNKNOWN
-            confidence = 1.0 - score
-            label = "camera_away"
+            confidence = 1.0 - score if label == AssessmentLabel.NEGATIVE else 0.0
 
         evidence = InteractionAddressingEvidence(
             evidence_kind=AddressingEvidenceKind.VISUAL_ORIENTATION,
@@ -148,7 +150,8 @@ class VisualAddressingProcessor(RouterProcessorBase):
             addressees=addressees,
             addressing_mode=addressing_mode,
             confidence=confidence,
-            evidence_label=label,
+            label=label,
+            evidence_label="camera_facing",
             raw_score=score,
             evidence_observation_ids=(observation.observation_id,),
         )
@@ -195,21 +198,21 @@ class VisualAddressingProcessor(RouterProcessorBase):
         if state.samples < self._min_samples:
             return
 
-        target = self._target(state.score)
-        if target is None:
-            return
+        label = self._label(state.score)
 
         published_at_ns = event.time_range.end.monotonic_ns
-        repeated_too_soon = target == state.last_target and (
+        repeated_too_soon = label == state.last_label and (
             published_at_ns - state.last_published_ns < self._republish_interval_ns
         )
         if repeated_too_soon:
             return
 
-        self._publish(observation=observation, face=face, score=state.score, target=target)
+        # A fresh UNKNOWN replaces the preceding observation too; it does not prolong an
+        # old positive or negative judgment. Repeated labels retain their publication limit.
+        self._publish(observation=observation, face=face, score=state.score, label=label)
 
-        changed = target != state.last_target
-        state.last_target = target
+        changed = label != state.last_label
+        state.last_label = label
         state.last_published_ns = published_at_ns
 
         # Evidence freshness is unchanged; only diagnostics are rate-limited.
@@ -220,9 +223,9 @@ class VisualAddressingProcessor(RouterProcessorBase):
 
         state.last_logged_at = now
         logger.debug(
-            "Visual addressing evidence target=%s score=%.3f "
+            "Visual addressing evidence label=%s score=%.3f "
             "yaw=%.3f pitch=%.3f roll=%.2f observation_id=%s suppressed=%d",
-            target,
+            label.value,
             state.score,
             estimate.yaw_proxy,
             estimate.pitch_proxy,

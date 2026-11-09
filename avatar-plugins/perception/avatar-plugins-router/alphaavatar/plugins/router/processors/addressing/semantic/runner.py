@@ -19,7 +19,7 @@ import math
 import os
 from time import perf_counter
 
-from alphaavatar.agents.router.enums import SemanticAddressingLabel
+from alphaavatar.agents.router.enums import AssessmentLabel
 from alphaavatar.agents.router.schemas import SemanticAddressingRequest, SemanticAddressingResult
 from alphaavatar.agents.runtime.inference import InferenceRunner
 from alphaavatar.agents.runtime.inference.cpu import available_cpu_count
@@ -193,11 +193,11 @@ class SemanticAddressingQwen3Runner(InferenceRunner):
         config = SEMANTIC_ADDRESSING_CONFIG
 
         if p_avatar >= config.uncertainty_high:
-            label = SemanticAddressingLabel.AVATAR
+            label = AssessmentLabel.POSITIVE
         elif p_avatar <= config.uncertainty_low:
-            label = SemanticAddressingLabel.NON_AVATAR
+            label = AssessmentLabel.NEGATIVE
         else:
-            label = SemanticAddressingLabel.UNKNOWN
+            label = AssessmentLabel.UNKNOWN
 
         return json.dumps(
             SemanticAddressingResult(
