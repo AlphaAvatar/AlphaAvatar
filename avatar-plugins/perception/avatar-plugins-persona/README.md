@@ -20,7 +20,7 @@ Each processor owns its configuration and lifecycle. Provider configuration and 
 | Processor | Main input | Responsibility |
 | --- | --- | --- |
 | Profiler | Committed conversation/Turn context | Extract persistent profile deltas without regenerating the complete profile. |
-| Speaker | Routed speech observations | Compute speaker embeddings, resolve identity and update voice attributes, each on its own bounded lane: a Turn's Context waits only for its segments' identities, up to `speaker.identity_wait_sec`; attributes reach later Turns. |
+| Speaker | Routed speech observations | Compute speaker embeddings (CAM++; 3 s windows, and speech shorter than a window once at its own length), resolve identity and update voice attributes, each on its own bounded lane: a Turn's Context waits only for its segments' identities, up to `speaker.identity_wait_sec`; attributes reach later Turns. Vectors are stored per voice model, in `speaker_collection_name` suffixed with it (`_campplus`); another model's vectors are never searched or merged. |
 | Face | Video/screen observations | Sample frames, recognize identities and publish face/attribute annotations. |
 
 Speaker and Face use bounded inference queues and preserve source identity. Raw audio or video is not persisted as a Persona profile. Face annotations enrich perception evidence without overwriting its raw observation.

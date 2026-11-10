@@ -209,3 +209,136 @@ ERes2NetV2 各格的阈值分布在 0.394～0.647，英文整段 0.647，中文�
 | `results/clips.npz` | `64613addb0b20c03…`：修剪后的片段（int16）和 VAD 标记 |
 | `results/stage1.{md,json}`、`stage2_campplus.{md,json}`、`bench.json`、`verify_export.txt`、`check_runner.txt` | 完整结果表 |
 | `results/v1/` | 加清洗规则之前的数据和嵌入，已被取代 |
+
+---
+
+# 第二批：CAM++ 接入、短段原长推理与阈值验证
+
+- 基线 HEAD `3f840c6f`；改动未暂存、未提交。本节只记修改摘要和证据索引，证据在会话临时目录（第 7 节）。
+
+## 结论
+
+- **已接入并切为默认**：CAM++ 自导出 ONNX。下载、runner、处理器参数、身份阈值和两种 VDB 的声纹存取都指向同一个模型。
+- **声纹分表**：声纹按模型分表，表名为 `<speaker_collection_name>_campplus`。旧 ERes2NetV2 声纹保留原表，不参与检索、融合和模板更新；人脸、资料和 `user_id` 不受影响。
+- **短段**：从未满过 3 s 窗口的段，在段结束时按原长推理一次，不补齐。短段只能延续已有轨迹，不新建轨迹；属性模型只接收完整窗口。
+- **阈值与是否通过**（按冻结的方法选定，看过独立集后没有调整）：
+
+  | 阈值 | 取值 | 结果 |
+  |---|---|---|
+  | `track_match_threshold` | 0.675 | 调参通过；独立集 AliMeeting 未通过 |
+  | `track_match_margin` | 0 | 同上 |
+  | `segment_consistency_threshold` | 0.45 | 调参通过；独立集 AMI-2 单人段误作废 2.5%，高于调参标准的 2% |
+  | `SPEAKER_MATCH_THRESHOLD` | 0.80 | 调参未通过，见第 3 节；独立集无误匹配，但召回率只有 0.3%～8.4% |
+
+## 1. 模型产物
+
+- **HF 仓库**：`AlphaAvatar/persona-speaker-vector-onnx`，revision `9680dc0888fc0bf74cee9892e95e0eb6f6555b2f`，`model.onnx` sha256 `38a03abb2bb0492155e990fe86ccb86182600de6f7b0a0ba42690d88c63fb436`。
+  - ERes2NetV2 仍可通过 `1899db09` / `62a02e9e` 获取。
+  - 起初另建过 `persona-speaker-vector-campplus-onnx`，已按要求删除。
+- **仓库内容**：
+  - `export/`：导出脚本、池化差异最小复现、示例生成脚本、固定版本的依赖（torch 2.9.0、onnx 1.21.0、onnxruntime 1.23.1、modelscope 1.33.0）；
+  - `verification/`：检查点一致性、池化复现报告、sherpa 产物对比；
+  - 以及清单、NOTICE、Apache-2.0 许可证和校验和。
+  - 导出脚本可逐字节复现 `model.onnx`。
+- **池化复现**：随机特征与上游示例录音，覆盖池化长度 99/100/101、199/200/201 及 0.5～5.3 s 的真实语音。
+  - 原样导出只在池化长度是 100 的倍数时一致，其余最低余弦 0.845。
+  - 改写后处处 ≥0.99999999998。
+  - sherpa-onnx 产物与原样导出的偏差逐值相同。
+
+## 2. 代码改动
+
+| 文件 | 改动 |
+|---|---|
+| `speaker/model_files.py` | `campplus` 取代 `eres2netv2`，固定 revision 与 sha256 并传给解析器；新增 `speaker_vector_collection` |
+| `speaker/vector_runner.py` | `MODEL_TYPE = "campplus"`；按会话唯一的输入名喂特征，FBank 不变 |
+| `speaker/processor.py` | 段结束时若从未产生窗口，用该段 `AudioSegmentPayload` 的音频做一次原长推理，走原窗口队列，取消、超时与等待释放沿用原有机制；已有窗口的长段只保留原尾窗逻辑；短段任务不写 `last_audio`；短段向量只延续已有轨迹 |
+| `speaker/tracking.py` | `resolve` 新增 `create` 参数（默认 True），为 False 时不新建轨迹 |
+| `speaker/config.py`、`agents/constants.py` | 四个阈值改为上表取值 |
+| `storage/vdb/lancedb.py`、`qdrant.py` | 声纹表改为按模型派生；Qdrant 默认人脸表仍由配置的原名派生（`<name>_face`） |
+| 测试 | 短段四种情形、短段不新建轨迹、模型固定版本、runner 输入名、两种 VDB 的旧声纹隔离与人脸/资料可读；`test_launch` 表名更新 |
+| 文档 | Persona README 的 Speaker 一行、Host 配置模板注释 |
+
+## 3. 阈值方法与依据
+
+- **方法**：在真实生产链路上采集向量，离线回放同一套关联逻辑扫描阈值。回放与真实链路在 1,218 段上逐段一致；最终代码在 read-test 上，两种口径的全部计数也一致。
+  - 生产链路：20 ms 音频帧 → Router VAD → SpeakerProcessor + CAM++ runner → 跟踪 → 真实 LanceDB 检索 → 会话结束保存。
+- **调参数据**：沿用上一轮的划分和已冻结的清洗规则，用 ASCEND 与 LibriSpeech/AISHELL-1 的 calibration 部分。
+- **选择规则**：写在 `sweep.py` 中，先于全量调参结果和任何对照、独立数据确定。
+  - 段内一致性：每个调参链里单人段误作废 ≤2% 的最高值。
+  - 跟踪：总体、ASCEND，以及 ≥100 次加入的时长桶，误关联都 ≤1%，在此前提下正确加入最多。
+  - 身份：各语料误匹配 ≤1%，在此前提下正确匹配最多。
+- **两处补充**（均在看到全量调参结果之前）：
+  1. 误关联按“两个被比较向量所取音频的说话人”评判。段的多数说话人可能与它第一个窗口的说话人不同，这一点阈值改不了，所以按段多数的归属另外报告。
+  2. 约束无解时，取最差受约束组误率最低的一组，并如实报告未通过。
+- **身份阈值调参未通过**：
+  - ASCEND 的 15 次误匹配全部发生在 ascend-9 和 ascend-10 之间。
+  - 声纹中心表明 ses2 标注为 10 的语音混有 9 的声音：ses1 中两人只有 0.25～0.27，ses2 中为 0.65～0.70；同一人跨会话通常为 0.89～0.96，而 10 号自身只有 0.79。
+  - 清洗规则已冻结，这对数据未剔除；补充规则落在网格上限 0.80。
+  - 仅作参考：排除这对后，0.62 时为 2/964。
+
+## 4. 结果
+
+误关联与误匹配按向量说话人评判；分母是可判定的段，即向量所取音频中多数说话人 ≥80%。
+
+| 数据（真实链路，除注明外） | 加入 / 误关联 | 新建 / 其中分裂 | 未归属 | 身份匹配 / 误匹配 | 已有模板时的召回 |
+|---|---|---|---|---|---|
+| ASCEND calibration（回放） | 1,457 / 7（0.48%） | 348 / 306 | 691 | 436 / 15 | — |
+| 其中两人对话（对方即冒认者） | 1,043 / 7（0.67%，上界 1.38%） | — | — | 309 / 15 | — |
+| ASCEND test（上一轮对照，回放） | 1,107 / 0 | 364 / 329 | 526 | 252 / 0 | — |
+| AMI 6 个系列，远讲麦克风（独立） | 1,167 / 5（0.43%） | 849 / 785 | 2,159 | 41 / 0 | 1.6% / 3.1% |
+| AliMeeting Eval 远场（独立） | **507 / 11（2.17%，上界 3.84%）** | 187 / 150 | 589 | 1 / 0 | 0.3% |
+| 其中两人会议 | 151 / 3（1.99%） | — | — | — | — |
+| LibriSpeech other，同性别近音配对（独立） | 818 / 0 | 234 / 124 | 459 | 45 / 0 | 8.4% |
+| 同上加噪 10 dB（DKITCHEN/OOFFICE/PRESTO） | 715 / 0 | 304 / 194 | 466 | 7 / 0 | 1.4% |
+
+- **短段**：
+  - 独立集共 455 段短段加入已有轨迹，误关联 3 次，其中 AliMeeting 2 次、AMI 1 次；其余短段未归属。
+  - 嗯、好、对、yeah、okay 这类短应答：AMI 81 段全部未归属；AliMeeting 114 段中 4 段被归属，误关联为 0。
+  - 冻结配置下的 274 个会话（独立集 169 个、Qdrant 复跑 56 个、read-test 49 个）中，属性模型收到的 3,550 次输入全部是 48,000 个采样点；5,534 个短段任务一次也没有进入属性模型。
+- **短段进入模板**（调参数据）：
+  - 在 0.80 和 0.62 下，短段是否并入模板，对窗口段的误匹配都没有影响：0.62 时分别为 83 次和 82 次。
+  - 原因是短段永远不会成为轨迹的创建者，模板里占主导的第一个向量总来自完整窗口。
+- **段内一致性**（独立集）：单人段误作废 0.1%～2.5%；段内换人被抓到 62%～86%。
+- **误关联的机制**：AMI 的 5 次和 AliMeeting 的 5 次，都是加入了“创建向量的音频里混有别人声音”的轨迹。轨迹向量建立后不再更新，所以一次混入会连续造成误关联。AliMeeting R8003 的 6 次误关联，对应的创建段只标注了 0.83 s 语音。
+- **按段多数评判的归属误差**：朗读合成会话为 2.8%，其中两人之间的停顿短于 0.55 s，被 VAD 合成了一段；AliMeeting 为 1.18%。
+
+## 5. 验证
+
+- **测试**：
+  - `pytest avatar-plugins/perception/avatar-plugins-persona/tests`：74 通过。新测试的 11 个变异都由断言失败抓到。
+  - 全量 `PYTHONDONTWRITEBYTECODE=1 ALPHAAVATAR_MODEL_OFFLINE=1 pytest -p no:cacheprovider --continue-on-collection-errors`：626 通过，18 失败，20 错误，全部在 router、Host doctor 和 transcript 的测试中。
+  - 18 个失败和 20 个错误在 HEAD 上同样存在，用 HEAD 版本的本批文件复跑确认：`SemanticAddressingLabel` 无法导入，`SmartTurnV3Model` 缺少 `incomplete_threshold`/`complete_threshold`，`endpoint_assessment` 键缺失，以及 turn-taking 的通知断言。均与本批无关，未修。
+- **两种 VDB**：
+  - LanceDB 与 Qdrant（qdrant-client 内存模式，不是 Qdrant 服务）跑同一条 LibriSpeech other 链，1,531 段的关联、作废和检索结果逐段一致。
+  - 迁移检查：先建一个含 ERes2NetV2 声纹、人脸和资料的 LanceDB 存储，再跑 8 场真实链路会话，探测阈值 0.6。36 次匹配无一指向旧用户；旧声纹表逐行不变；8 个旧用户读不到旧声纹，人脸和资料完整可读。
+- **质量检查**：`uv lock --check`、`check_workspace.py`、`ruff check .`、`ruff format --check .`、`git diff --check` 通过。
+- **运行**：调参采集 148 个会话，冻结配置下 274 个会话，迁移检查 8 个会话；全部无报错，无丢弃的推理任务。
+
+## 6. 剩余限制
+
+- **未通过的部分**（没有放宽标准）：
+  - AliMeeting 远场多人会议的跟踪误关联 2.17%；
+  - 身份阈值的调参；
+  - AMI-2 的单人段误作废 2.5%。
+- **阈值 0.80 的代价**：几乎不做跨会话的声纹认人，召回 ≤8.4%。独立集误匹配 0/94，样本太少，不足以支持低误识结论。
+- **轨迹分裂严重**：同一人新建的轨迹在各集合都有几百条。每条轨迹在会话结束时都会以生成的 `user_id` 保存一份模板。
+- **其余**：
+  - 独立集没有中英切换的数据，跨语言只在 ASCEND 上看过。
+  - AliMeeting 的身份检索只能在同一会议内做：前 5 分钟用耳机录音，之后用远场。
+  - 轨迹 TTL 在 harness 中按墙钟计，回放按媒体时间计。
+  - 资源只测了服务器，没有测移动端。
+- **下一步候选**（本批未做）：轨迹向量随加入的段更新；对创建向量做重叠检测；用无标注问题的新数据重新标定身份阈值。
+
+## 7. 证据索引
+
+位于 `/tmp/claude-1000/-home-ecs-user-AlphaAvatar/d9cabb34-bdee-4efc-bdcb-b5c422533d57/scratchpad/sv/`，不随仓库提供。
+
+| 路径 | 内容 |
+|---|---|
+| `hf_vector/` | 推送到 HF 的全部文件 |
+| `harness/live.py`、`replay.py`、`sweep.py`、`live_metrics.py`、`template_effect.py`、`legacy_check.py`、`sessions.py`、`check_replay.py` | 真实链路运行、回放、阈值选择、指标、模板对比、迁移检查、会话构建 |
+| `sessions/*.json`、`sessions/*/` | 各链的会话清单与标注（音频引用 `data/`、`data2/`） |
+| `live/collect/`、`live/final/` | 调参采集与冻结配置下的逐段记录（JSON + 向量） |
+| `live/sweep.out`、`live/chosen.json`、`live/frozen_at.txt` | 扫描输出、选定配置、冻结时间（2026-11-10T10:13:19Z） |
+| `live/tuning_tables.md`、`live/final/independent.md`、`live/final/libri.md` | 完整分组表（两种评判口径） |
+| `full_suite_final.txt` | 全量测试输出 |

@@ -24,6 +24,7 @@ class SpeakerConfig(BaseModel):
     max_segments: int = Field(default=32, ge=1, le=256)
     max_speakers: int = Field(default=64, ge=1, le=512)
     track_ttl_sec: float = Field(default=300.0, gt=0)
-    track_match_threshold: float = Field(default=0.75, ge=0, le=1)
-    track_match_margin: float = Field(default=0.08, ge=0, le=1)
-    segment_consistency_threshold: float = Field(default=0.65, ge=0, le=1)
+    # Cosines of the campplus speaker vectors.
+    track_match_threshold: float = Field(default=0.675, ge=0, le=1)
+    track_match_margin: float = Field(default=0.0, ge=0, le=1)
+    segment_consistency_threshold: float = Field(default=0.45, ge=0, le=1)

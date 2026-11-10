@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 class SpeakerVectorRunner(InferenceRunner):
     INFERENCE_METHOD = "alphaavatar.persona.speaker.vector"
     REQUIRES = (plugin_requirement(NAMESPACE, "speaker"),)
-    MODEL_TYPE: SpeakerModelType = "eres2netv2"
+    MODEL_TYPE: SpeakerModelType = "campplus"
 
     def initialize(self) -> None:
         import onnxruntime as ort
@@ -55,7 +55,7 @@ class SpeakerVectorRunner(InferenceRunner):
             providers = available
 
         self._session = ort.InferenceSession(path, providers=providers, sess_options=options)
-        self._input_names = [item.name for item in self._session.get_inputs()]
+        (self._input_name,) = (item.name for item in self._session.get_inputs())
         self._output_names = [item.name for item in self._session.get_outputs()]
         logger.info(
             "%s ready providers=%s threads=%d",
@@ -69,6 +69,6 @@ class SpeakerVectorRunner(InferenceRunner):
         waveform = np.frombuffer(data, dtype=np.float32)
         if not waveform.size or not np.isfinite(waveform).all():
             raise ValueError("Speaker waveform must contain finite float32 samples")
-        inputs = {"feature": self._feature_extractor(waveform)}
+        inputs = {self._input_name: self._feature_extractor(waveform)}
         embedding = self._session.run(None, inputs)[0]
         return embedding.tobytes()

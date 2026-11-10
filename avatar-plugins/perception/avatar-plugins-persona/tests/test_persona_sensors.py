@@ -39,7 +39,12 @@ from alphaavatar.core.env.schemas import (
     PerceptionSegmentRef,
     PerceptionSourceRef,
 )
-from alphaavatar.core.media import AudioFrame, AudioFramePayload, VideoFramePayload
+from alphaavatar.core.media import (
+    AudioFrame,
+    AudioFramePayload,
+    AudioSegmentPayload,
+    VideoFramePayload,
+)
 from alphaavatar.core.media.enums import PayloadFormat, PayloadView
 from alphaavatar.core.output import OutputRuntime
 from alphaavatar.core.perception import PerceptionRuntime
@@ -52,6 +57,7 @@ from alphaavatar.core.turn import TurnRuntime
 from alphaavatar.core.turn.enums import TurnInputModality
 from alphaavatar.plugins.persona.processors.face.analysis_runner import FaceAnalysisRunner
 from alphaavatar.plugins.persona.processors.speaker.attribute_runner import SpeakerAttributeRunner
+from alphaavatar.plugins.persona.processors.speaker.processor import SpeakerProcessor
 from alphaavatar.plugins.persona.processors.speaker.vector_runner import SpeakerVectorRunner
 
 HANG_GUARD = 30
@@ -86,6 +92,8 @@ class SensorInference:
         self.hold_attribute = False
         self.attribute_held, self.attribute_release = asyncio.Event(), asyncio.Event()
         self.attributes: list[str] = []  # Whose speech each attribute inference heard
+        self.attribute_samples: list[int] = []
+        self.vector_samples: list[int] = []  # The length of each speaker vector request
         self.saves: list[str] = []
 
     async def _maybe_hold(self, user: str) -> None:
@@ -96,6 +104,7 @@ class SensorInference:
 
     async def do_inference(self, method: str, data: bytes) -> bytes | None:
         if method == SpeakerVectorRunner.INFERENCE_METHOD:
+            self.vector_samples.append(len(data) // 4)
             user = LEVELS[round(np.frombuffer(data, dtype=np.float32)[0] * 32768)]
             if user == self.fail:
                 raise RuntimeError("speaker vector runner failed")
@@ -103,6 +112,7 @@ class SensorInference:
             return embedding(user, 192).tobytes()
         if method == SpeakerAttributeRunner.INFERENCE_METHOD:
             self.attributes.append(LEVELS[round(np.frombuffer(data, dtype=np.float32)[0] * 32768)])
+            self.attribute_samples.append(len(data) // 4)
             if self.hold_attribute:
                 self.hold_attribute = False
                 self.attribute_held.set()
@@ -229,6 +239,55 @@ def speak(
                 **common,
             )
         )
+
+
+def utter(
+    runtime: AvatarRuntime,
+    source: PerceptionSourceRef,
+    segment: str,
+    user: str,
+    *,
+    heard: float,
+    spoken: float | None,
+) -> None:
+    """One utterance known by its voice alone: ``heard`` seconds of routed frames, then its end,
+    carrying the Router's canonical audio of ``spoken`` seconds (its pre-roll and speech, not
+    the trailing silence) or none."""
+    level = next(level for level, name in LEVELS.items() if name == user)
+    ref = PerceptionSegmentRef(source, segment)
+    common = {"source": source, "segment": ref, "device_id": source.source_id}
+    samples = round(heard * 16000)
+    for index, start in enumerate(range(0, samples, 8000)):
+        count = min(8000, samples - start)
+        pcm = np.full(count, level, dtype="<i2").tobytes()
+        frame = AudioFrame(sample_rate=16000, num_channels=1, samples_per_channel=count, data=pcm)
+        runtime.perception.publish_observation(
+            EnvObservation(
+                kind=ObservationKind.SPEECH_FRAME,
+                time_range=RuntimeTimeRange.point(runtime.clock.now()),
+                payload=AudioFramePayload.create(frame=frame, frame_id=f"{segment}-{index}"),
+                **common,
+            )
+        )
+    payload = None
+    if spoken is not None:
+        count = round(spoken * 16000)
+        payload = AudioSegmentPayload.create(
+            segment_id=segment,
+            pcm16_bytes=np.full(count, level, dtype="<i2").tobytes(),
+            sample_rate=16000,
+            num_channels=1,
+            samples_per_channel=count,
+            source_observation_ids=(f"{segment}-0",),
+        )
+    runtime.perception.publish_observation(
+        EnvObservation(
+            kind=ObservationKind.SPEECH_SEGMENT,
+            time_range=RuntimeTimeRange.point(runtime.clock.now()),
+            payload=payload,
+            **common,
+        )
+    )
 
 
 def show(
@@ -370,6 +429,125 @@ async def test_a_window_that_times_out_or_fails_releases_its_association_and_say
     inference.release.set()
     await persona.on_stop()
     await runtime.aclose()
+
+
+def settled(runtime: AvatarRuntime, count: int) -> Callable[[], bool]:
+    return lambda: len(traced(runtime, "participant.segment_ready")) >= count
+
+
+@pytest.mark.parametrize(
+    ("heard", "spoken", "jobs"),
+    [(1.5, 1.2, [19200]), (3.0, 2.6, [48000]), (3.5, 3.2, [48000, 48000]), (1.5, None, [])],
+    ids=["short", "one-window", "window-and-tail", "no-segment-audio"],
+)
+async def test_speech_shorter_than_a_window_is_inferred_once_at_its_own_length(
+    heard: float,
+    spoken: float | None,
+    jobs: list[int],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Speech that never filled a window gives one vector of the segment's own audio, never
+    # padded; speech that did keeps its windows and full tail and gets no shorter copy.
+    monkeypatch.setattr(SpeakerProcessor, "ATTRIBUTE_INTERVAL_SEC", 0.0)  # Every segment is due
+    inference = SensorInference()
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "speaker")
+    await persona.on_start()
+    source = PerceptionSourceRef("device", 1)
+    # A full window opens alice's voice, the utterance under test follows, then another window.
+    for count, (segment, length, audio) in enumerate(
+        (("a", 3.0, 2.6), ("b", heard, spoken), ("c", 3.0, 2.6)), 1
+    ):
+        utter(runtime, source, segment, "alice", heard=length, spoken=audio)
+        await wait_until(settled(runtime, count), f"segment {segment} was never settled")
+    windows = 2 + (48000 in jobs)
+    await wait_until(lambda: len(inference.searches) == 2 + bool(jobs), "a search never ran")
+    await wait_until(
+        lambda: len(inference.attributes) >= windows, "the speaker was never described"
+    )
+    assert inference.vector_samples == [48000, *jobs, 48000]
+    assert inference.searches == ["speaker:alice"] * (2 + bool(jobs))
+    # The attribute model keeps its own input: full windows only, never the short audio.
+    assert inference.attribute_samples == [48000] * windows
+    await persona.on_stop()
+    await runtime.aclose()
+
+
+async def test_speech_shorter_than_a_window_continues_a_known_voice_but_never_opens_one(
+    tmp_path: Path,
+) -> None:
+    inference = SensorInference()
+    runtime = avatar_runtime(tmp_path, inference)
+    persona = persona_for(runtime, "speaker")
+    await persona.on_start()
+    source = PerceptionSourceRef("device", 1)
+    utter(runtime, source, "a", "bob", heard=1.5, spoken=1.2)
+    await wait_until(settled(runtime, 1), "the short segment was never settled")
+    # Too little speech to open a voice: inferred, then left unattributed and unsearched.
+    assert inference.vector_samples == [19200]
+    assert not runtime.session.participants and inference.searches == []
+
+    utter(runtime, source, "b", "alice", heard=3.0, spoken=2.6)
+    await wait_until(lambda: inference.searches, "the known voice was never searched")
+    utter(runtime, source, "c", "alice", heard=1.5, spoken=1.2)
+    await wait_until(lambda: len(inference.searches) == 2, "the short segment was never searched")
+    assert inference.searches == ["speaker:alice", "speaker:alice"]
+    alice = participant_of(runtime, "alice")
+    for segment in ("b", "c"):
+        resolved = runtime.participants.resolve(segment=PerceptionSegmentRef(source, segment))
+        assert resolved is not None and resolved.participant_id == alice.participant_id
+    await persona.on_stop()
+    await runtime.aclose()
+
+
+def test_the_speaker_vector_model_resolves_its_pinned_revision_and_checksum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from alphaavatar.plugins.persona.processors.speaker import model_files
+
+    seen = {}
+    monkeypatch.setattr(model_files, "resolve_hf_file", lambda **kwargs: seen.update(kwargs))
+    model_files.resolve_speaker_model_path(SpeakerVectorRunner.MODEL_TYPE, models_dir="/models")
+    config = model_files.SPEAKER_MODEL_CONFIG[SpeakerVectorRunner.MODEL_TYPE]
+    assert (seen["repo_id"], seen["revision"], seen["sha256"]) == (
+        config.hf_model,
+        config.revision,
+        config.sha256,
+    )
+    assert len(config.revision) == 40 and len(config.sha256) == 64
+
+
+def test_the_speaker_vector_runner_feeds_the_graph_its_own_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import onnx
+    from onnx import TensorProto, helper
+
+    from alphaavatar.agents.runtime.inference import RunnerLaunch
+    from alphaavatar.plugins.persona.processors.speaker import vector_runner
+    from alphaavatar.plugins.persona.processors.speaker.fbank import FBank
+
+    graph = helper.make_graph(
+        [helper.make_node("ReduceMax", ["x"], ["embedding"], axes=[1], keepdims=0)],
+        "speaker",
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, ["N", "T", 80])],
+        [helper.make_tensor_value_info("embedding", TensorProto.FLOAT, ["N", 80])],
+    )
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)])
+    model.ir_version = 7
+    onnx.save(model, tmp_path / "model.onnx")
+    monkeypatch.setattr(
+        vector_runner, "resolve_speaker_model_path", lambda *_, **__: str(tmp_path / "model.onnx")
+    )
+    runner = SpeakerVectorRunner()
+    runner.configure(RunnerLaunch(str(tmp_path / "avatar"), str(tmp_path / "models")))
+    runner.initialize()
+
+    waveform = (0.1 * np.random.default_rng(0).standard_normal(16000)).astype(np.float32)
+    result = np.frombuffer(runner.run(waveform.tobytes()), dtype=np.float32)
+    expected = FBank(80, sample_rate=16000, mean_nor=True)(waveform).max(axis=1).reshape(-1)
+    np.testing.assert_allclose(result, expected, rtol=1e-6, atol=1e-6)
 
 
 def traced(runtime: AvatarRuntime, stage: str) -> list[dict]:

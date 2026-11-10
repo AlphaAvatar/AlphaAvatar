@@ -167,7 +167,7 @@ init_config:
         tasks:
           persona.profile_delta: {provider: openai, model: gpt-4o, temperature: 0.1}
   speaker:
-    enabled: true  # Who is speaking, from voice; stored in speaker_collection_name.
+    enabled: true  # Who is speaking, from voice; stored in speaker_collection_name_campplus.
     inference_queue_size: 1
   face:
     enabled: true  # Who is present, from video frames; stored in face_collection_name.

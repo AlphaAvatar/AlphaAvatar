@@ -455,7 +455,8 @@ def test_local_vector_runners_open_only_their_launch_workspace(
     assert sorted(path.name for path in tmp_path.iterdir()) == ["home", "tmp", "workspace"]
     assert tables == {
         "memory": ["memories.lance"],
-        "persona": ["faces.lance", "profiles.lance", "speakers.lance"],
+        # Speaker vectors are kept per voice model.
+        "persona": ["faces.lance", "profiles.lance", "speakers_campplus.lance"],
         "mcp": [],
     }
     assert providers == [("embedding", "openai", "text-embedding-3-small")] * 3

@@ -29,7 +29,7 @@ from alphaavatar.agents.workspace import WorkspacePaths
 from ...namespace import NAMESPACE
 from ...processors.face.analysis_runner import FaceAnalysisRunner
 from ...processors.face.model_files import FACE_MODEL_CONFIG
-from ...processors.speaker.model_files import SPEAKER_MODEL_CONFIG
+from ...processors.speaker.model_files import SPEAKER_MODEL_CONFIG, speaker_vector_collection
 from ...processors.speaker.vector_runner import SpeakerVectorRunner
 from ...profile.serialization import merge_profile_items
 
@@ -370,6 +370,9 @@ class LanceDBRunner(InferenceRunner):
             raise ValueError("`speaker_collection_name` is required in persona.vdb_config")
         if not self._face_collection_name:
             raise ValueError("`face_collection_name` is required in persona.vdb_config")
+        self._speaker_collection_name = speaker_vector_collection(
+            self._speaker_collection_name, SpeakerVectorRunner.MODEL_TYPE
+        )
 
         # init client
         vdb_config = self._get_vdb_config(config)

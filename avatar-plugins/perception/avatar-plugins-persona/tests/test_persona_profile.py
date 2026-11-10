@@ -11,7 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Persona profile merge order, idempotent saves and LanceDB user isolation on local files."""
+"""Persona profile merge order, idempotent saves, LanceDB user isolation on local files, and
+speaker vectors kept per speaker model in both vector stores."""
 
 from __future__ import annotations
 
@@ -40,6 +41,7 @@ from alphaavatar.plugins.persona.profile.serialization import (
 )
 from alphaavatar.plugins.persona.storage.runtime_state import RuntimeStateStore
 from alphaavatar.plugins.persona.storage.vdb.lancedb import LanceDBRunner
+from alphaavatar.plugins.persona.storage.vdb.qdrant import QdrantRunner
 
 T0 = datetime(2026, 11, 2, 8, tzinfo=UTC)
 
@@ -226,3 +228,96 @@ def test_lancedb_user_predicates_isolate_quoted_identities_and_resave_idempotent
         for op, param in (("load", {}), ("save", {"details_items": None, "speaker_vector": None})):
             with pytest.raises(ValueError, match="Invalid user identifier"):
                 call(runner, op, user_id=invalid, **param)
+
+
+class OfflineQdrantRunner(QdrantRunner):
+    """The real local store; its LangChain profiler store needs LangChain embeddings."""
+
+    def _get_profiler_embeddings(self, config: dict) -> OfflineEmbeddings:
+        from langchain_core.embeddings import Embeddings
+
+        class LangChainEmbeddings(OfflineEmbeddings, Embeddings):
+            pass
+
+        return LangChainEmbeddings()
+
+
+def unit(index: int, size: int) -> list[float]:
+    vector = [0.0] * size
+    vector[index] = 1.0
+    return vector
+
+
+@pytest.mark.parametrize("backend", ["lancedb", "qdrant"])
+def test_a_new_speaker_model_starts_its_own_vectors_and_keeps_faces_and_profiles(
+    backend: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The configured speaker collection held the previous model's vectors (the same 192
+    # dimensions); with them sit the user's face vector and profile, written as before.
+    names = {"profiler_collection_name": "profiles", "speaker_collection_name": "speakers"}
+    if backend == "lancedb":
+        import lancedb
+
+        names |= {"face_collection_name": "faces", "client_path": str(tmp_path / "lancedb")}
+        client = lancedb.connect(str(tmp_path / "lancedb"))
+        rows = {"speakers": unit(0, 192), "faces": unit(0, 512)}
+        for table, vector in rows.items():
+            client.create_table(table, [{"id": "old", "user_id": "legacy", "vector": vector}])
+        runner = OfflineLanceDBRunner()
+    else:
+        from qdrant_client import QdrantClient
+        from qdrant_client.models import Distance, PointStruct, VectorParams
+
+        from alphaavatar.agents.utils.vdb import qdrant
+
+        # Qdrant's in-process store, shared with the runner as its client would be.
+        client = QdrantClient(location=":memory:")
+        # Without a configured face collection, the faces are named after the speakers'.
+        for table, vector in {"speakers": unit(0, 192), "speakers_face": unit(0, 512)}.items():
+            client.create_collection(
+                table, VectorParams(size=len(vector), distance=Distance.COSINE)
+            )
+            client.upsert(table, [PointStruct(id=1, vector=vector, payload={"user_id": "legacy"})])
+        names |= {"url": "http://qdrant.test"}
+        monkeypatch.setattr(qdrant, "get_client", lambda **_: client)
+        runner = OfflineQdrantRunner()
+    runner.configure(
+        RunnerLaunch(
+            str(tmp_path / "avatar"),
+            str(tmp_path / "models"),
+            config=json.dumps({"persona": names}),
+        )
+    )
+    runner.initialize()
+    details = flatten_profile_items(
+        "legacy",
+        {"name": entry("Ada", "chat", 1)},
+        fields=frozenset({"name"}),
+        updated_at={"name": at(1)},
+    )
+    saved = call(runner, "save", user_id="legacy", details_items=details, speaker_vector=None)
+    assert saved["error"] is None
+
+    # The previous model's vector is never searched, loaded or merged; the rest still reads.
+    assert call(runner, "search_speaker_vector", speaker_vector=unit(0, 192), threshold=0.5) is None
+    loaded = call(runner, "load", user_id="legacy")
+    assert loaded["speaker_vector"] is None
+    assert loaded["face_vector"] == pytest.approx(unit(0, 512))
+    (item,) = loaded["details_items"]
+    assert item["metadata"]["value"]["value"] == "Ada"
+
+    # A vector of this model is saved, found and loaded in its own collection.
+    assert (
+        call(runner, "save", user_id="legacy", details_items=None, speaker_vector=unit(1, 192))[
+            "error"
+        ]
+        is None
+    )
+    found = call(runner, "search_speaker_vector", speaker_vector=unit(1, 192), threshold=0.5)
+    assert found["user_id"] == "legacy"
+    assert call(runner, "load", user_id="legacy")["speaker_vector"] == pytest.approx(unit(1, 192))
+    if backend == "lancedb":
+        assert runner._client.open_table("speakers").count_rows() == 1
+    else:
+        assert runner._client.count("speakers").count == 1
+        runner.close()

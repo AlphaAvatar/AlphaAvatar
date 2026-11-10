@@ -39,7 +39,7 @@ from alphaavatar.agents.utils.vdb.probe import probe_dimension
 from ...namespace import NAMESPACE
 from ...processors.face.analysis_runner import FaceAnalysisRunner
 from ...processors.face.model_files import FACE_MODEL_CONFIG
-from ...processors.speaker.model_files import SPEAKER_MODEL_CONFIG
+from ...processors.speaker.model_files import SPEAKER_MODEL_CONFIG, speaker_vector_collection
 from ...processors.speaker.vector_runner import SpeakerVectorRunner
 from ...profile.serialization import merge_profile_items
 
@@ -330,15 +330,19 @@ class QdrantRunner(InferenceRunner):
         config = self.config_for(NAMESPACE)
 
         self._profiler_collection_name = config.get("profiler_collection_name", None)
-        self._speaker_collection_name = config.get("speaker_collection_name", None)
+        speaker_collection_name = config.get("speaker_collection_name", None)
         self._face_collection_name = config.get("face_collection_name", None)
 
         if not self._profiler_collection_name:
             raise ValueError("`profiler_collection_name` is required in persona.vdb_config")
-        if not self._speaker_collection_name:
+        if not speaker_collection_name:
             raise ValueError("`speaker_collection_name` is required in persona.vdb_config")
         if not self._face_collection_name:
-            self._face_collection_name = f"{self._speaker_collection_name}_face"
+            # From the configured name, so a speaker model change never moves the faces.
+            self._face_collection_name = f"{speaker_collection_name}_face"
+        self._speaker_collection_name = speaker_vector_collection(
+            speaker_collection_name, SpeakerVectorRunner.MODEL_TYPE
+        )
 
         # init client
         self._client = qdrant.get_client(**self._get_vdb_config(config))

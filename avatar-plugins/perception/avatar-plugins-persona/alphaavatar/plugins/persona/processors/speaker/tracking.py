@@ -36,8 +36,9 @@ class SpeakerTracks:
         self._retired: list[tuple[PerceptionSourceRef, PerceptionEntityRef]] = []
 
     def resolve(
-        self, source: PerceptionSourceRef, vector: np.ndarray, now: float
+        self, source: PerceptionSourceRef, vector: np.ndarray, now: float, *, create: bool = True
     ) -> PerceptionEntityRef | None:
+        """The track the vector matches, else a new one when ``create`` allows it."""
         for current, tracks in tuple(self._tracks.items()):
             if (
                 current.source_id == source.source_id
@@ -72,7 +73,7 @@ class SpeakerTracks:
             track.seen_at = now
             return track.entity
 
-        if sum(map(len, self._tracks.values())) >= self.max_tracks:
+        if not create or sum(map(len, self._tracks.values())) >= self.max_tracks:
             return None
 
         entity = PerceptionEntityRef(f"speaker-{uuid4().hex}")

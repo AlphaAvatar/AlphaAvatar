@@ -34,7 +34,7 @@ from alphaavatar.core.env.schemas import (
     PerceptionSegmentRef,
     PerceptionSourceRef,
 )
-from alphaavatar.core.media import AudioFrame, PayloadFormatUnavailable
+from alphaavatar.core.media import AudioFrame, AudioSegmentPayload, PayloadFormatUnavailable
 from alphaavatar.core.media.enums import PayloadFormat, PayloadView
 from alphaavatar.core.perception.enums import PerceptionStreamKind
 from alphaavatar.core.session.enums import IdentityOutcome, IdentitySource
@@ -72,6 +72,7 @@ class SpeakerSegmentState:
     invalid: bool = False
     inference_failed: bool = False
     vector: np.ndarray | None = None
+    short: bool = False  # Its vector is of speech shorter than a window
     last_audio: bytes | None = None
     identified: asyncio.Event = field(default_factory=asyncio.Event)  # Matched, or never will be
     speaker: Participant | None = None  # Its identified participant, for its attributes
@@ -83,6 +84,7 @@ class SpeakerWindow:
     audio_f32: bytes
     index: int = 0
     queued_ns: int = 0  # When it joined the inference queue, on the runtime clock
+    whole: bool = False  # A segment shorter than a window, at its own length
 
     @property
     def source(self) -> PerceptionSourceRef:
@@ -156,6 +158,24 @@ class SpeakerProcessor(PersonaProcessorBase):
             return None
         return frame if isinstance(frame, AudioFrame) else None
 
+    def _segment_pcm(self, observation: EnvObservation) -> bytes | None:
+        """A segment's canonical audio, the payload its transcription reads, when it is shorter
+        than a window."""
+        payload = observation.payload
+        if (
+            not isinstance(payload, AudioSegmentPayload)
+            or payload.sample_rate != self._sample_rate
+            or payload.num_channels != 1
+        ):
+            return None
+        try:
+            pcm = payload.get(
+                PayloadFormat.AUDIO_PCM16_BYTES, view=PayloadView.RAW, fallback_to_raw=False
+            )
+        except PayloadFormatUnavailable:
+            return None
+        return pcm if isinstance(pcm, bytes) and 0 < len(pcm) < self._window_bytes else None
+
     def _is_current(self, state: SpeakerSegmentState) -> bool:
         return self._segments.get(
             state.segment
@@ -209,12 +229,14 @@ class SpeakerProcessor(PersonaProcessorBase):
             self._retire(self._attribute_queue.get_nowait())  # Identified, never described
         self._attribute_queue.put_nowait(state)
 
-    def _enqueue_pcm(self, state: SpeakerSegmentState, pcm16: bytes) -> None:
+    def _enqueue_pcm(
+        self, state: SpeakerSegmentState, pcm16: bytes, *, whole: bool = False
+    ) -> None:
         audio = np.frombuffer(pcm16, dtype="<i2").astype(np.float32) / 32768.0
         state.window_index += 1
         state.pending += 1
         queued = self.runtime.clock.now().monotonic_ns
-        self._enqueue(SpeakerWindow(state, audio.tobytes(), state.window_index, queued))
+        self._enqueue(SpeakerWindow(state, audio.tobytes(), state.window_index, queued, whole))
 
     def _state(self, observation: EnvObservation) -> SpeakerSegmentState | None:
         segment = observation.segment
@@ -339,21 +361,20 @@ class SpeakerProcessor(PersonaProcessorBase):
         if state is None or state.closed:
             return
 
-        # Include the final tail in a full window; no zero-padding of short utterances.
-        if (
-            not state.invalid
-            and not state.inference_failed
-            and len(state.recent) == self._window_bytes
-            and state.last_window_end != state.samples
-        ):
-            self._enqueue_pcm(state, bytes(state.recent))
+        # Include the final tail in a full window; speech that never filled one is inferred
+        # once at its own length. Neither is padded.
+        if not state.invalid and not state.inference_failed:
+            if len(state.recent) == self._window_bytes and state.last_window_end != state.samples:
+                self._enqueue_pcm(state, bytes(state.recent))
+            elif state.window_index == 0 and (pcm := self._segment_pcm(observation)) is not None:
+                self._enqueue_pcm(state, pcm, whole=True)
 
         state.closed = True
         state.pcm.clear()
         state.recent.clear()
         if state.pending == 0:
             if state.invalid or state.inference_failed or state.vector is None:
-                # Short speech has no vector job to wait for; finish without joining the queue.
+                # No vector job to wait for; finish without joining the queue.
                 self._retire(state)
             else:
                 self._enqueue(state)
@@ -436,9 +457,11 @@ class SpeakerProcessor(PersonaProcessorBase):
                 return
 
         if state.vector is None:
-            state.vector = vector.copy()
+            state.vector, state.short = vector.copy(), job.whole
 
-        state.last_audio = job.audio_f32
+        # Attributes keep their own input: full windows only.
+        if not job.whole:
+            state.last_audio = job.audio_f32
 
     async def _resolve_identity(
         self, state: SpeakerSegmentState, participant: Participant
@@ -551,8 +574,9 @@ class SpeakerProcessor(PersonaProcessorBase):
                 if state.vector is None or state.inference_failed:
                     return
 
+                # Short speech may continue a known voice; it is too little to open one.
                 state.entity = self._tracks.resolve(
-                    state.segment.source, state.vector, time.monotonic()
+                    state.segment.source, state.vector, time.monotonic(), create=not state.short
                 )
                 self._release_tracks()
                 if state.entity is None:
