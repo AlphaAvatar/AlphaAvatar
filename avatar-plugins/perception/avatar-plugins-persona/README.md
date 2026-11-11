@@ -35,6 +35,8 @@ Partially started processors are tracked before their startup awaits. Shutdown s
 
 Profile state is loaded/persisted through PersonaStore, with LanceDB and Qdrant backends accessed through the shared inference runtime rather than synchronous database calls on the realtime loop.
 
+A participant's speaker vector merges each segment 0.95 old / 0.05 new and stays apart from the stored template while the session runs. A save merges it into the template loaded for the same identity by that rule. A user without a template takes it as is, as does a user the session allocated, which has nothing stored; for another user whose load did not complete, the stored template is left unchanged.
+
 ## Capabilities and context
 
 Enabled processors contribute to AvatarCapabilityRegistry. Capabilities are runtime descriptors and, where callable, typed operations; they are not merely prompt metadata. Disabled processors do not advertise enabled functionality.

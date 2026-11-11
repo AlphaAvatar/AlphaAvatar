@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
 import numpy as np
@@ -30,13 +30,29 @@ from .profile import UserProfileDetails
 from .profile.serialization import field_metadata, merge_profile_field
 
 
+@dataclass(frozen=True, slots=True)
+class _BaseProfile:
+    """The current identity's profile as the store returned it, read-only for the session, with
+    what the cache knows about that load. An empty profile is also what no load leaves, so
+    ``loaded`` tells a user without a template from a template never read."""
+
+    profile: UserProfile = field(default_factory=UserProfile)
+    loaded: bool = False
+
+    def template_only(self) -> _BaseProfile:
+        """A write's copy: the speaker template alone; profile details never merge into a save."""
+        vector = self.profile.speaker_vector
+        template = UserProfile(speaker_vector=None if vector is None else vector.copy())
+        return _BaseProfile(template, self.loaded)
+
+
 class DefaultPersonaCache(PersonaCache):
     """Participant observations are independent from the current user's read-only profile."""
 
     def __init__(self, *, participant: Participant) -> None:
         self._participant = participant
 
-        self._base_profile = UserProfile()
+        self._base = _BaseProfile()
         self._observations = UserProfile()
 
         self._detail_fields: set[str] = set()
@@ -58,13 +74,13 @@ class DefaultPersonaCache(PersonaCache):
         if participant.participant_id != self._participant.participant_id:
             raise ValueError("A Persona cache cannot be transferred to another participant")
         if participant.identity_sequence != self._participant.identity_sequence:
-            self._base_profile = UserProfile()
+            self._base = _BaseProfile()
             self._observations.runtime_state = None
         self._participant = participant
 
     @property
     def profile(self) -> UserProfile | None:
-        result = self._base_profile.model_copy(deep=True)
+        result = self._base.profile.model_copy(deep=True)
         if self._observations.details is not None:
             data = result.details.model_dump(mode="json") if result.details is not None else {}
             observed = self._observations.details.model_dump(mode="json")
@@ -172,6 +188,22 @@ class DefaultPersonaCache(PersonaCache):
         )
 
     @property
+    def saved_speaker_vector(self) -> np.ndarray | None:
+        """The speaker template a save writes, or None to leave the stored one as it is.
+
+        While the session runs, its vector stays apart from the stored template; only the save
+        merges it into the template loaded for this same identity, by the rule each segment
+        merges by. A user without a template takes the session's vector. Without a completed
+        load the stored template is unknown, so it is not overwritten."""
+        observed = self._observations.speaker_vector
+        if observed is None or not self._base.loaded:
+            return None
+        loaded = self._base.profile.speaker_vector
+        if loaded is None:
+            return observed.copy()
+        return self._merge_vector(loaded, observed, SPEAKER_BETA)
+
+    @property
     def face_vector(self) -> np.ndarray | None:
         return self._observations.face_vector
 
@@ -192,10 +224,16 @@ class DefaultPersonaCache(PersonaCache):
         return NumpyOP.l2_normalize(vector).copy()
 
     def set_base(self, profile: UserProfile) -> None:
-        self._base_profile = profile.model_copy(deep=True)
+        self._base = _BaseProfile(profile.model_copy(deep=True), loaded=True)
 
     def clear_base(self) -> None:
-        self._base_profile = UserProfile()
+        self._base = _BaseProfile()
+
+    def set_new_user(self) -> None:
+        """The identity's user is new in this session: the store holds nothing of it, which is
+        known without a load (one still running when the session ends never completes)."""
+        if not self._base.loaded:
+            self._base = _BaseProfile(loaded=True)
 
     def mark_profile_fields(self, fields: set[str], *, updated_at: datetime) -> None:
         self._detail_fields.update(fields)
@@ -209,6 +247,7 @@ class DefaultPersonaCache(PersonaCache):
     def snapshot(self) -> DefaultPersonaCache:
         result = DefaultPersonaCache(participant=self._participant)
         result._observations = self._observations.model_copy(deep=True)
+        result._base = self._base.template_only()
         result._detail_fields = self._detail_fields.copy()
         result._detail_timestamps = self._detail_timestamps.copy()
         result._detail_operations = deepcopy(self._detail_operations)

@@ -23,6 +23,7 @@ from alphaavatar.agents.persona.schemas import UserRuntimeState
 from alphaavatar.agents.runtime import AvatarRuntime
 from alphaavatar.agents.runtime.capability import AvatarCapabilityRegistry
 from alphaavatar.core.cleanup import wait_for_cleanup
+from alphaavatar.core.session.enums import IdentitySource
 from alphaavatar.core.session.schemas import Participant
 from alphaavatar.core.turn.schemas import TurnSnapshot
 
@@ -108,6 +109,12 @@ class PersonaRuntime(PersonaBase):
         state.current_room_type = self._runtime.state.interaction_method.room_type
         return state
 
+    def _allocated(self, participant: Participant) -> bool:
+        """Whether this session allocated the identity's user, so nothing is stored for it."""
+        history = self._runtime.session.identity_history(participant.participant_id)
+        current = participant.identity_sequence
+        return current < len(history) and history[current].source == IdentitySource.GENERATED
+
     def cache_for(self, participant_id: str) -> DefaultPersonaCache | None:
         participant = self._runtime.participants.get(participant_id)
         if participant is None:
@@ -125,6 +132,8 @@ class PersonaRuntime(PersonaBase):
             participant
         ):
             cache.clear_base()
+        elif self._allocated(participant):
+            cache.set_new_user()
 
         cache.runtime_state = self._runtime_state(participant, cache.runtime_state)
         return cache

@@ -18,7 +18,6 @@ import json
 
 import numpy as np
 
-from alphaavatar.agents.persona import PersonaCache
 from alphaavatar.agents.persona.enums import VectorRunnerOP
 from alphaavatar.agents.persona.schemas import UserProfile, UserRuntimeState
 from alphaavatar.agents.runtime import AvatarRuntime
@@ -26,6 +25,7 @@ from alphaavatar.agents.workspace import check_legacy_identity, prepare_user_pat
 from alphaavatar.core.cleanup import wait_for_cleanup
 from alphaavatar.core.session.schemas import Participant
 
+from ..cache import DefaultPersonaCache
 from ..profile import UserProfileDetails
 from ..profile.serialization import ProfileValueType, flatten_profile_items, rebuild_profile_items
 from .runtime_state import RuntimeStateStore
@@ -125,7 +125,7 @@ class PersonaStore:
         return str(user_id) if user_id else None
 
     async def _save_vdb(
-        self, *, user_id: str, persona: PersonaCache, timeout: float | None
+        self, *, user_id: str, persona: DefaultPersonaCache, timeout: float | None
     ) -> None:
         details_items = (
             flatten_profile_items(
@@ -138,9 +138,8 @@ class PersonaStore:
             if persona.profile_details is not None
             else None
         )
-        speaker_vector = (
-            persona.speaker_vector.tolist() if persona.speaker_vector is not None else None
-        )
+        template = persona.saved_speaker_vector
+        speaker_vector = template.tolist() if template is not None else None
         face_vector = persona.face_vector.tolist() if persona.face_vector is not None else None
 
         if not details_items and speaker_vector is None and face_vector is None:
@@ -168,7 +167,7 @@ class PersonaStore:
         if failures:
             raise RuntimeError(f"Persona VDB save failed: {failures}")
 
-    async def save(self, *, persona: PersonaCache, timeout: float | None = 15) -> None:
+    async def save(self, *, persona: DefaultPersonaCache, timeout: float | None = 15) -> None:
         # An admitted write retains its exact participant and observations across rebinding.
         persona = persona.snapshot()
         participant = persona.participant

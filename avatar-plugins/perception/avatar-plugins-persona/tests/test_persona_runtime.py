@@ -28,6 +28,7 @@ import pytest
 from alphaavatar.agents.avatar.provider.base import LLMBase
 from alphaavatar.agents.avatar.provider.schemas.model_result import ProviderModelResult
 from alphaavatar.agents.persona import PersonaProcessorBase
+from alphaavatar.agents.persona.schemas import UserProfile
 from alphaavatar.agents.runtime import AvatarRuntime, StateRuntime
 from alphaavatar.agents.runtime.modules.foundation import ProviderService
 from alphaavatar.agents.runtime.modules.participants import ParticipantRuntime
@@ -79,19 +80,32 @@ class ScriptedProviders(ProviderService):
 
 
 class PersonaInference:
-    """In-process stand-in for the Persona VDB runner transport."""
+    """In-process stand-in for the Persona VDB runner transport: each user's stored speaker
+    template, if ``templates`` has one, and the load of a user it ``holds`` never answering."""
 
-    def __init__(self, save: bytes | None = b'{"user_id":"x","error":null}') -> None:
+    def __init__(
+        self,
+        save: bytes | None = b'{"user_id":"x","error":null}',
+        *,
+        templates: dict[str, list[float]] | None = None,
+        holds: Callable[[str], bool] = lambda user_id: False,
+    ) -> None:
         self.saved: list[dict] = []
         self.operations: list[str] = []
-        self._save = save
+        self._save, self._templates, self._holds = save, templates or {}, holds
 
     async def do_inference(self, method: str, data: bytes) -> bytes | None:
         assert method == VDB
         request = json.loads(data)
         self.operations.append(request["op"])
         if request["op"] == "load":
-            return b'{"details_items":[],"speaker_vector":null,"face_vector":null}'
+            user_id = request["param"]["user_id"]
+            if self._holds(user_id):
+                await asyncio.Event().wait()
+            template = self._templates.get(user_id)
+            return json.dumps(
+                {"details_items": [], "speaker_vector": template, "face_vector": None}
+            ).encode()
         self.saved.append(request["param"])
         return self._save
 
@@ -410,9 +424,95 @@ async def test_vdb_save_failure_surfaces_instead_of_silently_succeeding(
     runtime = avatar_runtime(tmp_path, ScriptedProviders(name_ally), PersonaInference(save=result))
     participant = join(runtime)
     cache = DefaultPersonaCache(participant=participant)
+    cache.set_base(UserProfile())  # Its load found no template, so the save writes the voice.
     cache.speaker_vector = np.ones(192, dtype=np.float32)
     store = PersonaStore(runtime=runtime, inference_method=VDB)
     with pytest.raises(ExceptionGroup) as failed:
         await store.save(persona=cache)
     assert failed.group_contains(RuntimeError, match="Persona VDB save")
+    await runtime.aclose()
+
+
+def unit(*values: float) -> np.ndarray:
+    vector = np.asarray(values, dtype=np.float32)
+    return vector / np.linalg.norm(vector)
+
+
+def merged(current: np.ndarray, incoming: np.ndarray) -> np.ndarray:
+    """The cache's merge rule: 0.95 of what it holds, 0.05 of what arrives."""
+    return unit(*(0.95 * current + 0.05 * incoming))
+
+
+@pytest.mark.parametrize("stored", ["template", "none", "unloaded", "new-user"])
+async def test_a_save_merges_the_sessions_voice_into_the_template_loaded_for_its_user(
+    stored: str, tmp_path: Path
+) -> None:
+    template = unit(1, 0, 0, 0)
+    unloaded = stored in ("unloaded", "new-user")
+    inference = PersonaInference(
+        templates={"alice": template.tolist()} if stored == "template" else {},
+        holds=lambda user_id: unloaded,
+    )
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(name_ally), inference)
+    persona, _ = persona_for(runtime)
+    # A new user is one the session allocates itself; alice is the application's.
+    participant = runtime.participants.join(primary=True) if stored == "new-user" else join(runtime)
+    await persona.on_start()
+    if not unloaded:
+        await persona.load_profile(participant_id=participant.participant_id)
+    cache = persona.cache_for(participant.participant_id)
+    first, second = unit(0, 1, 0, 0), unit(0, 0, 1, 0)
+    cache.speaker_vector, cache.speaker_vector = first, second
+
+    # While it runs, the session's voice stays its own: the stored template is not in it.
+    voice = merged(first, second)
+    assert cache.speaker_vector == pytest.approx(voice)
+    await persona.on_stop()
+
+    saved = [s["speaker_vector"] for s in inference.saved if s["user_id"] == participant.user_id]
+    if stored == "template":
+        assert saved == [pytest.approx(merged(template, voice))]
+    elif stored in ("none", "new-user"):  # No template, read or known: the session's voice.
+        assert saved == [pytest.approx(voice)]
+    else:  # The stored template was never read, so the save leaves it as it is.
+        assert saved == []
+    await runtime.aclose()
+
+
+@pytest.mark.parametrize("load", ["loaded", "unloaded"])
+async def test_a_rebound_participant_saves_into_its_new_users_template_alone(
+    load: str, tmp_path: Path
+) -> None:
+    alice, bob = unit(1, 0, 0, 0), unit(0, 1, 0, 0)
+    inference = PersonaInference(
+        templates={"alice": alice.tolist(), "bob": bob.tolist()},
+        holds=lambda user_id: load == "unloaded" and user_id == "bob",
+    )
+    runtime = avatar_runtime(tmp_path, ScriptedProviders(name_ally), inference)
+    persona, _ = persona_for(runtime)
+    participant = join(runtime)
+    await persona.on_start()
+    await persona.load_profile(participant_id=participant.participant_id)
+    outcome = runtime.participants.bind_user(
+        IdentityRequest(
+            participant_id=participant.participant_id,
+            user_id="bob",
+            source=IdentitySource.PERCEPTION,
+            basis_sequence=participant.identity_sequence,
+            reason="Voice matched the stored user",
+        )
+    )
+    assert outcome == IdentityOutcome.APPLIED
+    if load == "loaded":
+        await persona.load_profile(participant_id=participant.participant_id)
+    voice = unit(0, 0, 1, 0)
+    persona.cache_for(participant.participant_id).speaker_vector = voice
+    await persona.on_stop()
+
+    # Alice's template, loaded first, never takes in what is saved as Bob.
+    saved = {save["user_id"]: save["speaker_vector"] for save in inference.saved}
+    if load == "loaded":
+        assert saved == {"bob": pytest.approx(merged(bob, voice))}
+    else:
+        assert saved == {}
     await runtime.aclose()
